@@ -1,0 +1,16 @@
+// Test for multiple levels of pointers
+//
+// Expected output: 0
+
+i32 main() {
+    i32 a = 66
+    i32* b = &a
+    i32** c = &b
+    i32*** d = &c
+    i32**** e = &d
+    i32***** f = &e
+
+    assert *****f == 66: "Expected *****f to be 66"
+    
+    return 0
+}

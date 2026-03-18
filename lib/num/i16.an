@@ -1,0 +1,11 @@
+from std.collections.hash import Murmur3Hasher
+from std.collections.hash import Hash
+from std.core.slice import from_raw_parts
+
+impl Hash<Murmur3Hasher> for i16 {
+    hash(Murmur3Hasher hasher) {
+        i16 val = *self
+        u8* ptr = bitcast<u8*>(&val)
+        hasher.write(from_raw_parts(ptr, 2))
+    }
+}

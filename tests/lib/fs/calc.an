@@ -1,0 +1,80 @@
+// A simple calculator for testing the fs module
+
+from std.core.string import String
+from std.core.io import readline, print
+from std.core.option import Option
+from std.core.str import CharIndicesIter
+
+i32 main() {
+    loop {
+        String line = readline().trimmed()
+        if line == "exit" {
+            break
+        }
+        if line.is_empty() {
+            continue
+        }
+
+        Option<u64> op_idx = Option<u64>.None
+        Option<char> op = Option<char>.None
+        CharIndicesIter chars = line.char_indices()
+
+        if line.starts_with_char('-') {
+            chars.next()
+        }
+
+        for elem in chars {
+            u64 idx = elem[0]
+            char ch = elem[1]
+            if "+-*/".contains_char(ch) {
+                op_idx = Option<u64>.Some(idx)
+                op = Option<char>.Some(ch)
+                break
+            }
+        }
+
+        if op_idx.is_none() {
+            print("Invalid expression: no operator found")
+            continue
+        }
+        u64 idx = op_idx.unwrap()
+        char operator = op.unwrap()
+        str left_str = line[0u64..idx].trim()
+        str right_str = line[idx + 1..line.len()].trim()
+
+        i64 left_num
+        i64 right_num
+        match left_str.parse<i64>() {
+            Ok as ok { left_num = ok.val }
+            Err as err {
+                print("Invalid expression: unable to parse left operand")
+                continue
+            }
+        }
+        match right_str.parse<i64>() {
+            Ok as ok { right_num = ok.val }
+            Err as err {
+                print("Invalid expression: unable to parse right operand")
+                continue
+            }
+        }
+
+        i64 result
+        match operator {
+            '+' { result = left_num + right_num }
+            '-' { result = left_num - right_num }
+            '*' { result = left_num * right_num }
+            '/' { result = left_num / right_num }
+            _ {
+                print("Invalid operator")
+                continue
+            }
+        }
+
+        print("Result: ")
+        print(result.to_string())
+        print("\n")
+    }
+
+    return 0
+}

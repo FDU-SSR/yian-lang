@@ -1,0 +1,7 @@
+Copyright (c) 2024-present Guangliang Yang and contributors
+
+The Yian language is licensed under the Apache 2.0 license or the MIT license, at your option.
+
+For details, please see the following files:
+    licenses/LICENSE-MIT
+    licenses/LICENSE-APACHE

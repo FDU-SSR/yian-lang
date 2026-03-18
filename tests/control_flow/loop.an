@@ -1,0 +1,17 @@
+// Test for loop control flow
+//
+// Expected output: 0
+
+i32 main(){
+    i32 i = 0
+    loop {
+        if i != 5 {
+            i += 1
+            continue
+        } else {
+            break
+        }
+    }
+    assert i == 5: "Continue loop failed"
+    return 0
+}

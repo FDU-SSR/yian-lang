@@ -1,0 +1,24 @@
+// Test typedefs
+//
+// Expected output: 0
+
+struct Person{
+    pub i32 a
+    pub i32 b
+}
+
+typedef Pr = Person
+typedef LL = i64
+typedef INT2 = i32
+typedef INT3 = i32
+
+i32 main(){
+    i32 a = 3
+    LL b = 12345
+    INT2 c = 4
+    INT3 d = 5
+    Pr p = Pr(a = 1, b = 2)
+    return 0
+}
+
+

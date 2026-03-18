@@ -1,0 +1,105 @@
+// 使用 Murmur3Hasher 的 HashSet 测试，键类型为 i64
+//
+// Expected output: 0
+
+from std.collections.hash import Murmur3Hasher
+from std.collections.hash import Murmur3BuildHasher
+from std.collections.hash_set import HashSet
+
+i32 main() {
+    // === Test 1: 基础构造 ===
+    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set1 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert set1.len() == 0: "new set should have len 0"
+    assert set1.is_empty(): "new set should be empty"
+
+    // === Test 2: insert & contains ===
+    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set2 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(42)
+    )
+
+    i64 v10 = 10
+    i64 v20 = 20
+    i64 v30 = 30
+
+    bool inserted
+    inserted = set2.insert(v10)
+    assert inserted: "first insert should succeed"
+    assert set2.len() == 1: "len should be 1"
+    assert set2.contains(v10): "contains should find 10"
+
+    inserted = set2.insert(v20)
+    assert inserted: "insert 20 should succeed"
+    inserted = set2.insert(v30)
+    assert inserted: "insert 30 should succeed"
+    assert set2.len() == 3: "len should be 3"
+
+    // === Test 3: 重复插入 ===
+    inserted = set2.insert(v10)
+    assert not inserted: "duplicate insert should return false"
+    assert set2.len() == 3: "len should not change after duplicate"
+
+    // === Test 4: contains 不存在的元素 ===
+    i64 v99 = 99
+    i64 v0 = 0
+    assert not set2.contains(v99): "should not contain 99"
+    assert not set2.contains(v0): "should not contain 0"
+
+    // === Test 5: remove ===
+    bool removed
+    removed = set2.remove(v20)
+    assert removed: "remove 20 should succeed"
+    assert set2.len() == 2: "len should be 2 after remove"
+    assert not set2.contains(v20): "20 should be gone"
+    assert set2.contains(v10): "10 should still exist"
+    assert set2.contains(v30): "30 should still exist"
+
+    // remove 不存在的元素
+    i64 v999 = 999
+    removed = set2.remove(v999)
+    assert not removed: "remove missing should return false"
+    assert set2.len() == 2: "len unchanged after removing missing"
+
+    // === Test 6: clear ===
+    set2.clear()
+    assert set2.len() == 0: "clear should reset len"
+    assert set2.is_empty(): "clear should make set empty"
+    assert not set2.contains(v10): "10 should be gone after clear"
+
+    // === Test 7: 大量插入触发 resize ===
+    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set3 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(7)
+    )
+    for i in 0i64..20 {
+        set3.insert(i)
+    }
+    assert set3.len() == 20: "should have 20 elements after batch insert"
+    for i in 0i64..20 {
+        assert set3.contains(i): "should contain all inserted values"
+    }
+    i64 v20b = 20
+    assert not set3.contains(v20b): "should not contain 20"
+
+    // === Test 8: 不同 seed ===
+    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set4 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(123)
+    )
+    i64 v100 = 100
+    i64 v200 = 200
+    i64 v300 = 300
+    i64 v400 = 400
+    set4.insert(v100)
+    set4.insert(v200)
+    set4.insert(v300)
+    assert set4.contains(v100): "seed 123: contains 100"
+    assert set4.contains(v200): "seed 123: contains 200"
+    assert set4.contains(v300): "seed 123: contains 300"
+    assert not set4.contains(v400): "seed 123: not contains 400"
+
+    return 0
+}

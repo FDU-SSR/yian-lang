@@ -1,0 +1,24 @@
+// Test integer literal
+//
+// Expected output: 0
+
+i32 main() {
+    i32 dec = 42
+    i32 hex = 0x2A
+    assert dec == hex: "dec != hex"
+    i32 oct = 0o52
+    assert dec == oct: "dec != oct"
+    i32 bin = 0b101010
+    assert dec == bin: "dec != bin"
+    u8 byte = b'A'
+    assert byte == 65: "byte != 65"
+    u8 hex_byte = b'\x41'
+    assert byte == hex_byte: "byte != hex_byte"
+
+    u32 suffix = 0x2A_u32
+    assert suffix == u32(dec): "suffix != dec as u32"
+    u64 underline = 1_000_000
+    assert underline == 1000000: "underline != 1000000"
+
+    return 0
+}

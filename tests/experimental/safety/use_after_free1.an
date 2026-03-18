@@ -1,0 +1,12 @@
+sys_test() {
+	i32 *p = dyn i32
+	i32 q
+
+	del q
+	*p = q
+}
+
+i32 main() {
+	sys_test()
+	return 0
+}

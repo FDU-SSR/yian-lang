@@ -1,0 +1,14 @@
+// readline 测试：通过管道模拟 stdin 输入
+//
+// 运行方式: echo "hello world" | lli output.ll
+// Expected output: hello world
+
+from std.core.io import readline, print
+from std.core.string import String
+
+i32 main() {
+    String line = readline()
+    print(line.as_str())
+    print("\n")
+    return 0
+}

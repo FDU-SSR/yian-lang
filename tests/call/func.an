@@ -1,0 +1,23 @@
+// Test function calls
+//
+// Expected output: 0
+
+i8 add(i8 a, i8 b){
+    return a + b
+}
+
+i8 sub(i8 a, i8 b){
+    return a - b
+}
+
+i32 main(){
+    i8 one = 1
+    i8 two = 2
+    i8 three = add(one, two)
+
+    assert three == 3: "Addition function failed"
+    assert sub(three, one) == two: "Subtraction function failed"
+    assert sub(three, two) == one: "Subtraction function failed"
+
+    return 0
+}

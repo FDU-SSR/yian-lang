@@ -1,0 +1,8 @@
+// Test failing assertions
+//
+// Expected runtime error: This should fail
+
+i32 main() {
+    assert false: "This should fail\n"
+    return 0
+}

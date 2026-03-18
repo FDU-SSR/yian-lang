@@ -1,0 +1,58 @@
+char* my_memcpy(char* dest, char* src, u32 len){
+    if not dest.is_valid() and not src.is_valid(){
+        return dest
+    }
+    if len == 0 {
+        return dest
+    }
+    while len > 0 {
+        *dest = *src
+        dest += 1
+        src += 1
+        len -= 1
+    }
+    return dest
+}
+i32 SkipString(char** jsonPtr, char** outStrStart){
+    // char* _vv1 = *(jsonPtr)
+    char* json = *(jsonPtr)
+    json += 1
+    i32 count = 0
+    char c
+    while true {
+        c = json[count]
+        count = count + 1
+        if u8(c) == 22 {
+            break
+        }
+        if u8(c) == 92 {
+            count = count + 1
+        }
+    }
+    
+    *(outStrStart) = json
+    *(jsonPtr) = *(jsonPtr) + count
+    return count - 1
+}
+i32 ParseString(char** jsonPtr){
+    _vv12 = *(jsonPtr)
+    _vv11 = *(_vv12)
+    if _vv11 != '"' {
+        // exit(1);
+        return 1
+    }
+    char* strStart
+    i32 length = SkipString(jsonPtr, &strStart)
+    char* str = dyn char[length + 1]
+    if not str.is_valid() {
+        // exit(1);
+        return 2
+    }
+    my_memcpy(str, strStart, length)
+    return 0
+}
+i32 main(){
+    char* input = "\"abc"
+    ParseString(&input)
+    return 0
+}

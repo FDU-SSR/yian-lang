@@ -1,0 +1,36 @@
+// Test method calls
+//
+// Expected output: 0
+
+struct Person {
+    pub i32 age
+    pub float weight
+}
+
+impl Person {
+    static pub Person new(i32 age, float weight) {
+        return Person(age, weight)
+    }
+
+    pub i32 get_age() {
+        return self.age
+    }
+
+    pub bool weight_gt(float weight) {
+        return self.weight > weight
+    }
+}
+
+i32 main() {
+    Person p = Person.new(20, 65.5)
+    assert p.age == 20 and p.weight > 65.0: "Person.new failed"
+
+    i32 age = p.get_age()
+    assert age == 20: "get_age method failed"
+
+    if p.weight_gt(70.0) {
+        panic("Weight comparison failed")
+    }
+
+    return 0
+}

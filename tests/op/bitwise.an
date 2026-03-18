@@ -1,0 +1,32 @@
+// Test bitwise operations: &, |, ^, ~, <<, >>
+//
+// Expected output: 0
+
+i32 main() {
+    i32 a = 0b1100  // 12 in decimal
+    i32 b = 0b1010  // 10 in decimal
+    i32 c = -1
+
+    i32 and_result = a & b
+    assert and_result == 0b1000: "Bitwise AND failed"
+
+    i32 or_result = a | b
+    assert or_result == 0b1110: "Bitwise OR failed"
+
+    i32 xor_result = a ^ b
+    assert xor_result == 0b0110: "Bitwise XOR failed"
+
+    i32 not_result = ~c
+    assert not_result == 0: "Bitwise NOT failed"
+
+    i32 left_shift_result = a << 2
+    assert left_shift_result == 0b110000: "Left shift failed"
+
+    i32 right_shift_result = a >> 2
+    assert right_shift_result == 0b0011: "Right shift failed"
+
+    i32 signed_right_shift_result = c >> 1
+    assert signed_right_shift_result == -1: "Signed right shift failed"
+
+    return 0
+}

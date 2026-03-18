@@ -1,0 +1,29 @@
+i32 decode_variable_length(char* buf, i32* bytes_consumed){
+    i32 value = 0;
+    i32 multiplier = 1;
+    i32 offset
+    for offset = 0; offset < 4; offset = offset + 1 {
+        char encoded_byte = buf[offset]
+        _vv1 = u8(encoded_byte)
+        _vv2 = i32(_vv1)
+        _vv4 = _vv2 * multiplier
+        value = value + _vv4;
+        multiplier = multiplier * 128;
+        _vv5 = _vv2 & 16
+        if _vv5 == 0 {
+            break
+        }
+    }
+    
+    if bytes_consumed.is_valid() {
+        _vv8 = offset + 1;
+        *(bytes_consumed) = _vv8;
+    }
+    return value;
+}
+i32 main(){
+    char[3] buf = [u8(26), u8(27), u8(28)]
+    i32 bytes_consumed = 0
+    decode_variable_length(buf, &bytes_consumed)
+    return 0
+}

@@ -1,0 +1,85 @@
+// Test for a generic Vector implementation with append and pop methods.
+//
+// Expected output: 0
+
+from std.core.option import Option
+
+struct Vector<T> {
+    T* data
+    u64 length
+    u64 capacity
+}
+
+impl<T> Vector<T> {
+    static Self new() {
+        return Self(
+            data=dyn T[2],
+            length=0,
+            capacity=2
+        )
+    }
+
+    static Self with_capacity(u64 capacity) {
+        return Self(
+            data=dyn T[capacity],
+            length=0,
+            capacity=capacity
+        )
+    }
+
+    grow() {
+        self.capacity *= 2
+        T* new_data = dyn T[self.capacity]
+        for u64 i = 0; i < self.length; i += 1 {
+            new_data[i] = self.data[i]
+        }
+        del self.data
+        self.data = new_data
+    }
+
+    append(T item) {
+        if self.length == self.capacity {
+            self.grow()
+        }
+        self.data[self.length] = item
+        self.length += 1
+    }
+
+    Option<T> pop() {
+        if self.length == 0 {
+            return Option<T>.None
+        }
+        self.length -= 1
+        return Option<T>.Some(self.data[self.length])
+    }
+
+    u64 len() {
+        return self.length
+    }
+}
+
+i32 main() {
+    Vector<i32> v = Vector<i32>.new()
+    v.append(1)
+    v.append(2)
+    v.append(3)
+    v.append(4)
+    v.append(5)
+
+    i32 sum = 0
+    loop {
+        Option<i32> item = v.pop()
+        match item {
+            None {
+                break
+            }
+            Some as item {
+                sum += item.val
+            }
+        }
+    }
+
+    assert sum == 15: "Sum should be 15"
+    
+    return 0
+}

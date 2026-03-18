@@ -1,0 +1,34 @@
+// Test trait method definitions and implementations
+//
+// Expected output: 0
+
+trait Walkable {
+    static pub walk_info();
+
+    pub i32 walk(i32 distance);
+}
+
+struct Dog {
+    pub i32 age
+}
+
+impl Walkable for Dog {
+    static pub walk_info() {
+        print("Dogs love to walk!")
+    }
+
+    pub i32 walk(i32 distance) {
+        return distance + self.age
+    }
+}
+
+i32 main() {
+    Dog d = Dog(5)
+
+    Dog.walk_info()
+
+    i32 total_distance = d.walk(10)
+    assert total_distance == 15: "Dog walk method failed"
+
+    return 0
+}

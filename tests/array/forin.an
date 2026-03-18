@@ -1,0 +1,21 @@
+// Test for-in loop on built-in array type
+//
+// Expected output: 0
+
+i32 main() {
+    u64[3] indexes
+    indexes[0] = 0
+    indexes[1] = 1
+    indexes[2] = 2
+
+    i32[3] values
+    for index in indexes {
+        values[index] = i32(index * 10)
+    }
+
+    assert values[0] == 0: "values[0] should be 0"
+    assert values[1] == 10: "values[1] should be 10"
+    assert values[2] == 20: "values[2] should be 20"
+
+    return 0
+}

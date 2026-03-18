@@ -1,0 +1,158 @@
+from std.core.vec import Vec
+from std.core.option import Option
+from std.core.slice import SliceIter
+
+i32 main() {
+    // 测试 Vec 构造方法
+    Vec<i32> v1 = Vec<i32>.new()
+    assert v1.len() == 0: "new() should create empty vector"
+    assert v1.is_empty(): "new() should create empty vector"
+    
+    Vec<i32> v2 = Vec<i32>.with_capacity(10)
+    assert v2.capacity() == 10: "with_capacity should set capacity"
+    
+    // 测试 push 和 size
+    Vec<i32> v3 = Vec<i32>.new()
+    v3.push(1)
+    v3.push(2)
+    v3.push(3)
+    assert v3.len() == 3: "push should increase size"
+    assert not v3.is_empty(): "vector with elements should not be empty"
+    
+    // 测试 get
+    Option<i32> opt1 = v3.get(0)
+    assert opt1.unwrap() == 1: "get(0) should return first element"
+    Option<i32> opt2 = v3.get(2)
+    assert opt2.unwrap() == 3: "get(2) should return third element"
+    Option<i32> opt3 = v3.get(10)
+    assert opt3.is_none(): "get out of bounds should return None"
+    
+    // 测试 first 和 last
+    Option<i32> first_opt = v3.first()
+    assert first_opt.unwrap() == 1: "first() should return first element"
+    Option<i32> last_opt = v3.last()
+    assert last_opt.unwrap() == 3: "last() should return last element"
+    
+    // 测试 pop
+    Option<i32> pop_opt = v3.pop()
+    assert pop_opt.unwrap() == 3: "pop() should return last element"
+    assert v3.len() == 2: "pop() should decrease size"
+    
+    // 测试 insert
+    v3.insert(1, 88)
+    assert v3.len() == 3: "insert should increase size"
+    assert v3[1] == 88: "insert should place element at index"
+    
+    // 测试 remove
+    i32 removed = v3.remove(0)
+    assert removed == 1: "remove should return removed element"
+    assert v3.len() == 2: "remove should decrease size"
+    
+    // 测试 clear
+    v3.clear()
+    assert v3.len() == 0: "clear should set size to 0"
+    assert v3.is_empty(): "clear should make vector empty"
+    
+    // 测试 extend
+    Vec<i32> v4 = Vec<i32>.new()
+    v4.push(10)
+    v4.push(20)
+    
+    Vec<i32> v5 = Vec<i32>.new()
+    v5.push(30)
+    v5.push(40)
+    
+    v4.extend(v5)
+    assert v4.len() == 4: "extend should append all elements"
+    assert v4[2] == 30: "extend should append correctly"
+    
+    // 测试 Add trait (operator +)
+    Vec<i32> v8 = Vec<i32>.new()
+    v8.push(1)
+    v8.push(2)
+    
+    Vec<i32> v9 = Vec<i32>.new()
+    v9.push(3)
+    v9.push(4)
+    
+    Vec<i32> v10 = v8 + v9
+    assert v10.len() == 4: "add should concatenate vectors"
+    assert v10[0] == 1: "add should concatenate correctly"
+    assert v10[3] == 4: "add should concatenate correctly"
+    
+    // 测试 PartialEq trait (operator ==/!=)
+    Vec<i32> v11 = Vec<i32>.new()
+    v11.push(1)
+    v11.push(2)
+    
+    Vec<i32> v12 = Vec<i32>.new()
+    v12.push(1)
+    v12.push(2)
+    
+    assert v11 == v12: "eq should return true for equal vectors"
+    
+    Vec<i32> v13 = Vec<i32>.new()
+    v13.push(1)
+    v13.push(3)
+    
+    assert not v11 == v13: "eq should return false for different vectors"
+    assert v11 != v13: "ne should return true for different vectors"
+    assert not v11 != v12: "ne should return false for equal vectors"
+    
+    // 测试 Clone trait
+    Vec<i32> v14 = Vec<i32>.new()
+    v14.push(100)
+    v14.push(200)
+    
+    Vec<i32> v15 = v14.clone()
+    assert v15.len() == 2: "clone should copy size"
+    assert v15 == v14: "clone should create equal vector"
+    
+    // 修改原向量，确保 clone 是深拷贝
+    v14.push(300)
+    assert v15.len() == 2: "clone should be independent"
+    
+    // 测试 reserve
+    Vec<i32> v16 = Vec<i32>.new()
+    v16.reserve(100)
+    assert v16.capacity() == 100: "reserve should set capacity"
+    
+    // 测试 shrink_to_fit
+    Vec<i32> v17 = Vec<i32>.new()
+    v17.reserve(100)
+    v17.push(1)
+    v17.push(2)
+    v17.shrink_to_fit()
+    assert v17.capacity() == 2: "shrink_to_fit should reduce capacity to size"
+    
+    // 测试 truncate
+    Vec<i32> v18 = Vec<i32>.new()
+    v18.push(1)
+    v18.push(2)
+    v18.push(3)
+    v18.push(4)
+    v18.truncate(2)
+    assert v18.len() == 2: "truncate should reduce size"
+    
+    // 测试 iter
+    Vec<i32> v21 = Vec<i32>.new()
+    v21.push(10)
+    v21.push(20)
+    v21.push(30)
+    
+    SliceIter<i32> iter = v21.into_iter()
+    Option<i32> iter_opt1 = iter.next()
+    assert iter_opt1.unwrap() == 10: "iter should return first element"
+    
+    Option<i32> iter_opt2 = iter.next()
+    assert iter_opt2.unwrap() == 20: "iter should return second element"
+    
+    Option<i32> iter_opt3 = iter.next()
+    assert iter_opt3.unwrap() == 30: "iter should return third element"
+    
+    Option<i32> iter_opt4 = iter.next()
+    assert iter_opt4.is_none(): "iter should return None at end"
+    
+    return 0
+}
+

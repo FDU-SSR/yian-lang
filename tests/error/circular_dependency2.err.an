@@ -1,0 +1,12 @@
+// Test for self circular dependencies between structs
+//
+// Expected runtime error: compiler.utils.errors.yian_error.CompilerError: Self-referential type detected: Node
+
+struct Node {
+    i32 data
+    Node next
+}
+
+i32 main() {
+    return 0
+}

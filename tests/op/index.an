@@ -1,0 +1,17 @@
+// Test indexing operator
+//
+// Expected output: 0
+
+i32 main() {
+    i32[5] arr = [10, 20, 30, 40, 50]
+    assert arr[0] == 10: "arr[0] should be 10"
+    
+    i32* p = &arr[0]
+    assert p[2] == 30: "p[2] should be 30"
+
+    (i32, bool) tup = (42, true)
+    assert tup[0] == 42: "tup[0] should be 42"
+    assert tup[1] == true: "tup[1] should be true"
+
+    return 0
+}

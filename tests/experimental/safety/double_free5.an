@@ -1,0 +1,82 @@
+struct request {
+	char *cmd1
+	char *cmd2
+}
+
+struct Sg_request {
+	request* rq
+}
+
+// should be replaced
+blk_mq_free_request(request *rq) {}
+
+remove_cmds(request *rq) {
+	del rq.cmd1
+	del rq.cmd2
+}
+
+blk_end_request_all(request* rq) {
+	i32 cond
+	
+	if cond != 0 {
+		remove_cmds(rq)
+	}
+}
+
+sg_finish_rem_req(Sg_request *srp) {
+	i32 cond
+
+	if cond != 0 {
+		remove_cmds(srp.rq)
+	}
+
+	blk_mq_free_request(srp.rq)
+}
+
+i32 sg_common_write(Sg_request *srp) {
+	i32 cond
+	i32 cond2
+	
+	if cond != 0 {
+		if cond2 != 0 {
+			blk_end_request_all(srp.rq)
+		}
+
+		sg_finish_rem_req(srp)
+		return 1
+	}
+
+	return 0
+}
+
+Sg_request* add_request() {
+	Sg_request *srp = dyn Sg_request
+	srp.rq = dyn request
+	srp.rq.cmd1 = dyn char
+	srp.rq.cmd2 = dyn char
+	return srp
+}
+
+i32 sg_new_write(Sg_request **o_srp) {
+	Sg_request *srp
+	srp = add_request()
+
+	i32 k = sg_common_write(srp)
+
+	return k
+}
+
+sg_ioctl() {
+	Sg_request *srp
+
+	i32 result = sg_new_write(&srp)
+}
+
+sys_test() {
+	sg_ioctl()
+}
+
+i32 main() {
+	sys_test()
+	return 0
+}

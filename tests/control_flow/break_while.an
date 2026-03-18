@@ -1,0 +1,20 @@
+// Test break statement in a while loop
+//
+// Expected output: 0
+
+i32 main(){
+    i32 sum = 0
+    i32 n = 10
+    i32 i = 1
+    while true {
+        if i < n {
+            sum += i
+        } else {
+            break
+        }
+        i += 1
+    }
+    assert sum == 45: "Break in while loop failed"
+    return 0
+}
+

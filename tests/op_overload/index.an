@@ -1,0 +1,37 @@
+// Test for operator overloading: Index operator
+//
+// Expected output: 0
+
+from std.core.ops import Index
+
+struct Container<T> {
+    T* items
+    u64 size
+}
+
+impl<T> Container<T> {
+    static pub Self new(u64 size, T default_value) {
+        T* items = dyn T[size]
+        for u64 i = 0; i < size; i += 1 {
+            items[i] = default_value
+        }
+        return Self(items, size)
+    }
+}
+
+impl<T> Index<u64, T> for Container<T> {
+    T* index(u64 idx) {
+        return self.items + idx
+    }
+}
+
+i32 main() {
+    Container<i32> c = Container<i32>.new(5, 42)
+    assert c[0] == 42: "Expected 42"
+    assert c[4] == 42: "Expected 42"
+
+    c[2] = 100
+    assert c[2] == 100: "Expected 100"
+
+    return 0
+}

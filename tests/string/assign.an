@@ -1,0 +1,24 @@
+// Test assignment of str type
+//
+// Expected output: AliceBobBobCharlie
+
+struct Person {
+    str name
+    i32 age
+}
+
+i32 main() {
+    str s1 = "Alice"
+    print(s1)
+
+    Person p = Person("Bob", 30)
+    print(p.name)
+
+    Person* p_ptr = &p
+    print(p_ptr.name)
+
+    Person* p_heap = dyn Person("Charlie", 25)
+    print(p_heap.name)
+
+    return 0
+}

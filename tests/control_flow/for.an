@@ -1,0 +1,14 @@
+// Test for loop control flow
+//
+// Expected output: 0
+
+i32 main(){
+    i32 a = 1
+    for i32 i = 1; i <= 5; {
+        a = a * 2
+        i = i + 1
+    }
+    a = a - 1
+    assert a == 31: "For loop failed"
+    return 0
+}

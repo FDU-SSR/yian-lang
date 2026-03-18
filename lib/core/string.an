@@ -1,0 +1,208 @@
+from vec import Vec
+from mem import Clone
+from ops import PartialEq, Add, Deref, Index
+from convert import From, Into
+from option import Option
+from range import Range
+
+pub struct String {
+    Vec<u8> data
+}
+
+impl String {
+    // Create a new empty String
+    static pub Self new() {
+        return Self(
+            data = Vec<u8>.new()
+        )
+    }
+
+    // Create a new String with specified capacity
+    static pub Self with_capacity(u64 capacity) {
+        return Self(
+            data = Vec<u8>.with_capacity(capacity)
+        )
+    }
+
+    // Extract str from String
+    pub str as_str() {
+        return str.from(self.data.as_slice())
+    }
+
+    // Get the byte slice of the String
+    pub u8[] as_slice() {
+        return self.data.as_slice()
+    }
+
+    // Get capacity of String in bytes
+    pub u64 capacity() {
+        return self.data.capacity()
+    }
+
+    // Get length of String in bytes
+    pub u64 len() {
+        return self.data.len()
+    }
+
+    // Check if the String is empty
+    pub bool is_empty() {
+        return self.len() == 0
+    }
+
+    // Push a String to the end(copy)
+    pub push_str(str s) {
+        self.data.extend_from_slice(s.as_slice())
+    }
+
+    // Push a single char to the end
+    pub push(char c) {
+        u32 code = u32(c)
+
+        if code <= 0x7F {
+            // 1 byte
+            self.data.push(u8(code))
+        } elif code <= 0x7FF {
+            // 2 bytes
+            self.data.push(u8(0xC0 | (code >> 6)))
+            self.data.push(u8(0x80 | (code & 0x3F)))
+        } elif code <= 0xFFFF {
+            // 3 bytes
+            self.data.push(u8(0xE0 | (code >> 12)))
+            self.data.push(u8(0x80 | ((code >> 6) & 0x3F)))
+            self.data.push(u8(0x80 | (code & 0x3F)))
+        } else {
+            // 4 bytes
+            self.data.push(u8(0xF0 | (code >> 18)))
+            self.data.push(u8(0x80 | ((code >> 12) & 0x3F)))
+            self.data.push(u8(0x80 | ((code >> 6) & 0x3F)))
+            self.data.push(u8(0x80 | (code & 0x3F)))
+        }
+    }
+
+    // Pop a char from the end and return it
+    pub Option<char> pop() {
+        if self.is_empty() {
+            return Option<char>.None
+        }
+
+        u64 len = self.len()
+        u8[] bytes = self.as_slice()
+
+        // Find the start of the last UTF-8 character
+        u64 i = 1
+        while i <= 4 and i <= len {
+            u8 byte = bytes[len - i]
+            // Check if the byte is a valid UTF-8 continuation byte
+            if (byte & 0xC0) != 0x80 {
+                u32 code = 0
+
+                // Decode the UTF-8 character based on the number of bytes
+                if i == 1 {
+                    code = u32(byte)
+                } elif i == 2 {
+                    code = u32(((bytes[len - 2] & 0x1F) << 6) | (byte & 0x3F))
+                } elif i == 3 {
+                    code = u32(((bytes[len - 3] & 0x0F) << 12) | ((bytes[len - 2] & 0x3F) << 6) | (byte & 0x3F))
+                } elif i == 4 {
+                    code = u32(((bytes[len - 4] & 0x07) << 18) | ((bytes[len - 3] & 0x3F) << 12) | ((bytes[len - 2] & 0x3F) << 6) | (byte & 0x3F))
+                }
+
+                self.data.truncate(len - i)
+                return Option<char>.Some(char(code))
+            }
+            i += 1
+        }
+        return Option<char>.None
+    }
+
+    // Trimed version of the String
+    pub String trimmed() {
+        return String.from(self.trim())
+    }
+
+    // Clear the contents of the String
+    pub clear() {
+        self.data.clear()
+    }
+
+    // Reserve additional capacity in bytes
+    pub reserve(u64 additional) {
+        self.data.reserve(additional)
+    }
+
+    // Shrink the capacity to fit the size
+    pub shrink_to_fit() {
+        self.data.shrink_to_fit()
+    }
+}
+
+impl Clone for String {
+    pub Self clone() {
+        return String(
+            data = self.data.clone()
+        )
+    }
+}
+
+// Implement PartialEq for String to compare with another String
+impl PartialEq<String> for String {
+    pub bool eq(String other) {
+        return self.as_str() == other.as_str()
+    }
+}
+
+// Implement PartialEq for String to compare with a str slice
+impl PartialEq<str> for String {
+    pub bool eq(str other) {
+        return self.as_str() == other
+    }
+}
+
+// Implement Add for String to concatenate with another String
+impl Add<String, String> for String {
+    pub String add(String other) {
+        String result = self.clone()
+        result.push_str(other.as_str())
+        return result
+    }
+}
+
+// Implement Add for String to concatenate with a str slice
+impl Add<str, String> for String {
+    pub String add(str other) {
+        String result = self.clone()
+        result.push_str(other)
+        return result
+    }
+}
+
+// Implement Deref to allow String to be used as a str slice
+impl Deref<str> for String {
+    pub str* deref() {
+        return &self.as_str()
+    }
+}
+
+// Implement From<str> for String to allow creating a String from a str slice
+// This will clone the data from the str slice into the String
+impl From<str> for String {
+    static pub Self from(str value) {
+        return Self(
+            data = Vec<u8>.from(value.as_slice())
+        )
+    }
+}
+
+// Implement Into<String> for str to allow converting a str slice into a String
+impl Into<String> for str {
+    pub String into() {
+        return String.from(*self)
+    }
+}
+
+// Implement Index for String to allow indexing into the String as a str slice
+impl Index<Range<u64>, str> for String {
+    pub str* index(Range<u64> range) {
+        return &self.as_str()[range]
+    }
+}

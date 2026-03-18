@@ -1,0 +1,41 @@
+// Test enum type with associated data and match statement
+//
+// Expected output: 0
+
+enum DivResult<T> {
+    Ok{T value}
+    DivByZero
+}
+
+DivResult<i32> safe_div(i32 a, i32 b) {
+    if b == 0 {
+        return DivResult<i32>.DivByZero
+    } else {
+        return DivResult<i32>.Ok(a / b)
+    }
+}
+
+i32 main() {
+    DivResult<i32> res1 = safe_div(10, 2)
+    DivResult<i32> res2 = safe_div(10, 0)
+
+    i32 val1
+    match res1 {
+        Ok as data{
+            val1 = data.value
+        }
+        DivByZero{
+            panic("Division by zero in res1")
+        }
+    }
+
+    match res2 {
+        Ok{
+            panic("Expected division by zero in res2")
+        }
+        _{}
+    }
+
+    assert val1 == 5: "safe_div(10, 2) should be 5"
+    return 0
+}

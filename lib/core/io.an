@@ -1,0 +1,115 @@
+from vec import Vec
+from string import String
+
+// =====================================================================
+// File open flags (Linux x86_64)
+// =====================================================================
+// O_RDONLY   = 0
+// O_WRONLY   = 1
+// O_RDWR     = 2
+// O_CREAT    = 64
+// O_TRUNC    = 512
+// O_APPEND   = 1024
+// O_WRONLY | O_CREAT | O_TRUNC  = 577
+// O_WRONLY | O_CREAT | O_APPEND = 1089
+
+// =====================================================================
+// Terminal I/O
+// =====================================================================
+
+// Print a string to stdout (fd 1).
+pub print(str s) {
+    write(1, s)
+}
+
+// Print a string to stderr (fd 2).
+pub eprint(str s) {
+    write(2, s)
+}
+
+// Read a line from stdin (fd 0), stopping at newline or EOF.
+// The trailing newline is NOT included in the returned String.
+// Returns a heap-allocated String since the input length is unknown.
+pub String readline() {
+    String result = String.new()
+    loop {
+        u8[1] ch
+        ch[0] = 0
+        str s = read(0, ch)
+        u8[] data = s.as_slice()
+        u64 n = data.len()
+        if n == 0 {
+            break
+        }
+        // '\n' == 10
+        if ch[0] == 10 {
+            break
+        }
+        result.push_str(s)
+    }
+    return result
+}
+
+// =====================================================================
+// Open mode wrappers
+// =====================================================================
+
+// Open a file for reading only (O_RDONLY = 0).
+pub i32 open_rdonly(str path) {
+    i32 fd = open(path, 0)
+    return fd
+}
+
+// Open a file for writing (creates or truncates).
+// flags = O_WRONLY | O_CREAT | O_TRUNC = 577
+pub i32 open_wronly(str path) {
+    i32 fd = open(path, 577)
+    return fd
+}
+
+// Open a file for appending (creates if not exists).
+// flags = O_WRONLY | O_CREAT | O_APPEND = 1089
+pub i32 open_append(str path) {
+    i32 fd = open(path, 1089)
+    return fd
+}
+
+// =====================================================================
+// High-level file I/O
+// =====================================================================
+
+// Open a file and read its entire content, returning as str.
+// The reading is done with a 32-byte probe buffer in a loop.
+pub str read_file(str path) {
+    i32 fd = open(path, 0)
+    Vec<u8> buf = Vec<u8>.new()
+    loop {
+        u8[32] probe
+        for i in 0u64..32 {
+            probe[i] = 0
+        }
+        str s = read(fd, probe)
+        u8[] data = s.as_slice()
+        u64 n = data.len()
+        if n == 0 {
+            break
+        }
+        buf.extend_from_slice(data)
+    }
+    close(fd)
+    return str.from(buf.as_slice())
+}
+
+// Write a str to a file at the given path (creates or truncates).
+pub write_file(str path, str content) {
+    i32 fd = open(path, 577)
+    write(fd, content)
+    close(fd)
+}
+
+// Append a str to a file at the given path (creates if not exists).
+pub append_file(str path, str content) {
+    i32 fd = open(path, 1089)
+    write(fd, content)
+    close(fd)
+}

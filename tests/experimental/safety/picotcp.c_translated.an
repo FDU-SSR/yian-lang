@@ -1,0 +1,46 @@
+struct pico_frame {
+    char* proto
+}
+i32 pico_frame_discard(pico_frame* f){
+    del f
+    return 0
+}
+i32 pico_transport_receive(pico_frame* f, i32 proto){
+    i32 ret = -1
+    char** tmp = &f.proto
+    match proto {
+        1: 
+            // Function strdup does not affect the vulnerability triggering, so it simplifies the processing
+            *tmp = "ICMPV4"
+            ret = 0
+        2: 
+            *tmp = "ICMPV6"
+            ret = 0
+        6: 
+            *tmp = "IGMP"
+            ret = 0
+        17: 
+            *tmp = "UDP"
+            ret = 0
+        58: 
+            *tmp = "TCP"
+            ret = 0
+        _: 
+            pico_frame_discard(f)
+            ret = -1
+    }
+    return ret
+}
+
+i32 pico_fragments_reassemble(i32 proto){
+    pico_frame *full = dyn pico_frame
+    if pico_transport_receive(full, proto) == -1 {
+        pico_frame_discard(full)
+        return 1
+    }
+    pico_frame_discard(full)
+    return 0
+}
+i32 main(i32 argc, char** argv){
+    return pico_fragments_reassemble(3)
+}

@@ -1,0 +1,18 @@
+// Test successful assertions
+//
+// Expected output: 0
+
+i32 main() {
+    assert true: "This should not fail"
+    assert 1 + 1 == 2: "Math is broken"
+    assert 6.9 < 7.0: "Float comparison failed"
+
+    i32 v = 10
+    i32* p = &v
+    i32* q = &v
+    assert p == q: "Pointer comparison failed"
+    assert *p == 10: "Dereferencing pointer failed"
+    assert *p == *q: "Pointer dereference comparison failed"
+
+    return 0
+}

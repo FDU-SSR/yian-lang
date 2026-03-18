@@ -1,0 +1,135 @@
+from std.collections.hash import Hasher
+from std.collections.hash import BuildHasher
+from std.collections.hash import Hash
+from std.collections.hash_map import SwissTable
+from std.core.ops import PartialEq
+
+// 简单的可哈希键类型
+pub struct MyKey {
+    pub i64 id
+}
+
+impl PartialEq<MyKey> for MyKey {
+    bool eq(MyKey other) {
+        return self.id == other.id
+    }
+}
+
+// 简单的可配置哈希器
+pub struct DummyHasher {
+    u64 result
+}
+
+impl DummyHasher {
+    pub static DummyHasher new(u64 seed) {
+        return DummyHasher(seed)
+    }
+
+    pub set_result(u64 v) {
+        self.result = v
+    }
+}
+
+pub struct DummyBuildHasher {
+    u64 seed
+}
+
+impl DummyBuildHasher {
+    pub static DummyBuildHasher with_seed(u64 seed) {
+        return DummyBuildHasher(seed)
+    }
+}
+
+impl BuildHasher<DummyHasher> for DummyBuildHasher {
+    DummyHasher build_hasher() {
+        return DummyHasher.new(self.seed)
+    }
+}
+
+impl Hasher for DummyHasher {
+    u64 finish() {
+        return self.result
+    }
+
+    write(u8[] bytes) {
+        // 测试哈希器，忽略输入
+    }
+}
+
+// 为 MyKey 提供 Hash 实现
+impl Hash<DummyHasher> for MyKey {
+    hash(DummyHasher hasher) {
+        hasher.set_result(u64(self.id))
+    }
+}
+
+// ---------- 测试开始 ----------
+i32 main() {
+    // === Test 1: 基础构造 ===
+    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map1 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+        0,
+        DummyBuildHasher.with_seed(0)
+    )
+    assert map1.len() == 0: "new map should have size 0"
+    assert map1.is_empty(): "new map should be empty"
+
+    // === Test 2: insert 与 get ===
+    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map2 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+        4,
+        DummyBuildHasher.with_seed(0)
+    )
+
+    map2.insert(MyKey(1), 100)
+    assert map2.len() == 1: "size should be 1 after insert"
+    assert map2.get(MyKey(1)).unwrap() == 100: "get should return inserted value"
+    assert map2.contains(MyKey(1)): "contains should find inserted key"
+
+    // === Test 3: 覆盖写入 ===
+    map2.insert(MyKey(1), 200)
+    assert map2.len() == 1: "size should not change after overwrite"
+    assert map2.get(MyKey(1)).unwrap() == 200: "get should return overwritten value"
+
+    // === Test 4: 多键插入与查询 ===
+    map2.insert(MyKey(2), 300)
+    map2.insert(MyKey(3), 400)
+    assert map2.len() == 3: "size should reflect all inserted keys"
+    assert map2.get(MyKey(2)).unwrap() == 300: "get key 2"
+    assert map2.get(MyKey(3)).unwrap() == 400: "get key 3"
+
+    // === Test 5: get 不存在的键 ===
+    assert map2.get(MyKey(99)).is_none(): "get missing key should return None"
+
+    // === Test 6: remove ===
+    map2.remove(MyKey(2))
+    assert map2.len() == 2: "size should decrement after remove"
+    assert map2.get(MyKey(2)).is_none(): "removed key should return None"
+    // 其他键不受影响
+    assert map2.get(MyKey(1)).unwrap() == 200: "key 1 should still exist"
+    assert map2.get(MyKey(3)).unwrap() == 400: "key 3 should still exist"
+
+    // remove 不存在的键不报错
+    map2.remove(MyKey(99))
+    assert map2.len() == 2: "remove missing key should not change size"
+
+    // === Test 7: 触发 resize ===
+    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map3 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+        4,
+        DummyBuildHasher.with_seed(0)
+    )
+    map3.insert(MyKey(10), 1)
+    map3.insert(MyKey(20), 2)
+    map3.insert(MyKey(30), 3)
+    // growth_left 应为 0，下次插入触发 resize
+    map3.insert(MyKey(40), 4)
+    assert map3.len() == 4: "size should be 4 after inserts"
+    assert map3.get(MyKey(10)).unwrap() == 1: "key 10 after resize"
+    assert map3.get(MyKey(20)).unwrap() == 2: "key 20 after resize"
+    assert map3.get(MyKey(30)).unwrap() == 3: "key 30 after resize"
+    assert map3.get(MyKey(40)).unwrap() == 4: "key 40 after resize"
+
+    // === Test 8: contains ===
+    assert map3.contains(MyKey(10)): "contains existing key"
+    assert not map3.contains(MyKey(99)): "contains missing key"
+
+    return 0
+}

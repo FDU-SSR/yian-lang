@@ -1,0 +1,17 @@
+// Test continue statement in a while loop
+//
+// Expected output: 0
+
+i32 main(){
+    i32 i = 0
+    while true {
+        if i != 5 {
+            i += 1
+            continue
+        } else {
+            break
+        }
+    }
+    assert i == 5: "Continue while loop failed"
+    return 0
+}

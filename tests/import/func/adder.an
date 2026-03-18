@@ -1,0 +1,7 @@
+T private_adder<T>(T a, T b) {
+    return a + b
+}
+
+pub T adder<T>(T a, T b) {
+    return private_adder(a, b)
+}

@@ -1,0 +1,23 @@
+// Test for disjoint circular dependencies between structs
+//
+// Expected runtime error: compiler.utils.errors.yian_error.CompilerError: Self-referential type detected: A3
+
+struct A1 {
+    i32 field1
+    A2 field2
+}
+struct A2 {
+    i32 field1
+}
+
+struct A3 {
+    A4 field1
+}
+
+struct A4 {
+    A3 field1
+}
+
+int main() {
+    return 0
+}

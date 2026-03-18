@@ -1,0 +1,19 @@
+// Test array initialization with literal values
+//
+// Expected output: 0
+
+i32 main() {
+    i32[6] array = [10, 7, 8, 9, 1, 5]    
+    assert array[0] == 10: "array[0] should be 10"
+
+    f64[4] float_array = [1.1, 2.2, 3.3, 4.4]
+    assert float_array[2] > 2.0 and float_array[2] < 4.0: "float_array[2] should be 3.3"
+
+    char[5] char_array = ['a', 'b', 'c', 'd', 'e']
+    assert char_array[4] == 'e': "char_array[4] should be 'e'"
+
+    bool[3] bool_array = [true, false, true]
+    assert bool_array[1] == false: "bool_array[1] should be false"
+
+    return 0
+}

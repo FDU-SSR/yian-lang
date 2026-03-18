@@ -1,0 +1,117 @@
+from option import Option
+from vec import Vec
+from iter import Iterator, IntoIterator
+from ops import PartialEq
+
+// A struct representation of a slice
+struct SliceStruct<T> {
+    pub T* ptr
+    pub u64 len
+}
+
+impl<T> T[] {
+    // Convert a slice to a SliceStruct
+    SliceStruct<T> as_struct() {
+        SliceStruct<T>* ret = bitcast<SliceStruct<T>*>(self)
+        return *ret
+    }
+
+    // Get the raw pointer to the slice data
+    pub T* ptr() {
+        return self.as_struct().ptr
+    }
+
+    // Get length of the slice
+    pub u64 len() {
+        return self.as_struct().len
+    }
+
+    // Get element at index
+    pub Option<T> get(u64 index) {
+        u64 len = self.len()
+        if index >= len {
+            return Option<T>.None
+        }
+        T* ptr = self.as_struct().ptr + index
+        return Option<T>.Some(*ptr)
+    }
+
+    // Get first element of the slice
+    pub Option<T> first() {
+        return self.get(0)
+    }
+
+    // Get last element of the slice
+    pub Option<T> last() {
+        u64 len = self.len()
+        if len == 0 {
+            return Option<T>.None
+        }
+        return self.get(len - 1)
+    }
+
+    // Clone the slice into a Vec
+    pub Vec<T> to_vec() {
+        SliceStruct<T> s = self.as_struct()
+        Vec<T> vec = Vec<T>.with_capacity(s.len)
+        for i in 0..s.len {
+            vec.push(s.ptr[i])
+        }
+        return vec
+    }
+}
+
+pub T[] from_raw_parts<T>(T* ptr, u64 len) {
+    SliceStruct<T> slice_struct = SliceStruct<T>(
+        ptr = ptr,
+        len = len
+    )
+    T[]* ret = bitcast<T[]*>(&slice_struct)
+    return *ret
+}
+
+pub struct SliceIter<T> {
+    pub T* ptr
+    pub T* end
+}
+
+impl<T> SliceIter<T> {
+    pub u64 len() {
+        return self.end - self.ptr
+    }
+}
+
+impl<T> Iterator<T> for SliceIter<T> {
+    Option<T> next() {
+        if self.ptr == self.end {
+            return Option<T>.None
+        }
+        T* current = self.ptr
+        self.ptr += 1
+        return Option<T>.Some(*current)
+    }
+}
+
+impl<T> IntoIterator<SliceIter<T>> for T[] {
+    SliceIter<T> into_iter() {
+        SliceStruct<T> s = self.as_struct()
+        return SliceIter<T>(
+            ptr = s.ptr,
+            end = s.ptr + s.len
+        )
+    }
+}
+
+impl<T> PartialEq<T[]> for T[] {
+    pub bool eq(T[] other) {
+        if self.len() != other.len() {
+            return false
+        }
+        for i in 0..self.len() {
+            if self.get(i).unwrap() != other.get(i).unwrap() {
+                return false
+            }
+        }
+        return true
+    }
+}

@@ -1,0 +1,5 @@
+i32 main() {
+    i32* p = dyn i32[10]
+    p[10] += 1  // Heap ptr index out of range
+    return 0
+}

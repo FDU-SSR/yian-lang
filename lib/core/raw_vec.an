@@ -1,0 +1,118 @@
+pub struct RawVec<T> {
+    T* data
+    u64 cap
+}
+
+impl<T> RawVec<T> {
+    static pub Self new() {
+        return Self(
+            data = bitcast<T*>(0u64),
+            cap = 0
+        )
+    }
+
+    static pub Self with_capacity(u64 capacity) {
+        if capacity == 0 {
+            return Self.new()
+        }
+        // Allocate memory for capacity elements
+        T* data = dyn T[capacity]
+        return Self(
+            data = data,
+            cap = capacity
+        )
+    }
+
+    pub T* ptr() {
+        return self.data
+    }
+
+    pub u64 capacity() {
+        return self.cap
+    }
+
+    pub grow() {
+        u64 old_cap = self.cap
+        u64 new_cap
+        if old_cap == 0 {
+            new_cap = 4
+        } else {
+            new_cap = old_cap * 2
+        }
+
+        T* new_data = dyn T[new_cap]
+
+        if old_cap > 0 {
+            // Copy existing elements to the new buffer
+            // Since we assume the vector is full when grow() is called
+            for i in 0..old_cap {
+                new_data[i] = self.data[i]
+            }
+            del self.data
+        }
+
+        self.data = new_data
+        self.cap = new_cap
+    }
+
+    pub reserve(u64 len, u64 additional) {
+        u64 required_cap = len + additional
+        if self.cap >= required_cap {
+            return
+        }
+
+        u64 new_cap = self.cap * 2
+        if new_cap < required_cap {
+            new_cap = required_cap
+        }
+        // Ensure minimum capacity
+        if new_cap < 4 {
+            new_cap = 4
+        }
+
+        T* new_data = dyn T[new_cap]
+        
+        // Copy valid elements
+        if len > 0 {
+            for i in 0..len {
+                new_data[i] = self.data[i]
+            }
+        }
+        
+        if self.cap > 0 {
+            del self.data
+        }
+        
+        self.data = new_data
+        self.cap = new_cap
+    }
+
+    pub shrink_to_fit(u64 len) {
+        if self.cap <= len {
+            return
+        }
+        
+        if len == 0 {
+            if self.cap > 0 {
+                del self.data
+            }
+            self.data = bitcast<T*>(0u64)
+            self.cap = 0
+            return
+        }
+
+        T* new_data = dyn T[len]
+        
+        // Copy valid elements
+        for i in 0..len {
+            new_data[i] = self.data[i]
+        }
+        
+        if self.cap > 0 {
+            del self.data
+        }
+        
+        self.data = new_data
+        self.cap = len
+    }
+}

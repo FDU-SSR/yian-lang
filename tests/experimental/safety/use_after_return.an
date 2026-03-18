@@ -1,0 +1,20 @@
+foo(i32 **param) {
+	i32 local_x = 1
+	*param = &local_x
+}
+
+i32* init() {
+	i32 *p
+	p = dyn i32
+	return p
+}
+
+sys_test() {
+	i32* local_p = init()
+	foo(&local_p)	
+}
+
+i32 main() {
+	sys_test()
+	return 0
+} 

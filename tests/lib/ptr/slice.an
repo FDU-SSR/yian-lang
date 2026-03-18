@@ -1,0 +1,12 @@
+from ptr import Slice
+i32 main() {
+    Slice<i32> p = Slice<i32>.new_array(10)
+    *p = 100
+    p[3] = 5
+    p[6] = 8
+    i32 v = *p
+    assert v == 100: "fail 1"
+    assert p[3] == 5: "fail 2"
+    assert p[6] == 8: "fail 3"
+    return 0
+}

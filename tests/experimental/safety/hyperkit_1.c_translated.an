@@ -1,0 +1,32 @@
+struct iovec {
+    i32 iov_len
+}
+i32 vq_getchain(iovec* iov){
+    i32 i = 0
+    for ; i < 32; i+=1 {
+        // i32 iov_len = rand() % 10
+        i32 iov_len = 9
+        if iov_len == 9 {
+            return -1
+        }
+        iov[i].iov_len = iov_len
+    }
+    return i
+}
+i32 iovec_pull(iovec** iov, i32 iov_len, i32* result){
+    *result = 0
+    while iov_len != 0{
+        *result += (*iov)[0].iov_len
+        iov_len -= 1
+        *iov = *iov + 1
+    }
+    return 0
+}
+i32 main(){
+    i32 iov_len, result
+    iovec[32] iov_array
+    iovec *iov = iov_array
+    iov_len = vq_getchain(iov)
+    iovec_pull(&iov, iov_len, &result)
+    return 0
+}

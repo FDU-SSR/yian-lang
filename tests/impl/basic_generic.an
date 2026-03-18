@@ -1,0 +1,28 @@
+// Test generic impl with basic types.
+//
+// Expected output: 0
+
+impl<T> T* {
+    T get_first() {
+        return (*self)[0]
+    }
+
+    u64 size_of() {
+        return sizeof(T)
+    }
+}
+
+i32 main() {
+    i32[3] arr = [42, 43, 44]
+    i32* ptr = &arr[0]
+
+    assert ptr.get_first() == 42: "First element should be 42"
+    assert ptr.size_of() == 4: "Size of i32 should be 4"
+
+    f64[2] darr = [3.14, 2.71]
+    f64* dptr = &darr[0]
+    assert dptr.get_first() == 3.14: "First element should be 3.14"
+    assert dptr.size_of() == 8: "Size of f64 should be 8"
+
+    return 0
+}

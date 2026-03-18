@@ -1,0 +1,61 @@
+from std.core.raw_vec import RawVec
+
+i32 main() {
+    // new()
+    RawVec<i32> v = RawVec<i32>.new()
+    assert v.capacity() == 0: "initial capacity should be 0"
+
+    // with_capacity()
+    RawVec<i32> v2 = RawVec<i32>.with_capacity(10)
+    assert v2.capacity() == 10: "with_capacity should be 10"
+
+    // ptr access
+    i32* ptr = v2.ptr()
+    ptr[0] = 100
+    ptr[1] = 200
+    assert ptr[0] == 100: "pointer access failed 1"
+    assert ptr[1] == 200: "pointer access failed 2"
+
+    // grow()
+    v.grow()
+    assert v.capacity() == 4: "grow empty vector failed"
+    
+    // reserve()
+    // current v capacity is 4. len assumed 0. additional 5 -> required 5.
+    // implementation: if cap >= required -> return.
+    // 4 < 5. new_cap = 4 * 2 = 8. 8 >= 5. new_cap = 8.
+    v.reserve(0, 5)
+    assert v.capacity() == 8: "reserve failed"
+
+    // Test reserve preserving data using v2
+    // v2 has capacity 10. len effectively 2 (indexes 0, 1 used).
+    // reserve 5 more. required = 2 + 5 = 7.
+    // 10 >= 7. reserve does nothing.
+    v2.reserve(2, 5)
+    assert v2.capacity() == 10: "reserve within capacity should not change cap"
+
+    // reserve huge amount to force realloc
+    // len=2. additional=20. required=22.
+    // 10 < 22. new_cap = 10 * 2 = 20.
+    // 20 < 22 -> new_cap = 22.
+    v2.reserve(2, 20)
+    assert v2.capacity() == 22: "reserve realloc failed"
+
+    // Validate data copy
+    // Need to get new ptr as old one is invalid
+    i32* new_ptr = v2.ptr()
+    assert new_ptr[0] == 100: "reserve data copy fail 1"
+    assert new_ptr[1] == 200: "reserve data copy fail 2"
+
+    // shrink_to_fit()
+    // current v2 capacity 22. shrink to 2.
+    // implementation: if cap <= len -> return.
+    // 22 > 2. new_cap = 2.
+    v2.shrink_to_fit(2)
+    assert v2.capacity() == 2: "shrink_to_fit failed"
+    i32* final_ptr = v2.ptr()
+    assert final_ptr[0] == 100: "shrink data copy fail 1"
+    assert final_ptr[1] == 200: "shrink data copy fail 2"
+
+    return 0
+}

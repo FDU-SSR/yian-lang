@@ -1,0 +1,31 @@
+// Test call chain with generics
+//
+// Expected output: 0
+
+T times_ten<T>(T a) {
+    return times_five(a) + times_five(a)
+}
+
+T times_five<T>(T a) {
+    return times_two(a) + times_two(a) + a
+}
+
+T times_two<T>(T a) {
+    return a + a
+}
+
+i32 main() {
+    // 1) explicit type arguments
+    i32 x = times_ten<i32>(3)
+    assert x == 30: "Expected 30"
+    f64 y = times_five<f64>(2.0)
+    assert y > 9.9 and y < 10.1: "Expected 10.0"
+
+    // 2) type inference
+    i32 m = times_two(7)
+    assert m == 14: "Expected 14"
+    f64 n = times_ten(1.5)
+    assert n > 14.9 and n < 15.1: "Expected 15.0"
+
+    return 0
+}

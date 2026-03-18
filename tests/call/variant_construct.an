@@ -1,0 +1,41 @@
+// Test variant construction and pattern matching
+//
+// Expected output: 0
+
+enum Command {
+    Start
+    Stop
+    Move {
+        bool is_forward
+        i32 distance
+    }
+    Speak {
+        str message
+    }
+}
+
+i32 main() {
+    Command cmd1 = Command.Start
+    Command cmd2 = Command.Move(true, 10)
+    Command cmd3 = Command.Speak("Hello")
+
+    match cmd1 {
+        Start { print("Command is Start\n") }
+        _ { panic("cmd1 should be Start") }
+    }
+
+    match cmd2 {
+        Move as move {
+            assert move.is_forward == true: "Move is_forward should be true"
+            assert move.distance == 10: "Move distance should be 10"
+        }
+        _ { panic("cmd2 should be Move") }
+    }
+
+    match cmd3 {
+        Speak as speak { print(speak.message) }
+        _ { panic("cmd3 should be Speak") }
+    }
+
+    return 0
+}

@@ -1,0 +1,17 @@
+from std.collections.hash import Murmur3Hasher
+from std.collections.hash import Hash
+from std.core.slice import from_raw_parts
+
+impl u8 {
+    pub bool is_ascii_whitespace() {
+        return *self == 0x20 or (*self >= 0x09 and *self <= 0x0D)
+    }
+}
+
+impl Hash<Murmur3Hasher> for u8 {
+    hash(Murmur3Hasher hasher) {
+        u8 val = *self
+        u8* ptr = &val
+        hasher.write(from_raw_parts(ptr, 1))
+    }
+}

@@ -1,0 +1,6 @@
+i32 main() {
+    i32 a
+    i32* pa = &a
+    i32* pb = pa + 1  // OK
+    return 0
+}

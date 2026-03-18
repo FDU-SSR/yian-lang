@@ -1,0 +1,237 @@
+from std.core.vec import Vec
+from std.core.option import Option
+
+from hash import Murmur3BuildHasher
+from hash import Murmur3Hasher
+
+pub struct SwissTable<K, V, H, B> {
+    Bucket<K, V>* buckets
+    u8* ctrls
+    u64 size
+    u64 capacity
+    u64 growth_left
+    B hasher_builder
+}
+
+struct Bucket<K, V> {
+    K key
+    V value
+}
+
+impl<K, V, H, B> SwissTable<K, V, H, B> {
+    static pub Self new() {
+        return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
+    }
+    
+    static pub Self with_capacity(u64 capacity) {
+        return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
+    }
+    
+    static pub Self with_capacity_and_hasher(u64 capacity, B hasher_builder) {
+        u64 actual_capacity
+        actual_capacity = Self.next_power_of_two(capacity)
+
+        u64 growth_left = Self.calculate_growth_left(actual_capacity)
+        u8* ctrls = dyn u8[actual_capacity]
+        for i in 0..actual_capacity {
+            ctrls[i] =  0b1111_1111
+        }
+        Bucket<K, V>* buckets = dyn Bucket<K, V>[actual_capacity]
+
+        return Self(
+            buckets,
+            ctrls,
+            0,
+            actual_capacity,
+            growth_left,
+            hasher_builder,
+        )
+    }
+
+    static pub u64 calculate_growth_left(u64 capacity) {
+        return capacity * 3 / 4
+    }
+
+    pub insert(K key, V value) {
+        if self.growth_left == 0 {
+            self.resize(self.capacity * 2)
+        }
+        u64 hash = self.hash_key(key)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 or ctrl_byte == 0b1000_0000 {
+                self.ctrls[index] = h2
+                self.buckets[index].key = key
+                self.buckets[index].value = value
+                self.size += 1
+                self.growth_left -= 1
+                return
+            } elif ctrl_byte == h2 and self.buckets[index].key == key {
+                self.buckets[index].value = value
+                return
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+    }
+
+    pub Option<V> get(K key) {
+        if self.capacity == 0 {
+            return Option<V>.None
+        }
+        u64 hash = self.hash_key(key)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 {
+                return Option<V>.None
+            }
+            
+            if ctrl_byte == h2 {
+                Bucket<K, V> bucket = self.buckets[index]
+                if bucket.key == key {
+                    return Option<V>.Some(bucket.value)
+                }
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+        
+        return Option<V>.None
+    }
+
+    pub remove(K key) {
+        if self.capacity == 0 {
+            return
+        }
+        u64 hash = self.hash_key(key)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 {
+                return
+            }
+            
+            if ctrl_byte == h2 {
+                Bucket<K, V> bucket = self.buckets[index]
+                if bucket.key == key {
+                    self.ctrls[index] = 0b1000_0000
+                    self.size -= 1
+                    return
+                }
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+    }
+    pub bool contains(K key) {
+        return self.get(key).is_some()
+    }
+
+    pub u64 len() {
+        return self.size
+    }
+
+    pub bool is_empty() {
+        return self.size == 0
+    }
+
+    pub clear() {
+        if self.capacity == 0 {
+            return
+        }
+        for i in 0..self.capacity {
+            self.ctrls[i] = 0b1111_1111
+        }
+        self.size = 0
+        self.growth_left = Self.calculate_growth_left(self.capacity)
+    }
+
+    u8 get_h2(u64 hash) {
+        u8 h2 = u8(hash >> 56)
+        if h2 == 0xFF or h2 == 0x80 {
+            h2 = (h2 & 0x7F) | 0x40
+        }
+        return h2
+    }
+
+    resize(u64 new_capacity) {
+        u64 actual_capacity = Self.next_power_of_two(new_capacity)
+        if actual_capacity == self.capacity {
+            return
+        }
+
+        u8* old_ctrls = self.ctrls
+        Bucket<K, V>* old_buckets = self.buckets
+        u64 old_capacity = self.capacity
+
+        u8* new_ctrls = dyn u8[actual_capacity]
+        for i in 0..actual_capacity {
+            new_ctrls[i] =  0b1111_1111
+        }
+        Bucket<K, V>* new_buckets = dyn Bucket<K, V>[actual_capacity]
+
+        self.capacity = actual_capacity
+        self.growth_left = Self.calculate_growth_left(actual_capacity)
+        self.size = 0
+        if old_capacity > 0 { 
+            for i in 0..old_capacity {
+                u8 ctrl_byte = old_ctrls[i]
+                if ctrl_byte != 0xFF and ctrl_byte != 0x80 {
+                    u64 hash = self.hash_key(old_buckets[i].key)
+                    u8 h2 = self.get_h2(hash)
+                    u64 primary_index = hash & (actual_capacity - 1)
+                    for j in 0..actual_capacity {
+                        u8 new_ctrl_byte = new_ctrls[primary_index]
+                        if new_ctrl_byte == 0b1111_1111 {
+                            new_ctrls[primary_index] = h2
+                            new_buckets[primary_index].key = old_buckets[i].key
+                            new_buckets[primary_index].value = old_buckets[i].value
+                            self.size += 1
+                            self.growth_left -= 1
+                            break
+                        }
+                        primary_index = (primary_index + 1) & (actual_capacity - 1)
+                    }
+                }
+            }
+        }
+        self.ctrls = new_ctrls
+        self.buckets = new_buckets
+        del old_ctrls
+        // Warning: del old_buckets会将内部的bucket.value一起删除，需要修改成move（暂时无法实现）
+        del old_buckets
+    }
+
+    pub u64 hash_key(K key) {
+        H hasher = self.hasher_builder.build_hasher()
+        key.hash(hasher)
+        return hasher.finish()
+    }
+
+    static pub u64 next_power_of_two(u64 n) {
+        if n == 0 {
+            return 0
+        }
+        
+        if n <= 1 {
+            return 1
+        }
+        
+        n -= 1
+        n |= n >> 1
+        n |= n >> 2
+        n |= n >> 4
+        n |= n >> 8
+        n |= n >> 16
+        n |= n >> 32
+        return n + 1
+    }
+}

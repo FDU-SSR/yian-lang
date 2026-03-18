@@ -1,0 +1,67 @@
+// Test default method implementation in traits
+//
+// Expected output: 0
+
+struct Circle {
+    i32 radius
+    i32 x
+    i32 y
+}
+
+struct Rectangle {
+    i32 width
+    i32 height
+    i32 x
+    i32 y
+}
+
+trait Shape {
+    i32 area();
+
+    // 有默认实现
+    move_by(i32 dx, i32 dy) {
+        print("Nothing to do\n")
+    }
+}
+
+impl Shape for Circle {
+    i32 area() {
+        return 3 * self.radius * self.radius
+    }
+
+    move_by(i32 dx, i32 dy) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+impl Shape for Rectangle {
+    i32 area() {
+        return self.width * self.height
+    }
+
+    move_by(i32 dx, i32 dy) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+i32 main() {
+    // use Circle
+    Circle circle = Circle(radius=2, x=0, y=0)
+    i32 circle_area = circle.area()
+    assert circle_area == 12: "Circle area calculation"
+    circle.move_by(1, 1)
+    assert circle.x == 1: "Circle move_by x"
+    assert circle.y == 1: "Circle move_by y"
+
+    // use Rectangle
+    Rectangle rect = Rectangle(width=2, height=2, x=1, y=1)
+    i32 rect_area = rect.area()
+    assert rect_area == 4: "Rectangle area calculation"
+    rect.move_by(1, 1)
+    assert rect.x == 2: "Rectangle move_by x"
+    assert rect.y == 2: "Rectangle move_by y"
+
+    return 0
+}

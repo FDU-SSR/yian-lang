@@ -1,0 +1,29 @@
+from walkable import Walkable
+
+pub struct Person {
+    i32 age
+    float height
+}
+
+impl Person {
+    static pub Self new(i32 age, float height) {
+        return Self(age, height)
+    }
+
+    pub i32 get_age() {
+        return self.age
+    }
+
+    pub float get_height() {
+        return self.height
+    }
+}
+
+impl Walkable for Person {
+    pub walk() {
+        self.age += 1
+        self.height += 1.0
+
+        print("Person is walking.\n")
+    }
+}

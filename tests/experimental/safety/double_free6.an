@@ -1,0 +1,18 @@
+struct request {
+	char *cmd
+}
+
+sys_test() {
+	char *c = dyn char
+	request rq
+
+	rq.cmd = c
+
+	del c
+	del rq.cmd
+}
+
+i32 main() {
+	sys_test()
+	return 0
+}

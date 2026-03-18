@@ -1,0 +1,8 @@
+i32 main() {
+    i32* pa = dyn i32
+    *pa = 6
+    *pa += 6
+    i32 res = *pa + *pa
+    assert res == 24: "res != 24"
+    return 0
+}

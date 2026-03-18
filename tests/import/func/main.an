@@ -1,0 +1,26 @@
+// Test importing functions from other modules
+//
+// Expected output: 0
+
+from adder import adder
+from sort import quick_sort
+
+i32 main() {
+    i32 res = adder(10, 20)
+    assert res == 30
+
+    i32* arr = dyn i32[5]
+    arr[0] = 5
+    arr[1] = 3
+    arr[2] = 8
+    arr[3] = 1
+    arr[4] = 4
+    quick_sort(arr, 5u64)
+    assert arr[0] == 1
+    assert arr[1] == 3
+    assert arr[2] == 4
+    assert arr[3] == 5
+    assert arr[4] == 8
+
+    return 0
+}

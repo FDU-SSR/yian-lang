@@ -1,0 +1,52 @@
+// Test comparison operations: ==, !=, <, <=, >, >=
+//
+// Expected output: 0
+
+enum Ordering {
+    Less
+    Equal
+    Greater
+}
+
+i32 main() {
+    i32 a = 5
+    i32 b = 10
+
+    assert (a == b) == false: "Equality check failed"
+    assert (a != b) == true: "Inequality check failed"
+    assert (a < b) == true: "Less than check failed"
+    assert (a <= b) == true: "Less than or equal check failed"
+    assert (a > b) == false: "Greater than check failed"
+    assert (a >= b) == false: "Greater than or equal check failed"
+
+    Ordering less = Ordering.Less
+    Ordering equal = Ordering.Equal
+    Ordering greater = Ordering.Greater
+
+    match less {
+        Less {
+            assert true: "Match Less failed"
+        }
+        _ {
+            panic("Expected Less")
+        }
+    }
+    match equal {
+        Equal {
+            assert true: "Match Equal failed"
+        }
+        _ {
+            panic("Expected Equal")
+        }
+    }
+    match greater {
+        Greater {
+            assert true: "Match Greater failed"
+        }
+        _ {
+            panic("Expected Greater")
+        }
+    }
+
+    return 0
+}

@@ -1,0 +1,17 @@
+// Test string literal
+//
+// Expected output:
+// Hello, World!
+// 你好，世界！
+// Line1
+// Line2	Tabbed
+
+i32 main() {
+    str hello = "Hello, World!"
+    print(hello)
+    str chinese = "你好，世界！"
+    print(chinese)
+    str escape = "Line1\nLine2\tTabbed"
+    print(escape)
+    return 0
+}

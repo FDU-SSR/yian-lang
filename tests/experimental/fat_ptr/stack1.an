@@ -1,0 +1,14 @@
+i32 main() {
+    i32[10] arr
+    i32* parr = arr
+    for u64 i = 0; i < 10; i += 1 {
+        parr[i] = i32(i)
+    }
+    i32 sum = 0
+    for u64 i = 0; i < 10; i += 1 {
+        sum += parr[i]
+    }
+    assert sum == 45: "sum != 45"
+    assert arr[9] == 9: "arr[9] != 9"
+    return 0
+}

@@ -1,0 +1,29 @@
+// Test short circuit mechanism for logical operators
+//
+// Expected output:
+// false_func called
+// Short circuit works correctly
+
+bool false_func() {
+    print("false_func called\n")
+    return false
+}
+
+bool true_func() {
+    panic("true_func should not be called\n")
+}
+
+i32 main() {
+    if false and false_func() {
+        panic("This should not be printed\n")
+    }
+
+    if true or true_func() {
+        print("Short circuit works correctly\n")
+    }
+
+    bool a
+    a = true or true_func()
+
+    return 0
+}

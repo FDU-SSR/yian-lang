@@ -1,0 +1,184 @@
+from option import Option
+from ordered_map import OrderedMap
+
+i32 main() {
+    // 新建空有序映射
+    OrderedMap<i32, i32> m = OrderedMap<i32, i32>.new()
+    assert m.len() == 0: "new len != 0"
+    assert m.is_empty(): "new map is not empty"
+
+    // insert：新 key 返回 None，size 增长
+    Option<i32> opt
+
+    opt = m.insert(3, 30)
+    assert opt.is_none(): "insert 3 should return none"
+    assert m.len() == 1: "len after insert (3,30) should be 1"
+
+    opt = m.insert(1, 10)
+    assert opt.is_none(): "insert 1 should return none"
+
+    opt = m.insert(5, 50)
+    assert opt.is_none(): "insert 5 should return none"
+    assert m.len() == 3: "len after 3 inserts should be 3"
+    assert not m.is_empty(): "map should not be empty after inserts"
+
+    // insert：已存在 key 返回旧值，size 不变
+    opt = m.insert(3, 300)
+    assert opt.is_some(): "insert existing key 3 should return some"
+    assert opt.unwrap() == 30: "insert existing key 3 should return old value 30"
+    assert m.len() == 3: "len should not change when inserting existing key"
+
+    // get / contains 测试
+    assert m.contains(1): "map should contain key 1"
+    assert m.contains(3): "map should contain key 3"
+    assert m.contains(5): "map should contain key 5"
+    assert not m.contains(4): "map should not contain key 4"
+
+    opt = m.get(1)
+    assert opt.is_some(): "get(1) should be some"
+    assert opt.unwrap() == 10: "get(1) should be 10"
+
+    opt = m.get(3)
+    assert opt.is_some(): "get(3) should be some"
+    assert opt.unwrap() == 300: "get(3) should be 300 (updated value)"
+
+    opt = m.get(4)
+    assert opt.is_none(): "get(4) should be none"
+
+    // min_key / max_key 测试
+    Option<i32> key_opt
+
+    key_opt = m.min_key()
+    assert key_opt.is_some(): "min_key should be some"
+    assert key_opt.unwrap() == 1: "min_key value should be 1"
+
+    key_opt = m.max_key()
+    assert key_opt.is_some(): "max_key should be some"
+    assert key_opt.unwrap() == 5: "max_key value should be 5"
+
+    // min_value / max_value 测试
+    opt = m.min_value()
+    assert opt.is_some(): "min_value should be some"
+    assert opt.unwrap() == 10: "min_value should be 10"
+
+    opt = m.max_value()
+    assert opt.is_some(): "max_value should be some"
+    assert opt.unwrap() == 50: "max_value should be 50"
+
+    // lower_bound_key 测试
+    key_opt = m.lower_bound_key(0)
+    assert key_opt.is_some(): "lower_bound_key(0) should be some"
+    assert key_opt.unwrap() == 1: "lower_bound_key(0) should be 1"
+
+    key_opt = m.lower_bound_key(2)
+    assert key_opt.is_some(): "lower_bound_key(2) should be some"
+    assert key_opt.unwrap() == 3: "lower_bound_key(2) should be 3"
+
+    key_opt = m.lower_bound_key(5)
+    assert key_opt.is_some(): "lower_bound_key(5) should be some"
+    assert key_opt.unwrap() == 5: "lower_bound_key(5) should be 5"
+
+    key_opt = m.lower_bound_key(6)
+    assert key_opt.is_none(): "lower_bound_key(6) should be none"
+
+    // upper_bound_key 测试
+    key_opt = m.upper_bound_key(0)
+    assert key_opt.is_some(): "upper_bound_key(0) should be some"
+    assert key_opt.unwrap() == 1: "upper_bound_key(0) should be 1"
+
+    key_opt = m.upper_bound_key(3)
+    assert key_opt.is_some(): "upper_bound_key(3) should be some"
+    assert key_opt.unwrap() == 5: "upper_bound_key(3) should be 5"
+
+    key_opt = m.upper_bound_key(5)
+    assert key_opt.is_none(): "upper_bound_key(5) should be none"
+
+    // lower_bound_value 测试（按 key 比较，返回 value）
+    opt = m.lower_bound_value(0)
+    assert opt.is_some(): "lower_bound_value(0) should be some"
+    assert opt.unwrap() == 10: "lower_bound_value(0) should be 10"
+
+    opt = m.lower_bound_value(2)
+    assert opt.is_some(): "lower_bound_value(2) should be some"
+    assert opt.unwrap() == 300: "lower_bound_value(2) should be 300 (value of key 3)"
+
+    opt = m.lower_bound_value(5)
+    assert opt.is_some(): "lower_bound_value(5) should be some"
+    assert opt.unwrap() == 50: "lower_bound_value(5) should be 50"
+
+    opt = m.lower_bound_value(6)
+    assert opt.is_none(): "lower_bound_value(6) should be none"
+
+    // upper_bound_value 测试（按 key 比较，返回 value）
+    opt = m.upper_bound_value(0)
+    assert opt.is_some(): "upper_bound_value(0) should be some"
+    assert opt.unwrap() == 10: "upper_bound_value(0) should be 10"
+
+    opt = m.upper_bound_value(3)
+    assert opt.is_some(): "upper_bound_value(3) should be some"
+    assert opt.unwrap() == 50: "upper_bound_value(3) should be 50"
+
+    opt = m.upper_bound_value(5)
+    assert opt.is_none(): "upper_bound_value(5) should be none"
+
+    // remove 测试
+    opt = m.remove(3)
+    assert opt.is_some(): "remove(3) should return some"
+    assert opt.unwrap() == 300: "remove(3) should return value 300"
+    assert m.len() == 2: "len after remove 3 should be 2"
+    assert not m.contains(3): "map should not contain key 3 after remove"
+
+    opt = m.remove(3)
+    assert opt.is_none(): "remove non-exist 3 should return none"
+    assert m.len() == 2: "len should not change when removing non-exist key"
+
+    // 删除后重新检查 min/max 和边界
+    key_opt = m.min_key()
+    assert key_opt.is_some(): "min_key after remove should be some"
+    assert key_opt.unwrap() == 1: "min_key after remove should be 1"
+
+    key_opt = m.max_key()
+    assert key_opt.is_some(): "max_key after remove should be some"
+    assert key_opt.unwrap() == 5: "max_key after remove should be 5"
+
+    opt = m.lower_bound_value(2)
+    assert opt.is_some(): "lower_bound_value(2) after remove should be some"
+    assert opt.unwrap() == 50: "lower_bound_value(2) after remove should be 50"
+
+    opt = m.upper_bound_value(1)
+    assert opt.is_some(): "upper_bound_value(1) after remove should be some"
+    assert opt.unwrap() == 50: "upper_bound_value(1) after remove should be 50"
+
+    // clear 测试
+    m.clear()
+    assert m.is_empty(): "map should be empty after clear"
+    assert m.len() == 0: "len after clear should be 0"
+
+    key_opt = m.min_key()
+    assert key_opt.is_none(): "min_key of empty map should be none"
+
+    key_opt = m.max_key()
+    assert key_opt.is_none(): "max_key of empty map should be none"
+
+    opt = m.min_value()
+    assert opt.is_none(): "min_value of empty map should be none"
+
+    opt = m.max_value()
+    assert opt.is_none(): "max_value of empty map should be none"
+
+    key_opt = m.lower_bound_key(1)
+    assert key_opt.is_none(): "lower_bound_key on empty map should be none"
+
+    key_opt = m.upper_bound_key(1)
+    assert key_opt.is_none(): "upper_bound_key on empty map should be none"
+
+    opt = m.lower_bound_value(1)
+    assert opt.is_none(): "lower_bound_value on empty map should be none"
+
+    opt = m.upper_bound_value(1)
+    assert opt.is_none(): "upper_bound_value on empty map should be none"
+
+    return 0
+}
+
+

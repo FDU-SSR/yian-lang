@@ -1,0 +1,12 @@
+i32 main() {
+    i32 a = 6
+    i32* fpa = &a
+    i32 res = 0
+    res += fpa[0]
+    res += *fpa
+    fpa[0] = res
+    *fpa = res + 1
+    assert res == 12: "test 1 fail"
+    assert a == 13: "test 2 fail"
+    return 0
+}

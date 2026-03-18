@@ -1,0 +1,17 @@
+// Test `to_vec` functionality of slices
+//
+// Expected output: 0
+
+from std.core.vec import Vec
+
+i32 main() {
+    i32[5] arr = [1, 2, 3, 4, 5]
+    i32[] slice = arr[1u64..4] // This should be a slice containing [2, 3, 4]
+
+    // Test converting slice to Vec
+    Vec<i32> vec = slice.to_vec()
+    assert vec.len() == 3: "Expected Vec length to be 3"
+    assert vec[0] == 2 and vec[1] == 3 and vec[2] == 4: "Expected Vec elements to be [2, 3, 4]"
+
+    return 0
+}

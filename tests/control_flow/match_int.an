@@ -1,0 +1,36 @@
+// Test match statement with integer cases
+//
+// Expected output: 0
+
+i32 main() {
+    i32 a = 3
+    i32 b
+    i32 c
+    if true {
+        b = 4
+    }
+    b = 5
+
+    match a {
+        1 {
+            b = a + 1
+            c = b + 2
+        }
+        2 {
+            b = a + 2
+            c = b + 3
+        }
+        3, 4 {
+            b = a + 3  // b = 3 + 3 = 6
+            c = b + 4  // c = 6 + 4 = 10
+        }
+        _ {
+            b = a + 3
+        }
+    }
+    assert a == 3: "Match failed on a"
+    assert b == 6: "Match failed on b"
+    assert c == 10: "Match failed on c"
+
+    return 0
+}

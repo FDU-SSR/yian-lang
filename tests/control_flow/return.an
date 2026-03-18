@@ -1,0 +1,55 @@
+// Test complex return value types: tuples, arrays, structs, and enums.
+//
+// Expected output: 0
+
+struct Point {
+    pub i32 x
+    pub i32 y
+}
+
+enum Shape {
+    Circle { i32 radius }
+    Rectangle { i32 width, i32 height }
+}
+
+Point get_point() {
+    return Point(10, 20)
+}
+
+Shape get_shape() {
+    return Shape.Rectangle(30, 40)
+}
+
+(i32, i32) get_tuple() {
+    return (1, 2)
+}
+
+i32[3] get_array() {
+    return [3, 4, 5]
+}
+
+i32 main() {
+    Point p = get_point()
+    Shape s = get_shape()
+    (i32, i32) t = get_tuple()
+    i32[3] arr = get_array()
+
+    assert p.x == 10: "Point x mismatch"
+    assert p.y == 20: "Point y mismatch"
+    match s {
+        Rectangle as rect {
+            assert rect.width == 30: "Rectangle width mismatch"
+            assert rect.height == 40: "Rectangle height mismatch"
+        }
+        _ {
+            assert false: "Shape type mismatch"
+        }
+    }
+    assert t[0] == 1: "Tuple first element mismatch"
+    assert t[1] == 2: "Tuple second element mismatch"
+    assert arr[0] == 3: "Array first element mismatch"
+    assert arr[1] == 4: "Array second element mismatch"
+    assert arr[2] == 5: "Array third element mismatch"
+    
+    return 0
+}

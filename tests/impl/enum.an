@@ -1,0 +1,43 @@
+// Test for basic enum and method functionality
+//
+// Expected output:
+// Command: Start
+// Command: Pause
+
+enum Command {
+    Start
+    Stop
+    Pause {i32 duration}
+}
+
+impl Command {
+    static pub Command new_start() {
+        return Command.Start
+    }
+
+    static pub Command new_stop() {
+        return Command.Stop
+    }
+
+    static pub Command new_pause(i32 duration) {
+        return Command.Pause(duration)
+    }
+
+    pub execute() {
+        match *self {
+            Start { print("Command: Start\n") }
+            Stop { print("Command: Stop\n") }
+            Pause { print("Command: Pause\n") }
+        }
+    }
+}
+
+i32 main() {
+    Command cmd1 = Command.new_start()
+    Command cmd2 = Command.new_pause(10)
+
+    cmd1.execute()
+    cmd2.execute()
+
+    return 0
+}

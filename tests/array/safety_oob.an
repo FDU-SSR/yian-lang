@@ -1,0 +1,10 @@
+// Test out-of-bounds array access handling
+//
+// Expected runtime error: Array 'arr': index 'idx' out of bounds
+
+i32 main() {
+    i32[3] arr = [1, 2, 3]
+    u64 idx = 3
+    i32 err = arr[idx]  // OOB access
+    return 0
+}

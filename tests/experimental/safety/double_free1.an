@@ -1,0 +1,6 @@
+main() {
+    i32 *p = dyn i32(5)
+
+    del p
+    del p
+}

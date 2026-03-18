@@ -1,0 +1,28 @@
+// Test function pointer assignment and invocation
+//
+// Expected output: 0
+
+struct Person{
+    pub i32 age
+    pub i32 score
+}
+
+i32 add(i32 a, i32 b) {
+    return a + b
+}
+
+Person make_person(i32 x, i32 y){
+    return Person(x, y)
+}
+
+i32 main() {
+    fn<i32(i32, i32)> add_func = &add
+    fn<Person(i32, i32)> person_func = &make_person
+
+    Person p = person_func(2, 3)
+    assert p.age == 2 and p.score == 3: "person_func should return Person(2, 3)"
+    
+    assert add_func(1, 2) == 3: "add_func should return 3"
+    
+    return 0
+}

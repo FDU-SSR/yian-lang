@@ -1,0 +1,13 @@
+i32 main() {
+    i32* p = dyn i32[10]
+    for u64 i = 0; i < 10; i += 1 {
+        p[i] = i32(i)
+    }
+    i32 sum = 0
+    for u64 i = 0; i < 10; i += 1 {
+        sum += p[i]
+    }
+    assert sum == 45: "sum != 45"
+    assert p[9] == 9: "p[9] != 9"
+    return 0
+}

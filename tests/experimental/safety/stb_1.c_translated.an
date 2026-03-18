@@ -1,0 +1,55 @@
+u32 my_strlen(char* string){
+    assert string.is_valid(): "string is null"
+    u32 len = 0
+    while string[len] != '\0' {
+        len += 1
+    }
+    return len
+}
+char* my_strcpy(char* dest, char* src){ 
+    assert dest.is_valid(): "dest is null"
+    assert src.is_valid(): "src is null"
+    u32 len = 0
+    while src[len] != '\0' {
+        dest[len] = src[len]
+        len += 1
+    }
+    return dest
+}
+
+char* my_strdup(char* string){
+    char *duplicate = dyn char[my_strlen(string) + 1]
+    my_strcpy(duplicate, string)
+    return duplicate
+}
+
+i32 getNumberOfNumbersInAString(char* string){
+    // i32 i = 0
+    // char *numberAsString
+    // char *duplicate = strdup(string)
+    // char *ptr = duplicate
+    return 0
+}
+
+i32 main(i32 argc, char** argv) {
+    char* out = dyn char
+    for i32 i = 1; i < 2; i+=1 {
+        char* input = "0"
+        i32 NumberOfNumbers = getNumberOfNumbersInAString(input)
+        if not out.is_valid() {
+            out = dyn char
+            if not out.is_valid() {
+                return 1
+            }
+        }
+        else {
+            // NumberOfNumbers is 0
+            out.realloc(NumberOfNumbers)
+            // delete a zero-sized block is not a bug in YIAN
+            // char c = *out // This command will trigger an error and jump out
+            del out
+        }
+    }
+    // Subsequent logic does not affect the vulnerability triggering, so it is omitted.
+    return 0
+}

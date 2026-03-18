@@ -1,0 +1,92 @@
+from ptr import Slice
+from option import Option
+
+struct treeNode{
+    Option<Slice<treeNode>> left
+    Option<Slice<treeNode>> right
+}
+
+Slice<treeNode> NewTreeNode(Option<Slice<treeNode>> left, Option<Slice<treeNode>> right) {
+    Slice<treeNode> node = Slice<treeNode>.new_object()
+    (*node).left = left
+    (*node).right = right
+    return node
+}
+
+i64 ItemCheck(Slice<treeNode> tree)
+{
+    i64 res = 1
+    treeNode tree_item = *tree
+    if not tree_item.left.is_none() {
+        res += ItemCheck(tree_item.left.unwrap())
+    }
+    if not tree_item.right.is_none() {
+        res += ItemCheck(tree_item.right.unwrap())
+    }
+    return res
+}
+
+Slice<treeNode> BottomUpTree(u32 depth)
+{
+    if depth > 0
+    {
+        Slice<treeNode> left_child = BottomUpTree(depth - 1)
+        Slice<treeNode> right_child = BottomUpTree(depth - 1)
+        return NewTreeNode(Option<Slice<treeNode>>.Some(left_child), Option<Slice<treeNode>>.Some(right_child))
+    }
+    else
+    {
+        return NewTreeNode(Option<Slice<treeNode>>.None, Option<Slice<treeNode>>.None)
+    }
+}
+DeleteTree(Slice<treeNode> tree)
+{
+    treeNode tree_item = *tree
+    if not tree_item.left.is_none() {
+        DeleteTree(tree_item.left.unwrap())
+    }
+    if not tree_item.right.is_none() {
+        DeleteTree(tree_item.right.unwrap())
+    }
+    tree.delete()
+}
+
+
+i32 main()
+{
+    u32 N = 20
+    u32 minDepth = 4
+    u32 maxDepth = N
+    i64 check = 0
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2
+    }
+    
+    u32 stretchDepth = maxDepth + 1
+
+    Slice<treeNode> stretchTree = BottomUpTree(stretchDepth)
+    DeleteTree(stretchTree)
+
+    Slice<treeNode> longLivedTree = BottomUpTree(maxDepth)
+
+    for u32 depth = minDepth; depth <= maxDepth; depth += 2
+    {
+        u32 totalDepth = maxDepth - depth + minDepth
+        i64 iterations = 1
+        for u32 i = 0; i < totalDepth; i+=1 {
+            iterations *= 2
+        }
+        for i64 i = 0; i < iterations; i += 1
+        {
+            Slice<treeNode> tempTree = BottomUpTree(depth)
+            check += ItemCheck(tempTree)
+            DeleteTree(tempTree)
+        }
+    }
+    DeleteTree(longLivedTree)
+    
+    assert i32(check % 256) == 176: "fail"
+    print("pass")
+    return 0
+}

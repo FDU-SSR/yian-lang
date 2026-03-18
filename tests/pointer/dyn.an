@@ -1,0 +1,28 @@
+// Test pointer operations on dynamic allocation
+//
+// Expected output: 0
+
+struct Person{
+    str name
+    i32 age
+}
+
+i32 main()
+{
+    Person* p = dyn Person("Alice", 30)
+    assert p.age == 30: "Expected age to be 30"
+
+    p.age = 31
+    assert p.age == 31: "Expected age to be 31 after modification"
+
+    i32* arr = dyn i32[3]
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
+    assert arr[1] == 20: "Expected arr[1] to be 20"
+
+    arr += 1
+    assert *arr == 20: "Expected *arr to be 20 after pointer arithmetic"
+
+    return 0
+}

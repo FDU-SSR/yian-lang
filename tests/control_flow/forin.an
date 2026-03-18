@@ -1,0 +1,14 @@
+// Test for-in loop functionality
+//
+// Expected output: 0
+
+i32 main()
+{
+    i32 sum = 0
+    i32[5] nums_list = [1, 2, 3, 4, 5]
+    for num in nums_list{
+        sum = sum + num
+    }
+    assert sum == 15: "For-in loop failed"
+    return 0
+}

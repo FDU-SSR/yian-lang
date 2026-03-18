@@ -1,0 +1,21 @@
+// Test reading and writing struct fields
+//
+// Expected output: 0
+
+struct Person {
+    pub i32 age
+    pub float height
+}
+
+i32 main() {
+    Person p = Person(10, 5.9)
+    assert p.age == 10: "p.age should be 10"
+    assert p.height > 5.8 and p.height < 6.0: "p.height should be around 5.9"
+
+    p.age = 20
+    p.height = 6.1
+    assert p.age == 20: "p.age should be 20"
+    assert p.height > 6.0 and p.height < 6.2: "p.height should be around 6.1"
+
+    return 0
+}

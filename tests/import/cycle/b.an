@@ -1,0 +1,16 @@
+// Test circular import cycle handling
+//
+// Expected output: 0
+
+from a import Value, lib_unwrap_value
+
+pub T unwrap_value<T>(Value<T> v) {
+    return v.value
+}
+
+i32 main() {
+    Value<i32> v = Value(42)
+    i32 result = lib_unwrap_value(v)
+    assert result == 42: "result should be 42"
+    return 0
+}

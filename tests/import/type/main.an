@@ -1,0 +1,19 @@
+// Test importing a type and using its methods and traits
+//
+// Expected output: Person is walking.
+
+from person import Person
+
+i32 main() {
+    Person p = Person.new(25, 175.5)
+
+    assert p.get_age() == 25
+    assert p.get_height() > 175.0 and p.get_height() < 176.0
+
+    p.walk()
+
+    assert p.get_age() == 26
+    assert p.get_height() > 176.0 and p.get_height() < 177.0
+
+    return 0
+}

@@ -1,0 +1,8 @@
+// Test out of range literal assignment
+//
+// Expected compilation error: Value 1000 out of range for type i8
+
+i32 main() {
+    i8 i = 1000i8    
+    return 0
+}

@@ -1,0 +1,13 @@
+// Test match statement with char type
+//
+// Expected output: 0
+
+i32 main() {
+    char a = 'b'
+    match a {
+        'a' { panic("Matched a") }
+        'b' { return 0 }
+        'c', 'd' { panic("Matched c or d") }
+        _ { panic("Matched default case") }
+    }
+}

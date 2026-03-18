@@ -1,0 +1,15 @@
+// Test do-while loop functionality
+//
+// Expected output: 0
+
+i32 main()
+{
+    i32 i = 0
+    i32 sum = 0
+    do {
+        sum += i
+        i += 1
+    } while i < 10
+    assert sum == 45: "Do-while loop failed"
+    return 0
+}

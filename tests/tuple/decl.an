@@ -1,0 +1,15 @@
+// Test declarations of tuple type
+//
+// Expected output: 0
+
+struct Pair {
+    pub i32 first
+    pub i32 second
+}
+
+i32 main() {
+    (Pair, Pair) tuple1
+    (i32, Pair)[3] tuple2
+
+    return 0
+}

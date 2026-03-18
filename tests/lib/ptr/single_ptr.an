@@ -1,0 +1,8 @@
+from ptr import RawPtr
+i32 main() {
+    i32* p = RawPtr<i32>.new_object()
+    *p = 100
+    i32 v = *p
+    assert v == 100: "fail 1"
+    return 0
+}

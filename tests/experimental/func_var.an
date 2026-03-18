@@ -1,0 +1,44 @@
+// Test variable of function type
+//
+// Expected output: 0
+
+i32 func() {
+    return 42
+}
+
+i32 add_one(i32 x) {
+    return x + 1
+}
+
+invoker<T>(T f) {
+    return f(5)
+}
+
+struct Accumulator<T> {
+    i32 value
+    T func
+}
+
+impl<T> Accumulator<T> {
+    accumulate_n_times(i32 n) {
+        for i32 i = 0; i < n; i += 1 {
+            self.value = (self.func)(self.value)
+        }
+    }
+}
+
+
+i32 main() {
+    func_var = func  // Assign function to variable
+    i32 result = func_var()  // Call function via variable
+    assert result == 42: "result should be 42"
+
+    i32 added = invoker(add_one)
+    assert added == 6: "added should be 6"
+
+    acc = Accumulator(0, add_one)
+    acc.accumulate_n_times(3)
+    assert acc.value == 3: "acc.value should be 3"
+
+    return 0
+}

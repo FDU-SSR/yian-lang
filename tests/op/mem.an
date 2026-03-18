@@ -1,0 +1,15 @@
+// Test memory operations: dereference and address-of
+//
+// Expected output: 0
+
+i32 main() {
+    i32 a = 42
+    i32* p = &a  // Address-of operator
+
+    assert *p == 42: "Dereference failed"  // Dereference operator
+
+    *p = 100
+    assert a == 100: "Memory write via pointer failed"
+
+    return 0
+}

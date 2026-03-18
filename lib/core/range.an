@@ -1,0 +1,42 @@
+from mem import Clone
+from ops import PartialEq
+from option import Option
+from iter import Iterator, IntoIterator
+
+pub struct Range<T> {
+    pub T start
+    pub T end
+}
+
+impl<T> Clone for Range<T> {
+    Self clone() {
+        return Self(
+            start=self.start.clone(),
+            end=self.end.clone()
+        )
+    }
+}
+
+impl<T> PartialEq<Range<T>> for Range<T> {
+    bool eq(Range<T> other) {
+        return self.start == other.start and self.end == other.end
+    }
+}
+
+impl<T> Iterator<T> for Range<T> {
+    Option<T> next() {
+        if self.start < self.end {
+            T value = self.start
+            self.start += 1
+            return Option<T>.Some(value)
+        } else {
+            return Option<T>.None
+        }
+    }
+}
+
+impl<T> IntoIterator<Range<T>> for Range<T> {
+    Range<T> into_iter() {
+        return *self
+    }
+}

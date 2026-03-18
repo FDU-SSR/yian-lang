@@ -1,0 +1,31 @@
+// Test for tuple type working with functions, including passing and returning tuples
+//
+// Expected output: 0
+
+struct Pair {
+    pub i32 first
+    pub i32 second
+}
+
+(Pair, i32) create_pair_and_number(i32 a, i32 b, i32 num) {
+    Pair p = Pair(a, b)
+    (Pair, i32) tmp = (p, num)
+    return tmp
+}
+
+i32 sum_tuple((i32, i32) t) {
+    return t[0] + t[1]
+}
+
+i32 main() {
+    (Pair, i32) result = create_pair_and_number(5, 10, 15)
+    assert result[0].first == 5: "result[0].first should be 5"
+    assert result[0].second == 10: "result[0].second should be 10"
+    assert result[1] == 15: "result[1] should be 15"
+
+    (i32, i32) num_tuple = (20, 30)
+    i32 total = sum_tuple(num_tuple)
+    assert total == 50: "total should be 50"
+
+    return 0
+}

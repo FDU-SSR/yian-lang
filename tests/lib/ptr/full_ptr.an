@@ -1,0 +1,13 @@
+from ptr import FullPtr
+i32 main() {
+    FullPtr<i32> p = FullPtr<i32>.new_object()
+    *p = 100
+    i32 v = *p
+    assert v == 100: "fail 1"
+    p.realloc(10)
+    p[3] = 5
+    p[6] = 8
+    assert p[3] == 5: "fail 2"
+    assert p[6] == 8: "fail 3"
+    return 0
+}

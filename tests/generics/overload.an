@@ -1,0 +1,29 @@
+// Test method overloading based on generics
+//
+// Expected output: 0
+
+struct Value<T> {
+    pub T data
+}
+
+trait Clone {
+    Self clone();
+}
+
+impl<T> Clone for Value<T> {
+    Self clone() {
+        return Self(data=self.data)
+    }
+}
+
+i32 main() {
+    Value<i32> v1 = Value<i32>(data=42)
+    Value<i32> v2 = v1.clone()
+    assert v2.data == 42: "Cloned value does not match"
+
+    Value<f64> v3 = Value<f64>(data=3.14)
+    Value<f64> v4 = v3.clone()
+    assert v4.data > 3.13 and v4.data < 3.15: "Cloned value does not match"
+
+    return 0
+}

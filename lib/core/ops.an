@@ -1,0 +1,122 @@
+pub trait Add<Rhs, Output> {
+    Output add(Rhs rhs);
+}
+
+pub trait Sub<Rhs, Output> {
+    Output sub(Rhs rhs);
+}
+
+pub trait Mul<Rhs, Output> {
+    Output mul(Rhs rhs);
+}
+
+pub trait Div<Rhs, Output> {
+    Output div(Rhs rhs);
+}
+
+pub trait Rem<Rhs, Output> {
+    Output rem(Rhs rhs);
+}
+
+pub trait Neg<Output> {
+    Output neg();
+}
+
+pub trait BitAnd<Rhs, Output> {
+    Output bit_and(Rhs rhs);
+}
+
+pub trait BitOr<Rhs, Output> {
+    Output bit_or(Rhs rhs);
+}
+
+pub trait BitXor<Rhs, Output> {
+    Output bit_xor(Rhs rhs);
+}
+
+pub trait BitNot<Output> {
+    Output bit_not();
+}
+
+pub trait Shl<Rhs, Output> {
+    Output shl(Rhs rhs);
+}
+
+pub trait Shr<Rhs, Output> {
+    Output shr(Rhs rhs);
+}
+
+pub trait PartialEq<Rhs> {
+    bool eq(Rhs rhs);
+    bool ne(Rhs rhs) {
+        return not self.eq(rhs)
+    }
+}
+
+pub enum Ordering {
+    Less
+    Equal
+    Greater
+}
+
+pub trait PartialOrd<Rhs> {
+    Ordering partial_cmp(Rhs rhs);
+
+    bool lt(Rhs rhs) {
+        match self.partial_cmp(rhs) {
+            Less {
+                return true
+            }
+            _ {
+                return false
+            }
+        }
+    }
+
+    bool le(Rhs rhs) {
+        match self.partial_cmp(rhs) {
+            Less {
+                return true
+            }
+            Equal {
+                return true
+            }
+            _ {
+                return false
+            }
+        }
+    }
+
+    bool gt(Rhs rhs) {
+        match self.partial_cmp(rhs) {
+            Greater {
+                return true
+            }
+            _ {
+                return false
+            }
+        }
+    }
+
+    bool ge(Rhs rhs) {
+        match self.partial_cmp(rhs) {
+            Less {
+                return false
+            }
+            Equal {
+                return true
+            }
+            Greater {
+                return true
+            }
+        }
+    }
+}
+
+pub trait Index<Idx, Target> {
+    Target* index(Idx index);
+}
+
+pub trait Deref<Target> {
+    Target* deref();
+}

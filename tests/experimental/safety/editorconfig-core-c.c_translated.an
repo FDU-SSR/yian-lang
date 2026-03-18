@@ -1,0 +1,43 @@
+char* strcat(char* dest, char* src) {
+  char* p = dest
+  while *p != '\0' {
+    p += 1
+  }
+  while *src != '\0' {
+    *p = *src
+    p += 1
+    src += 1
+  }
+  *p = '\0'
+  return dest
+}
+
+i32 ec_glob(char* pattern) {
+  char* c
+  char* pcre_str = dyn char[80]
+  *pcre_str = '^'
+  char* p_pcre
+  char* pcre_str_end
+  p_pcre = pcre_str + 1
+  pcre_str_end = pcre_str + 80
+  u32 offset = 0
+  for c = pattern; *c != '\0'; c += 1 {
+    match *c {
+    '?':
+        u32 string_len = 4
+        if offset + string_len >= 80 {
+            return 0
+        }
+        strcat((p_pcre + offset), "[^/]")
+        offset += string_len
+    _:
+      *(p_pcre + offset) = *c // Problem: copy of pattern characters into pcre_str without bound checking leads to overflow of pcre_str buffer
+      offset += 1
+    }
+  }
+  return i32(offset)
+}
+
+i32 main() {
+  return ec_glob("???????????????????aaaaaaaaaaa")
+}

@@ -1,0 +1,1 @@
+Field 'priv_field' of struct 'ExportableStruct' is private and cannot be accessed from unit field.err.an unless inside an impl for that struct

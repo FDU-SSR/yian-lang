@@ -1,0 +1,23 @@
+// Test for 'del' statement with dynamic memory allocation
+//
+// Expected output: 0
+
+struct Person{
+    pub i32 age
+}
+
+i32 main() {
+    i32* p1 = dyn i32
+    del p1
+
+    Person* p2 = dyn Person
+    del p2
+
+    i32* p3 = dyn i32[10]
+    del p3
+
+    Person* p4 = dyn Person(5)
+    del p4
+
+    return 0
+}

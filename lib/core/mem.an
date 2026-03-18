@@ -1,0 +1,96 @@
+// A marker trait indicating that a type's values can be duplicated simply by copying bits.
+//
+// When a type implements Copy, assignments and passing the type to functions
+// will copy the value instead of moving it.
+pub trait Copy {}
+
+// A trait for types that can be cloned to create a duplicate of the value.
+//
+// The clone method should return a new instance of the type equivalent to the original.
+pub trait Clone {
+    Self clone();
+}
+
+// Implement clone for all basic types
+// Integer types
+impl Clone for i8 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for i16 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for i32 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for i64 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for u8 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for u16 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for u32 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for u64 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+// Floating-point types
+impl Clone for f32 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+impl Clone for f64 {
+    pub Self clone() {
+        return *self
+    }
+}
+
+// Boolean type
+impl Clone for bool {
+    pub Self clone() {
+        return *self
+    }
+}
+
+// Character type
+impl Clone for char {
+    pub Self clone() {
+        return *self
+    }
+}
+
+// Void type
+impl Clone for void {
+    pub Self clone() {
+        return *self
+    }
+}

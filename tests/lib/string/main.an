@@ -1,0 +1,105 @@
+from std.core.string import String
+from std.core.option import Option
+
+i32 main() {
+    // 测试 String 构造方法
+    String s_new = String.new()
+    assert s_new.len() == 0: "new() should create empty string"
+    assert s_new.is_empty(): "new() should create empty string"
+    
+    String s_cap = String.with_capacity(100)
+    assert s_cap.capacity() == 100: "with_capacity should set capacity"
+    
+    String s_from = String.from("Hello, World!")
+    assert s_from.len() == 13: "from should set correct length"
+    assert s_from == "Hello, World!": "from should set correct content"
+
+    // 测试 reserve
+    String s_reserve = String.new()
+    u64 old_capacity = s_reserve.capacity()
+    s_reserve.reserve(50)
+    assert s_reserve.capacity() >= old_capacity + 50: "reserve should increase capacity"
+
+    // 测试 shrink_to_fit
+    String s_shrink = String.with_capacity(100)
+    s_shrink.push_str("Shrink me")
+    s_shrink.shrink_to_fit()
+    assert s_shrink.capacity() == s_shrink.len(): "shrink_to_fit should reduce capacity to length"
+
+    // 测试 push
+    String s_push = String.new()
+    s_push.push('H')
+    s_push.push('e')
+    s_push.push('l')
+    s_push.push('l')
+    s_push.push('o')
+    assert s_push == "Hello": "string content should match pushed characters"
+
+    // 测试 push_str
+    s_push.push_str("World")
+    assert s_push == "HelloWorld": "string content should match after push_str"
+    
+    // 测试 pop
+    String s_pop = String.from("Test")
+    Option<char> c1 = s_pop.pop()
+    assert c1.is_some(): "pop should return Some for non-empty string"
+    assert c1.unwrap() == 't': "pop should return last character"
+    assert s_pop == "Tes": "string content should be updated after pop"
+
+    s_pop = String.new()
+    Option<char> c2 = s_pop.pop()
+    assert c2.is_none(): "pop should return None for empty string"
+
+    // 测试 clear
+    String s_clear = String.from("NotEmpty")
+    s_clear.clear()
+    assert s_clear.is_empty(): "clear should empty the string"
+    
+    // 测试 as_str
+    String s_asstr = String.from("TestAsStr")
+    str raw_str = s_asstr.as_str()
+    assert raw_str == "TestAsStr": "as_str should return correct str representation"
+
+    // 测试 as_slice
+    String s_asbytes = String.from("Bytes")
+    u8[] bytes = s_asbytes.as_slice()
+    assert bytes.len() == 5: "as_slice should return correct byte length"
+    assert bytes[0] == b'B': "as_slice should return correct byte content"
+    assert bytes[1] == b'y': "as_slice should return correct byte content"
+    assert bytes[2] == b't': "as_slice should return correct byte content"
+    assert bytes[3] == b'e': "as_slice should return correct byte content"
+    assert bytes[4] == b's': "as_slice should return correct byte content"
+
+    // 测试 PartialEq trait
+    String s_eq1 = String.from("Hi")
+    String s_eq2 = String.from("Hi")
+    String s_eq3 = String.from("Bye")
+    assert s_eq1 == s_eq2: "eq should return true for equal strings"
+    assert s_eq1 != s_eq3: "eq should return false for different strings"
+    
+    // 测试 Add trait
+    String s_add1 = String.from("ABC")
+    String s_add2 = String.from("DEF")
+    String s_add3 = s_add1 + s_add2
+    String s_add4 = s_add1 + "XYZ"
+    assert s_add3 == "ABCDEF": "add should concatenate two strings"
+    assert s_add4 == "ABCXYZ": "add should concatenate string and str"
+    
+    // 测试 Clone trait
+    String s_clone1 = String.from("CloneMe")
+    String s_clone2 = s_clone1.clone()
+    assert s_clone1 == s_clone2: "clone should create identical copy"
+
+    s_clone2.push('!')
+    assert s_clone1 != s_clone2: "modifying clone should not affect original"
+    assert s_clone1 == "CloneMe": "original string should remain unchanged after clone modification"
+    assert s_clone2 == "CloneMe!": "cloned string should reflect modifications"
+
+    // 测试 Deref trait
+    String s_deref = String.from("DerefTest")
+    str deref_str = *s_deref
+    assert deref_str == "DerefTest": "deref should return correct str representation"
+
+    return 0
+}
+

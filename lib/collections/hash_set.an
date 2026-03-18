@@ -1,0 +1,222 @@
+from hash import Murmur3BuildHasher
+from hash import Murmur3Hasher
+
+pub struct HashSet<T, H, B> {
+    T* buckets
+    u8* ctrls
+    u64 size
+    u64 capacity
+    u64 growth_left
+    B hasher_builder
+}
+
+impl<T, H, B> HashSet<T, H, B> {
+    static pub Self new() {
+        return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
+    }
+    
+    static pub Self with_capacity(u64 capacity) {
+        return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
+    }
+    
+    static pub Self with_capacity_and_hasher(u64 capacity, B hasher_builder) {
+        u64 actual_capacity = Self.next_power_of_two(capacity)
+
+        u64 growth_left = Self.calculate_growth_left(actual_capacity)
+        u8* ctrls = dyn u8[actual_capacity]
+        for i in 0..actual_capacity {
+            ctrls[i] = 0b1111_1111
+        }
+        T* buckets = dyn T[actual_capacity]
+
+        return Self(
+            buckets,
+            ctrls,
+            0,
+            actual_capacity,
+            growth_left,
+            hasher_builder,
+        )
+    }
+
+    static pub u64 calculate_growth_left(u64 capacity) {
+        return capacity * 3 / 4
+    }
+
+    pub bool insert(T value) {
+        if self.growth_left == 0 {
+            self.resize(self.capacity * 2)
+        }
+        u64 hash = self.hash_value(value)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 or ctrl_byte == 0b1000_0000 {
+                self.ctrls[index] = h2
+                self.buckets[index] = value
+                self.size += 1
+                self.growth_left -= 1
+                return true
+            } elif ctrl_byte == h2 and self.buckets[index] == value {
+                return false
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+        return false
+    }
+
+    pub bool contains(T value) {
+        if self.capacity == 0 {
+            return false
+        }
+        u64 hash = self.hash_value(value)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 {
+                return false
+            }
+            
+            if ctrl_byte == h2 {
+                if self.buckets[index] == value {
+                    return true
+                }
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+        
+        return false
+    }
+
+    pub bool remove(T value) {
+        if self.capacity == 0 {
+            return false
+        }
+        u64 hash = self.hash_value(value)
+        u64 primary_index = hash & (self.capacity - 1)
+        u8 h2 = self.get_h2(hash)
+        u64 index = primary_index
+        for i in 0..self.capacity {
+            u8 ctrl_byte = self.ctrls[index]
+            
+            if ctrl_byte == 0b1111_1111 {
+                return false
+            }
+            
+            if ctrl_byte == h2 {
+                if self.buckets[index] == value {
+                    self.ctrls[index] = 0b1000_0000
+                    self.size -= 1
+                    return true
+                }
+            }
+            index = (index + 1) & (self.capacity - 1)
+        }
+        return false
+    }
+
+    pub u64 len() {
+        return self.size
+    }
+
+    pub bool is_empty() {
+        return self.size == 0
+    }
+
+    pub clear() {
+        if self.capacity == 0 {
+            return
+        }
+        for i in 0..self.capacity {
+            self.ctrls[i] = 0b1111_1111
+        }
+        self.size = 0
+        self.growth_left = Self.calculate_growth_left(self.capacity)
+    }
+
+    u8 get_h2(u64 hash) {
+        u8 h2 = u8(hash >> 56)
+        if h2 == 0xFF or h2 == 0x80 {
+            h2 = (h2 & 0x7F) | 0x40
+        }
+        return h2
+    }
+
+    resize(u64 new_capacity) {
+        u64 actual_capacity = Self.next_power_of_two(new_capacity)
+        if actual_capacity == self.capacity {
+            return
+        }
+
+        u8* old_ctrls = self.ctrls
+        T* old_buckets = self.buckets
+        u64 old_capacity = self.capacity
+
+        u8* new_ctrls = dyn u8[actual_capacity]
+        for i in 0..actual_capacity {
+            new_ctrls[i] = 0b1111_1111
+        }
+        T* new_buckets = dyn T[actual_capacity]
+
+        self.capacity = actual_capacity
+        self.growth_left = Self.calculate_growth_left(actual_capacity)
+        self.size = 0
+        if old_capacity > 0 { 
+            for i in 0..old_capacity {
+                u8 ctrl_byte = old_ctrls[i]
+                if ctrl_byte != 0xFF and ctrl_byte != 0x80 {
+                    u64 hash = self.hash_value(old_buckets[i])
+                    u8 h2 = self.get_h2(hash)
+                    u64 primary_index = hash & (actual_capacity - 1)
+                    for j in 0..actual_capacity {
+                        u8 new_ctrl_byte = new_ctrls[primary_index]
+                        if new_ctrl_byte == 0b1111_1111 {
+                            new_ctrls[primary_index] = h2
+                            new_buckets[primary_index] = old_buckets[i]
+                            self.size += 1
+                            self.growth_left -= 1
+                            break
+                        }
+                        primary_index = (primary_index + 1) & (actual_capacity - 1)
+                    }
+                }
+            }
+        }
+        self.ctrls = new_ctrls
+        self.buckets = new_buckets
+        del old_ctrls
+        // Warning: del old_buckets会将内部的value一起删除，需要修改成move（暂时无法实现）
+        // del old_buckets
+    }
+
+    pub u64 hash_value(T value) {
+        H hasher = self.hasher_builder.build_hasher()
+        value.hash(hasher)
+        return hasher.finish()
+    }
+
+    static pub u64 next_power_of_two(u64 n) {
+        if n == 0 {
+            return 0
+        }
+        
+        if n <= 1 {
+            return 1
+        }
+        
+        n -= 1
+        n |= n >> 1
+        n |= n >> 2
+        n |= n >> 4
+        n |= n >> 8
+        n |= n >> 16
+        n |= n >> 32
+        return n + 1
+    }
+}

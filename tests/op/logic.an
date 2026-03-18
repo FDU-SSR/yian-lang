@@ -1,0 +1,26 @@
+// Test logical operators: and, or, not
+//
+// Expected output: 0
+
+i32 main()
+{
+    i32 a = 1
+    i32 b = 2
+    i32 c = 3
+    if a > 0 and b > 0{
+        c = c + 1
+    }
+    assert c == 4: "and operator failed"
+
+    if a > 0 or b > 0{
+        c = c + 1
+    }
+    assert c == 5: "or operator failed"
+
+    if not a > 1{
+        c = c + 1
+    }
+    assert c == 6: "not operator failed"
+    
+    return 0
+}

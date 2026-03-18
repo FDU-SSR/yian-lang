@@ -1,0 +1,7 @@
+i32 main(){
+    i32* tmp = dyn i32
+    i32@ ptr = tmp.to_slice()
+    i32 full@ f = ptr.to_full()
+    *f = 6
+    return *f
+}

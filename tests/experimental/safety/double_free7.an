@@ -1,0 +1,32 @@
+enum Option<T> {
+    None
+    Some{T value}
+}
+
+Option<char*> g_ptr = Option<char*>.None
+
+use_g_ptr() {
+	match g_ptr {
+		Some as some:
+			*(some.value) = 'a'
+		_: ;
+	}
+}
+
+free_g_ptr() {
+	match g_ptr {
+		Some as some:
+			del some.value
+			// some 的作用域必须在此前终结!
+			g_ptr = Option<char*>.None
+		_: ;
+	}
+}
+
+i32 main() {
+	g_ptr = Option<char*>.Some(dyn char)
+	use_g_ptr()
+	free_g_ptr()
+	free_g_ptr()
+	return 0
+}

@@ -1,0 +1,9 @@
+intrinsic i32 add(i32 a, i32 b) { return a + b; }
+
+i32 main()
+{
+    i32 x = 1
+    i32 y = 2
+    i32 c = add(x, y)
+    return 0
+}

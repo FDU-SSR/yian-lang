@@ -1,0 +1,75 @@
+// The Option type is an enum that can either be None or Some value of type T.
+// It is used to represent an optional value that may or may not be present.
+
+from mem import Clone
+
+pub enum Option<T> {
+    None
+    Some { T val }
+}
+
+impl<T> Option<T> {
+    // Check if the Option is Some or None
+    pub bool is_some() {
+        match *self {
+            None { return false }
+            Some { return true }
+        }
+    }
+
+    pub bool is_none() {
+        return not self.is_some()
+    }
+
+    // Unwrap the value if it is Some, otherwise panic (or return an error)
+    pub T unwrap() {
+        match *self {
+            None { panic("Called unwrap on a None value") }
+            Some as load { return load.val }
+        }
+    }
+
+    // Unwrap the value if it is Some, otherwise return the provided default value
+    pub T unwrap_or(T default) {
+        match *self {
+            None { return default }
+            Some as load { return load.val }
+        }
+    }
+
+    // Take the value out of the Option, leaving None in its place.
+    pub Option<T> take() {
+        match *self {
+            None { return Option<T>.None }
+            Some as load {
+                T ret = load.val
+                *self = Option<T>.None
+                return Option<T>.Some(ret)
+            }
+        }
+    }
+
+    // Replace the value in the Option with a new value, returning the old value.
+    pub Option<T> replace(T val) {
+        match *self {
+            None {
+                *self = Option<T>.Some(val)
+                return Option<T>.None
+            }
+            Some as load {
+                T old_val = load.val
+                *self = Option<T>.Some(val)
+                return Option<T>.Some(old_val)
+            }
+        }
+    }
+}
+
+impl<T> Clone for Option<T> {
+    pub Self clone() {
+        match *self {
+            None { return Option<T>.None }
+            Some as load { return Option<T>.Some(load.val.clone()) }
+        }
+    }
+}

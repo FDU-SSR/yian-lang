@@ -1,0 +1,29 @@
+// Test for 'dyn' statement with basic type dynamic memory allocation
+//
+// Expected output: 0
+
+i32 main() {
+    i8* a = dyn i8
+    *a = 42
+    i8 val_a = *a
+    assert val_a == 42
+
+    i8* b = dyn i8(100)
+    i8 val_b = *b
+    assert val_b == 100
+
+    i32* c = dyn i32(0)
+    *c += 58
+    i32 val_c = *c
+    assert val_c == 58
+
+    i32* d = dyn i32[3]
+    d[0] = 10
+    d[1] = 20
+    d[2] = 30
+    assert d[0] == 10
+    assert d[1] == 20
+    assert d[2] == 30
+
+    return 0
+}

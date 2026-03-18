@@ -1,0 +1,18 @@
+// Test struct construction and field access
+//
+// Expected output: 0
+
+struct Person {
+    pub i32 age
+    pub float weight
+}
+
+i32 main() {
+    Person p = Person(20, 60.5)
+    i32 age = p.age
+    assert age == 20: "Person struct construction failed"
+    if p.weight > 61.0 {
+        panic("Person weight field access failed")
+    }
+    return 0
+}

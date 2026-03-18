@@ -1,0 +1,23 @@
+// Test write_file and read_file
+//
+// Expected output: 0
+
+from std.core.io import read_file, write_file
+
+i32 main() {
+    // write then read back
+    str test_content = "Hello, Yian file I/O!\n"
+    write_file("/tmp/yian_test_rw.txt", test_content)
+
+    str read_back = read_file("/tmp/yian_test_rw.txt")
+    assert read_back == test_content: "read_file should return what write_file wrote"
+
+    // write_file overwrites previous content
+    str content_v2 = "overwritten\n"
+    write_file("/tmp/yian_test_rw.txt", content_v2)
+
+    str read_v2 = read_file("/tmp/yian_test_rw.txt")
+    assert read_v2 == content_v2: "write_file should overwrite previous content"
+
+    return 0
+}

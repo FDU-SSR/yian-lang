@@ -1,0 +1,23 @@
+// Test low-level open/write/read/close
+//
+// Expected output: 0
+
+i32 main() {
+    // O_WRONLY | O_CREAT | O_TRUNC = 577
+    i32 wfd = open("/tmp/yian_test_low.txt", 577)
+    write(wfd, "low-level test")
+    close(wfd)
+
+    // Read it back with low-level read (O_RDONLY = 0)
+    i32 rfd = open("/tmp/yian_test_low.txt", 0)
+    u8[32] buf
+    for i in 0u64..32 {
+        buf[i] = 0
+    }
+    str result = read(rfd, buf)
+    close(rfd)
+
+    assert result == "low-level test": "low-level read should match low-level write"
+
+    return 0
+}

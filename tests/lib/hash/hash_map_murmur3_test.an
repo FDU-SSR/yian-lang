@@ -1,0 +1,107 @@
+// 使用 Murmur3Hasher 的 SwissTable (HashMap) 测试，键/值类型为 i64
+//
+// Expected output: 0
+
+from std.collections.hash import Murmur3Hasher
+from std.collections.hash import Murmur3BuildHasher
+from std.collections.hash_map import SwissTable
+
+i32 main() {
+    // === Test 1: 基础构造 ===
+    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map1 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert map1.len() == 0: "new map should have len 0"
+    assert map1.is_empty(): "new map should be empty"
+
+    // === Test 2: insert & get ===
+    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map2 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(42)
+    )
+
+    i64 k1 = 1
+    i64 k2 = 2
+    i64 k3 = 3
+    i64 val100 = 100
+    i64 val200 = 200
+    i64 val300 = 300
+
+    map2.insert(k1, val100)
+    assert map2.len() == 1: "len should be 1"
+    assert map2.get(k1).unwrap() == 100: "get(1) should return 100"
+    assert map2.contains(k1): "contains(1) should be true"
+
+    map2.insert(k2, val200)
+    map2.insert(k3, val300)
+    assert map2.len() == 3: "len should be 3"
+    assert map2.get(k2).unwrap() == 200: "get(2) should return 200"
+    assert map2.get(k3).unwrap() == 300: "get(3) should return 300"
+
+    // === Test 3: 覆盖写入 ===
+    i64 val999 = 999
+    map2.insert(k1, val999)
+    assert map2.len() == 3: "len unchanged after overwrite"
+    assert map2.get(k1).unwrap() == 999: "get(1) should return updated value"
+
+    // === Test 4: get 不存在的键 ===
+    i64 k99 = 99
+    assert map2.get(k99).is_none(): "get missing key should return None"
+    assert not map2.contains(k99): "contains missing key should be false"
+
+    // === Test 5: remove ===
+    map2.remove(k2)
+    assert map2.len() == 2: "len should be 2 after remove"
+    assert map2.get(k2).is_none(): "removed key should return None"
+    assert map2.get(k1).unwrap() == 999: "key 1 still exists"
+    assert map2.get(k3).unwrap() == 300: "key 3 still exists"
+
+    // remove 不存在的键
+    i64 k888 = 888
+    map2.remove(k888)
+    assert map2.len() == 2: "remove missing should not change len"
+
+    // === Test 6: clear ===
+    map2.clear()
+    assert map2.len() == 0: "clear should reset len"
+    assert map2.is_empty(): "clear should make map empty"
+    assert map2.get(k1).is_none(): "key 1 gone after clear"
+
+    // === Test 7: 大量插入触发 resize ===
+    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map3 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(7)
+    )
+    for i in 0i64..20 {
+        map3.insert(i, i * 10)
+    }
+    assert map3.len() == 20: "should have 20 entries"
+    for i in 0i64..20 {
+        assert map3.get(i).unwrap() == i * 10: "value should match key * 10"
+    }
+    i64 k20 = 20
+    assert map3.get(k20).is_none(): "should not contain key 20"
+
+    // === Test 8: 不同 seed ===
+    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map4 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(123)
+    )
+    i64 k100 = 100
+    i64 k200 = 200
+    i64 k300 = 300
+    i64 k400 = 400
+    i64 v1 = 1
+    i64 v2 = 2
+    i64 v3 = 3
+    map4.insert(k100, v1)
+    map4.insert(k200, v2)
+    map4.insert(k300, v3)
+    assert map4.get(k100).unwrap() == 1: "seed 123: get 100"
+    assert map4.get(k200).unwrap() == 2: "seed 123: get 200"
+    assert map4.get(k300).unwrap() == 3: "seed 123: get 300"
+    assert map4.get(k400).is_none(): "seed 123: 400 not present"
+
+    return 0
+}

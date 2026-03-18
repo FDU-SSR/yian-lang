@@ -1,0 +1,184 @@
+from slice import SliceIter
+from option import Option
+from iter import Iterator, IntoIterator
+from convert import From, Into
+from ops import PartialEq, Index
+from range import Range
+
+impl str {
+    // Create a str from a byte slice
+    // TODO: this is currently just a bitcast, but we should validate that the byte slice is valid UTF-8 and return an error if not
+    static Self from_slice(u8[] s) {
+        str* ret = bitcast<str*>(&s)
+        return *ret
+    }
+
+    // Get the byte slice of the str
+    pub u8[] as_slice() {
+        u8[]* ret = bitcast<u8[]*>(self)
+        return *ret
+    }
+
+    // Get an iterator over the characters of the str
+    pub CharIter chars() {
+        return CharIter(self.as_slice().into_iter())
+    }
+
+    // Get an iterator over the characters and their byte indices
+    pub CharIndicesIter char_indices() {
+        return CharIndicesIter(0, self.chars())
+    }
+
+    // Check if the str starts with the given prefix character
+    pub bool starts_with_char(char prefix) {
+        Option<char> first_char = self.chars().next()
+        return first_char.is_some() and first_char.unwrap() == prefix
+    }
+
+    // Check if the str contains the given character
+    pub bool contains_char(char c) {
+        for ch in self.chars() {
+            if ch == c {
+                return true
+            }
+        }
+        return false
+    }
+
+    bool is_char_boundary(u64 index) {
+        u8[] bytes = self.as_slice()
+        u64 len = bytes.len()
+
+        if index > len {
+            return false
+        }
+        if index == len {
+            return true
+        }
+
+        return (bytes[index] & 192) != 128
+    }
+    
+    // Trim whitespace from both ends of the String
+    pub str trim() {
+        u8[] bytes = self.as_slice()
+        u64 start = 0
+        u64 end = self.len()
+        while start < end and bytes[start].is_ascii_whitespace() {
+            start += 1
+        }
+        while end > start and bytes[end - 1].is_ascii_whitespace() {
+            end -= 1
+        }
+        return str.from(self.data.as_slice()[start..end])
+    }
+}
+
+pub struct CharIter {
+    pub SliceIter<u8> byte_iter
+}
+
+impl CharIter {
+    pub u64 len() {
+        return self.byte_iter.len()
+    }
+}
+
+impl Iterator<char> for CharIter {
+    pub Option<char> next() {
+        Option<u8> b1_opt = self.byte_iter.next()
+
+        if b1_opt.is_none() {
+            return Option<char>.None
+        }
+        u8 b1 = b1_opt.unwrap_or(0) // We know it's Some, so unwrap is safe
+
+        if b1 < 128 { // 0xxxxxxx
+            return Option<char>.Some(char(b1))
+        }
+
+        // 2-byte: 110xxxxx 10xxxxxx
+        if (b1 & 224) == 192 {
+            u8 b2 = self.byte_iter.next().unwrap_or(0)
+            return Option<char>.Some(char((u32(b1 & 31) << 6) | u32(b2 & 63)))
+        }
+
+        // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+        if (b1 & 240) == 224 {
+            u8 b2 = self.byte_iter.next().unwrap_or(0)
+            u8 b3 = self.byte_iter.next().unwrap_or(0)
+            return Option<char>.Some(char((u32(b1 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b3 & 63)))
+        }
+
+        // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+        if (b1 & 248) == 240 {
+            u8 b2 = self.byte_iter.next().unwrap_or(0)
+            u8 b3 = self.byte_iter.next().unwrap_or(0)
+            u8 b4 = self.byte_iter.next().unwrap_or(0)
+            return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)))
+        }
+
+        // Invalid
+        return Option<char>.None
+    }
+}
+
+pub struct CharIndicesIter {
+    pub u64 front_offset
+    pub CharIter iter
+}
+
+impl IntoIterator<CharIndicesIter> for CharIndicesIter {
+    CharIndicesIter into_iter() {
+        return *self
+    }
+}
+
+impl Iterator<(u64, char)> for CharIndicesIter {
+    pub Option<(u64, char)> next() {
+        u64 pre_len = self.iter.byte_iter.len()
+        match self.iter.next() {
+            None { return Option<(u64, char)>.None }
+            Some as some {
+                u64 index = self.front_offset
+                u64 len = self.iter.byte_iter.len()
+                self.front_offset += pre_len - len
+                return Option<(u64, char)>.Some((index, some.val))
+            }
+        }
+    }
+}
+
+impl From<u8[]> for str {
+    pub static Self from(u8[] value) {
+        return Self.from_slice(value)
+    }
+}
+
+impl Into<u8[]> for str {
+    pub u8[] into() {
+        return self.as_slice()
+    }
+}
+
+impl PartialEq<str> for str {
+    pub bool eq(str other) {
+        return self.as_slice() == other.as_slice()
+    }
+}
+
+impl Index<Range<u64>, str> for str {
+    pub str* index(Range<u64> range) {
+        u8[] bytes = self.as_slice()
+        u64 len = bytes.len()
+
+        if range.start > range.end or range.end > len {
+            panic("index out of bounds")
+        }
+        if not self.is_char_boundary(range.start) or not self.is_char_boundary(range.end) {
+            panic("str slice index is not on a char boundary")
+        }
+
+        return dyn Self.from_slice(bytes[range.start..range.end])
+    }
+}

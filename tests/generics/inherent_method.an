@@ -1,0 +1,58 @@
+// Test for inherent methods with generics
+//
+// Expected output: 0
+
+struct Pair<T> {
+    T first
+    T second
+}
+
+impl<T> Pair<T> {
+    static pub Self new(T first, T second) {
+        return Self(first, second)
+    }
+
+    pub T sum() {
+        return self.first + self.second
+    }
+
+    pub T max() {
+        if (self.first > self.second) {
+            return self.first
+        }
+        return self.second
+    }
+
+    pub T min() {
+        if (self.first < self.second) {
+            return self.first
+        }
+        return self.second
+    }
+
+    pub swap() {
+        T temp = self.first
+        self.first = self.second
+        self.second = temp
+    }
+}
+
+i32 main() {
+    // 1) explicit type arguments
+    Pair<i32> p1 = Pair<i32>.new(10, 20)
+    assert p1.sum() == 30: "Expected sum 30"
+    assert p1.max() == 20: "Expected max 20"
+    assert p1.min() == 10: "Expected min 10"
+    p1.swap()
+    assert p1.first == 20 and p1.second == 10: "Expected swapped values"
+
+    // 2) type inference
+    Pair<f64> p2 = Pair<f64>.new(5.5, 2.2)
+    assert p2.sum() > 7.6 and p2.sum() < 7.8: "Expected sum ~7.7"
+    assert p2.max() > 5.4 and p2.max() < 5.6: "Expected max ~5.5"
+    assert p2.min() > 2.1 and p2.min() < 2.3: "Expected min ~2.2"
+    p2.swap()
+    assert p2.first > 2.1 and p2.first < 2.3 and p2.second > 5.4 and p2.second < 5.6: "Expected swapped values"
+
+    return 0
+}

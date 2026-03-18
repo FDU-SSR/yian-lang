@@ -1,0 +1,745 @@
+from ops import Add, Sub, Index, Deref, PartialEq, PartialOrd, Ordering
+
+pub u64 random(){
+    return 1u64 | (1u64 << 63)
+}
+
+struct MemoryBlock {
+    pub u64 lock        // 64 bit lock
+    pub u64 size        // 64 bit size
+}
+
+// 一级指针
+
+pub struct RawPtr<T> {
+    i8* address
+    u64 key_or_len
+}
+
+// 二级指针（Slice）
+
+pub struct Slice<T> {
+    i8* address     // to stack object/memory block
+    u64 key_or_len  // key(heap), len(stack)
+}
+
+// 三级指针
+
+pub struct FullPtr<T> {
+    i8* address     // to stack object/memory block
+    u64 offset      // 64 bit offset
+    u64 key_or_len  // key(heap), len(stack)
+}
+
+impl<T> FullPtr<T> {
+    bool __is_stack() {
+        return self.key_or_len < 9223372036854775808    // 2^63
+    }
+    bool __is_heap() {
+        return self.key_or_len >= 9223372036854775808   // 2^63
+    }
+    __check_ptr_type_match(FullPtr<T> rhs) {
+        if ((self.key_or_len ^ rhs.key_or_len) & (u64(1) << 63)) != 0 {
+            panic("Stack ptr vs. Heap ptr")
+        }
+    }
+    bool __key_lock_match() {
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return mb.lock == self.key_or_len
+    }
+
+    // 需要改为private
+    pub T* get_raw() {
+        T* res
+        if self.__is_stack() {
+            res = bitcast<T*>(self.address)
+        } else {
+            res = bitcast<T*>(byte_offset(self.address, i64(sizeof(MemoryBlock))))
+        }
+        return res
+    }
+
+    pub u64 len() {
+        if self.__is_stack() {
+            return self.key_or_len
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            return mb.size
+        }
+    }
+    // 构造指针
+    pub static FullPtr<T> new_object() {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        // 然后构造指针
+        return FullPtr<T>(raw_buffer, 0, key_lock)
+    }
+    pub static FullPtr<T> new_array(u64 len) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + len * sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = len * sizeof(T)
+        // 然后构造指针
+        return FullPtr<T>(raw_buffer, 0, key_lock)
+    }
+
+    // 需要改成内置函数
+    pub static FullPtr<T> from_slice(Slice<T> slice) {
+        return FullPtr<T>(slice.address, 0, slice.key_or_len)
+    }
+
+    pub static FullPtr<T> from_raw(RawPtr<T> raw_ptr) {
+        return FullPtr<T>(raw_ptr.address, 0, raw_ptr.key_or_len)
+    }
+
+    pub RawPtr<T> to_raw() {
+        return RawPtr<T>.from_full(self)
+    }
+
+    pub Slice<T> to_slice() {
+        return Slice<T>.from_full(self)
+    }
+
+    static FullPtr<T> to_heap(T* init_value_addr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(byte_offset(base, i64(sizeof(MemoryBlock))))
+        memcpy(data_ptr, init_value_addr, sizeof(T))
+        // 然后构造指针
+        return FullPtr<T>(raw_buffer, 0, key_lock)
+    }
+    static FullPtr<T> heap_address(T* raw_ptr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(byte_offset(base, i64(sizeof(MemoryBlock))))
+        memcpy(raw_ptr, data_ptr, sizeof(T))
+        // 然后构造指针
+        return FullPtr<T>(raw_buffer, 0, key_lock)
+    }
+
+    // 对栈变量取地址
+    static FullPtr<T> address(T* raw_ptr) {
+        return FullPtr<T>(raw_ptr, 0, sizeof(T))
+    }
+    // 从数组退化成指针
+    static FullPtr<T> from_array(T* array, u64 len) {
+        return FullPtr<T>(array, 0, len * sizeof(T))
+    }
+    FullPtr<U> offset<U>(u64 offset) {
+        u64 new_offset = self.offset + offset
+        return FullPtr<U>(self.address, new_offset, self.key_or_len)
+    }
+
+    bool is_valid() {
+        if self.__is_stack() {
+            return true
+        }
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return self.key_or_len == mb.lock
+    }
+    pub realloc(u64 len) {
+        assert not self.__is_stack(): "cannot realloc stack pointer"
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        // 检查 key 和 lock 匹配
+        assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+        // 检查是否有偏移
+        assert self.offset == 0: "Heap ptr delete has offset"
+        // 重新生成 key 和 lock
+        u64 new_key_lock = random()
+        // 重新生成 MemoryBlock
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + len * sizeof(T)]
+        MemoryBlock* new_base = bitcast<MemoryBlock*>(raw_buffer)
+        new_base.lock = new_key_lock
+        new_base.size = len * sizeof(T)
+        // 复制数据
+        u64 copy_size
+        if mb.size < len * sizeof(T) {
+            copy_size = mb.size
+        } else {
+            copy_size = len * sizeof(T)
+        }
+        copy_size /= sizeof(T)
+        T* old_data = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock))))
+        T* new_data = bitcast<T*>(byte_offset(new_base, i64(sizeof(MemoryBlock))))
+        for u64 i = 0; i < copy_size; i += 1 {
+            new_data[i] = old_data[i]
+        }
+        // 释放原内存
+        del mb
+        // 修改自己
+        self.address = raw_buffer
+        self.key_or_len = new_key_lock
+    }
+    copy_to(FullPtr<T> other, u64 len) {
+        u64 valid_len
+        u64 other_valid_len
+        T* raw_ptr
+        T* other_raw_ptr
+        if self.__is_stack() {
+            valid_len = (self.key_or_len - self.offset) / sizeof(T)
+            raw_ptr = bitcast<T*>(byte_offset(self.address, i64(self.offset)))
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            valid_len = (mb.size - self.offset) / sizeof(T)
+            raw_ptr = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock) + self.offset)))
+        }
+        if other.__is_stack() {
+            other_valid_len = (other.key_or_len - other.offset) / sizeof(T)
+            other_raw_ptr = bitcast<T*>(byte_offset(other.address, i64(other.offset)))
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(other.address)
+            other_valid_len = (mb.size - other.offset) / sizeof(T)
+            other_raw_ptr = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock) + other.offset)))
+        }
+        assert valid_len >= len: "ptr does not have enough elements to copy"
+        assert other_valid_len >= len: "ptr does not have enough elements to copy"
+        for u64 i = 0; i < len; i += 1 {
+            other_raw_ptr[i] = raw_ptr[i]
+        }
+    }
+    i64 ptr_sub(FullPtr<T> rhs) {
+        assert self.address == rhs.address: "Ptr sub base mismatch"
+        if self.__is_stack() and rhs.__is_heap() {
+            panic("Stack ptr - Heap ptr")
+        } elif self.__is_heap() and rhs.__is_stack() {
+            panic("Heap ptr - Stack ptr")
+        }
+        return (i64(self.offset) - i64(rhs.offset)) / sizeof(T)
+    }
+
+    pub delete() {
+        assert self.__is_heap(): "can only delete heap ptr"
+        assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+        assert self.offset == 0: "Heap ptr delete has offset"
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        mb.lock = 0
+        del mb
+    }
+}
+
+// 指针 + 整数 --> 指针
+impl<T> Add<u64, FullPtr<T>> for FullPtr<T> {
+    Self add(u64 rhs) {
+        return FullPtr<T>(self.address, self.offset + rhs * sizeof(T), self.key_or_len)
+    }
+}
+
+// 指针 - 整数  --> 指针
+impl<T> Sub<u64, FullPtr<T>> for FullPtr<T> {
+    Self sub(u64 rhs) {
+        return FullPtr<T>(self.address, self.offset - rhs * sizeof(T), self.key_or_len)
+    }
+}
+
+// 比较运算
+impl<Rhs> PartialEq<Rhs> for FullPtr<Rhs> {
+    bool eq(Rhs rhs) {
+        self.__check_ptr_type_match(rhs)
+        return self.offset == rhs.offset
+    }
+}
+
+impl<Rhs> PartialOrd<Rhs> for FullPtr<Rhs> {
+    Ordering partial_cmp(Rhs rhs) {
+        self.__check_ptr_type_match(rhs)
+        if self.offset < rhs.offset {
+            return Ordering.Less
+        } elif self.offset > rhs.offset {
+            return Ordering.Greater
+        } else {
+            return Ordering.Equal
+        }
+    }
+}
+// impl<T> Lt<FullPtr<T>> for FullPtr<T> {
+//     bool lt(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset < rhs.offset
+//     }
+// }
+// impl<T> Gt<FullPtr<T>> for FullPtr<T> {
+//     bool gt(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset > rhs.offset
+//     }
+// }
+// impl<T> Le<FullPtr<T>> for FullPtr<T> {
+//     bool le(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset <= rhs.offset
+//     }
+// }
+// impl<T> Ge<FullPtr<T>> for FullPtr<T> {
+//     bool ge(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset >= rhs.offset
+//     }
+// }
+// impl<T> Eq<FullPtr<T>> for FullPtr<T> {
+//     bool eq(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset == rhs.offset
+//     }
+// }
+// impl<T> Ne<FullPtr<T>> for FullPtr<T> {
+//     bool ne(FullPtr<T> rhs) {
+//         self.__check_ptr_type_match(rhs)
+//         return self.offset != rhs.offset
+//     }
+// }
+
+// 索引
+impl<T> Index<u64, T> for FullPtr<T> {
+    T* index(u64 index) {
+        if self.__is_stack() {
+            assert index * sizeof(T) + self.offset < self.key_or_len: "Stack ptr index out of range"
+            T* buff = bitcast<T*>(byte_offset(self.address, i64(self.offset)))
+            return buff + index
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            // 检查 key 与 lock 匹配
+            assert self.__key_lock_match(): "Heap ptr index key mismatch"
+            // 检查越界
+            assert index * sizeof(T) + self.offset < mb.size: "Heap ptr index out of range"
+            T* buff = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock) + self.offset)))
+            return buff + index
+        }
+    }
+}
+
+// 解引用
+impl<T> Deref<T> for FullPtr<T> {
+    T* deref() {
+        if self.__is_stack() {
+            assert self.offset < self.key_or_len: "Stack ptr deref out of range"
+            T* buff = bitcast<T*>(byte_offset(self.address, i64(self.offset)))
+            return buff
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            // 检查 key 与 lock 匹配
+            assert self.__key_lock_match(): "Heap ptr deref key mismatch"
+            // 检查越界
+            assert self.offset < mb.size: "Heap ptr deref out of range"
+            T* buff = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock) + self.offset)))
+            return buff
+        }
+    }
+}
+
+// 释放内存
+// impl<T> Delete for FullPtr<T> {
+    // delete() {
+    //     assert self.__is_heap(): "can only delete heap ptr"
+    //     assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+    //     assert self.offset == 0: "Heap ptr delete has offset"
+    //     MemoryBlock* mb = self.address
+    //     mb.lock = 0
+    //     del mb
+    // }
+// }
+
+impl<T> Slice<T> {
+    bool __is_stack() {
+        return (self.key_or_len & (u64(1) << 63)) == 0
+    }
+    bool __is_heap() {
+        return (self.key_or_len & (u64(1) << 63)) != 0
+    }
+    __check_ptr_type_match(Slice<T> rhs) {
+        if ((self.key_or_len ^ rhs.key_or_len) & (u64(1) << 63)) != 0 {
+            panic("Stack ptr vs. Heap ptr")
+        }
+    }
+    bool __key_lock_match() {
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return mb.lock == self.key_or_len
+    }
+    // 需要改为private
+    pub T* get_raw() {
+        T* res
+        if self.__is_stack() {
+            res = bitcast<T*>(self.address)
+        } else {
+            res = bitcast<T*>(self.address + sizeof(MemoryBlock))
+        }
+        return res
+    }
+
+    pub u64 get_len() {
+        if self.__is_stack() {
+            return self.key_or_len / sizeof(T)
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            return mb.size / sizeof(T)
+        }
+    }
+    // 构造指针
+    pub static Slice<T> new_object() {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        // 然后构造指针
+        return Slice<T>(raw_buffer, key_lock)
+    }
+    pub static Slice<T> new_array(u64 len) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + len * sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = len * sizeof(T)
+        // 然后构造指针
+        return Slice<T>(raw_buffer, key_lock)
+    }
+
+    // 需要改成内置函数
+    pub static from_raw(RawPtr<T> raw_ptr) {
+        return Slice<T>(raw_ptr.address, raw_ptr.key_or_len)
+    }
+
+    pub static from_full(FullPtr<T> full_ptr) {
+        return Slice<T>(full_ptr.address, full_ptr.key_or_len)
+    }
+
+    pub to_raw() {
+        return RawPtr<T>.from_slice(self)
+    }
+
+    pub to_full() {
+        return FullPtr<T>.from_slice(self)
+    }
+
+    static Slice<T> to_heap(T* init_value_addr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(base + sizeof(MemoryBlock))
+        memcpy(data_ptr, init_value_addr, sizeof(T))
+        // 然后构造指针
+        return Slice<T>(raw_buffer, key_lock)
+    }
+    static Slice<T> heap_address(T* raw_ptr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(base + sizeof(MemoryBlock))
+        memcpy(raw_ptr, data_ptr, sizeof(T))
+        // 然后构造指针
+        return Slice<T>(raw_buffer, key_lock)
+    }
+
+    // 对栈变量取地址
+    static Slice<T> address(T* raw_ptr) {
+        return Slice<T>(raw_ptr, sizeof(T))
+    }
+    // 从数组退化成指针
+    static Slice<T> from_array(T* array, u64 len) {
+        return Slice<T>(array, len * sizeof(T))
+    }
+
+    bool is_valid() {
+        if self.__is_stack() {
+            return true
+        }
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return self.key_or_len == mb.lock
+    }
+    pub realloc(u64 len) {
+        assert not self.__is_stack(): "cannot realloc stack pointer"
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        // 检查 key 和 lock 匹配
+        assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+        // 重新生成 key 和 lock
+        u64 new_key_lock = random()
+        // 重新生成 MemoryBlock
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + len * sizeof(T)]
+        MemoryBlock* new_base = bitcast<MemoryBlock*>(raw_buffer)
+        new_base.lock = new_key_lock
+        new_base.size = len * sizeof(T)
+        // 复制数据
+        u64 copy_size
+        if mb.size < len * sizeof(T) {
+            copy_size = mb.size
+        } else {
+            copy_size = len * sizeof(T)
+        }
+        copy_size /= sizeof(T)
+        T* old_data = bitcast<T*>(byte_offset(mb, sizeof(MemoryBlock)))
+        T* new_data = bitcast<T*>(byte_offset(new_base, sizeof(MemoryBlock)))
+        for u64 i = 0; i < copy_size; i += 1 {
+            new_data[i] = old_data[i]
+        }
+        // 释放原内存
+        del mb
+        // 修改自己
+        self.address = raw_buffer
+        self.key_or_len = new_key_lock
+    }
+    copy_to(Slice<T> other, u64 len) {
+        u64 valid_len
+        u64 other_valid_len
+        T* raw_ptr
+        T* other_raw_ptr
+        if self.__is_stack() {
+            valid_len = self.key_or_len / sizeof(T)
+            raw_ptr = bitcast<T*>(self.address)
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            valid_len = mb.size / sizeof(T)
+            raw_ptr = bitcast<T*>(byte_offset(mb, sizeof(MemoryBlock)))
+        }
+        if other.__is_stack() {
+            valid_len = other.key_or_len / sizeof(T)
+            raw_ptr = bitcast<T*>(other.address)
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(other.address)
+            valid_len = mb.size / sizeof(T)
+            raw_ptr = bitcast<T*>(byte_offset(mb, sizeof(MemoryBlock)))
+        }
+        assert valid_len >= len: "ptr does not have enough elements to copy"
+        assert other_valid_len >= len: "ptr does not have enough elements to copy"
+        for u64 i = 0; i < len; i += 1 {
+            other_raw_ptr[i] = raw_ptr[i]
+        }
+    }
+
+    pub delete() {
+        assert self.__is_heap(): "can only delete heap ptr"
+        assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        mb.lock = 0
+        del mb
+    }
+}
+
+// 索引
+impl<T> Index<u64, T> for Slice<T> {
+    T* index(u64 index) {
+        if self.__is_stack() {
+            assert index * sizeof(T) < self.key_or_len: "Stack ptr index out of range"
+            T* buff = bitcast<T*>(self.address)
+            return buff + index
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            // 检查 key 与 lock 匹配
+            assert self.__key_lock_match(): "Heap ptr index key mismatch"
+            // 检查越界
+            assert index * sizeof(T) < mb.size: "Heap ptr index out of range"
+            T* buff = bitcast<T*>(byte_offset(mb, sizeof(MemoryBlock)))
+            return buff + index
+        }
+    }
+}
+
+// 解引用
+impl<T> Deref<T> for Slice<T> {
+    T* deref() {
+        if self.__is_stack() {
+            // stack slice: address points directly to data
+            T* buff = bitcast<T*>(self.address)
+            return buff
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            // 检查 key 与 lock 匹配
+            assert self.__key_lock_match(): "Heap ptr deref key mismatch"
+            // heap slice: data starts right after MemoryBlock header
+            T* buff = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock))))
+            return buff
+        }
+    }
+}
+
+// 释放内存
+// impl<T> Delete for Slice<T> {
+//     delete() {
+//         assert self.__is_heap(): "can only delete heap ptr"
+//         assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+//         MemoryBlock* mb = self.address
+//         mb.lock = 0
+//         del mb
+//     }
+// }
+
+impl<T> RawPtr<T> {
+    bool __is_stack() {
+        return (self.key_or_len & (u64(1) << 63)) == 0
+    }
+    bool __is_heap() {
+        return (self.key_or_len & (u64(1) << 63)) != 0
+    }
+    __check_ptr_type_match(RawPtr<T> rhs) {
+        if ((self.key_or_len ^ rhs.key_or_len) & (u64(1) << 63)) != 0 {
+            panic("Stack ptr vs. Heap ptr")
+        }
+    }
+    bool __key_lock_match() {
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return mb.lock == self.key_or_len
+    }
+    // 需要改为private
+    pub T* get_raw() {
+        T* res
+        if self.__is_stack() {
+            res = bitcast<T*>(self.address)
+        } else {
+            res = bitcast<T*>(self.address + sizeof(MemoryBlock))
+        }
+        return res
+    }
+
+    // 构造指针
+    pub static RawPtr<T> new_object() {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[u64(sizeof(MemoryBlock) + sizeof(T))]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        // 然后构造指针
+        return RawPtr<T>(raw_buffer, key_lock)
+    }
+
+    // 需要改成内置函数
+    pub static RawPtr<T> from_full(FullPtr<T> full_ptr) {
+        assert full_ptr.len() == 1: "FullPtr length must be 1"
+        return RawPtr<T>(full_ptr.address, full_ptr.key_or_len)
+    }
+
+    pub static RawPtr<T> from_slice(Slice<T> slice_ptr) {
+        assert slice_ptr.len() == 1: "Slice length must be 1"
+        return RawPtr<T>(slice_ptr.address, slice_ptr.key_or_len)
+    }
+
+    pub FullPtr<T> to_full() {
+        return FullPtr<T>.from_raw(self)
+    }
+
+    pub Slice<T> to_slice() {
+        return Slice<T>.from_raw(self)
+    }
+
+    static RawPtr<T> to_heap(T* init_value_addr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(byte_offset(base, i64(sizeof(MemoryBlock))))
+        memcpy(data_ptr, init_value_addr, sizeof(T))
+        // 然后构造指针
+        return RawPtr<T>(raw_buffer, key_lock)
+    }
+    static RawPtr<T> heap_address(T* raw_ptr) {
+        // 生成 key 和 lock
+        u64 key_lock = random()
+        // 构造 MemoryBlock + Buffer
+        i8* raw_buffer = dyn i8[sizeof(MemoryBlock) + sizeof(T)]
+        MemoryBlock* base = bitcast<MemoryBlock*>(raw_buffer)
+        base.lock = key_lock
+        base.size = sizeof(T)
+        T* data_ptr = bitcast<T*>(byte_offset(base, i64(sizeof(MemoryBlock))))
+        memcpy(raw_ptr, data_ptr, sizeof(T))
+        // 然后构造指针
+        return RawPtr<T>(raw_buffer, key_lock)
+    }
+
+    // 对栈变量取地址
+    static RawPtr<T> address(T* raw_ptr) {
+        return RawPtr<T>(raw_ptr, sizeof(T))
+    }
+
+    bool is_valid() {
+        if self.__is_stack() {
+            return true
+        }
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        return self.key_or_len == mb.lock
+    }
+    
+    copy_to(RawPtr<T> other) {
+        T* raw_ptr
+        T* other_raw_ptr
+        if self.__is_stack() {
+            raw_ptr = bitcast<T*>(self.address)
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            raw_ptr = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock))))
+        }
+        if other.__is_stack() {
+            other_raw_ptr = bitcast<T*>(other.address)
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(other.address)
+            other_raw_ptr = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock))))
+        }
+        *other_raw_ptr = *raw_ptr
+    }
+
+    pub delete() {
+        assert self.__is_heap(): "can only delete heap ptr"
+        assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+        MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+        mb.lock = 0
+        del mb
+    }
+}
+
+// 解引用
+impl<T> Deref<T> for RawPtr<T> {
+    T* deref() {
+        if self.__is_stack() {
+            T* buff = bitcast<T*>(self.address)
+            return buff
+        } else {
+            MemoryBlock* mb = bitcast<MemoryBlock*>(self.address)
+            // 检查 key 与 lock 匹配
+            assert self.__key_lock_match(): "Heap ptr deref key mismatch"
+            T* buff = bitcast<T*>(byte_offset(mb, i64(sizeof(MemoryBlock))))
+            return buff
+        }
+    }
+}
+
+// 释放内存
+// impl<T> Delete for RawPtr<T> {
+//     delete() {
+//         assert self.__is_heap(): "can only delete heap ptr"
+//         assert self.__key_lock_match(): "Heap ptr delete key mismatch"
+//         MemoryBlock* mb = self.address
+//         mb.lock = 0
+//         del mb
+//     }
+// }

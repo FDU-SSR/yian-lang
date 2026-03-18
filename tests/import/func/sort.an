@@ -1,0 +1,38 @@
+pub quick_sort<T>(T* arr, u64 len) {
+    if len == 0 {
+        return
+    }
+    do_quick_sort(arr, 0u64, len - 1)
+}
+
+do_quick_sort<T>(T* arr, u64 low, u64 high) {
+    if low < high {
+        u64 p = partition(arr, low, high)
+
+        if p > low {
+            do_quick_sort(arr, low, p - 1)
+        }
+        do_quick_sort(arr, p + 1, high)
+    }
+}
+
+u64 partition<T>(T* arr, u64 low, u64 high) {
+    T pivot = arr[high]
+    u64 i = low
+
+    for u64 j = low; j < high; j += 1 {
+        if arr[j] <= pivot {
+            swap(&arr[i], &arr[j])
+            i += 1
+        }
+    }
+
+    swap(&arr[i], &arr[high])
+    return i
+}
+
+swap<T>(T* a, T* b) {
+    T temp = *a
+    *a = *b
+    *b = temp
+}

@@ -1,0 +1,92 @@
+from ptr import FullPtr
+from option import Option
+
+struct treeNode{
+    Option<FullPtr<treeNode>> left
+    Option<FullPtr<treeNode>> right
+}
+
+FullPtr<treeNode> NewTreeNode(Option<FullPtr<treeNode>> left, Option<FullPtr<treeNode>> right) {
+    FullPtr<treeNode> node = FullPtr<treeNode>.new_object()
+    (*node).left = left
+    (*node).right = right
+    return node
+}
+
+i64 ItemCheck(FullPtr<treeNode> tree)
+{
+    i64 res = 1
+    treeNode tree_item = *tree
+    if not tree_item.left.is_none() {
+        res += ItemCheck(tree_item.left.unwrap())
+    }
+    if not tree_item.right.is_none() {
+        res += ItemCheck(tree_item.right.unwrap())
+    }
+    return res
+}
+
+FullPtr<treeNode> BottomUpTree(u32 depth)
+{
+    if depth > 0
+    {
+        FullPtr<treeNode> left_child = BottomUpTree(depth - 1)
+        FullPtr<treeNode> right_child = BottomUpTree(depth - 1)
+        return NewTreeNode(Option<FullPtr<treeNode>>.Some(left_child), Option<FullPtr<treeNode>>.Some(right_child))
+    }
+    else
+    {
+        return NewTreeNode(Option<FullPtr<treeNode>>.None, Option<FullPtr<treeNode>>.None)
+    }
+}
+DeleteTree(FullPtr<treeNode> tree)
+{
+    treeNode tree_item = *tree
+    if not tree_item.left.is_none() {
+        DeleteTree(tree_item.left.unwrap())
+    }
+    if not tree_item.right.is_none() {
+        DeleteTree(tree_item.right.unwrap())
+    }
+    tree.delete()
+}
+
+
+i32 main()
+{
+    u32 N = 20
+    u32 minDepth = 4
+    u32 maxDepth = N
+    i64 check = 0
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2
+    }
+    
+    u32 stretchDepth = maxDepth + 1
+
+    FullPtr<treeNode> stretchTree = BottomUpTree(stretchDepth)
+    DeleteTree(stretchTree)
+
+    FullPtr<treeNode> longLivedTree = BottomUpTree(maxDepth)
+
+    for u32 depth = minDepth; depth <= maxDepth; depth += 2
+    {
+        u32 totalDepth = maxDepth - depth + minDepth
+        i64 iterations = 1
+        for u32 i = 0; i < totalDepth; i+=1 {
+            iterations *= 2
+        }
+        for i64 i = 0; i < iterations; i += 1
+        {
+            FullPtr<treeNode> tempTree = BottomUpTree(depth)
+            check += ItemCheck(tempTree)
+            DeleteTree(tempTree)
+        }
+    }
+    DeleteTree(longLivedTree)
+    
+    assert i32(check % 256) == 176: "fail"
+    print("pass")
+    return 0
+}

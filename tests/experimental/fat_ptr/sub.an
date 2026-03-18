@@ -1,0 +1,7 @@
+i32 main() {
+    i32[2] arr
+    i32* p_arr = arr
+    i32* p_arr_1 = p_arr + 1
+    assert p_arr == p_arr_1 - 1: "test fail"
+    return 0
+}

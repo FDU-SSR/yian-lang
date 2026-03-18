@@ -1,0 +1,123 @@
+from option import Option
+from std.bak.ordered_set import OrderedSet
+
+i32 main() {
+    // 新建空有序集合
+    OrderedSet<i32> s = OrderedSet<i32>.new()
+    assert s.len() == 0: "new len != 0"
+    assert s.is_empty(): "new set is not empty"
+
+    // insert：新 key 返回 true，size 增长
+    bool inserted
+
+    inserted = s.insert(3)
+    assert inserted: "insert 3 should return true"
+    assert s.len() == 1: "len after insert 3 should be 1"
+
+    inserted = s.insert(1)
+    assert inserted: "insert 1 should return true"
+
+    inserted = s.insert(5)
+    assert inserted: "insert 5 should return true"
+    assert s.len() == 3: "len after 3 inserts should be 3"
+    assert not s.is_empty(): "set should not be empty after inserts"
+
+    // insert：已存在 key 返回 false，size 不变
+    inserted = s.insert(3)
+    assert not inserted: "insert existing key 3 should return false"
+    assert s.len() == 3: "len should not change when inserting existing key"
+
+    // contains 测试
+    assert s.contains(1): "set should contain 1"
+    assert s.contains(3): "set should contain 3"
+    assert s.contains(5): "set should contain 5"
+    assert not s.contains(4): "set should not contain 4"
+
+    // min / max 测试
+    Option<i32> opt
+
+    opt = s.min()
+    assert opt.is_some(): "min should be some"
+    assert opt.unwrap() == 1: "min value should be 1"
+
+    opt = s.max()
+    assert opt.is_some(): "max should be some"
+    assert opt.unwrap() == 5: "max value should be 5"
+
+    // lower_bound 测试
+    opt = s.lower_bound(0)
+    assert opt.is_some(): "lower_bound(0) should be some"
+    assert opt.unwrap() == 1: "lower_bound(0) should be 1"
+
+    opt = s.lower_bound(2)
+    assert opt.is_some(): "lower_bound(2) should be some"
+    assert opt.unwrap() == 3: "lower_bound(2) should be 3"
+
+    opt = s.lower_bound(5)
+    assert opt.is_some(): "lower_bound(5) should be some"
+    assert opt.unwrap() == 5: "lower_bound(5) should be 5"
+
+    opt = s.lower_bound(6)
+    assert opt.is_none(): "lower_bound(6) should be none"
+
+    // upper_bound 测试
+    opt = s.upper_bound(0)
+    assert opt.is_some(): "upper_bound(0) should be some"
+    assert opt.unwrap() == 1: "upper_bound(0) should be 1"
+
+    opt = s.upper_bound(3)
+    assert opt.is_some(): "upper_bound(3) should be some"
+    assert opt.unwrap() == 5: "upper_bound(3) should be 5"
+
+    opt = s.upper_bound(5)
+    assert opt.is_none(): "upper_bound(5) should be none"
+
+    // remove 测试
+    bool removed
+
+    removed = s.remove(3)
+    assert removed: "remove(3) should return true"
+    assert s.len() == 2: "len after remove 3 should be 2"
+    assert not s.contains(3): "set should not contain 3 after remove"
+
+    removed = s.remove(3)
+    assert not removed: "remove non-exist 3 should return false"
+    assert s.len() == 2: "len should not change when removing non-exist key"
+
+    // 删除后重新检查 min/max 和边界
+    opt = s.min()
+    assert opt.is_some(): "min after remove should be some"
+    assert opt.unwrap() == 1: "min after remove should be 1"
+
+    opt = s.max()
+    assert opt.is_some(): "max after remove should be some"
+    assert opt.unwrap() == 5: "max after remove should be 5"
+
+    opt = s.lower_bound(2)
+    assert opt.is_some(): "lower_bound(2) after remove should be some"
+    assert opt.unwrap() == 5: "lower_bound(2) after remove should be 5"
+
+    opt = s.upper_bound(1)
+    assert opt.is_some(): "upper_bound(1) after remove should be some"
+    assert opt.unwrap() == 5: "upper_bound(1) after remove should be 5"
+
+    // clear 测试
+    s.clear()
+    assert s.is_empty(): "set should be empty after clear"
+    assert s.len() == 0: "len after clear should be 0"
+
+    opt = s.min()
+    assert opt.is_none(): "min of empty set should be none"
+
+    opt = s.max()
+    assert opt.is_none(): "max of empty set should be none"
+
+    opt = s.lower_bound(1)
+    assert opt.is_none(): "lower_bound on empty set should be none"
+
+    opt = s.upper_bound(1)
+    assert opt.is_none(): "upper_bound on empty set should be none"
+
+    return 0
+}
+

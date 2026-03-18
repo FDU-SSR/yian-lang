@@ -1,0 +1,20 @@
+// Test boolean literal
+//
+// Expected output: 0
+
+i32 main() {
+    bool t = true
+    bool f = false
+    assert t != f: "true should not equal false"
+
+    bool and_result = true and false
+    assert and_result == false: "true and false should be false"
+
+    bool or_result = true or false
+    assert or_result == true: "true or false should be true"
+
+    bool not_result = not true
+    assert not_result == false: "not true should be false"
+
+    return 0
+}

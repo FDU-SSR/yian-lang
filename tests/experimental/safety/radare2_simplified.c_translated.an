@@ -1,0 +1,70 @@
+struct pyc_object{
+    char type
+    char* data
+} 
+
+struct RefNode{
+    pyc_object* data
+}
+
+pyc_object* get_none_object() {
+    char* tmp0 = dyn char[4]
+    tmp0 [0] = 'N'
+    tmp0 [1] = 'o'
+    tmp0 [2] = 'n'
+    tmp0 [3] = 'e'
+    return dyn pyc_object('N', tmp0)
+}
+
+i32 free_object(pyc_object* obj) {
+    del (*obj).data
+    del obj
+    return 0
+}
+
+RefNode* create_ref_node(pyc_object* data) {
+    return dyn RefNode(data)
+}
+
+pyc_object* get_object(char* input) {
+    u8 code = input[0]
+    u8 flag = code & 0x80
+    u8 type = code & ~0x80
+    
+    pyc_object* ret = dyn pyc_object
+    RefNode* ref = dyn RefNode
+    
+    if flag != 0 {
+        ret = get_none_object()
+        ref = create_ref_node(ret)
+    }
+
+    if type == 1 {
+        assert 1==1 : "Not implemented"
+    } 
+
+    if flag != 0 and ref.is_valid() {
+        // err: Delete stack pointer
+        free_object((*ref).data)
+        pyc_object** tmp = &ref.data
+        *tmp = get_none_object()
+    }
+
+    if ref.is_valid() {
+        free_object((*ref).data)
+        del ref
+    }
+    return ret
+}
+
+i32 main() {
+    //char[1] data = "\x81"
+    char* data = dyn char
+    *data = '\x81'
+    pyc_object* obj = get_object(data)
+    // Use-after-free: obj was freed in get_object()
+    char c = (*obj).type
+    // double free
+    free_object(obj)
+    return 0
+}

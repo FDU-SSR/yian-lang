@@ -1,0 +1,23 @@
+// Test generic structs
+//
+// Expected output: 0
+
+struct Value<T> {
+    pub T data
+}
+
+struct Pair<T, U> {
+    pub Value<T> first
+    pub Value<U> second
+}
+
+i32 main() {
+    Pair<i32, f64> p = Pair<i32, f64>(
+        first=Value<i32>(data=10),
+        second=Value<f64>(data=20.5)
+    )
+    assert p.first.data == 10: "Expected first.data 10"
+    assert p.second.data > 20.4 and p.second.data < 20.6: "Expected second.data ~20.5"
+
+    return 0
+}

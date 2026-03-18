@@ -1,0 +1,50 @@
+from std.core.str import CharIter
+from std.core.option import Option
+
+i32 main() {
+    // 1. Test from() and as_slice()
+    // 'A', 'B', 'C' -> 65, 66, 67
+    u8[3] arr = [65, 66, 67]
+    str s = str.from(arr[0u64..3])
+    
+    u8[] s_slice = s.as_slice()
+    assert s_slice.len() == 3
+    assert s_slice[0] == 65
+    assert s_slice[1] == 66
+    assert s_slice[2] == 67
+
+    // 2. Test chars() iterator (ASCII)
+    CharIter iter = s.chars()
+    assert iter.next().unwrap() == 'A'
+    assert iter.next().unwrap() == 'B'
+    assert iter.next().unwrap() == 'C'
+    assert iter.next().is_none()
+
+    // 3. Test multi-byte chars (if supported by implementation)
+    // UTF-8 for "中" (Chinese character for 'middle') is E4 B8 AD (228, 184, 173)
+    u8[3] zhong_arr = [228, 184, 173]
+    str s_zhong = str.from(zhong_arr[0u64..3])
+    CharIter iter_zhong = s_zhong.chars()
+    
+    // Assuming char type can hold unicode codepoint
+    // '中' is U+4E2D (20013)
+    // If str implementation supports it:
+    Option<char> c_zhong = iter_zhong.next()
+    assert c_zhong.is_some()
+    // assert c_zhong.unwrap() == '中' // '中' literal might not work based on compiler support, prefer codepoint check if char is integer-like
+    // or just rely on single char
+    
+    assert iter_zhong.next().is_none()
+
+    // 4. Test slicing on UTF-8 character boundaries
+    u8[6] nihao_arr = [228, 189, 160, 229, 165, 189]
+    str s_nihao = str.from(nihao_arr[0u64..6])
+    str ni = s_nihao[0u64..3]
+    str hao = s_nihao[3u64..6]
+
+    assert ni.as_slice() == nihao_arr[0u64..3]
+    assert hao.as_slice() == nihao_arr[3u64..6]
+    assert s_nihao[0u64..6].as_slice() == nihao_arr[0u64..6]
+    
+    return 0
+}

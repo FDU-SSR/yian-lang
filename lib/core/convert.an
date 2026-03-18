@@ -1,0 +1,7 @@
+pub trait From<Src> {
+    static Self from(Src value);
+}
+
+pub trait Into<Dst> {
+    Dst into();
+}

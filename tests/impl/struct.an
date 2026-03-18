@@ -1,0 +1,24 @@
+// Test for basic struct and method functionality
+//
+// Expected output: 0
+
+struct Pair{
+    i32 a
+    i32 b
+}
+
+impl Pair{
+    pub static Self new(i32 a, i32 b){
+        return Self(a = a, b = b)
+    }
+
+    pub i32 sum(){
+        return self.a + self.b
+    }
+}
+
+i32 main(){
+    Pair p = Pair.new(3, 4)
+    assert p.sum() == 7
+    return 0
+}
