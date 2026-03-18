@@ -1,0 +1,33 @@
+{
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "./cmd;./lian/src"
+    },
+    "python.analysis.extraPaths": [
+        "./cmd",
+        "./lian/src"
+    ],
+    "cSpell.words": [
+        "lian"
+    ],
+    "python.REPL.enableREPLSmartSend": false,
+    "files.associations": {
+        "random": "c",
+        "queue": "c",
+        "stack": "c",
+        "bitset": "c",
+        "__availability": "c",
+        "string": "c",
+        "stdlib.h": "c",
+        "ctype.h": "c",
+        "typeinfo": "c",
+        "stdio.h": "c",
+        "numeric": "c",
+        "streambuf": "c",
+        "tuple": "c",
+        "string_view": "c",
+        "type_traits": "c",
+        "algorithm": "c",
+        "stdint.h": "c",
+        "pthread.h": "c"
+    },
+}

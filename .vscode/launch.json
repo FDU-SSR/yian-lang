@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Compiler",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cmd/compiler/main.py",
+      "args": [
+        "compile",
+        "-f",
+        "-d",
+        "-w",
+        "${workspaceFolder}/tests/yian_workspace",
+        "${workspaceFolder}/lib",
+        "${workspaceFolder}/path/to/your_test.an"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}
