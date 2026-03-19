@@ -1,3 +1,7 @@
+// Test for Vec push and pop operations
+//
+// Expected output: 0
+
 from std.core.vec import Vec
 
 i32 main() {

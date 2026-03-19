@@ -179,7 +179,9 @@ impl Add<str, String> for String {
 // Implement Deref to allow String to be used as a str slice
 impl Deref<str> for String {
     pub str* deref() {
-        return &self.as_str()
+        // TODO: This causes memory leak
+        str* ret = dyn self.as_str()
+        return ret
     }
 }
 
@@ -203,6 +205,8 @@ impl Into<String> for str {
 // Implement Index for String to allow indexing into the String as a str slice
 impl Index<Range<u64>, str> for String {
     pub str* index(Range<u64> range) {
-        return &self.as_str()[range]
+        // TODO: This causes memory leak
+        str* ret = dyn self.as_str()[range]
+        return ret
     }
 }
