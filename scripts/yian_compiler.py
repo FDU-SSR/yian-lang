@@ -23,15 +23,9 @@ args = [arg for arg in args if arg not in optimize_args]
 root_dir = Path(__file__).resolve().parent.parent
 llir_path = root_dir / "tests" / "yian_workspace" / "objects"
 
-# === 运行编译命令 ===
-cmd = ["python", str(root_dir / "cmd" / "compiler" / "main.py")]
-output_path = str(root_dir / "tests" / "yian_workspace")
-# lib/std/src
-lib_path = str(root_dir / "lib" / "std" / "src")
-# lib_path = ""
-options = ["compile", "-f", "-w", output_path]
-
-full_cmd = cmd + options + args + [lib_path]
+# === 运行编译命令（直接调用 scripts/compiler.py）===
+cmd = ["python", str(root_dir / "scripts" / "compiler.py")]
+full_cmd = cmd + args
 result = subprocess.run(full_cmd)
 
 if display_enabled:

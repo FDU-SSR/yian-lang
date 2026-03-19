@@ -5,16 +5,22 @@
 创建文件 `hello.an`：
 
 ```yian
+from std.core.io import print
 i32 main() {
     print("Hello, yian!\n")
     return 0
 }
 ```
 
-编译运行：
+编译：
 
 ```bash
 ./scripts/yian_compiler.py hello.an
+```
+
+运行:
+```bash
+./tests/yian_workspace/bin/out
 ```
 
 你会看到输出：
