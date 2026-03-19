@@ -159,7 +159,7 @@ cython_debug/
 .idea/
 
 # VsCode
-# .vscode/
+.vscode/
 
 # Compiled source #
 ###################
@@ -306,8 +306,6 @@ tests/temp
 lian_workspace/
 /yian_workspace/
 yian_workspace/
-.vscode/
-.vscode/settings.json
 
 *.lprof
 *.prof

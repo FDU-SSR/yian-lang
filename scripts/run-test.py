@@ -35,7 +35,9 @@ relative_test_dirs = [
     "type",
 
     "lib/fs",
+    "lib/hash",
     "lib/option",
+    "lib/raw_vec",
     "lib/result",
     "lib/slice",
     "lib/str",
