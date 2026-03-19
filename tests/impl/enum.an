@@ -4,6 +4,8 @@
 // Command: Start
 // Command: Pause
 
+from std.core.io import print
+
 enum Command {
     Start
     Stop

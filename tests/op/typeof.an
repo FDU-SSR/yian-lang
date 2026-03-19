@@ -7,6 +7,8 @@
 // It is bool
 // Unknown type
 
+from std.core.io import print
+
 func<T>(T param) {
     if typeof(param, i32) {
         print("It is i32\n")

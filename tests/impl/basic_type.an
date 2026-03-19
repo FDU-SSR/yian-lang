@@ -1,6 +1,9 @@
 // Test for general types (e.g., i32) and method functionality
 //
-// Expected output: Hello, Yian!
+// Expected output:
+// Hello, Yian!
+
+from std.core.io import print
 
 impl i32 {
     pub inc() {

@@ -2,6 +2,8 @@
 //
 // Expected output: Person is walking.
 
+from std.core.io import print
+
 from person import Person
 
 i32 main() {

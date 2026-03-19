@@ -1,6 +1,9 @@
 // Test for 'dyn' statement with struct type dynamic memory allocation
 //
-// Expected output: Charlie
+// Expected output:
+// Charlie
+
+from std.core.io import print
 
 struct Person{
     i32 age

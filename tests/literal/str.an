@@ -6,6 +6,8 @@
 // Line1
 // Line2	Tabbed
 
+from std.core.io import print
+
 i32 main() {
     str hello = "Hello, World!"
     print(hello)

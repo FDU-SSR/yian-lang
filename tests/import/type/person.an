@@ -1,3 +1,5 @@
+from std.core.io import print
+
 from walkable import Walkable
 
 pub struct Person {

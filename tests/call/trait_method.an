@@ -1,6 +1,9 @@
 // Test trait method definitions and implementations
 //
-// Expected output: 0
+// Expected output:
+// Dogs love to walk!
+
+from std.core.io import print
 
 trait Walkable {
     static pub walk_info();

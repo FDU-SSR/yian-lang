@@ -2,6 +2,8 @@
 //
 // Expected output: 0
 
+from std.core.io import print
+
 struct Circle {
     i32 radius
     i32 x

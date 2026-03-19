@@ -4,6 +4,8 @@
 // false_func called
 // Short circuit works correctly
 
+from std.core.io import print
+
 bool false_func() {
     print("false_func called\n")
     return false
