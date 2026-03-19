@@ -394,9 +394,7 @@ module.exports = grammar({
         $.assignment_statement,
         $.type_definition,
         $.declaration,
-        $.ok_statement,
         $.while_statement,
-        $.do_while_statement,
         $.loop_statement,
         $.for_statement,
         $.for_in_statement,
@@ -522,8 +520,7 @@ module.exports = grammar({
         $._type,
         $.expression,
         $.enum_case,
-        '_',
-        'default',
+      '_',
     )),
 
     enum_case: $ => seq(
@@ -593,13 +590,6 @@ module.exports = grammar({
         field('body', $.block),
     ),
 
-    do_while_statement: $ => seq(
-        'do',
-        field('body', $.block),
-        'while',
-        field('condition', $.expression),
-    ),
-
     loop_statement: $ => seq(
         'loop',
         field('body', $.block),
@@ -618,13 +608,6 @@ module.exports = grammar({
           field('message', $.string_literal)
         )),
     ),
-
-    ok_statement: $ => prec.right(seq(
-        'ok',
-        field('condition', $.expression),
-        field('consequence', $.block),
-        optional(field('alternative', $.else_clause)),
-    )),
 
     if_expression: $ => seq(
         'if',
@@ -671,7 +654,6 @@ module.exports = grammar({
 
     declaration: $ => prec(PREC.DECL, choice(
       $.struct_declaration,
-      $.union_declaration,
       $.enum_declaration,
       $.implement_declaration,
       $.trait_declaration,
@@ -807,14 +789,6 @@ module.exports = grammar({
       
       field("pointer_stars", repeat(choice('*', '@', 'full@'))),
       field('name', $.identifier)
-    ),
-
-    union_declaration: $ => seq(
-      optional(field('heap_flag', $.dyn)),
-      'union',
-      field('name', $.identifier),
-      optional(field("type_parameters", $.type_parameters)),
-      $.struct_body,
     ),
 
     dyn: $ => 'dyn',
@@ -982,12 +956,9 @@ module.exports = grammar({
     ),
 
     modifiers: $ => repeat1(choice(
-      'local',
       'static',
-      'shared',
       'inline',
       'pub',
-      'volatile',
       'intrinsic',
     )),
 
