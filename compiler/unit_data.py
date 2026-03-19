@@ -24,7 +24,7 @@ class SymbolTable:
 
     def add_def(self, stmt_id: StmtId, name: str, symbol_id: SymbolId):
         if name in self.def_table[stmt_id]:
-            raise CompilerError(f"Duplicate definition for statement ID {stmt_id}")
+            raise CompilerError(f"Duplicate symbol definition in statement {StmtId}: '{name}'")
         self.def_table[stmt_id][name] = symbol_id
 
     def lookup(self, stmt_id: StmtId, name: str) -> Symbol:

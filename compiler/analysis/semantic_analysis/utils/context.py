@@ -193,12 +193,12 @@ class SemanticCtx:
         """
         Register a symbol ID with a given statement ID and name.
         """
-        if self.__unit_data is None:
-            raise CompilerError("Unit data is not set")
         symbol_id = self.__symbol_id_counter
         self.__symbol_id_counter += 1
 
-        self.__unit_data.symbol_register_def(stmt_id, name, symbol_id)
+        if self.__def_point is None:
+            assert self.__unit_data is not None
+            self.__unit_data.symbol_register_def(stmt_id, name, symbol_id)
 
         return symbol_id
 
