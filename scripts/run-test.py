@@ -33,11 +33,14 @@ relative_test_dirs = [
     "trait",
     "tuple",
     "type",
-    # "lib/hash",
-    # "lib/map",
-    # "lib/set",
-    # "lib/vec",
-    # "lib/string",
+
+    "lib/fs",
+    "lib/option",
+    "lib/result",
+    "lib/slice",
+    "lib/str",
+    "lib/string",
+    "lib/vec",
 ]
 
 # Concatenate the full path

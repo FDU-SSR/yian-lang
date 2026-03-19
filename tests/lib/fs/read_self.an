@@ -6,8 +6,7 @@ from std.core.io import read_file
 
 i32 main() {
     str self_content = read_file("tests/lib/fs/read_self.an")
-    u8[] self_bytes = self_content.as_slice()
-    assert self_bytes.len() > 0: "reading own source should return non-empty content"
+    assert self_content.starts_with("// Test read_file reading its own source"): "File content should start with expected string"
 
     return 0
 }

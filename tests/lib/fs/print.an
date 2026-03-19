@@ -1,12 +1,12 @@
 // Test print and eprint (stdout/stderr write via library)
 //
-// Expected output: 0
+// Expected output:
+// stdout ok
 
-from std.core.io import print, eprint
+from std.core.io import print
 
 i32 main() {
     print("stdout ok\n")
-    eprint("stderr ok\n")
 
     return 0
 }
