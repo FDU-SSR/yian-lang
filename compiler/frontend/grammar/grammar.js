@@ -12,7 +12,6 @@ const PREC = {
   BIT_XOR: 18,         // ^
   BIT_AND: 20,         // &
   EQUALITY: 22,        // ==  !=
-  RANGE: 23,            // ..
   REL: 24,            // <  <=  >  >=  instanceof
   SHIFT: 26,          // <<  >>  >>>
   ADD: 28,            // +  -
@@ -368,7 +367,6 @@ module.exports = grammar({
         ['>>', PREC.SHIFT],
         ['in', PREC.REL],
         ['not in', PREC.REL],
-        ['..', PREC.RANGE],
       ].map(([operator, precedence]) =>
         prec.left(precedence, seq(
           field('left', $.expression),
