@@ -1,3 +1,5 @@
+from std.collections.hash import Murmur3Hasher, Hash
+
 from slice import SliceIter
 from option import Option
 from iter import Iterator, IntoIterator
@@ -27,38 +29,6 @@ impl str {
     // Get an iterator over the characters and their byte indices
     pub CharIndicesIter char_indices() {
         return CharIndicesIter(0, self.chars())
-    }
-
-    // Check if the str starts with the given prefix
-    pub bool starts_with(str prefix) {
-        u8[] self_bytes = self.as_slice()
-        u8[] prefix_bytes = prefix.as_slice()
-        if prefix_bytes.len() > self_bytes.len() {
-            return false
-        }
-        for i in 0..prefix_bytes.len() {
-            if self_bytes[i] != prefix_bytes[i] {
-                return false
-            }
-        }
-        return true
-    }
-
-    // Check if the str ends with the given suffix
-    pub bool ends_with(str suffix) {
-        u8[] self_bytes = self.as_slice()
-        u8[] suffix_bytes = suffix.as_slice()
-        if suffix_bytes.len() > self_bytes.len() {
-            return false
-        }
-        u64 self_len = self_bytes.len()
-        u64 suffix_len = suffix_bytes.len()
-        for i in 0..suffix_len {
-            if self_bytes[self_len - suffix_len + i] != suffix_bytes[i] {
-                return false
-            }
-        }
-        return true
     }
 
     // Check if the str starts with the given prefix character
@@ -212,5 +182,12 @@ impl Index<Range<u64>, str> for str {
         }
 
         return dyn Self.from_slice(bytes[range.start..range.end])
+    }
+}
+
+impl Hash<Murmur3Hasher> for str {
+    hash(Murmur3Hasher hasher) {
+        u8[] bytes = self.as_slice()
+        hasher.write(bytes)
     }
 }

@@ -338,6 +338,10 @@ def parse_byte_literal(byte_literal: str) -> tuple[IR.LiteralValue, str]:
         byte_value, byte_literal = __consume_escape_sequence(byte_literal)
         # convert hex string to byte value
         byte_value = ord(byte_value)
+    elif byte_literal.startswith("\\"):
+        # other escape byte
+        byte_value, byte_literal = __consume_escape_sequence(byte_literal)
+        byte_value = ord(byte_value)
     else:
         byte_char, byte_literal = __consume_one(byte_literal)
         # byte must be in range 0-255
