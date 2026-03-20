@@ -849,32 +849,12 @@ class OperationChecker:
         raise CompilerError("Unhandled case in range operation checking.")
 
     def __handle_pos(self, operand: IR.TypedValue) -> OperationResult:
-        # Arithmetic only
-        if isinstance(operand, IR.LiteralValue):
-            if isinstance(operand, IR.IntegerLiteral):
-                self.__literal_assignable(TypeSpace.i32_id, operand)
-                return OperationResult(result_type=TypeSpace.i32_id, method_type=None, lvalue=False)
-            if isinstance(operand, IR.FloatLiteral):
-                self.__literal_assignable(TypeSpace.f64_id, operand)
-                return OperationResult(result_type=TypeSpace.f64_id, method_type=None, lvalue=False)
-            raise SemanticError(f"Unsupported operand for unary +: {operand}")
-
         op_ty = self.__space[operand.type_id]
         if not isinstance(op_ty, (ty.IntType, ty.FloatType)):
             raise SemanticError(f"Unsupported operand type for unary +: {self.__space.get_name(operand.type_id)}")
         return OperationResult(result_type=operand.type_id, method_type=None, lvalue=False)
 
     def __handle_neg(self, operand: IR.TypedValue) -> OperationResult:
-        # Arithmetic only
-        if isinstance(operand, IR.LiteralValue):
-            if isinstance(operand, IR.IntegerLiteral):
-                self.__literal_assignable(TypeSpace.i32_id, operand)
-                return OperationResult(result_type=TypeSpace.i32_id, method_type=None, lvalue=False)
-            if isinstance(operand, IR.FloatLiteral):
-                self.__literal_assignable(TypeSpace.f64_id, operand)
-                return OperationResult(result_type=TypeSpace.f64_id, method_type=None, lvalue=False)
-            raise SemanticError(f"Unsupported operand for unary -: {operand}")
-
         op_ty = self.__space[operand.type_id]
         if isinstance(op_ty, (ty.IntType, ty.FloatType)):
             return OperationResult(result_type=operand.type_id, method_type=None, lvalue=False)

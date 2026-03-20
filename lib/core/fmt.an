@@ -1,0 +1,155 @@
+from string import String
+
+pub trait ToString {
+    String to_string();
+}
+
+void append_unsigned_digits(String* out, u64 value) {
+    if value >= 10u64 {
+        append_unsigned_digits(out, value / 10u64)
+    }
+    u8 digit = u8(value % 10u64)
+    out.push(char(b'0' + digit))
+}
+
+String unsigned_to_string(u64 value) {
+    String out = String.new()
+    append_unsigned_digits(&out, value)
+    return out
+}
+
+String signed_to_string(i64 value) {
+    if value >= 0 {
+        return unsigned_to_string(u64(value))
+    }
+
+    String out = String.new()
+    out.push('-')
+
+    u64 mag = u64(value)
+    mag = 0u64 - mag
+    append_unsigned_digits(&out, mag)
+    return out
+}
+
+String float_to_string(f64 value) {
+    if value != value {
+        return String.from("NaN")
+    }
+
+    if value == 0.0 {
+        return String.from("0")
+    }
+
+    String out = String.new()
+    if value < 0.0 {
+        out.push('-')
+        value = -value
+    }
+
+    u64 int_part = u64(value)
+    append_unsigned_digits(&out, int_part)
+
+    f64 frac = value - f64(int_part)
+    if frac == 0.0 {
+        return out
+    }
+
+    out.push('.')
+    u64 count = 0
+    while count < 6u64 {
+        frac *= 10.0
+        u8 digit = u8(frac)
+        out.push(char(b'0' + digit))
+        frac -= f64(digit)
+        count += 1
+        if frac == 0.0 {
+            break
+        }
+    }
+
+    return out
+}
+
+impl ToString for u8 {
+    String to_string() {
+        return unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u16 {
+    String to_string() {
+        return unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u32 {
+    String to_string() {
+        return unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u64 {
+    String to_string() {
+        return unsigned_to_string(*self)
+    }
+}
+
+impl ToString for i8 {
+    String to_string() {
+        return signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i16 {
+    String to_string() {
+        return signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i32 {
+    String to_string() {
+        return signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i64 {
+    String to_string() {
+        return signed_to_string(*self)
+    }
+}
+
+impl ToString for f32 {
+    String to_string() {
+        return float_to_string(f64(*self))
+    }
+}
+
+impl ToString for f64 {
+    String to_string() {
+        return float_to_string(*self)
+    }
+}
+
+impl ToString for bool {
+    String to_string() {
+        if *self {
+            return String.from("true")
+        }
+        return String.from("false")
+    }
+}
+
+impl ToString for char {
+    String to_string() {
+        String out = String.new()
+        out.push(*self)
+        return out
+    }
+}
+
+impl ToString for void {
+    String to_string() {
+        return String.from("void")
+    }
+}
