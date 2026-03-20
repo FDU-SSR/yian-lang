@@ -61,18 +61,18 @@ module.exports = grammar({
     $._type,
   ],
 
-    conflicts: $ => [
-        // [$._multiline_string_literal, $._string_literal],
-        // [$.multiline_string_fragment, $.string_fragment],
-        [$.type_arguments, $.type_parameters],
-        // [$.block_without_brace],
-        [$.if_expression],
-        [$.primary_expression, $.local_variable_declaration],
-        [$.primary_expression, $.switch_label],
-        [$.primary_expression, $.array_type],
-        [$.argument_list, $.formal_parameters],
-        [$.primary_expression, $.formal_parameter],
-    ],
+  conflicts: $ => [
+    // [$._multiline_string_literal, $._string_literal],
+    // [$.multiline_string_fragment, $.string_fragment],
+    [$.type_arguments, $.type_parameters],
+    // [$.block_without_brace],
+    [$.if_expression],
+    [$.primary_expression, $.local_variable_declaration],
+    [$.primary_expression, $.switch_label],
+    [$.primary_expression, $.array_type],
+    [$.argument_list, $.formal_parameters],
+    [$.primary_expression, $.formal_parameter],
+  ],
 
   inline: $ => [
     $._variable_declarator_id,
@@ -86,7 +86,7 @@ module.exports = grammar({
   rules: {
     program: $ =>
       repeat(
-          seq($.statement, terminator)
+        seq($.statement, terminator)
       ),
 
     comment: $ => seq(
@@ -96,7 +96,7 @@ module.exports = grammar({
       ),
     ),
 
-    line_comment: _ =>  token(prec(PREC.COMMENT, /\/\/[^\n]*/)),
+    line_comment: _ => token(prec(PREC.COMMENT, /\/\/[^\n]*/)),
     block_comment: _ => token(prec(PREC.COMMENT,
       seq(
         '/*',
@@ -137,7 +137,7 @@ module.exports = grammar({
       $.identifier,
     ),
 
-    call_expression: $ =>  prec.left(PREC.CALL,
+    call_expression: $ => prec.left(PREC.CALL,
       // choice(
       //   seq(
       //     field('function_name', $.primary_expression),
@@ -191,7 +191,7 @@ module.exports = grammar({
           optional(terminator),
         ),
       ),
-  ),
+    ),
 
     argument_list: $ => seq(
       '(',
@@ -297,7 +297,7 @@ module.exports = grammar({
 
     anonymous_formal_parameters: $ => prec.left(seq(
       '|',
-          commaSep($.formal_parameter),
+      commaSep($.formal_parameter),
       '|',
     )),
 
@@ -311,7 +311,7 @@ module.exports = grammar({
         // b = dyn f64 不进行初始化
         //seq('dyn', field('type', $._type),
         // c = dyn i32(5) 进行初始化
-        seq(field('type', $._type),  field("pointer_stars", repeat(choice('*', '@', 'full@'))), optional($.argument_list)),
+        seq(field('type', $._type), field("pointer_stars", repeat(choice('*', '@', 'full@'))), optional($.argument_list)),
         // d = dyn expr 支持添加常量
         // p = dyn Person(name = "abc", age = 18)
         field('expr', $.expression),
@@ -320,7 +320,7 @@ module.exports = grammar({
         // f = dyn 5i32 支持声明一个 i32 类型的常量 5
         field('constant', $.constant),
         // g = dyn i32[5] 支持声明定长数组
-        seq(field('array_type', $._type),  field("pointer_stars", repeat(choice('*', '@', 'full@'))), field('array_size', $.dimensions_expr)),
+        seq(field('array_type', $._type), field("pointer_stars", repeat(choice('*', '@', 'full@'))), field('array_size', $.dimensions_expr)),
         // h = dyn [1, 2, 3, 4, 5] 支持声明数组常量
         field('array_constant', $.array_initializer),
       )
@@ -374,45 +374,45 @@ module.exports = grammar({
           field('operator', operator),
           field('right', $.expression),
         )),
-    )),
+      )),
 
     unary_expression: $ => choice(...[
-        ['+', PREC.UNARY],
-        ['-', PREC.UNARY],
-        ['!', PREC.UNARY],
-        ['~', PREC.UNARY],
-      ].map(([operator, precedence]) =>
-        prec.left(precedence, seq(
-          // @ts-ignore
-          field('operator', operator),
-          field('operand', $.expression),
-        )),
+      ['+', PREC.UNARY],
+      ['-', PREC.UNARY],
+      ['!', PREC.UNARY],
+      ['~', PREC.UNARY],
+    ].map(([operator, precedence]) =>
+      prec.left(precedence, seq(
+        // @ts-ignore
+        field('operator', operator),
+        field('operand', $.expression),
+      )),
     )),
 
     statement: $ => choice(
-        $.expression_statement,
-        $.assignment_statement,
-        $.type_definition,
-        $.declaration,
-        $.while_statement,
-        $.loop_statement,
-        $.for_statement,
-        $.for_in_statement,
-        $.standalone_block,
-        $.break_statement,
-        $.continue_statement,
-        $.return_statement,
-        $.with_statement,
-        $.local_variable_declaration,
-        $.method_declaration,
-        $.import_statement,
-        $.from_import_statement,
-        $.yield_statement,
-        $.assert_statement,
-        $.del_statement,
-        $.empty_statement,
-        $.dot_call_statement,
-        $.constant_declaration,
+      $.expression_statement,
+      $.assignment_statement,
+      $.type_definition,
+      $.declaration,
+      $.while_statement,
+      $.loop_statement,
+      $.for_statement,
+      $.for_in_statement,
+      $.standalone_block,
+      $.break_statement,
+      $.continue_statement,
+      $.return_statement,
+      $.with_statement,
+      $.local_variable_declaration,
+      $.method_declaration,
+      $.import_statement,
+      $.from_import_statement,
+      $.yield_statement,
+      $.assert_statement,
+      $.del_statement,
+      $.empty_statement,
+      $.dot_call_statement,
+      $.constant_declaration,
     ),
 
     empty_statement: _ => ';',
@@ -471,16 +471,16 @@ module.exports = grammar({
     ),
 
     local_variable_declaration: $ => seq(
-        optional($.modifiers),
-        field('type', $._type),
-        
-        field("pointer_stars", repeat(choice('*', '@', 'full@'))),
-        commaSep1(
-          field(
-            'declarator',
-            $.variable_declarator
-          )
-        ),
+      optional($.modifiers),
+      field('type', $._type),
+
+      field("pointer_stars", repeat(choice('*', '@', 'full@'))),
+      commaSep1(
+        field(
+          'declarator',
+          $.variable_declarator
+        )
+      ),
     ),
 
     variable_declarator: $ => seq(
@@ -498,28 +498,28 @@ module.exports = grammar({
     ),
 
     switch_expression: $ => seq(
-        'match',
-        field('condition', $.expression),
-        field('body', $.switch_block),
+      'match',
+      field('condition', $.expression),
+      field('body', $.switch_block),
     ),
 
     switch_block: $ => seq(
-        '{',
-        repeat1(seq($.switch_block_statement_group)),
-        '}',
+      '{',
+      repeat1(seq($.switch_block_statement_group)),
+      '}',
     ),
 
     switch_block_statement_group: $ => prec.left(seq(
-        $.switch_label,
-        // ":",
-        // $.block_without_brace,
-        $.block,
+      $.switch_label,
+      // ":",
+      // $.block_without_brace,
+      $.block,
     )),
 
     switch_label: $ => commaSep1(choice(
-        $._type,
-        $.expression,
-        $.enum_case,
+      $._type,
+      $.expression,
+      $.enum_case,
       '_',
     )),
 
@@ -530,9 +530,9 @@ module.exports = grammar({
     ),
 
     with_statement: $ => seq(
-        'with',
-        field('receiver', $.primary_expression),
-        field('body', $.block),
+      'with',
+      field('receiver', $.primary_expression),
+      field('body', $.block),
     ),
 
     break_statement: $ => "break",
@@ -559,7 +559,7 @@ module.exports = grammar({
           $.local_variable_declaration,
           $.assignment_statement,
           // commaSep($.expression),
-      ))),
+        ))),
       ';',
       field('condition', optional($.expression)),
       ';',
@@ -585,60 +585,60 @@ module.exports = grammar({
     ),
 
     while_statement: $ => seq(
-        'while',
-        field('condition', $.expression),
-        field('body', $.block),
+      'while',
+      field('condition', $.expression),
+      field('body', $.block),
     ),
 
     loop_statement: $ => seq(
-        'loop',
-        field('body', $.block),
+      'loop',
+      field('body', $.block),
     ),
 
     yield_statement: $ => seq(
-        'yield',
-        field('expression', $.expression),
+      'yield',
+      field('expression', $.expression),
     ),
 
     assert_statement: $ => seq(
-        'assert',
-        field('condition', $.expression),
-        optional(seq(
-          ':',
-          field('message', $.string_literal)
-        )),
+      'assert',
+      field('condition', $.expression),
+      optional(seq(
+        ':',
+        field('message', $.string_literal)
+      )),
     ),
 
     if_expression: $ => seq(
-        'if',
-        field('condition', $.expression),
-        field('consequence', $.block),
-        repeat(field('alternative', $.elif_clause)),
-        optional(field('alternative', $.else_clause)),
+      'if',
+      field('condition', $.expression),
+      field('consequence', $.block),
+      repeat(field('alternative', $.elif_clause)),
+      optional(field('alternative', $.else_clause)),
     ),
 
     elif_clause: $ => seq(
-        optional(terminator),
-        'elif',
-        field('condition', $.expression),
-        field('consequence', $.block),
+      optional(terminator),
+      'elif',
+      field('condition', $.expression),
+      field('consequence', $.block),
     ),
 
     else_clause: $ => seq(
-        optional(terminator),
-        'else',
-        field('consequence', $.block),
+      optional(terminator),
+      'else',
+      field('consequence', $.block),
     ),
 
     block: $ => seq(
       '{',
-        optional($._statement_list),
+      optional($._statement_list),
       '}',
     ),
 
     standalone_block: $ => seq(
       '{',
-        optional($._statement_list),
+      optional($._statement_list),
       '}',
     ),
 
@@ -678,41 +678,41 @@ module.exports = grammar({
       //     optional(field('type_parameters', $.type_parameters))
       // )),
       // $.type_in_impl,
-      seq(field('type', $._type),  field("pointer_stars", repeat(choice('*', '@', 'full@')))),
+      seq(field('type', $._type), field("pointer_stars", repeat(choice('*', '@', 'full@')))),
       optional(field('where_clause', $.where_clause)),
       field('body', $.implement_body)
     ),
     trait_in_impl: $ => seq(
       field('trait', seq(
-          field('name', $.identifier),
-          optional(field('type_parameters', $.type_parameters))
+        field('name', $.identifier),
+        optional(field('type_parameters', $.type_parameters))
       )),
       'for'
     ),
 
     where_clause: $ => seq(
-        'where',
-        commaSep1($.type_constraint)
+      'where',
+      commaSep1($.type_constraint)
     ),
 
     type_constraint: $ => seq(
-        field('type', $._type),
-        ':',
-        field('bound', seq(
-            $._type,
-            repeat(
-                seq(
-                    choice('&', '|'),
-                    $._type
-                )
-            )
-        ))
+      field('type', $._type),
+      ':',
+      field('bound', seq(
+        $._type,
+        repeat(
+          seq(
+            choice('&', '|'),
+            $._type
+          )
+        )
+      ))
     ),
 
     implement_body: $ => seq(
-        '{',
-        repeat($.method_declaration),
-        '}'
+      '{',
+      repeat($.method_declaration),
+      '}'
     ),
 
     // trait_list: $ => commaSep1(alias($.identifier, $.type_identifier)),
@@ -761,7 +761,7 @@ module.exports = grammar({
       '{',
       optional(commaOrNewlineSep($, $.enum_variant)),
       '}'
-  ),
+    ),
 
     enum_variant: $ => choice(
       $.simple_enum_variant,
@@ -786,7 +786,7 @@ module.exports = grammar({
 
     enum_field: $ => seq(
       field('type', $._type),
-      
+
       field("pointer_stars", repeat(choice('*', '@', 'full@'))),
       field('name', $.identifier)
     ),
@@ -812,7 +812,7 @@ module.exports = grammar({
     field_declaration: $ => seq(
       optional($.modifiers),
       field('type', $._type),
-      
+
       field("pointer_stars", repeat(choice('*', '@', 'full@'))),
       field('name', choice(
         $._field_identifier,
@@ -821,39 +821,39 @@ module.exports = grammar({
     ),
 
     method_declaration: $ => prec.left(PREC.DECL, choice(
-        seq(
-          optional($.modifiers),
-          optional(field('type', $._type)),
-          
-          field("pointer_stars", repeat(choice('*', '@', 'full@'))),
-          field('name', $.identifier),
-          optional(field('type_parameters', $.type_parameters)),
-          field('parameters', $.formal_parameters),
-          ';'
-        ),
-        seq(
-          optional($.modifiers),
-          optional(field('type', $._type)),
-          
-          field("pointer_stars", repeat(choice('*', '@', 'full@'))),
-          field('name', $.identifier),
-          optional(field('type_parameters', $.type_parameters)),
-          field('parameters', $.formal_parameters),
-          optional(terminator),
-          field('body', $.block),
-        ),
+      seq(
+        optional($.modifiers),
+        optional(field('type', $._type)),
+
+        field("pointer_stars", repeat(choice('*', '@', 'full@'))),
+        field('name', $.identifier),
+        optional(field('type_parameters', $.type_parameters)),
+        field('parameters', $.formal_parameters),
+        ';'
+      ),
+      seq(
+        optional($.modifiers),
+        optional(field('type', $._type)),
+
+        field("pointer_stars", repeat(choice('*', '@', 'full@'))),
+        field('name', $.identifier),
+        optional(field('type_parameters', $.type_parameters)),
+        field('parameters', $.formal_parameters),
+        optional(terminator),
+        field('body', $.block),
+      ),
     )),
 
     formal_parameters: $ => seq(
       '(',
-        commaSep($.formal_parameter),
+      commaSep($.formal_parameter),
       ')'
     ),
 
     formal_parameter: $ => seq(
       optional($.modifiers),
       field('type', $._type),
-      
+
       field("pointer_stars", repeat(choice('*', '@', 'full@'))),
       $._variable_declarator_id,
     ),
@@ -877,12 +877,12 @@ module.exports = grammar({
     ),
 
     record_type: $ => seq(
-        '{',
-        field('key_type', $._type),
-        ':',
-        field('value_type', $._type),
-        '}'
-      ),
+      '{',
+      field('key_type', $._type),
+      ':',
+      field('value_type', $._type),
+      '}'
+    ),
 
     tuple_type: $ => prec.left(PREC.TUPLE, seq(
       '(',
@@ -894,12 +894,12 @@ module.exports = grammar({
     )),
 
     array_type: $ => seq(
-        field('data_type', $._type),
-        field('dimensions', $.dimensions_expr),
-      ),
+      field('data_type', $._type),
+      field('dimensions', $.dimensions_expr),
+    ),
 
     primitive_type: $ => choice(
-      'i8','u8','i16', 'u16', 'i32', 'u32', 'i64', 'u64', 'f16','f32', 'f64', 'bool', 'char', 'string'
+      'i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64', 'f16', 'f32', 'f64', 'bool', 'char', 'string'
     ),
 
 
@@ -925,14 +925,14 @@ module.exports = grammar({
     )),
 
     type_bound: $ => seq(
-        ':',
-        $.identifier,
-        repeat(
-            seq(
-                choice('&', '|'),
-                $.identifier
-            )
+      ':',
+      $.identifier,
+      repeat(
+        seq(
+          choice('&', '|'),
+          $.identifier
         )
+      )
     ),
 
     method_pointer: $ => prec.left(PREC.GENERIC, seq(
@@ -951,7 +951,7 @@ module.exports = grammar({
 
     formal_types: $ => seq(
       '(',
-        commaSep(alias($._type, $.formal_type)),
+      commaSep(alias($._type, $.formal_type)),
       ')'
     ),
 
@@ -983,18 +983,18 @@ module.exports = grammar({
     identifier: $ => /[_a-zA-Z][_a-zA-Z0-9]*/,
     int_literal: _ => token(new RegExp(
       `(?:` +
-        `0[bB]${_BIN_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
-        `|0[oO]${_OCT_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
-        `|0[xX]${_HEX_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
-        `|${_DEC_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
+      `0[bB]${_BIN_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
+      `|0[oO]${_OCT_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
+      `|0[xX]${_HEX_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
+      `|${_DEC_DIGITS_RE}(?:${_INT_SUFFIX_RE})?` +
       `)`
     )),
 
     float_literal: _ => token(new RegExp(
       `(?:` +
-        `(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})` +
-        `(?:${_DEC_EXP_RE})?` +
-        `(?:${_FLOAT_SUFFIX_RE})?` +
+      `(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})` +
+      `(?:${_DEC_EXP_RE})?` +
+      `(?:${_FLOAT_SUFFIX_RE})?` +
       `)`
     )),
     bool_literal: $ => choice('true', 'false'),
@@ -1011,15 +1011,15 @@ module.exports = grammar({
     )),
     decimal_floating_point_literal: _ => token(new RegExp(
       `(?:` +
-        `0[xX](?:` +
-          `(?:${_HEX_DIGITS_RE}\\.${_HEX_DIGITS_RE}|\\.${_HEX_DIGITS_RE}|${_HEX_DIGITS_RE})` +
-          `${_HEX_EXP_RE}` +
-          `(?:${_FLOAT_SUFFIX_RE})?` +
-        `)` +
-        `|(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})${_DEC_EXP_RE}(?:${_FLOAT_SUFFIX_RE})?` +
-        `|${_DEC_DIGITS_RE}${_DEC_EXP_RE}(?:${_FLOAT_SUFFIX_RE})?` +
-        `|${_DEC_DIGITS_RE}(?:${_FLOAT_SUFFIX_RE})` +
-        `|(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})(?:${_FLOAT_SUFFIX_RE})` +
+      `0[xX](?:` +
+      `(?:${_HEX_DIGITS_RE}\\.${_HEX_DIGITS_RE}|\\.${_HEX_DIGITS_RE}|${_HEX_DIGITS_RE})` +
+      `${_HEX_EXP_RE}` +
+      `(?:${_FLOAT_SUFFIX_RE})?` +
+      `)` +
+      `|(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})${_DEC_EXP_RE}(?:${_FLOAT_SUFFIX_RE})?` +
+      `|${_DEC_DIGITS_RE}${_DEC_EXP_RE}(?:${_FLOAT_SUFFIX_RE})?` +
+      `|${_DEC_DIGITS_RE}(?:${_FLOAT_SUFFIX_RE})` +
+      `|(?:${_DEC_DIGITS_RE}\\.${_DEC_DIGITS_RE}|\\.${_DEC_DIGITS_RE})(?:${_FLOAT_SUFFIX_RE})` +
       `)`
     )),
 
@@ -1092,32 +1092,32 @@ module.exports = grammar({
  *
  */
 function sep1(rule, separator) {
-    return seq(rule, repeat(seq(separator, rule)));
-  }
+  return seq(rule, repeat(seq(separator, rule)));
+}
 
-  /**
-   * Creates a rule to match one or more of the rules separated by a comma
-   *
-   * @param {RuleOrLiteral} rule
-   *
-   * @return {SeqRule}
-   *
-   */
-  function commaSep1(rule) {
-    return sep1(rule, ',');
-  }
+/**
+ * Creates a rule to match one or more of the rules separated by a comma
+ *
+ * @param {RuleOrLiteral} rule
+ *
+ * @return {SeqRule}
+ *
+ */
+function commaSep1(rule) {
+  return sep1(rule, ',');
+}
 
-  /**
-   * Creates a rule to optionally match one or more of the rules separated by a comma
-   *
-   * @param {RuleOrLiteral} rule
-   *
-   * @return {ChoiceRule}
-   *
-   */
-  function commaSep(rule) {
-    return optional(commaSep1(rule));
-  }
+/**
+ * Creates a rule to optionally match one or more of the rules separated by a comma
+ *
+ * @param {RuleOrLiteral} rule
+ *
+ * @return {ChoiceRule}
+ *
+ */
+function commaSep(rule) {
+  return optional(commaSep1(rule));
+}
 
 function commaOrNewlineSep($, rule) {
   const separator = choice(
