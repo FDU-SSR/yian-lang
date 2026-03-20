@@ -38,7 +38,7 @@ def __consume_prefix(s: str, prefix: str) -> str:
     """
     if not s.startswith(prefix):
         raise YianSyntaxError(f"Expected prefix '{prefix}' in '{s}'")
-    return s[len(prefix):]
+    return s[len(prefix):].strip()
 
 
 def __consume_chars(s: str, num_chars: int) -> tuple[str, str]:
