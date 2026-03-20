@@ -6,7 +6,7 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #endif
 
-#define LANGUAGE_VERSION 15
+#define LANGUAGE_VERSION 14
 #define STATE_COUNT 2144
 #define LARGE_STATE_COUNT 37
 #define SYMBOL_COUNT 249
@@ -17,7 +17,7 @@
 #define MAX_ALIAS_SEQUENCE_LENGTH 10
 #define MAX_RESERVED_WORD_SET_SIZE 0
 #define PRODUCTION_ID_COUNT 266
-#define SUPERTYPE_COUNT 5
+#define SUPERTYPE_COUNT 0
 
 enum ts_symbol_identifiers {
   sym_identifier = 1,
@@ -5296,85 +5296,6 @@ static const TSStateId ts_primary_state_ids[STATE_COUNT] = {
   [2143] = 2143,
 };
 
-static const TSSymbol ts_supertype_symbols[SUPERTYPE_COUNT] = {
-  sym_constant,
-  sym_declaration,
-  sym_expression,
-  sym_primary_expression,
-  sym_statement,
-};
-
-static const TSMapSlice ts_supertype_map_slices[] = {
-  [sym_constant] = {.index = 0, .length = 7},
-  [sym_declaration] = {.index = 7, .length = 5},
-  [sym_expression] = {.index = 12, .length = 12},
-  [sym_primary_expression] = {.index = 24, .length = 8},
-  [sym_statement] = {.index = 32, .length = 23},
-};
-
-static const TSSymbol ts_supertype_map_entries[] = {
-  [0] =
-    sym_bool_literal,
-    sym_bytes_literal,
-    sym_char_literal,
-    sym_decimal_floating_point_literal,
-    sym_float_literal,
-    sym_int_literal,
-    sym_string_literal,
-  [7] =
-    sym_enum_declaration,
-    sym_ffi_declaration,
-    sym_implement_declaration,
-    sym_struct_declaration,
-    sym_trait_declaration,
-  [12] =
-    sym_anonymous_method,
-    sym_array_initializer,
-    sym_binary_expression,
-    sym_boolean_expression,
-    sym_dyn_expression,
-    sym_if_expression,
-    sym_not_expression,
-    sym_primary_expression,
-    sym_slice_access,
-    sym_switch_expression,
-    sym_tuple_initializer,
-    sym_unary_expression,
-  [24] =
-    alias_sym_constant,
-    sym_addr_of,
-    sym_array_access,
-    sym_call_expression,
-    sym_field_access,
-    sym_identifier,
-    sym_mem_access,
-    sym_parenthesized_expression,
-  [32] =
-    sym_assert_statement,
-    sym_assignment_statement,
-    sym_break_statement,
-    sym_constant_declaration,
-    sym_continue_statement,
-    sym_declaration,
-    sym_del_statement,
-    sym_dot_call_statement,
-    sym_empty_statement,
-    sym_expression_statement,
-    sym_for_in_statement,
-    sym_for_statement,
-    sym_from_import_statement,
-    sym_import_statement,
-    sym_local_variable_declaration,
-    sym_loop_statement,
-    sym_method_declaration,
-    sym_return_statement,
-    sym_standalone_block,
-    sym_type_definition,
-    sym_while_statement,
-    sym_with_statement,
-    sym_yield_statement,
-};
-
 static bool ts_lex(TSLexer *lexer, TSStateId state) {
   START_LEXER();
   eof = lexer->eof(lexer);
@@ -8274,7 +8195,7 @@ static bool ts_lex_keywords(TSLexer *lexer, TSStateId state) {
   }
 }
 
-static const TSLexerMode ts_lex_modes[STATE_COUNT] = {
+static const TSLexMode ts_lex_modes[STATE_COUNT] = {
   [0] = {.lex_state = 0},
   [1] = {.lex_state = 101},
   [2] = {.lex_state = 101},
@@ -76470,7 +76391,6 @@ TS_PUBLIC const TSLanguage *tree_sitter_yian(void) {
     .state_count = STATE_COUNT,
     .large_state_count = LARGE_STATE_COUNT,
     .production_id_count = PRODUCTION_ID_COUNT,
-    .supertype_count = SUPERTYPE_COUNT,
     .field_count = FIELD_COUNT,
     .max_alias_sequence_length = MAX_ALIAS_SEQUENCE_LENGTH,
     .parse_table = &ts_parse_table[0][0],
@@ -76481,9 +76401,6 @@ TS_PUBLIC const TSLanguage *tree_sitter_yian(void) {
     .field_names = ts_field_names,
     .field_map_slices = ts_field_map_slices,
     .field_map_entries = ts_field_map_entries,
-    .supertype_map_slices = ts_supertype_map_slices,
-    .supertype_map_entries = ts_supertype_map_entries,
-    .supertype_symbols = ts_supertype_symbols,
     .symbol_metadata = ts_symbol_metadata,
     .public_symbol_map = ts_symbol_map,
     .alias_map = ts_non_terminal_alias_map,
@@ -76493,13 +76410,6 @@ TS_PUBLIC const TSLanguage *tree_sitter_yian(void) {
     .keyword_lex_fn = ts_lex_keywords,
     .keyword_capture_token = sym_identifier,
     .primary_state_ids = ts_primary_state_ids,
-    .name = "yian",
-    .max_reserved_word_set_size = 0,
-    .metadata = {
-      .major_version = 0,
-      .minor_version = 1,
-      .patch_version = 0,
-    },
   };
   return &language;
 }
