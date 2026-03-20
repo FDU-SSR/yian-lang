@@ -6,7 +6,6 @@ impl Hash<Murmur3Hasher> for i64 {
     hash(Murmur3Hasher hasher) {
         i64 val = *self
         u8* ptr = bitcast<u8*>(&val)
-        u64 size = 8
-        hasher.write(from_raw_parts(ptr, size))
+        hasher.write(from_raw_parts(ptr, 8))
     }
 }
