@@ -102,5 +102,12 @@ i32 main() {
     assert map4.get(k300).unwrap() == 3: "seed 123: get 300"
     assert map4.get(k400).is_none(): "seed 123: 400 not present"
 
+    // === Test 9: 索引访问 ===
+    HashMap<i64, i64> map5 = HashMap<i64, i64>.new()
+    map5.insert(k1, val100)
+    assert map5[k1] == 100: "index access should return value"
+    map5[k1] = val999
+    assert map5[k1] == 999: "index assignment should update value"
+
     return 0
 }
