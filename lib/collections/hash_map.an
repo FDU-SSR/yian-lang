@@ -1,14 +1,13 @@
-from std.core.vec import Vec
 from std.core.option import Option
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher
 
-pub struct SwissTable<K, V, H, B> {
+pub struct HashMap<K, V> {
     Bucket<K, V>* buckets
     u8* ctrls
     u64 size
     u64 capacity
     u64 growth_left
-    B hasher_builder
+    Murmur3BuildHasher hasher_builder
 }
 
 struct Bucket<K, V> {
@@ -16,7 +15,7 @@ struct Bucket<K, V> {
     V value
 }
 
-impl<K, V, H, B> SwissTable<K, V, H, B> {
+impl<K, V> HashMap<K, V> {
     static pub Self new() {
         return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
     }
@@ -25,7 +24,7 @@ impl<K, V, H, B> SwissTable<K, V, H, B> {
         return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity_and_hasher(u64 capacity, B hasher_builder) {
+    static pub Self with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) {
         u64 actual_capacity
         actual_capacity = Self.next_power_of_two(capacity)
 
@@ -209,7 +208,7 @@ impl<K, V, H, B> SwissTable<K, V, H, B> {
     }
 
     pub u64 hash_key(K key) {
-        H hasher = self.hasher_builder.build_hasher()
+        Murmur3Hasher hasher = self.hasher_builder.build_hasher()
         key.hash(hasher)
         return hasher.finish()
     }

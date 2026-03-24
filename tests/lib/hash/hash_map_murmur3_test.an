@@ -1,14 +1,13 @@
-// 使用 Murmur3Hasher 的 SwissTable (HashMap) 测试，键/值类型为 i64
+// 使用 Murmur3Hasher 的 HashMap 测试，键/值类型为 i64
 //
 // Expected output: 0
 
-from std.collections.hash import Murmur3Hasher
-from std.collections.hash import Murmur3BuildHasher
-from std.collections.hash_map import SwissTable
+from std.core.hash import Murmur3BuildHasher
+from std.collections.hash_map import HashMap
 
 i32 main() {
     // === Test 1: 基础构造 ===
-    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map1 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashMap<i64, i64> map1 = HashMap<i64, i64>.with_capacity_and_hasher(
         0,
         Murmur3BuildHasher.with_seed(0)
     )
@@ -16,7 +15,7 @@ i32 main() {
     assert map1.is_empty(): "new map should be empty"
 
     // === Test 2: insert & get ===
-    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map2 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashMap<i64, i64> map2 = HashMap<i64, i64>.with_capacity_and_hasher(
         8,
         Murmur3BuildHasher.with_seed(42)
     )
@@ -69,7 +68,7 @@ i32 main() {
     assert map2.get(k1).is_none(): "key 1 gone after clear"
 
     // === Test 7: 大量插入触发 resize ===
-    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map3 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashMap<i64, i64> map3 = HashMap<i64, i64>.with_capacity_and_hasher(
         4,
         Murmur3BuildHasher.with_seed(7)
     )
@@ -84,7 +83,7 @@ i32 main() {
     assert map3.get(k20).is_none(): "should not contain key 20"
 
     // === Test 8: 不同 seed ===
-    SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher> map4 = SwissTable<i64, i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashMap<i64, i64> map4 = HashMap<i64, i64>.with_capacity_and_hasher(
         8,
         Murmur3BuildHasher.with_seed(123)
     )
