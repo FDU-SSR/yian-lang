@@ -1,5 +1,4 @@
-from std.collections.hash import Murmur3Hasher
-from std.collections.hash import Hash
+from std.core.hash import Murmur3Hasher, Hash
 from std.core.slice import from_raw_parts
 
 impl u8 {

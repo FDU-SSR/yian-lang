@@ -1,4 +1,4 @@
-from std.collections.hash import Murmur3Hasher, Hash
+from std.core.hash import Murmur3Hasher, Hash
 
 from slice import SliceIter
 from option import Option

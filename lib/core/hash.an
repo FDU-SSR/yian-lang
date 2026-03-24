@@ -1,13 +1,4 @@
-// from wrapping_ops import rotate_left
-pub u64 rotate_left(u64 x, u64 n) {
-    u64 shift = n % 64
-    if shift == 0 {
-        return x
-    }
-    u64 left_part = x << shift
-    u64 right_part = x >> (64 - shift)
-    return left_part | right_part
-}
+from ops import min
 
 pub trait Hasher {
     u64 finish();
@@ -25,42 +16,34 @@ pub trait Hash<T> {
 pub struct Murmur3Hasher {
     u64 state
     u64 len
-    // u8[8] tail
-    u8* tail
+    u8[8] tail
+    // u8* tail
     u64 tail_len
     u64 seed
 }
 
 impl Murmur3Hasher {
-    pub static Murmur3Hasher with_seed(u64 seed){
-        return Murmur3Hasher(
-            state = seed,
-            len = 0,
-            tail = dyn u8[8],
-            tail_len = 0,
-            seed = seed
-        )
+    pub static Self with_seed(u64 seed){
+        Self res
+        res.state = seed
+        res.len = 0
+        res.tail_len = 0
+        res.seed = seed
+        // leave tail uninitialized
+        return res
     }
     mix(u64 k) {
         u64 C1 = 0x87c37b91114253d5
         u64 C2 = 0x4cf5ad432745937f
 
-        k = k * C1
-        k = rotate_left(k, 31)
-        k = k * C2
+        k *= C1
+        k.rotate_left(31)
+        k *= C2
         u64 tmp = self.state
         tmp ^= k
-        tmp = rotate_left(tmp, 27)
+        tmp.rotate_left(27)
         self.state = (tmp * 5) + 0x52dce729
     }
-}
-
-// 需要移动到其他库
-u64 min(u64 a, u64 b) {
-    if a < b {
-        return a
-    }
-    return b
 }
 
 impl Hasher for Murmur3Hasher {
@@ -69,7 +52,7 @@ impl Hasher for Murmur3Hasher {
 
         if self.tail_len > 0 {
             u64 k = 0
-            memcpy(&k, self.tail, self.tail_len)
+            memcpy(&k, &self.tail, self.tail_len)
             state ^= k * 0x4cf5ad432745937f
         }
 
@@ -97,14 +80,14 @@ impl Hasher for Murmur3Hasher {
             u64 need = 8 - self.tail_len
             u64 take = min((total_len - offset), need)
 
-            memcpy(self.tail + self.tail_len, bytes_ptr + offset, take)
+            memcpy(&self.tail[self.tail_len], bytes_ptr + offset, take)
 
             self.tail_len += take
             offset += take
 
             if self.tail_len == 8 {
                 u64 k
-                memcpy(&k, self.tail, 8)
+                memcpy(&k, &self.tail, 8)
                 self.mix(k)
                 self.tail_len = 0
             }
@@ -126,7 +109,7 @@ impl Hasher for Murmur3Hasher {
 
         u64 remaining = total_len - offset
         if remaining > 0 {
-            memcpy(self.tail, bytes_ptr + offset, remaining)
+            memcpy(&self.tail, bytes_ptr + offset, remaining)
             self.tail_len = remaining
         }
     }
@@ -137,8 +120,8 @@ pub struct Murmur3BuildHasher {
 }
 
 impl Murmur3BuildHasher {
-    pub static Murmur3BuildHasher with_seed(u64 seed) {
-        return Murmur3BuildHasher(seed)
+    pub static Self with_seed(u64 seed) {
+        return Self(seed)
     }
 }
 

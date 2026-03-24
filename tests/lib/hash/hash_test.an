@@ -1,5 +1,4 @@
-from std.collections.hash import Murmur3Hasher
-from std.collections.hash import Murmur3BuildHasher
+from std.core.hash import Murmur3Hasher, Murmur3BuildHasher
 
 i32 main() {
     // 同一 seed 的 hasher 初始状态应一致

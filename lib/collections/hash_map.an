@@ -1,8 +1,6 @@
 from std.core.vec import Vec
 from std.core.option import Option
-
-from hash import Murmur3BuildHasher
-from hash import Murmur3Hasher
+from std.core.hash import Murmur3BuildHasher, Murmur3Hasher
 
 pub struct SwissTable<K, V, H, B> {
     Bucket<K, V>* buckets

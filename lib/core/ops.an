@@ -113,6 +113,20 @@ pub trait PartialOrd<Rhs> {
     }
 }
 
+pub T max<T>(T a, T b) {
+    if a < b {
+        return b
+    }
+    return a
+}
+
+pub T min<T>(T a, T b) {
+    if a < b {
+        return a
+    }
+    return b
+}
+
 pub trait Index<Idx, Target> {
     Target* index(Idx index);
 }

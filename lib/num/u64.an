@@ -1,6 +1,17 @@
-from std.collections.hash import Murmur3Hasher
-from std.collections.hash import Hash
+from std.core.hash import Murmur3Hasher, Hash
 from std.core.slice import from_raw_parts
+
+impl u64 {
+    pub rotate_left(u64 n) {
+        u64 shift = n % 64
+        if shift == 0 {
+            return
+        }
+        u64 left_part = *self << shift
+        u64 right_part = *self >> (64 - shift)
+        *self = left_part | right_part
+    }
+}
 
 impl Hash<Murmur3Hasher> for u64 {
     hash(Murmur3Hasher hasher) {

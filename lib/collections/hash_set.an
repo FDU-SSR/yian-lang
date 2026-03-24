@@ -1,16 +1,15 @@
-from hash import Murmur3BuildHasher
-from hash import Murmur3Hasher
+from std.core.hash import Murmur3BuildHasher, Murmur3Hasher
 
-pub struct HashSet<T, H, B> {
+pub struct HashSet<T> {
     T* buckets
     u8* ctrls
     u64 size
     u64 capacity
     u64 growth_left
-    B hasher_builder
+    Murmur3BuildHasher hasher_builder
 }
 
-impl<T, H, B> HashSet<T, H, B> {
+impl<T> HashSet<T> {
     static pub Self new() {
         return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
     }
@@ -19,7 +18,7 @@ impl<T, H, B> HashSet<T, H, B> {
         return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity_and_hasher(u64 capacity, B hasher_builder) {
+    static pub Self with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) {
         u64 actual_capacity = Self.next_power_of_two(capacity)
 
         u64 growth_left = Self.calculate_growth_left(actual_capacity)
@@ -196,7 +195,7 @@ impl<T, H, B> HashSet<T, H, B> {
     }
 
     pub u64 hash_value(T value) {
-        H hasher = self.hasher_builder.build_hasher()
+        Murmur3Hasher hasher = self.hasher_builder.build_hasher()
         value.hash(hasher)
         return hasher.finish()
     }

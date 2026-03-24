@@ -2,13 +2,12 @@
 //
 // Expected output: 0
 
-from std.collections.hash import Murmur3Hasher
-from std.collections.hash import Murmur3BuildHasher
+from std.core.hash import Murmur3BuildHasher
 from std.collections.hash_set import HashSet
 
 i32 main() {
     // === Test 1: 基础构造 ===
-    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set1 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashSet<i64> set1 = HashSet<i64>.with_capacity_and_hasher(
         0,
         Murmur3BuildHasher.with_seed(0)
     )
@@ -16,7 +15,7 @@ i32 main() {
     assert set1.is_empty(): "new set should be empty"
 
     // === Test 2: insert & contains ===
-    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set2 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashSet<i64> set2 = HashSet<i64>.with_capacity_and_hasher(
         8,
         Murmur3BuildHasher.with_seed(42)
     )
@@ -70,7 +69,7 @@ i32 main() {
     assert not set2.contains(v10): "10 should be gone after clear"
 
     // === Test 7: 大量插入触发 resize ===
-    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set3 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashSet<i64> set3 = HashSet<i64>.with_capacity_and_hasher(
         4,
         Murmur3BuildHasher.with_seed(7)
     )
@@ -85,7 +84,7 @@ i32 main() {
     assert not set3.contains(v20b): "should not contain 20"
 
     // === Test 8: 不同 seed ===
-    HashSet<i64, Murmur3Hasher, Murmur3BuildHasher> set4 = HashSet<i64, Murmur3Hasher, Murmur3BuildHasher>.with_capacity_and_hasher(
+    HashSet<i64> set4 = HashSet<i64>.with_capacity_and_hasher(
         8,
         Murmur3BuildHasher.with_seed(123)
     )

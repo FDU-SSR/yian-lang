@@ -29,7 +29,7 @@ def type_unification(
     generic_mapping: dict[TypeId, TypeId] = {}
     seen_generics: set[TypeId] = set()
     literal_pairs: list[tuple[LiteralValue, TypeId]] = []
-    
+
     for arg_obj, param_type_id in zip(args, params):
         if isinstance(arg_obj, TypeId):
             arg_type_id = arg_obj
@@ -40,23 +40,23 @@ def type_unification(
             if arg_type_id is None:
                 literal_pairs.append((arg_obj, param_type_id))
                 continue
-                
+
         __unify(arg_type_id, param_type_id, generic_mapping, seen_generics, type_space)
-    
+
     for literal_obj, param_type_id in literal_pairs:
         resolved_type_id = generic_mapping.get(param_type_id)
-        
+
         if resolved_type_id is not None:
             literal_obj.type_id = resolved_type_id  # type: ignore
             arg_type_id = resolved_type_id
         else:
             arg_type_id = literal_obj.type_id
-            
+
         __unify(arg_type_id, param_type_id, generic_mapping, seen_generics, type_space)
 
     for key, val in list(generic_mapping.items()):
         generic_mapping[key] = __apply_subst(val, generic_mapping, type_space)
-        
+
     unmapped_generics = seen_generics - generic_mapping.keys()
     for generic in unmapped_generics:
         generic_mapping[generic] = generic
@@ -189,7 +189,7 @@ def __unify(
     if isinstance(arg, PointerType) and isinstance(param, PointerType):
         __unify(arg.pointee_type, param.pointee_type, generic_mapping, seen_generics, type_space)
         return
-    
+
     if isinstance(arg, SliceType) and isinstance(param, SliceType):
         __unify(arg.element_type, param.element_type, generic_mapping, seen_generics, type_space)
         return
