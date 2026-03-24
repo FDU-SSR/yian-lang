@@ -44,6 +44,9 @@ def type_unification(
         __unify(arg_type_id, param_type_id, generic_mapping, seen_generics, type_space)
 
     for literal_obj, param_type_id in literal_pairs:
+        if not isinstance(type_space[param_type_id], GenericType):
+            literal_obj.type_id = param_type_id  # type: ignore
+            continue
         resolved_type_id = generic_mapping.get(param_type_id)
 
         if resolved_type_id is not None:
