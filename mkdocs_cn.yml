@@ -1,0 +1,48 @@
+site_name: YIAN 语法文档（中文）
+site_description: YIAN 语言语法与标准库文档
+docs_dir: docs/grammar
+site_url: ""
+
+theme:
+  name: material
+  features:
+    - announce.dismiss
+    - navigation.sections
+    - toc.follow
+    - content.code.copy
+    - content.tabs.link
+
+extra:
+  generator: false
+
+plugins:
+  - tooltips
+  - glightbox
+  - search:
+      lang: zh
+
+markdown_extensions:
+  - pymdownx.highlight:
+      linenums: false
+      use_pygments: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - admonition
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - 首页: index.md
+  - 快速开始: 00.quick_start.md
+  - 引言: 01.intro.md
+  - 类型系统: 02.type_system.md
+  - 方法: 03.methods.md
+  - 语句: 04.statements.md
+  - 泛型: 05.generics.md
+  - 模块: 06.modules.md
+  - 表达式: 07.expression.md
+  - 标准库: 08.standard_library.md
