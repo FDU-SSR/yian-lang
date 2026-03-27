@@ -15,10 +15,13 @@ DEFAULT_WORKSPACE_PATH = os.path.join(ROOT_DIR, "tests")
 LANG_NAME = "yian"
 LANG_EXTENSION = [".an"]
 
-DEFAULT_SO_PATH = "yian_lang_linux.so"
-if platform.system() == 'Darwin':
-    if platform.machine() == 'arm64':
-        DEFAULT_SO_PATH = "yian_lang_macos_arm64.so"
+if platform.machine() == 'arm64':
+    DEFAULT_SO_PATH = "yian_lang_arm64.so"
+elif platform.machine() == 'x86_64':
+    DEFAULT_SO_PATH = "yian_lang_x86_64.so"
+else:
+    raise Exception(f"Unsupported architecture: {platform.machine()}")
+
 LANG_SO_PATH = os.path.join(YIAN_DIR, "compiler", "frontend", DEFAULT_SO_PATH)
 
 BASIC_DIR = "basic"
