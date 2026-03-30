@@ -2,12 +2,7 @@
 import argparse
 from pathlib import Path
 
-from compiler_api import (
-    CompilationPipelineError,
-    CompileRequest,
-    compile_project,
-    split_clang_args,
-)
+from compiler_api import CompilationPipelineError, CompileRequest, compile_project, split_clang_args
 
 
 def parse_cli() -> tuple[argparse.Namespace, list[str]]:
@@ -15,7 +10,7 @@ def parse_cli() -> tuple[argparse.Namespace, list[str]]:
         prog="yian_compiler.py",
         description=(
             "Yian compile entrypoint: run compiler/main.py to generate LLVM IR, "
-            "then link and produce either LLVM IR or a binary executable."
+            "then produce either LLVM IR (ll) or executable (exe)."
         ),
         epilog=(
             "Examples:\n"
@@ -23,11 +18,12 @@ def parse_cli() -> tuple[argparse.Namespace, list[str]]:
             "  yian_compiler.py -d tests/control_flow/for.an\n"
             "  yian_compiler.py -p tests/array/init.an\n"
             "  yian_compiler.py tests/call/func.an -O2\n"
-            "  yian_compiler.py --emit-llvm tests/call/func.an --output build/func.ll\n\n"
+            "  yian_compiler.py --target ll tests/call/func.an --output build/func.ll\n"
+            "  yian_compiler.py --target exe tests/call/func.an --output build/func\n\n"
             "Notes:\n"
             "  1) Unknown arguments are passed through to compiler/main.py\n"
             "  2) -O0/-O1/-O2/-O3/-Os (including lowercase variants) are passed to clang\n"
-            "  3) --emit-llvm mode writes a .ll artifact and skips clang\n"
+            "  3) --target exe links object file with clang to generate executable\n"
             "  4) -d forwards debug mode to compiler/main.py"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -53,11 +49,11 @@ def parse_cli() -> tuple[argparse.Namespace, list[str]]:
         help="Set output path for the final artifact",
     )
     parser.add_argument(
-        "--emit-llvm",
-        action="store_true",
-        help="Emit LLVM IR (*.ll) instead of a binary executable",
+        "--target",
+        default="exe",
+        choices=["ll", "exe"],
+        help="Target artifact kind: ll/exe (default: exe)",
     )
-
     parsed, compiler_args = parser.parse_known_args()
     if not compiler_args:
         parser.error("missing compiler arguments (for example: <path>)")
@@ -75,7 +71,7 @@ def main() -> int:
                 clang_args=clang_args,
                 debug=parsed.debug,
                 display=parsed.display,
-                emit_llvm=parsed.emit_llvm,
+                target=parsed.target,
                 output=parsed.output,
                 verbose=True,
             )

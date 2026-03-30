@@ -198,11 +198,12 @@ class CompilerDriver:
         return semantic_ctx
 
     def __translate(self, llvm_ctx: LLVMCtx) -> None:
+        output_stem = os.path.splitext(config.LLVM_IR_OUTPUT_FILE_NAME)[0]
         LowLevelIRTranslator(llvm_ctx).run(self.__def_points).export(
-            os.path.join(
-                self.options.objects_dir,
-                config.LLVM_IR_OUTPUT_FILE_NAME
-            )
+            output_dir=self.options.objects_dir,
+            emit_kind=self.options.emit,
+            output_stem=output_stem,
+            intermediate_dir=self.options.intermediate_results_dir,
         )
 
 
@@ -223,6 +224,12 @@ class CompilerArgsParser(ArgsParser):
             parser.add_argument("--strict-parse-mode", action="store_false", help="Enable the strict way to parse code")
             parser.add_argument("--dep_path", action="append", default=[], help="Add deps path")
             parser.add_argument("--generate-binary", action="store_true", help="Run the backend to generate binary files")
+            parser.add_argument(
+                "--emit",
+                default="ll",
+                choices=["ll", "ir", "llvm-ir", "bc", "bytecode", "o", "obj", "object", "s", "asm", "assembly"],
+                help="Backend output format: ll/ir/llvm-ir, bc/bytecode, o/obj/object, s/asm/assembly",
+            )
         return self
 
     def set_yian_default_options(self):

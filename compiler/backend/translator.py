@@ -67,8 +67,8 @@ class LowLevelIRTranslator:
         self.__ctx.ir_finalize_functions()
         return self
 
-    def export(self, path: str) -> None:
-        self.__ctx.ir_export(path)
+    def export(self, output_dir: str, emit_kind: str, output_stem: str, intermediate_dir: str | None = None) -> str:
+        return self.__ctx.ir_emit(output_dir, emit_kind, output_stem, intermediate_dir)
 
     def __register_def_point(self, def_point: DefPoint) -> None:
         def_ty = self.__ctx.ty_get(def_point.type_id)

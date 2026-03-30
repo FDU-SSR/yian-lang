@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import subprocess
+import time
 from pathlib import Path
 
 from compiler_api import CompilationPipelineError, CompileRequest, compile_project
@@ -14,34 +15,34 @@ binary_path = root_dir / "tests" / "yian_workspace" / "bin" / "out"
 OPTIMIZE_LEVEL = "-o3"
 
 relative_test_dirs = [
-    # "array",
-    # "call",
-    # "control_flow",
-    # "dyn",
-    # "error",
-    # "generics",
-    # "impl",
-    # "import",
-    # "literal",
-    # "op",
-    # "op_overload",
-    # "pointer",
-    # "private",
-    # "string",
-    # "trait",
-    # "tuple",
-    # "type",
+    "array",
+    "call",
+    "control_flow",
+    "dyn",
+    "error",
+    "generics",
+    "impl",
+    "import",
+    "literal",
+    "op",
+    "op_overload",
+    "pointer",
+    "private",
+    "string",
+    "trait",
+    "tuple",
+    "type",
 
-    # "lib/fs",
-    # "lib/fmt",
+    "lib/fs",
+    "lib/fmt",
     "lib/hash",
-    # "lib/option",
-    # "lib/raw_vec",
-    # "lib/result",
-    # "lib/slice",
-    # "lib/str",
-    # "lib/string",
-    # "lib/vec",
+    "lib/option",
+    "lib/raw_vec",
+    "lib/result",
+    "lib/slice",
+    "lib/str",
+    "lib/string",
+    "lib/vec",
 ]
 
 # Concatenate the full path
@@ -68,6 +69,7 @@ def run_compiler_test(target_path: Path) -> tuple[bool, str]:
             CompileRequest(
                 compiler_args=compiler_args,
                 clang_args=clang_args,
+                target="exe",
                 output=binary_path,
                 capture_output=True,
                 verbose=False,
@@ -116,6 +118,8 @@ def run_compiler_test(target_path: Path) -> tuple[bool, str]:
 
 
 def main():
+    start_time = time.perf_counter()
+
     success_count = 0
     total_count = 0
     error_files_count = 0
@@ -143,7 +147,10 @@ def main():
                 else:
                     failed_files.append((str(path), error_msg))
 
+    total_duration = time.perf_counter() - start_time
+
     print(f"\nTest finished. Total: {total_count}, Succeeded: {success_count}, Failed: {total_count - success_count} (including {error_files_count} expected compilation errors *.err.an)")
+    print(f"Total test time: {total_duration:.2f}s")
 
     if failed_files:
         print("\nThe following files failed to compile or their run results were not as expected:")

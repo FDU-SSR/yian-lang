@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import subprocess
 import sys
-
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
 
 OPTIMIZE_ARGS = {
     "-O0",
@@ -17,6 +17,32 @@ OPTIMIZE_ARGS = {
     "-o2",
     "-o3",
     "-os",
+}
+
+TARGET_ALIASES: dict[str, str] = {
+    "ll": "ll",
+    "ir": "ll",
+    "llvm-ir": "ll",
+    "bc": "bc",
+    "bytecode": "bc",
+    "o": "obj",
+    "obj": "obj",
+    "object": "obj",
+    "s": "asm",
+    "asm": "asm",
+    "assembly": "asm",
+    "exe": "exe",
+    "bin": "exe",
+    "binary": "exe",
+    "executable": "exe",
+}
+
+TARGET_TO_SUFFIX: dict[str, str] = {
+    "ll": ".ll",
+    "bc": ".bc",
+    "obj": ".o",
+    "asm": ".s",
+    "exe": "",
 }
 
 
@@ -49,7 +75,7 @@ class CompileRequest:
     clang_args: list[str] = field(default_factory=list)
     debug: bool = False
     display: bool = False
-    emit_llvm: bool = False
+    target: Literal["ll", "bc", "obj", "asm", "exe"] = "exe"
     output: Path | None = None
     root_dir: Path | None = None
     capture_output: bool = False
@@ -58,9 +84,9 @@ class CompileRequest:
 
 @dataclass
 class CompileResult:
-    linked_ll_path: Path
+    compiler_artifact_path: Path
     artifact_path: Path
-    emitted_llvm: bool
+    target: str
 
 
 def split_clang_args(compiler_args: list[str]) -> tuple[list[str], list[str]]:
@@ -95,6 +121,7 @@ def _log(verbose: bool, message: str) -> None:
 def run_compiler(
     root_dir: Path,
     compiler_args: list[str],
+    emit_kind: str,
     debug: bool,
     *,
     capture_output: bool,
@@ -110,6 +137,8 @@ def run_compiler(
         "-f",
         "-w",
         str(workspace_output),
+        "--emit",
+        emit_kind,
         *compiler_args,
         str(lib_path),
     ]
@@ -131,42 +160,51 @@ def run_view(root_dir: Path, *, capture_output: bool, verbose: bool) -> None:
     )
 
 
-def link_ll_files(llir_path: Path, *, capture_output: bool, verbose: bool) -> Path:
-    ll_files = list(llir_path.glob("*.ll"))
-    if not ll_files:
-        raise FileNotFoundError(f"No .ll files found in {llir_path}")
-
-    if len(ll_files) == 1:
-        return ll_files[0]
-
-    output_file = llir_path / "out.ll"
-    cmd_link = ["llvm-link", "-S", "-o", str(output_file), *[str(f) for f in ll_files]]
-    _log(verbose, "=== linking ===")
-    _run_checked(cmd_link, "llvm-link", capture_output=capture_output)
-    _log(verbose, f"linked {len(ll_files)} files to {output_file}")
-
-    for file in ll_files:
-        file.unlink()
-    return output_file
+def normalize_target(target: str) -> str:
+    normalized = TARGET_ALIASES.get(target.lower())
+    if normalized is None:
+        choices = ", ".join(sorted({"ll", "bc", "obj", "asm", "exe"}))
+        raise ValueError(f"Unsupported target: {target}. Supported targets: {choices}")
+    return normalized
 
 
-def emit_llvm_artifact(linked_ll: Path, root_dir: Path, output_path: Path | None) -> Path:
-    default_output = root_dir / "tests" / "yian_workspace" / "bin" / "out.ll"
+def compiler_emit_kind(target: str) -> str:
+    # Executable output uses object file as compiler backend artifact.
+    return "obj" if target == "exe" else target
+
+
+def expected_compiler_artifact_path(root_dir: Path, emit_kind: str) -> Path:
+    suffix = TARGET_TO_SUFFIX[emit_kind]
+    return root_dir / "tests" / "yian_workspace" / "objects" / f"output{suffix}"
+
+
+def resolve_output_path(root_dir: Path, output_path: Path | None, target: str) -> Path:
+    default_name = "out" if target == "exe" else f"out{TARGET_TO_SUFFIX[target]}"
+    default_output = root_dir / "tests" / "yian_workspace" / "bin" / default_name
     final_output = output_path if output_path is not None else default_output
 
-    if final_output.suffix != ".ll":
-        final_output = final_output.with_suffix(".ll")
+    expected_suffix = TARGET_TO_SUFFIX[target]
+    if expected_suffix and final_output.suffix != expected_suffix:
+        final_output = final_output.with_suffix(expected_suffix)
 
     final_output.parent.mkdir(parents=True, exist_ok=True)
+    return final_output
 
-    if linked_ll.resolve() != final_output.resolve():
-        final_output.write_text(linked_ll.read_text(encoding="utf-8"), encoding="utf-8")
 
+def emit_compiler_artifact(
+    compiler_artifact: Path,
+    root_dir: Path,
+    target: str,
+    output_path: Path | None,
+) -> Path:
+    final_output = resolve_output_path(root_dir, output_path, target)
+    if compiler_artifact.resolve() != final_output.resolve():
+        final_output.write_bytes(compiler_artifact.read_bytes())
     return final_output
 
 
 def compile_with_clang(
-    linked_ll_file: Path,
+    object_file: Path,
     clang_args: list[str],
     root_dir: Path,
     binary_output: Path | None,
@@ -174,11 +212,17 @@ def compile_with_clang(
     capture_output: bool,
     verbose: bool,
 ) -> Path:
-    default_output = root_dir / "tests" / "yian_workspace" / "bin" / "out"
-    clang_output_file = binary_output if binary_output is not None else default_output
-    clang_output_file.parent.mkdir(parents=True, exist_ok=True)
+    clang_output_file = resolve_output_path(root_dir, binary_output, "exe")
 
-    full_cmd = ["clang", str(linked_ll_file), *clang_args, "-o", str(clang_output_file), "-lm"]
+    full_cmd = [
+        "clang",
+        str(object_file),
+        *clang_args,
+        "-pie",
+        "-o",
+        str(clang_output_file),
+        "-lm",
+    ]
     _log(verbose, "=== compiling ===")
     _run_checked(full_cmd, "clang", capture_output=capture_output)
     _log(verbose, f"compiled all files to {clang_output_file}")
@@ -187,11 +231,13 @@ def compile_with_clang(
 
 def compile_project(request: CompileRequest) -> CompileResult:
     root_dir = request.root_dir or Path(__file__).resolve().parent.parent
-    llir_path = root_dir / "tests" / "yian_workspace" / "objects"
+    target = normalize_target(request.target)
+    emit_kind = compiler_emit_kind(target)
 
     run_compiler(
         root_dir,
         request.compiler_args,
+        emit_kind,
         request.debug,
         capture_output=request.capture_output,
     )
@@ -203,23 +249,21 @@ def compile_project(request: CompileRequest) -> CompileResult:
             verbose=request.verbose,
         )
 
-    linked_ll_file = link_ll_files(
-        llir_path,
-        capture_output=request.capture_output,
-        verbose=request.verbose,
-    )
+    compiler_artifact = expected_compiler_artifact_path(root_dir, emit_kind)
+    if not compiler_artifact.exists():
+        raise FileNotFoundError(f"Expected compiler artifact not found: {compiler_artifact}")
 
-    if request.emit_llvm:
-        llvm_output = emit_llvm_artifact(linked_ll_file, root_dir, request.output)
-        _log(request.verbose, f"emitted llvm ir to {llvm_output}")
+    if target != "exe":
+        output = emit_compiler_artifact(compiler_artifact, root_dir, target, request.output)
+        _log(request.verbose, f"emitted {target} artifact to {output}")
         return CompileResult(
-            linked_ll_path=linked_ll_file,
-            artifact_path=llvm_output,
-            emitted_llvm=True,
+            compiler_artifact_path=compiler_artifact,
+            artifact_path=output,
+            target=target,
         )
 
     binary_output = compile_with_clang(
-        linked_ll_file,
+        compiler_artifact,
         request.clang_args,
         root_dir,
         request.output,
@@ -227,7 +271,7 @@ def compile_project(request: CompileRequest) -> CompileResult:
         verbose=request.verbose,
     )
     return CompileResult(
-        linked_ll_path=linked_ll_file,
+        compiler_artifact_path=compiler_artifact,
         artifact_path=binary_output,
-        emitted_llvm=False,
+        target=target,
     )

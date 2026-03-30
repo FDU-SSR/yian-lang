@@ -1,3 +1,8 @@
+import importlib
+import os
+
+from llvmlite import ir
+
 from compiler.backend.utils.def_info import DefInfo
 from compiler.backend.utils.func_obj import FuncObjManager
 from compiler.backend.utils.ll_block import LowLevelBlockManager
@@ -10,14 +15,15 @@ from compiler.config.defs import IRHandlerMap, StmtId, SymbolId, TypeId, UnitId
 from compiler.unit_data import UnitData
 from compiler.utils import is_user_defined_name, ty
 from compiler.utils.errors import CompilerError, ErrorReporter
-from compiler.utils.IR import (ArrayLiteral, TupleLiteral, BooleanLiteral, CharLiteral, DefPoint, FloatLiteral, IntegerLiteral,
-                               Operator, StringLiteral, TypedValue, Variable)
+from compiler.utils.IR import (ArrayLiteral, BooleanLiteral, CharLiteral, DefPoint, FloatLiteral, IntegerLiteral,
+                               Operator, StringLiteral, TupleLiteral, TypedValue, Variable)
 from compiler.utils.IR import cgir as cir
 from compiler.utils.ty import MethodRegistry, TypeSpace
-from llvmlite import ir
 
 
 class LLVMCtx:
+    _llvm_binding_initialized: bool = False
+
     def __init__(
         self,
         type_space: TypeSpace,
@@ -88,6 +94,84 @@ class LLVMCtx:
         with open(path, "w", encoding="utf-8") as f:
             f.write(str(self.__module))
         # print(f"Exported LLVM IR to {path}")
+
+    def ir_emit(self, output_dir: str, emit_kind: str, output_stem: str, intermediate_dir: str | None = None) -> str:
+        normalized_kind = self.__normalize_emit_kind(emit_kind)
+        output_path_by_kind = {
+            "ll": os.path.join(output_dir, f"{output_stem}.ll"),
+            "bc": os.path.join(output_dir, f"{output_stem}.bc"),
+            "obj": os.path.join(output_dir, f"{output_stem}.o"),
+            "asm": os.path.join(output_dir, f"{output_stem}.s"),
+        }
+
+        ll_path = output_path_by_kind["ll"]
+        if normalized_kind != "ll" and intermediate_dir is not None:
+            ll_path = os.path.join(intermediate_dir, f"{output_stem}.ll")
+
+        self.ir_export(ll_path)
+
+        if normalized_kind == "ll":
+            return ll_path
+
+        llvm = self.__ensure_llvm_backend_initialized()
+        module = llvm.parse_assembly(str(self.__module))
+        module.verify()
+
+        if normalized_kind == "bc":
+            out_path = output_path_by_kind["bc"]
+            with open(out_path, "wb") as f:
+                f.write(module.as_bitcode())
+            return out_path
+
+        target = llvm.Target.from_triple(module.triple)
+        target_machine = target.create_target_machine(reloc="pic")
+
+        if normalized_kind == "obj":
+            out_path = output_path_by_kind["obj"]
+            with open(out_path, "wb") as f:
+                f.write(target_machine.emit_object(module))
+            return out_path
+
+        if normalized_kind == "asm":
+            out_path = output_path_by_kind["asm"]
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(target_machine.emit_assembly(module))
+            return out_path
+
+        raise CompilerError(f"Unsupported emit kind: {emit_kind}")
+
+    @staticmethod
+    def __normalize_emit_kind(kind: str) -> str:
+        alias = {
+            "ll": "ll",
+            "ir": "ll",
+            "llvm-ir": "ll",
+            "bc": "bc",
+            "bytecode": "bc",
+            "o": "obj",
+            "obj": "obj",
+            "object": "obj",
+            "s": "asm",
+            "asm": "asm",
+            "assembly": "asm",
+        }
+        normalized = alias.get(kind.lower())
+        if normalized is None:
+            raise CompilerError(f"Unsupported emit kind: {kind}")
+        return normalized
+
+    @staticmethod
+    def __ensure_llvm_backend_initialized():
+        llvm = importlib.import_module("llvmlite.binding")
+        if LLVMCtx._llvm_binding_initialized:
+            return llvm
+
+        llvm.initialize()
+        llvm.initialize_native_target()
+        llvm.initialize_native_asmprinter()
+        llvm.initialize_native_asmparser()
+        LLVMCtx._llvm_binding_initialized = True
+        return llvm
 
     def ir_alloc_var(self, var: cir.Variable) -> None:
         if self.__def_info is None:
