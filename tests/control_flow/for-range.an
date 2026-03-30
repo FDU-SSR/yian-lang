@@ -1,4 +1,4 @@
-// Test for-in loop control flow.
+// Test for loop control flow in a range-based style.
 //
 // Expected output: 0
 
@@ -10,8 +10,8 @@ i32 main(){
     }
 
     i32 sum = 0
-    for elem in arr {
-        sum += elem
+    for i in 0u64..1024 {
+        sum += arr[i]
     }
 
     assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2"

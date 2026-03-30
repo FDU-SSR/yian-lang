@@ -1,14 +1,20 @@
-// Test for loop control flow
+// Test classic for loop control flow.
 //
 // Expected output: 0
 
 i32 main(){
-    i32 a = 1
-    for i32 i = 1; i <= 5; {
-        a = a * 2
-        i = i + 1
+    // add up 1024 elements of an array
+    i32[1024] arr
+    for u64 i = 0; i < 1024; i += 1 {
+        arr[i] = i32(i)
     }
-    a = a - 1
-    assert a == 31: "For loop failed"
+
+    i32 sum = 0
+    for u64 i = 0; i < 1024; i += 1 {
+        sum += arr[i]
+    }
+
+    assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2"
+
     return 0
 }
