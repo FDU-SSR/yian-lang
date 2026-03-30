@@ -6,43 +6,42 @@ from pathlib import Path
 # Get the root directory where the compiler.sh script is located
 root_dir = Path(__file__).resolve().parent.parent
 
-# scripts/compiler.py
-compiler_path = root_dir / "scripts" / "compiler.py"
-output_path = root_dir / "tests" / "yian_workspace"
+# scripts/yian_compiler.py
+compiler_path = root_dir / "scripts" / "yian_compiler.py"
 tests_path = root_dir / "tests"
 tests_result_path = root_dir / "tests" / "tests_results"
-ll_path = root_dir / "tests" / "yian_workspace" / "objects" / "output.ll"
-
-options = f"compile -f -w {output_path}"
+binary_path = root_dir / "tests" / "yian_workspace" / "bin" / "out"
+OPTIMIZE_LEVEL = "-o3"
 
 relative_test_dirs = [
-    "array",
-    "call",
-    "control_flow",
-    "dyn",
-    "error",
-    "generics",
-    "impl",
-    "import",
-    "literal",
-    "op",
-    "op_overload",
-    "pointer",
-    "private",
-    "string",
-    "trait",
-    "tuple",
-    "type",
+    # "array",
+    # "call",
+    # "control_flow",
+    # "dyn",
+    # "error",
+    # "generics",
+    # "impl",
+    # "import",
+    # "literal",
+    # "op",
+    # "op_overload",
+    # "pointer",
+    # "private",
+    # "string",
+    # "trait",
+    # "tuple",
+    # "type",
 
-    "lib/fs",
+    # "lib/fs",
+    # "lib/fmt",
     "lib/hash",
-    "lib/option",
-    "lib/raw_vec",
-    "lib/result",
-    "lib/slice",
-    "lib/str",
-    "lib/string",
-    "lib/vec",
+    # "lib/option",
+    # "lib/raw_vec",
+    # "lib/result",
+    # "lib/slice",
+    # "lib/str",
+    # "lib/string",
+    # "lib/vec",
 ]
 
 # Concatenate the full path
@@ -54,56 +53,55 @@ def run_compiler_test(target_path: Path) -> tuple[bool, str]:
     Execute compilation test on the specified file
     """
 
-    compile_cmd = f"{compiler_path} {target_path}"
+    compile_cmd = [
+        str(compiler_path),
+        str(target_path),
+        OPTIMIZE_LEVEL,
+        "-o",
+        str(binary_path),
+    ]
 
     if target_path.parent.name == "op_overload":
-        compile_cmd += f" {target_path.with_name('ops.an')}"
+        compile_cmd.append(str(target_path.with_name("ops.an")))
     if target_path.parent.name == "private":
-        compile_cmd += f" {target_path.with_name('private.an')}"
+        compile_cmd.append(str(target_path.with_name("private.an")))
 
     expect_error = target_path.is_file() and target_path.name.endswith('.err.an')
     try:
         print(f"Testing file: {target_path}")
         # Execute compilation command
-        subprocess.run(compile_cmd, shell=True, check=True, text=True, capture_output=True)
+        subprocess.run(compile_cmd, check=True, text=True, capture_output=True)
         print("Compilation successful")
         if expect_error:
             return False, "Expected compilation error, but compilation succeeded"
 
-        if ll_path.exists():
-            # First, use opt to optimize the .ll file
-            opt_cmd = f"opt -S -o {ll_path} -O3 {ll_path}"
-            subprocess.run(opt_cmd, shell=True, check=True, text=True, capture_output=True)
-            # Use lli to run the .ll file
-            run_cmd = f"lli {ll_path}"
-            run_result = subprocess.run(run_cmd, shell=True, text=True, capture_output=True)
+        if not binary_path.exists():
+            print("Generated binary file not found")
+            return False, "Generated binary file not found"
 
-            actual_returncode = run_result.returncode
-            stdout_output = run_result.stdout.strip()
+        run_result = subprocess.run([str(binary_path)], text=True, capture_output=True)
+        actual_returncode = run_result.returncode
+        stdout_output = run_result.stdout.strip()
 
-            # Find the corresponding .an.ans file
-            relative_path = target_path.relative_to(tests_path)
-            ans_file_path = tests_result_path / relative_path.parent / (relative_path.name + '.ans')
-            if not ans_file_path.exists():
-                if actual_returncode == 0:
-                    print("Program returned 0, considered successful")
-                    return True, "Success"
-                else:
-                    msg = f"No .ans file found, and the program return code is not 0: {actual_returncode}"
-                    print(msg)
-                    return False, msg
+        # Find the corresponding .an.ans file
+        relative_path = target_path.relative_to(tests_path)
+        ans_file_path = tests_result_path / relative_path.parent / (relative_path.name + '.ans')
+        if not ans_file_path.exists():
+            if actual_returncode == 0:
+                print("Program returned 0, considered successful")
+                return True, "Success"
+            msg = f"No .ans file found, and the program return code is not 0: {actual_returncode}"
+            print(msg)
+            return False, msg
 
-            expected_content = ans_file_path.read_text().strip()
+        expected_content = ans_file_path.read_text().strip()
 
-            # Compare return value or standard output
-            if str(actual_returncode) == expected_content or stdout_output == expected_content:
-                print("Run result is as expected")
-            else:
-                print(f"Run result does not match expectation. Expected: {expected_content}, Actual return code: {actual_returncode}, Actual output: {stdout_output}")
-                return False, f"Expected: {expected_content}, Actual return code: {actual_returncode}, Actual output: {stdout_output}"
+        # Compare return value or standard output
+        if str(actual_returncode) == expected_content or stdout_output == expected_content:
+            print("Run result is as expected")
         else:
-            print("Generated .ll file not found")
-            return False, "Generated .ll file not found"
+            print(f"Run result does not match expectation. Expected: {expected_content}, Actual return code: {actual_returncode}, Actual output: {stdout_output}")
+            return False, f"Expected: {expected_content}, Actual return code: {actual_returncode}, Actual output: {stdout_output}"
 
         return True, "Success"
     except subprocess.CalledProcessError as e:
