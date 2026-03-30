@@ -43,6 +43,10 @@ class CompilerDriver:
         # ====== initialization =====
         self.__init_compiler_workspace()
 
+    def __debug_print(self, *args, **kwargs) -> None:
+        if self.options.debug:
+            print(*args, **kwargs)
+
     def __init_compiler_workspace(self):
         """
         Create necessary directories in the compiler workspace.
@@ -95,9 +99,13 @@ class CompilerDriver:
 
             try:
                 dp.export(cgir_export_path)
-                print(f"Exported CGIR for DefPoint '{unit_name}::{dp.procedure_name}::{dp.type_id}' at {cgir_export_path}")
+                self.__debug_print(
+                    f"Exported CGIR for DefPoint '{unit_name}::{dp.procedure_name}::{dp.type_id}' at {cgir_export_path}"
+                )
             except Exception as e:
-                print(f"Failed to export CGIR for DefPoint '{unit_name}::{dp.procedure_name}::{dp.type_id}': {e}")
+                self.__debug_print(
+                    f"Failed to export CGIR for DefPoint '{unit_name}::{dp.procedure_name}::{dp.type_id}': {e}"
+                )
 
     def __dump_unit_datas(self, unit_datas: dict[UnitId, UnitData]) -> None:
         if not self.options.debug:
@@ -113,9 +121,9 @@ class CompilerDriver:
 
             try:
                 unit_data.export(cgir_export_path)
-                print(f"Exported GIR for UnitData '{unit_name}::{unit_id}' at {cgir_export_path}")
+                self.__debug_print(f"Exported GIR for UnitData '{unit_name}::{unit_id}' at {cgir_export_path}")
             except Exception as e:
-                print(f"Failed to export GIR for UnitData '{unit_name}::{unit_id}': {e}")
+                self.__debug_print(f"Failed to export GIR for UnitData '{unit_name}::{unit_id}': {e}")
 
     def __semantic_analysis(self) -> SemanticCtx:
         # 1. PASS 1: GIR conversion
@@ -159,28 +167,28 @@ class CompilerDriver:
             VariableAnalyzer,
         ]
 
-        print("\n\n=== Starting Unit Passes ===\n")
-        print(f"Total Passes to run: {len(unit_passes)}\n")
-        print(f"Units to analyze: {self.__unit_datas}\n")
+        self.__debug_print("\n\n=== Starting Unit Passes ===\n")
+        self.__debug_print(f"Total Passes to run: {len(unit_passes)}\n")
+        self.__debug_print(f"Units to analyze: {self.__unit_datas}\n")
 
         if self.options.debug:
             self.__dump_unit_datas(self.__unit_datas)
 
         for pass_cls in unit_passes:
-            print("=" * 10, f"Running {pass_cls.__name__}", "=" * 10)
+            self.__debug_print("=" * 10, f"Running {pass_cls.__name__}", "=" * 10)
 
             pass_instance = pass_cls(semantic_ctx)
             pass_instance.run(set(self.__unit_datas.values()))
 
-        print("\n\n=== Starting DefPoint Analysis Passes ===\n")
-        print(f"Total Passes to run: {len(def_point_passes)}\n")
-        print(f"DefPoints to analyze: {self.__def_points}\n")
+        self.__debug_print("\n\n=== Starting DefPoint Analysis Passes ===\n")
+        self.__debug_print(f"Total Passes to run: {len(def_point_passes)}\n")
+        self.__debug_print(f"DefPoints to analyze: {self.__def_points}\n")
 
         if self.options.debug:
             self.__dump_def_points(self.__def_points)
 
         for pass_cls in def_point_passes:
-            print("=" * 10, f"Running {pass_cls.__name__}", "=" * 10)
+            self.__debug_print("=" * 10, f"Running {pass_cls.__name__}", "=" * 10)
 
             pass_instance = pass_cls(semantic_ctx)
             pass_instance.run(self.__def_points)
@@ -225,6 +233,11 @@ class CompilerArgsParser(ArgsParser):
 
 
 class Compiler:
+    @staticmethod
+    def _debug_print(enabled: bool, *args, **kwargs) -> None:
+        if enabled:
+            print(*args, **kwargs)
+
     def run_frontend(self):
         lian = Lian()
         lian.add_lang(config.LANG_NAME, config.LANG_EXTENSION, config.LANG_SO_PATH, YianParser)
@@ -240,7 +253,8 @@ class Compiler:
         lian = self.run_frontend()
 
         # 2. print welcome message
-        print(
+        self._debug_print(
+            lian.options.debug,
             "\n\n\t" + "/" * 60 + "\n"
             "\t////" + " " * 20 + "Yian Compiler" + " " * 18 + " ////\n"
             "\t" + "/" * 60 + "\n"

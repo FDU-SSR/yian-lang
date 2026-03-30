@@ -87,7 +87,7 @@ class LLVMCtx:
         """
         with open(path, "w", encoding="utf-8") as f:
             f.write(str(self.__module))
-        print(f"Exported LLVM IR to {path}")
+        # print(f"Exported LLVM IR to {path}")
 
     def ir_alloc_var(self, var: cir.Variable) -> None:
         if self.__def_info is None:
