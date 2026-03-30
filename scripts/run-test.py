@@ -3,11 +3,11 @@
 import subprocess
 from pathlib import Path
 
+from compiler_api import CompilationPipelineError, CompileRequest, compile_project
+
 # Get the root directory where the compiler.sh script is located
 root_dir = Path(__file__).resolve().parent.parent
 
-# scripts/yian_compiler.py
-compiler_path = root_dir / "scripts" / "yian_compiler.py"
 tests_path = root_dir / "tests"
 tests_result_path = root_dir / "tests" / "tests_results"
 binary_path = root_dir / "tests" / "yian_workspace" / "bin" / "out"
@@ -53,24 +53,26 @@ def run_compiler_test(target_path: Path) -> tuple[bool, str]:
     Execute compilation test on the specified file
     """
 
-    compile_cmd = [
-        str(compiler_path),
-        str(target_path),
-        OPTIMIZE_LEVEL,
-        "-o",
-        str(binary_path),
-    ]
+    compiler_args = [str(target_path)]
+    clang_args = [OPTIMIZE_LEVEL]
 
     if target_path.parent.name == "op_overload":
-        compile_cmd.append(str(target_path.with_name("ops.an")))
+        compiler_args.append(str(target_path.with_name("ops.an")))
     if target_path.parent.name == "private":
-        compile_cmd.append(str(target_path.with_name("private.an")))
+        compiler_args.append(str(target_path.with_name("private.an")))
 
     expect_error = target_path.is_file() and target_path.name.endswith('.err.an')
     try:
         print(f"Testing file: {target_path}")
-        # Execute compilation command
-        subprocess.run(compile_cmd, check=True, text=True, capture_output=True)
+        compile_project(
+            CompileRequest(
+                compiler_args=compiler_args,
+                clang_args=clang_args,
+                output=binary_path,
+                capture_output=True,
+                verbose=False,
+            )
+        )
         print("Compilation successful")
         if expect_error:
             return False, "Expected compilation error, but compilation succeeded"
@@ -104,12 +106,13 @@ def run_compiler_test(target_path: Path) -> tuple[bool, str]:
             return False, f"Expected: {expected_content}, Actual return code: {actual_returncode}, Actual output: {stdout_output}"
 
         return True, "Success"
-    except subprocess.CalledProcessError as e:
+    except CompilationPipelineError as e:
         if expect_error:
             print("Compilation error as expected")
             return True, "Success"
-        print(f"Test failed: {e.stderr}")
-        return False, e.stderr
+        err_msg = e.stderr.strip() if e.stderr else str(e)
+        print(f"Test failed: {err_msg}")
+        return False, err_msg
 
 
 def main():
