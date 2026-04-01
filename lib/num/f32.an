@@ -1,0 +1,10 @@
+from std.core.hash import Murmur3Hasher, Hash
+from std.core.slice import from_raw_parts
+
+impl Hash<Murmur3Hasher> for f32 {
+    hash(Murmur3Hasher hasher) {
+        f32 val = *self
+        u8* ptr = bitcast<u8*>(&val)
+        hasher.write(from_raw_parts(ptr, 4))
+    }
+}

@@ -74,6 +74,11 @@ impl str {
         }
         return str.from(self.data.as_slice()[start..end])
     }
+
+    // Parse the str into specified type T, panicking if parsing fails
+    pub T parse<T>() {
+        return T.from(*self)
+    }
 }
 
 pub struct CharIter {
@@ -122,6 +127,12 @@ impl Iterator<char> for CharIter {
 
         // Invalid
         return Option<char>.None
+    }
+}
+
+impl IntoIterator<CharIter> for CharIter {
+    CharIter into_iter() {
+        return *self
     }
 }
 

@@ -1,0 +1,62 @@
+from std.core.hash import Murmur3Hasher, Hash
+from std.core.slice import from_raw_parts
+from std.core.convert import From, Into
+
+impl Hash<Murmur3Hasher> for f64 {
+    hash(Murmur3Hasher hasher) {
+        f64 val = *self
+        u8* ptr = bitcast<u8*>(&val)
+        hasher.write(from_raw_parts(ptr, 8))
+    }
+}
+
+impl From<str> for f64 {
+    pub static Self from(str value) {
+        u8[] bytes = value.as_slice()
+        u64 len = bytes.len()
+        if len == 0 {
+            panic("invalid f64: empty string")
+        }
+
+        bool seen_dot = false
+        bool has_int_digit = false
+        bool has_frac_digit = false
+
+        u64 int_part = 0
+        f64 frac_part = 0.0
+        f64 divisor = 1.0
+
+        u64 i = 0
+        while i < len {
+            u8 b = bytes[i]
+            if b == b'.' {
+                if seen_dot {
+                    panic("invalid f64: multiple dots")
+                }
+                seen_dot = true
+            } elif b >= b'0' and b <= b'9' {
+                u8 digit = b - b'0'
+                if not seen_dot {
+                    has_int_digit = true
+                    int_part = int_part * 10 + u64(digit)
+                } else {
+                    has_frac_digit = true
+                    divisor *= 10.0
+                    frac_part += f64(digit) / divisor
+                }
+            } else {
+                panic("invalid f64: contains illegal character")
+            }
+            i += 1
+        }
+
+        if not seen_dot {
+            panic("invalid f64: missing dot")
+        }
+        if not has_int_digit or not has_frac_digit {
+            panic("invalid f64: malformed decimal")
+        }
+
+        return f64(int_part) + frac_part
+    }
+}

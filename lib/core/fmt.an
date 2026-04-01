@@ -4,7 +4,7 @@ pub trait ToString {
     String to_string();
 }
 
-void append_unsigned_digits(String* out, u64 value) {
+append_unsigned_digits(String* out, u64 value) {
     if value >= 10u64 {
         append_unsigned_digits(out, value / 10u64)
     }

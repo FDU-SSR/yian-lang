@@ -1,5 +1,6 @@
 from std.core.hash import Murmur3Hasher, Hash
 from std.core.slice import from_raw_parts
+from std.core.convert import From, Into
 
 impl u64 {
     pub rotate_left(u64 n) {
@@ -34,5 +35,34 @@ impl Hash<Murmur3Hasher> for u64 {
         u64 val = *self
         u8* ptr = bitcast<u8*>(&val)
         hasher.write(from_raw_parts(ptr, 8))
+    }
+}
+
+impl From<str> for u64 {
+    pub static Self from(str value) {
+        u8[] bytes = value.as_slice()
+        u64 len = bytes.len()
+        if len == 0 {
+            panic("invalid u64: empty string")
+        }
+
+        u64 out = 0
+        u64 max_u64 = 18446744073709551615u64
+        u64 i = 0
+        while i < len {
+            u8 b = bytes[i]
+            if b < b'0' or b > b'9' {
+                panic("invalid u64: contains non-digit")
+            }
+
+            u64 digit = u64(b - b'0')
+            if out > (max_u64 - digit) / 10 {
+                panic("invalid u64: overflow")
+            }
+            out = out * 10 + digit
+            i += 1
+        }
+
+        return out
     }
 }

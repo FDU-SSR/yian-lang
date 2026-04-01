@@ -1,17 +1,17 @@
 # yian_compiler.py 编译脚本说明
 
-本文档详细说明 [scripts/yian_compiler.py](scripts/yian_compiler.py) 的用途、参数、执行流程与常见问题，便于在命令行下稳定地完成 YIAN 工程编译。
+本文档详细说明 `scripts/yian_compiler.py` 的用途、参数、执行流程与常见问题，便于在命令行下稳定地完成 YIAN 工程编译。
 
 ## 1. 脚本定位
 
-[scripts/yian_compiler.py](scripts/yian_compiler.py) 是一个统一入口，负责串联两段流程：
+`scripts/yian_compiler.py` 是一个统一入口，负责串联两段流程：
 
-1. 调用 [compiler/main.py](compiler/main.py) 生成 LLVM 后端产物。
+1. 调用 `compiler/main.py` 生成 LLVM 后端产物。
 2. 根据目标类型输出最终文件：
 	- 目标为 ll：直接导出 LLVM IR 文本。
 	- 目标为 exe：先生成目标文件，再调用 clang 链接成可执行文件。
 
-脚本内部依赖 [scripts/compiler_api.py](scripts/compiler_api.py) 提供的编译管线实现。
+脚本内部依赖 `scripts/compiler_api.py` 提供的编译管线实现。
 
 ## 2. 基本用法
 
@@ -109,7 +109,7 @@ scripts/yian_compiler.py tests/call/func.an --output build/func
 
 ## 5. 相关文件
 
-1. [scripts/yian_compiler.py](scripts/yian_compiler.py)：命令行入口。
-2. [scripts/compiler_api.py](scripts/compiler_api.py)：编译管线与产物处理逻辑。
-3. [compiler/main.py](compiler/main.py)：核心编译命令实现。
-4. [lian/scripts/dfview.py](lian/scripts/dfview.py)：中间结果展示工具。
+1. `scripts/yian_compiler.py`：命令行入口。
+2. `scripts/compiler_api.py`：编译管线与产物处理逻辑。
+3. `compiler/main.py`：核心编译命令实现。
+4. `lian/scripts/dfview.py`：中间结果展示工具。
