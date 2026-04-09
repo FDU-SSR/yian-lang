@@ -429,7 +429,7 @@ class Operation:
             result: ir.Value = builder.icmp_unsigned(cmp_op, left_tag, right_tag)  # type: ignore
             return LLValue(TypeSpace.bool_id, result)
         else:
-            raise CompilerError(f"Unsupported types for equality comparison: {ltype}, {rtype}")
+            raise CompilerError(f"Unsupported types for equality comparison: {self.__space.get_name(ltype.type_id)}, {self.__space.get_name(rtype.type_id)}")
 
     def __equal(self, left: LLValue, right: LLValue, builder: ir.IRBuilder) -> LLValue:
         return self.__eq_util(left, right, builder, "==")
