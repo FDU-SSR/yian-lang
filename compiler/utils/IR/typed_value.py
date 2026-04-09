@@ -58,7 +58,7 @@ class IntegerLiteral:
         # Determine type based on suffix
         if self.suffix is not None:
             return TypeSpace.intrinsic_type(IntrinsicType.from_str(self.suffix))
-        
+
         return None
 
 
@@ -104,7 +104,7 @@ class FloatLiteral:
         # Determine type based on suffix
         if self.suffix is not None:
             return TypeSpace.intrinsic_type(IntrinsicType.from_str(self.suffix))
-        
+
         return None
 
 
@@ -213,9 +213,7 @@ class TupleLiteral:
 
     def get_determined_type_id(self) -> TypeId | None:
         """Get the determined type ID from _type_id if available, otherwise return None."""
-        if self._type_id is not None:
-            return self._type_id
-        return None
+        return self._type_id
 
 
 LiteralValue = IntegerLiteral | FloatLiteral | StringLiteral | BooleanLiteral | CharLiteral | ArrayLiteral | TupleLiteral

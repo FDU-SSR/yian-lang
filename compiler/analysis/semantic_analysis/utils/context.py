@@ -329,7 +329,7 @@ class SemanticCtx:
         """
         Check if the source value can be assigned to the target type.
         """
-        self.__operation_checker.assignable(target_type, source_value)
+        self.__operation_checker.assignable_check(target_type, source_value)
 
     def ty_binary_op_check(self, op: IR.Operator, left: IR.TypedValue, right: IR.TypedValue) -> OperationResult:
         """
@@ -391,7 +391,7 @@ class SemanticCtx:
             method_name,
             generic_args,
             arg_values,
-            self.__operation_checker.assignable,
+            self.__operation_checker.assignable_check,
         )
 
     def ty_static_method_lookup(
@@ -409,7 +409,7 @@ class SemanticCtx:
             method_name,
             generic_args,
             arg_values,
-            self.__operation_checker.assignable,
+            self.__operation_checker.assignable_check,
         )
 
     def ty_func_call_check(
@@ -624,7 +624,7 @@ class SemanticCtx:
             pointer_type,
             "deref",
             [],
-            self.__operation_checker.assignable
+            self.__operation_checker.assignable_check
         )
         if method_id is not None:
             method_ty = self.ty_get(method_id).expect_method()
