@@ -199,6 +199,15 @@ class OperationChecker:
         handler = self.__unary_handlers[op]
         return handler(operand)
 
+    def __try_trait_method_result(self, trait: IntrinsicTrait, receiver_type: TypeId, method_name: str, args: list[IR.TypedValue], lvalue: bool) -> OperationResult | None:
+        method = self.__method_registry.trait_method_lookup(trait, receiver_type, method_name, args, self.assignable_check)
+        if method is None:
+            return None
+
+        method_ty = self.__space[method].expect_method()
+        return_type = method_ty.return_type(self.__space.instantiate)
+        return OperationResult(result_type=return_type, method_type=method, lvalue=lvalue)
+
     def __handle_add(self, left: IR.TypedValue, right: IR.TypedValue) -> OperationResult:
         # 1) numeric add(float/int)
         unified_type = self.__try_builtin_numeric_type(left, right)
@@ -216,11 +225,9 @@ class OperationChecker:
             return OperationResult(result_type=right.type_id, method_type=None, lvalue=False)
 
         # 3) overloaded add
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Add, left.type_id, "add", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Add, left.type_id, "add", [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(f"Unsupported operand types for addition: {self.__space.get_name(left.type_id)} + {self.__space.get_name(right.type_id)}")
 
@@ -247,11 +254,9 @@ class OperationChecker:
             return OperationResult(result_type=TypeSpace.i64_id, method_type=None, lvalue=False)
 
         # 4) overloaded sub
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Sub, left.type_id, "sub", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Sub, left.type_id, "sub", [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(f"Unsupported operand types for subtraction: {self.__space.get_name(left.type_id)} - {self.__space.get_name(right.type_id)}")
 
@@ -262,11 +267,9 @@ class OperationChecker:
             return OperationResult(result_type=unified_type, method_type=None, lvalue=False)
 
         # 2) overloaded mul
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Mul, left.type_id, "mul", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Mul, left.type_id, "mul", [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for multiplication: {self.__space.get_name(left.type_id)} * {self.__space.get_name(right.type_id)}"
@@ -279,11 +282,9 @@ class OperationChecker:
             return OperationResult(result_type=unified_type, method_type=None, lvalue=False)
 
         # 2) overloaded div
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Div, left.type_id, "div", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Div, left.type_id, "div", [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for division: {self.__space.get_name(left.type_id)} / {self.__space.get_name(right.type_id)}"
@@ -296,11 +297,9 @@ class OperationChecker:
             return OperationResult(result_type=unified_type, method_type=None, lvalue=False)
 
         # 2) overloaded rem
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Rem, left.type_id, "rem", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Rem, left.type_id, "rem", [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for remainder: {self.__space.get_name(left.type_id)} % {self.__space.get_name(right.type_id)}"
@@ -313,11 +312,9 @@ class OperationChecker:
             return OperationResult(result_type=unified_type, method_type=None, lvalue=False)
 
         # 2) overloaded bitwise op
-        method = self.__method_registry.trait_method_lookup(trait, left.type_id, method_name, [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(trait, left.type_id, method_name, [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for bitwise op {op}: {self.__space.get_name(left.type_id)}, {self.__space.get_name(right.type_id)}"
@@ -351,11 +348,9 @@ class OperationChecker:
             return OperationResult(result_type=left.type_id, method_type=None, lvalue=False)
 
         # 2) overloaded shift
-        method = self.__method_registry.trait_method_lookup(trait, left.type_id, method_name, [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(trait, left.type_id, method_name, [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for shift op {op}: {self.__space.get_name(left.type_id)}, {self.__space.get_name(right.type_id)}"
@@ -389,11 +384,9 @@ class OperationChecker:
                 method_name = "ne"
             case _:
                 raise CompilerError(f"Unhandled comparison operator: {op}")
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.PartialEq, left.type_id, method_name, [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.PartialEq, left.type_id, method_name, [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for comparison {op}: {self.__space.get_name(left.type_id)}, {self.__space.get_name(right.type_id)}"
@@ -418,11 +411,9 @@ class OperationChecker:
             case _:
                 raise CompilerError(f"Unhandled ordered comparison operator: {op}")
 
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.PartialOrd, left.type_id, method_name, [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.PartialOrd, left.type_id, method_name, [right], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Unsupported operand types for ordered comparison {op}: {self.__space.get_name(left.type_id)}, {self.__space.get_name(right.type_id)}"
@@ -513,11 +504,9 @@ class OperationChecker:
             return OperationResult(result_type=elem_type, method_type=None, lvalue=True)
 
         # 3) Index overload
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Index, left_ty_id, "index", [right], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=True)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Index, left_ty_id, "index", [right], lvalue=True)
+        if overload_result is not None:
+            return overload_result
 
         raise YianTypeError(f"Cannot apply index operator {IR.Operator.Index} to type '{self.__space.get_name(left_ty_id)}'.")
 
@@ -550,11 +539,9 @@ class OperationChecker:
             return OperationResult(result_type=operand.type_id, method_type=None, lvalue=False)
 
         # overload
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Neg, operand.type_id, "neg", [], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Neg, operand.type_id, "neg", [], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(f"Unsupported operand type for unary -: {self.__space.get_name(operand.type_id)}")
 
@@ -565,11 +552,9 @@ class OperationChecker:
             return OperationResult(result_type=op_ty.pointee_type, method_type=None, lvalue=True)
 
         # overload
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.Deref, operand.type_id, "deref", [], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=True)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.Deref, operand.type_id, "deref", [], lvalue=True)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(
             f"Cannot dereference non-pointer type: {self.__space.get_name(operand.type_id)}"
@@ -589,11 +574,9 @@ class OperationChecker:
             return OperationResult(result_type=operand.type_id, method_type=None, lvalue=False)
 
         # overload
-        method = self.__method_registry.trait_method_lookup(IntrinsicTrait.BitNot, operand.type_id, "bit_not", [], self.assignable_check)
-        if method is not None:
-            method_ty = self.__space[method].expect_method()
-            return_type = method_ty.return_type(self.__space.instantiate)
-            return OperationResult(result_type=return_type, method_type=method, lvalue=False)
+        overload_result = self.__try_trait_method_result(IntrinsicTrait.BitNot, operand.type_id, "bit_not", [], lvalue=False)
+        if overload_result is not None:
+            return overload_result
 
         raise SemanticError(f"Unsupported type for bitwise not: {self.__space.get_name(operand.type_id)}")
 
