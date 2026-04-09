@@ -4,6 +4,7 @@ from ops import PartialEq, Add, Deref, Index
 from convert import From, Into
 from option import Option
 from range import Range
+from fmt import ToString
 
 pub struct String {
     Vec<u8> data
@@ -208,5 +209,11 @@ impl Index<Range<u64>, str> for String {
         // TODO: This causes memory leak
         str* ret = dyn self.as_str()[range]
         return ret
+    }
+}
+
+impl ToString for String {
+    pub String to_string() {
+        return *self
     }
 }
