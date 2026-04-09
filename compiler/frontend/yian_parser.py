@@ -2065,7 +2065,9 @@ class YianParser(common_parser.Parser):
         field_nodes = self.find_children_by_type(node, "enum_field")
         for each_field in field_nodes:
             field_name = self.read_node_text(each_field)
-            count = field_name.count('*')
+            # 只识别第一段（空格分隔的第一部分）尾部的*
+            first_segment = field_name.split()[0] if field_name.split() else field_name
+            count = len(first_segment) - len(first_segment.rstrip('*'))
             type_node = self.find_child_by_field(each_field, "type")
             field_name_node = self.find_child_by_field(each_field, "name")
             field_type = self.read_node_text(type_node)
