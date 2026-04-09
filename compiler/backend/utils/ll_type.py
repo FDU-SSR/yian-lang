@@ -24,6 +24,8 @@ class LowLevelTypeManager:
         self.__i64 = ir.IntType(64)
         self.__str_type = ir.LiteralStructType([self.__i8.as_pointer(), self.__i64])
         self.__ptr = ir.PointerType(self.__i8)
+        self.__target_data = create_target_data(self.__module.data_layout)
+        self.__layout_cache: dict[TypeId, tuple[int, int]] = {}
 
         self.__intrinsic_functions: dict[IntrinsicFunction, ir.Function] = self.__create_intrinsic_functions()
 
@@ -117,14 +119,116 @@ class LowLevelTypeManager:
         Get the size of the type in bytes.
         """
         ll_type = self.get_ll_type(type_id)
-        return ll_type.get_abi_size(create_target_data(self.__module.data_layout))
+        return ll_type.get_abi_size(self.__target_data)
 
     def get_type_align(self, type_id: TypeId) -> int:
         """
         Get the alignment of the type in bytes.
         """
         ll_type = self.get_ll_type(type_id)
-        return ll_type.get_abi_alignment(create_target_data(self.__module.data_layout))
+        return ll_type.get_abi_alignment(self.__target_data)
+
+    @staticmethod
+    def __align_up(value: int, align: int) -> int:
+        if align <= 1:
+            return value
+        return (value + align - 1) // align * align
+
+    def __stable_layout(self, type_id: TypeId, visiting: set[TypeId] | None = None) -> tuple[int, int]:
+        cached = self.__layout_cache.get(type_id)
+        if cached is not None:
+            return cached
+
+        if visiting is None:
+            visiting = set()
+        if type_id in visiting:
+            raise CodegenError(f"Recursive by-value layout is not supported: {self.__space.get_name(type_id)}")
+        visiting.add(type_id)
+
+        type_def = self.__space[type_id]
+
+        if isinstance(type_def, ty.VoidType):
+            result = (0, 1)
+        elif isinstance(type_def, ty.BoolType):
+            result = (1, 1)
+        elif isinstance(type_def, ty.CharType):
+            result = (4, 4)
+        elif isinstance(type_def, ty.StrType):
+            result = (
+                self.__str_type.get_abi_size(self.__target_data),
+                self.__str_type.get_abi_alignment(self.__target_data),
+            )
+        elif isinstance(type_def, ty.IntType):
+            result = (type_def.size, type_def.size)
+        elif isinstance(type_def, ty.FloatType):
+            result = (type_def.size, type_def.size)
+        elif isinstance(type_def, ty.PointerType):
+            result = (
+                self.__ptr.get_abi_size(self.__target_data),
+                self.__ptr.get_abi_alignment(self.__target_data),
+            )
+        elif isinstance(type_def, ty.FunctionPointerType):
+            result = (
+                self.__ptr.get_abi_size(self.__target_data),
+                self.__ptr.get_abi_alignment(self.__target_data),
+            )
+        elif isinstance(type_def, ty.SliceType):
+            ll_type = self.get_ll_type(type_id)
+            result = (ll_type.get_abi_size(self.__target_data), ll_type.get_abi_alignment(self.__target_data))
+        elif isinstance(type_def, ty.ArrayType):
+            elem_size, elem_align = self.__stable_layout(type_def.element_type, visiting)
+            result = (elem_size * type_def.length, elem_align)
+        elif isinstance(type_def, ty.TupleType):
+            offset = 0
+            max_align = 1
+            for et in type_def.element_types:
+                f_size, f_align = self.__stable_layout(et, visiting)
+                offset = self.__align_up(offset, f_align)
+                offset += f_size
+                max_align = max(max_align, f_align)
+            result = (self.__align_up(offset, max_align), max_align)
+        elif isinstance(type_def, ty.StructType):
+            generic_args = type_def.generic_args
+            substs = dict(zip(type_def.struct_def.generics, generic_args))
+            fields = sorted(type_def.struct_def.fields.values(), key=lambda f: f.index)
+            field_type_ids = [self.__space.instantiate(f.type_id, substs) for f in fields]
+
+            offset = 0
+            max_align = 1
+            for ft in field_type_ids:
+                f_size, f_align = self.__stable_layout(ft, visiting)
+                offset = self.__align_up(offset, f_align)
+                offset += f_size
+                max_align = max(max_align, f_align)
+            result = (self.__align_up(offset, max_align), max_align)
+        elif isinstance(type_def, ty.EnumType):
+            if self.null_pointer_optimizable(type_id):
+                opt_type_id = type_def.generic_args[0]
+                result = self.__stable_layout(opt_type_id, visiting)
+            else:
+                generic_args = type_def.generic_args
+                substs = dict(zip(type_def.enum_def.generics, generic_args))
+
+                max_size = 0
+                max_align = 1
+                for v in type_def.enum_def.variants.values():
+                    if v.payload is None:
+                        continue
+                    payload_type_id = self.__space.instantiate(v.payload, substs)
+                    p_size, p_align = self.__stable_layout(payload_type_id, visiting)
+                    max_size = max(max_size, p_size)
+                    max_align = max(max_align, p_align)
+
+                payload_size = self.__align_up(max_size, max_align) if max_size > 0 else 0
+                # Enum ABI in this backend is {i32 tag, [payload_size x i8] payload}.
+                result = (self.__align_up(4 + payload_size, 4), 4)
+        else:
+            ll_type = self.get_ll_type(type_id)
+            result = (ll_type.get_abi_size(self.__target_data), ll_type.get_abi_alignment(self.__target_data))
+
+        visiting.remove(type_id)
+        self.__layout_cache[type_id] = result
+        return result
 
     def intrinsic_func(self, intrinsic: IntrinsicFunction) -> ir.Function:
         """
@@ -220,8 +324,7 @@ class LowLevelTypeManager:
         max_size = 0
         max_align = 1
         for payload_type_id in payload_type_ids:
-            size = self.get_type_size(payload_type_id)
-            align = self.get_type_align(payload_type_id)
+            size, align = self.__stable_layout(payload_type_id)
             max_size = max(max_size, size)
             max_align = max(max_align, align)
 
