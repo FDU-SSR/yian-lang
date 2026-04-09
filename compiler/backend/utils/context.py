@@ -895,7 +895,7 @@ class LLVMCtx:
                 current_ptr = enum_addr.value
                 current_type_id = opt_type_id
 
-                for field_index in field_path:
+                for i, field_index in enumerate(field_path):
                     current_type = self.ty_get(current_type_id).expect_struct()
 
                     field_ptr = builder.gep(
@@ -913,7 +913,7 @@ class LLVMCtx:
                     substs = dict(zip(current_type.struct_def.generics, generic_args))
                     current_type_id = self.__space.instantiate(field.type_id, substs)
 
-                    if field_index == field_path[-1]:
+                    if i == len(field_path) - 1:
                         pointer_value = builder.load(field_ptr, name="optimizable.ptr")
                         return LLValue(current_type_id, pointer_value)
                     else:
