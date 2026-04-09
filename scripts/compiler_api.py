@@ -234,20 +234,31 @@ def compile_project(request: CompileRequest) -> CompileResult:
     target = normalize_target(request.target)
     emit_kind = compiler_emit_kind(target)
 
-    run_compiler(
-        root_dir,
-        request.compiler_args,
-        emit_kind,
-        request.debug,
-        capture_output=request.capture_output,
-    )
+    compile_error: CompilationPipelineError | None = None
+    try:
+        run_compiler(
+            root_dir,
+            request.compiler_args,
+            emit_kind,
+            request.debug,
+            capture_output=request.capture_output,
+        )
+    except CompilationPipelineError as error:
+        compile_error = error
 
     if request.display:
-        run_view(
-            root_dir,
-            capture_output=request.capture_output,
-            verbose=request.verbose,
-        )
+        try:
+            run_view(
+                root_dir,
+                capture_output=request.capture_output,
+                verbose=request.verbose,
+            )
+        except Exception:
+            if compile_error is None:
+                raise
+
+    if compile_error is not None:
+        raise compile_error
 
     compiler_artifact = expected_compiler_artifact_path(root_dir, emit_kind)
     if not compiler_artifact.exists():
