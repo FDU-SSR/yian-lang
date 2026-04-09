@@ -23,30 +23,9 @@ i32 main() {
     Ordering equal = Ordering.Equal
     Ordering greater = Ordering.Greater
 
-    match less {
-        Less {
-            assert true: "Match Less failed"
-        }
-        _ {
-            panic("Expected Less")
-        }
-    }
-    match equal {
-        Equal {
-            assert true: "Match Equal failed"
-        }
-        _ {
-            panic("Expected Equal")
-        }
-    }
-    match greater {
-        Greater {
-            assert true: "Match Greater failed"
-        }
-        _ {
-            panic("Expected Greater")
-        }
-    }
+    assert less == Ordering.Less: "Enum equality check failed"
+    assert equal == Ordering.Equal: "Enum equality check failed"
+    assert greater == Ordering.Greater: "Enum equality check failed"
 
     return 0
 }
