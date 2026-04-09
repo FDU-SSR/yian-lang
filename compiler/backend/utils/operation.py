@@ -423,6 +423,11 @@ class Operation:
             assert ltype.pointee_type == rtype.pointee_type
             result: ir.Value = builder.icmp_unsigned(cmp_op, left.value, right.value)  # type: ignore
             return LLValue(TypeSpace.bool_id, result)
+        elif isinstance(ltype, ty.EnumType) and isinstance(rtype, ty.EnumType):
+            left_tag = builder.extract_value(left.value, 0)
+            right_tag = builder.extract_value(right.value, 0)
+            result: ir.Value = builder.icmp_unsigned(cmp_op, left_tag, right_tag)  # type: ignore
+            return LLValue(TypeSpace.bool_id, result)
         else:
             raise CompilerError(f"Unsupported types for equality comparison: {ltype}, {rtype}")
 

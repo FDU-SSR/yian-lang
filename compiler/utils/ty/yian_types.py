@@ -447,6 +447,10 @@ class EnumType(InstantiatedType):
     def variant_count(self) -> int:
         return len(self.enum_def.variants)
 
+    @property
+    def tag_only(self) -> bool:
+        return all(variant.payload is None for variant in self.enum_def.variants.values())
+
 
 @dataclass(eq=False)
 class Parameter:

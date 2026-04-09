@@ -368,6 +368,8 @@ class OperationChecker:
             return True
         if not ordered and isinstance(ty_def, (ty.BoolType, ty.CharType)):
             return True
+        if not ordered and isinstance(ty_def, ty.EnumType) and ty_def.tag_only:
+            return True
         return False
 
     def __handle_cmp(self, op: IR.Operator, left: IR.TypedValue, right: IR.TypedValue) -> OperationResult:
