@@ -699,6 +699,11 @@ class LLVMCtx:
 
         # For NPO payload variables, the receiver address is already the address of the val field.
         if receiver.symbol_id in self.__npo_payload_symbols:
+            # bitcast to the field type
+            receiver_addr.value = self.__def_info.builder.bitcast(
+                receiver_addr.value,
+                self.__ll_type.get_ll_type(self.__space.alloc_pointer(field.type_id)),
+            )  # type: ignore
             return LLValue(field.type_id, receiver_addr.value)
 
         field_addr = self.__def_info.builder.gep(
