@@ -1,0 +1,13 @@
+from std.core.string import String
+from std.core.io import print
+
+i32 main() {
+    String s = String.from("Hello")
+    s.push_str(", World!")
+    assert s == "Hello, World!": "s should be 'Hello, World!'"
+
+    s += " How are you?"
+    assert s == "Hello, World! How are you?": "s should be 'Hello, World! How are you?'"
+
+    return 0
+}
