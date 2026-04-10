@@ -118,15 +118,15 @@ class LowLevelTypeManager:
         """
         Get the size of the type in bytes.
         """
-        ll_type = self.get_ll_type(type_id)
-        return ll_type.get_abi_size(self.__target_data)
+        size, _ = self.__stable_layout(type_id)
+        return size
 
     def get_type_align(self, type_id: TypeId) -> int:
         """
         Get the alignment of the type in bytes.
         """
-        ll_type = self.get_ll_type(type_id)
-        return ll_type.get_abi_alignment(self.__target_data)
+        _, align = self.__stable_layout(type_id)
+        return align
 
     @staticmethod
     def __align_up(value: int, align: int) -> int:
