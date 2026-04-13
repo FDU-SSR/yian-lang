@@ -39,8 +39,8 @@ class TypeChecker(UnitPass):
             "bitcast": self.__builtin_bitcast,
             "byte_offset": self.__builtin_byte_offset,
             "memcpy": self.__builtin_memcpy,
-            "read": self.__builtin_read,
-            "write": self.__builtin_write,
+            "sys_read": self.__builtin_read,
+            "sys_write": self.__builtin_write,
             "open": self.__builtin_open,
             "close": self.__builtin_close,
         }

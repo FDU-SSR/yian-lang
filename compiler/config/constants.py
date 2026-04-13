@@ -43,7 +43,7 @@ YIAN_KEYWORDS = {
     # Self
     "self", "Self",
     # Built-in instructions
-    "sizeof", "bitcast", "typeof", "panic", "byte_offset", "memcpy", "read", "write", "open", "close",
+    "sizeof", "bitcast", "typeof", "panic", "byte_offset", "memcpy", "sys_read", "sys_write", "open", "close",
     # Not implemented yet
     # "union", "default", "do", "yield", "with",
     # "ok", "local", "shared", "volatile", "where",
