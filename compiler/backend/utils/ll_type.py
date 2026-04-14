@@ -81,6 +81,11 @@ class LowLevelTypeManager:
             ir.FunctionType(self.__i32, [self.__ptr, self.__ptr, self.__i64]),
             name="memcmp",
         )
+        intrinsics[IntrinsicFunction.SysRandom] = ir.Function(
+            self.__module,
+            ir.FunctionType(self.__i32, []),
+            name="rand",
+        )
         return intrinsics
 
     def get_ll_type(self, type_id: TypeId) -> ir.Type:

@@ -43,7 +43,7 @@ YIAN_KEYWORDS = {
     # Self
     "self", "Self",
     # Built-in instructions
-    "sizeof", "bitcast", "typeof", "panic", "byte_offset", "memcpy", "sys_read", "sys_write", "open", "close",
+    "sizeof", "bitcast", "typeof", "panic", "byte_offset", "memcpy", "sys_read", "sys_write", "open", "close", "sys_random",
     # Not implemented yet
     # "union", "default", "do", "yield", "with",
     # "ok", "local", "shared", "volatile", "where",
@@ -224,6 +224,7 @@ class IntrinsicFunction(Enum):
     StrCompare = auto()
     MemCopy = auto()
     MemCompare = auto()
+    SysRandom = auto()
 
 
 STD_LIBS = {

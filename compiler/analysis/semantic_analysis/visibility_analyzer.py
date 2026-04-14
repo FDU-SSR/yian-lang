@@ -52,6 +52,7 @@ class VisibilityAnalyzer(DefPointPass):
             cir.BitCast: lambda stmt: None,
             cir.ByteOffset: lambda stmt: None,
             cir.MemCopy: lambda stmt: None,
+            cir.SysRandom: lambda stmt: None,
 
             cir.IntCase: self.__case_stmt,
             cir.CharCase: self.__case_stmt,

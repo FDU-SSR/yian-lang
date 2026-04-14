@@ -477,6 +477,14 @@ class LLVMCtx:
             raise CompilerError("DefCtx is not set in LLVMCtx")
         self.__operation.mem_copy(dest_addr, src_addr, size_value, self.__def_info.builder)
 
+    def ir_random(self) -> LLValue:
+        """
+        generate a random u64 value and return it as an LLValue
+        """
+        if self.__def_info is None:
+            raise CompilerError("DefCtx is not set in LLVMCtx")
+        return self.__operation.random(self.__def_info.builder)
+
     def ir_store(self, target: Variable, value: LLValue) -> None:
         """
         store value into target variable

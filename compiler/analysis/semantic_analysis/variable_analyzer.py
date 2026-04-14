@@ -46,6 +46,7 @@ class VariableAnalyzer(DefPointPass):
             cir.BitCast: lambda stmt: None,
             cir.ByteOffset: lambda stmt: None,
             cir.MemCopy: lambda stmt: None,
+            cir.SysRandom: lambda stmt: None,
         }
 
     def _run_prelude(self) -> None:

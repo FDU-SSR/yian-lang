@@ -313,7 +313,7 @@ class Assign(CheckedGIR):
     @classmethod
     def from_gir(
         cls,
-        gir_stmt: IR.AssignStmt,
+        gir_stmt: IR.AssignStmt | IR.CallStmt,
         target: Variable,
         value: TypedValue,
     ) -> 'Assign':
@@ -1760,4 +1760,37 @@ class FieldAccess(CheckedGIR):
             target,
             receiver,
             field,
+        )
+
+
+class SysRandom(CheckedGIR):
+    """
+    Represents a system random number generation.
+
+    Attributes:
+        target (Variable): The target variable to store the random value.
+    """
+
+    def __init__(
+        self,
+        stmt_metadata: StmtMetadata,
+        pos: SrcPosition,
+        target: Variable,
+    ):
+        super().__init__(stmt_metadata, pos)
+        self.target = target
+
+    def __repr__(self) -> str:
+        return f"{self.stmt_id}: {self.target} <- sys_random()"
+
+    @classmethod
+    def from_gir(
+        cls,
+        gir_stmt: IR.CallStmt,
+        target: Variable,
+    ) -> 'SysRandom':
+        return cls(
+            gir_stmt.metadata,
+            gir_stmt.pos,
+            target,
         )

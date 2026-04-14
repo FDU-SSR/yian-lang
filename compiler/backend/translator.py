@@ -52,6 +52,7 @@ class LowLevelIRTranslator:
             cir.BitCast: self.__bitcast,
             cir.ByteOffset: self.__byte_offset,
             cir.MemCopy: self.__mem_copy,
+            cir.SysRandom: self.__sys_random,
         }
 
     def run(self, def_points: set[DefPoint]):
@@ -980,3 +981,9 @@ class LowLevelIRTranslator:
         size_value = self.__ctx.ir_value(stmt.size)
 
         self.__ctx.ir_mem_copy(dest_addr, src_addr, size_value)
+
+    def __sys_random(self, stmt: cir.CheckedGIR) -> None:
+        assert isinstance(stmt, cir.SysRandom)
+
+        random_value = self.__ctx.ir_random()
+        self.__ctx.ir_store(stmt.target, random_value)

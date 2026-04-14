@@ -43,6 +43,7 @@ class TypeChecker(UnitPass):
             "sys_write": self.__builtin_write,
             "open": self.__builtin_open,
             "close": self.__builtin_close,
+            "sys_random": self.__builtin_random,
         }
 
     @property
@@ -353,6 +354,23 @@ class TypeChecker(UnitPass):
 
         self._ctx.cgir_emit(cir.Close.from_gir(stmt, arg_value))
 
+    def __builtin_random(self, stmt: ir.CallStmt) -> None:
+        """
+        sys_random() -> u64
+        """
+        if len(stmt.positional_arguments) != 0 or len(stmt.named_arguments) != 0:
+            raise YianTypeError("The 'sys_random' takes no arguments")
+
+        # generate a random u64 value
+        random_result = IR.Variable(-1, "", TypeSpace.u64_id, False)  # dummy value to do type checking
+
+        if stmt.target is None:
+            raise SemanticError("sys_random must have a target")
+
+        target_var = self.__check_target(stmt, stmt.target, random_result, False)
+
+        self._ctx.cgir_emit(cir.SysRandom.from_gir(stmt, target_var))
+
     def __builtin_panic(self, stmt: ir.CallStmt) -> None:
         """
         panic(str)
@@ -407,7 +425,7 @@ class TypeChecker(UnitPass):
 
         target_var = self.__check_target(stmt, stmt.target, typeof_value, False)
 
-        self._ctx.cgir_emit(cir.Assign(stmt.metadata, stmt.pos, target_var, typeof_value))
+        self._ctx.cgir_emit(cir.Assign.from_gir(stmt, target_var, typeof_value))
 
     def __builtin_bitcast(self, stmt: ir.CallStmt) -> None:
         """

@@ -242,6 +242,18 @@ class Operation:
         memcpy_func = self.__ll_type.intrinsic_func(IntrinsicFunction.MemCopy)
         builder.call(memcpy_func, [dest_i8_ptr, src_i8_ptr, size.value])
 
+    def random(self, builder: ir.IRBuilder) -> LLValue:
+        """
+        generate a random u64 value and return it as an LLValue
+        """
+        random_func = self.__ll_type.intrinsic_func(IntrinsicFunction.SysRandom)
+        random_value = builder.call(random_func, [])
+
+        # rand() returns an i32, but we want to return a u64. We can zero-extend the i32 result to u64.
+        random_value = builder.zext(random_value, ir.IntType(64))
+
+        return LLValue(TypeSpace.u64_id, random_value)  # type: ignore
+
     def __add(self, left: LLValue, right: LLValue, builder: ir.IRBuilder) -> LLValue:
         ltype = self.__space[left.type_id]
         rtype = self.__space[right.type_id]
