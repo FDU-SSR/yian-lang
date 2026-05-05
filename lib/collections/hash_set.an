@@ -1,4 +1,6 @@
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher
+from std.core.option import Option
+from std.core.iter import Iterator, IntoIterator
 
 pub struct HashSet<T> {
     T* buckets
@@ -217,5 +219,38 @@ impl<T> HashSet<T> {
         n |= n >> 16
         n |= n >> 32
         return n + 1
+    }
+}
+
+pub struct HashSetIter<T> {
+    T* buckets
+    u8* ctrls
+    u64 capacity
+    u64 index
+}
+
+impl<T> Iterator<T> for HashSetIter<T> {
+    pub Option<T> next() {
+        while self.index < self.capacity {
+            u8 ctrl_byte = self.ctrls[self.index]
+            if ctrl_byte != 0b1111_1111 and ctrl_byte != 0b1000_0000 {
+                T value = self.buckets[self.index]
+                self.index += 1
+                return Option<T>.Some(value)
+            }
+            self.index += 1
+        }
+        return Option<T>.None
+    }
+}
+
+impl<T> IntoIterator<HashSetIter<T>> for HashSet<T> {
+    pub HashSetIter<T> into_iter() {
+        return HashSetIter<T>(
+            buckets=self.buckets,
+            ctrls=self.ctrls,
+            capacity=self.capacity,
+            index=0
+        )
     }
 }

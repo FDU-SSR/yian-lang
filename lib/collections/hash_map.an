@@ -1,6 +1,7 @@
 from std.core.option import Option
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher
 from std.core.ops import Index
+from std.core.iter import Iterator, IntoIterator
 
 pub struct HashMap<K, V> {
     Bucket<K, V>* buckets
@@ -241,5 +242,38 @@ impl<K, V> Index<K, V> for HashMap<K, V> {
         }
         
         panic("key not found")
+    }
+}
+
+pub struct HashMapKeyIter<K, V> {
+    Bucket<K, V>* buckets
+    u8* ctrls
+    u64 capacity
+    u64 index
+}
+
+impl<K, V> Iterator<K> for HashMapKeyIter<K, V> {
+    pub Option<K> next() {
+        while self.index < self.capacity {
+            u8 ctrl_byte = self.ctrls[self.index]
+            if ctrl_byte != 0b1111_1111 and ctrl_byte != 0b1000_0000 {
+                K key = self.buckets[self.index].key
+                self.index += 1
+                return Option<K>.Some(key)
+            }
+            self.index += 1
+        }
+        return Option<K>.None
+    }
+}
+
+impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
+    pub HashMapKeyIter<K, V> into_iter() {
+        return HashMapKeyIter<K, V>(
+            buckets=self.buckets,
+            ctrls=self.ctrls,
+            capacity=self.capacity,
+            index=0
+        )
     }
 }
