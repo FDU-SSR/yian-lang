@@ -1,4 +1,5 @@
-from typing import Callable
+from llvmlite import ir
+from llvmlite.binding import create_target_data
 
 from compiler.config.constants import IntrinsicFunction
 from compiler.config.defs import TypeId, UnitId
@@ -6,8 +7,6 @@ from compiler.unit_data import UnitData
 from compiler.utils import mangle_type, ty
 from compiler.utils.errors import CodegenError
 from compiler.utils.ty import TypeSpace
-from llvmlite import ir
-from llvmlite.binding import create_target_data
 
 
 class LowLevelTypeManager:
@@ -93,31 +92,43 @@ class LowLevelTypeManager:
             return self.__storage[type_id]
 
         ty_def = self.__space[type_id]
-        type_handlers: dict[type, Callable[[], ir.Type]] = {
-            ty.VoidType: lambda: ir.VoidType(),
-            ty.BoolType: lambda: ir.IntType(1),
-            ty.CharType: lambda: self.__i32,
-            ty.StrType: lambda: self.__str_type,
-            ty.IntType: lambda: self.__handle_int(type_id),
-            ty.FloatType: lambda: self.__handle_float(type_id),
-            ty.PointerType: lambda: self.__handle_pointer(type_id),
-            ty.SliceType: lambda: self.__handle_slice(type_id),
-            ty.ArrayType: lambda: self.__handle_array(type_id),
-            ty.TupleType: lambda: self.__handle_tuple(type_id),
-            ty.StructType: lambda: self.__handle_struct(type_id),
-            ty.EnumType: lambda: self.__handle_enum(type_id),
-            ty.MethodType: lambda: self.__handle_method(type_id),
-            ty.FunctionType: lambda: self.__handle_function(type_id),
-            ty.FunctionPointerType: lambda: self.__handle_function_pointer(type_id),
-        }
 
-        type_kind = type(ty_def)
-        if type_kind in type_handlers:
-            res = type_handlers[type_kind]()
-            self.__storage[type_id] = res
-            return res
+        match ty_def:
+            case ty.VoidType():
+                res = self.__void
+            case ty.BoolType():
+                res = self.__i8
+            case ty.CharType():
+                res = self.__i32
+            case ty.StrType():
+                res = self.__str_type
+            case ty.IntType():
+                res = self.__handle_int(type_id)
+            case ty.FloatType():
+                res = self.__handle_float(type_id)
+            case ty.PointerType():
+                res = self.__handle_pointer(type_id)
+            case ty.SliceType():
+                res = self.__handle_slice(type_id)
+            case ty.ArrayType():
+                res = self.__handle_array(type_id)
+            case ty.TupleType():
+                res = self.__handle_tuple(type_id)
+            case ty.StructType():
+                res = self.__handle_struct(type_id)
+            case ty.EnumType():
+                res = self.__handle_enum(type_id)
+            case ty.MethodType():
+                res = self.__handle_method(type_id)
+            case ty.FunctionType():
+                res = self.__handle_function(type_id)
+            case ty.FunctionPointerType():
+                res = self.__handle_function_pointer(type_id)
+            case _:
+                raise CodegenError(f"{ty_def} cannot be converted to llir type")
 
-        raise CodegenError(f"{ty_def} cannot be converted to llir type")
+        self.__storage[type_id] = res
+        return res
 
     def get_type_size(self, type_id: TypeId) -> int:
         """

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
-from compiler.utils.errors import CompilerError
 from llvmlite import ir
+
+from compiler.utils.errors import CompilerError
 
 
 @dataclass

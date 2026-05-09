@@ -927,13 +927,6 @@ class Break(CheckedGIR):
     Represents a break statement.
     """
 
-    def __init__(
-        self,
-        stmt_metadata: StmtMetadata,
-        pos: SrcPosition,
-    ):
-        super().__init__(stmt_metadata, pos)
-
     def __repr__(self) -> str:
         return f"{self.stmt_id}: break"
 
@@ -952,13 +945,6 @@ class Continue(CheckedGIR):
     """
     Represents a continue statement.
     """
-
-    def __init__(
-        self,
-        stmt_metadata: StmtMetadata,
-        pos: SrcPosition,
-    ):
-        super().__init__(stmt_metadata, pos)
 
     def __repr__(self) -> str:
         return f"{self.stmt_id}: continue"

@@ -5,7 +5,7 @@
       "name": "Debug Compiler",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/cmd/compiler/main.py",
+      "program": "${workspaceFolder}/compiler/main.py",
       "args": [
         "compile",
         "-f",
@@ -13,7 +13,7 @@
         "-w",
         "${workspaceFolder}/tests/yian_workspace",
         "${workspaceFolder}/lib",
-        "${workspaceFolder}/path/to/your_test.an"
+        "${workspaceFolder}/experiment/cwe/CVE-2021-32495.an"
       ],
       "console": "integratedTerminal"
     }

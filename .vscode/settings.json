@@ -2,13 +2,8 @@
     "terminal.integrated.env.linux": {
         "PYTHONPATH": "./cmd;./lian/src"
     },
-    "python.analysis.extraPaths": [
-        "./cmd",
-        "./lian/src"
-    ],
-    "cSpell.words": [
-        "lian"
-    ],
+    "python.analysis.extraPaths": ["./cmd", "./lian/src"],
+    "cSpell.words": ["lian"],
     "python.REPL.enableREPLSmartSend": false,
     "files.associations": {
         "random": "c",
@@ -30,4 +25,11 @@
         "stdint.h": "c",
         "pthread.h": "c"
     },
+    "editor.formatOnSave": true,
+    "python.analysis.typeCheckingMode": "standard",
+    "python.analysis.autoImportCompletions": true,
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "isort.importStrategy": "fromEnvironment"
 }
+
