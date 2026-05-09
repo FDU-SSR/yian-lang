@@ -28,6 +28,14 @@ impl u64 {
         n |= n >> 32
         return n + 1
     }
+
+    pub align_up(u64 alignment) {
+        if alignment == 0 {
+            panic("alignment must be greater than 0")
+        }
+        u64 mask = alignment - 1
+        *self = (*self + mask) & ~mask
+    }
 }
 
 impl Hash<Murmur3Hasher> for u64 {
