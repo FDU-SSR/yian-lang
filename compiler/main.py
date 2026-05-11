@@ -6,9 +6,9 @@ import traceback
 from pathlib import Path
 from typing import NoReturn
 
-from compiler.frontend.lex.lexer import LexError, Lexer
-from compiler.frontend.lex.position import SrcSpan
+from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.token import Token
+from compiler.utils.IR.position import SrcSpan
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:

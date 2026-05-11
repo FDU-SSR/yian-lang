@@ -1,6 +1,6 @@
-from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.frontend.lex.token import (EOF, Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind,
                                          Token)
+from compiler.utils.IR.position import SrcPosition, SrcSpan
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 IN_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
@@ -15,22 +15,91 @@ class LexError(ValueError):
         self.span = span
 
 
-class Lexer:
+class CharStream:
     def __init__(self, source: str):
         self.__source = source
-
-        self.__pos = SrcPosition(0, 1)
-
         self.__index = 0
+        self.pos = SrcPosition(0, 1)
+
+    def at_end(self) -> bool:
+        return self.__index >= len(self.__source)
+
+    def next(self) -> str:
+        if self.__index >= len(self.__source):
+            raise StopIteration("End of source code reached")
+        ch = self.__source[self.__index]
+        self.__index += 1
+
+        if ch == "\n":
+            self.pos.row += 1
+            self.pos.col = 1
+        else:
+            self.pos.col += 1
+
+        return ch
+
+    def advance(self) -> None:
+        if self.at_end():
+            raise StopIteration("End of source code reached")
+
+        if self.__source[self.__index] == "\n":
+            self.pos.row += 1
+            self.pos.col = 1
+        else:
+            self.pos.col += 1
+
+        self.__index += 1
+
+    def advance_n(self, n: int) -> None:
+        for _ in range(n):
+            self.advance()
+
+    def peek(self) -> str | None:
+        """
+        Peeks the next character
+        """
+        if self.__index >= len(self.__source):
+            return None
+        return self.__source[self.__index]
+
+    def peek_n(self, n: int) -> str | None:
+        """
+        Peeks a slice of the next n characters
+        """
+        if self.__index + n > len(self.__source):
+            return None
+        return self.__source[self.__index:self.__index + n]
+
+    def peek_nth(self, n: int) -> str | None:
+        """
+        Peeks the nth character after the current position (1-based index)
+        """
+        if self.__index + n >= len(self.__source):
+            return None
+        return self.__source[self.__index + n - 1]
+
+    def consume(self, expected: str) -> str:
+        """
+        Consumes the prefix of the next characters if they match the expected string, and returns the consumed string.
+        """
+        if not self.peek_n(len(expected)) == expected:
+            raise ValueError(f"Expected '{expected}' but got '{self.peek_n(len(expected))}'")
+        self.advance_n(len(expected))
+        return expected
+
+
+class Lexer:
+    def __init__(self, source: str):
+        self.__stream = CharStream(source)
         self.__tokens: list[Token] = []
 
     def lex(self) -> None:
         """
         Lexes the source code into tokens.
         """
-        while self.__index < len(self.__source):
+        while not self.__stream.at_end():
             self.__tokens.append(self.__next_token())
-        self.__tokens.append(EOF(self.__pos.into_span()))
+        self.__tokens.append(EOF(self.__stream.pos.into_span()))
 
     def export(self) -> list[Token]:
         """
@@ -38,54 +107,21 @@ class Lexer:
         """
         return self.__tokens
 
-    def __next(self) -> str:
-        """
-        Returns the next character from the source code.
-        """
-        if self.__index >= len(self.__source):
-            raise StopIteration("End of source code reached")
-        char = self.__source[self.__index]
-        self.__index += 1
-
-        if char == "\n":
-            self.__pos.row += 1
-            self.__pos.col = 1
-        else:
-            self.__pos.col += 1
-
-        return char
-
     def __skip_ignored(self) -> None:
         """
         Skips whitespace and line comments.
         """
-        while self.__index < len(self.__source):
-            ch = self.__peek()
+        while not self.__stream.at_end():
+            ch = self.__stream.peek()
             if ch is None:
                 return
             if ch.isspace():
-                self.__next()
+                self.__stream.advance()
                 continue
-            if ch == "/" and self.__peek_n(2) == "/":
+            if self.__stream.peek_n(2) == "//":
                 self.__skip_line_comment()
                 continue
             return
-
-    def __peek(self) -> str | None:
-        """
-        Peeks the next character from the source code without consuming it.
-        """
-        if self.__index >= len(self.__source):
-            return None
-        return self.__source[self.__index]
-
-    def __peek_n(self, n: int) -> str | None:
-        """
-        Peeks the next n characters from the source code without consuming them.
-        """
-        if self.__index + n > len(self.__source):
-            return None
-        return self.__source[self.__index + n - 1]
 
     def __next_token(self) -> Token:
         """
@@ -94,11 +130,11 @@ class Lexer:
         Assumes that the caller has already checked that there are more characters to read.
         """
         self.__skip_ignored()
-        if self.__index >= len(self.__source):
-            return EOF(self.__pos.into_span())
+        if self.__stream.at_end():
+            return EOF(self.__stream.pos.into_span())
 
-        start_pos = self.__pos.clone()
-        ch = self.__next()
+        start_pos = self.__stream.pos.clone()
+        ch = self.__stream.next()
 
         if ch in START_IDENTIFIER:
             return self.__lex_identifier_or_keyword(ch, start_pos)
@@ -117,14 +153,12 @@ class Lexer:
 
         Assumes that the caller has already consumed the first character of the identifier or keyword.
         """
-        c = self.__peek()
+        c = self.__stream.peek()
         while c is not None and c in IN_IDENTIFIER:
-            self.__next()
-            tok_str += c
+            tok_str += self.__stream.next()
+            c = self.__stream.peek()
 
-            c = self.__peek()
-
-        span = SrcSpan(start_pos, self.__pos.clone())
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
         tok = KeywordKind.try_from_str(tok_str)
         if tok is not None:
             return Keyword(tok, span)
@@ -137,28 +171,22 @@ class Lexer:
 
         Assumes that the caller has already consumed the first character of the number literal.
         """
-        c = self.__peek()
+        c = self.__stream.peek()
         while c is not None and c in IN_NUMBER:
-            self.__next()
-            tok_str += c
-
-            c = self.__peek()
+            tok_str += self.__stream.next()
+            c = self.__stream.peek()
 
         if c == ".":
-            c_after_dot = self.__peek_n(2)
+            c_after_dot = self.__stream.peek_nth(2)
             if c_after_dot in START_NUMBER:
-                self.__next()
-                tok_str += "."
-                self.__next()
-                tok_str += c_after_dot
-                c = self.__peek()
+                tok_str += self.__stream.consume(".")
+                tok_str += self.__stream.next()
+                c = self.__stream.peek()
                 while c is not None and c in IN_NUMBER:
-                    self.__next()
-                    tok_str += c
+                    tok_str += self.__stream.next()
+                    c = self.__stream.peek()
 
-                    c = self.__peek()
-
-        span = SrcSpan(start_pos, self.__pos.clone())
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
             return Literal(tok_str, span)
         except ValueError as exc:
@@ -171,29 +199,23 @@ class Lexer:
         Assumes that the caller has already consumed the opening double quote.
         """
         tok_str = "\""
-        c = self.__peek()
+        c = self.__stream.peek()
         while c is not None and c != "\"":
+            tok_str += self.__stream.next()
+
             # if the current character is a backslash
             # we need to accept the next character even if it is a double quote
             if c == "\\":
-                self.__next()
-                tok_str += "\\"
-                c = self.__peek()
+                c = self.__stream.peek()
                 if c is not None:
-                    self.__next()
-                    tok_str += c
-                    c = self.__peek()
-            else:
-                self.__next()
-                tok_str += c
-                c = self.__peek()
+                    tok_str += self.__stream.next()
 
-        if c is None or c != "\"":
-            raise LexError("Unterminated string literal", SrcSpan(start_pos, self.__pos.clone()))
+            c = self.__stream.peek()
 
-        tok_str += "\""
-        self.__next()
-        span = SrcSpan(start_pos, self.__pos.clone())
+        # after loop, make sure we ended with a closing quote
+        tok_str += self.__stream.consume("\"")
+
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
             return Literal(tok_str, span)
         except ValueError as exc:
@@ -206,29 +228,23 @@ class Lexer:
         Assumes that the caller has already consumed the opening single quote.
         """
         tok_str = "'"
-        c = self.__peek()
+        c = self.__stream.peek()
         while c is not None and c != "'":
+            tok_str += self.__stream.next()
+
             # if the current character is a backslash
             # we need to accept the next character even if it is a single quote
             if c == "\\":
-                self.__next()
-                tok_str += "\\"
-                c = self.__peek()
+                c = self.__stream.peek()
                 if c is not None:
-                    self.__next()
-                    tok_str += c
-                    c = self.__peek()
-            else:
-                self.__next()
-                tok_str += c
-                c = self.__peek()
+                    tok_str += self.__stream.next()
 
-        if c is None or c != "'":
-            raise LexError("Unterminated char literal", SrcSpan(start_pos, self.__pos.clone()))
+            c = self.__stream.peek()
 
-        tok_str += "'"
-        self.__next()
-        span = SrcSpan(start_pos, self.__pos.clone())
+        # after loop, make sure we ended with a closing quote
+        tok_str += self.__stream.consume("'")
+
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
             return Literal(tok_str, span)
         except ValueError as exc:
@@ -238,13 +254,13 @@ class Lexer:
         """
         Skips a line comment starting at the current slash.
         """
-        self.__next()
-        self.__next()
+        # consume the initial '//'
+        self.__stream.consume("//")
 
-        while self.__index < len(self.__source):
-            if self.__peek() == "\n":
+        while not self.__stream.at_end():
+            if self.__stream.peek() == "\n":
                 return
-            self.__next()
+            self.__stream.advance()
 
     def __lex_delimiter_or_operator(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
@@ -253,16 +269,16 @@ class Lexer:
         Assumes that the caller has already consumed the first character of the delimiter or operator.
         """
         if tok_str == "\n":
-            return Punctuator(PunctuatorKind.Endl, SrcSpan(start_pos, self.__pos.clone()))
+            return Punctuator(PunctuatorKind.Endl, SrcSpan(start_pos, self.__stream.pos.clone()))
 
-        next_char = self.__peek()
+        next_char = self.__stream.peek()
         if next_char is not None:
             combined = tok_str + next_char
             if PunctuatorKind.try_from_str(combined) is not None:
-                self.__next()
+                self.__stream.advance()
                 tok_str = combined
 
-        span = SrcSpan(start_pos, self.__pos.clone())
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
             kind = PunctuatorKind.from_str(tok_str)
         except ValueError as exc:

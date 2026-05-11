@@ -1,7 +1,7 @@
 from abc import ABC
 from enum import Enum, auto
 
-from compiler.frontend.lex.position import SrcSpan
+from compiler.utils.IR.position import SrcSpan
 
 
 class Token(ABC):

@@ -13,9 +13,6 @@ from typing import Optional
 
 from compiler.config.constants import YIAN_KEYWORDS
 
-from lian.util import util
-from lian.util.data_model import DataModel
-
 from .ty import InstantiatedType, TypeSpace
 
 
@@ -24,18 +21,6 @@ def __mangle_identifier(identifier: str) -> str:
     对标识符进行名称混淆。
     """
     return f"{len(identifier)}{identifier}"
-
-
-def is_available(element) -> bool:
-    if isinstance(element, str):
-        element = element.strip()
-    return util.is_available(element)
-
-
-def is_empty(element) -> bool:
-    if isinstance(element, str):
-        element = element.strip()
-    return util.is_empty(element)
 
 
 def is_user_defined_name(name: str) -> bool:
@@ -131,25 +116,3 @@ def mangle_type(
             res += mangle_type(unit_name, generic_arg_id, type_space)
 
     return res
-
-
-def save_dict_list(dict_list: list, file_path: str):
-    DataModel(dict_list).save(file_path)
-
-
-# def get_unit_id_by_stmt_id(stmt_id: StmtId, unit_data_collection: dict[UnitId, "UnitData"]) -> UnitId:
-#     """
-#     Get the unit ID of a given statement.
-
-#     Args:
-#         stmt_id (StmtId): The ID of the statement.
-#         unit_data_collection (dict[int, UnitData]): The collection of unit data.
-#     """
-#     target_unit_id = None
-#     for unit_id, unit_data in unit_data_collection.items():
-#         if stmt_id in unit_data:
-#             target_unit_id = unit_id
-#             break
-#     if target_unit_id is None:
-#         raise CompilerError("Cannot find the unit data for function body copying")
-#     return target_unit_id
