@@ -1,321 +1,369 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TypeAlias
+
 from compiler.frontend.lex.token import Literal as LexLiteral
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 
-class ASTNode:
-    def __init__(self, span: SrcSpan):
-        self.span = span
+@dataclass
+class Program:
+    span: SrcSpan
+    items: list[ProgramItem]
+
+
+@dataclass
+class Import:
+    span: SrcSpan
+    paths: list[str]
+    target: str
+    alias: str | None
+
+
+@dataclass
+class Alias:
+    span: SrcSpan
+    name: str
+    generics: list[str]
+    target: ASTType
+
+
+@dataclass
+class VarInfo:
+    span: SrcSpan
+    var_type: ASTType
+    name: str
+
+
+@dataclass
+class FuncDef:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    params: list[VarInfo]
+    ret_type: ASTType | None
+    body: Block
+
+
+@dataclass
+class FieldInfo:
+    span: SrcSpan
+    is_pub: bool
+    field_type: ASTType
+    name: str
+
+
+@dataclass
+class StructDef:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    generics: list[str]
+    fields: list[FieldInfo]
+
+
+@dataclass
+class VariantInfo:
+    span: SrcSpan
+    name: str
+    fields: list[VarInfo]
+
+
+@dataclass
+class EnumDef:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    generics: list[str]
+    variants: list[VariantInfo]
+
+
+@dataclass
+class Impl:
+    span: SrcSpan
+    generics: list[str]
+    target: ASTType
+    trait: ASTType | None
+    items: list[MethodDef]
 
 
-class Program(ASTNode):
-    def __init__(self, funcs: list["ProgramItem"]):
-        # use the span of the first program item as the span of the whole program
-        assert len(funcs) > 0, "Program must have at least one item"
-        super().__init__(funcs[0].span)
-        self.funcs = funcs
-
+@dataclass
+class TraitDef:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    generics: list[str]
+    items: list[TraitItem]
 
-class ProgramItem(ASTNode):
-    pass
-
-
-class Import(ProgramItem):
-    def __init__(self, span: SrcSpan, paths: list[str], target: str, alias: str | None):
-        super().__init__(span)
-        self.paths = paths
-        self.target = target
-        self.alias = alias
-
-
-class Alias(ProgramItem):
-    def __init__(self, span: SrcSpan, name: str, generics: list[str], target: ASTType):
-        super().__init__(span)
-        self.name = name
-        self.generics = generics
-        self.target = target
 
+@dataclass
+class MethodDef:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    generics: list[str]
+    params: list[VarInfo]
+    ret_type: ASTType | None
+    body: Block
 
-class VarInfo(ASTNode):
-    def __init__(self, span: SrcSpan, var_type: ASTType, name: str):
-        super().__init__(span)
-        self.var_type = var_type
-        self.name = name
-
 
-class FuncDef(ProgramItem):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, params: list[VarInfo], ret_type: ASTType | None, body: "Block"):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.params = params
-        self.ret_type = ret_type
-        self.body = body
+@dataclass
+class MethodDecl:
+    span: SrcSpan
+    attrs: list[str]
+    name: str
+    generics: list[str]
+    params: list[VarInfo]
+    ret_type: ASTType | None
+    body: Block
 
 
-class FieldInfo(ASTNode):
-    def __init__(self, span: SrcSpan, is_pub: bool, field_type: ASTType, name: str):
-        super().__init__(span)
-        self.is_pub = is_pub
-        self.field_type = field_type
-        self.name = name
+@dataclass
+class Block:
+    span: SrcSpan
+    stmts: list[Stmt]
 
 
-class StructDef(ProgramItem):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, generics: list[str], fields: list[FieldInfo]):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.generics = generics
-        self.fields = fields
+@dataclass
+class VarDecl:
+    span: SrcSpan
+    name: str
+    var_type: ASTType
+    init_expr: Expr | None
 
 
-class VariantInfo(ASTNode):
-    def __init__(self, span: SrcSpan, name: str, fields: list[VarInfo]):
-        super().__init__(span)
-        self.name = name
-        self.fields = fields
+@dataclass
+class Return:
+    span: SrcSpan
+    expr: Expr | None
 
 
-class EnumDef(ProgramItem):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, generics: list[str], variants: list[VariantInfo]):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.generics = generics
-        self.variants = variants
+@dataclass
+class If:
+    span: SrcSpan
+    condition: Expr
+    then_branch: Block
+    else_branch: Block | None
 
 
-class Impl(ProgramItem):
-    def __init__(self, span: SrcSpan, generics: list[str], target: ASTType, trait: ASTType | None, items: list["MethodDef"]):
-        super().__init__(span)
-        self.generics = generics
-        self.target = target
-        self.trait = trait
-        self.items = items
+@dataclass
+class For:
+    span: SrcSpan
+    var_name: str
+    iterable: Expr
+    body: Block
 
 
-class TraitDef(ProgramItem):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, generics: list[str], items: list["MethodDecl | MethodDef"]):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.generics = generics
-        self.items = items
+@dataclass
+class While:
+    span: SrcSpan
+    condition: Expr
+    body: Block
 
 
-class MethodDef(ASTNode):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, generics: list[str], params: list[VarInfo], ret_type: ASTType | None, body: "Block"):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.generics = generics
-        self.params = params
-        self.ret_type = ret_type
-        self.body = body
+@dataclass
+class Loop:
+    span: SrcSpan
+    body: Block
 
 
-class MethodDecl(ASTNode):
-    def __init__(self, span: SrcSpan, attrs: list[str], name: str, generics: list[str], params: list[VarInfo], ret_type: ASTType | None):
-        super().__init__(span)
-        self.attrs = attrs
-        self.name = name
-        self.generics = generics
-        self.params = params
-        self.ret_type = ret_type
+@dataclass
+class Match:
+    span: SrcSpan
+    expr: Expr
+    arms: list[tuple[Pattern, Block]]
 
 
-class Stmt(ASTNode):
-    pass
+@dataclass
+class Break:
+    span: SrcSpan
 
 
-class Block(Stmt):
-    def __init__(self, span: SrcSpan, stmts: list["Stmt"]):
-        super().__init__(span)
-        self.stmts = stmts
+@dataclass
+class Continue:
+    span: SrcSpan
 
 
-class VarDecl(Stmt):
-    def __init__(self, span: SrcSpan, name: str, var_type: ASTType, init_expr: "Expr | None"):
-        super().__init__(span)
-        self.name = name
-        self.var_type = var_type
-        self.init_expr = init_expr
+@dataclass
+class Assert:
+    span: SrcSpan
+    condition: Expr
+    message: str | None
 
 
-class Return(Stmt):
-    def __init__(self, span: SrcSpan, expr: "Expr | None"):
-        super().__init__(span)
-        self.expr = expr
+@dataclass
+class Delete:
+    span: SrcSpan
+    target: Expr
 
 
-class If(Stmt):
-    def __init__(self, span: SrcSpan, condition: "Expr", then_branch: "Block", else_branch: "Block | None"):
-        super().__init__(span)
-        self.condition = condition
-        self.then_branch = then_branch
-        self.else_branch = else_branch
+@dataclass
+class IntPattern:
+    span: SrcSpan
+    values: list[int]
+    block: Block
 
 
-class For(Stmt):
-    def __init__(self, span: SrcSpan, var_name: str, iterable: "Expr", body: "Block"):
-        super().__init__(span)
-        self.var_name = var_name
-        self.iterable = iterable
-        self.body = body
+@dataclass
+class CharPattern:
+    span: SrcSpan
+    values: list[str]
+    block: Block
 
 
-class While(Stmt):
-    def __init__(self, span: SrcSpan, condition: "Expr", body: "Block"):
-        super().__init__(span)
-        self.condition = condition
-        self.body = body
+@dataclass
+class StrPattern:
+    span: SrcSpan
+    values: list[str]
+    block: Block
 
 
-class Loop(Stmt):
-    def __init__(self, span: SrcSpan, body: "Block"):
-        super().__init__(span)
-        self.body = body
+@dataclass
+class EnumPattern:
+    span: SrcSpan
+    variants: list[str]
+    block: Block
 
 
-class Match(Stmt):
-    def __init__(self, span: SrcSpan, expr: "Expr", arms: list[tuple["Pattern", "Block"]]):
-        super().__init__(span)
-        self.expr = expr
-        self.arms = arms
+@dataclass
+class PayloadPattern:
+    span: SrcSpan
+    variant: str
+    fields: list[str]
+    block: Block
 
 
-class Break(Stmt):
-    pass
+@dataclass
+class WildcardPattern:
+    span: SrcSpan
+    block: Block
 
 
-class Continue(Stmt):
-    pass
+@dataclass
+class Binary:
+    span: SrcSpan
+    op: BinaryOperator
+    left: Expr
+    right: Expr
 
 
-class Assert(Stmt):
-    def __init__(self, span: SrcSpan, condition: "Expr", message: str | None):
-        super().__init__(span)
-        self.condition = condition
-        self.message = message
+@dataclass
+class Unary:
+    span: SrcSpan
+    op: UnaryOperator
+    operand: Expr
 
 
-class Delete(Stmt):
-    def __init__(self, span: SrcSpan, target: "Expr"):
-        super().__init__(span)
-        self.target = target
+@dataclass
+class Call:
+    span: SrcSpan
+    callee: Expr
+    positional_args: list[Expr]
+    named_args: dict[str, Expr]
 
 
-class Pattern(ASTNode):
-    pass
+@dataclass
+class MethodCall:
+    span: SrcSpan
+    receiver: Expr
+    method_name: str
+    generics: list[ASTType]
+    args: list[Expr]
 
 
-class IntPattern(Pattern):
-    def __init__(self, span: SrcSpan, values: list[int], block: "Block"):
-        super().__init__(span)
-        self.values = values
-        self.block = block
+@dataclass
+class FieldAccess:
+    span: SrcSpan
+    receiver: Expr
+    field_name: str
 
 
-class CharPattern(Pattern):
-    def __init__(self, span: SrcSpan, values: list[str], block: "Block"):
-        super().__init__(span)
-        self.values = values
-        self.block = block
+@dataclass
+class DynValue:
+    span: SrcSpan
+    value: Expr
 
 
-class StrPattern(Pattern):
-    def __init__(self, span: SrcSpan, values: list[str], block: "Block"):
-        super().__init__(span)
-        self.values = values
-        self.block = block
+@dataclass
+class DynBuffer:
+    span: SrcSpan
+    target_type: ASTType
+    size: Expr
 
 
-class EnumPattern(Pattern):
-    def __init__(self, span: SrcSpan, variants: list[str], block: "Block"):
-        super().__init__(span)
-        self.variants = variants
-        self.block = block
+@dataclass
+class TypeItem:
+    """
+    Represents stuff like `Option<T>`, `i32[10]`, `Foo<i32*, String>`, etc.
+    """
 
+    span: SrcSpan
+    name: str
+    generics: list[ASTType]
 
-class PayloadPattern(Pattern):
-    def __init__(self, span: SrcSpan, variant: str, fields: list[str], block: "Block"):
-        super().__init__(span)
-        self.variant = variant
-        self.block = block
 
+@dataclass
+class Tuple:
+    span: SrcSpan
+    elements: list[Expr]
 
-class WildcardPattern(Pattern):
-    def __init__(self, span: SrcSpan, block: "Block"):
-        super().__init__(span)
-        self.block = block
 
+@dataclass
+class Array:
+    span: SrcSpan
+    elements: list[Expr]
 
-class Expr(ASTNode):
-    pass
 
+@dataclass
+class Identifier:
+    span: SrcSpan
+    name: str
 
-class Binary(Expr):
-    def __init__(self, span: SrcSpan, op: BinaryOperator, left: "Expr", right: "Expr"):
-        super().__init__(span)
-        self.op = op
-        self.left = left
-        self.right = right
 
+@dataclass
+class Literal:
+    span: SrcSpan
+    literal: LexLiteral
 
-class Unary(Expr):
-    def __init__(self, span: SrcSpan, op: UnaryOperator, operand: "Expr"):
-        super().__init__(span)
-        self.op = op
-        self.operand = operand
 
+ProgramItem: TypeAlias = (
+    Import
+    | Alias
+    | FuncDef
+    | StructDef | EnumDef | TraitDef
+    | Impl
+    | VarDecl
+)
 
-class Call(Expr):
-    def __init__(self, span: SrcSpan, callee: "Expr", positional_args: list["Expr"], named_args: dict[str, "Expr"]):
-        super().__init__(span)
-        self.callee = callee
-        self.positional_args = positional_args
-        self.named_args = named_args
 
+TraitItem: TypeAlias = (
+    MethodDecl | MethodDef
+)
 
-class MethodCall(Expr):
-    def __init__(self, span: SrcSpan, receiver: "Expr", method_name: str, generics: list[ASTType], args: list["Expr"]):
-        super().__init__(span)
-        self.receiver = receiver
-        self.method_name = method_name
-        self.generics = generics
-        self.args = args
 
+Stmt: TypeAlias = (
+    Block
+    | VarDecl
+    | If | For | While | Loop | Match
+    | Return | Break | Continue | Assert
+    | Delete
+)
 
-class FieldAccess(Expr):
-    def __init__(self, span: SrcSpan, receiver: "Expr", field_name: str):
-        super().__init__(span)
-        self.receiver = receiver
-        self.field_name = field_name
 
+Expr: TypeAlias = (
+    Binary | Unary | FieldAccess
+    | Call | MethodCall
+    | DynValue | DynBuffer
+    | TypeItem | Identifier | Literal
+    | Tuple | Array
+)
 
-class DynValue(Expr):
-    def __init__(self, span: SrcSpan, value: "Expr"):
-        super().__init__(span)
-        self.value = value
 
-
-class DynBuffer(Expr):
-    def __init__(self, span: SrcSpan, target_type: ASTType, size: "Expr"):
-        super().__init__(span)
-        self.target_type = target_type
-        self.size = size
-
-
-class Atom(Expr):
-    def __init__(self, span: SrcSpan, name: str, generics: list[ASTType]):
-        super().__init__(span)
-        self.name = name
-        self.generics = generics
-
-
-class Literal(Expr):
-    def __init__(self, span: SrcSpan, literal: LexLiteral):
-        super().__init__(span)
-        self.literal = literal
+Pattern: TypeAlias = (
+    IntPattern | CharPattern | EnumPattern
+    | StrPattern
+    | PayloadPattern
+)
