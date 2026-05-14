@@ -1,8 +1,9 @@
 from __future__ import annotations
 from typing import Callable
 
-from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
+from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, LiteralKind, Punctuator, PunctuatorKind, Token
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.parser import ParseError
 
 
 class TokenStream:
@@ -124,6 +125,17 @@ class TokenStream:
                 return AST.Identifier(name=name, span=span)
             case _:
                 raise ValueError(f"Expected identifier or keyword but got '{token}'")
+
+    def consume_integer_literal(self) -> int:
+        """Consumes and returns the next token if it is an integer literal, otherwise raises an error."""
+        token = self.next()
+        match token:
+            case Literal(kind=LiteralKind.Integer, value=value):
+                self.advance()
+                assert isinstance(value, int)
+                return value
+            case _:
+                raise ParseError(f"Expected integer literal but got '{token}'", token.span)
 
     def function_like(self) -> bool:
         """Checks if the following tokens match the pattern of a function definition."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from compiler.frontend.parse.ast import Identifier
 from compiler.utils.IR.position import SrcSpan
 
 
@@ -61,10 +62,10 @@ class VoidType:
 @dataclass
 class NamedType:
     span: SrcSpan
-    name: str
+    name: Identifier
 
     def __repr__(self) -> str:
-        return self.name
+        return self.name.name
 
 
 @dataclass
