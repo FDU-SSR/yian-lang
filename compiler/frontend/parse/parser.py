@@ -1,9 +1,13 @@
-from typing import Callable
+from __future__ import annotations
 
-from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.parser_expr import ExprParser
+from compiler.frontend.parse.parser_stmt import StmtParser
+from compiler.frontend.parse.parser_type import TypeParser
+from compiler.frontend.parse.stream import TokenStream
 from compiler.utils.errors.yian_error import CompilerError
+from compiler.utils.IR.position import SrcSpan
 
 
 class ParseError(ValueError):
@@ -12,153 +16,13 @@ class ParseError(ValueError):
         self.span = span
 
 
-class TokenStream:
-    def __init__(self, tokens: list[Token]):
-        self.__tokens = tokens
-        self.__index = 0
-
-        self.__concat_space()
-
-    def at_end(self) -> bool:
-        return self.__index >= len(self.__tokens)
-
-    def peek(self) -> Token | None:
-        if self.at_end():
-            return None
-        return self.__tokens[self.__index]
-
-    def next(self) -> Token:
-        if self.at_end():
-            raise StopIteration("End of token stream reached")
-        token = self.__tokens[self.__index]
-        self.__index += 1
-        return token
-
-    def advance(self) -> None:
-        if self.at_end():
-            raise StopIteration("End of token stream reached")
-        self.__index += 1
-
-    def consume_keyword(self, expected_kind: KeywordKind) -> Keyword:
-        token = self.peek()
-        if token is None:
-            raise ValueError(f"Expected keyword '{expected_kind}' but got end of token stream")
-        if not isinstance(token, Keyword) or token.kind != expected_kind:
-            raise ValueError(f"Expected keyword '{expected_kind}' but got '{token}'")
-        self.advance()
-        return token
-
-    def consume_punctuator(self, expected_kind: PunctuatorKind) -> Punctuator:
-        token = self.peek()
-        if token is None:
-            raise ValueError(f"Expected punctuator '{expected_kind}' but got end of token stream")
-        if not isinstance(token, Punctuator) or token.kind != expected_kind:
-            raise ValueError(f"Expected punctuator '{expected_kind}' but got '{token}'")
-        self.advance()
-        return token
-
-    def skip_spaces(self) -> None:
-        """Skips consecutive space tokens."""
-        while not self.at_end():
-            token = self.peek()
-            if isinstance(token, Punctuator) and token.kind in {PunctuatorKind.Space, PunctuatorKind.Endl}:
-                self.advance()
-            else:
-                break
-
-    def consume_attrs(self) -> list[AST.Attr]:
-        """Consumes attributes (e.g., #[attr]) and returns them as a list."""
-        attrs: list[AST.Attr] = []
-        while not self.at_end():
-            self.skip_spaces()
-            match self.peek():
-                case Keyword(KeywordKind.Pub, span):
-                    self.advance()
-                    attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Pub))
-                case Keyword(KeywordKind.Static, span):
-                    self.advance()
-                    attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Static))
-                case _:
-                    break
-        return attrs
-
-    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[PunctuatorKind]) -> list[ItemType]:
-        """Consumes a separated list of items parsed by the given item_parser function."""
-        items: list[ItemType] = []
-        while True:
-            self.skip_spaces()
-            items.append(item_parser())
-            self.skip_spaces()
-
-            token = self.peek()
-            if isinstance(token, Punctuator) and token.kind in separators:
-                self.consume_punctuator(token.kind)
-            else:
-                break
-        return items
-
-    def consume_until[ItemType](self, item_parser: Callable[[], ItemType], terminators: set[PunctuatorKind]) -> list[ItemType]:
-        """Consumes items parsed by the given item_parser function until a terminator is encountered."""
-        items: list[ItemType] = []
-        while True:
-            self.skip_spaces()
-            token = self.peek()
-            if isinstance(token, Punctuator) and token.kind in terminators:
-                break
-            items.append(item_parser())
-        return items
-
-    def consume_generics(self) -> list[AST.Identifier]:
-        """Consumes generic parameters enclosed in angle brackets and returns them as a list of identifiers."""
-        generics: list[AST.Identifier] = []
-        token = self.peek()
-        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Less:
-            self.consume_punctuator(PunctuatorKind.Less)
-            generics = self.consume_separated(self.expect_identifier, {PunctuatorKind.Comma})
-            self.consume_punctuator(PunctuatorKind.Greater)
-
-        return generics
-
-    def expect_identifier(self) -> AST.Identifier:
-        """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
-        token = self.next()
-        match token:
-            case Keyword(kind, span):
-                self.advance()
-                return AST.Identifier(name=kind.value, span=span)
-            case Identifier(name, span):
-                self.advance()
-                return AST.Identifier(name=name, span=span)
-            case _:
-                raise ValueError(f"Expected identifier or keyword but got '{token}'")
-
-    def __concat_space(self) -> None:
-        """Concatenates consecutive space tokens into a single token with the combined span."""
-        concatenated_tokens: list[Token] = []
-        current_space_token: Punctuator | None = None
-
-        for token in self.__tokens:
-            if not isinstance(token, Punctuator) or token.kind != PunctuatorKind.Space:
-                if current_space_token is not None:
-                    concatenated_tokens.append(current_space_token)
-                    current_space_token = None
-                concatenated_tokens.append(token)
-            else:
-                if current_space_token is None:
-                    current_space_token = token
-                else:
-                    # Extend the span of the current space token to include the new one
-                    current_space_token.span += token.span
-
-        if current_space_token is not None:
-            concatenated_tokens.append(current_space_token)
-
-        self.__tokens = concatenated_tokens
-
-
 class Parser:
     def __init__(self, tokens: list[Token]):
         self.__stream = TokenStream(tokens)
+
+        self.__expr_parser = ExprParser(self.__stream)
+        self.__type_parser = TypeParser(self.__stream)
+        self.__stmt_parser = StmtParser(self.__stream, self.__expr_parser, self.__type_parser)
 
     def parse(self) -> AST.Program:
         """
@@ -168,7 +32,7 @@ class Parser:
 
         while not self.__stream.at_end():
             attrs = self.__stream.consume_attrs()  # Consume any attributes before the item
-            self.__stream.skip_spaces()  # Skip any spaces after attributes
+            self.__stream.consume_spaces()  # Skip any spaces after attributes
             match self.__stream.peek():
                 case Keyword(KeywordKind.Import, _):
                     if attrs:
@@ -204,44 +68,44 @@ class Parser:
         match self.__stream.next():
             case Keyword(KeywordKind.Import, span):
                 # Parse `import xxx.yyy as zzz`
-                self.__stream.skip_spaces()
+                self.__stream.consume_spaces()
 
                 # Parse the path
-                paths = self.__stream.consume_separated(self.__stream.expect_identifier, {PunctuatorKind.Dot})
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot})
 
                 # pop last as target
                 target = paths.pop()
 
-                self.__stream.skip_spaces()
+                self.__stream.consume_spaces()
 
                 match self.__stream.peek():
                     case Keyword(KeywordKind.As, _):
                         self.__stream.advance()
-                        self.__stream.skip_spaces()
-                        alias = self.__stream.expect_identifier()
+                        self.__stream.consume_spaces()
+                        alias = self.__stream.consume_identifier()
                         return [AST.Import(span=span, paths=paths, target=target, alias=alias)]
                     case _:
                         return [AST.Import(span=span, paths=paths, target=target, alias=None)]
 
             case Keyword(KeywordKind.From, span):
                 # Parse `from xxx.yyy import zzz as zzz_alias, www as www_alias`
-                self.__stream.skip_spaces()
+                self.__stream.consume_spaces()
 
                 # Parse the path
-                paths = self.__stream.consume_separated(self.__stream.expect_identifier, {PunctuatorKind.Dot})
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot})
 
-                self.__stream.skip_spaces()
+                self.__stream.consume_spaces()
                 self.__stream.consume_keyword(KeywordKind.Import)
-                self.__stream.skip_spaces()
+                self.__stream.consume_spaces()
 
                 def parse_target() -> tuple[AST.Identifier, AST.Identifier | None]:
-                    target = self.__stream.expect_identifier()
-                    self.__stream.skip_spaces()
+                    target = self.__stream.consume_identifier()
+                    self.__stream.consume_spaces()
                     match self.__stream.peek():
                         case Keyword(KeywordKind.As, _):
                             self.__stream.advance()
-                            self.__stream.skip_spaces()
-                            alias = self.__stream.expect_identifier()
+                            self.__stream.consume_spaces()
+                            alias = self.__stream.consume_identifier()
                             return target, alias
                         case _:
                             return target, None
@@ -257,12 +121,12 @@ class Parser:
 
     def __parse_alias(self) -> AST.Alias:
         self.__stream.consume_keyword(KeywordKind.Typedef)
-        self.__stream.skip_spaces()
-        name = self.__stream.expect_identifier()
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
         generics = self.__stream.consume_generics()
-        self.__stream.skip_spaces()
+        self.__stream.consume_spaces()
         self.__stream.consume_punctuator(PunctuatorKind.Equal)
-        self.__stream.skip_spaces()
+        self.__stream.consume_spaces()
         target = self.__parse_type()
         return AST.Alias(span=name.span, name=name, generics=generics, target=target)
 
@@ -270,9 +134,9 @@ class Parser:
         span = self.__stream.consume_keyword(KeywordKind.Impl).span
         generics = self.__stream.consume_generics()
 
-        self.__stream.skip_spaces()
+        self.__stream.consume_spaces()
         ty = self.__parse_type()
-        self.__stream.skip_spaces()
+        self.__stream.consume_spaces()
 
         token = self.__stream.peek()
         if isinstance(token, Keyword) and token.kind == KeywordKind.For:
@@ -280,9 +144,9 @@ class Parser:
 
             self.__stream.consume_keyword(KeywordKind.For)
 
-            self.__stream.skip_spaces()
+            self.__stream.consume_spaces()
             target = self.__parse_type()
-            self.__stream.skip_spaces()
+            self.__stream.consume_spaces()
         else:
             trait = None
             target = ty
@@ -296,10 +160,10 @@ class Parser:
     def __parse_struct(self, attrs: list[AST.Attr]) -> AST.StructDef:
         self.__stream.consume_keyword(KeywordKind.Struct)
 
-        self.__stream.skip_spaces()
-        name = self.__stream.expect_identifier()
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
         generics = self.__stream.consume_generics()
-        self.__stream.skip_spaces()
+        self.__stream.consume_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
         fields = self.__stream.consume_until(self.__parse_field_info, {PunctuatorKind.RBrace})
@@ -308,19 +172,155 @@ class Parser:
         return AST.StructDef(span=name.span, attrs=attrs, name=name, generics=generics, fields=fields)
 
     def __parse_enum(self, attrs: list[AST.Attr]) -> AST.EnumDef:
-        raise NotImplementedError("Enum parsing not implemented yet")
+        self.__stream.consume_keyword(KeywordKind.Enum)
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+        generics = self.__stream.consume_generics()
+        self.__stream.consume_spaces()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        variants = self.__stream.consume_until(self.__parse_variant_info, {PunctuatorKind.RBrace})
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.EnumDef(span=name.span, attrs=attrs, name=name, generics=generics, variants=variants)
 
     def __parse_trait(self, attrs: list[AST.Attr]) -> AST.TraitDef:
-        raise NotImplementedError("Trait parsing not implemented yet")
+        self.__stream.consume_keyword(KeywordKind.Trait)
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+        generics = self.__stream.consume_generics()
+        self.__stream.consume_spaces()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        items = self.__stream.consume_until(self.__parse_trait_item, {PunctuatorKind.RBrace})
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
 
     def __parse_func_or_var(self, attrs: list[AST.Attr]) -> AST.VarDecl | AST.FuncDef:
-        raise NotImplementedError("Function and variable parsing not implemented yet")
+        if self.__stream.function_like():
+            return self.__parse_func_def(attrs=attrs)
+        return self.__parse_var_decl(attrs=attrs)
 
-    def __parse_method_def(self) -> AST.MethodDef:
-        raise NotImplementedError("Method parsing not implemented yet")
+    def __parse_method_decl(self) -> AST.MethodDecl:
+        attrs = self.__stream.consume_attrs()
+
+        self.__stream.consume_spaces()
+        if not self.__stream.function_like():
+            ret_type = None
+        else:
+            ret_type = self.__parse_type()
+        self.__stream.consume_spaces()
+
+        name = self.__stream.consume_identifier()
+        generics = self.__stream.consume_generics()
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma})
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        return AST.MethodDecl(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type)
+
+    def __parse_method_def(self, decl: AST.MethodDecl | None = None) -> AST.MethodDef:
+        if decl is None:
+            decl = self.__parse_method_decl()
+
+        self.__stream.consume_spaces()
+        block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
+        body = self.__stream.consume_until(self.__parse_stmt, {PunctuatorKind.RBrace})
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        block = AST.Block(span=block_span, stmts=body)
+
+        return AST.MethodDef(span=decl.span, decl=decl, body=block)
 
     def __parse_field_info(self) -> AST.FieldInfo:
-        raise NotImplementedError("Field parsing not implemented yet")
+        attrs = self.__stream.consume_attrs()
+
+        self.__stream.consume_spaces()
+        field_type = self.__parse_type()
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+
+        return AST.FieldInfo(span=name.span, attrs=attrs, field_type=field_type, name=name)
+
+    def __parse_variant_info(self) -> AST.VariantInfo:
+        name = self.__stream.consume_identifier()
+
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
+            self.__stream.consume_punctuator(PunctuatorKind.LParen)
+            fields = self.__stream.consume_until(self.__parse_var_info, {PunctuatorKind.RParen})
+            self.__stream.consume_punctuator(PunctuatorKind.RParen)
+        else:
+            fields: list[AST.VarInfo] = []
+
+        return AST.VariantInfo(span=name.span, name=name, fields=fields)
+
+    def __parse_var_info(self) -> AST.VarInfo:
+        var_type = self.__parse_type()
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+
+        return AST.VarInfo(span=name.span, var_type=var_type, name=name)
+
+    def __parse_trait_item(self) -> AST.TraitItem:
+        decl = self.__parse_method_decl()
+
+        self.__stream.consume_spaces()
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
+            return self.__parse_method_def(decl=decl)
+        return decl
+
+    def __parse_var_decl(self, attrs: list[AST.Attr]) -> AST.VarDecl:
+        var_type = self.__parse_type()
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+
+        self.__stream.consume_spaces()
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Equal:
+            self.__stream.consume_punctuator(PunctuatorKind.Equal)
+            self.__stream.consume_spaces()
+            init_expr = self.__parse_expr()
+        else:
+            init_expr = None
+
+        return AST.VarDecl(span=name.span, attrs=attrs, var_type=var_type, name=name, init_expr=init_expr)
+
+    def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
+        if self.__stream.function_like():
+            ret_type = None
+        else:
+            ret_type = self.__parse_type()
+
+        self.__stream.consume_spaces()
+        name = self.__stream.consume_identifier()
+        generics = self.__stream.consume_generics()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma})
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        self.__stream.consume_spaces()
+        block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
+        body = self.__stream.consume_until(self.__parse_stmt, {PunctuatorKind.RBrace})
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        block = AST.Block(span=block_span, stmts=body)
+
+        return AST.FuncDef(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=block)
+
+    def __parse_stmt(self) -> AST.Stmt:
+        return self.__stmt_parser.parse_stmt()
+
+    def __parse_expr(self) -> AST.Expr:
+        return self.__expr_parser.parse_expr()
 
     def __parse_type(self) -> AST.ASTType:
-        raise NotImplementedError("Type parsing not implemented yet")
+        return self.__type_parser.parse_type()

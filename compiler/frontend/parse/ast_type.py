@@ -107,13 +107,13 @@ class SliceType:
 @dataclass
 class InstantiatedType:
     span: SrcSpan
-    name: str
+    base: ASTType
     generic_args: list[ASTType]
 
     def __repr__(self) -> str:
         if len(self.generic_args) == 0:
-            return self.name
-        return f"{self.name}<{', '.join(repr(arg) for arg in self.generic_args)}>"
+            return repr(self.base)
+        return f"{repr(self.base)}<{', '.join(repr(arg) for arg in self.generic_args)}>"
 
 
 @dataclass

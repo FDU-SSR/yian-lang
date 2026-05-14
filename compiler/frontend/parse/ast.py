@@ -36,7 +36,7 @@ class Alias:
 class VarInfo:
     span: SrcSpan
     var_type: ASTType
-    name: str
+    name: Identifier
 
 
 class AttrKind(Enum):
@@ -54,7 +54,8 @@ class Attr:
 class FuncDef:
     span: SrcSpan
     attrs: list[Attr]
-    name: str
+    name: Identifier
+    generics: list[Identifier]
     params: list[VarInfo]
     ret_type: ASTType | None
     body: Block
@@ -63,9 +64,9 @@ class FuncDef:
 @dataclass
 class FieldInfo:
     span: SrcSpan
-    is_pub: bool
+    attrs: list[Attr]
     field_type: ASTType
-    name: str
+    name: Identifier
 
 
 @dataclass
@@ -106,19 +107,15 @@ class Impl:
 class TraitDef:
     span: SrcSpan
     attrs: list[Attr]
-    name: str
-    generics: list[str]
+    name: Identifier
+    generics: list[Identifier]
     items: list[TraitItem]
 
 
 @dataclass
 class MethodDef:
     span: SrcSpan
-    attrs: list[Attr]
-    name: str
-    generics: list[str]
-    params: list[VarInfo]
-    ret_type: ASTType | None
+    decl: MethodDecl
     body: Block
 
 
@@ -126,11 +123,10 @@ class MethodDef:
 class MethodDecl:
     span: SrcSpan
     attrs: list[Attr]
-    name: str
-    generics: list[str]
+    name: Identifier
+    generics: list[Identifier]
     params: list[VarInfo]
     ret_type: ASTType | None
-    body: Block
 
 
 @dataclass
@@ -142,8 +138,9 @@ class Block:
 @dataclass
 class VarDecl:
     span: SrcSpan
-    name: str
+    attrs: list[Attr]
     var_type: ASTType
+    name: Identifier
     init_expr: Expr | None
 
 
@@ -164,7 +161,7 @@ class If:
 @dataclass
 class For:
     span: SrcSpan
-    var_name: str
+    var_name: Identifier
     iterable: Expr
     body: Block
 
@@ -203,7 +200,7 @@ class Continue:
 class Assert:
     span: SrcSpan
     condition: Expr
-    message: str | None
+    message: LexLiteral | None
 
 
 @dataclass
@@ -222,29 +219,29 @@ class IntPattern:
 @dataclass
 class CharPattern:
     span: SrcSpan
-    values: list[str]
+    values: list[LexLiteral]
     block: Block
 
 
 @dataclass
 class StrPattern:
     span: SrcSpan
-    values: list[str]
+    values: list[LexLiteral]
     block: Block
 
 
 @dataclass
 class EnumPattern:
     span: SrcSpan
-    variants: list[str]
+    variants: list[Identifier]
     block: Block
 
 
 @dataclass
 class PayloadPattern:
     span: SrcSpan
-    variant: str
-    fields: list[str]
+    variant: Identifier
+    fields: list[Identifier]
     block: Block
 
 
@@ -274,14 +271,14 @@ class Call:
     span: SrcSpan
     callee: Expr
     positional_args: list[Expr]
-    named_args: dict[str, Expr]
+    named_args: dict[Identifier, Expr]
 
 
 @dataclass
 class MethodCall:
     span: SrcSpan
     receiver: Expr
-    method_name: str
+    method_name: Identifier
     generics: list[ASTType]
     args: list[Expr]
 
@@ -290,7 +287,7 @@ class MethodCall:
 class FieldAccess:
     span: SrcSpan
     receiver: Expr
-    field_name: str
+    field_name: Identifier
 
 
 @dataclass
@@ -313,7 +310,7 @@ class TypeItem:
     """
 
     span: SrcSpan
-    name: str
+    name: Identifier
     generics: list[ASTType]
 
 
