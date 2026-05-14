@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from compiler.utils.IR.position import SrcSpan
+
 
 @dataclass
 class IntType:
+    span: SrcSpan
     signed: bool
     width: int  # in bytes
 
@@ -16,6 +19,7 @@ class IntType:
 
 @dataclass
 class FloatType:
+    span: SrcSpan
     width: int  # in bytes
 
     def __repr__(self) -> str:
@@ -24,30 +28,39 @@ class FloatType:
 
 @dataclass
 class BoolType:
+    span: SrcSpan
+
     def __repr__(self) -> str:
         return "bool"
 
 
 @dataclass
 class StrType:
+    span: SrcSpan
+
     def __repr__(self) -> str:
         return "str"
 
 
 @dataclass
 class CharType:
+    span: SrcSpan
+
     def __repr__(self) -> str:
         return "char"
 
 
 @dataclass
 class VoidType:
+    span: SrcSpan
+
     def __repr__(self) -> str:
         return "void"
 
 
 @dataclass
 class NamedType:
+    span: SrcSpan
     name: str
 
     def __repr__(self) -> str:
@@ -56,6 +69,7 @@ class NamedType:
 
 @dataclass
 class ArrayType:
+    span: SrcSpan
     element_type: ASTType
     size: int
 
@@ -65,6 +79,7 @@ class ArrayType:
 
 @dataclass
 class TupleType:
+    span: SrcSpan
     element_types: list[ASTType]
 
     def __repr__(self) -> str:
@@ -73,6 +88,7 @@ class TupleType:
 
 @dataclass
 class PointerType:
+    span: SrcSpan
     pointee_type: ASTType
 
     def __repr__(self) -> str:
@@ -81,6 +97,7 @@ class PointerType:
 
 @dataclass
 class SliceType:
+    span: SrcSpan
     element_type: ASTType
 
     def __repr__(self) -> str:
@@ -89,6 +106,7 @@ class SliceType:
 
 @dataclass
 class InstantiatedType:
+    span: SrcSpan
     name: str
     generic_args: list[ASTType]
 
@@ -100,6 +118,7 @@ class InstantiatedType:
 
 @dataclass
 class FunctionType:
+    span: SrcSpan
     param_types: list[ASTType]
     return_type: ASTType
 

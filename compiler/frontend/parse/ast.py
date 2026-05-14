@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TypeAlias
 
 from compiler.frontend.lex.token import Literal as LexLiteral
@@ -18,16 +19,16 @@ class Program:
 @dataclass
 class Import:
     span: SrcSpan
-    paths: list[str]
-    target: str
-    alias: str | None
+    paths: list[Identifier]
+    target: Identifier
+    alias: Identifier | None
 
 
 @dataclass
 class Alias:
     span: SrcSpan
-    name: str
-    generics: list[str]
+    name: Identifier
+    generics: list[Identifier]
     target: ASTType
 
 
@@ -38,10 +39,21 @@ class VarInfo:
     name: str
 
 
+class AttrKind(Enum):
+    Pub = auto()
+    Static = auto()
+
+
+@dataclass
+class Attr:
+    span: SrcSpan
+    kind: AttrKind
+
+
 @dataclass
 class FuncDef:
     span: SrcSpan
-    attrs: list[str]
+    attrs: list[Attr]
     name: str
     params: list[VarInfo]
     ret_type: ASTType | None
@@ -59,32 +71,32 @@ class FieldInfo:
 @dataclass
 class StructDef:
     span: SrcSpan
-    attrs: list[str]
-    name: str
-    generics: list[str]
+    attrs: list[Attr]
+    name: Identifier
+    generics: list[Identifier]
     fields: list[FieldInfo]
 
 
 @dataclass
 class VariantInfo:
     span: SrcSpan
-    name: str
+    name: Identifier
     fields: list[VarInfo]
 
 
 @dataclass
 class EnumDef:
     span: SrcSpan
-    attrs: list[str]
-    name: str
-    generics: list[str]
+    attrs: list[Attr]
+    name: Identifier
+    generics: list[Identifier]
     variants: list[VariantInfo]
 
 
 @dataclass
 class Impl:
     span: SrcSpan
-    generics: list[str]
+    generics: list[Identifier]
     target: ASTType
     trait: ASTType | None
     items: list[MethodDef]
@@ -93,7 +105,7 @@ class Impl:
 @dataclass
 class TraitDef:
     span: SrcSpan
-    attrs: list[str]
+    attrs: list[Attr]
     name: str
     generics: list[str]
     items: list[TraitItem]
@@ -102,7 +114,7 @@ class TraitDef:
 @dataclass
 class MethodDef:
     span: SrcSpan
-    attrs: list[str]
+    attrs: list[Attr]
     name: str
     generics: list[str]
     params: list[VarInfo]
@@ -113,7 +125,7 @@ class MethodDef:
 @dataclass
 class MethodDecl:
     span: SrcSpan
-    attrs: list[str]
+    attrs: list[Attr]
     name: str
     generics: list[str]
     params: list[VarInfo]
