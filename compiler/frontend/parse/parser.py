@@ -1,3 +1,5 @@
+from typing import Callable
+
 from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
 from compiler.utils.IR.position import SrcSpan
 from compiler.frontend.parse import ast as AST
@@ -80,24 +82,39 @@ class TokenStream:
                     break
         return attrs
 
+    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[PunctuatorKind]) -> list[ItemType]:
+        """Consumes a separated list of items parsed by the given item_parser function."""
+        items: list[ItemType] = []
+        while True:
+            self.skip_spaces()
+            items.append(item_parser())
+            self.skip_spaces()
+
+            token = self.peek()
+            if isinstance(token, Punctuator) and token.kind in separators:
+                self.consume_punctuator(token.kind)
+            else:
+                break
+        return items
+
+    def consume_until[ItemType](self, item_parser: Callable[[], ItemType], terminators: set[PunctuatorKind]) -> list[ItemType]:
+        """Consumes items parsed by the given item_parser function until a terminator is encountered."""
+        items: list[ItemType] = []
+        while True:
+            self.skip_spaces()
+            token = self.peek()
+            if isinstance(token, Punctuator) and token.kind in terminators:
+                break
+            items.append(item_parser())
+        return items
+
     def consume_generics(self) -> list[AST.Identifier]:
         """Consumes generic parameters enclosed in angle brackets and returns them as a list of identifiers."""
         generics: list[AST.Identifier] = []
         token = self.peek()
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Less:
             self.consume_punctuator(PunctuatorKind.Less)
-
-            while True:
-                self.skip_spaces()
-                generics.append(self.expect_identifier())
-                self.skip_spaces()
-
-                token = self.peek()
-                if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Comma:
-                    self.consume_punctuator(PunctuatorKind.Comma)
-                else:
-                    break
-
+            generics = self.consume_separated(self.expect_identifier, {PunctuatorKind.Comma})
             self.consume_punctuator(PunctuatorKind.Greater)
 
         return generics
@@ -184,21 +201,13 @@ class Parser:
         )
 
     def __parse_import(self) -> list[AST.Import]:
-        paths: list[AST.Identifier] = []
-
         match self.__stream.next():
             case Keyword(KeywordKind.Import, span):
                 # Parse `import xxx.yyy as zzz`
                 self.__stream.skip_spaces()
 
                 # Parse the path
-                while True:
-                    paths.append(self.__stream.expect_identifier())
-                    match self.__stream.peek():
-                        case Punctuator(PunctuatorKind.Dot, _):
-                            self.__stream.advance()
-                        case _:
-                            break
+                paths = self.__stream.consume_separated(self.__stream.expect_identifier, {PunctuatorKind.Dot})
 
                 # pop last as target
                 target = paths.pop()
@@ -219,39 +228,26 @@ class Parser:
                 self.__stream.skip_spaces()
 
                 # Parse the path
-                while True:
-                    paths.append(self.__stream.expect_identifier())
-                    match self.__stream.peek():
-                        case Punctuator(PunctuatorKind.Dot, _):
-                            self.__stream.advance()
-                        case _:
-                            break
+                paths = self.__stream.consume_separated(self.__stream.expect_identifier, {PunctuatorKind.Dot})
 
                 self.__stream.skip_spaces()
                 self.__stream.consume_keyword(KeywordKind.Import)
                 self.__stream.skip_spaces()
 
-                targets: list[AST.Identifier] = []
-                aliases: list[AST.Identifier | None] = []
-
-                while True:
-                    targets.append(self.__stream.expect_identifier())
+                def parse_target() -> tuple[AST.Identifier, AST.Identifier | None]:
+                    target = self.__stream.expect_identifier()
                     self.__stream.skip_spaces()
                     match self.__stream.peek():
                         case Keyword(KeywordKind.As, _):
                             self.__stream.advance()
                             self.__stream.skip_spaces()
-                            aliases.append(self.__stream.expect_identifier())
+                            alias = self.__stream.expect_identifier()
+                            return target, alias
                         case _:
-                            aliases.append(None)
+                            return target, None
 
-                    self.__stream.skip_spaces()
-                    match self.__stream.peek():
-                        case Punctuator(PunctuatorKind.Comma, _):
-                            self.__stream.advance()
-                            self.__stream.skip_spaces()
-                        case _:
-                            break
+                targets_and_aliases = self.__stream.consume_separated(parse_target, {PunctuatorKind.Comma})
+                targets, aliases = zip(*targets_and_aliases)
 
                 # each target corresponds to a separate import stmt
                 return [AST.Import(span=span, paths=paths, target=target, alias=alias) for target, alias in zip(targets, aliases)]
@@ -292,13 +288,7 @@ class Parser:
             target = ty
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        items: list[AST.MethodDef] = []
-        while True:
-            self.__stream.skip_spaces()
-            token = self.__stream.peek()
-            if isinstance(token, Punctuator) and token.kind == PunctuatorKind.RBrace:
-                break
-            items.append(self.__parse_method_def())
+        items = self.__stream.consume_until(self.__parse_method_def, {PunctuatorKind.RBrace})
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items)
@@ -312,13 +302,7 @@ class Parser:
         self.__stream.skip_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        fields: list[AST.FieldInfo] = []
-        while True:
-            self.__stream.skip_spaces()
-            token = self.__stream.peek()
-            if isinstance(token, Punctuator) and token.kind == PunctuatorKind.RBrace:
-                break
-            fields.append(self.__parse_field_info())
+        fields = self.__stream.consume_until(self.__parse_field_info, {PunctuatorKind.RBrace})
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.StructDef(span=name.span, attrs=attrs, name=name, generics=generics, fields=fields)
