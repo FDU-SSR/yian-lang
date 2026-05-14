@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TypeAlias
 
 from compiler.utils.IR.position import SrcSpan
 
@@ -60,7 +63,7 @@ class KeywordKind(Enum):
     SelfType = "Self"
 
     @classmethod
-    def try_from_str(cls, value: str) -> "KeywordKind | None":
+    def try_from_str(cls, value: str) -> KeywordKind | None:
         try:
             return cls(value)
         except ValueError:
@@ -78,6 +81,10 @@ class Keyword:
 
     def __repr__(self) -> str:
         return f"Keyword({self.kind.value})"
+
+    @classmethod
+    def from_kind(cls, kind: KeywordKind) -> Keyword:
+        return cls(kind, SrcSpan.empty())
 
 
 @dataclass
@@ -137,14 +144,14 @@ class PunctuatorKind(Enum):
     EOF = "eof"
 
     @classmethod
-    def try_from_str(cls, value: str) -> "PunctuatorKind | None":
+    def try_from_str(cls, value: str) -> PunctuatorKind | None:
         try:
             return cls(value)
         except ValueError:
             return None
 
     @classmethod
-    def from_str(cls, value: str) -> "PunctuatorKind":
+    def from_str(cls, value: str) -> PunctuatorKind:
         try:
             return cls(value)
         except ValueError as exc:
@@ -162,6 +169,10 @@ class Punctuator:
 
     def __repr__(self) -> str:
         return f"Punctuator({self.kind.value})"
+
+    @classmethod
+    def from_kind(cls, kind: PunctuatorKind) -> Punctuator:
+        return cls(kind, SrcSpan.empty())
 
 
 class LiteralKind(Enum):
@@ -377,4 +388,4 @@ class Literal:
         raise ValueError(f"Error parsing literal: {self.raw} is not a valid literal")
 
 
-Token = Keyword | Identifier | Punctuator | Literal
+Token: TypeAlias = Keyword | Identifier | Punctuator | Literal

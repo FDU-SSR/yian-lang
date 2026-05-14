@@ -26,3 +26,22 @@ class SrcSpan:
     @staticmethod
     def empty() -> SrcSpan:
         return SrcSpan(SrcPosition(0, 0), SrcPosition(0, 0))
+
+    def __iadd__(self, other: SrcSpan) -> SrcSpan:
+        self.start.row = min(self.start.row, other.start.row)
+        self.start.col = min(self.start.col, other.start.col)
+        self.end.row = max(self.end.row, other.end.row)
+        self.end.col = max(self.end.col, other.end.col)
+        return self
+
+    def __add__(self, other: SrcSpan) -> SrcSpan:
+        new_span = deepcopy(self)
+        new_span += other
+        return new_span
+
+    @staticmethod
+    def combine_all(spans: list[SrcSpan]) -> SrcSpan:
+        combined_span = SrcSpan.empty()
+        for span in spans:
+            combined_span += span
+        return combined_span
