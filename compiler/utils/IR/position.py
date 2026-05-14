@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from copy import deepcopy
 
 
@@ -6,10 +8,10 @@ class SrcPosition:
         self.row = row
         self.col = col
 
-    def clone(self) -> "SrcPosition":
+    def clone(self) -> SrcPosition:
         return deepcopy(self)
 
-    def into_span(self) -> "SrcSpan":
+    def into_span(self) -> SrcSpan:
         """
         Converts this position into a span.
         """
@@ -20,3 +22,7 @@ class SrcSpan:
     def __init__(self, start: SrcPosition, end: SrcPosition):
         self.start = start.clone()
         self.end = end.clone()
+
+    @staticmethod
+    def empty() -> SrcSpan:
+        return SrcSpan(SrcPosition(0, 0), SrcPosition(0, 0))

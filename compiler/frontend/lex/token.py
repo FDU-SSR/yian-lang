@@ -1,16 +1,7 @@
-from abc import ABC
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from compiler.utils.IR.position import SrcSpan
-
-
-class Token(ABC):
-    """
-    Base class for all tokens.
-    """
-
-    def __init__(self, span: SrcSpan):
-        self.span = span
 
 
 class KeywordKind(Enum):
@@ -76,27 +67,27 @@ class KeywordKind(Enum):
             return None
 
 
-class Keyword(Token):
+@dataclass
+class Keyword:
     """
     Represents a keyword token.
     """
 
-    def __init__(self, kind: KeywordKind, span: SrcSpan):
-        super().__init__(span)
-        self.kind = kind
+    kind: KeywordKind
+    span: SrcSpan
 
     def __repr__(self) -> str:
         return f"Keyword({self.kind.value})"
 
 
-class Identifier(Token):
+@dataclass
+class Identifier:
     """
     Represents an identifier token.
     """
 
-    def __init__(self, name: str, span: SrcSpan):
-        super().__init__(span)
-        self.name = name
+    name: str
+    span: SrcSpan
 
     def __repr__(self) -> str:
         return f"Identifier({self.name})"
@@ -141,7 +132,9 @@ class PunctuatorKind(Enum):
     LessEqual = "<="
     GreaterEqual = ">="
     DotDot = ".."
+    Space = "space"
     Endl = "endl"
+    EOF = "eof"
 
     @classmethod
     def try_from_str(cls, value: str) -> "PunctuatorKind | None":
@@ -158,14 +151,14 @@ class PunctuatorKind(Enum):
             raise ValueError(f"{value} is not a valid punctuator") from exc
 
 
-class Punctuator(Token):
+@dataclass
+class Punctuator:
     """
     Represents a punctuator token.
     """
 
-    def __init__(self, kind: PunctuatorKind, span: SrcSpan):
-        super().__init__(span)
-        self.kind = kind
+    kind: PunctuatorKind
+    span: SrcSpan
 
     def __repr__(self) -> str:
         return f"Punctuator({self.kind.value})"
@@ -182,23 +175,26 @@ class LiteralKind(Enum):
     Float = auto()
 
 
-class Literal(Token):
+@dataclass
+class Literal:
     """
     Represents a literal token.
     """
 
-    def __init__(self, raw: str, span: SrcSpan):
-        super().__init__(span)
-        self.raw = raw
+    raw: str
+    span: SrcSpan
+    suffix: str | None = field(init=False, default=None)
+    kind: LiteralKind = field(init=False)
+    value: str | int | float = field(init=False)
 
-        self.suffix: str | None = None
+    def __post_init__(self):
         self.kind = self.__parse_kind()
-        self.value: str | int | float | bool = self.__parse_value()
+        self.value = self.__parse_value()
 
     def __repr__(self) -> str:
         return f"Literal({self.kind.name}, {self.raw})"
 
-    def __parse_value(self) -> str | int | float | bool:
+    def __parse_value(self) -> str | int | float:
         match self.kind:
             case LiteralKind.String:
                 return self.__parse_string_value()
@@ -258,14 +254,14 @@ class Literal(Token):
         escape_char = self.raw[i]
         if escape_char in self.ESCAPE_SEQUENCES:
             return i, self.ESCAPE_SEQUENCES[escape_char]
-        elif escape_char in {"x", "X"}:
+        if escape_char in {"x", "X"}:
             # hex character literal
             hex_digits = self.raw[i + 1: i + 3]
             i += 2
             if any(c not in self.BASE_DIGITS[16] for c in hex_digits):
                 raise ValueError(f"Invalid hex escape sequence: \\{escape_char}{hex_digits}")
             return i, chr(int(hex_digits, 16))
-        elif escape_char in {"u", "U"}:
+        if escape_char in {"u", "U"}:
             # unicode character literal
             if self.raw[i + 1] != "{":
                 raise ValueError(f"Invalid unicode escape sequence: \\{escape_char} must be followed by {{")
@@ -279,8 +275,7 @@ class Literal(Token):
             if any(c not in self.BASE_DIGITS[16] for c in unicode_digits):
                 raise ValueError(f"Invalid unicode escape sequence: \\{escape_char}{{{unicode_digits}}}")
             return i, chr(int(unicode_digits, 16))
-        else:
-            raise ValueError(f"Invalid escape sequence: \\{escape_char}")
+        raise ValueError(f"Invalid escape sequence: \\{escape_char}")
 
     INT_SUFFIXES = {
         "i8": 2**7 - 1,
@@ -339,9 +334,9 @@ class Literal(Token):
         # handle prefixes
         if self.raw.startswith(("0b", "0B")):
             raise ValueError("Binary float literals are not supported")
-        elif self.raw.startswith(("0o", "0O")):
+        if self.raw.startswith(("0o", "0O")):
             raise ValueError("Octal float literals are not supported")
-        elif self.raw.startswith(("0x", "0X")):
+        if self.raw.startswith(("0x", "0X")):
             base = 16
             raw = self.raw[2:]
         else:
@@ -382,10 +377,4 @@ class Literal(Token):
         raise ValueError(f"Error parsing literal: {self.raw} is not a valid literal")
 
 
-class EOF(Token):
-    """
-    Represents the end of file token.
-    """
-
-    def __repr__(self) -> str:
-        return "EOF"
+Token = Keyword | Identifier | Punctuator | Literal

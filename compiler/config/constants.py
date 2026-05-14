@@ -1,7 +1,5 @@
 from enum import Enum, auto
 
-from lian.util.util import SimpleEnum
-
 BLOCK_STMTS = [
     "block_start",
     "block_end"
@@ -43,7 +41,7 @@ YIAN_KEYWORDS = {
     # Self
     "self", "Self",
     # Built-in instructions
-    "sizeof", "bitcast", "typeof", "panic", "byte_offset", "memcpy", "sys_read", "sys_write", "open", "close", "sys_random",
+    "sizeof", "bitcast", "panic", "byte_offset", "memcpy", "sys_read", "sys_write", "open", "close", "sys_random",
     # Not implemented yet
     # "union", "default", "do", "yield", "with",
     # "ok", "local", "shared", "volatile", "where",
@@ -85,16 +83,6 @@ class AccessMode(Enum):
             case "public":
                 return cls.Public
         raise ValueError(f"{s} is not a access mode")
-
-
-YIAN_ATTRS = SimpleEnum({
-    "PUBLIC": "pub",
-    "STATIC": "static",
-    "SHARED": "shared",
-    "MUTEX": "mutex",
-    "INLINE": "inline",
-    "INTRINSIC": "intrinsic"
-})
 
 
 class IntrinsicCustomType(Enum):
@@ -245,31 +233,6 @@ STD_LIBS = {
 
 PRIMITIVE_TYPE_ID_MAX = 200
 
-TYPE_VALUE_DEF_KIND = SimpleEnum({
-    "SYMBOL_DEF": 0,
-    "CONSTANT_DATA": 1,
-    "ANONYMOUS_DEF": 2,
-})
-
-LIB_KIND = SimpleEnum({
-    "FIRST_PARTY": 0,
-    "BUILTIN": 1,
-    "EXTERNAL": 2,
-})
-
-SYSCALL_NUM = SimpleEnum({
-    "SYS_OPEN": 2,
-    "SYS_CLOSE": 3,
-    "SYS_READ": 63,
-    "SYS_WRITE": 64,
-})
-
-SYSCALL_NUM = SimpleEnum({
-    "SYS_OPEN": 2,
-    "SYS_CLOSE": 3,
-    "SYS_READ": 63,
-    "SYS_WRITE": 64,
-})
 
 ROOT_BLOCK_ID = 0
 

@@ -1,5 +1,4 @@
-from compiler.frontend.lex.token import (EOF, Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind,
-                                         Token)
+from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind, Token
 from compiler.utils.IR.position import SrcPosition, SrcSpan
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
@@ -99,7 +98,7 @@ class Lexer:
         """
         while not self.__stream.at_end():
             self.__tokens.append(self.__next_token())
-        self.__tokens.append(EOF(self.__stream.pos.into_span()))
+        self.__tokens.append(Punctuator(PunctuatorKind.EOF, self.__stream.pos.into_span()))
 
     def export(self) -> list[Token]:
         """
@@ -115,8 +114,13 @@ class Lexer:
             ch = self.__stream.peek()
             if ch is None:
                 return
+            if ch == "\n":
+                self.__stream.advance()
+                self.__tokens.append(Punctuator(PunctuatorKind.Endl, self.__stream.pos.into_span()))
+                continue
             if ch.isspace():
                 self.__stream.advance()
+                self.__tokens.append(Punctuator(PunctuatorKind.Space, self.__stream.pos.into_span()))
                 continue
             if self.__stream.peek_n(2) == "//":
                 self.__skip_line_comment()
@@ -131,7 +135,7 @@ class Lexer:
         """
         self.__skip_ignored()
         if self.__stream.at_end():
-            return EOF(self.__stream.pos.into_span())
+            return Punctuator(PunctuatorKind.EOF, self.__stream.pos.into_span())
 
         start_pos = self.__stream.pos.clone()
         ch = self.__stream.next()
@@ -259,6 +263,8 @@ class Lexer:
 
         while not self.__stream.at_end():
             if self.__stream.peek() == "\n":
+                self.__tokens.append(Punctuator(PunctuatorKind.Endl, self.__stream.pos.into_span()))
+                self.__stream.advance()
                 return
             self.__stream.advance()
 
