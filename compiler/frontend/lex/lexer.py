@@ -1,4 +1,6 @@
-from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind, Token
+# from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind, Token
+from compiler.frontend.lex import token as Tok
+from compiler.frontend.lex.token import Token
 from compiler.utils.IR.position import SrcPosition, SrcSpan
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
@@ -98,7 +100,7 @@ class Lexer:
         """
         while not self.__stream.at_end():
             self.__tokens.append(self.__next_token())
-        self.__tokens.append(Punctuator(PunctuatorKind.EOF, self.__stream.pos.into_span()))
+        self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.EOF, self.__stream.pos.into_span()))
 
     def export(self) -> list[Token]:
         """
@@ -116,11 +118,11 @@ class Lexer:
                 return
             if ch == "\n":
                 self.__stream.advance()
-                self.__tokens.append(Punctuator(PunctuatorKind.Endl, self.__stream.pos.into_span()))
+                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Endl, self.__stream.pos.into_span()))
                 continue
             if ch.isspace():
                 self.__stream.advance()
-                self.__tokens.append(Punctuator(PunctuatorKind.Space, self.__stream.pos.into_span()))
+                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Space, self.__stream.pos.into_span()))
                 continue
             if self.__stream.peek_n(2) == "//":
                 self.__skip_line_comment()
@@ -135,21 +137,22 @@ class Lexer:
         """
         self.__skip_ignored()
         if self.__stream.at_end():
-            return Punctuator(PunctuatorKind.EOF, self.__stream.pos.into_span())
+            return Tok.Punctuator(Tok.PunctuatorKind.EOF, self.__stream.pos.into_span())
 
         start_pos = self.__stream.pos.clone()
         ch = self.__stream.next()
 
+        if ch == '"':
+            return self.__lex_string(start_pos)
+        if ch == "'":
+            return self.__lex_char(start_pos)
+        if ch == "b" and self.__stream.peek() == "'":
+            return self.__lex_byte(start_pos)
         if ch in START_IDENTIFIER:
             return self.__lex_identifier_or_keyword(ch, start_pos)
-        elif ch in START_NUMBER:
+        if ch in START_NUMBER:
             return self.__lex_number(ch, start_pos)
-        elif ch == '"':
-            return self.__lex_string(start_pos)
-        elif ch == "'":
-            return self.__lex_char(start_pos)
-        else:
-            return self.__lex_delimiter_or_operator(ch, start_pos)
+        return self.__lex_delimiter_or_operator(ch, start_pos)
 
     def __lex_identifier_or_keyword(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
@@ -163,11 +166,11 @@ class Lexer:
             c = self.__stream.peek()
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
-        tok = KeywordKind.try_from_str(tok_str)
+        tok = Tok.KeywordKind.try_from_str(tok_str)
         if tok is not None:
-            return Keyword(tok, span)
+            return Tok.Keyword(tok, span)
         else:
-            return Identifier(tok_str, span)
+            return Tok.Identifier(tok_str, span)
 
     def __lex_number(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
@@ -192,7 +195,11 @@ class Lexer:
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
-            return Literal(tok_str, span)
+            if any(c in ".eEpP" for c in tok_str):
+                value, suffix = Tok.parse_float_value(tok_str)
+                return Tok.FloatLiteral(tok_str, span, value, suffix)
+            value, suffix = Tok.parse_integer_value(tok_str)
+            return Tok.IntLiteral(tok_str, span, value, suffix)
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
 
@@ -221,7 +228,7 @@ class Lexer:
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
-            return Literal(tok_str, span)
+            return Tok.StrLiteral(tok_str, span, Tok.parse_string_value(tok_str))
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
 
@@ -250,7 +257,35 @@ class Lexer:
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
-            return Literal(tok_str, span)
+            return Tok.CharLiteral(tok_str, span, Tok.parse_char_value(tok_str))
+        except ValueError as exc:
+            raise LexError(str(exc), span) from exc
+
+    def __lex_byte(self, start_pos: SrcPosition) -> Token:
+        """
+        Lexes a byte literal (integer literal with a 'b' prefix) from the source code.
+        """
+        tok_str = "b'"
+        self.__stream.consume("'")  # consume the opening single quote after 'b'
+        c = self.__stream.peek()
+        while c is not None and c != "'":
+            tok_str += self.__stream.next()
+
+            # if the current character is a backslash
+            # we need to accept the next character even if it is a single quote
+            if c == "\\":
+                c = self.__stream.peek()
+                if c is not None:
+                    tok_str += self.__stream.next()
+
+            c = self.__stream.peek()
+
+        # after loop, make sure we ended with a closing quote
+        tok_str += self.__stream.consume("'")
+
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
+        try:
+            return Tok.IntLiteral(tok_str, span, Tok.parse_byte_value(tok_str), suffix="u8")
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
 
@@ -263,7 +298,7 @@ class Lexer:
 
         while not self.__stream.at_end():
             if self.__stream.peek() == "\n":
-                self.__tokens.append(Punctuator(PunctuatorKind.Endl, self.__stream.pos.into_span()))
+                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Endl, self.__stream.pos.into_span()))
                 self.__stream.advance()
                 return
             self.__stream.advance()
@@ -275,18 +310,18 @@ class Lexer:
         Assumes that the caller has already consumed the first character of the delimiter or operator.
         """
         if tok_str == "\n":
-            return Punctuator(PunctuatorKind.Endl, SrcSpan(start_pos, self.__stream.pos.clone()))
+            return Tok.Punctuator(Tok.PunctuatorKind.Endl, SrcSpan(start_pos, self.__stream.pos.clone()))
 
         next_char = self.__stream.peek()
         if next_char is not None:
             combined = tok_str + next_char
-            if PunctuatorKind.try_from_str(combined) is not None:
+            if Tok.PunctuatorKind.try_from_str(combined) is not None:
                 self.__stream.advance()
                 tok_str = combined
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
-            kind = PunctuatorKind.from_str(tok_str)
+            kind = Tok.PunctuatorKind.from_str(tok_str)
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
-        return Punctuator(kind, span)
+        return Tok.Punctuator(kind, span)

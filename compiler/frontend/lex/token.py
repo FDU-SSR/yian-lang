@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from dataclasses import dataclass
+from enum import Enum
 from typing import TypeAlias
 
 from compiler.utils.IR.position import SrcSpan
@@ -175,217 +175,218 @@ class Punctuator:
         return cls(kind, SrcSpan.empty())
 
 
-class LiteralKind(Enum):
-    """
-    No boolean literals since we can just use keywords
-    """
-
-    String = auto()
-    Char = auto()
-    Integer = auto()
-    Float = auto()
+@dataclass
+class IntLiteral:
+    raw: str
+    span: SrcSpan
+    value: int
+    suffix: str | None
 
 
 @dataclass
-class Literal:
-    """
-    Represents a literal token.
-    """
-
+class FloatLiteral:
     raw: str
     span: SrcSpan
-    suffix: str | None = field(init=False, default=None)
-    kind: LiteralKind = field(init=False)
-    value: str | int | float = field(init=False)
+    value: float
+    suffix: str | None
 
-    def __post_init__(self):
-        self.kind = self.__parse_kind()
-        self.value = self.__parse_value()
 
-    def __repr__(self) -> str:
-        return f"Literal({self.kind.name}, {self.raw})"
+@dataclass
+class CharLiteral:
+    raw: str
+    span: SrcSpan
+    value: str
 
-    def __parse_value(self) -> str | int | float:
-        match self.kind:
-            case LiteralKind.String:
-                return self.__parse_string_value()
-            case LiteralKind.Char:
-                return self.__parse_char_value()
-            case LiteralKind.Integer:
-                return self.__parse_integer_value()
-            case LiteralKind.Float:
-                return self.__parse_float_value()
 
-    def __parse_string_value(self) -> str:
-        # handle escape sequences
-        result = ""
-        i = 1  # skip the opening quote
-        while i < len(self.raw) - 1:  # skip the closing quote
-            c = self.raw[i]
-            if c == "\\":
-                i, c = self.__parse_escape_sequence(i)
-            result += c
-            i += 1
-        return result
+@dataclass
+class StrLiteral:
+    raw: str
+    span: SrcSpan
+    value: str
 
-    def __parse_char_value(self) -> str:
-        # handle escape sequences
-        result = ""
-        i = 1  # skip the opening quote
-        c = self.raw[i]
+
+ESCAPE_SEQUENCES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "0": "\0",
+}
+
+BASE_DIGITS = {
+    2: "01",
+    8: "01234567",
+    10: "0123456789",
+    16: "0123456789abcdefABCDEF",
+}
+
+
+def __parse_escape_sequence(raw: str) -> tuple[str, str]:
+    if not raw:
+        raise ValueError("Invalid escape sequence at end of literal")
+    escape_char, raw = raw[0], raw[1:]
+    if escape_char in ESCAPE_SEQUENCES:
+        return ESCAPE_SEQUENCES[escape_char], raw
+    if escape_char in {"x", "X"}:
+        # hex character literal
+        hex_digits, raw = raw[:2], raw[2:]
+        if len(hex_digits) != 2:
+            raise ValueError(f"Invalid hex escape sequence: \\{escape_char} must be followed by 2 hex digits")
+        if any(c not in BASE_DIGITS[16] for c in hex_digits):
+            raise ValueError(f"Invalid hex escape sequence: \\{escape_char}{hex_digits}")
+        return chr(int(hex_digits, 16)), raw
+    if escape_char in {"u", "U"}:
+        # unicode character literal
+        if raw[0] != "{":
+            raise ValueError(f"Invalid unicode escape sequence: \\{escape_char} must be followed by {{")
+        raw = raw[1:]  # skip the '{'
+        unicode_digits = ""
+        while raw and raw[0] != "}":
+            unicode_digits += raw[0]
+            raw = raw[1:]
+        if not raw:
+            raise ValueError("Invalid unicode escape sequence: missing closing }")
+        if any(c not in BASE_DIGITS[16] for c in unicode_digits):
+            raise ValueError(f"Invalid unicode escape sequence: \\{escape_char}{{{unicode_digits}}}")
+        return chr(int(unicode_digits, 16)), raw[1:]  # skip the closing '}'
+    raise ValueError(f"Invalid escape sequence: \\{escape_char}")
+
+
+def parse_string_value(raw: str) -> str:
+    # handle escape sequences
+    result = ""
+    raw = raw[1:]  # skip the opening quote
+    while raw:
+        c, raw = raw[0], raw[1:]
         if c == "\\":
-            i, c = self.__parse_escape_sequence(i)
+            c, raw = __parse_escape_sequence(raw)
         result += c
-        i += 1
-        if i != len(self.raw) - 1:
-            raise ValueError("Char literals must be a single character")
-        return result
+    return result
 
-    ESCAPE_SEQUENCES = {
-        "n": "\n",
-        "t": "\t",
-        "r": "\r",
-        "\\": "\\",
-        "'": "'",
-        '"': '"',
-        "0": "\0",
-    }
 
-    BASE_DIGITS = {
-        2: "01",
-        8: "01234567",
-        10: "0123456789",
-        16: "0123456789abcdefABCDEF",
-    }
+def parse_char_value(raw: str) -> str:
+    # handle escape sequences
+    result = ""
+    raw = raw[1:]  # skip the opening quote
+    c, raw = raw[0], raw[1:]
+    if c == "\\":
+        c, raw = __parse_escape_sequence(raw)
+    result += c
+    raw = raw[1:]  # skip the closing quote
+    if raw:
+        raise ValueError(f"Char literal can only contain one character, but got {result} in {raw}")
+    return result
 
-    def __parse_escape_sequence(self, i: int) -> tuple[int, str]:
-        i += 1  # skip the backslash
-        if i >= len(self.raw) - 1:
-            raise ValueError("Invalid escape sequence at end of literal")
-        escape_char = self.raw[i]
-        if escape_char in self.ESCAPE_SEQUENCES:
-            return i, self.ESCAPE_SEQUENCES[escape_char]
-        if escape_char in {"x", "X"}:
-            # hex character literal
-            hex_digits = self.raw[i + 1: i + 3]
-            i += 2
-            if any(c not in self.BASE_DIGITS[16] for c in hex_digits):
-                raise ValueError(f"Invalid hex escape sequence: \\{escape_char}{hex_digits}")
-            return i, chr(int(hex_digits, 16))
-        if escape_char in {"u", "U"}:
-            # unicode character literal
-            if self.raw[i + 1] != "{":
-                raise ValueError(f"Invalid unicode escape sequence: \\{escape_char} must be followed by {{")
-            i += 2  # skip the 'u' and the '{'
-            unicode_digits = ""
-            while i < len(self.raw) - 1 and self.raw[i] != "}":
-                unicode_digits += self.raw[i]
-                i += 1
-            if i >= len(self.raw) - 1:
-                raise ValueError("Invalid unicode escape sequence: missing closing }")
-            if any(c not in self.BASE_DIGITS[16] for c in unicode_digits):
-                raise ValueError(f"Invalid unicode escape sequence: \\{escape_char}{{{unicode_digits}}}")
-            return i, chr(int(unicode_digits, 16))
-        raise ValueError(f"Invalid escape sequence: \\{escape_char}")
 
-    INT_SUFFIXES = {
-        "i8": 2**7 - 1,
-        "i16": 2**15 - 1,
-        "i32": 2**31 - 1,
-        "i64": 2**63 - 1,
-        "u8": 2**8 - 1,
-        "u16": 2**16 - 1,
-        "u32": 2**32 - 1,
-        "u64": 2**64 - 1,
-        "int": 2**31 - 1,
-        "uint": 2**32 - 1,
-    }
+def parse_byte_value(raw: str) -> int:
+    # handle escape sequences
+    result = 0
+    raw = raw[2:]  # skip the b and opening quote
+    if not raw:
+        raise ValueError("Empty byte literal")
+    c, raw = raw[0], raw[1:]
+    if c == "\\":
+        c, raw = __parse_escape_sequence(raw)
+    result = ord(c)
+    raw = raw[1:]  # skip the closing quote
+    if raw:
+        raise ValueError(f"Byte literal can only contain one character, but got {c} in {raw}")
+    if result > 255:
+        raise ValueError(f"Byte literal must be in range 0..255, but got {result}")
+    return result
 
-    FLOAT_SUFFIXES = {"f16", "f32", "f64", "float"}
 
-    def __parse_integer_value(self) -> int:
-        # handle prefixes
-        if self.raw.startswith(("0b", "0B")):
-            base = 2
-            raw = self.raw[2:]
-        elif self.raw.startswith(("0o", "0O")):
-            base = 8
-            raw = self.raw[2:]
-        elif self.raw.startswith(("0x", "0X")):
-            base = 16
-            raw = self.raw[2:]
-        else:
-            base = 10
-            raw = self.raw
+INT_SUFFIXES = {
+    "i8": 2**7 - 1,
+    "i16": 2**15 - 1,
+    "i32": 2**31 - 1,
+    "i64": 2**63 - 1,
+    "u8": 2**8 - 1,
+    "u16": 2**16 - 1,
+    "u32": 2**32 - 1,
+    "u64": 2**64 - 1,
+    "int": 2**31 - 1,
+    "uint": 2**32 - 1,
+}
 
-        # handle suffixes
-        for suffix in self.INT_SUFFIXES:
-            if raw.endswith(suffix):
-                self.suffix = suffix
-                raw = raw[:-len(suffix)]
-                break
+FLOAT_SUFFIXES = {"f16", "f32", "f64", "float"}
 
-        # remove underscores
-        raw = raw.replace("_", "")
 
-        if any(c not in self.BASE_DIGITS[base] for c in raw):
-            raise ValueError(f"Invalid integer literal: {self.raw} is not a valid base {base} integer")
+def parse_integer_value(raw: str) -> tuple[int, str | None]:
+    # handle prefixes
+    if raw.startswith(("0b", "0B")):
+        base = 2
+        raw = raw[2:]
+    elif raw.startswith(("0o", "0O")):
+        base = 8
+        raw = raw[2:]
+    elif raw.startswith(("0x", "0X")):
+        base = 16
+        raw = raw[2:]
+    else:
+        base = 10
 
-        value = int(raw, base)
+    # handle suffixes
+    suffix = None
+    for int_suffix in INT_SUFFIXES:
+        if raw.endswith(int_suffix):
+            suffix = int_suffix
+            raw = raw[:-len(int_suffix)]
+            break
 
-        # check int range based on suffix
-        if self.suffix is not None:
-            max_value = self.INT_SUFFIXES[self.suffix]
-            if value > max_value:
-                raise ValueError(f"Integer literal {self.raw} exceeds maximum value for type {self.suffix}")
+    # remove underscores
+    raw = raw.replace("_", "")
 
-        return value
+    if any(c not in BASE_DIGITS[base] for c in raw):
+        raise ValueError(f"Invalid integer literal: {raw} is not a valid base {base} integer")
 
-    def __parse_float_value(self) -> float:
-        # handle prefixes
-        if self.raw.startswith(("0b", "0B")):
-            raise ValueError("Binary float literals are not supported")
-        if self.raw.startswith(("0o", "0O")):
-            raise ValueError("Octal float literals are not supported")
-        if self.raw.startswith(("0x", "0X")):
-            base = 16
-            raw = self.raw[2:]
-        else:
-            base = 10
-            raw = self.raw
+    value = int(raw, base)
 
-        # handle suffixes
-        for suffix in self.FLOAT_SUFFIXES:
-            if raw.endswith(suffix):
-                self.suffix = suffix
-                raw = raw[:-len(suffix)]
-                break
+    # check int range based on suffix
+    if suffix is not None:
+        max_value = INT_SUFFIXES[suffix]
+        if value > max_value:
+            raise ValueError(f"Integer literal {raw} exceeds maximum value for type {suffix}")
 
-        # remove underscores
-        raw = raw.replace("_", "")
+    return value, suffix
 
-        if any(c not in self.BASE_DIGITS[base] and c not in ".eEpP+-" for c in raw):
-            raise ValueError(f"Invalid float literal: {self.raw} is not a valid base {base} float")
 
-        if base == 16:
-            value = float.fromhex(raw)
-        else:
-            value = float(raw)
+def parse_float_value(raw: str) -> tuple[float, str | None]:
+    # handle prefixes
+    if raw.startswith(("0b", "0B")):
+        raise ValueError("Binary float literals are not supported")
+    if raw.startswith(("0o", "0O")):
+        raise ValueError("Octal float literals are not supported")
+    if raw.startswith(("0x", "0X")):
+        base = 16
+        raw = raw[2:]
+    else:
+        base = 10
 
-        return value
+    # handle suffixes
+    suffix = None
+    for float_suffix in FLOAT_SUFFIXES:
+        if raw.endswith(float_suffix):
+            suffix = float_suffix
+            raw = raw[:-len(float_suffix)]
+            break
 
-    def __parse_kind(self) -> LiteralKind:
-        if self.raw.startswith("'") and self.raw.endswith("'"):
-            return LiteralKind.Char
-        if self.raw.startswith('"') and self.raw.endswith('"'):
-            return LiteralKind.String
-        if self.raw[0] in "0123456789":
-            if any(ch in self.raw for ch in ".eEpP") or self.raw.endswith(("f16", "f32", "f64")):
-                return LiteralKind.Float
-            return LiteralKind.Integer
-        if self.raw.startswith("b'") and self.raw.endswith("'"):
-            return LiteralKind.Integer
-        raise ValueError(f"Error parsing literal: {self.raw} is not a valid literal")
+    # remove underscores
+    raw = raw.replace("_", "")
 
+    if any(c not in BASE_DIGITS[base] and c not in ".eEpP+-" for c in raw):
+        raise ValueError(f"Invalid float literal: {raw} is not a valid base {base} float")
+
+    if base == 16:
+        value = float.fromhex(raw)
+    else:
+        value = float(raw)
+
+    return value, suffix
+
+
+Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral
 
 Token: TypeAlias = Keyword | Identifier | Punctuator | Literal
