@@ -28,6 +28,7 @@ class KeywordKind(Enum):
     Match = "match"
     For = "for"
     While = "while"
+    Loop = "loop"
     Break = "break"
     Continue = "continue"
     Return = "return"
