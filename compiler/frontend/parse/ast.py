@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TypeAlias
 
+from compiler.frontend.lex.token import CharLiteral, IntLiteral
 from compiler.frontend.lex.token import Literal as LexLiteral
+from compiler.frontend.lex.token import StrLiteral
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
@@ -138,6 +140,14 @@ class Block:
 @dataclass
 class VarDecl:
     span: SrcSpan
+    var_type: ASTType
+    name: Identifier
+    init_expr: Expr | None
+
+
+@dataclass
+class GlobalVarDecl:
+    span: SrcSpan
     attrs: list[Attr]
     var_type: ASTType
     name: Identifier
@@ -155,6 +165,7 @@ class If:
     span: SrcSpan
     condition: Expr
     then_branch: Block
+    elif_branches: list[tuple[Expr, Block]]
     else_branch: Block | None
 
 
@@ -200,7 +211,7 @@ class Continue:
 class Assert:
     span: SrcSpan
     condition: Expr
-    message: LexLiteral | None
+    message: Expr | None
 
 
 @dataclass
@@ -212,29 +223,25 @@ class Delete:
 @dataclass
 class IntPattern:
     span: SrcSpan
-    values: list[int]
-    block: Block
+    values: list[IntLiteral]
 
 
 @dataclass
 class CharPattern:
     span: SrcSpan
-    values: list[LexLiteral]
-    block: Block
+    values: list[CharLiteral]
 
 
 @dataclass
 class StrPattern:
     span: SrcSpan
-    values: list[LexLiteral]
-    block: Block
+    values: list[StrLiteral]
 
 
 @dataclass
 class EnumPattern:
     span: SrcSpan
     variants: list[Identifier]
-    block: Block
 
 
 @dataclass
@@ -242,13 +249,11 @@ class PayloadPattern:
     span: SrcSpan
     variant: Identifier
     fields: list[Identifier]
-    block: Block
 
 
 @dataclass
 class WildcardPattern:
     span: SrcSpan
-    block: Block
 
 
 @dataclass
@@ -344,21 +349,12 @@ ProgramItem: TypeAlias = (
     | FuncDef
     | StructDef | EnumDef | TraitDef
     | Impl
-    | VarDecl
+    | GlobalVarDecl
 )
 
 
 TraitItem: TypeAlias = (
     MethodDecl | MethodDef
-)
-
-
-Stmt: TypeAlias = (
-    Block
-    | VarDecl
-    | If | For | While | Loop | Match
-    | Return | Break | Continue | Assert
-    | Delete
 )
 
 
@@ -371,8 +367,18 @@ Expr: TypeAlias = (
 )
 
 
+Stmt: TypeAlias = (
+    Block
+    | VarDecl
+    | If | For | While | Loop | Match
+    | Return | Break | Continue | Assert
+    | Delete
+    | Expr
+)
+
 Pattern: TypeAlias = (
     IntPattern | CharPattern | EnumPattern
     | StrPattern
     | PayloadPattern
+    | WildcardPattern
 )

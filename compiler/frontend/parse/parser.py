@@ -199,10 +199,10 @@ class Parser:
 
         return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
 
-    def __parse_func_or_var(self, attrs: list[AST.Attr]) -> AST.VarDecl | AST.FuncDef:
+    def __parse_func_or_var(self, attrs: list[AST.Attr]) -> AST.GlobalVarDecl | AST.FuncDef:
         if self.__stream.function_like():
             return self.__parse_func_def(attrs=attrs)
-        return self.__parse_var_decl(attrs=attrs)
+        return self.__parse_global_var_decl(attrs=attrs)
 
     def __parse_method_decl(self) -> AST.MethodDecl:
         attrs = self.__stream.consume_attrs()
@@ -276,7 +276,7 @@ class Parser:
             return self.__parse_method_def(decl=decl)
         return decl
 
-    def __parse_var_decl(self, attrs: list[AST.Attr]) -> AST.VarDecl:
+    def __parse_global_var_decl(self, attrs: list[AST.Attr]) -> AST.GlobalVarDecl:
         var_type = self.__parse_type()
 
         self.__stream.consume_spaces()
@@ -291,7 +291,7 @@ class Parser:
         else:
             init_expr = None
 
-        return AST.VarDecl(span=name.span, attrs=attrs, var_type=var_type, name=name, init_expr=init_expr)
+        return AST.GlobalVarDecl(span=name.span, attrs=attrs, var_type=var_type, name=name, init_expr=init_expr)
 
     def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
         if self.__stream.function_like():

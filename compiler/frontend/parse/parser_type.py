@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 
 from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind
 from compiler.frontend.parse import ast as AST
@@ -19,7 +20,7 @@ class TypeParser:
 
         # absorbs subsequent type modifiers
         token = self.__stream.peek()
-        while token is not None:
+        while True:
             match token:
                 case Punctuator(kind=PunctuatorKind.Less):
                     # generic type application, e.g., `Option<int>`
@@ -58,7 +59,9 @@ class TypeParser:
         token = self.__stream.next()
 
         if isinstance(token, Keyword) and token.kind in self.MAPPING:
-            return TypeParser.MAPPING[token.kind]
+            ty = deepcopy(self.MAPPING[token.kind])
+            ty.span = token.span
+            return ty
 
         if isinstance(token, Keyword) and token.kind == KeywordKind.Fn:
             # function type, e.g., `fn(int, str) -> bool`
