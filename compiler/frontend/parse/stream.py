@@ -27,6 +27,9 @@ class TokenStream:
             return None
         return self.__tokens[self.__index + n]
 
+    def peek_n(self, n: int) -> list[Token]:
+        return self.__tokens[self.__index: self.__index + n]
+
     def next(self) -> Token:
         if self.at_end():
             raise ParseError("End of token stream reached", self.peek().span)

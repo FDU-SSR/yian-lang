@@ -102,6 +102,9 @@ class Identifier:
 
 
 class PunctuatorKind(Enum):
+    """
+    Represents the kind of a punctuator token.
+    """
     LParen = "("
     RParen = ")"
     LBrace = "{"
@@ -139,6 +142,8 @@ class PunctuatorKind(Enum):
     NotEqual = "!="
     LessEqual = "<="
     GreaterEqual = ">="
+    LessLess = "<<"
+    LessLessEqual = "<<="
     DotDot = ".."
     Space = "space"
     Endl = "endl"
