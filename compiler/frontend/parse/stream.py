@@ -5,7 +5,7 @@ from typing import Callable
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.parser import ParseError
+from compiler.frontend.parse.error import ParseError
 
 
 class TokenStream:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum, auto
+from enum import Enum
 
 from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind
 from compiler.frontend.parse.stream import TokenStream
@@ -172,11 +172,39 @@ class BinaryOperator(Enum):
 
 class UnaryOperator(Enum):
     # Arithmetic
-    Neg = auto()
+    Neg = 13
     # Bitwise
-    BitNot = auto()
+    BitNot = 13
     # Logical
-    LogicalNot = auto()
+    LogicalNot = 13
     # Mem
-    Deref = auto()
-    AddrOf = auto()
+    Deref = 14
+    AddrOf = 14
+
+    @classmethod
+    def try_from_token(cls, stream: TokenStream) -> UnaryOperator | None:
+        token = stream.peek()
+
+        match token:
+            case Punctuator(kind=PunctuatorKind.Minus):
+                stream.consume_punctuator(PunctuatorKind.Minus)
+                return cls.Neg
+            case Punctuator(kind=PunctuatorKind.Tilde):
+                stream.consume_punctuator(PunctuatorKind.Tilde)
+                return cls.BitNot
+            case Keyword(kind=KeywordKind.Not):
+                stream.consume_keyword(KeywordKind.Not)
+                return cls.LogicalNot
+            case Punctuator(kind=PunctuatorKind.Star):
+                stream.consume_punctuator(PunctuatorKind.Star)
+                return cls.Deref
+            case Punctuator(kind=PunctuatorKind.Ampersand):
+                stream.consume_punctuator(PunctuatorKind.Ampersand)
+                return cls.AddrOf
+            case _:
+                return None
+
+    @property
+    def rbp(self) -> int:
+        """Right binding power of the unary operator."""
+        return self.value

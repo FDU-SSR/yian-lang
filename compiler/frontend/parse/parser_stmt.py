@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.parser import ParseError
+from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
 from compiler.frontend.parse.parser_type import TypeParser
 from compiler.frontend.parse.stream import TokenStream

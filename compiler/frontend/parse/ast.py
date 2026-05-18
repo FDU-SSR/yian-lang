@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-from compiler.frontend.lex.token import CharLiteral, IntLiteral
-from compiler.frontend.lex.token import Literal as LexLiteral
-from compiler.frontend.lex.token import StrLiteral
-from compiler.frontend.parse.ast_type import ASTType
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
-from compiler.utils.IR.position import SrcSpan
+if TYPE_CHECKING:
+    from compiler.frontend.lex.token import CharLiteral, IntLiteral
+    from compiler.frontend.lex.token import Literal as LexLiteral
+    from compiler.frontend.lex.token import StrLiteral
+    from compiler.frontend.parse.ast_type import ASTType
+    from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+    from compiler.utils.IR.position import SrcSpan
 
 
 @dataclass
@@ -272,11 +273,17 @@ class Unary:
 
 
 @dataclass
+class Arg:
+    span: SrcSpan
+    name: Identifier | None
+    value: Expr
+
+
+@dataclass
 class Call:
     span: SrcSpan
     callee: Expr
-    positional_args: list[Expr]
-    named_args: dict[Identifier, Expr]
+    args: list[Arg]
 
 
 @dataclass
@@ -285,7 +292,7 @@ class MethodCall:
     receiver: Expr
     method_name: Identifier
     generics: list[ASTType]
-    args: list[Expr]
+    args: list[Arg]
 
 
 @dataclass

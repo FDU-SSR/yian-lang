@@ -8,6 +8,8 @@ from typing import NoReturn
 
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.token import Token
+from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.parser import ParseError, Parser
 from compiler.utils.IR.position import SrcSpan
 
 
@@ -93,17 +95,21 @@ def main(argv: list[str] | None = None) -> int:
 
     # extract .an files from input paths
     src_files = collect_an_files(args.paths)
+    sources: list[str] = []
+    for src_file in src_files:
+        with src_file.open() as f:
+            sources.append(f.read())
 
     # lex all source files
     token_lists: list[list[Token]] = []
-    for src_file in src_files:
-        with src_file.open() as f:
-            source = f.read()
+    for src_file, source in zip(src_files, sources):
         lexer = Lexer(source)
+
         try:
             lexer.lex()
         except LexError as error:
             __print_source_error(src_file, source, error.span, error)
+
         token_lists.append(lexer.export())
 
     # debug print tokens
@@ -113,7 +119,16 @@ def main(argv: list[str] | None = None) -> int:
             for token in tokens:
                 print(f"  {token}")
 
-    # TODO: subsequent compilation stages
+    programs: list[AST.Program] = []
+    for src_file, source, tokens in zip(src_files, sources, token_lists):
+        parser = Parser(tokens)
+
+        try:
+            program = parser.parse()
+        except ParseError as error:
+            __print_source_error(src_file, source, error.span, error)
+
+        programs.append(program)
 
     return 0
 

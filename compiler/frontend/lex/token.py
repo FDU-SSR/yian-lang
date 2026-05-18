@@ -211,6 +211,13 @@ class StrLiteral:
     value: str
 
 
+@dataclass
+class BoolLiteral:
+    raw: str
+    span: SrcSpan
+    value: bool
+
+
 ESCAPE_SEQUENCES = {
     "n": "\n",
     "t": "\t",
@@ -393,6 +400,6 @@ def parse_float_value(raw: str) -> tuple[float, str | None]:
     return value, suffix
 
 
-Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral
+Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
 
 Token: TypeAlias = Keyword | Identifier | Punctuator | Literal

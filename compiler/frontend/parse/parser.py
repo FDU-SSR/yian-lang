@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
 from compiler.frontend.parse.parser_stmt import StmtParser
 from compiler.frontend.parse.parser_type import TypeParser
@@ -10,18 +11,12 @@ from compiler.utils.errors.yian_error import CompilerError
 from compiler.utils.IR.position import SrcSpan
 
 
-class ParseError(ValueError):
-    def __init__(self, message: str, span: SrcSpan):
-        super().__init__(message)
-        self.span = span
-
-
 class Parser:
     def __init__(self, tokens: list[Token]):
         self.__stream = TokenStream(tokens)
 
-        self.__expr_parser = ExprParser(self.__stream)
         self.__type_parser = TypeParser(self.__stream)
+        self.__expr_parser = ExprParser(self.__stream, self.__type_parser)
         self.__stmt_parser = StmtParser(self.__stream, self.__expr_parser, self.__type_parser)
 
     def parse(self) -> AST.Program:

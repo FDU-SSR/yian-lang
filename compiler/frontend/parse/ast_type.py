@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-from compiler.frontend.parse.ast import Identifier
-from compiler.utils.IR.position import SrcSpan
+if TYPE_CHECKING:
+    from compiler.frontend.parse.ast import Identifier
+    from compiler.utils.IR.position import SrcSpan
 
 
 @dataclass

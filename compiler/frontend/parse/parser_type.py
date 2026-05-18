@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 from copy import deepcopy
 
 from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as Ty
 from compiler.frontend.parse.ast_type import ASTType
-from compiler.frontend.parse.parser import ParseError
+from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.stream import TokenStream
 from compiler.utils.IR.position import SrcSpan
 
