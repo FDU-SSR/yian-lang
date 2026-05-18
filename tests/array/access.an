@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32[4] arr
     arr[0] = 3
     arr[1] = 4

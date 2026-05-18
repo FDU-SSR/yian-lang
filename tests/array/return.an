@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32[3] get_array2() {
+get_array2() -> i32[3] {
     i32[3] arr = [1, 2, 3]
     return arr
 }
@@ -12,7 +12,7 @@ struct Pair {
     pub i32 second
 }
 
-Pair[3] get_pairs() {
+get_pairs() -> Pair[3] {
     Pair p1 = Pair(1, 2)
     Pair p2 = Pair(2, 3)
     Pair p3 = Pair(3, 4)
@@ -23,7 +23,7 @@ Pair[3] get_pairs() {
     return arr
 }
 
-i32 main() {
+main() -> i32 {
     i32[3] array = get_array2()
     assert array[0] + array[1] + array[2] == 6: "Sum of array elements should be 6"
 

@@ -68,7 +68,7 @@ class TypeParser:
             # function type, e.g., `fn(int, str) -> bool`
             self.__stream.consume_keyword(KeywordKind.Fn)
             self.__stream.consume_punctuator(PunctuatorKind.LParen)
-            param_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma})
+            param_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
             self.__stream.consume_spaces()
@@ -89,7 +89,7 @@ class TypeParser:
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
             # tuple type, e.g., `(int, str)`
             self.__stream.consume_punctuator(PunctuatorKind.LParen)
-            element_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma})
+            element_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
             return Ty.TupleType(span=token.span, element_types=element_types)
 
@@ -98,7 +98,7 @@ class TypeParser:
     def __parse_instantiated(self, base: ASTType) -> ASTType:
         """Parses a generic type application from the token stream."""
         self.__stream.consume_punctuator(PunctuatorKind.Less)
-        generic_args = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma})
+        generic_args = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.Greater})
         self.__stream.consume_punctuator(PunctuatorKind.Greater)
 
         return Ty.InstantiatedType(span=base.span, base=base, generic_args=generic_args)

@@ -23,6 +23,9 @@ class SrcSpan:
         self.start = start.clone()
         self.end = end.clone()
 
+    def __repr__(self) -> str:
+        return f"Span({self.start.row}:{self.start.col} - {self.end.row}:{self.end.col})"
+
     @staticmethod
     def empty() -> SrcSpan:
         return SrcSpan(SrcPosition(0, 0), SrcPosition(0, 0))

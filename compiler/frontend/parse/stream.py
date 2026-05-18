@@ -90,10 +90,11 @@ class TokenStream:
                     break
         return attrs
 
-    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[Tok.PunctuatorKind]) -> list[ItemType]:
+    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[Tok.PunctuatorKind], terminators: set[Tok.PunctuatorKind]) -> list[ItemType]:
         """Consumes a separated list of items parsed by the given item_parser function."""
         items: list[ItemType] = []
-        while True:
+        token = self.peek()
+        while not (isinstance(token, Tok.Punctuator) and token.kind in terminators):
             self.consume_spaces()
             items.append(item_parser())
             self.consume_spaces()
@@ -122,7 +123,7 @@ class TokenStream:
         token = self.peek()
         if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less:
             self.consume_punctuator(Tok.PunctuatorKind.Less)
-            generics = self.consume_separated(self.consume_identifier, {Tok.PunctuatorKind.Comma})
+            generics = self.consume_separated(self.consume_identifier, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
             self.consume_punctuator(Tok.PunctuatorKind.Greater)
 
         return generics
@@ -131,11 +132,7 @@ class TokenStream:
         """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
         token = self.next()
         match token:
-            case Tok.Keyword(kind, span):
-                self.advance()
-                return AST.Identifier(name=kind.value, span=span)
             case Tok.Identifier(name, span):
-                self.advance()
                 return AST.Identifier(name=name, span=span)
             case _:
                 raise ParseError(f"Expected identifier or keyword but got '{token}'", token.span)
@@ -145,7 +142,6 @@ class TokenStream:
         token = self.next()
         match token:
             case Tok.IntLiteral(value=value):
-                self.advance()
                 return value
             case _:
                 raise ParseError(f"Expected integer literal but got '{token}'", token.span)
@@ -174,9 +170,112 @@ class TokenStream:
         self.__tokens = concatenated_tokens
 
     def function_like(self) -> bool:
-        """Checks if the following tokens match the pattern of a function definition."""
-        raise NotImplementedError("Function-like pattern checking not implemented yet")
+        """
+        Checks if the following tokens match the pattern of a function definition.
+
+        Ident<IdentT1, IdentT2, ...>(
+        """
+        index = 0
+
+        def check_identifier() -> bool:
+            nonlocal index
+            token = self.peek_nth(index)
+            if not isinstance(token, Tok.Identifier):
+                return False
+            index += 1
+            return True
+
+        def skip_spaces() -> None:
+            nonlocal index
+            while True:
+                token = self.peek_nth(index)
+                if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Space:
+                    index += 1
+                else:
+                    break
+
+        # Check for identifier
+        if not check_identifier():
+            return False
+
+        # Check for optional generic parameters
+        token = self.peek_nth(index)
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less:
+            index += 1
+            while True:
+                skip_spaces()
+                if not check_identifier():
+                    return False
+                skip_spaces()
+                token = self.peek_nth(index)
+                if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
+                    index += 1
+                elif isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Greater:
+                    index += 1
+                    break
+                else:
+                    return False
+
+        # Check for opening parenthesis
+        token = self.peek_nth(index)
+        if not isinstance(token, Tok.Punctuator) or token.kind != Tok.PunctuatorKind.LParen:
+            return False
+
+        return True
 
     def var_decl_like(self) -> bool:
-        """Checks if the following tokens match the pattern of a variable declaration."""
-        raise NotImplementedError("Variable declaration-like pattern checking not implemented yet")
+        """
+        Checks if the following tokens match the pattern of a variable declaration.
+
+        Type Ident =
+        """
+        index = 0
+
+        def skip_brackets(open_kind: Tok.PunctuatorKind, close_kind: Tok.PunctuatorKind) -> None:
+            nonlocal index
+            token = self.peek_nth(index)
+            if isinstance(token, Tok.Punctuator) and token.kind == open_kind:
+                index += 1
+                depth = 1
+                while depth > 0:
+                    token = self.peek_nth(index)
+                    if token is None:
+                        return
+                    if isinstance(token, Tok.Punctuator):
+                        if token.kind == open_kind:
+                            depth += 1
+                        elif token.kind == close_kind:
+                            depth -= 1
+                    index += 1
+
+        # Check for type
+        while True:
+            token = self.peek_nth(index)
+            match token:
+                case Tok.Keyword():
+                    index += 1
+                case Tok.Identifier():
+                    index += 1
+                case Tok.Punctuator(kind=Tok.PunctuatorKind.Star):
+                    index += 1
+                case Tok.Punctuator(kind=Tok.PunctuatorKind.LBracket):
+                    skip_brackets(Tok.PunctuatorKind.LBracket, Tok.PunctuatorKind.RBracket)
+                case Tok.Punctuator(kind=Tok.PunctuatorKind.Less):
+                    skip_brackets(Tok.PunctuatorKind.Less, Tok.PunctuatorKind.Greater)
+                case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
+                    skip_brackets(Tok.PunctuatorKind.LParen, Tok.PunctuatorKind.RParen)
+                case _:
+                    break
+
+        # Check for space
+        token = self.peek_nth(index)
+        if not isinstance(token, Tok.Punctuator) or token.kind != Tok.PunctuatorKind.Space:
+            return False
+        index += 1
+
+        # Check for identifier
+        token = self.peek_nth(index)
+        if not isinstance(token, Tok.Identifier):
+            return False
+
+        return True

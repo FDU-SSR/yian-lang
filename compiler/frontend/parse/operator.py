@@ -169,6 +169,75 @@ class BinaryOperator(Enum):
         """Right binding power of the operator (for right-associative operators)."""
         return self.value[1]
 
+    def __repr__(self) -> str:
+        match self:
+            case BinaryOperator.Add:
+                return "+"
+            case BinaryOperator.Sub:
+                return "-"
+            case BinaryOperator.Mul:
+                return "*"
+            case BinaryOperator.Div:
+                return "/"
+            case BinaryOperator.Mod:
+                return "%"
+            case BinaryOperator.BitAnd:
+                return "&"
+            case BinaryOperator.BitOr:
+                return "|"
+            case BinaryOperator.BitXor:
+                return "^"
+            case BinaryOperator.Shl:
+                return "<<"
+            case BinaryOperator.Shr:
+                return ">>"
+            case BinaryOperator.Eq:
+                return "=="
+            case BinaryOperator.Neq:
+                return "!="
+            case BinaryOperator.Lt:
+                return "<"
+            case BinaryOperator.Gt:
+                return ">"
+            case BinaryOperator.Leq:
+                return "<="
+            case BinaryOperator.Geq:
+                return ">="
+            case BinaryOperator.LogicalAnd:
+                return "and"
+            case BinaryOperator.LogicalOr:
+                return "or"
+            case BinaryOperator.Assign:
+                return "="
+            case BinaryOperator.AddAssign:
+                return "+="
+            case BinaryOperator.SubAssign:
+                return "-="
+            case BinaryOperator.MulAssign:
+                return "*="
+            case BinaryOperator.DivAssign:
+                return "/="
+            case BinaryOperator.ModAssign:
+                return "%="
+            case BinaryOperator.BitAndAssign:
+                return "&="
+            case BinaryOperator.BitOrAssign:
+                return "|="
+            case BinaryOperator.BitXorAssign:
+                return "^="
+            case BinaryOperator.ShlAssign:
+                return "<<="
+            case BinaryOperator.ShrAssign:
+                return ">>="
+            case BinaryOperator.Index:
+                return "[]"
+            case BinaryOperator.In:
+                return "in"
+            case BinaryOperator.NotIn:
+                return "not in"
+            case BinaryOperator.Range:
+                return ".."
+
 
 class UnaryOperator(Enum):
     # Arithmetic
@@ -208,3 +277,16 @@ class UnaryOperator(Enum):
     def rbp(self) -> int:
         """Right binding power of the unary operator."""
         return self.value
+
+    def __repr__(self) -> str:
+        match self:
+            case UnaryOperator.Neg:
+                return "-"
+            case UnaryOperator.BitNot:
+                return "~"
+            case UnaryOperator.LogicalNot:
+                return "not "
+            case UnaryOperator.Deref:
+                return "*"
+            case UnaryOperator.AddrOf:
+                return "&"

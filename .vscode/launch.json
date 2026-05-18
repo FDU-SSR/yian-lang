@@ -1,21 +1,16 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Debug Compiler",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/compiler/main.py",
-      "args": [
-        "compile",
-        "-f",
-        "-d",
-        "-w",
-        "${workspaceFolder}/tests/yian_workspace",
-        "${workspaceFolder}/lib",
-        "${workspaceFolder}/experiment/cwe/CVE-2021-32495.an"
-      ],
-      "console": "integratedTerminal"
-    }
-  ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug compiler.main",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "compiler.main",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": ["tests/array/return.an"]
+        }
+    ]
 }
+

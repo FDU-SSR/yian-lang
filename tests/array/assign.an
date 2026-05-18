@@ -2,10 +2,10 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32[5] buff1
     i32[5] buff2
-    for i32 i = 0; i < 5; i += 1 {
+    for i in 0..5i32 {
         buff1[u64(i)] = i * 10       // buff1 = [0, 10, 20, 30, 40]
     }
     buff2 = buff1                 // assign buff1 to buff2

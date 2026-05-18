@@ -53,6 +53,7 @@ class Parser:
                     items.append(self.__parse_trait(attrs=attrs))
                 case _:
                     items.append(self.__parse_func_or_var(attrs=attrs))
+            self.__stream.consume_spaces()  # Skip any spaces between items
 
         return AST.Program(
             span=SrcSpan.combine_all([item.span for item in items]),
@@ -66,7 +67,7 @@ class Parser:
                 self.__stream.consume_spaces()
 
                 # Parse the path
-                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot})
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot}, set())
 
                 # pop last as target
                 target = paths.pop()
@@ -87,7 +88,7 @@ class Parser:
                 self.__stream.consume_spaces()
 
                 # Parse the path
-                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot})
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot}, set())
 
                 self.__stream.consume_spaces()
                 self.__stream.consume_keyword(KeywordKind.Import)
@@ -105,7 +106,7 @@ class Parser:
                         case _:
                             return target, None
 
-                targets_and_aliases = self.__stream.consume_separated(parse_target, {PunctuatorKind.Comma})
+                targets_and_aliases = self.__stream.consume_separated(parse_target, {PunctuatorKind.Comma}, set())
                 targets, aliases = zip(*targets_and_aliases)
 
                 # each target corresponds to a separate import stmt
@@ -203,17 +204,20 @@ class Parser:
         attrs = self.__stream.consume_attrs()
 
         self.__stream.consume_spaces()
-        if not self.__stream.function_like():
-            ret_type = None
-        else:
-            ret_type = self.__parse_type()
-        self.__stream.consume_spaces()
-
         name = self.__stream.consume_identifier()
         generics = self.__stream.consume_generics()
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma})
+        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        self.__stream.consume_spaces()
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Arrow:
+            self.__stream.consume_punctuator(PunctuatorKind.Arrow)
+            self.__stream.consume_spaces()
+            ret_type = self.__parse_type()
+        else:
+            ret_type = None
 
         return AST.MethodDecl(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type)
 
@@ -289,18 +293,21 @@ class Parser:
         return AST.GlobalVarDecl(span=name.span, attrs=attrs, var_type=var_type, name=name, init_expr=init_expr)
 
     def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
-        if self.__stream.function_like():
-            ret_type = None
-        else:
-            ret_type = self.__parse_type()
-
-        self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
         generics = self.__stream.consume_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma})
+        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        self.__stream.consume_spaces()
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Arrow:
+            self.__stream.consume_punctuator(PunctuatorKind.Arrow)
+            self.__stream.consume_spaces()
+            ret_type = self.__parse_type()
+        else:
+            ret_type = None
 
         self.__stream.consume_spaces()
         block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span

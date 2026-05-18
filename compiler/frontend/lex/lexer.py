@@ -98,9 +98,12 @@ class Lexer:
         """
         Lexes the source code into tokens.
         """
-        while not self.__stream.at_end():
-            self.__tokens.append(self.__next_token())
-        self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.EOF, self.__stream.pos.into_span()))
+        while True:
+            self.__skip_ignored()
+            token = self.__next_token()
+            self.__tokens.append(token)
+            if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF:
+                break
 
     def export(self) -> list[Token]:
         """
@@ -135,7 +138,6 @@ class Lexer:
 
         Assumes that the caller has already checked that there are more characters to read.
         """
-        self.__skip_ignored()
         if self.__stream.at_end():
             return Tok.Punctuator(Tok.PunctuatorKind.EOF, self.__stream.pos.into_span())
 

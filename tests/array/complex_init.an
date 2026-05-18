@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 get_num(i32 a) {
+get_num(i32 a) -> i32 {
     return a
 }
 
@@ -12,7 +12,7 @@ struct Person {
 }
 
 
-i32 main() {
+main() -> i32 {
     i32[3] arr = [get_num(1), get_num(2), get_num(3)]
     assert arr[1] == 2: "arr[1] should be 2"
 

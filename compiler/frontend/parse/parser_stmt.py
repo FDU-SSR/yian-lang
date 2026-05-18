@@ -215,22 +215,22 @@ class StmtParser:
         next_token = self.__stream.peek()
         match next_token:
             case Tok.IntLiteral():
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.Punctuator(kind=Tok.PunctuatorKind.Minus):
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.CharLiteral():
-                values = self.__stream.consume_separated(self.__parse_char_pattern_value, {Tok.PunctuatorKind.Comma})
+                values = self.__stream.consume_separated(self.__parse_char_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
                 return AST.CharPattern(span=values[0].span, values=values)
             case Tok.StrLiteral():
-                values = self.__stream.consume_separated(self.__parse_str_pattern_value, {Tok.PunctuatorKind.Comma})
+                values = self.__stream.consume_separated(self.__parse_str_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
                 return AST.StrPattern(span=values[0].span, values=values)
             case Tok.Identifier():
                 next_next_token = self.__stream.peek_nth(1)
                 if isinstance(next_next_token, Tok.Punctuator) and next_next_token.kind == Tok.PunctuatorKind.LParen:
                     return self.__parse_enum_payload_pattern()
-                variants = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Pipe})
+                variants = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Pipe}, {Tok.PunctuatorKind.LBrace})
                 return AST.EnumPattern(span=variants[0].span, variants=variants)
             case Tok.Keyword(kind=Tok.KeywordKind.Underscore):
                 span = self.__stream.consume_keyword(Tok.KeywordKind.Underscore).span
@@ -277,7 +277,7 @@ class StmtParser:
         variant_token = self.__stream.consume_identifier()
 
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        fields = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Comma})
+        fields = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
         return AST.PayloadPattern(span=variant_token.span, variant=variant_token, fields=fields)

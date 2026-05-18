@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     u64[3] indexes
     indexes[0] = 0
     indexes[1] = 1
