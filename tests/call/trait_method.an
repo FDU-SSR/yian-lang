@@ -6,9 +6,9 @@
 from std.core.io import print
 
 trait Walkable {
-    static pub walk_info();
+    static pub walk_info()
 
-    pub i32 walk(i32 distance);
+    pub walk(i32 distance) -> i32
 }
 
 struct Dog {
@@ -20,12 +20,12 @@ impl Walkable for Dog {
         print("Dogs love to walk!")
     }
 
-    pub i32 walk(i32 distance) {
+    pub walk(i32 distance) -> i32 {
         return distance + self.age
     }
 }
 
-i32 main() {
+main() -> i32 {
     Dog d = Dog(5)
 
     Dog.walk_info()

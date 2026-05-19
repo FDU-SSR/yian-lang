@@ -18,7 +18,7 @@ enum Command {
     }
 }
 
-i32 main() {
+main() -> i32 {
     Command cmd1 = Command.Start
     Command cmd2 = Command.Move(true, 10)
     Command cmd3 = Command.Speak("Hello\n")
@@ -29,15 +29,15 @@ i32 main() {
     }
 
     match cmd2 {
-        Move as move {
-            assert move.is_forward == true: "Move is_forward should be true"
-            assert move.distance == 10: "Move distance should be 10"
+        Move(is_forward, distance) {
+            assert is_forward == true: "Move is_forward should be true"
+            assert distance == 10: "Move distance should be 10"
         }
         _ { panic("cmd2 should be Move") }
     }
 
     match cmd3 {
-        Speak as speak { print(speak.message) }
+        Speak(message) { print(message) }
         _ { panic("cmd3 should be Speak") }
     }
 

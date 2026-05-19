@@ -52,110 +52,81 @@ class BinaryOperator(Enum):
     Range = (999, 999)
 
     @classmethod
-    def try_from_token(cls, stream: TokenStream) -> BinaryOperator | None:
+    def try_from_token(cls, stream: TokenStream) -> tuple[BinaryOperator, int] | None:
+        """Try to parse a binary operator from the token stream. Returns the operator and its token length if successful, or None if the next token is not a binary operator."""
         token = stream.peek()
 
         match token:
             case Punctuator(kind=PunctuatorKind.Plus):
-                stream.consume_punctuator(PunctuatorKind.Plus)
-                return cls.Add
+                return cls.Add, 1
             case Punctuator(kind=PunctuatorKind.Minus):
-                stream.consume_punctuator(PunctuatorKind.Minus)
-                return cls.Sub
+                return cls.Sub, 1
             case Punctuator(kind=PunctuatorKind.Star):
-                stream.consume_punctuator(PunctuatorKind.Star)
-                return cls.Mul
+                return cls.Mul, 1
             case Punctuator(kind=PunctuatorKind.Slash):
-                stream.consume_punctuator(PunctuatorKind.Slash)
-                return cls.Div
+                return cls.Div, 1
             case Punctuator(kind=PunctuatorKind.Percent):
-                stream.consume_punctuator(PunctuatorKind.Percent)
-                return cls.Mod
+                return cls.Mod, 1
             case Punctuator(kind=PunctuatorKind.Ampersand):
-                stream.consume_punctuator(PunctuatorKind.Ampersand)
-                return cls.BitAnd
+                return cls.BitAnd, 1
             case Punctuator(kind=PunctuatorKind.Pipe):
-                stream.consume_punctuator(PunctuatorKind.Pipe)
-                return cls.BitOr
+                return cls.BitOr, 1
             case Punctuator(kind=PunctuatorKind.Caret):
-                stream.consume_punctuator(PunctuatorKind.Caret)
-                return cls.BitXor
+                return cls.BitXor, 1
             case Punctuator(kind=PunctuatorKind.LessLess):
-                stream.consume_punctuator(PunctuatorKind.LessLess)
-                return cls.Shl
+                return cls.Shl, 1
             case Punctuator(kind=PunctuatorKind.EqualEqual):
-                stream.consume_punctuator(PunctuatorKind.EqualEqual)
-                return cls.Eq
+                return cls.Eq, 1
             case Punctuator(kind=PunctuatorKind.NotEqual):
-                stream.consume_punctuator(PunctuatorKind.NotEqual)
-                return cls.Neq
+                return cls.Neq, 1
             case Punctuator(kind=PunctuatorKind.Less):
-                stream.consume_punctuator(PunctuatorKind.Less)
-                return cls.Lt
+                return cls.Lt, 1
             case Punctuator(kind=PunctuatorKind.Greater):
-                stream.consume_punctuator(PunctuatorKind.Greater)
-                next_token = stream.peek()
+                next_token = stream.peek_nth(1)
                 if not (isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Greater):
-                    return cls.Gt
-                stream.consume_punctuator(PunctuatorKind.Greater)
-                next_next_token = stream.peek()
+                    return cls.Gt, 1
+                next_next_token = stream.peek_nth(2)
                 if isinstance(next_next_token, Punctuator) and next_next_token.kind == PunctuatorKind.Equal:
-                    stream.consume_punctuator(PunctuatorKind.Equal)
-                    return cls.ShrAssign
-                return cls.Shr
+                    return cls.ShrAssign, 3
+                return cls.Shr, 2
             case Punctuator(kind=PunctuatorKind.LessEqual):
-                stream.consume_punctuator(PunctuatorKind.LessEqual)
-                return cls.Leq
+                return cls.Leq, 1
             case Punctuator(kind=PunctuatorKind.GreaterEqual):
-                stream.consume_punctuator(PunctuatorKind.GreaterEqual)
-                return cls.Geq
+                return cls.Geq, 1
             case Keyword(kind=KeywordKind.And):
-                stream.consume_keyword(KeywordKind.And)
-                return cls.LogicalAnd
+                return cls.LogicalAnd, 1
             case Keyword(kind=KeywordKind.Or):
-                stream.consume_keyword(KeywordKind.Or)
-                return cls.LogicalOr
+                return cls.LogicalOr, 1
             case Punctuator(kind=PunctuatorKind.Equal):
-                stream.consume_punctuator(PunctuatorKind.Equal)
-                return cls.Assign
+                return cls.Assign, 1
             case Punctuator(kind=PunctuatorKind.PlusEqual):
-                stream.consume_punctuator(PunctuatorKind.PlusEqual)
-                return cls.AddAssign
+                return cls.AddAssign, 1
             case Punctuator(kind=PunctuatorKind.MinusEqual):
-                stream.consume_punctuator(PunctuatorKind.MinusEqual)
-                return cls.SubAssign
+                return cls.SubAssign, 1
             case Punctuator(kind=PunctuatorKind.StarEqual):
-                stream.consume_punctuator(PunctuatorKind.StarEqual)
-                return cls.MulAssign
+                return cls.MulAssign, 1
             case Punctuator(kind=PunctuatorKind.SlashEqual):
-                stream.consume_punctuator(PunctuatorKind.SlashEqual)
-                return cls.DivAssign
+                return cls.DivAssign, 1
             case Punctuator(kind=PunctuatorKind.PercentEqual):
-                stream.consume_punctuator(PunctuatorKind.PercentEqual)
-                return cls.ModAssign
+                return cls.ModAssign, 1
             case Punctuator(kind=PunctuatorKind.AmpersandEqual):
-                stream.consume_punctuator(PunctuatorKind.AmpersandEqual)
-                return cls.BitAndAssign
+                return cls.BitAndAssign, 1
             case Punctuator(kind=PunctuatorKind.PipeEqual):
-                stream.consume_punctuator(PunctuatorKind.PipeEqual)
-                return cls.BitOrAssign
+                return cls.BitOrAssign, 1
             case Punctuator(kind=PunctuatorKind.CaretEqual):
-                stream.consume_punctuator(PunctuatorKind.CaretEqual)
-                return cls.BitXorAssign
+                return cls.BitXorAssign, 1
             case Punctuator(kind=PunctuatorKind.LessLessEqual):
-                stream.consume_punctuator(PunctuatorKind.LessLessEqual)
-                return cls.ShlAssign
+                return cls.ShlAssign, 1
             case Keyword(kind=KeywordKind.In):
-                stream.consume_keyword(KeywordKind.In)
-                return cls.In
+                return cls.In, 1
             case Keyword(kind=KeywordKind.Not):
-                stream.consume_keyword(KeywordKind.Not)
-                stream.consume_spaces()
-                stream.consume_keyword(KeywordKind.In)
-                return cls.NotIn
+                next_token = stream.peek_nth(1)
+                next_next_token = stream.peek_nth(2)
+                if isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Space and isinstance(next_next_token, Keyword) and next_next_token.kind == KeywordKind.In:
+                    return cls.NotIn, 3
+                return None
             case Punctuator(kind=PunctuatorKind.DotDot):
-                stream.consume_punctuator(PunctuatorKind.DotDot)
-                return cls.Range
+                return cls.Range, 1
             case _:
                 return None
 
@@ -169,7 +140,7 @@ class BinaryOperator(Enum):
         """Right binding power of the operator (for right-associative operators)."""
         return self.value[1]
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         match self:
             case BinaryOperator.Add:
                 return "+"
@@ -251,25 +222,20 @@ class UnaryOperator(Enum):
     AddrOf = 14
 
     @classmethod
-    def try_from_token(cls, stream: TokenStream) -> UnaryOperator | None:
+    def try_from_token(cls, stream: TokenStream) -> tuple[UnaryOperator, int] | None:
         token = stream.peek()
 
         match token:
             case Punctuator(kind=PunctuatorKind.Minus):
-                stream.consume_punctuator(PunctuatorKind.Minus)
-                return cls.Neg
+                return cls.Neg, 1
             case Punctuator(kind=PunctuatorKind.Tilde):
-                stream.consume_punctuator(PunctuatorKind.Tilde)
-                return cls.BitNot
+                return cls.BitNot, 1
             case Keyword(kind=KeywordKind.Not):
-                stream.consume_keyword(KeywordKind.Not)
-                return cls.LogicalNot
+                return cls.LogicalNot, 1
             case Punctuator(kind=PunctuatorKind.Star):
-                stream.consume_punctuator(PunctuatorKind.Star)
-                return cls.Deref
+                return cls.Deref, 1
             case Punctuator(kind=PunctuatorKind.Ampersand):
-                stream.consume_punctuator(PunctuatorKind.Ampersand)
-                return cls.AddrOf
+                return cls.AddrOf, 1
             case _:
                 return None
 
@@ -278,7 +244,7 @@ class UnaryOperator(Enum):
         """Right binding power of the unary operator."""
         return self.value
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         match self:
             case UnaryOperator.Neg:
                 return "-"

@@ -7,7 +7,7 @@ struct Person {
     pub float weight
 }
 
-i32 main() {
+main() -> i32 {
     Person p = Person(20, 60.5)
     i32 age = p.age
     assert age == 20: "Person struct construction failed"

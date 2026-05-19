@@ -3,16 +3,16 @@
 // Expected output: 0
 
 main() -> i32 {
-    i32[2, 2, 2] arr = [[[1,2], [3, 4]], [[5, 6], [7, 8]]]
-    assert arr[0, 1, 1] == 4: "arr[0,1,1] should be 4"
+    i32[2][2][2] arr = [[[1,2], [3, 4]], [[5, 6], [7, 8]]]
+    assert arr[0][1][1] == 4: "arr[0][1][1] should be 4"
 
-    arr[0, 0, 0] = 4
-    arr[1, 1, 1] = 5
-    assert arr[0, 0, 0] == 4: "arr[0,0,0] should be 4"
-    assert arr[1, 1, 1] == 5: "arr[1,1,1] should be 5"
+    arr[0][0][0] = 4
+    arr[1][1][1] = 5
+    assert arr[0][0][0] == 4: "arr[0][0][0] should be 4"
+    assert arr[1][1][1] == 5: "arr[1][1][1] should be 5"
 
-    i32 a = arr[0, 0, 0]
-    i32 b = arr[1, 1, 1]
+    i32 a = arr[0][0][0]
+    i32 b = arr[1][1][1]
     assert a + b == 9: "a + b should be 9"
 
     return 0

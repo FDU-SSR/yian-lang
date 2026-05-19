@@ -31,10 +31,16 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         help="Input path(s).",
     )
     parser.add_argument(
-        "-d",
-        "--debug",
-        action="store_true",
-        help="Enable debug mode.",
+        "--token",
+        type=Path,
+        metavar="PATH",
+        help="Write token output to PATH.",
+    )
+    parser.add_argument(
+        "--ast",
+        type=Path,
+        metavar="PATH",
+        help="Write AST output to PATH.",
     )
     return parser.parse_args(argv)
 
@@ -88,10 +94,29 @@ def __print_source_error(path: Path, source: str, span: SrcSpan, error: Exceptio
     sys.exit(-1)
 
 
+def __write_text_output(output_path: Path, content: str) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content)
+
+
+def __format_token_output(src_files: list[Path], token_lists: list[list[Token]]) -> str:
+    sections: list[str] = []
+    for src_file, tokens in zip(src_files, token_lists):
+        lines = [f"Tokens for {src_file}:"]
+        lines.extend(f"  {token}" for token in tokens)
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections) + ("\n" if sections else "")
+
+
+def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> str:
+    sections: list[str] = []
+    for src_file, program in zip(src_files, programs):
+        sections.append(f"AST for {src_file}:\n{program.export().rstrip()}")
+    return "\n\n".join(sections) + ("\n" if sections else "")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
-
-    debug_mode: bool = args.debug
 
     # extract .an files from input paths
     src_files = collect_an_files(args.paths)
@@ -112,13 +137,6 @@ def main(argv: list[str] | None = None) -> int:
 
         token_lists.append(lexer.export())
 
-    # debug print tokens
-    if debug_mode:
-        for src_file, tokens in zip(src_files, token_lists):
-            print(f"Tokens for {src_file}:")
-            for token in tokens:
-                print(f"  {token}")
-
     programs: list[AST.Program] = []
     for src_file, source, tokens in zip(src_files, sources, token_lists):
         parser = Parser(tokens)
@@ -129,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
             __print_source_error(src_file, source, error.span, error)
 
         programs.append(program)
+
+    if args.token is not None:
+        __write_text_output(args.token, __format_token_output(src_files, token_lists))
+
+    if args.ast is not None:
+        __write_text_output(args.ast, __format_ast_output(src_files, programs))
 
     return 0
 

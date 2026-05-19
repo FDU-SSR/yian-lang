@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
+from compiler.frontend.parse.ast_export import export_program
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 if TYPE_CHECKING:
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
 class Program:
     span: SrcSpan
     items: list[ProgramItem]
+
+    def export(self) -> str:
+        return export_program(self)
 
 
 @dataclass
@@ -86,7 +90,7 @@ class FuncDef:
         generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
         params_str = ", ".join(str(param) for param in self.params)
         ret_type_str = f" -> {self.ret_type}" if self.ret_type else ""
-        return f"{attrs_str} fn {self.name.name}{generics_str}({params_str}){ret_type_str} {{ ... }}"
+        return f"{attrs_str} fn {self.name.name}{generics_str}({params_str}){ret_type_str}"
 
 
 @dataclass
@@ -226,8 +230,9 @@ class GlobalVarDecl:
     init_expr: Expr | None
 
     def __repr__(self) -> str:
+        attrs_str = " ".join(str(attr) for attr in self.attrs)
         init_str = f" = {self.init_expr}" if self.init_expr else ""
-        return f"var {self.var_type} {self.name.name}{init_str}"
+        return f"{attrs_str} var {self.var_type} {self.name.name}{init_str}"
 
 
 @dataclass

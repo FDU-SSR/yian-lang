@@ -229,6 +229,10 @@ class TokenStream:
 
         Type Ident =
         """
+        token = self.peek()
+        if isinstance(token, Tok.Keyword) and token.kind in {Tok.KeywordKind.Int, Tok.KeywordKind.Uint, Tok.KeywordKind.Float, Tok.KeywordKind.Bool, Tok.KeywordKind.Str, Tok.KeywordKind.Char, Tok.KeywordKind.Void, Tok.KeywordKind.Fn}:
+            return True
+
         index = 0
 
         def skip_brackets(open_kind: Tok.PunctuatorKind, close_kind: Tok.PunctuatorKind) -> None:

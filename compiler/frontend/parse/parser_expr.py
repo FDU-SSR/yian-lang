@@ -24,14 +24,20 @@ class ExprParser:
 
         while True:
             self.__stream.consume_spaces()
-            op = BinaryOperator.try_from_token(self.__stream)
-            self.__stream.consume_spaces()
+            op_info = BinaryOperator.try_from_token(self.__stream)
 
-            if op is None:
+            if op_info is None:
                 break
 
+            op, op_len = op_info
             if op.lbp < min_bp:
                 break
+
+            # consume the operator tokens
+            for _ in range(op_len):
+                self.__stream.advance()
+            # consume any spaces after the operator
+            self.__stream.consume_spaces()
 
             rhs = self.__parse_expr_bp(op.rbp)
             lhs = AST.Binary(span=lhs.span + rhs.span, op=op, left=lhs, right=rhs)
@@ -41,10 +47,17 @@ class ExprParser:
     def __parse_prefix(self) -> AST.Expr:
         """Parses the prefix part of an expression."""
         # try to parse a unary operator
-        unary_op = UnaryOperator.try_from_token(self.__stream)
-        if unary_op is not None:
-            operand = self.__parse_expr_bp(unary_op.rbp)
-            return AST.Unary(span=operand.span, op=unary_op, operand=operand)
+        op_info = UnaryOperator.try_from_token(self.__stream)
+        if op_info is not None:
+            op, op_len = op_info
+            # consume the operator tokens
+            for _ in range(op_len):
+                self.__stream.advance()
+            # consume any spaces after the operator
+            self.__stream.consume_spaces()
+
+            operand = self.__parse_expr_bp(op.rbp)
+            return AST.Unary(span=operand.span, op=op, operand=operand)
 
         # try to parse a dyn expression
         token = self.__stream.peek()

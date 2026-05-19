@@ -8,20 +8,20 @@ struct Person {
 }
 
 impl Person {
-    static pub Person new(i32 age, float weight) {
+    static pub new(i32 age, float weight) -> Person {
         return Person(age, weight)
     }
 
-    pub i32 get_age() {
+    pub get_age() -> i32 {
         return self.age
     }
 
-    pub bool weight_gt(float weight) {
+    pub weight_gt(float weight) -> bool {
         return self.weight > weight
     }
 }
 
-i32 main() {
+main() -> i32 {
     Person p = Person.new(20, 65.5)
     assert p.age == 20 and p.weight > 65.0: "Person.new failed"
 

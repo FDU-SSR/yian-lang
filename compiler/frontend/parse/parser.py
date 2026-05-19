@@ -248,11 +248,12 @@ class Parser:
     def __parse_variant_info(self) -> AST.VariantInfo:
         name = self.__stream.consume_identifier()
 
+        self.__stream.consume_spaces()
         token = self.__stream.peek()
-        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
-            self.__stream.consume_punctuator(PunctuatorKind.LParen)
-            fields = self.__stream.consume_until(self.__parse_var_info, {PunctuatorKind.RParen})
-            self.__stream.consume_punctuator(PunctuatorKind.RParen)
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
+            self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+            fields = self.__stream.consume_until(self.__parse_var_info, {PunctuatorKind.RBrace})
+            self.__stream.consume_punctuator(PunctuatorKind.RBrace)
         else:
             fields: list[AST.VarInfo] = []
 

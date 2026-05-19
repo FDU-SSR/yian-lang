@@ -49,6 +49,9 @@ class TypeParser:
         KeywordKind.U64: Ty.IntType(span=SrcSpan.empty(), width=8, signed=False),
         KeywordKind.F32: Ty.FloatType(span=SrcSpan.empty(), width=4),
         KeywordKind.F64: Ty.FloatType(span=SrcSpan.empty(), width=8),
+        KeywordKind.Int: Ty.IntType(span=SrcSpan.empty(), width=4, signed=True),  # default int type is i32
+        KeywordKind.Uint: Ty.IntType(span=SrcSpan.empty(), width=4, signed=False),  # default uint type is u32
+        KeywordKind.Float: Ty.FloatType(span=SrcSpan.empty(), width=8),  # default float type is f64
         KeywordKind.Bool: Ty.BoolType(span=SrcSpan.empty()),
         KeywordKind.Str: Ty.StrType(span=SrcSpan.empty()),
         KeywordKind.Char: Ty.CharType(span=SrcSpan.empty()),
@@ -66,7 +69,6 @@ class TypeParser:
 
         if isinstance(token, Keyword) and token.kind == KeywordKind.Fn:
             # function type, e.g., `fn(int, str) -> bool`
-            self.__stream.consume_keyword(KeywordKind.Fn)
             self.__stream.consume_punctuator(PunctuatorKind.LParen)
             param_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
@@ -88,7 +90,6 @@ class TypeParser:
 
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
             # tuple type, e.g., `(int, str)`
-            self.__stream.consume_punctuator(PunctuatorKind.LParen)
             element_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
             return Ty.TupleType(span=token.span, element_types=element_types)

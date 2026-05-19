@@ -81,7 +81,7 @@ class Keyword:
     span: SrcSpan
 
     def __repr__(self) -> str:
-        return f"Keyword({self.kind.value})"
+        return self.kind.value
 
     @classmethod
     def from_kind(cls, kind: KeywordKind) -> Keyword:
@@ -98,7 +98,7 @@ class Identifier:
     span: SrcSpan
 
     def __repr__(self) -> str:
-        return f"Identifier({self.name})"
+        return self.name
 
 
 class PunctuatorKind(Enum):
@@ -145,9 +145,9 @@ class PunctuatorKind(Enum):
     LessLess = "<<"
     LessLessEqual = "<<="
     DotDot = ".."
-    Space = "space"
-    Endl = "endl"
-    EOF = "eof"
+    Space = "<space>"
+    Endl = "<endl>"
+    EOF = "<eof>"
 
     @classmethod
     def try_from_str(cls, value: str) -> PunctuatorKind | None:
@@ -174,7 +174,7 @@ class Punctuator:
     span: SrcSpan
 
     def __repr__(self) -> str:
-        return f"Punctuator({self.kind.value})"
+        return self.kind.value
 
     @classmethod
     def from_kind(cls, kind: PunctuatorKind) -> Punctuator:
@@ -188,6 +188,9 @@ class IntLiteral:
     value: int
     suffix: str | None
 
+    def __repr__(self) -> str:
+        return self.raw
+
 
 @dataclass
 class FloatLiteral:
@@ -196,12 +199,18 @@ class FloatLiteral:
     value: float
     suffix: str | None
 
+    def __repr__(self) -> str:
+        return self.raw
+
 
 @dataclass
 class CharLiteral:
     raw: str
     span: SrcSpan
     value: str
+
+    def __repr__(self) -> str:
+        return self.raw
 
 
 @dataclass
@@ -210,12 +219,18 @@ class StrLiteral:
     span: SrcSpan
     value: str
 
+    def __repr__(self) -> str:
+        return self.raw
+
 
 @dataclass
 class BoolLiteral:
     raw: str
     span: SrcSpan
     value: bool
+
+    def __repr__(self) -> str:
+        return self.raw
 
 
 ESCAPE_SEQUENCES = {

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32 i = 42
     f64 f = 6.6
     char ch = 'A'

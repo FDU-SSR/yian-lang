@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-i8 add(i8 a, i8 b){
+add(i8 a, i8 b) -> i8{
     return a + b
 }
 
-i8 sub(i8 a, i8 b){
+sub(i8 a, i8 b) -> i8{
     return a - b
 }
 
-i32 main(){
+main() -> i32{
     i8 one = 1
     i8 two = 2
     i8 three = add(one, two)
