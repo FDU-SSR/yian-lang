@@ -173,60 +173,6 @@ class TokenStream:
 
         self.__tokens = concatenated_tokens
 
-    def function_like(self) -> bool:
-        """
-        Checks if the following tokens match the pattern of a function definition.
-
-        Ident<IdentT1, IdentT2, ...>(
-        """
-        index = 0
-
-        def check_identifier() -> bool:
-            nonlocal index
-            token = self.peek_nth(index)
-            if not isinstance(token, Tok.Identifier):
-                return False
-            index += 1
-            return True
-
-        def skip_spaces() -> None:
-            nonlocal index
-            while True:
-                token = self.peek_nth(index)
-                if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Space:
-                    index += 1
-                else:
-                    break
-
-        # Check for identifier
-        if not check_identifier():
-            return False
-
-        # Check for optional generic parameters
-        token = self.peek_nth(index)
-        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less:
-            index += 1
-            while True:
-                skip_spaces()
-                if not check_identifier():
-                    return False
-                skip_spaces()
-                token = self.peek_nth(index)
-                if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
-                    index += 1
-                elif isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Greater:
-                    index += 1
-                    break
-                else:
-                    return False
-
-        # Check for opening parenthesis
-        token = self.peek_nth(index)
-        if not isinstance(token, Tok.Punctuator) or token.kind != Tok.PunctuatorKind.LParen:
-            return False
-
-        return True
-
     def var_decl_like(self) -> bool:
         """
         Checks if the following tokens match the pattern of a variable declaration.

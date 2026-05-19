@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from compiler.semantic_analysis.utils.context import SemanticCtx
 from compiler.config.constants import ROOT_BLOCK_ID
 from compiler.config.defs import IRHandlerMap, StmtId
-from compiler.unit_data import UnitData
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.utils.IR import cgir as cir
 from compiler.utils.IR import gir as ir
 from compiler.utils.IR.def_point import DefPoint

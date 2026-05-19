@@ -1,6 +1,6 @@
 from compiler.backend.utils.ll_type import LowLevelTypeManager
 from compiler.config.defs import TypeId, UnitId
-from compiler.unit_data import UnitData
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.utils import mangle_function, ty
 from compiler.utils.errors import CompilerError, SemanticError
 from compiler.utils.ty import MethodRegistry, TypeSpace

@@ -76,8 +76,6 @@ def __export_program_item(item: AST.ProgramItem, guides: list[bool], is_last: bo
             return __export_trait_def(item, guides, is_last)
         case AST.Impl():
             return __export_impl(item, guides, is_last)
-        case AST.GlobalVarDecl():
-            return __export_global_var_decl(item, guides, is_last)
 
 
 def __export_import(item: AST.Import, guides: list[bool], is_last: bool) -> str:
@@ -145,13 +143,6 @@ def __export_impl(item: AST.Impl, guides: list[bool], is_last: bool) -> str:
         res += __export_items_with_handler(item.items, child_guides + [False], __export_method_def)
     else:
         res += __line(guides, True, "Items: []")
-    return res
-
-
-def __export_global_var_decl(item: AST.GlobalVarDecl, guides: list[bool], is_last: bool) -> str:
-    res = __line(guides, is_last, f"GlobalVarDecl: {__format_attrs(item.attrs)}var {item.var_type} {item.name.name}")
-    if item.init_expr is not None:
-        res += __export_expr_child("Init", item.init_expr, guides, is_last, True)
     return res
 
 

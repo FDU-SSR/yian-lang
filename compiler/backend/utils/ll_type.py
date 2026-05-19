@@ -3,7 +3,7 @@ from llvmlite.binding import create_target_data
 
 from compiler.config.constants import IntrinsicFunction
 from compiler.config.defs import TypeId, UnitId
-from compiler.unit_data import UnitData
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.utils import mangle_type, ty
 from compiler.utils.errors import CodegenError
 from compiler.utils.ty import TypeSpace

@@ -52,7 +52,7 @@ class Parser:
                 case Keyword(KeywordKind.Trait, _):
                     items.append(self.__parse_trait(attrs=attrs))
                 case _:
-                    items.append(self.__parse_func_or_var(attrs=attrs))
+                    items.append(self.__parse_func_def(attrs=attrs))
             self.__stream.consume_spaces()  # Skip any spaces between items
 
         return AST.Program(
@@ -195,11 +195,6 @@ class Parser:
 
         return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
 
-    def __parse_func_or_var(self, attrs: list[AST.Attr]) -> AST.GlobalVarDecl | AST.FuncDef:
-        if self.__stream.function_like():
-            return self.__parse_func_def(attrs=attrs)
-        return self.__parse_global_var_decl(attrs=attrs)
-
     def __parse_method_decl(self) -> AST.MethodDecl:
         attrs = self.__stream.consume_attrs()
 
@@ -276,23 +271,6 @@ class Parser:
             return self.__parse_method_def(decl=decl)
         return decl
 
-    def __parse_global_var_decl(self, attrs: list[AST.Attr]) -> AST.GlobalVarDecl:
-        var_type = self.__parse_type()
-
-        self.__stream.consume_spaces()
-        name = self.__stream.consume_identifier()
-
-        self.__stream.consume_spaces()
-        token = self.__stream.peek()
-        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Equal:
-            self.__stream.consume_punctuator(PunctuatorKind.Equal)
-            self.__stream.consume_spaces()
-            init_expr = self.__parse_expr()
-        else:
-            init_expr = None
-
-        return AST.GlobalVarDecl(span=name.span, attrs=attrs, var_type=var_type, name=name, init_expr=init_expr)
-
     def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
         name = self.__stream.consume_identifier()
         generics = self.__stream.consume_generics()
@@ -321,9 +299,6 @@ class Parser:
 
     def __parse_stmt(self) -> AST.Stmt:
         return self.__stmt_parser.parse_stmt()
-
-    def __parse_expr(self) -> AST.Expr:
-        return self.__expr_parser.parse_expr()
 
     def __parse_type(self) -> AST.ASTType:
         return self.__type_parser.parse_type()

@@ -12,7 +12,7 @@ from compiler.backend.utils.operation import Operation
 from compiler.backend.utils.setup import LowLevelSetup
 from compiler.config.constants import NO_PATH
 from compiler.config.defs import IRHandlerMap, StmtId, SymbolId, TypeId, UnitId
-from compiler.unit_data import UnitData
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.utils import is_user_defined_name, ty
 from compiler.utils.errors import CompilerError, ErrorReporter
 from compiler.utils.IR import (ArrayLiteral, BooleanLiteral, CharLiteral, DefPoint, FloatLiteral, IntegerLiteral,

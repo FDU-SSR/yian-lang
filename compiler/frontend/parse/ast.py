@@ -222,20 +222,6 @@ class VarDecl:
 
 
 @dataclass
-class GlobalVarDecl:
-    span: SrcSpan
-    attrs: list[Attr]
-    var_type: ASTType
-    name: Identifier
-    init_expr: Expr | None
-
-    def __repr__(self) -> str:
-        attrs_str = " ".join(str(attr) for attr in self.attrs)
-        init_str = f" = {self.init_expr}" if self.init_expr else ""
-        return f"{attrs_str} var {self.var_type} {self.name.name}{init_str}"
-
-
-@dataclass
 class Return:
     span: SrcSpan
     expr: Expr | None
@@ -545,7 +531,6 @@ ProgramItem: TypeAlias = (
     | FuncDef
     | StructDef | EnumDef | TraitDef
     | Impl
-    | GlobalVarDecl
 )
 
 
