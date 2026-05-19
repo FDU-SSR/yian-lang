@@ -1,4 +1,4 @@
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
 from compiler.config.constants import YianAttribute
 from compiler.config.defs import IRHandlerMap
 

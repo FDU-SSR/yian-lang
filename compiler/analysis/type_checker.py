@@ -6,8 +6,8 @@ Type Check pass: check types and complete CGIR generation
 - Generic instantiation
 """
 
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
-from compiler.analysis.semantic_analysis.utils.context import DefPoint, SemanticCtx
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.context import DefPoint, SemanticCtx
 from compiler.config.defs import IRHandler, IRHandlerMap, StmtId, TypeId
 from compiler.utils import IR, ty
 from compiler.utils.errors import CompilerError, NameResolutionError, SemanticError, YianSyntaxError, YianTypeError

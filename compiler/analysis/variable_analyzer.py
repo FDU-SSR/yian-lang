@@ -1,4 +1,4 @@
-from compiler.analysis.semantic_analysis.utils.analysis_pass import DefPointPass
+from compiler.semantic_analysis.utils.analysis_pass import DefPointPass
 from compiler.config.defs import IRHandlerMap
 from compiler.utils.IR import cgir as cir
 

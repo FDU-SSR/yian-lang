@@ -3,7 +3,7 @@ Import Resolve pass: Resolves import statements in the GIR by linking imported s
 """
 
 from copy import deepcopy
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
 from compiler.config.defs import IRHandlerMap
 from compiler.utils.IR import gir as ir
 

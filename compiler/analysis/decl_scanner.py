@@ -7,7 +7,7 @@ Decl Scan pass: scan all declarations' type information in unit data, including:
 - Global variable declarations
 """
 
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
 from compiler.config.constants import AccessMode, YianAttribute
 from compiler.config.defs import IRHandlerMap
 from compiler.utils import IR, ty

@@ -6,7 +6,7 @@ This module defines the structure for analysis passes used in type analysis.
 
 from abc import ABC, abstractmethod
 
-from compiler.analysis.semantic_analysis.utils.context import SemanticCtx
+from compiler.semantic_analysis.utils.context import SemanticCtx
 from compiler.config.constants import ROOT_BLOCK_ID
 from compiler.config.defs import IRHandlerMap, StmtId
 from compiler.unit_data import UnitData

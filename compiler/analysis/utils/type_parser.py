@@ -1,4 +1,4 @@
-from compiler.analysis.semantic_analysis.utils.scope_manager import ScopeManager
+from compiler.semantic_analysis.utils.scope_manager import ScopeManager
 from compiler.config.constants import IntrinsicType
 from compiler.config.defs import StmtId, TypeId, UnitId
 from compiler.unit_data import UnitData

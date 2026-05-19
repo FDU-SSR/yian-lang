@@ -1,4 +1,4 @@
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
 from compiler.config.defs import IRHandlerMap, TypeId
 from compiler.utils import ty
 from compiler.utils.errors import SemanticError, YianTypeError

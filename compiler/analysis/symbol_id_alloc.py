@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
 from compiler import utils
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
-from compiler.analysis.semantic_analysis.utils.context import SemanticCtx
-from compiler.analysis.semantic_analysis.utils.type_parser import TypeParser
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.context import SemanticCtx
+from compiler.semantic_analysis.utils.type_parser import TypeParser
 from compiler.config.constants import ROOT_BLOCK_ID
 from compiler.config.defs import IRHandlerMap, StmtId, SymbolId
 from compiler.utils.errors import SemanticError

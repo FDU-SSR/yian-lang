@@ -1,12 +1,12 @@
 from typing import TypeVar, cast
 
-from compiler.analysis.semantic_analysis.utils.cgir_builder import CGIRBuilder
-from compiler.analysis.semantic_analysis.utils.operation_checker import OperationChecker, OperationResult
-from compiler.analysis.semantic_analysis.utils.scope_manager import (CustomTypeDeclScope, FunctionDeclScope,
-                                                                     ImplDeclScope, MethodDeclScope, ScopeManager,
-                                                                     TraitDeclScope)
-from compiler.analysis.semantic_analysis.utils.type_parser import TypeParser
-from compiler.analysis.semantic_analysis.utils.value_parser import ValueParser
+from compiler.semantic_analysis.utils.cgir_builder import CGIRBuilder
+from compiler.semantic_analysis.utils.operation_checker import OperationChecker, OperationResult
+from compiler.semantic_analysis.utils.scope_manager import (CustomTypeDeclScope, FunctionDeclScope,
+                                                            ImplDeclScope, MethodDeclScope, ScopeManager,
+                                                            TraitDeclScope)
+from compiler.semantic_analysis.utils.type_parser import TypeParser
+from compiler.semantic_analysis.utils.value_parser import ValueParser
 from compiler.backend.utils.context import LLVMCtx
 from compiler.config.constants import NO_PATH, NO_STMT_ID, IntrinsicTrait
 from compiler.config.defs import IRHandlerMap, StmtId, SymbolId, TypeId, UnitId

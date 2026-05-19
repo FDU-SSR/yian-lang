@@ -1,5 +1,5 @@
-from compiler.analysis.semantic_analysis.utils import constant_parse as ConstantParser
-from compiler.analysis.semantic_analysis.utils.scope_manager import ScopeManager
+from compiler.semantic_analysis.utils import constant_parse as ConstantParser
+from compiler.semantic_analysis.utils.scope_manager import ScopeManager
 from compiler.config.constants import SELF_SYMBOL_ID, VAR_FIRST_CHAR
 from compiler.config.defs import StmtId
 from compiler.unit_data import UnitData

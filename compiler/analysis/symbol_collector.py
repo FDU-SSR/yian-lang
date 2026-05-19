@@ -8,7 +8,7 @@ Symbol Collect pass: Collects symbols from GIR statements and registers them in 
 For Custom Types, Functions, and Methods, their types are allocated in the TypeSpace during this pass.
 """
 
-from compiler.analysis.semantic_analysis.utils.analysis_pass import UnitPass
+from compiler.semantic_analysis.utils.analysis_pass import UnitPass
 from compiler.config.defs import IRHandlerMap
 from compiler.utils import IR
 from compiler.utils.IR import gir as ir
