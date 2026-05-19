@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32 a = 42
     i32* p = &a  // Address-of operator
 

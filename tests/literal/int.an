@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32 dec = 42
     i32 hex = 0x2A
     assert dec == hex: "dec != hex"

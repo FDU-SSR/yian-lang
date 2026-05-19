@@ -7,7 +7,7 @@ struct Person {
     pub float height
 }
 
-i32 main() {
+main() -> i32 {
     Person p = Person(10, 5.9)
     assert p.age == 10: "p.age should be 10"
     assert p.height > 5.8 and p.height < 6.0: "p.height should be around 5.9"

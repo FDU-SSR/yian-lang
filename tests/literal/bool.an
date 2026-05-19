@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     bool t = true
     bool f = false
     assert t != f: "true should not equal false"

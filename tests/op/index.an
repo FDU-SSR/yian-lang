@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32[5] arr = [10, 20, 30, 40, 50]
     assert arr[0] == 10: "arr[0] should be 10"
     

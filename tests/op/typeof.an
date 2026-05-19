@@ -23,7 +23,7 @@ func<T>(T param) {
     }
 }
 
-i32 main() {
+main() -> i32 {
     i32 a = 10
     float b = 3.14
     str c = "Hello"

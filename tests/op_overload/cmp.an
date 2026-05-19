@@ -9,13 +9,13 @@ struct Value<T> {
 }
 
 impl<T> PartialEq<Value<T>> for Value<T> {
-    bool eq(Self rhs) {
+    eq(Self rhs) -> bool {
         return self.value == rhs.value
     }
 }
 
 impl<T> PartialOrd<Value<T>> for Value<T> {
-    Ordering partial_cmp(Self rhs) {
+    partial_cmp(Self rhs) -> Ordering {
         if self.value < rhs.value {
             return Ordering.Less
         } elif self.value > rhs.value {
@@ -26,7 +26,7 @@ impl<T> PartialOrd<Value<T>> for Value<T> {
     }
 }
 
-i32 main() {
+main() -> i32 {
     Value<i32> a = Value<i32>(5)
     Value<i32> b = Value<i32>(10)
     Value<i32> c = Value<i32>(5)

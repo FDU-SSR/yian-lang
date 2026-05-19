@@ -9,12 +9,12 @@ struct Ptr<T> {
 }
 
 impl<T> Deref<T> for Ptr<T> {
-    T* deref() {
+    deref() -> T* {
         return self.ptr
     }
 }
 
-i32 main() {
+main() -> i32 {
     i32 value = 42
     Ptr<i32> p = Ptr(&value)
     i32 p_val = *p

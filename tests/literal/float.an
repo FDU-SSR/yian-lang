@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     float point = 3.1415
     assert point > 3.14 and point < 3.15: "point out of range"
 

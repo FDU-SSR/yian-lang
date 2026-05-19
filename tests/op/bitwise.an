@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32 a = 0b1100  // 12 in decimal
     i32 b = 0b1010  // 10 in decimal
     i32 c = -1

@@ -8,7 +8,7 @@
 
 from std.core.io import print
 
-i32 main() {
+main() -> i32 {
     str hello = "Hello, World!"
     print(hello)
     str chinese = "你好，世界！"

@@ -9,42 +9,42 @@ struct Value<T> {
 }
 
 impl<T> BitAnd<Value<T>, Value<T>> for Value<T> {
-    Self bit_and(Self rhs) {
+    bit_and(Self rhs) -> Self {
         return Self(self.value & rhs.value)
     }
 }
 
 impl<T> BitOr<Value<T>, Value<T>> for Value<T> {
-    Self bit_or(Self rhs) {
+    bit_or(Self rhs) -> Self {
         return Self(self.value | rhs.value)
     }
 }
 
 impl<T> BitXor<Value<T>, Value<T>> for Value<T> {
-    Self bit_xor(Self rhs) {
+    bit_xor(Self rhs) -> Self {
         return Self(self.value ^ rhs.value)
     }
 }
 
 impl<T> BitNot<Value<T>> for Value<T> {
-    Self bit_not() {
+    bit_not() -> Self {
         return Self(~self.value)
     }
 }
 
 impl<T> Shl<Value<T>, Value<T>> for Value<T> {
-    Self shl(Self rhs) {
+    shl(Self rhs) -> Self {
         return Self(self.value << rhs.value)
     }
 }
 
 impl<T> Shr<Value<T>, Value<T>> for Value<T> {
-    Self shr(Self rhs) {
+    shr(Self rhs) -> Self {
         return Self(self.value >> rhs.value)
     }
 }
 
-i32 main() {
+main() -> i32 {
     Value<i32> a = Value<i32>(6)   // 0b0110
     Value<i32> b = Value<i32>(3)   // 0b0011
 

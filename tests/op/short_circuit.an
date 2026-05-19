@@ -6,16 +6,16 @@
 
 from std.core.io import print
 
-bool false_func() {
+false_func() -> bool {
     print("false_func called\n")
     return false
 }
 
-bool true_func() {
+true_func() -> bool {
     panic("true_func should not be called\n")
 }
 
-i32 main() {
+main() -> i32 {
     if false and false_func() {
         panic("This should not be printed\n")
     }
