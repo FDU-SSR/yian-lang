@@ -10,7 +10,7 @@ impl i32 {
         *self += 1
     }
 
-    pub i32 abs() {
+    pub abs() -> i32 {
         if *self < 0 {
             return -*self
         } else {
@@ -20,7 +20,7 @@ impl i32 {
 }
 
 impl bool {
-    pub bool toggle() {
+    pub toggle() -> bool {
         return not *self
     }
 }
@@ -33,7 +33,7 @@ impl str {
 }
 
 
-i32 main() {
+main() -> i32 {
     i32 a = -5
     a.inc()
     assert a == -4

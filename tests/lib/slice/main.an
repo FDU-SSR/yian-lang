@@ -5,7 +5,7 @@
 from std.core.option import Option
 from std.core.vec import Vec
 
-i32 main() {
+main() -> i32 {
     i32[5] arr = [1, 2, 3, 4, 5]
     i32[] slice = arr[1u64..4] // This should be a slice containing [2, 3, 4]
 

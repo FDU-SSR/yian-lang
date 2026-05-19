@@ -12,41 +12,41 @@ pub struct String {
 
 impl String {
     // Create a new empty String
-    static pub Self new() {
+    static pub new() -> Self {
         return Self(
             data = Vec<u8>.new()
         )
     }
 
     // Create a new String with specified capacity
-    static pub Self with_capacity(u64 capacity) {
+    static pub with_capacity(u64 capacity) -> Self {
         return Self(
             data = Vec<u8>.with_capacity(capacity)
         )
     }
 
     // Extract str from String
-    pub str as_str() {
+    pub as_str() -> str {
         return str.from(self.data.as_slice())
     }
 
     // Get the byte slice of the String
-    pub u8[] as_slice() {
+    pub as_slice() -> u8[] {
         return self.data.as_slice()
     }
 
     // Get capacity of String in bytes
-    pub u64 capacity() {
+    pub capacity() -> u64 {
         return self.data.capacity()
     }
 
     // Get length of String in bytes
-    pub u64 len() {
+    pub len() -> u64 {
         return self.data.len()
     }
 
     // Check if the String is empty
-    pub bool is_empty() {
+    pub is_empty() -> bool {
         return self.len() == 0
     }
 
@@ -81,7 +81,7 @@ impl String {
     }
 
     // Pop a char from the end and return it
-    pub Option<char> pop() {
+    pub pop() -> Option<char> {
         if self.is_empty() {
             return Option<char>.None
         }
@@ -117,7 +117,7 @@ impl String {
     }
 
     // Trimed version of the String
-    pub String trimmed() {
+    pub trimmed() -> String {
         return String.from(self.trim())
     }
 
@@ -138,7 +138,7 @@ impl String {
 }
 
 impl Clone for String {
-    pub Self clone() {
+    pub clone() -> Self {
         return String(
             data = self.data.clone()
         )
@@ -147,21 +147,21 @@ impl Clone for String {
 
 // Implement PartialEq for String to compare with another String
 impl PartialEq<String> for String {
-    pub bool eq(String other) {
+    pub eq(String other) -> bool {
         return self.as_str() == other.as_str()
     }
 }
 
 // Implement PartialEq for String to compare with a str slice
 impl PartialEq<str> for String {
-    pub bool eq(str other) {
+    pub eq(str other) -> bool {
         return self.as_str() == other
     }
 }
 
 // Implement Add for String to concatenate with another String
 impl Add<String, String> for String {
-    pub String add(String other) {
+    pub add(String other) -> String {
         String result = self.clone()
         result.push_str(other.as_str())
         return result
@@ -170,7 +170,7 @@ impl Add<String, String> for String {
 
 // Implement Add for String to concatenate with a str slice
 impl Add<str, String> for String {
-    pub String add(str other) {
+    pub add(str other) -> String {
         String result = self.clone()
         result.push_str(other)
         return result
@@ -179,7 +179,7 @@ impl Add<str, String> for String {
 
 // Implement Deref to allow String to be used as a str slice
 impl Deref<str> for String {
-    pub str* deref() {
+    pub deref() -> str* {
         // TODO: This causes memory leak
         str* ret = dyn self.as_str()
         return ret
@@ -189,7 +189,7 @@ impl Deref<str> for String {
 // Implement From<str> for String to allow creating a String from a str slice
 // This will clone the data from the str slice into the String
 impl From<str> for String {
-    static pub Self from(str value) {
+    static pub from(str value) -> Self {
         return Self(
             data = Vec<u8>.from(value.as_slice())
         )
@@ -198,14 +198,14 @@ impl From<str> for String {
 
 // Implement Into<String> for str to allow converting a str slice into a String
 impl Into<String> for str {
-    pub String into() {
+    pub into() -> String {
         return String.from(*self)
     }
 }
 
 // Implement Index for String to allow indexing into the String as a str slice
 impl Index<Range<u64>, str> for String {
-    pub str* index(Range<u64> range) {
+    pub index(Range<u64> range) -> str* {
         // TODO: This causes memory leak
         str* ret = dyn self.as_str()[range]
         return ret
@@ -213,7 +213,7 @@ impl Index<Range<u64>, str> for String {
 }
 
 impl ToString for String {
-    pub String to_string() {
+    pub to_string() -> String {
         return *self
     }
 }

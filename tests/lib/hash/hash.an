@@ -1,6 +1,6 @@
 from std.core.hash import Murmur3Hasher, Murmur3BuildHasher
 
-i32 main() {
+main() -> i32 {
     // 同一 seed 的 hasher 初始状态应一致
     Murmur3Hasher h1 = Murmur3Hasher.with_seed(0)
     Murmur3Hasher h2 = Murmur3Hasher.with_seed(0)

@@ -18,15 +18,15 @@ struct Bucket<K, V> {
 }
 
 impl<K, V> HashMap<K, V> {
-    static pub Self new() {
+    static pub new() -> Self {
         return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity(u64 capacity) {
+    static pub with_capacity(u64 capacity) -> Self {
         return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) {
+    static pub with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) -> Self {
         u64 actual_capacity
         actual_capacity = capacity.next_power_of_two()
 
@@ -47,7 +47,7 @@ impl<K, V> HashMap<K, V> {
         )
     }
 
-    static pub u64 calculate_growth_left(u64 capacity) {
+    static pub calculate_growth_left(u64 capacity) -> u64 {
         return capacity * 3 / 4
     }
 
@@ -77,7 +77,7 @@ impl<K, V> HashMap<K, V> {
         }
     }
 
-    pub Option<V> get(K key) {
+    pub get(K key) -> Option<V> {
         if self.capacity == 0 {
             return Option<V>.None
         }
@@ -130,15 +130,15 @@ impl<K, V> HashMap<K, V> {
             index = (index + 1) & (self.capacity - 1)
         }
     }
-    pub bool contains(K key) {
+    pub contains(K key) -> bool {
         return self.get(key).is_some()
     }
 
-    pub u64 len() {
+    pub len() -> u64 {
         return self.size
     }
 
-    pub bool is_empty() {
+    pub is_empty() -> bool {
         return self.size == 0
     }
 
@@ -153,7 +153,7 @@ impl<K, V> HashMap<K, V> {
         self.growth_left = Self.calculate_growth_left(self.capacity)
     }
 
-    u8 get_h2(u64 hash) {
+    get_h2(u64 hash) -> u8 {
         u8 h2 = u8(hash >> 56)
         if h2 == 0xFF or h2 == 0x80 {
             h2 = (h2 & 0x7F) | 0x40
@@ -209,7 +209,7 @@ impl<K, V> HashMap<K, V> {
         del old_buckets
     }
 
-    pub u64 hash_key(K key) {
+    pub hash_key(K key) -> u64 {
         Murmur3Hasher hasher = self.hasher_builder.build_hasher()
         key.hash(hasher)
         return hasher.finish()
@@ -217,7 +217,7 @@ impl<K, V> HashMap<K, V> {
 }
 
 impl<K, V> Index<K, V> for HashMap<K, V> {
-    pub V* index(K key) {
+    pub index(K key) -> V* {
         if self.capacity == 0 {
             panic("indexing into empty map")
         }
@@ -253,7 +253,7 @@ pub struct HashMapKeyIter<K, V> {
 }
 
 impl<K, V> Iterator<K> for HashMapKeyIter<K, V> {
-    pub Option<K> next() {
+    pub next() -> Option<K> {
         while self.index < self.capacity {
             u8 ctrl_byte = self.ctrls[self.index]
             if ctrl_byte != 0b1111_1111 and ctrl_byte != 0b1000_0000 {
@@ -268,7 +268,7 @@ impl<K, V> Iterator<K> for HashMapKeyIter<K, V> {
 }
 
 impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
-    pub HashMapKeyIter<K, V> into_iter() {
+    pub into_iter() -> HashMapKeyIter<K, V> {
         return HashMapKeyIter<K, V>(
             buckets=self.buckets,
             ctrls=self.ctrls,

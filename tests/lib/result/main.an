@@ -7,7 +7,7 @@ from std.core.option import Option
 
 typedef ErrorCode = u64
 
-i32 main() {
+main() -> i32 {
     // Create a Result with a value
     Result<i32, ErrorCode> res1 = Result<i32, ErrorCode>.Ok(42)
     Result<i32, ErrorCode> res2 = Result<i32, ErrorCode>.Err(1)

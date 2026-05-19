@@ -14,7 +14,7 @@ pub struct Vec<T> {
 
 impl<T> Vec<T> {
     // Create a new, empty Vec
-    static pub Self new() {
+    static pub new() -> Self {
         return Self(
             raw_vec = RawVec<T>.new(),
             len = 0
@@ -22,7 +22,7 @@ impl<T> Vec<T> {
     }
 
     // Create a Vec with specified capacity
-    static pub Self with_capacity(u64 capacity) {
+    static pub with_capacity(u64 capacity) -> Self {
         return Self(
             raw_vec = RawVec<T>.with_capacity(capacity),
             len = 0
@@ -30,7 +30,7 @@ impl<T> Vec<T> {
     }
 
     // Get a slice reference to the elements
-    pub T[] as_slice() {
+    pub as_slice() -> T[] {
         return from_raw_parts(self.raw_vec.ptr(), self.len)
     }
 
@@ -56,7 +56,7 @@ impl<T> Vec<T> {
     }
 
     // Pop an element from the end, returning None if empty
-    pub Option<T> pop() {
+    pub pop() -> Option<T> {
         if self.len == 0 {
             return Option<T>.None
         } else {
@@ -95,7 +95,7 @@ impl<T> Vec<T> {
 
     // Remove an element at index, shifting elements to the left, returning the removed element
     // Panics if index >= len
-    pub T remove(u64 index) {
+    pub remove(u64 index) -> T {
         u64 len = self.len
         if index >= len {
             panic("index out of bounds")
@@ -118,7 +118,7 @@ impl<T> Vec<T> {
 
     // Remove the last element, replacing it with the element at end, returning the removed element
     // Panics if index >= len
-    pub T swap_remove(u64 index) {
+    pub swap_remove(u64 index) -> T {
         u64 len = self.len
         if index >= len {
             panic("index out of bounds")
@@ -171,12 +171,12 @@ impl<T> Vec<T> {
     }
 
     // Check if the Vec is empty
-    pub bool is_empty() {
+    pub is_empty() -> bool {
         return self.len == 0
     }
 
     // Get the capacity
-    pub u64 capacity() {
+    pub capacity() -> u64 {
         return self.raw_vec.capacity()
     }
 }
@@ -184,13 +184,13 @@ impl<T> Vec<T> {
 // Implement Clone for Vec<T>
 // This will clone the elements in the Vec, so it requires T to be Clone
 impl<T> Clone for Vec<T> {
-    pub Self clone() {
+    pub clone() -> Self {
         return self.as_slice().to_vec()
     }
 }
 
 impl<T> Index<u64, T> for Vec<T> {
-    pub T* index(u64 index) {
+    pub index(u64 index) -> T* {
         if index >= self.len {
             panic("index out of bounds")
         }
@@ -199,7 +199,7 @@ impl<T> Index<u64, T> for Vec<T> {
 }
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
-    pub bool eq(Vec<T> rhs) {
+    pub eq(Vec<T> rhs) -> bool {
         return self.as_slice() == rhs.as_slice()
     }
 }
@@ -215,14 +215,14 @@ impl<T> From<T[]> for Vec<T> {
 // Implement Into for Vec<T> to convert a Vec into a slice
 // This will return a slice reference to the elements in the Vec
 impl<T> Into<Vec<T>> for T[] {
-    pub Vec<T> into() {
+    pub into() -> Vec<T> {
         return Vec<T>.from(*self)
     }
 }
 
 // Implement Deref for Vec<T> to allow dereferencing to a slice
 impl<T> Deref<T[]> for Vec<T> {
-    pub T[]* deref() {
+    pub deref() -> T[]* {
         // TODO: this is a temporary solution to allow dereferencing Vec to a slice and will cause memory leak.
         T[]* res = dyn self.as_slice()
         return res
@@ -231,7 +231,7 @@ impl<T> Deref<T[]> for Vec<T> {
 
 // Implement Add for Vec<T> to concatenate two Vecs
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
-    pub Vec<T> add(Vec<T> rhs) {
+    pub add(Vec<T> rhs) -> Vec<T> {
         Vec<T> result = Vec<T>.with_capacity(self.len + rhs.len)
         result.extend(self.clone())
         result.extend(rhs.clone())

@@ -4,7 +4,7 @@
 
 from std.core.io import read_file, write_file
 
-i32 main() {
+main() -> i32 {
     // write then read back
     str test_content = "Hello, Yian file I/O!\n"
     write_file("/tmp/yian_test_rw.txt", test_content)

@@ -4,7 +4,7 @@
 
 from std.core.io import read_file, write_file, append_file
 
-i32 main() {
+main() -> i32 {
     write_file("/tmp/yian_test_append.txt", "first\n")
     append_file("/tmp/yian_test_append.txt", "second\n")
 

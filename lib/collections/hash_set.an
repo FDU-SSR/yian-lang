@@ -12,15 +12,15 @@ pub struct HashSet<T> {
 }
 
 impl<T> HashSet<T> {
-    static pub Self new() {
+    static pub new() -> Self {
         return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity(u64 capacity) {
+    static pub with_capacity(u64 capacity) -> Self {
         return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
     }
     
-    static pub Self with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) {
+    static pub with_capacity_and_hasher(u64 capacity, Murmur3BuildHasher hasher_builder) -> Self {
         u64 actual_capacity = Self.next_power_of_two(capacity)
 
         u64 growth_left = Self.calculate_growth_left(actual_capacity)
@@ -40,11 +40,11 @@ impl<T> HashSet<T> {
         )
     }
 
-    static pub u64 calculate_growth_left(u64 capacity) {
+    static pub calculate_growth_left(u64 capacity) -> u64 {
         return capacity * 3 / 4
     }
 
-    pub bool insert(T value) {
+    pub insert(T value) -> bool {
         if self.growth_left == 0 {
             self.resize(self.capacity * 2)
         }
@@ -69,7 +69,7 @@ impl<T> HashSet<T> {
         return false
     }
 
-    pub bool contains(T value) {
+    pub contains(T value) -> bool {
         if self.capacity == 0 {
             return false
         }
@@ -95,7 +95,7 @@ impl<T> HashSet<T> {
         return false
     }
 
-    pub bool remove(T value) {
+    pub remove(T value) -> bool {
         if self.capacity == 0 {
             return false
         }
@@ -122,11 +122,11 @@ impl<T> HashSet<T> {
         return false
     }
 
-    pub u64 len() {
+    pub len() -> u64 {
         return self.size
     }
 
-    pub bool is_empty() {
+    pub is_empty() -> bool {
         return self.size == 0
     }
 
@@ -141,7 +141,7 @@ impl<T> HashSet<T> {
         self.growth_left = Self.calculate_growth_left(self.capacity)
     }
 
-    u8 get_h2(u64 hash) {
+    get_h2(u64 hash) -> u8 {
         u8 h2 = u8(hash >> 56)
         if h2 == 0xFF or h2 == 0x80 {
             h2 = (h2 & 0x7F) | 0x40
@@ -196,13 +196,13 @@ impl<T> HashSet<T> {
         // del old_buckets
     }
 
-    pub u64 hash_value(T value) {
+    pub hash_value(T value) -> u64 {
         Murmur3Hasher hasher = self.hasher_builder.build_hasher()
         value.hash(hasher)
         return hasher.finish()
     }
 
-    static pub u64 next_power_of_two(u64 n) {
+    static pub next_power_of_two(u64 n) -> u64 {
         if n == 0 {
             return 0
         }
@@ -230,7 +230,7 @@ pub struct HashSetIter<T> {
 }
 
 impl<T> Iterator<T> for HashSetIter<T> {
-    pub Option<T> next() {
+    pub next() -> Option<T> {
         while self.index < self.capacity {
             u8 ctrl_byte = self.ctrls[self.index]
             if ctrl_byte != 0b1111_1111 and ctrl_byte != 0b1000_0000 {
@@ -245,7 +245,7 @@ impl<T> Iterator<T> for HashSetIter<T> {
 }
 
 impl<T> IntoIterator<HashSetIter<T>> for HashSet<T> {
-    pub HashSetIter<T> into_iter() {
+    pub into_iter() -> HashSetIter<T> {
         return HashSetIter<T>(
             buckets=self.buckets,
             ctrls=self.ctrls,

@@ -6,7 +6,7 @@ pub struct Value<T> {
     pub T value
 }
 
-pub T lib_unwrap_value<T>(Value<T> v) {
+pub lib_unwrap_value<T>(Value<T> v) -> T {
     return unwrap_value(v)
 }
 

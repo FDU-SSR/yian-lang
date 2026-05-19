@@ -13,7 +13,7 @@ impl u64 {
         *self = left_part | right_part
     }
 
-    pub u64 next_power_of_two() {
+    pub next_power_of_two() -> u64 {
         u64 n = *self
         if n <= 1 {
             return 1
@@ -39,7 +39,7 @@ impl Hash<Murmur3Hasher> for u64 {
 }
 
 impl From<str> for u64 {
-    pub static Self from(str value) {
+    pub static from(str value) -> Self {
         u8[] bytes = value.as_slice()
         u64 len = bytes.len()
         if len == 0 {

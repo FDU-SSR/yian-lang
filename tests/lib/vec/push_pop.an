@@ -4,7 +4,7 @@
 
 from std.core.vec import Vec
 
-i32 main() {
+main() -> i32 {
     Vec<i32> v = Vec<i32>.with_capacity(10)
     v.push(1)
     v.push(2)

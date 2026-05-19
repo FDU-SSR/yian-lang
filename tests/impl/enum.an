@@ -13,15 +13,15 @@ enum Command {
 }
 
 impl Command {
-    static pub Command new_start() {
+    static pub new_start() -> Command {
         return Command.Start
     }
 
-    static pub Command new_stop() {
+    static pub new_stop() -> Command {
         return Command.Stop
     }
 
-    static pub Command new_pause(i32 duration) {
+    static pub new_pause(i32 duration) -> Command {
         return Command.Pause(duration)
     }
 
@@ -34,7 +34,7 @@ impl Command {
     }
 }
 
-i32 main() {
+main() -> i32 {
     Command cmd1 = Command.new_start()
     Command cmd2 = Command.new_pause(10)
 

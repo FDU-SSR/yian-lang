@@ -10,35 +10,35 @@ from range import Range
 impl str {
     // Create a str from a byte slice
     // TODO: this is currently just a bitcast, but we should validate that the byte slice is valid UTF-8 and return an error if not
-    static Self from_slice(u8[] s) {
+    static from_slice(u8[] s) -> Self {
         str* ret = bitcast<str*>(&s)
         return *ret
     }
 
     // Get the byte slice of the str
-    pub u8[] as_slice() {
+    pub as_slice() -> u8[] {
         u8[]* ret = bitcast<u8[]*>(self)
         return *ret
     }
 
     // Get an iterator over the characters of the str
-    pub CharIter chars() {
+    pub chars() -> CharIter {
         return CharIter(self.as_slice().into_iter())
     }
 
     // Get an iterator over the characters and their byte indices
-    pub CharIndicesIter char_indices() {
+    pub char_indices() -> CharIndicesIter {
         return CharIndicesIter(0, self.chars())
     }
 
     // Check if the str starts with the given prefix character
-    pub bool starts_with_char(char prefix) {
+    pub starts_with_char(char prefix) -> bool {
         Option<char> first_char = self.chars().next()
         return first_char.is_some() and first_char.unwrap() == prefix
     }
 
     // Check if the str contains the given character
-    pub bool contains_char(char c) {
+    pub contains_char(char c) -> bool {
         for ch in self.chars() {
             if ch == c {
                 return true
@@ -47,7 +47,7 @@ impl str {
         return false
     }
 
-    bool is_char_boundary(u64 index) {
+    is_char_boundary(u64 index) -> bool {
         u8[] bytes = self.as_slice()
         u64 len = bytes.len()
 
@@ -62,7 +62,7 @@ impl str {
     }
     
     // Trim whitespace from both ends of the String
-    pub str trim() {
+    pub trim() -> str {
         u8[] bytes = self.as_slice()
         u64 start = 0
         u64 end = self.len()
@@ -76,7 +76,7 @@ impl str {
     }
 
     // Parse the str into specified type T, panicking if parsing fails
-    pub T parse<T>() {
+    pub parse<T>() -> T {
         return T.from(*self)
     }
 }
@@ -86,13 +86,13 @@ pub struct CharIter {
 }
 
 impl CharIter {
-    pub u64 len() {
+    pub len() -> u64 {
         return self.byte_iter.len()
     }
 }
 
 impl Iterator<char> for CharIter {
-    pub Option<char> next() {
+    pub next() -> Option<char> {
         Option<u8> b1_opt = self.byte_iter.next()
 
         if b1_opt.is_none() {
@@ -131,7 +131,7 @@ impl Iterator<char> for CharIter {
 }
 
 impl IntoIterator<CharIter> for CharIter {
-    CharIter into_iter() {
+    into_iter() -> CharIter {
         return *self
     }
 }
@@ -142,13 +142,13 @@ pub struct CharIndicesIter {
 }
 
 impl IntoIterator<CharIndicesIter> for CharIndicesIter {
-    CharIndicesIter into_iter() {
+    into_iter() -> CharIndicesIter {
         return *self
     }
 }
 
 impl Iterator<(u64, char)> for CharIndicesIter {
-    pub Option<(u64, char)> next() {
+    pub next() -> Option<(u64, char)> {
         u64 pre_len = self.iter.byte_iter.len()
         match self.iter.next() {
             None { return Option<(u64, char)>.None }
@@ -163,25 +163,25 @@ impl Iterator<(u64, char)> for CharIndicesIter {
 }
 
 impl From<u8[]> for str {
-    pub static Self from(u8[] value) {
+    pub static from(u8[] value) -> Self {
         return Self.from_slice(value)
     }
 }
 
 impl Into<u8[]> for str {
-    pub u8[] into() {
+    pub into() -> u8[] {
         return self.as_slice()
     }
 }
 
 impl PartialEq<str> for str {
-    pub bool eq(str other) {
+    pub eq(str other) -> bool {
         return self.as_slice() == other.as_slice()
     }
 }
 
 impl Index<Range<u64>, str> for str {
-    pub str* index(Range<u64> range) {
+    pub index(Range<u64> range) -> str* {
         u8[] bytes = self.as_slice()
         u64 len = bytes.len()
 

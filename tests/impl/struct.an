@@ -8,16 +8,16 @@ struct Pair{
 }
 
 impl Pair{
-    pub static Self new(i32 a, i32 b){
+    pub static new(i32 a, i32 b) -> Self {
         return Self(a = a, b = b)
     }
 
-    pub i32 sum(){
+    pub sum() -> i32 {
         return self.a + self.b
     }
 }
 
-i32 main(){
+main() -> i32 {
     Pair p = Pair.new(3, 4)
     assert p.sum() == 7
     return 0

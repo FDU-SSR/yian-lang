@@ -10,19 +10,19 @@ pub enum Option<T> {
 
 impl<T> Option<T> {
     // Check if the Option is Some or None
-    pub bool is_some() {
+    pub is_some() -> bool {
         match *self {
             None { return false }
             Some { return true }
         }
     }
 
-    pub bool is_none() {
+    pub is_none() -> bool {
         return not self.is_some()
     }
 
     // Unwrap the value if it is Some, otherwise panic (or return an error)
-    pub T unwrap() {
+    pub unwrap() -> T {
         match *self {
             None { panic("Called unwrap on a None value") }
             Some as load { return load.val }
@@ -30,7 +30,7 @@ impl<T> Option<T> {
     }
 
     // Unwrap the value if it is Some, otherwise return the provided default value
-    pub T unwrap_or(T default) {
+    pub unwrap_or(T default) -> T {
         match *self {
             None { return default }
             Some as load { return load.val }
@@ -38,7 +38,7 @@ impl<T> Option<T> {
     }
 
     // Take the value out of the Option, leaving None in its place.
-    pub Option<T> take() {
+    pub take() -> Option<T> {
         match *self {
             None { return Option<T>.None }
             Some as load {
@@ -50,7 +50,7 @@ impl<T> Option<T> {
     }
 
     // Replace the value in the Option with a new value, returning the old value.
-    pub Option<T> replace(T val) {
+    pub replace(T val) -> Option<T> {
         match *self {
             None {
                 *self = Option<T>.Some(val)
@@ -66,7 +66,7 @@ impl<T> Option<T> {
 }
 
 impl<T> Clone for Option<T> {
-    pub Self clone() {
+    pub clone() -> Self {
         match *self {
             None { return Option<T>.None }
             Some as load { return Option<T>.Some(load.val.clone()) }

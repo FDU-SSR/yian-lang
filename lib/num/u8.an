@@ -2,23 +2,23 @@ from std.core.hash import Murmur3Hasher, Hash
 from std.core.slice import from_raw_parts
 
 impl u8 {
-    pub bool is_ascii_whitespace() {
+    pub is_ascii_whitespace() -> bool {
         return *self == 0x20 or (*self >= 0x09 and *self <= 0x0D)
     }
 
-    pub bool is_ascii_alpha() {
+    pub is_ascii_alpha() -> bool {
         return (*self >= 0x41 and *self <= 0x5A) or (*self >= 0x61 and *self <= 0x7A)
     }
 
-    pub bool is_ascii_digit() {
+    pub is_ascii_digit() -> bool {
         return *self >= 0x30 and *self <= 0x39
     }
 
-    pub bool is_ascii_alphanumeric() {
+    pub is_ascii_alphanumeric() -> bool {
         return self.is_ascii_alpha() or self.is_ascii_digit()
     }
 
-    pub bool is_ascii_hex_digit() {
+    pub is_ascii_hex_digit() -> bool {
         return self.is_ascii_digit() or (*self >= 0x41 and *self <= 0x46) or (*self >= 0x61 and *self <= 0x66)
     }
 }

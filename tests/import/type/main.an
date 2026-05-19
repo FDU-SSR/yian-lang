@@ -6,7 +6,7 @@ from std.core.io import print
 
 from person import Person
 
-i32 main() {
+main() -> i32 {
     Person p = Person.new(25, 175.5)
 
     assert p.get_age() == 25

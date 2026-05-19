@@ -4,7 +4,7 @@
 
 from std.core.io import read_file
 
-i32 main() {
+main() -> i32 {
     str self_content = read_file("tests/lib/fs/read_self.an")
     assert self_content.starts_with("// Test read_file reading its own source"): "File content should start with expected string"
 

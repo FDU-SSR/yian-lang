@@ -4,11 +4,11 @@
 
 from a import Value, lib_unwrap_value
 
-pub T unwrap_value<T>(Value<T> v) {
+pub unwrap_value<T>(Value<T> v) -> T {
     return v.value
 }
 
-i32 main() {
+main() -> i32 {
     Value<i32> v = Value(42)
     i32 result = lib_unwrap_value(v)
     assert result == 42: "result should be 42"

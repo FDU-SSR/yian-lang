@@ -1,6 +1,6 @@
 from std.core.raw_vec import RawVec
 
-i32 main() {
+main() -> i32 {
     // new()
     RawVec<i32> v = RawVec<i32>.new()
     assert v.capacity() == 0: "initial capacity should be 0"

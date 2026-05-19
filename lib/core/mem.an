@@ -8,89 +8,89 @@ pub trait Copy {}
 //
 // The clone method should return a new instance of the type equivalent to the original.
 pub trait Clone {
-    Self clone();
+    clone() -> Self;
 }
 
 // Implement clone for all basic types
 // Integer types
 impl Clone for i8 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for i16 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for i32 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for i64 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for u8 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for u16 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for u32 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for u64 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 // Floating-point types
 impl Clone for f32 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 impl Clone for f64 {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 // Boolean type
 impl Clone for bool {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 // Character type
 impl Clone for char {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }
 
 // Void type
 impl Clone for void {
-    pub Self clone() {
+    pub clone() -> Self {
         return *self
     }
 }

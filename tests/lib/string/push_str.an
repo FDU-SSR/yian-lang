@@ -1,7 +1,7 @@
 from std.core.string import String
 from std.core.io import print
 
-i32 main() {
+main() -> i32 {
     String s = String.from("Hello")
     s.push_str(", World!")
     assert s == "Hello, World!": "s should be 'Hello, World!'"

@@ -4,7 +4,7 @@
 
 from std.core.fmt import ToString
 
-i32 main() {
+main() -> i32 {
     // Unsigned integers
     u8 u8v = 255u8
     assert u8v.to_string() == "255": "u8 to_string failed"

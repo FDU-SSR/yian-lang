@@ -8,15 +8,15 @@ pub struct Person {
 }
 
 impl Person {
-    static pub Self new(i32 age, float height) {
+    static pub new(i32 age, float height) -> Person {
         return Self(age, height)
     }
 
-    pub i32 get_age() {
+    pub get_age() -> i32 {
         return self.age
     }
 
-    pub float get_height() {
+    pub get_height() -> float {
         return self.height
     }
 }

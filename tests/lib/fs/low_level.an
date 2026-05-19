@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     // O_WRONLY | O_CREAT | O_TRUNC = 577
     i32 wfd = open("/tmp/yian_test_low.txt", 577)
     write(wfd, "low-level test")

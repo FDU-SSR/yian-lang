@@ -4,7 +4,7 @@
 
 from std.core.option import Option
 
-i32 main() {
+main() -> i32 {
     // Create an Option with a value
     Option<i32> opt1 = Option<i32>.Some(42)
     Option<i32> opt2 = Option<i32>.None
