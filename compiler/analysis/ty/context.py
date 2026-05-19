@@ -63,11 +63,11 @@ class TypeCtx:
         self.__slice_cache: dict[int, int] = {}  # element type id -> slice type id
         self.__array_cache: dict[tuple[int, int], int] = {}  # (element type id, length) -> array type id
         self.__tuple_cache: dict[tuple[int, ...], int] = {}  # element type ids -> tuple type id
-        self.__function_pointer_cache: dict[tuple[int, ...], int] = {}  # (param type ids, return type id) -> function pointer type id
+        self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}  # ((param type ids), return type id) -> function pointer type id
         # =============================================
 
         # === cache from template to instance ===
-        self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}  # (template type id, generic arg type ids) -> instance type id
+        self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}  # (def id, generic arg type ids) -> instance type id
         # =======================================
 
         # === NPO (Null Pointer Optimization) cache ===
@@ -177,3 +177,129 @@ class TypeCtx:
     @classmethod
     def intrinsic_custom_type(cls, intrinsic: Type.IntrinsicCustomType) -> int:
         return cls.INTRINSIC_CUSTOM_TYPE_DICT[intrinsic]
+
+    def alloc_generic(self, name: str) -> int:
+        return self.__add_type(Type.GenericType(type_id=-1, name=name))
+
+    def alloc_pointer(self, pointee_type: int) -> int:
+        if pointee_type in self.__pointer_cache:
+            return self.__pointer_cache[pointee_type]
+
+        pointer_ty = Type.PointerType(type_id=-1, pointee_type=pointee_type)
+        pointer_ty_id = self.__add_type(pointer_ty)
+        self.__pointer_cache[pointee_type] = pointer_ty_id
+        return pointer_ty_id
+
+    def alloc_slice(self, element_type: int) -> int:
+        if element_type in self.__slice_cache:
+            return self.__slice_cache[element_type]
+
+        slice_ty = Type.SliceType(type_id=-1, element_type=element_type)
+        slice_ty_id = self.__add_type(slice_ty)
+        self.__slice_cache[element_type] = slice_ty_id
+        return slice_ty_id
+
+    def alloc_array(self, element_type: int, length: int) -> int:
+        key = (element_type, length)
+        if key in self.__array_cache:
+            return self.__array_cache[key]
+
+        array_ty = Type.ArrayType(type_id=-1, element_type=element_type, length=length)
+        array_ty_id = self.__add_type(array_ty)
+        self.__array_cache[key] = array_ty_id
+        return array_ty_id
+
+    def alloc_tuple(self, element_types: list[int]) -> int:
+        key = tuple(element_types)
+        if key in self.__tuple_cache:
+            return self.__tuple_cache[key]
+
+        tuple_ty = Type.TupleType(type_id=-1, element_types=element_types)
+        tuple_ty_id = self.__add_type(tuple_ty)
+        self.__tuple_cache[key] = tuple_ty_id
+        return tuple_ty_id
+
+    def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
+        key = (tuple(param_types), return_type)
+        if key in self.__function_pointer_cache:
+            return self.__function_pointer_cache[key]
+
+        function_pointer_ty = Type.FunctionPointerType(type_id=-1, parameter_types=param_types, return_type=return_type)
+        function_pointer_ty_id = self.__add_type(function_pointer_ty)
+        self.__function_pointer_cache[key] = function_pointer_ty_id
+        return function_pointer_ty_id
+
+    def alloc_struct(self, name: str) -> int:
+        struct_def = Type.StructDef(name=name)
+        struct_ty = Type.StructType(type_id=-1, struct_def=struct_def)
+
+        intrinsic_mapping = {
+            "Range": self.Range_id,
+        }
+        if name in intrinsic_mapping:
+            struct_ty.type_id = intrinsic_mapping[name]
+
+        type_id = self.__add_type(struct_ty)
+        return type_id
+
+    def alloc_enum(self, name: str) -> int:
+        enum_def = Type.EnumDef(name=name)
+        enum_ty = Type.EnumType(type_id=-1, enum_def=enum_def)
+
+        intrinsic_mapping = {
+            "Option": self.Option_id,
+            "Result": self.Result_id,
+        }
+        if name in intrinsic_mapping:
+            enum_ty.type_id = intrinsic_mapping[name]
+
+        type_id = self.__add_type(enum_ty)
+        return type_id
+
+    def alloc_trait(self, name: str) -> int:
+        trait_def = Type.TraitDef(name=name)
+        trait_ty = Type.TraitType(type_id=-1, trait_def=trait_def)
+
+        intrinsic_mapping = {
+            "Add": self.add_id,
+            "Sub": self.sub_id,
+            "Mul": self.mul_id,
+            "Div": self.div_id,
+            "Rem": self.rem_id,
+            "Neg": self.neg_id,
+
+            "BitAnd": self.bitand_id,
+            "BitOr": self.bitor_id,
+            "BitXor": self.bitxor_id,
+            "BitNot": self.bitnot_id,
+            "Shl": self.shl_id,
+            "Shr": self.shr_id,
+
+            "PartialEq": self.partial_eq_id,
+            "PartialOrd": self.partial_ord_id,
+
+            "Index": self.index_id,
+            "Contains": self.contains_id,
+            "Deref": self.deref_id,
+            "Delete": self.delete_id,
+            "Drop": self.drop_id,
+        }
+        if name in intrinsic_mapping:
+            trait_ty.type_id = intrinsic_mapping[name]
+
+        type_id = self.__add_type(trait_ty)
+        return type_id
+
+    def alloc_method(self, name: str) -> int:
+        method_def = Type.MethodDef(name=name)
+        method_ty = Type.MethodType(type_id=-1, method_def=method_def)
+
+        type_id = self.__add_type(method_ty)
+        return type_id
+
+    def alloc_function(self, name: str) -> int:
+        function_def = Type.FunctionDef(name=name)
+        function_ty = Type.FunctionType(type_id=-1, function_def=function_def)
+
+        type_id = self.__add_type(function_ty)
+        return type_id
