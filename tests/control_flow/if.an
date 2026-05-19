@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
    i32 a = 3
    if a > 10 {
       panic("a is greater than 10")

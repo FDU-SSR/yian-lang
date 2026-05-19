@@ -3,9 +3,7 @@
 // Expected output: 0
 
 enum Color{
-    BLUE
-    RED
-    YELLOW, GREEN, BLACK
+    BLUE, RED, YELLOW, GREEN, BLACK
     LOOK{
         i32 who
         i32 direction
@@ -13,18 +11,18 @@ enum Color{
     MOVE{i32 who, i32 direction}
 }
 
-i32 match_enum(Color c) {
+match_enum(Color c) -> i32 {
     match c {
         YELLOW { return 3 }
         GREEN { return 4 }
         BLACK { return 5 }
-        LOOK as l { return l.who + l.direction }
-        MOVE as m { return m.who + m.direction }
+        LOOK(who, direction) { return who + direction }
+        MOVE(who, direction) { return who + direction }
         _ { return 0 }  // BLUE and RED
     }
 }
 
-i32 main()
+main() -> i32
 {
     Color c = Color.BLUE
 

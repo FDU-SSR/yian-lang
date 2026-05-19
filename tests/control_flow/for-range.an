@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main(){
+main() -> i32 {
     // add up 1024 elements of an array
     i32[1024] arr
     for i in 0u64..1024 {

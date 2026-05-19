@@ -2,9 +2,9 @@
 //
 // Expected output: 0
 
-i32 main(){
+main() -> i32 {
     i32 ret = -66
-    for i32 i = 0; i < 16; i += 1 {
+    for i in 0..10 {
         if i == 5 {
             ret = 66
             break

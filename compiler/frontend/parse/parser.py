@@ -176,7 +176,7 @@ class Parser:
         self.__stream.consume_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        variants = self.__stream.consume_until(self.__parse_variant_info, {PunctuatorKind.RBrace})
+        variants = self.__stream.consume_separated(self.__parse_variant_info, {PunctuatorKind.Comma, PunctuatorKind.Endl}, {PunctuatorKind.RBrace})
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.EnumDef(span=name.span, attrs=attrs, name=name, generics=generics, variants=variants)
@@ -248,11 +248,11 @@ class Parser:
     def __parse_variant_info(self) -> AST.VariantInfo:
         name = self.__stream.consume_identifier()
 
-        self.__stream.consume_spaces()
+        self.__stream.consume_spaces_inline()
         token = self.__stream.peek()
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
             self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-            fields = self.__stream.consume_until(self.__parse_var_info, {PunctuatorKind.RBrace})
+            fields = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma, PunctuatorKind.Endl}, {PunctuatorKind.RBrace})
             self.__stream.consume_punctuator(PunctuatorKind.RBrace)
         else:
             fields: list[AST.VarInfo] = []

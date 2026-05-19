@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-i32 main(){
+main() -> i32 {
     // add up 1024 elements of an array
     i32[1024] arr
-    for u64 i = 0; i < 1024; i += 1 {
+    for i in 0u64..1024 {
         arr[i] = i32(i)
     }
 
     i32 sum = 0
-    for u64 i = 0; i < 1024; i += 1 {
+    for i in 0u64..1024 {
         sum += arr[i]
     }
 

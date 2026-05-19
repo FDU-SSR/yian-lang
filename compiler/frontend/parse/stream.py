@@ -97,11 +97,13 @@ class TokenStream:
         while not (isinstance(token, Tok.Punctuator) and token.kind in terminators):
             self.consume_spaces()
             items.append(item_parser())
-            self.consume_spaces()
+            self.consume_spaces_inline()
 
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in separators:
                 self.consume_punctuator(token.kind)
+                self.consume_spaces_inline()
+                token = self.peek()
             else:
                 break
         return items
@@ -230,7 +232,7 @@ class TokenStream:
         Type Ident =
         """
         token = self.peek()
-        if isinstance(token, Tok.Keyword) and token.kind in {Tok.KeywordKind.Int, Tok.KeywordKind.Uint, Tok.KeywordKind.Float, Tok.KeywordKind.Bool, Tok.KeywordKind.Str, Tok.KeywordKind.Char, Tok.KeywordKind.Void, Tok.KeywordKind.Fn}:
+        if isinstance(token, Tok.Keyword) and token.kind in {Tok.KeywordKind.Fn}:
             return True
 
         index = 0

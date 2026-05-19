@@ -2,9 +2,9 @@
 //
 // Expected output: 0
 
-i32 main(){
+main() -> i32 {
     i32 sum = 0
-    for i32 i = 0; i < 16; i += 1 {
+    for i in 0..16 {
         if i > 10 {
             continue
         }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     assert true: "This should not fail"
     assert 1 + 1 == 2: "Math is broken"
     assert 6.9 < 7.0: "Float comparison failed"
