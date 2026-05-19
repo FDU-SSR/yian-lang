@@ -25,7 +25,7 @@ impl<T> Option<T> {
     pub unwrap() -> T {
         match *self {
             None { panic("Called unwrap on a None value") }
-            Some as load { return load.val }
+            Some(val) { return val }
         }
     }
 
@@ -33,7 +33,7 @@ impl<T> Option<T> {
     pub unwrap_or(T default) -> T {
         match *self {
             None { return default }
-            Some as load { return load.val }
+            Some(val) { return val }
         }
     }
 
@@ -41,10 +41,9 @@ impl<T> Option<T> {
     pub take() -> Option<T> {
         match *self {
             None { return Option<T>.None }
-            Some as load {
-                T ret = load.val
+            Some(val) {
                 *self = Option<T>.None
-                return Option<T>.Some(ret)
+                return Option<T>.Some(val)
             }
         }
     }
@@ -56,8 +55,7 @@ impl<T> Option<T> {
                 *self = Option<T>.Some(val)
                 return Option<T>.None
             }
-            Some as load {
-                T old_val = load.val
+            Some(old_val) {
                 *self = Option<T>.Some(val)
                 return Option<T>.Some(old_val)
             }
@@ -69,7 +67,7 @@ impl<T> Clone for Option<T> {
     pub clone() -> Self {
         match *self {
             None { return Option<T>.None }
-            Some as load { return Option<T>.Some(load.val.clone()) }
+            Some(val) { return Option<T>.Some(val.clone()) }
         }
     }
 }

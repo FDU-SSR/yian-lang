@@ -152,11 +152,11 @@ impl Iterator<(u64, char)> for CharIndicesIter {
         u64 pre_len = self.iter.byte_iter.len()
         match self.iter.next() {
             None { return Option<(u64, char)>.None }
-            Some as some {
+            Some(val) {
                 u64 index = self.front_offset
                 u64 len = self.iter.byte_iter.len()
                 self.front_offset += pre_len - len
-                return Option<(u64, char)>.Some((index, some.val))
+                return Option<(u64, char)>.Some((index, val))
             }
         }
     }

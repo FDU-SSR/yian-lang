@@ -1,16 +1,16 @@
 from ops import min
 
 pub trait Hasher {
-    u64 finish();
-    write(u8[] bytes);
+    finish() -> u64
+    write(u8[] bytes)
 }
 
 pub trait BuildHasher<T> {
-    T build_hasher();
+    build_hasher() -> T
 }
 
 pub trait Hash<T> {
-    hash(T hasher);
+    hash(T hasher)
 }
 
 pub struct Murmur3Hasher {
@@ -23,7 +23,7 @@ pub struct Murmur3Hasher {
 }
 
 impl Murmur3Hasher {
-    pub static Self with_seed(u64 seed){
+    static pub with_seed(u64 seed) -> Self {
         Self res
         res.state = seed
         res.len = 0
@@ -47,7 +47,7 @@ impl Murmur3Hasher {
 }
 
 impl Hasher for Murmur3Hasher {
-    u64 finish() {
+    finish() -> u64 {
         u64 state = self.state
 
         if self.tail_len > 0 {
@@ -98,7 +98,7 @@ impl Hasher for Murmur3Hasher {
 
         if full_blocks > 0 {
             u8* block_ptr = bytes_ptr + offset
-            for u64 i = 0; i < full_blocks; i += 1 {
+            for i in 0..full_blocks {
                 u64 k
                 memcpy(&k, block_ptr, 8)
                 self.mix(k)
@@ -120,13 +120,13 @@ pub struct Murmur3BuildHasher {
 }
 
 impl Murmur3BuildHasher {
-    pub static Self with_seed(u64 seed) {
+    static pub with_seed(u64 seed) -> Self {
         return Self(seed)
     }
 }
 
 impl BuildHasher<Murmur3Hasher> for Murmur3BuildHasher {
-    Murmur3Hasher build_hasher() {
+    build_hasher() -> Murmur3Hasher {
         return Murmur3Hasher.with_seed(self.seed)
     }
 }

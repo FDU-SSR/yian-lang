@@ -36,7 +36,7 @@ impl<T> HashSet<T> {
             0,
             actual_capacity,
             growth_left,
-            hasher_builder,
+            hasher_builder
         )
     }
 

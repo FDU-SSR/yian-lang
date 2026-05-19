@@ -9,7 +9,7 @@ pub struct Range<T> {
 }
 
 impl<T> Clone for Range<T> {
-    Self clone() {
+    clone() -> Self {
         return Self(
             start=self.start.clone(),
             end=self.end.clone()
@@ -18,13 +18,13 @@ impl<T> Clone for Range<T> {
 }
 
 impl<T> PartialEq<Range<T>> for Range<T> {
-    bool eq(Range<T> other) {
+    eq(Range<T> other) -> bool {
         return self.start == other.start and self.end == other.end
     }
 }
 
 impl<T> Iterator<T> for Range<T> {
-    Option<T> next() {
+    next() -> Option<T> {
         if self.start < self.end {
             T value = self.start
             self.start += 1
@@ -36,7 +36,7 @@ impl<T> Iterator<T> for Range<T> {
 }
 
 impl<T> IntoIterator<Range<T>> for Range<T> {
-    Range<T> into_iter() {
+    into_iter() -> Range<T> {
         return *self
     }
 }

@@ -134,6 +134,8 @@ class TokenStream:
         """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
         token = self.next()
         match token:
+            case Tok.Keyword(kind, span):
+                return AST.Identifier(name=kind.value, span=span)
             case Tok.Identifier(name, span):
                 return AST.Identifier(name=name, span=span)
             case _:

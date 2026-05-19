@@ -43,7 +43,7 @@ impl<K, V> HashMap<K, V> {
             0,
             actual_capacity,
             growth_left,
-            hasher_builder,
+            hasher_builder
         )
     }
 

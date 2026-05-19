@@ -8,7 +8,7 @@ pub trait Copy {}
 //
 // The clone method should return a new instance of the type equivalent to the original.
 pub trait Clone {
-    clone() -> Self;
+    clone() -> Self
 }
 
 // Implement clone for all basic types

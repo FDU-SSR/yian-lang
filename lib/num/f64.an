@@ -11,7 +11,7 @@ impl Hash<Murmur3Hasher> for f64 {
 }
 
 impl From<str> for f64 {
-    pub static Self from(str value) {
+    pub static from(str value) -> Self {
         u8[] bytes = value.as_slice()
         u64 len = bytes.len()
         if len == 0 {

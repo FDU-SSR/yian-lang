@@ -1,7 +1,7 @@
 from string import String
 
 pub trait ToString {
-    String to_string();
+    to_string() -> String
 }
 
 append_unsigned_digits(String* out, u64 value) {
@@ -12,13 +12,12 @@ append_unsigned_digits(String* out, u64 value) {
     out.push(char(b'0' + digit))
 }
 
-String unsigned_to_string(u64 value) {
+unsigned_to_string(u64 value) -> String {
     String out = String.new()
     append_unsigned_digits(&out, value)
     return out
 }
-
-String signed_to_string(i64 value) {
+signed_to_string(i64 value) -> String {
     if value >= 0 {
         return unsigned_to_string(u64(value))
     }
@@ -32,7 +31,7 @@ String signed_to_string(i64 value) {
     return out
 }
 
-String float_to_string(f64 value) {
+float_to_string(f64 value) -> String {
     if value != value {
         return String.from("NaN")
     }
@@ -72,67 +71,67 @@ String float_to_string(f64 value) {
 }
 
 impl ToString for u8 {
-    String to_string() {
+    to_string() -> String {
         return unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u16 {
-    String to_string() {
+    to_string() -> String {
         return unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u32 {
-    String to_string() {
+    to_string() -> String {
         return unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u64 {
-    String to_string() {
+    to_string() -> String {
         return unsigned_to_string(*self)
     }
 }
 
 impl ToString for i8 {
-    String to_string() {
+    to_string() -> String {
         return signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i16 {
-    String to_string() {
+    to_string() -> String {
         return signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i32 {
-    String to_string() {
+    to_string() -> String {
         return signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i64 {
-    String to_string() {
+    to_string() -> String {
         return signed_to_string(*self)
     }
 }
 
 impl ToString for f32 {
-    String to_string() {
+    to_string() -> String {
         return float_to_string(f64(*self))
     }
 }
 
 impl ToString for f64 {
-    String to_string() {
+    to_string() -> String {
         return float_to_string(*self)
     }
 }
 
 impl ToString for bool {
-    String to_string() {
+    to_string() -> String {
         if *self {
             return String.from("true")
         }
@@ -141,7 +140,7 @@ impl ToString for bool {
 }
 
 impl ToString for char {
-    String to_string() {
+    to_string() -> String {
         String out = String.new()
         out.push(*self)
         return out
@@ -149,7 +148,7 @@ impl ToString for char {
 }
 
 impl ToString for void {
-    String to_string() {
+    to_string() -> String {
         return String.from("void")
     }
 }

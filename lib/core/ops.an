@@ -1,54 +1,54 @@
 pub trait Add<Rhs, Output> {
-    Output add(Rhs rhs);
+    add(Rhs rhs) -> Output
 }
 
 pub trait Sub<Rhs, Output> {
-    Output sub(Rhs rhs);
+    sub(Rhs rhs) -> Output
 }
 
 pub trait Mul<Rhs, Output> {
-    Output mul(Rhs rhs);
+    mul(Rhs rhs) -> Output
 }
 
 pub trait Div<Rhs, Output> {
-    Output div(Rhs rhs);
+    div(Rhs rhs) -> Output
 }
 
 pub trait Rem<Rhs, Output> {
-    Output rem(Rhs rhs);
+    rem(Rhs rhs) -> Output
 }
 
 pub trait Neg<Output> {
-    Output neg();
+    neg() -> Output
 }
 
 pub trait BitAnd<Rhs, Output> {
-    Output bit_and(Rhs rhs);
+    bit_and(Rhs rhs) -> Output
 }
 
 pub trait BitOr<Rhs, Output> {
-    Output bit_or(Rhs rhs);
+    bit_or(Rhs rhs) -> Output
 }
 
 pub trait BitXor<Rhs, Output> {
-    Output bit_xor(Rhs rhs);
+    bit_xor(Rhs rhs) -> Output
 }
 
 pub trait BitNot<Output> {
-    Output bit_not();
+    bit_not() -> Output
 }
 
 pub trait Shl<Rhs, Output> {
-    Output shl(Rhs rhs);
+    shl(Rhs rhs) -> Output
 }
 
 pub trait Shr<Rhs, Output> {
-    Output shr(Rhs rhs);
+    shr(Rhs rhs) -> Output
 }
 
 pub trait PartialEq<Rhs> {
-    bool eq(Rhs rhs);
-    bool ne(Rhs rhs) {
+    eq(Rhs rhs) -> bool
+    ne(Rhs rhs) -> bool {
         return not self.eq(rhs)
     }
 }
@@ -60,9 +60,9 @@ pub enum Ordering {
 }
 
 pub trait PartialOrd<Rhs> {
-    Ordering partial_cmp(Rhs rhs);
+    partial_cmp(Rhs rhs) -> Ordering
 
-    bool lt(Rhs rhs) {
+    lt(Rhs rhs) -> bool {
         match self.partial_cmp(rhs) {
             Less {
                 return true
@@ -73,7 +73,7 @@ pub trait PartialOrd<Rhs> {
         }
     }
 
-    bool le(Rhs rhs) {
+    le(Rhs rhs) -> bool {
         match self.partial_cmp(rhs) {
             Less {
                 return true
@@ -87,7 +87,7 @@ pub trait PartialOrd<Rhs> {
         }
     }
 
-    bool gt(Rhs rhs) {
+    gt(Rhs rhs) -> bool {
         match self.partial_cmp(rhs) {
             Greater {
                 return true
@@ -98,7 +98,7 @@ pub trait PartialOrd<Rhs> {
         }
     }
 
-    bool ge(Rhs rhs) {
+    ge(Rhs rhs) -> bool {
         match self.partial_cmp(rhs) {
             Less {
                 return false
@@ -113,14 +113,14 @@ pub trait PartialOrd<Rhs> {
     }
 }
 
-pub T max<T>(T a, T b) {
+pub max<T>(T a, T b) -> T {
     if a < b {
         return b
     }
     return a
 }
 
-pub T min<T>(T a, T b) {
+pub min<T>(T a, T b) -> T {
     if a < b {
         return a
     }
@@ -128,9 +128,9 @@ pub T min<T>(T a, T b) {
 }
 
 pub trait Index<Idx, Target> {
-    Target* index(Idx index);
+    index(Idx index) -> Target*
 }
 
 pub trait Deref<Target> {
-    Target* deref();
+    deref() -> Target*
 }
