@@ -60,8 +60,6 @@ class KeywordKind(Enum):
     Int = "int"
     Uint = "uint"
     Float = "float"
-    Self_ = "self"
-    SelfType = "Self"
 
     @classmethod
     def try_from_str(cls, value: str) -> KeywordKind | None:

@@ -8,22 +8,22 @@ struct Pair<T> {
 }
 
 impl<T> Pair<T> {
-    static pub Self new(T first, T second) {
+    static pub new(T first, T second) -> Self {
         return Self(first, second)
     }
 
-    pub T sum() {
+    pub sum() -> T {
         return self.first + self.second
     }
 
-    pub T max() {
+    pub max() -> T {
         if (self.first > self.second) {
             return self.first
         }
         return self.second
     }
 
-    pub T min() {
+    pub min() -> T {
         if (self.first < self.second) {
             return self.first
         }
@@ -37,7 +37,7 @@ impl<T> Pair<T> {
     }
 }
 
-i32 main() {
+main() -> i32 {
     // 1) explicit type arguments
     Pair<i32> p1 = Pair<i32>.new(10, 20)
     assert p1.sum() == 30: "Expected sum 30"

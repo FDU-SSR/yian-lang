@@ -7,7 +7,7 @@ struct Pair<T, U> {
     pub U second
 }
 
-i32 main() {
+main() -> i32 {
     i32 a = 1
     i64 b = 2
     Pair<i32, i64> p1 = Pair<i32, i64>(first=a, second=b)

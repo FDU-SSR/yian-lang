@@ -7,6 +7,6 @@ struct Node {
     Node next
 }
 
-i32 main() {
+main() -> i32 {
     return 0
 }

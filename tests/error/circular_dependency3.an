@@ -7,7 +7,7 @@ struct Node {
     Node* next
 }
 
-i32 main() {
+main() -> i32 {
     Node n
     n.data = 10
     n.next = &n

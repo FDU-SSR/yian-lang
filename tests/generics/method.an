@@ -3,23 +3,23 @@
 // Expected output: 0
 
 impl i32 {
-    pub i32 casted_add<U>(U other) {
+    pub casted_add<U>(U other) -> i32 {
         return *self + i32(other)
     }
 }
 
 trait CastedSubtract<T> {
-    T casted_subtract<U>(U other);
+    casted_subtract<U>(U other) -> T
 }
 
 impl CastedSubtract<i32> for i32 {
-    i32 casted_subtract<U>(U other) {
+    casted_subtract<U>(U other) -> i32 {
         return *self - i32(other)
     }
 }
 
 
-i32 main() {
+main() -> i32 {
     i32 a = 50
     i32 b = a.casted_add<f64>(25.5)
     assert b == 75: "Expected casted_add result 75"

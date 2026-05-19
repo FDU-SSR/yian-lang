@@ -11,29 +11,28 @@ struct Person{
 }
 
 impl Person{
-    static pub Self new(i32 age, str name){
+    static pub new(i32 age, str name) -> Self {
         return Self(age, name)
     }
 
-    pub i32 get_age(){
+    pub get_age() -> i32 {
         return self.age
     }
 
-    pub str get_name(){
+    pub get_name() -> str {
         return self.name
     }
 }
 
 
-i32 main() {
-    Person* p1 = dyn Person
-    *p1 = Person.new(25, "Alice")
+main() -> i32 {
+    Person* p1 = dyn Person.new(25, "Alice")
     assert p1.get_age() == 25
 
     Person* p2 = dyn Person(30, "Bob")
     assert p2.get_age() == 30
 
-    Person* p3 = dyn Person[2]
+    Person* p3 = dyn[2] Person
     p3[0] = Person.new(22, "Charlie")
     p3[1] = Person.new(28, "Diana")
     assert p3[0].get_age() == 22

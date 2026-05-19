@@ -2,19 +2,19 @@
 //
 // Expected output: 0
 
-T times_ten<T>(T a) {
+times_ten<T>(T a) -> T {
     return times_five(a) + times_five(a)
 }
 
-T times_five<T>(T a) {
+times_five<T>(T a) -> T {
     return times_two(a) + times_two(a) + a
 }
 
-T times_two<T>(T a) {
+times_two<T>(T a) -> T {
     return a + a
 }
 
-i32 main() {
+main() -> i32 {
     // 1) explicit type arguments
     i32 x = times_ten<i32>(3)
     assert x == 30: "Expected 30"

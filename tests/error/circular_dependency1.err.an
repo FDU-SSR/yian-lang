@@ -18,6 +18,6 @@ struct A4 {
     A3 field1
 }
 
-int main() {
+main() -> i32 {
     return 0
 }
