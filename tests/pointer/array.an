@@ -2,22 +2,23 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     i32[10] arr
-    for u64 i = 0; i < 10; i += 1 {
+    for i in 0..10u64 {
         arr[i] = i32(i)
     }
 
     i32* p = &arr[0]
-    for u64 i = 0; i < 10; i += 1 {
+    for i in 0..10u64 {
         p[i] += 66
     }
     assert arr[0] == 66: "Expected 66"
 
     i32* begin = &arr[0]
     i32* end = begin + 10
-    for i32* it = begin; it < end; it += 1 {
-        *it += 1
+    while begin < end {
+        *begin += 1
+        begin += 1
     }
     assert arr[9] == 76: "Expected 76"
 

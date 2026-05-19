@@ -4,6 +4,6 @@
 
 from private import NonExportableStruct
 
-i32 main() {
+main() -> i32 {
     return 0
 }

@@ -7,7 +7,7 @@ struct Person{
     i32 age
 }
 
-i32 main()
+main() -> i32
 {
     Person* p = dyn Person("Alice", 30)
     assert p.age == 30: "Expected age to be 30"
@@ -15,7 +15,7 @@ i32 main()
     p.age = 31
     assert p.age == 31: "Expected age to be 31 after modification"
 
-    i32* arr = dyn i32[3]
+    i32* arr = dyn[3] i32
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30

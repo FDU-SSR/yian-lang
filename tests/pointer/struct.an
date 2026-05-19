@@ -10,14 +10,14 @@ struct MyStruct {
     i32* e
 }
 
-i32 main() {
+main() -> i32 {
     i32 f = 100
     MyStruct my_struct = MyStruct(
         5,
         true,
         'c',
         1.1,
-        &f,
+        &f
     )
     i32* pa = &my_struct.a
     bool* pb = &my_struct.b

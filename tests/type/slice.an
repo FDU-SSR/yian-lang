@@ -2,11 +2,11 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     // create a slice from array/pointer
     i32[5] arr = [1, 2, 3, 4, 5]
     i32[] array_slice = arr[1u64..4]
-    i32* heap_arr = dyn i32[5]
+    i32* heap_arr = dyn[5] i32
     heap_arr[0] = 10
     heap_arr[1] = 20
     heap_arr[2] = 30

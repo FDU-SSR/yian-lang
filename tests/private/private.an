@@ -12,19 +12,19 @@ struct NonExportableStruct {
 }
 
 impl ExportableStruct {
-    static pub Self new(i32 a, i32 b) {
+    static pub new(i32 a, i32 b) -> Self {
         return ExportableStruct(a, b)
     }
 }
 
-pub NonExportableStruct make_non_exportable(i32 a, i32 b) {
+pub make_non_exportable(i32 a, i32 b) -> NonExportableStruct {
     return NonExportableStruct(a, b)
 }
 
-ExportableStruct make_exportable(i32 a, i32 b) {
+make_exportable(i32 a, i32 b) -> ExportableStruct {
     return ExportableStruct(a, b)
 }
 
-pub i32 get_priv_field(ExportableStruct* es) {
+pub get_priv_field(ExportableStruct* es) -> i32 {
     return es.priv_field
 }

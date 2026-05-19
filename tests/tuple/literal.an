@@ -7,7 +7,7 @@ struct Pair {
     pub i32 second
 }
 
-i32 main() {
+main() -> i32 {
     (i32, i32) tuple1 = (10, 20)
     assert tuple1[0] == 10: "tuple1[0] should be 10"
     assert tuple1[1] == 20: "tuple1[1] should be 20"

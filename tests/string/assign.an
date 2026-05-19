@@ -9,7 +9,7 @@ struct Person {
     i32 age
 }
 
-i32 main() {
+main() -> i32 {
     str s1 = "Alice"
     print(s1)
 

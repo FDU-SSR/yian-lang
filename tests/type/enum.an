@@ -7,7 +7,7 @@ enum DivResult<T> {
     DivByZero
 }
 
-DivResult<i32> safe_div(i32 a, i32 b) {
+safe_div(i32 a, i32 b) -> DivResult<i32> {
     if b == 0 {
         return DivResult<i32>.DivByZero
     } else {
@@ -15,14 +15,14 @@ DivResult<i32> safe_div(i32 a, i32 b) {
     }
 }
 
-i32 main() {
+main() -> i32 {
     DivResult<i32> res1 = safe_div(10, 2)
     DivResult<i32> res2 = safe_div(10, 0)
 
     i32 val1
     match res1 {
-        Ok as data{
-            val1 = data.value
+        Ok(data) {
+            val1 = data
         }
         DivByZero{
             panic("Division by zero in res1")

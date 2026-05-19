@@ -11,17 +11,17 @@ struct Vector<T> {
 }
 
 impl<T> Vector<T> {
-    static Self new() {
+    static new() -> Self {
         return Self(
-            data=dyn T[2],
+            data=dyn[2] T,
             length=0,
             capacity=2
         )
     }
 
-    static Self with_capacity(u64 capacity) {
+    static with_capacity(u64 capacity) -> Self {
         return Self(
-            data=dyn T[capacity],
+            data=dyn[capacity] T,
             length=0,
             capacity=capacity
         )
@@ -29,8 +29,8 @@ impl<T> Vector<T> {
 
     grow() {
         self.capacity *= 2
-        T* new_data = dyn T[self.capacity]
-        for u64 i = 0; i < self.length; i += 1 {
+        T* new_data = dyn[self.capacity] T
+        for i in 0..self.length {
             new_data[i] = self.data[i]
         }
         del self.data
@@ -45,7 +45,7 @@ impl<T> Vector<T> {
         self.length += 1
     }
 
-    Option<T> pop() {
+    pop() -> Option<T> {
         if self.length == 0 {
             return Option<T>.None
         }
@@ -53,12 +53,12 @@ impl<T> Vector<T> {
         return Option<T>.Some(self.data[self.length])
     }
 
-    u64 len() {
+    len() -> u64 {
         return self.length
     }
 }
 
-i32 main() {
+main() -> i32 {
     Vector<i32> v = Vector<i32>.new()
     v.append(1)
     v.append(2)
@@ -73,8 +73,8 @@ i32 main() {
             None {
                 break
             }
-            Some as item {
-                sum += item.val
+            Some(val) {
+                sum += val
             }
         }
     }

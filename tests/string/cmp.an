@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-i32 main() {
+main() -> i32 {
     str s1 = "apple"
     str s2 = "banana"
     str s3 = "apple"

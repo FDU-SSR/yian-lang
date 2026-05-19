@@ -18,7 +18,7 @@ struct Rectangle {
 }
 
 trait Shape {
-    i32 area();
+    area() -> i32
 
     // 有默认实现
     move_by(i32 dx, i32 dy) {
@@ -27,7 +27,7 @@ trait Shape {
 }
 
 impl Shape for Circle {
-    i32 area() {
+    area() -> i32 {
         return 3 * self.radius * self.radius
     }
 
@@ -38,7 +38,7 @@ impl Shape for Circle {
 }
 
 impl Shape for Rectangle {
-    i32 area() {
+    area() -> i32 {
         return self.width * self.height
     }
 
@@ -48,7 +48,7 @@ impl Shape for Rectangle {
     }
 }
 
-i32 main() {
+main() -> i32 {
     // use Circle
     Circle circle = Circle(radius=2, x=0, y=0)
     i32 circle_area = circle.area()

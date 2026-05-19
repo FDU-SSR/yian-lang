@@ -7,7 +7,7 @@ struct Pair {
     pub i32 second
 }
 
-i32 main() {
+main() -> i32 {
     (Pair, Pair) tuple1
     (i32, Pair)[3] tuple2
 

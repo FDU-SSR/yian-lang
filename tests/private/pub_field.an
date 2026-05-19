@@ -4,7 +4,7 @@
 
 from private import ExportableStruct
 
-i32 main() {
+main() -> i32 {
     ExportableStruct es = ExportableStruct.new(42, 84)
     assert es.pub_field == 42: "Expected pub_field to be 42"
     return 0

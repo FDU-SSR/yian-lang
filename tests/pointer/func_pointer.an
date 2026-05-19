@@ -8,49 +8,49 @@ struct Person{
 }
 
 impl Person {
-    pub i32 get_age() {
+    pub get_age() -> i32 {
         return self.age
     }
 
-    pub i32 get_score() {
+    pub get_score() -> i32 {
         return self.score
     }
 }
 
 
-i32 add(i32 a, i32 b)
+add(i32 a, i32 b) -> i32
 {
     return a + b
 }
 
-i32 sub(i32 a, i32 b){
+sub(i32 a, i32 b) -> i32{
     return a - b
 }
 
 
 
-Person make_person(i32 x, i32 y){
+make_person(i32 x, i32 y) -> Person {
     return Person(x, y)
 }
 
-i32 accumulate(i32 a, i32 b, fn<i32(i32, i32)> func){
+accumulate(i32 a, i32 b, fn(i32, i32) -> i32 func) -> i32 {
     i32 c = func(a, b)
     return c
 }
-struct table{
-    fn<i32(i32, i32)> Add_pointer
-    fn<i32(i32, i32)> Sub_pointer
+struct Table{
+    fn(i32, i32) -> i32 Add_pointer
+    fn(i32, i32) -> i32 Sub_pointer
 }
 
-i32 main()
+main() -> i32
 {
-    fn<i32(i32, i32)> add_func = &add
-    fn<Person(i32, i32)> per_func = &make_person
-    fn<i32(i32, i32)> sub_func = &sub
+    fn(i32, i32) -> i32 add_func = &add
+    fn(i32, i32) -> Person per_func = &make_person
+    fn(i32, i32) -> i32 sub_func = &sub
 
-    table tb = table(add_func, sub_func)
+    Table tb = Table(add_func, sub_func)
 
-    table* tb2 = &tb
+    Table* tb2 = &tb
     i32 i = (tb2.Add_pointer)(10, 2)
 
     i32 res = (tb.Add_pointer)(10, 2)

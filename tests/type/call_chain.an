@@ -5,23 +5,23 @@
 struct makef1 {}
 struct makef2 {}
 
-makef1 f() {
+f() -> makef1 {
     return makef1()
 }
 
 impl makef1 {
-    makef2 f1() {
+    f1() -> makef2 {
         return makef2()
     }
 }
 
 impl makef2 {
-    i32 f2() {
+    f2() -> i32 {
         return 5
     }
 }
 
-i32 main() {
+main() -> i32 {
     assert f().f1().f2() == 5: "call chain works"
 
     return 0

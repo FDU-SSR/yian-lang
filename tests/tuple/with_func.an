@@ -7,17 +7,17 @@ struct Pair {
     pub i32 second
 }
 
-(Pair, i32) create_pair_and_number(i32 a, i32 b, i32 num) {
+create_pair_and_number(i32 a, i32 b, i32 num) -> (Pair, i32) {
     Pair p = Pair(a, b)
     (Pair, i32) tmp = (p, num)
     return tmp
 }
 
-i32 sum_tuple((i32, i32) t) {
+sum_tuple((i32, i32) t) -> i32 {
     return t[0] + t[1]
 }
 
-i32 main() {
+main() -> i32 {
     (Pair, i32) result = create_pair_and_number(5, 10, 15)
     assert result[0].first == 5: "result[0].first should be 5"
     assert result[0].second == 10: "result[0].second should be 10"

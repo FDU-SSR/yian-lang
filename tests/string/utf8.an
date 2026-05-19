@@ -9,7 +9,7 @@
 
 from std.core.io import print
 
-i32 main() {
+main() -> i32 {
     print("你好易安!\n")
     print("Hello Yian!\n")
     print("こんにちは、イアン！\n")
