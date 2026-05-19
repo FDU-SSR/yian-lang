@@ -89,7 +89,8 @@ class StructDef:
 @dataclass
 class StructType:
     type_id: int
-    struct_def: StructDef
+    custom_def: StructDef
+    generic_args: list[int] = field(default_factory=list[int])
 
 
 @dataclass
@@ -109,7 +110,8 @@ class EnumDef:
 @dataclass
 class EnumType:
     type_id: int
-    enum_def: EnumDef
+    custom_def: EnumDef
+    generic_args: list[int] = field(default_factory=list[int])
 
 
 @dataclass
@@ -129,7 +131,8 @@ class FunctionDef:
 @dataclass
 class FunctionType:
     type_id: int
-    function_def: FunctionDef
+    custom_def: FunctionDef
+    generic_args: list[int] = field(default_factory=list[int])
 
 
 @dataclass
@@ -146,7 +149,8 @@ class MethodDef:
 @dataclass
 class MethodType:
     type_id: int
-    method_def: MethodDef
+    custom_def: MethodDef
+    generic_args: list[int] = field(default_factory=list[int])
 
 
 @dataclass
@@ -159,7 +163,8 @@ class TraitDef:
 @dataclass
 class TraitType:
     type_id: int
-    trait_def: TraitDef
+    custom_def: TraitDef
+    generic_args: list[int] = field(default_factory=list[int])
 
 
 @dataclass

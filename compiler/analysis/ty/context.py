@@ -231,7 +231,7 @@ class TypeCtx:
 
     def alloc_struct(self, name: str) -> int:
         struct_def = Type.StructDef(name=name)
-        struct_ty = Type.StructType(type_id=-1, struct_def=struct_def)
+        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
 
         intrinsic_mapping = {
             "Range": self.Range_id,
@@ -244,7 +244,7 @@ class TypeCtx:
 
     def alloc_enum(self, name: str) -> int:
         enum_def = Type.EnumDef(name=name)
-        enum_ty = Type.EnumType(type_id=-1, enum_def=enum_def)
+        enum_ty = Type.EnumType(type_id=-1, custom_def=enum_def)
 
         intrinsic_mapping = {
             "Option": self.Option_id,
@@ -258,7 +258,7 @@ class TypeCtx:
 
     def alloc_trait(self, name: str) -> int:
         trait_def = Type.TraitDef(name=name)
-        trait_ty = Type.TraitType(type_id=-1, trait_def=trait_def)
+        trait_ty = Type.TraitType(type_id=-1, custom_def=trait_def)
 
         intrinsic_mapping = {
             "Add": self.add_id,
@@ -292,14 +292,61 @@ class TypeCtx:
 
     def alloc_method(self, name: str) -> int:
         method_def = Type.MethodDef(name=name)
-        method_ty = Type.MethodType(type_id=-1, method_def=method_def)
+        method_ty = Type.MethodType(type_id=-1, custom_def=method_def)
 
         type_id = self.__add_type(method_ty)
         return type_id
 
     def alloc_function(self, name: str) -> int:
         function_def = Type.FunctionDef(name=name)
-        function_ty = Type.FunctionType(type_id=-1, function_def=function_def)
+        function_ty = Type.FunctionType(type_id=-1, custom_def=function_def)
 
         type_id = self.__add_type(function_ty)
         return type_id
+
+    def alloc_range(self, type_id: int) -> int:
+        return self.alloc_instance(self.Range_id, [type_id])
+
+    def alloc_instance(self, type_id: int, generic_args: list[int]) -> int:
+        """
+        Given an uninstantiated type Ty<T1, T2, ..., Tn>, and a list of generic argument type IDs [A1, A2, ..., An],
+        allocate an instantiated type Ty<A1, A2, ..., An>.
+        """
+        ty = self.__space[type_id]
+
+        if not isinstance(ty, Type.CustomType):
+            raise ValueError(f"Type ID {type_id} is not a custom type and cannot be instantiated")
+        if len(ty.generic_args) != len(generic_args):
+            raise ValueError(f"Generic argument count mismatch for type ID {type_id}")
+
+        if len(ty.custom_def.generics) == 0:
+            if len(generic_args) != 0:
+                raise ValueError(f"Type ID {type_id} is not generic and cannot be instantiated with generic arguments")
+            return type_id
+
+        key = (id(ty.custom_def), tuple(generic_args))
+        if key in self.__instance_cache:
+            return self.__instance_cache[key]
+
+        match ty:
+            case Type.StructType(custom_def=struct_def):
+                instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generic_args)
+            case Type.EnumType(custom_def=enum_def):
+                instance_ty = Type.EnumType(type_id=-1, custom_def=enum_def, generic_args=generic_args)
+            case Type.TraitType(custom_def=trait_def):
+                instance_ty = Type.TraitType(type_id=-1, custom_def=trait_def, generic_args=generic_args)
+            case Type.MethodType(custom_def=method_def):
+                instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=generic_args)
+            case Type.FunctionType(custom_def=function_def):
+                instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=generic_args)
+
+        instance_ty_id = self.__add_type(instance_ty)
+        self.__instance_cache[key] = instance_ty_id
+        return instance_ty_id
+
+    def instantiate(self, type_id: int, substs: dict[int, int]) -> int:
+        """
+        Given a type `ty` that may contain generic type parameters, and a substitution map `substs`,
+        return a new type where the generic type parameters are replaced by the corresponding types in `substs`.
+        """
+        raise NotImplementedError("Type instantiation is not implemented yet")
