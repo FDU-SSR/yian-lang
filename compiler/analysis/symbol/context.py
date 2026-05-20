@@ -64,11 +64,18 @@ class SymbolCtx:
         """Gets a symbol by its ID."""
         return self.__all_symbols[symbol_id]
 
-    def lookup(self, name: str) -> int | None:
+    def lookup(self, name: str) -> Symbol | None:
         """Looks up a symbol by name in the current scope and its parents."""
         scope = self.__current_scope
         while scope is not None:
             if name in scope.symbols:
-                return scope.symbols[name]
+                return self.__all_symbols[scope.symbols[name]]
             scope = scope.parent
         return None  # Symbol not found
+
+    def lookup_exportable(self, name: str) -> Symbol | None:
+        """Looks up an exportable symbol by name."""
+        symbol_id = self.__exportable_symbols.get(name)
+        if symbol_id is not None:
+            return self.__all_symbols[symbol_id]
+        return None
