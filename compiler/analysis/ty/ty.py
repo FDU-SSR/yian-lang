@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypeAlias
 
+from compiler.analysis.ty.context import TypeCtx
 from compiler.config.constants import AccessMode
 
 
@@ -92,6 +93,30 @@ class StructType:
     custom_def: StructDef
     generic_args: list[int] = field(default_factory=list[int])
 
+    def get_fields(self, context: TypeCtx) -> list[StructField]:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        fields: list[StructField] = []
+        for field_ in self.custom_def.fields:
+            fields.append(StructField(
+                name=field_.name,
+                type_id=context.instantiate(field_.type_id, substs),
+                access_mode=field_.access_mode,
+                index=field_.index,
+            ))
+        return fields
+
+    def get_field_by_name(self, name: str, context: TypeCtx) -> StructField | None:
+        for field_ in self.custom_def.fields:
+            if field_.name == name:
+                substs = dict(zip(self.custom_def.generics, self.generic_args))
+                return StructField(
+                    name=field_.name,
+                    type_id=context.instantiate(field_.type_id, substs),
+                    access_mode=field_.access_mode,
+                    index=field_.index,
+                )
+        return None
+
 
 @dataclass
 class EnumVariant:
@@ -112,6 +137,34 @@ class EnumType:
     type_id: int
     custom_def: EnumDef
     generic_args: list[int] = field(default_factory=list[int])
+
+    def get_variants(self, context: TypeCtx) -> list[EnumVariant]:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        variants: list[EnumVariant] = []
+        for variant in self.custom_def.variants:
+            payload_type = None
+            if variant.payload_type is not None:
+                payload_type = context.instantiate(variant.payload_type, substs)
+            variants.append(EnumVariant(
+                name=variant.name,
+                payload_type=payload_type,
+                discriminant=variant.discriminant,
+            ))
+        return variants
+
+    def get_variant_by_name(self, name: str, context: TypeCtx) -> EnumVariant | None:
+        for variant in self.custom_def.variants:
+            if variant.name == name:
+                substs = dict(zip(self.custom_def.generics, self.generic_args))
+                payload_type = None
+                if variant.payload_type is not None:
+                    payload_type = context.instantiate(variant.payload_type, substs)
+                return EnumVariant(
+                    name=variant.name,
+                    payload_type=payload_type,
+                    discriminant=variant.discriminant,
+                )
+        return None
 
 
 @dataclass
@@ -174,6 +227,20 @@ class FunctionPointerType:
     return_type: int
 
 
+@dataclass
+class AliasDef:
+    name: str
+    generics: list[int] = field(default_factory=list[int])
+    aliased_type: int = -1
+
+
+@dataclass
+class AliasType:
+    type_id: int
+    custom_def: AliasDef
+    generic_args: list[int] = field(default_factory=list[int])
+
+
 BasicType: TypeAlias = (
     VoidType | BoolType | CharType | StrType
     | IntType | FloatType
@@ -186,7 +253,7 @@ DerivedType: TypeAlias = (
 
 CustomType: TypeAlias = (
     StructType | EnumType | TraitType
-    | MethodType | FunctionType
+    | MethodType | FunctionType | AliasType
 )
 
 Ty: TypeAlias = BasicType | DerivedType | CustomType | GenericType

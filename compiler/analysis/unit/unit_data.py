@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from compiler.analysis.symbol.context import SymbolCtx
+from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast import Program
 
 
@@ -9,4 +12,7 @@ class UnitData:
         self.__program = program
         self.__unit_id = unit_id
 
-        self.__symbol_ctx = SymbolCtx(unit_id)
+        self.symbol_ctx = SymbolCtx(unit_id)
+
+    def items(self) -> Iterator[AST.ProgramItem]:
+        return iter(self.__program.items)

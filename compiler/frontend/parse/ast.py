@@ -42,6 +42,7 @@ class Import:
 @dataclass
 class Alias:
     span: SrcSpan
+    attrs: list[Attr]
     name: Identifier
     generics: list[Identifier]
     target: ASTType

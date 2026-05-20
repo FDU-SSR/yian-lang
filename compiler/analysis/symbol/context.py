@@ -19,6 +19,8 @@ class SymbolCtx:
         self.__next_id = 0
         self.__current_scope = Scope(symbols={}, parent=None)
 
+        self.__exportable_symbols: dict[str, int] = {}  # name -> symbol_id
+
     @property
     def unit_id(self) -> int:
         return self.__unit_id
@@ -51,6 +53,11 @@ class SymbolCtx:
         self.__current_scope.symbols[name] = symbol_id
         symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=attributes)
         self.__all_symbols[symbol_id] = symbol
+
+        # add a pub symbol to global scope will be exported
+        if SymbolAttribute.Public in attributes and self.__current_scope.parent is None:
+            self.__exportable_symbols[name] = symbol_id
+
         return symbol_id
 
     def get(self, symbol_id: int) -> Symbol:

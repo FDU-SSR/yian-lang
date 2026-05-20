@@ -38,9 +38,7 @@ class Parser:
                         raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
                     items.extend(self.__parse_import())
                 case Keyword(KeywordKind.Typedef, _):
-                    if attrs:
-                        raise ParseError("Attributes are not allowed on type aliases", attrs[0].span)
-                    items.append(self.__parse_alias())
+                    items.append(self.__parse_alias(attrs=attrs))
                 case Keyword(KeywordKind.Impl, _):
                     if attrs:
                         raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
@@ -115,7 +113,7 @@ class Parser:
             case _:
                 raise CompilerError("Unreachable code")
 
-    def __parse_alias(self) -> AST.Alias:
+    def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:
         self.__stream.consume_keyword(KeywordKind.Typedef)
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
@@ -124,7 +122,7 @@ class Parser:
         self.__stream.consume_punctuator(PunctuatorKind.Equal)
         self.__stream.consume_spaces()
         target = self.__parse_type()
-        return AST.Alias(span=name.span, name=name, generics=generics, target=target)
+        return AST.Alias(span=name.span, attrs=attrs, name=name, generics=generics, target=target)
 
     def __parse_impl(self) -> AST.Impl:
         span = self.__stream.consume_keyword(KeywordKind.Impl).span

@@ -70,10 +70,7 @@ class TypeCtx:
         self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}  # (def id, generic arg type ids) -> instance type id
         # =======================================
 
-        # === NPO (Null Pointer Optimization) cache ===
-        self.__npo_cache: dict[int, tuple[bool, list[int]]] = {}
-        self.__npo_payload_inner_type: dict[int, int] = {}
-        # ==============================================
+        self.__name_cache: dict[int, str] = {}  # type id -> type name (for debugging and error messages)
 
     def __force_add_type(self, ty: Type.Ty) -> None:
         """
@@ -229,6 +226,13 @@ class TypeCtx:
         self.__function_pointer_cache[key] = function_pointer_ty_id
         return function_pointer_ty_id
 
+    def alloc_alias(self, name: str) -> int:
+        alias_def = Type.AliasDef(name=name)
+        alias_ty = Type.AliasType(type_id=-1, custom_def=alias_def)
+
+        type_id = self.__add_type(alias_ty)
+        return type_id
+
     def alloc_struct(self, name: str) -> int:
         struct_def = Type.StructDef(name=name)
         struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
@@ -339,6 +343,8 @@ class TypeCtx:
                 instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=generic_args)
             case Type.FunctionType(custom_def=function_def):
                 instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=generic_args)
+            case Type.AliasType(custom_def=alias_def):
+                instance_ty = Type.AliasType(type_id=-1, custom_def=alias_def, generic_args=generic_args)
 
         instance_ty_id = self.__add_type(instance_ty)
         self.__instance_cache[key] = instance_ty_id
@@ -349,4 +355,187 @@ class TypeCtx:
         Given a type `ty` that may contain generic type parameters, and a substitution map `substs`,
         return a new type where the generic type parameters are replaced by the corresponding types in `substs`.
         """
-        raise NotImplementedError("Type instantiation is not implemented yet")
+        if len(substs) == 0:
+            return type_id
+
+        ty = self.__space[type_id]
+        match ty:
+            case Type.GenericType(type_id=generic_type_id):
+                if generic_type_id in substs:
+                    return substs[generic_type_id]
+                else:
+                    return type_id
+            case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) \
+                    | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args):
+                instantiated_args = [self.instantiate(arg_id, substs) for arg_id in generic_args]
+                return self.alloc_instance(type_id, instantiated_args)
+            case Type.PointerType(pointee_type=pointee_type):
+                instantiated_pointee = self.instantiate(pointee_type, substs)
+                return self.alloc_pointer(instantiated_pointee)
+            case Type.SliceType(element_type=element_type):
+                instantiated_element = self.instantiate(element_type, substs)
+                return self.alloc_slice(instantiated_element)
+            case Type.ArrayType(element_type=element_type, length=length):
+                instantiated_element = self.instantiate(element_type, substs)
+                return self.alloc_array(instantiated_element, length)
+            case Type.TupleType(element_types=element_types):
+                instantiated_elements = [self.instantiate(elem_id, substs) for elem_id in element_types]
+                return self.alloc_tuple(instantiated_elements)
+            case Type.FunctionPointerType(parameter_types=param_types, return_type=return_type):
+                instantiated_params = [self.instantiate(param_id, substs) for param_id in param_types]
+                instantiated_return = self.instantiate(return_type, substs)
+                return self.alloc_function_pointer(instantiated_params, instantiated_return)
+            case _:
+                return type_id
+
+    def get_name(self, type_id: int) -> str:
+        if type_id in self.__name_cache:
+            return self.__name_cache[type_id]
+
+        ty = self.__space[type_id]
+        match ty:
+            case Type.VoidType():
+                name = "void"
+            case Type.BoolType():
+                name = "bool"
+            case Type.CharType():
+                name = "char"
+            case Type.StrType():
+                name = "str"
+            case Type.IntType(size=size, signed=signed):
+                prefix = "i" if signed else "u"
+                name = f"{prefix}{size * 8}"
+            case Type.FloatType(size=size):
+                name = f"f{size * 8}"
+            case Type.PointerType(pointee_type=pointee_type):
+                pointee_name = self.get_name(pointee_type)
+                name = f"{pointee_name}*"
+            case Type.SliceType(element_type=element_type):
+                element_name = self.get_name(element_type)
+                name = f"{element_name}[]"
+            case Type.ArrayType(element_type=element_type, length=length):
+                element_name = self.get_name(element_type)
+                name = f"{element_name}[{length}]"
+            case Type.TupleType(element_types=element_types):
+                element_names = [self.get_name(elem_id) for elem_id in element_types]
+                name = f"({', '.join(element_names)})"
+            case Type.FunctionPointerType(parameter_types=param_types, return_type=return_type):
+                param_names = [self.get_name(param_id) for param_id in param_types]
+                return_name = self.get_name(return_type)
+                name = f"fn({', '.join(param_names)}) -> {return_name}"
+            case Type.GenericType(name=name):
+                pass
+            case Type.StructType(custom_def=custom_def, generic_args=generic_args):
+                if len(generic_args) == 0:
+                    name = custom_def.name
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.EnumType(custom_def=custom_def, generic_args=generic_args):
+                if len(generic_args) == 0:
+                    name = custom_def.name
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.TraitType(custom_def=custom_def, generic_args=generic_args):
+                if len(generic_args) == 0:
+                    name = custom_def.name
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.MethodType(custom_def=custom_def, generic_args=generic_args):
+                receiver_name = self.get_name(custom_def.receiver_type)
+                if len(generic_args) == 0:
+                    name = f"{receiver_name}::{custom_def.name}"
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{receiver_name}::{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.FunctionType(custom_def=custom_def, generic_args=generic_args):
+                if len(generic_args) == 0:
+                    name = custom_def.name
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.AliasType(custom_def=custom_def, generic_args=generic_args):
+                if len(generic_args) == 0:
+                    name = custom_def.name
+                else:
+                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
+                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+
+        self.__name_cache[type_id] = name
+        return name
+
+    def finalize(self) -> None:
+        """
+        Final check and preparation of the type space before code generation.
+
+        1. Check self-referential types.
+        """
+        self.__check_self_referential_types()
+
+    def __check_self_referential_types(self) -> None:
+        """
+        Check for self-referential types that would cause infinite recursion during code generation.
+        For example, a struct that contains itself directly or indirectly.
+
+        This is a simple DFS-based cycle detection in the type graph.
+        """
+        visited: set[int] = set()
+        stack: list[int] = []
+        in_stack: set[int] = set()
+
+        def visit(type_id: int) -> None:
+            if type_id in in_stack:
+                chain = " -> ".join(self.get_name(tid) for tid in stack) + f" -> {self.get_name(type_id)}"
+                raise CompilerError(f"Self-referential type detected: {chain}")
+            if type_id in visited:
+                return
+            visited.add(type_id)
+            stack.append(type_id)
+            in_stack.add(type_id)
+
+            try:
+                ty = self.__space[type_id]
+                match ty:
+                    case Type.ArrayType(element_type=element_type):
+                        visit(element_type)
+                    case Type.TupleType(element_types=element_types):
+                        for elem_id in element_types:
+                            visit(elem_id)
+                    case Type.StructType():
+                        for field in ty.get_fields(self):
+                            visit(field.type_id)
+                    case Type.EnumType():
+                        for variant in ty.get_variants(self):
+                            if variant.payload_type is not None:
+                                visit(variant.payload_type)
+                    case _:
+                        pass
+            finally:
+                stack.pop()
+                in_stack.remove(type_id)
+
+        for type_id in list(self.__space):
+            visit(type_id)
+
+    def is_instance(self, template_id: int, generic_args: list[int], target_id: int) -> bool:
+        """
+        Check if the instantiated type of `template_id` with `generic_args` is the same as `target_id`.
+        """
+        template_ty = self.__space[template_id]
+        if not isinstance(template_ty, Type.CustomType):
+            raise CompilerError(f"Type ID {template_id} is not a custom type and cannot be instantiated")
+
+        target_ty = self.__space[target_id]
+        if not isinstance(target_ty, Type.CustomType):
+            raise CompilerError(f"Type ID {target_id} is not a custom type and cannot be compared for instance")
+
+        if id(template_ty.custom_def) != id(target_ty.custom_def):
+            return False
+
+        for arg_id, target_arg_id in zip(generic_args, target_ty.generic_args):
+            if arg_id != target_arg_id:
+                return False
+
+        return True
