@@ -11,6 +11,7 @@ from compiler.frontend.parse.ast import Program
 
 @dataclass
 class UnitData:
+    unit_id: int
     program: Program
     path: Path
     symbol_ctx: SymbolCtx = field(default_factory=SymbolCtx, hash=False, repr=False, compare=False)

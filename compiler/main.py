@@ -6,6 +6,10 @@ import traceback
 from pathlib import Path
 from typing import NoReturn
 
+from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.global_resolve import GlobalResolve
+from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
@@ -67,7 +71,10 @@ def __print_traceback(error: Exception) -> None:
     print()
 
 
-def __print_source_error(path: Path, source: str, span: SrcSpan, error: Exception) -> NoReturn:
+def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
+    path = span.path
+    source = path.read_text()
+
     print("-" * 20)
     __print_traceback(error)
 
@@ -120,33 +127,38 @@ def main(argv: list[str] | None = None) -> int:
 
     # extract .an files from input paths
     src_files = collect_an_files(args.paths)
-    sources: list[str] = []
-    for src_file in src_files:
-        with src_file.open() as f:
-            sources.append(f.read())
 
     # lex all source files
     token_lists: list[list[Token]] = []
-    for src_file, source in zip(src_files, sources):
-        lexer = Lexer(source)
+    for src_file in src_files:
+        lexer = Lexer(src_file)
 
         try:
             lexer.lex()
         except LexError as error:
-            __print_source_error(src_file, source, error.span, error)
+            __print_source_error(error.span, error)
 
         token_lists.append(lexer.export())
 
     programs: list[AST.Program] = []
-    for src_file, source, tokens in zip(src_files, sources, token_lists):
+    for src_file, tokens in zip(src_files, token_lists):
         parser = Parser(tokens)
 
         try:
             program = parser.parse()
         except ParseError as error:
-            __print_source_error(src_file, source, error.span, error)
+            __print_source_error(error.span, error)
 
         programs.append(program)
+
+    unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
+    type_ctx = TypeCtx()
+
+    global_resolver = GlobalResolve(unit_datas, type_ctx)
+    try:
+        global_resolver.run()
+    except AnalysisError as error:
+        __print_source_error(error.span, error)
 
     if args.token is not None:
         __write_text_output(args.token, __format_token_output(src_files, token_lists))

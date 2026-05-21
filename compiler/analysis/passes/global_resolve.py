@@ -17,17 +17,29 @@ from compiler.frontend.parse import ast as AST
 
 
 class GlobalResolve:
-    def __init__(self, units: list[UnitData], type_ctx: TypeCtx) -> None:
+    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx) -> None:
         self.__units = units
         self.__type_ctx = type_ctx
 
-        self.__path_lookup: dict[Path, UnitData] = {unit.path.resolve(): unit for unit in units}
+        self.__path_lookup: dict[Path, UnitData] = {unit.path.resolve(): unit for unit in units.values()}
         self.__std_lookup: dict[tuple[str, ...], UnitData] = {}
 
         self.__build_std_lookup()
 
+    def run(self) -> None:
+        for unit in self.__units.values():
+            self.__collect_symbols(unit)
+
+        for unit in self.__units.values():
+            self.__resolve_imports(unit)
+
+        for unit in self.__units.values():
+            self.__resolve_definitions(unit)
+
+        self.__type_ctx.check_impls()
+
     def __build_std_lookup(self) -> None:
-        for unit in self.__units:
+        for unit in self.__units.values():
             parts = unit.path.parts
             for i in range(len(parts) - 1, -1, -1):
                 if parts[i] == "lib":
@@ -35,18 +47,6 @@ class GlobalResolve:
                     key = ("std",) + rel_parts[:-1] + (unit.path.stem,)
                     self.__std_lookup[key] = unit
                     break
-
-    def run(self) -> None:
-        for unit in self.__units:
-            self.__collect_symbols(unit)
-
-        for unit in self.__units:
-            self.__resolve_imports(unit)
-
-        for unit in self.__units:
-            self.__resolve_definitions(unit)
-
-        self.__type_ctx.check_impls()
 
     def __convert_attr(self, attr: AST.Attr) -> SymbolAttribute:
         match attr.kind:
@@ -267,7 +267,7 @@ class GlobalResolve:
         ty.custom_def.return_type = ret_type_id
 
         # add the resolved procedure to the type context
-        self.__type_ctx.add_procedure(ty.type_id, func_def.body, unit.path)
+        self.__type_ctx.add_procedure(ty.type_id, func_def.body, unit.unit_id)
 
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
         symbol = unit.symbol_ctx.lookup(struct_def.name.name)
@@ -372,7 +372,7 @@ class GlobalResolve:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)
 
             # add the resolved procedure to the type context
-            self.__type_ctx.add_procedure(method_id, item.body, unit.path)
+            self.__type_ctx.add_procedure(method_id, item.body, unit.unit_id)
 
             impl_obj.methods[item.decl.name.name] = method_id
 

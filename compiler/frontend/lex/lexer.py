@@ -1,4 +1,6 @@
 # from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind, Token
+from pathlib import Path
+
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.token import Token
 from compiler.utils.IR.position import SrcPosition, SrcSpan
@@ -17,10 +19,10 @@ class LexError(ValueError):
 
 
 class CharStream:
-    def __init__(self, source: str):
-        self.__source = source
+    def __init__(self, path: Path):
+        self.__source = path.read_text()
         self.__index = 0
-        self.pos = SrcPosition(0, 1)
+        self.pos = SrcPosition(0, 1, path)
 
     def at_end(self) -> bool:
         return self.__index >= len(self.__source)
@@ -90,8 +92,8 @@ class CharStream:
 
 
 class Lexer:
-    def __init__(self, source: str):
-        self.__stream = CharStream(source)
+    def __init__(self, path: Path):
+        self.__stream = CharStream(path)
         self.__tokens: list[Token] = []
 
     def lex(self) -> None:
