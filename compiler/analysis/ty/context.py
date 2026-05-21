@@ -3,6 +3,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.impl import Impl, ImplRegistry
 from compiler.analysis.ty.resolver import TypeResolver
 from compiler.frontend.parse.ast_type import ASTType
+from compiler.utils.IR.position import SrcSpan
 from compiler.utils.errors.yian_error import CompilerError
 
 
@@ -380,8 +381,7 @@ class TypeCtx:
             case Type.GenericType(type_id=generic_type_id):
                 if generic_type_id in substs:
                     return substs[generic_type_id]
-                else:
-                    return type_id
+                return type_id
             case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) \
                     | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args):
                 instantiated_args = [self.instantiate(arg_id, substs) for arg_id in generic_args]
@@ -565,5 +565,13 @@ class TypeCtx:
         """
         return self.__resolver.resolve(ty, symbol_ctx)
 
-    def register_impl(self, generics: list[int], target: int, trait: int | None) -> Impl:
-        return self.__impl_registry.register_impl(generics, target, trait)
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
+        return self.__impl_registry.register_impl(span, generics, target, trait)
+
+    def check_impls(self) -> None:
+        """
+        Check the validity of all registered impls.
+
+        This should be called after all impls are registered.
+        """
+        self.__impl_registry.check_impls()

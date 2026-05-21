@@ -46,6 +46,8 @@ class ResolveGlobal:
         for unit in self.__units:
             self.__resolve_definitions(unit)
 
+        self.__type_ctx.check_impls()
+
     def __convert_attr(self, attr: AST.Attr) -> SymbolAttribute:
         match attr.kind:
             case AST.AttrKind.Pub:
@@ -328,6 +330,7 @@ class ResolveGlobal:
         unit.symbol_ctx.enter_scope()
         for generic_name, generic_type_id in zip(trait_def.generics, ty.custom_def.generics):
             unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, symbol.type_id)
 
         methods: dict[str, int] = {}
         for item in trait_def.items:
@@ -354,12 +357,13 @@ class ResolveGlobal:
             unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
 
         target_type_id = self.__type_ctx.resolve_type(impl.target, unit.symbol_ctx)
+        unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, target_type_id)
 
         trait_type_id = None
         if impl.trait is not None:
             trait_type_id = self.__type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
 
-        impl_obj = self.__type_ctx.register_impl(generics, target_type_id, trait_type_id)
+        impl_obj = self.__type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id)
 
         for item in impl.items:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)

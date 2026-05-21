@@ -205,6 +205,24 @@ class MethodType:
     custom_def: MethodDef
     generic_args: list[int] = field(default_factory=list[int])
 
+    def receiver_type(self, context: TypeCtx) -> int:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        return context.instantiate(self.custom_def.receiver_type, substs)
+
+    def return_type(self, context: TypeCtx) -> int:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        return context.instantiate(self.custom_def.return_type, substs)
+
+    def parameters(self, context: TypeCtx) -> list[Parameter]:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        parameters: list[Parameter] = []
+        for param in self.custom_def.parameters:
+            parameters.append(Parameter(
+                name=param.name,
+                type_id=context.instantiate(param.type_id, substs),
+            ))
+        return parameters
+
 
 @dataclass
 class TraitDef:
@@ -218,6 +236,13 @@ class TraitType:
     type_id: int
     custom_def: TraitDef
     generic_args: list[int] = field(default_factory=list[int])
+
+    def get_methods(self, context: TypeCtx) -> dict[str, int]:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        methods: dict[str, int] = {}
+        for method_name, method_type_id in self.custom_def.methods.items():
+            methods[method_name] = context.instantiate(method_type_id, substs)
+        return methods
 
 
 @dataclass
