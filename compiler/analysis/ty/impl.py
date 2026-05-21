@@ -125,6 +125,9 @@ class ImplRegistry:
 
         method_ty.generic_args = trait_method_ty.generic_args + impl.generics
 
+        # add cloned procedure to the type context
+        self.__ctx.add_procedure(method_type_id, *self.__ctx.get_procedure(trait_method_id))
+
         return method_type_id
 
     def __cache_impls(self) -> None:

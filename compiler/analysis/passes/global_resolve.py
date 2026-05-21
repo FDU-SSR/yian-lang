@@ -16,7 +16,7 @@ from compiler.config.constants import AccessMode
 from compiler.frontend.parse import ast as AST
 
 
-class ResolveGlobal:
+class GlobalResolve:
     def __init__(self, units: list[UnitData], type_ctx: TypeCtx) -> None:
         self.__units = units
         self.__type_ctx = type_ctx
@@ -266,6 +266,9 @@ class ResolveGlobal:
         ty.custom_def.parameters = parameters
         ty.custom_def.return_type = ret_type_id
 
+        # add the resolved procedure to the type context
+        self.__type_ctx.add_procedure(ty.type_id, func_def.body, unit.path)
+
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
         symbol = unit.symbol_ctx.lookup(struct_def.name.name)
         assert symbol is not None
@@ -367,6 +370,10 @@ class ResolveGlobal:
 
         for item in impl.items:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)
+
+            # add the resolved procedure to the type context
+            self.__type_ctx.add_procedure(method_id, item.body, unit.path)
+
             impl_obj.methods[item.decl.name.name] = method_id
 
         unit.symbol_ctx.exit_scope()
@@ -414,4 +421,5 @@ class ResolveGlobal:
         ty.custom_def.is_static = any(attr.kind == AST.AttrKind.Static for attr in decl.attrs)
         ty.custom_def.is_header = is_header
         ty.generic_args = generics.copy()
+
         return type_id

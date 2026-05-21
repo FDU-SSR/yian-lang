@@ -1,10 +1,13 @@
+from pathlib import Path
+
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.impl import Impl, ImplRegistry
 from compiler.analysis.ty.resolver import TypeResolver
+from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
-from compiler.utils.IR.position import SrcSpan
 from compiler.utils.errors.yian_error import CompilerError
+from compiler.utils.IR.position import SrcSpan
 
 
 class TypeCtx:
@@ -79,6 +82,7 @@ class TypeCtx:
 
         self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
+        self.__procedures: dict[int, tuple[AST.Block, Path]] = {}  # procedure_id -> procedure block
 
     def __force_add_type(self, ty: Type.Ty) -> None:
         """
@@ -575,3 +579,28 @@ class TypeCtx:
         This should be called after all impls are registered.
         """
         self.__impl_registry.check_impls()
+
+    def add_procedure(self, type_id: int, body: AST.Block, path: Path) -> None:
+        ty = self.__space[type_id]
+        if isinstance(ty, Type.FunctionType):
+            def_id = id(ty.custom_def)
+        elif isinstance(ty, Type.MethodType):
+            def_id = id(ty.custom_def)
+        else:
+            raise CompilerError(f"Type ID {type_id} is not a function or method type and cannot be associated with a procedure")
+
+        self.__procedures[def_id] = (body, path)
+
+    def get_procedure(self, type_id: int) -> tuple[AST.Block, Path]:
+        ty = self.__space[type_id]
+        if isinstance(ty, Type.FunctionType):
+            def_id = id(ty.custom_def)
+        elif isinstance(ty, Type.MethodType):
+            def_id = id(ty.custom_def)
+        else:
+            raise CompilerError(f"Type ID {type_id} is not a function or method type and cannot be associated with a procedure")
+
+        if def_id in self.__procedures:
+            return self.__procedures[def_id]
+        else:
+            raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")

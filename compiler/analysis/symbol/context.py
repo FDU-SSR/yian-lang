@@ -13,17 +13,12 @@ class Scope:
 
 
 class SymbolCtx:
-    def __init__(self, unit_id: int):
-        self.__unit_id = unit_id
+    def __init__(self):
         self.__all_symbols: dict[int, Symbol] = {}  # symbol_id -> Symbol
         self.__next_id = 0
         self.__current_scope = Scope(symbols={}, parent=None)
 
         self.__exportable_symbols: dict[str, int] = {}  # name -> symbol_id
-
-    @property
-    def unit_id(self) -> int:
-        return self.__unit_id
 
     def __next_symbol_id(self) -> int:
         symbol_id = self.__next_id
