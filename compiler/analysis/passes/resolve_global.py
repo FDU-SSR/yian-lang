@@ -9,6 +9,7 @@ from pathlib import Path
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
+from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.parse import ast as AST
@@ -158,7 +159,26 @@ class ResolveGlobal:
                     pass
 
     def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
-        raise NotImplementedError("Alias resolution is not implemented yet")
+        symbol = unit.symbol_ctx.lookup(alias.name.name)
+        assert symbol is not None
+
+        # resolve generics and aliased type
+        unit.symbol_ctx.enter_scope()
+        generics: list[int] = []
+        for generic in alias.generics:
+            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
+            generics.append(generic_type_id)
+            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+
+        aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
+        unit.symbol_ctx.exit_scope()
+
+        # update the alias symbol with the resolved type
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.AliasType)
+        ty.custom_def.generics = generics.copy()
+        ty.custom_def.aliased_type = aliased_type_id
+        ty.generic_args = generics.copy()
 
     def __resolve_func_def(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         raise NotImplementedError("Function definition resolution is not implemented yet")

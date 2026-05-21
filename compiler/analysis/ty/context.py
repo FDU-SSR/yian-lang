@@ -1,4 +1,7 @@
+from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.resolver import TypeResolver
+from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.errors.yian_error import CompilerError
 
 
@@ -71,6 +74,8 @@ class TypeCtx:
         # =======================================
 
         self.__name_cache: dict[int, str] = {}  # type id -> type name (for debugging and error messages)
+
+        self.__resolver = TypeResolver(self)
 
     def __force_add_type(self, ty: Type.Ty) -> None:
         """
@@ -539,3 +544,11 @@ class TypeCtx:
                 return False
 
         return True
+
+    def resolve_type(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
+        """
+        Resolve an ASTType to a type ID in the type context.
+
+        This is used during type checking to convert the types written in the source code (AST) to the internal type representation.
+        """
+        return self.__resolver.resolve(ty, symbol_ctx)
