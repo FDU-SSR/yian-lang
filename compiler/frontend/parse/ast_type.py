@@ -107,7 +107,7 @@ class SliceType:
 
 
 @dataclass
-class InstantiatedType:
+class InstanceType:
     span: SrcSpan
     base: ASTType
     generic_args: list[ASTType]
@@ -133,6 +133,6 @@ ASTType: TypeAlias = (
     IntType | FloatType | BoolType | StrType | CharType | VoidType
     | ArrayType | TupleType | PointerType | SliceType
     | NamedType
-    | InstantiatedType
+    | InstanceType
     | FunctionType
 )

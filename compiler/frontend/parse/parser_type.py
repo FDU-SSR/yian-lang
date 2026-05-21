@@ -25,7 +25,7 @@ class TypeParser:
             match token:
                 case Punctuator(kind=PunctuatorKind.Less):
                     # generic type application, e.g., `Option<int>`
-                    base = self.__parse_instantiated(base)
+                    base = self.__parse_instance(base)
                 case Punctuator(kind=PunctuatorKind.Star):
                     # pointer type, e.g., `int*`
                     base = self.__parse_pointer(base)
@@ -96,13 +96,13 @@ class TypeParser:
 
         raise ParseError(f"Expected type but got '{token}'", token.span)
 
-    def __parse_instantiated(self, base: ASTType) -> ASTType:
+    def __parse_instance(self, base: ASTType) -> ASTType:
         """Parses a generic type application from the token stream."""
         self.__stream.consume_punctuator(PunctuatorKind.Less)
         generic_args = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.Greater})
         self.__stream.consume_punctuator(PunctuatorKind.Greater)
 
-        return Ty.InstantiatedType(span=base.span, base=base, generic_args=generic_args)
+        return Ty.InstanceType(span=base.span, base=base, generic_args=generic_args)
 
     def __parse_pointer(self, base: ASTType) -> ASTType:
         """Parses a pointer type from the token stream."""

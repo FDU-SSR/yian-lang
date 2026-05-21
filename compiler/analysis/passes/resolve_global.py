@@ -12,6 +12,7 @@ from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.config.constants import AccessMode
 from compiler.frontend.parse import ast as AST
 
 
@@ -62,7 +63,19 @@ class ResolveGlobal:
 
                     # alloc in symbol space
                     symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+
+                    generics = [
+                        self.__type_ctx.alloc_generic(generic.name)
+                        for generic in item.generics
+                    ]
+                    ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(ty, Type.AliasType)
+                    ty.custom_def.generics = generics.copy()
+                    ty.generic_args = generics.copy()
 
                 case AST.FuncDef(name=name, attrs=attrs):
                     # alloc in type space
@@ -70,7 +83,19 @@ class ResolveGlobal:
 
                     # alloc in symbol space
                     symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs)
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+
+                    generics = [
+                        self.__type_ctx.alloc_generic(generic.name)
+                        for generic in item.generics
+                    ]
+                    ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(ty, Type.FunctionType)
+                    ty.custom_def.generics = generics.copy()
+                    ty.generic_args = generics.copy()
 
                 case AST.StructDef(name=name, attrs=attrs):
                     # alloc in type space
@@ -78,7 +103,19 @@ class ResolveGlobal:
 
                     # alloc in symbol space
                     symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+
+                    generics = [
+                        self.__type_ctx.alloc_generic(generic.name)
+                        for generic in item.generics
+                    ]
+                    ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(ty, Type.StructType)
+                    ty.custom_def.generics = generics.copy()
+                    ty.generic_args = generics.copy()
 
                 case AST.EnumDef(name=name, attrs=attrs):
                     # alloc in type space
@@ -86,7 +123,19 @@ class ResolveGlobal:
 
                     # alloc in symbol space
                     symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+
+                    generics = [
+                        self.__type_ctx.alloc_generic(generic.name)
+                        for generic in item.generics
+                    ]
+                    ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(ty, Type.EnumType)
+                    ty.custom_def.generics = generics.copy()
+                    ty.generic_args = generics.copy()
 
                 case AST.TraitDef(name=name, attrs=attrs):
                     # alloc in type space
@@ -94,7 +143,19 @@ class ResolveGlobal:
 
                     # alloc in symbol space
                     symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+
+                    generics = [
+                        self.__type_ctx.alloc_generic(generic.name)
+                        for generic in item.generics
+                    ]
+                    ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(ty, Type.TraitType)
+                    ty.custom_def.generics = generics.copy()
+                    ty.generic_args = generics.copy()
 
                 case _:
                     # other items are ignored in this pass
@@ -145,7 +206,7 @@ class ResolveGlobal:
                 case AST.Alias():
                     self.__resolve_alias(unit, item)
                 case AST.FuncDef():
-                    self.__resolve_func_def(unit, item)
+                    self.__resolve_func_decl(unit, item)
                 case AST.StructDef():
                     self.__resolve_struct_def(unit, item)
                 case AST.EnumDef():
@@ -161,36 +222,192 @@ class ResolveGlobal:
     def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
         symbol = unit.symbol_ctx.lookup(alias.name.name)
         assert symbol is not None
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.AliasType)
 
         # resolve generics and aliased type
         unit.symbol_ctx.enter_scope()
-        generics: list[int] = []
-        for generic in alias.generics:
-            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
-            generics.append(generic_type_id)
-            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+        for generic_name, generic_type_id in zip(alias.generics, ty.custom_def.generics):
+            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
 
         aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the alias symbol with the resolved type
-        ty = self.__type_ctx[symbol.type_id]
-        assert isinstance(ty, Type.AliasType)
-        ty.custom_def.generics = generics.copy()
         ty.custom_def.aliased_type = aliased_type_id
-        ty.generic_args = generics.copy()
 
-    def __resolve_func_def(self, unit: UnitData, func_def: AST.FuncDef) -> None:
-        raise NotImplementedError("Function definition resolution is not implemented yet")
+    def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
+        symbol = unit.symbol_ctx.lookup(func_def.name.name)
+        assert symbol is not None
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.FunctionType)
+
+        # resolve generics, parameters and return type
+        unit.symbol_ctx.enter_scope()
+        for generic_name, generic_type_id in zip(func_def.generics, ty.custom_def.generics):
+            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+
+        parameters = [
+            Type.Parameter(
+                name=param.name.name,
+                type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+            )
+            for param in func_def.params
+        ]
+        if func_def.ret_type is None:
+            ret_type_id = self.__type_ctx.void_id
+        else:
+            ret_type_id = self.__type_ctx.resolve_type(func_def.ret_type, unit.symbol_ctx)
+        unit.symbol_ctx.exit_scope()
+
+        # update the function symbol with the resolved type
+        ty.custom_def.parameters = parameters
+        ty.custom_def.return_type = ret_type_id
 
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
-        raise NotImplementedError("Struct definition resolution is not implemented yet")
+        symbol = unit.symbol_ctx.lookup(struct_def.name.name)
+        assert symbol is not None
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.StructType)
+
+        # resolve generics and fields
+        unit.symbol_ctx.enter_scope()
+        for generic_name, generic_type_id in zip(struct_def.generics, ty.custom_def.generics):
+            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+
+        fields: list[Type.StructField] = []
+        for index, field in enumerate(struct_def.fields):
+            field_type_id = self.__type_ctx.resolve_type(field.field_type, unit.symbol_ctx)
+            is_pub = any(attr.kind == AST.AttrKind.Pub for attr in field.attrs)
+            fields.append(Type.StructField(
+                name=field.name.name,
+                type_id=field_type_id,
+                access_mode=AccessMode.Public if is_pub else AccessMode.Private,
+                index=index,
+            ))
+        unit.symbol_ctx.exit_scope()
+
+        # update the struct symbol with the resolved type
+        ty.custom_def.fields = fields
 
     def __resolve_enum_def(self, unit: UnitData, enum_def: AST.EnumDef) -> None:
-        raise NotImplementedError("Enum definition resolution is not implemented yet")
+        symbol = unit.symbol_ctx.lookup(enum_def.name.name)
+        assert symbol is not None
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.EnumType)
+
+        # resolve generics and variants
+        unit.symbol_ctx.enter_scope()
+        for generic_name, generic_type_id in zip(enum_def.generics, ty.custom_def.generics):
+            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+
+        variants: list[Type.EnumVariant] = []
+        for index, variant in enumerate(enum_def.variants):
+            payload_type_id = None
+            if len(variant.fields) > 0:
+                field_names = [field.name.name for field in variant.fields]
+                field_types = [self.__type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
+                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types)
+            variants.append(Type.EnumVariant(
+                name=variant.name.name,
+                payload_type=payload_type_id,
+                discriminant=index,
+            ))
+        unit.symbol_ctx.exit_scope()
+
+        # update the enum symbol with the resolved type
+        ty.custom_def.variants = variants
 
     def __resolve_trait_def(self, unit: UnitData, trait_def: AST.TraitDef) -> None:
-        raise NotImplementedError("Trait definition resolution is not implemented yet")
+        symbol = unit.symbol_ctx.lookup(trait_def.name.name)
+        assert symbol is not None
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.TraitType)
+
+        # resolve generics and methods
+        unit.symbol_ctx.enter_scope()
+        for generic_name, generic_type_id in zip(trait_def.generics, ty.custom_def.generics):
+            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+
+        methods: dict[str, int] = {}
+        for item in trait_def.items:
+            match item:
+                case AST.MethodDecl():
+                    method_type_id = self.__resolve_method_decl(unit, item, ty.custom_def.generics, symbol.type_id, True)
+                    method_name = item.name.name
+                case AST.MethodDef():
+                    method_type_id = self.__resolve_method_decl(unit, item.decl, ty.custom_def.generics, symbol.type_id, False)
+                    method_name = item.decl.name.name
+            methods[method_name] = method_type_id
+        unit.symbol_ctx.exit_scope()
+
+        # update the trait symbol with the resolved type
+        ty.custom_def.methods = methods
 
     def __resolve_impl(self, unit: UnitData, impl: AST.Impl) -> None:
-        raise NotImplementedError("Impl resolution is not implemented yet")
+        # resolve generics, target type and trait
+        unit.symbol_ctx.enter_scope()
+        generics: list[int] = []
+        for generic in impl.generics:
+            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
+            generics.append(generic_type_id)
+            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+
+        target_type_id = self.__type_ctx.resolve_type(impl.target, unit.symbol_ctx)
+
+        trait_type_id = None
+        if impl.trait is not None:
+            trait_type_id = self.__type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
+
+        impl_obj = self.__type_ctx.register_impl(generics, target_type_id, trait_type_id)
+
+        for item in impl.items:
+            method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)
+            impl_obj.methods[item.decl.name.name] = method_id
+
+        unit.symbol_ctx.exit_scope()
+
+    def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: list[int], receiver_type_id: int, is_header: bool) -> int:
+        # alloc in type space
+        type_id = self.__type_ctx.alloc_method(decl.name.name)
+
+        # alloc in symbol space
+        symbol_attrs = {self.__convert_attr(attr) for attr in decl.attrs}
+        symbol_id = unit.symbol_ctx.add_symbol(decl.name.name, SymbolKind.Function, type_id, symbol_attrs)
+        if symbol_id is None:
+            raise AnalysisError(f"Duplicate method name: {decl.name.name}", decl.name.span)
+        symbol = unit.symbol_ctx.get(symbol_id)
+
+        # resolve generics, parameters and return type
+        unit.symbol_ctx.enter_scope()
+        generics: list[int] = []
+        generics += prev_generics
+        for generic in decl.generics:
+            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
+            generics.append(generic_type_id)
+            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+
+        parameters = [
+            Type.Parameter(
+                name=param.name.name,
+                type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+            )
+            for param in decl.params
+        ]
+        if decl.ret_type is None:
+            ret_type_id = self.__type_ctx.void_id
+        else:
+            ret_type_id = self.__type_ctx.resolve_type(decl.ret_type, unit.symbol_ctx)
+        unit.symbol_ctx.exit_scope()
+
+        # update the method symbol with the resolved type
+        ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.MethodType)
+        ty.custom_def.generics = generics.copy()
+        ty.custom_def.receiver_type = receiver_type_id
+        ty.custom_def.parameters = parameters
+        ty.custom_def.return_type = ret_type_id
+        ty.custom_def.is_static = any(attr.kind == AST.AttrKind.Static for attr in decl.attrs)
+        ty.custom_def.is_header = is_header
+        ty.generic_args = generics.copy()
+        return type_id

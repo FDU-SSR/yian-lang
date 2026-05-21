@@ -1,5 +1,6 @@
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.impl import Impl, ImplRegistry
 from compiler.analysis.ty.resolver import TypeResolver
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.errors.yian_error import CompilerError
@@ -76,6 +77,7 @@ class TypeCtx:
         self.__name_cache: dict[int, str] = {}  # type id -> type name (for debugging and error messages)
 
         self.__resolver = TypeResolver(self)
+        self.__impl_registry = ImplRegistry(self)
 
     def __force_add_type(self, ty: Type.Ty) -> None:
         """
@@ -250,6 +252,16 @@ class TypeCtx:
 
         type_id = self.__add_type(struct_ty)
         return type_id
+
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int]) -> int:
+        if len(field_names) != len(field_types):
+            raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
+
+        struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}")
+        for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
+            struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index))
+        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
+        return self.__add_type(struct_ty)
 
     def alloc_enum(self, name: str) -> int:
         enum_def = Type.EnumDef(name=name)
@@ -552,3 +564,6 @@ class TypeCtx:
         This is used during type checking to convert the types written in the source code (AST) to the internal type representation.
         """
         return self.__resolver.resolve(ty, symbol_ctx)
+
+    def register_impl(self, generics: list[int], target: int, trait: int | None) -> Impl:
+        return self.__impl_registry.register_impl(generics, target, trait)
