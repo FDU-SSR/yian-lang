@@ -102,7 +102,7 @@ class EnumMatch:
 class EnumMatchArm:
     span: SrcSpan
     variant: Type.EnumVariant | None  # None means the default case
-    unpack_fields: list[str] | None  # None means not unpacking
+    unpack_fields: list[int] | None  # None means not unpacking
     body: Block
 
 
