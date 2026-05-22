@@ -181,7 +181,14 @@ class TypeCheck:
         if stmt.init_expr is not None:
             init_expr = self.__expr_value(stmt.init_expr, symbol_ctx, var_type_id)
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
-            out.append(HIR.Binary(span=stmt.span, op=BinaryOperator.Assign, left=var, right=init_expr, type_id=var_type_id, is_place=False))
+            out.append(HIR.Binary(
+                span=stmt.span,
+                op=BinaryOperator.Assign,
+                left=var,
+                right=init_expr,
+                type_id=var_type_id,
+                is_place=False
+            ))
 
     def __check_if(self, stmt: AST.If, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
         # type check condition
@@ -203,7 +210,15 @@ class TypeCheck:
         # convert elif blocks to nested if-else
         current_else_block = else_block
         for elif_cond_expr, elif_block in reversed(elif_blocks):
-            current_else_block = HIR.Block(span=elif_block.span, stmts=[HIR.If(span=elif_cond_expr.span, cond=elif_cond_expr, then_branch=elif_block, else_branch=current_else_block)])
+            current_else_block = HIR.Block(
+                span=elif_block.span,
+                stmts=[HIR.If(
+                    span=elif_cond_expr.span,
+                    cond=elif_cond_expr,
+                    then_branch=elif_block,
+                    else_branch=current_else_block
+                )]
+            )
 
         out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
 
@@ -218,9 +233,20 @@ class TypeCheck:
         body_block = self.__check_block(stmt.body, symbol_ctx)
 
         # loop { if not condition { break } body }
-        not_cond_expr = HIR.Unary(span=cond_expr.span, op=UnaryOperator.LogicalNot, operand=cond_expr, type_id=TypeCtx.bool_id, is_place=False)
+        not_cond_expr = HIR.Unary(
+            span=cond_expr.span,
+            op=UnaryOperator.LogicalNot,
+            operand=cond_expr,
+            type_id=TypeCtx.bool_id,
+            is_place=False
+        )
         break_stmt = HIR.Break(span=stmt.span)
-        if_stmt = HIR.If(span=cond_expr.span, cond=not_cond_expr, then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]), else_branch=None)
+        if_stmt = HIR.If(
+            span=cond_expr.span,
+            cond=not_cond_expr,
+            then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]),
+            else_branch=None
+        )
         loop_block = HIR.Block(span=stmt.span, stmts=[if_stmt, body_block])
         out.append(HIR.Loop(span=stmt.span, body=loop_block))
 
