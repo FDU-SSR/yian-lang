@@ -8,7 +8,7 @@ from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.operator import BinaryOperator
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 
@@ -132,9 +132,11 @@ class TypeCheck:
         return body
 
     def __check_block(self, ast_block: AST.Block, symbol_ctx: SymbolCtx) -> HIR.Block:
+        symbol_ctx.enter_scope()
         stmts: list[HIR.Stmt] = []
         for stmt in ast_block.stmts:
             self.__check_stmt(stmt, stmts, symbol_ctx)
+        symbol_ctx.exit_scope()
 
         return HIR.Block(span=ast_block.span, stmts=stmts)
 
@@ -182,16 +184,51 @@ class TypeCheck:
             out.append(HIR.Binary(span=stmt.span, op=BinaryOperator.Assign, left=var, right=init_expr, type_id=var_type_id, is_place=False))
 
     def __check_if(self, stmt: AST.If, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
-        raise NotImplementedError("If statement is not implemented yet")
+        # type check condition
+        cond_expr = self.__expr_value(stmt.condition, symbol_ctx, expected=TypeCtx.bool_id)
+
+        # type check then branch
+        then_block = self.__check_block(stmt.then_branch, symbol_ctx)
+
+        # type check elif branches
+        elif_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
+        for elif_branch in stmt.elif_branches:
+            elif_cond_expr = self.__expr_value(elif_branch[0], symbol_ctx, expected=TypeCtx.bool_id)
+            elif_block = self.__check_block(elif_branch[1], symbol_ctx)
+            elif_blocks.append((elif_cond_expr, elif_block))
+
+        # type check else branch
+        else_block = self.__check_block(stmt.else_branch, symbol_ctx) if stmt.else_branch is not None else None
+
+        # convert elif blocks to nested if-else
+        current_else_block = else_block
+        for elif_cond_expr, elif_block in reversed(elif_blocks):
+            current_else_block = HIR.Block(span=elif_block.span, stmts=[HIR.If(span=elif_cond_expr.span, cond=elif_cond_expr, then_branch=elif_block, else_branch=current_else_block)])
+
+        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
 
     def __check_for(self, stmt: AST.For, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
         raise NotImplementedError("For statement is not implemented yet")
 
     def __check_while(self, stmt: AST.While, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
-        raise NotImplementedError("While statement is not implemented yet")
+        # type check condition
+        cond_expr = self.__expr_value(stmt.condition, symbol_ctx, expected=TypeCtx.bool_id)
+
+        # type check body
+        body_block = self.__check_block(stmt.body, symbol_ctx)
+
+        # loop { if not condition { break } body }
+        not_cond_expr = HIR.Unary(span=cond_expr.span, op=UnaryOperator.LogicalNot, operand=cond_expr, type_id=TypeCtx.bool_id, is_place=False)
+        break_stmt = HIR.Break(span=stmt.span)
+        if_stmt = HIR.If(span=cond_expr.span, cond=not_cond_expr, then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]), else_branch=None)
+        loop_block = HIR.Block(span=stmt.span, stmts=[if_stmt, body_block])
+        out.append(HIR.Loop(span=stmt.span, body=loop_block))
 
     def __check_loop(self, stmt: AST.Loop, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
-        raise NotImplementedError("Loop statement is not implemented yet")
+        # type check body
+        body_block = self.__check_block(stmt.body, symbol_ctx)
+
+        out.append(HIR.Loop(span=stmt.span, body=body_block))
 
     def __check_match(self, stmt: AST.Match, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
         raise NotImplementedError("Match statement is not implemented yet")
