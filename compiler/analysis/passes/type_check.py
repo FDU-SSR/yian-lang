@@ -8,7 +8,6 @@ from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 
@@ -181,14 +180,7 @@ class TypeCheck:
         if stmt.init_expr is not None:
             init_expr = self.__expr_value(stmt.init_expr, symbol_ctx, var_type_id)
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
-            out.append(HIR.Binary(
-                span=stmt.span,
-                op=BinaryOperator.Assign,
-                left=var,
-                right=init_expr,
-                type_id=var_type_id,
-                is_place=False
-            ))
+            out.append(self.__expr_checker.assign(stmt.span, var, init_expr))
 
     def __check_if(self, stmt: AST.If, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
         # type check condition
@@ -223,7 +215,68 @@ class TypeCheck:
         out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
 
     def __check_for(self, stmt: AST.For, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
-        raise NotImplementedError("For statement is not implemented yet")
+        symbol_ctx.enter_scope()
+        stmts: list[HIR.Stmt] = []
+
+        # type check iterable expression
+        iterable_expr = self.__expr_value(stmt.iterable, symbol_ctx, None)
+
+        # call into_iter() method to get an iterator
+        iter_expr = self.__expr_checker.into_iter(iterable_expr, symbol_ctx)
+
+        # add iterator variable to symbol context and create a local variable for it
+        iter_var_type_id = iter_expr.type_id
+        iter_symbol_id = symbol_ctx.add_symbol("%iter", SymbolKind.Variable, iter_var_type_id)
+        assert iter_symbol_id is not None
+        self.__current_locals.append(iter_symbol_id)
+
+        # assign the into_iter() result to the iterator variable
+        iter_var = HIR.Var(span=stmt.var_name.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
+        stmts.append(self.__expr_checker.assign(stmt.span, iter_var, iter_expr))
+
+        # add loop variable to symbol context and create a local variable for it
+        item_type_id = self.__type_ctx.iter_item_type(iter_var_type_id)
+        item_symbol_id = symbol_ctx.add_symbol(stmt.var_name.name, SymbolKind.Variable, item_type_id)
+        if item_symbol_id is None:
+            raise AnalysisError(f"Variable '{stmt.var_name.name}' is already defined in the current scope", stmt.var_name.span)
+        self.__current_locals.append(item_symbol_id)
+
+        # type check loop body
+        body_block = self.__check_block(stmt.body, symbol_ctx)
+
+        # loop { match iter.next() { Some(item) => body, None => break } }
+        # build next method call: iter.next()
+        next_method_call = self.__expr_checker.call_method(iter_var, "next", None, [], symbol_ctx)
+
+        # build match arms
+        option_ty = self.__type_ctx[next_method_call.type_id]
+        assert isinstance(option_ty, Type.EnumType)
+        some_variant = option_ty.get_variant_by_name("Some", self.__type_ctx)
+        assert some_variant is not None and some_variant.payload_type is not None
+        none_variant = option_ty.get_variant_by_name("None", self.__type_ctx)
+        assert none_variant is not None
+
+        some_arm = HIR.EnumMatchArm(
+            span=stmt.span,
+            variant=some_variant,
+            unpack_fields=[item_symbol_id],
+            body=body_block
+        )
+        none_arm = HIR.EnumMatchArm(
+            span=stmt.span,
+            variant=none_variant,
+            unpack_fields=None,
+            body=HIR.Block(span=stmt.span, stmts=[HIR.Break(span=stmt.span)])
+        )
+        match_stmt = HIR.EnumMatch(
+            span=stmt.span,
+            value=next_method_call,
+            arms=[some_arm, none_arm]
+        )
+        stmts.append(match_stmt)
+        symbol_ctx.exit_scope()
+
+        out.append(HIR.Loop(span=stmt.span, body=HIR.Block(span=stmt.span, stmts=stmts)))
 
     def __check_while(self, stmt: AST.While, out: list[HIR.Stmt], symbol_ctx: SymbolCtx) -> None:
         # type check condition
@@ -233,13 +286,7 @@ class TypeCheck:
         body_block = self.__check_block(stmt.body, symbol_ctx)
 
         # loop { if not condition { break } body }
-        not_cond_expr = HIR.Unary(
-            span=cond_expr.span,
-            op=UnaryOperator.LogicalNot,
-            operand=cond_expr,
-            type_id=TypeCtx.bool_id,
-            is_place=False
-        )
+        not_cond_expr = self.__expr_checker.logical_not(cond_expr, symbol_ctx)
         break_stmt = HIR.Break(span=stmt.span)
         if_stmt = HIR.If(
             span=cond_expr.span,

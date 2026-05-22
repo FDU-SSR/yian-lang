@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.impl import Impl, ImplRegistry
@@ -6,6 +10,7 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.errors.yian_error import CompilerError
 from compiler.utils.IR.position import SrcSpan
+from compiler.analysis.unit import hir as HIR
 
 
 class TypeCtx:
@@ -602,3 +607,25 @@ class TypeCtx:
             return self.__procedures[def_id]
         else:
             raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
+
+    def method_lookup(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> LookupResult | None:
+        """
+        Lookup a method for a given caller type. See details in `manual/impl.md`.
+        """
+        raise NotImplementedError("Method lookup is not implemented yet")
+
+    def iter_item_type(self, iter_type_id: int) -> int:
+        """
+        Get the item type of an iterator type.
+
+        This is used for desugaring for loops, where we need to know the item type of the iterator to type check the loop variable.
+        """
+        raise NotImplementedError("Iterator item type lookup is not implemented yet")
+
+
+@dataclass
+class LookupResult:
+    """Result of method lookup"""
+    method_id: int
+    deref_count: int
+    impl: Impl
