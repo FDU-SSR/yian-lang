@@ -187,6 +187,20 @@ class FunctionType:
     custom_def: FunctionDef
     generic_args: list[int] = field(default_factory=list[int])
 
+    def return_type(self, context: TypeCtx) -> int:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        return context.instantiate(self.custom_def.return_type, substs)
+
+    def parameters(self, context: TypeCtx) -> list[Parameter]:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        parameters: list[Parameter] = []
+        for param in self.custom_def.parameters:
+            parameters.append(Parameter(
+                name=param.name,
+                type_id=context.instantiate(param.type_id, substs),
+            ))
+        return parameters
+
 
 @dataclass
 class MethodDef:

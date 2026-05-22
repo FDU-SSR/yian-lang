@@ -8,6 +8,7 @@ from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.global_resolve import GlobalResolve
+from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.lex.lexer import Lexer, LexError
@@ -159,6 +160,13 @@ def main(argv: list[str] | None = None) -> int:
         global_resolver.run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
+
+    type_checker = TypeCheck(unit_datas, type_ctx)
+    try:
+        type_checker.run()
+    except AnalysisError as error:
+        __print_source_error(error.span, error)
+    def_points = type_checker.export()
 
     if args.token is not None:
         __write_text_output(args.token, __format_token_output(src_files, token_lists))

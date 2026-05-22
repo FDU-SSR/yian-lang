@@ -11,6 +11,10 @@ class Scope:
     symbols: dict[str, int]  # name -> symbol_id
     parent: Scope | None
 
+    def clone(self) -> Scope:
+        """Clones the scope, creating a new instance with the same symbols and parent."""
+        return Scope(symbols=self.symbols.copy(), parent=self.parent.clone() if self.parent else None)
+
 
 class SymbolCtx:
     def __init__(self):
@@ -74,3 +78,12 @@ class SymbolCtx:
         if symbol_id is not None:
             return self.__all_symbols[symbol_id]
         return None
+
+    def clone(self) -> SymbolCtx:
+        """Clones the symbol context, creating a new instance with the same symbols and scope structure."""
+        new_ctx = SymbolCtx()
+        new_ctx.__all_symbols = self.__all_symbols.copy()
+        new_ctx.__next_id = self.__next_id
+        new_ctx.__current_scope = self.__current_scope.clone()
+        new_ctx.__exportable_symbols = self.__exportable_symbols.copy()
+        return new_ctx

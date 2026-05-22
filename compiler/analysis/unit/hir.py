@@ -112,6 +112,8 @@ class Binary:
     op: BinaryOperator
     left: Expr
     right: Expr
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -119,6 +121,8 @@ class Unary:
     span: SrcSpan
     op: UnaryOperator
     operand: Expr
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -127,6 +131,8 @@ class Call:
     span: SrcSpan
     func: int  # type_id
     args: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -134,6 +140,8 @@ class StructConstruct:
     span: SrcSpan
     struct_id: int  # type_id
     field_values: dict[str, Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -141,6 +149,8 @@ class Invoke:
     span: SrcSpan
     callable: Expr
     args: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -148,6 +158,8 @@ class Cast:
     span: SrcSpan
     value: Expr
     target_type: int  # type_id
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -156,6 +168,8 @@ class MethodCall:
     receiver: Expr
     method_id: int  # type_id of the method
     args: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -164,6 +178,8 @@ class VariantConstruct:
     enum_id: int  # type_id of the enum
     variant: Type.EnumVariant
     args: dict[str, Expr] | None  # None means no payload
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -171,25 +187,33 @@ class FieldAccess:
     span: SrcSpan
     receiver: Expr
     field: Type.StructField
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class DynValue:
     span: SrcSpan
     value: Expr
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class DynBuffer:
     span: SrcSpan
-    type_id: int  # type_id of the buffer element type
+    element_type: int  # type_id of the buffer element type
     length: Expr
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class SizeOf:
     span: SrcSpan
-    type_id: int  # type_id of the type to get size of
+    target_type: int  # type_id of the type to get size of
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -197,12 +221,16 @@ class BitCast:
     span: SrcSpan
     value: Expr
     target_type: int  # type_id
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Tuple:
     span: SrcSpan
     field_values: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -210,19 +238,24 @@ class Array:
     span: SrcSpan
     element_type: int  # type_id
     elements: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Var:
     span: SrcSpan
     symbol_id: int
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class IntLiteral:
     span: SrcSpan
     value: int
-    type_id: int  # type_id of the integer literal
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -230,24 +263,31 @@ class FloatLiteral:
     span: SrcSpan
     value: float
     type_id: int  # type_id of the float literal
+    is_place: bool
 
 
 @dataclass
 class CharLiteral:
     span: SrcSpan
     value: str  # should be a single character
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class StrLiteral:
     span: SrcSpan
     value: str
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class BoolLiteral:
     span: SrcSpan
     value: bool
+    type_id: int
+    is_place: bool
 
 
 Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
