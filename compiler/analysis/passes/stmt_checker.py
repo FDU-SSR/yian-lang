@@ -3,8 +3,15 @@ from __future__ import annotations
 from typing import List
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_checker import ExprChecker
-from compiler.analysis.passes.hir_builder import build_block, build_enum_match, build_enum_match_arm, build_loop
+from compiler.analysis.passes.expr_checker import ExprChecker, ExprResult
+from compiler.analysis.passes.hir_builder import (
+    build_block,
+    build_enum_match,
+    build_enum_match_arm,
+    build_loop,
+    build_switch,
+    build_switch_arm,
+)
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -171,6 +178,91 @@ class StmtChecker:
         out.append(HIR.Loop(span=stmt.span, body=body_block))
 
     def check_match(self, stmt: AST.Match, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        assert ctx.symbol_ctx is not None
+
+        # evaluate the scrutinee expression first
+        value_expr = self.__expr.value(stmt.expr)
+        value_type = ctx.type_ctx[value_expr.type_id]
+
+        # Path 1: integer-like or C-style enum -> Switch
+        if isinstance(value_type, Type.IntType) or isinstance(value_type, Type.CharType):
+            self.__lower_match_as_switch(stmt, value_expr, out, ctx)
+            return
+
+        # Path 2/3: enums -> either C-like (no payloads) or payload-carrying variants
+        if isinstance(value_type, Type.EnumType):
+            variants = value_type.get_variants(ctx.type_ctx)
+            if all(v.payload_type is None for v in variants):
+                # C-like enum, can use switch lowering
+                self.__lower_match_as_switch(stmt, value_expr, out, ctx)
+                return
+            # payload-carrying enum: need unpacking per-arm
+            self.__lower_match_enum_unpack(stmt, value_expr, out, ctx)
+            return
+
+        # Fallback: try equality-based lowering using PartialEq (method calls)
+        self.__lower_match_with_partial_eq(stmt, value_expr, out, ctx)
+
+    # --- Lowering strategy stubs -------------------------------------------------
+    def __lower_match_as_switch(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
+        a C-style enum. This is a stub: implement pattern -> integer mapping and
+        build `HIR.SwitchArm`s, then emit `hir_builder.build_switch`.
+        """
+        # Build switch arms from AST patterns. Support IntPattern, EnumPattern, WildcardPattern.
+        arms: list[HIR.SwitchArm] = []
+
+        # determine int width in bytes
+        switch_ty = ctx.type_ctx[value_expr.type_id]
+        if isinstance(switch_ty, Type.IntType):
+            int_width = switch_ty.size
+        elif isinstance(switch_ty, Type.CharType):
+            int_width = 4  # unicode scalar values can be up to 4 bytes
+        else:
+            int_width = 4  # default width for enums / other types represented as integers
+
+        for pat, arm_block in stmt.arms:
+            # lower arm body
+            body = self.check_block(arm_block, ctx)
+
+            if isinstance(pat, AST.IntPattern):
+                for lit in pat.values:
+                    val = lit.value
+                    arms.append(build_switch_arm(pat.span, val, int_width, body))
+            elif isinstance(pat, AST.EnumPattern):
+                # each variant name maps to a discriminant
+                enum_ty = ctx.type_ctx[value_expr.type_id]
+                assert isinstance(enum_ty, Type.EnumType)
+                for ident in pat.variants:
+                    variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
+                    if variant is None:
+                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+                    arms.append(build_switch_arm(pat.span, variant.discriminant, int_width, body))
+            elif isinstance(pat, AST.WildcardPattern):
+                # wildcard -> default arm
+                arms.append(build_switch_arm(pat.span, None, int_width, body))
+            else:
+                # unsupported pattern for switch lowering; signal via AnalysisError
+                raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by switch lowering", pat.span)
+
+        # Emit the switch HIR
+        out.append(build_switch(stmt.span, value_expr.hir, arms))
+
+    def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower `match` by generating a chain of equality checks using the
+        `PartialEq` trait (e.g. `==`) when the type is not switchable. This
+        stub should use `ExprChecker.call_method` to emit equality calls and
+        assemble an `if`-chain (use `hir_builder.build_if_chain`).
+        """
+        raise NotImplementedError()
+
+    def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower `match` for enums with payloads by emitting a `Match` HIR that
+        inspects the discriminant and unpacks payloads into local symbols.
+        This stub should use `ctx.type_ctx` to query variants and
+        `ctx.symbol_ctx.add_symbol` / `ctx.push_local` to bind payloads, then
+        call `hir_builder.build_enum_match` / `build_enum_match_arm`.
+        """
         raise NotImplementedError()
 
     def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:

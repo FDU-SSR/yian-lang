@@ -61,7 +61,13 @@ class Delete:
 
 @dataclass
 class Switch:
-    """Switch for integer types."""
+    """
+    Low-level match for:
+
+    1. types that are represented as integers (e.g. integer types, char)
+    2. enum types that are represented as integers (i.e. C-like enums without payload)
+    3. enum types that are represented as integers + payload, but don't need to unpack the payload
+    """
     span: SrcSpan
     value: Expr
     arms: list[SwitchArm]
@@ -77,7 +83,11 @@ class SwitchArm:
 
 @dataclass
 class Match:
-    """Match for types that are not integers, but support `==`."""
+    """
+    Low-level match for:
+
+    1. enum types that are represented as integers + payload, and need to unpack the payload
+    """
     span: SrcSpan
     value: Expr
     arms: list[MatchArm]
@@ -85,21 +95,6 @@ class Match:
 
 @dataclass
 class MatchArm:
-    span: SrcSpan
-    pattern: Expr | None  # None means the default case
-    body: Block
-
-
-@dataclass
-class EnumMatch:
-    """Match for enum types."""
-    span: SrcSpan
-    value: Expr
-    arms: list[EnumMatchArm]
-
-
-@dataclass
-class EnumMatchArm:
     span: SrcSpan
     variant: Type.EnumVariant | None  # None means the default case
     unpack_fields: list[int] | None  # None means not unpacking
@@ -309,7 +304,7 @@ Stmt: TypeAlias = (
     | If | Loop
     | Panic
     | Delete
-    | Switch | Match | EnumMatch
+    | Switch | Match
     | Block
     | Expr
 )
