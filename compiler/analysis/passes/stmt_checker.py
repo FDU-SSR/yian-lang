@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+from typing import Any, List
+
+from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit import hir as HIR
+from compiler.frontend.parse import ast as AST
+
+
+class StmtChecker:
+    """Statement/block checker and lowering.
+
+    Minimal stub that mirrors the structure of the previous `TypeCheck` statement
+    handling. Concrete implementations should perform checks via `ExprChecker` and
+    append constructed HIR nodes to output lists.
+    """
+
+    def __init__(self, expr_checker: Any):
+        self.__expr = expr_checker
+
+    def check_block(self, ast_block: AST.Block, ctx: SemCtx) -> HIR.Block:
+        ctx.enter_scope()
+        stmts: List[HIR.Stmt] = []
+        try:
+            for stmt in ast_block.stmts:
+                self.check_stmt(stmt, stmts, ctx)
+        finally:
+            ctx.exit_scope()
+        return HIR.Block(span=ast_block.span, stmts=stmts)
+
+    def check_stmt(self, stmt: AST.Stmt, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        match stmt:
+            case AST.Block():
+                out.append(self.check_block(stmt, ctx))
+            case AST.VarDecl():
+                self.check_var_decl(stmt, out, ctx)
+            case AST.If():
+                self.check_if(stmt, out, ctx)
+            case AST.For():
+                self.check_for(stmt, out, ctx)
+            case AST.While():
+                self.check_while(stmt, out, ctx)
+            case AST.Loop():
+                self.check_loop(stmt, out, ctx)
+            case AST.Match():
+                self.check_match(stmt, out, ctx)
+            case AST.Return():
+                self.check_return(stmt, out, ctx)
+            case AST.Break():
+                self.check_break(stmt, out, ctx)
+            case AST.Continue():
+                self.check_continue(stmt, out, ctx)
+            case AST.Assert():
+                self.check_assert(stmt, out, ctx)
+            case AST.Delete():
+                self.check_delete(stmt, out, ctx)
+            case _:
+                assert ctx.symbol_ctx is not None
+                out.append(self.__expr.eval(stmt, ctx.symbol_ctx))
+
+    def check_var_decl(self, stmt: AST.VarDecl, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        assert ctx.symbol_ctx is not None
+
+        var_type_id = ctx.resolve_type(stmt.var_type)
+        symbol_id = ctx.symbol_ctx.add_symbol(stmt.name.name, SymbolKind.Variable, var_type_id)
+        if symbol_id is None:
+            raise AnalysisError(f"Variable '{stmt.name.name}' is already defined in the current scope", stmt.span)
+        ctx.push_local(symbol_id)
+
+        if stmt.init_expr is not None:
+            init_expr = self.__expr.value(stmt.init_expr, ctx.symbol_ctx, var_type_id)
+            var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
+            out.append(self.__expr.assign(stmt.span, var, init_expr))
+
+    def check_if(self, stmt: AST.If, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        assert ctx.symbol_ctx is not None
+
+        cond_expr = self.__expr.value(stmt.condition, ctx.symbol_ctx, expected=TypeCtx.bool_id)
+        then_block = self.check_block(stmt.then_branch, ctx)
+
+        elif_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
+        for elif_branch in stmt.elif_branches:
+            elif_cond_expr = self.__expr.value(elif_branch[0], ctx.symbol_ctx, expected=TypeCtx.bool_id)
+            elif_block = self.check_block(elif_branch[1], ctx)
+            elif_blocks.append((elif_cond_expr, elif_block))
+
+        else_block = self.check_block(stmt.else_branch, ctx) if stmt.else_branch is not None else None
+
+        current_else_block = else_block
+        for elif_cond_expr, elif_block in reversed(elif_blocks):
+            current_else_block = HIR.Block(
+                span=elif_block.span,
+                stmts=[HIR.If(
+                    span=elif_cond_expr.span,
+                    cond=elif_cond_expr,
+                    then_branch=elif_block,
+                    else_branch=current_else_block,
+                )]
+            )
+
+        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
+
+    def check_for(self, stmt: AST.For, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        assert ctx.symbol_ctx is not None
+
+        ctx.enter_scope()
+        try:
+            stmts: List[HIR.Stmt] = []
+
+            iterable_expr = self.__expr.value(stmt.iterable, ctx.symbol_ctx, None)
+            iter_expr = self.__expr.into_iter(iterable_expr.hir, ctx.symbol_ctx)
+
+            iter_var_type_id = iter_expr.type_id
+            iter_symbol_id = ctx.symbol_ctx.add_symbol("%iter", SymbolKind.Variable, iter_var_type_id)
+            assert iter_symbol_id is not None
+            ctx.push_local(iter_symbol_id)
+
+            iter_var = HIR.Var(span=stmt.var_name.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
+            stmts.append(self.__expr.assign(stmt.span, iter_var, iter_expr.hir))
+
+            item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
+            item_symbol_id = ctx.symbol_ctx.add_symbol(stmt.var_name.name, SymbolKind.Variable, item_type_id)
+            if item_symbol_id is None:
+                raise AnalysisError(f"Variable '{stmt.var_name.name}' is already defined in the current scope", stmt.var_name.span)
+            ctx.push_local(item_symbol_id)
+
+            body_block = self.check_block(stmt.body, ctx)
+
+            next_method_call = self.__expr.call_method(iter_var, "next", None, [], ctx.symbol_ctx)
+
+            option_ty = ctx.type_ctx[next_method_call.type_id]
+            assert isinstance(option_ty, Type.EnumType)
+            some_variant = option_ty.get_variant_by_name("Some", ctx.type_ctx)
+            assert some_variant is not None and some_variant.payload_type is not None
+            none_variant = option_ty.get_variant_by_name("None", ctx.type_ctx)
+            assert none_variant is not None
+
+            some_arm = HIR.EnumMatchArm(
+                span=stmt.span,
+                variant=some_variant,
+                unpack_fields=[item_symbol_id],
+                body=body_block,
+            )
+            none_arm = HIR.EnumMatchArm(
+                span=stmt.span,
+                variant=none_variant,
+                unpack_fields=None,
+                body=HIR.Block(span=stmt.span, stmts=[HIR.Break(span=stmt.span)])
+            )
+            match_stmt = HIR.EnumMatch(span=stmt.span, value=next_method_call, arms=[some_arm, none_arm])
+            stmts.append(match_stmt)
+        finally:
+            ctx.exit_scope()
+
+        out.append(HIR.Loop(span=stmt.span, body=HIR.Block(span=stmt.span, stmts=stmts)))
+
+    def check_while(self, stmt: AST.While, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        assert ctx.symbol_ctx is not None
+
+        cond_expr = self.__expr.value(stmt.condition, ctx.symbol_ctx, expected=TypeCtx.bool_id)
+        body_block = self.check_block(stmt.body, ctx)
+
+        not_cond_expr = self.__expr.logical_not(cond_expr, ctx.symbol_ctx)
+        break_stmt = HIR.Break(span=stmt.span)
+        if_stmt = HIR.If(
+            span=cond_expr.span,
+            cond=not_cond_expr,
+            then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]),
+            else_branch=None
+        )
+        loop_block = HIR.Block(span=stmt.span, stmts=[if_stmt, body_block])
+        out.append(HIR.Loop(span=stmt.span, body=loop_block))
+
+    def check_loop(self, stmt: AST.Loop, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        body_block = self.check_block(stmt.body, ctx)
+        out.append(HIR.Loop(span=stmt.span, body=body_block))
+
+    def check_match(self, stmt: AST.Match, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_continue(self, stmt: AST.Continue, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()

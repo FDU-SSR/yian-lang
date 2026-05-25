@@ -1,5 +1,7 @@
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_check import ExprCheck
+from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.passes.stmt_checker import StmtChecker
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -22,7 +24,10 @@ class TypeCheck:
         self.__current_type_id: int = -1
         self.__current_locals: list[int] = []
 
+        self.__sem_ctx = SemCtx(type_ctx)
+
         self.__expr_checker = ExprCheck(self)
+        self.__stmt_helper = StmtChecker(self.__expr_checker)
 
     def run(self) -> None:
         self.__find_main()
@@ -73,24 +78,34 @@ class TypeCheck:
         func_ty = self.__type_ctx[self.__current_type_id]
         assert isinstance(func_ty, Type.FunctionType)
 
-        def_point.symbol_ctx.enter_scope()
+        self.__sem_ctx.begin_def(
+            unit_id=def_point.unit_id,
+            def_type_id=def_point.type_id,
+            def_kind="function",
+            ast_body=def_point.ast_body,
+            return_type_id=func_ty.return_type(self.__type_ctx),
+            receiver_type_id=None,
+            is_static=False,
+            symbol_ctx=def_point.symbol_ctx.clone(),
+        )
+        self.__current_locals = self.__sem_ctx.locals
+
+        assert self.__sem_ctx.symbol_ctx is not None
 
         # add generics to symbol context
         for generic, generic_arg in zip(func_ty.custom_def.generics, func_ty.generic_args):
             generic_ty = self.__type_ctx[generic]
             assert isinstance(generic_ty, Type.GenericType)
-            def_point.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
+            self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
 
         # add parameters to symbol context and create local variables for them
         for param in func_ty.parameters(self.__type_ctx):
-            symbol_id = def_point.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
             assert symbol_id is not None
-            self.__current_locals.append(symbol_id)
+            self.__sem_ctx.push_local(symbol_id)
 
         # type check function body
-        body = self.__check_block(def_point.ast_body, def_point.symbol_ctx)
-
-        def_point.symbol_ctx.exit_scope()
+        body = self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)
 
         return body
 
@@ -98,35 +113,45 @@ class TypeCheck:
         method_ty = self.__type_ctx[self.__current_type_id]
         assert isinstance(method_ty, Type.MethodType)
 
-        def_point.symbol_ctx.enter_scope()
+        self.__sem_ctx.begin_def(
+            unit_id=def_point.unit_id,
+            def_type_id=def_point.type_id,
+            def_kind="method",
+            ast_body=def_point.ast_body,
+            return_type_id=method_ty.return_type(self.__type_ctx),
+            receiver_type_id=method_ty.receiver_type(self.__type_ctx),
+            is_static=method_ty.custom_def.is_static,
+            symbol_ctx=def_point.symbol_ctx.clone(),
+        )
+        self.__current_locals = self.__sem_ctx.locals
+
+        assert self.__sem_ctx.symbol_ctx is not None
 
         # add generics to symbol context
         for generic, generic_arg in zip(method_ty.custom_def.generics, method_ty.generic_args):
             generic_ty = self.__type_ctx[generic]
             assert isinstance(generic_ty, Type.GenericType)
-            def_point.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
+            self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
 
         # add Self type to symbol context
         Self_type_id = method_ty.receiver_type(self.__type_ctx)
-        def_point.symbol_ctx.add_symbol("Self", SymbolKind.Type, Self_type_id)
+        self.__sem_ctx.symbol_ctx.add_symbol("Self", SymbolKind.Type, Self_type_id)
 
         # add receiver to symbol context and create a local variable for it if the method is not static
         if not method_ty.custom_def.is_static:
             self_type_id = self.__type_ctx.alloc_pointer(Self_type_id)
-            symbol_id = def_point.symbol_ctx.add_symbol("self", SymbolKind.Variable, self_type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol("self", SymbolKind.Variable, self_type_id)
             assert symbol_id is not None
-            self.__current_locals.append(symbol_id)
+            self.__sem_ctx.push_local(symbol_id)
 
         # add parameters to symbol context and create local variables for them
         for param in method_ty.parameters(self.__type_ctx):
-            symbol_id = def_point.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
             assert symbol_id is not None
-            self.__current_locals.append(symbol_id)
+            self.__sem_ctx.push_local(symbol_id)
 
         # type check method body
-        body = self.__check_block(def_point.ast_body, def_point.symbol_ctx)
-
-        def_point.symbol_ctx.exit_scope()
+        body = self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)
 
         return body
 
