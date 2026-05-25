@@ -120,7 +120,7 @@ class StmtChecker:
             ctx.push_local(iter_symbol_id)
 
             iter_var = HIR.Var(span=stmt.var_name.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
-            stmts.append(self.__expr.assign(stmt.span, iter_var, iter_expr))
+            stmts.append(self.__expr.assign(stmt.span, iter_var, iter_expr.hir))
 
             item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
             item_symbol_id = ctx.symbol_ctx.add_symbol(stmt.var_name.name, SymbolKind.Variable, item_type_id)
@@ -151,7 +151,7 @@ class StmtChecker:
                 unpack_fields=None,
                 body=HIR.Block(span=stmt.span, stmts=[HIR.Break(span=stmt.span)])
             )
-            match_stmt = HIR.EnumMatch(span=stmt.span, value=next_method_call, arms=[some_arm, none_arm])
+            match_stmt = HIR.EnumMatch(span=stmt.span, value=next_method_call.hir, arms=[some_arm, none_arm])
             stmts.append(match_stmt)
         finally:
             ctx.exit_scope()
@@ -168,7 +168,7 @@ class StmtChecker:
         break_stmt = HIR.Break(span=stmt.span)
         if_stmt = HIR.If(
             span=cond_expr.hir.span,
-            cond=not_cond_expr,
+            cond=not_cond_expr.hir,
             then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]),
             else_branch=None
         )

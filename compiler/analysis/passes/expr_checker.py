@@ -41,14 +41,14 @@ class ExprChecker:
         """Treat an expression as an l-value/place."""
         raise NotImplementedError()
 
-    def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> HIR.MethodCall:
+    def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> ExprResult:
         raise NotImplementedError()
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
         raise NotImplementedError()
 
-    def logical_not(self, operand: HIR.Expr) -> HIR.Unary:
+    def logical_not(self, operand: HIR.Expr) -> ExprResult:
         raise NotImplementedError()
 
-    def into_iter(self, iterable: HIR.Expr) -> HIR.Expr:
+    def into_iter(self, iterable: HIR.Expr) -> ExprResult:
         raise NotImplementedError()
