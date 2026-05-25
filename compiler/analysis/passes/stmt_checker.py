@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import List
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.expr_checker import ExprChecker, ExprResult
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -19,7 +20,7 @@ class StmtChecker:
     append constructed HIR nodes to output lists.
     """
 
-    def __init__(self, expr_checker: Any):
+    def __init__(self, expr_checker: ExprChecker):
         self.__expr = expr_checker
 
     def check_block(self, ast_block: AST.Block, ctx: SemCtx) -> HIR.Block:
@@ -59,8 +60,7 @@ class StmtChecker:
             case AST.Delete():
                 self.check_delete(stmt, out, ctx)
             case _:
-                assert ctx.symbol_ctx is not None
-                out.append(self.__expr.eval(stmt, ctx.symbol_ctx))
+                out.append(self.__expr.eval(stmt))
 
     def check_var_decl(self, stmt: AST.VarDecl, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -72,19 +72,19 @@ class StmtChecker:
         ctx.push_local(symbol_id)
 
         if stmt.init_expr is not None:
-            init_expr = self.__expr.value(stmt.init_expr, ctx.symbol_ctx, var_type_id)
+            init_expr = self.__expr.value(stmt.init_expr, var_type_id)
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
-            out.append(self.__expr.assign(stmt.span, var, init_expr))
+            out.append(self.__expr.assign(stmt.span, var, init_expr.hir))
 
     def check_if(self, stmt: AST.If, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        cond_expr = self.__expr.value(stmt.condition, ctx.symbol_ctx, expected=TypeCtx.bool_id)
+        cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
         then_block = self.check_block(stmt.then_branch, ctx)
 
-        elif_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
+        elif_blocks: list[tuple[ExprResult, HIR.Block]] = []
         for elif_branch in stmt.elif_branches:
-            elif_cond_expr = self.__expr.value(elif_branch[0], ctx.symbol_ctx, expected=TypeCtx.bool_id)
+            elif_cond_expr = self.__expr.value(elif_branch[0], expected=TypeCtx.bool_id)
             elif_block = self.check_block(elif_branch[1], ctx)
             elif_blocks.append((elif_cond_expr, elif_block))
 
@@ -95,14 +95,14 @@ class StmtChecker:
             current_else_block = HIR.Block(
                 span=elif_block.span,
                 stmts=[HIR.If(
-                    span=elif_cond_expr.span,
-                    cond=elif_cond_expr,
+                    span=elif_cond_expr.hir.span,
+                    cond=elif_cond_expr.hir,
                     then_branch=elif_block,
                     else_branch=current_else_block,
                 )]
             )
 
-        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
+        out.append(HIR.If(span=stmt.span, cond=cond_expr.hir, then_branch=then_block, else_branch=current_else_block))
 
     def check_for(self, stmt: AST.For, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -111,8 +111,8 @@ class StmtChecker:
         try:
             stmts: List[HIR.Stmt] = []
 
-            iterable_expr = self.__expr.value(stmt.iterable, ctx.symbol_ctx, None)
-            iter_expr = self.__expr.into_iter(iterable_expr.hir, ctx.symbol_ctx)
+            iterable_expr = self.__expr.value(stmt.iterable)
+            iter_expr = self.__expr.into_iter(iterable_expr.hir)
 
             iter_var_type_id = iter_expr.type_id
             iter_symbol_id = ctx.symbol_ctx.add_symbol("%iter", SymbolKind.Variable, iter_var_type_id)
@@ -120,7 +120,7 @@ class StmtChecker:
             ctx.push_local(iter_symbol_id)
 
             iter_var = HIR.Var(span=stmt.var_name.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
-            stmts.append(self.__expr.assign(stmt.span, iter_var, iter_expr.hir))
+            stmts.append(self.__expr.assign(stmt.span, iter_var, iter_expr))
 
             item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
             item_symbol_id = ctx.symbol_ctx.add_symbol(stmt.var_name.name, SymbolKind.Variable, item_type_id)
@@ -130,7 +130,7 @@ class StmtChecker:
 
             body_block = self.check_block(stmt.body, ctx)
 
-            next_method_call = self.__expr.call_method(iter_var, "next", None, [], ctx.symbol_ctx)
+            next_method_call = self.__expr.call_method(iter_var, "next", None, [])
 
             option_ty = ctx.type_ctx[next_method_call.type_id]
             assert isinstance(option_ty, Type.EnumType)
@@ -161,13 +161,13 @@ class StmtChecker:
     def check_while(self, stmt: AST.While, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        cond_expr = self.__expr.value(stmt.condition, ctx.symbol_ctx, expected=TypeCtx.bool_id)
+        cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
         body_block = self.check_block(stmt.body, ctx)
 
-        not_cond_expr = self.__expr.logical_not(cond_expr, ctx.symbol_ctx)
+        not_cond_expr = self.__expr.logical_not(cond_expr.hir)
         break_stmt = HIR.Break(span=stmt.span)
         if_stmt = HIR.If(
-            span=cond_expr.span,
+            span=cond_expr.hir.span,
             cond=not_cond_expr,
             then_branch=HIR.Block(span=stmt.span, stmts=[break_stmt]),
             else_branch=None

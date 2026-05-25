@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from enum import Enum
+from typing import Optional
 
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
@@ -13,9 +14,20 @@ from compiler.utils.IR.position import SrcSpan
 @dataclass
 class LoopFrame:
     span: SrcSpan
-    kind: str
+    kind: LoopKind
     break_allowed: bool = True
     continue_allowed: bool = True
+
+
+class DefKind(Enum):
+    Function = "function"
+    Method = "method"
+
+
+class LoopKind(Enum):
+    For = "for"
+    While = "while"
+    Loop = "loop"
 
 
 class SemCtx:
@@ -28,7 +40,7 @@ class SemCtx:
     - provide a minimal, safe API for helpers
     """
 
-    def __init__(self, type_ctx: TypeCtx, diagnostics: Any = None):
+    def __init__(self, type_ctx: TypeCtx, diagnostics: object | None = None):
         # session
         self.__type_ctx: TypeCtx = type_ctx
         self.__diagnostics = diagnostics
@@ -36,7 +48,7 @@ class SemCtx:
         # def (initialized by begin_def)
         self.__unit_id: Optional[int] = None
         self.__def_type_id: Optional[int] = None
-        self.__def_kind: Optional[str] = None
+        self.__def_kind: Optional[DefKind] = None
         self.__ast_body: Optional[AST.Block] = None
         self.__return_type_id: Optional[int] = None
         self.__receiver_type_id: Optional[int] = None
@@ -49,15 +61,12 @@ class SemCtx:
         self.__scope_depth: int = 0
         self.__current_span: SrcSpan = SrcSpan.empty()
 
-        # derived (short-lived caches)
-        self.__derived: dict[str, Any] = {}
-
     @property
     def type_ctx(self) -> TypeCtx:
         return self.__type_ctx
 
     @property
-    def diagnostics(self) -> Any:
+    def diagnostics(self) -> object | None:
         return self.__diagnostics
 
     @property
@@ -69,7 +78,7 @@ class SemCtx:
         return self.__def_type_id
 
     @property
-    def def_kind(self) -> Optional[str]:
+    def def_kind(self) -> Optional[DefKind]:
         return self.__def_kind
 
     @property
@@ -108,12 +117,8 @@ class SemCtx:
     def current_span(self) -> SrcSpan:
         return self.__current_span
 
-    @property
-    def derived(self) -> dict[str, Any]:
-        return self.__derived
-
     # lifecycle
-    def begin_def(self, *, unit_id: int, def_type_id: int, def_kind: str, ast_body: AST.Block,
+    def begin_def(self, *, unit_id: int, def_type_id: int, def_kind: DefKind, ast_body: AST.Block,
                   return_type_id: int, receiver_type_id: Optional[int], is_static: bool, symbol_ctx: SymbolCtx) -> None:
         self.__unit_id = unit_id
         self.__def_type_id = def_type_id
@@ -124,12 +129,11 @@ class SemCtx:
         self.__is_static = is_static
         self.__symbol_ctx = symbol_ctx
 
-        # reset flow and derived
+        # reset flow state
         self.__locals = []
         self.__loop_stack = []
         self.__scope_depth = 0
         self.__current_span = ast_body.span
-        self.__derived = {}
 
     # scope management (delegates to symbol_ctx)
     def enter_scope(self) -> None:
