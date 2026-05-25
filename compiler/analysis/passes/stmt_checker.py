@@ -4,20 +4,15 @@ from typing import List
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_checker import ExprChecker, ExprResult
-from compiler.analysis.passes.hir_builder import (
-    build_block,
-    build_enum_match,
-    build_enum_match_arm,
-    build_loop,
-    build_switch,
-    build_switch_arm,
-)
+from compiler.analysis.passes.hir_builder import (build_block, build_enum_match, build_enum_match_arm, build_if_chain,
+                                                  build_loop, build_switch, build_switch_arm)
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.operator import BinaryOperator
 
 
 class StmtChecker:
@@ -254,7 +249,78 @@ class StmtChecker:
         stub should use `ExprChecker.call_method` to emit equality calls and
         assemble an `if`-chain (use `hir_builder.build_if_chain`).
         """
-        raise NotImplementedError()
+        # Build condition -> block pairs for each arm, using PartialEq-based
+        # tests for non-switchable patterns. Concrete equality construction
+        # and pattern decomposition are delegated to helper interfaces below.
+        cond_and_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
+        default_block: HIR.Block | None = None
+
+        for pat, arm_block in stmt.arms:
+            # wildcard becomes the default arm
+            if isinstance(pat, AST.WildcardPattern):
+                default_block = self.check_block(arm_block, ctx)
+                continue
+
+            # build a boolean-testing expression for this pattern using PartialEq
+            cond_expr = self.__pattern_to_eq_cond(pat, value_expr, ctx)
+            body = self.check_block(arm_block, ctx)
+            cond_and_blocks.append((cond_expr, body))
+
+        out.append(build_if_chain(stmt.span, cond_and_blocks, default_block))
+
+    # --- Helpers used by PartialEq lowering (interfaces only) -----------------
+    def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: ExprResult, ctx: SemCtx) -> HIR.Expr:
+        """Construct a boolean `HIR.Expr` that tests whether `value_expr`
+        matches `pat` by using `PartialEq` comparisons. This is an interface
+        stub: implement pattern decomposition and calls to
+        `ExprChecker.call_eq` here.
+        """
+        # Handle simple literal patterns by constructing HIR literal nodes
+        # and using ExprChecker.call_eq to generate boolean expressions.
+        conds: list[HIR.Expr] = []
+
+        match pat:
+            case AST.IntPattern():
+                for lit in pat.values:
+                    rhs = HIR.IntLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
+                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
+                    conds.append(eq_res.hir)
+            case AST.CharPattern():
+                for lit in pat.values:
+                    rhs = HIR.CharLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
+                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
+                    conds.append(eq_res.hir)
+            case AST.StrPattern():
+                for lit in pat.values:
+                    rhs = HIR.StrLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
+                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
+                    conds.append(eq_res.hir)
+            case AST.EnumPattern():
+                enum_ty = ctx.type_ctx[value_expr.type_id]
+                assert isinstance(enum_ty, Type.EnumType)
+                for ident in pat.variants:
+                    variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
+                    if variant is None:
+                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+                    rhs = HIR.VariantConstruct(span=ident.span, enum_id=value_expr.type_id, variant=variant, args=None, type_id=value_expr.type_id, is_place=False)
+                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
+                    conds.append(eq_res.hir)
+            case AST.PayloadPattern():
+                # Payload patterns introduce bindings; equality-based lowering
+                # cannot handle binding patterns here.
+                raise AnalysisError("Payload patterns are not supported by PartialEq-based lowering", pat.span)
+            case _:
+                raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by PartialEq lowering", pat.span)
+
+        # combine conditions with logical OR if multiple alternatives
+        if len(conds) == 0:
+            # defensive: no condition built -> false
+            return HIR.BoolLiteral(span=pat.span, value=False, type_id=TypeCtx.bool_id, is_place=False)
+
+        expr = conds[0]
+        for c in conds[1:]:
+            expr = HIR.Binary(span=expr.span, op=BinaryOperator.LogicalOr, left=expr, right=c, type_id=TypeCtx.bool_id, is_place=False)
+        return expr
 
     def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         """Lower `match` for enums with payloads by emitting a `Match` HIR that

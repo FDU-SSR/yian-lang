@@ -614,6 +614,21 @@ class TypeCtx:
         """
         raise NotImplementedError("Method lookup is not implemented yet")
 
+    # --- Impl / trait convenience wrappers ---------------------------------
+    def has_impl_for_trait_template(self, type_id: int, trait_type_id: int, required_arg_types: list[int] | None = None) -> bool:
+        """Template-aware wrapper to check for impl availability.
+
+        Delegates to `ImplRegistry.has_impl_for_trait_template`.
+        """
+        return self.__impl_registry.has_impl_for_trait_template(type_id, trait_type_id, required_arg_types)
+
+    def resolve_trait_method_impl_template(self, type_id: int, trait_type_id: int, method_name: str, arg_types: list[int] | None = None) -> int | None:
+        """Template-aware wrapper to resolve a trait method implementation.
+
+        Delegates to `ImplRegistry.resolve_trait_method_impl_template`.
+        """
+        return self.__impl_registry.resolve_trait_method_impl_template(type_id, trait_type_id, method_name, arg_types)
+
     def iter_item_type(self, iter_type_id: int) -> int:
         """
         Get the item type of an iterator type.

@@ -143,3 +143,43 @@ class ImplRegistry:
                 self.__generic_impl_cache.append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
                 self.__trait_generic_impl_cache.append(impl)
+
+    # --- Querying interfaces (stubs) ---------------------------------------
+    # Template-aware querying interfaces (preferred) -----------------------
+
+    # --- Template-aware interfaces -----------------------------------------
+    def find_impl_for_trait_template(
+        self,
+        target_type_id: int,
+        trait_type_id: int,
+        trait_generic_args: list[int] | None = None,
+        required_arg_types: list[int] | None = None,
+    ) -> Impl | None:
+        """Find an impl for `trait_type_id` (possibly a generic trait template)
+        implemented for `target_type_id`.
+
+        - `trait_generic_args` may be provided to constrain the trait instantiation
+          arguments when matching generic traits (e.g. PartialEq<Bar>).
+        - `required_arg_types` can be used to match the method parameter types
+          (for example, the RHS type for `PartialEq`).
+
+        This is an interface stub; concrete lookup logic should be implemented
+        in a follow-up change.
+        """
+        raise NotImplementedError()
+
+    def has_impl_for_trait_template(self, target_type_id: int, trait_type_id: int, required_arg_types: list[int] | None = None) -> bool:
+        """Return True if an impl exists for the given trait template on the target type.
+
+        Interface stub.
+        """
+        raise NotImplementedError()
+
+    def resolve_trait_method_impl_template(self, target_type_id: int, trait_type_id: int, method_name: str, arg_types: list[int] | None = None) -> int | None:
+        """Resolve the concrete method type id that implements `method_name`
+        for an impl of `trait_type_id` on `target_type_id`. `arg_types` may be
+        used to disambiguate overloads.
+
+        Interface stub.
+        """
+        raise NotImplementedError()

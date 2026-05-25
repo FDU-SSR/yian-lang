@@ -44,6 +44,15 @@ class ExprChecker:
     def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> ExprResult:
         raise NotImplementedError()
 
+    def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> ExprResult:
+        """Emit a `PartialEq` equality call between `lhs` and `rhs`.
+
+        This is a thin convenience wrapper that should perform trait/method
+        resolution and construct an appropriate `ExprResult` representing the
+        equality comparison. It is intentionally left as an interface stub.
+        """
+        raise NotImplementedError()
+
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
         raise NotImplementedError()
 
