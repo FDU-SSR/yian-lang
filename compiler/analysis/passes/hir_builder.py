@@ -15,7 +15,7 @@ def build_loop(span: SrcSpan, stmts: list[HIR.Stmt]) -> HIR.Loop:
 
 def build_enum_match_arm(
     span: SrcSpan,
-    variant: Type.EnumVariant,
+    variant: Type.EnumVariant | None,
     unpack_fields: list[int] | None,
     body: HIR.Block,
 ) -> HIR.MatchArm:

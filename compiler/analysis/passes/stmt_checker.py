@@ -131,27 +131,6 @@ class StmtChecker:
         finally:
             ctx.exit_scope()
 
-    def __declare_local_symbol(self, name: AST.Identifier, type_id: int, ctx: SemCtx) -> int:
-        assert ctx.symbol_ctx is not None
-
-        symbol_id = ctx.symbol_ctx.add_symbol(name.name, SymbolKind.Variable, type_id)
-        if symbol_id is None:
-            raise AnalysisError(f"Variable '{name.name}' is already defined in the current scope", name.span)
-        ctx.push_local(symbol_id)
-        return symbol_id
-
-    def __enum_variants(self, type_id: int, variant_names: list[str], ctx: SemCtx) -> tuple[Type.EnumVariant, ...]:
-        option_ty = ctx.type_ctx[type_id]
-        assert isinstance(option_ty, Type.EnumType)
-
-        variants: list[Type.EnumVariant] = []
-        for variant_name in variant_names:
-            variant = option_ty.get_variant_by_name(variant_name, ctx.type_ctx)
-            assert variant is not None
-            variants.append(variant)
-
-        return tuple(variants)
-
     def check_while(self, stmt: AST.While, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
@@ -198,7 +177,42 @@ class StmtChecker:
         # Fallback: try equality-based lowering using PartialEq (method calls)
         self.__lower_match_with_partial_eq(stmt, value_expr, out, ctx)
 
-    # --- Lowering strategy stubs -------------------------------------------------
+    def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_continue(self, stmt: AST.Continue, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        raise NotImplementedError()
+
+    def __declare_local_symbol(self, name: AST.Identifier, type_id: int, ctx: SemCtx) -> int:
+        assert ctx.symbol_ctx is not None
+
+        symbol_id = ctx.symbol_ctx.add_symbol(name.name, SymbolKind.Variable, type_id)
+        if symbol_id is None:
+            raise AnalysisError(f"Variable '{name.name}' is already defined in the current scope", name.span)
+        ctx.push_local(symbol_id)
+        return symbol_id
+
+    def __enum_variants(self, type_id: int, variant_names: list[str], ctx: SemCtx) -> tuple[Type.EnumVariant, ...]:
+        option_ty = ctx.type_ctx[type_id]
+        assert isinstance(option_ty, Type.EnumType)
+
+        variants: list[Type.EnumVariant] = []
+        for variant_name in variant_names:
+            variant = option_ty.get_variant_by_name(variant_name, ctx.type_ctx)
+            assert variant is not None
+            variants.append(variant)
+
+        return tuple(variants)
+
     def __lower_match_as_switch(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
         a C-style enum. This is a stub: implement pattern -> integer mapping and
@@ -244,11 +258,6 @@ class StmtChecker:
         out.append(build_switch(stmt.span, value_expr.hir, arms))
 
     def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        """Lower `match` by generating a chain of equality checks using the
-        `PartialEq` trait (e.g. `==`) when the type is not switchable. This
-        stub should use `ExprChecker.call_method` to emit equality calls and
-        assemble an `if`-chain (use `hir_builder.build_if_chain`).
-        """
         # Build condition -> block pairs for each arm, using PartialEq-based
         # tests for non-switchable patterns. Concrete equality construction
         # and pattern decomposition are delegated to helper interfaces below.
@@ -268,13 +277,7 @@ class StmtChecker:
 
         out.append(build_if_chain(stmt.span, cond_and_blocks, default_block))
 
-    # --- Helpers used by PartialEq lowering (interfaces only) -----------------
     def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: ExprResult, ctx: SemCtx) -> HIR.Expr:
-        """Construct a boolean `HIR.Expr` that tests whether `value_expr`
-        matches `pat` by using `PartialEq` comparisons. This is an interface
-        stub: implement pattern decomposition and calls to
-        `ExprChecker.call_eq` here.
-        """
         # Handle simple literal patterns by constructing HIR literal nodes
         # and using ExprChecker.call_eq to generate boolean expressions.
         conds: list[HIR.Expr] = []
@@ -323,25 +326,73 @@ class StmtChecker:
         return expr
 
     def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        """Lower `match` for enums with payloads by emitting a `Match` HIR that
-        inspects the discriminant and unpacks payloads into local symbols.
-        This stub should use `ctx.type_ctx` to query variants and
-        `ctx.symbol_ctx.add_symbol` / `ctx.push_local` to bind payloads, then
-        call `hir_builder.build_enum_match` / `build_enum_match_arm`.
-        """
-        raise NotImplementedError()
+        assert ctx.symbol_ctx is not None
 
-    def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        enum_ty = ctx.type_ctx[value_expr.type_id]
+        assert isinstance(enum_ty, Type.EnumType)
 
-    def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        # To avoid re-evaluating the scrutinee, store it into a temporary local
+        tmp_ident = AST.Identifier(span=stmt.span, name="%match")
+        tmp_sym = self.__declare_local_symbol(tmp_ident, value_expr.type_id, ctx)
+        tmp_var = HIR.Var(span=stmt.span, symbol_id=tmp_sym, type_id=value_expr.type_id, is_place=True)
+        init_stmt = self.__expr.assign(stmt.span, tmp_var, value_expr.hir)
 
-    def check_continue(self, stmt: AST.Continue, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        arms: list[HIR.MatchArm] = []
 
-    def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        for pat, arm_block in stmt.arms:
+            if isinstance(pat, AST.WildcardPattern):
+                body = self.check_block(arm_block, ctx)
+                arms.append(build_enum_match_arm(pat.span, None, None, body))
+                continue
 
-    def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+            if isinstance(pat, AST.EnumPattern):
+                for ident in pat.variants:
+                    variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
+                    if variant is None:
+                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+
+                    # If variant has payload, but pattern did not bind fields,
+                    # treat as matching discriminant only (ignore payload).
+                    body = self.check_block(arm_block, ctx)
+                    arms.append(build_enum_match_arm(pat.span, variant, None, body))
+                continue
+
+            # PayloadPattern: variant with explicit field bindings
+            if isinstance(pat, AST.PayloadPattern):
+                variant = enum_ty.get_variant_by_name(pat.variant.name, ctx.type_ctx)
+                if variant is None:
+                    raise AnalysisError(f"Unknown enum variant '{pat.variant.name}'", pat.variant.span)
+
+                if variant.payload_type is None:
+                    raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
+
+                # Determine payload field types. Support tuple payloads or single-field payloads.
+                payload_ty_id = variant.payload_type
+                payload_ty = ctx.type_ctx[payload_ty_id]
+                if isinstance(payload_ty, Type.TupleType):
+                    field_types = payload_ty.element_types
+                else:
+                    field_types = [payload_ty_id]
+
+                if len(pat.fields) != len(field_types):
+                    raise AnalysisError(f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields", pat.span)
+
+                # Enter a scope for the arm's bindings, declare symbols, lower body, then exit scope.
+                ctx.enter_scope()
+                try:
+                    unpack_fields: list[int] = []
+                    for ident, ftype in zip(pat.fields, field_types):
+                        sym_id = self.__declare_local_symbol(ident, ftype, ctx)
+                        unpack_fields.append(sym_id)
+
+                    body = self.check_block(arm_block, ctx)
+                    arms.append(build_enum_match_arm(pat.span, variant, unpack_fields, body))
+                finally:
+                    ctx.exit_scope()
+                continue
+
+            # Other patterns are unsupported in this path
+            raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by enum-unpack lowering (basic path)", pat.span)
+
+        match_stmt = build_enum_match(stmt.span, tmp_var, arms)
+        out.append(build_block(stmt.span, [init_stmt, match_stmt]))

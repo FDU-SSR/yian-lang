@@ -144,10 +144,6 @@ class ImplRegistry:
             elif impl.trait is not None and len(impl.generics) > 0:
                 self.__trait_generic_impl_cache.append(impl)
 
-    # --- Querying interfaces (stubs) ---------------------------------------
-    # Template-aware querying interfaces (preferred) -----------------------
-
-    # --- Template-aware interfaces -----------------------------------------
     def find_impl_for_trait_template(
         self,
         target_type_id: int,
