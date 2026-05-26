@@ -131,7 +131,9 @@ class StmtChecker:
             item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
             item_symbol_id = self.__declare_local_symbol(stmt.var_name, item_type_id, ctx)
             body_block = self.check_block(stmt.body, ctx)
-            some_variant, none_variant = self.__enum_variants(next_var_type_id, ["Some", "None"], ctx)
+            enum_variants = self.__enum_variants(next_var_type_id, ["Some", "None"], ctx)
+            some_variant = enum_variants[0]
+            none_variant = enum_variants[1]
 
             some_arm = build_enum_match_arm(stmt.span, some_variant, [item_symbol_id], body_block)
             none_arm = build_enum_match_arm(stmt.span, none_variant, None, build_block(stmt.span, [HIR.Break(span=stmt.span)]))
@@ -262,7 +264,14 @@ class StmtChecker:
         )
 
     def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        assert ctx.symbol_ctx is not None
+
+        target_expr = self.__expr.value(stmt.target)
+        target_type = ctx.type_ctx[target_expr.type_id]
+        if not isinstance(target_type, Type.PointerType):
+            raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
+
+        out.append(HIR.Delete(stmt.span, target_expr.hir))
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int, ctx: SemCtx) -> int:
         assert ctx.symbol_ctx is not None
@@ -273,7 +282,7 @@ class StmtChecker:
         ctx.push_local(symbol_id)
         return symbol_id
 
-    def __enum_variants(self, type_id: int, variant_names: list[str], ctx: SemCtx) -> tuple[Type.EnumVariant, ...]:
+    def __enum_variants(self, type_id: int, variant_names: list[str], ctx: SemCtx) -> list[Type.EnumVariant]:
         option_ty = ctx.type_ctx[type_id]
         assert isinstance(option_ty, Type.EnumType)
 
@@ -283,7 +292,7 @@ class StmtChecker:
             assert variant is not None
             variants.append(variant)
 
-        return tuple(variants)
+        return variants
 
     def __lower_match_as_switch(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
