@@ -476,7 +476,7 @@ class DynBuffer:
 @dataclass
 class TypeItem:
     """
-    Represents stuff like `Option<T>`, `i32[10]`, `Foo<i32*, String>`, etc.
+    Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
     """
 
     span: SrcSpan

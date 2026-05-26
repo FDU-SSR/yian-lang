@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.op_builder import OpBuilder
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
@@ -20,6 +21,7 @@ class ExprChecker:
 
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
+        self.__op_builder = OpBuilder(ctx, self)
 
     def value(self, expr: AST.Expr, expected: Optional[int] = None) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
@@ -51,13 +53,13 @@ class ExprChecker:
                 return self.__handle_array(expr, expected)
 
     def __handle_binary(self, node: AST.Binary, expected: Optional[int]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__op_builder.build_binary(node.span, node.op, node.left, node.right, expected)
 
     def __handle_unary(self, node: AST.Unary, expected: Optional[int]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__op_builder.build_unary(node.span, node.op, node.operand, expected)
 
     def __handle_field_access(self, node: AST.FieldAccess, expected: Optional[int]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__op_builder.build_field_access(node.span, node.receiver, node.field_name.name, expected)
 
     def __handle_call(self, node: AST.Call, expected: Optional[int]) -> HIR.Expr:
         raise NotImplementedError()
@@ -66,10 +68,10 @@ class ExprChecker:
         raise NotImplementedError()
 
     def __handle_dyn_value(self, node: AST.DynValue, expected: Optional[int]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__op_builder.build_dyn_value(node.span, node.value, expected)
 
     def __handle_dyn_buffer(self, node: AST.DynBuffer, expected: Optional[int]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__op_builder.build_dyn_buffer(node.span, node.target_type, node.size, expected)
 
     def __handle_type_item(self, node: AST.TypeItem, expected: Optional[int]) -> HIR.Expr:
         raise NotImplementedError()

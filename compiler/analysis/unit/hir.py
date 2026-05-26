@@ -285,6 +285,13 @@ class BoolLiteral:
     is_place: bool
 
 
+@dataclass
+class Ty:
+    span: SrcSpan
+    type_id: int
+    is_place: bool
+
+
 Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
 
 
@@ -295,7 +302,7 @@ Expr: TypeAlias = (
     | DynValue | DynBuffer
     | SizeOf | BitCast
     | Tuple | Array
-    | Var | Literal
+    | Var | Literal | Ty
 )
 
 
