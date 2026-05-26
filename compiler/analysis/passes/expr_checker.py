@@ -21,15 +21,69 @@ class ExprChecker:
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
 
-    def eval(self, expr: AST.Expr) -> HIR.Expr:
-        """Evaluate an expression in statement position (value dropped).
-
-        Returns a HIR.Expr representing the evaluated expression (may be a noop wrapper).
-        """
-        raise NotImplementedError()
-
     def value(self, expr: AST.Expr, expected: Optional[int] = None) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
+        # Dispatch based on AST node kind to dedicated handlers.
+        match expr:
+            case AST.Binary():
+                return self.__handle_binary(expr, expected)
+            case AST.Unary():
+                return self.__handle_unary(expr, expected)
+            case AST.FieldAccess():
+                return self.__handle_field_access(expr, expected)
+            case AST.Call():
+                return self.__handle_call(expr, expected)
+            case AST.MethodCall():
+                return self.__handle_method_call(expr, expected)
+            case AST.DynValue():
+                return self.__handle_dyn_value(expr, expected)
+            case AST.DynBuffer():
+                return self.__handle_dyn_buffer(expr, expected)
+            case AST.TypeItem():
+                return self.__handle_type_item(expr, expected)
+            case AST.Identifier():
+                return self.__handle_identifier(expr, expected)
+            case AST.Literal():
+                return self.__handle_literal(expr, expected)
+            case AST.Tuple():
+                return self.__handle_tuple(expr, expected)
+            case AST.Array():
+                return self.__handle_array(expr, expected)
+
+    def __handle_binary(self, node: AST.Binary, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_unary(self, node: AST.Unary, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_field_access(self, node: AST.FieldAccess, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_call(self, node: AST.Call, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_method_call(self, node: AST.MethodCall, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_dyn_value(self, node: AST.DynValue, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_dyn_buffer(self, node: AST.DynBuffer, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_type_item(self, node: AST.TypeItem, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_identifier(self, node: AST.Identifier, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_literal(self, node: AST.Literal, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_tuple(self, node: AST.Tuple, expected: Optional[int]) -> HIR.Expr:
+        raise NotImplementedError()
+
+    def __handle_array(self, node: AST.Array, expected: Optional[int]) -> HIR.Expr:
         raise NotImplementedError()
 
     def as_place(self, expr: AST.Expr) -> HIR.Expr:

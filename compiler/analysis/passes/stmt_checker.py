@@ -63,7 +63,7 @@ class StmtChecker:
             case AST.Delete():
                 self.check_delete(stmt, out, ctx)
             case _:
-                out.append(self.__expr.eval(stmt))
+                out.append(self.__expr.value(stmt))
 
     def check_var_decl(self, stmt: AST.VarDecl, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
