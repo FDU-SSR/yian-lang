@@ -102,7 +102,7 @@ class ExprChecker:
         return self.call_method(iterator, "next", None, [])
 
     def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> HIR.Expr:
-        return self.call_method(lhs, "eq", [rhs.type_id], [rhs])
+        return self.call_method(lhs, "eq", None, [rhs])
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
         if not target.is_place:
