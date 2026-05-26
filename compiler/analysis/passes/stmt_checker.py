@@ -6,7 +6,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_checker import ExprChecker, ExprResult
 from compiler.analysis.passes.hir_builder import (build_block, build_enum_match, build_enum_match_arm, build_if_chain,
                                                   build_loop, build_switch, build_switch_arm)
-from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.passes.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -108,48 +108,67 @@ class StmtChecker:
         assert ctx.symbol_ctx is not None
 
         ctx.enter_scope()
+        ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.For))
         try:
             iterable_expr = self.__expr.value(stmt.iterable)
-            iter_expr = self.__expr.call_method(iterable_expr.hir, "into_iter", None, [])
+            iter_expr = self.__expr.call_into_iter(iterable_expr.hir)
 
             iter_var_type_id = iter_expr.type_id
             iter_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%iter"), iter_var_type_id, ctx)
             iter_var = HIR.Var(span=stmt.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
             iter_init = self.__expr.assign(stmt.span, iter_var, iter_expr.hir)
 
+            next_method_call = self.__expr.call_next(iter_var)
+            next_var_type_id = next_method_call.type_id
+            next_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%next"), next_var_type_id, ctx)
+            next_var = HIR.Var(span=stmt.span, symbol_id=next_symbol_id, type_id=next_var_type_id, is_place=True)
+            next_init = self.__expr.assign(stmt.span, next_var, next_method_call.hir)
+
+            update_method_call = self.__expr.call_next(iter_var)
+            update_stmt = self.__expr.assign(stmt.span, next_var, update_method_call.hir)
+            ctx.loop_stack[-1].continue_prefix_stmts = [update_stmt]
+
             item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
             item_symbol_id = self.__declare_local_symbol(stmt.var_name, item_type_id, ctx)
             body_block = self.check_block(stmt.body, ctx)
-            next_method_call = self.__expr.call_method(iter_var, "next", None, [])
-            some_variant, none_variant = self.__enum_variants(next_method_call.type_id, ["Some", "None"], ctx)
+            some_variant, none_variant = self.__enum_variants(next_var_type_id, ["Some", "None"], ctx)
 
             some_arm = build_enum_match_arm(stmt.span, some_variant, [item_symbol_id], body_block)
             none_arm = build_enum_match_arm(stmt.span, none_variant, None, build_block(stmt.span, [HIR.Break(span=stmt.span)]))
-            next_match_stmt = build_enum_match(stmt.span, next_method_call.hir, [some_arm, none_arm])
-            loop_stmt = build_loop(stmt.span, [next_match_stmt])
-            out.append(build_block(stmt.span, [iter_init, loop_stmt]))
+            next_match_stmt = build_enum_match(stmt.span, next_var, [some_arm, none_arm])
+            loop_stmt = build_loop(stmt.span, [next_match_stmt, update_stmt])
+            out.append(build_block(stmt.span, [iter_init, next_init, loop_stmt]))
         finally:
+            ctx.pop_loop()
             ctx.exit_scope()
 
     def check_while(self, stmt: AST.While, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
-        body_block = self.check_block(stmt.body, ctx)
+        ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.While))
+        try:
+            cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
+            body_block = self.check_block(stmt.body, ctx)
 
-        not_cond_expr = self.__expr.logical_not(cond_expr.hir)
-        break_stmt = HIR.Break(span=stmt.span)
-        if_stmt = HIR.If(
-            span=cond_expr.hir.span,
-            cond=not_cond_expr.hir,
-            then_branch=build_block(stmt.span, [break_stmt]),
-            else_branch=None
-        )
-        out.append(build_loop(stmt.span, [if_stmt, body_block]))
+            not_cond_expr = self.__expr.logical_not(cond_expr.hir)
+            break_stmt = HIR.Break(span=stmt.span)
+            if_stmt = HIR.If(
+                span=cond_expr.hir.span,
+                cond=not_cond_expr.hir,
+                then_branch=build_block(stmt.span, [break_stmt]),
+                else_branch=None
+            )
+            out.append(build_loop(stmt.span, [if_stmt, body_block]))
+        finally:
+            ctx.pop_loop()
 
     def check_loop(self, stmt: AST.Loop, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        body_block = self.check_block(stmt.body, ctx)
-        out.append(HIR.Loop(span=stmt.span, body=body_block))
+        ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.Loop))
+        try:
+            body_block = self.check_block(stmt.body, ctx)
+            out.append(HIR.Loop(span=stmt.span, body=body_block))
+        finally:
+            ctx.pop_loop()
 
     def check_match(self, stmt: AST.Match, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -178,13 +197,44 @@ class StmtChecker:
         self.__lower_match_with_partial_eq(stmt, value_expr, out, ctx)
 
     def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        assert ctx.symbol_ctx is not None
+
+        return_type_id = ctx.current_return_type()
+        if return_type_id is None:
+            raise AnalysisError("return statement is not allowed outside of a function or method", stmt.span)
+
+        if stmt.expr is None:
+            if return_type_id != TypeCtx.void_id:
+                raise AnalysisError("missing return value", stmt.span)
+            out.append(HIR.Return(span=stmt.span, value=None))
+            return
+
+        if return_type_id == TypeCtx.void_id:
+            raise AnalysisError("void function cannot return a value", stmt.expr.span)
+
+        value_expr = self.__expr.value(stmt.expr, expected=return_type_id)
+        out.append(HIR.Return(span=stmt.span, value=value_expr.hir))
 
     def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        if not ctx.loop_stack:
+            raise AnalysisError("'break' is only allowed inside a loop", stmt.span)
+
+        loop_frame = ctx.loop_stack[-1]
+        if not loop_frame.break_allowed:
+            raise AnalysisError("'break' is not allowed in the current loop", stmt.span)
+
+        out.append(HIR.Break(span=stmt.span))
 
     def check_continue(self, stmt: AST.Continue, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        if not ctx.loop_stack:
+            raise AnalysisError("'continue' is only allowed inside a loop", stmt.span)
+
+        loop_frame = ctx.loop_stack[-1]
+        if not loop_frame.continue_allowed:
+            raise AnalysisError("'continue' is not allowed in the current loop", stmt.span)
+
+        out.extend(loop_frame.continue_prefix_stmts)
+        out.append(HIR.Continue(span=stmt.span))
 
     def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         raise NotImplementedError()

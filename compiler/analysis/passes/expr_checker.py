@@ -44,6 +44,22 @@ class ExprChecker:
     def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> ExprResult:
         raise NotImplementedError()
 
+    def call_into_iter(self, iterable: HIR.Expr) -> ExprResult:
+        """Emit an `into_iter` call for a `for`-loop iterable.
+
+        This is a convenience wrapper specialized for iterator conversion and
+        mirrors the dedicated `call_eq` interface style.
+        """
+        raise NotImplementedError()
+
+    def call_next(self, iterator: HIR.Expr) -> ExprResult:
+        """Emit a `next` call for an iterator value.
+
+        This keeps iterator protocol lowering explicit instead of routing
+        through the generic `call_method` interface.
+        """
+        raise NotImplementedError()
+
     def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> ExprResult:
         """Emit a `PartialEq` equality call between `lhs` and `rhs`.
 
@@ -57,7 +73,4 @@ class ExprChecker:
         raise NotImplementedError()
 
     def logical_not(self, operand: HIR.Expr) -> ExprResult:
-        raise NotImplementedError()
-
-    def into_iter(self, iterable: HIR.Expr) -> ExprResult:
         raise NotImplementedError()

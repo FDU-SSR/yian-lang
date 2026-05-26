@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.IR.position import SrcSpan
+
+
+class LoopKind(Enum):
+    For = "for"
+    While = "while"
+    Loop = "loop"
 
 
 @dataclass
@@ -17,17 +24,12 @@ class LoopFrame:
     kind: LoopKind
     break_allowed: bool = True
     continue_allowed: bool = True
+    continue_prefix_stmts: list[HIR.Stmt] = field(default_factory=list[HIR.Stmt])
 
 
 class DefKind(Enum):
     Function = "function"
     Method = "method"
-
-
-class LoopKind(Enum):
-    For = "for"
-    While = "while"
-    Loop = "loop"
 
 
 class SemCtx:
