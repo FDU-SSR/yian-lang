@@ -1,26 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Optional
 
+from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
-
-
-@dataclass
-class ExprResult:
-    hir: HIR.Expr
-    type_id: int
-    is_place: bool
 
 
 class ExprChecker:
     """Expression checker and lowering facade.
 
     For now this is a minimal stub. Concrete implementations should perform
-    semantic checks and return `ExprResult` carrying HIR nodes and type ids.
+    semantic checks and return `HIR.Expr` carrying HIR nodes and type ids.
     """
 
     def __init__(self, ctx: SemCtx):
@@ -33,44 +28,53 @@ class ExprChecker:
         """
         raise NotImplementedError()
 
-    def value(self, expr: AST.Expr, expected: Optional[int] = None) -> ExprResult:
-        """Evaluate an expression and return its value and type information."""
+    def value(self, expr: AST.Expr, expected: Optional[int] = None) -> HIR.Expr:
+        """Evaluate an expression and return its value (HIR.Expr)."""
         raise NotImplementedError()
 
-    def as_place(self, expr: AST.Expr) -> ExprResult:
-        """Treat an expression as an l-value/place."""
+    def as_place(self, expr: AST.Expr) -> HIR.Expr:
+        """Treat an expression as an l-value/place and return HIR.Expr."""
         raise NotImplementedError()
 
-    def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> ExprResult:
+    def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> HIR.Expr:
         raise NotImplementedError()
 
-    def call_into_iter(self, iterable: HIR.Expr) -> ExprResult:
-        """Emit an `into_iter` call for a `for`-loop iterable.
+    def call_into_iter(self, iterable: HIR.Expr) -> HIR.Expr:
+        return self.call_method(iterable, "into_iter", None, [])
 
-        This is a convenience wrapper specialized for iterator conversion and
-        mirrors the dedicated `call_eq` interface style.
-        """
-        raise NotImplementedError()
+    def call_next(self, iterator: HIR.Expr) -> HIR.Expr:
+        return self.call_method(iterator, "next", None, [])
 
-    def call_next(self, iterator: HIR.Expr) -> ExprResult:
-        """Emit a `next` call for an iterator value.
-
-        This keeps iterator protocol lowering explicit instead of routing
-        through the generic `call_method` interface.
-        """
-        raise NotImplementedError()
-
-    def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> ExprResult:
-        """Emit a `PartialEq` equality call between `lhs` and `rhs`.
-
-        This is a thin convenience wrapper that should perform trait/method
-        resolution and construct an appropriate `ExprResult` representing the
-        equality comparison. It is intentionally left as an interface stub.
-        """
-        raise NotImplementedError()
+    def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> HIR.Expr:
+        return self.call_method(lhs, "eq", [rhs.type_id], [rhs])
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
-        raise NotImplementedError()
+        if not target.is_place:
+            raise AnalysisError("assignment target must be an l-value", span)
 
-    def logical_not(self, operand: HIR.Expr) -> ExprResult:
-        raise NotImplementedError()
+        if target.type_id != value.type_id:
+            target_name = self.__ctx.type_ctx.get_name(target.type_id)
+            value_name = self.__ctx.type_ctx.get_name(value.type_id)
+            raise AnalysisError(f"cannot assign value of type '{value_name}' to '{target_name}'", span)
+
+        return HIR.Binary(
+            span=span,
+            op=BinaryOperator.Assign,
+            left=target,
+            right=value,
+            type_id=target.type_id,
+            is_place=False,
+        )
+
+    def logical_not(self, operand: HIR.Expr) -> HIR.Expr:
+        if operand.type_id != TypeCtx.bool_id:
+            operand_name = self.__ctx.type_ctx.get_name(operand.type_id)
+            raise AnalysisError(f"logical not expects a bool value, got '{operand_name}'", operand.span)
+
+        return HIR.Unary(
+            span=operand.span,
+            op=UnaryOperator.LogicalNot,
+            operand=operand,
+            type_id=TypeCtx.bool_id,
+            is_place=False,
+        )

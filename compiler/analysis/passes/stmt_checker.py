@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_checker import ExprChecker, ExprResult
+from compiler.analysis.passes.expr_checker import ExprChecker
 from compiler.analysis.passes.hir_builder import (build_block, build_enum_match, build_enum_match_arm, build_if_chain,
                                                   build_loop, build_switch, build_switch_arm)
 from compiler.analysis.passes.sem_ctx import LoopFrame, LoopKind, SemCtx
@@ -74,7 +74,7 @@ class StmtChecker:
         if stmt.init_expr is not None:
             init_expr = self.__expr.value(stmt.init_expr, var_type_id)
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
-            out.append(self.__expr.assign(stmt.span, var, init_expr.hir))
+            out.append(self.__expr.assign(stmt.span, var, init_expr))
 
     def check_if(self, stmt: AST.If, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -86,7 +86,7 @@ class StmtChecker:
         for elif_branch in stmt.elif_branches:
             elif_cond_expr = self.__expr.value(elif_branch[0], expected=TypeCtx.bool_id)
             elif_block = self.check_block(elif_branch[1], ctx)
-            elif_blocks.append((elif_cond_expr.hir, elif_block))
+            elif_blocks.append((elif_cond_expr, elif_block))
 
         else_block = self.check_block(stmt.else_branch, ctx) if stmt.else_branch is not None else None
 
@@ -102,7 +102,7 @@ class StmtChecker:
                 )]
             )
 
-        out.append(HIR.If(span=stmt.span, cond=cond_expr.hir, then_branch=then_block, else_branch=current_else_block))
+        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
 
     def check_for(self, stmt: AST.For, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -111,21 +111,21 @@ class StmtChecker:
         ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.For))
         try:
             iterable_expr = self.__expr.value(stmt.iterable)
-            iter_expr = self.__expr.call_into_iter(iterable_expr.hir)
+            iter_expr = self.__expr.call_into_iter(iterable_expr)
 
             iter_var_type_id = iter_expr.type_id
             iter_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%iter"), iter_var_type_id, ctx)
             iter_var = HIR.Var(span=stmt.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
-            iter_init = self.__expr.assign(stmt.span, iter_var, iter_expr.hir)
+            iter_init = self.__expr.assign(stmt.span, iter_var, iter_expr)
 
             next_method_call = self.__expr.call_next(iter_var)
             next_var_type_id = next_method_call.type_id
             next_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%next"), next_var_type_id, ctx)
             next_var = HIR.Var(span=stmt.span, symbol_id=next_symbol_id, type_id=next_var_type_id, is_place=True)
-            next_init = self.__expr.assign(stmt.span, next_var, next_method_call.hir)
+            next_init = self.__expr.assign(stmt.span, next_var, next_method_call)
 
             update_method_call = self.__expr.call_next(iter_var)
-            update_stmt = self.__expr.assign(stmt.span, next_var, update_method_call.hir)
+            update_stmt = self.__expr.assign(stmt.span, next_var, update_method_call)
             ctx.loop_stack[-1].continue_prefix_stmts = [update_stmt]
 
             item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
@@ -152,11 +152,11 @@ class StmtChecker:
             cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
             body_block = self.check_block(stmt.body, ctx)
 
-            not_cond_expr = self.__expr.logical_not(cond_expr.hir)
+            not_cond_expr = self.__expr.logical_not(cond_expr)
             break_stmt = HIR.Break(span=stmt.span)
             if_stmt = HIR.If(
-                span=cond_expr.hir.span,
-                cond=not_cond_expr.hir,
+                span=cond_expr.span,
+                cond=not_cond_expr,
                 then_branch=build_block(stmt.span, [break_stmt]),
                 else_branch=None
             )
@@ -215,7 +215,7 @@ class StmtChecker:
             raise AnalysisError("void function cannot return a value", stmt.expr.span)
 
         value_expr = self.__expr.value(stmt.expr, expected=return_type_id)
-        out.append(HIR.Return(span=stmt.span, value=value_expr.hir))
+        out.append(HIR.Return(span=stmt.span, value=value_expr))
 
     def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         if not ctx.loop_stack:
@@ -251,13 +251,13 @@ class StmtChecker:
                 is_place=False,
             )
         else:
-            message_expr = self.__expr.value(stmt.message, expected=TypeCtx.str_id).hir
+            message_expr = self.__expr.value(stmt.message, expected=TypeCtx.str_id)
 
         fail_block = build_block(stmt.span, [HIR.Panic(span=stmt.span, message=message_expr)])
         out.append(
             HIR.If(
                 span=stmt.span,
-                cond=self.__expr.logical_not(condition_expr.hir).hir,
+                cond=self.__expr.logical_not(condition_expr),
                 then_branch=fail_block,
                 else_branch=None,
             )
@@ -270,8 +270,7 @@ class StmtChecker:
         target_type = ctx.type_ctx[target_expr.type_id]
         if not isinstance(target_type, Type.PointerType):
             raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
-
-        out.append(HIR.Delete(stmt.span, target_expr.hir))
+        out.append(HIR.Delete(stmt.span, target_expr))
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int, ctx: SemCtx) -> int:
         assert ctx.symbol_ctx is not None
@@ -294,7 +293,7 @@ class StmtChecker:
 
         return variants
 
-    def __lower_match_as_switch(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+    def __lower_match_as_switch(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
         a C-style enum. This is a stub: implement pattern -> integer mapping and
         build `HIR.SwitchArm`s, then emit `hir_builder.build_switch`.
@@ -336,9 +335,9 @@ class StmtChecker:
                 raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by switch lowering", pat.span)
 
         # Emit the switch HIR
-        out.append(build_switch(stmt.span, value_expr.hir, arms))
+        out.append(build_switch(stmt.span, value_expr, arms))
 
-    def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+    def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         # Build condition -> block pairs for each arm, using PartialEq-based
         # tests for non-switchable patterns. Concrete equality construction
         # and pattern decomposition are delegated to helper interfaces below.
@@ -358,7 +357,7 @@ class StmtChecker:
 
         out.append(build_if_chain(stmt.span, cond_and_blocks, default_block))
 
-    def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: ExprResult, ctx: SemCtx) -> HIR.Expr:
+    def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: HIR.Expr, ctx: SemCtx) -> HIR.Expr:
         # Handle simple literal patterns by constructing HIR literal nodes
         # and using ExprChecker.call_eq to generate boolean expressions.
         conds: list[HIR.Expr] = []
@@ -367,18 +366,18 @@ class StmtChecker:
             case AST.IntPattern():
                 for lit in pat.values:
                     rhs = HIR.IntLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
-                    conds.append(eq_res.hir)
+                    eq_res = self.__expr.call_eq(value_expr, rhs)
+                    conds.append(eq_res)
             case AST.CharPattern():
                 for lit in pat.values:
                     rhs = HIR.CharLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
-                    conds.append(eq_res.hir)
+                    eq_res = self.__expr.call_eq(value_expr, rhs)
+                    conds.append(eq_res)
             case AST.StrPattern():
                 for lit in pat.values:
                     rhs = HIR.StrLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
-                    conds.append(eq_res.hir)
+                    eq_res = self.__expr.call_eq(value_expr, rhs)
+                    conds.append(eq_res)
             case AST.EnumPattern():
                 enum_ty = ctx.type_ctx[value_expr.type_id]
                 assert isinstance(enum_ty, Type.EnumType)
@@ -387,8 +386,8 @@ class StmtChecker:
                     if variant is None:
                         raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
                     rhs = HIR.VariantConstruct(span=ident.span, enum_id=value_expr.type_id, variant=variant, args=None, type_id=value_expr.type_id, is_place=False)
-                    eq_res = self.__expr.call_eq(value_expr.hir, rhs)
-                    conds.append(eq_res.hir)
+                    eq_res = self.__expr.call_eq(value_expr, rhs)
+                    conds.append(eq_res)
             case AST.PayloadPattern():
                 # Payload patterns introduce bindings; equality-based lowering
                 # cannot handle binding patterns here.
@@ -406,7 +405,7 @@ class StmtChecker:
             expr = HIR.Binary(span=expr.span, op=BinaryOperator.LogicalOr, left=expr, right=c, type_id=TypeCtx.bool_id, is_place=False)
         return expr
 
-    def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: ExprResult, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+    def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
         enum_ty = ctx.type_ctx[value_expr.type_id]
@@ -416,7 +415,7 @@ class StmtChecker:
         tmp_ident = AST.Identifier(span=stmt.span, name="%match")
         tmp_sym = self.__declare_local_symbol(tmp_ident, value_expr.type_id, ctx)
         tmp_var = HIR.Var(span=stmt.span, symbol_id=tmp_sym, type_id=value_expr.type_id, is_place=True)
-        init_stmt = self.__expr.assign(stmt.span, tmp_var, value_expr.hir)
+        init_stmt = self.__expr.assign(stmt.span, tmp_var, value_expr)
 
         arms: list[HIR.MatchArm] = []
 
