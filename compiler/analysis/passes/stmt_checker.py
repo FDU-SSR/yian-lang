@@ -234,10 +234,32 @@ class StmtChecker:
             raise AnalysisError("'continue' is not allowed in the current loop", stmt.span)
 
         out.extend(loop_frame.continue_prefix_stmts)
-        out.append(HIR.Continue(span=stmt.span))
+        out.append(HIR.Continue(stmt.span))
 
     def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        raise NotImplementedError()
+        assert ctx.symbol_ctx is not None
+
+        condition_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
+
+        if stmt.message is None:
+            message_expr = HIR.StrLiteral(
+                span=stmt.span,
+                value=f"assertion failed at {stmt.span}",
+                type_id=TypeCtx.str_id,
+                is_place=False,
+            )
+        else:
+            message_expr = self.__expr.value(stmt.message, expected=TypeCtx.str_id).hir
+
+        fail_block = build_block(stmt.span, [HIR.Panic(span=stmt.span, message=message_expr)])
+        out.append(
+            HIR.If(
+                span=stmt.span,
+                cond=self.__expr.logical_not(condition_expr.hir).hir,
+                then_branch=fail_block,
+                else_branch=None,
+            )
+        )
 
     def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         raise NotImplementedError()
