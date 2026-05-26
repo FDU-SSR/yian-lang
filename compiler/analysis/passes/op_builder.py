@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import NoReturn, Optional
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_checker import ExprChecker
+from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -22,10 +22,10 @@ class OpBuilder:
     of the methods below should follow the project's op routing rules.
     """
 
-    def __init__(self, ctx: SemCtx, expr_checker: ExprChecker) -> None:
+    def __init__(self, ctx: SemCtx, expr_evaluator: ExprEvaluator) -> None:
         self.__ctx = ctx
         self.__type_ctx = ctx.type_ctx
-        self.__expr_checker = expr_checker
+        self.__evaluator = expr_evaluator
 
     def __expectation_checker(self, span: SrcSpan, expr: HIR.Expr, expected: Optional[int]) -> None:
         if expected is not None and expr.type_id != expected:
@@ -106,7 +106,7 @@ class OpBuilder:
                 return self.__build_addr_of(span, operand, expected)
 
     def build_field_access(self, span: SrcSpan, receiver: AST.Expr, field_name: str, expected: Optional[int] = None) -> HIR.Expr:
-        receiver_hir = self.__expr_checker.value(receiver)
+        receiver_hir = self.__evaluator.value(receiver)
         if isinstance(receiver_hir, HIR.Var):
             # struct field access
             res = self.__build_field_access(span, receiver_hir, field_name)
@@ -124,9 +124,9 @@ class OpBuilder:
             expected_ty = self.__type_ctx[expected]
             if not isinstance(expected_ty, Type.PointerType):
                 self.__type_mismatch(span, expected, "pointer type", "dyn value")
-            value_hir = self.__expr_checker.value(value, expected_ty.pointee_type)
+            value_hir = self.__evaluator.value(value, expected_ty.pointee_type)
         else:
-            value_hir = self.__expr_checker.value(value)
+            value_hir = self.__evaluator.value(value)
 
         ptr_type_id = self.__type_ctx.alloc_pointer(value_hir.type_id)
         expr = HIR.DynValue(span=span, value=value_hir, type_id=ptr_type_id, is_place=False)
@@ -134,7 +134,7 @@ class OpBuilder:
 
     def build_dyn_buffer(self, span: SrcSpan, target_type: ASTType, size: AST.Expr, expected: Optional[int] = None) -> HIR.Expr:
         target_type_id = self.__ctx.resolve_type(target_type)
-        size_hir = self.__expr_checker.value(size, TypeCtx.u64_id)
+        size_hir = self.__evaluator.value(size, TypeCtx.u64_id)
 
         ptr_type_id = self.__type_ctx.alloc_pointer(target_type_id)
         expr = HIR.DynBuffer(span=span, element_type=target_type_id, length=size_hir, type_id=ptr_type_id, is_place=False)

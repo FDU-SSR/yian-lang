@@ -421,6 +421,16 @@ class Arg:
 
 @dataclass
 class Call:
+    """
+    Could be:
+
+    1. intrinsic instructions like `panic("error message")`
+    2. free functions like `foo(1, 2)`
+    3. constructors like `Point(x=1, y=2)`
+    4. function pointers like `let f: fn(i32) -> i32 = ...; f(42)`
+    5. basic types like `i32(42)`, `u32('a')`, etc.
+    """
+
     span: SrcSpan
     callee: Expr
     args: list[Arg]
