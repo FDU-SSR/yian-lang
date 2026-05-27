@@ -72,19 +72,19 @@ class StmtChecker:
         symbol_id = self.__declare_local_symbol(stmt.name, var_type_id, ctx)
 
         if stmt.init_expr is not None:
-            init_expr = self.__expr.value(stmt.init_expr, var_type_id)
+            init_expr = self.__expr.coerce(self.__expr.value(stmt.init_expr), var_type_id)
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
             out.append(self.__expr.assign(stmt.span, var, init_expr))
 
     def check_if(self, stmt: AST.If, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
+        cond_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
         then_block = self.check_block(stmt.then_branch, ctx)
 
         elif_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
         for elif_branch in stmt.elif_branches:
-            elif_cond_expr = self.__expr.value(elif_branch[0], expected=TypeCtx.bool_id)
+            elif_cond_expr = self.__expr.coerce(self.__expr.value(elif_branch[0]), TypeCtx.bool_id)
             elif_block = self.check_block(elif_branch[1], ctx)
             elif_blocks.append((elif_cond_expr, elif_block))
 
@@ -149,7 +149,7 @@ class StmtChecker:
 
         ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.While))
         try:
-            cond_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
+            cond_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
             body_block = self.check_block(stmt.body, ctx)
 
             not_cond_expr = self.__expr.logical_not(cond_expr)
@@ -214,7 +214,7 @@ class StmtChecker:
         if return_type_id == TypeCtx.void_id:
             raise AnalysisError("void function cannot return a value", stmt.expr.span)
 
-        value_expr = self.__expr.value(stmt.expr, expected=return_type_id)
+        value_expr = self.__expr.coerce(self.__expr.value(stmt.expr), return_type_id)
         out.append(HIR.Return(span=stmt.span, value=value_expr))
 
     def check_break(self, stmt: AST.Break, out: List[HIR.Stmt], ctx: SemCtx) -> None:
@@ -241,7 +241,7 @@ class StmtChecker:
     def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        condition_expr = self.__expr.value(stmt.condition, expected=TypeCtx.bool_id)
+        condition_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
 
         if stmt.message is None:
             message_expr = HIR.StrLiteral(
@@ -251,7 +251,7 @@ class StmtChecker:
                 is_place=False,
             )
         else:
-            message_expr = self.__expr.value(stmt.message, expected=TypeCtx.str_id)
+            message_expr = self.__expr.coerce(self.__expr.value(stmt.message), TypeCtx.str_id)
 
         fail_block = build_block(stmt.span, [HIR.Panic(span=stmt.span, message=message_expr)])
         out.append(

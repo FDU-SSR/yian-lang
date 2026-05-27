@@ -42,6 +42,16 @@ class FloatType:
 
 
 @dataclass
+class IntLiteralType:
+    type_id: int
+
+
+@dataclass
+class FloatLiteralType:
+    type_id: int
+
+
+@dataclass
 class GenericType:
     type_id: int
     name: str
@@ -283,6 +293,7 @@ class AliasType:
 BasicType: TypeAlias = (
     VoidType | BoolType | CharType | StrType
     | IntType | FloatType
+    | IntLiteralType | FloatLiteralType
 )
 
 DerivedType: TypeAlias = (

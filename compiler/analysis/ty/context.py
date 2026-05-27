@@ -34,6 +34,9 @@ class TypeCtx:
     f32_id: int = 23
     f64_id: int = 24
 
+    int_literal_id: int = 25
+    float_literal_id: int = 26
+
     # intrinsic trait IDs
     add_id: int = 50
     sub_id: int = 51
@@ -112,6 +115,9 @@ class TypeCtx:
         self.__force_add_type(Type.FloatType(type_id=self.f16_id, size=2))
         self.__force_add_type(Type.FloatType(type_id=self.f32_id, size=4))
         self.__force_add_type(Type.FloatType(type_id=self.f64_id, size=8))
+
+        self.__force_add_type(Type.IntLiteralType(type_id=self.int_literal_id))
+        self.__force_add_type(Type.FloatLiteralType(type_id=self.float_literal_id))
 
     def __add_type(self, ty: Type.Ty) -> int:
         if ty.type_id == -1:
@@ -431,6 +437,10 @@ class TypeCtx:
                 name = f"{prefix}{size * 8}"
             case Type.FloatType(size=size):
                 name = f"f{size * 8}"
+            case Type.IntLiteralType():
+                name = "IntLiteralType"
+            case Type.FloatLiteralType():
+                name = "FloatLiteralType"
             case Type.PointerType(pointee_type=pointee_type):
                 pointee_name = self.get_name(pointee_type)
                 name = f"{pointee_name}*"
