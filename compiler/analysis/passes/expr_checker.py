@@ -7,7 +7,6 @@ from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
-from compiler.config.constants import IntrinsicType
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -111,85 +110,19 @@ class ExprChecker:
                 if literal.suffix is None:
                     type_id = TypeCtx.int_literal_id
                 else:
-                    match IntrinsicType.from_str(literal.suffix):
-                        case IntrinsicType.Void:
-                            type_id = TypeCtx.void_id
-                        case IntrinsicType.Bool:
-                            type_id = TypeCtx.bool_id
-                        case IntrinsicType.Char:
-                            type_id = TypeCtx.char_id
-                        case IntrinsicType.Str:
-                            type_id = TypeCtx.str_id
-                        case IntrinsicType.I8:
-                            type_id = TypeCtx.i8_id
-                        case IntrinsicType.I16:
-                            type_id = TypeCtx.i16_id
-                        case IntrinsicType.I32:
-                            type_id = TypeCtx.i32_id
-                        case IntrinsicType.I64:
-                            type_id = TypeCtx.i64_id
-                        case IntrinsicType.U8:
-                            type_id = TypeCtx.u8_id
-                        case IntrinsicType.U16:
-                            type_id = TypeCtx.u16_id
-                        case IntrinsicType.U32:
-                            type_id = TypeCtx.u32_id
-                        case IntrinsicType.U64:
-                            type_id = TypeCtx.u64_id
-                        case IntrinsicType.F16:
-                            type_id = TypeCtx.f16_id
-                        case IntrinsicType.F32:
-                            type_id = TypeCtx.f32_id
-                        case IntrinsicType.F64:
-                            type_id = TypeCtx.f64_id
-                        case IntrinsicType.Int:
-                            type_id = TypeCtx.i32_id
-                        case IntrinsicType.UInt:
-                            type_id = TypeCtx.u64_id
-                        case IntrinsicType.Float:
-                            type_id = TypeCtx.f64_id
+                    intrinsic_type = Type.IntrinsicType.from_str(literal.suffix)
+                    if intrinsic_type is None:
+                        raise AnalysisError(f"Unknown intrinsic type suffix '{literal.suffix}'", node.span)
+                    type_id = TypeCtx.intrinsic_type(intrinsic_type)
                 return HIR.IntLiteral(span=node.span, value=literal.value, type_id=type_id, is_place=False)
             case Tok.FloatLiteral():
                 if literal.suffix is None:
                     type_id = TypeCtx.float_literal_id
                 else:
-                    match IntrinsicType.from_str(literal.suffix):
-                        case IntrinsicType.Void:
-                            type_id = TypeCtx.void_id
-                        case IntrinsicType.Bool:
-                            type_id = TypeCtx.bool_id
-                        case IntrinsicType.Char:
-                            type_id = TypeCtx.char_id
-                        case IntrinsicType.Str:
-                            type_id = TypeCtx.str_id
-                        case IntrinsicType.I8:
-                            type_id = TypeCtx.i8_id
-                        case IntrinsicType.I16:
-                            type_id = TypeCtx.i16_id
-                        case IntrinsicType.I32:
-                            type_id = TypeCtx.i32_id
-                        case IntrinsicType.I64:
-                            type_id = TypeCtx.i64_id
-                        case IntrinsicType.U8:
-                            type_id = TypeCtx.u8_id
-                        case IntrinsicType.U16:
-                            type_id = TypeCtx.u16_id
-                        case IntrinsicType.U32:
-                            type_id = TypeCtx.u32_id
-                        case IntrinsicType.U64:
-                            type_id = TypeCtx.u64_id
-                        case IntrinsicType.F16:
-                            type_id = TypeCtx.f16_id
-                        case IntrinsicType.F32:
-                            type_id = TypeCtx.f32_id
-                        case IntrinsicType.F64:
-                            type_id = TypeCtx.f64_id
-                        case IntrinsicType.Int:
-                            type_id = TypeCtx.i32_id
-                        case IntrinsicType.UInt:
-                            type_id = TypeCtx.u64_id
-                        case IntrinsicType.Float:
-                            type_id = TypeCtx.f64_id
+                    intrinsic_type = Type.IntrinsicType.from_str(literal.suffix)
+                    if intrinsic_type is None:
+                        raise AnalysisError(f"Unknown intrinsic type suffix '{literal.suffix}'", node.span)
+                    type_id = TypeCtx.intrinsic_type(intrinsic_type)
                 return HIR.FloatLiteral(span=node.span, value=literal.value, type_id=type_id, is_place=False)
             case Tok.CharLiteral():
                 return HIR.CharLiteral(span=node.span, value=literal.value, type_id=TypeCtx.char_id, is_place=False)

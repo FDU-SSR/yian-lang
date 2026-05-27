@@ -333,6 +333,48 @@ class IntrinsicType(Enum):
     UInt = "uint"
     Float = "float"
 
+    @classmethod
+    def from_str(cls, s: str) -> IntrinsicType | None:
+        match s:
+            case "void":
+                return cls.Void
+            case "bool":
+                return cls.Bool
+            case "char":
+                return cls.Char
+            case "str":
+                return cls.Str
+            case "i8":
+                return cls.I8
+            case "i16":
+                return cls.I16
+            case "i32":
+                return cls.I32
+            case "i64":
+                return cls.I64
+            case "u8":
+                return cls.U8
+            case "u16":
+                return cls.U16
+            case "u32":
+                return cls.U32
+            case "u64":
+                return cls.U64
+            case "f16":
+                return cls.F16
+            case "f32":
+                return cls.F32
+            case "f64":
+                return cls.F64
+            case "int":
+                return cls.Int
+            case "uint":
+                return cls.UInt
+            case "float":
+                return cls.Float
+            case _:
+                return None
+
 
 class IntrinsicCustomType(Enum):
     Add = "Add"
