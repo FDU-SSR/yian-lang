@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.call_dispatcher import CallDispatcher
 from compiler.analysis.passes.op_builder import OpBuilder
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
@@ -23,6 +24,7 @@ class ExprChecker:
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
         self.__op_builder = OpBuilder(ctx, self)
+        self.__call_dispatcher = CallDispatcher(ctx, self)
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
@@ -62,10 +64,10 @@ class ExprChecker:
         return self.__op_builder.build_field_access(node.span, node.receiver, node.field_name.name)
 
     def __handle_call(self, node: AST.Call) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__call_dispatcher.handle_call(node)
 
     def __handle_method_call(self, node: AST.MethodCall) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__call_dispatcher.handle_method_call(node)
 
     def __handle_dyn_value(self, node: AST.DynValue) -> HIR.Expr:
         return self.__op_builder.build_dyn_value(node.span, node.value)
