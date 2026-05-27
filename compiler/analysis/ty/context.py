@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.ty.impl import Impl, ImplRegistry
 from compiler.analysis.ty.resolver import TypeResolver
+from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.errors.yian_error import CompilerError
 from compiler.utils.IR.position import SrcSpan
-from compiler.analysis.unit import hir as HIR
 
 
 class TypeCtx:
@@ -622,7 +624,55 @@ class TypeCtx:
         """
         Lookup a method for a given caller type. See details in `manual/impl.md`.
         """
-        raise NotImplementedError("Method lookup is not implemented yet")
+        candidates: list[LookupResult] = []
+
+        for impl in self.__impl_registry.iter_impls():
+            if method_name not in impl.methods:
+                continue
+
+            receiver_inference = GenericInference(self, receiver.span)
+            try:
+                receiver_inference.constrain(impl.target, receiver.type_id)
+                impl_substs = receiver_inference.substitutions()
+            except AnalysisError:
+                continue
+
+            method_id = impl.methods[method_name]
+            instantiated_method_id = self.instantiate(method_id, impl_substs)
+            instantiated_method_ty = self[instantiated_method_id]
+            assert isinstance(instantiated_method_ty, Type.MethodType)
+
+            if generic_args is not None and len(generic_args) > 0:
+                method_generics = instantiated_method_ty.custom_def.generics
+                if len(generic_args) > len(method_generics):
+                    continue
+                explicit_generics = method_generics[len(method_generics) - len(generic_args):]
+                explicit_substs = dict(zip(explicit_generics, generic_args))
+                instantiated_method_id = self.instantiate(instantiated_method_id, explicit_substs)
+                instantiated_method_ty = self[instantiated_method_id]
+                assert isinstance(instantiated_method_ty, Type.MethodType)
+
+            parameters = instantiated_method_ty.parameters(self)
+            if len(parameters) != len(args):
+                continue
+
+            arg_inference = GenericInference(self, receiver.span)
+            try:
+                for param, arg in zip(parameters, args):
+                    arg_inference.constrain(param.type_id, arg.type_id)
+                arg_substs = arg_inference.substitutions()
+            except AnalysisError:
+                continue
+
+            final_substs = impl_substs | arg_substs
+            final_method_id = self.instantiate(instantiated_method_id, final_substs)
+            candidates.append(LookupResult(method_id=final_method_id, deref_count=0, impl=impl))
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+        return None
 
     def iter_item_type(self, iter_type_id: int) -> int:
         """

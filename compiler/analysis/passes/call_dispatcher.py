@@ -5,7 +5,9 @@ from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
+from compiler.analysis.ty.context import LookupResult
 from compiler.frontend.parse import ast as AST
 from compiler.utils.IR.position import SrcSpan
 
@@ -60,11 +62,19 @@ class CallDispatcher:
             raise AnalysisError(f"'{func_name}' is not a function", span)
 
         parameters = func_ty.parameters(self.__ctx.type_ctx)
-        if len(parameters) != len(args):
-            raise AnalysisError(f"function '{func_name}' expects {len(parameters)} arguments, got {len(args)}", span)
+        expected_type_ids = [param.type_id for param in parameters]
+        coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
 
-        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
-        return HIR.Call(span=span, func=func_type_id, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
+        instantiated_func_id = inference.instantiate(func_type_id)
+        instantiated_func_ty = self.__ctx.type_ctx[instantiated_func_id]
+        assert isinstance(instantiated_func_ty, Type.FunctionType)
+        return HIR.Call(
+            span=span,
+            func=instantiated_func_id,
+            args=coerced_args,
+            type_id=instantiated_func_ty.return_type(self.__ctx.type_ctx),
+            is_place=False,
+        )
 
     def __handle_invocation(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):
@@ -98,8 +108,10 @@ class CallDispatcher:
         assert isinstance(struct_ty, Type.StructType)
 
         fields = struct_ty.get_fields(self.__ctx.type_ctx)
-        coerced_fields = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
-        return HIR.StructConstruct(span=span, struct_id=struct_type_id, field_values=coerced_fields, type_id=struct_type_id, is_place=False)
+        coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
+
+        instantiated_struct_id = inference.instantiate(struct_type_id)
+        return HIR.StructConstruct(span=span, struct_id=instantiated_struct_id, field_values=coerced_fields, type_id=instantiated_struct_id, is_place=False)
 
     def __handle_cast(self, span: SrcSpan, target_type_id: int, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):
@@ -123,9 +135,7 @@ class CallDispatcher:
         if lookup is None:
             raise AnalysisError(f"Unknown method '{node.method_name.name}'", node.method_name.span)
 
-        method_type = self.__ctx.type_ctx[lookup.method_id]
-        assert isinstance(method_type, Type.MethodType)
-        return HIR.MethodCall(span=node.span, receiver=receiver, method_id=lookup.method_id, args=args, type_id=method_type.return_type(self.__ctx.type_ctx), is_place=False)
+        return self.__dispatch_method_call(node.span, receiver, lookup, args, "method call")
 
     def __handle_static_or_variant_method_call(self, node: AST.MethodCall, receiver: HIR.Ty) -> HIR.Expr:
         ty = self.__ctx.type_ctx[receiver.type_id]
@@ -145,10 +155,27 @@ class CallDispatcher:
 
         if lookup is None:
             raise AnalysisError(f"Unknown static method '{node.method_name.name}'", node.method_name.span)
+        return self.__dispatch_method_call(node.span, receiver, lookup, args, "static method call")
 
+    def __dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, lookup: LookupResult, args: list[HIR.Expr], context_name: str) -> HIR.MethodCall:
+        """Common method call construction after `method_lookup` succeeded.
+
+        `lookup.method_id` is expected to be an instantiated/concrete method type id.
+        """
         method_type = self.__ctx.type_ctx[lookup.method_id]
         assert isinstance(method_type, Type.MethodType)
-        return HIR.MethodCall(span=node.span, receiver=receiver, method_id=lookup.method_id, args=args, type_id=method_type.return_type(self.__ctx.type_ctx), is_place=False)
+        parameters = method_type.parameters(self.__ctx.type_ctx)
+        expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
+
+        coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
+        return HIR.MethodCall(
+            span=span,
+            receiver=coerced_receiver,
+            method_id=lookup.method_id,
+            args=coerced_args,
+            type_id=inference.instantiate(method_type.return_type(self.__ctx.type_ctx)),
+            is_place=False,
+        )
 
     def __handle_variant_construction(self, span: SrcSpan, enum_type_id: int, variant: Type.EnumVariant, args: list[AST.Arg]) -> HIR.Expr:
         if not args:
@@ -166,7 +193,7 @@ class CallDispatcher:
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
 
-        value = self.__expr.coerce(self.__expr.value(args[0].value), variant.payload_type)
+        value = self.__infer_named_or_positional_values(span, [variant.payload_type], [args[0]], "variant construction")[0]
         return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args={variant.name: value}, type_id=enum_type_id, is_place=False)
 
     def __resolve_positional_args(self, args: list[AST.Arg], context_name: str) -> list[HIR.Expr]:
@@ -174,30 +201,77 @@ class CallDispatcher:
             raise AnalysisError(f"named arguments are not supported for {context_name}", args[0].span)
         return [self.__expr.value(arg.value) for arg in args]
 
-    def __resolve_named_or_positional_struct_args(self, span: SrcSpan, struct_type_id: int, fields: list[Type.StructField], args: list[AST.Arg]) -> dict[str, HIR.Expr]:
+    def __infer_arguments(self, span: SrcSpan, expected_type_ids: list[int], args: list[AST.Arg], context_name: str) -> tuple[list[HIR.Expr], GenericInference]:
+        if len(expected_type_ids) != len(args):
+            raise AnalysisError(f"{context_name} expects {len(expected_type_ids)} arguments, got {len(args)}", span)
+
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        values = [self.__expr.value(arg.value) for arg in args]
+        for expected_type_id, value in zip(expected_type_ids, values):
+            inference.constrain(expected_type_id, value.type_id)
+
+        coerced_args = [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids, values)]
+        return coerced_args, inference
+
+    def __infer_receiver_and_args(self, span: SrcSpan, receiver: HIR.Expr, expected_type_ids: list[int], args: list[HIR.Expr], context_name: str) -> tuple[HIR.Expr, list[HIR.Expr], GenericInference]:
+        if len(expected_type_ids) != len(args) + 1:
+            raise AnalysisError(f"{context_name} expects {len(expected_type_ids) - 1} arguments, got {len(args)}", span)
+
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        inference.constrain(expected_type_ids[0], receiver.type_id)
+        for expected_type_id, value in zip(expected_type_ids[1:], args):
+            inference.constrain(expected_type_id, value.type_id)
+
+        coerced_receiver = self.__expr.coerce(receiver, inference.instantiate(expected_type_ids[0]))
+        coerced_args = [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids[1:], args)]
+        return coerced_receiver, coerced_args, inference
+
+    def __infer_named_or_positional_values(self, span: SrcSpan, expected_type_ids: list[int], args: list[AST.Arg], context_name: str) -> list[HIR.Expr]:
+        if len(expected_type_ids) != len(args):
+            raise AnalysisError(f"{context_name} expects {len(expected_type_ids)} arguments, got {len(args)}", span)
+
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        values = [self.__expr.value(arg.value) for arg in args]
+        for expected_type_id, value in zip(expected_type_ids, values):
+            inference.constrain(expected_type_id, value.type_id)
+
+        return [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids, values)]
+
+    def __resolve_named_or_positional_struct_args(self, span: SrcSpan, struct_type_id: int, fields: list[Type.StructField], args: list[AST.Arg]) -> tuple[dict[str, HIR.Expr], GenericInference]:
         if not args:
-            return {}
+            inference = GenericInference(self.__ctx.type_ctx, span)
+            return {}, inference
 
         if self.__has_named_arg(args):
             if any(arg.name is None for arg in args):
                 raise AnalysisError("named and positional arguments cannot be mixed", span)
 
             field_by_name = {field.name: field for field in fields}
-            resolved: dict[str, HIR.Expr] = {}
+            resolved_values: dict[str, HIR.Expr] = {}
             for arg in args:
                 assert arg.name is not None
                 field = field_by_name.get(arg.name.name)
                 if field is None:
                     raise AnalysisError(f"unknown field '{arg.name.name}' in struct constructor", arg.name.span)
-                if field.name in resolved:
+                if field.name in resolved_values:
                     raise AnalysisError(f"duplicate field '{field.name}' in struct constructor", arg.name.span)
-                resolved[field.name] = self.__expr.coerce(self.__expr.value(arg.value), field.type_id)
+                resolved_values[field.name] = self.__expr.value(arg.value)
 
-            if len(resolved) != len(fields):
-                missing = [field.name for field in fields if field.name not in resolved]
+            if len(resolved_values) != len(fields):
+                missing = [field.name for field in fields if field.name not in resolved_values]
                 if missing:
                     raise AnalysisError(f"missing struct fields: {', '.join(missing)}", span)
-            return resolved
+            inference = GenericInference(self.__ctx.type_ctx, span)
+            for field in fields:
+                inference.constrain(field.type_id, resolved_values[field.name].type_id)
+
+            return (
+                {
+                    field.name: self.__expr.coerce(resolved_values[field.name], inference.instantiate(field.type_id))
+                    for field in fields
+                },
+                inference,
+            )
 
         if len(args) != len(fields):
             raise AnalysisError(
@@ -205,10 +279,18 @@ class CallDispatcher:
                 span,
             )
 
-        return {
-            field.name: self.__expr.coerce(self.__expr.value(arg.value), field.type_id)
-            for field, arg in zip(fields, args)
-        }
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        values = [self.__expr.value(arg.value) for arg in args]
+        for field, value in zip(fields, values):
+            inference.constrain(field.type_id, value.type_id)
+
+        return (
+            {
+                field.name: self.__expr.coerce(value, inference.instantiate(field.type_id))
+                for field, value in zip(fields, values)
+            },
+            inference,
+        )
 
     def __resolve_named_variant_args(self, span: SrcSpan, variant: Type.EnumVariant, args: list[AST.Arg]) -> dict[str, HIR.Expr]:
         if any(arg.name is None for arg in args):
@@ -218,7 +300,11 @@ class CallDispatcher:
 
         arg = args[0]
         assert arg.name is not None
-        return {arg.name.name: self.__expr.value(arg.value)}
+        if variant.payload_type is None:
+            raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
+
+        value = self.__infer_named_or_positional_values(span, [variant.payload_type], [arg], "variant construction")[0]
+        return {arg.name.name: value}
 
     def __has_named_arg(self, args: list[AST.Arg]) -> bool:
         return any(arg.name is not None for arg in args)

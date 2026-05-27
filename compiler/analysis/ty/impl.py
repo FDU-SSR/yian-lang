@@ -41,6 +41,9 @@ class ImplRegistry:
 
         self.__cache_impls()
 
+    def iter_impls(self) -> list[Impl]:
+        return list(self.__impls)
+
     def __check_impl(self, impl: Impl) -> None:
         """
         Check if the given impl has implemented all required methods and that the signatures match.
