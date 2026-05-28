@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-from compiler.analysis.ty.context import TypeCtx
 from compiler.config.constants import AccessMode
+
+if TYPE_CHECKING:
+    from compiler.analysis.ty.context import TypeCtx
 
 
 @dataclass

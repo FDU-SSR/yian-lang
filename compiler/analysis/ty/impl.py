@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
 from compiler.utils.IR.position import SrcSpan
+
+if TYPE_CHECKING:
+    from compiler.analysis.ty.context import TypeCtx
 
 
 @dataclass

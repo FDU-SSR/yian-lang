@@ -1,9 +1,15 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.symbol.symbol import SymbolKind
-from compiler.analysis.ty.context import TypeCtx
-from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse import ast_type as ASTTy
+from compiler.frontend.parse.ast_type import ASTType
+
+if TYPE_CHECKING:
+    from compiler.analysis.ty.context import TypeCtx
 
 
 class TypeResolver:
@@ -11,20 +17,20 @@ class TypeResolver:
         self.__ctx = type_ctx
 
     INT_MAPPING = {
-        (True, 1): TypeCtx.i8_id,
-        (True, 2): TypeCtx.i16_id,
-        (True, 4): TypeCtx.i32_id,
-        (True, 8): TypeCtx.i64_id,
-        (False, 1): TypeCtx.u8_id,
-        (False, 2): TypeCtx.u16_id,
-        (False, 4): TypeCtx.u32_id,
-        (False, 8): TypeCtx.u64_id,
+        (True, 1): 14,
+        (True, 2): 15,
+        (True, 4): 16,
+        (True, 8): 17,
+        (False, 1): 18,
+        (False, 2): 19,
+        (False, 4): 20,
+        (False, 8): 21,
     }
 
     FLOAT_MAPPING = {
-        2: TypeCtx.f16_id,
-        4: TypeCtx.f32_id,
-        8: TypeCtx.f64_id,
+        2: 22,
+        4: 23,
+        8: 24,
     }
 
     def resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:

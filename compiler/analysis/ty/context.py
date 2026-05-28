@@ -9,8 +9,8 @@ from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.ty.impl import Impl, ImplRegistry
 from compiler.analysis.ty.name import TypeFormatter
-from compiler.analysis.ty.space import TypeSpace
 from compiler.analysis.ty.resolver import TypeResolver
+from compiler.analysis.ty.space import TypeSpace
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
@@ -205,12 +205,6 @@ class TypeCtx:
     def contains_generic(self, type_id: int) -> bool:
         return type_ops.contains_generic(self, type_id)
 
-    def is_int_literal_type(self, type_id: int) -> bool:
-        return type_ops.is_int_literal_type(self, type_id)
-
-    def is_float_literal_type(self, type_id: int) -> bool:
-        return type_ops.is_float_literal_type(self, type_id)
-
     def merge_types(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
         return type_ops.merge_types(self, left_type_id, right_type_id, span)
 
@@ -392,7 +386,23 @@ class TypeCtx:
 
         This is used for desugaring for loops, where we need to know the item type of the iterator to type check the loop variable.
         """
-        raise NotImplementedError("Iterator item type lookup is not implemented yet")
+        receiver = HIR.Ty(span=SrcSpan.empty(), type_id=iter_type_id, is_place=False)
+        lookup = self.method_lookup(receiver, "next", None, [])
+        if lookup is None:
+            raise CompilerError(f"Type '{self.get_name(iter_type_id)}' does not provide a next() method")
+
+        method_ty = self[lookup.method_id]
+        if not isinstance(method_ty, Type.MethodType):
+            raise CompilerError(f"Method lookup for type '{self.get_name(iter_type_id)}' did not resolve to a method type")
+
+        return_type_id = method_ty.return_type(self)
+        return_ty = self[return_type_id]
+        if isinstance(return_ty, Type.EnumType) and return_ty.custom_def.name == "Option" and len(return_ty.generic_args) == 1:
+            return return_ty.generic_args[0]
+
+        raise CompilerError(
+            f"Iterator next() for type '{self.get_name(iter_type_id)}' must return Option<T>, got '{self.get_name(return_type_id)}'"
+        )
 
 
 @dataclass

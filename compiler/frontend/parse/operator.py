@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind
-from compiler.frontend.parse.stream import TokenStream
+
+if TYPE_CHECKING:
+    from compiler.frontend.parse.stream import TokenStream
 
 
 class BinaryOperator(Enum):
