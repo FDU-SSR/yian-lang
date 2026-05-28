@@ -4,9 +4,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.unit import hir as HIR
 from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
@@ -15,12 +13,30 @@ if TYPE_CHECKING:
 
 class GenericInference:
     def __init__(self, type_ctx: TypeCtx, span: SrcSpan):
+        """Create a new generic-inference session.
+
+        Args:
+            type_ctx: The type context used to resolve, allocate, and name types.
+            span: The source span used for diagnostics emitted by this session.
+        """
         self.__type_ctx = type_ctx
         self.__span = span
         self.__bindings: dict[int, list[int]] = defaultdict(list)  # generic type id -> list of candidate type ids
         self.__solved_substs: dict[int, int] | None = None
 
     def constrain(self, expected_type_id: int, actual_type_id: int) -> None:
+        """Add a new inference constraint.
+
+        The expected type is treated as a pattern. If it contains generic
+        parameters, the corresponding parts of the actual type are recorded as
+        candidate bindings. If it is already concrete, the method validates
+        structural compatibility and raises `AnalysisError` when the types do
+        not match.
+
+        Args:
+            expected_type_id: The type shape we want the actual type to satisfy.
+            actual_type_id: The concrete type observed at the call site.
+        """
         expected_ty = self.__type_ctx[expected_type_id]
 
         if isinstance(expected_ty, Type.GenericType):
@@ -59,13 +75,14 @@ class GenericInference:
             return
 
         if isinstance(expected_ty, Type.CustomType) and isinstance(actual_ty, Type.CustomType):
-            if type(expected_ty) is not type(actual_ty) or id(expected_ty.custom_def) != id(actual_ty.custom_def):
+            if id(expected_ty.custom_def) != id(actual_ty.custom_def):
                 raise AnalysisError(
                     f"cannot infer generic arguments from '{self.__type_ctx.get_name(actual_type_id)}' to '{self.__type_ctx.get_name(expected_type_id)}'",
                     self.__span,
                 )
 
             if len(expected_ty.generic_args) != len(actual_ty.generic_args):
+                # TODO: this check is redundant because expected_ty.custom_def == actual_ty.custom_def
                 raise AnalysisError(
                     f"generic argument count mismatch between '{self.__type_ctx.get_name(expected_type_id)}' and '{self.__type_ctx.get_name(actual_type_id)}'",
                     self.__span,
@@ -75,7 +92,7 @@ class GenericInference:
                 self.constrain(expected_arg, actual_arg)
             return
 
-        if self.__is_literal_type(actual_type_id):
+        if self.__type_ctx.is_literal_type(actual_type_id):
             return
 
         if expected_type_id != actual_type_id:
@@ -84,26 +101,30 @@ class GenericInference:
                 self.__span,
             )
 
-    def infer_arguments(self, expected_type_ids: list[int], args: list[HIR.Expr], expr_evaluator: ExprEvaluator) -> list[HIR.Expr]:
-        if len(expected_type_ids) != len(args):
-            raise AnalysisError(
-                f"generic inference expects {len(expected_type_ids)} arguments, got {len(args)}",
-                self.__span,
-            )
-
-        for expected_type_id, arg in zip(expected_type_ids, args):
-            self.constrain(expected_type_id, arg.type_id)
-
-        return [expr_evaluator.coerce(arg, self.instantiate(expected_type_id)) for expected_type_id, arg in zip(expected_type_ids, args)]
-
     def instantiate(self, type_id: int) -> int:
+        """Instantiate a type with the solved substitutions.
+
+        This resolves all collected bindings first, substitutes every generic
+        parameter in `type_id`, and then applies default concrete types for any
+        remaining literal types. The result must not contain unresolved generic
+        parameters; otherwise inference is considered incomplete.
+
+        Args:
+            type_id: The type to instantiate after inference completes.
+
+        Returns:
+            A fully instantiated type ID.
+
+        Raises:
+            AnalysisError: If inference remains incomplete after substitution.
+        """
         self.__solve()
         assert self.__solved_substs is not None
 
         instantiated_type_id = self.__type_ctx.instantiate(type_id, self.__solved_substs)
-        instantiated_type_id = self.__default_literals(instantiated_type_id)
+        instantiated_type_id = self.__type_ctx.default_literals(instantiated_type_id)
 
-        if self.__contains_generic(instantiated_type_id, set()):
+        if self.__type_ctx.contains_generic(instantiated_type_id):
             raise AnalysisError(
                 f"cannot infer generic type '{self.__type_ctx.get_name(type_id)}' from the call arguments",
                 self.__span,
@@ -112,11 +133,23 @@ class GenericInference:
         return instantiated_type_id
 
     def substitutions(self) -> dict[int, int]:
+        """Return the solved generic substitutions.
+
+        The returned dictionary maps generic type IDs to the concrete type IDs
+        inferred for them. A copy is returned so callers cannot mutate the
+        cached solution stored inside the inference session.
+        """
         self.__solve()
         assert self.__solved_substs is not None
         return dict(self.__solved_substs)
 
     def __solve(self) -> None:
+        """Solve all generic bindings once and cache the result.
+
+        Binding resolution is performed in deterministic order by generic ID.
+        Each binding is resolved recursively, merged across candidates, and then
+        normalized with default literal handling before being cached.
+        """
         if self.__solved_substs is not None:
             return
 
@@ -125,9 +158,26 @@ class GenericInference:
             self.__solved_substs[generic_id] = self.__resolve_binding(generic_id, set())
 
         for generic_id, type_id in list(self.__solved_substs.items()):
-            self.__solved_substs[generic_id] = self.__default_literals(self.__type_ctx.instantiate(type_id, self.__solved_substs))
+            self.__solved_substs[generic_id] = self.__type_ctx.default_literals(self.__type_ctx.instantiate(type_id, self.__solved_substs))
 
     def __resolve_binding(self, generic_id: int, resolving: set[int]) -> int:
+        """Resolve one generic parameter into a concrete candidate type.
+
+        A binding may have several candidate types. They are resolved one by one
+        and merged into a single compatible type. The `resolving` set is used to
+        detect cycles when a generic references itself through other bindings.
+
+        Args:
+            generic_id: The generic type ID being resolved.
+            resolving: The current recursion stack of generic IDs.
+
+        Returns:
+            The resolved type ID for the generic parameter.
+
+        Raises:
+            AnalysisError: If no candidate exists, merging fails, or a cycle is
+            detected.
+        """
         if self.__solved_substs is not None and generic_id in self.__solved_substs:
             return self.__solved_substs[generic_id]
 
@@ -138,7 +188,7 @@ class GenericInference:
             )
 
         resolving.add(generic_id)
-        candidates = self.__bindings.get(generic_id, [])
+        candidates = self.__bindings[generic_id]
         if not candidates:
             raise AnalysisError(
                 f"cannot infer generic parameter '{self.__type_ctx.get_name(generic_id)}'",
@@ -151,12 +201,12 @@ class GenericInference:
             if merged_type_id is None:
                 merged_type_id = resolved_candidate
             else:
-                merged_type_id = self.__merge_types(merged_type_id, resolved_candidate)
+                merged_type_id = self.__type_ctx.merge_types(merged_type_id, resolved_candidate, self.__span)
 
         assert merged_type_id is not None
-        merged_type_id = self.__default_literals(merged_type_id)
+        merged_type_id = self.__type_ctx.default_literals(merged_type_id)
 
-        if self.__contains_generic(merged_type_id, set()):
+        if self.__type_ctx.contains_generic(merged_type_id):
             raise AnalysisError(
                 f"cannot infer generic parameter '{self.__type_ctx.get_name(generic_id)}'",
                 self.__span,
@@ -168,6 +218,12 @@ class GenericInference:
         return merged_type_id
 
     def __resolve_type(self, type_id: int, resolving: set[int]) -> int:
+        """Recursively replace any nested generic bindings inside a type.
+
+        Composite types are rebuilt from their resolved children so the final
+        merged candidate uses the most specific fully-resolved shape available.
+        Unbound generics are preserved as-is.
+        """
         ty = self.__type_ctx[type_id]
 
         match ty:
@@ -214,185 +270,3 @@ class GenericInference:
                 return self.__type_ctx.alloc_instance(type_id, [self.__resolve_type(arg_type, resolving) for arg_type in generic_args])
             case _:
                 return type_id
-
-    def __merge_types(self, left_type_id: int, right_type_id: int) -> int:
-        if left_type_id == right_type_id:
-            return left_type_id
-
-        left_ty = self.__type_ctx[left_type_id]
-        right_ty = self.__type_ctx[right_type_id]
-
-        if isinstance(left_ty, Type.GenericType):
-            return right_type_id
-        if isinstance(right_ty, Type.GenericType):
-            return left_type_id
-
-        if self.__is_int_literal_type(left_ty):
-            return self.__merge_int_literal(left_type_id, right_type_id)
-        if self.__is_float_literal_type(left_ty):
-            return self.__merge_float_literal(left_type_id, right_type_id)
-        if self.__is_int_literal_type(right_ty):
-            return self.__merge_int_literal(right_type_id, left_type_id)
-        if self.__is_float_literal_type(right_ty):
-            return self.__merge_float_literal(right_type_id, left_type_id)
-
-        if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
-            return self.__type_ctx.alloc_pointer(self.__merge_types(left_ty.pointee_type, right_ty.pointee_type))
-
-        if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
-            return self.__type_ctx.alloc_slice(self.__merge_types(left_ty.element_type, right_ty.element_type))
-
-        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-            if left_ty.length != right_ty.length:
-                raise AnalysisError(
-                    f"array lengths do not match: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-                    self.__span,
-                )
-            return self.__type_ctx.alloc_array(self.__merge_types(left_ty.element_type, right_ty.element_type), left_ty.length)
-
-        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
-            if len(left_ty.element_types) != len(right_ty.element_types):
-                raise AnalysisError(
-                    f"tuple element counts do not match: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-                    self.__span,
-                )
-            return self.__type_ctx.alloc_tuple([
-                self.__merge_types(left_element_type, right_element_type)
-                for left_element_type, right_element_type in zip(left_ty.element_types, right_ty.element_types)
-            ])
-
-        if isinstance(left_ty, Type.FunctionPointerType) and isinstance(right_ty, Type.FunctionPointerType):
-            if len(left_ty.parameter_types) != len(right_ty.parameter_types):
-                raise AnalysisError(
-                    f"function pointer parameter counts do not match: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-                    self.__span,
-                )
-            return self.__type_ctx.alloc_function_pointer(
-                [self.__merge_types(left_param_type, right_param_type) for left_param_type, right_param_type in zip(left_ty.parameter_types, right_ty.parameter_types)],
-                self.__merge_types(left_ty.return_type, right_ty.return_type),
-            )
-
-        if isinstance(left_ty, Type.CustomType) and isinstance(right_ty, Type.CustomType):
-            if type(left_ty) is not type(right_ty) or id(left_ty.custom_def) != id(right_ty.custom_def):
-                raise AnalysisError(
-                    f"incompatible types: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-                    self.__span,
-                )
-            if len(left_ty.generic_args) != len(right_ty.generic_args):
-                raise AnalysisError(
-                    f"generic argument count mismatch: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-                    self.__span,
-                )
-            return self.__type_ctx.alloc_instance(left_type_id, [
-                self.__merge_types(left_arg, right_arg)
-                for left_arg, right_arg in zip(left_ty.generic_args, right_ty.generic_args)
-            ])
-
-        raise AnalysisError(
-            f"incompatible types: {self.__type_ctx.get_name(left_type_id)} vs {self.__type_ctx.get_name(right_type_id)}",
-            self.__span,
-        )
-
-    def __merge_int_literal(self, literal_type_id: int, other_type_id: int) -> int:
-        other_ty = self.__type_ctx[other_type_id]
-        if isinstance(other_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
-            return other_type_id
-        raise AnalysisError(
-            f"cannot merge integer literal with '{self.__type_ctx.get_name(other_type_id)}'",
-            self.__span,
-        )
-
-    def __merge_float_literal(self, literal_type_id: int, other_type_id: int) -> int:
-        other_ty = self.__type_ctx[other_type_id]
-        if isinstance(other_ty, (Type.FloatType, Type.FloatLiteralType)):
-            return other_type_id
-        if isinstance(other_ty, Type.IntLiteralType):
-            return literal_type_id
-        raise AnalysisError(
-            f"cannot merge float literal with '{self.__type_ctx.get_name(other_type_id)}'",
-            self.__span,
-        )
-
-    def __default_literals(self, type_id: int) -> int:
-        ty = self.__type_ctx[type_id]
-
-        match ty:
-            case Type.IntLiteralType():
-                return self.__type_ctx.i32_id
-            case Type.FloatLiteralType():
-                return self.__type_ctx.f64_id
-            case Type.PointerType(pointee_type=pointee_type):
-                return self.__type_ctx.alloc_pointer(self.__default_literals(pointee_type))
-            case Type.SliceType(element_type=element_type):
-                return self.__type_ctx.alloc_slice(self.__default_literals(element_type))
-            case Type.ArrayType(element_type=element_type, length=length):
-                return self.__type_ctx.alloc_array(self.__default_literals(element_type), length)
-            case Type.TupleType(element_types=element_types):
-                return self.__type_ctx.alloc_tuple([self.__default_literals(element_type) for element_type in element_types])
-            case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
-                return self.__type_ctx.alloc_function_pointer(
-                    [self.__default_literals(parameter_type) for parameter_type in parameter_types],
-                    self.__default_literals(return_type),
-                )
-            case Type.StructType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case Type.EnumType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case Type.TraitType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case Type.MethodType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case Type.FunctionType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case Type.AliasType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__default_literals(arg_type) for arg_type in generic_args])
-            case _:
-                return type_id
-
-    def __contains_generic(self, type_id: int, visiting: set[int]) -> bool:
-        if type_id in visiting:
-            return False
-        visiting.add(type_id)
-
-        ty = self.__type_ctx[type_id]
-        match ty:
-            case Type.GenericType():
-                return True
-            case Type.PointerType(pointee_type=pointee_type):
-                return self.__contains_generic(pointee_type, visiting)
-            case Type.SliceType(element_type=element_type):
-                return self.__contains_generic(element_type, visiting)
-            case Type.ArrayType(element_type=element_type, length=_):
-                return self.__contains_generic(element_type, visiting)
-            case Type.TupleType(element_types=element_types):
-                return any(self.__contains_generic(element_type, visiting) for element_type in element_types)
-            case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
-                return any(self.__contains_generic(parameter_type, visiting) for parameter_type in parameter_types) or self.__contains_generic(return_type, visiting)
-            case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
-                if len(ty.custom_def.generics) > 0 and len(generic_args) == 0:
-                    return True
-                return any(self.__contains_generic(arg_type, visiting) for arg_type in generic_args)
-            case _:
-                return False
-
-    def __is_literal_type(self, type_id: int) -> bool:
-        ty = self.__type_ctx[type_id]
-        return self.__is_int_literal_type(ty) or self.__is_float_literal_type(ty)
-
-    def __is_int_literal_type(self, ty: Type.Ty) -> bool:
-        return isinstance(ty, Type.IntLiteralType)
-
-    def __is_float_literal_type(self, ty: Type.Ty) -> bool:
-        return isinstance(ty, Type.FloatLiteralType)

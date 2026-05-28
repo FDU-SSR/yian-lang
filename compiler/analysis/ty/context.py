@@ -517,16 +517,16 @@ class TypeCtx:
                 raise AnalysisError(f"{context_name} must have a compatible type, got [{element_names}]", span)
             return first_type_id
 
-        return self.common_literal_type(type_ids, span)
+        return self.__common_literal_type(type_ids, span)
 
-    def common_literal_type(self, type_ids: list[int], span: SrcSpan) -> int:
+    def __common_literal_type(self, type_ids: list[int], span: SrcSpan) -> int:
         """Fold a list of literal type IDs into the most specific common type."""
         result_type_id = type_ids[0]
         for next_type_id in type_ids[1:]:
-            result_type_id = self.gcd_literal_type(result_type_id, next_type_id, span)
+            result_type_id = self.__gcd_literal_type(result_type_id, next_type_id, span)
         return result_type_id
 
-    def gcd_literal_type(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
+    def __gcd_literal_type(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
         """Compute the greatest common literal type for two type IDs.
 
         This supports nested array and tuple literals so compound literals can
@@ -552,7 +552,7 @@ class TypeCtx:
                 left_name = self.get_name(left_type_id)
                 right_name = self.get_name(right_type_id)
                 raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-            element_type_id = self.gcd_literal_type(left_ty.element_type, right_ty.element_type, span)
+            element_type_id = self.__gcd_literal_type(left_ty.element_type, right_ty.element_type, span)
             return self.alloc_array(element_type_id, left_ty.length)
 
         if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
@@ -561,7 +561,7 @@ class TypeCtx:
                 right_name = self.get_name(right_type_id)
                 raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
             element_types = [
-                self.gcd_literal_type(left_elem, right_elem, span)
+                self.__gcd_literal_type(left_elem, right_elem, span)
                 for left_elem, right_elem in zip(left_ty.element_types, right_ty.element_types)
             ]
             return self.alloc_tuple(element_types)
@@ -581,6 +581,202 @@ class TypeCtx:
                 return all(self.is_literal_type(element_type) for element_type in element_types)
             case _:
                 return False
+
+    def default_literals(self, type_id: int) -> int:
+        """Replace unresolved literal types with their default concrete types.
+
+        Integer literals default to `i32`, float literals default to `f64`.
+        Compound types are rebuilt recursively so the whole type becomes fully concrete.
+        """
+        ty = self[type_id]
+
+        match ty:
+            case Type.IntLiteralType():
+                return self.i32_id
+            case Type.FloatLiteralType():
+                return self.f64_id
+            case Type.PointerType(pointee_type=pointee_type):
+                return self.alloc_pointer(self.default_literals(pointee_type))
+            case Type.SliceType(element_type=element_type):
+                return self.alloc_slice(self.default_literals(element_type))
+            case Type.ArrayType(element_type=element_type, length=length):
+                return self.alloc_array(self.default_literals(element_type), length)
+            case Type.TupleType(element_types=element_types):
+                return self.alloc_tuple([self.default_literals(element_type) for element_type in element_types])
+            case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
+                return self.alloc_function_pointer(
+                    [self.default_literals(parameter_type) for parameter_type in parameter_types],
+                    self.default_literals(return_type),
+                )
+            case Type.StructType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case Type.EnumType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case Type.TraitType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case Type.MethodType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case Type.FunctionType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case Type.AliasType(generic_args=generic_args):
+                if len(generic_args) == 0:
+                    return type_id
+                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
+            case _:
+                return type_id
+
+    def contains_generic(self, type_id: int) -> bool:
+        """Return whether the given `type_id` contains any unresolved generic parameter."""
+        visiting: set[int] = set()
+
+        def _contains(tid: int) -> bool:
+            if tid in visiting:
+                return False
+            visiting.add(tid)
+            ty = self[tid]
+            match ty:
+                case Type.GenericType():
+                    return True
+                case Type.PointerType(pointee_type=pointee_type):
+                    return _contains(pointee_type)
+                case Type.SliceType(element_type=element_type):
+                    return _contains(element_type)
+                case Type.ArrayType(element_type=element_type, length=_):
+                    return _contains(element_type)
+                case Type.TupleType(element_types=element_types):
+                    return any(_contains(element_type) for element_type in element_types)
+                case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
+                    return any(_contains(parameter_type) for parameter_type in parameter_types) or _contains(return_type)
+                case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
+                    if len(ty.custom_def.generics) > 0 and len(generic_args) == 0:
+                        return True
+                    return any(_contains(arg_type) for arg_type in generic_args)
+                case _:
+                    return False
+
+        return _contains(type_id)
+
+    def is_int_literal_type(self, type_id: int) -> bool:
+        ty = self[type_id]
+        return isinstance(ty, Type.IntLiteralType)
+
+    def is_float_literal_type(self, type_id: int) -> bool:
+        ty = self[type_id]
+        return isinstance(ty, Type.FloatLiteralType)
+
+    def merge_types(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
+        """Merge two candidate types into one compatible result.
+
+        Raises `AnalysisError` on incompatibility. This mirrors the former
+        `GenericInference.__merge_types` logic but lives in the type context so
+        other components can reuse it.
+        """
+        if left_type_id == right_type_id:
+            return left_type_id
+
+        left_ty = self[left_type_id]
+        right_ty = self[right_type_id]
+
+        if isinstance(left_ty, Type.GenericType):
+            return right_type_id
+        if isinstance(right_ty, Type.GenericType):
+            return left_type_id
+
+        if self.is_int_literal_type(left_type_id):
+            return self.__merge_int_literal(left_type_id, right_type_id, span)
+        if self.is_float_literal_type(left_type_id):
+            return self.__merge_float_literal(left_type_id, right_type_id, span)
+        if self.is_int_literal_type(right_type_id):
+            return self.__merge_int_literal(right_type_id, left_type_id, span)
+        if self.is_float_literal_type(right_type_id):
+            return self.__merge_float_literal(right_type_id, left_type_id, span)
+
+        if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
+            return self.alloc_pointer(self.merge_types(left_ty.pointee_type, right_ty.pointee_type, span))
+
+        if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
+            return self.alloc_slice(self.merge_types(left_ty.element_type, right_ty.element_type, span))
+
+        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
+            if left_ty.length != right_ty.length:
+                raise AnalysisError(
+                    f"array lengths do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+                    span,
+                )
+            return self.alloc_array(self.merge_types(left_ty.element_type, right_ty.element_type, span), left_ty.length)
+
+        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
+            if len(left_ty.element_types) != len(right_ty.element_types):
+                raise AnalysisError(
+                    f"tuple element counts do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+                    span,
+                )
+            return self.alloc_tuple([
+                self.merge_types(left_element_type, right_element_type, span)
+                for left_element_type, right_element_type in zip(left_ty.element_types, right_ty.element_types)
+            ])
+
+        if isinstance(left_ty, Type.FunctionPointerType) and isinstance(right_ty, Type.FunctionPointerType):
+            if len(left_ty.parameter_types) != len(right_ty.parameter_types):
+                raise AnalysisError(
+                    f"function pointer parameter counts do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+                    span,
+                )
+            return self.alloc_function_pointer(
+                [self.merge_types(left_param_type, right_param_type, span) for left_param_type, right_param_type in zip(left_ty.parameter_types, right_ty.parameter_types)],
+                self.merge_types(left_ty.return_type, right_ty.return_type, span),
+            )
+
+        if isinstance(left_ty, Type.CustomType) and isinstance(right_ty, Type.CustomType):
+            if type(left_ty) is not type(right_ty) or id(left_ty.custom_def) != id(right_ty.custom_def):
+                raise AnalysisError(
+                    f"incompatible types: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+                    span,
+                )
+            if len(left_ty.generic_args) != len(right_ty.generic_args):
+                raise AnalysisError(
+                    f"generic argument count mismatch: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+                    span,
+                )
+            return self.alloc_instance(left_type_id, [
+                self.merge_types(left_arg, right_arg, span)
+                for left_arg, right_arg in zip(left_ty.generic_args, right_ty.generic_args)
+            ])
+
+        raise AnalysisError(
+            f"incompatible types: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
+            span,
+        )
+
+    def __merge_int_literal(self, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
+        other_ty = self[other_type_id]
+        if isinstance(other_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
+            return other_type_id
+        raise AnalysisError(
+            f"cannot merge integer literal with '{self.get_name(other_type_id)}'",
+            span,
+        )
+
+    def __merge_float_literal(self, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
+        other_ty = self[other_type_id]
+        if isinstance(other_ty, (Type.FloatType, Type.FloatLiteralType)):
+            return other_type_id
+        if isinstance(other_ty, Type.IntLiteralType):
+            return literal_type_id
+        raise AnalysisError(
+            f"cannot merge float literal with '{self.get_name(other_type_id)}'",
+            span,
+        )
 
     def finalize(self) -> None:
         """
