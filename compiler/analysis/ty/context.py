@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.ty.impl import Impl, ImplRegistry
+from compiler.analysis.ty.name import TypeFormatter
+from compiler.analysis.ty.space import TypeSpace
 from compiler.analysis.ty.resolver import TypeResolver
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
@@ -68,73 +71,14 @@ class TypeCtx:
     Result_id: int = 102
 
     def __init__(self):
-        self.__space: dict[int, Type.Ty] = {}
-
-        self.__next_id = 500
-
-        self.__add_intrinsic_types()
-
-        # === caches to avoid duplicate allocations ===
-        self.__pointer_cache: dict[int, int] = {}  # pointee type id -> pointer type id
-        self.__slice_cache: dict[int, int] = {}  # element type id -> slice type id
-        self.__array_cache: dict[tuple[int, int], int] = {}  # (element type id, length) -> array type id
-        self.__tuple_cache: dict[tuple[int, ...], int] = {}  # element type ids -> tuple type id
-        self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}  # ((param type ids), return type id) -> function pointer type id
-        # =============================================
-
-        # === cache from template to instance ===
-        self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}  # (def id, generic arg type ids) -> instance type id
-        # =======================================
-
-        self.__name_cache: dict[int, str] = {}  # type id -> type name (for debugging and error messages)
+        self.__space = TypeSpace(self)
+        self.__formatter = TypeFormatter(self)
 
         self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
         self.__procedures: dict[int, tuple[AST.Block, int]] = {}  # procedure_id -> procedure block
 
-    def __force_add_type(self, ty: Type.Ty) -> None:
-        """
-        Assumes the type ID is already set in the type object and does not check for duplicates.
-        """
-        self.__space[ty.type_id] = ty
-
-    def __add_intrinsic_types(self) -> None:
-        self.__force_add_type(Type.VoidType(type_id=self.void_id))
-        self.__force_add_type(Type.BoolType(type_id=self.bool_id))
-        self.__force_add_type(Type.CharType(type_id=self.char_id))
-        self.__force_add_type(Type.StrType(type_id=self.str_id))
-
-        self.__force_add_type(Type.IntType(type_id=self.i8_id, size=1, signed=True))
-        self.__force_add_type(Type.IntType(type_id=self.i16_id, size=2, signed=True))
-        self.__force_add_type(Type.IntType(type_id=self.i32_id, size=4, signed=True))
-        self.__force_add_type(Type.IntType(type_id=self.i64_id, size=8, signed=True))
-
-        self.__force_add_type(Type.IntType(type_id=self.u8_id, size=1, signed=False))
-        self.__force_add_type(Type.IntType(type_id=self.u16_id, size=2, signed=False))
-        self.__force_add_type(Type.IntType(type_id=self.u32_id, size=4, signed=False))
-        self.__force_add_type(Type.IntType(type_id=self.u64_id, size=8, signed=False))
-
-        self.__force_add_type(Type.FloatType(type_id=self.f16_id, size=2))
-        self.__force_add_type(Type.FloatType(type_id=self.f32_id, size=4))
-        self.__force_add_type(Type.FloatType(type_id=self.f64_id, size=8))
-
-        self.__force_add_type(Type.IntLiteralType(type_id=self.int_literal_id))
-        self.__force_add_type(Type.FloatLiteralType(type_id=self.float_literal_id))
-
-    def __add_type(self, ty: Type.Ty) -> int:
-        if ty.type_id == -1:
-            ty.type_id = self.__next_id
-            self.__next_id += 1
-
-        if ty.type_id in self.__space:
-            raise CompilerError(f"Type ID {ty.type_id} already exists in the type context")
-
-        self.__space[ty.type_id] = ty
-        return ty.type_id
-
     def __getitem__(self, type_id: int) -> Type.Ty:
-        if type_id not in self.__space:
-            raise CompilerError(f"Type ID {type_id} does not exist in the type context")
         return self.__space[type_id]
 
     def __contains__(self, type_id: int) -> bool:
@@ -199,584 +143,76 @@ class TypeCtx:
         return cls.INTRINSIC_CUSTOM_TYPE_DICT[intrinsic]
 
     def alloc_generic(self, name: str) -> int:
-        return self.__add_type(Type.GenericType(type_id=-1, name=name))
+        return self.__space.alloc_generic(name)
 
     def alloc_pointer(self, pointee_type: int) -> int:
-        if pointee_type in self.__pointer_cache:
-            return self.__pointer_cache[pointee_type]
-
-        pointer_ty = Type.PointerType(type_id=-1, pointee_type=pointee_type)
-        pointer_ty_id = self.__add_type(pointer_ty)
-        self.__pointer_cache[pointee_type] = pointer_ty_id
-        return pointer_ty_id
+        return self.__space.alloc_pointer(pointee_type)
 
     def alloc_slice(self, element_type: int) -> int:
-        if element_type in self.__slice_cache:
-            return self.__slice_cache[element_type]
-
-        slice_ty = Type.SliceType(type_id=-1, element_type=element_type)
-        slice_ty_id = self.__add_type(slice_ty)
-        self.__slice_cache[element_type] = slice_ty_id
-        return slice_ty_id
+        return self.__space.alloc_slice(element_type)
 
     def alloc_array(self, element_type: int, length: int) -> int:
-        key = (element_type, length)
-        if key in self.__array_cache:
-            return self.__array_cache[key]
-
-        array_ty = Type.ArrayType(type_id=-1, element_type=element_type, length=length)
-        array_ty_id = self.__add_type(array_ty)
-        self.__array_cache[key] = array_ty_id
-        return array_ty_id
+        return self.__space.alloc_array(element_type, length)
 
     def alloc_tuple(self, element_types: list[int]) -> int:
-        key = tuple(element_types)
-        if key in self.__tuple_cache:
-            return self.__tuple_cache[key]
-
-        tuple_ty = Type.TupleType(type_id=-1, element_types=element_types)
-        tuple_ty_id = self.__add_type(tuple_ty)
-        self.__tuple_cache[key] = tuple_ty_id
-        return tuple_ty_id
+        return self.__space.alloc_tuple(element_types)
 
     def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
-        key = (tuple(param_types), return_type)
-        if key in self.__function_pointer_cache:
-            return self.__function_pointer_cache[key]
-
-        function_pointer_ty = Type.FunctionPointerType(type_id=-1, parameter_types=param_types, return_type=return_type)
-        function_pointer_ty_id = self.__add_type(function_pointer_ty)
-        self.__function_pointer_cache[key] = function_pointer_ty_id
-        return function_pointer_ty_id
+        return self.__space.alloc_function_pointer(param_types, return_type)
 
     def alloc_alias(self, name: str) -> int:
-        alias_def = Type.AliasDef(name=name)
-        alias_ty = Type.AliasType(type_id=-1, custom_def=alias_def)
-
-        type_id = self.__add_type(alias_ty)
-        return type_id
+        return self.__space.alloc_alias(name)
 
     def alloc_struct(self, name: str) -> int:
-        struct_def = Type.StructDef(name=name)
-        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
-
-        intrinsic_mapping = {
-            "Range": self.Range_id,
-        }
-        if name in intrinsic_mapping:
-            struct_ty.type_id = intrinsic_mapping[name]
-
-        type_id = self.__add_type(struct_ty)
-        return type_id
+        return self.__space.alloc_struct(name)
 
     def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int]) -> int:
-        if len(field_names) != len(field_types):
-            raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
-
-        struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}")
-        for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
-            struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index))
-        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
-        return self.__add_type(struct_ty)
+        return self.__space.alloc_unnamed_struct(owner, field_names, field_types)
 
     def alloc_enum(self, name: str) -> int:
-        enum_def = Type.EnumDef(name=name)
-        enum_ty = Type.EnumType(type_id=-1, custom_def=enum_def)
-
-        intrinsic_mapping = {
-            "Option": self.Option_id,
-            "Result": self.Result_id,
-        }
-        if name in intrinsic_mapping:
-            enum_ty.type_id = intrinsic_mapping[name]
-
-        type_id = self.__add_type(enum_ty)
-        return type_id
+        return self.__space.alloc_enum(name)
 
     def alloc_trait(self, name: str) -> int:
-        trait_def = Type.TraitDef(name=name)
-        trait_ty = Type.TraitType(type_id=-1, custom_def=trait_def)
-
-        intrinsic_mapping = {
-            "Add": self.add_id,
-            "Sub": self.sub_id,
-            "Mul": self.mul_id,
-            "Div": self.div_id,
-            "Rem": self.rem_id,
-            "Neg": self.neg_id,
-
-            "BitAnd": self.bitand_id,
-            "BitOr": self.bitor_id,
-            "BitXor": self.bitxor_id,
-            "BitNot": self.bitnot_id,
-            "Shl": self.shl_id,
-            "Shr": self.shr_id,
-
-            "PartialEq": self.partial_eq_id,
-            "PartialOrd": self.partial_ord_id,
-
-            "Index": self.index_id,
-            "Contains": self.contains_id,
-            "Deref": self.deref_id,
-            "Delete": self.delete_id,
-            "Drop": self.drop_id,
-        }
-        if name in intrinsic_mapping:
-            trait_ty.type_id = intrinsic_mapping[name]
-
-        type_id = self.__add_type(trait_ty)
-        return type_id
+        return self.__space.alloc_trait(name)
 
     def alloc_method(self, name: str) -> int:
-        method_def = Type.MethodDef(name=name)
-        method_ty = Type.MethodType(type_id=-1, custom_def=method_def)
-
-        type_id = self.__add_type(method_ty)
-        return type_id
+        return self.__space.alloc_method(name)
 
     def alloc_function(self, name: str) -> int:
-        function_def = Type.FunctionDef(name=name)
-        function_ty = Type.FunctionType(type_id=-1, custom_def=function_def)
-
-        type_id = self.__add_type(function_ty)
-        return type_id
+        return self.__space.alloc_function(name)
 
     def alloc_range(self, type_id: int) -> int:
-        return self.alloc_instance(self.Range_id, [type_id])
+        return self.__space.alloc_range(type_id)
 
     def alloc_instance(self, type_id: int, generic_args: list[int]) -> int:
-        """
-        Given an uninstantiated type Ty<T1, T2, ..., Tn>, and a list of generic argument type IDs [A1, A2, ..., An],
-        allocate an instantiated type Ty<A1, A2, ..., An>.
-        """
-        ty = self.__space[type_id]
-
-        if not isinstance(ty, Type.CustomType):
-            raise ValueError(f"Type ID {type_id} is not a custom type and cannot be instantiated")
-        if len(ty.generic_args) != len(generic_args):
-            raise ValueError(f"Generic argument count mismatch for type ID {type_id}")
-
-        if len(ty.custom_def.generics) == 0:
-            if len(generic_args) != 0:
-                raise ValueError(f"Type ID {type_id} is not generic and cannot be instantiated with generic arguments")
-            return type_id
-
-        key = (id(ty.custom_def), tuple(generic_args))
-        if key in self.__instance_cache:
-            return self.__instance_cache[key]
-
-        match ty:
-            case Type.StructType(custom_def=struct_def):
-                instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generic_args)
-            case Type.EnumType(custom_def=enum_def):
-                instance_ty = Type.EnumType(type_id=-1, custom_def=enum_def, generic_args=generic_args)
-            case Type.TraitType(custom_def=trait_def):
-                instance_ty = Type.TraitType(type_id=-1, custom_def=trait_def, generic_args=generic_args)
-            case Type.MethodType(custom_def=method_def):
-                instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=generic_args)
-            case Type.FunctionType(custom_def=function_def):
-                instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=generic_args)
-            case Type.AliasType(custom_def=alias_def):
-                instance_ty = Type.AliasType(type_id=-1, custom_def=alias_def, generic_args=generic_args)
-
-        instance_ty_id = self.__add_type(instance_ty)
-        self.__instance_cache[key] = instance_ty_id
-        return instance_ty_id
+        return self.__space.alloc_instance(type_id, generic_args)
 
     def instantiate(self, type_id: int, substs: dict[int, int]) -> int:
-        """
-        Given a type `ty` that may contain generic type parameters, and a substitution map `substs`,
-        return a new type where the generic type parameters are replaced by the corresponding types in `substs`.
-        """
-        if len(substs) == 0:
-            return type_id
-
-        ty = self.__space[type_id]
-        match ty:
-            case Type.GenericType(type_id=generic_type_id):
-                if generic_type_id in substs:
-                    return substs[generic_type_id]
-                return type_id
-            case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) \
-                    | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args):
-                instantiated_args = [self.instantiate(arg_id, substs) for arg_id in generic_args]
-                return self.alloc_instance(type_id, instantiated_args)
-            case Type.PointerType(pointee_type=pointee_type):
-                instantiated_pointee = self.instantiate(pointee_type, substs)
-                return self.alloc_pointer(instantiated_pointee)
-            case Type.SliceType(element_type=element_type):
-                instantiated_element = self.instantiate(element_type, substs)
-                return self.alloc_slice(instantiated_element)
-            case Type.ArrayType(element_type=element_type, length=length):
-                instantiated_element = self.instantiate(element_type, substs)
-                return self.alloc_array(instantiated_element, length)
-            case Type.TupleType(element_types=element_types):
-                instantiated_elements = [self.instantiate(elem_id, substs) for elem_id in element_types]
-                return self.alloc_tuple(instantiated_elements)
-            case Type.FunctionPointerType(parameter_types=param_types, return_type=return_type):
-                instantiated_params = [self.instantiate(param_id, substs) for param_id in param_types]
-                instantiated_return = self.instantiate(return_type, substs)
-                return self.alloc_function_pointer(instantiated_params, instantiated_return)
-            case _:
-                return type_id
+        return type_ops.instantiate(self, type_id, substs)
 
     def get_name(self, type_id: int) -> str:
-        if type_id in self.__name_cache:
-            return self.__name_cache[type_id]
-
-        ty = self.__space[type_id]
-        match ty:
-            case Type.VoidType():
-                name = "void"
-            case Type.BoolType():
-                name = "bool"
-            case Type.CharType():
-                name = "char"
-            case Type.StrType():
-                name = "str"
-            case Type.IntType(size=size, signed=signed):
-                prefix = "i" if signed else "u"
-                name = f"{prefix}{size * 8}"
-            case Type.FloatType(size=size):
-                name = f"f{size * 8}"
-            case Type.IntLiteralType():
-                name = "IntLiteralType"
-            case Type.FloatLiteralType():
-                name = "FloatLiteralType"
-            case Type.PointerType(pointee_type=pointee_type):
-                pointee_name = self.get_name(pointee_type)
-                name = f"{pointee_name}*"
-            case Type.SliceType(element_type=element_type):
-                element_name = self.get_name(element_type)
-                name = f"{element_name}[]"
-            case Type.ArrayType(element_type=element_type, length=length):
-                element_name = self.get_name(element_type)
-                name = f"{element_name}[{length}]"
-            case Type.TupleType(element_types=element_types):
-                element_names = [self.get_name(elem_id) for elem_id in element_types]
-                name = f"({', '.join(element_names)})"
-            case Type.FunctionPointerType(parameter_types=param_types, return_type=return_type):
-                param_names = [self.get_name(param_id) for param_id in param_types]
-                return_name = self.get_name(return_type)
-                name = f"fn({', '.join(param_names)}) -> {return_name}"
-            case Type.GenericType(name=name):
-                pass
-            case Type.StructType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.EnumType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.TraitType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.MethodType(custom_def=custom_def, generic_args=generic_args):
-                receiver_name = self.get_name(custom_def.receiver_type)
-                if len(generic_args) == 0:
-                    name = f"{receiver_name}::{custom_def.name}"
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{receiver_name}::{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.FunctionType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.AliasType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-
-        self.__name_cache[type_id] = name
-        return name
+        return self.__formatter.get_name(type_id)
 
     def infer_common_type(self, type_ids: list[int], span: SrcSpan, context_name: str) -> int:
-        """Infer a common type from a list of types.
-
-        Literal-only types are resolved by repeatedly merging literal types,
-        while types with any concrete element type must agree on that type.
-        """
-        definite_type_ids = [type_id for type_id in type_ids if not self.is_literal_type(type_id)]
-
-        if definite_type_ids:
-            first_type_id = definite_type_ids[0]
-            if any(type_id != first_type_id for type_id in definite_type_ids[1:]):
-                element_names = ", ".join(self.get_name(type_id) for type_id in type_ids)
-                raise AnalysisError(f"{context_name} must have a compatible type, got [{element_names}]", span)
-            return first_type_id
-
-        return self.__common_literal_type(type_ids, span)
-
-    def __common_literal_type(self, type_ids: list[int], span: SrcSpan) -> int:
-        """Fold a list of literal type IDs into the most specific common type."""
-        result_type_id = type_ids[0]
-        for next_type_id in type_ids[1:]:
-            result_type_id = self.__gcd_literal_type(result_type_id, next_type_id, span)
-        return result_type_id
-
-    def __gcd_literal_type(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
-        """Compute the greatest common literal type for two type IDs.
-
-        This supports nested array and tuple literals so compound literals can
-        still be inferred when their components are compatible.
-        """
-        if left_type_id == right_type_id:
-            return left_type_id
-
-        left_ty = self[left_type_id]
-        right_ty = self[right_type_id]
-
-        if isinstance(left_ty, Type.IntLiteralType):
-            if isinstance(right_ty, Type.IntLiteralType):
-                return self.int_literal_id
-            if isinstance(right_ty, Type.FloatLiteralType):
-                return self.float_literal_id
-        if isinstance(left_ty, Type.FloatLiteralType):
-            if isinstance(right_ty, Type.IntLiteralType | Type.FloatLiteralType):
-                return self.float_literal_id
-
-        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-            if left_ty.length != right_ty.length:
-                left_name = self.get_name(left_type_id)
-                right_name = self.get_name(right_type_id)
-                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-            element_type_id = self.__gcd_literal_type(left_ty.element_type, right_ty.element_type, span)
-            return self.alloc_array(element_type_id, left_ty.length)
-
-        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
-            if len(left_ty.element_types) != len(right_ty.element_types):
-                left_name = self.get_name(left_type_id)
-                right_name = self.get_name(right_type_id)
-                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-            element_types = [
-                self.__gcd_literal_type(left_elem, right_elem, span)
-                for left_elem, right_elem in zip(left_ty.element_types, right_ty.element_types)
-            ]
-            return self.alloc_tuple(element_types)
-
-        left_name = self.get_name(left_type_id)
-        right_name = self.get_name(right_type_id)
-        raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
+        return type_ops.infer_common_type(self, type_ids, span, context_name)
 
     def is_literal_type(self, type_id: int) -> bool:
-        ty = self[type_id]
-        match ty:
-            case Type.IntLiteralType() | Type.FloatLiteralType():
-                return True
-            case Type.ArrayType(element_type=element_type):
-                return self.is_literal_type(element_type)
-            case Type.TupleType(element_types=element_types):
-                return all(self.is_literal_type(element_type) for element_type in element_types)
-            case _:
-                return False
+        return type_ops.is_literal_type(self, type_id)
 
     def default_literals(self, type_id: int) -> int:
-        """Replace unresolved literal types with their default concrete types.
-
-        Integer literals default to `i32`, float literals default to `f64`.
-        Compound types are rebuilt recursively so the whole type becomes fully concrete.
-        """
-        ty = self[type_id]
-
-        match ty:
-            case Type.IntLiteralType():
-                return self.i32_id
-            case Type.FloatLiteralType():
-                return self.f64_id
-            case Type.PointerType(pointee_type=pointee_type):
-                return self.alloc_pointer(self.default_literals(pointee_type))
-            case Type.SliceType(element_type=element_type):
-                return self.alloc_slice(self.default_literals(element_type))
-            case Type.ArrayType(element_type=element_type, length=length):
-                return self.alloc_array(self.default_literals(element_type), length)
-            case Type.TupleType(element_types=element_types):
-                return self.alloc_tuple([self.default_literals(element_type) for element_type in element_types])
-            case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
-                return self.alloc_function_pointer(
-                    [self.default_literals(parameter_type) for parameter_type in parameter_types],
-                    self.default_literals(return_type),
-                )
-            case Type.StructType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case Type.EnumType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case Type.TraitType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case Type.MethodType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case Type.FunctionType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case Type.AliasType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.alloc_instance(type_id, [self.default_literals(arg_type) for arg_type in generic_args])
-            case _:
-                return type_id
+        return type_ops.default_literals(self, type_id)
 
     def contains_generic(self, type_id: int) -> bool:
-        """Return whether the given `type_id` contains any unresolved generic parameter."""
-        visiting: set[int] = set()
-
-        def _contains(tid: int) -> bool:
-            if tid in visiting:
-                return False
-            visiting.add(tid)
-            ty = self[tid]
-            match ty:
-                case Type.GenericType():
-                    return True
-                case Type.PointerType(pointee_type=pointee_type):
-                    return _contains(pointee_type)
-                case Type.SliceType(element_type=element_type):
-                    return _contains(element_type)
-                case Type.ArrayType(element_type=element_type, length=_):
-                    return _contains(element_type)
-                case Type.TupleType(element_types=element_types):
-                    return any(_contains(element_type) for element_type in element_types)
-                case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
-                    return any(_contains(parameter_type) for parameter_type in parameter_types) or _contains(return_type)
-                case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
-                    if len(ty.custom_def.generics) > 0 and len(generic_args) == 0:
-                        return True
-                    return any(_contains(arg_type) for arg_type in generic_args)
-                case _:
-                    return False
-
-        return _contains(type_id)
+        return type_ops.contains_generic(self, type_id)
 
     def is_int_literal_type(self, type_id: int) -> bool:
-        ty = self[type_id]
-        return isinstance(ty, Type.IntLiteralType)
+        return type_ops.is_int_literal_type(self, type_id)
 
     def is_float_literal_type(self, type_id: int) -> bool:
-        ty = self[type_id]
-        return isinstance(ty, Type.FloatLiteralType)
+        return type_ops.is_float_literal_type(self, type_id)
 
     def merge_types(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
-        """Merge two candidate types into one compatible result.
-
-        Raises `AnalysisError` on incompatibility. This mirrors the former
-        `GenericInference.__merge_types` logic but lives in the type context so
-        other components can reuse it.
-        """
-        if left_type_id == right_type_id:
-            return left_type_id
-
-        left_ty = self[left_type_id]
-        right_ty = self[right_type_id]
-
-        if isinstance(left_ty, Type.GenericType):
-            return right_type_id
-        if isinstance(right_ty, Type.GenericType):
-            return left_type_id
-
-        if self.is_int_literal_type(left_type_id):
-            return self.__merge_int_literal(left_type_id, right_type_id, span)
-        if self.is_float_literal_type(left_type_id):
-            return self.__merge_float_literal(left_type_id, right_type_id, span)
-        if self.is_int_literal_type(right_type_id):
-            return self.__merge_int_literal(right_type_id, left_type_id, span)
-        if self.is_float_literal_type(right_type_id):
-            return self.__merge_float_literal(right_type_id, left_type_id, span)
-
-        if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
-            return self.alloc_pointer(self.merge_types(left_ty.pointee_type, right_ty.pointee_type, span))
-
-        if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
-            return self.alloc_slice(self.merge_types(left_ty.element_type, right_ty.element_type, span))
-
-        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-            if left_ty.length != right_ty.length:
-                raise AnalysisError(
-                    f"array lengths do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-                    span,
-                )
-            return self.alloc_array(self.merge_types(left_ty.element_type, right_ty.element_type, span), left_ty.length)
-
-        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
-            if len(left_ty.element_types) != len(right_ty.element_types):
-                raise AnalysisError(
-                    f"tuple element counts do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-                    span,
-                )
-            return self.alloc_tuple([
-                self.merge_types(left_element_type, right_element_type, span)
-                for left_element_type, right_element_type in zip(left_ty.element_types, right_ty.element_types)
-            ])
-
-        if isinstance(left_ty, Type.FunctionPointerType) and isinstance(right_ty, Type.FunctionPointerType):
-            if len(left_ty.parameter_types) != len(right_ty.parameter_types):
-                raise AnalysisError(
-                    f"function pointer parameter counts do not match: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-                    span,
-                )
-            return self.alloc_function_pointer(
-                [self.merge_types(left_param_type, right_param_type, span) for left_param_type, right_param_type in zip(left_ty.parameter_types, right_ty.parameter_types)],
-                self.merge_types(left_ty.return_type, right_ty.return_type, span),
-            )
-
-        if isinstance(left_ty, Type.CustomType) and isinstance(right_ty, Type.CustomType):
-            if type(left_ty) is not type(right_ty) or id(left_ty.custom_def) != id(right_ty.custom_def):
-                raise AnalysisError(
-                    f"incompatible types: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-                    span,
-                )
-            if len(left_ty.generic_args) != len(right_ty.generic_args):
-                raise AnalysisError(
-                    f"generic argument count mismatch: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-                    span,
-                )
-            return self.alloc_instance(left_type_id, [
-                self.merge_types(left_arg, right_arg, span)
-                for left_arg, right_arg in zip(left_ty.generic_args, right_ty.generic_args)
-            ])
-
-        raise AnalysisError(
-            f"incompatible types: {self.get_name(left_type_id)} vs {self.get_name(right_type_id)}",
-            span,
-        )
-
-    def __merge_int_literal(self, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
-        other_ty = self[other_type_id]
-        if isinstance(other_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
-            return other_type_id
-        raise AnalysisError(
-            f"cannot merge integer literal with '{self.get_name(other_type_id)}'",
-            span,
-        )
-
-    def __merge_float_literal(self, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
-        other_ty = self[other_type_id]
-        if isinstance(other_ty, (Type.FloatType, Type.FloatLiteralType)):
-            return other_type_id
-        if isinstance(other_ty, Type.IntLiteralType):
-            return literal_type_id
-        raise AnalysisError(
-            f"cannot merge float literal with '{self.get_name(other_type_id)}'",
-            span,
-        )
+        return type_ops.merge_types(self, left_type_id, right_type_id, span)
 
     def finalize(self) -> None:
         """
