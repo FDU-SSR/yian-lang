@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from enum import Enum
+from typing import NoReturn
+
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.passes.sem_ctx import SemCtx
@@ -10,7 +13,15 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
-from typing import NoReturn
+
+
+class OperandType(Enum):
+    Integer = "Integer"
+    Float = "Float"
+    Bool = "Bool"
+    Char = "Char"
+    Str = "Str"
+    Overloaded = "Overloaded"
 
 
 class OpBuilder:
@@ -126,15 +137,18 @@ class OpBuilder:
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
 
-        numeric_expr = self.__build_numeric_binary(
+        builtin_expr = self.__binary_helper(
             span=span,
             op=BinaryOperator.Add,
             left=left_hir,
             right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.Add,
+            method_name="add",
             context_name="operator '+'",
         )
-        if numeric_expr is not None:
-            return numeric_expr
+        if builtin_expr is not None:
+            return builtin_expr
 
         left_ty = self.__type_ctx[left_hir.type_id]
         right_ty = self.__type_ctx[right_hir.type_id]
@@ -167,39 +181,176 @@ class OpBuilder:
                 is_place=False,
             )
 
-        overloaded_expr = self.__resolve_overloaded_operator(
-            span=span,
-            trait_kind=Type.IntrinsicCustomType.Add,
-            method_name="add",
-            receiver=left_hir,
-            args=[right_hir],
-            context_name="operator '+'",
-        )
-        if overloaded_expr is not None:
-            return overloaded_expr
-
-        return self.__raise_unsupported_binary_operator(span, "+", left_hir.type_id, right_hir.type_id)
+        self.__raise_unsupported_binary_operator(span, "+", left_hir.type_id, right_hir.type_id)
 
     def __build_sub(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.Sub,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.Sub,
+            method_name="sub",
+            context_name="operator '-'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        left_ty = self.__type_ctx[left_hir.type_id]
+        right_ty = self.__type_ctx[right_hir.type_id]
+
+        if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
+            if left_hir.type_id != right_hir.type_id:
+                left_name = self.__type_ctx.get_name(left_hir.type_id)
+                right_name = self.__type_ctx.get_name(right_hir.type_id)
+                raise AnalysisError(f"operator '-' is not supported between '{left_name}' and '{right_name}'", span)
+
+            return HIR.Binary(
+                span=span,
+                op=BinaryOperator.Sub,
+                left=left_hir,
+                right=right_hir,
+                type_id=TypeCtx.u64_id,
+                is_place=False,
+            )
+
+        if isinstance(left_ty, Type.PointerType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            if right_hir.type_id == TypeCtx.u64_id:
+                offset_value = right_hir
+            elif isinstance(self.__type_ctx[right_hir.type_id], Type.IntLiteralType):
+                offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            else:
+                offset_name = self.__type_ctx.get_name(right_hir.type_id)
+                raise AnalysisError(f"pointer offset must be 'u64' or integer literal, got '{offset_name}'", span)
+
+            return HIR.Binary(
+                span=span,
+                op=BinaryOperator.Sub,
+                left=left_hir,
+                right=offset_value,
+                type_id=left_hir.type_id,
+                is_place=False,
+            )
+
+        self.__raise_unsupported_binary_operator(span, "-", left_hir.type_id, right_hir.type_id)
 
     def __build_mul(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.Mul,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.Mul,
+            method_name="mul",
+            context_name="operator '*'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "*", left_hir.type_id, right_hir.type_id)
 
     def __build_div(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.Div,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.Div,
+            method_name="div",
+            context_name="operator '/'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "/", left_hir.type_id, right_hir.type_id)
 
     def __build_mod(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.Mod,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.Rem,
+            method_name="rem",
+            context_name="operator '%'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "%", left_hir.type_id, right_hir.type_id)
 
     def __build_bitand(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitAnd,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.BitAnd,
+            method_name="bit_and",
+            context_name="operator '&'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "&", left_hir.type_id, right_hir.type_id)
 
     def __build_bitor(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitOr,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.BitOr,
+            method_name="bit_or",
+            context_name="operator '|'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "|", left_hir.type_id, right_hir.type_id)
 
     def __build_bitxor(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitXor,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
+            trait_kind=Type.IntrinsicCustomType.BitXor,
+            method_name="bit_xor",
+            context_name="operator '^'",
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "^", left_hir.type_id, right_hir.type_id)
 
     def __build_shl(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         raise NotImplementedError()
@@ -276,28 +427,62 @@ class OpBuilder:
     def __build_variant_construct(self, span: SrcSpan, enum_type_id: int, variant_name: str) -> HIR.Expr:
         raise NotImplementedError()
 
-    def __build_numeric_binary(
+    def __binary_helper(
         self,
         span: SrcSpan,
         op: BinaryOperator,
         left: HIR.Expr,
         right: HIR.Expr,
+        allowed_operand_types: set[OperandType],
+        trait_kind: Type.IntrinsicCustomType,
+        method_name: str,
         context_name: str,
-    ) -> HIR.Binary | None:
-        if not self.__type_ctx.is_numeric_type(left.type_id) or not self.__type_ctx.is_numeric_type(right.type_id):
+    ) -> HIR.Expr | None:
+        """Helper function for building binary operator expressions.
+
+        1. Operand types are both builtin types
+        2. Operator can be overloaded and operands implement the corresponding trait
+        """
+        left_operand_type = self.__get_operand_type(left.type_id)
+        right_operand_type = self.__get_operand_type(right.type_id)
+        if left_operand_type not in allowed_operand_types or right_operand_type not in allowed_operand_types:
+            return None
+        if left_operand_type != right_operand_type:
+            self.__raise_unsupported_binary_operator(span, context_name, left.type_id, right.type_id)
+        operand_type = left_operand_type
+
+        if operand_type != OperandType.Overloaded:
+            result_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
+            left = self.__evaluator.coerce(left, result_type_id)
+            right = self.__evaluator.coerce(right, result_type_id)
+            return HIR.Binary(span, op, left, right, result_type_id, is_place=False)
+
+        if OperandType.Overloaded not in allowed_operand_types:
             return None
 
-        result_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
-        left_coerced = self.__evaluator.coerce(left, result_type_id)
-        right_coerced = self.__evaluator.coerce(right, result_type_id)
-        return HIR.Binary(
+        overloaded_expr = self.__resolve_overloaded_operator(
             span=span,
-            op=op,
-            left=left_coerced,
-            right=right_coerced,
-            type_id=result_type_id,
-            is_place=False,
+            trait_kind=trait_kind,
+            method_name=method_name,
+            receiver=left,
+            args=[right],
+            context_name=context_name,
         )
+        return overloaded_expr
+
+    def __get_operand_type(self, type_id: int) -> OperandType:
+        ty = self.__type_ctx[type_id]
+        if isinstance(ty, Type.IntType) or isinstance(ty, Type.IntLiteralType):
+            return OperandType.Integer
+        if isinstance(ty, Type.FloatType) or isinstance(ty, Type.FloatLiteralType):
+            return OperandType.Float
+        if isinstance(ty, Type.BoolType):
+            return OperandType.Bool
+        if isinstance(ty, Type.CharType):
+            return OperandType.Char
+        if isinstance(ty, Type.StrType):
+            return OperandType.Str
+        return OperandType.Overloaded
 
     def __resolve_overloaded_operator(
         self,
@@ -338,14 +523,7 @@ class OpBuilder:
             for arg, param in zip(args, parameters)
         ]
 
-        return HIR.MethodCall(
-            span=span,
-            receiver=coerced_receiver,
-            method_id=lookup.method_id,
-            args=coerced_args,
-            type_id=method_ty.return_type(self.__type_ctx),
-            is_place=False,
-        )
+        return HIR.MethodCall(span, coerced_receiver, lookup.method_id, coerced_args, method_ty.return_type(self.__type_ctx), False)
 
     def __raise_unsupported_binary_operator(self, span: SrcSpan, operator_symbol: str, left_type_id: int, right_type_id: int) -> NoReturn:
         left_name = self.__type_ctx.get_name(left_type_id)
