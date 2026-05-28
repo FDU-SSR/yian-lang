@@ -143,7 +143,7 @@ class ExprChecker:
             raise AnalysisError("Cannot infer the type of an empty array literal", node.span)
 
         elements = [self.value(element) for element in node.elements]
-        element_type_id = self.__common_array_element_type(elements, node.span)
+        element_type_id = self.__ctx.type_ctx.infer_common_type([element.type_id for element in elements], node.span, "array elements")
         if any(element.type_id != element_type_id for element in elements):
             elements = [self.coerce(element, element_type_id) for element in elements]
 
@@ -253,76 +253,6 @@ class ExprChecker:
             case HIR.SizeOf():
                 expr.type_id = expected
                 return expr
-
-    def __common_array_element_type(self, elements: list[HIR.Expr], span: SrcSpan) -> int:
-        type_ids = [element.type_id for element in elements]
-        definite_type_ids = [type_id for type_id in type_ids if not self.__is_literal_type(type_id)]
-
-        if definite_type_ids:
-            first_type_id = definite_type_ids[0]
-            if any(type_id != first_type_id for type_id in definite_type_ids[1:]):
-                element_names = ", ".join(self.__ctx.type_ctx.get_name(type_id) for type_id in type_ids)
-                raise AnalysisError(f"array elements must have a compatible type, got [{element_names}]", span)
-            return first_type_id
-
-        return self.__common_literal_type(type_ids, span)
-
-    def __common_literal_type(self, type_ids: list[int], span: SrcSpan) -> int:
-        result_type_id = type_ids[0]
-        for next_type_id in type_ids[1:]:
-            result_type_id = self.__gcd_literal_type(result_type_id, next_type_id, span)
-        return result_type_id
-
-    def __gcd_literal_type(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
-        if left_type_id == right_type_id:
-            return left_type_id
-
-        left_ty = self.__ctx.type_ctx[left_type_id]
-        right_ty = self.__ctx.type_ctx[right_type_id]
-
-        if isinstance(left_ty, Type.IntLiteralType):
-            if isinstance(right_ty, Type.IntLiteralType):
-                return TypeCtx.int_literal_id
-            if isinstance(right_ty, Type.FloatLiteralType):
-                return TypeCtx.float_literal_id
-        if isinstance(left_ty, Type.FloatLiteralType):
-            if isinstance(right_ty, Type.IntLiteralType | Type.FloatLiteralType):
-                return TypeCtx.float_literal_id
-
-        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-            if left_ty.length != right_ty.length:
-                left_name = self.__ctx.type_ctx.get_name(left_type_id)
-                right_name = self.__ctx.type_ctx.get_name(right_type_id)
-                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-            element_type_id = self.__gcd_literal_type(left_ty.element_type, right_ty.element_type, span)
-            return self.__ctx.type_ctx.alloc_array(element_type_id, left_ty.length)
-
-        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
-            if len(left_ty.element_types) != len(right_ty.element_types):
-                left_name = self.__ctx.type_ctx.get_name(left_type_id)
-                right_name = self.__ctx.type_ctx.get_name(right_type_id)
-                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-            element_types = [
-                self.__gcd_literal_type(left_elem, right_elem, span)
-                for left_elem, right_elem in zip(left_ty.element_types, right_ty.element_types)
-            ]
-            return self.__ctx.type_ctx.alloc_tuple(element_types)
-
-        left_name = self.__ctx.type_ctx.get_name(left_type_id)
-        right_name = self.__ctx.type_ctx.get_name(right_type_id)
-        raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-
-    def __is_literal_type(self, type_id: int) -> bool:
-        ty = self.__ctx.type_ctx[type_id]
-        match ty:
-            case Type.IntLiteralType() | Type.FloatLiteralType():
-                return True
-            case Type.ArrayType(element_type=element_type):
-                return self.__is_literal_type(element_type)
-            case Type.TupleType(element_types=element_types):
-                return all(self.__is_literal_type(element_type) for element_type in element_types)
-            case _:
-                return False
 
     def as_place(self, expr: AST.Expr) -> HIR.Expr:
         """Treat an expression as an l-value/place and return HIR.Expr."""

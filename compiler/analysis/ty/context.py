@@ -502,6 +502,86 @@ class TypeCtx:
         self.__name_cache[type_id] = name
         return name
 
+    def infer_common_type(self, type_ids: list[int], span: SrcSpan, context_name: str) -> int:
+        """Infer a common type from a list of types.
+
+        Literal-only types are resolved by repeatedly merging literal types,
+        while types with any concrete element type must agree on that type.
+        """
+        definite_type_ids = [type_id for type_id in type_ids if not self.is_literal_type(type_id)]
+
+        if definite_type_ids:
+            first_type_id = definite_type_ids[0]
+            if any(type_id != first_type_id for type_id in definite_type_ids[1:]):
+                element_names = ", ".join(self.get_name(type_id) for type_id in type_ids)
+                raise AnalysisError(f"{context_name} must have a compatible type, got [{element_names}]", span)
+            return first_type_id
+
+        return self.common_literal_type(type_ids, span)
+
+    def common_literal_type(self, type_ids: list[int], span: SrcSpan) -> int:
+        """Fold a list of literal type IDs into the most specific common type."""
+        result_type_id = type_ids[0]
+        for next_type_id in type_ids[1:]:
+            result_type_id = self.gcd_literal_type(result_type_id, next_type_id, span)
+        return result_type_id
+
+    def gcd_literal_type(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
+        """Compute the greatest common literal type for two type IDs.
+
+        This supports nested array and tuple literals so compound literals can
+        still be inferred when their components are compatible.
+        """
+        if left_type_id == right_type_id:
+            return left_type_id
+
+        left_ty = self[left_type_id]
+        right_ty = self[right_type_id]
+
+        if isinstance(left_ty, Type.IntLiteralType):
+            if isinstance(right_ty, Type.IntLiteralType):
+                return self.int_literal_id
+            if isinstance(right_ty, Type.FloatLiteralType):
+                return self.float_literal_id
+        if isinstance(left_ty, Type.FloatLiteralType):
+            if isinstance(right_ty, Type.IntLiteralType | Type.FloatLiteralType):
+                return self.float_literal_id
+
+        if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
+            if left_ty.length != right_ty.length:
+                left_name = self.get_name(left_type_id)
+                right_name = self.get_name(right_type_id)
+                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
+            element_type_id = self.gcd_literal_type(left_ty.element_type, right_ty.element_type, span)
+            return self.alloc_array(element_type_id, left_ty.length)
+
+        if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
+            if len(left_ty.element_types) != len(right_ty.element_types):
+                left_name = self.get_name(left_type_id)
+                right_name = self.get_name(right_type_id)
+                raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
+            element_types = [
+                self.gcd_literal_type(left_elem, right_elem, span)
+                for left_elem, right_elem in zip(left_ty.element_types, right_ty.element_types)
+            ]
+            return self.alloc_tuple(element_types)
+
+        left_name = self.get_name(left_type_id)
+        right_name = self.get_name(right_type_id)
+        raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
+
+    def is_literal_type(self, type_id: int) -> bool:
+        ty = self[type_id]
+        match ty:
+            case Type.IntLiteralType() | Type.FloatLiteralType():
+                return True
+            case Type.ArrayType(element_type=element_type):
+                return self.is_literal_type(element_type)
+            case Type.TupleType(element_types=element_types):
+                return all(self.is_literal_type(element_type) for element_type in element_types)
+            case _:
+                return False
+
     def finalize(self) -> None:
         """
         Final check and preparation of the type space before code generation.
