@@ -119,6 +119,20 @@ def is_literal_type(ctx: TypeCtx, type_id: int) -> bool:
             return False
 
 
+def is_numeric_type(ctx: TypeCtx, type_id: int, include_literals: bool = True) -> bool:
+    ty = ctx[type_id]
+    if include_literals:
+        return isinstance(ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType))
+    return isinstance(ty, (Type.IntType, Type.FloatType))
+
+
+def is_integer_type(ctx: TypeCtx, type_id: int, include_literals: bool = True) -> bool:
+    ty = ctx[type_id]
+    if include_literals:
+        return isinstance(ty, (Type.IntType, Type.IntLiteralType))
+    return isinstance(ty, Type.IntType)
+
+
 def default_literals(ctx: TypeCtx, type_id: int) -> int:
     """Replace unresolved literal types with their default concrete types."""
     ty = ctx[type_id]

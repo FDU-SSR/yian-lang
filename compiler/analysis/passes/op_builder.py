@@ -3,12 +3,14 @@ from __future__ import annotations
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
+from typing import NoReturn
 
 
 class OpBuilder:
@@ -121,7 +123,62 @@ class OpBuilder:
         return expr
 
     def __build_add(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        numeric_expr = self.__build_numeric_binary(
+            span=span,
+            op=BinaryOperator.Add,
+            left=left_hir,
+            right=right_hir,
+            context_name="operator '+'",
+        )
+        if numeric_expr is not None:
+            return numeric_expr
+
+        left_ty = self.__type_ctx[left_hir.type_id]
+        right_ty = self.__type_ctx[right_hir.type_id]
+
+        pointer_operand: HIR.Expr | None = None
+        offset_operand: HIR.Expr | None = None
+
+        if isinstance(left_ty, Type.PointerType):
+            pointer_operand = left_hir
+            offset_operand = right_hir
+        elif isinstance(right_ty, Type.PointerType):
+            pointer_operand = right_hir
+            offset_operand = left_hir
+
+        if pointer_operand is not None and offset_operand is not None and self.__type_ctx.is_integer_type(offset_operand.type_id):
+            if offset_operand.type_id == TypeCtx.u64_id:
+                offset_value = offset_operand
+            elif isinstance(self.__type_ctx[offset_operand.type_id], Type.IntLiteralType):
+                offset_value = self.__evaluator.coerce(offset_operand, TypeCtx.u64_id)
+            else:
+                offset_name = self.__type_ctx.get_name(offset_operand.type_id)
+                raise AnalysisError(f"pointer offset must be 'u64' or integer literal, got '{offset_name}'", span)
+
+            return HIR.Binary(
+                span=span,
+                op=BinaryOperator.Add,
+                left=pointer_operand,
+                right=offset_value,
+                type_id=pointer_operand.type_id,
+                is_place=False,
+            )
+
+        overloaded_expr = self.__resolve_overloaded_operator(
+            span=span,
+            trait_kind=Type.IntrinsicCustomType.Add,
+            method_name="add",
+            receiver=left_hir,
+            args=[right_hir],
+            context_name="operator '+'",
+        )
+        if overloaded_expr is not None:
+            return overloaded_expr
+
+        return self.__raise_unsupported_binary_operator(span, "+", left_hir.type_id, right_hir.type_id)
 
     def __build_sub(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         raise NotImplementedError()
@@ -218,3 +275,82 @@ class OpBuilder:
 
     def __build_variant_construct(self, span: SrcSpan, enum_type_id: int, variant_name: str) -> HIR.Expr:
         raise NotImplementedError()
+
+    def __build_numeric_binary(
+        self,
+        span: SrcSpan,
+        op: BinaryOperator,
+        left: HIR.Expr,
+        right: HIR.Expr,
+        context_name: str,
+    ) -> HIR.Binary | None:
+        if not self.__type_ctx.is_numeric_type(left.type_id) or not self.__type_ctx.is_numeric_type(right.type_id):
+            return None
+
+        result_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
+        left_coerced = self.__evaluator.coerce(left, result_type_id)
+        right_coerced = self.__evaluator.coerce(right, result_type_id)
+        return HIR.Binary(
+            span=span,
+            op=op,
+            left=left_coerced,
+            right=right_coerced,
+            type_id=result_type_id,
+            is_place=False,
+        )
+
+    def __resolve_overloaded_operator(
+        self,
+        span: SrcSpan,
+        trait_kind: Type.IntrinsicCustomType,
+        method_name: str,
+        receiver: HIR.Expr,
+        args: list[HIR.Expr],
+        context_name: str,
+    ) -> HIR.MethodCall | None:
+        trait_id = TypeCtx.intrinsic_custom_type(trait_kind)
+
+        lookup = self.__type_ctx.method_lookup(receiver, method_name, None, args)
+        if lookup is None:
+            return None
+        impl_trait_id = lookup.impl.trait
+        if impl_trait_id is None:
+            return None
+
+        impl_trait_ty = self.__type_ctx[impl_trait_id]
+        trait_ty = self.__type_ctx[trait_id]
+        if not isinstance(impl_trait_ty, Type.TraitType) or not isinstance(trait_ty, Type.TraitType):
+            return None
+
+        if id(impl_trait_ty.custom_def) != id(trait_ty.custom_def):
+            return None
+
+        method_ty = self.__type_ctx[lookup.method_id]
+        assert isinstance(method_ty, Type.MethodType)
+        parameters = method_ty.parameters(self.__type_ctx)
+        if len(parameters) != len(args):
+            raise AnalysisError(f"{context_name} expects {len(parameters)} argument(s), got {len(args)}", span)
+
+        receiver_expected = method_ty.receiver_type(self.__type_ctx)
+        coerced_receiver = self.__evaluator.coerce(receiver, receiver_expected)
+        coerced_args = [
+            self.__evaluator.coerce(arg, param.type_id)
+            for arg, param in zip(args, parameters)
+        ]
+
+        return HIR.MethodCall(
+            span=span,
+            receiver=coerced_receiver,
+            method_id=lookup.method_id,
+            args=coerced_args,
+            type_id=method_ty.return_type(self.__type_ctx),
+            is_place=False,
+        )
+
+    def __raise_unsupported_binary_operator(self, span: SrcSpan, operator_symbol: str, left_type_id: int, right_type_id: int) -> NoReturn:
+        left_name = self.__type_ctx.get_name(left_type_id)
+        right_name = self.__type_ctx.get_name(right_type_id)
+        raise AnalysisError(
+            f"operator '{operator_symbol}' is not supported between '{left_name}' and '{right_name}'",
+            span,
+        )

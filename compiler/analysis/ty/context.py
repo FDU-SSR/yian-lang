@@ -199,6 +199,12 @@ class TypeCtx:
     def is_literal_type(self, type_id: int) -> bool:
         return type_ops.is_literal_type(self, type_id)
 
+    def is_numeric_type(self, type_id: int, include_literals: bool = True) -> bool:
+        return type_ops.is_numeric_type(self, type_id, include_literals)
+
+    def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
+        return type_ops.is_integer_type(self, type_id, include_literals)
+
     def default_literals(self, type_id: int) -> int:
         return type_ops.default_literals(self, type_id)
 
