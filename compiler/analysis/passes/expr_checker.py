@@ -341,7 +341,7 @@ class ExprChecker:
         return hir_expr
 
     def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> HIR.Expr:
-        raise NotImplementedError()
+        return self.__call_dispatcher.dispatch_method_call(receiver.span, receiver, method_name, generic_args, args, "method call")
 
     def call_into_iter(self, iterable: HIR.Expr) -> HIR.Expr:
         return self.call_method(iterable, "into_iter", None, [])

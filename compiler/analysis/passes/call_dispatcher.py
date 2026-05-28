@@ -17,6 +17,14 @@ class CallDispatcher:
         self.__ctx = ctx
         self.__expr = expr
 
+    def dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr], context_name: str) -> HIR.Expr:
+        lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
+
+        if lookup is None:
+            raise AnalysisError(f"Unknown {context_name} '{method_name}'", span)
+
+        return self.__dispatch_method_call(span, receiver, lookup, args, context_name)
+
     def handle_call(self, node: AST.Call) -> HIR.Expr:
         if isinstance(node.callee, AST.Identifier):
             return self.__handle_named_call(node, node.callee)
@@ -125,17 +133,14 @@ class CallDispatcher:
 
     def __handle_instance_method_call(self, node: AST.MethodCall, receiver: HIR.Expr) -> HIR.Expr:
         args = self.__resolve_positional_args(node.args, "method call")
-        lookup = self.__ctx.type_ctx.method_lookup(
+        return self.dispatch_method_call(
+            node.span,
             receiver,
             node.method_name.name,
             [self.__ctx.resolve_type(generic) for generic in node.generics] if node.generics else None,
             args,
+            "method call",
         )
-
-        if lookup is None:
-            raise AnalysisError(f"Unknown method '{node.method_name.name}'", node.method_name.span)
-
-        return self.__dispatch_method_call(node.span, receiver, lookup, args, "method call")
 
     def __handle_static_or_variant_method_call(self, node: AST.MethodCall, receiver: HIR.Ty) -> HIR.Expr:
         ty = self.__ctx.type_ctx[receiver.type_id]
@@ -146,16 +151,14 @@ class CallDispatcher:
                 return self.__handle_variant_construction(node.span, receiver.type_id, variant, node.args)
 
         args = self.__resolve_positional_args(node.args, "static method call")
-        lookup = self.__ctx.type_ctx.method_lookup(
+        return self.dispatch_method_call(
+            node.span,
             receiver,
             node.method_name.name,
             [self.__ctx.resolve_type(generic) for generic in node.generics] if node.generics else None,
             args,
+            "static method call",
         )
-
-        if lookup is None:
-            raise AnalysisError(f"Unknown static method '{node.method_name.name}'", node.method_name.span)
-        return self.__dispatch_method_call(node.span, receiver, lookup, args, "static method call")
 
     def __dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, lookup: LookupResult, args: list[HIR.Expr], context_name: str) -> HIR.MethodCall:
         """Common method call construction after `method_lookup` succeeded.
