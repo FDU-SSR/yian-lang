@@ -396,6 +396,17 @@ class IntrinsicCustomType(Enum):
     PartialEq = "PartialEq"
     PartialOrd = "PartialOrd"
 
+    AddAssign = "AddAssign"
+    SubAssign = "SubAssign"
+    MulAssign = "MulAssign"
+    DivAssign = "DivAssign"
+    RemAssign = "RemAssign"
+    BitAndAssign = "BitAndAssign"
+    BitOrAssign = "BitOrAssign"
+    BitXorAssign = "BitXorAssign"
+    ShlAssign = "ShlAssign"
+    ShrAssign = "ShrAssign"
+
     Index = "Index"
     Contains = "Contains"
     Deref = "Deref"

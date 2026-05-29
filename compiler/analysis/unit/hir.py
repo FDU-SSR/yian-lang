@@ -187,6 +187,15 @@ class FieldAccess:
 
 
 @dataclass
+class TupleAccess:
+    span: SrcSpan
+    receiver: Expr
+    index: int
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class DynValue:
     span: SrcSpan
     value: Expr
@@ -298,7 +307,7 @@ Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | Bool
 Expr: TypeAlias = (
     Binary | Unary
     | Call | StructConstruct | Invoke | Cast
-    | MethodCall | VariantConstruct | FieldAccess
+    | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast
     | Tuple | Array

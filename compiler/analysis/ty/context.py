@@ -65,6 +65,17 @@ class TypeCtx:
     delete_id: int = 83
     drop_id: int = 84
 
+    add_assign_id: int = 90
+    sub_assign_id: int = 91
+    mul_assign_id: int = 92
+    div_assign_id: int = 93
+    rem_assign_id: int = 94
+    bitand_assign_id: int = 95
+    bitor_assign_id: int = 96
+    bitxor_assign_id: int = 97
+    shl_assign_id: int = 98
+    shr_assign_id: int = 99
+
     # intrinsic struct/enum IDs
     Range_id: int = 100
     Option_id: int = 101
@@ -130,6 +141,17 @@ class TypeCtx:
 
         Type.IntrinsicCustomType.PartialEq: partial_eq_id,
         Type.IntrinsicCustomType.PartialOrd: partial_ord_id,
+
+        Type.IntrinsicCustomType.AddAssign: add_assign_id,
+        Type.IntrinsicCustomType.SubAssign: sub_assign_id,
+        Type.IntrinsicCustomType.MulAssign: mul_assign_id,
+        Type.IntrinsicCustomType.DivAssign: div_assign_id,
+        Type.IntrinsicCustomType.RemAssign: rem_assign_id,
+        Type.IntrinsicCustomType.BitAndAssign: bitand_assign_id,
+        Type.IntrinsicCustomType.BitOrAssign: bitor_assign_id,
+        Type.IntrinsicCustomType.BitXorAssign: bitxor_assign_id,
+        Type.IntrinsicCustomType.ShlAssign: shl_assign_id,
+        Type.IntrinsicCustomType.ShrAssign: shr_assign_id,
 
         Type.IntrinsicCustomType.Index: index_id,
         Type.IntrinsicCustomType.Contains: contains_id,

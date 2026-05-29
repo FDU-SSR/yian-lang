@@ -56,6 +56,25 @@ class OpBuilder:
             BinaryOperator.Gt: (Type.IntrinsicCustomType.PartialOrd, "gt"),
             BinaryOperator.Leq: (Type.IntrinsicCustomType.PartialOrd, "le"),
             BinaryOperator.Geq: (Type.IntrinsicCustomType.PartialOrd, "ge"),
+
+            BinaryOperator.AddAssign: (Type.IntrinsicCustomType.AddAssign, "add_assign"),
+            BinaryOperator.SubAssign: (Type.IntrinsicCustomType.SubAssign, "sub_assign"),
+            BinaryOperator.MulAssign: (Type.IntrinsicCustomType.MulAssign, "mul_assign"),
+            BinaryOperator.DivAssign: (Type.IntrinsicCustomType.DivAssign, "div_assign"),
+            BinaryOperator.ModAssign: (Type.IntrinsicCustomType.RemAssign, "rem_assign"),
+            BinaryOperator.BitAndAssign: (Type.IntrinsicCustomType.BitAndAssign, "bitand_assign"),
+            BinaryOperator.BitOrAssign: (Type.IntrinsicCustomType.BitOrAssign, "bitor_assign"),
+            BinaryOperator.BitXorAssign: (Type.IntrinsicCustomType.BitXorAssign, "bitxor_assign"),
+            BinaryOperator.ShlAssign: (Type.IntrinsicCustomType.ShlAssign, "shl_assign"),
+            BinaryOperator.ShrAssign: (Type.IntrinsicCustomType.ShrAssign, "shr_assign"),
+
+            BinaryOperator.Index: (Type.IntrinsicCustomType.Index, "index"),
+            BinaryOperator.In: (Type.IntrinsicCustomType.Contains, "contains"),
+            BinaryOperator.NotIn: (Type.IntrinsicCustomType.Contains, "not_contains"),
+
+            UnaryOperator.Neg: (Type.IntrinsicCustomType.Neg, "neg"),
+            UnaryOperator.BitNot: (Type.IntrinsicCustomType.BitNot, "bit_not"),
+            UnaryOperator.Deref: (Type.IntrinsicCustomType.Deref, "deref"),
         }
 
     def build_binary(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
@@ -130,16 +149,14 @@ class OpBuilder:
 
     def build_field_access(self, span: SrcSpan, receiver: AST.Expr, field_name: str) -> HIR.Expr:
         receiver_hir = self.__evaluator.value(receiver)
-        if isinstance(receiver_hir, HIR.Var):
-            # struct field access
-            res = self.__build_field_access(span, receiver_hir, field_name)
-        elif isinstance(receiver_hir, HIR.Ty):
-            # enum variant construction
-            res = self.__build_variant_construct(span, receiver_hir.type_id, field_name)
-        else:
-            raise AnalysisError("field access is only supported on struct instances and enum types", span)
+        receiver_ty = self.__type_ctx[receiver_hir.type_id]
 
-        return res
+        if isinstance(receiver_ty, Type.StructType):
+            return self.__build_field_access(span, receiver_hir, field_name)
+        elif isinstance(receiver_hir, HIR.Ty) and isinstance(receiver_ty, Type.EnumType):
+            return self.__build_variant_construct(span, receiver_hir.type_id, field_name)
+
+        raise AnalysisError("field access is only supported on struct instances and enum types", span)
 
     def build_dyn_value(self, span: SrcSpan, value: AST.Expr) -> HIR.Expr:
         value_hir = self.__evaluator.value(value)
@@ -184,14 +201,7 @@ class OpBuilder:
             offset_operand = left_hir
 
         if pointer_operand is not None and offset_operand is not None and self.__type_ctx.is_integer_type(offset_operand.type_id):
-            if offset_operand.type_id == TypeCtx.u64_id:
-                offset_value = offset_operand
-            elif isinstance(self.__type_ctx[offset_operand.type_id], Type.IntLiteralType):
-                offset_value = self.__evaluator.coerce(offset_operand, TypeCtx.u64_id)
-            else:
-                offset_name = self.__type_ctx.get_name(offset_operand.type_id)
-                raise AnalysisError(f"pointer offset must be 'u64' or integer literal, got '{offset_name}'", span)
-
+            offset_value = self.__evaluator.coerce(offset_operand, TypeCtx.u64_id)
             return HIR.Binary(
                 span=span,
                 op=BinaryOperator.Add,
@@ -236,14 +246,7 @@ class OpBuilder:
             )
 
         if isinstance(left_ty, Type.PointerType) and self.__type_ctx.is_integer_type(right_hir.type_id):
-            if right_hir.type_id == TypeCtx.u64_id:
-                offset_value = right_hir
-            elif isinstance(self.__type_ctx[right_hir.type_id], Type.IntLiteralType):
-                offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
-            else:
-                offset_name = self.__type_ctx.get_name(right_hir.type_id)
-                raise AnalysisError(f"pointer offset must be 'u64' or integer literal, got '{offset_name}'", span)
-
+            offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
             return HIR.Binary(
                 span=span,
                 op=BinaryOperator.Sub,
@@ -424,67 +427,383 @@ class OpBuilder:
         self.__raise_unsupported_binary_operator(span, str(op), left_hir.type_id, right_hir.type_id)
 
     def __build_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        right_hir = self.__evaluator.coerce(right_hir, left_hir.type_id)
+        return HIR.Binary(span, BinaryOperator.Assign, left_hir, right_hir, left_hir.type_id, is_place=False)
 
     def __build_add_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.AddAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        left_ty = self.__type_ctx[left_hir.type_id]
+        if isinstance(left_ty, Type.PointerType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            return HIR.Binary(
+                span=span,
+                op=BinaryOperator.AddAssign,
+                left=left_hir,
+                right=offset_value,
+                type_id=left_hir.type_id,
+                is_place=False,
+            )
+
+        self.__raise_unsupported_binary_operator(span, "+=", left_hir.type_id, right_hir.type_id)
 
     def __build_sub_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.SubAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        left_ty = self.__type_ctx[left_hir.type_id]
+        if isinstance(left_ty, Type.PointerType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            return HIR.Binary(
+                span=span,
+                op=BinaryOperator.SubAssign,
+                left=left_hir,
+                right=offset_value,
+                type_id=left_hir.type_id,
+                is_place=False,
+            )
+
+        self.__raise_unsupported_binary_operator(span, "-=", left_hir.type_id, right_hir.type_id)
 
     def __build_mul_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.MulAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "*=", left_hir.type_id, right_hir.type_id)
 
     def __build_div_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.DivAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "/=", left_hir.type_id, right_hir.type_id)
 
     def __build_mod_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.ModAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "%=", left_hir.type_id, right_hir.type_id)
 
     def __build_bitand_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitAndAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "&=", left_hir.type_id, right_hir.type_id)
 
     def __build_bitor_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitOrAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "|=", left_hir.type_id, right_hir.type_id)
 
     def __build_bitxor_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=BinaryOperator.BitXorAssign,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, "^=", left_hir.type_id, right_hir.type_id)
 
     def __build_shl_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__shift_helper(
+            span=span,
+            op=BinaryOperator.ShlAssign,
+            left=left_hir,
+            right=right_hir
+        )
+        return builtin_expr
 
     def __build_shr_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__shift_helper(
+            span=span,
+            op=BinaryOperator.ShrAssign,
+            left=left_hir,
+            right=right_hir
+        )
+        return builtin_expr
 
     def __build_index(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        left_ty = self.__type_ctx[left_hir.type_id]
+
+        # 1) Array/Pointer/Slice indexing
+        if isinstance(left_ty, (Type.ArrayType, Type.PointerType, Type.SliceType)):
+            match left_ty:
+                case Type.ArrayType():
+                    element_type = left_ty.element_type
+                case Type.PointerType():
+                    element_type = left_ty.pointee_type
+                case Type.SliceType():
+                    element_type = left_ty.element_type
+
+            if self.__type_ctx.is_integer_type(right_hir.type_id):
+                right_hir = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+                return HIR.Binary(span, BinaryOperator.Index, left_hir, right_hir, element_type, is_place=left_hir.is_place)
+
+            # range<u64> -> slice (not an lvalue)
+            range_u64 = self.__type_ctx.alloc_range(TypeCtx.u64_id)
+            if right_hir.type_id == range_u64:
+                slice_type = self.__type_ctx.alloc_slice(element_type)
+                return HIR.StructConstruct(span, range_u64, {"start": left_hir, "end": right_hir}, slice_type, is_place=False)
+
+            raise AnalysisError(f"Index requires type u64 or range<u64>, got '{self.__type_ctx.get_name(right_hir.type_id)}'.", span)
+
+        # 2) Tuple indexing
+        if isinstance(left_ty, Type.TupleType):
+            if not isinstance(right_hir, HIR.IntLiteral):
+                raise AnalysisError("Tuple index must be an integer literal.", span)
+
+            index_val = right_hir.value
+            if index_val < 0 or index_val >= len(left_ty.element_types):
+                raise AnalysisError(f"Tuple index {index_val} out of bounds for tuple of size {len(left_ty.element_types)}.", span)
+
+            elem_type = left_ty.element_types[index_val]
+            return HIR.TupleAccess(span, left_hir, index_val, elem_type, is_place=left_hir.is_place)
+
+        # 3) Index overload via trait
+        overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
+        if overloaded_expr is not None:
+            # if index() returns a pointer, add a deref to make it an lvalue
+            result_type = self.__type_ctx[overloaded_expr.type_id]
+            if isinstance(result_type, Type.PointerType):
+                overloaded_expr = HIR.Unary(span, UnaryOperator.Deref, overloaded_expr, result_type.pointee_type, is_place=True)
+            return overloaded_expr
+
+        raise AnalysisError(f"Cannot apply index operator {BinaryOperator.Index} to type '{self.__type_ctx.get_name(left_hir.type_id)}'.", span)
 
     def __build_in(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        # a in b is desugared to b.contains(a)
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        overloaded_expr = self.__resolve_overloaded_operator(span, op, right_hir, [left_hir])
+        if overloaded_expr is not None:
+            return overloaded_expr
+
+        raise AnalysisError(f"Cannot apply operator {op} to type '{self.__type_ctx.get_name(left_hir.type_id)}'.", span)
 
     def __build_range(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        # a..b is desugared to Range(start=a, end=b)
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        merged_type_id = self.__type_ctx.merge_types(left_hir.type_id, right_hir.type_id, span)
+        left_hir = self.__evaluator.coerce(left_hir, merged_type_id)
+        right_hir = self.__evaluator.coerce(right_hir, merged_type_id)
+
+        range_type_id = self.__type_ctx.alloc_range(merged_type_id)
+        return HIR.StructConstruct(span, range_type_id, {"start": left_hir, "end": right_hir}, range_type_id, is_place=False)
 
     def __build_neg(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        operand_hir = self.__evaluator.value(operand)
+
+        builtin_expr = self.__unary_helper(
+            span=span,
+            op=UnaryOperator.Neg,
+            operand=operand_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_unary_operator(span, "-", operand_hir.type_id)
 
     def __build_bitnot(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        operand_hir = self.__evaluator.value(operand)
+
+        builtin_expr = self.__unary_helper(
+            span=span,
+            op=UnaryOperator.BitNot,
+            operand=operand_hir,
+            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_unary_operator(span, "~", operand_hir.type_id)
 
     def __build_logical_not(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        operand_hir = self.__evaluator.value(operand)
+
+        builtin_expr = self.__unary_helper(
+            span=span,
+            op=UnaryOperator.LogicalNot,
+            operand=operand_hir,
+            allowed_operand_types={OperandType.Bool},
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_unary_operator(span, "!", operand_hir.type_id)
 
     def __build_deref(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        operand_hir = self.__evaluator.value(operand)
+
+        operand_ty = self.__type_ctx[operand_hir.type_id]
+        if isinstance(operand_ty, Type.PointerType):
+            return HIR.Unary(span, UnaryOperator.Deref, operand_hir, operand_ty.pointee_type, is_place=True)
+
+        # deref overload via trait
+        overloaded_expr = self.__resolve_overloaded_operator(span, UnaryOperator.Deref, operand_hir, [])
+        if overloaded_expr is not None:
+            result_type = self.__type_ctx[overloaded_expr.type_id]
+            if isinstance(result_type, Type.PointerType):
+                return HIR.Unary(span, UnaryOperator.Deref, overloaded_expr, result_type.pointee_type, is_place=True)
+            else:
+                return overloaded_expr
+
+        raise AnalysisError(f"Cannot apply dereference operator to type '{self.__type_ctx.get_name(operand_hir.type_id)}'.", span)
 
     def __build_addr_of(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        raise NotImplementedError()
+        operand_hir = self.__evaluator.value(operand)
 
-    def __build_field_access(self, span: SrcSpan, receiver: HIR.Var, field_name: str) -> HIR.Expr:
-        raise NotImplementedError()
+        if not operand_hir.is_place:
+            raise AnalysisError("address-of operator requires a place expression", span)
+
+        ptr_type_id = self.__type_ctx.alloc_pointer(operand_hir.type_id)
+        return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
+
+    def __build_field_access(self, span: SrcSpan, receiver: HIR.Expr, field_name: str) -> HIR.Expr:
+        struct_ty = self.__type_ctx[receiver.type_id]
+        assert isinstance(struct_ty, Type.StructType)
+
+        struct_field = struct_ty.get_field_by_name(field_name, self.__type_ctx)
+        if struct_field is None:
+            raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
+
+        return HIR.FieldAccess(span, receiver, struct_field, struct_field.type_id, is_place=receiver.is_place)
 
     def __build_variant_construct(self, span: SrcSpan, enum_type_id: int, variant_name: str) -> HIR.Expr:
-        raise NotImplementedError()
+        enum_ty = self.__type_ctx[enum_type_id]
+        assert isinstance(enum_ty, Type.EnumType)
+
+        variant = enum_ty.get_variant_by_name(variant_name, self.__type_ctx)
+        if variant is None:
+            raise AnalysisError(f"Enum '{self.__type_ctx.get_name(enum_type_id)}' has no variant named '{variant_name}'.", span)
+
+        return HIR.VariantConstruct(span, enum_type_id, variant, None, enum_type_id, is_place=False)
 
     def __shift_helper(self, span: SrcSpan, op: BinaryOperator, left: HIR.Expr, right: HIR.Expr) -> HIR.Expr:
         """Helper function for building shift operator expressions.
@@ -517,7 +836,7 @@ class OpBuilder:
         left_operand_type = self.__get_operand_type(left.type_id, allowed_operand_types)
         right_operand_type = self.__get_operand_type(right.type_id, allowed_operand_types)
         if left_operand_type != right_operand_type:
-            self.__raise_unsupported_binary_operator(span, str(op), left.type_id, right.type_id)
+            return None
         operand_type = left_operand_type
 
         if operand_type != OperandType.Overloaded:
@@ -532,6 +851,18 @@ class OpBuilder:
         overloaded_expr = self.__resolve_overloaded_operator(span, op, left, [right])
         return overloaded_expr
 
+    def __unary_helper(self, span: SrcSpan, op: UnaryOperator, operand: HIR.Expr, allowed_operand_types: set[OperandType]) -> HIR.Expr | None:
+        operand_type = self.__get_operand_type(operand.type_id, allowed_operand_types)
+
+        if operand_type != OperandType.Overloaded:
+            return HIR.Unary(span, op, operand, operand.type_id, is_place=False)
+
+        if OperandType.Overloaded not in allowed_operand_types:
+            return None
+
+        overloaded_expr = self.__resolve_overloaded_operator(span, op, operand, [])
+        return overloaded_expr
+
     def __get_operand_type(self, type_id: int, allowed_operand_types: set[OperandType]) -> OperandType:
         ty = self.__type_ctx[type_id]
         if isinstance(ty, (Type.IntType, Type.IntLiteralType)) and OperandType.Integer in allowed_operand_types:
@@ -544,7 +875,7 @@ class OpBuilder:
             return OperandType.Char
         return OperandType.Overloaded
 
-    def __resolve_overloaded_operator(self, span: SrcSpan, op: BinaryOperator, receiver: HIR.Expr, args: list[HIR.Expr]) -> HIR.MethodCall | None:
+    def __resolve_overloaded_operator(self, span: SrcSpan, op: BinaryOperator | UnaryOperator, receiver: HIR.Expr, args: list[HIR.Expr]) -> HIR.MethodCall | None:
         trait_kind, method_name = self.__OP_INFO[op]
 
         trait_id = TypeCtx.intrinsic_custom_type(trait_kind)
@@ -578,6 +909,13 @@ class OpBuilder:
         ]
 
         return HIR.MethodCall(span, coerced_receiver, lookup.method_id, coerced_args, method_ty.return_type(self.__type_ctx), False)
+
+    def __raise_unsupported_unary_operator(self, span: SrcSpan, operator_symbol: str, operand_type_id: int) -> NoReturn:
+        operand_name = self.__type_ctx.get_name(operand_type_id)
+        raise AnalysisError(
+            f"operator '{operator_symbol}' is not supported for type '{operand_name}'",
+            span,
+        )
 
     def __raise_unsupported_binary_operator(self, span: SrcSpan, operator_symbol: str, left_type_id: int, right_type_id: int) -> NoReturn:
         left_name = self.__type_ctx.get_name(left_type_id)
