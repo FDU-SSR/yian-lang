@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind
+from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
+                                         PunctuatorKind)
 
 if TYPE_CHECKING:
     from compiler.frontend.parse.stream import TokenStream
@@ -11,48 +12,48 @@ if TYPE_CHECKING:
 
 class BinaryOperator(Enum):
     # Arithmetic
-    Add = (10, 11)
-    Sub = (10, 11)
-    Mul = (11, 12)
-    Div = (11, 12)
-    Mod = (11, 12)
+    Add = auto()
+    Sub = auto()
+    Mul = auto()
+    Div = auto()
+    Mod = auto()
     # Bitwise
-    BitAnd = (6, 7)
-    BitOr = (4, 5)
-    BitXor = (5, 6)
-    Shl = (9, 10)
-    Shr = (9, 10)
+    BitAnd = auto()
+    BitOr = auto()
+    BitXor = auto()
+    Shl = auto()
+    Shr = auto()
     # Comparison
-    Eq = (7, 8)
-    Neq = (7, 8)
-    Lt = (8, 9)
-    Gt = (8, 9)
-    Leq = (8, 9)
-    Geq = (8, 9)
+    Eq = auto()
+    Neq = auto()
+    Lt = auto()
+    Gt = auto()
+    Leq = auto()
+    Geq = auto()
     # Logical
-    LogicalAnd = (3, 4)
-    LogicalOr = (2, 3)
+    LogicalAnd = auto()
+    LogicalOr = auto()
     # Assignment
-    Assign = (1, 1)
+    Assign = auto()
     # Arithmetic assignment
-    AddAssign = (1, 1)
-    SubAssign = (1, 1)
-    MulAssign = (1, 1)
-    DivAssign = (1, 1)
-    ModAssign = (1, 1)
+    AddAssign = auto()
+    SubAssign = auto()
+    MulAssign = auto()
+    DivAssign = auto()
+    ModAssign = auto()
     # Bitwise assignment
-    BitAndAssign = (1, 1)
-    BitOrAssign = (1, 1)
-    BitXorAssign = (1, 1)
-    ShlAssign = (1, 1)
-    ShrAssign = (1, 1)
+    BitAndAssign = auto()
+    BitOrAssign = auto()
+    BitXorAssign = auto()
+    ShlAssign = auto()
+    ShrAssign = auto()
     # Mem
-    Index = (999, 999)
+    Index = auto()
     # Membership
-    In = (999, 999)
-    NotIn = (999, 999)
+    In = auto()
+    NotIn = auto()
     # Range
-    Range = (999, 999)
+    Range = auto()
 
     @classmethod
     def try_from_token(cls, stream: TokenStream) -> tuple[BinaryOperator, int] | None:
@@ -136,12 +137,12 @@ class BinaryOperator(Enum):
     @property
     def lbp(self) -> int:
         """Left binding power (precedence) of the operator."""
-        return self.value[0]
+        return BINARY_PRECEDENCE[self][0]
 
     @property
     def rbp(self) -> int:
         """Right binding power of the operator (for right-associative operators)."""
-        return self.value[1]
+        return BINARY_PRECEDENCE[self][1]
 
     def __str__(self) -> str:
         match self:
@@ -213,16 +214,53 @@ class BinaryOperator(Enum):
                 return ".."
 
 
+BINARY_PRECEDENCE = {
+    BinaryOperator.Add: (10, 11),
+    BinaryOperator.Sub: (10, 11),
+    BinaryOperator.Mul: (11, 12),
+    BinaryOperator.Div: (11, 12),
+    BinaryOperator.Mod: (11, 12),
+    BinaryOperator.BitAnd: (6, 7),
+    BinaryOperator.BitOr: (4, 5),
+    BinaryOperator.BitXor: (5, 6),
+    BinaryOperator.Shl: (9, 10),
+    BinaryOperator.Shr: (9, 10),
+    BinaryOperator.Eq: (7, 8),
+    BinaryOperator.Neq: (7, 8),
+    BinaryOperator.Lt: (8, 9),
+    BinaryOperator.Gt: (8, 9),
+    BinaryOperator.Leq: (8, 9),
+    BinaryOperator.Geq: (8, 9),
+    BinaryOperator.LogicalAnd: (3, 4),
+    BinaryOperator.LogicalOr: (2, 3),
+    BinaryOperator.Assign: (1, 1),
+    BinaryOperator.AddAssign: (1, 1),
+    BinaryOperator.SubAssign: (1, 1),
+    BinaryOperator.MulAssign: (1, 1),
+    BinaryOperator.DivAssign: (1, 1),
+    BinaryOperator.ModAssign: (1, 1),
+    BinaryOperator.BitAndAssign: (1, 1),
+    BinaryOperator.BitOrAssign: (1, 1),
+    BinaryOperator.BitXorAssign: (1, 1),
+    BinaryOperator.ShlAssign: (1, 1),
+    BinaryOperator.ShrAssign: (1, 1),
+    BinaryOperator.Index: (999, 999),
+    BinaryOperator.In: (999, 999),
+    BinaryOperator.NotIn: (999, 999),
+    BinaryOperator.Range: (999, 999),
+}
+
+
 class UnaryOperator(Enum):
     # Arithmetic
-    Neg = 13
+    Neg = auto()
     # Bitwise
-    BitNot = 13
+    BitNot = auto()
     # Logical
-    LogicalNot = 13
+    LogicalNot = auto()
     # Mem
-    Deref = 14
-    AddrOf = 14
+    Deref = auto()
+    AddrOf = auto()
 
     @classmethod
     def try_from_token(cls, stream: TokenStream) -> tuple[UnaryOperator, int] | None:
@@ -245,7 +283,7 @@ class UnaryOperator(Enum):
     @property
     def rbp(self) -> int:
         """Right binding power of the unary operator."""
-        return self.value
+        return UNARY_PRECEDENCE[self]
 
     def __str__(self) -> str:
         match self:
@@ -259,3 +297,12 @@ class UnaryOperator(Enum):
                 return "*"
             case UnaryOperator.AddrOf:
                 return "&"
+
+
+UNARY_PRECEDENCE = {
+    UnaryOperator.Neg: 13,
+    UnaryOperator.BitNot: 13,
+    UnaryOperator.LogicalNot: 13,
+    UnaryOperator.Deref: 14,
+    UnaryOperator.AddrOf: 14,
+}
