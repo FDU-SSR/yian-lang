@@ -92,6 +92,9 @@ class TypeCtx:
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
 
+    def items(self):
+        return self.__space.items()
+
     def __contains__(self, type_id: int) -> bool:
         return type_id in self.__space
 

@@ -35,6 +35,9 @@ class TypeSpace:
             raise CompilerError(f"Type ID {type_id} does not exist in the type context")
         return self.__space[type_id]
 
+    def items(self):
+        return self.__space.items()
+
     def __setitem__(self, type_id: int, ty: Type.Ty) -> None:
         self.__space[type_id] = ty
 

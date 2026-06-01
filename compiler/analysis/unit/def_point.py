@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from compiler.analysis.symbol.context import SymbolCtx
+from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 
@@ -15,3 +16,8 @@ class DefPoint:
     symbol_ctx: SymbolCtx
     body: HIR.Block | None = None
     locals: list[int] = field(default_factory=list[int])
+
+    def export(self, type_ctx: TypeCtx | None = None) -> str:
+        from compiler.analysis.unit.hir_export import export_def_point
+
+        return export_def_point(self, type_ctx)

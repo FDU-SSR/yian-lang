@@ -63,6 +63,9 @@ class SymbolCtx:
         """Gets a symbol by its ID."""
         return self.__all_symbols[symbol_id]
 
+    def items(self):
+        return self.__all_symbols.items()
+
     def lookup(self, name: str) -> Symbol | None:
         """Looks up a symbol by name in the current scope and its parents."""
         scope = self.__current_scope

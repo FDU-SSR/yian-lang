@@ -3,6 +3,7 @@
 import argparse
 import sys
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NoReturn
 
@@ -10,6 +11,8 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit.def_point import DefPoint
+from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.token import Token
@@ -39,13 +42,22 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         "--token",
         type=Path,
         metavar="PATH",
-        help="Write token output to PATH.",
+        default=Path("build/token.txt"),
+        help="Write token output to PATH (default: build/token.txt).",
     )
     parser.add_argument(
         "--ast",
         type=Path,
         metavar="PATH",
-        help="Write AST output to PATH.",
+        default=Path("build/ast.txt"),
+        help="Write AST output to PATH (default: build/ast.txt).",
+    )
+    parser.add_argument(
+        "--hir",
+        type=Path,
+        metavar="PATH",
+        default=Path("build/hir.txt"),
+        help="Write HIR output to PATH (default: build/hir.txt).",
     )
     return parser.parse_args(argv)
 
@@ -123,6 +135,10 @@ def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> s
     return "\n\n".join(sections) + ("\n" if sections else "")
 
 
+def __format_hir_output(unit_datas: Mapping[int, UnitData], def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
+    return export_hir_bundle(unit_datas, def_points, type_ctx)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
@@ -173,6 +189,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.ast is not None:
         __write_text_output(args.ast, __format_ast_output(src_files, programs))
+
+    if args.hir is not None:
+        __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
 
     return 0
 
