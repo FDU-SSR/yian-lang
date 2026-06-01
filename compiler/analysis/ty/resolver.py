@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import ASTType
 
 if TYPE_CHECKING:
+    from compiler.analysis.symbol.context import SymbolCtx
     from compiler.analysis.ty.context import TypeCtx
 
 

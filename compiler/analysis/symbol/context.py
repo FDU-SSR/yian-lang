@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from compiler.analysis.symbol.symbol import Symbol, SymbolAttribute, SymbolKind
+from compiler.analysis.ty.context import TypeCtx
 from compiler.utils.errors.yian_error import CompilerError
 
 
@@ -23,6 +24,30 @@ class SymbolCtx:
         self.__current_scope = Scope(symbols={}, parent=None)
 
         self.__exportable_symbols: dict[str, int] = {}  # name -> symbol_id
+
+        # add built-in types
+        self.add_symbol(name="void", type_id=TypeCtx.void_id, kind=SymbolKind.Type)
+        self.add_symbol(name="bool", type_id=TypeCtx.bool_id, kind=SymbolKind.Type)
+        self.add_symbol(name="char", type_id=TypeCtx.char_id, kind=SymbolKind.Type)
+        self.add_symbol(name="string", type_id=TypeCtx.str_id, kind=SymbolKind.Type)
+
+        self.add_symbol(name="i8", type_id=TypeCtx.i8_id, kind=SymbolKind.Type)
+        self.add_symbol(name="i16", type_id=TypeCtx.i16_id, kind=SymbolKind.Type)
+        self.add_symbol(name="i32", type_id=TypeCtx.i32_id, kind=SymbolKind.Type)
+        self.add_symbol(name="i64", type_id=TypeCtx.i64_id, kind=SymbolKind.Type)
+
+        self.add_symbol(name="u8", type_id=TypeCtx.u8_id, kind=SymbolKind.Type)
+        self.add_symbol(name="u16", type_id=TypeCtx.u16_id, kind=SymbolKind.Type)
+        self.add_symbol(name="u32", type_id=TypeCtx.u32_id, kind=SymbolKind.Type)
+        self.add_symbol(name="u64", type_id=TypeCtx.u64_id, kind=SymbolKind.Type)
+
+        self.add_symbol(name="f16", type_id=TypeCtx.f16_id, kind=SymbolKind.Type)
+        self.add_symbol(name="f32", type_id=TypeCtx.f32_id, kind=SymbolKind.Type)
+        self.add_symbol(name="f64", type_id=TypeCtx.f64_id, kind=SymbolKind.Type)
+
+        self.add_symbol(name="int", type_id=TypeCtx.i32_id, kind=SymbolKind.Type)
+        self.add_symbol(name="uint", type_id=TypeCtx.u32_id, kind=SymbolKind.Type)
+        self.add_symbol(name="float", type_id=TypeCtx.f64_id, kind=SymbolKind.Type)
 
     def __next_symbol_id(self) -> int:
         symbol_id = self.__next_id

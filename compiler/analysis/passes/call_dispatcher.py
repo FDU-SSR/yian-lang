@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
-from compiler.analysis.passes.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
-from compiler.analysis.ty.context import LookupResult
 from compiler.frontend.parse import ast as AST
 from compiler.utils.IR.position import SrcSpan
+
+if TYPE_CHECKING:
+    from compiler.analysis.passes.sem_ctx import SemCtx
+    from compiler.analysis.ty.context import LookupResult
 
 
 class CallDispatcher:

@@ -6,14 +6,17 @@ This is the first pass of the analysis phase.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.unit_data import UnitData
 from compiler.config.constants import AccessMode
 from compiler.frontend.parse import ast as AST
+
+if TYPE_CHECKING:
+    from compiler.analysis.ty.context import TypeCtx
+    from compiler.analysis.unit.unit_data import UnitData
 
 
 class GlobalResolve:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
@@ -16,6 +16,9 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.utils.errors.yian_error import CompilerError
 from compiler.utils.IR.position import SrcSpan
+
+if TYPE_CHECKING:
+    from compiler.analysis.symbol.context import SymbolCtx
 
 
 class TypeCtx:
