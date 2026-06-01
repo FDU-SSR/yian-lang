@@ -241,7 +241,7 @@ class Parser:
     def __parse_variant_info(self) -> AST.VariantInfo:
         name = self.__stream.consume_identifier()
 
-        self.__stream.consume_spaces_inline()
+        self.__stream.consume_spaces(endl_sensitive=True)
         token = self.__stream.peek()
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
             self.__stream.consume_punctuator(PunctuatorKind.LBrace)

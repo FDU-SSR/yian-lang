@@ -157,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
         token_lists.append(lexer.export())
 
+    if args.token is not None:
+        __write_text_output(args.token, __format_token_output(src_files, token_lists))
+
     programs: list[AST.Program] = []
     for src_file, tokens in zip(src_files, token_lists):
         parser = Parser(tokens)
@@ -167,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
             __print_source_error(error.span, error)
 
         programs.append(program)
+
+    if args.ast is not None:
+        __write_text_output(args.ast, __format_ast_output(src_files, programs))
 
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx()
@@ -183,12 +189,6 @@ def main(argv: list[str] | None = None) -> int:
     except AnalysisError as error:
         __print_source_error(error.span, error)
     def_points = type_checker.export()
-
-    if args.token is not None:
-        __write_text_output(args.token, __format_token_output(src_files, token_lists))
-
-    if args.ast is not None:
-        __write_text_output(args.ast, __format_ast_output(src_files, programs))
 
     if args.hir is not None:
         __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))

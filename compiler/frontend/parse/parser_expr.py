@@ -23,7 +23,12 @@ class ExprParser:
         lhs = self.__parse_prefix()
 
         while True:
-            self.__stream.consume_spaces()
+            self.__stream.consume_spaces(endl_sensitive=True)
+
+            # stop if we reach the end of the line
+            if self.__stream.end_of_line():
+                break
+
             op_info = BinaryOperator.try_from_token(self.__stream)
 
             if op_info is None:

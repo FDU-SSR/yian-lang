@@ -55,7 +55,7 @@ class StmtParser:
     def __parse_return(self) -> AST.Return:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Return).span
 
-        self.__stream.consume_spaces_inline()
+        self.__stream.consume_spaces(endl_sensitive=True)
         token = self.__stream.peek()
         if isinstance(token, Tok.Punctuator) and token.kind in {Tok.PunctuatorKind.Endl, Tok.PunctuatorKind.EOF}:
             expr = None

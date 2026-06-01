@@ -94,7 +94,7 @@ class PointerType:
     pointee_type: ASTType
 
     def __repr__(self) -> str:
-        return f"*{self.pointee_type}"
+        return f"{self.pointee_type}*"
 
 
 @dataclass

@@ -19,6 +19,10 @@ class TokenStream:
         token = self.peek()
         return isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF
 
+    def end_of_line(self) -> bool:
+        token = self.peek()
+        return isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Endl
+
     def peek(self) -> Token:
         return self.__tokens[self.__index]
 
@@ -56,20 +60,14 @@ class TokenStream:
         self.advance()
         return token
 
-    def consume_spaces(self) -> None:
+    def consume_spaces(self, endl_sensitive: bool = False) -> None:
         """Skips consecutive space tokens."""
+        space_kinds = {Tok.PunctuatorKind.Space}
+        if not endl_sensitive:
+            space_kinds.add(Tok.PunctuatorKind.Endl)
         while not self.at_end():
             token = self.peek()
-            if isinstance(token, Tok.Punctuator) and token.kind in {Tok.PunctuatorKind.Space, Tok.PunctuatorKind.Endl}:
-                self.advance()
-            else:
-                break
-
-    def consume_spaces_inline(self) -> None:
-        """Skips consecutive space tokens but stops at newlines."""
-        while not self.at_end():
-            token = self.peek()
-            if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Space:
+            if isinstance(token, Tok.Punctuator) and token.kind in space_kinds:
                 self.advance()
             else:
                 break
@@ -92,17 +90,18 @@ class TokenStream:
 
     def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[Tok.PunctuatorKind], terminators: set[Tok.PunctuatorKind]) -> list[ItemType]:
         """Consumes a separated list of items parsed by the given item_parser function."""
+        endl_sensitive = Tok.PunctuatorKind.Endl in separators or Tok.PunctuatorKind.Endl in terminators
         items: list[ItemType] = []
         token = self.peek()
         while not (isinstance(token, Tok.Punctuator) and token.kind in terminators):
-            self.consume_spaces()
+            self.consume_spaces(endl_sensitive=False)  # not sensitive to endl before item
             items.append(item_parser())
-            self.consume_spaces_inline()
+            self.consume_spaces(endl_sensitive=endl_sensitive)
 
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in separators:
                 self.consume_punctuator(token.kind)
-                self.consume_spaces_inline()
+                self.consume_spaces(endl_sensitive=endl_sensitive)
                 token = self.peek()
             else:
                 break
