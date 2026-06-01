@@ -74,6 +74,9 @@ class CallDispatcher:
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
 
         instantiated_func_id = inference.instantiate(func_type_id)
+        # report reachable instantiated function to the semantic context
+        self.__ctx.report_def(instantiated_func_id)
+
         instantiated_func_ty = self.__ctx.type_ctx[instantiated_func_id]
         assert isinstance(instantiated_func_ty, Type.FunctionType)
         return HIR.Call(
@@ -171,6 +174,9 @@ class CallDispatcher:
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 
         coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
+        # report reachable instantiated method to the semantic context
+        self.__ctx.report_def(lookup.method_id)
+
         return HIR.MethodCall(
             span=span,
             receiver=coerced_receiver,

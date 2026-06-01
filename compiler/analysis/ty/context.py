@@ -351,8 +351,7 @@ class TypeCtx:
 
         if def_id in self.__procedures:
             return self.__procedures[def_id]
-        else:
-            raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
+        raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
 
     def method_lookup(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> LookupResult | None:
         """

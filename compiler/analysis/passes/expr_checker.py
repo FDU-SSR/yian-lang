@@ -155,6 +155,7 @@ class ExprChecker:
             return expr
 
         expected_ty = self.__ctx.type_ctx[expected]
+        expr_ty = self.__ctx.type_ctx[expr.type_id]
 
         match expr:
             case HIR.IntLiteral():
@@ -193,82 +194,24 @@ class ExprChecker:
                 expr.type_id = expected
                 return expr
             case HIR.Binary():
-                expr.left = self.coerce(expr.left, expected)
-                expr.right = self.coerce(expr.right, expected)
-                expr.type_id = expected
+                if isinstance(expr_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
+                    expr.left = self.coerce(expr.left, expected)
+                    expr.right = self.coerce(expr.right, expected)
+                    expr.type_id = expected
                 return expr
             case HIR.Unary():
-                expr.operand = self.coerce(expr.operand, expected)
-                expr.type_id = expected
+                if isinstance(expr_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
+                    expr.operand = self.coerce(expr.operand, expected)
+                    expr.type_id = expected
                 return expr
             case HIR.DynValue():
-                if isinstance(expected_ty, Type.PointerType):
-                    expr.value = self.coerce(expr.value, expected_ty.pointee_type)
-                    expr.type_id = expected
-                    return expr
-                expr.value = self.coerce(expr.value, expected)
+                if not isinstance(expected_ty, Type.PointerType):
+                    raise AnalysisError(f"Expected pointer type for dynamic value, got '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
+                expr.value = self.coerce(expr.value, expected_ty.pointee_type)
                 expr.type_id = expected
                 return expr
-            case HIR.DynBuffer():
-                expr.length = self.coerce(expr.length, TypeCtx.u64_id)
-                expr.type_id = expected
+            case _:
                 return expr
-            case HIR.FieldAccess():
-                expr.receiver = self.coerce(expr.receiver, expr.receiver.type_id)
-                expr.type_id = expected
-                return expr
-            case HIR.Call():
-                expr.args = [self.coerce(arg, arg.type_id) for arg in expr.args]
-                expr.type_id = expected
-                return expr
-            case HIR.Invoke():
-                expr.callable = self.coerce(expr.callable, expr.callable.type_id)
-                expr.args = [self.coerce(arg, arg.type_id) for arg in expr.args]
-                expr.type_id = expected
-                return expr
-            case HIR.MethodCall():
-                expr.receiver = self.coerce(expr.receiver, expr.receiver.type_id)
-                expr.args = [self.coerce(arg, arg.type_id) for arg in expr.args]
-                expr.type_id = expected
-                return expr
-            case HIR.StructConstruct():
-                expr.field_values = {
-                    name: self.coerce(field_expr, field_expr.type_id)
-                    for name, field_expr in expr.field_values.items()
-                }
-                expr.type_id = expected
-                return expr
-            case HIR.VariantConstruct():
-                if expr.args is not None:
-                    expr.args = {
-                        name: self.coerce(field_expr, field_expr.type_id)
-                        for name, field_expr in expr.args.items()
-                    }
-                expr.type_id = expected
-                return expr
-            case HIR.Cast() | HIR.BitCast():
-                expr.value = self.coerce(expr.value, expr.value.type_id)
-                expr.type_id = expected
-                return expr
-            case HIR.SizeOf():
-                expr.type_id = expected
-                return expr
-
-    def as_place(self, expr: AST.Expr) -> HIR.Expr:
-        """Treat an expression as an l-value/place and return HIR.Expr."""
-        if isinstance(expr, AST.Identifier):
-            assert self.__ctx.symbol_ctx is not None
-            symbol = self.__ctx.symbol_ctx.lookup(expr.name)
-            if symbol is None:
-                raise AnalysisError(f"Unknown identifier '{expr.name}'", expr.span)
-            if symbol.kind != SymbolKind.Variable:
-                raise AnalysisError(f"Identifier '{expr.name}' is not an l-value", expr.span)
-            return HIR.Var(span=expr.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
-
-        hir_expr = self.value(expr)
-        if not hir_expr.is_place:
-            raise AnalysisError("expression is not an l-value", expr.span)
-        return hir_expr
 
     def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> HIR.Expr:
         return self.__call_dispatcher.dispatch_method_call(receiver.span, receiver, method_name, generic_args, args, "method call")

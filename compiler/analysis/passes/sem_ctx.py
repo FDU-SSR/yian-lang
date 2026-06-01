@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
+from compiler.utils.errors.yian_error import CompilerError
 from compiler.utils.IR.position import SrcSpan
 
 
@@ -62,6 +63,8 @@ class SemCtx:
         self.__loop_stack: list[LoopFrame] = []
         self.__scope_depth: int = 0
         self.__current_span: SrcSpan = SrcSpan.empty()
+        # callback to report discovered reachable definition type ids
+        self.__def_reporter: Callable[[int], None] | None = None
 
     @property
     def type_ctx(self) -> TypeCtx:
@@ -164,6 +167,22 @@ class SemCtx:
         # delegate to TypeCtx; many call sites pass symbol_ctx for resolution
         assert self.__symbol_ctx is not None
         return self.__type_ctx.resolve_type(ast_type, self.__symbol_ctx)
+
+    # ----------------- reachable def reporting API -----------------
+    def set_def_reporter(self, reporter: Callable[[int], None]) -> None:
+        """Set a callback that will be called with a concrete `type_id` whenever
+        an expression resolver discovers a reachable function/method definition.
+
+        The callback should be fast and idempotent; it is allowed to be called
+        multiple times for the same `type_id`.
+        """
+        self.__def_reporter = reporter
+
+    def report_def(self, type_id: int) -> None:
+        """Report a reachable definition `type_id` to the registered reporter."""
+        if self.__def_reporter is None:
+            raise CompilerError("No def reporter registered in SemCtx")
+        self.__def_reporter(type_id)
 
     def current_return_type(self) -> Optional[int]:
         return self.__return_type_id

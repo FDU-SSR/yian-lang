@@ -27,6 +27,25 @@ class TypeCheck:
         self.__expr_helper = ExprChecker(self.__sem_ctx)
         self.__stmt_helper = StmtChecker(self.__expr_helper)
 
+        # wire sem_ctx reachable-def reporter to our enqueue function
+        self.__sem_ctx.set_def_reporter(self.__report_def_point)
+
+    def __report_def_point(self, type_id: int) -> None:
+        """Idempotently register a reachable `type_id` as a DefPoint and enqueue it.
+
+        This mirrors the old worklist behaviour: whenever lowering discovers a
+        concrete instantiated function/method type id, we record and schedule it
+        for later checking.
+        """
+        if type_id in self.__def_points:
+            return
+        body, unit_id = self.__type_ctx.get_procedure(type_id)
+
+        unit = self.__units[unit_id]
+        dp = DefPoint(type_id=type_id, unit_id=unit_id, ast_body=body, symbol_ctx=unit.symbol_ctx.clone())
+        self.__def_points[type_id] = dp
+        self.__worklist.append(dp)
+
     def run(self) -> None:
         self.__find_main()
 
