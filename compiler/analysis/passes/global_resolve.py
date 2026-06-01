@@ -48,12 +48,15 @@ class GlobalResolve:
                     self.__std_lookup[key] = unit
                     break
 
-    def __convert_attr(self, attr: AST.Attr) -> SymbolAttribute:
-        match attr.kind:
-            case AST.AttrKind.Pub:
-                return SymbolAttribute.Public
-            case AST.AttrKind.Static:
-                raise AnalysisError(f"{attr} is not a valid attribute here", attr.span)
+    def __convert_attrs(self, attrs: list[AST.Attr]) -> set[SymbolAttribute]:
+        res: set[SymbolAttribute] = set()
+        for attr in attrs:
+            match attr.kind:
+                case AST.AttrKind.Pub:
+                    res.add(SymbolAttribute.Public)
+                case _:
+                    continue
+        return res
 
     def __collect_symbols(self, unit: UnitData) -> None:
         """Collects all global symbols in the unit."""
@@ -64,7 +67,7 @@ class GlobalResolve:
                     type_id = self.__type_ctx.alloc_alias(name.name)
 
                     # alloc in symbol space
-                    symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
+                    symbol_attrs = self.__convert_attrs(attrs)
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
@@ -84,7 +87,7 @@ class GlobalResolve:
                     type_id = self.__type_ctx.alloc_function(name.name)
 
                     # alloc in symbol space
-                    symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
+                    symbol_attrs = self.__convert_attrs(attrs)
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
@@ -104,7 +107,7 @@ class GlobalResolve:
                     type_id = self.__type_ctx.alloc_struct(name.name)
 
                     # alloc in symbol space
-                    symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
+                    symbol_attrs = self.__convert_attrs(attrs)
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
@@ -124,7 +127,7 @@ class GlobalResolve:
                     type_id = self.__type_ctx.alloc_enum(name.name)
 
                     # alloc in symbol space
-                    symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
+                    symbol_attrs = self.__convert_attrs(attrs)
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
@@ -144,7 +147,7 @@ class GlobalResolve:
                     type_id = self.__type_ctx.alloc_trait(name.name)
 
                     # alloc in symbol space
-                    symbol_attrs = {self.__convert_attr(attr) for attr in attrs}
+                    symbol_attrs = self.__convert_attrs(attrs)
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
@@ -198,7 +201,7 @@ class GlobalResolve:
             return self.__std_lookup.get(tuple(paths))
 
         # case 2: relative import
-        target_path = unit.path.parent.joinpath(*paths).with_suffix(".yian")
+        target_path = unit.path.parent.joinpath(*paths).with_suffix(".an")
         return self.__path_lookup.get(target_path.resolve())
 
     def __resolve_definitions(self, unit: UnitData) -> None:
@@ -383,7 +386,7 @@ class GlobalResolve:
         type_id = self.__type_ctx.alloc_method(decl.name.name)
 
         # alloc in symbol space
-        symbol_attrs = {self.__convert_attr(attr) for attr in decl.attrs}
+        symbol_attrs = self.__convert_attrs(decl.attrs)
         symbol_id = unit.symbol_ctx.add_symbol(decl.name.name, SymbolKind.Function, type_id, symbol_attrs)
         if symbol_id is None:
             raise AnalysisError(f"Duplicate method name: {decl.name.name}", decl.name.span)
