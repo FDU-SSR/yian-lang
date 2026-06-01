@@ -85,6 +85,16 @@ class ImplRegistry:
                 impl.span,
             )
 
+    def __impl_compatible(self, trait_type: int, target_type: int, type_from_trait: int, type_from_impl: int) -> bool:
+        """
+        Check that the type from the impl is compatible with the type from the trait.
+        """
+        if type_from_trait == type_from_impl:
+            return True
+        if type_from_trait == trait_type and type_from_impl == target_type:
+            return True
+        return False
+
     def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int) -> bool:
         """
         Check that the method defined in the impl matches the method defined in the trait.
@@ -99,14 +109,14 @@ class ImplRegistry:
             return False
         if trait_method_ty.receiver_type(self.__ctx) != trait_type:
             return False
-        if trait_method_ty.return_type(self.__ctx) != impl_method_ty.return_type(self.__ctx):
+        if not self.__impl_compatible(trait_type, target_type, trait_method_ty.return_type(self.__ctx), impl_method_ty.return_type(self.__ctx)):
             return False
         trait_params = trait_method_ty.parameters(self.__ctx)
         impl_params = impl_method_ty.parameters(self.__ctx)
         if len(trait_params) != len(impl_params):
             return False
         for trait_param, impl_param in zip(trait_params, impl_params):
-            if trait_param.type_id != impl_param.type_id:
+            if not self.__impl_compatible(trait_type, target_type, trait_param.type_id, impl_param.type_id):
                 return False
         return True
 
