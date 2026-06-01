@@ -920,6 +920,7 @@ class OpBuilder:
             for arg, param in zip(args, parameters)
         ]
 
+        self.__ctx.report_def(lookup.method_id)
         return HIR.MethodCall(span, coerced_receiver, lookup.method_id, coerced_args, method_ty.return_type(self.__type_ctx), False)
 
     def __raise_unsupported_unary_operator(self, span: SrcSpan, operator_symbol: str, operand_type_id: int) -> NoReturn:

@@ -347,6 +347,7 @@ class GlobalResolve:
                 case AST.MethodDef():
                     method_type_id = self.__resolve_method_decl(unit, item.decl, ty.custom_def.generics, symbol.type_id, False)
                     method_name = item.decl.name.name
+                    self.__type_ctx.add_procedure(method_type_id, item.body, unit.unit_id)
             methods[method_name] = method_type_id
         unit.symbol_ctx.exit_scope()
 
