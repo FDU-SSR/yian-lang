@@ -388,6 +388,7 @@ class OpBuilder:
             left=left_hir,
             right=right_hir,
             allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded},
+            result_type_id=TypeCtx.bool_id,
         )
         if builtin_expr is not None:
             return builtin_expr
@@ -404,6 +405,7 @@ class OpBuilder:
             left=left_hir,
             right=right_hir,
             allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
+            result_type_id=TypeCtx.bool_id,
         )
         if builtin_expr is not None:
             return builtin_expr
@@ -827,7 +829,15 @@ class OpBuilder:
 
         self.__raise_unsupported_binary_operator(span, str(op), left.type_id, right.type_id)
 
-    def __binary_helper(self, span: SrcSpan, op: BinaryOperator, left: HIR.Expr, right: HIR.Expr, allowed_operand_types: set[OperandType]) -> HIR.Expr | None:
+    def __binary_helper(
+        self,
+        span: SrcSpan,
+        op: BinaryOperator,
+        left: HIR.Expr,
+        right: HIR.Expr,
+        allowed_operand_types: set[OperandType],
+        result_type_id: int | None = None,
+    ) -> HIR.Expr | None:
         """Helper function for building binary operator expressions.
 
         1. Operand types are both builtin types
@@ -840,9 +850,11 @@ class OpBuilder:
         operand_type = left_operand_type
 
         if operand_type != OperandType.Overloaded:
-            result_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
-            left = self.__evaluator.coerce(left, result_type_id)
-            right = self.__evaluator.coerce(right, result_type_id)
+            operand_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
+            left = self.__evaluator.coerce(left, operand_type_id)
+            right = self.__evaluator.coerce(right, operand_type_id)
+            if result_type_id is None:
+                result_type_id = operand_type_id
             return HIR.Binary(span, op, left, right, result_type_id, is_place=False)
 
         if OperandType.Overloaded not in allowed_operand_types:
