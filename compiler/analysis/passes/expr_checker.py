@@ -98,7 +98,7 @@ class ExprChecker:
 
         match symbol.kind:
             case SymbolKind.Variable:
-                return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=False)
+                return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type:
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
             case _:
