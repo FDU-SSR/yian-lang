@@ -4,14 +4,19 @@ from typing import List
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_checker import ExprChecker
-from compiler.analysis.passes.hir_builder import (build_block, build_enum_match, build_enum_match_arm, build_if_chain,
-                                                  build_loop, build_switch, build_switch_arm)
+from compiler.analysis.passes.hir_builder import (build_block,
+                                                  build_enum_match,
+                                                  build_enum_match_arm,
+                                                  build_if_chain, build_loop,
+                                                  build_switch,
+                                                  build_switch_arm)
 from compiler.analysis.passes.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.operator import BinaryOperator
 
 
@@ -68,11 +73,18 @@ class StmtChecker:
     def check_var_decl(self, stmt: AST.VarDecl, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
-        var_type_id = ctx.resolve_type(stmt.var_type)
+        if isinstance(stmt.var_type, ASTTy.DeducedType):
+            if stmt.init_expr is None:
+                raise AnalysisError("cannot infer the type of a variable without an initializer", stmt.span)
+            init_expr = self.__expr.value(stmt.init_expr)
+            var_type_id = init_expr.type_id
+        else:
+            var_type_id = ctx.resolve_type(stmt.var_type)
+            init_expr = self.__expr.coerce(self.__expr.value(stmt.init_expr), var_type_id) if stmt.init_expr is not None else None
+
         symbol_id = self.__declare_local_symbol(stmt.name, var_type_id, ctx)
 
-        if stmt.init_expr is not None:
-            init_expr = self.__expr.coerce(self.__expr.value(stmt.init_expr), var_type_id)
+        if init_expr is not None:
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
             out.append(self.__expr.assign(stmt.span, var, init_expr))
 

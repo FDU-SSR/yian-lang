@@ -4,8 +4,8 @@ Desugar ASTs by desugaring syntactic sugar into more fundamental constructs.
 Rules:
 
 - var declarations with initializers => var declarations + assignments
-- for => loop
-- while => loop
+- for item in iterable { body } => { iter = iterable.into_iter(); loop { match iter.next() { Some(item) { body }, None { break } } } }
+- while cond { body } => loop { if not cond { break } body }
 - assert => if + panic
 """
 
@@ -14,8 +14,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.operator import BinaryOperator
+from compiler.frontend.parse import ast_type as ASTTy
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 
 class Desugar:
@@ -49,9 +51,9 @@ class Desugar:
         desugared_stmts: list[AST.Stmt] = []
 
         for stmt in block.stmts:
-            self.__process_var_decls_in_stmt(stmt)
+            self.__process_nested_blocks(stmt, self.__process_var_decls)
 
-            if isinstance(stmt, AST.VarDecl) and stmt.init_expr is not None:
+            if isinstance(stmt, AST.VarDecl) and stmt.init_expr is not None and not isinstance(stmt.var_type, ASTTy.DeducedType):
                 init_expr = stmt.init_expr
                 stmt.init_expr = None
                 desugared_stmts.append(stmt)
@@ -68,33 +70,153 @@ class Desugar:
 
         block.stmts = desugared_stmts
 
-    def __process_var_decls_in_stmt(self, stmt: AST.Stmt) -> None:
+    def __process_nested_blocks(self, stmt: AST.Stmt, processor: Callable[[AST.Block], None]) -> None:
         match stmt:
             case AST.Block():
-                self.__process_var_decls(stmt)
+                processor(stmt)
             case AST.If():
-                self.__process_var_decls(stmt.then_branch)
+                processor(stmt.then_branch)
                 for _, elif_branch in stmt.elif_branches:
-                    self.__process_var_decls(elif_branch)
+                    processor(elif_branch)
                 if stmt.else_branch is not None:
-                    self.__process_var_decls(stmt.else_branch)
+                    processor(stmt.else_branch)
             case AST.For():
-                self.__process_var_decls(stmt.body)
+                processor(stmt.body)
             case AST.While():
-                self.__process_var_decls(stmt.body)
+                processor(stmt.body)
             case AST.Loop():
-                self.__process_var_decls(stmt.body)
+                processor(stmt.body)
             case AST.Match():
                 for _, arm_block in stmt.arms:
-                    self.__process_var_decls(arm_block)
+                    processor(arm_block)
             case _:
                 return
 
     def __process_for_loops(self, block: AST.Block) -> None:
-        raise NotImplementedError()
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_for_loops)
+
+            if isinstance(stmt, AST.For):
+                desugared_stmts.append(self.__desugar_for(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
 
     def __process_while_loops(self, block: AST.Block) -> None:
-        raise NotImplementedError()
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_while_loops)
+
+            if isinstance(stmt, AST.While):
+                desugared_stmts.append(self.__desugar_while(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
 
     def __process_asserts(self, block: AST.Block) -> None:
-        raise NotImplementedError()
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_asserts)
+
+            if isinstance(stmt, AST.Assert):
+                desugared_stmts.append(self.__desugar_assert(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
+
+    def __desugar_assert(self, stmt: AST.Assert) -> AST.If:
+        message = stmt.message
+        if message is None:
+            message_value = f"assertion failed at {stmt.span}"
+            message = AST.Literal(
+                span=stmt.span,
+                literal=Tok.StrLiteral(raw=f"\"{message_value}\"", span=stmt.span, value=message_value),
+            )
+
+        panic_call = AST.Call(
+            span=stmt.span,
+            callee=AST.Identifier(span=stmt.span, name="panic"),
+            args=[AST.Arg(span=message.span, name=None, value=message)],
+        )
+
+        return AST.If(
+            span=stmt.span,
+            condition=AST.Unary(span=stmt.condition.span, op=UnaryOperator.LogicalNot, operand=stmt.condition),
+            then_branch=AST.Block(span=stmt.span, stmts=[panic_call]),
+            elif_branches=[],
+            else_branch=None,
+        )
+
+    def __desugar_while(self, stmt: AST.While) -> AST.Loop:
+        break_if = AST.If(
+            span=stmt.span,
+            condition=AST.Unary(span=stmt.condition.span, op=UnaryOperator.LogicalNot, operand=stmt.condition),
+            then_branch=AST.Block(span=stmt.span, stmts=[AST.Break(span=stmt.span)]),
+            elif_branches=[],
+            else_branch=None,
+        )
+
+        return AST.Loop(
+            span=stmt.span,
+            body=AST.Block(span=stmt.body.span, stmts=[break_if, stmt.body]),
+        )
+
+    def __desugar_for(self, stmt: AST.For) -> AST.Block:
+        iter_name = AST.Identifier(span=stmt.span, name="%iter")
+        iter_init = AST.MethodCall(
+            span=stmt.iterable.span,
+            receiver=stmt.iterable,
+            method_name=AST.Identifier(span=stmt.iterable.span, name="into_iter"),
+            generics=[],
+            args=[],
+        )
+        iter_decl = AST.VarDecl(
+            span=stmt.span,
+            var_type=ASTTy.DeducedType(span=stmt.span),
+            name=iter_name,
+            init_expr=iter_init,
+        )
+
+        next_call = AST.MethodCall(
+            span=stmt.span,
+            receiver=AST.Identifier(span=stmt.span, name=iter_name.name),
+            method_name=AST.Identifier(span=stmt.span, name="next"),
+            generics=[],
+            args=[],
+        )
+        some_arm = (
+            AST.PayloadPattern(
+                span=stmt.var_name.span,
+                variant=AST.Identifier(span=stmt.var_name.span, name="Some"),
+                fields=[stmt.var_name],
+            ),
+            stmt.body,
+        )
+        none_arm = (
+            AST.EnumPattern(
+                span=stmt.span,
+                variants=[AST.Identifier(span=stmt.span, name="None")],
+            ),
+            AST.Block(span=stmt.span, stmts=[AST.Break(span=stmt.span)]),
+        )
+
+        return AST.Block(
+            span=stmt.span,
+            stmts=[
+                iter_decl,
+                AST.Loop(
+                    span=stmt.span,
+                    body=AST.Block(
+                        span=stmt.body.span,
+                        stmts=[AST.Match(span=stmt.span, expr=next_call, arms=[some_arm, none_arm])],
+                    ),
+                ),
+            ],
+        )
