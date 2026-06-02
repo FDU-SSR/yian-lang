@@ -7,6 +7,7 @@ Rules:
 - for item in iterable { body } => { iter = iterable.into_iter(); loop { match iter.next() { Some(item) { body }, None { break } } } }
 - while cond { body } => loop { if not cond { break } body }
 - assert => if + panic
+- if cond { body } elif cond2 { body2 } else { body3 } => nested ifs
 """
 
 
@@ -29,6 +30,7 @@ class Desugar:
             self.__process_for_loops,
             self.__process_while_loops,
             self.__process_asserts,
+            self.__process_if_chains,
         ]
 
     def run(self) -> None:
@@ -131,6 +133,19 @@ class Desugar:
 
         block.stmts = desugared_stmts
 
+    def __process_if_chains(self, block: AST.Block) -> None:
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_if_chains)
+
+            if isinstance(stmt, AST.If) and stmt.elif_branches:
+                desugared_stmts.append(self.__desugar_if_chain(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
+
     def __desugar_assert(self, stmt: AST.Assert) -> AST.If:
         message = stmt.message
         if message is None:
@@ -219,4 +234,25 @@ class Desugar:
                     ),
                 ),
             ],
+        )
+
+    def __desugar_if_chain(self, stmt: AST.If) -> AST.If:
+        current_else = stmt.else_branch
+        for elif_cond, elif_branch in reversed(stmt.elif_branches):
+            current_else = AST.Block(
+                span=elif_branch.span,
+                stmts=[AST.If(
+                    span=elif_branch.span,
+                    condition=elif_cond,
+                    then_branch=elif_branch,
+                    elif_branches=[],
+                    else_branch=current_else,
+                )],
+            )
+        return AST.If(
+            span=stmt.span,
+            condition=stmt.condition,
+            then_branch=stmt.then_branch,
+            elif_branches=[],
+            else_branch=current_else,
         )

@@ -9,10 +9,6 @@ def build_block(span: SrcSpan, stmts: list[HIR.Stmt]) -> HIR.Block:
     return HIR.Block(span=span, stmts=stmts)
 
 
-def build_loop(span: SrcSpan, stmts: list[HIR.Stmt]) -> HIR.Loop:
-    return HIR.Loop(span=span, body=build_block(span, stmts))
-
-
 def build_enum_match_arm(
     span: SrcSpan,
     variant: Type.EnumVariant | None,

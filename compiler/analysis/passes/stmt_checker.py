@@ -7,8 +7,7 @@ from compiler.analysis.passes.expr_checker import ExprChecker
 from compiler.analysis.passes.hir_builder import (build_block,
                                                   build_enum_match,
                                                   build_enum_match_arm,
-                                                  build_if_chain, build_loop,
-                                                  build_switch,
+                                                  build_if_chain, build_switch,
                                                   build_switch_arm)
 from compiler.analysis.passes.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
@@ -49,10 +48,6 @@ class StmtChecker:
                 self.check_var_decl(stmt, out, ctx)
             case AST.If():
                 self.check_if(stmt, out, ctx)
-            case AST.For():
-                self.check_for(stmt, out, ctx)
-            case AST.While():
-                self.check_while(stmt, out, ctx)
             case AST.Loop():
                 self.check_loop(stmt, out, ctx)
             case AST.Match():
@@ -63,10 +58,11 @@ class StmtChecker:
                 self.check_break(stmt, out, ctx)
             case AST.Continue():
                 self.check_continue(stmt, out, ctx)
-            case AST.Assert():
-                self.check_assert(stmt, out, ctx)
             case AST.Delete():
                 self.check_delete(stmt, out, ctx)
+            case AST.For() | AST.While() | AST.Assert():
+                # These statements are desugared in an earlier pass; encountering them here is an invariant violation.
+                raise AnalysisError(f"Unexpected statement type {type(stmt).__name__} after desugaring", stmt.span)
             case _:
                 out.append(self.__expr.value(stmt))
 
@@ -91,90 +87,14 @@ class StmtChecker:
     def check_if(self, stmt: AST.If, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
 
+        if stmt.elif_branches:
+            raise AnalysisError("Unexpected elif branches after desugaring", stmt.span)
+
         cond_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
         then_block = self.check_block(stmt.then_branch, ctx)
-
-        elif_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
-        for elif_branch in stmt.elif_branches:
-            elif_cond_expr = self.__expr.coerce(self.__expr.value(elif_branch[0]), TypeCtx.bool_id)
-            elif_block = self.check_block(elif_branch[1], ctx)
-            elif_blocks.append((elif_cond_expr, elif_block))
-
         else_block = self.check_block(stmt.else_branch, ctx) if stmt.else_branch is not None else None
 
-        current_else_block = else_block
-        for elif_cond_expr, elif_block in reversed(elif_blocks):
-            current_else_block = build_block(
-                elif_block.span,
-                [HIR.If(
-                    span=elif_cond_expr.span,
-                    cond=elif_cond_expr,
-                    then_branch=elif_block,
-                    else_branch=current_else_block,
-                )]
-            )
-
-        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=current_else_block))
-
-    def check_for(self, stmt: AST.For, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        assert ctx.symbol_ctx is not None
-
-        ctx.enter_scope()
-        ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.For))
-        try:
-            iterable_expr = self.__expr.value(stmt.iterable)
-            iter_expr = self.__expr.call_into_iter(iterable_expr)
-
-            iter_var_type_id = iter_expr.type_id
-            iter_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%iter"), iter_var_type_id, ctx)
-            iter_var = HIR.Var(span=stmt.span, symbol_id=iter_symbol_id, type_id=iter_var_type_id, is_place=True)
-            iter_init = self.__expr.assign(stmt.span, iter_var, iter_expr)
-
-            next_method_call = self.__expr.call_next(iter_var)
-            next_var_type_id = next_method_call.type_id
-            next_symbol_id = self.__declare_local_symbol(AST.Identifier(span=stmt.var_name.span, name="%next"), next_var_type_id, ctx)
-            next_var = HIR.Var(span=stmt.span, symbol_id=next_symbol_id, type_id=next_var_type_id, is_place=True)
-            next_init = self.__expr.assign(stmt.span, next_var, next_method_call)
-
-            update_method_call = self.__expr.call_next(iter_var)
-            update_stmt = self.__expr.assign(stmt.span, next_var, update_method_call)
-            ctx.loop_stack[-1].continue_prefix_stmts = [update_stmt]
-
-            item_type_id = ctx.type_ctx.iter_item_type(iter_var_type_id)
-            item_symbol_id = self.__declare_local_symbol(stmt.var_name, item_type_id, ctx)
-            body_block = self.check_block(stmt.body, ctx)
-            enum_variants = self.__enum_variants(next_var_type_id, ["Some", "None"], ctx)
-            some_variant = enum_variants[0]
-            none_variant = enum_variants[1]
-
-            some_arm = build_enum_match_arm(stmt.span, some_variant, [item_symbol_id], body_block)
-            none_arm = build_enum_match_arm(stmt.span, none_variant, None, build_block(stmt.span, [HIR.Break(span=stmt.span)]))
-            next_match_stmt = build_enum_match(stmt.span, next_var, [some_arm, none_arm])
-            loop_stmt = build_loop(stmt.span, [next_match_stmt, update_stmt])
-            out.append(build_block(stmt.span, [iter_init, next_init, loop_stmt]))
-        finally:
-            ctx.pop_loop()
-            ctx.exit_scope()
-
-    def check_while(self, stmt: AST.While, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        assert ctx.symbol_ctx is not None
-
-        ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.While))
-        try:
-            cond_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
-            body_block = self.check_block(stmt.body, ctx)
-
-            not_cond_expr = self.__expr.logical_not(cond_expr)
-            break_stmt = HIR.Break(span=stmt.span)
-            if_stmt = HIR.If(
-                span=cond_expr.span,
-                cond=not_cond_expr,
-                then_branch=build_block(stmt.span, [break_stmt]),
-                else_branch=None
-            )
-            out.append(build_loop(stmt.span, [if_stmt, body_block]))
-        finally:
-            ctx.pop_loop()
+        out.append(HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=else_block))
 
     def check_loop(self, stmt: AST.Loop, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         ctx.push_loop(LoopFrame(span=stmt.span, kind=LoopKind.Loop))
@@ -247,33 +167,7 @@ class StmtChecker:
         if not loop_frame.continue_allowed:
             raise AnalysisError("'continue' is not allowed in the current loop", stmt.span)
 
-        out.extend(loop_frame.continue_prefix_stmts)
         out.append(HIR.Continue(stmt.span))
-
-    def check_assert(self, stmt: AST.Assert, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        assert ctx.symbol_ctx is not None
-
-        condition_expr = self.__expr.coerce(self.__expr.value(stmt.condition), TypeCtx.bool_id)
-
-        if stmt.message is None:
-            message_expr = HIR.StrLiteral(
-                span=stmt.span,
-                value=f"assertion failed at {stmt.span}",
-                type_id=TypeCtx.str_id,
-                is_place=False,
-            )
-        else:
-            message_expr = self.__expr.coerce(self.__expr.value(stmt.message), TypeCtx.str_id)
-
-        fail_block = build_block(stmt.span, [HIR.Panic(span=stmt.span, message=message_expr)])
-        out.append(
-            HIR.If(
-                span=stmt.span,
-                cond=self.__expr.logical_not(condition_expr),
-                then_branch=fail_block,
-                else_branch=None,
-            )
-        )
 
     def check_delete(self, stmt: AST.Delete, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         assert ctx.symbol_ctx is not None
@@ -292,18 +186,6 @@ class StmtChecker:
             raise AnalysisError(f"Variable '{name.name}' is already defined in the current scope", name.span)
         ctx.push_local(symbol_id)
         return symbol_id
-
-    def __enum_variants(self, type_id: int, variant_names: list[str], ctx: SemCtx) -> list[Type.EnumVariant]:
-        option_ty = ctx.type_ctx[type_id]
-        assert isinstance(option_ty, Type.EnumType)
-
-        variants: list[Type.EnumVariant] = []
-        for variant_name in variant_names:
-            variant = option_ty.get_variant_by_name(variant_name, ctx.type_ctx)
-            assert variant is not None
-            variants.append(variant)
-
-        return variants
 
     def __lower_match_as_switch(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
         """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
