@@ -15,6 +15,13 @@ from compiler.utils.IR.position import SrcSpan
 if TYPE_CHECKING:
     from compiler.analysis.passes.sem_ctx import SemCtx
 
+# Built-in instruction names that form expressions (they return values).
+_BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast"})
+
+# Built-in instruction names that form statements (they do not return values).
+# When used in expression context, they produce a descriptive error.
+_BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy", "sys_read", "sys_write"})
+
 
 class CallDispatcher:
     def __init__(self, ctx: SemCtx, expr: ExprEvaluator):
@@ -30,6 +37,10 @@ class CallDispatcher:
         return self.build_method_call(span, receiver, lookup, args, context_name)
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:
+        # bitcast<ptr_type>(expr) — callee is a TypeItem with generic ptr type
+        if isinstance(node.callee, AST.TypeItem) and node.callee.name.name == "bitcast":
+            return self.__handle_bitcast(node, node.callee)
+
         if isinstance(node.callee, AST.Identifier):
             return self.__handle_named_call(node, node.callee)
 
@@ -50,6 +61,12 @@ class CallDispatcher:
     def __handle_named_call(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
 
+        # Intercept built-in instruction names before the symbol lookup.
+        if callee.name in _BUILTIN_STMT_ONLY_NAMES:
+            raise AnalysisError(f"'{callee.name}' is a statement and cannot be used as an expression", callee.span)
+        if callee.name in _BUILTIN_EXPR_NAMES:
+            return self.__handle_builtin_expr(node, callee)
+
         symbol = self.__ctx.symbol_ctx.lookup(callee.name)
         if symbol is None:
             raise AnalysisError(f"Unknown identifier '{callee.name}'", callee.span)
@@ -64,6 +81,87 @@ class CallDispatcher:
                 return self.__handle_invocation(node.span, callable_expr, node.args)
             case SymbolKind.Type:
                 return self.__handle_type_call(node.span, HIR.Ty(span=callee.span, type_id=symbol.type_id, is_place=False), node.args)
+
+    def __handle_builtin_expr(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
+        """Lower a call to a built-in expression name into the appropriate HIR node."""
+        if callee.name == "sizeof":
+            return self.__handle_sizeof(node)
+        if callee.name == "bitcast":
+            raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
+        raise AnalysisError(f"Unknown built-in expression '{callee.name}'", callee.span)
+
+    def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
+        """Lower `sizeof(type)` into HIR.SizeOf.
+
+        The argument must evaluate to a type (HIR.Ty). This supports simple type
+        names like `sizeof(i32)` as well as generic types like `sizeof(Vec<u8>)`.
+        """
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'sizeof'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'sizeof' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        # Evaluate the argument as an expression. For type names this will
+        # produce HIR.Ty, which carries the resolved type_id.
+        arg_hir = self.__expr.value(node.args[0].value)
+        if not isinstance(arg_hir, HIR.Ty):
+            raise AnalysisError("'sizeof' expects a type as its argument", node.args[0].span)
+
+        # sizeof returns usize (u64)
+        usize_type_id = self.__ctx.type_ctx.u64_id
+        return HIR.SizeOf(
+            span=node.span,
+            target_type=arg_hir.type_id,
+            type_id=usize_type_id,
+            is_place=False,
+        )
+
+    def __handle_bitcast(self, node: AST.Call, callee: AST.TypeItem) -> HIR.Expr:
+        """Lower `bitcast<ptr_type>(expr)` into HIR.BitCast.
+
+        Requirements:
+        - Exactly 1 generic argument (the target pointer type)
+        - Exactly 1 call argument (the pointer expression to cast)
+        - Both must be pointer types
+        """
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'bitcast'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'bitcast' expects exactly 1 argument, got {len(node.args)}", node.span)
+        if len(callee.generics) != 1:
+            raise AnalysisError(
+                f"'bitcast' expects exactly 1 generic argument (target pointer type), got {len(callee.generics)}",
+                callee.span,
+            )
+
+        # Resolve the target pointer type from the generic argument.
+        assert self.__ctx.symbol_ctx is not None
+        target_type_id = self.__ctx.resolve_type(callee.generics[0])
+
+        # Evaluate the expression argument (must be a pointer expression).
+        value = self.__expr.value(node.args[0].value)
+
+        # Validate that both the value and target are pointer types.
+        value_ty = self.__ctx.type_ctx[value.type_id]
+        target_ty = self.__ctx.type_ctx[target_type_id]
+        if not isinstance(value_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
+                node.args[0].span,
+            )
+        if not isinstance(target_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'bitcast' target type must be a pointer type, got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
+                callee.span,
+            )
+
+        return HIR.BitCast(
+            span=node.span,
+            value=value,
+            target_type=target_type_id,
+            type_id=target_type_id,
+            is_place=False,
+        )
 
     def __handle_function_call(self, span: SrcSpan, func_type_id: int, func_name: str, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):

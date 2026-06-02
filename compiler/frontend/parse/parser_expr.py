@@ -97,10 +97,18 @@ class ExprParser:
         """Parses a primary expression."""
         token = self.__stream.peek()
         match token:
-            case Tok.Identifier():
+            case Tok.Keyword(kind=Tok.KeywordKind.True_):
+                self.__stream.consume_keyword(Tok.KeywordKind.True_)
+                return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="true", span=token.span, value=True))
+            case Tok.Keyword(kind=Tok.KeywordKind.False_):
+                self.__stream.consume_keyword(Tok.KeywordKind.False_)
+                return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="false", span=token.span, value=False))
+            case Tok.Identifier() | Tok.Keyword():
+                # Identifiers and (non-literal) keywords both represent names in
+                # expression context (type names, function names, built-in calls).
                 ident = self.__stream.consume_identifier()
 
-                # handle generic type identifiers (e.g., Type<...>)
+                # handle generic type arguments (e.g., Type<...>, bitcast<T*>)
                 next_token = self.__stream.peek()
                 if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Less:
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
@@ -108,16 +116,10 @@ class ExprParser:
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
                     return AST.TypeItem(span=ident.span, name=ident, generics=generics)
 
-                return AST.Identifier(span=ident.span, name=ident.name)
+                return ident
             case Tok.IntLiteral() | Tok.FloatLiteral() | Tok.CharLiteral() | Tok.StrLiteral():
                 self.__stream.advance()
                 return AST.Literal(span=token.span, literal=token)
-            case Tok.Keyword(kind=Tok.KeywordKind.True_):
-                self.__stream.consume_keyword(Tok.KeywordKind.True_)
-                return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="true", span=token.span, value=True))
-            case Tok.Keyword(kind=Tok.KeywordKind.False_):
-                self.__stream.consume_keyword(Tok.KeywordKind.False_)
-                return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="false", span=token.span, value=False))
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
                 expr = self.parse_expr()
@@ -146,10 +148,6 @@ class ExprParser:
                 items = self.__stream.consume_separated(self.parse_expr, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RBracket})
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
                 return AST.Array(span=token.span, elements=items)
-            case Tok.Keyword():
-                # could be a type cast (e.g., Type(expr))
-                self.__stream.advance()
-                return AST.Identifier(span=token.span, name=token.kind.value)
             case _:
                 raise ParseError(f"Unexpected token '{token}' while parsing expression", token.span)
 

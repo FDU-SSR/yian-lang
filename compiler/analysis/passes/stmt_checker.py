@@ -18,6 +18,9 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.operator import BinaryOperator
 
+# Built-in instruction names that form statements (not expressions).
+_BUILTIN_STMT_NAMES = frozenset({"panic"})
+
 
 class StmtChecker:
     """Statement/block checker and lowering.
@@ -63,6 +66,9 @@ class StmtChecker:
             case AST.For() | AST.While() | AST.Assert():
                 # These statements are desugared in an earlier pass; encountering them here is an invariant violation.
                 raise AnalysisError(f"Unexpected statement type {type(stmt).__name__} after desugaring", stmt.span)
+            case _ if self.__is_builtin_stmt_call(stmt):
+                assert isinstance(stmt, AST.Call)
+                self.__check_builtin_stmt(stmt, out, ctx)
             case _:
                 out.append(self.__expr.value(stmt))
 
@@ -177,6 +183,32 @@ class StmtChecker:
         if not isinstance(target_type, Type.PointerType):
             raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
         out.append(HIR.Delete(stmt.span, target_expr))
+
+    def __is_builtin_stmt_call(self, stmt: AST.Stmt) -> bool:
+        """Return True if `stmt` is an AST.Call to a built-in statement name."""
+        if not isinstance(stmt, AST.Call):
+            return False
+        if not isinstance(stmt.callee, AST.Identifier):
+            return False
+        return stmt.callee.name in _BUILTIN_STMT_NAMES
+
+    def __check_builtin_stmt(self, stmt: AST.Call, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower a call to a built-in statement into the appropriate HIR node."""
+        callee = stmt.callee
+        assert isinstance(callee, AST.Identifier)
+        if callee.name == "panic":
+            self.__check_panic(stmt, out, ctx)
+
+    def __check_panic(self, stmt: AST.Call, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower `panic(message)` into HIR.Panic."""
+        if any(arg.name is not None for arg in stmt.args):
+            raise AnalysisError("named arguments are not supported for 'panic'", stmt.span)
+        if len(stmt.args) != 1:
+            raise AnalysisError(f"'panic' expects exactly 1 argument, got {len(stmt.args)}", stmt.span)
+
+        message = self.__expr.value(stmt.args[0].value)
+        message = self.__expr.coerce(message, TypeCtx.str_id)
+        out.append(HIR.Panic(span=stmt.span, message=message))
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int, ctx: SemCtx) -> int:
         assert ctx.symbol_ctx is not None
