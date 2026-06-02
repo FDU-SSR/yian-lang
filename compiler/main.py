@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.desuger import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
@@ -139,13 +140,7 @@ def __format_hir_output(unit_datas: Mapping[int, UnitData], def_points: Mapping[
     return export_hir_bundle(unit_datas, def_points, type_ctx)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_cli(argv)
-
-    # extract .an files from input paths
-    src_files = collect_an_files(args.paths)
-
-    # lex all source files
+def __lex(src_files: list[Path]) -> list[list[Token]]:
     token_lists: list[list[Token]] = []
     for src_file in src_files:
         lexer = Lexer(src_file)
@@ -156,12 +151,12 @@ def main(argv: list[str] | None = None) -> int:
             __print_source_error(error.span, error)
 
         token_lists.append(lexer.export())
+    return token_lists
 
-    if args.token is not None:
-        __write_text_output(args.token, __format_token_output(src_files, token_lists))
 
+def __parse(token_lists: list[list[Token]]) -> list[AST.Program]:
     programs: list[AST.Program] = []
-    for src_file, tokens in zip(src_files, token_lists):
+    for tokens in token_lists:
         parser = Parser(tokens)
 
         try:
@@ -170,6 +165,33 @@ def main(argv: list[str] | None = None) -> int:
             __print_source_error(error.span, error)
 
         programs.append(program)
+    return programs
+
+
+def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
+    for program in programs:
+        desugarer = Desugar(program)
+        desugarer.run()
+    return programs
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_cli(argv)
+
+    # extract .an files from input paths
+    src_files = collect_an_files(args.paths)
+
+    # lex all source files
+    token_lists: list[list[Token]] = __lex(src_files)
+
+    if args.token is not None:
+        __write_text_output(args.token, __format_token_output(src_files, token_lists))
+
+    # parse all token lists into ASTs
+    programs: list[AST.Program] = __parse(token_lists)
+
+    # desugar ASTs
+    programs = __desugar(programs)
 
     if args.ast is not None:
         __write_text_output(args.ast, __format_ast_output(src_files, programs))

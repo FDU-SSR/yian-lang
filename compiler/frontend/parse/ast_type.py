@@ -129,10 +129,19 @@ class FunctionType:
         return f"fn({param_str}) -> {self.return_type}"
 
 
+@dataclass
+class DeducedType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "_"
+
+
 ASTType: TypeAlias = (
     IntType | FloatType | BoolType | StrType | CharType | VoidType
     | ArrayType | TupleType | PointerType | SliceType
     | NamedType
     | InstanceType
     | FunctionType
+    | DeducedType
 )
