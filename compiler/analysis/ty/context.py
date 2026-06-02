@@ -194,8 +194,8 @@ class TypeCtx:
     def alloc_struct(self, name: str) -> int:
         return self.__space.alloc_struct(name)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int]) -> int:
-        return self.__space.alloc_unnamed_struct(owner, field_names, field_types)
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int]) -> int:
+        return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics)
 
     def alloc_enum(self, name: str) -> int:
         return self.__space.alloc_enum(name)

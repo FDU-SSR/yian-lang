@@ -372,13 +372,10 @@ class StmtChecker:
                 if variant.payload_type is None:
                     raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
 
-                # Determine payload field types. Support tuple payloads or single-field payloads.
-                payload_ty_id = variant.payload_type
-                payload_ty = ctx.type_ctx[payload_ty_id]
-                if isinstance(payload_ty, Type.TupleType):
-                    field_types = payload_ty.element_types
-                else:
-                    field_types = [payload_ty_id]
+                payload_ty = ctx.type_ctx[variant.payload_type]
+                assert isinstance(payload_ty, Type.StructType), f"Expected struct payload for variant '{pat.variant.name}', got {type(payload_ty).__name__}"
+
+                field_types = [f.type_id for f in payload_ty.get_fields(ctx.type_ctx)]
 
                 if len(pat.fields) != len(field_types):
                     raise AnalysisError(f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields", pat.span)

@@ -318,7 +318,7 @@ class GlobalResolve:
             if len(variant.fields) > 0:
                 field_names = [field.name.name for field in variant.fields]
                 field_types = [self.__type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
-                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types)
+                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types, generics=ty.custom_def.generics)
             variants.append(Type.EnumVariant(
                 name=variant.name.name,
                 payload_type=payload_type_id,
