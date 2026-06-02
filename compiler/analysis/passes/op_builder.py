@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, NoReturn
 
@@ -24,6 +25,61 @@ class OperandType(Enum):
     Bool = "Bool"
     Char = "Char"
     Overloaded = "Overloaded"
+
+
+@dataclass
+class _BinaryOpDesc:
+    """Descriptor for a binary operator that follows the simple `__binary_helper` pattern."""
+
+    op: BinaryOperator
+    symbol: str
+    allowed_operand_types: set[OperandType]
+    result_type_id: int | None = None
+    is_assign: bool = False
+
+
+@dataclass
+class _UnaryOpDesc:
+    """Descriptor for a unary operator that follows the simple `__unary_helper` pattern."""
+
+    op: UnaryOperator
+    symbol: str
+    allowed_operand_types: set[OperandType]
+
+
+_BINARY_OP_TABLE: dict[BinaryOperator, _BinaryOpDesc] = {
+    # ---- arithmetic ----
+    BinaryOperator.Mul: _BinaryOpDesc(BinaryOperator.Mul, "*", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    BinaryOperator.Div: _BinaryOpDesc(BinaryOperator.Div, "/", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    BinaryOperator.Mod: _BinaryOpDesc(BinaryOperator.Mod, "%", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    # ---- bitwise ----
+    BinaryOperator.BitAnd: _BinaryOpDesc(BinaryOperator.BitAnd, "&", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    BinaryOperator.BitOr: _BinaryOpDesc(BinaryOperator.BitOr, "|", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    BinaryOperator.BitXor: _BinaryOpDesc(BinaryOperator.BitXor, "^", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    # ---- comparison (result is bool) ----
+    BinaryOperator.Eq: _BinaryOpDesc(BinaryOperator.Eq, "Eq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Neq: _BinaryOpDesc(BinaryOperator.Neq, "Neq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Lt: _BinaryOpDesc(BinaryOperator.Lt, "Lt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Gt: _BinaryOpDesc(BinaryOperator.Gt, "Gt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Leq: _BinaryOpDesc(BinaryOperator.Leq, "Leq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Geq: _BinaryOpDesc(BinaryOperator.Geq, "Geq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    # ---- logical ----
+    BinaryOperator.LogicalAnd: _BinaryOpDesc(BinaryOperator.LogicalAnd, "LogicalAnd", {OperandType.Bool}),
+    BinaryOperator.LogicalOr: _BinaryOpDesc(BinaryOperator.LogicalOr, "LogicalOr", {OperandType.Bool}),
+    # ---- compound assignment ----
+    BinaryOperator.MulAssign: _BinaryOpDesc(BinaryOperator.MulAssign, "*=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.DivAssign: _BinaryOpDesc(BinaryOperator.DivAssign, "/=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.ModAssign: _BinaryOpDesc(BinaryOperator.ModAssign, "%=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitAndAssign: _BinaryOpDesc(BinaryOperator.BitAndAssign, "&=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitOrAssign: _BinaryOpDesc(BinaryOperator.BitOrAssign, "|=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitXorAssign: _BinaryOpDesc(BinaryOperator.BitXorAssign, "^=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+}
+
+_UNARY_OP_TABLE: dict[UnaryOperator, _UnaryOpDesc] = {
+    UnaryOperator.Neg: _UnaryOpDesc(UnaryOperator.Neg, "-", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    UnaryOperator.BitNot: _UnaryOpDesc(UnaryOperator.BitNot, "~", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    UnaryOperator.LogicalNot: _UnaryOpDesc(UnaryOperator.LogicalNot, "!", {OperandType.Bool}),
+}
 
 
 class OpBuilder:
@@ -82,74 +138,58 @@ class OpBuilder:
         }
 
     def build_binary(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
+        # ---- operators with dedicated logic ----
         match op:
             case BinaryOperator.Add:
                 return self.__build_add(span, left, right)
             case BinaryOperator.Sub:
                 return self.__build_sub(span, left, right)
-            case BinaryOperator.Mul:
-                return self.__build_mul(span, left, right)
-            case BinaryOperator.Div:
-                return self.__build_div(span, left, right)
-            case BinaryOperator.Mod:
-                return self.__build_mod(span, left, right)
-            case BinaryOperator.BitAnd:
-                return self.__build_bitand(span, left, right)
-            case BinaryOperator.BitOr:
-                return self.__build_bitor(span, left, right)
-            case BinaryOperator.BitXor:
-                return self.__build_bitxor(span, left, right)
-            case BinaryOperator.Shl:
-                return self.__build_shl(span, left, right)
-            case BinaryOperator.Shr:
-                return self.__build_shr(span, left, right)
-            case BinaryOperator.Eq | BinaryOperator.Neq:
-                return self.__build_cmp_eq(span, op, left, right)
-            case  BinaryOperator.Lt | BinaryOperator.Gt | BinaryOperator.Leq | BinaryOperator.Geq:
-                return self.__build_cmp_ord(span, op, left, right)
-            case BinaryOperator.LogicalAnd | BinaryOperator.LogicalOr:
-                return self.__build_logical(span, op, left, right)
-            case BinaryOperator.Assign:
-                return self.__build_assign(span, left, right)
             case BinaryOperator.AddAssign:
                 return self.__build_add_assign(span, left, right)
             case BinaryOperator.SubAssign:
                 return self.__build_sub_assign(span, left, right)
-            case BinaryOperator.MulAssign:
-                return self.__build_mul_assign(span, left, right)
-            case BinaryOperator.DivAssign:
-                return self.__build_div_assign(span, left, right)
-            case BinaryOperator.ModAssign:
-                return self.__build_mod_assign(span, left, right)
-            case BinaryOperator.BitAndAssign:
-                return self.__build_bitand_assign(span, left, right)
-            case BinaryOperator.BitOrAssign:
-                return self.__build_bitor_assign(span, left, right)
-            case BinaryOperator.BitXorAssign:
-                return self.__build_bitxor_assign(span, left, right)
-            case BinaryOperator.ShlAssign:
-                return self.__build_shl_assign(span, left, right)
-            case BinaryOperator.ShrAssign:
-                return self.__build_shr_assign(span, left, right)
+            case BinaryOperator.Assign:
+                return self.__build_assign(span, left, right)
             case BinaryOperator.Index:
                 return self.__build_index(span, left, right)
             case BinaryOperator.In | BinaryOperator.NotIn:
                 return self.__build_in(span, op, left, right)
             case BinaryOperator.Range:
                 return self.__build_range(span, left, right)
+            case BinaryOperator.Shl:
+                return self.__build_shl(span, left, right)
+            case BinaryOperator.Shr:
+                return self.__build_shr(span, left, right)
+            case BinaryOperator.ShlAssign:
+                return self.__build_shl_assign(span, left, right)
+            case BinaryOperator.ShrAssign:
+                return self.__build_shr_assign(span, left, right)
+            case _:
+                pass
+
+        # ---- table-driven operators ----
+        desc = _BINARY_OP_TABLE.get(op)
+        if desc is not None:
+            return self.__build_table_binary(span, left, right, desc)
+
+        raise AnalysisError(f"Unhandled binary operator: {op}", span)
 
     def build_unary(self, span: SrcSpan, op: UnaryOperator, operand: AST.Expr) -> HIR.Expr:
+        # ---- operators with dedicated logic ----
         match op:
-            case UnaryOperator.Neg:
-                return self.__build_neg(span, operand)
-            case UnaryOperator.BitNot:
-                return self.__build_bitnot(span, operand)
-            case UnaryOperator.LogicalNot:
-                return self.__build_logical_not(span, operand)
             case UnaryOperator.Deref:
                 return self.__build_deref(span, operand)
             case UnaryOperator.AddrOf:
                 return self.__build_addr_of(span, operand)
+            case _:
+                pass
+
+        # ---- table-driven operators ----
+        desc = _UNARY_OP_TABLE.get(op)
+        if desc is not None:
+            return self.__build_table_unary(span, operand, desc)
+
+        raise AnalysisError(f"Unhandled unary operator: {op}", span)
 
     def build_field_access(self, span: SrcSpan, receiver: AST.Expr, field_name: str) -> HIR.Expr:
         receiver_hir = self.__evaluator.value(receiver)
@@ -262,102 +302,6 @@ class OpBuilder:
 
         self.__raise_unsupported_binary_operator(span, "-", left_hir.type_id, right_hir.type_id)
 
-    def __build_mul(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.Mul,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "*", left_hir.type_id, right_hir.type_id)
-
-    def __build_div(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.Div,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "/", left_hir.type_id, right_hir.type_id)
-
-    def __build_mod(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.Mod,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "%", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitand(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitAnd,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "&", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitor(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitOr,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "|", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitxor(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitXor,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "^", left_hir.type_id, right_hir.type_id)
-
     def __build_shl(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
@@ -381,56 +325,6 @@ class OpBuilder:
             right=right_hir
         )
         return builtin_expr
-
-    def __build_cmp_eq(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=op,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded},
-            result_type_id=TypeCtx.bool_id,
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, str(op), left_hir.type_id, right_hir.type_id)
-
-    def __build_cmp_ord(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=op,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-            result_type_id=TypeCtx.bool_id,
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, str(op), left_hir.type_id, right_hir.type_id)
-
-    def __build_logical(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=op,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Bool},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, str(op), left_hir.type_id, right_hir.type_id)
 
     def __build_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         left_hir = self.__evaluator.value(left)
@@ -503,120 +397,6 @@ class OpBuilder:
             )
 
         self.__raise_unsupported_binary_operator(span, "-=", left_hir.type_id, right_hir.type_id)
-
-    def __build_mul_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.MulAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "*=", left_hir.type_id, right_hir.type_id)
-
-    def __build_div_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.DivAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "/=", left_hir.type_id, right_hir.type_id)
-
-    def __build_mod_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.ModAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "%=", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitand_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitAndAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "&=", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitor_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitOrAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "|=", left_hir.type_id, right_hir.type_id)
-
-    def __build_bitxor_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        builtin_expr = self.__binary_helper(
-            span=span,
-            op=BinaryOperator.BitXorAssign,
-            left=left_hir,
-            right=right_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_binary_operator(span, "^=", left_hir.type_id, right_hir.type_id)
 
     def __build_shl_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         left_hir = self.__evaluator.value(left)
@@ -722,48 +502,6 @@ class OpBuilder:
         range_type_id = self.__type_ctx.alloc_range(merged_type_id)
         return HIR.StructConstruct(span, range_type_id, {"start": left_hir, "end": right_hir}, range_type_id, is_place=False)
 
-    def __build_neg(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        operand_hir = self.__evaluator.value(operand)
-
-        builtin_expr = self.__unary_helper(
-            span=span,
-            op=UnaryOperator.Neg,
-            operand=operand_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Float, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_unary_operator(span, "-", operand_hir.type_id)
-
-    def __build_bitnot(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        operand_hir = self.__evaluator.value(operand)
-
-        builtin_expr = self.__unary_helper(
-            span=span,
-            op=UnaryOperator.BitNot,
-            operand=operand_hir,
-            allowed_operand_types={OperandType.Integer, OperandType.Bool, OperandType.Overloaded},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_unary_operator(span, "~", operand_hir.type_id)
-
-    def __build_logical_not(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
-        operand_hir = self.__evaluator.value(operand)
-
-        builtin_expr = self.__unary_helper(
-            span=span,
-            op=UnaryOperator.LogicalNot,
-            operand=operand_hir,
-            allowed_operand_types={OperandType.Bool},
-        )
-        if builtin_expr is not None:
-            return builtin_expr
-
-        self.__raise_unsupported_unary_operator(span, "!", operand_hir.type_id)
-
     def __build_deref(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
@@ -810,6 +548,44 @@ class OpBuilder:
             raise AnalysisError(f"Enum '{self.__type_ctx.get_name(enum_type_id)}' has no variant named '{variant_name}'.", span)
 
         return HIR.VariantConstruct(span, enum_type_id, variant, None, enum_type_id, is_place=False)
+
+    # ------------------------------------------------------------------
+    # table-driven generic builders
+    # ------------------------------------------------------------------
+
+    def __build_table_binary(self, span: SrcSpan, left: AST.Expr, right: AST.Expr, desc: _BinaryOpDesc) -> HIR.Expr:
+        left_hir = self.__evaluator.value(left)
+        right_hir = self.__evaluator.value(right)
+
+        if desc.is_assign and not left_hir.is_place:
+            raise AnalysisError("left operand of assignment must be a place expression", span)
+
+        builtin_expr = self.__binary_helper(
+            span=span,
+            op=desc.op,
+            left=left_hir,
+            right=right_hir,
+            allowed_operand_types=desc.allowed_operand_types,
+            result_type_id=desc.result_type_id,
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_binary_operator(span, desc.symbol, left_hir.type_id, right_hir.type_id)
+
+    def __build_table_unary(self, span: SrcSpan, operand: AST.Expr, desc: _UnaryOpDesc) -> HIR.Expr:
+        operand_hir = self.__evaluator.value(operand)
+
+        builtin_expr = self.__unary_helper(
+            span=span,
+            op=desc.op,
+            operand=operand_hir,
+            allowed_operand_types=desc.allowed_operand_types,
+        )
+        if builtin_expr is not None:
+            return builtin_expr
+
+        self.__raise_unsupported_unary_operator(span, desc.symbol, operand_hir.type_id)
 
     def __shift_helper(self, span: SrcSpan, op: BinaryOperator, left: HIR.Expr, right: HIR.Expr) -> HIR.Expr:
         """Helper function for building shift operator expressions.
