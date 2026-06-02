@@ -23,8 +23,8 @@ class ExprChecker:
 
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
-        self.__op_builder = OpBuilder(ctx, self)
         self.__call_dispatcher = CallDispatcher(ctx, self)
+        self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""

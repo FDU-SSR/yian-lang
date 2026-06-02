@@ -4,6 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, NoReturn
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.call_dispatcher import CallDispatcher
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -33,10 +34,11 @@ class OpBuilder:
     of the methods below should follow the project's op routing rules.
     """
 
-    def __init__(self, ctx: SemCtx, expr_evaluator: ExprEvaluator) -> None:
+    def __init__(self, ctx: SemCtx, expr_evaluator: ExprEvaluator, call_dispatcher: CallDispatcher) -> None:
         self.__ctx = ctx
         self.__type_ctx = ctx.type_ctx
         self.__evaluator = expr_evaluator
+        self.__call_dispatcher = call_dispatcher
 
         self.__OP_INFO = {
             BinaryOperator.Add: (Type.IntrinsicCustomType.Add, "add"),
@@ -909,21 +911,7 @@ class OpBuilder:
         if id(impl_trait_ty.custom_def) != id(trait_ty.custom_def):
             return None
 
-        method_ty = self.__type_ctx[lookup.method_id]
-        assert isinstance(method_ty, Type.MethodType)
-        parameters = method_ty.parameters(self.__type_ctx)
-        if len(parameters) != len(args):
-            raise AnalysisError(f"{str(op)} expects {len(parameters)} argument(s), got {len(args)}", span)
-
-        receiver_expected = method_ty.receiver_type(self.__type_ctx)
-        coerced_receiver = self.__evaluator.coerce(receiver, receiver_expected)
-        coerced_args = [
-            self.__evaluator.coerce(arg, param.type_id)
-            for arg, param in zip(args, parameters)
-        ]
-
-        self.__ctx.report_def(lookup.method_id)
-        return HIR.MethodCall(span, coerced_receiver, lookup.method_id, coerced_args, method_ty.return_type(self.__type_ctx), False)
+        return self.__call_dispatcher.build_method_call(span, receiver, lookup, args, "operator")
 
     def __raise_unsupported_unary_operator(self, span: SrcSpan, operator_symbol: str, operand_type_id: int) -> NoReturn:
         operand_name = self.__type_ctx.get_name(operand_type_id)

@@ -6,6 +6,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.context import LookupResult
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
@@ -13,7 +14,6 @@ from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.passes.sem_ctx import SemCtx
-    from compiler.analysis.ty.context import LookupResult
 
 
 class CallDispatcher:
@@ -27,7 +27,7 @@ class CallDispatcher:
         if lookup is None:
             raise AnalysisError(f"Unknown {context_name} '{method_name}'", span)
 
-        return self.__dispatch_method_call(span, receiver, lookup, args, context_name)
+        return self.build_method_call(span, receiver, lookup, args, context_name)
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:
         if isinstance(node.callee, AST.Identifier):
@@ -167,8 +167,12 @@ class CallDispatcher:
             "static method call",
         )
 
-    def __dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, lookup: LookupResult, args: list[HIR.Expr], context_name: str) -> HIR.MethodCall:
-        """Common method call construction after `method_lookup` succeeded.
+    def build_method_call(self, span: SrcSpan, receiver: HIR.Expr, lookup: LookupResult, args: list[HIR.Expr], context_name: str) -> HIR.MethodCall:
+        """Construct HIR.MethodCall from a successful `method_lookup` result.
+
+        Handles GenericInference + coercion for receiver and args,
+        reports the instantiated method via SemCtx.report_def,
+        and returns a fully-typed HIR.MethodCall node.
 
         `lookup.method_id` is expected to be an instantiated/concrete method type id.
         """
