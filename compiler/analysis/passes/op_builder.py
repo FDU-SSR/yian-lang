@@ -576,6 +576,13 @@ class OpBuilder:
         if builtin_expr is not None:
             return builtin_expr
 
+        if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq, BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
+            left_ty = self.__type_ctx[left_hir.type_id]
+            right_ty = self.__type_ctx[right_hir.type_id]
+            if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
+                if left_ty.pointee_type == right_ty.pointee_type:
+                    return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
+
         self.__raise_unsupported_binary_operator(span, desc.symbol, left_hir.type_id, right_hir.type_id)
 
     def __build_table_unary(self, span: SrcSpan, operand: AST.Expr, desc: _UnaryOpDesc) -> HIR.Expr:
