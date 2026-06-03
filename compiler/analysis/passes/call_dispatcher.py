@@ -327,8 +327,23 @@ class CallDispatcher:
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
 
-        value = self.__infer_named_or_positional_values(span, [variant.payload_type], [args[0]], "variant construction")[0]
-        return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args={variant.name: value}, type_id=enum_type_id, is_place=False)
+        # payload_type 非 None 时必定是 StructType
+        payload_ty = self.__ctx.type_ctx[variant.payload_type]
+        assert isinstance(payload_ty, Type.StructType)
+        fields = payload_ty.get_fields(self.__ctx.type_ctx)
+        if len(args) != len(fields):
+            raise AnalysisError(f"variant '{variant.name}' expects {len(fields)} arguments, got {len(args)}", span)
+
+        arg_values = [self.__expr.value(arg.value) for arg in args]
+        field_type_ids = [field.type_id for field in fields]
+
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        for field_type_id, arg_value in zip(field_type_ids, arg_values):
+            inference.constrain(field_type_id, arg_value.type_id)
+
+        coerced_values = [self.__expr.coerce(val, inference.instantiate(field_type_id)) for field_type_id, val in zip(field_type_ids, arg_values)]
+        args_dict = {field.name: val for field, val in zip(fields, coerced_values)}
+        return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=args_dict, type_id=enum_type_id, is_place=False)
 
     def __resolve_positional_args(self, args: list[AST.Arg], context_name: str) -> list[HIR.Expr]:
         if self.__has_named_arg(args):
