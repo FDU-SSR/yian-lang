@@ -173,6 +173,20 @@ class TypeCtx:
     def alloc_generic(self, name: str) -> int:
         return self.__space.alloc_generic(name)
 
+    def alloc_const_generic(self, name: str, value_type: int) -> int:
+        return self.__space.alloc_const_generic(name, value_type)
+
+    def alloc_literal_value(self, value: int | bool, value_type: int) -> int:
+        return self.__space.alloc_literal_value(value, value_type)
+
+    def try_extract_array_length(self, array_type_id: int) -> int | None:
+        arr_ty = self[array_type_id]
+        assert isinstance(arr_ty, Type.ArrayType)
+        length_ty = self[arr_ty.length]
+        if isinstance(length_ty, Type.LiteralValueType):
+            return length_ty.value
+        return None
+
     def alloc_pointer(self, pointee_type: int) -> int:
         return self.__space.alloc_pointer(pointee_type)
 

@@ -20,6 +20,7 @@ class KeywordKind(Enum):
     Dyn = "dyn"
     Pub = "pub"
     Static = "static"
+    Const = "const"
     Inline = "inline"
     Intrinsic = "intrinsic"
     If = "if"

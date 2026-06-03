@@ -109,10 +109,12 @@ class TypeCheck:
 
         assert self.__sem_ctx.symbol_ctx is not None
 
-        for generic, generic_arg in zip(func_ty.custom_def.generics, func_ty.generic_args):
-            generic_ty = self.__type_ctx[generic]
-            assert isinstance(generic_ty, Type.GenericType)
-            self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
+        for generic_id, generic_arg_id in zip(func_ty.custom_def.generics, func_ty.generic_args):
+            generic_ty = self.__type_ctx[generic_id]
+            if isinstance(generic_ty, Type.GenericType):
+                self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg_id)
+            elif isinstance(generic_ty, Type.ConstGenericType):
+                self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.ConstGeneric, generic_arg_id)
 
         for param in func_ty.parameters(self.__type_ctx):
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
@@ -139,10 +141,12 @@ class TypeCheck:
 
         assert self.__sem_ctx.symbol_ctx is not None
 
-        for generic, generic_arg in zip(method_ty.custom_def.generics, method_ty.generic_args):
-            generic_ty = self.__type_ctx[generic]
-            assert isinstance(generic_ty, Type.GenericType)
-            self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg)
+        for generic_id, generic_arg_id in zip(method_ty.custom_def.generics, method_ty.generic_args):
+            generic_ty = self.__type_ctx[generic_id]
+            if isinstance(generic_ty, Type.GenericType):
+                self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg_id)
+            elif isinstance(generic_ty, Type.ConstGenericType):
+                self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.ConstGeneric, generic_arg_id)
 
         self_type_id = method_ty.receiver_type(self.__type_ctx)
         self.__sem_ctx.symbol_ctx.add_symbol("Self", SymbolKind.Type, self_type_id)

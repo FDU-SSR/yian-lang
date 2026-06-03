@@ -10,6 +10,7 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
@@ -79,15 +80,36 @@ class ExprChecker:
         assert self.__ctx.symbol_ctx is not None
 
         symbol = self.__ctx.symbol_ctx.lookup(node.name.name)
-        if symbol is None or symbol.kind != SymbolKind.Type:
+        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
-        generic_arg_ids = [self.__ctx.resolve_type(generic) for generic in node.generics]
+        generic_arg_ids = [self.__resolve_generic_arg(arg) for arg in node.generics]
         type_id = symbol.type_id
         if generic_arg_ids:
             type_id = self.__ctx.type_ctx.alloc_instance(type_id, generic_arg_ids)
 
         return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
+
+    def __resolve_generic_arg(self, arg: AST.ASTType | AST.ConstExpr) -> int:
+        """Resolve a generic argument — either a type or a const expression — to a TypeId."""
+        match arg:
+            case LiteralConstExpr() | GenericConstExpr():
+                return self.__resolve_const_expr(arg)
+            case _:
+                return self.__ctx.resolve_type(arg)
+
+    def __resolve_const_expr(self, const_expr: AST.ConstExpr) -> int:
+        """Resolve a ConstExpr to a TypeId."""
+        match const_expr:
+            case LiteralConstExpr(literal=Tok.IntLiteral(value=v)):
+                return self.__ctx.type_ctx.alloc_literal_value(v, self.__ctx.type_ctx.u64_id)
+            case GenericConstExpr(name=name):
+                assert self.__ctx.symbol_ctx is not None
+                symbol = self.__ctx.symbol_ctx.lookup(name.name)
+                assert symbol is not None, f"Undefined const generic '{name.name}'"
+                return symbol.type_id
+            case _:
+                raise AnalysisError("Unsupported const expression", const_expr.span)
 
     def __handle_identifier(self, node: AST.Identifier) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
@@ -99,7 +121,11 @@ class ExprChecker:
         match symbol.kind:
             case SymbolKind.Variable:
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
-            case SymbolKind.Type:
+            case SymbolKind.Type | SymbolKind.ConstGeneric:
+                ty = self.__ctx.type_ctx[symbol.type_id]
+                if isinstance(ty, Type.LiteralValueType):
+                    assert isinstance(ty.value, int)
+                    return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
             case _:
                 raise AnalysisError(f"Identifier '{node.name}' cannot be used as an expression", node.span)
@@ -147,7 +173,8 @@ class ExprChecker:
         if any(element.type_id != element_type_id for element in elements):
             elements = [self.coerce(element, element_type_id) for element in elements]
 
-        type_id = self.__ctx.type_ctx.alloc_array(element_type_id, len(elements))
+        length_id = self.__ctx.type_ctx.alloc_literal_value(len(elements), self.__ctx.type_ctx.u64_id)
+        type_id = self.__ctx.type_ctx.alloc_array(element_type_id, length_id)
         return HIR.Array(span=node.span, element_type=element_type_id, elements=elements, type_id=type_id, is_place=False)
 
     def coerce(self, expr: HIR.Expr, expected: int) -> HIR.Expr:

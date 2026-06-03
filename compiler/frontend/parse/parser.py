@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from compiler.frontend.lex.token import Keyword, KeywordKind, Punctuator, PunctuatorKind, Token
+from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
+                                         PunctuatorKind, Token)
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
@@ -113,11 +114,50 @@ class Parser:
             case _:
                 raise CompilerError("Unreachable code")
 
+    def __parse_generics(self) -> list[AST.GenericParam]:
+        """Parse generic parameters enclosed in angle brackets.
+
+        Handles both type generic parameters (<T>) and const generic parameters
+        (<const u64 N>). Returns a unified list of GenericParam.
+        """
+        params: list[AST.GenericParam] = []
+        token = self.__stream.peek()
+        if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.Less):
+            return params
+
+        self.__stream.consume_punctuator(PunctuatorKind.Less)
+
+        def parse_param() -> AST.GenericParam:
+            token = self.__stream.peek()
+            # const generic: <const u64 N>
+            if isinstance(token, Keyword) and token.kind == KeywordKind.Const:
+                const_span = self.__stream.consume_keyword(KeywordKind.Const).span
+                self.__stream.consume_spaces()
+                value_type = self.__type_parser.parse_type()
+                self.__stream.consume_spaces()
+                name = self.__stream.consume_identifier()
+                return AST.ConstGenericParam(
+                    span=const_span + name.span,
+                    name=name,
+                    value_type=value_type,
+                )
+            # type generic: <T>
+            name = self.__stream.consume_identifier()
+            return AST.TypeGenericParam(span=name.span, name=name)
+
+        params = self.__stream.consume_separated(
+            parse_param,
+            {PunctuatorKind.Comma},
+            {PunctuatorKind.Greater},
+        )
+        self.__stream.consume_punctuator(PunctuatorKind.Greater)
+        return params
+
     def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:
         self.__stream.consume_keyword(KeywordKind.Typedef)
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
         self.__stream.consume_spaces()
         self.__stream.consume_punctuator(PunctuatorKind.Equal)
         self.__stream.consume_spaces()
@@ -126,7 +166,7 @@ class Parser:
 
     def __parse_impl(self) -> AST.Impl:
         span = self.__stream.consume_keyword(KeywordKind.Impl).span
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
 
         self.__stream.consume_spaces()
         ty = self.__parse_type()
@@ -156,7 +196,7 @@ class Parser:
 
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
         self.__stream.consume_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
@@ -170,7 +210,7 @@ class Parser:
 
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
         self.__stream.consume_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
@@ -184,7 +224,7 @@ class Parser:
 
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
         self.__stream.consume_spaces()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
@@ -198,7 +238,7 @@ class Parser:
 
         self.__stream.consume_spaces()
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
         params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
@@ -271,7 +311,7 @@ class Parser:
 
     def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
         name = self.__stream.consume_identifier()
-        generics = self.__stream.consume_generics()
+        generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
         params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})

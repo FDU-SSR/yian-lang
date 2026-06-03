@@ -39,7 +39,7 @@ class GenericInference:
         """
         expected_ty = self.__type_ctx[expected_type_id]
 
-        if isinstance(expected_ty, Type.GenericType):
+        if isinstance(expected_ty, (Type.GenericType, Type.ConstGenericType)):
             self.__bindings[expected_type_id].append(actual_type_id)
             return
 
@@ -54,9 +54,8 @@ class GenericInference:
             return
 
         if isinstance(expected_ty, Type.ArrayType) and isinstance(actual_ty, Type.ArrayType):
-            if expected_ty.length != actual_ty.length:
-                raise AnalysisError("array lengths do not match during generic inference", self.__span)
             self.constrain(expected_ty.element_type, actual_ty.element_type)
+            self.constrain(expected_ty.length, actual_ty.length)
             return
 
         if isinstance(expected_ty, Type.TupleType) and isinstance(actual_ty, Type.TupleType):
@@ -227,16 +226,21 @@ class GenericInference:
         ty = self.__type_ctx[type_id]
 
         match ty:
-            case Type.GenericType(type_id=generic_type_id):
-                if generic_type_id in self.__bindings:
-                    return self.__resolve_binding(generic_type_id, resolving)
+            case Type.GenericType() | Type.ConstGenericType():
+                if type_id in self.__bindings:
+                    return self.__resolve_binding(type_id, resolving)
+                return type_id
+            case Type.LiteralValueType():
                 return type_id
             case Type.PointerType(pointee_type=pointee_type):
                 return self.__type_ctx.alloc_pointer(self.__resolve_type(pointee_type, resolving))
             case Type.SliceType(element_type=element_type):
                 return self.__type_ctx.alloc_slice(self.__resolve_type(element_type, resolving))
             case Type.ArrayType(element_type=element_type, length=length):
-                return self.__type_ctx.alloc_array(self.__resolve_type(element_type, resolving), length)
+                return self.__type_ctx.alloc_array(
+                    self.__resolve_type(element_type, resolving),
+                    self.__resolve_type(length, resolving),
+                )
             case Type.TupleType(element_types=element_types):
                 return self.__type_ctx.alloc_tuple([self.__resolve_type(element_type, resolving) for element_type in element_types])
             case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):

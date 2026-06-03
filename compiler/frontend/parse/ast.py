@@ -11,8 +11,32 @@ if TYPE_CHECKING:
     from compiler.frontend.lex.token import CharLiteral, IntLiteral
     from compiler.frontend.lex.token import Literal as LexLiteral
     from compiler.frontend.lex.token import StrLiteral
-    from compiler.frontend.parse.ast_type import ASTType
+    from compiler.frontend.parse.ast_type import ASTType, ConstExpr
     from compiler.utils.IR.position import SrcSpan
+
+
+@dataclass
+class TypeGenericParam:
+    """类型泛型参数，如 <T>"""
+    span: SrcSpan
+    name: Identifier
+
+    def __repr__(self) -> str:
+        return self.name.name
+
+
+@dataclass
+class ConstGenericParam:
+    """常量泛型参数，如 <const u64 N>"""
+    span: SrcSpan
+    name: Identifier
+    value_type: ASTType      # 常量的类型标注，如 u64
+
+    def __repr__(self) -> str:
+        return f"const {self.value_type} {self.name.name}"
+
+
+GenericParam: TypeAlias = TypeGenericParam | ConstGenericParam
 
 
 @dataclass
@@ -44,11 +68,11 @@ class Alias:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     target: ASTType
 
     def __repr__(self) -> str:
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         return f"typedef {self.name.name}{generics_str} = {self.target}"
 
 
@@ -81,17 +105,17 @@ class FuncDef:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     params: list[VarInfo]
     ret_type: ASTType | None
     body: Block
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         params_str = ", ".join(str(param) for param in self.params)
         ret_type_str = f" -> {self.ret_type}" if self.ret_type else ""
-        return f"{attrs_str} fn {self.name.name}{generics_str}({params_str}){ret_type_str}"
+        return f"{attrs_str} {self.name.name}{generics_str}({params_str}){ret_type_str}"
 
 
 @dataclass
@@ -111,12 +135,12 @@ class StructDef:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     fields: list[FieldInfo]
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         fields_str = ", ".join(str(field) for field in self.fields)
         return f"{attrs_str} struct {self.name.name}{generics_str} {{ {fields_str} }}"
 
@@ -137,12 +161,12 @@ class EnumDef:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     variants: list[VariantInfo]
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         variants_str = ", ".join(str(variant) for variant in self.variants)
         return f"{attrs_str} enum {self.name.name}{generics_str} {{ {variants_str} }}"
 
@@ -150,13 +174,13 @@ class EnumDef:
 @dataclass
 class Impl:
     span: SrcSpan
-    generics: list[Identifier]
+    generics: list[GenericParam]
     target: ASTType
     trait: ASTType | None
     items: list[MethodDef]
 
     def __repr__(self) -> str:
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         if self.trait:
             return f"impl{generics_str} {self.trait} for {self.target} {{ ... }}"
         else:
@@ -168,12 +192,12 @@ class TraitDef:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     items: list[TraitItem]
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         return f"{attrs_str} trait {self.name.name}{generics_str} {{ ... }}"
 
 
@@ -192,13 +216,13 @@ class MethodDecl:
     span: SrcSpan
     attrs: list[Attr]
     name: Identifier
-    generics: list[Identifier]
+    generics: list[GenericParam]
     params: list[VarInfo]
     ret_type: ASTType | None
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        generics_str = f"<{', '.join(gen.name for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
         params_str = ", ".join(str(param) for param in self.params)
         ret_type_str = f" -> {self.ret_type}" if self.ret_type else ""
         return f"{attrs_str} fn {self.name.name}{generics_str}({params_str}){ret_type_str}"
@@ -491,10 +515,10 @@ class TypeItem:
 
     span: SrcSpan
     name: Identifier
-    generics: list[ASTType]
+    generics: list[ASTType | ConstExpr]
 
     def __repr__(self) -> str:
-        generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
+        generics_str = f"<{', '.join(repr(gen) for gen in self.generics)}>" if self.generics else ""
         return f"{self.name.name}{generics_str}"
 
 

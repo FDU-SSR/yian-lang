@@ -42,9 +42,14 @@ class TypeFormatter:
             case Type.SliceType(element_type=element_type):
                 element_name = self.get_name(element_type)
                 name = f"{element_name}[]"
+            case Type.ConstGenericType(name=cg_name):
+                name = cg_name
+            case Type.LiteralValueType(value=value):
+                name = str(value)
             case Type.ArrayType(element_type=element_type, length=length):
                 element_name = self.get_name(element_type)
-                name = f"{element_name}[{length}]"
+                length_name = self.get_name(length)
+                name = f"{element_name}[{length_name}]"
             case Type.TupleType(element_types=element_types):
                 element_names = [self.get_name(elem_id) for elem_id in element_types]
                 name = f"({', '.join(element_names)})"

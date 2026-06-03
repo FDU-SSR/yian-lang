@@ -21,6 +21,7 @@ class TypeSpace:
         self.__tuple_cache: dict[tuple[int, ...], int] = {}
         self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}
         self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}
+        self.__literal_cache: dict[tuple[int | bool, int], int] = {}
 
         self.__add_intrinsic_types()
 
@@ -81,6 +82,17 @@ class TypeSpace:
     def alloc_generic(self, name: str) -> int:
         return self.__add_type(Type.GenericType(type_id=-1, name=name))
 
+    def alloc_const_generic(self, name: str, value_type: int) -> int:
+        return self.__add_type(Type.ConstGenericType(type_id=-1, name=name, value_type=value_type))
+
+    def alloc_literal_value(self, value: int | bool, value_type: int) -> int:
+        key = (value, value_type)
+        if key in self.__literal_cache:
+            return self.__literal_cache[key]
+        ty_id = self.__add_type(Type.LiteralValueType(type_id=-1, value=value, value_type=value_type))
+        self.__literal_cache[key] = ty_id
+        return ty_id
+
     def alloc_pointer(self, pointee_type: int) -> int:
         if pointee_type in self.__pointer_cache:
             return self.__pointer_cache[pointee_type]
@@ -100,6 +112,7 @@ class TypeSpace:
         return slice_ty_id
 
     def alloc_array(self, element_type: int, length: int) -> int:
+        # length is a TypeId: LiteralValueType (concrete) or ConstGenericType (generic)
         key = (element_type, length)
         if key in self.__array_cache:
             return self.__array_cache[key]

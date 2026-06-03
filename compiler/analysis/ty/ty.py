@@ -60,10 +60,24 @@ class GenericType:
 
 
 @dataclass
+class ConstGenericType:
+    type_id: int
+    name: str
+    value_type: int      # 常量的类型，如 u64_id
+
+
+@dataclass
+class LiteralValueType:
+    type_id: int
+    value: int | bool     # 常量的具体值
+    value_type: int       # 值的类型，如 u64_id
+
+
+@dataclass
 class ArrayType:
     type_id: int
     element_type: int
-    length: int
+    length: int           # TypeId → ConstGenericType | LiteralValueType
 
 
 @dataclass
@@ -308,7 +322,7 @@ CustomType: TypeAlias = (
     | MethodType | FunctionType | AliasType
 )
 
-Ty: TypeAlias = BasicType | DerivedType | CustomType | GenericType
+Ty: TypeAlias = BasicType | DerivedType | CustomType | GenericType | ConstGenericType | LiteralValueType
 
 
 class IntrinsicType(Enum):

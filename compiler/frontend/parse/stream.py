@@ -118,17 +118,6 @@ class TokenStream:
             items.append(item_parser())
         return items
 
-    def consume_generics(self) -> list[AST.Identifier]:
-        """Consumes generic parameters enclosed in angle brackets and returns them as a list of identifiers."""
-        generics: list[AST.Identifier] = []
-        token = self.peek()
-        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less:
-            self.consume_punctuator(Tok.PunctuatorKind.Less)
-            generics = self.consume_separated(self.consume_identifier, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
-            self.consume_punctuator(Tok.PunctuatorKind.Greater)
-
-        return generics
-
     def consume_identifier(self) -> AST.Identifier:
         """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
         token = self.next()

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Punctuator, PunctuatorKind
+from compiler.frontend.lex.token import (Identifier, IntLiteral, Keyword,
+                                         KeywordKind, Punctuator,
+                                         PunctuatorKind)
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as Ty
 from compiler.frontend.parse.ast_type import ASTType
@@ -99,7 +101,11 @@ class TypeParser:
     def __parse_instance(self, base: ASTType) -> ASTType:
         """Parses a generic type application from the token stream."""
         self.__stream.consume_punctuator(PunctuatorKind.Less)
-        generic_args = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.Greater})
+        generic_args = self.__stream.consume_separated(
+            self.parse_generic_arg,
+            {PunctuatorKind.Comma},
+            {PunctuatorKind.Greater},
+        )
         self.__stream.consume_punctuator(PunctuatorKind.Greater)
 
         return Ty.InstanceType(span=base.span, base=base, generic_args=generic_args)
@@ -110,7 +116,12 @@ class TypeParser:
         return Ty.PointerType(span=base.span, pointee_type=base)
 
     def __parse_array(self, base: ASTType) -> ASTType:
-        """Parses an array type from the token stream."""
+        """Parses an array or slice type from the token stream.
+
+        Slice:  T[]           → SliceType
+        Array:  T[10]         → ArrayType(LiteralConstExpr)
+                T[N]          → ArrayType(GenericConstExpr)
+        """
         self.__stream.consume_punctuator(PunctuatorKind.LBracket)
 
         token = self.__stream.peek()
@@ -118,7 +129,35 @@ class TypeParser:
             # slice type, e.g., `int[]`
             self.__stream.consume_punctuator(PunctuatorKind.RBracket)
             return Ty.SliceType(span=base.span, element_type=base)
-        # fixed-size array type, e.g., `int[10]`
-        size = self.__stream.consume_integer_literal()
+
+        # fixed-size array — size is a ConstExpr (literal or generic ref)
+        size = self.__parse_const_expr()
         self.__stream.consume_punctuator(PunctuatorKind.RBracket)
         return Ty.ArrayType(span=base.span, element_type=base, size=size)
+
+    def __parse_const_expr(self) -> Ty.ConstExpr:
+        """Parses a compile-time constant: integer literal or identifier reference."""
+        token = self.__stream.peek()
+        if isinstance(token, (Identifier, Keyword)):
+            # generic const reference, e.g., T[N]
+            name = self.__stream.consume_identifier()
+            return Ty.GenericConstExpr(span=name.span, name=name)
+        # literal, e.g., T[10]
+        if isinstance(token, IntLiteral):
+            self.__stream.advance()
+            return Ty.LiteralConstExpr(span=token.span, literal=token)
+        raise ParseError(f"Expected constant expression (integer literal or identifier) but got '{token}'", token.span)
+
+    def parse_generic_arg(self) -> ASTType | Ty.ConstExpr:
+        """Parses a generic argument — either a type or a constant expression.
+
+        Used for InstanceType generic args where the parser cannot distinguish
+        type args from const args without type context. Literal values are
+        parsed as ConstExpr; identifiers and type expressions are parsed as
+        ASTType (the resolver will disambiguate later).
+        """
+        token = self.__stream.peek()
+        if isinstance(token, IntLiteral):
+            self.__stream.advance()
+            return Ty.LiteralConstExpr(span=token.span, literal=token)
+        return self.parse_type()

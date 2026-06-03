@@ -16,7 +16,7 @@ YIAN_KEYWORDS = {
     # Type related
     "typedef", "struct", "enum", "trait", "impl", "fn",
     # Attribute related
-    "dyn", "pub", "static", "inline", "intrinsic",
+    "dyn", "pub", "static", "inline", "intrinsic", "const",
     # Control flow related
     "if", "elif", "else",
     "match",

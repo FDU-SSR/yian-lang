@@ -76,10 +76,7 @@ class GlobalResolve:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
 
-                    generics = [
-                        self.__type_ctx.alloc_generic(generic.name)
-                        for generic in item.generics
-                    ]
+                    generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.AliasType)
                     ty.custom_def.generics = generics.copy()
@@ -96,10 +93,7 @@ class GlobalResolve:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
 
-                    generics = [
-                        self.__type_ctx.alloc_generic(generic.name)
-                        for generic in item.generics
-                    ]
+                    generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.FunctionType)
                     ty.custom_def.generics = generics.copy()
@@ -116,10 +110,7 @@ class GlobalResolve:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
 
-                    generics = [
-                        self.__type_ctx.alloc_generic(generic.name)
-                        for generic in item.generics
-                    ]
+                    generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.StructType)
                     ty.custom_def.generics = generics.copy()
@@ -136,10 +127,7 @@ class GlobalResolve:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
 
-                    generics = [
-                        self.__type_ctx.alloc_generic(generic.name)
-                        for generic in item.generics
-                    ]
+                    generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.EnumType)
                     ty.custom_def.generics = generics.copy()
@@ -156,10 +144,7 @@ class GlobalResolve:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
 
-                    generics = [
-                        self.__type_ctx.alloc_generic(generic.name)
-                        for generic in item.generics
-                    ]
+                    generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.TraitType)
                     ty.custom_def.generics = generics.copy()
@@ -168,6 +153,23 @@ class GlobalResolve:
                 case _:
                     # other items are ignored in this pass
                     pass
+
+    def __alloc_generics(self, unit: UnitData, item_generics: list[AST.GenericParam]) -> list[int]:
+        """Allocate generic parameters from AST GenericParam list.
+
+        Handles both TypeGenericParam (→ GenericType) and
+        ConstGenericParam (→ ConstGenericType). Does NOT register
+        symbols — that happens during __resolve_definitions.
+        """
+        generics: list[int] = []
+        for param in item_generics:
+            match param:
+                case AST.TypeGenericParam(name=name):
+                    generics.append(self.__type_ctx.alloc_generic(name.name))
+                case AST.ConstGenericParam(name=name, value_type=vty):
+                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    generics.append(self.__type_ctx.alloc_const_generic(name.name, vt_id))
+        return generics
 
     def __resolve_imports(self, unit: UnitData) -> None:
         """Resolves all import statements in the unit and adds the imported symbols to the symbol context."""
@@ -234,9 +236,7 @@ class GlobalResolve:
         assert isinstance(ty, Type.AliasType)
 
         # resolve generics and aliased type
-        unit.symbol_ctx.enter_scope()
-        for generic_name, generic_type_id in zip(alias.generics, ty.custom_def.generics):
-            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
 
         aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
@@ -251,9 +251,7 @@ class GlobalResolve:
         assert isinstance(ty, Type.FunctionType)
 
         # resolve generics, parameters and return type
-        unit.symbol_ctx.enter_scope()
-        for generic_name, generic_type_id in zip(func_def.generics, ty.custom_def.generics):
-            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        self.__enter_generic_scope(unit, func_def.generics, ty.custom_def.generics)
 
         parameters = [
             Type.Parameter(
@@ -275,6 +273,16 @@ class GlobalResolve:
         # add the resolved procedure to the type context
         self.__type_ctx.add_procedure(ty.type_id, func_def.body, unit.unit_id)
 
+    def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: list[int]) -> None:
+        """进入泛型作用域，注册类型泛型和常量泛型符号。"""
+        unit.symbol_ctx.enter_scope()
+        for param, ty_id in zip(ast_generics, ty_generic_ids):
+            match param:
+                case AST.TypeGenericParam(name=name):
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, ty_id)
+                case AST.ConstGenericParam(name=name):
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, ty_id)
+
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
         symbol = unit.symbol_ctx.lookup(struct_def.name.name)
         assert symbol is not None
@@ -282,9 +290,7 @@ class GlobalResolve:
         assert isinstance(ty, Type.StructType)
 
         # resolve generics and fields
-        unit.symbol_ctx.enter_scope()
-        for generic_name, generic_type_id in zip(struct_def.generics, ty.custom_def.generics):
-            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        self.__enter_generic_scope(unit, struct_def.generics, ty.custom_def.generics)
 
         fields: list[Type.StructField] = []
         for index, field in enumerate(struct_def.fields):
@@ -308,9 +314,7 @@ class GlobalResolve:
         assert isinstance(ty, Type.EnumType)
 
         # resolve generics and variants
-        unit.symbol_ctx.enter_scope()
-        for generic_name, generic_type_id in zip(enum_def.generics, ty.custom_def.generics):
-            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        self.__enter_generic_scope(unit, enum_def.generics, ty.custom_def.generics)
 
         variants: list[Type.EnumVariant] = []
         for index, variant in enumerate(enum_def.variants):
@@ -336,9 +340,7 @@ class GlobalResolve:
         assert isinstance(ty, Type.TraitType)
 
         # resolve generics and methods
-        unit.symbol_ctx.enter_scope()
-        for generic_name, generic_type_id in zip(trait_def.generics, ty.custom_def.generics):
-            unit.symbol_ctx.add_symbol(generic_name.name, SymbolKind.Type, generic_type_id)
+        self.__enter_generic_scope(unit, trait_def.generics, ty.custom_def.generics)
         unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, symbol.type_id)
 
         methods: dict[str, int] = {}
@@ -361,10 +363,16 @@ class GlobalResolve:
         # resolve generics, target type and trait
         unit.symbol_ctx.enter_scope()
         generics: list[int] = []
-        for generic in impl.generics:
-            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
-            generics.append(generic_type_id)
-            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+        for param in impl.generics:
+            match param:
+                case AST.TypeGenericParam(name=name):
+                    g_id = self.__type_ctx.alloc_generic(name.name)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id)
+                case AST.ConstGenericParam(name=name, value_type=vty):
+                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id)
+            generics.append(g_id)
 
         target_type_id = self.__type_ctx.resolve_type(impl.target, unit.symbol_ctx)
         unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, target_type_id)
@@ -398,12 +406,17 @@ class GlobalResolve:
 
         # resolve generics, parameters and return type
         unit.symbol_ctx.enter_scope()
-        generics: list[int] = []
-        generics += prev_generics
-        for generic in decl.generics:
-            generic_type_id = self.__type_ctx.alloc_generic(generic.name)
-            generics.append(generic_type_id)
-            unit.symbol_ctx.add_symbol(generic.name, SymbolKind.Type, generic_type_id)
+        generics: list[int] = list(prev_generics)
+        for param in decl.generics:
+            match param:
+                case AST.TypeGenericParam(name=name):
+                    g_id = self.__type_ctx.alloc_generic(name.name)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id)
+                case AST.ConstGenericParam(name=name, value_type=vty):
+                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id)
+            generics.append(g_id)
 
         parameters = [
             Type.Parameter(

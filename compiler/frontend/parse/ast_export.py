@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Callable
 
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import ASTType
+from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
+                                              GenericConstExpr,
+                                              LiteralConstExpr)
 
 
 def __gen_prefix(guides: list[bool], is_last: bool) -> str:
@@ -28,8 +31,16 @@ def __format_attrs(attrs: list[AST.Attr]) -> str:
     return f"{' '.join(str(attr) for attr in attrs)} " if attrs else ""
 
 
-def __format_generics(generics: list[AST.Identifier]) -> str:
-    return f"<{', '.join(gen.name for gen in generics)}>" if generics else ""
+def __format_generics(generics: list[AST.GenericParam]) -> str:
+    if not generics:
+        return ""
+    parts: list[str] = []
+    for gen in generics:
+        if isinstance(gen, AST.TypeGenericParam):
+            parts.append(gen.name.name)
+        else:
+            parts.append(f"const {gen.value_type} {gen.name.name}")
+    return f"<{', '.join(parts)}>"
 
 
 def __export_items_with_handler[ItemType](items: list[ItemType], guides: list[bool], handler: Callable[[ItemType, list[bool], bool], str]) -> str:
@@ -39,10 +50,14 @@ def __export_items_with_handler[ItemType](items: list[ItemType], guides: list[bo
     return res
 
 
-def __export_type_list(types: list[ASTType], guides: list[bool]) -> str:
+def __export_type_list(types: Sequence[ASTType | ConstExpr], guides: list[bool]) -> str:
     res = ""
     for idx, value in enumerate(types):
-        res += __line(guides, idx == len(types) - 1, f"Type: {value}")
+        match value:
+            case LiteralConstExpr() | GenericConstExpr():
+                res += __line(guides, idx == len(types) - 1, f"ConstExpr: {value}")
+            case _:
+                res += __line(guides, idx == len(types) - 1, f"Type: {value}")
     return res
 
 

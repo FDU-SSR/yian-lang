@@ -108,11 +108,11 @@ class ExprParser:
                 # expression context (type names, function names, built-in calls).
                 ident = self.__stream.consume_identifier()
 
-                # handle generic type arguments (e.g., Type<...>, bitcast<T*>)
+                # handle generic arguments (e.g., Type<...>, bitcast<T*>, Array<T, 5>)
                 next_token = self.__stream.peek()
                 if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Less:
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
-                    generics = self.__stream.consume_separated(self.__type_parser.parse_type, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
+                    generics = self.__stream.consume_separated(self.__type_parser.parse_generic_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
                     return AST.TypeItem(span=ident.span, name=ident, generics=generics)
 

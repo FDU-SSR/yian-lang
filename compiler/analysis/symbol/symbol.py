@@ -8,6 +8,7 @@ class SymbolKind(Enum):
     Variable = "variable"
     Function = "function"
     Type = "type"
+    ConstGeneric = "const_generic"
 
 
 class SymbolAttribute(Enum):

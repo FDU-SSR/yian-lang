@@ -17,12 +17,13 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
 
     ty = ctx[type_id]
     match ty:
-        case Type.GenericType(type_id=generic_type_id):
-            if generic_type_id in substs:
-                return substs[generic_type_id]
+        case Type.GenericType() | Type.ConstGenericType():
+            return substs.get(type_id, type_id)
+        case Type.LiteralValueType():
             return type_id
         case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) \
-                | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args):
+                | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) \
+                | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
             instantiated_args = [instantiate(ctx, arg_id, substs) for arg_id in generic_args]
             return ctx.alloc_instance(type_id, instantiated_args)
         case Type.PointerType(pointee_type=pointee_type):
@@ -33,7 +34,8 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
             return ctx.alloc_slice(instantiated_element)
         case Type.ArrayType(element_type=element_type, length=length):
             instantiated_element = instantiate(ctx, element_type, substs)
-            return ctx.alloc_array(instantiated_element, length)
+            instantiated_length = instantiate(ctx, length, substs)
+            return ctx.alloc_array(instantiated_element, instantiated_length)
         case Type.TupleType(element_types=element_types):
             instantiated_elements = [instantiate(ctx, elem_id, substs) for elem_id in element_types]
             return ctx.alloc_tuple(instantiated_elements)
@@ -147,7 +149,9 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
         case Type.SliceType(element_type=element_type):
             return ctx.alloc_slice(default_literals(ctx, element_type))
         case Type.ArrayType(element_type=element_type, length=length):
-            return ctx.alloc_array(default_literals(ctx, element_type), length)
+            return ctx.alloc_array(default_literals(ctx, element_type), default_literals(ctx, length))
+        case Type.ConstGenericType() | Type.LiteralValueType():
+            return type_id
         case Type.TupleType(element_types=element_types):
             return ctx.alloc_tuple([default_literals(ctx, element_type) for element_type in element_types])
         case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
@@ -193,14 +197,16 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
         visiting.add(tid)
         ty = ctx[tid]
         match ty:
-            case Type.GenericType():
+            case Type.GenericType() | Type.ConstGenericType():
                 return True
+            case Type.LiteralValueType():
+                return False
             case Type.PointerType(pointee_type=pointee_type):
                 return _contains(pointee_type)
             case Type.SliceType(element_type=element_type):
                 return _contains(element_type)
-            case Type.ArrayType(element_type=element_type, length=_):
-                return _contains(element_type)
+            case Type.ArrayType(element_type=element_type, length=length):
+                return _contains(element_type) or _contains(length)
             case Type.TupleType(element_types=element_types):
                 return any(_contains(element_type) for element_type in element_types)
             case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
@@ -233,10 +239,14 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
     left_ty = ctx[left_type_id]
     right_ty = ctx[right_type_id]
 
-    if isinstance(left_ty, Type.GenericType):
+    if isinstance(left_ty, (Type.GenericType, Type.ConstGenericType)):
         return right_type_id
-    if isinstance(right_ty, Type.GenericType):
+    if isinstance(right_ty, (Type.GenericType, Type.ConstGenericType)):
         return left_type_id
+    if isinstance(left_ty, Type.LiteralValueType) and isinstance(right_ty, Type.LiteralValueType):
+        if left_ty.value == right_ty.value:
+            return left_type_id
+        raise AnalysisError(f"const value mismatch: {left_ty.value} vs {right_ty.value}", span)
 
     if is_int_literal_type(ctx, left_type_id):
         return _merge_int_literal(ctx, left_type_id, right_type_id, span)
@@ -254,12 +264,8 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
         return ctx.alloc_slice(merge_types(ctx, left_ty.element_type, right_ty.element_type, span))
 
     if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-        if left_ty.length != right_ty.length:
-            raise AnalysisError(
-                f"array lengths do not match: {ctx.get_name(left_type_id)} vs {ctx.get_name(right_type_id)}",
-                span,
-            )
-        return ctx.alloc_array(merge_types(ctx, left_ty.element_type, right_ty.element_type, span), left_ty.length)
+        merged_length = merge_types(ctx, left_ty.length, right_ty.length, span)
+        return ctx.alloc_array(merge_types(ctx, left_ty.element_type, right_ty.element_type, span), merged_length)
 
     if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
         if len(left_ty.element_types) != len(right_ty.element_types):

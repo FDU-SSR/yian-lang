@@ -102,6 +102,15 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
     }
 }
 
+impl<T, const u64 N> IntoIterator<SliceIter<T>> for T[N] {
+    into_iter() -> SliceIter<T> {
+        return SliceIter<T>(
+            ptr = bitcast<T*>(self),
+            end = bitcast<T*>(self) + N
+        )
+    }
+}
+
 impl<T> PartialEq<T[]> for T[] {
     pub eq(T[] other) -> bool {
         if self.len() != other.len() {
