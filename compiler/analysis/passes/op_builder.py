@@ -195,9 +195,14 @@ class OpBuilder:
         receiver_hir = self.__evaluator.value(receiver)
         receiver_ty = self.__type_ctx[receiver_hir.type_id]
 
+        # auto-deref: only handle PointerType, NOT the Deref trait
+        while isinstance(receiver_ty, Type.PointerType):
+            receiver_hir = HIR.Unary(span, UnaryOperator.Deref, receiver_hir, receiver_ty.pointee_type, is_place=True)
+            receiver_ty = self.__type_ctx[receiver_ty.pointee_type]
+
         if isinstance(receiver_ty, Type.StructType):
             return self.__build_field_access(span, receiver_hir, field_name)
-        elif isinstance(receiver_hir, HIR.Ty) and isinstance(receiver_ty, Type.EnumType):
+        if isinstance(receiver_hir, HIR.Ty) and isinstance(receiver_ty, Type.EnumType):
             return self.__build_variant_construct(span, receiver_hir.type_id, field_name)
 
         raise AnalysisError("field access is only supported on struct instances and enum types", span)

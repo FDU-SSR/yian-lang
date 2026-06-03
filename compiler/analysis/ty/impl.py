@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
@@ -46,6 +47,48 @@ class ImplRegistry:
 
     def iter_impls(self) -> list[Impl]:
         return list(self.__impls)
+
+    def find_deref_target(self, type_id: int) -> int | None:
+        """
+        If `type_id` implements the `Deref` trait, return the target type
+        (the pointee of the deref() return type). Otherwise return None.
+
+        Used by TypeCtx.try_deref to support auto-deref via the Deref trait.
+        """
+        deref_trait_id = self.__ctx.deref_id
+
+        # 1) Non-generic trait impls that match the exact target type
+        for impl in self.__trait_impl_cache.get(type_id, []):
+            if impl.trait == deref_trait_id and "deref" in impl.methods:
+                return self.__resolve_deref_target(impl, {})
+
+        # 2) Generic trait impls — try to unify impl.target against type_id
+        for impl in self.__trait_generic_impl_cache:
+            if impl.trait != deref_trait_id or "deref" not in impl.methods:
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            return self.__resolve_deref_target(impl, substs)
+
+        return None
+
+    def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
+        """Given a Deref impl and substitutions, resolve the final target pointee type."""
+        deref_method_id = impl.methods["deref"]
+        instantiated_id = deref_method_id
+        if substs:
+            instantiated_id = self.__ctx.instantiate(deref_method_id, substs)
+        method_ty = self.__ctx[instantiated_id]
+        assert isinstance(method_ty, Type.MethodType)
+        return_type_id = method_ty.return_type(self.__ctx)
+        return_ty = self.__ctx[return_type_id]
+        if isinstance(return_ty, Type.PointerType):
+            return return_ty.pointee_type
+        return None
 
     def __check_impl(self, impl: Impl) -> None:
         """

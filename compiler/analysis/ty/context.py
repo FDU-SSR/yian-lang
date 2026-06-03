@@ -359,58 +359,96 @@ class TypeCtx:
             return self.__procedures[def_id]
         raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
 
+    def try_deref(self, type_id: int) -> int | None:
+        """
+        Perform one dereference step at the type level (no HIR nodes generated).
+
+        Handles two cases:
+        - Pointer types: return the pointee type directly
+        - Types implementing the Deref trait: resolve deref() return type's pointee
+
+        Returns None if the type cannot be dereferenced.
+        """
+        ty = self[type_id]
+        if isinstance(ty, Type.PointerType):
+            return ty.pointee_type
+        return self.__impl_registry.find_deref_target(type_id)
+
+    def deref_chain(self, type_id: int) -> list[int]:
+        """
+        Repeatedly apply try_deref until no more dereferences are possible.
+        Returns the list of types encountered: [original, deref1, deref2, ...].
+        """
+        chain = [type_id]
+        current = type_id
+        while True:
+            next_ty = self.try_deref(current)
+            if next_ty is None:
+                break
+            chain.append(next_ty)
+            current = next_ty
+        return chain
+
     def method_lookup(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> LookupResult | None:
         """
         Lookup a method for a given caller type. See details in `manual/impl.md`.
+
+        Iterates through the deref chain of the receiver type, searching for
+        matching method implementations at each level. Returns the first match
+        with the fewest dereferences.
         """
-        candidates: list[LookupResult] = []
+        chain = self.deref_chain(receiver.type_id)
 
-        for impl in self.__impl_registry.iter_impls():
-            if method_name not in impl.methods:
-                continue
+        for deref_count, type_at_level in enumerate(chain):
+            candidates: list[LookupResult] = []
 
-            receiver_inference = GenericInference(self, receiver.span)
-            try:
-                receiver_inference.constrain(impl.target, receiver.type_id)
-                impl_substs = receiver_inference.substitutions()
-            except AnalysisError:
-                continue
-
-            method_id = impl.methods[method_name]
-            instantiated_method_id = self.instantiate(method_id, impl_substs)
-            instantiated_method_ty = self[instantiated_method_id]
-            assert isinstance(instantiated_method_ty, Type.MethodType)
-
-            if generic_args is not None and len(generic_args) > 0:
-                method_generics = instantiated_method_ty.custom_def.generics
-                if len(generic_args) > len(method_generics):
+            for impl in self.__impl_registry.iter_impls():
+                if method_name not in impl.methods:
                     continue
-                explicit_generics = method_generics[len(method_generics) - len(generic_args):]
-                explicit_substs = dict(zip(explicit_generics, generic_args))
-                instantiated_method_id = self.instantiate(instantiated_method_id, explicit_substs)
+
+                receiver_inference = GenericInference(self, receiver.span)
+                try:
+                    receiver_inference.constrain(impl.target, type_at_level)
+                    impl_substs = receiver_inference.substitutions()
+                except AnalysisError:
+                    continue
+
+                method_id = impl.methods[method_name]
+                instantiated_method_id = self.instantiate(method_id, impl_substs)
                 instantiated_method_ty = self[instantiated_method_id]
                 assert isinstance(instantiated_method_ty, Type.MethodType)
 
-            parameters = instantiated_method_ty.parameters(self)
-            if len(parameters) != len(args):
-                continue
+                if generic_args is not None and len(generic_args) > 0:
+                    method_generics = instantiated_method_ty.custom_def.generics
+                    if len(generic_args) > len(method_generics):
+                        continue
+                    explicit_generics = method_generics[len(method_generics) - len(generic_args):]
+                    explicit_substs = dict(zip(explicit_generics, generic_args))
+                    instantiated_method_id = self.instantiate(instantiated_method_id, explicit_substs)
+                    instantiated_method_ty = self[instantiated_method_id]
+                    assert isinstance(instantiated_method_ty, Type.MethodType)
 
-            arg_inference = GenericInference(self, receiver.span)
-            try:
-                for param, arg in zip(parameters, args):
-                    arg_inference.constrain(param.type_id, arg.type_id)
-                arg_substs = arg_inference.substitutions()
-            except AnalysisError:
-                continue
+                parameters = instantiated_method_ty.parameters(self)
+                if len(parameters) != len(args):
+                    continue
 
-            final_substs = impl_substs | arg_substs
-            final_method_id = self.instantiate(instantiated_method_id, final_substs)
-            candidates.append(LookupResult(method_id=final_method_id, deref_count=0, impl=impl))
+                arg_inference = GenericInference(self, receiver.span)
+                try:
+                    for param, arg in zip(parameters, args):
+                        arg_inference.constrain(param.type_id, arg.type_id)
+                    arg_substs = arg_inference.substitutions()
+                except AnalysisError:
+                    continue
 
-        if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
-            raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+                final_substs = impl_substs | arg_substs
+                final_method_id = self.instantiate(instantiated_method_id, final_substs)
+                candidates.append(LookupResult(method_id=final_method_id, deref_count=deref_count, impl=impl))
+
+            if len(candidates) == 1:
+                return candidates[0]
+            if len(candidates) > 1:
+                raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+
         return None
 
     def iter_item_type(self, iter_type_id: int) -> int:

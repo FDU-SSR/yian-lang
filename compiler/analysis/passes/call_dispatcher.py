@@ -10,17 +10,18 @@ from compiler.analysis.ty.context import LookupResult
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.passes.sem_ctx import SemCtx
 
 # Built-in instruction names that form expressions (they return values).
-_BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast"})
+BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast"})
 
 # Built-in instruction names that form statements (they do not return values).
 # When used in expression context, they produce a descriptive error.
-_BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy", "sys_read", "sys_write"})
+BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy", "sys_read", "sys_write"})
 
 
 class CallDispatcher:
@@ -33,6 +34,24 @@ class CallDispatcher:
 
         if lookup is None:
             raise AnalysisError(f"Unknown {context_name} '{method_name}'", span)
+
+        # auto-deref: insert deref nodes for each level in the deref chain
+        for _ in range(lookup.deref_count):
+            current_ty = self.__ctx.type_ctx[receiver.type_id]
+            if isinstance(current_ty, Type.PointerType):
+                # pointer deref
+                receiver = HIR.Unary(span, UnaryOperator.Deref, receiver, current_ty.pointee_type, is_place=True)
+            else:
+                # Deref trait deref: call deref() method
+                deref_lookup = self.__ctx.type_ctx.method_lookup(receiver, "deref", None, [])
+                assert deref_lookup is not None, f"Deref trait impl expected for type '{self.__ctx.type_ctx.get_name(receiver.type_id)}'"
+                deref_call = self.build_method_call(span, receiver, deref_lookup, [], context_name)
+                result_ty = self.__ctx.type_ctx[deref_call.type_id]
+                if isinstance(result_ty, Type.PointerType):
+                    # deref() returns a pointer → auto-deref the result (Deref trait special handling)
+                    receiver = HIR.Unary(span, UnaryOperator.Deref, deref_call, result_ty.pointee_type, is_place=True)
+                else:
+                    receiver = deref_call
 
         return self.build_method_call(span, receiver, lookup, args, context_name)
 
@@ -62,9 +81,9 @@ class CallDispatcher:
         assert self.__ctx.symbol_ctx is not None
 
         # Intercept built-in instruction names before the symbol lookup.
-        if callee.name in _BUILTIN_STMT_ONLY_NAMES:
+        if callee.name in BUILTIN_STMT_ONLY_NAMES:
             raise AnalysisError(f"'{callee.name}' is a statement and cannot be used as an expression", callee.span)
-        if callee.name in _BUILTIN_EXPR_NAMES:
+        if callee.name in BUILTIN_EXPR_NAMES:
             return self.__handle_builtin_expr(node, callee)
 
         symbol = self.__ctx.symbol_ctx.lookup(callee.name)
