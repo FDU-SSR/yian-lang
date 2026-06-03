@@ -210,13 +210,24 @@ class ExprParser:
         token = self.__stream.peek()
         if isinstance(token, Tok.Identifier):
             # could be a named argument or a positional argument
-            next_token = self.__stream.peek_nth(1)
-            if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
-                # named argument
-                name = self.__stream.consume_identifier()
-                self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
-                value = self.parse_expr()
-                return AST.Arg(span=name.span + value.span, name=name, value=value)
+            # look ahead past spaces for '='
+            offset = 1
+            while True:
+                ahead = self.__stream.peek_nth(offset)
+                if ahead is None:
+                    break
+                if isinstance(ahead, Tok.Punctuator) and ahead.kind == Tok.PunctuatorKind.Space:
+                    offset += 1
+                    continue
+                if isinstance(ahead, Tok.Punctuator) and ahead.kind == Tok.PunctuatorKind.Equal:
+                    # named argument
+                    name = self.__stream.consume_identifier()
+                    self.__stream.consume_spaces()
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+                    self.__stream.consume_spaces()
+                    value = self.parse_expr()
+                    return AST.Arg(span=name.span + value.span, name=name, value=value)
+                break
 
         # positional argument
         value = self.parse_expr()
