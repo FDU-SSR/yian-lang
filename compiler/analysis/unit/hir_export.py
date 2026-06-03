@@ -6,9 +6,8 @@ from typing import TYPE_CHECKING, Callable, TypeVar
 from compiler.analysis.unit import hir as HIR
 
 if TYPE_CHECKING:
-    from compiler.analysis.ty.context import TypeCtx
     from compiler.analysis.symbol.context import SymbolCtx
-    from compiler.analysis.unit.def_point import DefPoint
+    from compiler.analysis.ty.context import TypeCtx
     from compiler.analysis.unit.unit_data import UnitData
 
 ItemType = TypeVar("ItemType")
@@ -115,8 +114,6 @@ def __export_stmt(stmt: HIR.Stmt, guides: list[bool], is_last: bool, type_ctx: T
             return __export_match(stmt, guides, is_last, type_ctx)
         case HIR.Binary() | HIR.Unary() | HIR.Call() | HIR.StructConstruct() | HIR.Invoke() | HIR.Cast() | HIR.MethodCall() | HIR.VariantConstruct() | HIR.FieldAccess() | HIR.TupleAccess() | HIR.DynValue() | HIR.DynBuffer() | HIR.SizeOf() | HIR.BitCast() | HIR.Tuple() | HIR.Array() | HIR.Var() | HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Ty():
             return __export_expr_stmt(stmt, guides, is_last, type_ctx)
-        case _:
-            raise TypeError(f"Unsupported statement: {type(stmt)!r}")
 
 
 def __export_return(stmt: HIR.Return, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
@@ -229,8 +226,6 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __line(guides, is_last, f"BoolLiteral: {expr.value} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
         case HIR.Ty():
             return __line(guides, is_last, f"Ty: {__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-        case _:
-            raise TypeError(f"Unsupported expression: {type(expr)!r}")
 
 
 def __export_binary(expr: HIR.Binary, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:

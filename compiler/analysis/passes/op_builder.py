@@ -528,6 +528,15 @@ class OpBuilder:
     def __build_addr_of(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
+        if isinstance(operand_hir, HIR.Ty):
+            func_ty = self.__type_ctx[operand_hir.type_id]
+            if isinstance(func_ty, Type.FunctionType):
+                params = func_ty.parameters(self.__type_ctx)
+                param_type_ids = [p.type_id for p in params]
+                ret_type_id = func_ty.return_type(self.__type_ctx)
+                fn_ptr_type_id = self.__type_ctx.alloc_function_pointer(param_type_ids, ret_type_id)
+                return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, fn_ptr_type_id, is_place=False)
+
         if not operand_hir.is_place:
             raise AnalysisError("address-of operator requires a place expression", span)
 

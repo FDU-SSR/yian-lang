@@ -121,14 +121,14 @@ class ExprChecker:
         match symbol.kind:
             case SymbolKind.Variable:
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
+            case SymbolKind.Function:
+                return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
                 ty = self.__ctx.type_ctx[symbol.type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
-            case _:
-                raise AnalysisError(f"Identifier '{node.name}' cannot be used as an expression", node.span)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
         literal = node.literal
