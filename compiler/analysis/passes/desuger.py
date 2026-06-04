@@ -131,10 +131,8 @@ class Desugar:
         for stmt in block.stmts:
             self.__process_nested_blocks(stmt, self.__process_range_exprs)
 
-            if isinstance(stmt, AST.Binary) and stmt.op == BinaryOperator.Range:
-                desugared_stmts.append(self.__desugar_range(stmt))
-            else:
-                desugared_stmts.append(stmt)
+            self.__desugar_range_in_stmt(stmt)
+            desugared_stmts.append(stmt)
 
         block.stmts = desugared_stmts
 
@@ -144,10 +142,8 @@ class Desugar:
         for stmt in block.stmts:
             self.__process_nested_blocks(stmt, self.__process_member_tests)
 
-            if isinstance(stmt, AST.Binary) and stmt.op in [BinaryOperator.In, BinaryOperator.NotIn]:
-                desugared_stmts.append(self.__desugar_member_test(stmt))
-            else:
-                desugared_stmts.append(stmt)
+            self.__desugar_member_test_in_stmt(stmt)
+            desugared_stmts.append(stmt)
 
         block.stmts = desugared_stmts
 
@@ -262,22 +258,99 @@ class Desugar:
             else_branch=current_else,
         )
 
-    def __desugar_range(self, stmt: AST.Binary) -> AST.Call:
-        return AST.Call(
-            span=stmt.span,
-            callee=AST.Identifier(span=stmt.span, name="Range"),
-            args=[
-                AST.Arg(span=stmt.left.span, name=None, value=stmt.left),
-                AST.Arg(span=stmt.right.span, name=None, value=stmt.right),
-            ],
-        )
+    def __desugar_range(self, expr: AST.Expr) -> AST.Expr:
+        """Recursively walk an expression tree and desugar any Binary(Range) nodes."""
+        self.__walk_expr_children(expr, self.__desugar_range)
 
-    def __desugar_member_test(self, stmt: AST.Binary) -> AST.MethodCall:
-        method_name = "contains" if stmt.op == BinaryOperator.In else "not_contains"
-        return AST.MethodCall(
-            span=stmt.span,
-            receiver=stmt.right,
-            method_name=AST.Identifier(span=stmt.span, name=method_name),
-            generics=[],
-            args=[AST.Arg(span=stmt.left.span, name=None, value=stmt.left)],
-        )
+        if isinstance(expr, AST.Binary) and expr.op == BinaryOperator.Range:
+            return AST.Call(
+                span=expr.span,
+                callee=AST.Identifier(span=expr.span, name="Range"),
+                args=[
+                    AST.Arg(span=expr.left.span, name=None, value=expr.left),
+                    AST.Arg(span=expr.right.span, name=None, value=expr.right),
+                ],
+            )
+        return expr
+
+    def __desugar_member_test(self, expr: AST.Expr) -> AST.Expr:
+        """Recursively walk an expression tree and desugar any Binary(In) or Binary(NotIn) nodes."""
+        self.__walk_expr_children(expr, self.__desugar_member_test)
+
+        if isinstance(expr, AST.Binary) and expr.op in [BinaryOperator.In, BinaryOperator.NotIn]:
+            method_name = "contains" if expr.op == BinaryOperator.In else "not_contains"
+            return AST.MethodCall(
+                span=expr.span,
+                receiver=expr.right,
+                method_name=AST.Identifier(span=expr.span, name=method_name),
+                generics=[],
+                args=[AST.Arg(span=expr.left.span, name=None, value=expr.left)],
+            )
+        return expr
+
+    def __walk_expr_children(self, expr: AST.Expr, visitor: Callable[[AST.Expr], AST.Expr]) -> None:
+        """Walk the immediate sub-expressions of an expression and apply the visitor to each."""
+        match expr:
+            case AST.Binary():
+                expr.left = visitor(expr.left)
+                expr.right = visitor(expr.right)
+            case AST.Unary():
+                expr.operand = visitor(expr.operand)
+            case AST.Call():
+                expr.callee = visitor(expr.callee)
+                for arg in expr.args:
+                    arg.value = visitor(arg.value)
+            case AST.MethodCall():
+                expr.receiver = visitor(expr.receiver)
+                for arg in expr.args:
+                    arg.value = visitor(arg.value)
+            case AST.FieldAccess():
+                expr.receiver = visitor(expr.receiver)
+            case AST.DynValue():
+                expr.value = visitor(expr.value)
+            case AST.DynBuffer():
+                expr.size = visitor(expr.size)
+            case AST.Tuple():
+                expr.elements = [visitor(e) for e in expr.elements]
+            case AST.Array():
+                expr.elements = [visitor(e) for e in expr.elements]
+            case _:
+                pass
+
+    def __desugar_range_in_stmt(self, stmt: AST.Stmt) -> None:
+        """Walk expression fields within a statement and desugar any Range operators."""
+        self.__desugar_expr_in_stmt(stmt, self.__desugar_range)
+
+    def __desugar_member_test_in_stmt(self, stmt: AST.Stmt) -> None:
+        """Walk expression fields within a statement and desugar any In/NotIn operators."""
+        self.__desugar_expr_in_stmt(stmt, self.__desugar_member_test)
+
+    def __desugar_expr_in_stmt(self, stmt: AST.Stmt, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
+        """Apply expr_visitor to all expression fields within a statement."""
+        match stmt:
+            case AST.VarDecl(init_expr=expr) if expr is not None:
+                stmt.init_expr = expr_visitor(expr)
+            case AST.Return(expr=expr) if expr is not None:
+                stmt.expr = expr_visitor(expr)
+            case AST.If():
+                stmt.condition = expr_visitor(stmt.condition)
+                for i in range(len(stmt.elif_branches)):
+                    cond, body = stmt.elif_branches[i]
+                    stmt.elif_branches[i] = (expr_visitor(cond), body)
+            case AST.While():
+                stmt.condition = expr_visitor(stmt.condition)
+            case AST.Match():
+                stmt.expr = expr_visitor(stmt.expr)
+            case AST.Assert():
+                stmt.condition = expr_visitor(stmt.condition)
+                if stmt.message is not None:
+                    stmt.message = expr_visitor(stmt.message)
+            case AST.Delete():
+                stmt.target = expr_visitor(stmt.target)
+            case AST.For():
+                stmt.iterable = expr_visitor(stmt.iterable)
+            case AST.Binary():
+                stmt.left = expr_visitor(stmt.left)
+                stmt.right = expr_visitor(stmt.right)
+            case _:
+                pass
