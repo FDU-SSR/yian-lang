@@ -28,7 +28,7 @@ class OperandType(Enum):
 
 
 @dataclass
-class _BinaryOpDesc:
+class BinaryOpDesc:
     """Descriptor for a binary operator that follows the simple `__binary_helper` pattern."""
 
     op: BinaryOperator
@@ -39,7 +39,7 @@ class _BinaryOpDesc:
 
 
 @dataclass
-class _UnaryOpDesc:
+class UnaryOpDesc:
     """Descriptor for a unary operator that follows the simple `__unary_helper` pattern."""
 
     op: UnaryOperator
@@ -47,38 +47,38 @@ class _UnaryOpDesc:
     allowed_operand_types: set[OperandType]
 
 
-_BINARY_OP_TABLE: dict[BinaryOperator, _BinaryOpDesc] = {
+BINARY_OP_TABLE: dict[BinaryOperator, BinaryOpDesc] = {
     # ---- arithmetic ----
-    BinaryOperator.Mul: _BinaryOpDesc(BinaryOperator.Mul, "*", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
-    BinaryOperator.Div: _BinaryOpDesc(BinaryOperator.Div, "/", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
-    BinaryOperator.Mod: _BinaryOpDesc(BinaryOperator.Mod, "%", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    BinaryOperator.Mul: BinaryOpDesc(BinaryOperator.Mul, "*", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    BinaryOperator.Div: BinaryOpDesc(BinaryOperator.Div, "/", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    BinaryOperator.Mod: BinaryOpDesc(BinaryOperator.Mod, "%", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
     # ---- bitwise ----
-    BinaryOperator.BitAnd: _BinaryOpDesc(BinaryOperator.BitAnd, "&", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
-    BinaryOperator.BitOr: _BinaryOpDesc(BinaryOperator.BitOr, "|", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
-    BinaryOperator.BitXor: _BinaryOpDesc(BinaryOperator.BitXor, "^", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    BinaryOperator.BitAnd: BinaryOpDesc(BinaryOperator.BitAnd, "&", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    BinaryOperator.BitOr: BinaryOpDesc(BinaryOperator.BitOr, "|", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    BinaryOperator.BitXor: BinaryOpDesc(BinaryOperator.BitXor, "^", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
     # ---- comparison (result is bool) ----
-    BinaryOperator.Eq: _BinaryOpDesc(BinaryOperator.Eq, "Eq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
-    BinaryOperator.Neq: _BinaryOpDesc(BinaryOperator.Neq, "Neq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
-    BinaryOperator.Lt: _BinaryOpDesc(BinaryOperator.Lt, "Lt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
-    BinaryOperator.Gt: _BinaryOpDesc(BinaryOperator.Gt, "Gt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
-    BinaryOperator.Leq: _BinaryOpDesc(BinaryOperator.Leq, "Leq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
-    BinaryOperator.Geq: _BinaryOpDesc(BinaryOperator.Geq, "Geq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Eq: BinaryOpDesc(BinaryOperator.Eq, "Eq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Neq: BinaryOpDesc(BinaryOperator.Neq, "Neq", {OperandType.Integer, OperandType.Float, OperandType.Bool, OperandType.Char, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Lt: BinaryOpDesc(BinaryOperator.Lt, "Lt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Gt: BinaryOpDesc(BinaryOperator.Gt, "Gt", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Leq: BinaryOpDesc(BinaryOperator.Leq, "Leq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
+    BinaryOperator.Geq: BinaryOpDesc(BinaryOperator.Geq, "Geq", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, result_type_id=TypeCtx.bool_id),
     # ---- logical ----
-    BinaryOperator.LogicalAnd: _BinaryOpDesc(BinaryOperator.LogicalAnd, "LogicalAnd", {OperandType.Bool}),
-    BinaryOperator.LogicalOr: _BinaryOpDesc(BinaryOperator.LogicalOr, "LogicalOr", {OperandType.Bool}),
+    BinaryOperator.LogicalAnd: BinaryOpDesc(BinaryOperator.LogicalAnd, "LogicalAnd", {OperandType.Bool}),
+    BinaryOperator.LogicalOr: BinaryOpDesc(BinaryOperator.LogicalOr, "LogicalOr", {OperandType.Bool}),
     # ---- compound assignment ----
-    BinaryOperator.MulAssign: _BinaryOpDesc(BinaryOperator.MulAssign, "*=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
-    BinaryOperator.DivAssign: _BinaryOpDesc(BinaryOperator.DivAssign, "/=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
-    BinaryOperator.ModAssign: _BinaryOpDesc(BinaryOperator.ModAssign, "%=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
-    BinaryOperator.BitAndAssign: _BinaryOpDesc(BinaryOperator.BitAndAssign, "&=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
-    BinaryOperator.BitOrAssign: _BinaryOpDesc(BinaryOperator.BitOrAssign, "|=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
-    BinaryOperator.BitXorAssign: _BinaryOpDesc(BinaryOperator.BitXorAssign, "^=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.MulAssign: BinaryOpDesc(BinaryOperator.MulAssign, "*=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.DivAssign: BinaryOpDesc(BinaryOperator.DivAssign, "/=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.ModAssign: BinaryOpDesc(BinaryOperator.ModAssign, "%=", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitAndAssign: BinaryOpDesc(BinaryOperator.BitAndAssign, "&=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitOrAssign: BinaryOpDesc(BinaryOperator.BitOrAssign, "|=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
+    BinaryOperator.BitXorAssign: BinaryOpDesc(BinaryOperator.BitXorAssign, "^=", {OperandType.Integer, OperandType.Overloaded}, is_assign=True),
 }
 
-_UNARY_OP_TABLE: dict[UnaryOperator, _UnaryOpDesc] = {
-    UnaryOperator.Neg: _UnaryOpDesc(UnaryOperator.Neg, "-", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
-    UnaryOperator.BitNot: _UnaryOpDesc(UnaryOperator.BitNot, "~", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
-    UnaryOperator.LogicalNot: _UnaryOpDesc(UnaryOperator.LogicalNot, "!", {OperandType.Bool}),
+UNARY_OP_TABLE: dict[UnaryOperator, UnaryOpDesc] = {
+    UnaryOperator.Neg: UnaryOpDesc(UnaryOperator.Neg, "-", {OperandType.Integer, OperandType.Float, OperandType.Overloaded}),
+    UnaryOperator.BitNot: UnaryOpDesc(UnaryOperator.BitNot, "~", {OperandType.Integer, OperandType.Bool, OperandType.Overloaded}),
+    UnaryOperator.LogicalNot: UnaryOpDesc(UnaryOperator.LogicalNot, "!", {OperandType.Bool}),
 }
 
 
@@ -129,8 +129,6 @@ class OpBuilder:
             BinaryOperator.ShrAssign: (Type.IntrinsicCustomType.ShrAssign, "shr_assign"),
 
             BinaryOperator.Index: (Type.IntrinsicCustomType.Index, "index"),
-            BinaryOperator.In: (Type.IntrinsicCustomType.Contains, "contains"),
-            BinaryOperator.NotIn: (Type.IntrinsicCustomType.Contains, "not_contains"),
 
             UnaryOperator.Neg: (Type.IntrinsicCustomType.Neg, "neg"),
             UnaryOperator.BitNot: (Type.IntrinsicCustomType.BitNot, "bit_not"),
@@ -152,10 +150,6 @@ class OpBuilder:
                 return self.__build_assign(span, left, right)
             case BinaryOperator.Index:
                 return self.__build_index(span, left, right)
-            case BinaryOperator.In | BinaryOperator.NotIn:
-                return self.__build_in(span, op, left, right)
-            case BinaryOperator.Range:
-                return self.__build_range(span, left, right)
             case BinaryOperator.Shl:
                 return self.__build_shl(span, left, right)
             case BinaryOperator.Shr:
@@ -168,7 +162,7 @@ class OpBuilder:
                 pass
 
         # ---- table-driven operators ----
-        desc = _BINARY_OP_TABLE.get(op)
+        desc = BINARY_OP_TABLE.get(op)
         if desc is not None:
             return self.__build_table_binary(span, left, right, desc)
 
@@ -185,7 +179,7 @@ class OpBuilder:
                 pass
 
         # ---- table-driven operators ----
-        desc = _UNARY_OP_TABLE.get(op)
+        desc = UNARY_OP_TABLE.get(op)
         if desc is not None:
             return self.__build_table_unary(span, operand, desc)
 
@@ -484,29 +478,6 @@ class OpBuilder:
 
         raise AnalysisError(f"Cannot apply index operator {BinaryOperator.Index} to type '{self.__type_ctx.get_name(left_hir.type_id)}'.", span)
 
-    def __build_in(self, span: SrcSpan, op: BinaryOperator, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        # a in b is desugared to b.contains(a)
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        overloaded_expr = self.__resolve_overloaded_operator(span, op, right_hir, [left_hir])
-        if overloaded_expr is not None:
-            return overloaded_expr
-
-        raise AnalysisError(f"Cannot apply operator {op} to type '{self.__type_ctx.get_name(left_hir.type_id)}'.", span)
-
-    def __build_range(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
-        # a..b is desugared to Range(start=a, end=b)
-        left_hir = self.__evaluator.value(left)
-        right_hir = self.__evaluator.value(right)
-
-        merged_type_id = self.__type_ctx.merge_types(left_hir.type_id, right_hir.type_id, span)
-        left_hir = self.__evaluator.coerce(left_hir, merged_type_id)
-        right_hir = self.__evaluator.coerce(right_hir, merged_type_id)
-
-        range_type_id = self.__type_ctx.alloc_range(merged_type_id)
-        return HIR.StructConstruct(span, range_type_id, {"start": left_hir, "end": right_hir}, range_type_id, is_place=False)
-
     def __build_deref(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
@@ -567,7 +538,7 @@ class OpBuilder:
     # table-driven generic builders
     # ------------------------------------------------------------------
 
-    def __build_table_binary(self, span: SrcSpan, left: AST.Expr, right: AST.Expr, desc: _BinaryOpDesc) -> HIR.Expr:
+    def __build_table_binary(self, span: SrcSpan, left: AST.Expr, right: AST.Expr, desc: BinaryOpDesc) -> HIR.Expr:
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
 
@@ -594,7 +565,7 @@ class OpBuilder:
 
         self.__raise_unsupported_binary_operator(span, desc.symbol, left_hir.type_id, right_hir.type_id)
 
-    def __build_table_unary(self, span: SrcSpan, operand: AST.Expr, desc: _UnaryOpDesc) -> HIR.Expr:
+    def __build_table_unary(self, span: SrcSpan, operand: AST.Expr, desc: UnaryOpDesc) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
         builtin_expr = self.__unary_helper(

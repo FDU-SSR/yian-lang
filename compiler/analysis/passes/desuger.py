@@ -3,11 +3,12 @@ Desugar ASTs by desugaring syntactic sugar into more fundamental constructs.
 
 Rules:
 
-- var declarations with initializers => var declarations + assignments
 - for item in iterable { body } => { iter = iterable.into_iter(); loop { match iter.next() { Some(item) { body }, None { break } } } }
 - while cond { body } => loop { if not cond { break } body }
 - assert => if + panic
 - if cond { body } elif cond2 { body2 } else { body3 } => nested ifs
+- range expressions (a..b) => Range(a, b)
+- member test (x in y) => y.contains(x)
 """
 
 
@@ -26,11 +27,12 @@ class Desugar:
         self.__program = program
 
         self.__processors: list[Callable[[AST.Block], None]] = [
-            self.__process_var_decls,
             self.__process_for_loops,
             self.__process_while_loops,
             self.__process_asserts,
             self.__process_if_chains,
+            self.__process_range_exprs,
+            self.__process_member_tests,
         ]
 
     def run(self) -> None:
@@ -48,29 +50,6 @@ class Desugar:
                                 processor(trait_item.body)
                     case _:
                         continue
-
-    def __process_var_decls(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
-
-        for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_var_decls)
-
-            if isinstance(stmt, AST.VarDecl) and stmt.init_expr is not None and not isinstance(stmt.var_type, ASTTy.DeducedType):
-                init_expr = stmt.init_expr
-                stmt.init_expr = None
-                desugared_stmts.append(stmt)
-                desugared_stmts.append(
-                    AST.Binary(
-                        span=stmt.name.span + init_expr.span,
-                        op=BinaryOperator.Assign,
-                        left=AST.Identifier(span=stmt.name.span, name=stmt.name.name),
-                        right=init_expr,
-                    )
-                )
-            else:
-                desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
 
     def __process_nested_blocks(self, stmt: AST.Stmt, processor: Callable[[AST.Block], None]) -> None:
         match stmt:
@@ -141,6 +120,32 @@ class Desugar:
 
             if isinstance(stmt, AST.If) and stmt.elif_branches:
                 desugared_stmts.append(self.__desugar_if_chain(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
+
+    def __process_range_exprs(self, block: AST.Block) -> None:
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_range_exprs)
+
+            if isinstance(stmt, AST.Binary) and stmt.op == BinaryOperator.Range:
+                desugared_stmts.append(self.__desugar_range(stmt))
+            else:
+                desugared_stmts.append(stmt)
+
+        block.stmts = desugared_stmts
+
+    def __process_member_tests(self, block: AST.Block) -> None:
+        desugared_stmts: list[AST.Stmt] = []
+
+        for stmt in block.stmts:
+            self.__process_nested_blocks(stmt, self.__process_member_tests)
+
+            if isinstance(stmt, AST.Binary) and stmt.op in [BinaryOperator.In, BinaryOperator.NotIn]:
+                desugared_stmts.append(self.__desugar_member_test(stmt))
             else:
                 desugared_stmts.append(stmt)
 
@@ -255,4 +260,24 @@ class Desugar:
             then_branch=stmt.then_branch,
             elif_branches=[],
             else_branch=current_else,
+        )
+
+    def __desugar_range(self, stmt: AST.Binary) -> AST.Call:
+        return AST.Call(
+            span=stmt.span,
+            callee=AST.Identifier(span=stmt.span, name="Range"),
+            args=[
+                AST.Arg(span=stmt.left.span, name=None, value=stmt.left),
+                AST.Arg(span=stmt.right.span, name=None, value=stmt.right),
+            ],
+        )
+
+    def __desugar_member_test(self, stmt: AST.Binary) -> AST.MethodCall:
+        method_name = "contains" if stmt.op == BinaryOperator.In else "not_contains"
+        return AST.MethodCall(
+            span=stmt.span,
+            receiver=stmt.right,
+            method_name=AST.Identifier(span=stmt.span, name=method_name),
+            generics=[],
+            args=[AST.Arg(span=stmt.left.span, name=None, value=stmt.left)],
         )
