@@ -54,6 +54,15 @@ class Panic:
 
 
 @dataclass
+class SysWrite:
+    span: SrcSpan
+    fd: Expr
+    buf: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Delete:
     span: SrcSpan
     target: Expr
@@ -230,6 +239,15 @@ class BitCast:
 
 
 @dataclass
+class SysRead:
+    span: SrcSpan
+    fd: Expr
+    buf: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Tuple:
     span: SrcSpan
     field_values: list[Expr]
@@ -309,7 +327,7 @@ Expr: TypeAlias = (
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast
+    | SizeOf | BitCast | SysRead | SysWrite
     | Tuple | Array
     | Var | Literal | Ty
 )

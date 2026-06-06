@@ -4,8 +4,7 @@ from typing import List
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_checker import ExprChecker
-from compiler.analysis.passes.hir_builder import (build_block,
-                                                  build_enum_match,
+from compiler.analysis.passes.hir_builder import (build_enum_match,
                                                   build_enum_match_arm,
                                                   build_if_chain, build_switch,
                                                   build_switch_arm)
@@ -337,12 +336,6 @@ class StmtChecker:
         enum_ty = ctx.type_ctx[value_expr.type_id]
         assert isinstance(enum_ty, Type.EnumType)
 
-        # To avoid re-evaluating the scrutinee, store it into a temporary local
-        tmp_ident = AST.Identifier(span=stmt.span, name="%match")
-        tmp_sym = self.__declare_local_symbol(tmp_ident, value_expr.type_id, ctx)
-        tmp_var = HIR.Var(span=stmt.span, symbol_id=tmp_sym, type_id=value_expr.type_id, is_place=True)
-        init_stmt = self.__expr.assign(stmt.span, tmp_var, value_expr)
-
         arms: list[HIR.MatchArm] = []
 
         for pat, arm_block in stmt.arms:
@@ -397,5 +390,5 @@ class StmtChecker:
             # Other patterns are unsupported in this path
             raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by enum-unpack lowering (basic path)", pat.span)
 
-        match_stmt = build_enum_match(stmt.span, tmp_var, arms)
-        out.append(build_block(stmt.span, [init_stmt, match_stmt]))
+        match_stmt = build_enum_match(stmt.span, value_expr, arms)
+        out.append(match_stmt)

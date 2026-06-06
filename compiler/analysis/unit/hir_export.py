@@ -112,7 +112,7 @@ def __export_stmt(stmt: HIR.Stmt, guides: list[bool], is_last: bool, type_ctx: T
             return __export_switch(stmt, guides, is_last, type_ctx)
         case HIR.Match():
             return __export_match(stmt, guides, is_last, type_ctx)
-        case HIR.Binary() | HIR.Unary() | HIR.Call() | HIR.StructConstruct() | HIR.Invoke() | HIR.Cast() | HIR.MethodCall() | HIR.VariantConstruct() | HIR.FieldAccess() | HIR.TupleAccess() | HIR.DynValue() | HIR.DynBuffer() | HIR.SizeOf() | HIR.BitCast() | HIR.Tuple() | HIR.Array() | HIR.Var() | HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Ty():
+        case HIR.Binary() | HIR.Unary() | HIR.Call() | HIR.StructConstruct() | HIR.Invoke() | HIR.Cast() | HIR.MethodCall() | HIR.VariantConstruct() | HIR.FieldAccess() | HIR.TupleAccess() | HIR.DynValue() | HIR.DynBuffer() | HIR.SizeOf() | HIR.BitCast() | HIR.SysRead() | HIR.SysWrite() | HIR.Tuple() | HIR.Array() | HIR.Var() | HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Ty():
             return __export_expr_stmt(stmt, guides, is_last, type_ctx)
 
 
@@ -208,6 +208,10 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_size_of(expr, guides, is_last, type_ctx)
         case HIR.BitCast():
             return __export_bit_cast(expr, guides, is_last, type_ctx)
+        case HIR.SysRead():
+            return __export_sys_read(expr, guides, is_last, type_ctx)
+        case HIR.SysWrite():
+            return __export_sys_write(expr, guides, is_last, type_ctx)
         case HIR.Tuple():
             return __export_tuple(expr, guides, is_last, type_ctx)
         case HIR.Array():
@@ -330,6 +334,20 @@ def __export_size_of(expr: HIR.SizeOf, guides: list[bool], is_last: bool, type_c
 def __export_bit_cast(expr: HIR.BitCast, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     res = __line(guides, is_last, f"BitCast: target_type={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
     res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_sys_read(expr: HIR.SysRead, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"SysRead: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
+    res += __export_expr_child("Buf", expr.buf, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_sys_write(expr: HIR.SysWrite, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"SysWrite: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
+    res += __export_expr_child("Buf", expr.buf, guides, is_last, True, type_ctx)
     return res
 
 

@@ -18,11 +18,11 @@ if TYPE_CHECKING:
     from compiler.analysis.passes.sem_ctx import SemCtx
 
 # Built-in instruction names that form expressions (they return values).
-BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast"})
+BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write"})
 
 # Built-in instruction names that form statements (they do not return values).
 # When used in expression context, they produce a descriptive error.
-BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy", "sys_read", "sys_write"})
+BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy"})
 
 
 class CallDispatcher:
@@ -110,6 +110,10 @@ class CallDispatcher:
             return self.__handle_sizeof(node)
         if callee.name == "bitcast":
             raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
+        if callee.name == "sys_write":
+            return self.__handle_sys_write(node)
+        if callee.name == "sys_read":
+            return self.__handle_sys_read(node)
         raise AnalysisError(f"Unknown built-in expression '{callee.name}'", callee.span)
 
     def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
@@ -160,7 +164,7 @@ class CallDispatcher:
         generic_arg = callee.generics[0]
         if isinstance(generic_arg, (LiteralConstExpr, GenericConstExpr)):
             raise AnalysisError(
-                f"'bitcast' expects a type argument, got a const expression",
+                "'bitcast' expects a type argument, got a const expression",
                 callee.span,
             )
         assert self.__ctx.symbol_ctx is not None
@@ -188,6 +192,40 @@ class CallDispatcher:
             value=value,
             target_type=target_type_id,
             type_id=target_type_id,
+            is_place=False,
+        )
+
+    def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
+        """Lower `sys_write(fd, buf)` into HIR.SysWrite."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'sys_write'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'sys_write' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
+        buf = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.str_id)
+        return HIR.SysWrite(
+            span=node.span,
+            fd=fd,
+            buf=buf,
+            type_id=self.__ctx.type_ctx.void_id,
+            is_place=False,
+        )
+
+    def __handle_sys_read(self, node: AST.Call) -> HIR.Expr:
+        """Lower `sys_read(fd, buf)` into HIR.SysRead."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'sys_read'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'sys_read' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
+        buf = self.__expr.value(node.args[1].value)
+        return HIR.SysRead(
+            span=node.span,
+            fd=fd,
+            buf=buf,
+            type_id=self.__ctx.type_ctx.str_id,
             is_place=False,
         )
 
@@ -330,9 +368,6 @@ class CallDispatcher:
             coerced_args = self.__resolve_named_variant_args(span, variant, args)
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
 
-        if len(args) != 1:
-            raise AnalysisError(f"variant '{variant.name}' expects 1 argument, got {len(args)}", span)
-
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
 
@@ -383,17 +418,6 @@ class CallDispatcher:
         coerced_receiver = self.__expr.coerce(receiver, inference.instantiate(expected_type_ids[0]))
         coerced_args = [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids[1:], args)]
         return coerced_receiver, coerced_args, inference
-
-    def __infer_named_or_positional_values(self, span: SrcSpan, expected_type_ids: list[int], args: list[AST.Arg], context_name: str) -> list[HIR.Expr]:
-        if len(expected_type_ids) != len(args):
-            raise AnalysisError(f"{context_name} expects {len(expected_type_ids)} arguments, got {len(args)}", span)
-
-        inference = GenericInference(self.__ctx.type_ctx, span)
-        values = [self.__expr.value(arg.value) for arg in args]
-        for expected_type_id, value in zip(expected_type_ids, values):
-            inference.constrain(expected_type_id, value.type_id)
-
-        return [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids, values)]
 
     def __resolve_named_or_positional_struct_args(self, span: SrcSpan, struct_type_id: int, fields: list[Type.StructField], args: list[AST.Arg]) -> tuple[dict[str, HIR.Expr], GenericInference]:
         if not args:
@@ -453,16 +477,37 @@ class CallDispatcher:
     def __resolve_named_variant_args(self, span: SrcSpan, variant: Type.EnumVariant, args: list[AST.Arg]) -> dict[str, HIR.Expr]:
         if any(arg.name is None for arg in args):
             raise AnalysisError("named and positional arguments cannot be mixed", span)
-        if len(args) != 1:
-            raise AnalysisError(f"variant '{variant.name}' expects one named payload argument", span)
-
-        arg = args[0]
-        assert arg.name is not None
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
 
-        value = self.__infer_named_or_positional_values(span, [variant.payload_type], [arg], "variant construction")[0]
-        return {arg.name.name: value}
+        payload_ty = self.__ctx.type_ctx[variant.payload_type]
+        assert isinstance(payload_ty, Type.StructType)
+        fields = payload_ty.get_fields(self.__ctx.type_ctx)
+        field_by_name = {field.name: field for field in fields}
+
+        resolved_values: dict[str, HIR.Expr] = {}
+        for arg in args:
+            assert arg.name is not None
+            field = field_by_name.get(arg.name.name)
+            if field is None:
+                raise AnalysisError(f"unknown field '{arg.name.name}' in variant '{variant.name}'", arg.name.span)
+            if field.name in resolved_values:
+                raise AnalysisError(f"duplicate field '{field.name}' in variant '{variant.name}'", arg.name.span)
+            resolved_values[field.name] = self.__expr.value(arg.value)
+
+        if len(resolved_values) != len(fields):
+            missing = [field.name for field in fields if field.name not in resolved_values]
+            if missing:
+                raise AnalysisError(f"missing variant fields: {', '.join(missing)}", span)
+
+        inference = GenericInference(self.__ctx.type_ctx, span)
+        for field in fields:
+            inference.constrain(field.type_id, resolved_values[field.name].type_id)
+
+        return {
+            field.name: self.__expr.coerce(resolved_values[field.name], inference.instantiate(field.type_id))
+            for field in fields
+        }
 
     def __has_named_arg(self, args: list[AST.Arg]) -> bool:
         return any(arg.name is not None for arg in args)
