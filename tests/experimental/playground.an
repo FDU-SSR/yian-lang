@@ -1,5 +1,5 @@
-i32 main() {
-    i32[16] buff
+fn main() -> i32 {
+    let buff: i32[16];
     for u64 i = 0; 16 > i; i += 1 {
         buff[i] = i32(i)
     }

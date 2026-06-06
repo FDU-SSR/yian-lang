@@ -51,7 +51,6 @@ class BinaryOperator(Enum):
     Index = auto()
     # Membership
     In = auto()
-    NotIn = auto()
     # Range
     Range = auto()
 
@@ -97,9 +96,9 @@ class BinaryOperator(Enum):
                 return cls.Leq, 1
             case Punctuator(kind=PunctuatorKind.GreaterEqual):
                 return cls.Geq, 1
-            case Keyword(kind=KeywordKind.And):
+            case Punctuator(kind=PunctuatorKind.AmpersandAmpersand):
                 return cls.LogicalAnd, 1
-            case Keyword(kind=KeywordKind.Or):
+            case Punctuator(kind=PunctuatorKind.PipePipe):
                 return cls.LogicalOr, 1
             case Punctuator(kind=PunctuatorKind.Equal):
                 return cls.Assign, 1
@@ -123,12 +122,6 @@ class BinaryOperator(Enum):
                 return cls.ShlAssign, 1
             case Keyword(kind=KeywordKind.In):
                 return cls.In, 1
-            case Keyword(kind=KeywordKind.Not):
-                next_token = stream.peek_nth(1)
-                next_next_token = stream.peek_nth(2)
-                if isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Space and isinstance(next_next_token, Keyword) and next_next_token.kind == KeywordKind.In:
-                    return cls.NotIn, 3
-                return None
             case Punctuator(kind=PunctuatorKind.DotDot):
                 return cls.Range, 1
             case _:
@@ -179,9 +172,9 @@ class BinaryOperator(Enum):
             case BinaryOperator.Geq:
                 return ">="
             case BinaryOperator.LogicalAnd:
-                return "and"
+                return "&&"
             case BinaryOperator.LogicalOr:
-                return "or"
+                return "||"
             case BinaryOperator.Assign:
                 return "="
             case BinaryOperator.AddAssign:
@@ -208,8 +201,6 @@ class BinaryOperator(Enum):
                 return "[]"
             case BinaryOperator.In:
                 return "in"
-            case BinaryOperator.NotIn:
-                return "not in"
             case BinaryOperator.Range:
                 return ".."
 
@@ -246,7 +237,6 @@ BINARY_PRECEDENCE = {
     BinaryOperator.ShrAssign: (1, 1),
     BinaryOperator.Index: (999, 999),
     BinaryOperator.In: (999, 999),
-    BinaryOperator.NotIn: (999, 999),
     BinaryOperator.Range: (999, 999),
 }
 
@@ -271,7 +261,7 @@ class UnaryOperator(Enum):
                 return cls.Neg, 1
             case Punctuator(kind=PunctuatorKind.Tilde):
                 return cls.BitNot, 1
-            case Keyword(kind=KeywordKind.Not):
+            case Punctuator(kind=PunctuatorKind.Exclamation):
                 return cls.LogicalNot, 1
             case Punctuator(kind=PunctuatorKind.Star):
                 return cls.Deref, 1
@@ -292,7 +282,7 @@ class UnaryOperator(Enum):
             case UnaryOperator.BitNot:
                 return "~"
             case UnaryOperator.LogicalNot:
-                return "not "
+                return "!"
             case UnaryOperator.Deref:
                 return "*"
             case UnaryOperator.AddrOf:

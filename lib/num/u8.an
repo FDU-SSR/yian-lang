@@ -1,32 +1,32 @@
-from std.core.hash import Murmur3Hasher, Hash
-from std.core.slice import from_raw_parts
+from std.core.hash import Murmur3Hasher, Hash;
+from std.core.slice import from_raw_parts;
 
 impl u8 {
-    pub is_ascii_whitespace() -> bool {
-        return *self == 0x20 or (*self >= 0x09 and *self <= 0x0D)
+    pub fn is_ascii_whitespace() -> bool {
+        return *self == 0x20 || (*self >= 0x09 && *self <= 0x0D);
     }
 
-    pub is_ascii_alpha() -> bool {
-        return (*self >= 0x41 and *self <= 0x5A) or (*self >= 0x61 and *self <= 0x7A)
+    pub fn is_ascii_alpha() -> bool {
+        return (*self >= 0x41 && *self <= 0x5A) || (*self >= 0x61 && *self <= 0x7A);
     }
 
-    pub is_ascii_digit() -> bool {
-        return *self >= 0x30 and *self <= 0x39
+    pub fn is_ascii_digit() -> bool {
+        return *self >= 0x30 && *self <= 0x39;
     }
 
-    pub is_ascii_alphanumeric() -> bool {
-        return self.is_ascii_alpha() or self.is_ascii_digit()
+    pub fn is_ascii_alphanumeric() -> bool {
+        return self.is_ascii_alpha() || self.is_ascii_digit();
     }
 
-    pub is_ascii_hex_digit() -> bool {
-        return self.is_ascii_digit() or (*self >= 0x41 and *self <= 0x46) or (*self >= 0x61 and *self <= 0x66)
+    pub fn is_ascii_hex_digit() -> bool {
+        return self.is_ascii_digit() || (*self >= 0x41 && *self <= 0x46) || (*self >= 0x61 && *self <= 0x66);
     }
 }
 
 impl Hash<Murmur3Hasher> for u8 {
-    hash(Murmur3Hasher hasher) {
-        u8 val = *self
-        u8* ptr = &val
-        hasher.write(from_raw_parts(ptr, 1))
+    fn hash(hasher: Murmur3Hasher) {
+        let val: u8 = *self;
+        let ptr: u8* = &val;
+        hasher.write(from_raw_parts(ptr, 1));
     }
 }

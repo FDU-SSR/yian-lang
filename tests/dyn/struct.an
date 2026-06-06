@@ -3,42 +3,42 @@
 // Expected output:
 // Charlie
 
-from std.core.io import print
+from std.core.io import print;
 
 struct Person{
-    i32 age
-    str name
+    age: i32,
+    name: str,
 }
 
 impl Person{
-    static pub new(i32 age, str name) -> Self {
-        return Self(age, name)
+    static pub fn new(age: i32, name: str) -> Self {
+        return Self(age, name);
     }
 
-    pub get_age() -> i32 {
-        return self.age
+    pub fn get_age() -> i32 {
+        return self.age;
     }
 
-    pub get_name() -> str {
-        return self.name
+    pub fn get_name() -> str {
+        return self.name;
     }
 }
 
 
-main() -> i32 {
-    Person* p1 = dyn Person.new(25, "Alice")
-    assert p1.get_age() == 25
+fn main() -> i32 {
+    let p1: Person* = dyn Person.new(25, "Alice");
+    assert p1.get_age() == 25;
 
-    Person* p2 = dyn Person(30, "Bob")
-    assert p2.get_age() == 30
+    let p2: Person* = dyn Person(30, "Bob");
+    assert p2.get_age() == 30;
 
-    Person* p3 = dyn[2] Person
+    let p3: Person* = dyn[2] Person;
     p3[0] = Person.new(22, "Charlie")
     p3[1] = Person.new(28, "Diana")
-    assert p3[0].get_age() == 22
-    assert p3[1].get_age() == 28
+    assert p3[0].get_age() == 22;
+    assert p3[1].get_age() == 28;
 
-    print(p3[0].get_name())
+    print(p3[0].get_name());
 
-    return 0
+    return 0;
 }

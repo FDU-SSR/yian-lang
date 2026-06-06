@@ -1,46 +1,46 @@
 pub struct RawVec<T> {
-    T* data
-    u64 cap
+    data: T*,
+    cap: u64,
 }
 
 impl<T> RawVec<T> {
-    static pub new() -> Self {
+    static pub fn new() -> Self {
         return Self(
             data = bitcast<T*>(0u64),
             cap = 0
         )
     }
 
-    static pub with_capacity(u64 capacity) -> Self {
+    static pub fn with_capacity(capacity: u64) -> Self {
         if capacity == 0 {
-            return Self.new()
+            return Self.new();
         }
         // Allocate memory for capacity elements
-        T* data = dyn T[capacity]
+        let data: T* = dyn T[capacity];
         return Self(
             data = data,
             cap = capacity
         )
     }
 
-    pub ptr() -> T* {
-        return self.data
+    pub fn ptr() -> T* {
+        return self.data;
     }
 
-    pub capacity() -> u64 {
-        return self.cap
+    pub fn capacity() -> u64 {
+        return self.cap;
     }
 
-    pub grow() {
-        u64 old_cap = self.cap
+    pub fn grow() {
+        let old_cap: u64 = self.cap;
         u64 new_cap
         if old_cap == 0 {
-            new_cap = 4
+            new_cap = 4;
         } else {
-            new_cap = old_cap * 2
+            new_cap = old_cap * 2;
         }
 
-        T* new_data = dyn T[new_cap]
+        let new_data: T* = dyn T[new_cap];
 
         if old_cap > 0 {
             // Copy existing elements to the new buffer
@@ -48,29 +48,29 @@ impl<T> RawVec<T> {
             for i in 0..old_cap {
                 new_data[i] = self.data[i]
             }
-            del self.data
+            del self.data;
         }
 
-        self.data = new_data
-        self.cap = new_cap
+        self.data = new_data;
+        self.cap = new_cap;
     }
 
-    pub reserve(u64 len, u64 additional) {
-        u64 required_cap = len + additional
+    pub fn reserve(len: u64, additional: u64) {
+        let required_cap: u64 = len + additional;
         if self.cap >= required_cap {
-            return
+            return;
         }
 
-        u64 new_cap = self.cap * 2
+        let new_cap: u64 = self.cap * 2;
         if new_cap < required_cap {
-            new_cap = required_cap
+            new_cap = required_cap;
         }
         // Ensure minimum capacity
         if new_cap < 4 {
-            new_cap = 4
+            new_cap = 4;
         }
 
-        T* new_data = dyn T[new_cap]
+        let new_data: T* = dyn T[new_cap];
         
         // Copy valid elements
         if len > 0 {
@@ -80,28 +80,28 @@ impl<T> RawVec<T> {
         }
         
         if self.cap > 0 {
-            del self.data
+            del self.data;
         }
         
-        self.data = new_data
-        self.cap = new_cap
+        self.data = new_data;
+        self.cap = new_cap;
     }
 
-    pub shrink_to_fit(u64 len) {
+    pub fn shrink_to_fit(len: u64) {
         if self.cap <= len {
-            return
+            return;
         }
         
         if len == 0 {
             if self.cap > 0 {
-                del self.data
+                del self.data;
             }
-            self.data = bitcast<T*>(0u64)
-            self.cap = 0
-            return
+            self.data = bitcast<T*>(0u64);
+            self.cap = 0;
+            return;
         }
 
-        T* new_data = dyn T[len]
+        let new_data: T* = dyn T[len];
         
         // Copy valid elements
         for i in 0..len {
@@ -109,10 +109,10 @@ impl<T> RawVec<T> {
         }
         
         if self.cap > 0 {
-            del self.data
+            del self.data;
         }
         
-        self.data = new_data
-        self.cap = len
+        self.data = new_data;
+        self.cap = len;
     }
 }

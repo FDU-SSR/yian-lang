@@ -2,7 +2,7 @@
 //
 // Expected runtime error: This should fail
 
-main() -> i32 {
-    assert false: "This should fail\n"
-    return 0
+fn main() -> i32 {
+    assert false: "This should fail\n";
+    return 0;
 }

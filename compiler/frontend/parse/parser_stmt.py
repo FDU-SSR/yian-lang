@@ -16,13 +16,15 @@ class StmtParser:
         self.__type_parser = type_parser
 
     def parse_stmt(self) -> AST.Stmt:
-        """Parses a statement from the token stream."""
+        """Parses a statement from the token stream. Consumes trailing semicolon for simple statements."""
         token = self.__stream.peek()
         match token:
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LBrace):
                 return self.__parse_block()
             case Tok.Keyword(kind=Tok.KeywordKind.Return):
-                return self.__parse_return()
+                stmt = self.__parse_return()
+                self.__stream.consume_semicolon()
+                return stmt
             case Tok.Keyword(kind=Tok.KeywordKind.If):
                 return self.__parse_if()
             case Tok.Keyword(kind=Tok.KeywordKind.For):
@@ -34,17 +36,29 @@ class StmtParser:
             case Tok.Keyword(kind=Tok.KeywordKind.Match):
                 return self.__parse_match()
             case Tok.Keyword(kind=Tok.KeywordKind.Break):
-                return self.__parse_break()
+                stmt = self.__parse_break()
+                self.__stream.consume_semicolon()
+                return stmt
             case Tok.Keyword(kind=Tok.KeywordKind.Continue):
-                return self.__parse_continue()
+                stmt = self.__parse_continue()
+                self.__stream.consume_semicolon()
+                return stmt
             case Tok.Keyword(kind=Tok.KeywordKind.Assert):
-                return self.__parse_assert()
+                stmt = self.__parse_assert()
+                self.__stream.consume_semicolon()
+                return stmt
             case Tok.Keyword(kind=Tok.KeywordKind.Del):
-                return self.__parse_delete()
+                stmt = self.__parse_delete()
+                self.__stream.consume_semicolon()
+                return stmt
+            case Tok.Keyword(kind=Tok.KeywordKind.Let):
+                stmt = self.__parse_var_decl()
+                self.__stream.consume_semicolon()
+                return stmt
             case _:
-                if self.__stream.var_decl_like():
-                    return self.__parse_var_decl()
-                return self.__parse_expr_stmt()
+                stmt = self.__parse_expr_stmt()
+                self.__stream.consume_semicolon()
+                return stmt
 
     def __parse_block(self) -> AST.Block:
         span = self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace).span
@@ -55,9 +69,9 @@ class StmtParser:
     def __parse_return(self) -> AST.Return:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Return).span
 
-        self.__stream.consume_spaces(endl_sensitive=True)
         token = self.__stream.peek()
-        if isinstance(token, Tok.Punctuator) and token.kind in {Tok.PunctuatorKind.Endl, Tok.PunctuatorKind.EOF}:
+        # return; -> no value, return expr; -> has value
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Semicolon:
             expr = None
         else:
             expr = self.__expr_parser.parse_expr()
@@ -66,35 +80,28 @@ class StmtParser:
     def __parse_if(self) -> AST.If:
         span = self.__stream.consume_keyword(Tok.KeywordKind.If).span
 
-        self.__stream.consume_spaces()
         condition = self.__expr_parser.parse_expr()
 
-        self.__stream.consume_spaces()
         then_branch = self.__parse_block()
 
         elif_branches: list[tuple[AST.Expr, AST.Block]] = []
         while True:
-            self.__stream.consume_spaces()
             next_token = self.__stream.peek()
             if isinstance(next_token, Tok.Keyword) and next_token.kind == Tok.KeywordKind.Elif:
                 self.__stream.consume_keyword(Tok.KeywordKind.Elif)
 
-                self.__stream.consume_spaces()
                 elif_condition = self.__expr_parser.parse_expr()
 
-                self.__stream.consume_spaces()
                 elif_block = self.__parse_block()
 
                 elif_branches.append((elif_condition, elif_block))
             else:
                 break
 
-        self.__stream.consume_spaces()
         else_branch: AST.Block | None = None
         next_token = self.__stream.peek()
         if isinstance(next_token, Tok.Keyword) and next_token.kind == Tok.KeywordKind.Else:
             self.__stream.consume_keyword(Tok.KeywordKind.Else)
-            self.__stream.consume_spaces()
             else_branch = self.__parse_block()
 
         return AST.If(span=span, condition=condition, then_branch=then_branch, elif_branches=elif_branches, else_branch=else_branch)
@@ -102,16 +109,12 @@ class StmtParser:
     def __parse_for(self) -> AST.For:
         span = self.__stream.consume_keyword(Tok.KeywordKind.For).span
 
-        self.__stream.consume_spaces()
         var_name = self.__stream.consume_identifier()
 
-        self.__stream.consume_spaces()
         self.__stream.consume_keyword(Tok.KeywordKind.In)
 
-        self.__stream.consume_spaces()
         iterable = self.__expr_parser.parse_expr()
 
-        self.__stream.consume_spaces()
         body = self.__parse_block()
 
         return AST.For(span=span, var_name=var_name, iterable=iterable, body=body)
@@ -119,10 +122,8 @@ class StmtParser:
     def __parse_while(self) -> AST.While:
         span = self.__stream.consume_keyword(Tok.KeywordKind.While).span
 
-        self.__stream.consume_spaces()
         condition = self.__expr_parser.parse_expr()
 
-        self.__stream.consume_spaces()
         body = self.__parse_block()
 
         return AST.While(span=span, condition=condition, body=body)
@@ -130,7 +131,6 @@ class StmtParser:
     def __parse_loop(self) -> AST.Loop:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Loop).span
 
-        self.__stream.consume_spaces()
         body = self.__parse_block()
 
         return AST.Loop(span=span, body=body)
@@ -138,10 +138,8 @@ class StmtParser:
     def __parse_match(self) -> AST.Match:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Match).span
 
-        self.__stream.consume_spaces()
         expr = self.__expr_parser.parse_expr()
 
-        self.__stream.consume_spaces()
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace)
         arms = self.__stream.consume_until(self.__parse_match_arm, {Tok.PunctuatorKind.RBrace})
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace)
@@ -159,15 +157,12 @@ class StmtParser:
     def __parse_assert(self) -> AST.Assert:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Assert).span
 
-        self.__stream.consume_spaces()
         condition = self.__expr_parser.parse_expr()
 
-        self.__stream.consume_spaces()
         next_token = self.__stream.peek()
         if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Colon:
             self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
 
-            self.__stream.consume_spaces()
             message = self.__expr_parser.parse_expr()
         else:
             message = None
@@ -177,23 +172,23 @@ class StmtParser:
     def __parse_delete(self) -> AST.Delete:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Del).span
 
-        self.__stream.consume_spaces()
         target = self.__expr_parser.parse_expr()
 
         return AST.Delete(span=span, target=target)
 
     def __parse_var_decl(self) -> AST.VarDecl:
-        var_type = self.__type_parser.parse_type()
+        self.__stream.consume_keyword(Tok.KeywordKind.Let)
 
-        self.__stream.consume_spaces()
         var_name = self.__stream.consume_identifier()
 
-        self.__stream.consume_spaces()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
+
+        var_type = self.__type_parser.parse_type()
+
         next_token = self.__stream.peek()
         if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
             self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
 
-            self.__stream.consume_spaces()
             init_expr = self.__expr_parser.parse_expr()
         else:
             init_expr = None
@@ -204,10 +199,21 @@ class StmtParser:
         return self.__expr_parser.parse_expr()
 
     def __parse_match_arm(self) -> tuple[AST.Pattern, AST.Block]:
+        # Consume optional leading comma and/or trailing comma from match body
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
+            self.__stream.advance()
+
         pattern = self.__parse_pattern()
 
-        self.__stream.consume_spaces()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.FatArrow)
+
         block = self.__parse_block()
+
+        # Consume optional trailing comma
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
+            self.__stream.advance()
 
         return pattern, block
 
@@ -215,22 +221,22 @@ class StmtParser:
         next_token = self.__stream.peek()
         match next_token:
             case Tok.IntLiteral():
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.Punctuator(kind=Tok.PunctuatorKind.Minus):
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.CharLiteral():
-                values = self.__stream.consume_separated(self.__parse_char_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
+                values = self.__stream.consume_separated(self.__parse_char_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
                 return AST.CharPattern(span=values[0].span, values=values)
             case Tok.StrLiteral():
-                values = self.__stream.consume_separated(self.__parse_str_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.LBrace})
+                values = self.__stream.consume_separated(self.__parse_str_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
                 return AST.StrPattern(span=values[0].span, values=values)
             case Tok.Identifier():
                 next_next_token = self.__stream.peek_nth(1)
                 if isinstance(next_next_token, Tok.Punctuator) and next_next_token.kind == Tok.PunctuatorKind.LParen:
                     return self.__parse_enum_payload_pattern()
-                variants = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Pipe}, {Tok.PunctuatorKind.LBrace})
+                variants = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Pipe}, {Tok.PunctuatorKind.FatArrow})
                 return AST.EnumPattern(span=variants[0].span, variants=variants)
             case Tok.Keyword(kind=Tok.KeywordKind.Underscore):
                 span = self.__stream.consume_keyword(Tok.KeywordKind.Underscore).span

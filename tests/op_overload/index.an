@@ -2,36 +2,36 @@
 //
 // Expected output: 0
 
-from std.core.ops import Index
+from std.core.ops import Index;
 
 struct Container<T> {
-    T* items
-    u64 size
+    items: T*,
+    size: u64,
 }
 
 impl<T> Container<T> {
-    static pub new(u64 size, T default_value) -> Self {
-        T* items = dyn T[size]
+    static pub fn new(size: u64, default_value: T) -> Self {
+        let items: T* = dyn T[size];
         for i in 0..size {
             items[i] = default_value
         }
-        return Self(items, size)
+        return Self(items, size);
     }
 }
 
 impl<T> Index<u64, T> for Container<T> {
-    index(u64 idx) -> T* {
-        return self.items + idx
+    fn index(idx: u64) -> T* {
+        return self.items + idx;
     }
 }
 
-main() -> i32 {
-    Container<i32> c = Container<i32>.new(5, 42)
-    assert c[0] == 42: "Expected 42"
-    assert c[4] == 42: "Expected 42"
+fn main() -> i32 {
+    let c: Container<i32> = Container<i32>.new(5, 42);
+    assert c[0] == 42: "Expected 42";
+    assert c[4] == 42: "Expected 42";
 
     c[2] = 100
-    assert c[2] == 100: "Expected 100"
+    assert c[2] == 100: "Expected 100";
 
-    return 0
+    return 0;
 }

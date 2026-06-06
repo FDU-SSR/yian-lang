@@ -1,7 +1,7 @@
-char* my_strcpy(char* dest, char* src) {
+fn my_strcpy(char* dest, char* src) -> char* {
     assert dest.is_valid(): "dest is null"
     assert src.is_valid(): "src is null"
-    char* d = dest
+    let d: char* = dest
     while *src != '\0' {
         *d = *src
         d += 1
@@ -9,22 +9,22 @@ char* my_strcpy(char* dest, char* src) {
     }
     return dest
 }
-i32 tinydir_file_open(char* path){
-    char[4096] dir_name_buf
-    char[256] file_name_buf
-    char* dir_name
-    char* base_name
-    i32 path_len = 360
-    if not path.is_valid() or path_len == 0 or path_len >= 4096{
+fn tinydir_file_open(char* path) -> i32 {
+    let dir_name_buf: char[4096];
+    let file_name_buf: char[256];
+    let dir_name: char*;
+    let base_name: char*;
+    let path_len: i32 = 360
+    if ! path.is_valid() || path_len == 0 || path_len >= 4096{
         return -1
     } 
     // 缺少strcpy
-    my_strcpy(dir_name_buf, path)
-    my_strcpy(file_name_buf, path)
+    fn my_strcpy(dir_name_buf, path)
+    fn my_strcpy(file_name_buf, path)
     return 0
 }
-i32 main(i32 argc, char argv){
-    char* path = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+fn main(i32 argc, char argv) -> i32 {
+    let path: char* = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     if tinydir_file_open(path) == -1 {
         return 1
     }

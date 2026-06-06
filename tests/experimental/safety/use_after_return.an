@@ -1,20 +1,20 @@
-foo(i32 **param) {
-	i32 local_x = 1
-	*param = &local_x
+fn foo(i32 **param) {
+ let local_x: i32 = 1;
+	*param = &local_x;
 }
 
-i32* init() {
+fn init() -> i32* {
 	i32 *p
 	p = dyn i32
 	return p
 }
 
-sys_test() {
-	i32* local_p = init()
-	foo(&local_p)	
+fn sys_test() {
+ let local_p: i32* = init();
+	foo(&local_p);
 }
 
-i32 main() {
-	sys_test()
+fn main() -> i32 {
+	fn sys_test()
 	return 0
 } 

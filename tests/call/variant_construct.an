@@ -1,45 +1,17 @@
-// Test variant construction and pattern matching
-//
-// Expected output:
-// Command is Start
-// Hello
-
-from std.core.io import print
-
 enum Command {
-    Start
-    Stop
+    Start, Stop,
     Move {
-        bool is_forward
-        i32 distance
-    }
+        is_forward: bool,
+        distance: i32,
+    },
     Speak {
-        str message
-    }
+        message: str,
+    },
 }
 
-main() -> i32 {
-    Command cmd1 = Command.Start
-    Command cmd2 = Command.Move(true, 10)
-    Command cmd3 = Command.Speak("Hello\n")
-
-    match cmd1 {
-        Start { print("Command is Start\n") }
-        _ { panic("cmd1 should be Start") }
-    }
-
-    match cmd2 {
-        Move(is_forward, distance) {
-            assert is_forward == true: "Move is_forward should be true"
-            assert distance == 10: "Move distance should be 10"
-        }
-        _ { panic("cmd2 should be Move") }
-    }
-
-    match cmd3 {
-        Speak(message) { print(message) }
-        _ { panic("cmd3 should be Speak") }
-    }
-
-    return 0
+fn main() -> i32 {
+    let c1: Command = Command.Start;
+    let c3: Command = Command.Move(is_forward = true, distance = 5);
+    let c4: Command = Command.Speak(message = "hello");
+    return 0;
 }

@@ -79,11 +79,11 @@ class Alias:
 @dataclass
 class VarInfo:
     span: SrcSpan
-    var_type: ASTType
     name: Identifier
+    var_type: ASTType
 
     def __repr__(self) -> str:
-        return f"{self.var_type} {self.name.name}"
+        return f"{self.name.name}: {self.var_type}"
 
 
 class AttrKind(Enum):
@@ -122,12 +122,12 @@ class FuncDef:
 class FieldInfo:
     span: SrcSpan
     attrs: list[Attr]
-    field_type: ASTType
     name: Identifier
+    field_type: ASTType
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
-        return f"{attrs_str} {self.field_type} {self.name.name}"
+        return f"{attrs_str} {self.name.name}: {self.field_type}"
 
 
 @dataclass
@@ -237,13 +237,13 @@ class Block:
 @dataclass
 class VarDecl:
     span: SrcSpan
-    var_type: ASTType
     name: Identifier
+    var_type: ASTType
     init_expr: Expr | None
 
     def __repr__(self) -> str:
         init_str = f" = {self.init_expr}" if self.init_expr else ""
-        return f"var {self.var_type} {self.name.name}{init_str}"
+        return f"let {self.name.name}: {self.var_type}{init_str}"
 
 
 @dataclass

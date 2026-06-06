@@ -1,73 +1,75 @@
-// The Option type is an enum that can either be None or Some value of type T.
-// It is used to represent an optional value that may or may not be present.
+// The Option type is an enum that can either be None || Some value of type T.
+// It is used to represent an optional value that may || may ! be present.
 
-from mem import Clone
+from mem import Clone;
 
 pub enum Option<T> {
-    None
-    Some { T val }
+    None,
+    Some {
+        val: T,
+    },
 }
 
 impl<T> Option<T> {
-    // Check if the Option is Some or None
-    pub is_some() -> bool {
+    // Check if the Option is Some || None
+    pub fn is_some() -> bool {
         match *self {
-            None { return false }
-            Some { return true }
+            None => { return false; },
+            Some => { return true; },
         }
     }
 
-    pub is_none() -> bool {
-        return not self.is_some()
+    pub fn is_none() -> bool {
+        return !self.is_some();
     }
 
-    // Unwrap the value if it is Some, otherwise panic (or return an error)
-    pub unwrap() -> T {
+    // Unwrap the value if it is Some, otherwise panic (|| return an error)
+    pub fn unwrap() -> T {
         match *self {
-            None { panic("Called unwrap on a None value") }
-            Some(val) { return val }
+            None => { panic("Called unwrap on a None value"); },
+            Some(val) => { return val; },
         }
     }
 
     // Unwrap the value if it is Some, otherwise return the provided default value
-    pub unwrap_or(T default) -> T {
+    pub fn unwrap_or(default: T) -> T {
         match *self {
-            None { return default }
-            Some(val) { return val }
+            None => { return default; },
+            Some(val) => { return val; },
         }
     }
 
     // Take the value out of the Option, leaving None in its place.
-    pub take() -> Option<T> {
+    pub fn take() -> Option<T> {
         match *self {
-            None { return Option<T>.None }
-            Some(val) {
-                *self = Option<T>.None
-                return Option<T>.Some(val)
-            }
+            None => { return Option<T>.None; },
+            Some(val) => {
+                *self = Option<T>.None;
+                return Option<T>.Some(val);
+            },
         }
     }
 
     // Replace the value in the Option with a new value, returning the old value.
-    pub replace(T val) -> Option<T> {
+    pub fn replace(val: T) -> Option<T> {
         match *self {
-            None {
-                *self = Option<T>.Some(val)
-                return Option<T>.None
-            }
-            Some(old_val) {
-                *self = Option<T>.Some(val)
-                return Option<T>.Some(old_val)
-            }
+            None => {
+                *self = Option<T>.Some(val);
+                return Option<T>.None;
+            },
+            Some(old_val) => {
+                *self = Option<T>.Some(val);
+                return Option<T>.Some(old_val);
+            },
         }
     }
 }
 
 impl<T> Clone for Option<T> {
-    pub clone() -> Self {
+    pub fn clone() -> Self {
         match *self {
-            None { return Option<T>.None }
-            Some(val) { return Option<T>.Some(val.clone()) }
+            None => { return Option<T>.None; },
+            Some(val) => { return Option<T>.Some(val.clone()); },
         }
     }
 }

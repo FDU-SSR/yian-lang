@@ -2,12 +2,12 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    char a = 'b'
+fn main() -> i32 {
+    let a: char = 'b';
     match a {
-        'a' { panic("Matched a") }
-        'b' { return 0 }
-        'c', 'd' { panic("Matched c or d") }
-        _ { panic("Matched default case") }
+        'a' => { panic("Matched a"); },
+        'b' => { return 0; },
+        'c', 'd' => { panic("Matched c || d"); },
+        _ => { panic("Matched default case"); },
     }
 }

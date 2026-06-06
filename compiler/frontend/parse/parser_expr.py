@@ -23,11 +23,6 @@ class ExprParser:
         lhs = self.__parse_prefix()
 
         while True:
-            self.__stream.consume_spaces(endl_sensitive=True)
-
-            # stop if we reach the end of the line
-            if self.__stream.end_of_line():
-                break
 
             op_info = BinaryOperator.try_from_token(self.__stream)
 
@@ -41,8 +36,6 @@ class ExprParser:
             # consume the operator tokens
             for _ in range(op_len):
                 self.__stream.advance()
-            # consume any spaces after the operator
-            self.__stream.consume_spaces()
 
             rhs = self.__parse_expr_bp(op.rbp)
             lhs = AST.Binary(span=lhs.span + rhs.span, op=op, left=lhs, right=rhs)
@@ -58,8 +51,6 @@ class ExprParser:
             # consume the operator tokens
             for _ in range(op_len):
                 self.__stream.advance()
-            # consume any spaces after the operator
-            self.__stream.consume_spaces()
 
             operand = self.__parse_expr_bp(op.rbp)
             return AST.Unary(span=operand.span, op=op, operand=operand)
@@ -84,12 +75,10 @@ class ExprParser:
             array_size = self.parse_expr()
             self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
 
-            self.__stream.consume_spaces()
             target_type = self.__type_parser.parse_type()
             return AST.DynBuffer(span=token.span, target_type=target_type, size=array_size)
 
         # dyn value
-        self.__stream.consume_spaces()
         value = self.parse_expr()
         return AST.DynValue(span=token.span, value=value)
 
@@ -111,10 +100,12 @@ class ExprParser:
                 # handle generic arguments (e.g., Type<...>, bitcast<T*>, Array<T, 5>)
                 next_token = self.__stream.peek()
                 if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Less:
-                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
-                    generics = self.__stream.consume_separated(self.__type_parser.parse_generic_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
-                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
-                    return AST.TypeItem(span=ident.span, name=ident, generics=generics)
+                    # Distinguish Type<T> from a < b (comparison)
+                    if self.__looks_like_type_item():
+                        self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
+                        generics = self.__stream.consume_separated(self.__type_parser.parse_generic_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
+                        self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
+                        return AST.TypeItem(span=ident.span, name=ident, generics=generics)
 
                 return ident
             case Tok.IntLiteral() | Tok.FloatLiteral() | Tok.CharLiteral() | Tok.StrLiteral():
@@ -180,16 +171,23 @@ class ExprParser:
 
                             expr = AST.MethodCall(span=expr.span, receiver=expr, method_name=field_or_method_name, generics=[], args=args)
                         case Tok.Punctuator(kind=Tok.PunctuatorKind.Less):
-                            # method call with generics
-                            self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
-                            generics = self.__stream.consume_separated(self.__type_parser.parse_type, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
-                            self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
+                            # Could be a generic method call: expr.name<T>(args)
+                            # Or a comparison: expr.name < T
+                            # Look ahead: if the tokens after <...> are (, it's a method call
+                            is_method_call = self.__looks_like_generic_method_call()
+                            if is_method_call:
+                                self.__stream.consume_punctuator(Tok.PunctuatorKind.Less)
+                                generics = self.__stream.consume_separated(self.__type_parser.parse_type, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.Greater})
+                                self.__stream.consume_punctuator(Tok.PunctuatorKind.Greater)
 
-                            self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-                            args = self.__stream.consume_separated(self.parse_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
-                            self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+                                self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+                                args = self.__stream.consume_separated(self.parse_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+                                self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
-                            expr = AST.MethodCall(span=expr.span, receiver=expr, method_name=field_or_method_name, generics=generics, args=args)
+                                expr = AST.MethodCall(span=expr.span, receiver=expr, method_name=field_or_method_name, generics=generics, args=args)
+                            else:
+                                # field access, < is a comparison operator
+                                expr = AST.FieldAccess(span=expr.span, receiver=expr, field_name=field_or_method_name)
                         case _:
                             # field access
                             expr = AST.FieldAccess(span=expr.span, receiver=expr, field_name=field_or_method_name)
@@ -205,29 +203,101 @@ class ExprParser:
                 case _:
                     return expr
 
+    def __looks_like_type_item(self) -> bool:
+        """Look ahead to distinguish `Type<T>` from `a < b` (comparison).
+
+        In expression context, TypeItem is used as receiver for method calls
+        or field access: Type<T>.method() or Type<T>.Variant.
+        Also handles Type<T>* (pointer) and Type<T>[] (slice/array).
+
+        If `>` is followed by `.`, `(`, `*`, `[`, or `)`, `,`, `;`, `}`, `:`,
+        `=`, `->`, EOF, or a keyword, it's a TypeItem. Otherwise, `<` is comparison.
+        """
+        saved = self.__stream.save()
+        try:
+            token = self.__stream.peek()
+            if not (isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less):
+                return False
+            self.__stream.advance()  # consume <
+            depth = 1
+            while depth > 0:
+                tok = self.__stream.peek()
+                if isinstance(tok, Tok.Punctuator):
+                    if tok.kind == Tok.PunctuatorKind.Less:
+                        depth += 1
+                    elif tok.kind == Tok.PunctuatorKind.Greater:
+                        depth -= 1
+                    elif tok.kind in (Tok.PunctuatorKind.EOF, Tok.PunctuatorKind.LBrace,
+                                       Tok.PunctuatorKind.RBrace, Tok.PunctuatorKind.Semicolon):
+                        # Definitely not a TypeItem — these can't appear inside <>
+                        return False
+                self.__stream.advance()
+            # After matching >, check what follows
+            next_tok = self.__stream.peek()
+            if isinstance(next_tok, Tok.Punctuator) and next_tok.kind in {
+                Tok.PunctuatorKind.Dot, Tok.PunctuatorKind.LParen,
+                Tok.PunctuatorKind.Star, Tok.PunctuatorKind.LBracket,
+                Tok.PunctuatorKind.RParen, Tok.PunctuatorKind.Comma,
+                Tok.PunctuatorKind.Semicolon, Tok.PunctuatorKind.RBrace,
+                Tok.PunctuatorKind.Colon, Tok.PunctuatorKind.Equal,
+                Tok.PunctuatorKind.Arrow, Tok.PunctuatorKind.FatArrow,
+                Tok.PunctuatorKind.EqualEqual, Tok.PunctuatorKind.NotEqual,
+                Tok.PunctuatorKind.AmpersandAmpersand, Tok.PunctuatorKind.PipePipe,
+                Tok.PunctuatorKind.Plus, Tok.PunctuatorKind.Minus,
+                Tok.PunctuatorKind.Greater, Tok.PunctuatorKind.RBracket,
+                Tok.PunctuatorKind.EOF,
+            }:
+                return True
+            if isinstance(next_tok, Tok.Keyword):
+                return True
+            # Followed by identifier or literal → comparison
+            return False
+        finally:
+            self.__stream.restore(saved)
+
+    def __looks_like_generic_method_call(self) -> bool:
+        """Look ahead to distinguish `expr.name<T>(args)` from `expr.name < T`.
+
+        After `<`, scan forward through balanced `<>` brackets. If the token
+        right after the matching `>` is `(`, it's a generic method call.
+        """
+        saved = self.__stream.save()
+        try:
+            token = self.__stream.peek()
+            if not (isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Less):
+                return False
+            self.__stream.advance()  # consume <
+            depth = 1
+            while depth > 0:
+                tok = self.__stream.peek()
+                if isinstance(tok, Tok.Punctuator):
+                    if tok.kind == Tok.PunctuatorKind.Less:
+                        depth += 1
+                    elif tok.kind == Tok.PunctuatorKind.Greater:
+                        depth -= 1
+                    elif tok.kind in (Tok.PunctuatorKind.EOF, Tok.PunctuatorKind.LBrace,
+                                       Tok.PunctuatorKind.RBrace, Tok.PunctuatorKind.Semicolon):
+                        return False
+                self.__stream.advance()
+            # After matching >, check for (
+            next_tok = self.__stream.peek()
+            return isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.LParen
+        finally:
+            self.__stream.restore(saved)
+
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""
         token = self.__stream.peek()
         if isinstance(token, Tok.Identifier):
             # could be a named argument or a positional argument
-            # look ahead past spaces for '='
-            offset = 1
-            while True:
-                ahead = self.__stream.peek_nth(offset)
-                if ahead is None:
-                    break
-                if isinstance(ahead, Tok.Punctuator) and ahead.kind == Tok.PunctuatorKind.Space:
-                    offset += 1
-                    continue
-                if isinstance(ahead, Tok.Punctuator) and ahead.kind == Tok.PunctuatorKind.Equal:
-                    # named argument
-                    name = self.__stream.consume_identifier()
-                    self.__stream.consume_spaces()
-                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
-                    self.__stream.consume_spaces()
-                    value = self.parse_expr()
-                    return AST.Arg(span=name.span + value.span, name=name, value=value)
-                break
+            # look ahead for '='
+            ahead = self.__stream.peek_nth(1)
+            if isinstance(ahead, Tok.Punctuator) and ahead.kind == Tok.PunctuatorKind.Equal:
+                # named argument
+                name = self.__stream.consume_identifier()
+                self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+                value = self.parse_expr()
+                return AST.Arg(span=name.span + value.span, name=name, value=value)
 
         # positional argument
         value = self.parse_expr()

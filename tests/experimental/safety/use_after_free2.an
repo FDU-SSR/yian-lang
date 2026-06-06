@@ -2,19 +2,19 @@ struct request {
 	char *cmd
 }
 
-sys_test() {
+fn sys_test() {
 	char *c = dyn char
-	request rq
-	char p
+	let rq: request;
+	let p: char;
 
-	rq.cmd = c
+	rq.cmd = c;
 
-	del c
+	del c;
 
 	*(rq.cmd) = p
 }
 
-i32 main() {
-	sys_test()
+fn main() -> i32 {
+	fn sys_test()
 	return 0
 }

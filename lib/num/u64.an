@@ -1,22 +1,22 @@
-from std.core.hash import Murmur3Hasher, Hash
-from std.core.slice import from_raw_parts
-from std.core.convert import From, Into
+from std.core.hash import Murmur3Hasher, Hash;
+from std.core.slice import from_raw_parts;
+from std.core.convert import From, Into;
 
 impl u64 {
-    pub rotate_left(u64 n) {
-        u64 shift = n % 64
+    pub fn rotate_left(n: u64) {
+        let shift: u64 = n % 64;
         if shift == 0 {
-            return
+            return;
         }
-        u64 left_part = *self << shift
-        u64 right_part = *self >> (64 - shift)
-        *self = left_part | right_part
+        let left_part: u64 = *self << shift;
+        let right_part: u64 = *self >> (64 - shift);
+        *self = left_part | right_part;
     }
 
-    pub next_power_of_two() -> u64 {
-        u64 n = *self
+    pub fn next_power_of_two() -> u64 {
+        let n: u64 = *self;
         if n <= 1 {
-            return 1
+            return 1;
         }
 
         n -= 1
@@ -26,43 +26,43 @@ impl u64 {
         n |= n >> 8
         n |= n >> 16
         n |= n >> 32
-        return n + 1
+        return n + 1;
     }
 }
 
 impl Hash<Murmur3Hasher> for u64 {
-    hash(Murmur3Hasher hasher) {
-        u64 val = *self
-        u8* ptr = bitcast<u8*>(&val)
-        hasher.write(from_raw_parts(ptr, 8))
+    fn hash(hasher: Murmur3Hasher) {
+        let val: u64 = *self;
+        let ptr: u8* = bitcast<u8*>(&val);
+        hasher.write(from_raw_parts(ptr, 8));
     }
 }
 
 impl From<str> for u64 {
-    pub static from(str value) -> Self {
-        u8[] bytes = value.as_slice()
-        u64 len = bytes.len()
+    pub static fn from(value: str) -> Self {
+        let bytes: u8[] = value.as_slice();
+        let len: u64 = bytes.len();
         if len == 0 {
-            panic("invalid u64: empty string")
+            panic("invalid u64: empty string");
         }
 
-        u64 out = 0
-        u64 max_u64 = 18446744073709551615u64
-        u64 i = 0
+        let out: u64 = 0;
+        let max_u64: u64 = 18446744073709551615u64;
+        let i: u64 = 0;
         while i < len {
-            u8 b = bytes[i]
-            if b < b'0' or b > b'9' {
-                panic("invalid u64: contains non-digit")
+            let b: u8 = bytes[i];
+            if b < b'0' || b > b'9' {
+                panic("invalid u64: contains non-digit");
             }
 
-            u64 digit = u64(b - b'0')
+            let digit: u64 = u64(b - b'0');
             if out > (max_u64 - digit) / 10 {
-                panic("invalid u64: overflow")
+                panic("invalid u64: overflow");
             }
-            out = out * 10 + digit
+            out = out * 10 + digit;
             i += 1
         }
 
-        return out
+        return out;
     }
 }

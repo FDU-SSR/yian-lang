@@ -115,22 +115,20 @@ class Lexer:
 
     def __skip_ignored(self) -> None:
         """
-        Skips whitespace and line comments.
+        Skips whitespace and comments.
         """
         while not self.__stream.at_end():
             ch = self.__stream.peek()
             if ch is None:
                 return
-            if ch == "\n":
-                self.__stream.advance()
-                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Endl, self.__stream.pos.into_span()))
-                continue
             if ch.isspace():
                 self.__stream.advance()
-                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Space, self.__stream.pos.into_span()))
                 continue
             if self.__stream.peek_n(2) == "//":
                 self.__skip_line_comment()
+                continue
+            if self.__stream.peek_n(2) == "/*":
+                self.__skip_block_comment()
                 continue
             return
 
@@ -156,7 +154,7 @@ class Lexer:
             return self.__lex_identifier_or_keyword(ch, start_pos)
         if ch in START_NUMBER:
             return self.__lex_number(ch, start_pos)
-        return self.__lex_delimiter_or_operator(ch, start_pos)
+        return self.__lex_punctuator(ch, start_pos)
 
     def __lex_identifier_or_keyword(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
@@ -302,20 +300,32 @@ class Lexer:
 
         while not self.__stream.at_end():
             if self.__stream.peek() == "\n":
-                self.__tokens.append(Tok.Punctuator(Tok.PunctuatorKind.Endl, self.__stream.pos.into_span()))
                 self.__stream.advance()
                 return
             self.__stream.advance()
 
-    def __lex_delimiter_or_operator(self, tok_str: str, start_pos: SrcPosition) -> Token:
+    def __skip_block_comment(self) -> None:
+        """
+        Skips a block comment starting at / * and ending at * /. Nesting is not supported.
+        """
+        # consume the initial '/*'
+        self.__stream.consume("/*")
+
+        while not self.__stream.at_end():
+            if self.__stream.peek_n(2) == "*/":
+                self.__stream.consume("*/")
+                return
+            self.__stream.advance()
+
+        # reached end of file without closing */
+        raise LexError("Unterminated block comment", self.__stream.pos.into_span())
+
+    def __lex_punctuator(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
         Lexes a delimiter or an operator from the source code.
 
         Assumes that the caller has already consumed the first character of the delimiter or operator.
         """
-        if tok_str == "\n":
-            return Tok.Punctuator(Tok.PunctuatorKind.Endl, SrcSpan(start_pos, self.__stream.pos.clone()))
-
         next_char = self.__stream.peek()
         if next_char is not None:
             combined = tok_str + next_char

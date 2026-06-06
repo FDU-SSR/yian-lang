@@ -1,8 +1,8 @@
-from ptr import FullPtr
-i32 main() {
-    FullPtr<i32> p = FullPtr<i32>.new_object()
+from ptr import FullPtr;
+fn main() -> i32 {
+    let p: FullPtr<i32> = FullPtr<i32>.new_object()
     *p = 100
-    i32 v = *p
+    let v: i32 = *p
     assert v == 100: "fail 1"
     p.realloc(10)
     p[3] = 5

@@ -1,9 +1,9 @@
-i32 main() {
-    i32* p = dyn i32[10]
+fn main() -> i32 {
+    let p: i32* = dyn i32[10]
     for u64 i = 0; i < 10; i += 1 {
         p[i] = i32(i)
     }
-    i32 sum = 0
+    let sum: i32 = 0
     for u64 i = 0; i < 10; i += 1 {
         sum += p[i]
     }

@@ -1,13 +1,13 @@
 struct pico_frame {
-    char* proto
+    proto: char*,
 }
-i32 pico_frame_discard(pico_frame* f){
+fn pico_frame_discard(pico_frame* f) -> i32 {
     del f
     return 0
 }
-i32 pico_transport_receive(pico_frame* f, i32 proto){
-    i32 ret = -1
-    char** tmp = &f.proto
+fn pico_transport_receive(pico_frame* f, i32 proto) -> i32 {
+    let ret: i32 = -1
+    let tmp: char** = &f.proto
     match proto {
         1: 
             // Function strdup does not affect the vulnerability triggering, so it simplifies the processing
@@ -32,15 +32,15 @@ i32 pico_transport_receive(pico_frame* f, i32 proto){
     return ret
 }
 
-i32 pico_fragments_reassemble(i32 proto){
+fn pico_fragments_reassemble(i32 proto) -> i32 {
     pico_frame *full = dyn pico_frame
     if pico_transport_receive(full, proto) == -1 {
         pico_frame_discard(full)
         return 1
     }
-    pico_frame_discard(full)
+    fn pico_frame_discard(full)
     return 0
 }
-i32 main(i32 argc, char** argv){
+fn main(i32 argc, char** argv) -> i32 {
     return pico_fragments_reassemble(3)
 }

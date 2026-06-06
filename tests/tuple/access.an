@@ -3,11 +3,11 @@
 // Expected output: 0
 
 struct Pair {
-    pub i32 first
-    pub i32 second
+    pub first: i32,
+    pub second: i32,
 }
 
-main() -> i32 {
+fn main() -> i32 {
     (Pair, Pair) tuple1
     (i32, Pair)[3] tuple2
 
@@ -15,17 +15,17 @@ main() -> i32 {
     tuple1[1].first = 30
     tuple2[1][1].second = 10
 
-    assert tuple1[0].first == 10: "tuple1[0].first should be 10"
-    assert tuple1[0].second == 20: "tuple1[0].second should be 20"
-    assert tuple1[1].first == 30: "tuple1[1].first should be 30"
-    assert tuple2[1][1].second == 10: "tuple2[1].second should be 10"
+    assert tuple1[0].first == 10: "tuple1[0].first should be 10";
+    assert tuple1[0].second == 20: "tuple1[0].second should be 20";
+    assert tuple1[1].first == 30: "tuple1[1].first should be 30";
+    assert tuple2[1][1].second == 10: "tuple2[1].second should be 10";
 
     tuple2[0][0] = 5
-    assert tuple2[0][0] == 5: "tuple2[0][0] should be 5"
+    assert tuple2[0][0] == 5: "tuple2[0][0] should be 5";
 
     tuple2[2][1] = Pair(15, 25)
-    assert tuple2[2][1].first == 15: "tuple2[2][1].first should be 15"
-    assert tuple2[2][1].second == 25: "tuple2[2][1].second should be 25"
+    assert tuple2[2][1].first == 15: "tuple2[2][1].first should be 15";
+    assert tuple2[2][1].second == 25: "tuple2[2][1].second should be 25";
 
-    return 0
+    return 0;
 }

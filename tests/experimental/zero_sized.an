@@ -3,19 +3,19 @@
 // Expected output: 0
 
 struct StructWithZST {
-    pub i32 a
-    pub void b  // Zero-sized type field
-    pub f64[0] c  // This should make the struct align to 8 bytes
-    pub (void, void) d  // Zero-sized tuple field
+    pub a: i32,
+    pub field: void b // Zero-sized type,
+    pub bytes: f64[0] c // This should make the struct align to 8,
+    pub field: (void, void) d // Zero-sized tuple,
 }
 
-i32 main() {
-    void v1
-    void v2
+fn main() -> i32 {
+    let v1: void;
+    let v2: void;
     v1 = v2  // This should compile and do nothing
     assert sizeof(v1) == 0: "sizeof(v1) should be 0"
 
-    StructWithZST s1
+    let s1: StructWithZST;
     s1.a = 42
     assert s1.a == 42: "s1.a should be 42"
     assert sizeof(s1) == 8: "sizeof(s1) should be 8"

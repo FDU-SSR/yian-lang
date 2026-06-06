@@ -1,15 +1,15 @@
-from mem import Clone
-from ops import PartialEq
-from option import Option
-from iter import Iterator, IntoIterator
+from mem import Clone;
+from ops import PartialEq;
+from option import Option;
+from iter import Iterator, IntoIterator;
 
 pub struct Range<T> {
-    pub T start
-    pub T end
+    pub start: T,
+    pub end: T,
 }
 
 impl<T> Clone for Range<T> {
-    clone() -> Self {
+    fn clone() -> Self {
         return Self(
             start=self.start.clone(),
             end=self.end.clone()
@@ -18,25 +18,25 @@ impl<T> Clone for Range<T> {
 }
 
 impl<T> PartialEq<Range<T>> for Range<T> {
-    eq(Range<T> other) -> bool {
-        return self.start == other.start and self.end == other.end
+    fn eq(other: Range<T>) -> bool {
+        return self.start == other.start && self.end == other.end;
     }
 }
 
 impl<T> Iterator<T> for Range<T> {
-    next() -> Option<T> {
+    fn next() -> Option<T> {
         if self.start < self.end {
-            T value = self.start
+            let value: T = self.start;
             self.start += 1
-            return Option<T>.Some(value)
+            return Option<T>.Some(value);
         } else {
-            return Option<T>.None
+            return Option<T>.None;
         }
     }
 }
 
 impl<T> IntoIterator<Range<T>> for Range<T> {
-    into_iter() -> Range<T> {
-        return *self
+    fn into_iter() -> Range<T> {
+        return *self;
     }
 }

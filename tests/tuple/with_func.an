@@ -3,29 +3,29 @@
 // Expected output: 0
 
 struct Pair {
-    pub i32 first
-    pub i32 second
+    pub first: i32,
+    pub second: i32,
 }
 
-create_pair_and_number(i32 a, i32 b, i32 num) -> (Pair, i32) {
-    Pair p = Pair(a, b)
-    (Pair, i32) tmp = (p, num)
-    return tmp
+fn create_pair_and_number(a: i32, b: i32, num: i32) -> (Pair, i32) {
+    let p: Pair = Pair(a, b);
+    let tmp: (Pair, i32) = (p, num)
+    return tmp;
 }
 
-sum_tuple((i32, i32) t) -> i32 {
-    return t[0] + t[1]
+fn sum_tuple(t: (i32, i32)) -> i32 {
+    return t[0] + t[1];
 }
 
-main() -> i32 {
-    (Pair, i32) result = create_pair_and_number(5, 10, 15)
-    assert result[0].first == 5: "result[0].first should be 5"
-    assert result[0].second == 10: "result[0].second should be 10"
-    assert result[1] == 15: "result[1] should be 15"
+fn main() -> i32 {
+    let result: (Pair, i32) = create_pair_and_number(5, 10, 15)
+    assert result[0].first == 5: "result[0].first should be 5";
+    assert result[0].second == 10: "result[0].second should be 10";
+    assert result[1] == 15: "result[1] should be 15";
 
-    (i32, i32) num_tuple = (20, 30)
-    i32 total = sum_tuple(num_tuple)
-    assert total == 50: "total should be 50"
+    let num_tuple: (i32, i32) = (20, 30)
+    let total: i32 = sum_tuple(num_tuple);
+    assert total == 50: "total should be 50";
 
-    return 0
+    return 0;
 }

@@ -2,29 +2,29 @@
 // Do not compile this file standalone
 
 pub struct ExportableStruct {
-    pub i32 pub_field
-    i32 priv_field
+    pub pub_field: i32,
+    priv_field: i32,
 }
 
 struct NonExportableStruct {
-    pub i32 pub_field
-    i32 priv_field
+    pub pub_field: i32,
+    priv_field: i32,
 }
 
 impl ExportableStruct {
-    static pub new(i32 a, i32 b) -> Self {
-        return ExportableStruct(a, b)
+    static pub fn new(a: i32, b: i32) -> Self {
+        return ExportableStruct(a, b);
     }
 }
 
-pub make_non_exportable(i32 a, i32 b) -> NonExportableStruct {
-    return NonExportableStruct(a, b)
+pub fn make_non_exportable(a: i32, b: i32) -> NonExportableStruct {
+    return NonExportableStruct(a, b);
 }
 
-make_exportable(i32 a, i32 b) -> ExportableStruct {
-    return ExportableStruct(a, b)
+fn make_exportable(a: i32, b: i32) -> ExportableStruct {
+    return ExportableStruct(a, b);
 }
 
-pub get_priv_field(ExportableStruct* es) -> i32 {
-    return es.priv_field
+pub fn get_priv_field(es: ExportableStruct*) -> i32 {
+    return es.priv_field;
 }

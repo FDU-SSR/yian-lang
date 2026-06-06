@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    i32 ret = -66
+fn main() -> i32 {
+    let ret: i32 = -66;
     for i in 0..10 {
         if i == 5 {
-            ret = 66
-            break
+            ret = 66;
+            break;
         }
     }
-    assert ret == 66: "Break statement failed"
-    return 0
+    assert ret == 66: "Break statement failed";
+    return 0;
 }
 

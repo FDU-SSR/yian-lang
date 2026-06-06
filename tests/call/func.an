@@ -2,22 +2,22 @@
 //
 // Expected output: 0
 
-add(i8 a, i8 b) -> i8{
-    return a + b
+fn add(a: i8, b: i8) -> i8{
+    return a + b;
 }
 
-sub(i8 a, i8 b) -> i8{
-    return a - b
+fn sub(a: i8, b: i8) -> i8{
+    return a - b;
 }
 
-main() -> i32{
-    i8 one = 1
-    i8 two = 2
-    i8 three = add(one, two)
+fn main() -> i32{
+    let one: i8 = 1;
+    let two: i8 = 2;
+    let three: i8 = add(one, two);
 
-    assert three == 3: "Addition function failed"
-    assert sub(three, one) == two: "Subtraction function failed"
-    assert sub(three, two) == one: "Subtraction function failed"
+    assert three == 3: "Addition function failed";
+    assert sub(three, one) == two: "Subtraction function failed";
+    assert sub(three, two) == one: "Subtraction function failed";
 
-    return 0
+    return 0;
 }

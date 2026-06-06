@@ -2,25 +2,25 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    i32[10] arr
+fn main() -> i32 {
+    let arr: i32[10];
     for i in 0..10u64 {
         arr[i] = i32(i)
     }
 
-    i32* p = &arr[0]
+    let p: i32* = &arr[0];
     for i in 0..10u64 {
         p[i] += 66
     }
-    assert arr[0] == 66: "Expected 66"
+    assert arr[0] == 66: "Expected 66";
 
-    i32* begin = &arr[0]
-    i32* end = begin + 10
+    let begin: i32* = &arr[0];
+    let end: i32* = begin + 10;
     while begin < end {
         *begin += 1
         begin += 1
     }
-    assert arr[9] == 76: "Expected 76"
+    assert arr[9] == 76: "Expected 76";
 
-    return 0
+    return 0;
 }

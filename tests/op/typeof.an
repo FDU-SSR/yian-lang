@@ -7,34 +7,34 @@
 // It is bool
 // Unknown type
 
-from std.core.io import print
+from std.core.io import print;
 
-func<T>(T param) {
+fn func<T>(param: T) {
     if typeof(param, i32) {
-        print("It is i32\n")
+        print("It is i32\n");
     } elif typeof(param, float) {
-        print("It is float\n")
+        print("It is float\n");
     } elif typeof(param, str) {
-        print("It is str\n")
+        print("It is str\n");
     } elif typeof(param, bool) {
-        print("It is bool\n")
+        print("It is bool\n");
     } else {
-        print("Unknown type\n")
+        print("Unknown type\n");
     }
 }
 
-main() -> i32 {
-    i32 a = 10
-    float b = 3.14
-    str c = "Hello"
-    bool d = true
-    i32[1] e = [1]
+fn main() -> i32 {
+    let a: i32 = 10;
+    let b: float = 3.14;
+    let c: str = "Hello";
+    let d: bool = true;
+    let e: i32[1] = [1];
 
-    func(a)  // Expected: It is i32
-    func(b)  // Expected: It is float
-    func(c)  // Expected: It is str
-    func(d)  // Expected: It is bool
-    func(e)  // Expected: Unknown type
+    func(a)  // Expected: It is i32;
+    func(b)  // Expected: It is float;
+    func(c)  // Expected: It is str;
+    func(d)  // Expected: It is bool;
+    func(e)  // Expected: Unknown type;
 
-    return 0
+    return 0;
 }

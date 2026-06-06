@@ -1,40 +1,40 @@
-from std.core.ptr import RawPtr
-from std.core.option import Option
+from std.core.ptr import RawPtr;
+from std.core.option import Option;
 struct treeNode{
-    Option<RawPtr<treeNode>> left
-    Option<RawPtr<treeNode>> right
+    left: Option<RawPtr<treeNode>>,
+    right: Option<RawPtr<treeNode>>,
 }
 
-RawPtr<treeNode> NewTreeNode(Option<RawPtr<treeNode>> left, Option<RawPtr<treeNode>> right) {
-    RawPtr<treeNode> node = RawPtr<treeNode>.new_object()
+fn NewTreeNode(Option<RawPtr<treeNode>> left, Option<RawPtr<treeNode>> right) -> RawPtr<treeNode> {
+    let node: RawPtr<treeNode> = RawPtr<treeNode>.new_object()
     (*node).left = left
     (*node).right = right
     return node
 }
 
-i64 ItemCheck(RawPtr<treeNode> tree)
+fn ItemCheck(RawPtr<treeNode> tree) -> i64 
 {
-    i64 res = 1
-    treeNode tree_item = *tree
-    Option<RawPtr<treeNode>> left = tree_item.left
-    Option<RawPtr<treeNode>> right = tree_item.right
+    let res: i64 = 1
+    let tree_item: treeNode = *tree
+    let left: Option<RawPtr<treeNode>> = tree_item.left
+    let right: Option<RawPtr<treeNode>> = tree_item.right
     match left {
         Some as load { res += ItemCheck(load.val) }
-        _ {}
+        _ => {}
     }
     match right {
         Some as load { res += ItemCheck(load.val) }
-        _ {}
+        _ => {}
     }
     return res
 }
 
-RawPtr<treeNode> BottomUpTree(u32 depth)
+fn BottomUpTree(u32 depth) -> RawPtr<treeNode> 
 {
     if depth > 0
     {
-        RawPtr<treeNode> left_child = BottomUpTree(depth - 1)
-        RawPtr<treeNode> right_child = BottomUpTree(depth - 1)
+        let left_child: RawPtr<treeNode> = BottomUpTree(depth - 1)
+        let right_child: RawPtr<treeNode> = BottomUpTree(depth - 1)
         return NewTreeNode(Option<RawPtr<treeNode>>.Some(left_child), Option<RawPtr<treeNode>>.Some(right_child))
     }
     else
@@ -42,57 +42,57 @@ RawPtr<treeNode> BottomUpTree(u32 depth)
         return NewTreeNode(Option<RawPtr<treeNode>>.None, Option<RawPtr<treeNode>>.None)
     }
 }
-DeleteTree(RawPtr<treeNode> tree)
+fn DeleteTree(tree: RawPtr<treeNode>)
 {
-    treeNode tree_item = *tree
-    Option<RawPtr<treeNode>> left = tree_item.left
-    Option<RawPtr<treeNode>> right = tree_item.right
+    let tree_item: treeNode = *tree
+    let left: Option<RawPtr<treeNode>> = tree_item.left
+    let right: Option<RawPtr<treeNode>> = tree_item.right
     match left {
         Some as load { DeleteTree(load.val) }
-        _ {}
+        _ => {}
     }
     match right {
         Some as load { DeleteTree(load.val) }
-        _ {}
+        _ => {}
     }
     tree.delete()
 }
 
 
-i32 main()
+fn main() -> i32 
 {
-    u32 N = 20
-    u32 minDepth = 4
-    u32 maxDepth = N
-    i64 check = 0
+    let N: u32 = 20
+    let minDepth: u32 = 4
+    let maxDepth: u32 = N
+    let check: i64 = 0
 
     if (minDepth + 2) > N {
         maxDepth = minDepth + 2
     }
     
-    u32 stretchDepth = maxDepth + 1
-    RawPtr<treeNode> stretchTree = BottomUpTree(stretchDepth)
-    DeleteTree(stretchTree)
+    let stretchDepth: u32 = maxDepth + 1
+    let stretchTree: RawPtr<treeNode> = BottomUpTree(stretchDepth)
+    fn DeleteTree(stretchTree)
 
-    RawPtr<treeNode> longLivedTree = BottomUpTree(maxDepth)
+    let longLivedTree: RawPtr<treeNode> = BottomUpTree(maxDepth)
 
     for u32 depth = minDepth; depth <= maxDepth; depth += 2
     {
-        u32 totalDepth = maxDepth - depth + minDepth
-        i64 iterations = 1
+        let totalDepth: u32 = maxDepth - depth + minDepth
+        let iterations: i64 = 1
         for u32 i = 0; i < totalDepth; i+=1 {
             iterations *= 2
         }
         for i64 i = 0; i < iterations; i += 1
         {
-            RawPtr<treeNode> tempTree = BottomUpTree(depth)
+            let tempTree: RawPtr<treeNode> = BottomUpTree(depth)
             check += ItemCheck(tempTree)
             DeleteTree(tempTree)
         }
     }
-    DeleteTree(longLivedTree)
+    fn DeleteTree(longLivedTree)
     
     assert i32(check % 256) == 176: "fail"
-    print("pass")
+    fn print("pass")
     return 0
 }

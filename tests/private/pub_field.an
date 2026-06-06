@@ -2,10 +2,10 @@
 //
 // Expected output: 0
 
-from private import ExportableStruct
+from private import ExportableStruct;
 
-main() -> i32 {
-    ExportableStruct es = ExportableStruct.new(42, 84)
-    assert es.pub_field == 42: "Expected pub_field to be 42"
-    return 0
+fn main() -> i32 {
+    let es: ExportableStruct = ExportableStruct.new(42, 84);
+    assert es.pub_field == 42: "Expected pub_field to be 42";
+    return 0;
 }

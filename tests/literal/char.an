@@ -2,16 +2,16 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    char A = 'A'
-    char zhong = '中'
-    char slash_n = '\n'
-    char null = '\0'
-    assert u32(null) == 0: "u32(null) == 0 fail\n"
-    char hex_A = '\x41'
-    assert hex_A == A: "hex_A == A fail\n"
-    char hex_zhong = '\u{4E2D}'
-    assert hex_zhong == zhong: "hex_zhong == zhong fail\n"
+fn main() -> i32 {
+    let A: char = 'A';
+    let zhong: char = '中';
+    let slash_n: char = '\n';
+    let null: char = '\0';
+    assert u32(null) == 0: "u32(null) == 0 fail\n";
+    let hex_A: char = '\x41';
+    assert hex_A == A: "hex_A == A fail\n";
+    let hex_zhong: char = '\u{4E2D}';
+    assert hex_zhong == zhong: "hex_zhong == zhong fail\n";
 
-    return 0
+    return 0;
 }

@@ -1,6 +1,6 @@
-i32 main() {
-    i32 a
-    i32* pa = &a
-    i32* pb = pa + 1  // OK
+fn main() -> i32 {
+    let a: i32;
+    let pa: i32* = &a
+    let pb: i32* = pa + 1  // OK
     return 0
 }

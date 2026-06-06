@@ -3,53 +3,58 @@
 // Expected output: 0
 
 struct Point {
-    pub i32 x
-    pub i32 y
+    pub x: i32,
+    pub y: i32,
 }
 
 enum Shape {
-    Circle { i32 radius }
-    Rectangle { i32 width, i32 height }
+    Circle {
+        radius: i32,
+    },
+    Rectangle {
+        width: i32,
+        height: i32,
+    },
 }
 
-get_point() -> Point {
-    return Point(10, 20)
+fn get_point() -> Point {
+    return Point(10, 20);
 }
 
-get_shape() -> Shape {
-    return Shape.Rectangle(30, 40)
+fn get_shape() -> Shape {
+    return Shape.Rectangle(30, 40);
 }
 
-get_tuple() -> (i32, i32) {
-    return (1, 2)
+fn get_tuple() -> (i32, i32) {
+    return (1, 2);
 }
 
-get_array() -> i32[3] {
-    return [3, 4, 5]
+fn get_array() -> i32[3] {
+    return [3, 4, 5];
 }
 
-main() -> i32 {
-    Point p = get_point()
-    Shape s = get_shape()
-    (i32, i32) t = get_tuple()
-    i32[3] arr = get_array()
+fn main() -> i32 {
+    let p: Point = get_point();
+    let s: Shape = get_shape();
+    let t: (i32, i32) = get_tuple();
+    let arr: i32[3] = get_array();
 
-    assert p.x == 10: "Point x mismatch"
-    assert p.y == 20: "Point y mismatch"
+    assert p.x == 10: "Point x mismatch";
+    assert p.y == 20: "Point y mismatch";
     match s {
-        Rectangle(width, height) {
-            assert width == 30: "Rectangle width mismatch"
-            assert height == 40: "Rectangle height mismatch"
-        }
-        _ {
-            assert false: "Shape type mismatch"
-        }
+        Rectangle(width, height) => {
+            assert width == 30: "Rectangle width mismatch";
+            assert height == 40: "Rectangle height mismatch";
+        },
+        _ => {
+            assert false: "Shape type mismatch";
+        },
     }
-    assert t[0] == 1: "Tuple first element mismatch"
-    assert t[1] == 2: "Tuple second element mismatch"
-    assert arr[0] == 3: "Array first element mismatch"
-    assert arr[1] == 4: "Array second element mismatch"
-    assert arr[2] == 5: "Array third element mismatch"
-    
-    return 0
+    assert t[0] == 1: "Tuple first element mismatch";
+    assert t[1] == 2: "Tuple second element mismatch";
+    assert arr[0] == 3: "Array first element mismatch";
+    assert arr[1] == 4: "Array second element mismatch";
+    assert arr[2] == 5: "Array third element mismatch";
+
+    return 0;
 }

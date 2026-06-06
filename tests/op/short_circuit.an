@@ -4,28 +4,28 @@
 // false_func called
 // Short circuit works correctly
 
-from std.core.io import print
+from std.core.io import print;
 
-false_func() -> bool {
-    print("false_func called\n")
-    return false
+fn false_func() -> bool {
+    print("false_func called\n");
+    return false;
 }
 
-true_func() -> bool {
-    panic("true_func should not be called\n")
+fn true_func() -> bool {
+    panic("true_func should ! be called\n");
 }
 
-main() -> i32 {
-    if false and false_func() {
-        panic("This should not be printed\n")
+fn main() -> i32 {
+    if false && false_func() {
+        panic("This should ! be printed\n");
     }
 
-    if true or true_func() {
-        print("Short circuit works correctly\n")
+    if true || true_func() {
+        print("Short circuit works correctly\n");
     }
 
-    bool a
-    a = true or true_func()
+    let a: bool;
+    a = true || true_func();
 
-    return 0
+    return 0;
 }

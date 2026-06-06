@@ -1,5 +1,5 @@
-char* my_memcpy(char* dest, char* src, u32 len){
-    if not dest.is_valid() and not src.is_valid(){
+fn my_memcpy(char* dest, char* src, u32 len) -> char* {
+    if ! dest.is_valid() && ! src.is_valid(){
         return dest
     }
     if len == 0 {
@@ -13,12 +13,12 @@ char* my_memcpy(char* dest, char* src, u32 len){
     }
     return dest
 }
-i32 SkipString(char** jsonPtr, char** outStrStart){
+fn SkipString(char** jsonPtr, char** outStrStart) -> i32 {
     // char* _vv1 = *(jsonPtr)
-    char* json = *(jsonPtr)
+    let json: char* = *(jsonPtr)
     json += 1
-    i32 count = 0
-    char c
+    let count: i32 = 0
+    let c: char;
     while true {
         c = json[count]
         count = count + 1
@@ -34,25 +34,25 @@ i32 SkipString(char** jsonPtr, char** outStrStart){
     *(jsonPtr) = *(jsonPtr) + count
     return count - 1
 }
-i32 ParseString(char** jsonPtr){
+fn ParseString(char** jsonPtr) -> i32 {
     _vv12 = *(jsonPtr)
     _vv11 = *(_vv12)
     if _vv11 != '"' {
         // exit(1);
         return 1
     }
-    char* strStart
-    i32 length = SkipString(jsonPtr, &strStart)
-    char* str = dyn char[length + 1]
-    if not str.is_valid() {
+    let strStart: char*;
+    let length: i32 = SkipString(jsonPtr, &strStart)
+    let str: char* = dyn char[length + 1]
+    if ! str.is_valid() {
         // exit(1);
         return 2
     }
-    my_memcpy(str, strStart, length)
+    fn my_memcpy(str, strStart, length)
     return 0
 }
-i32 main(){
-    char* input = "\"abc"
-    ParseString(&input)
+fn main() -> i32 {
+    let input: char* = "\"abc"
+    fn ParseString(&input)
     return 0
 }

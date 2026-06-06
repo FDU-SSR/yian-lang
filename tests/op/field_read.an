@@ -3,19 +3,19 @@
 // Expected output: 0
 
 struct Person {
-    pub i32 age
-    pub float height
+    pub age: i32,
+    pub height: float,
 }
 
-main() -> i32 {
-    Person p = Person(10, 5.9)
-    assert p.age == 10: "p.age should be 10"
-    assert p.height > 5.8 and p.height < 6.0: "p.height should be around 5.9"
+fn main() -> i32 {
+    let p: Person = Person(10, 5.9);
+    assert p.age == 10: "p.age should be 10";
+    assert p.height > 5.8 && p.height < 6.0: "p.height should be around 5.9";
 
-    p.age = 20
-    p.height = 6.1
-    assert p.age == 20: "p.age should be 20"
-    assert p.height > 6.0 and p.height < 6.2: "p.height should be around 6.1"
+    p.age = 20;
+    p.height = 6.1;
+    assert p.age == 20: "p.age should be 20";
+    assert p.height > 6.0 && p.height < 6.2: "p.height should be around 6.1";
 
-    return 0
+    return 0;
 }

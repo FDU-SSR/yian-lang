@@ -1,31 +1,31 @@
-from std.core.io import print
+from std.core.io import print;
 
-from walkable import Walkable
+from walkable import Walkable;
 
 pub struct Person {
-    i32 age
-    float height
+    age: i32,
+    height: float,
 }
 
 impl Person {
-    static pub new(i32 age, float height) -> Person {
-        return Self(age, height)
+    static pub fn new(age: i32, height: float) -> Person {
+        return Self(age, height);
     }
 
-    pub get_age() -> i32 {
-        return self.age
+    pub fn get_age() -> i32 {
+        return self.age;
     }
 
-    pub get_height() -> float {
-        return self.height
+    pub fn get_height() -> float {
+        return self.height;
     }
 }
 
 impl Walkable for Person {
-    pub walk() {
+    pub fn walk() {
         self.age += 1
         self.height += 1.0
 
-        print("Person is walking.\n")
+        print("Person is walking.\n");
     }
 }

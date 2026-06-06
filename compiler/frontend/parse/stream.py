@@ -13,15 +13,17 @@ class TokenStream:
         self.__tokens = tokens
         self.__index = 0
 
-        self.__concat_space()
-
     def at_end(self) -> bool:
         token = self.peek()
         return isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF
 
-    def end_of_line(self) -> bool:
-        token = self.peek()
-        return isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Endl
+    def save(self) -> int:
+        """Returns current index for later restoration."""
+        return self.__index
+
+    def restore(self, index: int) -> None:
+        """Restores the stream to a previously saved index."""
+        self.__index = index
 
     def peek(self) -> Token:
         return self.__tokens[self.__index]
@@ -60,23 +62,10 @@ class TokenStream:
         self.advance()
         return token
 
-    def consume_spaces(self, endl_sensitive: bool = False) -> None:
-        """Skips consecutive space tokens."""
-        space_kinds = {Tok.PunctuatorKind.Space}
-        if not endl_sensitive:
-            space_kinds.add(Tok.PunctuatorKind.Endl)
-        while not self.at_end():
-            token = self.peek()
-            if isinstance(token, Tok.Punctuator) and token.kind in space_kinds:
-                self.advance()
-            else:
-                break
-
     def consume_attrs(self) -> list[AST.Attr]:
         """Consumes attributes (e.g., #[attr]) and returns them as a list."""
         attrs: list[AST.Attr] = []
         while not self.at_end():
-            self.consume_spaces()
             match self.peek():
                 case Tok.Keyword(kind=Tok.KeywordKind.Pub, span=span):
                     self.advance()
@@ -90,18 +79,14 @@ class TokenStream:
 
     def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[Tok.PunctuatorKind], terminators: set[Tok.PunctuatorKind]) -> list[ItemType]:
         """Consumes a separated list of items parsed by the given item_parser function."""
-        endl_sensitive = Tok.PunctuatorKind.Endl in separators or Tok.PunctuatorKind.Endl in terminators
         items: list[ItemType] = []
         token = self.peek()
         while not (isinstance(token, Tok.Punctuator) and token.kind in terminators):
-            self.consume_spaces(endl_sensitive=False)  # not sensitive to endl before item
             items.append(item_parser())
-            self.consume_spaces(endl_sensitive=endl_sensitive)
 
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in separators:
                 self.consume_punctuator(token.kind)
-                self.consume_spaces(endl_sensitive=endl_sensitive)
                 token = self.peek()
             else:
                 break
@@ -111,7 +96,6 @@ class TokenStream:
         """Consumes items parsed by the given item_parser function until a terminator is encountered."""
         items: list[ItemType] = []
         while True:
-            self.consume_spaces()
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in terminators:
                 break
@@ -138,86 +122,9 @@ class TokenStream:
             case _:
                 raise ParseError(f"Expected integer literal but got '{token}'", token.span)
 
-    def __concat_space(self) -> None:
-        """Concatenates consecutive space tokens into a single token with the combined span."""
-        concatenated_tokens: list[Token] = []
-        current_space_token: Tok.Punctuator | None = None
-
-        for token in self.__tokens:
-            if not isinstance(token, Tok.Punctuator) or token.kind != Tok.PunctuatorKind.Space:
-                if current_space_token is not None:
-                    concatenated_tokens.append(current_space_token)
-                    current_space_token = None
-                concatenated_tokens.append(token)
-            else:
-                if current_space_token is None:
-                    current_space_token = token
-                else:
-                    # Extend the span of the current space token to include the new one
-                    current_space_token.span += token.span
-
-        if current_space_token is not None:
-            concatenated_tokens.append(current_space_token)
-
-        self.__tokens = concatenated_tokens
-
-    def var_decl_like(self) -> bool:
-        """
-        Checks if the following tokens match the pattern of a variable declaration.
-
-        Type Ident =
-        """
+    def consume_semicolon(self) -> Tok.Punctuator:
+        """Consumes an optional semicolon token. No-op if semicolon is not present."""
         token = self.peek()
-        if isinstance(token, Tok.Keyword) and token.kind in {Tok.KeywordKind.Fn}:
-            return True
-
-        index = 0
-
-        def skip_brackets(open_kind: Tok.PunctuatorKind, close_kind: Tok.PunctuatorKind) -> None:
-            nonlocal index
-            token = self.peek_nth(index)
-            if isinstance(token, Tok.Punctuator) and token.kind == open_kind:
-                index += 1
-                depth = 1
-                while depth > 0:
-                    token = self.peek_nth(index)
-                    if token is None:
-                        return
-                    if isinstance(token, Tok.Punctuator):
-                        if token.kind == open_kind:
-                            depth += 1
-                        elif token.kind == close_kind:
-                            depth -= 1
-                    index += 1
-
-        # Check for type
-        while True:
-            token = self.peek_nth(index)
-            match token:
-                case Tok.Keyword():
-                    index += 1
-                case Tok.Identifier():
-                    index += 1
-                case Tok.Punctuator(kind=Tok.PunctuatorKind.Star):
-                    index += 1
-                case Tok.Punctuator(kind=Tok.PunctuatorKind.LBracket):
-                    skip_brackets(Tok.PunctuatorKind.LBracket, Tok.PunctuatorKind.RBracket)
-                case Tok.Punctuator(kind=Tok.PunctuatorKind.Less):
-                    skip_brackets(Tok.PunctuatorKind.Less, Tok.PunctuatorKind.Greater)
-                case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
-                    skip_brackets(Tok.PunctuatorKind.LParen, Tok.PunctuatorKind.RParen)
-                case _:
-                    break
-
-        # Check for space
-        token = self.peek_nth(index)
-        if not isinstance(token, Tok.Punctuator) or token.kind != Tok.PunctuatorKind.Space:
-            return False
-        index += 1
-
-        # Check for identifier
-        token = self.peek_nth(index)
-        if not isinstance(token, Tok.Identifier):
-            return False
-
-        return True
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Semicolon:
+            return self.consume_punctuator(Tok.PunctuatorKind.Semicolon)
+        return Tok.Punctuator(Tok.PunctuatorKind.Semicolon, token.span)

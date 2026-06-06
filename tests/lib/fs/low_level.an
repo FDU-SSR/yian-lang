@@ -2,22 +2,22 @@
 //
 // Expected output: 0
 
-main() -> i32 {
+fn main() -> i32 {
     // O_WRONLY | O_CREAT | O_TRUNC = 577
-    i32 wfd = open("/tmp/yian_test_low.txt", 577)
-    write(wfd, "low-level test")
-    close(wfd)
+    let wfd: i32 = open("/tmp/yian_test_low.txt", 577);
+    write(wfd, "low-level test");
+    close(wfd);
 
     // Read it back with low-level read (O_RDONLY = 0)
-    i32 rfd = open("/tmp/yian_test_low.txt", 0)
-    u8[32] buf
+    let rfd: i32 = open("/tmp/yian_test_low.txt", 0);
+    let buf: u8[32];
     for i in 0u64..32 {
         buf[i] = 0
     }
-    str result = read(rfd, buf)
-    close(rfd)
+    let result: str = read(rfd, buf);
+    close(rfd);
 
-    assert result == "low-level test": "low-level read should match low-level write"
+    assert result == "low-level test": "low-level read should match low-level write";
 
-    return 0
+    return 0;
 }

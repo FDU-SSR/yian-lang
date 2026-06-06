@@ -2,19 +2,19 @@
 //
 // Expected output: 0
 
-main() -> i32 {
+fn main() -> i32 {
     // add up 1024 elements of an array
-    i32[1024] arr
+    let arr: i32[1024];
     for i in 0u64..1024 {
         arr[i] = i32(i)
     }
 
-    i32 sum = 0
+    let sum: i32 = 0;
     for i in 0u64..1024 {
         sum += arr[i]
     }
 
-    assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2"
+    assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2";
 
-    return 0
+    return 0;
 }

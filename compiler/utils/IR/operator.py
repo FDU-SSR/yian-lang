@@ -21,12 +21,11 @@ class Operator(Enum):
     Lt = auto()         # <
     Ge = auto()         # >=
     Le = auto()         # <=
-    And = auto()        # and
-    Or = auto()         # or
-    Not = auto()        # not
+    And = auto()        # &&
+    Or = auto()         # ||
+    Not = auto()        # !
     Index = auto()      # []
     In = auto()         # in
-    NotIn = auto()      # not in
     Dot = auto()        # .
     Range = auto()      # ..
 
@@ -90,7 +89,6 @@ class Operator(Enum):
     def is_membership(self) -> bool:
         return self in {
             Operator.In,
-            Operator.NotIn,
         }
 
 
@@ -112,12 +110,11 @@ _OP_STR_TO_ENUM = {
     "<": Operator.Lt,
     ">=": Operator.Ge,
     "<=": Operator.Le,
-    "and": Operator.And,
-    "or": Operator.Or,
-    "not": Operator.Not,
+    "&&": Operator.And,
+    "||": Operator.Or,
+    "!": Operator.Not,
     "[]": Operator.Index,
     "in": Operator.In,
-    "not in": Operator.NotIn,
     ".": Operator.Dot,
     "..": Operator.Range,
 }

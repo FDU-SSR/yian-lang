@@ -1,41 +1,41 @@
-// Test enum type with associated data and match statement
+// Test enum type with associated data && match statement
 //
 // Expected output: 0
 
 enum DivResult<T> {
-    Ok{T value}
-    DivByZero
+    Ok { value: T, },
+    DivByZero,
 }
 
-safe_div(i32 a, i32 b) -> DivResult<i32> {
+fn safe_div(a: i32, b: i32) -> DivResult<i32> {
     if b == 0 {
-        return DivResult<i32>.DivByZero
+        return DivResult<i32>.DivByZero;
     } else {
-        return DivResult<i32>.Ok(a / b)
+        return DivResult<i32>.Ok(a / b);
     }
 }
 
-main() -> i32 {
-    DivResult<i32> res1 = safe_div(10, 2)
-    DivResult<i32> res2 = safe_div(10, 0)
+fn main() -> i32 {
+    let res1: DivResult<i32> = safe_div(10, 2);
+    let res2: DivResult<i32> = safe_div(10, 0);
 
-    i32 val1
+    let val1: i32;
     match res1 {
-        Ok(data) {
-            val1 = data
+        Ok(data) => {
+            val1 = data;
         }
-        DivByZero{
+        DivByZero => {
             panic("Division by zero in res1")
         }
     }
 
     match res2 {
-        Ok{
+        Ok => {
             panic("Expected division by zero in res2")
         }
-        _{}
+        _ => {}
     }
 
-    assert val1 == 5: "safe_div(10, 2) should be 5"
-    return 0
+    assert val1 == 5: "safe_div(10, 2) should be 5";
+    return 0;
 }

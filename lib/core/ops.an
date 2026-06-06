@@ -1,136 +1,136 @@
 pub trait Add<Rhs, Output> {
-    add(Rhs rhs) -> Output
+    fn add(rhs: Rhs) -> Output;
 }
 
 pub trait Sub<Rhs, Output> {
-    sub(Rhs rhs) -> Output
+    fn sub(rhs: Rhs) -> Output;
 }
 
 pub trait Mul<Rhs, Output> {
-    mul(Rhs rhs) -> Output
+    fn mul(rhs: Rhs) -> Output;
 }
 
 pub trait Div<Rhs, Output> {
-    div(Rhs rhs) -> Output
+    fn div(rhs: Rhs) -> Output;
 }
 
 pub trait Rem<Rhs, Output> {
-    rem(Rhs rhs) -> Output
+    fn rem(rhs: Rhs) -> Output;
 }
 
 pub trait Neg<Output> {
-    neg() -> Output
+    fn neg() -> Output;
 }
 
 pub trait BitAnd<Rhs, Output> {
-    bit_and(Rhs rhs) -> Output
+    fn bit_and(rhs: Rhs) -> Output;
 }
 
 pub trait BitOr<Rhs, Output> {
-    bit_or(Rhs rhs) -> Output
+    fn bit_or(rhs: Rhs) -> Output;
 }
 
 pub trait BitXor<Rhs, Output> {
-    bit_xor(Rhs rhs) -> Output
+    fn bit_xor(rhs: Rhs) -> Output;
 }
 
 pub trait BitNot<Output> {
-    bit_not() -> Output
+    fn bit_not() -> Output;
 }
 
 pub trait Shl<Rhs, Output> {
-    shl(Rhs rhs) -> Output
+    fn shl(rhs: Rhs) -> Output;
 }
 
 pub trait Shr<Rhs, Output> {
-    shr(Rhs rhs) -> Output
+    fn shr(rhs: Rhs) -> Output;
 }
 
 pub trait PartialEq<Rhs> {
-    eq(Rhs rhs) -> bool
-    ne(Rhs rhs) -> bool {
-        return not self.eq(rhs)
+    fn eq(rhs: Rhs) -> bool;
+    fn ne(rhs: Rhs) -> bool {
+        return ! self.eq(rhs);
     }
 }
 
 pub enum Ordering {
-    Less
-    Equal
-    Greater
+    Less,
+    Equal,
+    Greater,
 }
 
 pub trait PartialOrd<Rhs> {
-    partial_cmp(Rhs rhs) -> Ordering
+    fn partial_cmp(rhs: Rhs) -> Ordering;
 
-    lt(Rhs rhs) -> bool {
+    fn lt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
     }
 
-    le(Rhs rhs) -> bool {
+    fn le(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return true
             }
-            Equal {
+            Equal => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
     }
 
-    gt(Rhs rhs) -> bool {
+    fn gt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Greater {
+            Greater => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
     }
 
-    ge(Rhs rhs) -> bool {
+    fn ge(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return false
             }
-            Equal {
+            Equal => {
                 return true
             }
-            Greater {
+            Greater => {
                 return true
             }
         }
     }
 }
 
-pub max<T>(T a, T b) -> T {
+pub fn max<T>(a: T, b: T) -> T {
     if a < b {
-        return b
+        return b;
     }
-    return a
+    return a;
 }
 
-pub min<T>(T a, T b) -> T {
+pub fn min<T>(a: T, b: T) -> T {
     if a < b {
-        return a
+        return a;
     }
-    return b
+    return b;
 }
 
 pub trait Index<Idx, Target> {
-    index(Idx index) -> Target*
+    fn index(index: Idx) -> Target*;
 }
 
 pub trait Deref<Target> {
-    deref() -> Target*
+    fn deref() -> Target*;
 }

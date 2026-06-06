@@ -2,38 +2,38 @@
 //
 // Expected output: 0
 
-i32 func() {
+fn func() -> i32 {
     return 42
 }
 
-i32 add_one(i32 x) {
+fn add_one(i32 x) -> i32 {
     return x + 1
 }
 
-invoker<T>(T f) {
-    return f(5)
+fn invoker<T>(f: T) {
+    return f(5);
 }
 
 struct Accumulator<T> {
-    i32 value
-    T func
+    value: i32,
+    func: T,
 }
 
 impl<T> Accumulator<T> {
-    accumulate_n_times(i32 n) {
+    fn accumulate_n_times(n: i32) {
         for i32 i = 0; i < n; i += 1 {
-            self.value = (self.func)(self.value)
+            self.value = (self.func)(self.value);
         }
     }
 }
 
 
-i32 main() {
+fn main() -> i32 {
     func_var = func  // Assign function to variable
-    i32 result = func_var()  // Call function via variable
+    let result: i32 = func_var()  // Call function via variable
     assert result == 42: "result should be 42"
 
-    i32 added = invoker(add_one)
+    let added: i32 = invoker(add_one)
     assert added == 6: "added should be 6"
 
     acc = Accumulator(0, add_one)

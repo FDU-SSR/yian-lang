@@ -1,15 +1,15 @@
-u32 my_strlen(char* string){
+fn my_strlen(char* string) -> u32 {
     assert string.is_valid(): "string is null"
-    u32 len = 0
+    let len: u32 = 0
     while string[len] != '\0' {
         len += 1
     }
     return len
 }
-char* my_strcpy(char* dest, char* src){ 
+fn my_strcpy(char* dest, char* src) -> char* {
     assert dest.is_valid(): "dest is null"
     assert src.is_valid(): "src is null"
-    u32 len = 0
+    let len: u32 = 0
     while src[len] != '\0' {
         dest[len] = src[len]
         len += 1
@@ -17,13 +17,13 @@ char* my_strcpy(char* dest, char* src){
     return dest
 }
 
-char* my_strdup(char* string){
+fn my_strdup(char* string) -> char* {
     char *duplicate = dyn char[my_strlen(string) + 1]
-    my_strcpy(duplicate, string)
+    fn my_strcpy(duplicate, string)
     return duplicate
 }
 
-i32 getNumberOfNumbersInAString(char* string){
+fn getNumberOfNumbersInAString(char* string) -> i32 {
     // i32 i = 0
     // char *numberAsString
     // char *duplicate = strdup(string)
@@ -31,14 +31,14 @@ i32 getNumberOfNumbersInAString(char* string){
     return 0
 }
 
-i32 main(i32 argc, char** argv) {
-    char* out = dyn char
+fn main(i32 argc, char** argv) -> i32 {
+    let out: char* = dyn char
     for i32 i = 1; i < 2; i+=1 {
-        char* input = "0"
-        i32 NumberOfNumbers = getNumberOfNumbersInAString(input)
-        if not out.is_valid() {
+        let input: char* = "0"
+        let NumberOfNumbers: i32 = getNumberOfNumbersInAString(input)
+        if ! out.is_valid() {
             out = dyn char
-            if not out.is_valid() {
+            if ! out.is_valid() {
                 return 1
             }
         }

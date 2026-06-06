@@ -2,33 +2,33 @@
 //
 // Expected output: 0
 
-get_array2() -> i32[3] {
-    i32[3] arr = [1, 2, 3]
-    return arr
+fn get_array2() -> i32[3] {
+    let arr: i32[3] = [1, 2, 3];
+    return arr;
 }
 
 struct Pair {
-    pub i32 first
-    pub i32 second
+    pub first: i32,
+    pub second: i32,
 }
 
-get_pairs() -> Pair[3] {
-    Pair p1 = Pair(1, 2)
-    Pair p2 = Pair(2, 3)
-    Pair p3 = Pair(3, 4)
-    Pair[3] arr
+fn get_pairs() -> Pair[3] {
+    let p1: Pair = Pair(1, 2);
+    let p2: Pair = Pair(2, 3);
+    let p3: Pair = Pair(3, 4);
+    let arr: Pair[3];
     arr[0] = p1
     arr[1] = p2
     arr[2] = p3
-    return arr
+    return arr;
 }
 
-main() -> i32 {
-    i32[3] array = get_array2()
-    assert array[0] + array[1] + array[2] == 6: "Sum of array elements should be 6"
+fn main() -> i32 {
+    let array: i32[3] = get_array2();
+    assert array[0] + array[1] + array[2] == 6: "Sum of array elements should be 6";
 
-    Pair[3] pairs = get_pairs()
-    assert pairs[0].second + pairs[1].second + pairs[2].second == 9: "Sum of pairs' second fields should be 9"
+    let pairs: Pair[3] = get_pairs();
+    assert pairs[0].second + pairs[1].second + pairs[2].second == 9: "Sum of pairs' second fields should be 9";
 
-    return 0
+    return 0;
 }

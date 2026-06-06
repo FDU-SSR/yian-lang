@@ -1,72 +1,72 @@
-from std.collections.hash import Hasher
-from std.collections.hash import BuildHasher
-from std.collections.hash import Hash
-from std.collections.hash_map import SwissTable
-from std.core.ops import PartialEq
+from std.collections.hash import Hasher;
+from std.collections.hash import BuildHasher;
+from std.collections.hash import Hash;
+from std.collections.hash_map import SwissTable;
+from std.core.ops import PartialEq;
 
 // 简单的可哈希键类型
 pub struct MyKey {
-    pub i64 id
+    pub id: i64,
 }
 
 impl PartialEq<MyKey> for MyKey {
     bool eq(MyKey other) {
-        return self.id == other.id
+        return self.id == other.id;
     }
 }
 
 // 简单的可配置哈希器
 pub struct DummyHasher {
-    u64 result
+    result: u64,
 }
 
 impl DummyHasher {
     pub static DummyHasher new(u64 seed) {
-        return DummyHasher(seed)
+        return DummyHasher(seed);
     }
 
-    pub set_result(u64 v) {
-        self.result = v
+    pub fn set_result(v: u64) {
+        self.result = v;
     }
 }
 
 pub struct DummyBuildHasher {
-    u64 seed
+    seed: u64,
 }
 
 impl DummyBuildHasher {
     pub static DummyBuildHasher with_seed(u64 seed) {
-        return DummyBuildHasher(seed)
+        return DummyBuildHasher(seed);
     }
 }
 
 impl BuildHasher<DummyHasher> for DummyBuildHasher {
     DummyHasher build_hasher() {
-        return DummyHasher.new(self.seed)
+        return DummyHasher.new(self.seed);
     }
 }
 
 impl Hasher for DummyHasher {
     u64 finish() {
-        return self.result
+        return self.result;
     }
 
-    write(u8[] bytes) {
+    fn write(bytes: u8[]) {
         // 测试哈希器，忽略输入
     }
 }
 
 // 为 MyKey 提供 Hash 实现
 impl Hash<DummyHasher> for MyKey {
-    hash(DummyHasher hasher) {
-        hasher.set_result(u64(self.id))
+    fn hash(hasher: DummyHasher) {
+        hasher.set_result(u64(self.id));
     }
 }
 
 // ---------- 测试开始 ----------
-i32 main() {
+fn main() -> i32 {
     // === Test 1: 基础构造 ===
-    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map1 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let map1: SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         0,
         DummyBuildHasher.with_seed(0)
     )
@@ -74,7 +74,7 @@ i32 main() {
     assert map1.is_empty(): "new map should be empty"
 
     // === Test 2: insert 与 get ===
-    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map2 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let map2: SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         4,
         DummyBuildHasher.with_seed(0)
     )
@@ -86,7 +86,7 @@ i32 main() {
 
     // === Test 3: 覆盖写入 ===
     map2.insert(MyKey(1), 200)
-    assert map2.len() == 1: "size should not change after overwrite"
+    assert map2.len() == 1: "size should ! change after overwrite"
     assert map2.get(MyKey(1)).unwrap() == 200: "get should return overwritten value"
 
     // === Test 4: 多键插入与查询 ===
@@ -109,10 +109,10 @@ i32 main() {
 
     // remove 不存在的键不报错
     map2.remove(MyKey(99))
-    assert map2.len() == 2: "remove missing key should not change size"
+    assert map2.len() == 2: "remove missing key should ! change size"
 
     // === Test 7: 触发 resize ===
-    SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> map3 = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let map3: SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         4,
         DummyBuildHasher.with_seed(0)
     )
@@ -129,7 +129,7 @@ i32 main() {
 
     // === Test 8: contains ===
     assert map3.contains(MyKey(10)): "contains existing key"
-    assert not map3.contains(MyKey(99)): "contains missing key"
+    assert ! map3.contains(MyKey(99)): "contains missing key"
 
     return 0
 }

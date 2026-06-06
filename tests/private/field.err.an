@@ -2,10 +2,10 @@
 //
 // Expected compilation error: Field 'priv_field' of struct 'ExportableStruct' is private and cannot be accessed from unit field.err.an unless inside an impl for that struct
 
-from private import ExportableStruct
+from private import ExportableStruct;
 
-main() -> i32 {
-    ExportableStruct es = ExportableStruct.new(42, 84)
-    assert es.priv_field == 84: "Expected priv_field to be 84"
-    return 0
+fn main() -> i32 {
+    let es: ExportableStruct = ExportableStruct.new(42, 84);
+    assert es.priv_field == 84: "Expected priv_field to be 84";
+    return 0;
 }

@@ -1,12 +1,12 @@
 // lib file in circular import cycle
 
-from b import unwrap_value
+from b import unwrap_value;
 
 pub struct Value<T> {
-    pub T value
+    pub value: T,
 }
 
-pub lib_unwrap_value<T>(Value<T> v) -> T {
-    return unwrap_value(v)
+pub fn lib_unwrap_value<T>(v: Value<T>) -> T {
+    return unwrap_value(v);
 }
 

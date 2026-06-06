@@ -2,9 +2,9 @@
 //
 // Expected runtime error: Array 'arr': index 'idx' out of bounds
 
-main() -> i32 {
-    i32[3] arr = [1, 2, 3]
-    u64 idx = 3
-    i32 err = arr[idx]  // OOB access
-    return 0
+fn main() -> i32 {
+    let arr: i32[3] = [1, 2, 3];
+    let idx: u64 = 3;
+    let err: i32 = arr[idx]  // OOB access;
+    return 0;
 }

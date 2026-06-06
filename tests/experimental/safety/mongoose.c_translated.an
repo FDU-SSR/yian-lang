@@ -1,9 +1,9 @@
-i32 decode_variable_length(char* buf, i32* bytes_consumed){
-    i32 value = 0;
-    i32 multiplier = 1;
-    i32 offset
+fn decode_variable_length(char* buf, i32* bytes_consumed) -> i32 {
+    let value: i32 = 0;
+    let multiplier: i32 = 1;
+    let offset: i32;
     for offset = 0; offset < 4; offset = offset + 1 {
-        char encoded_byte = buf[offset]
+        let encoded_byte: char = buf[offset]
         _vv1 = u8(encoded_byte)
         _vv2 = i32(_vv1)
         _vv4 = _vv2 * multiplier
@@ -21,9 +21,9 @@ i32 decode_variable_length(char* buf, i32* bytes_consumed){
     }
     return value;
 }
-i32 main(){
-    char[3] buf = [u8(26), u8(27), u8(28)]
-    i32 bytes_consumed = 0
-    decode_variable_length(buf, &bytes_consumed)
+fn main() -> i32 {
+    let buf: char[3] = [u8(26), u8(27), u8(28)]
+    let bytes_consumed: i32 = 0
+    fn decode_variable_length(buf, &bytes_consumed)
     return 0
 }

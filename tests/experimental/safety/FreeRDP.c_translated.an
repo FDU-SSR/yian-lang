@@ -1,27 +1,27 @@
 struct RFX_MESSAGE {
-    i32 numTiles
-    i32* tiles
+    numTiles: i32,
+    tiles: i32*,
 }
 
-i32 rfx_allocate_tiles(RFX_MESSAGE* message, i32 count){
-    i32* tmpTiles = dyn i32[count]
-    i32** tiles_addr = &message.tiles
+fn rfx_allocate_tiles(RFX_MESSAGE* message, i32 count) -> i32 {
+    let tmpTiles: i32* = dyn i32[count]
+    let tiles_addr: i32** = &message.tiles
     *tiles_addr = tmpTiles
     return 0
 }
-i32 rfx_message_get_tile(RFX_MESSAGE* message, i32 index){
-    i32* _vv5 = (*message).tiles;
-    i32 _vv4 = _vv5[index]; // Problem: potential null pointer dereference
+fn rfx_message_get_tile(RFX_MESSAGE* message, i32 index) -> i32 {
+    let _vv5: i32* = (*message).tiles;
+    let _vv4: i32 = _vv5[index]; // Problem: potential null pointer dereference
     return _vv4;
 }
-i32 main(){
-    RFX_MESSAGE message
-    i32* tmp1 = &message.numTiles
+fn main() -> i32 {
+    let message: RFX_MESSAGE;
+    let tmp1: i32* = &message.numTiles
     *tmp1 = 0
-    i32** tmp2 = &message.tiles
+    let tmp2: i32** = &message.tiles
     *tmp2 = dyn i32
 
-    rfx_allocate_tiles(&message, message.numTiles)
+    fn rfx_allocate_tiles(&message, message.numTiles)
 
     tmp1 = &message.numTiles
     *tmp1 = 1

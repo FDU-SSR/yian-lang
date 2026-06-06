@@ -2,37 +2,35 @@
 //
 // Expected output: 0
 
-enum Color{
-    BLUE, RED, YELLOW, GREEN, BLACK
-    LOOK{
-        i32 who
-        i32 direction
-    }
-    MOVE{i32 who, i32 direction}
+enum Color {
+    BLUE, RED, YELLOW, GREEN, BLACK,
+    LOOK {
+        who: i32,
+        direction: i32,
+    },
+    MOVE {
+        who: i32,
+        direction: i32,
+    },
 }
 
-match_enum(Color c) -> i32 {
+fn match_enum(c: Color) -> i32 {
     match c {
-        YELLOW { return 3 }
-        GREEN { return 4 }
-        BLACK { return 5 }
-        LOOK(who, direction) { return who + direction }
-        MOVE(who, direction) { return who + direction }
-        _ { return 0 }  // BLUE and RED
+        YELLOW => { return 3; },
+        GREEN => { return 4; },
+        BLACK => { return 5; },
+        LOOK(who, direction) => { return who + direction; },
+        MOVE(who, direction) => { return who + direction; },
+        _ => { return 0; },
     }
 }
 
-main() -> i32
-{
-    Color c = Color.BLUE
-
-    Color c3 = Color.LOOK(who = 1, direction = 2)
-
-    Color c4 = Color.MOVE(who = 1, direction = 2)
-
-    assert match_enum(c) == 0: "Match enum failed on BLUE"
-    assert match_enum(c3) == 3: "Match enum failed on LOOK"
-    assert match_enum(c4) == 3: "Match enum failed on MOVE"
-
-    return 0
+fn main() -> i32 {
+    let c: Color = Color.BLUE;
+    let c3: Color = Color.LOOK(who = 1, direction = 2);
+    let c4: Color = Color.MOVE(who = 1, direction = 2);
+    assert match_enum(c) == 0: "Match enum failed on BLUE";
+    assert match_enum(c3) == 3: "Match enum failed on LOOK";
+    assert match_enum(c4) == 3: "Match enum failed on MOVE";
+    return 0;
 }

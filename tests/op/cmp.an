@@ -3,29 +3,29 @@
 // Expected output: 0
 
 enum Ordering {
-    Less
-    Equal
-    Greater
+    Less,
+    Equal,
+    Greater,
 }
 
-main() -> i32 {
-    i32 a = 5
-    i32 b = 10
+fn main() -> i32 {
+    let a: i32 = 5;
+    let b: i32 = 10;
 
-    assert (a == b) == false: "Equality check failed"
-    assert (a != b) == true: "Inequality check failed"
-    assert (a < b) == true: "Less than check failed"
-    assert (a <= b) == true: "Less than or equal check failed"
-    assert (a > b) == false: "Greater than check failed"
-    assert (a >= b) == false: "Greater than or equal check failed"
+    assert (a == b) == false: "Equality check failed";
+    assert (a != b) == true: "Inequality check failed";
+    assert (a < b) == true: "Less than check failed";
+    assert (a <= b) == true: "Less than || equal check failed";
+    assert (a > b) == false: "Greater than check failed";
+    assert (a >= b) == false: "Greater than || equal check failed";
 
-    Ordering less = Ordering.Less
-    Ordering equal = Ordering.Equal
-    Ordering greater = Ordering.Greater
+    let less: Ordering = Ordering.Less;
+    let equal: Ordering = Ordering.Equal;
+    let greater: Ordering = Ordering.Greater;
 
-    assert less == Ordering.Less: "Enum equality check failed"
-    assert equal == Ordering.Equal: "Enum equality check failed"
-    assert greater == Ordering.Greater: "Enum equality check failed"
+    assert less == Ordering.Less: "Enum equality check failed";
+    assert equal == Ordering.Equal: "Enum equality check failed";
+    assert greater == Ordering.Greater: "Enum equality check failed";
 
-    return 0
+    return 0;
 }

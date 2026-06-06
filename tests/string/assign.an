@@ -2,25 +2,25 @@
 //
 // Expected output: AliceBobBobCharlie
 
-from std.core.io import print
+from std.core.io import print;
 
 struct Person {
-    str name
-    i32 age
+    name: str,
+    age: i32,
 }
 
-main() -> i32 {
-    str s1 = "Alice"
-    print(s1)
+fn main() -> i32 {
+    let s1: str = "Alice";
+    print(s1);
 
-    Person p = Person("Bob", 30)
-    print(p.name)
+    let p: Person = Person("Bob", 30);
+    print(p.name);
 
-    Person* p_ptr = &p
-    print(p_ptr.name)
+    let p_ptr: Person* = &p;
+    print(p_ptr.name);
 
-    Person* p_heap = dyn Person("Charlie", 25)
-    print(p_heap.name)
+    let p_heap: Person* = dyn Person("Charlie", 25);
+    print(p_heap.name);
 
-    return 0
+    return 0;
 }

@@ -2,16 +2,16 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    i32 i = 0
+fn main() -> i32 {
+    let i: i32 = 0;
     while true {
         if i != 5 {
             i += 1
-            continue
+            continue;
         } else {
-            break
+            break;
         }
     }
-    assert i == 5: "Continue while loop failed"
-    return 0
+    assert i == 5: "Continue while loop failed";
+    return 0;
 }

@@ -2,14 +2,14 @@
 //
 // Expected output: 0
 
-from std.core.io import read_file, write_file, append_file
+from std.core.io import read_file, write_file, append_file;
 
-main() -> i32 {
-    write_file("/tmp/yian_test_append.txt", "first\n")
-    append_file("/tmp/yian_test_append.txt", "second\n")
+fn main() -> i32 {
+    write_file("/tmp/yian_test_append.txt", "first\n");
+    append_file("/tmp/yian_test_append.txt", "second\n");
 
-    str appended = read_file("/tmp/yian_test_append.txt")
-    assert appended == "first\nsecond\n": "append_file should add to existing content"
+    let appended: str = read_file("/tmp/yian_test_append.txt");
+    assert appended == "first\nsecond\n": "append_file should add to existing content";
 
-    return 0
+    return 0;
 }

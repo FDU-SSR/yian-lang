@@ -5,24 +5,24 @@
 struct makef1 {}
 struct makef2 {}
 
-f() -> makef1 {
-    return makef1()
+fn f() -> makef1 {
+    return makef1();
 }
 
 impl makef1 {
-    f1() -> makef2 {
-        return makef2()
+    fn f1() -> makef2 {
+        return makef2();
     }
 }
 
 impl makef2 {
-    f2() -> i32 {
-        return 5
+    fn f2() -> i32 {
+        return 5;
     }
 }
 
-main() -> i32 {
-    assert f().f1().f2() == 5: "call chain works"
+fn main() -> i32 {
+    assert f().f1().f2() == 5: "call chain works";
 
-    return 0
+    return 0;
 }

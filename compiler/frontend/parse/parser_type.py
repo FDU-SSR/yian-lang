@@ -75,12 +75,10 @@ class TypeParser:
             param_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
-            self.__stream.consume_spaces()
             arrow_token = self.__stream.peek()
             if isinstance(arrow_token, Punctuator) and arrow_token.kind == PunctuatorKind.Arrow:
                 self.__stream.consume_punctuator(PunctuatorKind.Arrow)
 
-                self.__stream.consume_spaces()
                 return_type = self.parse_type()
             else:
                 return_type = Ty.VoidType(span=token.span)

@@ -2,27 +2,27 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    i8* a = dyn 42i8
-    i8 val_a = *a
-    assert val_a == 42
+fn main() -> i32 {
+    let a: i8* = dyn 42i8;
+    let val_a: i8 = *a;
+    assert val_a == 42;
 
-    i8* b = dyn i8(100)
-    i8 val_b = *b
-    assert val_b == 100
+    let b: i8* = dyn i8(100);
+    let val_b: i8 = *b;
+    assert val_b == 100;
 
-    i32* c = dyn i32(0)
+    let c: i32* = dyn i32(0);
     *c += 58
-    i32 val_c = *c
-    assert val_c == 58
+    let val_c: i32 = *c;
+    assert val_c == 58;
 
-    i32* d = dyn[3] i32
+    let d: i32* = dyn[3] i32;
     d[0] = 10
     d[1] = 20
     d[2] = 30
-    assert d[0] == 10
-    assert d[1] == 20
-    assert d[2] == 30
+    assert d[0] == 10;
+    assert d[1] == 20;
+    assert d[2] == 30;
 
-    return 0
+    return 0;
 }

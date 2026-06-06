@@ -3,21 +3,21 @@
 // Expected output: 0
 
 struct Pair<T, U> {
-    pub T first
-    pub U second
+    pub first: T,
+    pub second: U,
 }
 
-main() -> i32 {
-    i32 a = 1
-    i64 b = 2
-    Pair<i32, i64> p1 = Pair<i32, i64>(first=a, second=b)
-    assert p1.first == 1 and p1.second == 2: "Expected Pair(1, 2)"
+fn main() -> i32 {
+    let a: i32 = 1;
+    let b: i64 = 2;
+    let p1: Pair<i32, i64> = Pair<i32, i64>(first=a, second=b)
+    assert p1.first == 1 && p1.second == 2: "Expected Pair(1, 2)";
 
-    Pair<i32, i64> p2 = Pair<i32, i64>(a, b)
-    assert p2.first == 1 and p2.second == 2: "Expected Pair(1, 2)"
+    let p2: Pair<i32, i64> = Pair<i32, i64>(a, b)
+    assert p2.first == 1 && p2.second == 2: "Expected Pair(1, 2)";
 
-    Pair<i32, i64> p3 = Pair(a, b)
-    assert p3.first == 1 and p3.second == 2: "Expected Pair(1, 2)"
+    let p3: Pair<i32, i64> = Pair(a, b)
+    assert p3.first == 1 && p3.second == 2: "Expected Pair(1, 2)";
 
-    return 0
+    return 0;
 }

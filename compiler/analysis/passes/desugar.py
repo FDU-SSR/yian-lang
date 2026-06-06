@@ -274,15 +274,14 @@ class Desugar:
         return expr
 
     def __desugar_member_test(self, expr: AST.Expr) -> AST.Expr:
-        """Recursively walk an expression tree and desugar any Binary(In) or Binary(NotIn) nodes."""
+        """Recursively walk an expression tree and desugar Binary(In) nodes to .contains() calls."""
         self.__walk_expr_children(expr, self.__desugar_member_test)
 
-        if isinstance(expr, AST.Binary) and expr.op in [BinaryOperator.In, BinaryOperator.NotIn]:
-            method_name = "contains" if expr.op == BinaryOperator.In else "not_contains"
+        if isinstance(expr, AST.Binary) and expr.op == BinaryOperator.In:
             return AST.MethodCall(
                 span=expr.span,
                 receiver=expr.right,
-                method_name=AST.Identifier(span=expr.span, name=method_name),
+                method_name=AST.Identifier(span=expr.span, name="contains"),
                 generics=[],
                 args=[AST.Arg(span=expr.left.span, name=None, value=expr.left)],
             )
@@ -322,7 +321,7 @@ class Desugar:
         self.__desugar_expr_in_stmt(stmt, self.__desugar_range)
 
     def __desugar_member_test_in_stmt(self, stmt: AST.Stmt) -> None:
-        """Walk expression fields within a statement and desugar any In/NotIn operators."""
+        """Walk expression fields within a statement and desugar any In operators."""
         self.__desugar_expr_in_stmt(stmt, self.__desugar_member_test)
 
     def __desugar_expr_in_stmt(self, stmt: AST.Stmt, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:

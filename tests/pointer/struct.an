@@ -3,36 +3,36 @@
 // Expected output: 0
 
 struct MyStruct {
-    i32 a
-    bool b
-    char c
-    f64 d
-    i32* e
+    a: i32,
+    b: bool,
+    c: char,
+    d: f64,
+    e: i32*,
 }
 
-main() -> i32 {
-    i32 f = 100
-    MyStruct my_struct = MyStruct(
+fn main() -> i32 {
+    let f: i32 = 100;
+    let my_struct: MyStruct = MyStruct(
         5,
         true,
         'c',
         1.1,
         &f
     )
-    i32* pa = &my_struct.a
-    bool* pb = &my_struct.b
-    char* pc = &my_struct.c
-    f64* pd = &my_struct.d
-    i32** pe = &my_struct.e
+    let pa: i32* = &my_struct.a;
+    let pb: bool* = &my_struct.b;
+    let pc: char* = &my_struct.c;
+    let pd: f64* = &my_struct.d;
+    let pe: i32** = &my_struct.e;
 
-    assert *pa == 5: "Expected *pa to be 5"
-    assert *pb == true: "Expected *pb to be true"
-    assert *pc == 'c': "Expected *pc to be 'c'"
-    assert *pd == 1.1: "Expected *pd to be 1.1"
-    assert *pe == &f: "Expected *pe to be address of f"
+    assert *pa == 5: "Expected *pa to be 5";
+    assert *pb == true: "Expected *pb to be true";
+    assert *pc == 'c': "Expected *pc to be 'c'";
+    assert *pd == 1.1: "Expected *pd to be 1.1";
+    assert *pe == &f: "Expected *pe to be address of f";
 
     *(my_struct.e) = 5
-    assert f == 5: "Expected f to be 5 after modification through pointer"
+    assert f == 5: "Expected f to be 5 after modification through pointer";
 
-    return 0
+    return 0;
 }

@@ -4,38 +4,38 @@ struct request {
 }
 
 struct Sg_request {
-	request* rq
+ rq: request*,
 }
 
 // should be replaced
-blk_mq_free_request(request *rq) {}
+fn blk_mq_free_request(request *rq) {}
 
-remove_cmds(request *rq) {
-	del rq.cmd1
-	del rq.cmd2
+fn remove_cmds(request *rq) {
+	del rq.cmd1;
+	del rq.cmd2;
 }
 
-blk_end_request_all(request* rq) {
-	i32 cond
+fn blk_end_request_all(rq: request*) {
+	let cond: i32;
 	
 	if cond != 0 {
-		remove_cmds(rq)
+		remove_cmds(rq);
 	}
 }
 
-sg_finish_rem_req(Sg_request *srp) {
-	i32 cond
+fn sg_finish_rem_req(Sg_request *srp) {
+	let cond: i32;
 
 	if cond != 0 {
-		remove_cmds(srp.rq)
+		remove_cmds(srp.rq);
 	}
 
-	blk_mq_free_request(srp.rq)
+	blk_mq_free_request(srp.rq);
 }
 
-i32 sg_common_write(Sg_request *srp) {
-	i32 cond
-	i32 cond2
+fn sg_common_write(Sg_request *srp) -> i32 {
+	let cond: i32;
+	let cond2: i32;
 	
 	if cond != 0 {
 		if cond2 != 0 {
@@ -49,7 +49,7 @@ i32 sg_common_write(Sg_request *srp) {
 	return 0
 }
 
-Sg_request* add_request() {
+fn add_request() -> Sg_request* {
 	Sg_request *srp = dyn Sg_request
 	srp.rq = dyn request
 	srp.rq.cmd1 = dyn char
@@ -57,26 +57,26 @@ Sg_request* add_request() {
 	return srp
 }
 
-i32 sg_new_write(Sg_request **o_srp) {
+fn sg_new_write(Sg_request **o_srp) -> i32 {
 	Sg_request *srp
 	srp = add_request()
 
-	i32 k = sg_common_write(srp)
+	let k: i32 = sg_common_write(srp)
 
 	return k
 }
 
-sg_ioctl() {
+fn sg_ioctl() {
 	Sg_request *srp
 
-	i32 result = sg_new_write(&srp)
+ let result: i32 = sg_new_write(&srp);
 }
 
-sys_test() {
-	sg_ioctl()
+fn sys_test() {
+	sg_ioctl();
 }
 
-i32 main() {
-	sys_test()
+fn main() -> i32 {
+	fn sys_test()
 	return 0
 }

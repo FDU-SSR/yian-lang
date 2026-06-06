@@ -2,14 +2,14 @@
 //
 // Expected output: 0
 
-main() -> i32 {
-    i32 sum = 0
+fn main() -> i32 {
+    let sum: i32 = 0;
     for i in 0..16 {
         if i > 10 {
-            continue
+            continue;
         }
         sum += i
     }
-    assert sum == 55: "Continue statement failed"
-    return 0
+    assert sum == 55: "Continue statement failed";
+    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected compilation error: Value 1000 out of range for type i8
 
-main() -> i32 {
-    i8 i = 1000i8    
-    return 0
+fn main() -> i32 {
+    let i: i8 = 1000i8;
+    return 0;
 }
