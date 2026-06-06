@@ -10,6 +10,7 @@ from typing import NoReturn
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
+from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -195,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.ast is not None:
         __write_text_output(args.ast, __format_ast_output(src_files, programs))
+
+    # inject prelude imports into non-stdlib files
+    inject_prelude(src_files, programs)
 
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx()
