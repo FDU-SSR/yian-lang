@@ -117,10 +117,10 @@ class Parser:
         """
         params: list[AST.GenericParam] = []
         token = self.__stream.peek()
-        if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.Less):
+        if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.LAngle):
             return params
 
-        self.__stream.consume_punctuator(PunctuatorKind.Less)
+        self.__stream.consume_punctuator(PunctuatorKind.LAngle)
 
         def parse_param() -> AST.GenericParam:
             token = self.__stream.peek()
@@ -141,9 +141,9 @@ class Parser:
         params = self.__stream.consume_separated(
             parse_param,
             {PunctuatorKind.Comma},
-            {PunctuatorKind.Greater},
+            {PunctuatorKind.RAngle},
         )
-        self.__stream.consume_punctuator(PunctuatorKind.Greater)
+        self.__stream.consume_punctuator(PunctuatorKind.RAngle)
         return params
 
     def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:

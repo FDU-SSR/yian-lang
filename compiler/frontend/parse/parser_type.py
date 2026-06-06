@@ -25,7 +25,7 @@ class TypeParser:
         token = self.__stream.peek()
         while True:
             match token:
-                case Punctuator(kind=PunctuatorKind.Less):
+                case Punctuator(kind=PunctuatorKind.LAngle):
                     # generic type application, e.g., `Option<int>`
                     base = self.__parse_instance(base)
                 case Punctuator(kind=PunctuatorKind.Star):
@@ -98,13 +98,13 @@ class TypeParser:
 
     def __parse_instance(self, base: ASTType) -> ASTType:
         """Parses a generic type application from the token stream."""
-        self.__stream.consume_punctuator(PunctuatorKind.Less)
+        self.__stream.consume_punctuator(PunctuatorKind.LAngle)
         generic_args = self.__stream.consume_separated(
             self.parse_generic_arg,
             {PunctuatorKind.Comma},
-            {PunctuatorKind.Greater},
+            {PunctuatorKind.RAngle},
         )
-        self.__stream.consume_punctuator(PunctuatorKind.Greater)
+        self.__stream.consume_punctuator(PunctuatorKind.RAngle)
 
         return Ty.InstanceType(span=base.span, base=base, generic_args=generic_args)
 

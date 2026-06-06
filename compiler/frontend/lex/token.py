@@ -129,6 +129,8 @@ class PunctuatorKind(Enum):
     Equal = "="
     Less = "<"
     Greater = ">"
+    LAngle = "<angle>"   # Generic opening bracket — lexer emits when no preceding whitespace
+    RAngle = ">angle>"   # Generic closing bracket — lexer emits when no preceding whitespace
     PlusEqual = "+="
     MinusEqual = "-="
     StarEqual = "*="
@@ -143,6 +145,8 @@ class PunctuatorKind(Enum):
     GreaterEqual = ">="
     LessLess = "<<"
     LessLessEqual = "<<="
+    GreaterGreater = ">>"
+    GreaterGreaterEqual = ">>="
     DotDot = ".."
     EOF = "<eof>"
 

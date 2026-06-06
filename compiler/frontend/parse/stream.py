@@ -17,14 +17,6 @@ class TokenStream:
         token = self.peek()
         return isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF
 
-    def save(self) -> int:
-        """Returns current index for later restoration."""
-        return self.__index
-
-    def restore(self, index: int) -> None:
-        """Restores the stream to a previously saved index."""
-        self.__index = index
-
     def peek(self) -> Token:
         return self.__tokens[self.__index]
 

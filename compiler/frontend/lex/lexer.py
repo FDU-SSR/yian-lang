@@ -101,8 +101,8 @@ class Lexer:
         Lexes the source code into tokens.
         """
         while True:
-            self.__skip_ignored()
-            token = self.__next_token()
+            prev_was_ws = self.__skip_ignored()
+            token = self.__next_token(prev_was_ws)
             self.__tokens.append(token)
             if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF:
                 break
@@ -113,16 +113,18 @@ class Lexer:
         """
         return self.__tokens
 
-    def __skip_ignored(self) -> None:
+    def __skip_ignored(self) -> bool:
         """
-        Skips whitespace and comments.
+        Skips whitespace and comments. Returns True if any whitespace was consumed.
         """
+        saw_whitespace = False
         while not self.__stream.at_end():
             ch = self.__stream.peek()
             if ch is None:
-                return
+                return saw_whitespace
             if ch.isspace():
                 self.__stream.advance()
+                saw_whitespace = True
                 continue
             if self.__stream.peek_n(2) == "//":
                 self.__skip_line_comment()
@@ -130,9 +132,10 @@ class Lexer:
             if self.__stream.peek_n(2) == "/*":
                 self.__skip_block_comment()
                 continue
-            return
+            return saw_whitespace
+        return saw_whitespace
 
-    def __next_token(self) -> Token:
+    def __next_token(self, prev_was_ws: bool) -> Token:
         """
         Lexes the next token from the source code.
 
@@ -154,7 +157,7 @@ class Lexer:
             return self.__lex_identifier_or_keyword(ch, start_pos)
         if ch in START_NUMBER:
             return self.__lex_number(ch, start_pos)
-        return self.__lex_punctuator(ch, start_pos)
+        return self.__lex_punctuator(ch, start_pos, prev_was_ws)
 
     def __lex_identifier_or_keyword(self, tok_str: str, start_pos: SrcPosition) -> Token:
         """
@@ -320,20 +323,35 @@ class Lexer:
         # reached end of file without closing */
         raise LexError("Unterminated block comment", self.__stream.pos.into_span())
 
-    def __lex_punctuator(self, tok_str: str, start_pos: SrcPosition) -> Token:
+    def __lex_punctuator(self, tok_str: str, start_pos: SrcPosition, prev_was_ws: bool) -> Token:
         """
         Lexes a delimiter or an operator from the source code.
 
-        Assumes that the caller has already consumed the first character of the delimiter or operator.
+        Uses whitespace context to distinguish:
+        - `<` without preceding whitespace → LAngle (generic opening)
+        - `<` with preceding whitespace    → Less (comparison)
+        - `>` without preceding whitespace → RAngle (generic closing)
+        - `>` with preceding whitespace    → Greater (comparison)
         """
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
+
+        if tok_str == "<" and not prev_was_ws:
+            # Generic opening bracket — don't merge with following <
+            return Tok.Punctuator(Tok.PunctuatorKind.LAngle, span)
+
+        if tok_str == ">" and not prev_was_ws:
+            # Generic closing bracket — don't merge with following >
+            return Tok.Punctuator(Tok.PunctuatorKind.RAngle, span)
+
+        # Standard two-character operator combining
         next_char = self.__stream.peek()
         if next_char is not None:
             combined = tok_str + next_char
             if Tok.PunctuatorKind.try_from_str(combined) is not None:
                 self.__stream.advance()
                 tok_str = combined
+                span = SrcSpan(start_pos, self.__stream.pos.clone())
 
-        span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
             kind = Tok.PunctuatorKind.from_str(tok_str)
         except ValueError as exc:

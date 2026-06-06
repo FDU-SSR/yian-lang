@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING
 
 from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
-                                         PunctuatorKind)
-
-if TYPE_CHECKING:
-    from compiler.frontend.parse.stream import TokenStream
+                                         PunctuatorKind, Token)
 
 
 class BinaryOperator(Enum):
@@ -55,77 +51,13 @@ class BinaryOperator(Enum):
     Range = auto()
 
     @classmethod
-    def try_from_token(cls, stream: TokenStream) -> tuple[BinaryOperator, int] | None:
-        """Try to parse a binary operator from the token stream. Returns the operator and its token length if successful, or None if the next token is not a binary operator."""
-        token = stream.peek()
-
-        match token:
-            case Punctuator(kind=PunctuatorKind.Plus):
-                return cls.Add, 1
-            case Punctuator(kind=PunctuatorKind.Minus):
-                return cls.Sub, 1
-            case Punctuator(kind=PunctuatorKind.Star):
-                return cls.Mul, 1
-            case Punctuator(kind=PunctuatorKind.Slash):
-                return cls.Div, 1
-            case Punctuator(kind=PunctuatorKind.Percent):
-                return cls.Mod, 1
-            case Punctuator(kind=PunctuatorKind.Ampersand):
-                return cls.BitAnd, 1
-            case Punctuator(kind=PunctuatorKind.Pipe):
-                return cls.BitOr, 1
-            case Punctuator(kind=PunctuatorKind.Caret):
-                return cls.BitXor, 1
-            case Punctuator(kind=PunctuatorKind.LessLess):
-                return cls.Shl, 1
-            case Punctuator(kind=PunctuatorKind.EqualEqual):
-                return cls.Eq, 1
-            case Punctuator(kind=PunctuatorKind.NotEqual):
-                return cls.Neq, 1
-            case Punctuator(kind=PunctuatorKind.Less):
-                return cls.Lt, 1
-            case Punctuator(kind=PunctuatorKind.Greater):
-                next_token = stream.peek_nth(1)
-                if not (isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Greater):
-                    return cls.Gt, 1
-                next_next_token = stream.peek_nth(2)
-                if isinstance(next_next_token, Punctuator) and next_next_token.kind == PunctuatorKind.Equal:
-                    return cls.ShrAssign, 3
-                return cls.Shr, 2
-            case Punctuator(kind=PunctuatorKind.LessEqual):
-                return cls.Leq, 1
-            case Punctuator(kind=PunctuatorKind.GreaterEqual):
-                return cls.Geq, 1
-            case Punctuator(kind=PunctuatorKind.AmpersandAmpersand):
-                return cls.LogicalAnd, 1
-            case Punctuator(kind=PunctuatorKind.PipePipe):
-                return cls.LogicalOr, 1
-            case Punctuator(kind=PunctuatorKind.Equal):
-                return cls.Assign, 1
-            case Punctuator(kind=PunctuatorKind.PlusEqual):
-                return cls.AddAssign, 1
-            case Punctuator(kind=PunctuatorKind.MinusEqual):
-                return cls.SubAssign, 1
-            case Punctuator(kind=PunctuatorKind.StarEqual):
-                return cls.MulAssign, 1
-            case Punctuator(kind=PunctuatorKind.SlashEqual):
-                return cls.DivAssign, 1
-            case Punctuator(kind=PunctuatorKind.PercentEqual):
-                return cls.ModAssign, 1
-            case Punctuator(kind=PunctuatorKind.AmpersandEqual):
-                return cls.BitAndAssign, 1
-            case Punctuator(kind=PunctuatorKind.PipeEqual):
-                return cls.BitOrAssign, 1
-            case Punctuator(kind=PunctuatorKind.CaretEqual):
-                return cls.BitXorAssign, 1
-            case Punctuator(kind=PunctuatorKind.LessLessEqual):
-                return cls.ShlAssign, 1
-            case Keyword(kind=KeywordKind.In):
-                return cls.In, 1
-            case Punctuator(kind=PunctuatorKind.DotDot):
-                return cls.Range, 1
-            case _:
-                return None
+    def try_from_token(cls, token: Token) -> BinaryOperator | None:
+        """Try to parse a binary operator from a token. Returns the operator if successful, or None."""
+        if isinstance(token, Punctuator):
+            return BINARY_PUNCTUATOR_MAP.get(token.kind)
+        if isinstance(token, Keyword) and token.kind == KeywordKind.In:
+            return cls.In
+        return None
 
     @property
     def lbp(self) -> int:
@@ -205,6 +137,40 @@ class BinaryOperator(Enum):
                 return ".."
 
 
+BINARY_PUNCTUATOR_MAP: dict[PunctuatorKind, BinaryOperator] = {
+    PunctuatorKind.Plus: BinaryOperator.Add,
+    PunctuatorKind.Minus: BinaryOperator.Sub,
+    PunctuatorKind.Star: BinaryOperator.Mul,
+    PunctuatorKind.Slash: BinaryOperator.Div,
+    PunctuatorKind.Percent: BinaryOperator.Mod,
+    PunctuatorKind.Ampersand: BinaryOperator.BitAnd,
+    PunctuatorKind.Pipe: BinaryOperator.BitOr,
+    PunctuatorKind.Caret: BinaryOperator.BitXor,
+    PunctuatorKind.LessLess: BinaryOperator.Shl,
+    PunctuatorKind.EqualEqual: BinaryOperator.Eq,
+    PunctuatorKind.NotEqual: BinaryOperator.Neq,
+    PunctuatorKind.Less: BinaryOperator.Lt,
+    PunctuatorKind.Greater: BinaryOperator.Gt,
+    PunctuatorKind.GreaterGreater: BinaryOperator.Shr,
+    PunctuatorKind.GreaterGreaterEqual: BinaryOperator.ShrAssign,
+    PunctuatorKind.LessEqual: BinaryOperator.Leq,
+    PunctuatorKind.GreaterEqual: BinaryOperator.Geq,
+    PunctuatorKind.AmpersandAmpersand: BinaryOperator.LogicalAnd,
+    PunctuatorKind.PipePipe: BinaryOperator.LogicalOr,
+    PunctuatorKind.Equal: BinaryOperator.Assign,
+    PunctuatorKind.PlusEqual: BinaryOperator.AddAssign,
+    PunctuatorKind.MinusEqual: BinaryOperator.SubAssign,
+    PunctuatorKind.StarEqual: BinaryOperator.MulAssign,
+    PunctuatorKind.SlashEqual: BinaryOperator.DivAssign,
+    PunctuatorKind.PercentEqual: BinaryOperator.ModAssign,
+    PunctuatorKind.AmpersandEqual: BinaryOperator.BitAndAssign,
+    PunctuatorKind.PipeEqual: BinaryOperator.BitOrAssign,
+    PunctuatorKind.CaretEqual: BinaryOperator.BitXorAssign,
+    PunctuatorKind.LessLessEqual: BinaryOperator.ShlAssign,
+    PunctuatorKind.DotDot: BinaryOperator.Range,
+}
+
+
 BINARY_PRECEDENCE = {
     BinaryOperator.Add: (10, 11),
     BinaryOperator.Sub: (10, 11),
@@ -253,22 +219,11 @@ class UnaryOperator(Enum):
     AddrOf = auto()
 
     @classmethod
-    def try_from_token(cls, stream: TokenStream) -> tuple[UnaryOperator, int] | None:
-        token = stream.peek()
-
-        match token:
-            case Punctuator(kind=PunctuatorKind.Minus):
-                return cls.Neg, 1
-            case Punctuator(kind=PunctuatorKind.Tilde):
-                return cls.BitNot, 1
-            case Punctuator(kind=PunctuatorKind.Exclamation):
-                return cls.LogicalNot, 1
-            case Punctuator(kind=PunctuatorKind.Star):
-                return cls.Deref, 1
-            case Punctuator(kind=PunctuatorKind.Ampersand):
-                return cls.AddrOf, 1
-            case _:
-                return None
+    def try_from_token(cls, token: Token) -> UnaryOperator | None:
+        """Try to parse a unary operator from a token. Returns the operator if successful, or None."""
+        if isinstance(token, Punctuator):
+            return UNARY_PUNCTUATOR_MAP.get(token.kind)
+        return None
 
     @property
     def rbp(self) -> int:
@@ -287,6 +242,15 @@ class UnaryOperator(Enum):
                 return "*"
             case UnaryOperator.AddrOf:
                 return "&"
+
+
+UNARY_PUNCTUATOR_MAP: dict[PunctuatorKind, UnaryOperator] = {
+    PunctuatorKind.Minus: UnaryOperator.Neg,
+    PunctuatorKind.Tilde: UnaryOperator.BitNot,
+    PunctuatorKind.Exclamation: UnaryOperator.LogicalNot,
+    PunctuatorKind.Star: UnaryOperator.Deref,
+    PunctuatorKind.Ampersand: UnaryOperator.AddrOf,
+}
 
 
 UNARY_PRECEDENCE = {
