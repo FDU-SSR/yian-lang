@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.desuger import Desugar
+from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
