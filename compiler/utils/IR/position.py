@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy
 from pathlib import Path
 
 
@@ -11,7 +11,8 @@ class SrcPosition:
         self.path = path
 
     def clone(self) -> SrcPosition:
-        return deepcopy(self)
+        """Shallow copy is sufficient — all fields are immutable or shareable."""
+        return copy(self)
 
     def into_span(self) -> SrcSpan:
         """
@@ -43,7 +44,9 @@ class SrcSpan:
         return self
 
     def __add__(self, other: SrcSpan) -> SrcSpan:
-        new_span = deepcopy(self)
+        new_span = copy(self)
+        new_span.start = copy(self.start)
+        new_span.end = copy(self.end)
         new_span += other
         return new_span
 
