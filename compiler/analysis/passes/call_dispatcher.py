@@ -10,6 +10,7 @@ from compiler.analysis.ty.context import LookupResult
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
@@ -100,6 +101,8 @@ class CallDispatcher:
                 return self.__handle_invocation(node.span, callable_expr, node.args)
             case SymbolKind.Type:
                 return self.__handle_type_call(node.span, HIR.Ty(span=callee.span, type_id=symbol.type_id, is_place=False), node.args)
+            case SymbolKind.ConstGeneric:
+                raise AnalysisError(f"'{callee.name}' is a generic constant and cannot be called", node.span)
 
     def __handle_builtin_expr(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         """Lower a call to a built-in expression name into the appropriate HIR node."""
@@ -154,8 +157,14 @@ class CallDispatcher:
             )
 
         # Resolve the target pointer type from the generic argument.
+        generic_arg = callee.generics[0]
+        if isinstance(generic_arg, (LiteralConstExpr, GenericConstExpr)):
+            raise AnalysisError(
+                f"'bitcast' expects a type argument, got a const expression",
+                callee.span,
+            )
         assert self.__ctx.symbol_ctx is not None
-        target_type_id = self.__ctx.resolve_type(callee.generics[0])
+        target_type_id = self.__ctx.resolve_type(generic_arg)
 
         # Evaluate the expression argument (must be a pointer expression).
         value = self.__expr.value(node.args[0].value)
