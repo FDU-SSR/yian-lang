@@ -80,17 +80,20 @@ class ExprChecker:
         assert self.__ctx.symbol_ctx is not None
 
         symbol = self.__ctx.symbol_ctx.lookup(node.name.name)
-        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
+        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
-        generic_arg_ids = [self.__resolve_generic_arg(arg) for arg in node.generics]
+        generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
         type_id = symbol.type_id
         if generic_arg_ids:
             type_id = self.__ctx.type_ctx.alloc_instance(type_id, generic_arg_ids)
 
+        if symbol.kind == SymbolKind.Function:
+            self.__ctx.report_def(type_id)
+
         return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
-    def __resolve_generic_arg(self, arg: AST.ASTType | AST.ConstExpr) -> int:
+    def resolve_generic_arg(self, arg: AST.ASTType | AST.ConstExpr) -> int:
         """Resolve a generic argument — either a type or a const expression — to a TypeId."""
         match arg:
             case LiteralConstExpr() | GenericConstExpr():

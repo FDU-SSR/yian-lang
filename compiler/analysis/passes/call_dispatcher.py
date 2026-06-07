@@ -274,6 +274,9 @@ class CallDispatcher:
     def __handle_type_call(self, span: SrcSpan, callable_type: HIR.Ty, args: list[AST.Arg]) -> HIR.Expr:
         ty = self.__ctx.type_ctx[callable_type.type_id]
 
+        if isinstance(ty, Type.FunctionType):
+            return self.__handle_function_call(span, callable_type.type_id, self.__ctx.type_ctx.get_name(callable_type.type_id), args)
+
         if isinstance(ty, Type.StructType):
             return self.__handle_struct_construction(span, callable_type.type_id, args)
 
