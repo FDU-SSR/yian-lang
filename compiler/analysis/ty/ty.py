@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from typing import TYPE_CHECKING, TypeAlias
-
-from compiler.config.constants import AccessMode
 
 if TYPE_CHECKING:
     from compiler.analysis.ty.context import TypeCtx
+
+
+class AccessMode(Enum):
+    Private = auto()
+    Public = auto()
+
+    @classmethod
+    def from_str(cls, s: str):
+        match s:
+            case "private":
+                return cls.Private
+            case "public":
+                return cls.Public
+            case _:
+                raise ValueError(f"{s} is not a access mode")
 
 
 @dataclass
