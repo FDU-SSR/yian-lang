@@ -8,8 +8,8 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.error import CompilerError
 from compiler.frontend.parse import ast as AST
-from compiler.utils.errors.yian_error import CompilerError
 
 
 class TypeCheck:

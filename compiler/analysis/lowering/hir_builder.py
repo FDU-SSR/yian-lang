@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 
 def build_block(span: SrcSpan, stmts: list[HIR.Stmt]) -> HIR.Block:

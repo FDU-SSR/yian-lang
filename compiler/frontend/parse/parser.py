@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
                                          PunctuatorKind, Token)
 from compiler.frontend.parse import ast as AST
@@ -8,8 +10,6 @@ from compiler.frontend.parse.parser_expr import ExprParser
 from compiler.frontend.parse.parser_stmt import StmtParser
 from compiler.frontend.parse.parser_type import TypeParser
 from compiler.frontend.parse.stream import TokenStream
-from compiler.utils.errors.yian_error import CompilerError
-from compiler.utils.IR.position import SrcSpan
 
 
 class Parser:

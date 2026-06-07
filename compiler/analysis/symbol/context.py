@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from compiler.analysis.symbol.symbol import Symbol, SymbolAttribute, SymbolKind
 from compiler.analysis.ty.context import TypeCtx
-from compiler.utils.errors.yian_error import CompilerError
+from compiler.error import CompilerError
 
 
 @dataclass

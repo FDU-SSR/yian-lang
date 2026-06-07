@@ -11,11 +11,10 @@ from compiler.analysis.lowering.sem_ctx import DefKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
-from compiler.config.constants import AccessMode
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
-from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
@@ -524,7 +523,7 @@ class OpBuilder:
         if struct_field is None:
             raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
 
-        if struct_field.access_mode == AccessMode.Private:
+        if struct_field.access_mode == Type.AccessMode.Private:
             if not self.__can_access_private_field(struct_ty):
                 raise AnalysisError(
                     f"Field '{field_name}' of struct '{self.__type_ctx.get_name(receiver.type_id)}' "

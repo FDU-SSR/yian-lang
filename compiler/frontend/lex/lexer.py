@@ -3,7 +3,7 @@ from pathlib import Path
 
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.token import Token
-from compiler.utils.IR.position import SrcPosition, SrcSpan
+from compiler.frontend.lex.position import SrcPosition, SrcSpan
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 IN_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")

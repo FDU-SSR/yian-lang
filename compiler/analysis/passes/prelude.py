@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from compiler.frontend.parse import ast as AST
-from compiler.utils.IR.position import SrcPosition, SrcSpan
+from compiler.frontend.lex.position import SrcPosition, SrcSpan
 
 # Prelude imports injected into every non-lib source file.
 # Each entry is (path_segments, target_name) representing:

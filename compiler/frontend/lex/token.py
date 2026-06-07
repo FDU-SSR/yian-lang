@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 
 class KeywordKind(Enum):

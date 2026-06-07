@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.generic_inference import GenericInference
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.ty.context import TypeCtx

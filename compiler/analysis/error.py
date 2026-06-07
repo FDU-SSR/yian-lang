@@ -1,4 +1,4 @@
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 
 class AnalysisError(ValueError):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.ty import ty as Type
-from compiler.utils.errors.yian_error import CompilerError
+from compiler.error import CompilerError
 
 if TYPE_CHECKING:
     from compiler.analysis.ty.context import TypeCtx

@@ -5,8 +5,9 @@ from typing import List
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.hir_builder import (build_enum_match,
-                                                  build_enum_match_arm,
-                                                  build_if_chain, build_switch)
+                                                    build_enum_match_arm,
+                                                    build_if_chain,
+                                                    build_switch)
 from compiler.analysis.lowering.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type

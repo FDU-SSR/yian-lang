@@ -8,7 +8,7 @@ from typing import TypeAlias
 
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass

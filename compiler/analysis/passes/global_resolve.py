@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.config.constants import AccessMode
 from compiler.frontend.parse import ast as AST
 
 if TYPE_CHECKING:
@@ -300,7 +299,7 @@ class GlobalResolve:
             fields.append(Type.StructField(
                 name=field.name.name,
                 type_id=field_type_id,
-                access_mode=AccessMode.Public if is_pub else AccessMode.Private,
+                access_mode=Type.AccessMode.Public if is_pub else Type.AccessMode.Private,
                 index=index,
             ))
         unit.symbol_ctx.exit_scope()

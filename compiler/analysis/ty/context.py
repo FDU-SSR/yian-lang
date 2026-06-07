@@ -12,10 +12,10 @@ from compiler.analysis.ty.name import TypeFormatter
 from compiler.analysis.ty.resolver import TypeResolver
 from compiler.analysis.ty.space import TypeSpace
 from compiler.analysis.unit import hir as HIR
+from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
-from compiler.utils.errors.yian_error import CompilerError
-from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.symbol.context import SymbolCtx

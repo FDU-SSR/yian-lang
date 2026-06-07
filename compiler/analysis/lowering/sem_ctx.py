@@ -7,10 +7,10 @@ from typing import Callable, Optional
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
-from compiler.utils.errors.yian_error import CompilerError
-from compiler.utils.IR.position import SrcSpan
 
 
 class LoopKind(Enum):

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from compiler.frontend.lex.token import Literal as LexLiteral
     from compiler.frontend.lex.token import StrLiteral
     from compiler.frontend.parse.ast_type import ASTType, ConstExpr
-    from compiler.utils.IR.position import SrcSpan
+    from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass

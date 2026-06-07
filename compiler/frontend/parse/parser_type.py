@@ -10,7 +10,7 @@ from compiler.frontend.parse import ast_type as Ty
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.stream import TokenStream
-from compiler.utils.IR.position import SrcSpan
+from compiler.frontend.lex.position import SrcSpan
 
 
 class TypeParser:

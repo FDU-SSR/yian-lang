@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, TypeAlias
 if TYPE_CHECKING:
     from compiler.frontend.lex.token import Token
     from compiler.frontend.parse.ast import Identifier
-    from compiler.utils.IR.position import SrcSpan
+    from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass

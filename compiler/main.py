@@ -16,12 +16,12 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.parser import ParseError, Parser
-from compiler.utils.IR.position import SrcSpan
-from compiler.utils.errors.yian_error import CompilerError
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:

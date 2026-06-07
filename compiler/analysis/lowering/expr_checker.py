@@ -9,10 +9,10 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex import token as Tok
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
-from compiler.utils.IR.position import SrcSpan
 
 
 class ExprChecker:
