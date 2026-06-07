@@ -284,6 +284,13 @@ class TraitType:
             methods[method_name] = context.instantiate(method_type_id, substs)
         return methods
 
+    def get_method_by_name(self, name: str, context: TypeCtx) -> int | None:
+        substs = dict(zip(self.custom_def.generics, self.generic_args))
+        for method_name, method_type_id in self.custom_def.methods.items():
+            if method_name == name:
+                return context.instantiate(method_type_id, substs)
+        return None
+
 
 @dataclass
 class FunctionPointerType:

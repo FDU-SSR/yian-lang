@@ -136,6 +136,9 @@ class ImplRegistry:
             return True
         if type_from_trait == trait_type and type_from_impl == target_type:
             return True
+        if isinstance(self.__ctx[type_from_trait], (Type.GenericType, Type.ConstGenericType)) and \
+           isinstance(self.__ctx[type_from_impl], (Type.GenericType, Type.ConstGenericType)):
+            return True
         return False
 
     def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int) -> bool:
