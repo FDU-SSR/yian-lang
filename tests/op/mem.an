@@ -4,9 +4,9 @@
 
 fn main() -> i32 {
     let a: i32 = 42;
-    let p: i32* = &a  // Address-of operator;
+    let p: i32* = &a;  // Address-of operator
 
-    assert *p == 42: "Dereference failed"  // Dereference operator;
+    assert *p == 42: "Dereference failed";  // Dereference operator
 
     *p = 100;
     assert a == 100: "Memory write via pointer failed";

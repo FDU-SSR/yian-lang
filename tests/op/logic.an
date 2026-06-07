@@ -17,7 +17,7 @@ fn main() -> i32
     }
     assert c == 5: "|| operator failed"
 
-    if ! a > 1{
+    if !(a > 1) {
         c = c + 1
     }
     assert c == 6: "! operator failed"

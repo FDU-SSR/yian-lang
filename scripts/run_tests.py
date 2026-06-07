@@ -32,10 +32,6 @@ LIB_DIR = ROOT_DIR / "lib"
 # ---------------------------------------------------------------------------
 # Test source file (relative to TESTS_DIR) → extra .an files to compile alongside.
 EXTRA_SOURCES: dict[str, list[str]] = {
-    "private/field.err.an": ["private/private.an"],
-    "private/import.err.an": ["private/private.an"],
-    "private/pub_field.an": ["private/private.an"],
-    "private/pub_import.an": ["private/private.an"],
 }
 
 # Directories (relative to TESTS_DIR) whose .an files are compiled together.
@@ -43,6 +39,10 @@ MULTI_FILE_DIRS: set[str] = {
     "import/func",
     "import/cycle",
     "import/type",
+    "private/pub_field",
+    "private/pub_import",
+    "private/field_err",
+    "private/import_err",
 }
 
 
