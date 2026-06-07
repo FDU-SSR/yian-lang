@@ -115,6 +115,7 @@ class GlobalResolve:
                     assert isinstance(ty, Type.StructType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
+                    ty.custom_def.unit_id = unit.unit_id
 
                 case AST.EnumDef(name=name, attrs=attrs):
                     # alloc in type space

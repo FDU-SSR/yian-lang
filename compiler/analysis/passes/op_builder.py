@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, NoReturn
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.call_dispatcher import CallDispatcher
 from compiler.analysis.passes.expr_evaluator import ExprEvaluator
+from compiler.analysis.passes.sem_ctx import DefKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.config.constants import AccessMode
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -522,7 +524,37 @@ class OpBuilder:
         if struct_field is None:
             raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
 
+        if struct_field.access_mode == AccessMode.Private:
+            if not self.__can_access_private_field(struct_ty):
+                raise AnalysisError(
+                    f"Field '{field_name}' of struct '{self.__type_ctx.get_name(receiver.type_id)}' "
+                    f"is private and cannot be accessed from unit {self.__ctx.unit_id} "
+                    f"unless inside an impl for that struct",
+                    span,
+                )
+
         return HIR.FieldAccess(span, receiver, struct_field, struct_field.type_id, is_place=receiver.is_place)
+
+    def __can_access_private_field(self, struct_ty: Type.StructType) -> bool:
+        """Check whether the current def context allows private field access to *struct_ty*."""
+        # Same unit — any code in the struct's defining file can access private fields.
+        if self.__ctx.unit_id == struct_ty.custom_def.unit_id:
+            return True
+
+        # Inside an impl for the struct — methods have access.
+        if self.__ctx.def_kind == DefKind.Method:
+            receiver = self.__ctx.receiver_type_id
+            if receiver is not None:
+                receiver_ty = self.__type_ctx[receiver]
+                if isinstance(receiver_ty, Type.PointerType):
+                    receiver = receiver_ty.pointee_type
+                if isinstance(self.__type_ctx[receiver], Type.StructType):
+                    receiver_struct = self.__type_ctx[receiver]
+                    assert isinstance(receiver_struct, Type.StructType)
+                    if id(receiver_struct.custom_def) == id(struct_ty.custom_def):
+                        return True
+
+        return False
 
     def __build_variant_construct(self, span: SrcSpan, enum_type_id: int, variant_name: str) -> HIR.Expr:
         enum_ty = self.__type_ctx[enum_type_id]

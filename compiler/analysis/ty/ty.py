@@ -111,6 +111,7 @@ class StructDef:
     name: str
     generics: list[int] = field(default_factory=list[int])
     fields: list[StructField] = field(default_factory=list[StructField])
+    unit_id: int = -1
 
 
 @dataclass
