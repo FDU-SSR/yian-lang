@@ -9,7 +9,7 @@ Usage:
     python scripts/run_tests.py                  # run all tests
     python scripts/run_tests.py -v               # verbose: show failure details
     python scripts/run_tests.py -q               # quiet: only the summary line
-    python scripts/run_tests.py -x               # skip experimental/ tests
+    python scripts/run_tests.py -x               # include experimental/ tests
     python scripts/run_tests.py -f call          # only run tests matching "call"
 """
 
@@ -322,10 +322,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Only print the summary line (no progress, no details).",
     )
     parser.add_argument(
-        "-x", "--skip-experimental",
+        "-x", "--experimental",
         action="store_true",
-        dest="skip_experimental",
-        help="Skip tests under tests/experimental/.",
+        dest="include_experimental",
+        help="Include tests under tests/experimental/.",
     )
     parser.add_argument(
         "-f", "--filter",
@@ -339,8 +339,8 @@ def main(argv: list[str] | None = None) -> int:
     # Discover.
     all_tests = discover_tests()
 
-    # Apply filters.
-    if args.skip_experimental:
+    # By default, exclude experimental tests.
+    if not args.include_experimental:
         all_tests = [t for t in all_tests if not t.name.startswith("experimental/")]
 
     if args.filter_str:
