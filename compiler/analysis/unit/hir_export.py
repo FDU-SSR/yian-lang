@@ -377,10 +377,11 @@ def export_def_point(def_point: object, type_ctx: TypeCtx | None = None) -> str:
     type_id = getattr(def_point, "type_id", -1)
     unit_id = getattr(def_point, "unit_id", -1)
     locals_list = getattr(def_point, "locals", [])
+    params_list = getattr(def_point, "params", [])
     body = getattr(def_point, "body", None)
 
     res = "DefPoint\n"
-    res += __line([], True, f"Header: type={__format_type(type_ctx, type_id)} unit_id={unit_id} locals={locals_list}")
+    res += __line([], True, f"Header: type={__format_type(type_ctx, type_id)} unit_id={unit_id} locals={locals_list} params={params_list}")
     if body is not None:
         res += __line([], True, "Body:")
         res += __export_block_node(body, [False], True, type_ctx)

@@ -22,6 +22,7 @@ class TypeCheck:
 
         self.__current_type_id: int = -1
         self.__current_locals: list[int] = []
+        self.__current_params: list[int] = []
 
         self.__sem_ctx = SemCtx(type_ctx)
         self.__expr_helper = ExprChecker(self.__sem_ctx)
@@ -90,6 +91,8 @@ class TypeCheck:
             raise CompilerError(f"Type with id {def_point.type_id} is not a function or method type")
 
         def_point.locals = self.__current_locals
+        def_point.params = self.__current_params
+        def_point.symbol_ctx = self.__sem_ctx.symbol_ctx  # type: ignore[assignment]
 
     def __check_function(self, def_point: DefPoint) -> HIR.Block:
         func_ty = self.__type_ctx[self.__current_type_id]
@@ -120,6 +123,8 @@ class TypeCheck:
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
+
+        self.__current_params = list(self.__sem_ctx.locals)
 
         return self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)
 
@@ -161,5 +166,7 @@ class TypeCheck:
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
+
+        self.__current_params = list(self.__sem_ctx.locals)
 
         return self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)

@@ -1,219 +1,285 @@
-"""
-CFG IR — a control-flow-graph intermediate representation between HIR and LLVM IR.
-
-All variables and parameters are represented as pointers.  Pointer-producing
-instructions (LocalPtr, FieldPtr, ElementPtr) compute addresses; value-producing
-instructions (Lit, Load, Binary, …) compute actual data.  Store is the only
-side-effecting non-terminator instruction.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
+from compiler.analysis.ty.ty import EnumVariant
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 # ---------------------------------------------------------------------------
-# Top-level
+# Top Level
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class Param:
-    name: str
-    type_id: int
 
 
 @dataclass
 class Function:
+    """Functions and methods are all lowwered to this node."""
     name: str
-    params: list[Param]
-    return_type: int            # YIAN type_id, void_id for procedures
-    blocks: list[Block]
-    entry: str                  # label of the first block
-
+    type_id: int  # type id of the function/method
+    blocks: list[Block]  # all basic blocks in the function/method
+    entry: Block  # entry block of the function/method, also included in `blocks`
 
 # ---------------------------------------------------------------------------
-# Pointer-producing instructions  (result is a pointer)
+# Statements
 # ---------------------------------------------------------------------------
+
 
 @dataclass
-class LocalPtr:
-    """Address of a local variable:  %r = localptr x : T"""
-    result: str
-    var_name: str
-    type_id: int                # T (not T*)
+class VarPtr:
+    """Get pointer to a local variable"""
+    result: Reg
+    var_ref: VarRef
 
 
 @dataclass
 class FieldPtr:
-    """Address of a struct field:  %r = fieldptr %base.field_name"""
-    result: str
-    base: str                   # pointer to struct
-    field_name: str
-    struct_type: int            # type_id of the struct
+    """Given ptr to a struct/tuple, get pointer to a field of it"""
+    result: Reg
+    base: Reg
+    field_index: int
 
 
 @dataclass
 class ElementPtr:
-    """Address of an array / tuple element:  %r = elementptr %base[%index]"""
-    result: str
-    base: str                   # pointer to array or tuple
-    index: str                  # SSA value (i64) or integer literal
-    element_type: int           # type_id of the element
-
-
-# ---------------------------------------------------------------------------
-# Value-producing instructions  (result is a value)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Lit:
-    """Literal constant:  %r = 42 : i32"""
-    result: str
-    value: int | float | bool
-    type_id: int
+    """Given ptr to an array, get pointer to an element of it"""
+    result: Reg
+    base: Reg
+    index: Value
 
 
 @dataclass
 class Load:
-    """Read from a pointer:  %r = load T, %ptr"""
-    result: str
-    ptr: str
-    type_id: int                # pointee type T
+    """Load value from pointer"""
+    result: Reg
+    ptr: Reg
+
+
+@dataclass
+class Store:
+    """Write value to a pointer"""
+    ptr: Reg
+    value: Value
 
 
 @dataclass
 class Binary:
-    """Binary operation:  %r = add i32 %lhs, %rhs"""
-    result: str
+    """Binary operation"""
+    result: Reg
     op: BinaryOperator
-    lhs: str
-    rhs: str
-    type_id: int
+    lhs: Value
+    rhs: Value
 
 
 @dataclass
 class Unary:
-    """Unary operation:  %r = neg i32 %x"""
-    result: str
+    """Unary operation"""
+    result: Reg
     op: UnaryOperator
-    operand: str
-    type_id: int
+    operand: Value
+
+
+@dataclass
+class Delete:
+    """Delete a pointer"""
+    ptr: Value
 
 
 @dataclass
 class Call:
-    """Function call:  %r = call @callee(arg1, arg2)   (result=None for void)"""
-    result: str | None
-    callee: str                 # function name
-    args: list[str]             # SSA value names
-    type_id: int
+    """Call with a return value"""
+    result: Reg
+    callee_type: int  # type id of the function/method
+    args: list[Value]
 
 
 @dataclass
-class StructConstruct:
-    """Struct literal:  %r = Point { x: %v1, y: %v2 }"""
-    result: str
-    struct_type: int
-    fields: list[tuple[str, str]]   # [(field_name, ssa_value)]
-
-
-@dataclass
-class VariantConstruct:
-    """Enum variant construction:  %r = Option::Some { val: %v }"""
-    result: str
-    enum_type: int
-    variant_name: str
-    payload: list[tuple[str, str]] | None   # None = no payload
+class VoidCall:
+    """Call without a return value"""
+    callee_type: int  # type id of the function/method
+    args: list[Value]
 
 
 @dataclass
 class Cast:
-    """Type cast:  %r = cast %v to i64"""
-    result: str
-    value: str
-    target_type: int
-    source_type: int
+    """Cast a value to a different type
+
+    - integer/char <=> integer/char
+    - integer/float <=> integer/float
+    - pointer <=> pointer
+    """
+    result: Reg
+    value: Value
+    to_type: int
+
+
+@dataclass
+class StructConstruct:
+    """Construct a struct"""
+    result: Reg
+    struct_type: int
+    fields: list[Value]
+
+
+@dataclass
+class VariantConstruct:
+    """Construct an enum variant"""
+    result: Reg
+    enum_type: int
+    variant: EnumVariant
+    payload_fields: list[Value] | None  # None = no payload
 
 
 @dataclass
 class Phi:
-    """Phi node:  %r = φ [(%v1, block1), (%v2, block2)]"""
-    result: str
-    incoming: list[tuple[str, str]]     # [(ssa_value, block_label)]
-    type_id: int
+    """Phi node"""
+    result: Reg
+    incoming: list[tuple[Block, Value]]
 
 
-# ---------------------------------------------------------------------------
-# Side-effecting instruction  (no result)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Store:
-    """Write to a pointer:  store %val, %ptr"""
-    ptr: str
-    value: str
-
+Stmt: TypeAlias = (
+    VarPtr | FieldPtr | ElementPtr
+    | Load | Store
+    | Binary | Unary | Delete
+    | Call | VoidCall | Cast | StructConstruct | VariantConstruct
+    | Phi
+)
 
 # ---------------------------------------------------------------------------
 # Terminators
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Ret:
-    """Return from function."""
-    value: str | None           # None = void return
+    """Return value from function."""
+    value: Value
+
+
+@dataclass
+class RetVoid:
+    """Return void from function."""
 
 
 @dataclass
 class Br:
     """Unconditional branch."""
-    target: str                 # block label
+    target: Block
 
 
 @dataclass
 class CondBr:
     """Conditional branch:  br %cond, then, else"""
-    cond: str
-    then_block: str
-    else_block: str
+    cond: Value  # must be bool
+    then_block: Block
+    else_block: Block
 
 
 @dataclass
-class Switch:
-    """Multi-way branch on integer discriminant."""
-    value: str
-    default_block: str | None   # None = exhaustive (no default needed)
-    cases: list[tuple[int, str]]  # [(discriminant, block_label)]
+class Match:
+    """Match statement"""
+    value: Value  # must be integer/char/enum
+    arms: list[MatchArm]
+    default: Block | None
 
 
 @dataclass
-class Unreachable:
-    """Marks an unreachable code path."""
+class Panic:
+    """Panic statement"""
+    message: Value  # must be `str` type
 
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-
-Stmt: TypeAlias = (
-    LocalPtr | FieldPtr | ElementPtr
-    | Lit | Load | Binary | Unary | Call
-    | StructConstruct | VariantConstruct | Cast | Phi
-    | Store
-)
-
-Terminator: TypeAlias = Ret | Br | CondBr | Switch | Unreachable
-
+Terminator: TypeAlias = Ret | RetVoid | Br | CondBr | Match | Panic
 
 # ---------------------------------------------------------------------------
-# Basic block
+# Basic Data Structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Block:
+    """Basic block"""
     label: str
     stmts: list[Stmt] = field(default_factory=list[Stmt])
-    terminator: Terminator | None = None   # None until the block is sealed
+    terminator: Terminator | None = None
+
+
+@dataclass
+class VarRef:
+    """Reference to a local variable"""
+    name: str
+    symbol_id: int
+    type_id: int
+
+
+@dataclass
+class Reg:
+    """SSA register"""
+    name: str
+    type_id: int
+
+
+@dataclass
+class IntLiteral:
+    """Integer literal"""
+    value: int
+    type_id: int
+
+
+@dataclass
+class FloatLiteral:
+    """Float literal"""
+    value: float
+    type_id: int
+
+
+@dataclass
+class BoolLiteral:
+    """Bool literal"""
+    value: bool
+    type_id: int
+
+
+@dataclass
+class CharLiteral:
+    """Char literal"""
+    value: str
+    type_id: int
+
+
+@dataclass
+class StringLiteral:
+    """String literal"""
+    value: str
+    type_id: int
+
+
+Literal: TypeAlias = IntLiteral | FloatLiteral | BoolLiteral | CharLiteral | StringLiteral
+
+Value: TypeAlias = Literal | Reg
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MatchArm:
+    """Match arm"""
+    pattern: Pattern
+    body: Block
+
+
+@dataclass
+class IntPattern:
+    """Integer pattern"""
+    value: IntLiteral
+
+
+@dataclass
+class EnumPattern:
+    """Enum pattern"""
+    variant: EnumVariant
+    fields: list[VarRef] | None  # None = no payload
+
+
+Pattern: TypeAlias = IntPattern | EnumPattern

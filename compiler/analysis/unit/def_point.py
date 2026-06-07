@@ -16,6 +16,7 @@ class DefPoint:
     symbol_ctx: SymbolCtx
     body: HIR.Block | None = None
     locals: list[int] = field(default_factory=list[int])
+    params: list[int] = field(default_factory=list[int])
 
     def export(self, type_ctx: TypeCtx | None = None) -> str:
         from compiler.analysis.unit.hir_export import export_def_point

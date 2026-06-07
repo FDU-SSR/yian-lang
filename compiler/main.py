@@ -16,6 +16,8 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.codegen.cfg.dump import dump as dump_cfg
+from compiler.codegen.cfg.translator import CfgTranslator
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.position import SrcSpan
@@ -61,6 +63,13 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         default=Path("build/hir.txt"),
         help="Write HIR output to PATH (default: build/hir.txt).",
+    )
+    parser.add_argument(
+        "--cfg",
+        type=Path,
+        metavar="PATH",
+        default=Path("build/cfg.txt"),
+        help="Write CFG output to PATH (default: build/cfg.txt).",
     )
     return parser.parse_args(argv)
 
@@ -145,6 +154,17 @@ def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> s
 
 def __format_hir_output(unit_datas: Mapping[int, UnitData], def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
     return export_hir_bundle(unit_datas, def_points, type_ctx)
+
+
+def __format_cfg_output(def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
+    translator = CfgTranslator(type_ctx)
+    translator.run(def_points)
+    functions = translator.export()
+
+    sections: list[str] = []
+    for name in sorted(functions.keys()):
+        sections.append(dump_cfg(functions[name]))
+    return "\n\n".join(sections) + ("\n" if sections else "")
 
 
 def __lex(src_files: list[Path]) -> list[list[Token]]:
@@ -234,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.hir is not None:
         __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
+
+    if args.cfg is not None:
+        __write_text_output(args.cfg, __format_cfg_output(def_points, type_ctx))
 
     return 0
 

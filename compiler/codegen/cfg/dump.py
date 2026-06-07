@@ -12,10 +12,9 @@ def dump(func: IR.Function) -> str:
     """Return a human-readable string representation of *func*."""
     out: list[str] = []
 
-    # signature
-    param_strs = [f"%{p.name}: {__type_str(p.type_id)}" for p in func.params]
-    ret = __type_str(func.return_type) if func.return_type >= 0 else "void"
-    out.append(f"function @{func.name}({', '.join(param_strs)}) -> {ret} {{")
+    # signature — Function no longer carries params/return_type directly;
+    # those are encoded in the type system via func.type_id.
+    out.append(f"function @{func.name} (type_id={func.type_id}) {{")
 
     for block in func.blocks:
         out.append(f"  {block.label}:")
@@ -29,75 +28,182 @@ def dump(func: IR.Function) -> str:
     return "\n".join(out)
 
 
+# ---------------------------------------------------------------------------
+# statement dumpers
+# ---------------------------------------------------------------------------
+
+# pylint: disable=too-many-return-statements
 def __dump_stmt(stmt: IR.Stmt) -> str:
     match stmt:
-        case IR.LocalPtr(result=result, var_name=name, type_id=tid):
-            return f"%{result} = localptr {name}  [{__type_str(tid)}]"
+        case IR.VarPtr(result=result, var_ref=var_ref):
+            return (
+                f"%{result.name} = varptr {var_ref.name}"
+                f"  [{__type_str(var_ref.type_id)}]"
+            )
 
-        case IR.FieldPtr(result=result, base=base, field_name=field, struct_type=st):
-            return f"%{result} = fieldptr %{base}.{field}  [struct {__type_str(st)}]"
+        case IR.FieldPtr(result=result, base=base, field_index=idx):
+            return f"%{result.name} = fieldptr %{base.name}[{idx}]"
 
-        case IR.ElementPtr(result=result, base=base, index=idx, element_type=et):
-            return f"%{result} = elementptr %{base}[{idx}]  [{__type_str(et)}]"
+        case IR.ElementPtr(result=result, base=base, index=index):
+            return (
+                f"%{result.name} = elementptr %{base.name}"
+                f"[{__dump_value(index)}]"
+            )
 
-        case IR.Lit(result=result, value=value, type_id=tid):
-            return f"%{result} = Lit {__repr_value(value)}  [{__type_str(tid)}]"
-
-        case IR.Load(result=result, ptr=ptr, type_id=tid):
-            return f"%{result} = Load %{ptr}  [{__type_str(tid)}]"
-
-        case IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs, type_id=tid):
-            return f"%{result} = Binary {__op_str(op)} %{lhs}, %{rhs}  [{__type_str(tid)}]"
-
-        case IR.Unary(result=result, op=op, operand=operand, type_id=tid):
-            return f"%{result} = Unary {__op_str(op)} %{operand}  [{__type_str(tid)}]"
-
-        case IR.Call(result=result, callee=callee, args=args, type_id=tid):
-            arg_str = ", ".join(f"%{a}" for a in args)
-            res = f"%{result}" if result is not None else "void"
-            return f"{res} = call @{callee}({arg_str})  [{__type_str(tid)}]"
-
-        case IR.StructConstruct(result=result, struct_type=st, fields=fields):
-            field_str = ", ".join(f"{n}: %{v}" for n, v in fields)
-            return f"%{result} = Struct {__type_str(st)} {{{field_str}}}"
-
-        case IR.VariantConstruct(result=result, variant_name=name, payload=payload):
-            if payload is not None:
-                pl = ", ".join(f"{n}: %{v}" for n, v in payload)
-                return f"%{result} = Variant {name} {{{pl}}}"
-            return f"%{result} = Variant {name}"
-
-        case IR.Cast(result=result, value=value, target_type=tt, source_type=st):
-            return f"%{result} = Cast %{value}  [{__type_str(st)} -> {__type_str(tt)}]"
-
-        case IR.Phi(result=result, incoming=incoming, type_id=tid):
-            inc_str = ", ".join(f"[%{v}, {b}]" for v, b in incoming)
-            return f"%{result} = Phi [{inc_str}]  [{__type_str(tid)}]"
+        case IR.Load(result=result, ptr=ptr):
+            return (
+                f"%{result.name} = load %{ptr.name}"
+                f"  [{__type_str(result.type_id)}]"
+            )
 
         case IR.Store(ptr=ptr, value=value):
-            return f"Store %{ptr}, %{value}"
+            return f"store %{ptr.name}, {__dump_value(value)}"
 
+        case IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = binary {__op_str(op)}"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Unary(result=result, op=op, operand=operand):
+            return (
+                f"%{result.name} = unary {__op_str(op)}"
+                f" {__dump_value(operand)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Delete(ptr=ptr):
+            return f"delete {__dump_value(ptr)}"
+
+        case IR.Call(result=result, callee_type=callee_type, args=args):
+            arg_str = ", ".join(__dump_value(a) for a in args)
+            return (
+                f"%{result.name} = call @{__type_str(callee_type)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.VoidCall(callee_type=callee_type, args=args):
+            arg_str = ", ".join(__dump_value(a) for a in args)
+            return f"voidcall @{__type_str(callee_type)}({arg_str})"
+
+        case IR.Cast(result=result, value=value, to_type=to_type):
+            return (
+                f"%{result.name} = cast {__dump_value(value)}"
+                f" to {__type_str(to_type)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.StructConstruct(
+            result=result, struct_type=struct_type, fields=fields
+        ):
+            field_str = ", ".join(__dump_value(f) for f in fields)
+            return (
+                f"%{result.name} = struct"
+                f" {__type_str(struct_type)} {{{field_str}}}"
+            )
+
+        case IR.VariantConstruct(
+            result=result,
+            enum_type=_,
+            variant=variant,
+            payload_fields=payload_fields,
+        ):
+            if payload_fields is not None:
+                pl = ", ".join(__dump_value(f) for f in payload_fields)
+                return f"%{result.name} = variant {variant.name} {{{pl}}}"
+            return f"%{result.name} = variant {variant.name}"
+
+        case IR.Phi(result=result, incoming=incoming):
+            inc_str = ", ".join(
+                f"[{__dump_value(v)}, {b.label}]" for b, v in incoming
+            )
+            return (
+                f"%{result.name} = phi [{inc_str}]"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+
+# ---------------------------------------------------------------------------
+# terminator dumpers
+# ---------------------------------------------------------------------------
 
 def __dump_terminator(term: IR.Terminator) -> str:
     match term:
         case IR.Ret(value=value):
-            return f"Ret %{value}" if value is not None else "Ret"
+            return f"ret {__dump_value(value)}"
+
+        case IR.RetVoid():
+            return "ret"
+
         case IR.Br(target=target):
-            return f"Br {target}"
-        case IR.CondBr(cond=cond, then_block=then_, else_block=else_):
-            return f"CondBr %{cond}, {then_}, {else_}"
-        case IR.Switch(value=value, default_block=default, cases=cases):
-            case_strs = [f"case {v}: {b}" for v, b in cases]
+            return f"br {target.label}"
+
+        case IR.CondBr(
+            cond=cond, then_block=then_block, else_block=else_block
+        ):
+            return (
+                f"condbr {__dump_value(cond)},"
+                f" {then_block.label}, {else_block.label}"
+            )
+
+        case IR.Match(value=value, arms=arms, default=default):
+            arm_strs = [__dump_match_arm(arm) for arm in arms]
             if default is not None:
-                case_strs.append(f"default: {default}")
-            return f"Switch %{value} [{', '.join(case_strs)}]"
-        case IR.Unreachable():
-            return "Unreachable"
+                arm_strs.append(f"default: {default.label}")
+            return f"match {__dump_value(value)} {{{', '.join(arm_strs)}}}"
+
+        case IR.Panic(message=message):
+            return f"panic {__dump_value(message)}"
+
+
+def __dump_match_arm(arm: IR.MatchArm) -> str:
+    pattern_str = __dump_pattern(arm.pattern)
+    return f"{pattern_str} => {arm.body.label}"
+
+
+# pylint: disable=too-many-return-statements
+def __dump_pattern(pattern: IR.Pattern) -> str:
+    match pattern:
+        case IR.IntPattern(value=value):
+            return str(value.value)
+
+        case IR.CharPattern(value=value):
+            return repr(value.value)
+
+        case IR.EnumPattern(variant=variant, fields=fields):
+            if fields is not None:
+                field_strs = [f.name for f in fields]
+                return f"{variant.name}({', '.join(field_strs)})"
+            return variant.name
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+# pylint: disable=too-many-return-statements
+def __dump_value(val: IR.Value) -> str:
+    """Format a Value (Reg or Literal) for display."""
+    match val:
+        case IR.Reg(name=name):
+            return f"%{name}"
+
+        case IR.IntLiteral(value=v):
+            return f"{v}"
+
+        case IR.FloatLiteral(value=v):
+            return f"{v}"
+
+        case IR.BoolLiteral(value=v):
+            return "true" if v else "false"
+
+        case IR.CharLiteral(value=v):
+            return repr(v)
+
+        case IR.StringLiteral(value=v):
+            return repr(v)
+
 
 def __type_str(type_id: int) -> str:
     if type_id < 0:
@@ -107,9 +213,3 @@ def __type_str(type_id: int) -> str:
 
 def __op_str(op: BinaryOperator | UnaryOperator) -> str:
     return str(op)
-
-
-def __repr_value(value: int | float | bool) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return repr(value)
