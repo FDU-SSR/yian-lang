@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_evaluator import ExprEvaluator
+from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import LookupResult
@@ -15,7 +15,7 @@ from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
-    from compiler.analysis.passes.sem_ctx import SemCtx
+    from compiler.analysis.lowering.sem_ctx import SemCtx
 
 # Built-in instruction names that form expressions (they return values).
 BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write"})

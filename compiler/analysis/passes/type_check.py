@@ -1,7 +1,7 @@
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.expr_checker import ExprChecker
-from compiler.analysis.passes.sem_ctx import DefKind, SemCtx
-from compiler.analysis.passes.stmt_checker import StmtChecker
+from compiler.analysis.lowering.expr_checker import ExprChecker
+from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
+from compiler.analysis.lowering.stmt_checker import StmtChecker
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx

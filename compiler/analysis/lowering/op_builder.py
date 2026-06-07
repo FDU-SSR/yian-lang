@@ -5,9 +5,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, NoReturn
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.call_dispatcher import CallDispatcher
-from compiler.analysis.passes.expr_evaluator import ExprEvaluator
-from compiler.analysis.passes.sem_ctx import DefKind
+from compiler.analysis.lowering.call_dispatcher import CallDispatcher
+from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
+from compiler.analysis.lowering.sem_ctx import DefKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
@@ -18,7 +18,7 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.IR.position import SrcSpan
 
 if TYPE_CHECKING:
-    from compiler.analysis.passes.sem_ctx import SemCtx
+    from compiler.analysis.lowering.sem_ctx import SemCtx
 
 
 class OperandType(Enum):

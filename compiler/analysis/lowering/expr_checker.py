@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.passes.call_dispatcher import CallDispatcher
-from compiler.analysis.passes.op_builder import OpBuilder
-from compiler.analysis.passes.sem_ctx import SemCtx
+from compiler.analysis.lowering.call_dispatcher import CallDispatcher
+from compiler.analysis.lowering.op_builder import OpBuilder
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
