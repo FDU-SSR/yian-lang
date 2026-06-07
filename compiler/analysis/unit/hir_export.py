@@ -108,11 +108,11 @@ def __export_stmt(stmt: HIR.Stmt, guides: list[bool], is_last: bool, type_ctx: T
             res = __line(guides, is_last, f"Delete: span={__format_span(stmt.span)}")
             res += __export_expr_child("Target", stmt.target, guides, is_last, True, type_ctx)
             return res
-        case HIR.Switch():
-            return __export_switch(stmt, guides, is_last, type_ctx)
         case HIR.Match():
             return __export_match(stmt, guides, is_last, type_ctx)
-        case HIR.Binary() | HIR.Unary() | HIR.Call() | HIR.StructConstruct() | HIR.Invoke() | HIR.Cast() | HIR.MethodCall() | HIR.VariantConstruct() | HIR.FieldAccess() | HIR.TupleAccess() | HIR.DynValue() | HIR.DynBuffer() | HIR.SizeOf() | HIR.BitCast() | HIR.SysRead() | HIR.SysWrite() | HIR.Tuple() | HIR.Array() | HIR.Var() | HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Ty():
+        case HIR.SysWrite():
+            return __export_sys_write(stmt, guides, is_last, type_ctx)
+        case _:
             return __export_expr_stmt(stmt, guides, is_last, type_ctx)
 
 
@@ -139,32 +139,23 @@ def __export_loop(stmt: HIR.Loop, guides: list[bool], is_last: bool, type_ctx: T
     return res
 
 
-def __export_switch_arm(arm: HIR.SwitchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    header = f"SwitchArm: pattern={arm.pattern if arm.pattern is not None else '_'} int_width={arm.int_width}"
+def __export_match_arm(arm: HIR.MatchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    if arm.pattern is None:
+        header = "NewMatchArm: _"
+    elif isinstance(arm.pattern, HIR.IntPattern):
+        header = f"NewMatchArm: int={arm.pattern.value} type_id={arm.pattern.type_id}"
+    elif isinstance(arm.pattern, HIR.CharPattern):
+        header = f"NewMatchArm: char={arm.pattern.value!r}"
+    else:
+        unpacked = arm.pattern.unpack_fields if arm.pattern.unpack_fields is not None else []
+        header = f"NewMatchArm: variant={arm.pattern.variant.name} unpack_fields={unpacked}"
     res = __line(guides, is_last, header)
     res += __export_block_child("Body", arm.body, guides, is_last, True, type_ctx)
     return res
 
 
-def __export_match_arm(arm: HIR.MatchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    variant_name = arm.variant.name if arm.variant is not None else "_"
-    unpacked = arm.unpack_fields if arm.unpack_fields is not None else []
-    res = __line(guides, is_last, f"MatchArm: variant={variant_name} unpack_fields={unpacked}")
-    res += __export_block_child("Body", arm.body, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_switch(stmt: HIR.Switch, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Switch: span={__format_span(stmt.span)}")
-    res += __export_expr_child("Value", stmt.value, guides, is_last, False, type_ctx)
-    child_guides = guides + [not is_last]
-    res += __line(child_guides, True, "Arms:")
-    res += __export_items_with_handler(stmt.arms, child_guides + [False], lambda arm, g, last: __export_switch_arm(arm, g, last, type_ctx))
-    return res
-
-
 def __export_match(stmt: HIR.Match, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Match: span={__format_span(stmt.span)}")
+    res = __line(guides, is_last, f"NewMatch: span={__format_span(stmt.span)}")
     res += __export_expr_child("Value", stmt.value, guides, is_last, False, type_ctx)
     child_guides = guides + [not is_last]
     res += __line(child_guides, True, "Arms:")
@@ -210,8 +201,6 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_bit_cast(expr, guides, is_last, type_ctx)
         case HIR.SysRead():
             return __export_sys_read(expr, guides, is_last, type_ctx)
-        case HIR.SysWrite():
-            return __export_sys_write(expr, guides, is_last, type_ctx)
         case HIR.Tuple():
             return __export_tuple(expr, guides, is_last, type_ctx)
         case HIR.Array():

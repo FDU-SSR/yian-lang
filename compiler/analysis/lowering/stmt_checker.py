@@ -4,10 +4,9 @@ from typing import List
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
-from compiler.analysis.lowering.hir_builder import (build_enum_match,
-                                                    build_enum_match_arm,
-                                                    build_if_chain,
-                                                    build_switch)
+from compiler.analysis.lowering.hir_builder import (build_if_chain,
+                                                    build_match,
+                                                    build_match_arm)
 from compiler.analysis.lowering.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -116,23 +115,12 @@ class StmtChecker:
         value_expr = self.__expr.value(stmt.expr)
         value_type = ctx.type_ctx[value_expr.type_id]
 
-        # Path 1: integer-like or C-style enum -> Switch
-        if isinstance(value_type, Type.IntType) or isinstance(value_type, Type.CharType):
-            self.__lower_match_as_switch(stmt, value_expr, out, ctx)
+        # Path 1: integer-like, char, or enum -> NewMatch
+        if isinstance(value_type, (Type.IntType, Type.CharType, Type.EnumType)):
+            self.__lower_match_new_match(stmt, value_expr, out, ctx)
             return
 
-        # Path 2/3: enums -> either C-like (no payloads) or payload-carrying variants
-        if isinstance(value_type, Type.EnumType):
-            variants = value_type.get_variants(ctx.type_ctx)
-            if all(v.payload_type is None for v in variants):
-                # C-like enum, can use switch lowering
-                self.__lower_match_as_switch(stmt, value_expr, out, ctx)
-                return
-            # payload-carrying enum: need unpacking per-arm
-            self.__lower_match_enum_unpack(stmt, value_expr, out, ctx)
-            return
-
-        # Fallback: try equality-based lowering using PartialEq (method calls)
+        # Fallback: equality-based lowering using PartialEq -> if-chain
         self.__lower_match_with_partial_eq(stmt, value_expr, out, ctx)
 
     def check_return(self, stmt: AST.Return, out: List[HIR.Stmt], ctx: SemCtx) -> None:
@@ -218,68 +206,80 @@ class StmtChecker:
         ctx.push_local(symbol_id)
         return symbol_id
 
-    def __lower_match_as_switch(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        """Lower `match` to a `Switch` HIR when the scrutinee is integer-like or
-        a C-style enum. This is a stub: implement pattern -> integer mapping and
-        build `HIR.SwitchArm`s, then emit `hir_builder.build_switch`.
-        """
-        # Build switch arms from AST patterns. Support IntPattern, EnumPattern, WildcardPattern.
-        arms: list[HIR.SwitchArm] = []
+    def __lower_match_new_match(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
+        """Lower `match` to a `NewMatch` HIR for integer-like, char, and enum scrutinees."""
+        assert ctx.symbol_ctx is not None
 
-        # determine int width in bytes
-        switch_ty = ctx.type_ctx[value_expr.type_id]
-        if isinstance(switch_ty, Type.IntType):
-            int_width = switch_ty.size
-        elif isinstance(switch_ty, Type.CharType):
-            int_width = 4  # unicode scalar values can be up to 4 bytes
-        else:
-            int_width = 4  # default width for enums / other types represented as integers
+        arms: list[HIR.MatchArm] = []
 
         for pat, arm_block in stmt.arms:
-            # lower arm body
-            body = self.check_block(arm_block, ctx)
-
             match pat:
                 case AST.IntPattern():
+                    body = self.check_block(arm_block, ctx)
                     for lit in pat.values:
-                        val = lit.value
-                        arms.append(HIR.SwitchArm(pat.span, val, int_width, body))
+                        pattern: HIR.Pattern | None = HIR.IntPattern(pat.span, lit.value, value_expr.type_id)
+                        arms.append(build_match_arm(pat.span, pattern, body))
                 case AST.CharPattern():
+                    body = self.check_block(arm_block, ctx)
                     for lit in pat.values:
-                        val = ord(lit.value)
-                        arms.append(HIR.SwitchArm(pat.span, val, int_width, body))
+                        pattern = HIR.CharPattern(pat.span, lit.value)
+                        arms.append(build_match_arm(pat.span, pattern, body))
                 case AST.EnumPattern():
-                    # each variant name maps to a discriminant
-                    enum_ty = ctx.type_ctx[value_expr.type_id]
-                    assert isinstance(enum_ty, Type.EnumType)
+                    body = self.check_block(arm_block, ctx)
                     for ident in pat.variants:
-                        variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
-                        if variant is None:
-                            raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-                        arms.append(HIR.SwitchArm(pat.span, variant.discriminant, int_width, body))
+                        variant = self.__resolve_enum_variant(ident, value_expr.type_id, ctx)
+                        pattern = HIR.EnumPattern(pat.span, variant, None)
+                        arms.append(build_match_arm(pat.span, pattern, body))
+                case AST.PayloadPattern():
+                    variant = self.__resolve_enum_variant(pat.variant, value_expr.type_id, ctx)
+                    if variant.payload_type is None:
+                        raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
+                    payload_ty = ctx.type_ctx[variant.payload_type]
+                    assert isinstance(payload_ty, Type.StructType)
+                    field_types = [f.type_id for f in payload_ty.get_fields(ctx.type_ctx)]
+                    if len(pat.fields) != len(field_types):
+                        raise AnalysisError(
+                            f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields",
+                            pat.span,
+                        )
+                    ctx.enter_scope()
+                    try:
+                        unpack_fields: list[int] = []
+                        for ident, ftype in zip(pat.fields, field_types):
+                            sym_id = self.__declare_local_symbol(ident, ftype, ctx)
+                            unpack_fields.append(sym_id)
+                        body = self.check_block(arm_block, ctx)
+                        pattern = HIR.EnumPattern(pat.span, variant, unpack_fields)
+                        arms.append(build_match_arm(pat.span, pattern, body))
+                    finally:
+                        ctx.exit_scope()
                 case AST.WildcardPattern():
-                    # wildcard -> default arm
-                    arms.append(HIR.SwitchArm(pat.span, None, int_width, body))
+                    body = self.check_block(arm_block, ctx)
+                    arms.append(build_match_arm(pat.span, None, body))
                 case _:
-                    raise AnalysisError(f"Unsupported pattern {pat}", pat.span)
+                    raise AnalysisError(f"Unsupported pattern type {type(pat).__name__}", pat.span)
 
-        # Emit the switch HIR
-        out.append(build_switch(stmt.span, value_expr, arms))
+        out.append(build_match(stmt.span, value_expr, arms))
+
+    def __resolve_enum_variant(self, ident: AST.Identifier, enum_type_id: int, ctx: SemCtx) -> Type.EnumVariant:
+        """Resolve an enum variant name to its EnumVariant definition."""
+        enum_ty = ctx.type_ctx[enum_type_id]
+        assert isinstance(enum_ty, Type.EnumType)
+        variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
+        if variant is None:
+            raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+        return variant
 
     def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        # Build condition -> block pairs for each arm, using PartialEq-based
-        # tests for non-switchable patterns. Concrete equality construction
-        # and pattern decomposition are delegated to helper interfaces below.
+        """Lower `match` to an if-chain using PartialEq comparisons."""
         cond_and_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
         default_block: HIR.Block | None = None
 
         for pat, arm_block in stmt.arms:
-            # wildcard becomes the default arm
             if isinstance(pat, AST.WildcardPattern):
                 default_block = self.check_block(arm_block, ctx)
                 continue
 
-            # build a boolean-testing expression for this pattern using PartialEq
             cond_expr = self.__pattern_to_eq_cond(pat, value_expr, ctx)
             body = self.check_block(arm_block, ctx)
             cond_and_blocks.append((cond_expr, body))
@@ -287,8 +287,7 @@ class StmtChecker:
         out.append(build_if_chain(stmt.span, cond_and_blocks, default_block))
 
     def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: HIR.Expr, ctx: SemCtx) -> HIR.Expr:
-        # Handle simple literal patterns by constructing HIR literal nodes
-        # and using ExprChecker.call_eq to generate boolean expressions.
+        """Build a boolean expression testing *value_expr* against *pat* using PartialEq."""
         conds: list[HIR.Expr] = []
 
         match pat:
@@ -318,81 +317,14 @@ class StmtChecker:
                     eq_res = self.__expr.call_eq(value_expr, rhs)
                     conds.append(eq_res)
             case AST.PayloadPattern():
-                # Payload patterns introduce bindings; equality-based lowering
-                # cannot handle binding patterns here.
                 raise AnalysisError("Payload patterns are not supported by PartialEq-based lowering", pat.span)
             case _:
                 raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by PartialEq lowering", pat.span)
 
-        # combine conditions with logical OR if multiple alternatives
         if len(conds) == 0:
-            # defensive: no condition built -> false
             return HIR.BoolLiteral(span=pat.span, value=False, type_id=TypeCtx.bool_id, is_place=False)
 
         expr = conds[0]
         for c in conds[1:]:
             expr = HIR.Binary(span=expr.span, op=BinaryOperator.LogicalOr, left=expr, right=c, type_id=TypeCtx.bool_id, is_place=False)
         return expr
-
-    def __lower_match_enum_unpack(self, stmt: AST.Match, value_expr: HIR.Expr, out: List[HIR.Stmt], ctx: SemCtx) -> None:
-        assert ctx.symbol_ctx is not None
-
-        enum_ty = ctx.type_ctx[value_expr.type_id]
-        assert isinstance(enum_ty, Type.EnumType)
-
-        arms: list[HIR.MatchArm] = []
-
-        for pat, arm_block in stmt.arms:
-            if isinstance(pat, AST.WildcardPattern):
-                body = self.check_block(arm_block, ctx)
-                arms.append(build_enum_match_arm(pat.span, None, None, body))
-                continue
-
-            if isinstance(pat, AST.EnumPattern):
-                for ident in pat.variants:
-                    variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
-                    if variant is None:
-                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-
-                    # If variant has payload, but pattern did not bind fields,
-                    # treat as matching discriminant only (ignore payload).
-                    body = self.check_block(arm_block, ctx)
-                    arms.append(build_enum_match_arm(pat.span, variant, None, body))
-                continue
-
-            # PayloadPattern: variant with explicit field bindings
-            if isinstance(pat, AST.PayloadPattern):
-                variant = enum_ty.get_variant_by_name(pat.variant.name, ctx.type_ctx)
-                if variant is None:
-                    raise AnalysisError(f"Unknown enum variant '{pat.variant.name}'", pat.variant.span)
-
-                if variant.payload_type is None:
-                    raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
-
-                payload_ty = ctx.type_ctx[variant.payload_type]
-                assert isinstance(payload_ty, Type.StructType), f"Expected struct payload for variant '{pat.variant.name}', got {type(payload_ty).__name__}"
-
-                field_types = [f.type_id for f in payload_ty.get_fields(ctx.type_ctx)]
-
-                if len(pat.fields) != len(field_types):
-                    raise AnalysisError(f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields", pat.span)
-
-                # Enter a scope for the arm's bindings, declare symbols, lower body, then exit scope.
-                ctx.enter_scope()
-                try:
-                    unpack_fields: list[int] = []
-                    for ident, ftype in zip(pat.fields, field_types):
-                        sym_id = self.__declare_local_symbol(ident, ftype, ctx)
-                        unpack_fields.append(sym_id)
-
-                    body = self.check_block(arm_block, ctx)
-                    arms.append(build_enum_match_arm(pat.span, variant, unpack_fields, body))
-                finally:
-                    ctx.exit_scope()
-                continue
-
-            # Other patterns are unsupported in this path
-            raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by enum-unpack lowering (basic path)", pat.span)
-
-        match_stmt = build_enum_match(stmt.span, value_expr, arms)
-        out.append(match_stmt)

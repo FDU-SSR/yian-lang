@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from compiler.analysis.ty import ty as Type
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.lex.position import SrcSpan
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 
 @dataclass
@@ -69,34 +69,15 @@ class Delete:
 
 
 @dataclass
-class Switch:
-    """
-    Low-level match for:
-
-    1. types that are represented as integers (e.g. integer types, char)
-    2. enum types that are represented as integers (i.e. C-like enums without payload)
-    3. enum types that are represented as integers + payload, but don't need to unpack the payload
-    """
-    span: SrcSpan
-    value: Expr
-    arms: list[SwitchArm]
-
-
-@dataclass
-class SwitchArm:
-    span: SrcSpan
-    pattern: int | None  # None means the default case
-    int_width: int  # in bytes
-    body: Block
-
-
-@dataclass
 class Match:
     """
-    Low-level match for:
+    Low-level match covering:
 
-    1. enum types that are represented as integers + payload, and need to unpack the payload
+    1. Integer patterns (integer types, char via ord)
+    2. Char patterns
+    3. Enum patterns — C-like (no payload) or with payload unpacking
     """
+
     span: SrcSpan
     value: Expr
     arms: list[MatchArm]
@@ -105,9 +86,31 @@ class Match:
 @dataclass
 class MatchArm:
     span: SrcSpan
-    variant: Type.EnumVariant | None  # None means the default case
-    unpack_fields: list[int] | None  # symbol ids of unpacked variables, None means not unpacking
+    pattern: Pattern | None  # None means the default/wildcard case
     body: Block
+
+
+@dataclass
+class IntPattern:
+    span: SrcSpan
+    value: int
+    type_id: int  # type_id of the matched integer
+
+
+@dataclass
+class CharPattern:
+    span: SrcSpan
+    value: str
+
+
+@dataclass
+class EnumPattern:
+    span: SrcSpan
+    variant: Type.EnumVariant
+    unpack_fields: list[int] | None  # symbol ids of unpacked variables, None means not unpacking
+
+
+Pattern: TypeAlias = IntPattern | CharPattern | EnumPattern
 
 
 @dataclass
@@ -327,7 +330,7 @@ Expr: TypeAlias = (
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | SysRead | SysWrite
+    | SizeOf | BitCast | SysRead
     | Tuple | Array
     | Var | Literal | Ty
 )
@@ -338,7 +341,8 @@ Stmt: TypeAlias = (
     | If | Loop
     | Panic
     | Delete
-    | Switch | Match
+    | Match
     | Block
     | Expr
+    | SysWrite
 )

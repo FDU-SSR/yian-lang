@@ -114,6 +114,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 return f"%{result.name} = variant {variant.name} {{{pl}}}"
             return f"%{result.name} = variant {variant.name}"
 
+        case IR.SysWrite(
+            fd=fd,
+            buf=buf,
+        ):
+            return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
+
         case IR.Phi(result=result, incoming=incoming):
             inc_str = ", ".join(
                 f"[{__dump_value(v)}, {b.label}]" for b, v in incoming

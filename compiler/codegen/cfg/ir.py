@@ -130,6 +130,12 @@ class VariantConstruct:
 
 
 @dataclass
+class SysWrite:
+    fd: Value
+    buf: Value
+
+
+@dataclass
 class Phi:
     """Phi node"""
     result: Reg
@@ -140,7 +146,9 @@ Stmt: TypeAlias = (
     VarPtr | FieldPtr | ElementPtr
     | Load | Store
     | Binary | Unary | Delete
-    | Call | VoidCall | Cast | StructConstruct | VariantConstruct
+    | Call | VoidCall | Cast
+    | StructConstruct | VariantConstruct
+    | SysWrite
     | Phi
 )
 
@@ -276,10 +284,16 @@ class IntPattern:
 
 
 @dataclass
+class CharPattern:
+    """Char pattern"""
+    value: CharLiteral
+
+
+@dataclass
 class EnumPattern:
     """Enum pattern"""
     variant: EnumVariant
     fields: list[VarRef] | None  # None = no payload
 
 
-Pattern: TypeAlias = IntPattern | EnumPattern
+Pattern: TypeAlias = IntPattern | CharPattern | EnumPattern
