@@ -9,7 +9,7 @@ from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.parse import ast as AST
-from compiler.utils.IR.position import SrcSpan
+from compiler.utils.errors.yian_error import CompilerError
 
 
 class TypeCheck:
@@ -75,7 +75,7 @@ class TypeCheck:
                     self.__worklist.append(main_def_point)
                     self.__def_points[symbol.type_id] = main_def_point
         if not self.__worklist:
-            raise AnalysisError("No 'main' function found", SrcSpan.empty())
+            raise CompilerError("No 'main' function found")
 
     def __type_check_def(self, def_point: DefPoint) -> None:
         self.__current_type_id = def_point.type_id
@@ -87,7 +87,7 @@ class TypeCheck:
         elif isinstance(ty, Type.MethodType):
             def_point.body = self.__check_method(def_point)
         else:
-            raise AnalysisError(f"Type with id {def_point.type_id} is not a function or method type", SrcSpan.empty())
+            raise CompilerError(f"Type with id {def_point.type_id} is not a function or method type")
 
         def_point.locals = self.__current_locals
 

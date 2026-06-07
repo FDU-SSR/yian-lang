@@ -21,6 +21,7 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.parser import ParseError, Parser
 from compiler.utils.IR.position import SrcSpan
+from compiler.utils.errors.yian_error import CompilerError
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
@@ -75,6 +76,11 @@ def collect_an_files(paths: list[Path]) -> list[Path]:
 
         if path.is_dir():
             an_files.extend(file_path for file_path in path.rglob("*.an") if file_path.is_file())
+            continue
+
+        # Path does not exist — fail early instead of silently skipping
+        print(f"error: path does not exist: {path}", file=sys.stderr)
+        sys.exit(1)
 
     return an_files
 
@@ -209,11 +215,21 @@ def main(argv: list[str] | None = None) -> int:
     except AnalysisError as error:
         __print_source_error(error.span, error)
 
+    # Run final checks on the type space (e.g. self-referential type detection)
+    try:
+        type_ctx.finalize()
+    except CompilerError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
     type_checker = TypeCheck(unit_datas, type_ctx)
     try:
         type_checker.run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
+    except CompilerError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     def_points = type_checker.export()
 
     if args.hir is not None:

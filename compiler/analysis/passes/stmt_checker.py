@@ -6,8 +6,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.expr_checker import ExprChecker
 from compiler.analysis.passes.hir_builder import (build_enum_match,
                                                   build_enum_match_arm,
-                                                  build_if_chain, build_switch,
-                                                  build_switch_arm)
+                                                  build_if_chain, build_switch)
 from compiler.analysis.passes.sem_ctx import LoopFrame, LoopKind, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -239,25 +238,29 @@ class StmtChecker:
             # lower arm body
             body = self.check_block(arm_block, ctx)
 
-            if isinstance(pat, AST.IntPattern):
-                for lit in pat.values:
-                    val = lit.value
-                    arms.append(build_switch_arm(pat.span, val, int_width, body))
-            elif isinstance(pat, AST.EnumPattern):
-                # each variant name maps to a discriminant
-                enum_ty = ctx.type_ctx[value_expr.type_id]
-                assert isinstance(enum_ty, Type.EnumType)
-                for ident in pat.variants:
-                    variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
-                    if variant is None:
-                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-                    arms.append(build_switch_arm(pat.span, variant.discriminant, int_width, body))
-            elif isinstance(pat, AST.WildcardPattern):
-                # wildcard -> default arm
-                arms.append(build_switch_arm(pat.span, None, int_width, body))
-            else:
-                # unsupported pattern for switch lowering; signal via AnalysisError
-                raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by switch lowering", pat.span)
+            match pat:
+                case AST.IntPattern():
+                    for lit in pat.values:
+                        val = lit.value
+                        arms.append(HIR.SwitchArm(pat.span, val, int_width, body))
+                case AST.CharPattern():
+                    for lit in pat.values:
+                        val = ord(lit.value)
+                        arms.append(HIR.SwitchArm(pat.span, val, int_width, body))
+                case AST.EnumPattern():
+                    # each variant name maps to a discriminant
+                    enum_ty = ctx.type_ctx[value_expr.type_id]
+                    assert isinstance(enum_ty, Type.EnumType)
+                    for ident in pat.variants:
+                        variant = enum_ty.get_variant_by_name(ident.name, ctx.type_ctx)
+                        if variant is None:
+                            raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+                        arms.append(HIR.SwitchArm(pat.span, variant.discriminant, int_width, body))
+                case AST.WildcardPattern():
+                    # wildcard -> default arm
+                    arms.append(HIR.SwitchArm(pat.span, None, int_width, body))
+                case _:
+                    raise AnalysisError(f"Unsupported pattern {pat}", pat.span)
 
         # Emit the switch HIR
         out.append(build_switch(stmt.span, value_expr, arms))
