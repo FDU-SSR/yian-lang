@@ -338,6 +338,19 @@ class TypeCtx:
         """
         return self.__resolver.resolve(ty, symbol_ctx)
 
+    def resolve_aliases(self, type_id: int) -> int:
+        """Follow alias chains to the first non-alias concrete type."""
+        visited: set[int] = set()
+        while True:
+            if type_id in visited:
+                raise CompilerError(f"Circular type alias detected: {self.get_name(type_id)}")
+            visited.add(type_id)
+            ty = self[type_id]
+            if isinstance(ty, Type.AliasType):
+                type_id = ty.custom_def.aliased_type
+            else:
+                return type_id
+
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
         return self.__impl_registry.register_impl(span, generics, target, trait)
 

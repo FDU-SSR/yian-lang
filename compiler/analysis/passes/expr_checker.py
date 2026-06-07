@@ -84,7 +84,7 @@ class ExprChecker:
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
         generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
-        type_id = symbol.type_id
+        type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
         if generic_arg_ids:
             type_id = self.__ctx.type_ctx.alloc_instance(type_id, generic_arg_ids)
 

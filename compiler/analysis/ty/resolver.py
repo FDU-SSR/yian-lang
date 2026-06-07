@@ -75,7 +75,7 @@ class TypeResolver:
                     raise AnalysisError(f"Undefined type: {name}", ty.span)
                 if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
                     raise AnalysisError(f"{name} is not a type", ty.span)
-                return symbol.type_id
+                return self.__ctx.resolve_aliases(symbol.type_id)
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
                 base_type_id = self.resolve(base, symbol_ctx)
                 arg_ids = [self.__resolve_generic_arg(arg, symbol_ctx) for arg in generic_args]

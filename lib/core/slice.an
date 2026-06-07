@@ -2,6 +2,7 @@ from option import Option;
 from vec import Vec;
 from iter import Iterator, IntoIterator;
 from ops import PartialEq;
+from range import Range;
 
 // A struct representation of a slice
 struct SliceStruct<T> {

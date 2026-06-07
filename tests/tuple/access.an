@@ -8,8 +8,8 @@ struct Pair {
 }
 
 fn main() -> i32 {
-    (Pair, Pair) tuple1
-    (i32, Pair)[3] tuple2
+    let tuple1: (Pair, Pair)
+    let tuple2: (i32, Pair)[3]
 
     tuple1[0] = Pair(10, 20)
     tuple1[1].first = 30

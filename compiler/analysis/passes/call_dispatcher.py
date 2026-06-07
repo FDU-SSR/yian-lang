@@ -100,7 +100,8 @@ class CallDispatcher:
                 callable_expr = HIR.Var(span=callee.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=False)
                 return self.__handle_invocation(node.span, callable_expr, node.args)
             case SymbolKind.Type:
-                return self.__handle_type_call(node.span, HIR.Ty(span=callee.span, type_id=symbol.type_id, is_place=False), node.args)
+                type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
+                return self.__handle_type_call(node.span, HIR.Ty(span=callee.span, type_id=type_id, is_place=False), node.args)
             case SymbolKind.ConstGeneric:
                 raise AnalysisError(f"'{callee.name}' is a generic constant and cannot be called", node.span)
 
