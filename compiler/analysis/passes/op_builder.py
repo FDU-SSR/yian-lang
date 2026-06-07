@@ -617,8 +617,21 @@ class OpBuilder:
         """
         left_operand_type = self.__get_operand_type(left.type_id, allowed_operand_types)
         right_operand_type = self.__get_operand_type(right.type_id, allowed_operand_types)
+
         if left_operand_type != right_operand_type:
-            return None
+            try:
+                merged_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
+            except AnalysisError:
+                return None
+            merged_operand_type = self.__get_operand_type(merged_type_id, allowed_operand_types)
+            if merged_operand_type not in (left_operand_type, right_operand_type):
+                return None
+            left = self.__evaluator.coerce(left, merged_type_id)
+            right = self.__evaluator.coerce(right, merged_type_id)
+            if result_type_id is None:
+                result_type_id = merged_type_id
+            return HIR.Binary(span, op, left, right, result_type_id, is_place=False)
+
         operand_type = left_operand_type
 
         if operand_type != OperandType.Overloaded:
