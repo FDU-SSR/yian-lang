@@ -8,7 +8,7 @@ struct Ptr<T> {
     pub ptr: T*,
 }
 
-impl<T> Deref<T> for Ptr<T> {
+impl<T> Deref<T*> for Ptr<T> {
     fn deref() -> T* {
         return self.ptr;
     }

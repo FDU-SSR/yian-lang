@@ -92,6 +92,16 @@ class GenericInference:
             return
 
         if self.__type_ctx.is_literal_type(actual_type_id):
+            if isinstance(actual_ty, Type.IntLiteralType) and not self.__type_ctx.is_integer_type(expected_type_id, include_literals=True):
+                raise AnalysisError(
+                    f"cannot infer generic arguments from '{self.__type_ctx.get_name(actual_type_id)}' for '{self.__type_ctx.get_name(expected_type_id)}'",
+                    self.__span,
+                )
+            if isinstance(actual_ty, Type.FloatLiteralType) and not isinstance(expected_ty, (Type.FloatType, Type.FloatLiteralType)):
+                raise AnalysisError(
+                    f"cannot infer generic arguments from '{self.__type_ctx.get_name(actual_type_id)}' for '{self.__type_ctx.get_name(expected_type_id)}'",
+                    self.__span,
+                )
             return
 
         if expected_type_id != actual_type_id:
