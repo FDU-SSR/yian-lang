@@ -181,7 +181,7 @@ impl PartialEq<str> for str {
 }
 
 impl Index<Range<u64>, str> for str {
-    pub fn index(range: Range<u64>) -> str* {
+    pub fn index(range: Range<u64>) -> str {
         let bytes: u8[] = self.as_slice();
         let len: u64 = bytes.len();
 
@@ -192,7 +192,7 @@ impl Index<Range<u64>, str> for str {
             panic("str slice index is ! on a char boundary");
         }
 
-        return dyn Self.from_slice(bytes[range.start..range.end]);
+        return Self.from_slice(bytes[range.start..range.end]);
     }
 }
 

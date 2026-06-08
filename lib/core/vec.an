@@ -189,7 +189,7 @@ impl<T> Clone for Vec<T> {
     }
 }
 
-impl<T> Index<u64, T> for Vec<T> {
+impl<T> Index<u64, T*> for Vec<T> {
     pub fn index(index: u64) -> T* {
         if index >= self.len {
             panic("index out of bounds");
@@ -222,10 +222,8 @@ impl<T> Into<Vec<T>> for T[] {
 
 // Implement Deref for Vec<T> to allow dereferencing to a slice
 impl<T> Deref<T[]> for Vec<T> {
-    pub fn deref() -> T[]* {
-        // TODO: this is a temporary solution to allow dereferencing Vec to a slice and will cause memory leak.
-        let res: T[]* = dyn self.as_slice();
-        return res;
+    pub fn deref() -> T[] {
+        return self.as_slice();
     }
 }
 
