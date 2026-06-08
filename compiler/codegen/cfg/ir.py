@@ -7,19 +7,6 @@ from compiler.analysis.ty.ty import EnumVariant
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 # ---------------------------------------------------------------------------
-# Top Level
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class Function:
-    """Functions and methods are all lowwered to this node."""
-    name: str
-    type_id: int  # type id of the function/method
-    blocks: list[Block]  # all basic blocks in the function/method
-    entry: Block  # entry block of the function/method, also included in `blocks`
-
-# ---------------------------------------------------------------------------
 # Statements
 # ---------------------------------------------------------------------------
 
@@ -343,3 +330,18 @@ class EnumPattern:
 
 
 Pattern: TypeAlias = IntPattern | CharPattern | EnumPattern
+
+
+# ---------------------------------------------------------------------------
+# Top Level
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Function:
+    """Functions and methods are all lowwered to this node."""
+    name: str
+    type_id: int  # type id of the function/method
+    blocks: list[Block]  # all basic blocks in the function/method
+    entry: Block  # entry block of the function/method, also included in `blocks`
+    local_vars: dict[int, VarRef] = field(default_factory=dict[int, VarRef])  # symbol id -> VarRef for all local variables (including parameters)

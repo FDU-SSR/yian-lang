@@ -20,8 +20,6 @@ class CfgBuilder:
         self.__type_ctx = type_ctx
         self.__symbol_ctx = dp.symbol_ctx
         self.__counter = 0
-        # symbol_id → SSA pointer name
-        self.__locals: dict[int, IR.VarRef] = {}
         # loop context stacks
         self.__loop_header: list[IR.Block] = []
         self.__loop_exit: list[IR.Block] = []
@@ -41,7 +39,7 @@ class CfgBuilder:
         # ── register body local variables ──
         for local_id in dp.locals:
             symbol = self.__symbol_ctx.get(local_id)
-            self.__locals[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
+            self.__func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 
         # ── translate the body ──
         assert dp.body is not None
@@ -242,7 +240,7 @@ class CfgBuilder:
             )
         fields = None
         if pattern.unpack_fields is not None:
-            fields = [self.__locals[field] for field in pattern.unpack_fields]
+            fields = [self.__func.local_vars[field] for field in pattern.unpack_fields]
         return IR.EnumPattern(
             variant=pattern.variant,
             fields=fields
@@ -566,9 +564,9 @@ class CfgBuilder:
         return self.__build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def __resolve_var_addr(self, expr: HIR.Var) -> IR.Value:
-        if expr.symbol_id not in self.__locals:
+        if expr.symbol_id not in self.__func.local_vars:
             raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
-        var_ref = self.__locals[expr.symbol_id]
+        var_ref = self.__func.local_vars[expr.symbol_id]
         return self.__build_var_ptr(var_ref)
 
     # ------------------------------------------------------------------
