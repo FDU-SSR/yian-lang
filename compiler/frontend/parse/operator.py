@@ -136,6 +136,33 @@ class BinaryOperator(Enum):
             case BinaryOperator.Range:
                 return ".."
 
+    def is_logical(self) -> bool:
+        return self in (BinaryOperator.LogicalAnd, BinaryOperator.LogicalOr)
+
+    def is_compound_assign(self) -> bool:
+        return self in (BinaryOperator.AddAssign, BinaryOperator.SubAssign,
+                        BinaryOperator.MulAssign, BinaryOperator.DivAssign,
+                        BinaryOperator.ModAssign, BinaryOperator.BitAndAssign,
+                        BinaryOperator.BitOrAssign, BinaryOperator.BitXorAssign,
+                        BinaryOperator.ShlAssign, BinaryOperator.ShrAssign)
+
+    def compound_assign_to_binary(self) -> BinaryOperator:
+        return BINARY_COMPOUND_ASSIGN_TO_BINARY[self]
+
+
+BINARY_COMPOUND_ASSIGN_TO_BINARY = {
+    BinaryOperator.AddAssign: BinaryOperator.Add,
+    BinaryOperator.SubAssign: BinaryOperator.Sub,
+    BinaryOperator.MulAssign: BinaryOperator.Mul,
+    BinaryOperator.DivAssign: BinaryOperator.Div,
+    BinaryOperator.ModAssign: BinaryOperator.Mod,
+    BinaryOperator.BitAndAssign: BinaryOperator.BitAnd,
+    BinaryOperator.BitOrAssign: BinaryOperator.BitOr,
+    BinaryOperator.BitXorAssign: BinaryOperator.BitXor,
+    BinaryOperator.ShlAssign: BinaryOperator.Shl,
+    BinaryOperator.ShrAssign: BinaryOperator.Shr,
+}
+
 
 BINARY_PUNCTUATOR_MAP: dict[PunctuatorKind, BinaryOperator] = {
     PunctuatorKind.Plus: BinaryOperator.Add,

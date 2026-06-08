@@ -32,6 +32,13 @@ class VarPtr:
 
 
 @dataclass
+class Alloca:
+    """Store a local variable in the stack"""
+    result: Reg
+    value: Value
+
+
+@dataclass
 class FieldPtr:
     """Given ptr to a struct/tuple, get pointer to a field of it"""
     result: Reg
@@ -51,13 +58,13 @@ class ElementPtr:
 class Load:
     """Load value from pointer"""
     result: Reg
-    ptr: Reg
+    ptr: Value
 
 
 @dataclass
 class Store:
     """Write value to a pointer"""
-    ptr: Reg
+    ptr: Value
     value: Value
 
 
@@ -143,7 +150,7 @@ class Phi:
 
 
 Stmt: TypeAlias = (
-    VarPtr | FieldPtr | ElementPtr
+    VarPtr | FieldPtr | ElementPtr | Alloca
     | Load | Store
     | Binary | Unary | Delete
     | Call | VoidCall | Cast

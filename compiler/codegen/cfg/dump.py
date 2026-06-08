@@ -50,14 +50,20 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"[{__dump_value(index)}]"
             )
 
+        case IR.Alloca(result=result, value=value):
+            return (
+                f"%{result.name} = alloca"
+                f" {__dump_value(value)}"
+            )
+
         case IR.Load(result=result, ptr=ptr):
             return (
-                f"%{result.name} = load %{ptr.name}"
+                f"%{result.name} = load {__dump_value(ptr)}"
                 f"  [{__type_str(result.type_id)}]"
             )
 
         case IR.Store(ptr=ptr, value=value):
-            return f"store %{ptr.name}, {__dump_value(value)}"
+            return f"store {__dump_value(ptr)}, {__dump_value(value)}"
 
         case IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs):
             return (
