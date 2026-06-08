@@ -345,3 +345,4 @@ class Function:
     blocks: list[Block]  # all basic blocks in the function/method
     entry: Block  # entry block of the function/method, also included in `blocks`
     local_vars: dict[int, VarRef] = field(default_factory=dict[int, VarRef])  # symbol id -> VarRef for all local variables (including parameters)
+    params: list[int] = field(default_factory=list[int])  # symbol ids of parameters, in order

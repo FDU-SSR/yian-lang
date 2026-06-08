@@ -92,7 +92,8 @@ class TypeCheck:
 
         def_point.locals = self.__current_locals
         def_point.params = self.__current_params
-        def_point.symbol_ctx = self.__sem_ctx.symbol_ctx  # type: ignore[assignment]
+        assert self.__sem_ctx.symbol_ctx is not None
+        def_point.symbol_ctx = self.__sem_ctx.symbol_ctx
 
     def __check_function(self, def_point: DefPoint) -> HIR.Block:
         func_ty = self.__type_ctx[self.__current_type_id]

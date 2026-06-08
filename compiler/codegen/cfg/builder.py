@@ -36,6 +36,9 @@ class CfgBuilder:
         func_type = self.__type_ctx[dp.type_id]
         assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
 
+        # ── register parameters ──
+        self.__func.params = dp.params.copy()
+
         # ── register body local variables ──
         for local_id in dp.locals:
             symbol = self.__symbol_ctx.get(local_id)
