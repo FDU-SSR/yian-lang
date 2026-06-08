@@ -27,13 +27,13 @@ class TypeGenericParam:
 
 @dataclass
 class ConstGenericParam:
-    """常量泛型参数，如 <const u64 N>"""
+    """常量泛型参数，如 <const N: u64>"""
     span: SrcSpan
     name: Identifier
     value_type: ASTType      # 常量的类型标注，如 u64
 
     def __repr__(self) -> str:
-        return f"const {self.value_type} {self.name.name}"
+        return f"const {self.name.name}: {self.value_type}"
 
 
 GenericParam: TypeAlias = TypeGenericParam | ConstGenericParam

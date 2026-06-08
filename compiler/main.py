@@ -3,7 +3,6 @@
 import argparse
 import sys
 import traceback
-from collections.abc import Mapping
 from pathlib import Path
 from typing import NoReturn
 
@@ -16,8 +15,10 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.codegen.cfg import ir as CFG_IR
 from compiler.codegen.cfg.dump import dump as dump_cfg
 from compiler.codegen.cfg.translator import CfgTranslator
+from compiler.codegen.error import CodegenError
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.position import SrcSpan
@@ -47,29 +48,29 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         "--token",
         type=Path,
         metavar="PATH",
-        default=Path("build/token.txt"),
-        help="Write token output to PATH (default: build/token.txt).",
+        default=None,
+        help="Write token output to PATH.",
     )
     parser.add_argument(
         "--ast",
         type=Path,
         metavar="PATH",
-        default=Path("build/ast.txt"),
-        help="Write AST output to PATH (default: build/ast.txt).",
+        default=None,
+        help="Write AST output to PATH.",
     )
     parser.add_argument(
         "--hir",
         type=Path,
         metavar="PATH",
-        default=Path("build/hir.txt"),
-        help="Write HIR output to PATH (default: build/hir.txt).",
+        default=None,
+        help="Write HIR output to PATH.",
     )
     parser.add_argument(
         "--cfg",
         type=Path,
         metavar="PATH",
-        default=Path("build/cfg.txt"),
-        help="Write CFG output to PATH (default: build/cfg.txt).",
+        default=None,
+        help="Write CFG output to PATH.",
     )
     return parser.parse_args(argv)
 
@@ -152,15 +153,21 @@ def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> s
     return "\n\n".join(sections) + ("\n" if sections else "")
 
 
-def __format_hir_output(unit_datas: Mapping[int, UnitData], def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
+def __format_hir_output(unit_datas: dict[int, UnitData], def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> str:
     return export_hir_bundle(unit_datas, def_points, type_ctx)
 
 
-def __format_cfg_output(def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
+def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[str, CFG_IR.Function]:
+    """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
     translator = CfgTranslator(type_ctx)
-    translator.run(def_points)
-    functions = translator.export()
+    try:
+        translator.run(def_points)
+    except CodegenError as error:
+        __print_source_error(error.span, error)
+    return translator.export()
 
+
+def __format_cfg_output(functions: dict[str, CFG_IR.Function]) -> str:
     sections: list[str] = []
     for name in sorted(functions.keys()):
         sections.append(dump_cfg(functions[name]))
@@ -255,8 +262,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.hir is not None:
         __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
 
+    # HIR → CFG IR pass
+    cfg_functions = __cfg(def_points, type_ctx)
+
     if args.cfg is not None:
-        __write_text_output(args.cfg, __format_cfg_output(def_points, type_ctx))
+        __write_text_output(args.cfg, __format_cfg_output(cfg_functions))
 
     return 0
 

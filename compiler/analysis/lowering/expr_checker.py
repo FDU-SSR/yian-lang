@@ -125,7 +125,7 @@ class ExprChecker:
             case SymbolKind.Variable:
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Function:
-                return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
+                return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
                 ty = self.__ctx.type_ctx[symbol.type_id]
                 if isinstance(ty, Type.LiteralValueType):

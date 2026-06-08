@@ -215,11 +215,18 @@ def discover_tests() -> list[TestCase]:
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test(test: TestCase) -> TestResult:
+def run_test(test: TestCase, dump: bool = False) -> TestResult:
     """Compile *test* and return the result."""
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
+    if dump:
+        cmd += [
+            "--token", str(ROOT_DIR / "build" / "token.txt"),
+            "--ast", str(ROOT_DIR / "build" / "ast.txt"),
+            "--hir", str(ROOT_DIR / "build" / "hir.txt"),
+            "--cfg", str(ROOT_DIR / "build" / "cfg.txt"),
+        ]
 
     start = time.monotonic()
     proc = subprocess.run(
@@ -334,6 +341,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Only run tests whose name contains SUBSTRING.",
     )
+    parser.add_argument(
+        "--dump",
+        action="store_true",
+        help="Enable compiler intermediate output (token, AST, HIR, CFG).",
+    )
     args = parser.parse_args(argv)
 
     # Discover.
@@ -356,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     total_start = time.monotonic()
 
     for i, test in enumerate(all_tests, 1):
-        result = run_test(test)
+        result = run_test(test, dump=args.dump)
         results.append(result)
 
         if not args.quiet:

@@ -434,29 +434,7 @@ class OpBuilder:
 
         left_ty = self.__type_ctx[left_hir.type_id]
 
-        # 1) Array/Pointer/Slice indexing
-        if isinstance(left_ty, (Type.ArrayType, Type.PointerType, Type.SliceType)):
-            match left_ty:
-                case Type.ArrayType():
-                    element_type = left_ty.element_type
-                case Type.PointerType():
-                    element_type = left_ty.pointee_type
-                case Type.SliceType():
-                    element_type = left_ty.element_type
-
-            if self.__type_ctx.is_integer_type(right_hir.type_id):
-                right_hir = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
-                return HIR.Binary(span, BinaryOperator.Index, left_hir, right_hir, element_type, is_place=left_hir.is_place)
-
-            # range<u64> -> slice (not an lvalue)
-            range_u64 = self.__type_ctx.alloc_range(TypeCtx.u64_id)
-            if right_hir.type_id == range_u64:
-                slice_type = self.__type_ctx.alloc_slice(element_type)
-                return HIR.StructConstruct(span, range_u64, {"start": left_hir, "end": right_hir}, slice_type, is_place=False)
-
-            raise AnalysisError(f"Index requires type u64 or range<u64>, got '{self.__type_ctx.get_name(right_hir.type_id)}'.", span)
-
-        # 2) Tuple indexing
+        # Tuple indexing
         if isinstance(left_ty, Type.TupleType):
             if not isinstance(right_hir, HIR.IntLiteral):
                 raise AnalysisError("Tuple index must be an integer literal.", span)
@@ -468,7 +446,7 @@ class OpBuilder:
             elem_type = left_ty.element_types[index_val]
             return HIR.TupleAccess(span, left_hir, index_val, elem_type, is_place=left_hir.is_place)
 
-        # 3) Index overload via trait
+        # 4) Index overload via trait
         overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
         if overloaded_expr is not None:
             # if index() returns a pointer, add a deref to make it an lvalue

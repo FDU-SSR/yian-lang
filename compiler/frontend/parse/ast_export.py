@@ -39,7 +39,7 @@ def __format_generics(generics: list[AST.GenericParam]) -> str:
         if isinstance(gen, AST.TypeGenericParam):
             parts.append(gen.name.name)
         else:
-            parts.append(f"const {gen.value_type} {gen.name.name}")
+            parts.append(f"const {gen.name.name}: {gen.value_type}")
     return f"<{', '.join(parts)}>"
 
 

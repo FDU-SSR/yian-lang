@@ -33,13 +33,15 @@ class CfgBuilder:
             blocks=[entry_block],
             entry=entry_block,
         )
+        self.__current_block = entry_block
 
         func_type = self.__type_ctx[dp.type_id]
         assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
-        # ── register parameters as local variables ──
-        for param in dp.params:
-            param_symbol = self.__symbol_ctx.get(param)
-            self.__locals[param] = IR.VarRef(param_symbol.name, param, param_symbol.type_id)
+
+        # ── register body local variables ──
+        for local_id in dp.locals:
+            symbol = self.__symbol_ctx.get(local_id)
+            self.__locals[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 
         # ── translate the body ──
         assert dp.body is not None
@@ -310,8 +312,6 @@ class CfgBuilder:
 
         # resolve expr that produces an address
         match expr:
-            case HIR.Binary() if expr.op == BinaryOperator.Index:
-                return self.__resolve_index_addr(expr)
             case HIR.Unary() if expr.op == UnaryOperator.Deref:
                 return self.__resolve_deref_addr(expr)
             case HIR.FieldAccess():
@@ -320,6 +320,8 @@ class CfgBuilder:
                 return self.__resolve_tuple_access_addr(expr)
             case HIR.Var():
                 return self.__resolve_var_addr(expr)
+            case HIR.Ty():
+                return self.__build_func_ptr(expr.type_id)
             case _:
                 raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
 
@@ -332,15 +334,12 @@ class CfgBuilder:
         Special cases:
 
         - logical operators should implement short-circuit evaluation
-        - indexing should implement runtime bounds check
         - assignment => load address of lhs, load value from rhs, store value to lhs
         - compound assignments should be implemented as binary operation + store
         - `in` and `..` should not be handled here
         """
         if expr.op.is_logical():
             return self.__resolve_logical(expr)
-        if expr.op == BinaryOperator.Index:
-            return self.__resolve_index(expr)
         if expr.op == BinaryOperator.Assign:
             return self.__resolve_assign(expr)
         if expr.op.is_compound_assign():
@@ -369,10 +368,6 @@ class CfgBuilder:
         rhs_val = self.__resolve_val(expr.right)
         self.__build_store(rhs_val, lhs_addr)
         return rhs_val
-
-    def __resolve_index(self, expr: HIR.Binary) -> IR.Value:
-        addr = self.__resolve_index_addr(expr)
-        return self.__build_load(addr)
 
     def __resolve_logical(self, expr: HIR.Binary) -> IR.Value:
         """Lower short-circuit logical operators (&&, ||).
@@ -427,12 +422,12 @@ class CfgBuilder:
         """
         Special cases:
 
-        - dereference => load address then load value
+        - dereference => resolve pointer value then load through it
         - addr of lvalue => get address
         """
         if expr.op == UnaryOperator.Deref:
-            addr = self.__resolve_addr(expr.operand)
-            return self.__build_load(addr)
+            ptr_val = self.__resolve_val(expr.operand)
+            return self.__build_load(ptr_val)
         if expr.op == UnaryOperator.AddrOf:
             return self.__resolve_addr(expr.operand)
 
@@ -559,13 +554,8 @@ class CfgBuilder:
     # addr resolvors
     # ------------------------------------------------------------------
 
-    def __resolve_index_addr(self, expr: HIR.Binary) -> IR.Value:
-        addr = self.__resolve_addr(expr.left)
-        index = self.__resolve_val(expr.right)
-        return self.__build_element_ptr(addr, index)
-
     def __resolve_deref_addr(self, expr: HIR.Unary) -> IR.Value:
-        return self.__resolve_addr(expr.operand)
+        return self.__resolve_val(expr.operand)
 
     def __resolve_field_access_addr(self, expr: HIR.FieldAccess) -> IR.Value:
         base_addr = self.__resolve_addr(expr.receiver)
@@ -593,14 +583,6 @@ class CfgBuilder:
     def __build_alloca(self, value: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
         return self.__emit(IR.Alloca(result=result, value=value)).result
-
-    def __build_element_ptr(self, base: IR.Value, index: IR.Value) -> IR.Value:
-        array_ptr_type = self.__type_ctx[base.type_id]
-        assert isinstance(array_ptr_type, Type.PointerType)
-        array_type = self.__type_ctx[array_ptr_type.pointee_type]
-        assert isinstance(array_type, Type.ArrayType)
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(array_type.element_type))
-        return self.__emit(IR.ElementPtr(result=result, base=base, index=index)).result
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
@@ -666,3 +648,10 @@ class CfgBuilder:
     def __build_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=incoming[0][1].type_id)
         return self.__emit(IR.Phi(result=result, incoming=incoming)).result
+
+    def __build_func_ptr(self, func_type_id: int) -> IR.Value:
+        func_ty = self.__type_ctx[func_type_id]
+        assert isinstance(func_ty, Type.FunctionType)
+        func_ptr_ty = func_ty.as_pointer(self.__type_ctx)
+        result = IR.Reg(name=self.__new_name(), type_id=func_ptr_ty)
+        return self.__emit(IR.FuncPtr(result=result, func_type_id=func_type_id)).result

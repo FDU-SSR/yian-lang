@@ -1,6 +1,6 @@
 // Experimental feature: const generics
 
-impl<T, const u64 N> T[N] {
+impl<T, const N: u64> T[N] {
     u64 get_length() {
         return N;
     }

@@ -1,7 +1,7 @@
 from option import Option;
 from vec import Vec;
 from iter import Iterator, IntoIterator;
-from ops import PartialEq;
+from ops import PartialEq, Index;
 from range import Range;
 
 // A struct representation of a slice
@@ -103,7 +103,7 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
     }
 }
 
-impl<T, const u64 N> IntoIterator<SliceIter<T>> for T[N] {
+impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     fn into_iter() -> SliceIter<T> {
         return SliceIter<T>(
             ptr = bitcast<T*>(self),
@@ -123,5 +123,22 @@ impl<T> PartialEq<T[]> for T[] {
             }
         }
         return true;
+    }
+}
+
+impl<T> Index<u64, T*> for T[] {
+    fn index(index: u64) -> T* {
+        return self.ptr() + index;
+    }
+}
+
+impl<T> Index<Range<u64>, T[]> for T[] {
+    fn index(range: Range<u64>) -> T[] {
+        if range.end > self.len() {
+            panic("Range out of bounds");
+        }
+        let start_ptr: T* = self.ptr() + range.start;
+        let len: u64 = range.end - range.start;
+        return from_raw_parts(start_ptr, len);
     }
 }

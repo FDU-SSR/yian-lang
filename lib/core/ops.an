@@ -138,9 +138,9 @@ pub fn min<T>(a: T, b: T) -> T {
 }
 
 pub trait Index<Idx, Target> {
-    fn index(index: Idx) -> Target*;
+    fn index(index: Idx) -> Target;
 }
 
 pub trait Deref<Target> {
-    fn deref() -> Target*;
+    fn deref() -> Target;
 }

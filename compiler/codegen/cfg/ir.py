@@ -47,14 +47,6 @@ class FieldPtr:
 
 
 @dataclass
-class ElementPtr:
-    """Given ptr to an array, get pointer to an element of it"""
-    result: Reg
-    base: Value  # addr to the array, not first element of the array
-    index: Value
-
-
-@dataclass
 class Load:
     """Load value from pointer"""
     result: Reg
@@ -182,6 +174,13 @@ class SysRead:
 
 
 @dataclass
+class FuncPtr:
+    """Create a function pointer from a function type."""
+    result: Reg
+    func_type_id: int
+
+
+@dataclass
 class Phi:
     """Phi node"""
     result: Reg
@@ -189,11 +188,11 @@ class Phi:
 
 
 Stmt: TypeAlias = (
-    VarPtr | FieldPtr | ElementPtr | Alloca | Malloc
+    VarPtr | FieldPtr | Alloca | Malloc
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
     | Call | Invoke
-    | Cast | SizeOf
+    | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead
     | Phi

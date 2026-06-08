@@ -44,12 +44,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.FieldPtr(result=result, base=base, field_index=idx):
             return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
 
-        case IR.ElementPtr(result=result, base=base, index=index):
-            return (
-                f"%{result.name} = elementptr {__dump_value(base)}"
-                f"[{__dump_value(index)}]"
-            )
-
         case IR.Alloca(result=result, value=value):
             return (
                 f"%{result.name} = alloca"
@@ -60,6 +54,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return (
                 f"%{result.name} = malloc"
                 f" {__type_str(type_id)}, {__dump_value(size)}"
+            )
+
+        case IR.FuncPtr(result=result, func_type_id=func_type_id):
+            return (
+                f"%{result.name} = funcptr {__type_str(func_type_id)}"
+                f"  [{__type_str(result.type_id)}]"
             )
 
         case IR.Load(result=result, ptr=ptr):

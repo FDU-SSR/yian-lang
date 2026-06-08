@@ -241,6 +241,11 @@ class FunctionType:
             ))
         return parameters
 
+    def as_pointer(self, context: TypeCtx) -> int:
+        param_types = [p.type_id for p in self.parameters(context)]
+        ret_type = self.return_type(context)
+        return context.alloc_function_pointer(param_types, ret_type)
+
 
 @dataclass
 class MethodDef:

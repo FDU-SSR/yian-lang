@@ -113,7 +113,7 @@ class Parser:
         """Parse generic parameters enclosed in angle brackets.
 
         Handles both type generic parameters (<T>) and const generic parameters
-        (<const u64 N>). Returns a unified list of GenericParam.
+        (<const N: u64>). Returns a unified list of GenericParam.
         """
         params: list[AST.GenericParam] = []
         token = self.__stream.peek()
@@ -124,13 +124,14 @@ class Parser:
 
         def parse_param() -> AST.GenericParam:
             token = self.__stream.peek()
-            # const generic: <const u64 N>
+            # const generic: <const N: u64>
             if isinstance(token, Keyword) and token.kind == KeywordKind.Const:
                 const_span = self.__stream.consume_keyword(KeywordKind.Const).span
-                value_type = self.__type_parser.parse_type()
                 name = self.__stream.consume_identifier()
+                self.__stream.consume_punctuator(PunctuatorKind.Colon)
+                value_type = self.__type_parser.parse_type()
                 return AST.ConstGenericParam(
-                    span=const_span + name.span,
+                    span=const_span + value_type.span,
                     name=name,
                     value_type=value_type,
                 )

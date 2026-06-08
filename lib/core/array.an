@@ -1,0 +1,23 @@
+from ops import Index;
+from range import Range;
+from slice import from_raw_parts;
+
+impl<T, const N: u64> Index<u64, T*> for T[N] {
+    fn index(index: u64) -> T* {
+        if index >= N {
+            panic("Index out of bounds");
+        }
+        return bitcast<T*>(self) + index;
+    }
+}
+
+impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
+    fn index(range: Range<u64>) -> T[] {
+        if range.end > N {
+            panic("Index out of bounds");
+        }
+        let start: T* = bitcast<T*>(self) + range.start;
+        let len: u64 = range.end - range.start;
+        return from_raw_parts(start, len);
+    }
+}
