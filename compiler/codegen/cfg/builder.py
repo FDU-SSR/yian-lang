@@ -441,82 +441,170 @@ class CfgBuilder:
         return self.__build_unary(expr.op, val, expr.type_id)
 
     def __resolve_call(self, expr: HIR.Call) -> IR.Value:
-        raise NotImplementedError
+        arg_vals = [self.__resolve_val(arg) for arg in expr.args]
+        return self.__build_call(expr.func, arg_vals, expr.type_id)
 
     def __resolve_struct_construct(self, expr: HIR.StructConstruct) -> IR.Value:
-        raise NotImplementedError
+        struct_type = self.__type_ctx[expr.struct_id]
+        assert isinstance(struct_type, Type.StructType)
+        fields = struct_type.get_fields(self.__type_ctx)
+        field_vals = [self.__resolve_val(expr.field_values[field.name]) for field in fields]
+        return self.__build_aggregate_construct(expr.struct_id, field_vals)
 
     def __resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
-        raise NotImplementedError
+        callee = self.__resolve_val(expr.callable)
+        arg_vals = [self.__resolve_val(arg) for arg in expr.args]
+        return self.__build_invoke(callee, arg_vals, expr.type_id)
 
     def __resolve_cast(self, expr: HIR.Cast) -> IR.Value:
-        raise NotImplementedError
+        value = self.__resolve_val(expr.value)
+        return self.__build_cast(value, expr.target_type)
 
     def __resolve_method_call(self, expr: HIR.MethodCall) -> IR.Value:
-        raise NotImplementedError
+        method_type = self.__type_ctx[expr.method_id]
+        assert isinstance(method_type, Type.MethodType)
+
+        arg_vals = [self.__resolve_val(arg) for arg in expr.args]
+
+        if method_type.custom_def.is_static:
+            return self.__build_call(expr.method_id, arg_vals, expr.type_id)
+
+        # non-static: pass receiver address as the first argument
+        receiver_addr = self.__resolve_addr(expr.receiver)
+        return self.__build_call(expr.method_id, [receiver_addr] + arg_vals, expr.type_id)
 
     def __resolve_variant_construct(self, expr: HIR.VariantConstruct) -> IR.Value:
-        raise NotImplementedError
+        if expr.args is None:
+            payload_fields = None
+        else:
+            assert expr.variant.payload_type is not None
+            payload_type = self.__type_ctx[expr.variant.payload_type]
+            assert isinstance(payload_type, Type.StructType)
+            fields = payload_type.get_fields(self.__type_ctx)
+            payload_fields = [self.__resolve_val(expr.args[field.name]) for field in fields]
+
+        return self.__build_variant_construct(expr.enum_id, expr.variant, payload_fields, expr.type_id)
 
     def __resolve_field_access(self, expr: HIR.FieldAccess) -> IR.Value:
-        raise NotImplementedError
+        if expr.receiver.is_place:
+            addr = self.__resolve_field_access_addr(expr)
+            return self.__build_load(addr)
+
+        value = self.__resolve_val(expr.receiver)
+        return self.__build_extract_value(value, expr.field.index, expr.type_id)
 
     def __resolve_tuple_access(self, expr: HIR.TupleAccess) -> IR.Value:
-        raise NotImplementedError
+        if expr.receiver.is_place:
+            addr = self.__resolve_tuple_access_addr(expr)
+            return self.__build_load(addr)
+
+        value = self.__resolve_val(expr.receiver)
+        return self.__build_extract_value(value, expr.index, expr.type_id)
 
     def __resolve_dyn_value(self, expr: HIR.DynValue) -> IR.Value:
-        raise NotImplementedError
+        """
+        1. malloc a buffer on the heap
+        2. write the value to the buffer
+        """
+        size = IR.IntLiteral(1, type_id=TypeCtx.u64_id)
+        buffer = self.__build_malloc(expr.type_id, size)
+
+        value = self.__resolve_val(expr.value)
+        self.__build_store(value, buffer)
+        return buffer
 
     def __resolve_dyn_buffer(self, expr: HIR.DynBuffer) -> IR.Value:
-        raise NotImplementedError
+        size = self.__resolve_val(expr.length)
+        buffer = self.__build_malloc(expr.element_type, size)
+        return buffer
 
     def __resolve_size_of(self, expr: HIR.SizeOf) -> IR.Value:
-        raise NotImplementedError
+        return self.__build_size_of(expr.type_id)
 
     def __resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:
-        raise NotImplementedError
+        value = self.__resolve_val(expr.value)
+        return self.__build_cast(value, expr.type_id)
 
     def __resolve_sys_read(self, expr: HIR.SysRead) -> IR.Value:
-        raise NotImplementedError
+        fd = self.__resolve_val(expr.fd)
+        buf = self.__resolve_val(expr.buf)
+        return self.__build_sys_read(fd, buf)
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
-        raise NotImplementedError
+        field_vals = [self.__resolve_val(field) for field in expr.field_values]
+        return self.__build_aggregate_construct(expr.type_id, field_vals)
 
     def __resolve_array(self, expr: HIR.Array) -> IR.Value:
-        raise NotImplementedError
+        elements = [self.__resolve_val(element) for element in expr.elements]
+        return self.__build_array_construct(expr.type_id, elements)
 
     def __resolve_var(self, expr: HIR.Var) -> IR.Value:
-        raise NotImplementedError
+        addr = self.__resolve_var_addr(expr)
+        return self.__build_load(addr)
 
     def __resolve_literal(self, expr: HIR.Literal) -> IR.Value:
-        raise NotImplementedError
+        match expr:
+            case HIR.IntLiteral():
+                return IR.IntLiteral(value=expr.value, type_id=expr.type_id)
+            case HIR.FloatLiteral():
+                return IR.FloatLiteral(value=expr.value, type_id=expr.type_id)
+            case HIR.CharLiteral():
+                return IR.CharLiteral(value=expr.value, type_id=TypeCtx.char_id)
+            case HIR.BoolLiteral():
+                return IR.BoolLiteral(value=expr.value, type_id=TypeCtx.bool_id)
+            case HIR.StrLiteral():
+                return IR.StringLiteral(value=expr.value, type_id=TypeCtx.str_id)
 
     # ------------------------------------------------------------------
     # addr resolvors
     # ------------------------------------------------------------------
 
     def __resolve_index_addr(self, expr: HIR.Binary) -> IR.Value:
-        raise NotImplementedError
+        addr = self.__resolve_addr(expr.left)
+        index = self.__resolve_val(expr.right)
+        return self.__build_element_ptr(addr, index)
 
     def __resolve_deref_addr(self, expr: HIR.Unary) -> IR.Value:
-        raise NotImplementedError
+        return self.__resolve_addr(expr.operand)
 
     def __resolve_field_access_addr(self, expr: HIR.FieldAccess) -> IR.Value:
-        raise NotImplementedError
+        base_addr = self.__resolve_addr(expr.receiver)
+        return self.__build_field_ptr(base_addr, expr.field.index, expr.type_id)
 
     def __resolve_tuple_access_addr(self, expr: HIR.TupleAccess) -> IR.Value:
-        raise NotImplementedError
+        base_addr = self.__resolve_addr(expr.receiver)
+        return self.__build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def __resolve_var_addr(self, expr: HIR.Var) -> IR.Value:
-        raise NotImplementedError
+        if expr.symbol_id not in self.__locals:
+            raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
+        var_ref = self.__locals[expr.symbol_id]
+        return self.__build_var_ptr(var_ref)
 
     # ------------------------------------------------------------------
     # ir building helpers
     # ------------------------------------------------------------------
 
+    def __build_var_ptr(self, var_ref: IR.VarRef) -> IR.Value:
+        """Get the address of a local variable."""
+        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
+        return self.__emit(IR.VarPtr(result=result, var_ref=var_ref)).result
+
     def __build_alloca(self, value: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
         return self.__emit(IR.Alloca(result=result, value=value)).result
+
+    def __build_element_ptr(self, base: IR.Value, index: IR.Value) -> IR.Value:
+        array_ptr_type = self.__type_ctx[base.type_id]
+        assert isinstance(array_ptr_type, Type.PointerType)
+        array_type = self.__type_ctx[array_ptr_type.pointee_type]
+        assert isinstance(array_type, Type.ArrayType)
+        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(array_type.element_type))
+        return self.__emit(IR.ElementPtr(result=result, base=base, index=index)).result
+
+    def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
+        return self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__type_ctx[ptr.type_id]
@@ -527,6 +615,10 @@ class CfgBuilder:
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
         self.__emit(IR.Store(ptr=ptr, value=value))
 
+    def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
+        return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size)).result
+
     def __build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
@@ -534,6 +626,42 @@ class CfgBuilder:
     def __build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.Unary(result=result, op=op, operand=operand)).result
+
+    def __build_extract_value(self, base: IR.Value, field_index: int, type_id: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=type_id)
+        return self.__emit(IR.ExtractValue(result=result, base=base, field_index=field_index)).result
+
+    def __build_call(self, callee_type: int, args: list[IR.Value], result_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=result_type)
+        return self.__emit(IR.Call(result=result, callee_type=callee_type, args=args)).result
+
+    def __build_invoke(self, callee: IR.Value, args: list[IR.Value], result_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=result_type)
+        return self.__emit(IR.Invoke(result=result, callee=callee, args=args)).result
+
+    def __build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=to_type)
+        return self.__emit(IR.Cast(result=result, value=value, to_type=to_type)).result
+
+    def __build_size_of(self, type_id: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        return self.__emit(IR.SizeOf(result=result, type_id=type_id)).result
+
+    def __build_aggregate_construct(self, type_id: int, fields: list[IR.Value]) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=type_id)
+        return self.__emit(IR.AggregateConstruct(result=result, type_id=type_id, fields=fields)).result
+
+    def __build_array_construct(self, type_id: int, elements: list[IR.Value]) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=type_id)
+        return self.__emit(IR.ArrayConstruct(result=result, type_id=type_id, elements=elements)).result
+
+    def __build_variant_construct(self, enum_type: int, variant: Type.EnumVariant, payload_fields: list[IR.Value] | None, result_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=result_type)
+        return self.__emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
+
+    def __build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
     def __build_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=incoming[0][1].type_id)

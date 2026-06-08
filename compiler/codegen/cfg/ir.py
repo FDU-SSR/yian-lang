@@ -42,7 +42,7 @@ class Alloca:
 class FieldPtr:
     """Given ptr to a struct/tuple, get pointer to a field of it"""
     result: Reg
-    base: Reg
+    base: Value
     field_index: int
 
 
@@ -50,7 +50,7 @@ class FieldPtr:
 class ElementPtr:
     """Given ptr to an array, get pointer to an element of it"""
     result: Reg
-    base: Reg
+    base: Value  # addr to the array, not first element of the array
     index: Value
 
 
@@ -66,6 +66,14 @@ class Store:
     """Write value to a pointer"""
     ptr: Value
     value: Value
+
+
+@dataclass
+class Malloc:
+    """Allocate memory on the heap"""
+    result: Reg
+    type_id: int
+    size: Value
 
 
 @dataclass
@@ -86,6 +94,14 @@ class Unary:
 
 
 @dataclass
+class ExtractValue:
+    """Extract a field from a struct/tuple"""
+    result: Reg
+    base: Value
+    field_index: int
+
+
+@dataclass
 class Delete:
     """Delete a pointer"""
     ptr: Value
@@ -100,9 +116,10 @@ class Call:
 
 
 @dataclass
-class VoidCall:
-    """Call without a return value"""
-    callee_type: int  # type id of the function/method
+class Invoke:
+    """Invoke a callable value (function pointer, closure, etc.) with a return value"""
+    result: Reg
+    callee: Value
     args: list[Value]
 
 
@@ -120,11 +137,26 @@ class Cast:
 
 
 @dataclass
-class StructConstruct:
-    """Construct a struct"""
+class SizeOf:
+    """Get the size of a type in bytes"""
     result: Reg
-    struct_type: int
+    type_id: int
+
+
+@dataclass
+class AggregateConstruct:
+    """Construct an aggregate value (struct or tuple) from field values."""
+    result: Reg
+    type_id: int
     fields: list[Value]
+
+
+@dataclass
+class ArrayConstruct:
+    """Construct an array from element values."""
+    result: Reg
+    type_id: int
+    elements: list[Value]
 
 
 @dataclass
@@ -143,6 +175,13 @@ class SysWrite:
 
 
 @dataclass
+class SysRead:
+    result: Reg
+    fd: Value
+    buf: Value
+
+
+@dataclass
 class Phi:
     """Phi node"""
     result: Reg
@@ -150,12 +189,13 @@ class Phi:
 
 
 Stmt: TypeAlias = (
-    VarPtr | FieldPtr | ElementPtr | Alloca
+    VarPtr | FieldPtr | ElementPtr | Alloca | Malloc
     | Load | Store
-    | Binary | Unary | Delete
-    | Call | VoidCall | Cast
-    | StructConstruct | VariantConstruct
-    | SysWrite
+    | Binary | Unary | ExtractValue | Delete
+    | Call | Invoke
+    | Cast | SizeOf
+    | AggregateConstruct | ArrayConstruct | VariantConstruct
+    | SysWrite | SysRead
     | Phi
 )
 

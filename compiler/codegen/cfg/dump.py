@@ -42,11 +42,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             )
 
         case IR.FieldPtr(result=result, base=base, field_index=idx):
-            return f"%{result.name} = fieldptr %{base.name}[{idx}]"
+            return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
 
         case IR.ElementPtr(result=result, base=base, index=index):
             return (
-                f"%{result.name} = elementptr %{base.name}"
+                f"%{result.name} = elementptr {__dump_value(base)}"
                 f"[{__dump_value(index)}]"
             )
 
@@ -54,6 +54,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return (
                 f"%{result.name} = alloca"
                 f" {__dump_value(value)}"
+            )
+
+        case IR.Malloc(result=result, type_id=type_id, size=size):
+            return (
+                f"%{result.name} = malloc"
+                f" {__type_str(type_id)}, {__dump_value(size)}"
             )
 
         case IR.Load(result=result, ptr=ptr):
@@ -79,6 +85,13 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.ExtractValue(result=result, base=base, field_index=idx):
+            return (
+                f"%{result.name} = extractvalue"
+                f" {__dump_value(base)}[{idx}]"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
         case IR.Delete(ptr=ptr):
             return f"delete {__dump_value(ptr)}"
 
@@ -89,9 +102,13 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.VoidCall(callee_type=callee_type, args=args):
+        case IR.Invoke(result=result, callee=callee, args=args):
             arg_str = ", ".join(__dump_value(a) for a in args)
-            return f"voidcall @{__type_str(callee_type)}({arg_str})"
+            return (
+                f"%{result.name} = invoke"
+                f" {__dump_value(callee)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
 
         case IR.Cast(result=result, value=value, to_type=to_type):
             return (
@@ -100,13 +117,29 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.StructConstruct(
-            result=result, struct_type=struct_type, fields=fields
+        case IR.SizeOf(result=result, type_id=type_id):
+            return (
+                f"%{result.name} = sizeof"
+                f" {__type_str(type_id)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.AggregateConstruct(
+            result=result, type_id=type_id, fields=fields
         ):
             field_str = ", ".join(__dump_value(f) for f in fields)
             return (
-                f"%{result.name} = struct"
-                f" {__type_str(struct_type)} {{{field_str}}}"
+                f"%{result.name} = aggregate"
+                f" {__type_str(type_id)} {{{field_str}}}"
+            )
+
+        case IR.ArrayConstruct(
+            result=result, type_id=type_id, elements=elements
+        ):
+            elem_str = ", ".join(__dump_value(e) for e in elements)
+            return (
+                f"%{result.name} = array"
+                f" {__type_str(type_id)} [{elem_str}]"
             )
 
         case IR.VariantConstruct(
@@ -125,6 +158,17 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             buf=buf,
         ):
             return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
+
+        case IR.SysRead(
+            result=result,
+            fd=fd,
+            buf=buf,
+        ):
+            return (
+                f"%{result.name} = sys_read"
+                f" {__dump_value(fd)}, {__dump_value(buf)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
 
         case IR.Phi(result=result, incoming=incoming):
             inc_str = ", ".join(
