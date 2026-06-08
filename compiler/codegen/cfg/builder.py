@@ -48,12 +48,41 @@ class CfgBuilder:
         assert dp.body is not None
         self.__translate_block(dp.body)
 
+        # ── termination guard ──
+        self.__guard_termination(dp)
+
     # ------------------------------------------------------------------
     # public result
     # ------------------------------------------------------------------
 
     def build(self) -> IR.Function:
         return self.__func
+
+    # ------------------------------------------------------------------
+    # termination guard
+    # ------------------------------------------------------------------
+
+    def __guard_termination(self, dp: DefPoint) -> None:
+        """Ensure every block has a terminator.
+
+        - void-returning functions: patch unterminated blocks with ``RetVoid``.
+        - non-void-returning functions: raise ``CodegenError`` if any block is unterminated.
+        """
+        func_type = self.__type_ctx[dp.type_id]
+        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
+        return_type = func_type.return_type(self.__type_ctx)
+
+        for block in self.__func.blocks:
+            if block.terminator is not None:
+                continue
+            if return_type == TypeCtx.void_id:
+                block.terminator = IR.RetVoid()
+            else:
+                raise CodegenError(
+                    f"Function '{self.__func.name}' has unterminated block '{block.label}'; "
+                    f"non-void functions must have explicit return in all control paths.",
+                    dp.ast_body.span,
+                )
 
     # ------------------------------------------------------------------
     # SSA names & block helpers
