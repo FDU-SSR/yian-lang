@@ -102,24 +102,21 @@ class LLTypeCtx:
         return ir.LiteralStructType([self.__get_raw_type(et) for et in td.element_types])
 
     def __handle_struct(self, type_id: int, td: Type.StructType) -> ir.Type:
-        unit_name = self.__unit_names.get(td.custom_def.unit_id, "unknown")
+        unit_name = self.__unit_names.get(td.unit_id, "unknown")
         identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
-        substs = dict(zip(td.custom_def.generics, td.generic_args))
-        fields = sorted(td.custom_def.fields, key=lambda f: f.index)
-        identified.set_body(*[self.__get_raw_type(self.__type_ctx.instantiate(f.type_id, substs)) for f in fields])
+        identified.set_body(*[self.__get_raw_type(f.type_id) for f in td.get_fields(self.__type_ctx)])
         return identified
 
     def __handle_enum(self, type_id: int, td: Type.EnumType) -> ir.Type:
-        unit_name = self.__unit_names.get(getattr(td.custom_def, "unit_id", -1), "unknown")
+        unit_name = self.__unit_names.get(td.unit_id, "unknown")
         identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
-        substs = dict(zip(td.custom_def.generics, td.generic_args))
         max_size, max_align = 0, 1
-        for v in td.custom_def.variants:
+        for v in td.get_variants(self.__type_ctx):
             if v.payload_type is None:
                 continue
-            s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs))
+            s, a = self.__stable_layout(v.payload_type)
             max_size, max_align = max(max_size, s), max(max_align, a)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
         identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))
@@ -141,7 +138,7 @@ class LLTypeCtx:
         )
 
     def __handle_method(self, td: Type.MethodType) -> ir.Type:
-        receiver = None if td.custom_def.is_static else td.receiver_type(self.__type_ctx)
+        receiver = None if td.is_static else td.receiver_type(self.__type_ctx)
         return self.__build_function_type(
             td.return_type(self.__type_ctx),
             [pt.type_id for pt in td.parameters(self.__type_ctx)],
@@ -183,12 +180,11 @@ class LLTypeCtx:
             assert isinstance(length_ty, Type.LiteralValueType)
             result = (es * length_ty.value, ea)
         elif isinstance(td, Type.EnumType):
-            substs = dict(zip(td.custom_def.generics, td.generic_args))
             ms, ma = 0, 1
-            for v in td.custom_def.variants:
+            for v in td.get_variants(self.__type_ctx):
                 if v.payload_type is None:
                     continue
-                s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs))
+                s, a = self.__stable_layout(v.payload_type)
                 ms, ma = max(ms, s), max(ma, a)
             ps = self.__align_up(ms, ma) if ms > 0 else 0
             result = (self.__align_up(4 + ps, 4), 4)

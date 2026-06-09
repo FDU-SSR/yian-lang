@@ -133,6 +133,10 @@ class StructType:
     custom_def: StructDef
     generic_args: list[int] = field(default_factory=list[int])
 
+    @property
+    def unit_id(self) -> int:
+        return self.custom_def.unit_id
+
     def get_fields(self, context: TypeCtx) -> list[StructField]:
         substs = dict(zip(self.custom_def.generics, self.generic_args))
         fields: list[StructField] = []
@@ -170,6 +174,7 @@ class EnumDef:
     name: str
     generics: list[int] = field(default_factory=list[int])
     variants: list[EnumVariant] = field(default_factory=list[EnumVariant])
+    unit_id: int = -1
 
 
 @dataclass
@@ -177,6 +182,10 @@ class EnumType:
     type_id: int
     custom_def: EnumDef
     generic_args: list[int] = field(default_factory=list[int])
+
+    @property
+    def unit_id(self) -> int:
+        return self.custom_def.unit_id
 
     def get_variants(self, context: TypeCtx) -> list[EnumVariant]:
         substs = dict(zip(self.custom_def.generics, self.generic_args))
@@ -263,6 +272,10 @@ class MethodType:
     type_id: int
     custom_def: MethodDef
     generic_args: list[int] = field(default_factory=list[int])
+
+    @property
+    def is_static(self) -> bool:
+        return self.custom_def.is_static
 
     def receiver_type(self, context: TypeCtx) -> int:
         substs = dict(zip(self.custom_def.generics, self.generic_args))
