@@ -13,7 +13,7 @@ from compiler.codegen.llvm.builder import LLBuilder
 from compiler.codegen.llvm.intrinsics import IntrinsicKind
 from compiler.codegen.llvm.module import LLFunction, LLModule
 from compiler.codegen.llvm.types import LLTypeCtx
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.codegen.llvm.value import LLValue
 
 
 class LLTranslator:
@@ -50,28 +50,23 @@ class LLTranslator:
 
     def __build(self, cfg: IR.Function) -> None:
         self.__func = self.__module.get_func(cfg.type_id)
-        f = self.__func.__ir
 
         # ── entry block + allocas ──
         self.__func.add_entry_block()
         builder = LLBuilder(self.__func, self.__module, self.__ll_type_ctx, self.__type_ctx)
         builder.position_at(cfg.entry.label, where="first")
         for symbol_id, vr in cfg.local_vars.items():
-            self.__func.set_alloca(symbol_id, builder.alloca(vr.type_id, name=vr.name))
+            self.__func.set_alloca(symbol_id, builder.alloca(vr.type_id))
 
         builder.position_at(cfg.entry.label, where="end")
-        for i, symbol_id in enumerate(cfg.params):
-            if i < len(f.args):
-                a = self.__func.alloca(symbol_id)
-                if a is not None:
-                    builder.store_raw(f.args[i], a)
+        self.__func.store_params(cfg.params, builder)
 
         # ── create blocks ──
         for blk in cfg.blocks:
             if blk.label == cfg.entry.label:
                 self.__func.add_block(blk.label, self.__func.entry_block)
             else:
-                self.__func.add_block(blk.label, f.append_basic_block(blk.label))
+                self.__func.add_block(blk.label, self.__func.new_block(blk.label))
 
         # ── translate blocks ──
         for blk in cfg.blocks:
@@ -136,7 +131,7 @@ class LLTranslator:
                 res = self.__h_sizeof(builder, stmt)
                 self.__func.set_reg(stmt.result.name, res)
             case IR.FuncPtr():
-                res = self.__h_funcptr(stmt)
+                res = self.__h_funcptr(builder, stmt)
                 self.__func.set_reg(stmt.result.name, res)
             case IR.AggregateConstruct():
                 res = self.__h_aggregate(builder, stmt)
@@ -157,79 +152,79 @@ class LLTranslator:
     # stmt handlers
     # ------------------------------------------------------------------
 
-    def __h_varptr(self, stmt: IR.VarPtr) -> ir.Value:
+    def __h_varptr(self, stmt: IR.VarPtr) -> LLValue:
         a = self.__func.alloca(stmt.var_ref.symbol_id)
         assert a is not None
         return a
 
-    def __h_alloca(self, builder: LLBuilder, stmt: IR.Alloca) -> ir.Value:
+    def __h_alloca(self, builder: LLBuilder, stmt: IR.Alloca) -> LLValue:
         assert self.__func is not None
         eb = builder.fork_block(self.__func.entry_block, where="first")
-        a = eb.alloca(stmt.value.type_id, name=f"tmp.{stmt.result.name}")
+        a = eb.alloca(stmt.value.type_id)
         builder.store(stmt.value, a)
         return a
 
-    def __h_fieldptr(self, builder: LLBuilder, stmt: IR.FieldPtr) -> ir.Value:
+    def __h_fieldptr(self, builder: LLBuilder, stmt: IR.FieldPtr) -> LLValue:
         return builder.gep(stmt.base, [0, stmt.field_index])
 
-    def __h_load(self, builder: LLBuilder, stmt: IR.Load) -> ir.Value:
-        return builder.load(stmt.ptr, name=f"load.{stmt.result.name}")
+    def __h_load(self, builder: LLBuilder, stmt: IR.Load) -> LLValue:
+        return builder.load(stmt.ptr)
 
     def __h_store(self, builder: LLBuilder, stmt: IR.Store) -> None:
         builder.store(stmt.value, stmt.ptr)
 
-    def __h_malloc(self, builder: LLBuilder, stmt: IR.Malloc) -> ir.Value:
-        raw = builder.call_intrinsic(IntrinsicKind.Malloc, [stmt.size], name="malloc.raw")
+    def __h_malloc(self, builder: LLBuilder, stmt: IR.Malloc) -> LLValue:
+        raw = builder.call_intrinsic(IntrinsicKind.Malloc, [stmt.size])
         ptr_t = self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(stmt.type_id))
-        return builder.bitcast_ptr(raw, ptr_t, name=stmt.result.name)
+        return LLValue(stmt.result.type_id, builder.bitcast_ptr(raw, ptr_t))
 
-    def __h_binary(self, builder: LLBuilder, stmt: IR.Binary) -> ir.Value:
-        return builder.binary(stmt.op, stmt.lhs, stmt.rhs, stmt.result.name)
+    def __h_binary(self, builder: LLBuilder, stmt: IR.Binary) -> LLValue:
+        return builder.binary(stmt.op, stmt.lhs, stmt.rhs)
 
-    def __h_unary(self, builder: LLBuilder, stmt: IR.Unary) -> ir.Value:
-        return builder.unary(stmt.op, stmt.operand, stmt.result.name)
+    def __h_unary(self, builder: LLBuilder, stmt: IR.Unary) -> LLValue:
+        return builder.unary(stmt.op, stmt.operand)
 
-    def __h_extractvalue(self, builder: LLBuilder, stmt: IR.ExtractValue) -> ir.Value:
-        return builder.extract_value(stmt.base, stmt.field_index, name=stmt.result.name)
+    def __h_extractvalue(self, builder: LLBuilder, stmt: IR.ExtractValue) -> LLValue:
+        return builder.extract_value(stmt.base, stmt.field_index)
 
     def __h_delete(self, builder: LLBuilder, stmt: IR.Delete) -> None:
         builder.call_intrinsic(
             IntrinsicKind.Free,
-            [builder.bitcast_ptr(builder.resolve(stmt.ptr), builder.i8_ptr_type())],
+            [builder.bitcast_ptr(builder.resolve(stmt.ptr).ir_val, builder.i8_ptr_type())],
         )
 
-    def __h_call(self, builder: LLBuilder, stmt: IR.Call) -> ir.Value:
+    def __h_call(self, builder: LLBuilder, stmt: IR.Call) -> LLValue:
         callee = self.__module.get_func(stmt.callee_type)
         assert callee is not None, f"Function callee_type={stmt.callee_type} not declared"
-        return builder.call(callee._ir, stmt.args, name=stmt.result.name)
+        return builder.call(callee, stmt.args)
 
-    def __h_invoke(self, builder: LLBuilder, stmt: IR.Invoke) -> ir.Value:
-        return builder.call_value(stmt.callee, stmt.args, name=stmt.result.name)
+    def __h_invoke(self, builder: LLBuilder, stmt: IR.Invoke) -> LLValue:
+        return builder.call_value(stmt.callee, stmt.args)
 
-    def __h_cast(self, builder: LLBuilder, stmt: IR.Cast) -> ir.Value:
-        return builder.cast(stmt.value, stmt.to_type, stmt.result.name)
+    def __h_cast(self, builder: LLBuilder, stmt: IR.Cast) -> LLValue:
+        return builder.cast(stmt.value, stmt.to_type)
 
-    def __h_sizeof(self, builder: LLBuilder, stmt: IR.SizeOf) -> ir.Value:
+    def __h_sizeof(self, builder: LLBuilder, stmt: IR.SizeOf) -> LLValue:
         return builder.sizeof_const(stmt.type_id)
 
-    def __h_funcptr(self, stmt: IR.FuncPtr) -> ir.Value:
+    def __h_funcptr(self, builder: LLBuilder, stmt: IR.FuncPtr) -> LLValue:
         callee = self.__module.get_func(stmt.func_type_id)
         assert callee is not None, f"FuncPtr func_type_id={stmt.func_type_id} not declared"
-        return callee._ir
+        return builder.func_ptr(callee)
 
-    def __h_aggregate(self, builder: LLBuilder, stmt: IR.AggregateConstruct) -> ir.Value:
+    def __h_aggregate(self, builder: LLBuilder, stmt: IR.AggregateConstruct) -> LLValue:
         r = builder.undef(stmt.result.type_id)
         for i, fv in enumerate(stmt.fields):
             r = builder.insert_value(r, fv, i)
         return r
 
-    def __h_array(self, builder: LLBuilder, stmt: IR.ArrayConstruct) -> ir.Value:
+    def __h_array(self, builder: LLBuilder, stmt: IR.ArrayConstruct) -> LLValue:
         r = builder.undef(stmt.result.type_id)
         for i, ev in enumerate(stmt.elements):
             r = builder.insert_value(r, ev, i)
         return r
 
-    def __h_variant(self, builder: LLBuilder, stmt: IR.VariantConstruct) -> ir.Value:
+    def __h_variant(self, builder: LLBuilder, stmt: IR.VariantConstruct) -> LLValue:
         r = builder.undef(stmt.result.type_id)
         r = builder.insert_value(r, builder.i32(stmt.variant.discriminant), 0)
         if stmt.payload_fields is not None:
@@ -242,28 +237,28 @@ class LLTranslator:
                 self.__ll_type_ctx.get_type_size(stmt.variant.payload_type)
             )
             r = builder.insert_value(
-                r, builder.bitcast_ptr(pv, pay_arr, name="payload.bytes"), 1
+                r, LLValue(-1, builder.bitcast_ptr(pv.ir_val, pay_arr)), 1
             )
         return r
 
     def __h_syswrite(self, builder: LLBuilder, stmt: IR.SysWrite) -> None:
-        buf = builder.resolve(stmt.buf)
         builder.call_intrinsic(
             IntrinsicKind.Write,
             [stmt.fd, builder.extract_value(stmt.buf, 0), builder.extract_value(stmt.buf, 1)],
         )
 
-    def __h_sysread(self, builder: LLBuilder, stmt: IR.SysRead) -> ir.Value:
-        return builder.call_intrinsic(
+    def __h_sysread(self, builder: LLBuilder, stmt: IR.SysRead) -> LLValue:
+        raw = builder.call_intrinsic(
             IntrinsicKind.Read,
             [stmt.fd, builder.extract_value(stmt.buf, 0), builder.extract_value(stmt.buf, 1)],
-            name=stmt.result.name,
         )
+        return LLValue(stmt.result.type_id, raw)
 
     def __h_phi_impl(self, builder: LLBuilder, stmt: IR.Phi) -> None:
-        phi = builder.phi(stmt.result.type_id, stmt.result.name)
+        phi = builder.phi(stmt.result.type_id)
+        self.__func.set_reg(stmt.result.name, phi)
         for src, val in stmt.incoming:
-            builder.add_incoming(phi, val, src.label)
+            builder.add_incoming(phi, builder.resolve(val), src.label)
 
     # ------------------------------------------------------------------
     # terminators
@@ -287,7 +282,6 @@ class LLTranslator:
                 raise ValueError(f"Unknown terminator: {type(t).__name__}")
 
     def __panic(self, builder: LLBuilder, msg: IR.Value) -> None:
-        mv = builder.resolve(msg)
         builder.call_intrinsic(
             IntrinsicKind.Write,
             [builder.i32(2), builder.extract_value(msg, 0), builder.extract_value(msg, 1)],
@@ -300,7 +294,7 @@ class LLTranslator:
         mty = self.__type_ctx[t.value.type_id]
         default = self.__func.block(t.default.label) if t.default else None
         if default is None:
-            default = self.__func.__ir.append_basic_block("match.unreach")
+            default = self.__func.new_block("match.unreach")
             ir.IRBuilder(default).unreachable()
 
         if isinstance(mty, (Type.IntType, Type.CharType, Type.BoolType)):
@@ -317,8 +311,7 @@ class LLTranslator:
 
         elif isinstance(mty, Type.EnumType):
             disc = builder.load_raw(
-                builder.gep_raw(mv, [0, 0], name="disc.ptr"),
-                name="disc.val",
+                builder.gep_raw(mv, [0, 0])
             )
             sw = builder.raw().switch(disc, default)
             for arm in t.arms:
@@ -338,22 +331,16 @@ class LLTranslator:
         cb = builder.fork_block(bb, where="first")
 
         payload = cb.bitcast_ptr(
-            cb.gep_raw(mv, [0, 1], name="payload.ptr"),
+            cb.gep_raw(mv, [0, 1]),
             ir.PointerType(self.__ll_type_ctx.get_ll_type(pat.variant.payload_type)),
-            name="payload.cast",
         )
 
         for i, f in enumerate(pat.fields):
             if i >= len(pfields):
                 break
             fv = cb.load_raw(
-                cb.gep_raw(payload, [0, i], name=f"field.{f.name}.gep"),
-                name=f"field.{f.name}.val",
+                cb.gep_raw(payload, [0, i])
             )
             a = self.__func.alloca(f.symbol_id)
             if a is not None:
-                cb.store_raw(fv, a)
-
-    # ------------------------------------------------------------------
-    # helpers
-    # ------------------------------------------------------------------
+                cb.store_raw(fv, a.ir_val)

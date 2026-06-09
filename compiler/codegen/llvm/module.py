@@ -4,13 +4,17 @@ LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from llvmlite import ir  # type: ignore[import-untyped]
 
-from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.intrinsics import IntrinsicManager
 from compiler.codegen.llvm.types import LLTypeCtx
+from compiler.codegen.llvm.value import LLValue
+
+if TYPE_CHECKING:
+    from compiler.codegen.llvm.builder import LLBuilder
 
 
 class LLFunction:
@@ -18,15 +22,15 @@ class LLFunction:
 
     def __init__(self, ir_func: ir.Function) -> None:
         self.__ir = ir_func
-        self.__var_allocas: dict[int, ir.AllocaInstr] = {}
+        self.__var_allocas: dict[int, LLValue] = {}
         self.__entry_block: ir.Block | None = None
         self.__blocks: dict[str, ir.Block] = {}
-        self.__regs: dict[str, ir.Value] = {}
+        self.__regs: dict[str, LLValue] = {}
 
     # -- entry block --
 
     def add_entry_block(self) -> None:
-        self.__entry_block = self.__ir.append_basic_block(".entry")
+        self.__entry_block = self.new_block(".entry")
 
     @property
     def entry_block(self) -> ir.Block:
@@ -35,13 +39,17 @@ class LLFunction:
 
     # -- var allocas --
 
-    def set_alloca(self, symbol_id: int, alloca: ir.AllocaInstr) -> None:
+    def set_alloca(self, symbol_id: int, alloca: LLValue) -> None:
         self.__var_allocas[symbol_id] = alloca
 
-    def alloca(self, symbol_id: int) -> ir.AllocaInstr | None:
+    def alloca(self, symbol_id: int) -> LLValue | None:
         return self.__var_allocas.get(symbol_id)
 
     # -- block management --
+
+    def new_block(self, label: str) -> ir.Block:
+        """Append a basic block to the function."""
+        return self.__ir.append_basic_block(label)
 
     def add_block(self, label: str, block: ir.Block) -> None:
         self.__blocks[label] = block
@@ -49,12 +57,23 @@ class LLFunction:
     def block(self, label: str) -> ir.Block:
         return self.__blocks[label]
 
+    # -- parameter setup --
+
+    def store_params(self, cfg_params: list[int], builder: LLBuilder) -> None:
+        """Store incoming LLVM arguments into their allocas."""
+        for i, symbol_id in enumerate(cfg_params):
+            if i >= len(self.__ir.args):
+                break
+            a = self.alloca(symbol_id)
+            if a is not None:
+                builder.store_raw(self.__ir.args[i], a.ir_val)
+
     # -- register management --
 
-    def set_reg(self, name: str, value: ir.Value) -> None:
+    def set_reg(self, name: str, value: LLValue) -> None:
         self.__regs[name] = value
 
-    def reg(self, name: str) -> ir.Value:
+    def reg(self, name: str) -> LLValue:
         return self.__regs[name]
 
 
