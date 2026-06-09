@@ -9,32 +9,37 @@ from llvmlite import ir
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.llvm.builder import LLBuilder
 from compiler.codegen.llvm.intrinsics import IntrinsicKind
 from compiler.codegen.llvm.module import LLFunction, LLModule
+from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 
 class LLTranslator:
     """CFG Functions → LLVM Module."""
 
-    def __init__(self, type_ctx: TypeCtx, module: LLModule) -> None:
+    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str]) -> None:
         self.__type_ctx = type_ctx
-        self.__module = module
+
+        ll_module = ir.Module(name="yian.module")
+        ll_module.triple = "x86_64-unknown-linux-gnu"
+
+        self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names)
+        self.__module = LLModule(ll_module, self.__ll_type_ctx)
 
         # per-function state (reset in __build)
         self.__func: LLFunction | None = None
-        self.__blocks: dict[str, ir.Block] = {}
-        self.__regs: dict[str, ir.Value] = {}
 
     # ------------------------------------------------------------------
     # public
     # ------------------------------------------------------------------
 
     def run(self, functions: dict[str, IR.Function]) -> None:
-        for f in functions.values():
-            self.__module.declare(f)
-        for f in functions.values():
-            self.__build(f)
+        for function in functions.values():
+            self.__module.declare(function)
+        for function in functions.values():
+            self.__build(function)
 
     def export(self) -> LLModule:
         return self.__module
@@ -44,365 +49,311 @@ class LLTranslator:
     # ------------------------------------------------------------------
 
     def __build(self, cfg: IR.Function) -> None:
-        func = self.__module.get_func(cfg.type_id)
-        assert func is not None
-        self.__func = func
-        self.__blocks = {}
-        self.__regs = {}
-        f = func._ir
-        tm = self.__module.type_mapper
+        self.__func = self.__module.get_func(cfg.type_id)
+        f = self.__func.__ir
 
         # ── entry block + allocas ──
-        entry_bb = f.append_basic_block(".entry")
-        func.entry_block = entry_bb
-        eb = ir.IRBuilder(entry_bb)
+        self.__func.add_entry_block()
+        builder = LLBuilder(self.__func, self.__module, self.__ll_type_ctx, self.__type_ctx)
+        builder.position_at(cfg.entry.label, where="first")
         for symbol_id, vr in cfg.local_vars.items():
-            func.var_allocas[symbol_id] = eb.alloca(tm.get_ll_type(vr.type_id), name=vr.name)
+            self.__func.set_alloca(symbol_id, builder.alloca(vr.type_id, name=vr.name))
 
+        builder.position_at(cfg.entry.label, where="end")
         for i, symbol_id in enumerate(cfg.params):
             if i < len(f.args):
-                a = func.var_allocas.get(symbol_id)
+                a = self.__func.alloca(symbol_id)
                 if a is not None:
-                    eb.store(f.args[i], a)
+                    builder.store_raw(f.args[i], a)
 
         # ── create blocks ──
         for blk in cfg.blocks:
             if blk.label == cfg.entry.label:
-                self.__blocks[blk.label] = entry_bb
+                self.__func.add_block(blk.label, self.__func.entry_block)
             else:
-                self.__blocks[blk.label] = f.append_basic_block(blk.label)
+                self.__func.add_block(blk.label, f.append_basic_block(blk.label))
 
         # ── translate blocks ──
         for blk in cfg.blocks:
-            bb = self.__blocks[blk.label]
-            b = ir.IRBuilder(bb)
+            builder.position_at(blk.label, where="phi")
 
             # phi nodes
-            if blk.phis:
-                b.position_at_start(bb)
-                for ps in blk.phis:
-                    self.__h_phi_impl(b, ps)
+            for ps in blk.phis:
+                self.__h_phi_impl(builder, ps)
 
             # regular statements + terminator
-            b.position_at_end(bb)
+            builder.position_at(blk.label, where="end")
             for s in blk.stmts:
-                self.__translate(b, s)
+                self.__translate(builder, s)
 
             assert blk.terminator is not None
-            self.__term(b, blk.terminator)
+            self.__term(builder, blk.terminator)
 
     # ------------------------------------------------------------------
     # dispatch
     # ------------------------------------------------------------------
 
-    def __translate(self, builder: ir.IRBuilder, stmt: IR.Stmt) -> None:
+    def __translate(self, builder: LLBuilder, stmt: IR.Stmt) -> None:
         match stmt:
             case IR.VarPtr():
-                res = self.__h_varptr(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                res = self.__h_varptr(stmt)
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Alloca():
                 res = self.__h_alloca(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.FieldPtr():
                 res = self.__h_fieldptr(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Load():
                 res = self.__h_load(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Store():
                 self.__h_store(builder, stmt)
             case IR.Malloc():
                 res = self.__h_malloc(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Binary():
                 res = self.__h_binary(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Unary():
                 res = self.__h_unary(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.ExtractValue():
                 res = self.__h_extractvalue(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Delete():
                 self.__h_delete(builder, stmt)
             case IR.Call():
                 res = self.__h_call(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Invoke():
                 res = self.__h_invoke(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.Cast():
                 res = self.__h_cast(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.SizeOf():
                 res = self.__h_sizeof(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.FuncPtr():
-                res = self.__h_funcptr(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                res = self.__h_funcptr(stmt)
+                self.__func.set_reg(stmt.result.name, res)
             case IR.AggregateConstruct():
                 res = self.__h_aggregate(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.ArrayConstruct():
                 res = self.__h_array(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.VariantConstruct():
                 res = self.__h_variant(builder, stmt)
-                self.__regs[stmt.result.name] = res
+                self.__func.set_reg(stmt.result.name, res)
             case IR.SysWrite():
                 self.__h_syswrite(builder, stmt)
             case IR.SysRead():
                 res = self.__h_sysread(builder, stmt)
-                self.__regs[stmt.result.name] = res
-
-    def __val(self, v: IR.Value) -> ir.Value:
-        if isinstance(v, IR.Reg):
-            return self.__regs[v.name]
-        if isinstance(v, IR.IntLiteral):
-            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), v.value)
-        if isinstance(v, IR.FloatLiteral):
-            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), v.value)
-        if isinstance(v, IR.BoolLiteral):
-            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), 1 if v.value else 0)
-        if isinstance(v, IR.CharLiteral):
-            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), ord(v.value))
-        if isinstance(v, IR.StringLiteral):
-            return self.__module.str_literal_val(v.value.encode("utf-8"))
+                self.__func.set_reg(stmt.result.name, res)
 
     # ------------------------------------------------------------------
     # stmt handlers
     # ------------------------------------------------------------------
 
-    def __h_varptr(self, b: ir.IRBuilder, s: IR.VarPtr) -> ir.Value:
-        assert self.__func is not None
-        a = self.__func.var_allocas.get(s.var_ref.symbol_id)
+    def __h_varptr(self, stmt: IR.VarPtr) -> ir.Value:
+        a = self.__func.alloca(stmt.var_ref.symbol_id)
         assert a is not None
         return a
 
-    def __h_alloca(self, b: ir.IRBuilder, s: IR.Alloca) -> ir.Value:
+    def __h_alloca(self, builder: LLBuilder, stmt: IR.Alloca) -> ir.Value:
         assert self.__func is not None
-        eb = ir.IRBuilder(self.__func.entry_block)
-        ins = list(self.__func.entry_block.instructions)  # type: ignore[union-attr]
-        if ins:
-            eb.position_before(ins[0])
-        a = eb.alloca(self.__module.type_mapper.get_ll_type(s.value.type_id), name=f"tmp.{s.result.name}")
-        b.store(self.__val(s.value), a)
+        eb = builder.fork_block(self.__func.entry_block, where="first")
+        a = eb.alloca(stmt.value.type_id, name=f"tmp.{stmt.result.name}")
+        builder.store(stmt.value, a)
         return a
 
-    def __h_fieldptr(self, b: ir.IRBuilder, s: IR.FieldPtr) -> ir.Value:
-        return b.gep(self.__val(s.base), [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), s.field_index)], inbounds=True)
+    def __h_fieldptr(self, builder: LLBuilder, stmt: IR.FieldPtr) -> ir.Value:
+        return builder.gep(stmt.base, [0, stmt.field_index])
 
-    def __h_load(self, b: ir.IRBuilder, s: IR.Load) -> ir.Value:
-        return b.load(self.__val(s.ptr), name=f"load.{s.result.name}")
+    def __h_load(self, builder: LLBuilder, stmt: IR.Load) -> ir.Value:
+        return builder.load(stmt.ptr, name=f"load.{stmt.result.name}")
 
-    def __h_store(self, b: ir.IRBuilder, s: IR.Store) -> None:
-        b.store(self.__val(s.value), self.__val(s.ptr))
+    def __h_store(self, builder: LLBuilder, stmt: IR.Store) -> None:
+        builder.store(stmt.value, stmt.ptr)
 
-    def __h_malloc(self, b: ir.IRBuilder, s: IR.Malloc) -> ir.Value:
-        malloc = self.__module.intrinsics.get(IntrinsicKind.Malloc)
-        raw = b.call(malloc, [self.__val(s.size)], name="malloc.raw")
-        ptr_t = self.__module.type_mapper.get_ll_type(self.__type_ctx.alloc_pointer(s.type_id))
-        return b.bitcast(raw, ptr_t, name=s.result.name)
+    def __h_malloc(self, builder: LLBuilder, stmt: IR.Malloc) -> ir.Value:
+        raw = builder.call_intrinsic(IntrinsicKind.Malloc, [stmt.size], name="malloc.raw")
+        ptr_t = self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(stmt.type_id))
+        return builder.bitcast_ptr(raw, ptr_t, name=stmt.result.name)
 
-    def __h_binary(self, b: ir.IRBuilder, s: IR.Binary) -> ir.Value:
-        l, r = self.__val(s.lhs), self.__val(s.rhs)
-        if s.op.is_comparison():
-            return self.__cmp(b, s.op, l, r)
-        return self.__arith(b, s.op, l, r, s.result.name)
+    def __h_binary(self, builder: LLBuilder, stmt: IR.Binary) -> ir.Value:
+        return builder.binary(stmt.op, stmt.lhs, stmt.rhs, stmt.result.name)
 
-    def __h_unary(self, b: ir.IRBuilder, s: IR.Unary) -> ir.Value:
-        v = self.__val(s.operand)
-        if s.op == UnaryOperator.Neg:
-            return b.neg(v, name=s.result.name)
-        if s.op == UnaryOperator.Not:
-            return b.not_(v, name=s.result.name)
-        if s.op == UnaryOperator.BitNot:
-            return b.xor(v, ir.Constant(v.type, -1), name=s.result.name)  # type: ignore[union-attr]
-        raise ValueError(f"Unsupported unary: {s.op}")
+    def __h_unary(self, builder: LLBuilder, stmt: IR.Unary) -> ir.Value:
+        return builder.unary(stmt.op, stmt.operand, stmt.result.name)
 
-    def __h_extractvalue(self, b: ir.IRBuilder, s: IR.ExtractValue) -> ir.Value:
-        return b.extract_value(self.__val(s.base), s.field_index, name=s.result.name)
+    def __h_extractvalue(self, builder: LLBuilder, stmt: IR.ExtractValue) -> ir.Value:
+        return builder.extract_value(stmt.base, stmt.field_index, name=stmt.result.name)
 
-    def __h_delete(self, b: ir.IRBuilder, s: IR.Delete) -> None:
-        free = self.__module.intrinsics.get(IntrinsicKind.Free)
-        b.call(free, [b.bitcast(self.__val(s.ptr), ir.PointerType(ir.IntType(8)))])
+    def __h_delete(self, builder: LLBuilder, stmt: IR.Delete) -> None:
+        builder.call_intrinsic(
+            IntrinsicKind.Free,
+            [builder.bitcast_ptr(builder.resolve(stmt.ptr), builder.i8_ptr_type())],
+        )
 
-    def __h_call(self, b: ir.IRBuilder, s: IR.Call) -> ir.Value:
-        callee = self.__module.get_func(s.callee_type)
-        assert callee is not None, f"Function callee_type={s.callee_type} not declared"
-        return b.call(callee._ir, [self.__val(a) for a in s.args], name=s.result.name)
+    def __h_call(self, builder: LLBuilder, stmt: IR.Call) -> ir.Value:
+        callee = self.__module.get_func(stmt.callee_type)
+        assert callee is not None, f"Function callee_type={stmt.callee_type} not declared"
+        return builder.call(callee._ir, stmt.args, name=stmt.result.name)
 
-    def __h_invoke(self, b: ir.IRBuilder, s: IR.Invoke) -> ir.Value:
-        return b.call(self.__val(s.callee), [self.__val(a) for a in s.args], name=s.result.name)
+    def __h_invoke(self, builder: LLBuilder, stmt: IR.Invoke) -> ir.Value:
+        return builder.call_value(stmt.callee, stmt.args, name=stmt.result.name)
 
-    def __h_cast(self, b: ir.IRBuilder, s: IR.Cast) -> ir.Value:
-        v = self.__val(s.value)
-        src = self.__type_ctx[s.value.type_id]
-        dst = self.__type_ctx[s.to_type]
-        dt = self.__module.type_mapper.get_ll_type(s.to_type)
+    def __h_cast(self, builder: LLBuilder, stmt: IR.Cast) -> ir.Value:
+        return builder.cast(stmt.value, stmt.to_type, stmt.result.name)
 
-        if isinstance(src, (Type.IntType, Type.CharType, Type.BoolType)) and isinstance(dst, (Type.IntType, Type.CharType, Type.BoolType)):
-            sw = self.__module.type_mapper.get_ll_type(s.value.type_id).width  # type: ignore[union-attr]
-            dw = dt.width  # type: ignore[union-attr]
-            if dw > sw:
-                if isinstance(src, Type.CharType) or (isinstance(src, Type.IntType) and not src.signed):
-                    return b.zext(v, dt, name=s.result.name)
-                return b.sext(v, dt, name=s.result.name)
-            if dw < sw:
-                return b.trunc(v, dt, name=s.result.name)
-            return v
-        if isinstance(src, Type.IntType) and isinstance(dst, Type.FloatType):
-            return b.sitofp(v, dt, name=s.result.name) if src.signed else b.uitofp(v, dt, name=s.result.name)
-        if isinstance(src, Type.FloatType) and isinstance(dst, Type.IntType):
-            return b.fptosi(v, dt, name=s.result.name) if dst.signed else b.fptoui(v, dt, name=s.result.name)
-        if isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
-            return b.fpext(v, dt, name=s.result.name) if src.size < dst.size else b.fptrunc(v, dt, name=s.result.name)
-        if isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
-            return b.bitcast(v, dt, name=s.result.name)
-        raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
+    def __h_sizeof(self, builder: LLBuilder, stmt: IR.SizeOf) -> ir.Value:
+        return builder.sizeof_const(stmt.type_id)
 
-    def __h_sizeof(self, b: ir.IRBuilder, s: IR.SizeOf) -> ir.Value:
-        return ir.Constant(ir.IntType(64), self.__module.type_mapper.get_type_size(s.type_id))
-
-    def __h_funcptr(self, b: ir.IRBuilder, s: IR.FuncPtr) -> ir.Value:
-        callee = self.__module.get_func(s.func_type_id)
-        assert callee is not None, f"FuncPtr func_type_id={s.func_type_id} not declared"
+    def __h_funcptr(self, stmt: IR.FuncPtr) -> ir.Value:
+        callee = self.__module.get_func(stmt.func_type_id)
+        assert callee is not None, f"FuncPtr func_type_id={stmt.func_type_id} not declared"
         return callee._ir
 
-    def __h_aggregate(self, b: ir.IRBuilder, s: IR.AggregateConstruct) -> ir.Value:
-        r = ir.Constant(self.__module.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
-        for i, fv in enumerate(s.fields):
-            r = b.insert_value(r, self.__val(fv), i)
+    def __h_aggregate(self, builder: LLBuilder, stmt: IR.AggregateConstruct) -> ir.Value:
+        r = builder.undef(stmt.result.type_id)
+        for i, fv in enumerate(stmt.fields):
+            r = builder.insert_value(r, fv, i)
         return r
 
-    def __h_array(self, b: ir.IRBuilder, s: IR.ArrayConstruct) -> ir.Value:
-        r = ir.Constant(self.__module.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
-        for i, ev in enumerate(s.elements):
-            r = b.insert_value(r, self.__val(ev), i)
+    def __h_array(self, builder: LLBuilder, stmt: IR.ArrayConstruct) -> ir.Value:
+        r = builder.undef(stmt.result.type_id)
+        for i, ev in enumerate(stmt.elements):
+            r = builder.insert_value(r, ev, i)
         return r
 
-    def __h_variant(self, b: ir.IRBuilder, s: IR.VariantConstruct) -> ir.Value:
-        tm = self.__module.type_mapper
-        r = ir.Constant(tm.get_ll_type(s.result.type_id), ir.Undefined)
-        r = b.insert_value(r, ir.Constant(ir.IntType(32), s.variant.discriminant), 0, "set.disc")
-        if s.payload_fields is not None:
-            pt = self.__type_ctx[s.variant.payload_type]
+    def __h_variant(self, builder: LLBuilder, stmt: IR.VariantConstruct) -> ir.Value:
+        r = builder.undef(stmt.result.type_id)
+        r = builder.insert_value(r, builder.i32(stmt.variant.discriminant), 0)
+        if stmt.payload_fields is not None:
+            pt = self.__type_ctx[stmt.variant.payload_type]
             assert isinstance(pt, Type.StructType)
-            pv = ir.Constant(tm.get_ll_type(s.variant.payload_type), ir.Undefined)
-            for i, fv in enumerate(s.payload_fields):
-                pv = b.insert_value(pv, self.__val(fv), i)
-            pay_arr = ir.ArrayType(ir.IntType(8), tm.get_type_size(s.variant.payload_type))
-            r = b.insert_value(r, b.bitcast(pv, pay_arr, name="payload.bytes"), 1)
+            pv = builder.undef(stmt.variant.payload_type)
+            for i, fv in enumerate(stmt.payload_fields):
+                pv = builder.insert_value(pv, fv, i)
+            pay_arr = builder.padding_array(
+                self.__ll_type_ctx.get_type_size(stmt.variant.payload_type)
+            )
+            r = builder.insert_value(
+                r, builder.bitcast_ptr(pv, pay_arr, name="payload.bytes"), 1
+            )
         return r
 
-    def __h_syswrite(self, b: ir.IRBuilder, s: IR.SysWrite) -> None:
-        buf = self.__val(s.buf)
-        write = self.__module.intrinsics.get(IntrinsicKind.Write)
-        b.call(write, [self.__val(s.fd), b.extract_value(buf, 0), b.extract_value(buf, 1)])
+    def __h_syswrite(self, builder: LLBuilder, stmt: IR.SysWrite) -> None:
+        buf = builder.resolve(stmt.buf)
+        builder.call_intrinsic(
+            IntrinsicKind.Write,
+            [stmt.fd, builder.extract_value(stmt.buf, 0), builder.extract_value(stmt.buf, 1)],
+        )
 
-    def __h_sysread(self, b: ir.IRBuilder, s: IR.SysRead) -> ir.Value:
-        buf = self.__val(s.buf)
-        read = self.__module.intrinsics.get(IntrinsicKind.Read)
-        return b.call(read, [self.__val(s.fd), b.extract_value(buf, 0), b.extract_value(buf, 1)], name=s.result.name)
+    def __h_sysread(self, builder: LLBuilder, stmt: IR.SysRead) -> ir.Value:
+        return builder.call_intrinsic(
+            IntrinsicKind.Read,
+            [stmt.fd, builder.extract_value(stmt.buf, 0), builder.extract_value(stmt.buf, 1)],
+            name=stmt.result.name,
+        )
 
-    def __h_phi_impl(self, b: ir.IRBuilder, s: IR.Phi) -> None:
-        phi = b.phi(self.__module.type_mapper.get_ll_type(s.result.type_id), name=s.result.name)
-        self.__regs[s.result.name] = phi
-        for src, val in s.incoming:
-            phi.add_incoming(self.__val(val), self.__blocks[src.label])
+    def __h_phi_impl(self, builder: LLBuilder, stmt: IR.Phi) -> None:
+        phi = builder.phi(stmt.result.type_id, stmt.result.name)
+        for src, val in stmt.incoming:
+            builder.add_incoming(phi, val, src.label)
 
     # ------------------------------------------------------------------
     # terminators
     # ------------------------------------------------------------------
 
-    def __term(self, b: ir.IRBuilder, t: IR.Terminator) -> None:
+    def __term(self, builder: LLBuilder, t: IR.Terminator) -> None:
         match t:
             case IR.Ret(value=v):
-                b.ret(self.__val(v))
+                builder.ret(v)
             case IR.RetVoid():
-                b.ret_void()
+                builder.ret(None)
             case IR.Br(target=tg):
-                b.branch(self.__blocks[tg.label])
+                builder.br(tg.label)
             case IR.CondBr(cond=c, then_block=th, else_block=el):
-                b.cbranch(self.__val(c), self.__blocks[th.label], self.__blocks[el.label])
+                builder.condbr(c, th.label, el.label)
             case IR.Panic(message=m):
-                self.__panic(b, m)
+                self.__panic(builder, m)
             case IR.Match():
-                self.__match(b, t)
+                self.__match(builder, t)
             case _:
                 raise ValueError(f"Unknown terminator: {type(t).__name__}")
 
-    def __panic(self, b: ir.IRBuilder, msg: IR.Value) -> None:
-        mv = self.__val(msg)
-        write = self.__module.intrinsics.get(IntrinsicKind.Write)
-        b.call(write, [ir.Constant(ir.IntType(32), 2), b.extract_value(mv, 0), b.extract_value(mv, 1)])
-        b.call(self.__module.intrinsics.get(IntrinsicKind.Exit), [ir.Constant(ir.IntType(32), 1)])
-        b.unreachable()
+    def __panic(self, builder: LLBuilder, msg: IR.Value) -> None:
+        mv = builder.resolve(msg)
+        builder.call_intrinsic(
+            IntrinsicKind.Write,
+            [builder.i32(2), builder.extract_value(msg, 0), builder.extract_value(msg, 1)],
+        )
+        builder.call_intrinsic(IntrinsicKind.Exit, [builder.i32(1)])
+        builder.unreachable()
 
-    def __match(self, b: ir.IRBuilder, t: IR.Match) -> None:
-        assert self.__func is not None
-        mv = self.__val(t.value)
+    def __match(self, builder: LLBuilder, t: IR.Match) -> None:
+        mv = builder.resolve(t.value)
         mty = self.__type_ctx[t.value.type_id]
-        default = self.__blocks[t.default.label] if t.default else None
+        default = self.__func.block(t.default.label) if t.default else None
         if default is None:
-            default = self.__func._ir.append_basic_block("match.unreach")
+            default = self.__func.__ir.append_basic_block("match.unreach")
             ir.IRBuilder(default).unreachable()
 
         if isinstance(mty, (Type.IntType, Type.CharType, Type.BoolType)):
-            sw = b.switch(mv, default)
+            sw = builder.switch(t.value, default)
             for arm in t.arms:
                 if isinstance(arm.pattern, IR.IntPattern):
-                    sw.add_case(ir.Constant(self.__module.type_mapper.get_ll_type(arm.pattern.value.type_id), arm.pattern.value.value), self.__blocks[arm.body.label])
+                    builder.add_case(
+                        sw, builder.resolve(arm.pattern.value), arm.body.label
+                    )
                 elif isinstance(arm.pattern, IR.CharPattern):
-                    sw.add_case(ir.Constant(self.__module.type_mapper.get_ll_type(arm.pattern.value.type_id), ord(arm.pattern.value.value)), self.__blocks[arm.body.label])
+                    builder.add_case(
+                        sw, builder.resolve(arm.pattern.value), arm.body.label
+                    )
 
         elif isinstance(mty, Type.EnumType):
-            disc = b.load(b.gep(mv, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True, name="disc.ptr"), name="disc.val")
-            sw = b.switch(disc, default)
+            disc = builder.load_raw(
+                builder.gep_raw(mv, [0, 0], name="disc.ptr"),
+                name="disc.val",
+            )
+            sw = builder.raw().switch(disc, default)
             for arm in t.arms:
                 if isinstance(arm.pattern, IR.EnumPattern):
-                    bb = self.__blocks[arm.body.label]
-                    sw.add_case(ir.Constant(ir.IntType(32), arm.pattern.variant.discriminant), bb)
+                    bb = self.__func.block(arm.body.label)
+                    sw.add_case(builder.i32(arm.pattern.variant.discriminant), bb)
                     if arm.pattern.fields and arm.pattern.variant.payload_type is not None:
-                        self.__unpack(bb, mv, arm.pattern)
+                        self.__unpack(builder, bb, mv, arm.pattern)
 
-    def __unpack(self, bb: ir.Block, mv: ir.Value, pat: IR.EnumPattern) -> None:
-        assert self.__func is not None
-        tm = self.__module.type_mapper
-        cb = ir.IRBuilder(bb)
-        ins = list(bb.instructions)
-        if ins:
-            cb.position_before(ins[0])
-
+    def __unpack(
+        self, builder: LLBuilder, bb: ir.Block, mv: ir.Value, pat: IR.EnumPattern
+    ) -> None:
         pt = self.__type_ctx[pat.variant.payload_type]
         assert isinstance(pt, Type.StructType)
         pfields = pt.get_fields(self.__type_ctx)
 
-        payload = cb.bitcast(
-            cb.gep(mv, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True, name="payload.ptr"),
-            ir.PointerType(tm.get_ll_type(pat.variant.payload_type)), name="payload.cast")
+        cb = builder.fork_block(bb, where="first")
+
+        payload = cb.bitcast_ptr(
+            cb.gep_raw(mv, [0, 1], name="payload.ptr"),
+            ir.PointerType(self.__ll_type_ctx.get_ll_type(pat.variant.payload_type)),
+            name="payload.cast",
+        )
 
         for i, f in enumerate(pat.fields):
             if i >= len(pfields):
                 break
-            fv = cb.load(cb.gep(payload, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)], inbounds=True), name=f"field.{f.name}.val")
-            a = self.__func.var_allocas.get(f.symbol_id)
+            fv = cb.load_raw(
+                cb.gep_raw(payload, [0, i], name=f"field.{f.name}.gep"),
+                name=f"field.{f.name}.val",
+            )
+            a = self.__func.alloca(f.symbol_id)
             if a is not None:
-                cb.store(fv, a)
+                cb.store_raw(fv, a)
 
     # ------------------------------------------------------------------
-    # comparison / arithmetic
+    # helpers
     # ------------------------------------------------------------------
-
-    def __cmp(self, b: ir.IRBuilder, op: BinaryOperator, l: ir.Value, r: ir.Value) -> ir.Value:
-        pred = {BinaryOperator.Eq: "==", BinaryOperator.Neq: "!=", BinaryOperator.Lt: "<", BinaryOperator.Gt: ">", BinaryOperator.Leq: "<=", BinaryOperator.Geq: ">="}[op]
-        if isinstance(l.type, (ir.IntType, ir.PointerType)):  # type: ignore[union-attr]
-            return b.icmp_signed(pred, l, r, name="cmp")  # type: ignore[arg-type]
-        return b.fcmp_ordered(pred, l, r, name="cmp")  # type: ignore[arg-type]
-
-    def __arith(self, b: ir.IRBuilder, op: BinaryOperator, l: ir.Value, r: ir.Value, name: str) -> ir.Value:
-        ops = {BinaryOperator.Add: b.add, BinaryOperator.Sub: b.sub, BinaryOperator.Mul: b.mul,
-               BinaryOperator.Div: b.sdiv, BinaryOperator.Mod: b.srem, BinaryOperator.BitAnd: b.and_,
-               BinaryOperator.BitOr: b.or_, BinaryOperator.BitXor: b.xor,
-               BinaryOperator.Shl: b.shl, BinaryOperator.Shr: b.ashr}
-        return ops[op](l, r, name=name)

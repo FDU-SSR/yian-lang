@@ -17,18 +17,13 @@ def _mangle_type(unit_name: str, type_id: int, type_ctx: TypeCtx) -> str:
     return f"{unit_name}.{name}.{type_id}"
 
 
-class LlvmTypeMapper:
+class LLTypeCtx:
     """Maps Yian ``TypeCtx`` type IDs to ``ir.Type`` objects."""
 
-    def __init__(
-        self,
-        type_ctx: TypeCtx,
-        raw_module: ir.Module,
-        unit_datas: dict[int, UnitData],
-    ) -> None:
+    def __init__(self, type_ctx: TypeCtx, module: ir.Module, unit_names: dict[int, str]) -> None:
         self.__type_ctx = type_ctx
-        self.__mod = raw_module
-        self.__unit_id_to_name = {uid: ud.path.stem for uid, ud in unit_datas.items()}
+        self.__module = module
+        self.__unit_names = unit_names
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
@@ -37,7 +32,7 @@ class LlvmTypeMapper:
         self.__i64 = ir.IntType(64)
         self.__str_ll_type = ir.LiteralStructType([self.__i8.as_pointer(), self.__i64])
         self.__ptr = ir.PointerType(self.__i8)
-        self.__target_data = create_target_data(self.__mod.data_layout)  # type: ignore[no-untyped-call]
+        self.__target_data = create_target_data(self.__module.data_layout)  # type: ignore[no-untyped-call]
         self.__layout_cache: dict[int, tuple[int, int]] = {}
 
     # ------------------------------------------------------------------
@@ -101,14 +96,14 @@ class LlvmTypeMapper:
         return ir.ArrayType(self.get_ll_type(td.element_type), length)
 
     def __handle_tuple(self, type_id: int, td: Type.TupleType) -> ir.Type:
-        identified = self.__mod.context.get_identified_type(_mangle_type("tuple", type_id, self.__type_ctx))
+        identified = self.__module.context.get_identified_type(_mangle_type("tuple", type_id, self.__type_ctx))
         self.__storage[type_id] = identified
         identified.set_body(*[self.get_ll_type(et) for et in td.element_types])
         return identified
 
     def __handle_struct(self, type_id: int, td: Type.StructType) -> ir.Type:
-        unit_name = self.__unit_id_to_name.get(td.custom_def.unit_id, "unknown")
-        identified = self.__mod.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
+        unit_name = self.__unit_names.get(td.custom_def.unit_id, "unknown")
+        identified = self.__module.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
         substs = dict(zip(td.custom_def.generics, td.generic_args))
         fields = sorted(td.custom_def.fields, key=lambda f: f.index)
@@ -116,13 +111,14 @@ class LlvmTypeMapper:
         return identified
 
     def __handle_enum(self, type_id: int, td: Type.EnumType) -> ir.Type:
-        unit_name = self.__unit_id_to_name.get(getattr(td.custom_def, "unit_id", -1), "unknown")
-        identified = self.__mod.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
+        unit_name = self.__unit_names.get(getattr(td.custom_def, "unit_id", -1), "unknown")
+        identified = self.__module.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
         substs = dict(zip(td.custom_def.generics, td.generic_args))
         max_size, max_align = 0, 1
         for v in td.custom_def.variants:
-            if v.payload_type is None: continue
+            if v.payload_type is None:
+                continue
             s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs))
             max_size, max_align = max(max_size, s), max(max_align, a)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
@@ -157,20 +153,26 @@ class LlvmTypeMapper:
 
     def __stable_layout(self, type_id: int, visiting: set[int] | None = None) -> tuple[int, int]:
         cached = self.__layout_cache.get(type_id)
-        if cached is not None: return cached
+        if cached is not None:
+            return cached
         visiting = visiting or set()
         if type_id in visiting:
             raise ValueError(f"Recursive by-value layout: {self.__type_ctx.get_name(type_id)}")
         visiting.add(type_id)
         td = self.__type_ctx[type_id]
 
-        if isinstance(td, Type.VoidType):        result = (0, 1)
-        elif isinstance(td, Type.BoolType):       result = (1, 1)
-        elif isinstance(td, Type.CharType):       result = (4, 4)
+        if isinstance(td, Type.VoidType):
+            result = (0, 1)
+        elif isinstance(td, Type.BoolType):
+            result = (1, 1)
+        elif isinstance(td, Type.CharType):
+            result = (4, 4)
         elif isinstance(td, Type.StrType):
             result = (self.__str_ll_type.get_abi_size(self.__target_data), self.__str_ll_type.get_abi_alignment(self.__target_data))
-        elif isinstance(td, Type.IntType):        result = (td.size, td.size)
-        elif isinstance(td, Type.FloatType):      result = (td.size, td.size)
+        elif isinstance(td, Type.IntType):
+            result = (td.size, td.size)
+        elif isinstance(td, Type.FloatType):
+            result = (td.size, td.size)
         elif isinstance(td, (Type.PointerType, Type.FunctionPointerType)):
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))
         elif isinstance(td, Type.SliceType):
@@ -198,7 +200,8 @@ class LlvmTypeMapper:
             substs = dict(zip(td.custom_def.generics, td.generic_args))
             ms, ma = 0, 1
             for v in td.custom_def.variants:
-                if v.payload_type is None: continue
+                if v.payload_type is None:
+                    continue
                 s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs), visiting)
                 ms, ma = max(ms, s), max(ma, a)
             ps = self.__align_up(ms, ma) if ms > 0 else 0
