@@ -48,6 +48,9 @@ class CfgBuilder:
         assert dp.body is not None
         self.__translate_block(dp.body)
 
+        # ── dead code elimination ──
+        self.__eliminate_dead_code()
+
         # ── termination guard ──
         self.__guard_termination(dp)
 
@@ -61,6 +64,57 @@ class CfgBuilder:
     # ------------------------------------------------------------------
     # termination guard
     # ------------------------------------------------------------------
+
+    def __eliminate_dead_code(self) -> None:
+        """Remove blocks that are not reachable from the entry block.
+
+        Performs a BFS from the entry block following all forward edges
+        (terminator targets), then filters ``self.__func.blocks`` to only
+        include reachable blocks.  Phi nodes in surviving blocks are
+        cleaned up to remove incoming entries from deleted blocks.
+        """
+        # ── collect reachable blocks via BFS ──
+        # Block is an unhashable dataclass, so track via id(…).
+        reachable_ids: set[int] = set()
+        worklist = [self.__func.entry]
+
+        while worklist:
+            block = worklist.pop()
+            if id(block) in reachable_ids:
+                continue
+            reachable_ids.add(id(block))
+
+            if block.terminator is None:
+                continue
+
+            term = block.terminator
+            match term:
+                case IR.Br():
+                    worklist.append(term.target)
+                case IR.CondBr():
+                    worklist.append(term.then_block)
+                    worklist.append(term.else_block)
+                case IR.Match():
+                    for arm in term.arms:
+                        worklist.append(arm.body)
+                    if term.default is not None:
+                        worklist.append(term.default)
+                case IR.Ret() | IR.RetVoid() | IR.Panic():
+                    pass
+
+        # ── filter blocks ──
+        self.__func.blocks = [b for b in self.__func.blocks if id(b) in reachable_ids]
+
+        # ── clean up phi nodes ──
+        for block in self.__func.blocks:
+            surviving_phis: list[IR.Phi] = []
+            for phi in block.phis:
+                phi.incoming = [
+                    (pred, val) for pred, val in phi.incoming if id(pred) in reachable_ids
+                ]
+                if phi.incoming:
+                    surviving_phis.append(phi)
+            block.phis = surviving_phis
 
     def __guard_termination(self, dp: DefPoint) -> None:
         """Ensure every block has a terminator.
