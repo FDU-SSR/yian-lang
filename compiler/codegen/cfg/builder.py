@@ -229,7 +229,7 @@ class CfgBuilder:
         # then
         self.__switch_to(then_block)
         self.__translate_block(stmt.then_branch)
-        if then_block.terminator is None:
+        if self.__current_block.terminator is None:
             self.__set_terminator(IR.Br(merge_block))
 
         # else
@@ -237,7 +237,7 @@ class CfgBuilder:
             assert else_block is not None
             self.__switch_to(else_block)
             self.__translate_block(stmt.else_branch)
-            if else_block.terminator is None:
+            if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
 
         self.__switch_to(merge_block)
@@ -254,7 +254,7 @@ class CfgBuilder:
 
         self.__switch_to(body_block)
         self.__translate_block(stmt.body)
-        if body_block.terminator is None:
+        if self.__current_block.terminator is None:
             self.__set_terminator(IR.Br(body_block))
 
         self.__switch_to(exit_block)
@@ -302,8 +302,10 @@ class CfgBuilder:
 
             self.__switch_to(current_block)
             self.__translate_block(arm.body)
-            if current_block.terminator is None:
+            if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
+
+        self.__switch_to(merge_block)
 
     def __translate_sys_write(self, stmt: HIR.SysWrite) -> None:
         fd = self.__resolve_val(stmt.fd)
