@@ -119,12 +119,10 @@ class LLTypeCtx:
             variant_size, variant_align = self.__stable_layout(variant.payload_type)
             max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
-        identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))
-        return identified
+        identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))  # type: ignore
+        return identified  # type: ignore
 
-    def __build_function_type(
-        self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None
-    ) -> ir.FunctionType:
+    def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
         ret = self.__get_raw_type(ret_type_id)
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids]
         if receiver_type_id is not None:
@@ -172,8 +170,8 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
-        elif isinstance(td, (Type.PointerType, Type.FunctionPointerType)):
-            result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))
+        elif isinstance(type_def, (Type.PointerType, Type.FunctionPointerType)):
+            result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.ArrayType):
             element_size, element_align = self.__stable_layout(type_def.element_type)
             length_ty = self.__type_ctx[type_def.length]
@@ -190,7 +188,7 @@ class LLTypeCtx:
             result = (self.__align_up(4 + payload_size, 4), 4)
         else:
             ll_type = self.__get_raw_type(type_id)
-            result = (ll_type.get_abi_size(self.__target_data), ll_type.get_abi_alignment(self.__target_data))
+            result = (ll_type.get_abi_size(self.__target_data), ll_type.get_abi_alignment(self.__target_data))  # type: ignore
 
         self.__layout_cache[type_id] = result
-        return result
+        return result  # type: ignore
