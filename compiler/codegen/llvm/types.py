@@ -12,11 +12,6 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.llvm.value import LLType
 
 
-def mangle_type(unit_name: str, type_id: int, type_ctx: TypeCtx) -> str:
-    name = type_ctx.get_name(type_id)
-    return f"{unit_name}.{name}.{type_id}"
-
-
 class LLTypeCtx:
     """Maps Yian ``TypeCtx`` type IDs to ``ir.Type`` objects."""
 
@@ -49,6 +44,13 @@ class LLTypeCtx:
     # ------------------------------------------------------------------
     # type handlers
     # ------------------------------------------------------------------
+
+    def __mangle_type(self, type_id: int) -> str:
+        """Build a unique LLVM type name from the type definition's unit and name."""
+        td = self.__type_ctx[type_id]
+        assert isinstance(td, (Type.StructType, Type.EnumType))
+        unit_name = self.__unit_names.get(td.unit_id, "unknown")
+        return f"{unit_name}.{td.custom_def.name}.{type_id}"
 
     def __get_raw_type(self, type_id: int) -> ir.Type:
         if type_id in self.__storage:
@@ -102,15 +104,13 @@ class LLTypeCtx:
         return ir.LiteralStructType([self.__get_raw_type(et) for et in td.element_types])
 
     def __handle_struct(self, type_id: int, td: Type.StructType) -> ir.Type:
-        unit_name = self.__unit_names.get(td.unit_id, "unknown")
-        identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
+        identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
         self.__storage[type_id] = identified
-        identified.set_body(*[self.__get_raw_type(f.type_id) for f in td.get_fields(self.__type_ctx)])
-        return identified
+        identified.set_body(*[self.__get_raw_type(f.type_id) for f in td.get_fields(self.__type_ctx)])  # type: ignore
+        return identified  # type: ignore
 
     def __handle_enum(self, type_id: int, td: Type.EnumType) -> ir.Type:
-        unit_name = self.__unit_names.get(td.unit_id, "unknown")
-        identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
+        identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
         self.__storage[type_id] = identified
         max_size, max_align = 0, 1
         for v in td.get_variants(self.__type_ctx):
