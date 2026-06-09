@@ -4,17 +4,12 @@ LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from llvmlite import ir
 
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.intrinsics import IntrinsicManager
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
-
-if TYPE_CHECKING:
-    from compiler.codegen.llvm.builder import LLBuilder
 
 
 class LLFunction:
@@ -61,13 +56,10 @@ class LLFunction:
 
     # -- parameter setup --
 
-    def store_params(self, cfg_params: list[int], builder: LLBuilder) -> None:
-        """Store incoming LLVM arguments into their allocas."""
-        for i, symbol_id in enumerate(cfg_params):
-            if i >= len(self.__ir.args):
-                break
-            alloca_ptr = self.get_var_ptr(symbol_id)
-            builder.store_raw(self.__ir.args[i], alloca_ptr.ir_val)
+    def arg_values(self, param_type_ids: list[int]) -> list[LLValue]:
+        """Return LLVM function arguments as LLValues with the given type_ids."""
+        return [LLValue(tid, self.__ir.args[i])
+                for i, tid in enumerate(param_type_ids) if i < len(self.__ir.args)]
 
     # -- register management --
 
@@ -106,38 +98,21 @@ class LLModule:
     def __str__(self) -> str:
         return str(self.__module)
 
-    # -- constants --
-
-    def constant(self, llvm_type: ir.Type, value: int | float | None) -> ir.Constant:
-        return ir.Constant(llvm_type, value)  # type: ignore[arg-type]
-
-    def const_literal_struct(self, values: list[ir.Value]) -> ir.Constant:
-        return ir.Constant.literal_struct(values)
-
-    def undefined(self, llvm_type: ir.Type) -> ir.Constant:
-        return ir.Constant(llvm_type, ir.Undefined)
-
     # -- string literals --
 
-    def get_string_global(self, value: bytes) -> ir.Constant:
+    def get_string_global(self, value: bytes) -> ir.GlobalVariable:
+        """Return a global constant for the given string bytes."""
         if value in self.__strings:
-            global_var = self.__strings[value]
-        else:
-            string_type = ir.ArrayType(ir.IntType(8), len(value))
-            global_var = ir.GlobalVariable(self.__module, string_type, name=f"str.{self.__string_counter}")
-            self.__string_counter += 1
-            global_var.linkage = "private"
-            global_var.global_constant = True
-            global_var.unnamed_addr = True
-            global_var.initializer = ir.Constant(string_type, bytearray(value))  # type: ignore[arg-type]
-            self.__strings[value] = global_var
-        return global_var.gep([ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
-
-    def str_literal_val(self, value: bytes) -> ir.Constant:
-        """Return {i8*, i64} struct for a string literal."""
-        ptr = self.get_string_global(value)
-        length = ir.Constant(ir.IntType(64), len(value))
-        return ir.Constant.literal_struct([ptr, length])
+            return self.__strings[value]
+        string_type = ir.ArrayType(ir.IntType(8), len(value))  # type: ignore
+        global_var = ir.GlobalVariable(self.__module, string_type, name=f"str.{self.__string_counter}")
+        self.__string_counter += 1
+        global_var.linkage = "private"
+        global_var.global_constant = True
+        global_var.unnamed_addr = True
+        global_var.initializer = ir.Constant(string_type, bytearray(value))  # type: ignore[arg-type]
+        self.__strings[value] = global_var
+        return global_var
 
     # -- function declaration --
 
