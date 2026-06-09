@@ -42,8 +42,10 @@ class LLFunction:
     def set_alloca(self, symbol_id: int, alloca: LLValue) -> None:
         self.__var_allocas[symbol_id] = alloca
 
-    def alloca(self, symbol_id: int) -> LLValue | None:
-        return self.__var_allocas.get(symbol_id)
+    def get_var_ptr(self, symbol_id: int) -> LLValue:
+        if symbol_id not in self.__var_allocas:
+            raise KeyError(f"Variable with symbol id {symbol_id} not found in function {self.__ir.name}")
+        return self.__var_allocas[symbol_id]
 
     # -- block management --
 
@@ -64,7 +66,7 @@ class LLFunction:
         for i, symbol_id in enumerate(cfg_params):
             if i >= len(self.__ir.args):
                 break
-            a = self.alloca(symbol_id)
+            a = self.get_var_ptr(symbol_id)
             if a is not None:
                 builder.store_raw(self.__ir.args[i], a.ir_val)
 
