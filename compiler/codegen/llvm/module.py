@@ -66,9 +66,9 @@ class LLFunction:
         for i, symbol_id in enumerate(cfg_params):
             if i >= len(self.__ir.args):
                 break
-            a = self.get_var_ptr(symbol_id)
-            if a is not None:
-                builder.store_raw(self.__ir.args[i], a.ir_val)
+            alloca_ptr = self.get_var_ptr(symbol_id)
+            if alloca_ptr is not None:
+                builder.store_raw(self.__ir.args[i], alloca_ptr.ir_val)
 
     # -- register management --
 
@@ -109,30 +109,30 @@ class LLModule:
 
     # -- constants --
 
-    def constant(self, typ: ir.Type, value: int | float | None) -> ir.Constant:
-        return ir.Constant(typ, value)  # type: ignore[arg-type]
+    def constant(self, llvm_type: ir.Type, value: int | float | None) -> ir.Constant:
+        return ir.Constant(llvm_type, value)  # type: ignore[arg-type]
 
     def const_literal_struct(self, values: list[ir.Value]) -> ir.Constant:
         return ir.Constant.literal_struct(values)
 
-    def undefined(self, typ: ir.Type) -> ir.Constant:
-        return ir.Constant(typ, ir.Undefined)
+    def undefined(self, llvm_type: ir.Type) -> ir.Constant:
+        return ir.Constant(llvm_type, ir.Undefined)
 
     # -- string literals --
 
     def get_string_global(self, value: bytes) -> ir.Constant:
         if value in self.__strings:
-            gv = self.__strings[value]
+            global_var = self.__strings[value]
         else:
-            s_type = ir.ArrayType(ir.IntType(8), len(value))
-            gv = ir.GlobalVariable(self.__module, s_type, name=f"str.{self.__string_counter}")
+            string_type = ir.ArrayType(ir.IntType(8), len(value))
+            global_var = ir.GlobalVariable(self.__module, string_type, name=f"str.{self.__string_counter}")
             self.__string_counter += 1
-            gv.linkage = "private"
-            gv.global_constant = True
-            gv.unnamed_addr = True
-            gv.initializer = ir.Constant(s_type, bytearray(value))  # type: ignore[arg-type]
-            self.__strings[value] = gv
-        return gv.gep([ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+            global_var.linkage = "private"
+            global_var.global_constant = True
+            global_var.unnamed_addr = True
+            global_var.initializer = ir.Constant(string_type, bytearray(value))  # type: ignore[arg-type]
+            self.__strings[value] = global_var
+        return global_var.gep([ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
 
     def str_literal_val(self, value: bytes) -> ir.Constant:
         """Return {i8*, i64} struct for a string literal."""

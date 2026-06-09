@@ -17,51 +17,51 @@ _bind_ok: bool = False
 def _bind():
     global _bind_ok
     if not _bind_ok:
-        b = importlib.import_module("llvmlite.binding")
-        b.initialize()
-        b.initialize_native_target()
-        b.initialize_native_asmprinter()
-        b.initialize_native_asmparser()
+        binding = importlib.import_module("llvmlite.binding")
+        binding.initialize()
+        binding.initialize_native_target()
+        binding.initialize_native_asmprinter()
+        binding.initialize_native_asmparser()
         _bind_ok = True
     return importlib.import_module("llvmlite.binding")
 
 
-def emit_ll(m: LLModule, path: str) -> None:
+def emit_ll(llvm_module: LLModule, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write(str(m))
+        f.write(str(llvm_module))
 
 
-def emit_module(m: LLModule, output_dir: str, kind: str, stem: str, intermediate_dir: str | None = None) -> str:
-    k = _normalize(kind)
+def emit_module(llvm_module: LLModule, output_dir: str, kind: str, stem: str, intermediate_dir: str | None = None) -> str:
+    normalized_kind = _normalize_kind(kind)
     paths = {"ll": f"{stem}.ll", "bc": f"{stem}.bc", "obj": f"{stem}.o", "asm": f"{stem}.s"}
     ll_path = os.path.join(intermediate_dir or output_dir, paths["ll"])
-    emit_ll(m, ll_path)
-    if k == "ll":
+    emit_ll(llvm_module, ll_path)
+    if normalized_kind == "ll":
         return ll_path
 
-    b = _bind()
-    mod = b.parse_assembly(str(m))
-    mod.verify()
-    out = os.path.join(output_dir, paths[k])
+    binding = _bind()
+    llvm_mod = binding.parse_assembly(str(llvm_module))
+    llvm_mod.verify()
+    output_path = os.path.join(output_dir, paths[normalized_kind])
 
-    if k == "bc":
-        with open(out, "wb") as f:
-            f.write(mod.as_bitcode())
-    elif k in ("obj", "asm"):
-        tm = b.Target.from_triple(m.triple).create_target_machine(reloc="pic")  # type: ignore[union-attr]
-        if k == "obj":
-            with open(out, "wb") as f:
-                f.write(tm.emit_object(mod))
+    if normalized_kind == "bc":
+        with open(output_path, "wb") as f:
+            f.write(llvm_mod.as_bitcode())
+    elif normalized_kind in ("obj", "asm"):
+        target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic")  # type: ignore[union-attr]
+        if normalized_kind == "obj":
+            with open(output_path, "wb") as f:
+                f.write(target_machine.emit_object(llvm_mod))
         else:
-            with open(out, "w", encoding="utf-8") as f:
-                f.write(tm.emit_assembly(mod))
-    return out
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(target_machine.emit_assembly(llvm_mod))
+    return output_path
 
 
-def _normalize(kind: str) -> str:
-    a = {"ll": "ll", "ir": "ll", "llvm-ir": "ll", "bc": "bc", "bytecode": "bc",
-         "o": "obj", "obj": "obj", "object": "obj", "s": "asm", "asm": "asm", "assembly": "asm"}
-    v = a.get(kind.lower())
-    if v is None:
+def _normalize_kind(kind: str) -> str:
+    kind_map = {"ll": "ll", "ir": "ll", "llvm-ir": "ll", "bc": "bc", "bytecode": "bc",
+                "o": "obj", "obj": "obj", "object": "obj", "s": "asm", "asm": "asm", "assembly": "asm"}
+    value = kind_map.get(kind.lower())
+    if value is None:
         raise ValueError(f"Unsupported emit kind: {kind}")
-    return v
+    return value
