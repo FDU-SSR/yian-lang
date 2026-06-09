@@ -4,15 +4,15 @@ Yian type → LLVM IR type mapping.
 
 from __future__ import annotations
 
-from llvmlite import ir  # type: ignore[import-untyped]
-from llvmlite.binding import create_target_data  # type: ignore[import-untyped]
+from llvmlite import ir
+from llvmlite.binding import create_target_data  # type: ignore
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.unit_data import UnitData
+from compiler.codegen.llvm.value import LLType
 
 
-def _mangle_type(unit_name: str, type_id: int, type_ctx: TypeCtx) -> str:
+def mangle_type(unit_name: str, type_id: int, type_ctx: TypeCtx) -> str:
     name = type_ctx.get_name(type_id)
     return f"{unit_name}.{name}.{type_id}"
 
@@ -27,19 +27,30 @@ class LLTypeCtx:
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
-        self.__i8 = ir.IntType(8)
-        self.__i32 = ir.IntType(32)
-        self.__i64 = ir.IntType(64)
-        self.__str_ll_type = ir.LiteralStructType([self.__i8.as_pointer(), self.__i64])
-        self.__ptr = ir.PointerType(self.__i8)
-        self.__target_data = create_target_data(self.__module.data_layout)  # type: ignore[no-untyped-call]
-        self.__layout_cache: dict[int, tuple[int, int]] = {}
+        self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
+        self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
+        self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
+        self.__ptr: ir.PointerType = ir.PointerType(self.__i8)  # type: ignore
+        self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        self.__target_data = create_target_data(self.__module.data_layout)
+        self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
     # ------------------------------------------------------------------
     # public
     # ------------------------------------------------------------------
 
-    def get_ll_type(self, type_id: int) -> ir.Type:
+    def get_ll_type(self, type_id: int) -> LLType:
+        return LLType(type_id, self.__get_raw_type(type_id))
+
+    def get_type_size(self, type_id: int) -> int:
+        size, _ = self.__stable_layout(type_id)
+        return size
+
+    # ------------------------------------------------------------------
+    # type handlers
+    # ------------------------------------------------------------------
+
+    def __get_raw_type(self, type_id: int) -> ir.Type:
         if type_id in self.__storage:
             return self.__storage[type_id]
 
@@ -54,7 +65,7 @@ class LLTypeCtx:
             case Type.PointerType(): res = self.__handle_pointer(ty_def)
             case Type.SliceType():   res = self.__handle_slice(ty_def)
             case Type.ArrayType():   res = self.__handle_array(ty_def)
-            case Type.TupleType():   res = self.__handle_tuple(type_id, ty_def)
+            case Type.TupleType():   res = self.__handle_tuple(ty_def)
             case Type.StructType():  res = self.__handle_struct(type_id, ty_def)
             case Type.EnumType():    res = self.__handle_enum(type_id, ty_def)
             case Type.MethodType():  res = self.__handle_method(ty_def)
@@ -66,16 +77,8 @@ class LLTypeCtx:
         self.__storage[type_id] = res
         return res
 
-    def get_type_size(self, type_id: int) -> int:
-        size, _ = self.__stable_layout(type_id)
-        return size
-
-    # ------------------------------------------------------------------
-    # type handlers
-    # ------------------------------------------------------------------
-
     def __handle_int(self, td: Type.IntType) -> ir.Type:
-        return ir.IntType(td.size * 8)
+        return ir.IntType(td.size * 8)  # type: ignore
 
     def __handle_float(self, td: Type.FloatType) -> ir.Type:
         match td.size:
@@ -85,34 +88,31 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {td.size}")
 
     def __handle_pointer(self, td: Type.PointerType) -> ir.Type:
-        return ir.PointerType(self.get_ll_type(td.pointee_type))
+        return ir.PointerType(self.__get_raw_type(td.pointee_type))
 
     def __handle_slice(self, td: Type.SliceType) -> ir.Type:
-        return ir.LiteralStructType([self.get_ll_type(td.element_type).as_pointer(), self.__i64])
+        return ir.LiteralStructType([self.__get_raw_type(td.element_type).as_pointer(), self.__i64])
 
     def __handle_array(self, td: Type.ArrayType) -> ir.Type:
         length = self.__type_ctx.try_extract_array_length(td.type_id)
         assert length is not None
-        return ir.ArrayType(self.get_ll_type(td.element_type), length)
+        return ir.ArrayType(self.__get_raw_type(td.element_type), length)
 
-    def __handle_tuple(self, type_id: int, td: Type.TupleType) -> ir.Type:
-        identified = self.__module.context.get_identified_type(_mangle_type("tuple", type_id, self.__type_ctx))
-        self.__storage[type_id] = identified
-        identified.set_body(*[self.get_ll_type(et) for et in td.element_types])
-        return identified
+    def __handle_tuple(self, td: Type.TupleType) -> ir.Type:
+        return ir.LiteralStructType([self.__get_raw_type(et) for et in td.element_types])
 
     def __handle_struct(self, type_id: int, td: Type.StructType) -> ir.Type:
         unit_name = self.__unit_names.get(td.custom_def.unit_id, "unknown")
-        identified = self.__module.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
+        identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
         substs = dict(zip(td.custom_def.generics, td.generic_args))
         fields = sorted(td.custom_def.fields, key=lambda f: f.index)
-        identified.set_body(*[self.get_ll_type(self.__type_ctx.instantiate(f.type_id, substs)) for f in fields])
+        identified.set_body(*[self.__get_raw_type(self.__type_ctx.instantiate(f.type_id, substs)) for f in fields])
         return identified
 
     def __handle_enum(self, type_id: int, td: Type.EnumType) -> ir.Type:
         unit_name = self.__unit_names.get(getattr(td.custom_def, "unit_id", -1), "unknown")
-        identified = self.__module.context.get_identified_type(_mangle_type(unit_name, type_id, self.__type_ctx))
+        identified = self.__module.context.get_identified_type(mangle_type(unit_name, type_id, self.__type_ctx))
         self.__storage[type_id] = identified
         substs = dict(zip(td.custom_def.generics, td.generic_args))
         max_size, max_align = 0, 1
@@ -126,21 +126,21 @@ class LLTypeCtx:
         return identified
 
     def __handle_function(self, td: Type.FunctionType) -> ir.Type:
-        ret = self.get_ll_type(td.return_type(self.__type_ctx))
-        params = [self.get_ll_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
+        ret = self.__get_raw_type(td.return_type(self.__type_ctx))
+        params = [self.__get_raw_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
         return ir.FunctionType(ret, params)
 
     def __handle_method(self, td: Type.MethodType) -> ir.Type:
-        ret = self.get_ll_type(td.return_type(self.__type_ctx))
+        ret = self.__get_raw_type(td.return_type(self.__type_ctx))
         params: list[ir.Type] = []
         if not td.custom_def.is_static:
-            params.append(self.get_ll_type(td.receiver_type(self.__type_ctx)).as_pointer())  # type: ignore[union-attr]
-        params += [self.get_ll_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
+            params.append(self.__get_raw_type(td.receiver_type(self.__type_ctx)).as_pointer())  # type: ignore[union-attr]
+        params += [self.__get_raw_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
         return ir.FunctionType(ret, params)
 
     def __handle_function_pointer(self, td: Type.FunctionPointerType) -> ir.Type:
-        ret = self.get_ll_type(td.return_type)
-        params = [self.get_ll_type(pt) for pt in td.parameter_types]
+        ret = self.__get_raw_type(td.return_type)
+        params = [self.__get_raw_type(pt) for pt in td.parameter_types]
         return ir.FunctionType(ret, params).as_pointer()
 
     # ------------------------------------------------------------------
@@ -176,7 +176,7 @@ class LLTypeCtx:
         elif isinstance(td, (Type.PointerType, Type.FunctionPointerType)):
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))
         elif isinstance(td, Type.SliceType):
-            lt = self.get_ll_type(type_id)
+            lt = self.__get_raw_type(type_id)
             result = (lt.get_abi_size(self.__target_data), lt.get_abi_alignment(self.__target_data))
         elif isinstance(td, Type.ArrayType):
             es, ea = self.__stable_layout(td.element_type, visiting)
@@ -207,7 +207,7 @@ class LLTypeCtx:
             ps = self.__align_up(ms, ma) if ms > 0 else 0
             result = (self.__align_up(4 + ps, 4), 4)
         else:
-            lt = self.get_ll_type(type_id)
+            lt = self.__get_raw_type(type_id)
             result = (lt.get_abi_size(self.__target_data), lt.get_abi_alignment(self.__target_data))
 
         visiting.remove(type_id)

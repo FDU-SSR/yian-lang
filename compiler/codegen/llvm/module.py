@@ -143,9 +143,9 @@ class LLModule:
     # -- function declaration --
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
-        func_type = self.__type_ctx.get_ll_type(cfg_func.type_id)
-        assert isinstance(func_type, ir.FunctionType)
-        ir_func = ir.Function(self.__module, func_type, name=cfg_func.name)
+        func_ll_type = self.__type_ctx.get_ll_type(cfg_func.type_id)
+        assert isinstance(func_ll_type.ir_type, ir.FunctionType)
+        ir_func = ir.Function(self.__module, func_ll_type.ir_type, name=cfg_func.name)
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
         return func

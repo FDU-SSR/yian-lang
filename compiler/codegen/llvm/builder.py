@@ -89,7 +89,7 @@ class LLBuilder:
     # ------------------------------------------------------------------
 
     def _const(self, type_id: int, value: int | float) -> LLValue:
-        return LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id), value))
+        return LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id).ir_type, value))
 
     def i32(self, v: int) -> LLValue:
         return LLValue(-1, ir.Constant(ir.IntType(32), v))
@@ -101,7 +101,7 @@ class LLBuilder:
         return ir.PointerType(ir.IntType(8))
 
     def undef(self, type_id: int) -> LLValue:
-        return LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id), ir.Undefined))
+        return LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id).ir_type, ir.Undefined))
 
     def sizeof_const(self, type_id: int, result: str) -> None:
         self.__func.set_reg(result, LLValue(-1, ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(type_id))))
@@ -129,7 +129,7 @@ class LLBuilder:
         self.__func.set_reg(result, a)
 
     def alloca(self, type_id: int) -> LLValue:
-        return LLValue(type_id, self.__builder.alloca(self.__ll_type_ctx.get_ll_type(type_id)))
+        return LLValue(type_id, self.__builder.alloca(self.__ll_type_ctx.get_ll_type(type_id).ir_type))
 
     def alloca_store(self, value: IR.Value, result: str) -> None:
         a = self.alloca(value.type_id)
@@ -139,7 +139,7 @@ class LLBuilder:
     def malloc(self, type_id: int, size: IR.Value, result: str) -> None:
         raw = self._call_intrinsic(IntrinsicKind.Malloc, [size])
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
-        ptr_t = self.__ll_type_ctx.get_ll_type(ptr_type_id)
+        ptr_t = self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type
         ir_val = self.__builder.bitcast(raw, ptr_t)
         self.__func.set_reg(result, LLValue(ptr_type_id, ir_val))
 
@@ -205,12 +205,12 @@ class LLBuilder:
         v = self.resolve(value)
         src = self.__type_ctx[value.type_id]
         dst = self.__type_ctx[to_type]
-        dt = self.__ll_type_ctx.get_ll_type(to_type)
+        dt = self.__ll_type_ctx.get_ll_type(to_type).ir_type
 
         if isinstance(src, (Type.IntType, Type.CharType, Type.BoolType)) and isinstance(
             dst, (Type.IntType, Type.CharType, Type.BoolType)
         ):
-            sw = self.__ll_type_ctx.get_ll_type(value.type_id).width
+            sw = self.__ll_type_ctx.get_ll_type(value.type_id).ir_type.width
             dw = dt.width
             if dw > sw:
                 if isinstance(src, Type.CharType) or (isinstance(src, Type.IntType) and not src.signed):
@@ -285,7 +285,7 @@ class LLBuilder:
     # -- phi --
 
     def phi(self, type_id: int, incoming: list[tuple[IR.Block, IR.Value]], result: str) -> None:
-        p = self.__builder.phi(self.__ll_type_ctx.get_ll_type(type_id))
+        p = self.__builder.phi(self.__ll_type_ctx.get_ll_type(type_id).ir_type)
         self.__func.set_reg(result, LLValue(type_id, p))
         for src, val in incoming:
             p.add_incoming(self.resolve(val).ir_val, self.__func.block(src.label))
@@ -432,7 +432,7 @@ class LLBuilder:
 
         payload = cb.bitcast(
             cb.gep(mv, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True),
-            ir.PointerType(self.__ll_type_ctx.get_ll_type(pat.variant.payload_type)),
+            ir.PointerType(self.__ll_type_ctx.get_ll_type(pat.variant.payload_type).ir_type),
         )
 
         for i, f in enumerate(pat.fields):
