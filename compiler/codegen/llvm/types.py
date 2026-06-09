@@ -94,9 +94,9 @@ class LLTypeCtx:
         return ir.LiteralStructType([self.__get_raw_type(td.element_type).as_pointer(), self.__i64])
 
     def __handle_array(self, td: Type.ArrayType) -> ir.Type:
-        length = self.__type_ctx.try_extract_array_length(td.type_id)
-        assert length is not None
-        return ir.ArrayType(self.__get_raw_type(td.element_type), length)
+        length_ty = self.__type_ctx[td.length]
+        assert isinstance(length_ty, Type.LiteralValueType)
+        return ir.ArrayType(self.__get_raw_type(td.element_type), length_ty.value)
 
     def __handle_tuple(self, td: Type.TupleType) -> ir.Type:
         return ir.LiteralStructType([self.__get_raw_type(et) for et in td.element_types])
@@ -125,23 +125,31 @@ class LLTypeCtx:
         identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))
         return identified
 
-    def __handle_function(self, td: Type.FunctionType) -> ir.Type:
-        ret = self.__get_raw_type(td.return_type(self.__type_ctx))
-        params = [self.__get_raw_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
+    def __build_function_type(
+        self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None
+    ) -> ir.FunctionType:
+        ret = self.__get_raw_type(ret_type_id)
+        params = [self.__get_raw_type(pt) for pt in param_type_ids]
+        if receiver_type_id is not None:
+            params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())
         return ir.FunctionType(ret, params)
+
+    def __handle_function(self, td: Type.FunctionType) -> ir.Type:
+        return self.__build_function_type(
+            td.return_type(self.__type_ctx),
+            [pt.type_id for pt in td.parameters(self.__type_ctx)],
+        )
 
     def __handle_method(self, td: Type.MethodType) -> ir.Type:
-        ret = self.__get_raw_type(td.return_type(self.__type_ctx))
-        params: list[ir.Type] = []
-        if not td.custom_def.is_static:
-            params.append(self.__get_raw_type(td.receiver_type(self.__type_ctx)).as_pointer())  # type: ignore[union-attr]
-        params += [self.__get_raw_type(pt.type_id) for pt in td.parameters(self.__type_ctx)]
-        return ir.FunctionType(ret, params)
+        receiver = None if td.custom_def.is_static else td.receiver_type(self.__type_ctx)
+        return self.__build_function_type(
+            td.return_type(self.__type_ctx),
+            [pt.type_id for pt in td.parameters(self.__type_ctx)],
+            receiver,
+        )
 
     def __handle_function_pointer(self, td: Type.FunctionPointerType) -> ir.Type:
-        ret = self.__get_raw_type(td.return_type)
-        params = [self.__get_raw_type(pt) for pt in td.parameter_types]
-        return ir.FunctionType(ret, params).as_pointer()
+        return self.__build_function_type(td.return_type, td.parameter_types).as_pointer()
 
     # ------------------------------------------------------------------
     # stable layout
@@ -151,14 +159,10 @@ class LLTypeCtx:
     def __align_up(value: int, align: int) -> int:
         return (value + align - 1) // align * align if align > 1 else value
 
-    def __stable_layout(self, type_id: int, visiting: set[int] | None = None) -> tuple[int, int]:
+    def __stable_layout(self, type_id: int) -> tuple[int, int]:
         cached = self.__layout_cache.get(type_id)
         if cached is not None:
             return cached
-        visiting = visiting or set()
-        if type_id in visiting:
-            raise ValueError(f"Recursive by-value layout: {self.__type_ctx.get_name(type_id)}")
-        visiting.add(type_id)
         td = self.__type_ctx[type_id]
 
         if isinstance(td, Type.VoidType):
@@ -167,42 +171,24 @@ class LLTypeCtx:
             result = (1, 1)
         elif isinstance(td, Type.CharType):
             result = (4, 4)
-        elif isinstance(td, Type.StrType):
-            result = (self.__str_ll_type.get_abi_size(self.__target_data), self.__str_ll_type.get_abi_alignment(self.__target_data))
         elif isinstance(td, Type.IntType):
             result = (td.size, td.size)
         elif isinstance(td, Type.FloatType):
             result = (td.size, td.size)
         elif isinstance(td, (Type.PointerType, Type.FunctionPointerType)):
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))
-        elif isinstance(td, Type.SliceType):
-            lt = self.__get_raw_type(type_id)
-            result = (lt.get_abi_size(self.__target_data), lt.get_abi_alignment(self.__target_data))
         elif isinstance(td, Type.ArrayType):
-            es, ea = self.__stable_layout(td.element_type, visiting)
-            result = (es * self.__type_ctx.try_extract_array_length(type_id), ea)  # type: ignore[operator]
-        elif isinstance(td, Type.TupleType):
-            off, ma = 0, 1
-            for et in td.element_types:
-                s, a = self.__stable_layout(et, visiting)
-                off = self.__align_up(off, a) + s
-                ma = max(ma, a)
-            result = (self.__align_up(off, ma), ma)
-        elif isinstance(td, Type.StructType):
-            substs = dict(zip(td.custom_def.generics, td.generic_args))
-            off, ma = 0, 1
-            for f in sorted(td.custom_def.fields, key=lambda f: f.index):
-                s, a = self.__stable_layout(self.__type_ctx.instantiate(f.type_id, substs), visiting)
-                off = self.__align_up(off, a) + s
-                ma = max(ma, a)
-            result = (self.__align_up(off, ma), ma)
+            es, ea = self.__stable_layout(td.element_type)
+            length_ty = self.__type_ctx[td.length]
+            assert isinstance(length_ty, Type.LiteralValueType)
+            result = (es * length_ty.value, ea)
         elif isinstance(td, Type.EnumType):
             substs = dict(zip(td.custom_def.generics, td.generic_args))
             ms, ma = 0, 1
             for v in td.custom_def.variants:
                 if v.payload_type is None:
                     continue
-                s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs), visiting)
+                s, a = self.__stable_layout(self.__type_ctx.instantiate(v.payload_type, substs))
                 ms, ma = max(ms, s), max(ma, a)
             ps = self.__align_up(ms, ma) if ms > 0 else 0
             result = (self.__align_up(4 + ps, 4), 4)
@@ -210,6 +196,5 @@ class LLTypeCtx:
             lt = self.__get_raw_type(type_id)
             result = (lt.get_abi_size(self.__target_data), lt.get_abi_alignment(self.__target_data))
 
-        visiting.remove(type_id)
         self.__layout_cache[type_id] = result
         return result
