@@ -38,34 +38,6 @@ class LLBuilder:
         self.__builder: ir.IRBuilder
 
     # ------------------------------------------------------------------
-    # fork
-    # ------------------------------------------------------------------
-
-    def fork(self, label: str, where: BuilderPosition = BuilderPosition.End) -> LLBuilder:
-        forked = object.__new__(LLBuilder)
-        forked.__func = self.__func
-        forked.__module = self.__module
-        forked.__ll_type_ctx = self.__ll_type_ctx
-        forked.__type_ctx = self.__type_ctx
-        forked.position_at(label, where)
-        return forked
-
-    def fork_block(self, block: ir.Block, where: BuilderPosition = BuilderPosition.End) -> LLBuilder:
-        forked = object.__new__(LLBuilder)
-        forked.__func = self.__func
-        forked.__module = self.__module
-        forked.__ll_type_ctx = self.__ll_type_ctx
-        forked.__type_ctx = self.__type_ctx
-        forked.__builder = ir.IRBuilder(block)
-        if where == BuilderPosition.First:
-            instructions = list(block.instructions)
-            if instructions:
-                forked.__builder.position_before(instructions[0])
-        elif where == BuilderPosition.Phi:
-            forked.__builder.position_at_start(block)
-        return forked
-
-    # ------------------------------------------------------------------
     # resolve
     # ------------------------------------------------------------------
 
@@ -82,7 +54,6 @@ class LLBuilder:
             return self._const(value.type_id, ord(value.value))
         if isinstance(value, IR.StringLiteral):
             return LLValue(value.type_id, self.__module.str_literal_val(value.value.encode("utf-8")))
-        raise ValueError(f"Unknown value: {type(value).__name__}")
 
     # ------------------------------------------------------------------
     # constants

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from llvmlite import ir  # type: ignore[import-untyped]
+from llvmlite import ir
 
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.intrinsics import IntrinsicManager
@@ -67,8 +67,7 @@ class LLFunction:
             if i >= len(self.__ir.args):
                 break
             alloca_ptr = self.get_var_ptr(symbol_id)
-            if alloca_ptr is not None:
-                builder.store_raw(self.__ir.args[i], alloca_ptr.ir_val)
+            builder.store_raw(self.__ir.args[i], alloca_ptr.ir_val)
 
     # -- register management --
 
