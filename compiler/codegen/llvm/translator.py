@@ -4,9 +4,7 @@ CFG → LLVM IR translator.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from llvmlite import ir  # type: ignore[import-untyped]
+from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -15,43 +13,18 @@ from compiler.codegen.llvm.intrinsics import IntrinsicKind
 from compiler.codegen.llvm.module import LLFunction, LLModule
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
-_CMP = {BinaryOperator.Eq, BinaryOperator.Neq, BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq}
-
 
 class LLTranslator:
     """CFG Functions → LLVM Module."""
 
     def __init__(self, type_ctx: TypeCtx, module: LLModule) -> None:
         self.__type_ctx = type_ctx
-        self.__mod = module
+        self.__module = module
 
         # per-function state (reset in __build)
         self.__func: LLFunction | None = None
         self.__blocks: dict[str, ir.Block] = {}
         self.__regs: dict[str, ir.Value] = {}
-
-        self.__handlers: dict[type[IR.Stmt], Callable[..., ir.Value | None]] = {  # type: ignore[assignment]
-            IR.VarPtr:              self.__h_varptr,
-            IR.Alloca:              self.__h_alloca,
-            IR.FieldPtr:            self.__h_fieldptr,
-            IR.Load:                self.__h_load,
-            IR.Store:               self.__h_store,
-            IR.Malloc:              self.__h_malloc,
-            IR.Binary:              self.__h_binary,
-            IR.Unary:               self.__h_unary,
-            IR.ExtractValue:        self.__h_extractvalue,
-            IR.Delete:              self.__h_delete,
-            IR.Call:                self.__h_call,
-            IR.Invoke:              self.__h_invoke,
-            IR.Cast:                self.__h_cast,
-            IR.SizeOf:              self.__h_sizeof,
-            IR.FuncPtr:             self.__h_funcptr,
-            IR.AggregateConstruct:  self.__h_aggregate,
-            IR.ArrayConstruct:      self.__h_array,
-            IR.VariantConstruct:    self.__h_variant,
-            IR.SysWrite:            self.__h_syswrite,
-            IR.SysRead:             self.__h_sysread,
-        }
 
     # ------------------------------------------------------------------
     # public
@@ -59,25 +32,25 @@ class LLTranslator:
 
     def run(self, functions: dict[str, IR.Function]) -> None:
         for f in functions.values():
-            self.__mod.declare(f)
+            self.__module.declare(f)
         for f in functions.values():
             self.__build(f)
 
     def export(self) -> LLModule:
-        return self.__mod
+        return self.__module
 
     # ------------------------------------------------------------------
     # per-function build
     # ------------------------------------------------------------------
 
     def __build(self, cfg: IR.Function) -> None:
-        func = self.__mod.get_func(cfg.type_id)
+        func = self.__module.get_func(cfg.type_id)
         assert func is not None
         self.__func = func
         self.__blocks = {}
         self.__regs = {}
         f = func._ir
-        tm = self.__mod.type_mapper
+        tm = self.__module.type_mapper
 
         # ── entry block + allocas ──
         entry_bb = f.append_basic_block(".entry")
@@ -103,16 +76,16 @@ class LLTranslator:
         for blk in cfg.blocks:
             bb = self.__blocks[blk.label]
             b = ir.IRBuilder(bb)
-            phis = [s for s in blk.stmts if isinstance(s, IR.Phi)]
-            if phis:
+
+            # phi nodes
+            if blk.phis:
                 b.position_at_start(bb)
-                for ps in phis:
+                for ps in blk.phis:
                     self.__h_phi_impl(b, ps)
 
+            # regular statements + terminator
             b.position_at_end(bb)
             for s in blk.stmts:
-                if isinstance(s, IR.Phi):
-                    continue
                 self.__translate(b, s)
 
             assert blk.terminator is not None
@@ -122,27 +95,79 @@ class LLTranslator:
     # dispatch
     # ------------------------------------------------------------------
 
-    def __translate(self, b: ir.IRBuilder, s: IR.Stmt) -> None:
-        h = self.__handlers.get(type(s))
-        assert h is not None, f"No handler for {type(s).__name__}"
-        r = h(b, s)
-        if r is not None and hasattr(s, "result"):
-            self.__regs[s.result.name] = r  # type: ignore[union-attr]
+    def __translate(self, builder: ir.IRBuilder, stmt: IR.Stmt) -> None:
+        match stmt:
+            case IR.VarPtr():
+                res = self.__h_varptr(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Alloca():
+                res = self.__h_alloca(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.FieldPtr():
+                res = self.__h_fieldptr(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Load():
+                res = self.__h_load(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Store():
+                self.__h_store(builder, stmt)
+            case IR.Malloc():
+                res = self.__h_malloc(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Binary():
+                res = self.__h_binary(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Unary():
+                res = self.__h_unary(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.ExtractValue():
+                res = self.__h_extractvalue(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Delete():
+                self.__h_delete(builder, stmt)
+            case IR.Call():
+                res = self.__h_call(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Invoke():
+                res = self.__h_invoke(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.Cast():
+                res = self.__h_cast(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.SizeOf():
+                res = self.__h_sizeof(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.FuncPtr():
+                res = self.__h_funcptr(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.AggregateConstruct():
+                res = self.__h_aggregate(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.ArrayConstruct():
+                res = self.__h_array(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.VariantConstruct():
+                res = self.__h_variant(builder, stmt)
+                self.__regs[stmt.result.name] = res
+            case IR.SysWrite():
+                self.__h_syswrite(builder, stmt)
+            case IR.SysRead():
+                res = self.__h_sysread(builder, stmt)
+                self.__regs[stmt.result.name] = res
 
     def __val(self, v: IR.Value) -> ir.Value:
         if isinstance(v, IR.Reg):
             return self.__regs[v.name]
         if isinstance(v, IR.IntLiteral):
-            return ir.Constant(self.__mod.type_mapper.get_ll_type(v.type_id), v.value)
+            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), v.value)
         if isinstance(v, IR.FloatLiteral):
-            return ir.Constant(self.__mod.type_mapper.get_ll_type(v.type_id), v.value)
+            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), v.value)
         if isinstance(v, IR.BoolLiteral):
-            return ir.Constant(self.__mod.type_mapper.get_ll_type(v.type_id), 1 if v.value else 0)
+            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), 1 if v.value else 0)
         if isinstance(v, IR.CharLiteral):
-            return ir.Constant(self.__mod.type_mapper.get_ll_type(v.type_id), ord(v.value))
+            return ir.Constant(self.__module.type_mapper.get_ll_type(v.type_id), ord(v.value))
         if isinstance(v, IR.StringLiteral):
-            return self.__mod.str_literal_val(v.value.encode("utf-8"))
-        raise ValueError(f"Unknown value: {type(v).__name__}")
+            return self.__module.str_literal_val(v.value.encode("utf-8"))
 
     # ------------------------------------------------------------------
     # stmt handlers
@@ -160,7 +185,7 @@ class LLTranslator:
         ins = list(self.__func.entry_block.instructions)  # type: ignore[union-attr]
         if ins:
             eb.position_before(ins[0])
-        a = eb.alloca(self.__mod.type_mapper.get_ll_type(s.value.type_id), name=f"tmp.{s.result.name}")
+        a = eb.alloca(self.__module.type_mapper.get_ll_type(s.value.type_id), name=f"tmp.{s.result.name}")
         b.store(self.__val(s.value), a)
         return a
 
@@ -174,14 +199,14 @@ class LLTranslator:
         b.store(self.__val(s.value), self.__val(s.ptr))
 
     def __h_malloc(self, b: ir.IRBuilder, s: IR.Malloc) -> ir.Value:
-        malloc = self.__mod.intrinsics.get(IntrinsicKind.Malloc)
+        malloc = self.__module.intrinsics.get(IntrinsicKind.Malloc)
         raw = b.call(malloc, [self.__val(s.size)], name="malloc.raw")
-        ptr_t = self.__mod.type_mapper.get_ll_type(self.__type_ctx.alloc_pointer(s.type_id))
+        ptr_t = self.__module.type_mapper.get_ll_type(self.__type_ctx.alloc_pointer(s.type_id))
         return b.bitcast(raw, ptr_t, name=s.result.name)
 
     def __h_binary(self, b: ir.IRBuilder, s: IR.Binary) -> ir.Value:
         l, r = self.__val(s.lhs), self.__val(s.rhs)
-        if s.op in _CMP:
+        if s.op.is_comparison():
             return self.__cmp(b, s.op, l, r)
         return self.__arith(b, s.op, l, r, s.result.name)
 
@@ -199,11 +224,11 @@ class LLTranslator:
         return b.extract_value(self.__val(s.base), s.field_index, name=s.result.name)
 
     def __h_delete(self, b: ir.IRBuilder, s: IR.Delete) -> None:
-        free = self.__mod.intrinsics.get(IntrinsicKind.Free)
+        free = self.__module.intrinsics.get(IntrinsicKind.Free)
         b.call(free, [b.bitcast(self.__val(s.ptr), ir.PointerType(ir.IntType(8)))])
 
     def __h_call(self, b: ir.IRBuilder, s: IR.Call) -> ir.Value:
-        callee = self.__mod.get_func(s.callee_type)
+        callee = self.__module.get_func(s.callee_type)
         assert callee is not None, f"Function callee_type={s.callee_type} not declared"
         return b.call(callee._ir, [self.__val(a) for a in s.args], name=s.result.name)
 
@@ -214,10 +239,10 @@ class LLTranslator:
         v = self.__val(s.value)
         src = self.__type_ctx[s.value.type_id]
         dst = self.__type_ctx[s.to_type]
-        dt = self.__mod.type_mapper.get_ll_type(s.to_type)
+        dt = self.__module.type_mapper.get_ll_type(s.to_type)
 
         if isinstance(src, (Type.IntType, Type.CharType, Type.BoolType)) and isinstance(dst, (Type.IntType, Type.CharType, Type.BoolType)):
-            sw = self.__mod.type_mapper.get_ll_type(s.value.type_id).width  # type: ignore[union-attr]
+            sw = self.__module.type_mapper.get_ll_type(s.value.type_id).width  # type: ignore[union-attr]
             dw = dt.width  # type: ignore[union-attr]
             if dw > sw:
                 if isinstance(src, Type.CharType) or (isinstance(src, Type.IntType) and not src.signed):
@@ -237,27 +262,27 @@ class LLTranslator:
         raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
 
     def __h_sizeof(self, b: ir.IRBuilder, s: IR.SizeOf) -> ir.Value:
-        return ir.Constant(ir.IntType(64), self.__mod.type_mapper.get_type_size(s.type_id))
+        return ir.Constant(ir.IntType(64), self.__module.type_mapper.get_type_size(s.type_id))
 
     def __h_funcptr(self, b: ir.IRBuilder, s: IR.FuncPtr) -> ir.Value:
-        callee = self.__mod.get_func(s.func_type_id)
+        callee = self.__module.get_func(s.func_type_id)
         assert callee is not None, f"FuncPtr func_type_id={s.func_type_id} not declared"
         return callee._ir
 
     def __h_aggregate(self, b: ir.IRBuilder, s: IR.AggregateConstruct) -> ir.Value:
-        r = ir.Constant(self.__mod.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
+        r = ir.Constant(self.__module.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
         for i, fv in enumerate(s.fields):
             r = b.insert_value(r, self.__val(fv), i)
         return r
 
     def __h_array(self, b: ir.IRBuilder, s: IR.ArrayConstruct) -> ir.Value:
-        r = ir.Constant(self.__mod.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
+        r = ir.Constant(self.__module.type_mapper.get_ll_type(s.result.type_id), ir.Undefined)
         for i, ev in enumerate(s.elements):
             r = b.insert_value(r, self.__val(ev), i)
         return r
 
     def __h_variant(self, b: ir.IRBuilder, s: IR.VariantConstruct) -> ir.Value:
-        tm = self.__mod.type_mapper
+        tm = self.__module.type_mapper
         r = ir.Constant(tm.get_ll_type(s.result.type_id), ir.Undefined)
         r = b.insert_value(r, ir.Constant(ir.IntType(32), s.variant.discriminant), 0, "set.disc")
         if s.payload_fields is not None:
@@ -272,16 +297,16 @@ class LLTranslator:
 
     def __h_syswrite(self, b: ir.IRBuilder, s: IR.SysWrite) -> None:
         buf = self.__val(s.buf)
-        write = self.__mod.intrinsics.get(IntrinsicKind.Write)
+        write = self.__module.intrinsics.get(IntrinsicKind.Write)
         b.call(write, [self.__val(s.fd), b.extract_value(buf, 0), b.extract_value(buf, 1)])
 
     def __h_sysread(self, b: ir.IRBuilder, s: IR.SysRead) -> ir.Value:
         buf = self.__val(s.buf)
-        read = self.__mod.intrinsics.get(IntrinsicKind.Read)
+        read = self.__module.intrinsics.get(IntrinsicKind.Read)
         return b.call(read, [self.__val(s.fd), b.extract_value(buf, 0), b.extract_value(buf, 1)], name=s.result.name)
 
     def __h_phi_impl(self, b: ir.IRBuilder, s: IR.Phi) -> None:
-        phi = b.phi(self.__mod.type_mapper.get_ll_type(s.result.type_id), name=s.result.name)
+        phi = b.phi(self.__module.type_mapper.get_ll_type(s.result.type_id), name=s.result.name)
         self.__regs[s.result.name] = phi
         for src, val in s.incoming:
             phi.add_incoming(self.__val(val), self.__blocks[src.label])
@@ -309,9 +334,9 @@ class LLTranslator:
 
     def __panic(self, b: ir.IRBuilder, msg: IR.Value) -> None:
         mv = self.__val(msg)
-        write = self.__mod.intrinsics.get(IntrinsicKind.Write)
+        write = self.__module.intrinsics.get(IntrinsicKind.Write)
         b.call(write, [ir.Constant(ir.IntType(32), 2), b.extract_value(mv, 0), b.extract_value(mv, 1)])
-        b.call(self.__mod.intrinsics.get(IntrinsicKind.Exit), [ir.Constant(ir.IntType(32), 1)])
+        b.call(self.__module.intrinsics.get(IntrinsicKind.Exit), [ir.Constant(ir.IntType(32), 1)])
         b.unreachable()
 
     def __match(self, b: ir.IRBuilder, t: IR.Match) -> None:
@@ -327,9 +352,9 @@ class LLTranslator:
             sw = b.switch(mv, default)
             for arm in t.arms:
                 if isinstance(arm.pattern, IR.IntPattern):
-                    sw.add_case(ir.Constant(self.__mod.type_mapper.get_ll_type(arm.pattern.value.type_id), arm.pattern.value.value), self.__blocks[arm.body.label])
+                    sw.add_case(ir.Constant(self.__module.type_mapper.get_ll_type(arm.pattern.value.type_id), arm.pattern.value.value), self.__blocks[arm.body.label])
                 elif isinstance(arm.pattern, IR.CharPattern):
-                    sw.add_case(ir.Constant(self.__mod.type_mapper.get_ll_type(arm.pattern.value.type_id), ord(arm.pattern.value.value)), self.__blocks[arm.body.label])
+                    sw.add_case(ir.Constant(self.__module.type_mapper.get_ll_type(arm.pattern.value.type_id), ord(arm.pattern.value.value)), self.__blocks[arm.body.label])
 
         elif isinstance(mty, Type.EnumType):
             disc = b.load(b.gep(mv, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True, name="disc.ptr"), name="disc.val")
@@ -343,7 +368,7 @@ class LLTranslator:
 
     def __unpack(self, bb: ir.Block, mv: ir.Value, pat: IR.EnumPattern) -> None:
         assert self.__func is not None
-        tm = self.__mod.type_mapper
+        tm = self.__module.type_mapper
         cb = ir.IRBuilder(bb)
         ins = list(bb.instructions)
         if ins:

@@ -443,7 +443,7 @@ class CfgBuilder:
 
         # ── merge block ──
         self.__switch_to(merge_block)
-        return self.__build_phi([
+        return self.__emit_phi([
             (entry_block, short_circuit_value),
             (rhs_block, rhs_val),
         ])
@@ -675,9 +675,12 @@ class CfgBuilder:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
         return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
-    def __build_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
+    def __emit_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
+        """Emit a phi node into the current block's dedicated phi list."""
         result = IR.Reg(name=self.__new_name(), type_id=incoming[0][1].type_id)
-        return self.__emit(IR.Phi(result=result, incoming=incoming)).result
+        stmt = IR.Phi(result=result, incoming=incoming)
+        self.__current_block.phis.append(stmt)
+        return stmt.result
 
     def __build_func_ptr(self, func_type_id: int) -> IR.Value:
         func_ty = self.__type_ctx[func_type_id]

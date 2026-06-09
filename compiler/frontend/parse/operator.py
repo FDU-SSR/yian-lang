@@ -139,6 +139,10 @@ class BinaryOperator(Enum):
     def is_logical(self) -> bool:
         return self in (BinaryOperator.LogicalAnd, BinaryOperator.LogicalOr)
 
+    def is_comparison(self) -> bool:
+        return self in (BinaryOperator.Eq, BinaryOperator.Neq, BinaryOperator.Lt,
+                        BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq)
+
     def is_compound_assign(self) -> bool:
         return self in (BinaryOperator.AddAssign, BinaryOperator.SubAssign,
                         BinaryOperator.MulAssign, BinaryOperator.DivAssign,

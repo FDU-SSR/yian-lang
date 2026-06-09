@@ -182,7 +182,6 @@ Stmt: TypeAlias = (
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead
-    | Phi
 )
 
 # ---------------------------------------------------------------------------
@@ -240,6 +239,7 @@ Terminator: TypeAlias = Ret | RetVoid | Br | CondBr | Match | Panic
 class Block:
     """Basic block"""
     label: str
+    phis: list[Phi] = field(default_factory=list[Phi])
     stmts: list[Stmt] = field(default_factory=list[Stmt])
     terminator: Terminator | None = None
 

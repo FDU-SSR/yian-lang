@@ -18,6 +18,8 @@ def dump(func: IR.Function) -> str:
 
     for block in func.blocks:
         out.append(f"  {block.label}:")
+        for phi in block.phis:
+            out.append(f"    {__dump_phi(phi)}")
         for stmt in block.stmts:
             out.append(f"    {__dump_stmt(stmt)}")
         if block.terminator:
@@ -170,14 +172,15 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.Phi(result=result, incoming=incoming):
-            inc_str = ", ".join(
-                f"[{__dump_value(v)}, {b.label}]" for b, v in incoming
-            )
-            return (
-                f"%{result.name} = phi [{inc_str}]"
-                f"  [{__type_str(result.type_id)}]"
-            )
+
+def __dump_phi(phi: IR.Phi) -> str:
+    inc_str = ", ".join(
+        f"[{__dump_value(v)}, {b.label}]" for b, v in phi.incoming
+    )
+    return (
+        f"%{phi.result.name} = phi [{inc_str}]"
+        f"  [{__type_str(phi.result.type_id)}]"
+    )
 
 
 # ---------------------------------------------------------------------------
