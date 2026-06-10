@@ -220,7 +220,15 @@ class LLBuilder:
         elif isinstance(src, Type.IntType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.sitofp(value.ir_val, dest_ll_type) if src.signed else self.__builder.uitofp(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.IntType):
-            ir_val = self.__builder.fptosi(value.ir_val, dest_ll_type) if dst.signed else self.__builder.fptoui(value.ir_val, dest_ll_type)  # type: ignore
+            if dst.signed:
+                ir_val = self.__builder.fptosi(value.ir_val, dest_ll_type)  # type: ignore
+            else:
+                # Negative float → unsigned int should yield 0.
+                zero_f = ir.Constant(value.ir_val.type, 0.0)  # type: ignore
+                pos = self.__builder.fcmp_ordered(">=", value.ir_val, zero_f)  # type: ignore
+                raw = self.__builder.fptoui(value.ir_val, dest_ll_type)  # type: ignore
+                zero_i = ir.Constant(dest_ll_type, 0)  # type: ignore
+                ir_val = self.__builder.select(pos, raw, zero_i)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
