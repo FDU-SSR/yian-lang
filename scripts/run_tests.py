@@ -277,7 +277,8 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
         cmd,
         cwd=ROOT_DIR,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     compile_elapsed = (time.monotonic() - start) * 1000.0
@@ -301,7 +302,8 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
             [str(exe_path)],
             cwd=ROOT_DIR,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         run_elapsed = (time.monotonic() - run_start) * 1000.0
