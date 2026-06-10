@@ -190,7 +190,7 @@ def __format_hir_output(unit_datas: dict[int, UnitData], def_points: dict[int, D
     return export_hir_bundle(unit_datas, def_points, type_ctx)
 
 
-def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[str, CFG_IR.Function]:
+def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
     translator = CfgTranslator(type_ctx)
     try:
@@ -200,10 +200,11 @@ def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[str, CFG_I
     return translator.export()
 
 
-def __format_cfg_output(functions: dict[str, CFG_IR.Function]) -> str:
+def __format_cfg_output(functions: dict[int, CFG_IR.Function]) -> str:
     sections: list[str] = []
-    for name in sorted(functions.keys()):
-        sections.append(dump_cfg(functions[name]))
+    for type_id in sorted(functions.keys()):
+        func = functions[type_id]
+        sections.append(dump_cfg(func))
     return "\n\n".join(sections) + ("\n" if sections else "")
 
 
@@ -222,7 +223,7 @@ def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
 
 
 def __llvm_codegen(
-    cfg_functions: dict[str, CFG_IR.Function],
+    cfg_functions: dict[int, CFG_IR.Function],
     type_ctx: TypeCtx,
     unit_names: dict[int, str],
 ) -> LLModule:

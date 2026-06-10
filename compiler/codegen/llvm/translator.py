@@ -32,7 +32,7 @@ class LLTranslator:
     # public
     # ------------------------------------------------------------------
 
-    def run(self, functions: dict[str, IR.Function]) -> None:
+    def run(self, functions: dict[int, IR.Function]) -> None:
         for function in functions.values():
             self.__module.declare(function)
         for function in functions.values():

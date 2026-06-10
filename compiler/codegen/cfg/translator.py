@@ -20,21 +20,21 @@ class CfgTranslator:
 
         translator = CfgTranslator(type_ctx)
         translator.run(def_points)
-        functions = translator.export()  # dict[str, Function]
+        functions = translator.export()  # dict[int, Function]
     """
 
     def __init__(self, type_ctx: TypeCtx) -> None:
         self.__type_ctx = type_ctx
-        self.__functions: dict[str, IR.Function] = {}
+        self.__functions: dict[int, IR.Function] = {}
 
     def run(self, def_points: dict[int, DefPoint]) -> None:
         """Lower every DefPoint in *def_points* to a CFG Function."""
         for dp in def_points.values():
             func = self.__translate(dp)
-            self.__functions[func.name] = func
+            self.__functions[func.type_id] = func
 
-    def export(self) -> dict[str, IR.Function]:
-        """Return the translated functions keyed by name."""
+    def export(self) -> dict[int, IR.Function]:
+        """Return the translated functions keyed by type_id."""
         return dict(self.__functions)
 
     # ------------------------------------------------------------------
