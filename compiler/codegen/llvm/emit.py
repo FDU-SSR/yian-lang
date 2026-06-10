@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import tempfile
 
 from compiler.codegen.llvm.module import LLModule
 
@@ -33,14 +34,26 @@ class Emitter:
                     stem: str, intermediate_dir: str | None = None) -> str:
         normalized_kind = self._normalize_kind(kind)
         paths = {"ll": f"{stem}.ll", "bc": f"{stem}.bc", "obj": f"{stem}.o", "asm": f"{stem}.s"}
-        ll_path = os.path.join(intermediate_dir or output_dir, paths["ll"])
-        self.emit_ll(llvm_module, ll_path)
+
         if normalized_kind == "ll":
+            ll_path = os.path.join(intermediate_dir or output_dir, paths["ll"])
+            self.emit_ll(llvm_module, ll_path)
             return ll_path
 
-        binding = self.__ensure_binding()
-        llvm_mod = binding.parse_assembly(str(llvm_module))
-        llvm_mod.verify()
+        # For non-ll targets the serialized IR is only needed as input to
+        # llvmlite's parse_assembly.  Write it to a temp file so it is
+        # automatically cleaned up (even when parsing fails).
+        fd, ll_path = tempfile.mkstemp(suffix=".ll", prefix="yian_")
+        os.close(fd)
+        try:
+            self.emit_ll(llvm_module, ll_path)
+            binding = self.__ensure_binding()
+            llvm_mod = binding.parse_assembly(str(llvm_module))
+            llvm_mod.verify()
+        finally:
+            if os.path.exists(ll_path):
+                os.remove(ll_path)
+
         output_path = os.path.join(output_dir, paths[normalized_kind])
 
         if normalized_kind == "bc":
@@ -54,6 +67,7 @@ class Emitter:
             else:
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(target_machine.emit_assembly(llvm_mod))
+
         return output_path
 
     @staticmethod
