@@ -19,6 +19,9 @@ class Emitter:
     def __ensure_binding(self):
         if self.__binding is None:
             binding = importlib.import_module("llvmlite.binding")
+            binding.initialize_native_target()
+            binding.initialize_native_asmprinter()
+            binding.initialize_native_asmparser()
             self.__binding = binding
         return self.__binding
 

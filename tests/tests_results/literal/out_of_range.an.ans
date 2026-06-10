@@ -1,1 +1,1 @@
-Value 1000 out of range for type i8
+Integer literal 1000 exceeds maximum value for type i8

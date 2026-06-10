@@ -1,1 +1,1 @@
-compiler.utils.errors.yian_error.CompilerError: Self-referential type detected: A3
+Self-referential type detected: A3

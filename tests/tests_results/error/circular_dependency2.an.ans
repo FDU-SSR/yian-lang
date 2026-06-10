@@ -1,1 +1,1 @@
-compiler.utils.errors.yian_error.CompilerError: Self-referential type detected: Node
+Self-referential type detected: Node

@@ -26,6 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
 RESULTS_DIR = TESTS_DIR / "tests_results"
 LIB_DIR = ROOT_DIR / "lib"
+BUILD_DIR = ROOT_DIR / "build"
 
 # ---------------------------------------------------------------------------
 # Multi-file test configuration
@@ -66,6 +67,12 @@ class TestCase:
     expected_substring: str
     """For error tests: substring that should appear in the compiler output."""
 
+    expected_exit_code: int | None = None
+    """Expected runtime exit code (None = don't check, default 0)."""
+
+    expected_output: str = ""
+    """Expected stdout content (empty = no output check)."""
+
 
 @dataclass
 class TestResult:
@@ -75,7 +82,13 @@ class TestResult:
     exit_code: int
     elapsed_ms: float
     output: str
-    """Captured combined stdout+stderr."""
+    """Captured combined stdout+stderr (compiler output for analysis, or stderr for --run)."""
+
+    stdout: str = ""
+    """Captured stdout from running the compiled executable (--run mode only)."""
+
+    check_stdout: bool = False
+    """Whether to compare expected_output with captured stdout."""
 
     def passed(self) -> bool:
         if self.test.expect_error:
@@ -84,25 +97,42 @@ class TestResult:
             if self.test.expected_substring:
                 return self.test.expected_substring in self.output
             return True
-        return self.exit_code == 0
+        if self.test.expected_exit_code is not None:
+            if self.exit_code != self.test.expected_exit_code:
+                return False
+        elif self.exit_code != 0:
+            return False
+        if self.check_stdout and self.test.expected_output:
+            return self.stdout.strip() == self.test.expected_output.strip()
+        return True
 
 
 # ---------------------------------------------------------------------------
 # Test discovery
 # ---------------------------------------------------------------------------
 
-def _parse_ans(file_path: Path) -> tuple[bool, str]:
-    """Parse an .ans file into (expect_error, expected_substring).
+def _parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int | None, str, str]:
+    """Parse an .ans file into (expect_error, expected_exit_code, expected_output, expected_substring).
 
-    - First line "Exit code N"  → expect_error=True, substring = rest
-    - Otherwise                  → expect_error=False, substring = ""
+    For error tests (.err.an):
+      - "Exit code N" → compiler exit code N, substring=rest
+      - Otherwise       → compiler should fail (any non-zero), substring=entire file
+
+    For runtime tests (default):
+      - "Exit code N" → runtime exit code N, output=rest
+      - Otherwise       → runtime exit code 0, output=entire file
     """
-    raw = file_path.read_text()
+    raw = file_path.read_text().rstrip("\n")
     if raw.startswith("Exit code "):
         idx = raw.index("\n")
+        exit_code = int(raw[len("Exit code "):idx].strip())
         rest = raw[idx + 1:]
-        return True, rest
-    return False, ""
+        if is_error_test:
+            return True, exit_code, "", rest
+        return False, exit_code, rest, ""
+    if is_error_test:
+        return True, None, "", raw
+    return False, 0, raw, ""
 
 
 def _find_ans(test_rel: str) -> Path | None:
@@ -167,23 +197,26 @@ def discover_tests() -> list[TestCase]:
             source_files = [an_file] + [TESTS_DIR / e for e in extra]
             name = src_rel
 
+        # .err.an files (including those in multi-file dirs) are error tests.
+        is_err = name.endswith(".err.an") or any(f.name.endswith(".err.an") for f in source_files)
+
         # Look up expected output.
         ans_path = _find_ans(name)
         if ans_path is not None:
-            expect_error, expected_substr = _parse_ans(ans_path)
+            expect_error, expected_exit_code, expected_output, expected_substr = _parse_ans(ans_path, is_error_test=is_err)
         else:
-            expect_error = False
+            expect_error = is_err
+            expected_exit_code = None
+            expected_output = ""
             expected_substr = ""
-
-        # .err.an files are always error tests.
-        if name.endswith(".err.an"):
-            expect_error = True
 
         tests.append(TestCase(
             name=name,
             source_files=source_files,
             expect_error=expect_error,
             expected_substring=expected_substr,
+            expected_exit_code=expected_exit_code,
+            expected_output=expected_output,
         ))
 
     # Report orphaned .ans files (no matching source).
@@ -215,17 +248,26 @@ def discover_tests() -> list[TestCase]:
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test(test: TestCase, dump: bool = False) -> TestResult:
-    """Compile *test* and return the result."""
+def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResult:
+    """Compile *test* and return the result.
+
+    If *run* is True and the test is not an error test: compile to executable,
+    run it, and capture stdout + exit code.
+    """
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
+    exe_path: Path | None = None
+    if run and not test.expect_error:
+        exe_path = BUILD_DIR / "test_exe" / test.name
+        exe_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd += ["-t", "exe", "-o", str(exe_path)]
     if dump:
         cmd += [
-            "--token", str(ROOT_DIR / "build" / "token.txt"),
-            "--ast", str(ROOT_DIR / "build" / "ast.txt"),
-            "--hir", str(ROOT_DIR / "build" / "hir.txt"),
-            "--cfg", str(ROOT_DIR / "build" / "cfg.txt"),
+            "--token", str(BUILD_DIR / "token.txt"),
+            "--ast", str(BUILD_DIR / "ast.txt"),
+            "--hir", str(BUILD_DIR / "hir.txt"),
+            "--cfg", str(BUILD_DIR / "cfg.txt"),
         ]
 
     start = time.monotonic()
@@ -236,13 +278,46 @@ def run_test(test: TestCase, dump: bool = False) -> TestResult:
         text=True,
         check=False,
     )
-    elapsed = (time.monotonic() - start) * 1000.0
+    compile_elapsed = (time.monotonic() - start) * 1000.0
+
+    compiler_output = proc.stdout + proc.stderr
+
+    # If compilation failed, return immediately (for error tests this is expected).
+    if proc.returncode != 0 or test.expect_error:
+        return TestResult(
+            test=test,
+            exit_code=proc.returncode,
+            elapsed_ms=compile_elapsed,
+            output=compiler_output,
+        )
+
+    # --run mode: execute the compiled binary
+    if run and not test.expect_error:
+        assert exe_path is not None
+        run_start = time.monotonic()
+        run_proc = subprocess.run(
+            [str(exe_path)],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        run_elapsed = (time.monotonic() - run_start) * 1000.0
+
+        return TestResult(
+            test=test,
+            exit_code=run_proc.returncode,
+            elapsed_ms=compile_elapsed + run_elapsed,
+            output=compiler_output + run_proc.stderr,
+            stdout=run_proc.stdout,
+            check_stdout=True,
+        )
 
     return TestResult(
         test=test,
         exit_code=proc.returncode,
-        elapsed_ms=elapsed,
-        output=proc.stdout + proc.stderr,
+        elapsed_ms=compile_elapsed,
+        output=compiler_output,
     )
 
 
@@ -286,8 +361,23 @@ def print_summary(
 
 def _print_failure_detail(r: TestResult, out: TextIO) -> None:
     """Print why a single test failed."""
-    expect_kind = "error (non-zero)" if r.test.expect_error else "success (0)"
-    out.write(f"      expected {expect_kind}, got exit code {r.exit_code}\n")
+    if r.test.expect_error:
+        expect_kind = "error"
+        expected_exit = "non-zero"
+    elif r.test.expected_exit_code is not None:
+        expect_kind = "success"
+        expected_exit = str(r.test.expected_exit_code)
+    else:
+        expect_kind = "success"
+        expected_exit = "0"
+    out.write(f"      expected {expect_kind} (exit {expected_exit}), got exit code {r.exit_code}\n")
+
+    if r.test.expected_output and r.stdout:
+        out.write("      --- expected stdout ---\n")
+        out.write(_indent(r.test.expected_output, "      "))
+        out.write("      --- actual stdout ---\n")
+        out.write(_indent(r.stdout, "      "))
+
     if r.test.expected_substring:
         out.write("      --- expected substring ---\n")
         out.write(_indent(r.test.expected_substring, "      "))
@@ -346,6 +436,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Enable compiler intermediate output (token, AST, HIR, CFG).",
     )
+    parser.add_argument(
+        "--no-run",
+        action="store_true",
+        help="Analysis only: do not compile and run executables.",
+    )
     args = parser.parse_args(argv)
 
     # Discover.
@@ -368,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     total_start = time.monotonic()
 
     for i, test in enumerate(all_tests, 1):
-        result = run_test(test, dump=args.dump)
+        result = run_test(test, dump=args.dump, run=not args.no_run)
         results.append(result)
 
         if not args.quiet:
