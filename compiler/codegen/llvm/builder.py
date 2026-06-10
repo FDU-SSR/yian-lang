@@ -207,7 +207,7 @@ class LLBuilder:
 
     def call(self, callee: LLFunction, args: list[LLValue], result: str, return_type_id: int) -> LLValue:
         resolved = [a.ir_val for a in args]
-        ir_val = self.__builder.call(callee.__ir, resolved)  # type: ignore
+        ir_val = self.__builder.call(callee.ir_func, resolved)  # type: ignore
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -225,7 +225,7 @@ class LLBuilder:
         return result_val
 
     def func_ptr(self, func: LLFunction, func_ptr_type_id: int) -> LLValue:
-        return LLValue(func_ptr_type_id, func.__ir)  # type: ignore
+        return LLValue(func_ptr_type_id, func.ir_func)  # type: ignore
 
     def func_ptr_by_type(self, func_type_id: int, func_ptr_type_id: int, result: str) -> None:
         callee = self.__module.get_func(func_type_id)

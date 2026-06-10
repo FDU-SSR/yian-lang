@@ -22,6 +22,11 @@ class LLFunction:
         self.__blocks: dict[str, ir.Block] = {}
         self.__regs: dict[str, LLValue] = {}
 
+    @property
+    def ir_func(self) -> ir.Function:
+        """The underlying llvmlite ``ir.Function``."""
+        return self.__ir
+
     # -- entry block --
 
     def add_entry_block(self) -> None:

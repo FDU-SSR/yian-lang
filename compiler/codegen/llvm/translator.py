@@ -76,6 +76,14 @@ class LLTranslator:
         func = self.__func
 
         func.add_entry_block()
+
+        # create blocks first — must be done before any position_at calls
+        for block in cfg.blocks:
+            if block.label == cfg.entry.label:
+                func.add_block(block.label, func.entry_block)
+            else:
+                func.add_block(block.label, func.new_block(block.label))
+
         builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx)
 
         # entry block + local var allocas
@@ -88,13 +96,6 @@ class LLTranslator:
         param_type_ids = [cfg.local_vars[sid].type_id for sid in cfg.params]
         for arg, symbol_id in zip(func.arg_values(param_type_ids), cfg.params):
             builder.store(arg, func.get_var_ptr(symbol_id))
-
-        # create blocks
-        for block in cfg.blocks:
-            if block.label == cfg.entry.label:
-                func.add_block(block.label, func.entry_block)
-            else:
-                func.add_block(block.label, func.new_block(block.label))
 
         # translate
         for block in cfg.blocks:
