@@ -103,7 +103,14 @@ class TestResult:
         elif self.exit_code != 0:
             return False
         if self.check_stdout and self.test.expected_output:
-            return self.stdout.strip() == self.test.expected_output.strip()
+            expected = self.test.expected_output.strip()
+            if self.stdout.strip() == expected:
+                return True
+            # Runtime errors (e.g. panics) are printed to stderr, which is
+            # captured in self.output (compiler_output is empty on success).
+            if self.output.strip() == expected:
+                return True
+            return False
         return True
 
 

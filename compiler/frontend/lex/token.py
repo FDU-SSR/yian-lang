@@ -286,7 +286,7 @@ def __parse_escape_sequence(raw: str) -> tuple[str, str]:
 def parse_string_value(raw: str) -> str:
     # handle escape sequences
     result = ""
-    raw = raw[1:]  # skip the opening quote
+    raw = raw[1:-1]  # skip the opening and closing quotes
     while raw:
         c, raw = raw[0], raw[1:]
         if c == "\\":
