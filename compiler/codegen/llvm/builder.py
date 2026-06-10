@@ -70,6 +70,11 @@ class LLBuilder:
             if instructions:
                 self.__builder.position_before(instructions[0])  # type: ignore
 
+    @property
+    def current_block_label(self) -> str:
+        """Return the label of the block the builder is currently positioned in."""
+        return self.__builder.block.name  # type: ignore
+
     # ------------------------------------------------------------------
     # statements
     # ------------------------------------------------------------------
@@ -232,6 +237,10 @@ class LLBuilder:
             field_type = fields[index].type_id
         elif isinstance(base_type, Type.TupleType):
             field_type = base_type.element_types[index]
+        elif isinstance(base_type, Type.EnumType):
+            # Enum layout: { i32 discriminant, [pad x i8] payload }
+            # Field 0 is always the i32 discriminant.
+            field_type = self.__type_ctx.u32_id
         else:
             field_type = base.type_id
         result_val = LLValue(field_type, ir_val)
@@ -281,33 +290,43 @@ class LLBuilder:
 
     # -- aggregate construct --
 
+    def __build_aggregate(self, type_id: int, field_values: list[LLValue]) -> LLValue:
+        """Build an aggregate value by inserting each field value at its index."""
+        val = self.undef(type_id)
+        for i, fv in enumerate(field_values):
+            val = self.insert_value(val, fv, i)
+        return val
+
     def aggregate(self, type_id: int, fields: list[LLValue], result: str) -> None:
-        aggregate_val = self.undef(type_id)
-        for i, field_value in enumerate(fields):
-            aggregate_val = self.insert_value(aggregate_val, field_value, i)
-        self.__func.set_reg(result, aggregate_val)
+        self.__func.set_reg(result, self.__build_aggregate(type_id, fields))
 
     def array(self, type_id: int, elements: list[LLValue], result: str) -> None:
-        array_val = self.undef(type_id)
-        for i, element_value in enumerate(elements):
-            array_val = self.insert_value(array_val, element_value, i)
-        self.__func.set_reg(result, array_val)
+        self.__func.set_reg(result, self.__build_aggregate(type_id, elements))
 
-    def construct_enum_variant(
-        self, enum_type_id: int, discriminant: int,
-        payload_type_id: int, payload_fields: list[LLValue],
-        result: str,
-    ) -> None:
-        """Construct an enum variant value. Emits multiple LLVM IR internally."""
-        variant_val = self.undef(enum_type_id)
-        variant_val = self.insert_value(variant_val, self.i32(discriminant), 0)
-        payload_val = self.undef(payload_type_id)
-        for i, fv in enumerate(payload_fields):
-            payload_val = self.insert_value(payload_val, fv, i)
-        payload_size = self.__ll_type_ctx.get_type_size(payload_type_id)
-        payload_arr = ir.ArrayType(ir.IntType(8), payload_size)  # type: ignore
-        bitcast_ir = self.__builder.bitcast(payload_val.ir_val, payload_arr)  # type: ignore
-        ir_val = self.__builder.insert_value(variant_val.ir_val, bitcast_ir, 1)  # type: ignore
+    def construct_enum_variant(self, enum_type_id: int, discriminant: int, payload_type: int | None, payload_fields: list[LLValue] | None, result: str) -> None:
+        """Construct an enum variant value via temporary alloca + store + load.
+
+        Layout: { i32 discriminant, [pad x i8] payload }
+        1. alloca the enum type
+        2. store discriminant into field 0
+        3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
+        4. load the complete enum value
+        """
+        tmp_ptr = self.__builder.alloca(self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type)  # type: ignore
+
+        # Store discriminant at field 0
+        disc_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(0).ir_val], inbounds=True)  # type: ignore
+        self.__builder.store(self.i32(discriminant).ir_val, disc_ptr)  # type: ignore
+
+        if payload_type is not None:
+            assert payload_fields is not None
+            payload_val = self.__build_aggregate(payload_type, payload_fields)
+            # Bitcast the payload array pointer (field 1) to the payload struct pointer
+            payload_arr_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
+            payload_typed_ptr = self.__builder.bitcast(payload_arr_ptr, self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type)).ir_type)  # type: ignore
+            self.__builder.store(payload_val.ir_val, payload_typed_ptr)  # type: ignore
+
+        ir_val = self.__builder.load(tmp_ptr)  # type: ignore
         self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
 
     def unpack_enum_payload(
@@ -316,17 +335,16 @@ class LLBuilder:
     ) -> None:
         """Unpack enum variant payload fields into variable allocas.
 
-        Inserts instructions at the beginning of ``block_label``.
         ``fields`` is ``(field_index, symbol_id)`` pairs.
+        The caller is responsible for positioning the builder appropriately
+        (typically at the start of the arm block).
         """
-        self.position_at(block_label, where=BuilderPosition.First)
-
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
         payload_fields = payload_type_def.get_fields(self.__type_ctx)
 
         gep_val = self.__builder.gep(matched.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-        payload_ptr_ll_type = ir.PointerType(self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type)  # type: ignore
+        payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type_id)).ir_type  # type: ignore
         payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
 
         for field_index, symbol_id in fields:

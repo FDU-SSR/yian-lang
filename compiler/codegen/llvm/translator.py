@@ -103,7 +103,7 @@ class LLTranslator:
             builder.position_at(block.label, where=BuilderPosition.Phi)
             for phi in block.phis:
                 builder.phi(phi.result.type_id,
-                            [(src.label, self.__resolve(builder,val)) for src, val in phi.incoming],
+                            [(src.label, self.__resolve(builder, val)) for src, val in phi.incoming],
                             phi.result.name)
 
             # statements
@@ -124,57 +124,54 @@ class LLTranslator:
             case IR.VarPtr():
                 builder.var_ptr(stmt.var_ref.symbol_id, stmt.result.name)
             case IR.Alloca():
-                builder.alloca_store(self.__resolve(builder,stmt.value), stmt.result.name)
+                builder.alloca_store(self.__resolve(builder, stmt.value), stmt.result.name)
             case IR.FieldPtr():
-                builder.gep(self.__resolve(builder,stmt.base), [0, stmt.field_index], stmt.result.name)
+                builder.gep(self.__resolve(builder, stmt.base), [0, stmt.field_index], stmt.result.name)
             case IR.ElementPtr():
-                builder.element_ptr(self.__resolve(builder,stmt.base), self.__resolve(builder,stmt.offset), stmt.result.name)
+                builder.element_ptr(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset), stmt.result.name)
             case IR.PtrDiff():
-                builder.ptr_diff(self.__resolve(builder,stmt.lhs), self.__resolve(builder,stmt.rhs), stmt.result.name)
+                builder.ptr_diff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
             case IR.Load():
-                builder.load(self.__resolve(builder,stmt.ptr), stmt.result.name)
+                builder.load(self.__resolve(builder, stmt.ptr), stmt.result.name)
             case IR.Store():
-                builder.store(self.__resolve(builder,stmt.value), self.__resolve(builder,stmt.ptr))
+                builder.store(self.__resolve(builder, stmt.value), self.__resolve(builder, stmt.ptr))
             case IR.Malloc():
-                builder.malloc(stmt.type_id, self.__resolve(builder,stmt.size), stmt.result.name)
+                builder.malloc(stmt.type_id, self.__resolve(builder, stmt.size), stmt.result.name)
             case IR.Binary():
-                builder.binary(stmt.op, self.__resolve(builder,stmt.lhs), self.__resolve(builder,stmt.rhs), stmt.result.name)
+                builder.binary(stmt.op, self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
             case IR.Unary():
-                builder.unary(stmt.op, self.__resolve(builder,stmt.operand), stmt.result.name)
+                builder.unary(stmt.op, self.__resolve(builder, stmt.operand), stmt.result.name)
             case IR.ExtractValue():
-                builder.extract_value(self.__resolve(builder,stmt.base), stmt.field_index, stmt.result.name)
+                builder.extract_value(self.__resolve(builder, stmt.base), stmt.field_index, stmt.result.name)
             case IR.Delete():
-                builder.delete(self.__resolve(builder,stmt.ptr))
+                builder.delete(self.__resolve(builder, stmt.ptr))
             case IR.Call():
                 builder.call_func(stmt.callee_type,
-                                  [self.__resolve(builder,a) for a in stmt.args],
+                                  [self.__resolve(builder, a) for a in stmt.args],
                                   stmt.result.name, stmt.result.type_id)
             case IR.Invoke():
-                builder.call_value(self.__resolve(builder,stmt.callee),
-                                   [self.__resolve(builder,a) for a in stmt.args],
+                builder.call_value(self.__resolve(builder, stmt.callee),
+                                   [self.__resolve(builder, a) for a in stmt.args],
                                    stmt.result.name, stmt.result.type_id)
             case IR.Cast():
-                builder.cast(self.__resolve(builder,stmt.value), stmt.to_type, stmt.result.name)
+                builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name)
             case IR.SizeOf():
                 builder.sizeof_const(stmt.type_id, stmt.result.name)
             case IR.FuncPtr():
                 builder.func_ptr_by_type(stmt.func_type_id, stmt.result.type_id, stmt.result.name)
             case IR.AggregateConstruct():
                 builder.aggregate(stmt.result.type_id,
-                                  [self.__resolve(builder,f) for f in stmt.fields], stmt.result.name)
+                                  [self.__resolve(builder, f) for f in stmt.fields], stmt.result.name)
             case IR.ArrayConstruct():
                 builder.array(stmt.result.type_id,
-                              [self.__resolve(builder,e) for e in stmt.elements], stmt.result.name)
+                              [self.__resolve(builder, e) for e in stmt.elements], stmt.result.name)
             case IR.VariantConstruct():
-                fields = [self.__resolve(builder,f) for f in stmt.payload_fields] if stmt.payload_fields else []
-                payload_type_id = stmt.variant.payload_type if stmt.variant.payload_type is not None else 0
-                builder.construct_enum_variant(
-                    stmt.result.type_id, stmt.variant.discriminant,
-                    payload_type_id, fields, stmt.result.name)
+                fields = [self.__resolve(builder, f) for f in stmt.payload_fields] if stmt.payload_fields else None
+                builder.construct_enum_variant(stmt.result.type_id, stmt.variant.discriminant, stmt.variant.payload_type, fields, stmt.result.name)
             case IR.SysWrite():
-                builder.sys_write(self.__resolve(builder,stmt.fd), self.__resolve(builder,stmt.buf))
+                builder.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
             case IR.SysRead():
-                builder.sys_read(self.__resolve(builder,stmt.fd), self.__resolve(builder,stmt.buf), stmt.result.name)
+                builder.sys_read(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf), stmt.result.name)
 
     # ------------------------------------------------------------------
     # terminators
@@ -183,15 +180,15 @@ class LLTranslator:
     def __terminator(self, builder: LLBuilder, terminator: IR.Terminator) -> None:
         match terminator:
             case IR.Ret(value=value):
-                builder.ret(self.__resolve(builder,value))
+                builder.ret(self.__resolve(builder, value))
             case IR.RetVoid():
                 builder.ret(None)
             case IR.Br(target=target):
                 builder.br(target.label)
             case IR.CondBr(cond=cond, then_block=then_block, else_block=else_block):
-                builder.condbr(self.__resolve(builder,cond), then_block.label, else_block.label)
+                builder.condbr(self.__resolve(builder, cond), then_block.label, else_block.label)
             case IR.Panic(message=message):
-                builder.panic(self.__resolve(builder,message))
+                builder.panic(self.__resolve(builder, message))
             case IR.Match():
                 self.__emit_match(builder, terminator)
 
@@ -200,28 +197,40 @@ class LLTranslator:
     # ------------------------------------------------------------------
 
     def __emit_match(self, builder: LLBuilder, t: IR.Match) -> None:
-        matched = self.__resolve(builder,t.value)
+        matched = self.__resolve(builder, t.value)
         matched_type = self.__type_ctx[t.value.type_id]
         default_label = t.default.label if t.default else ""
 
         if isinstance(matched_type, (Type.IntType, Type.CharType, Type.BoolType)):
-            cases = [(self.__resolve(builder,arm.pattern.value), arm.body.label)
+            cases = [(self.__resolve(builder, arm.pattern.value), arm.body.label)
                      for arm in t.arms
                      if isinstance(arm.pattern, (IR.IntPattern, IR.CharPattern))]
             builder.switch(matched, cases, default_label)
 
         elif isinstance(matched_type, Type.EnumType):
-            disc_ptr = builder.gep(matched, [0, 0], "disc.ptr")
-            disc = builder.load(disc_ptr, "disc")
+            disc = builder.extract_value(matched, 0, "disc")
             cases = [(builder.i32(arm.pattern.variant.discriminant), arm.body.label)
                      for arm in t.arms
                      if isinstance(arm.pattern, IR.EnumPattern)]
+
+            # Alloca the matched value so unpack_enum_payload can GEP on a pointer.
+            # Must happen before switch terminates the block.
+            matched_ptr = builder.alloca(matched.type_id)
+            builder.store(matched, matched_ptr)
+
             builder.switch(disc, cases, default_label)
+
+            # Save position: switch terminates this block, unpack must go into arm blocks.
+            saved_label = builder.current_block_label
 
             for arm in t.arms:
                 if isinstance(arm.pattern, IR.EnumPattern) and arm.pattern.fields \
                         and arm.pattern.variant.payload_type is not None:
                     field_pairs = [(i, f.symbol_id) for i, f in enumerate(arm.pattern.fields)]
+                    builder.position_at(arm.body.label, where=BuilderPosition.First)
                     builder.unpack_enum_payload(
-                        matched, arm.body.label,
+                        matched_ptr, arm.body.label,
                         arm.pattern.variant.payload_type, field_pairs)
+
+            # Restore builder to original block so __build can continue correctly.
+            builder.position_at(saved_label)

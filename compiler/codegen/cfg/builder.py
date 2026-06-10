@@ -154,6 +154,7 @@ class CfgBuilder:
 
     def __new_block(self, label: str) -> IR.Block:
         block = IR.Block(f"{label}.{self.__counter}")
+        self.__counter += 1
         self.__func.blocks.append(block)
         return block
 
