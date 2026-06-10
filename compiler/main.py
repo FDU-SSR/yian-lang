@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -87,9 +86,9 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "-t", "--target",
-        choices=["exe", "ll", "bc", "obj", "asm"],
-        default=None,
-        help="Output target kind. If omitted, runs analysis only (no codegen).",
+        choices=["none", "exe", "ll", "bc", "obj", "asm"],
+        default="exe",
+        help="Output target kind (default: exe). Use 'none' for analysis only.",
     )
     parser.add_argument(
         "-o", "--output",
@@ -264,7 +263,7 @@ def __link_exe(obj_path: Path, output_path: Path, opt_level: int) -> None:
         sys.exit(1)
 
     cmd = [linker, str(obj_path), "-o", str(output_path), f"-O{opt_level}"]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(f"error: linker failed:\n{proc.stderr}", file=sys.stderr)
         sys.exit(proc.returncode)
@@ -368,8 +367,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cfg is not None:
         __write_text_output(args.cfg, __format_cfg_output(cfg_functions))
 
-    # Derive output path and run codegen (optional: only when --target is specified)
-    if args.target is not None:
+    # Derive output path and run codegen (skip only when --target none)
+    if args.target != "none":
         output_path = __derive_output(args, src_files)
 
         # Build unit_names mapping

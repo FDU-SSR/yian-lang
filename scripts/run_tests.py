@@ -262,6 +262,8 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
         exe_path = BUILD_DIR / "test_exe" / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)
         cmd += ["-t", "exe", "-o", str(exe_path)]
+    elif not run:
+        cmd += ["-t", "none"]
     if dump:
         cmd += [
             "--token", str(BUILD_DIR / "token.txt"),
