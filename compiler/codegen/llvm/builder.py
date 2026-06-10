@@ -144,21 +144,33 @@ class LLBuilder:
         if op.is_comparison():
             ir_val = self.__cmp_impl(op, lhs.ir_val, rhs.ir_val)
             result_val = LLValue(self.__type_ctx.bool_id, ir_val)
-        elif op == BinaryOperator.Add and isinstance(self.__type_ctx[lhs.type_id], Type.PointerType):
-            # Pointer arithmetic: ptr + offset → gep ptr, offset
-            ptr_ty = self.__type_ctx[lhs.type_id]
-            assert isinstance(ptr_ty, Type.PointerType)
-            ir_val = self.__builder.gep(lhs.ir_val, [rhs.ir_val], inbounds=False)  # type: ignore
-            result_val = LLValue(lhs.type_id, ir_val)
-        elif op == BinaryOperator.Add and isinstance(self.__type_ctx[rhs.type_id], Type.PointerType):
-            # Pointer arithmetic: offset + ptr → gep ptr, offset
-            ptr_ty = self.__type_ctx[rhs.type_id]
-            assert isinstance(ptr_ty, Type.PointerType)
-            ir_val = self.__builder.gep(rhs.ir_val, [lhs.ir_val], inbounds=False)  # type: ignore
-            result_val = LLValue(rhs.type_id, ir_val)
         else:
             ir_val = self.__arith_impl(op, lhs.ir_val, rhs.ir_val)
             result_val = LLValue(lhs.type_id, ir_val)
+        self.__func.set_reg(result, result_val)
+        return result_val
+
+    def element_ptr(self, base: LLValue, offset: LLValue, result: str) -> LLValue:
+        """Pointer arithmetic: ptr + offset → gep ptr, offset"""
+        ptr_ty = self.__type_ctx[base.type_id]
+        assert isinstance(ptr_ty, Type.PointerType)
+        ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
+        result_val = LLValue(base.type_id, ir_val)
+        self.__func.set_reg(result, result_val)
+        return result_val
+
+    def ptr_diff(self, lhs: LLValue, rhs: LLValue, result: str) -> LLValue:
+        """Pointer difference: ptr - ptr → integer offset (in elements, not bytes)"""
+        lhs_ty = self.__type_ctx[lhs.type_id]
+        assert isinstance(lhs_ty, Type.PointerType)
+        lhs_int = self.__builder.ptrtoint(lhs.ir_val, ir.IntType(64))  # type: ignore
+        rhs_int = self.__builder.ptrtoint(rhs.ir_val, ir.IntType(64))  # type: ignore
+        byte_diff = self.__builder.sub(lhs_int, rhs_int)  # type: ignore
+        elem_size = self.__builder.udiv(  # type: ignore
+            byte_diff,
+            ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(lhs_ty.pointee_type))  # type: ignore
+        )
+        result_val = LLValue(self.__type_ctx.u64_id, elem_size)  # type: ignore
         self.__func.set_reg(result, result_val)
         return result_val
 

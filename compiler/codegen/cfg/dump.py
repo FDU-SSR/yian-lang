@@ -46,6 +46,20 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.FieldPtr(result=result, base=base, field_index=idx):
             return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
 
+        case IR.ElementPtr(result=result, base=base, offset=offset):
+            return (
+                f"%{result.name} = elementptr"
+                f" {__dump_value(base)}, {__dump_value(offset)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.PtrDiff(result=result, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = ptrdiff"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
         case IR.Alloca(result=result, value=value):
             return (
                 f"%{result.name} = alloca"

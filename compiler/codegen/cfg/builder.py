@@ -436,6 +436,26 @@ class CfgBuilder:
         # common case
         lhs = self.__resolve_val(expr.left)
         rhs = self.__resolve_val(expr.right)
+
+        # ── route pointer arithmetic to dedicated instructions ──
+        lhs_ty = self.__type_ctx[lhs.type_id]
+        rhs_ty = self.__type_ctx[rhs.type_id]
+
+        if expr.op == BinaryOperator.Add:
+            if isinstance(lhs_ty, Type.PointerType):
+                return self.__build_element_ptr(lhs, rhs, expr.type_id)
+            if isinstance(rhs_ty, Type.PointerType):
+                return self.__build_element_ptr(rhs, lhs, expr.type_id)
+
+        if expr.op == BinaryOperator.Sub:
+            if isinstance(lhs_ty, Type.PointerType) and isinstance(rhs_ty, Type.PointerType):
+                return self.__build_ptr_diff(lhs, rhs)
+            if isinstance(lhs_ty, Type.PointerType):
+                # ptr - int → negate offset then ElementPtr
+                zero = IR.IntLiteral(value=0, type_id=rhs.type_id)
+                neg_offset = self.__build_binary(BinaryOperator.Sub, zero, rhs, rhs.type_id)
+                return self.__build_element_ptr(lhs, neg_offset, expr.type_id)
+
         return self.__build_binary(expr.op, lhs, rhs, expr.type_id)
 
     def __resolve_compound_assign(self, expr: HIR.Binary) -> IR.Value:
@@ -690,6 +710,14 @@ class CfgBuilder:
     def __build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
+
+    def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=result_type)
+        return self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+
+    def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=type_id)

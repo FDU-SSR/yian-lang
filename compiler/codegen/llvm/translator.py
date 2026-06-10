@@ -127,6 +127,10 @@ class LLTranslator:
                 builder.alloca_store(self.__resolve(builder,stmt.value), stmt.result.name)
             case IR.FieldPtr():
                 builder.gep(self.__resolve(builder,stmt.base), [0, stmt.field_index], stmt.result.name)
+            case IR.ElementPtr():
+                builder.element_ptr(self.__resolve(builder,stmt.base), self.__resolve(builder,stmt.offset), stmt.result.name)
+            case IR.PtrDiff():
+                builder.ptr_diff(self.__resolve(builder,stmt.lhs), self.__resolve(builder,stmt.rhs), stmt.result.name)
             case IR.Load():
                 builder.load(self.__resolve(builder,stmt.ptr), stmt.result.name)
             case IR.Store():

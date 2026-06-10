@@ -34,6 +34,22 @@ class FieldPtr:
 
 
 @dataclass
+class ElementPtr:
+    """Given ptr, get ptr + offset"""
+    result: Reg
+    base: Value
+    offset: Value
+
+
+@dataclass
+class PtrDiff:
+    """Get the offset between two pointers"""
+    result: Reg
+    lhs: Value
+    rhs: Value
+
+
+@dataclass
 class Load:
     """Load value from pointer"""
     result: Reg
@@ -175,7 +191,7 @@ class Phi:
 
 
 Stmt: TypeAlias = (
-    VarPtr | FieldPtr | Alloca | Malloc
+    VarPtr | FieldPtr | ElementPtr | PtrDiff | Alloca | Malloc
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
     | Call | Invoke
