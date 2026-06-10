@@ -79,7 +79,8 @@ class LLBuilder:
         self.__func.set_reg(result, alloca_ptr)
 
     def alloca(self, type_id: int) -> LLValue:
-        return LLValue(type_id, self.__builder.alloca(self.__ll_type_ctx.get_ll_type(type_id).ir_type))  # type: ignore
+        ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
+        return LLValue(ptr_type_id, self.__builder.alloca(self.__ll_type_ctx.get_ll_type(type_id).ir_type))  # type: ignore
 
     def alloca_store(self, value: LLValue, result: str) -> None:
         alloca_val = self.alloca(value.type_id)
@@ -114,12 +115,26 @@ class LLBuilder:
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
         base_type = self.__type_ctx[base.type_id]
         if isinstance(base_type, Type.PointerType):
-            result_type = base_type.pointee_type
+            pointee_type_id = base_type.pointee_type
         else:
-            result_type = base.type_id
+            pointee_type_id = base.type_id
+
+        # Apply indices after the implicit pointer dereference (index 0)
+        # to compute the final pointee type.
+        for idx in indices[1:]:
+            ty = self.__type_ctx[pointee_type_id]
+            if isinstance(ty, Type.StructType):
+                fields = ty.get_fields(self.__type_ctx)
+                pointee_type_id = fields[idx].type_id
+            elif isinstance(ty, Type.TupleType):
+                pointee_type_id = ty.element_types[idx]
+            elif isinstance(ty, Type.ArrayType):
+                pointee_type_id = ty.element_type
+
+        result_type_id = self.__type_ctx.alloc_pointer(pointee_type_id)
         idx_vals = [self.i32(i).ir_val for i in indices]
         ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
-        result_val = LLValue(result_type, ir_val)
+        result_val = LLValue(result_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
 
@@ -129,6 +144,18 @@ class LLBuilder:
         if op.is_comparison():
             ir_val = self.__cmp_impl(op, lhs.ir_val, rhs.ir_val)
             result_val = LLValue(self.__type_ctx.bool_id, ir_val)
+        elif op == BinaryOperator.Add and isinstance(self.__type_ctx[lhs.type_id], Type.PointerType):
+            # Pointer arithmetic: ptr + offset → gep ptr, offset
+            ptr_ty = self.__type_ctx[lhs.type_id]
+            assert isinstance(ptr_ty, Type.PointerType)
+            ir_val = self.__builder.gep(lhs.ir_val, [rhs.ir_val], inbounds=False)  # type: ignore
+            result_val = LLValue(lhs.type_id, ir_val)
+        elif op == BinaryOperator.Add and isinstance(self.__type_ctx[rhs.type_id], Type.PointerType):
+            # Pointer arithmetic: offset + ptr → gep ptr, offset
+            ptr_ty = self.__type_ctx[rhs.type_id]
+            assert isinstance(ptr_ty, Type.PointerType)
+            ir_val = self.__builder.gep(rhs.ir_val, [lhs.ir_val], inbounds=False)  # type: ignore
+            result_val = LLValue(rhs.type_id, ir_val)
         else:
             ir_val = self.__arith_impl(op, lhs.ir_val, rhs.ir_val)
             result_val = LLValue(lhs.type_id, ir_val)
