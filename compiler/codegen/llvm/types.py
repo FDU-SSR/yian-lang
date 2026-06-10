@@ -22,6 +22,7 @@ class LLTypeCtx:
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
+        self.__i1: ir.IntType = ir.IntType(1)  # type: ignore
         self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
@@ -59,7 +60,7 @@ class LLTypeCtx:
         ty_def = self.__type_ctx[type_id]
         match ty_def:
             case Type.VoidType():    result = self.__void
-            case Type.BoolType():    result = self.__i8
+            case Type.BoolType():    result = self.__i1
             case Type.CharType():    result = self.__i32
             case Type.StrType():     result = self.__str_ll_type
             case Type.IntType():     result = self.__handle_int(ty_def)
