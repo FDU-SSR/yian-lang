@@ -181,7 +181,11 @@ class LLBuilder:
 
     def unary(self, op: UnaryOperator, operand: LLValue, result: str) -> LLValue:
         if op == UnaryOperator.Neg:
-            ir_val = self.__builder.neg(operand.ir_val)  # type: ignore
+            if isinstance(operand.ir_val.type, ir.types._BaseFloatType):  # type: ignore
+                # llvmlite's neg() emits `sub` which is integer-only; use fsub for floats.
+                ir_val = self.__builder.fsub(ir.Constant(operand.ir_val.type, 0.0), operand.ir_val)  # type: ignore
+            else:
+                ir_val = self.__builder.neg(operand.ir_val)  # type: ignore
         elif op == UnaryOperator.LogicalNot:
             ir_val = self.__builder.not_(operand.ir_val)  # type: ignore
         elif op == UnaryOperator.BitNot:
@@ -445,7 +449,7 @@ class LLBuilder:
             return self.__builder.icmp_signed(predicate, lhs, rhs)  # type: ignore
         return self.__builder.fcmp_ordered(predicate, lhs, rhs)  # type: ignore
 
-    _ARITH_OPS = {
+    ARITH_OPS = {
         BinaryOperator.Add: "add", BinaryOperator.Sub: "sub",
         BinaryOperator.Mul: "mul", BinaryOperator.Div: "sdiv",
         BinaryOperator.Mod: "srem", BinaryOperator.BitAnd: "and_",
@@ -453,5 +457,13 @@ class LLBuilder:
         BinaryOperator.Shl: "shl", BinaryOperator.Shr: "ashr",
     }
 
+    FLOAT_ARITH_OPS = {
+        BinaryOperator.Add: "fadd", BinaryOperator.Sub: "fsub",
+        BinaryOperator.Mul: "fmul", BinaryOperator.Div: "fdiv",
+        BinaryOperator.Mod: "frem",
+    }
+
     def __arith_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        return getattr(self.__builder, self._ARITH_OPS[op])(lhs, rhs)
+        if isinstance(lhs.type, ir.types._BaseFloatType):  # type: ignore
+            return getattr(self.__builder, self.FLOAT_ARITH_OPS[op])(lhs, rhs)
+        return getattr(self.__builder, self.ARITH_OPS[op])(lhs, rhs)

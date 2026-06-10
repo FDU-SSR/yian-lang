@@ -265,11 +265,13 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
     exe_path: Path | None = None
-    if run and not test.expect_error:
+    if test.expect_error:
+        cmd += ["-t", "none"]
+    elif run:
         exe_path = BUILD_DIR / "test_exe" / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)
         cmd += ["-t", "exe", "-o", str(exe_path)]
-    elif not run:
+    else:
         cmd += ["-t", "none"]
     if dump:
         cmd += [
