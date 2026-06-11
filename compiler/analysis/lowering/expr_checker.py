@@ -242,6 +242,12 @@ class ExprChecker:
                 expr.type_id = expected
                 return expr
             case _:
+                if expr.type_id != expected:
+                    raise AnalysisError(
+                        f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' "
+                        f"but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
+                        expr.span,
+                    )
                 return expr
 
     def call_method(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> HIR.Expr:
