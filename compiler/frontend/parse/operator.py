@@ -150,6 +150,10 @@ class BinaryOperator(Enum):
                         BinaryOperator.BitOrAssign, BinaryOperator.BitXorAssign,
                         BinaryOperator.ShlAssign, BinaryOperator.ShrAssign)
 
+    def is_shift(self) -> bool:
+        return self in (BinaryOperator.Shl, BinaryOperator.Shr,
+                        BinaryOperator.ShlAssign, BinaryOperator.ShrAssign)
+
     def compound_assign_to_binary(self) -> BinaryOperator:
         return BINARY_COMPOUND_ASSIGN_TO_BINARY[self]
 

@@ -696,6 +696,10 @@ class CfgBuilder:
         lhs_ty = self.__type_ctx[lhs.type_id]
         rhs_ty = self.__type_ctx[rhs.type_id]
 
+        # LLVM requires shift operands to have the same integer width.
+        if op.is_shift() and lhs.type_id != rhs.type_id:
+            rhs = self.__build_cast(rhs, lhs.type_id)
+
         if op == BinaryOperator.Add:
             if isinstance(lhs_ty, Type.PointerType):
                 return self.__build_element_ptr(lhs, rhs, type_id)
