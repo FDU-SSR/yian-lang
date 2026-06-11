@@ -645,16 +645,7 @@ class OpBuilder:
         operand_type = self.__get_operand_type(operand.type_id, allowed_operand_types)
 
         if operand_type != OperandType.Overloaded:
-            # Resolve literal types to concrete defaults before codegen.
-            result_type_id = operand.type_id
-            ty = self.__type_ctx[result_type_id]
-            if isinstance(ty, Type.FloatLiteralType):
-                result_type_id = TypeCtx.f64_id
-                operand = self.__evaluator.coerce(operand, result_type_id)
-            elif isinstance(ty, Type.IntLiteralType):
-                result_type_id = TypeCtx.i64_id
-                operand = self.__evaluator.coerce(operand, result_type_id)
-            return HIR.Unary(span, op, operand, result_type_id, is_place=False)
+            return HIR.Unary(span, op, operand, operand.type_id, is_place=False)
 
         if OperandType.Overloaded not in allowed_operand_types:
             return None

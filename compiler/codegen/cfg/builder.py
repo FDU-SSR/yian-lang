@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.ty.type_ops import default_literals
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
@@ -627,9 +628,11 @@ class CfgBuilder:
     def __resolve_literal(self, expr: HIR.Literal) -> IR.Value:
         match expr:
             case HIR.IntLiteral():
-                return IR.IntLiteral(value=expr.value, type_id=expr.type_id)
+                type_id = default_literals(self.__type_ctx, expr.type_id)
+                return IR.IntLiteral(value=expr.value, type_id=type_id)
             case HIR.FloatLiteral():
-                return IR.FloatLiteral(value=expr.value, type_id=expr.type_id)
+                type_id = default_literals(self.__type_ctx, expr.type_id)
+                return IR.FloatLiteral(value=expr.value, type_id=type_id)
             case HIR.CharLiteral():
                 return IR.CharLiteral(value=expr.value, type_id=TypeCtx.char_id)
             case HIR.BoolLiteral():
@@ -689,6 +692,7 @@ class CfgBuilder:
         return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size)).result
 
     def __build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
+        type_id = default_literals(self.__type_ctx, type_id)
         # ── route pointer arithmetic to dedicated instructions ──
         lhs_ty = self.__type_ctx[lhs.type_id]
         rhs_ty = self.__type_ctx[rhs.type_id]
@@ -720,6 +724,7 @@ class CfgBuilder:
         return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
+        type_id = default_literals(self.__type_ctx, type_id)
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.Unary(result=result, op=op, operand=operand)).result
 
