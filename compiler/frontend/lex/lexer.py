@@ -343,14 +343,18 @@ class Lexer:
             # Generic closing bracket — don't merge with following >
             return Tok.Punctuator(Tok.PunctuatorKind.RAngle, span)
 
-        # Standard two-character operator combining
-        next_char = self.__stream.peek()
-        if next_char is not None:
+        # Multi-character operator combining — keep merging while the
+        # combined string is a valid token kind (handles <<=, >>=).
+        while True:
+            next_char = self.__stream.peek()
+            if next_char is None:
+                break
             combined = tok_str + next_char
-            if Tok.PunctuatorKind.try_from_str(combined) is not None:
-                self.__stream.advance()
-                tok_str = combined
-                span = SrcSpan(start_pos, self.__stream.pos.clone())
+            if Tok.PunctuatorKind.try_from_str(combined) is None:
+                break
+            self.__stream.advance()
+            tok_str = combined
+            span = SrcSpan(start_pos, self.__stream.pos.clone())
 
         try:
             kind = Tok.PunctuatorKind.from_str(tok_str)
