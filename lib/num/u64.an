@@ -1,6 +1,7 @@
 from std.core.hash import Murmur3Hasher, Hash;
 from std.core.slice import from_raw_parts;
 from std.core.convert import From, Into;
+from std.core.string import String;
 
 impl u64 {
     pub fn rotate_left(n: u64) {
@@ -29,31 +30,31 @@ impl u64 {
         return n + 1;
     }
 
-    pub align_up(u64 alignment) {
+    pub fn align_up(alignment: u64) {
         if alignment == 0 {
-            panic("alignment must be greater than 0")
+            panic("alignment must be greater than 0");
         }
-        u64 mask = alignment - 1
-        *self = (*self + mask) & ~mask
+        let mask: u64 = alignment - 1;
+        *self = (*self + mask) & !mask;
     }
 
-    pub String to_string_radix(u64 radix) {
-        if radix < 2 or radix > 36 {
-            panic("radix must be between 2 and 36")
+    pub fn to_string_radix(radix: u64) -> String {
+        if radix < 2 || radix > 36 {
+            panic("radix must be between 2 and 36");
         }
         if *self == 0 {
-            return String.from("0")
+            return String.from("0");
         }
 
-        u64 n = *self
-        String digits = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        String out = String.new()
+        let n: u64 = *self;
+        let digits: String = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        let out: String = String.new();
         while n > 0 {
-            u64 digit = n % radix
-            out += char(digits.as_slice()[digit])
-            n /= radix
+            let digit: u64 = n % radix;
+            out += char(digits.as_slice()[digit]);
+            n /= radix;
         }
-        return out.chars().rev().collect()
+        return out.chars().rev().collect();
     }
 }
 

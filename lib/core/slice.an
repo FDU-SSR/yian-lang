@@ -81,7 +81,7 @@ impl<T> SliceIter<T> {
         return self.end - self.ptr;
     }
 
-    pub RevSliceIter<T> rev() {
+    pub fn rev() -> RevSliceIter<T>  {
         return RevSliceIter<T>(
             ptr = self.end,
             begin = self.ptr
@@ -90,16 +90,16 @@ impl<T> SliceIter<T> {
 }
 
 pub struct RevSliceIter<T> {
-    pub T* ptr
-    pub T* begin
+    pub ptr: T*,
+    pub begin: T*,
 }
 
 impl<T> RevSliceIter<T> {
-    pub u64 len() {
+    pub fn len() -> u64 {
         return self.ptr - self.begin
     }
 
-    pub SliceIter<T> rev() {
+    pub fn rev() -> SliceIter<T> {
         return SliceIter<T>(
             ptr = self.begin,
             end = self.ptr
@@ -119,7 +119,7 @@ impl<T> Iterator<T> for SliceIter<T> {
 }
 
 impl<T> Iterator<T> for RevSliceIter<T> {
-    Option<T> next() {
+    pub fn next() -> Option<T> {
         if self.ptr == self.begin {
             return Option<T>.None
         }
@@ -129,7 +129,7 @@ impl<T> Iterator<T> for RevSliceIter<T> {
 }
 
 impl<T> IntoIterator<SliceIter<T>> for T[] {
-    fn into_iter() -> SliceIter<T> {
+    pub fn into_iter() -> SliceIter<T> {
         let s: SliceStruct<T> = self.as_struct();
         return SliceIter<T>(
             ptr = s.ptr,
@@ -139,7 +139,7 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
 }
 
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
-    fn into_iter() -> SliceIter<T> {
+    pub fn into_iter() -> SliceIter<T> {
         return SliceIter<T>(
             ptr = bitcast<T*>(self),
             end = bitcast<T*>(self) + N

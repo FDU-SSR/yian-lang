@@ -179,10 +179,10 @@ impl Add<str, String> for String {
 
 // Implement Add for String to concatenate with a char
 impl Add<char, String> for String {
-    pub String add(char other) {
-        String result = self.clone()
-        result.push(other)
-        return result
+    pub fn add(other: char) -> String {
+        let result: String = self.clone();
+        result.push(other);
+        return result;
     }
 }
 
