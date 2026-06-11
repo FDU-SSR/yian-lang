@@ -601,7 +601,7 @@ class CfgBuilder:
         return buffer
 
     def __resolve_size_of(self, expr: HIR.SizeOf) -> IR.Value:
-        return self.__build_size_of(expr.type_id)
+        return self.__build_size_of(expr.target_type)
 
     def __resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:
         value = self.__resolve_val(expr.value)

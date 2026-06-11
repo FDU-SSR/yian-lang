@@ -51,9 +51,10 @@ class LLBuilder:
 
     def string_literal(self, value: str, type_id: int) -> LLValue:
         """Create a ``{i8*, i64}`` struct value for a string literal."""
-        global_var = self.__module.get_string_global(value.encode("utf-8"))
+        encoded = value.encode("utf-8")
+        global_var = self.__module.get_string_global(encoded)
         ptr = global_var.gep([ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])  # type: ignore
-        length = ir.Constant(ir.IntType(64), len(value))  # type: ignore
+        length = ir.Constant(ir.IntType(64), len(encoded))  # type: ignore
         return LLValue(type_id, ir.Constant.literal_struct([ptr, length]))  # type: ignore
 
     # ------------------------------------------------------------------
