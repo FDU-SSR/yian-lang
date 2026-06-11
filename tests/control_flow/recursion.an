@@ -1,0 +1,49 @@
+// Test recursive functions: factorial and mutual recursion
+//
+// Expected output:
+// 120
+// even
+
+from std.core.io import print;
+
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn is_even(n: i32) -> bool {
+    if n == 0 {
+        return true;
+    }
+    return is_odd(n - 1);
+}
+
+fn is_odd(n: i32) -> bool {
+    if n == 0 {
+        return false;
+    }
+    return is_even(n - 1);
+}
+
+fn main() -> i32 {
+    // Test simple recursion
+    assert factorial(0) == 1: "factorial(0) failed";
+    assert factorial(1) == 1: "factorial(1) failed";
+    assert factorial(5) == 120: "factorial(5) failed";
+
+    // Test mutual recursion
+    assert is_even(0) == true: "is_even(0) failed";
+    assert is_even(1) == false: "is_even(1) failed";
+    assert is_even(4) == true: "is_even(4) failed";
+    assert is_odd(0) == false: "is_odd(0) failed";
+    assert is_odd(1) == true: "is_odd(1) failed";
+    assert is_odd(5) == true: "is_odd(5) failed";
+
+    // Print verification
+    assert factorial(5) == 120: "factorial verification";
+    print("120\n");
+    print("even\n");
+    return 0;
+}

@@ -1,0 +1,23 @@
+// Test match statement with string patterns (comma-separated for multi-value)
+//
+// Expected output:
+// matched hello
+// matched multi
+// matched default
+
+from std.core.io import print;
+
+fn test_match(s: str) -> str {
+    match s {
+        "hello" => { return "matched hello\n"; },
+        "world", "yian" => { return "matched multi\n"; },
+        _ => { return "matched default\n"; },
+    }
+}
+
+fn main() -> i32 {
+    print(test_match("hello"));
+    print(test_match("world"));
+    print(test_match("unknown"));
+    return 0;
+}

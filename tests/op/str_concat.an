@@ -1,0 +1,15 @@
+// Test string concatenation with + operator
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let a: str = "Hello";
+    let b: str = "World";
+    let c: str = a + b;
+    assert c == "HelloWorld": "str concat failed";
+
+    let d: str = a + " " + b;
+    assert d == "Hello World": "str concat with literal failed";
+
+    return 0;
+}

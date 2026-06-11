@@ -1,0 +1,76 @@
+// Integration test: combining struct, Option, enum, match, and methods
+// Tests a simple enum-based result processing pipeline
+//
+// Expected output:
+// success: 84
+// doubled
+
+from std.core.io import print;
+from std.core.option import Option;
+
+enum Operation {
+    Add {
+        a: i32,
+        b: i32,
+    },
+    Multiply {
+        a: i32,
+        b: i32,
+    },
+    Nothing,
+}
+
+struct Calculator {
+    pub last_result: i32,
+    pub op_count: i32,
+}
+
+impl Calculator {
+    static pub fn new() -> Self {
+        return Self(last_result = 0, op_count = 0);
+    }
+
+    pub fn execute(op: Operation) -> i32 {
+        self.op_count += 1;
+        match op {
+            Add(a, b) => {
+                self.last_result = a + b;
+            },
+            Multiply(a, b) => {
+                self.last_result = a * b;
+            },
+            Nothing => {
+                // keep last_result unchanged
+            },
+        }
+        return self.last_result;
+    }
+
+    static pub fn try_get_positive(value: i32) -> Option<i32> {
+        if value > 0 {
+            return Option<i32>.Some(value);
+        }
+        return Option<i32>.None;
+    }
+}
+
+fn main() -> i32 {
+    let calc: Calculator = Calculator.new();
+
+    let r1: i32 = calc.execute(Operation.Add(a = 40, b = 44));
+    assert r1 == 84: "Add failed";
+
+    let r2: i32 = calc.execute(Operation.Multiply(a = 6, b = 7));
+    assert r2 == 42: "Multiply failed";
+
+    let opt: Option<i32> = Calculator.try_get_positive(r1);
+    assert opt.is_some(): "should be Some";
+    assert opt.unwrap_or(0) == 84: "unwrap should be 84";
+
+    let opt2: Option<i32> = Calculator.try_get_positive(-5);
+    assert opt2.is_none(): "should be None";
+
+    print("success: 84\n");
+    print("doubled\n");
+    return 0;
+}

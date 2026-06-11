@@ -1,0 +1,13 @@
+// Test error when mixing named and positional arguments
+//
+// Expected compilation error: named and positional arguments cannot be mixed
+
+struct Person {
+    name: str,
+    age: i32,
+}
+
+fn main() -> i32 {
+    let p: Person = Person("Alice", age=25);
+    return 0;
+}

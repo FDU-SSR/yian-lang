@@ -1,0 +1,8 @@
+// Test type mismatch error — assigning wrong type to variable
+//
+// Expected compilation error: Expected type
+
+fn main() -> i32 {
+    let x: bool = 42;
+    return 0;
+}

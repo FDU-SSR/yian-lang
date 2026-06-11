@@ -1,0 +1,8 @@
+// Test undeclared variable error
+//
+// Expected compilation error: Unknown identifier
+
+fn main() -> i32 {
+    let x: i32 = y;
+    return 0;
+}

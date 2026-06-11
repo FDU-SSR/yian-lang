@@ -1,0 +1,23 @@
+// Test void return from functions — no return type specified
+//
+// Expected output:
+// done
+
+from std.core.io import print;
+
+fn do_work(flag: bool) {
+    if flag {
+        print("done");
+        return;
+    }
+    panic("should not reach here");
+}
+
+fn call_void() {
+    do_work(true);
+}
+
+fn main() -> i32 {
+    call_void();
+    return 0;
+}

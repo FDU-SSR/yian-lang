@@ -1,0 +1,57 @@
+// Test match statement with multi-value patterns
+// Int/Char patterns use comma separators; Enum patterns use | separator
+//
+// Expected output:
+// small
+// vowel
+// option_a
+
+from std.core.io import print;
+
+enum Color {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+}
+
+fn test_int(x: i32) -> str {
+    match x {
+        1, 2, 3 => { return "small\n"; },
+        10, 20, 30 => { return "medium\n"; },
+        _ => { return "other\n"; },
+    }
+}
+
+fn test_char(c: char) -> str {
+    match c {
+        'a', 'e', 'i', 'o', 'u' => { return "vowel\n"; },
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => { return "digit\n"; },
+        _ => { return "consonant\n"; },
+    }
+}
+
+fn test_enum(c: Color) -> str {
+    match c {
+        Red | Blue => { return "option_a\n"; },
+        Green | Yellow => { return "option_b\n"; },
+    }
+}
+
+fn main() -> i32 {
+    assert test_int(2) == "small\n": "multi int pattern failed";
+    assert test_int(20) == "medium\n": "multi int pattern failed";
+    assert test_int(99) == "other\n": "multi int default failed";
+
+    assert test_char('a') == "vowel\n": "multi char pattern failed";
+    assert test_char('z') == "consonant\n": "consonant failed";
+    assert test_char('5') == "digit\n": "digit failed";
+
+    assert test_enum(Color.Red) == "option_a\n": "multi enum pattern failed";
+    assert test_enum(Color.Green) == "option_b\n": "multi enum pattern failed";
+
+    print(test_int(2));
+    print(test_char('a'));
+    print(test_enum(Color.Red));
+    return 0;
+}

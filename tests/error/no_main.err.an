@@ -1,0 +1,7 @@
+// Test missing main function error
+//
+// Expected compilation error: No 'main' function found
+
+fn helper() -> i32 {
+    return 42;
+}

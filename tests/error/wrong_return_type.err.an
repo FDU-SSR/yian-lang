@@ -1,0 +1,11 @@
+// Test returning wrong type from function
+//
+// Expected compilation error: type mismatch in return
+
+fn get_value() -> i32 {
+    return "hello";
+}
+
+fn main() -> i32 {
+    return 0;
+}
