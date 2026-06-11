@@ -1,7 +1,7 @@
 pub trait From<Src> {
-    static Self from(Src value);
+    static fn from(value: Src) -> Self;
 }
 
 pub trait Into<Dst> {
-    Dst into();
+    fn into() -> Dst;
 }

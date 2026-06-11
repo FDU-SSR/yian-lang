@@ -1,1 +1,0 @@
-mv parser.so ../yian_lang_linux.so

@@ -3,9 +3,9 @@
 // Expected compilation error: compiler.utils.errors.yian_error.CompilerError: Self-referential type detected: LinkListNodeError
 
 struct LinkListNodeError {
-    LinkListNodeError error_field
+    error_field: LinkListNodeError,
 }
 
-i32 main() {
-    return 0
+fn main() -> i32 {
+    return 0;
 }

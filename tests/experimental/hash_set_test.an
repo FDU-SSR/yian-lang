@@ -1,83 +1,83 @@
-from std.collections.hash import Hasher
-from std.collections.hash import BuildHasher
-from std.collections.hash import Hash
-from std.collections.hash_set import HashSet
-from std.core.ops import PartialEq
+from std.collections.hash import Hasher;
+from std.collections.hash import BuildHasher;
+from std.collections.hash import Hash;
+from std.collections.hash_set import HashSet;
+from std.core.ops import PartialEq;
 
 // 简单的可哈希值类型
 pub struct MyVal {
-    pub i64 value
+    pub value: i64,
 }
 
 impl PartialEq<MyVal> for MyVal {
     bool eq(MyVal other) {
-        return self.value == other.value
+        return self.value == other.value;
     }
 }
 
 // 简单的可配置哈希器，允许在 hash 方法中直接设置结果
 pub struct DummyHasher {
-    u64 result
+    result: u64,
 }
 
 impl DummyHasher {
     pub static DummyHasher new(u64 seed) {
-        return DummyHasher(seed)
+        return DummyHasher(seed);
     }
 
     // 允许外部直接设置哈希结果，便于测试
-    pub set_result(u64 v) {
-        self.result = v
+    pub fn set_result(v: u64) {
+        self.result = v;
     }
 }
 
 // BuildHasher 实现，生成 DummyHasher
 pub struct DummyBuildHasher {
-    u64 seed
+    seed: u64,
 }
 
 impl DummyBuildHasher {
     pub static DummyBuildHasher with_seed(u64 seed) {
-        return DummyBuildHasher(seed)
+        return DummyBuildHasher(seed);
     }
 }
 
 impl BuildHasher<DummyHasher> for DummyBuildHasher {
     DummyHasher build_hasher() {
-        return DummyHasher.new(self.seed)
+        return DummyHasher.new(self.seed);
     }
 }
 
 // Hasher 实现：finish 返回当前 result，write 忽略输入
 impl Hasher for DummyHasher {
     u64 finish() {
-        return self.result
+        return self.result;
     }
 
-    write(u8[] bytes) {
+    fn write(bytes: u8[]) {
         // 测试哈希器，忽略输入
     }
 }
 
 // 为 MyVal 提供 Hash 实现：直接把 value 写入哈希器
 impl Hash<DummyHasher> for MyVal {
-    hash(DummyHasher hasher) {
+    fn hash(hasher: DummyHasher) {
         // 将值的无符号表示写入哈希器
-        hasher.set_result(u64(self.value))
+        hasher.set_result(u64(self.value));
     }
 }
 
 // ---------- 测试开始 ----------
-i32 main() {
+fn main() -> i32 {
     // 基础构造与容量
-    HashSet<MyVal, DummyHasher, DummyBuildHasher> set1 = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let set1: HashSet<MyVal, DummyHasher, DummyBuildHasher> = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         0,
         DummyBuildHasher.with_seed(0)
     )
     assert set1.len() == 0: "new() should create empty set"
     assert set1.is_empty(): "new() should be empty"
 
-    HashSet<MyVal, DummyHasher, DummyBuildHasher> set2 = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let set2: HashSet<MyVal, DummyHasher, DummyBuildHasher> = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         4,
         DummyBuildHasher.with_seed(0)
     )
@@ -85,7 +85,7 @@ i32 main() {
     assert set2.is_empty(): "with_capacity should start empty"
 
     // insert & contains
-    bool inserted
+    let inserted: bool;
     inserted = set2.insert(MyVal(1))
     assert inserted: "first insert should succeed"
     assert set2.len() == 1: "len should be 1 after insert"
@@ -93,23 +93,23 @@ i32 main() {
 
     // duplicate insert should fail
     inserted = set2.insert(MyVal(1))
-    assert not inserted: "duplicate insert should return false"
-    assert set2.len() == 1: "len should not change after duplicate insert"
+    assert ! inserted: "duplicate insert should return false"
+    assert set2.len() == 1: "len should ! change after duplicate insert"
 
     // insert more and test remove
     set2.insert(MyVal(2))
     set2.insert(MyVal(3))
     assert set2.len() == 3: "len should reflect inserted items"
 
-    bool removed
+    let removed: bool;
     removed = set2.remove(MyVal(2))
     assert removed: "remove should return true for existing item"
     assert set2.len() == 2: "len should decrement after remove"
-    assert not set2.contains(MyVal(2)): "removed item should not be contained"
+    assert ! set2.contains(MyVal(2)): "removed item should ! be contained"
 
     // remove missing
     removed = set2.remove(MyVal(99))
-    assert not removed: "remove should return false for missing item"
+    assert ! removed: "remove should return false for missing item"
 
     // clear
     set2.clear()
@@ -117,7 +117,7 @@ i32 main() {
     assert set2.is_empty(): "clear should make set empty"
 
     // 触发 resize：初始容量4，growth_left=3，插入第4个元素会触发扩容
-    HashSet<MyVal, DummyHasher, DummyBuildHasher> set3 = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
+    let set3: HashSet<MyVal, DummyHasher, DummyBuildHasher> = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         4,
         DummyBuildHasher.with_seed(0)
     )

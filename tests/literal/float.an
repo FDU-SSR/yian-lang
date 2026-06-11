@@ -2,24 +2,24 @@
 //
 // Expected output: 0
 
-i32 main() {
-    float point = 3.1415
-    assert point > 3.14 and point < 3.15: "point out of range"
+fn main() -> i32 {
+    let point: float = 3.1415;
+    assert point > 3.14 && point < 3.15: "point out of range";
 
-    float exp1 = 1.5e3
-    assert exp1 > 1499.0 and exp1 < 1501.0: "exp1 out of range"
-    float exp2 = 2.5e-2
-    assert exp2 > 0.024 and exp2 < 0.026: "exp2 out of range"
+    let exp1: float = 1.5e3;
+    assert exp1 > 1499.0 && exp1 < 1501.0: "exp1 out of range";
+    let exp2: float = 2.5e-2;
+    assert exp2 > 0.024 && exp2 < 0.026: "exp2 out of range";
 
-    float hex1 = 0x1.91eb86p+1
-    assert hex1 > 3.14 and hex1 < 3.15: "hex1 out of range"
-    float hex2 = 0x1.4p-2
-    assert hex2 > 0.3124 and hex2 < 0.3126: "hex2 out of range"
+    let hex1: float = 0x1.91eb86p+1;
+    assert hex1 > 3.14 && hex1 < 3.15: "hex1 out of range";
+    let hex2: float = 0x1.4p-2;
+    assert hex2 > 0.3124 && hex2 < 0.3126: "hex2 out of range";
 
-    f32 suffix = 2.5_f32
-    assert suffix > 2.4 and suffix < 2.6: "suffix out of range"
-    f64 underline = 1_000.000_1
-    assert underline > 1000.0000 and underline < 1000.0002: "underline out of range"
+    let suffix: f32 = 2.5_f32;
+    assert suffix > 2.4 && suffix < 2.6: "suffix out of range";
+    let underline: f64 = 1_000.000_1;
+    assert underline > 1000.0000 && underline < 1000.0002: "underline out of range";
 
-    return 0
+    return 0;
 }

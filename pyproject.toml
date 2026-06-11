@@ -1,0 +1,6 @@
+[tool.pyright]
+include = ["compiler"]
+exclude = ["bak", "tests", "docs", "**/node_modules", "**/__pycache__", "**/.*"]
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true
+reportMissingTypeStubs = false

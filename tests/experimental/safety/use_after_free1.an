@@ -1,12 +1,12 @@
-sys_test() {
+fn sys_test() {
 	i32 *p = dyn i32
-	i32 q
+	let q: i32;
 
-	del q
-	*p = q
+	del q;
+	*p = q;
 }
 
-i32 main() {
-	sys_test()
+fn main() -> i32 {
+	fn sys_test()
 	return 0
 }

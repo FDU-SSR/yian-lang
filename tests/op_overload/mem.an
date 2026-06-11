@@ -2,27 +2,27 @@
 //
 // Expected output: 0
 
-from std.core.ops import Deref
+from std.core.ops import Deref;
 
 struct Ptr<T> {
-    pub T* ptr
+    pub ptr: T*,
 }
 
-impl<T> Deref<T> for Ptr<T> {
-    T* deref() {
-        return self.ptr
+impl<T> Deref<T*> for Ptr<T> {
+    fn deref() -> T* {
+        return self.ptr;
     }
 }
 
-i32 main() {
-    i32 value = 42
-    Ptr<i32> p = Ptr(&value)
-    i32 p_val = *p
+fn main() -> i32 {
+    let value: i32 = 42;
+    let p: Ptr<i32> = Ptr(&value);
+    let p_val: i32 = *p;
 
-    assert p_val == 42: "Dereference failed"
+    assert p_val == 42: "Dereference failed";
 
-    *p = 100
-    assert value == 100: "Assignment through dereference failed"
+    *p = 100;
+    assert value == 100: "Assignment through dereference failed";
 
-    return 0
+    return 0;
 }

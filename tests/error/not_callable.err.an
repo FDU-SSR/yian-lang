@@ -1,0 +1,9 @@
+// Test calling a non-function value error
+//
+// Expected compilation error: expression is not callable
+
+fn main() -> i32 {
+    let x: i32 = 42;
+    x();
+    return 0;
+}

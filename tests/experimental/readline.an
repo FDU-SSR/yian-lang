@@ -3,12 +3,12 @@
 // 运行方式: echo "hello world" | lli output.ll
 // Expected output: hello world
 
-from std.core.io import readline, print
-from std.core.string import String
+from std.core.io import readline, print;
+from std.core.string import String;
 
-i32 main() {
-    String line = readline()
-    print(line.as_str())
-    print("\n")
+fn main() -> i32 {
+    let line: String = readline()
+    fn print(line.as_str())
+    fn print("\n")
     return 0
 }

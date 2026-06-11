@@ -1,0 +1,9 @@
+// Test dyn[] with runtime variable size
+//
+// Expected compilation error: dyn with variable expression
+
+fn main() -> i32 {
+    let n: i32 = 10;
+    let arr: i32* = dyn[n] i32;
+    return 0;
+}

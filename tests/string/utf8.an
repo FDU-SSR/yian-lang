@@ -7,13 +7,13 @@
 // 안녕하세요, 이안!
 // 🤣🤣🤣🤣🤣🤣🤣🤣🤣
 
-from std.core.io import print
+from std.core.io import print;
 
-i32 main() {
-    print("你好易安!\n")
-    print("Hello Yian!\n")
-    print("こんにちは、イアン！\n")
-    print("안녕하세요, 이안!\n")
-    print("🤣🤣🤣🤣🤣🤣🤣🤣🤣\n")
-    return 0
+fn main() -> i32 {
+    print("你好易安!\n");
+    print("Hello Yian!\n");
+    print("こんにちは、イアン！\n");
+    print("안녕하세요, 이안!\n");
+    print("🤣🤣🤣🤣🤣🤣🤣🤣🤣\n");
+    return 0;
 }

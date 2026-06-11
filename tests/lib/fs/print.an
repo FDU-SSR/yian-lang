@@ -3,10 +3,10 @@
 // Expected output:
 // stdout ok
 
-from std.core.io import print
+from std.core.io import print;
 
-i32 main() {
-    print("stdout ok\n")
+fn main() -> i32 {
+    print("stdout ok\n");
 
-    return 0
+    return 0;
 }

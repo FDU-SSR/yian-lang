@@ -1,5 +1,5 @@
-i32 main() {
-    i32* p = dyn i32
+fn main() -> i32 {
+    let p: i32* = dyn i32
     *p = 5
     del p
     return 0

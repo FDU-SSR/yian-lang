@@ -86,7 +86,7 @@ impl<T> IntoIterator<Range<T>> for Range<T> {
 1. `Range<u64>` 可以作为数组/切片/指针类型的索引使用, 运算结果是一个新的切片, 包含原切片中位于指定范围内的元素
 
 ```text
-impl<T, const u64 N> Index<Range<u64>, T[]> for T[N] {
+impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
     T[]* index(Range<u64> range) {
         // 返回一个新的切片, 包含原数组中位于指定范围内的元素
     }

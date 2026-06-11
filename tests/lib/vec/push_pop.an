@@ -2,22 +2,22 @@
 //
 // Expected output: 0
 
-from std.core.vec import Vec
+from std.core.vec import Vec;
 
-i32 main() {
-    Vec<i32> v = Vec<i32>.with_capacity(10)
-    v.push(1)
-    v.push(2)
-    v.push(3)
-    v.push(4)
-    v.push(5)
+fn main() -> i32 {
+    let v: Vec<i32> = Vec<i32>.with_capacity(10);
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    v.push(4);
+    v.push(5);
 
-    i32 sum = 0
+    let sum: i32 = 0;
     while v.len() > 0 {
         sum += v.pop().unwrap()
     }
 
-    assert sum == 15: "Expected sum to be 15"
+    assert sum == 15: "Expected sum to be 15";
 
-    return 0
+    return 0;
 }

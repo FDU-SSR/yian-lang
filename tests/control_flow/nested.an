@@ -1,0 +1,65 @@
+// Test nested control flow: match inside if, loop inside match, for inside while
+//
+// Expected output:
+// 25
+// 5050
+
+from std.core.io import print;
+
+// Test: match inside if
+fn classify_then_act(x: i32) -> i32 {
+    if x > 0 {
+        match x {
+            1 => { return 10; },
+            2 => { return 20; },
+            3, 4, 5 => { return 25; },
+            _ => { return 0; },
+        }
+    } else {
+        return -1;
+    }
+}
+
+// Test: loop inside match
+fn dispatch_loop(mode: i32) -> i32 {
+    match mode {
+        1 => {
+            let sum: i32 = 0;
+            let i: i32 = 0;
+            loop {
+                if i >= 5 {
+                    break;
+                }
+                sum += i;
+                i += 1;
+            }
+            return sum;
+        },
+        _ => { return 0; },
+    }
+}
+
+fn main() -> i32 {
+    // match inside if
+    let r1: i32 = classify_then_act(3);
+    assert r1 == 25: "match inside if failed";
+
+    // loop inside match
+    let r2: i32 = dispatch_loop(1);
+    assert r2 == 10: "loop inside match failed";
+
+    // for inside while: sum 1..100
+    let total: i32 = 0;
+    let rounds: i32 = 0;
+    while rounds < 1 {
+        for i in 1..101 {
+            total += i;
+        }
+        rounds += 1;
+    }
+    assert total == 5050: "for inside while failed";
+
+    print("25\n");
+    print("5050\n");
+    return 0;
+}

@@ -1,7 +1,7 @@
-main() {
+fn main() {
     i32 *p = dyn i32(5)
-    i32* q = p
+    let q: i32* = p;
 
-    del p
-    del q
+    del p;
+    del q;
 }

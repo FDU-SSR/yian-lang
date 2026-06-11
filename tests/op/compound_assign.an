@@ -1,0 +1,43 @@
+// Test compound assignment operators: +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    // Test arithmetic compound assignments
+    let a: i32 = 10;
+    a += 5;
+    assert a == 15: "+= failed";
+
+    a -= 3;
+    assert a == 12: "-= failed";
+
+    a *= 2;
+    assert a == 24: "*= failed";
+
+    a /= 3;
+    assert a == 8: "/= failed";
+
+    a %= 5;
+    assert a == 3: "%= failed";
+
+    // Test bitwise compound assignments
+    let b: i32 = 0x0F;  // 15
+    b &= 0x0A;          // 10
+    assert b == 10: "&= failed";
+
+    b |= 0x05;          // 15
+    assert b == 15: "|= failed";
+
+    b ^= 0x0F;          // 0
+    assert b == 0: "^= failed";
+
+    // Test shift compound assignments
+    let c: i32 = 1;
+    c <<= 4;
+    assert c == 16: "<<= failed";
+
+    c >>= 2;
+    assert c == 4: ">>= failed";
+
+    return 0;
+}

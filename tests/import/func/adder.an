@@ -1,7 +1,7 @@
-T private_adder<T>(T a, T b) {
-    return a + b
+fn private_adder<T>(a: T, b: T) -> T {
+    return a + b;
 }
 
-pub T adder<T>(T a, T b) {
-    return private_adder(a, b)
+pub fn adder<T>(a: T, b: T) -> T {
+    return private_adder(a, b);
 }

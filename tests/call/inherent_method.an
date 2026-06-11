@@ -3,34 +3,34 @@
 // Expected output: 0
 
 struct Person {
-    pub i32 age
-    pub float weight
+    pub age: i32,
+    pub weight: float,
 }
 
 impl Person {
-    static pub Person new(i32 age, float weight) {
-        return Person(age, weight)
+    static pub fn new(age: i32, weight: float) -> Person {
+        return Person(age, weight);
     }
 
-    pub i32 get_age() {
-        return self.age
+    pub fn get_age() -> i32 {
+        return self.age;
     }
 
-    pub bool weight_gt(float weight) {
-        return self.weight > weight
+    pub fn weight_gt(weight: float) -> bool {
+        return self.weight > weight;
     }
 }
 
-i32 main() {
-    Person p = Person.new(20, 65.5)
-    assert p.age == 20 and p.weight > 65.0: "Person.new failed"
+fn main() -> i32 {
+    let p: Person = Person.new(20, 65.5);
+    assert p.age == 20 && p.weight > 65.0: "Person.new failed";
 
-    i32 age = p.get_age()
-    assert age == 20: "get_age method failed"
+    let age: i32 = p.get_age();
+    assert age == 20: "get_age method failed";
 
     if p.weight_gt(70.0) {
-        panic("Weight comparison failed")
+        panic("Weight comparison failed");
     }
 
-    return 0
+    return 0;
 }

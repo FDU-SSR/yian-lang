@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-i32 main() {
-    i32 a = 66
-    i32* b = &a
-    i32** c = &b
-    i32*** d = &c
-    i32**** e = &d
-    i32***** f = &e
+fn main() -> i32 {
+    let a: i32 = 66;
+    let b: i32* = &a;
+    let c: i32** = &b;
+    let d: i32*** = &c;
+    let e: i32**** = &d;
+    let f: i32***** = &e;
 
-    assert *****f == 66: "Expected *****f to be 66"
+    assert *****f == 66: "Expected *****f to be 66";
     
-    return 0
+    return 0;
 }

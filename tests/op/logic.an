@@ -2,25 +2,25 @@
 //
 // Expected output: 0
 
-i32 main()
+fn main() -> i32
 {
-    i32 a = 1
-    i32 b = 2
-    i32 c = 3
-    if a > 0 and b > 0{
+    let a: i32 = 1
+    let b: i32 = 2
+    let c: i32 = 3
+    if a > 0 && b > 0{
         c = c + 1
     }
-    assert c == 4: "and operator failed"
+    assert c == 4: "&& operator failed"
 
-    if a > 0 or b > 0{
+    if a > 0 || b > 0{
         c = c + 1
     }
-    assert c == 5: "or operator failed"
+    assert c == 5: "|| operator failed"
 
-    if not a > 1{
+    if !(a > 1) {
         c = c + 1
     }
-    assert c == 6: "not operator failed"
+    assert c == 6: "! operator failed"
     
     return 0
 }

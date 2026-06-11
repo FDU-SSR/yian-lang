@@ -3,64 +3,64 @@
 // Expected output: 0
 
 trait Summable<T> {
-    T sum(T other);
-    static T zero();
-    T zero_sum() {
-        return self.sum(Self.zero())
+    fn sum(other: T) -> T;
+    static fn zero() -> T;
+    fn zero_sum() -> T {
+        return self.sum(Self.zero());
     }
 }
 
 struct Value<T> {
-    pub T data
+    pub data: T,
 }
 
 impl Summable<i32> for i32 {
-    i32 sum(i32 other) {
-        return *self + other
+    fn sum(other: i32) -> i32 {
+        return *self + other;
     }
-    static i32 zero() {
-        return 0
+    static fn zero() -> i32 {
+        return 0;
     }
 }
 
 impl Summable<f64> for f64 {
-    f64 sum(f64 other) {
-        return *self + other
+    fn sum(other: f64) -> f64 {
+        return *self + other;
     }
-    static f64 zero() {
-        return 0.0
+    static fn zero() -> f64 {
+        return 0.0;
     }
 }
 
 impl<T> Summable<Value<T>> for Value<T> {
-    Value<T> sum(Value<T> other) {
-        return Value<T>(data=self.data + other.data)
+    fn sum(other: Value<T>) -> Value<T> {
+        return Value<T>(data=self.data + other.data);
     }
-    static Value<T> zero() {
-        return Value<T>(data=T(0))
+    static fn zero() -> Value<T> {
+        return Value<T>(data=T(0));
     }
 }
 
-i32 main() {
-    i32 a = 10
-    i32 b = 20
-    i32 c = a.sum(b)
-    assert c == 30: "Expected sum 30"
-    assert i32.zero() == 0: "Expected zero 0"
-    assert a.zero_sum() == 10: "Expected zero_sum 10"
+fn main() -> i32 {
+    let a: i32 = 10;
+    let b: i32 = 20;
+    let c: i32 = a.sum(b);
+    assert c == 30: "Expected sum 30";
+    assert i32.zero() == 0: "Expected zero 0";
+    assert a.zero_sum() == 10: "Expected zero_sum 10";
 
-    f64 x = 5.5
-    f64 y = 2.2
-    f64 z = x.sum(y)
-    assert z > 7.6 and z < 7.8: "Expected sum ~7.7"
-    assert f64.zero() > -0.1 and f64.zero() < 0.1: "Expected zero ~0.0"
-    assert x.zero_sum() > 5.4 and x.zero_sum() < 5.6: "Expected zero_sum ~5.5"
+    let x: f64 = 5.5;
+    let y: f64 = 2.2;
+    let z: f64 = x.sum(y);
+    assert z > 7.6 && z < 7.8: "Expected sum ~7.7";
+    assert f64.zero() > -0.1 && f64.zero() < 0.1: "Expected zero ~0.0";
+    assert x.zero_sum() > 5.4 && x.zero_sum() < 5.6: "Expected zero_sum ~5.5";
 
-    Value<i32> v = Value(data=15)
-    Value<i32> w = v.sum(Value<i32>(data=25))
-    assert w.data == 40: "Expected sum 40"
-    assert Value<i32>.zero().data == 0: "Expected zero 0"
-    assert v.zero_sum().data == 15: "Expected zero_sum 15"
+    let v: Value<i32> = Value(data=15);
+    let w: Value<i32> = v.sum(Value<i32>(data=25));
+    assert w.data == 40: "Expected sum 40";
+    assert Value<i32>.zero().data == 0: "Expected zero 0";
+    assert v.zero_sum().data == 15: "Expected zero_sum 15";
 
-    return 0
+    return 0;
 }

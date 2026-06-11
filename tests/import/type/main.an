@@ -2,20 +2,20 @@
 //
 // Expected output: Person is walking.
 
-from std.core.io import print
+from std.core.io import print;
 
-from person import Person
+from person import Person;
 
-i32 main() {
-    Person p = Person.new(25, 175.5)
+fn main() -> i32 {
+    let p: Person = Person.new(25, 175.5);
 
-    assert p.get_age() == 25
-    assert p.get_height() > 175.0 and p.get_height() < 176.0
+    assert p.get_age() == 25;
+    assert p.get_height() > 175.0 && p.get_height() < 176.0;
 
-    p.walk()
+    p.walk();
 
-    assert p.get_age() == 26
-    assert p.get_height() > 176.0 and p.get_height() < 177.0
+    assert p.get_age() == 26;
+    assert p.get_height() > 176.0 && p.get_height() < 177.0;
 
-    return 0
+    return 0;
 }

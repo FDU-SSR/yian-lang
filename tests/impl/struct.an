@@ -3,22 +3,22 @@
 // Expected output: 0
 
 struct Pair{
-    i32 a
-    i32 b
+    a: i32,
+    b: i32,
 }
 
 impl Pair{
-    pub static Self new(i32 a, i32 b){
-        return Self(a = a, b = b)
+    pub static fn new(a: i32, b: i32) -> Self {
+        return Self(a = a, b = b);
     }
 
-    pub i32 sum(){
-        return self.a + self.b
+    pub fn sum() -> i32 {
+        return self.a + self.b;
     }
 }
 
-i32 main(){
-    Pair p = Pair.new(3, 4)
-    assert p.sum() == 7
-    return 0
+fn main() -> i32 {
+    let p: Pair = Pair.new(3, 4);
+    assert p.sum() == 7;
+    return 0;
 }

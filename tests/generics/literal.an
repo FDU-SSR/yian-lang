@@ -3,35 +3,35 @@
 // Expected output: 0
 
 struct Value<T> {
-    pub T val
+    pub val: T,
 }
 
 impl<T> Value<T> {
-    pub static Self* new_array(T default_value, u64 size) {
-        Self* arr = dyn Self[size]
-        for u64 i = 0; i < size; i += 1 {
+    pub static fn new_array(default_value: T, size: u64) -> Self* {
+        let arr: Self* = dyn[size] Self;
+        for i in 0..size {
             arr[i] = Self(val=default_value)
         }
-        return arr
+        return arr;
     }
 }
 
-i32 main() {
-    Value<i32>* int_values = Value<i32>.new_array(42, 5)
-    Value<f64>* float_values = Value<f64>.new_array(3.14, 5)
+fn main() -> i32 {
+    let int_values: Value<i32>* = Value<i32>.new_array(42, 5);
+    let float_values: Value<f64>* = Value<f64>.new_array(3.14, 5);
 
-    i32 int_sum = 0
-    for u64 i = 0; i < 5; i += 1 {
+    let int_sum: i32 = 0;
+    for i in 0..5u64 {
         int_sum += int_values[i].val
     }
 
-    f64 float_sum = 0.0
-    for u64 i = 0; i < 5; i += 1 {
+    let float_sum: f64 = 0.0;
+    for i in 0..5u64 {
         float_sum += float_values[i].val
     }
 
-    assert int_sum == 210: "Integer sum should be 210"
-    assert float_sum > 15.7 and float_sum < 15.8: "Float sum should be approximately 15.7"
+    assert int_sum == 210: "Integer sum should be 210";
+    assert float_sum > 15.7 && float_sum < 15.8: "Float sum should be approximately 15.7";
 
-    return 0
+    return 0;
 }

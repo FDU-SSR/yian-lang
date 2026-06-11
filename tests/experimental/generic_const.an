@@ -1,13 +1,13 @@
 // Experimental feature: const generics
 
-impl<T, const u64 N> T[N] {
+impl<T, const N: u64> T[N] {
     u64 get_length() {
-        return N
+        return N;
     }
 }
 
-i32 main() {
-    i32[5] arr = [1, 2, 3, 4, 5]
+fn main() -> i32 {
+    let arr: i32[5] = [1, 2, 3, 4, 5]
     assert arr.get_length() == 5: "Length should be 5"
     return 0
 }

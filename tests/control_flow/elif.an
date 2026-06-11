@@ -1,0 +1,28 @@
+// Test if/elif/else chain — verify only the first matching branch executes
+//
+// Expected output:
+// B
+
+from std.core.io import print;
+
+fn test_elif(x: i32) -> str {
+    if x == 1 {
+        return "A";
+    } elif x == 2 {
+        return "B";
+    } elif x == 3 {
+        return "C";
+    } else {
+        return "other";
+    }
+}
+
+fn main() -> i32 {
+    assert test_elif(1) == "A": "elif branch 1 failed";
+    assert test_elif(2) == "B": "elif branch 2 failed";
+    assert test_elif(3) == "C": "elif branch 3 failed";
+    assert test_elif(99) == "other": "elif else branch failed";
+
+    print(test_elif(2));
+    return 0;
+}

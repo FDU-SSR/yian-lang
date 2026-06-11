@@ -1,4 +1,0 @@
-- lang: javascript
-  method: "then"
-  args: "%arg0"
-

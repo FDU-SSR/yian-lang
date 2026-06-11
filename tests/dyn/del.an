@@ -3,21 +3,18 @@
 // Expected output: 0
 
 struct Person{
-    pub i32 age
+    pub age: i32,
 }
 
-i32 main() {
-    i32* p1 = dyn i32
-    del p1
+fn main() -> i32 {
+    let p1: i32* = dyn i32(25);
+    del p1;
 
-    Person* p2 = dyn Person
-    del p2
+    let p3: i32* = dyn[10] i32;
+    del p3;
 
-    i32* p3 = dyn i32[10]
-    del p3
+    let p4: Person* = dyn Person(5);
+    del p4;
 
-    Person* p4 = dyn Person(5)
-    del p4
-
-    return 0
+    return 0;
 }

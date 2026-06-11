@@ -2,24 +2,24 @@
 //
 // Expected output: 0
 
-i32 main() {
-    i32 a = 10
-    i32 b = 3
+fn main() -> i32 {
+    let a: i32 = 10;
+    let b: i32 = 3;
 
-    i32 sum = a + b
-    assert sum == 13: "Addition failed"
+    let sum: i32 = a + b;
+    assert sum == 13: "Addition failed";
 
-    i32 diff = a - b
-    assert diff == 7: "Subtraction failed"
+    let diff: i32 = a - b;
+    assert diff == 7: "Subtraction failed";
 
-    i32 prod = a * b
-    assert prod == 30: "Multiplication failed"
+    let prod: i32 = a * b;
+    assert prod == 30: "Multiplication failed";
 
-    i32 quot = a / b
-    assert quot == 3: "Division failed"
+    let quot: i32 = a / b;
+    assert quot == 3: "Division failed";
 
-    i32 rem = a % b
-    assert rem == 1: "Modulus failed"
+    let rem: i32 = a % b;
+    assert rem == 1: "Modulus failed";
 
-    return 0
+    return 0;
 }

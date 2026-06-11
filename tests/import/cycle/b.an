@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-from a import Value, lib_unwrap_value
+from a import Value, lib_unwrap_value;
 
-pub T unwrap_value<T>(Value<T> v) {
-    return v.value
+pub fn unwrap_value<T>(v: Value<T>) -> T {
+    return v.value;
 }
 
-i32 main() {
-    Value<i32> v = Value(42)
-    i32 result = lib_unwrap_value(v)
-    assert result == 42: "result should be 42"
-    return 0
+fn main() -> i32 {
+    let v: Value<i32> = Value(42);
+    let result: i32 = lib_unwrap_value(v);
+    assert result == 42: "result should be 42";
+    return 0;
 }

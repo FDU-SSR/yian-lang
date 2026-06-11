@@ -1,6 +1,6 @@
-i32 main() {
-    i32* p = dyn i32[10]
-    i32* _p = p + 1
+fn main() -> i32 {
+    let p: i32* = dyn i32[10]
+    let _p: i32* = p + 1
     del _p  // Heap ptr delete has offset
     return 0
 }

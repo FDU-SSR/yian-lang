@@ -1,0 +1,42 @@
+// Test named arguments in struct constructors
+//
+// Expected output:
+// Alice
+// Bob
+
+from std.core.io import print;
+
+struct Person {
+    name: str,
+    age: i32,
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+    label: str,
+}
+
+fn main() -> i32 {
+    // Named arguments in struct constructor
+    let p1: Person = Person(name="Alice", age=25);
+    assert p1.name == "Alice": "named arg name failed";
+    assert p1.age == 25: "named arg age failed";
+
+    // Different order of named arguments
+    let p2: Person = Person(age=30, name="Bob");
+    assert p2.name == "Bob": "named arg order failed";
+    assert p2.age == 30: "named arg order failed";
+
+    // Named arguments for struct with more fields
+    let pt: Point = Point(x=10, y=20, label="origin");
+    assert pt.x == 10: "named arg x failed";
+    assert pt.y == 20: "named arg y failed";
+    assert pt.label == "origin": "named arg label failed";
+
+    print(p1.name);
+    print("\n");
+    print(p2.name);
+    print("\n");
+    return 0;
+}

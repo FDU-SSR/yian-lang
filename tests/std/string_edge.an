@@ -1,0 +1,32 @@
+// Test String edge cases: empty operations, large concatenation
+//
+// Expected output:
+// empty ok
+// large ok
+
+from std.core.string import String;
+from std.core.io import print;
+
+fn main() -> i32 {
+    // Edge case 1: empty string operations
+    let s1: String = String.new();
+    assert s1.len() == 0: "empty string len should be 0";
+
+    s1.push_str("hello");
+    assert s1.len() == 5: "len should be 5";
+    s1.pop();
+    assert s1.len() == 4: "len should be 4 after pop";
+    print("empty ok\n");
+
+    // Edge case 2: large concatenation
+    let s2: String = String.new();
+    let i: i32 = 0;
+    while i < 100 {
+        s2.push_str("a");
+        i += 1;
+    }
+    assert s2.len() == 100: "large string len should be 100";
+    print("large ok\n");
+
+    return 0;
+}

@@ -1,38 +1,38 @@
-pub quick_sort<T>(T* arr, u64 len) {
+pub fn quick_sort<T>(arr: T*, len: u64) {
     if len == 0 {
-        return
+        return;
     }
-    do_quick_sort(arr, 0u64, len - 1)
+    do_quick_sort(arr, 0u64, len - 1);
 }
 
-do_quick_sort<T>(T* arr, u64 low, u64 high) {
+fn do_quick_sort<T>(arr: T*, low: u64, high: u64) {
     if low < high {
-        u64 p = partition(arr, low, high)
+        let p: u64 = partition(arr, low, high);
 
         if p > low {
-            do_quick_sort(arr, low, p - 1)
+            do_quick_sort(arr, low, p - 1);
         }
-        do_quick_sort(arr, p + 1, high)
+        do_quick_sort(arr, p + 1, high);
     }
 }
 
-u64 partition<T>(T* arr, u64 low, u64 high) {
-    T pivot = arr[high]
-    u64 i = low
+fn partition<T>(arr: T*, low: u64, high: u64) -> u64 {
+    let pivot: T = arr[high];
+    let i: u64 = low;
 
-    for u64 j = low; j < high; j += 1 {
+    for j in low..high {
         if arr[j] <= pivot {
-            swap(&arr[i], &arr[j])
+            swap(&arr[i], &arr[j]);
             i += 1
         }
     }
 
-    swap(&arr[i], &arr[high])
-    return i
+    swap(&arr[i], &arr[high]);
+    return i;
 }
 
-swap<T>(T* a, T* b) {
-    T temp = *a
-    *a = *b
-    *b = temp
+fn swap<T>(a: T*, b: T*) {
+    let temp: T = *a;
+    *a = *b;
+    *b = temp;
 }

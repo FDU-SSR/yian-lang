@@ -1,37 +1,34 @@
 // Test trait method definitions and implementations
 //
-// Expected output:
-// Dogs love to walk!
-
-from std.core.io import print
+// Expected output: 0
 
 trait Walkable {
-    static pub walk_info();
+    static pub fn walk_info() -> i32;
 
-    pub i32 walk(i32 distance);
+    pub fn walk(distance: i32) -> i32;
 }
 
 struct Dog {
-    pub i32 age
+    pub age: i32,
 }
 
 impl Walkable for Dog {
-    static pub walk_info() {
-        print("Dogs love to walk!")
+    static pub fn walk_info() -> i32 {
+        return 10;
     }
 
-    pub i32 walk(i32 distance) {
-        return distance + self.age
+    pub fn walk(distance: i32) -> i32 {
+        return distance + self.age;
     }
 }
 
-i32 main() {
-    Dog d = Dog(5)
+fn main() -> i32 {
+    let d: Dog = Dog(5);
 
-    Dog.walk_info()
+    assert Dog.walk_info() == 10: "Dog walk_info method failed";
 
-    i32 total_distance = d.walk(10)
-    assert total_distance == 15: "Dog walk method failed"
+    let total_distance: i32 = d.walk(10);
+    assert total_distance == 15: "Dog walk method failed";
 
-    return 0
+    return 0;
 }

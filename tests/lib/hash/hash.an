@@ -1,24 +1,24 @@
-from std.core.hash import Murmur3Hasher, Murmur3BuildHasher
+from std.core.hash import Murmur3Hasher, Murmur3BuildHasher;
 
-i32 main() {
+fn main() -> i32 {
     // 同一 seed 的 hasher 初始状态应一致
-    Murmur3Hasher h1 = Murmur3Hasher.with_seed(0)
-    Murmur3Hasher h2 = Murmur3Hasher.with_seed(0)
-    u64 f1 = h1.finish()
-    u64 f2 = h2.finish()
-    assert f1 == f2: "hashers with same seed should match"
+    let h1: Murmur3Hasher = Murmur3Hasher.with_seed(0);
+    let h2: Murmur3Hasher = Murmur3Hasher.with_seed(0);
+    let f1: u64 = h1.finish();
+    let f2: u64 = h2.finish();
+    assert f1 == f2: "hashers with same seed should match";
 
     // 不同 seed 应产生不同结果（依赖实现中 seed 的混入）
-    Murmur3Hasher h3 = Murmur3Hasher.with_seed(123)
-    u64 f3 = h3.finish()
-    assert f1 != f3: "hashers with different seeds should differ"
+    let h3: Murmur3Hasher = Murmur3Hasher.with_seed(123);
+    let f3: u64 = h3.finish();
+    assert f1 != f3: "hashers with different seeds should differ";
 
     // BuildHasher 应构建出等价的 hasher
-    Murmur3BuildHasher builder = Murmur3BuildHasher.with_seed(42)
-    Murmur3Hasher h4 = builder.build_hasher()
-    Murmur3Hasher h5 = Murmur3Hasher.with_seed(42)
-    assert h4.finish() == h5.finish(): "builder should produce hasher with same seed state"
+    let builder: Murmur3BuildHasher = Murmur3BuildHasher.with_seed(42);
+    let h4: Murmur3Hasher = builder.build_hasher();
+    let h5: Murmur3Hasher = Murmur3Hasher.with_seed(42);
+    assert h4.finish() == h5.finish(): "builder should produce hasher with same seed state";
 
-    return 0
+    return 0;
 }
 

@@ -8,8 +8,8 @@
 
 1. 调用 `compiler/main.py` 生成 LLVM 后端产物。
 2. 根据目标类型输出最终文件：
-	- 目标为 ll：直接导出 LLVM IR 文本。
-	- 目标为 exe：先生成目标文件，再调用 clang 链接成可执行文件。
+    - 目标为 ll：直接导出 LLVM IR 文本。
+    - 目标为 exe：先生成目标文件，再调用 clang 链接成可执行文件。
 
 脚本内部依赖 `scripts/compiler_api.py` 提供的编译管线实现。
 
@@ -94,7 +94,7 @@ scripts/yian_compiler.py tests/call/func.an --output build/func
 处理建议：
 
 1. 确认系统已安装 clang。
-2. 检查传入的 -O* 参数是否拼写正确。
+2. 检查传入的 -O\* 参数是否拼写正确。
 3. 确认编译阶段已生成对象文件（tests/yian_workspace/objects/output.o）。
 
 ### 4.3 找不到预期编译产物
@@ -113,3 +113,4 @@ scripts/yian_compiler.py tests/call/func.an --output build/func
 2. `scripts/compiler_api.py`：编译管线与产物处理逻辑。
 3. `compiler/main.py`：核心编译命令实现。
 4. `lian/scripts/dfview.py`：中间结果展示工具。
+

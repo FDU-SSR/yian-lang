@@ -1,11 +1,11 @@
-from option import Option
+from option import Option;
 
 // The Iterator trait defines a common interface for iterating over a sequence of values of type T. 
 pub trait Iterator<T> {
-    Option<T> next();
+    fn next() -> Option<T>;
 }
 
 // The IntoIterator trait allows a type to be converted into an iterator of type Iter.
 pub trait IntoIterator<Iter> {
-    Iter into_iter();
+    fn into_iter() -> Iter;
 }

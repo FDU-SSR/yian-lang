@@ -2,68 +2,68 @@
 //
 // Expected output: 0
 
-from std.core.io import print
+from std.core.io import print;
 
 struct Circle {
-    i32 radius
-    i32 x
-    i32 y
+    radius: i32,
+    x: i32,
+    y: i32,
 }
 
 struct Rectangle {
-    i32 width
-    i32 height
-    i32 x
-    i32 y
+    width: i32,
+    height: i32,
+    x: i32,
+    y: i32,
 }
 
 trait Shape {
-    i32 area();
+    fn area() -> i32;
 
     // 有默认实现
-    move_by(i32 dx, i32 dy) {
-        print("Nothing to do\n")
+    fn move_by(dx: i32, dy: i32) {
+        print("Nothing to do\n");
     }
 }
 
 impl Shape for Circle {
-    i32 area() {
-        return 3 * self.radius * self.radius
+    fn area() -> i32 {
+        return 3 * self.radius * self.radius;
     }
 
-    move_by(i32 dx, i32 dy) {
+    fn move_by(dx: i32, dy: i32) {
         self.x += dx
         self.y += dy
     }
 }
 
 impl Shape for Rectangle {
-    i32 area() {
-        return self.width * self.height
+    fn area() -> i32 {
+        return self.width * self.height;
     }
 
-    move_by(i32 dx, i32 dy) {
+    fn move_by(dx: i32, dy: i32) {
         self.x += dx
         self.y += dy
     }
 }
 
-i32 main() {
+fn main() -> i32 {
     // use Circle
-    Circle circle = Circle(radius=2, x=0, y=0)
-    i32 circle_area = circle.area()
-    assert circle_area == 12: "Circle area calculation"
-    circle.move_by(1, 1)
-    assert circle.x == 1: "Circle move_by x"
-    assert circle.y == 1: "Circle move_by y"
+    let circle: Circle = Circle(radius=2, x=0, y=0);
+    let circle_area: i32 = circle.area();
+    assert circle_area == 12: "Circle area calculation";
+    circle.move_by(1, 1);
+    assert circle.x == 1: "Circle move_by x";
+    assert circle.y == 1: "Circle move_by y";
 
     // use Rectangle
-    Rectangle rect = Rectangle(width=2, height=2, x=1, y=1)
-    i32 rect_area = rect.area()
-    assert rect_area == 4: "Rectangle area calculation"
-    rect.move_by(1, 1)
-    assert rect.x == 2: "Rectangle move_by x"
-    assert rect.y == 2: "Rectangle move_by y"
+    let rect: Rectangle = Rectangle(width=2, height=2, x=1, y=1);
+    let rect_area: i32 = rect.area();
+    assert rect_area == 4: "Rectangle area calculation";
+    rect.move_by(1, 1);
+    assert rect.x == 2: "Rectangle move_by x";
+    assert rect.y == 2: "Rectangle move_by y";
 
-    return 0
+    return 0;
 }

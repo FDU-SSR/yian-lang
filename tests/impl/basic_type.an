@@ -3,48 +3,48 @@
 // Expected output:
 // Hello, Yian!
 
-from std.core.io import print
+from std.core.io import print;
 
 impl i32 {
-    pub inc() {
+    pub fn inc() {
         *self += 1
     }
 
-    pub i32 abs() {
+    pub fn abs() -> i32 {
         if *self < 0 {
-            return -*self
+            return -*self;
         } else {
-            return *self
+            return *self;
         }
     }
 }
 
 impl bool {
-    pub bool toggle() {
-        return not *self
+    pub fn toggle() -> bool {
+        return ! *self;
     }
 }
 
 impl str {
-    pub println() {
-        print(*self)
-        print("\n")
+    pub fn println() {
+        print(*self);
+        print("\n");
     }
 }
 
 
-i32 main() {
-    i32 a = -5
-    a.inc()
-    assert a == -4
-    assert a.abs() == 4
+fn main() -> i32 {
+    let a: i32 = -5;
+    a.inc();
+    assert a == -4;
+    assert a.abs() == 4;
 
-    bool b = true
-    b = b.toggle()
-    assert b == false
+    let b: bool = true;
+    b = b.toggle();
+    assert b == false;
 
-    str msg = "Hello, Yian!"
-    msg.println()
+    let msg: str = "Hello, Yian!";
+    msg.println();
 
-    return 0
+    return 0;
 }

@@ -2,84 +2,84 @@
 //
 // Expected output: 0
 
-from std.core.option import Option
+from std.core.option import Option;
 
 struct Vector<T> {
-    T* data
-    u64 length
-    u64 capacity
+    data: T*,
+    length: u64,
+    capacity: u64,
 }
 
 impl<T> Vector<T> {
-    static Self new() {
+    static fn new() -> Self {
         return Self(
-            data=dyn T[2],
+            data=dyn[2] T,
             length=0,
             capacity=2
         )
     }
 
-    static Self with_capacity(u64 capacity) {
+    static fn with_capacity(capacity: u64) -> Self {
         return Self(
-            data=dyn T[capacity],
+            data=dyn[capacity] T,
             length=0,
             capacity=capacity
         )
     }
 
-    grow() {
+    fn grow() {
         self.capacity *= 2
-        T* new_data = dyn T[self.capacity]
-        for u64 i = 0; i < self.length; i += 1 {
+        let new_data: T* = dyn[self.capacity] T;
+        for i in 0..self.length {
             new_data[i] = self.data[i]
         }
-        del self.data
-        self.data = new_data
+        del self.data;
+        self.data = new_data;
     }
 
-    append(T item) {
+    fn append(item: T) {
         if self.length == self.capacity {
-            self.grow()
+            self.grow();
         }
         self.data[self.length] = item
         self.length += 1
     }
 
-    Option<T> pop() {
+    fn pop() -> Option<T> {
         if self.length == 0 {
-            return Option<T>.None
+            return Option<T>.None;
         }
         self.length -= 1
-        return Option<T>.Some(self.data[self.length])
+        return Option<T>.Some(self.data[self.length]);
     }
 
-    u64 len() {
-        return self.length
+    fn len() -> u64 {
+        return self.length;
     }
 }
 
-i32 main() {
-    Vector<i32> v = Vector<i32>.new()
-    v.append(1)
-    v.append(2)
-    v.append(3)
-    v.append(4)
-    v.append(5)
+fn main() -> i32 {
+    let v: Vector<i32> = Vector<i32>.new();
+    v.append(1);
+    v.append(2);
+    v.append(3);
+    v.append(4);
+    v.append(5);
 
-    i32 sum = 0
+    let sum: i32 = 0;
     loop {
-        Option<i32> item = v.pop()
+        let item: Option<i32> = v.pop();
         match item {
-            None {
+            None => {
                 break
             }
-            Some as item {
-                sum += item.val
+            Some(val) => {
+                sum += val
             }
         }
     }
 
-    assert sum == 15: "Sum should be 15"
+    assert sum == 15: "Sum should be 15";
     
-    return 0
+    return 0;
 }

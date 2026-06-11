@@ -1,0 +1,51 @@
+// Test Vec edge cases: empty pop, large allocation, clear and reuse
+//
+// Expected output:
+// empty pop ok
+// after clear ok
+// large ok
+
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.io import print;
+
+fn main() -> i32 {
+    // Edge case 1: pop from empty vector
+    let v1: Vec<i32> = Vec<i32>.with_capacity(4);
+    let popped: Option<i32> = v1.pop();
+    assert popped.is_none(): "pop on empty should return None";
+    print("empty pop ok\n");
+
+    // Edge case 2: push, clear, then reuse
+    let v2: Vec<i32> = Vec<i32>.with_capacity(4);
+    v2.push(1);
+    v2.push(2);
+    v2.push(3);
+    assert v2.len() == 3: "len should be 3";
+    v2.clear();
+    assert v2.len() == 0: "len should be 0 after clear";
+    v2.push(42);
+    assert v2.len() == 1: "len should be 1 after reuse";
+    let val: Option<i32> = v2.pop();
+    assert val.is_some(): "should have value";
+    assert val.unwrap_or(0) == 42: "should be 42";
+    print("after clear ok\n");
+
+    // Edge case 3: large number of elements
+    let v3: Vec<i32> = Vec<i32>.with_capacity(1000);
+    let i: i32 = 0;
+    while i < 1000 {
+        v3.push(i);
+        i += 1;
+    }
+    assert v3.len() == 1000: "should have 1000 elements";
+    let first: Option<i32> = v3.get(0);
+    assert first.is_some(): "first should exist";
+    assert first.unwrap_or(-1) == 0: "first should be 0";
+    let last: Option<i32> = v3.get(999);
+    assert last.is_some(): "last should exist";
+    assert last.unwrap_or(-1) == 999: "last should be 999";
+    print("large ok\n");
+
+    return 0;
+}

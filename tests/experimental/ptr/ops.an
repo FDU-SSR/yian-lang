@@ -49,14 +49,14 @@ pub trait Shr<Rhs, Output> {
 pub trait PartialEq<Rhs> {
     bool eq(Rhs rhs);
     bool ne(Rhs rhs) {
-        return not self.eq(rhs)
+        return ! self.eq(rhs)
     }
 }
 
 pub enum Ordering {
-    Less
-    Equal
-    Greater
+    Less,
+    Equal,
+    Greater,
 }
 
 pub trait PartialOrd<Rhs> {
@@ -64,10 +64,10 @@ pub trait PartialOrd<Rhs> {
 
     bool lt(Rhs rhs) {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
@@ -75,13 +75,13 @@ pub trait PartialOrd<Rhs> {
 
     bool le(Rhs rhs) {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return true
             }
-            Equal {
+            Equal => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
@@ -89,10 +89,10 @@ pub trait PartialOrd<Rhs> {
 
     bool gt(Rhs rhs) {
         match self.partial_cmp(rhs) {
-            Greater {
+            Greater => {
                 return true
             }
-            _ {
+            _ => {
                 return false
             }
         }
@@ -100,13 +100,13 @@ pub trait PartialOrd<Rhs> {
 
     bool ge(Rhs rhs) {
         match self.partial_cmp(rhs) {
-            Less {
+            Less => {
                 return false
             }
-            Equal {
+            Equal => {
                 return true
             }
-            Greater {
+            Greater => {
                 return true
             }
         }

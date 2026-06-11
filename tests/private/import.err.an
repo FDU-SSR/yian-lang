@@ -1,9 +1,0 @@
-// Test for importing private items from another module
-//
-// Expected compilation error: No exported symbol 'NonExportableStruct' found in unit: private.an
-
-from private import NonExportableStruct
-
-i32 main() {
-    return 0
-}

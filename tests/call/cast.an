@@ -2,40 +2,40 @@
 //
 // Expected output: 0
 
-i32 main() {
-    i32 i = 42
-    f64 f = 6.6
-    char ch = 'A'
+fn main() -> i32 {
+    let i: i32 = 42;
+    let f: f64 = 6.6;
+    let ch: char = 'A';
 
     // Float to int
-    i32 f_to_i = i32(f)
-    assert f_to_i == 6: "Float to int cast failed"
-    u32 f_to_u = u32(-3.4)
-    assert f_to_u == 0: "Float to unsigned int cast failed"
+    let f_to_i: i32 = i32(f);
+    assert f_to_i == 6: "Float to int cast failed";
+    let f_to_u: u32 = u32(-3.4);
+    assert f_to_u == 0: "Float to unsigned int cast failed";
 
     // Int to float
-    f64 i_to_f = f64(i)
-    assert i_to_f > 41.9 and i_to_f < 42.1: "Int to float cast failed"
+    let i_to_f: f64 = f64(i);
+    assert i_to_f > 41.9 && i_to_f < 42.1: "Int to float cast failed";
 
     // Float cast
-    f32 f_to_f = f32(f)
-    assert f_to_f > 6.5 and f_to_f < 6.7: "Float to float cast failed"
+    let f_to_f: f32 = f32(f);
+    assert f_to_f > 6.5 && f_to_f < 6.7: "Float to float cast failed";
 
     // Int cast
-    i8 i_to_i = i8(i)
-    assert i_to_i == 42: "Int to int cast failed"
-    u16 i_to_u = u16(-1)
-    assert i_to_u == 65535: "Int to unsigned int cast failed"
+    let i_to_i: i8 = i8(i);
+    assert i_to_i == 42: "Int to int cast failed";
+    let i_to_u: u16 = u16(-1);
+    assert i_to_u == 65535: "Int to unsigned int cast failed";
 
     // Char cast
-    u32 ch_to_u = u32(ch)
-    assert ch_to_u == 65: "Char to unsigned int cast failed"
-    char u_to_ch = char(66u8)
-    assert u_to_ch == 'B': "Unsigned int to char cast failed"
-    char u16_to_ch = char(67u16)
-    assert u16_to_ch == 'C': "u16 to char cast failed"
-    char u32_to_ch = char(68u32)
-    assert u32_to_ch == 'D': "u32 to char cast failed"
+    let ch_to_u: u32 = u32(ch);
+    assert ch_to_u == 65: "Char to unsigned int cast failed";
+    let u_to_ch: char = char(66u8);
+    assert u_to_ch == 'B': "Unsigned int to char cast failed";
+    let u16_to_ch: char = char(67u16);
+    assert u16_to_ch == 'C': "u16 to char cast failed";
+    let u32_to_ch: char = char(68u32);
+    assert u32_to_ch == 'D': "u32 to char cast failed";
 
-    return 0
+    return 0;
 }

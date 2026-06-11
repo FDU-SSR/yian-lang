@@ -1,83 +1,84 @@
-from option import Option
-from vec import Vec
-from iter import Iterator, IntoIterator
-from ops import PartialEq
+from option import Option;
+from vec import Vec;
+from iter import Iterator, IntoIterator;
+from ops import PartialEq, Index;
+from range import Range;
 
 // A struct representation of a slice
 struct SliceStruct<T> {
-    pub T* ptr
-    pub u64 len
+    pub ptr: T*,
+    pub len: u64,
 }
 
 impl<T> T[] {
     // Convert a slice to a SliceStruct
-    SliceStruct<T> as_struct() {
-        SliceStruct<T>* ret = bitcast<SliceStruct<T>*>(self)
-        return *ret
+    fn as_struct() -> SliceStruct<T> {
+        let ret: SliceStruct<T>* = bitcast<SliceStruct<T>*>(self);
+        return *ret;
     }
 
     // Get the raw pointer to the slice data
-    pub T* ptr() {
-        return self.as_struct().ptr
+    pub fn ptr() -> T* {
+        return self.as_struct().ptr;
     }
 
     // Get length of the slice
-    pub u64 len() {
-        return self.as_struct().len
+    pub fn len() -> u64 {
+        return self.as_struct().len;
     }
 
     // Get element at index
-    pub Option<T> get(u64 index) {
-        u64 len = self.len()
+    pub fn get(index: u64) -> Option<T> {
+        let len: u64 = self.len();
         if index >= len {
-            return Option<T>.None
+            return Option<T>.None;
         }
-        T* ptr = self.as_struct().ptr + index
-        return Option<T>.Some(*ptr)
+        let ptr: T* = self.as_struct().ptr + index;
+        return Option<T>.Some(*ptr);
     }
 
     // Get first element of the slice
-    pub Option<T> first() {
-        return self.get(0)
+    pub fn first() -> Option<T> {
+        return self.get(0);
     }
 
     // Get last element of the slice
-    pub Option<T> last() {
-        u64 len = self.len()
+    pub fn last() -> Option<T> {
+        let len: u64 = self.len();
         if len == 0 {
-            return Option<T>.None
+            return Option<T>.None;
         }
-        return self.get(len - 1)
+        return self.get(len - 1);
     }
 
     // Clone the slice into a Vec
-    pub Vec<T> to_vec() {
-        SliceStruct<T> s = self.as_struct()
-        Vec<T> vec = Vec<T>.with_capacity(s.len)
+    pub fn to_vec() -> Vec<T> {
+        let s: SliceStruct<T> = self.as_struct();
+        let vec: Vec<T> = Vec<T>.with_capacity(s.len);
         for i in 0..s.len {
-            vec.push(s.ptr[i])
+            vec.push(s.ptr[i]);
         }
-        return vec
+        return vec;
     }
 }
 
-pub T[] from_raw_parts<T>(T* ptr, u64 len) {
-    SliceStruct<T> slice_struct = SliceStruct<T>(
+pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
+    let slice_struct: SliceStruct<T> = SliceStruct<T>(
         ptr = ptr,
         len = len
     )
-    T[]* ret = bitcast<T[]*>(&slice_struct)
-    return *ret
+    let ret: T[]* = bitcast<T[]*>(&slice_struct);
+    return *ret;
 }
 
 pub struct SliceIter<T> {
-    pub T* ptr
-    pub T* end
+    pub ptr: T*,
+    pub end: T*,
 }
 
 impl<T> SliceIter<T> {
-    pub u64 len() {
-        return self.end - self.ptr
+    pub fn len() -> u64 {
+        return self.end - self.ptr;
     }
 
     pub RevSliceIter<T> rev() {
@@ -107,13 +108,13 @@ impl<T> RevSliceIter<T> {
 }
 
 impl<T> Iterator<T> for SliceIter<T> {
-    Option<T> next() {
+    fn next() -> Option<T> {
         if self.ptr == self.end {
-            return Option<T>.None
+            return Option<T>.None;
         }
-        T* current = self.ptr
+        let current: T* = self.ptr;
         self.ptr += 1
-        return Option<T>.Some(*current)
+        return Option<T>.Some(*current);
     }
 }
 
@@ -128,8 +129,8 @@ impl<T> Iterator<T> for RevSliceIter<T> {
 }
 
 impl<T> IntoIterator<SliceIter<T>> for T[] {
-    SliceIter<T> into_iter() {
-        SliceStruct<T> s = self.as_struct()
+    fn into_iter() -> SliceIter<T> {
+        let s: SliceStruct<T> = self.as_struct();
         return SliceIter<T>(
             ptr = s.ptr,
             end = s.ptr + s.len
@@ -137,22 +138,42 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
     }
 }
 
-impl<T> IntoIterator<RevSliceIter<T>> for RevSliceIter<T> {
-    RevSliceIter<T> into_iter() {
-        return *self
+impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
+    fn into_iter() -> SliceIter<T> {
+        return SliceIter<T>(
+            ptr = bitcast<T*>(self),
+            end = bitcast<T*>(self) + N
+        )
     }
 }
 
 impl<T> PartialEq<T[]> for T[] {
-    pub bool eq(T[] other) {
+    pub fn eq(other: T[]) -> bool {
         if self.len() != other.len() {
-            return false
+            return false;
         }
         for i in 0..self.len() {
             if self.get(i).unwrap() != other.get(i).unwrap() {
-                return false
+                return false;
             }
         }
-        return true
+        return true;
+    }
+}
+
+impl<T> Index<u64, T*> for T[] {
+    fn index(index: u64) -> T* {
+        return self.ptr() + index;
+    }
+}
+
+impl<T> Index<Range<u64>, T[]> for T[] {
+    fn index(range: Range<u64>) -> T[] {
+        if range.end > self.len() {
+            panic("Range out of bounds");
+        }
+        let start_ptr: T* = self.ptr() + range.start;
+        let len: u64 = range.end - range.start;
+        return from_raw_parts(start_ptr, len);
     }
 }

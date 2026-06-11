@@ -1,77 +1,79 @@
-from option import Option
+from option import Option;
 
-from mem import Clone
+from mem import Clone;
 
 pub enum Result<T, E> {
-    Ok { T val }
-    Err { E msg }
+    Ok { val: T, },
+    Err {
+        msg: E,
+    },
 }
 
 impl<T, E> Result<T, E> {
     // Check if the Result is Ok or Err
-    pub bool is_ok() {
+    pub fn is_ok() -> bool {
         match *self {
-            Ok { return true }
-            Err { return false }
+            Ok => { return true }
+            Err => { return false }
         }
     }
 
-    pub bool is_err() {
-        return not self.is_ok()
+    pub fn is_err() -> bool {
+        return ! self.is_ok();
     }
 
     // Unwrap the value if it is Ok, otherwise return the provided default value
-    pub T unwrap_or(T default) {
+    pub fn unwrap_or(default: T) -> T {
         match *self {
-            Ok as ok { return ok.val }
-            _ { return default }
+            Ok(val) => { return val }
+            _ => { return default }
         }
     }
 
-    pub T unwrap() {
+    pub fn unwrap() -> T {
         match *self {
-            Ok as ok { return ok.val }
-            Err as err { panic("Called unwrap on an Err value") }
+            Ok(val) => { return val }
+            Err(err) => { panic("Called unwrap on an Err value") }
         }
     }
 
     // Unwrap the error message if it is Err, otherwise return the provided default error message
-    pub E unwrap_or_err(E default) {
+    pub fn unwrap_or_err(default: E) -> E {
         match *self {
-            Err as err { return err.msg }
-            _ { return default }
+            Err(err) => { return err.msg }
+            _ => { return default }
         }
     }
 
-    pub E unwrap_err() {
+    pub fn unwrap_err() -> E {
         match *self {
-            Err as err { return err.msg }
-            Ok as ok { panic("Called unwrap_err on an Ok value") }
+            Err(err) => { return err.msg }
+            Ok(val) => { panic("Called unwrap_err on an Ok value") }
         }
     }
 
     // Convert the Result into an Option, discarding the error message if it is Err
-    pub Option<T> ok() {
+    pub fn ok() -> Option<T> {
         match *self {
-            Ok as ok { return Option<T>.Some(ok.val) }
-            _ { return Option<T>.None }
+            Ok(val) => { return Option<T>.Some(val) }
+            _ => { return Option<T>.None }
         }
     }
 
     // Convert the Result into an Option, discarding the value if it is Ok
-    pub Option<E> err() {
+    pub fn err() -> Option<E> {
         match *self {
-            Err as err { return Option<E>.Some(err.msg) }
-            _ { return Option<E>.None }
+            Err(err) => { return Option<E>.Some(err.msg) }
+            _ => { return Option<E>.None }
         }
     }
 }
 
 impl<T, E> Clone for Result<T, E> {
-    pub Self clone() {
+    pub fn clone() -> Self {
         match *self {
-            Ok as ok { return Result<T, E>.Ok(ok.val.clone()) }
-            Err as err { return Result<T, E>.Err(err.msg.clone()) }
+            Ok(val) => { return Result<T, E>.Ok(val.clone()) }
+            Err(err) => { return Result<T, E>.Err(err.msg.clone()) }
         }
     }
 }

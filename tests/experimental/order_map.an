@@ -1,14 +1,14 @@
-from option import Option
-from ordered_map import OrderedMap
+from option import Option;
+from ordered_map import OrderedMap;
 
-i32 main() {
+fn main() -> i32 {
     // 新建空有序映射
-    OrderedMap<i32, i32> m = OrderedMap<i32, i32>.new()
+    let m: OrderedMap<i32, i32> = OrderedMap<i32, i32>.new()
     assert m.len() == 0: "new len != 0"
-    assert m.is_empty(): "new map is not empty"
+    assert m.is_empty(): "new map is ! empty"
 
     // insert：新 key 返回 None，size 增长
-    Option<i32> opt
+    let opt: Option<i32>;
 
     opt = m.insert(3, 30)
     assert opt.is_none(): "insert 3 should return none"
@@ -20,19 +20,19 @@ i32 main() {
     opt = m.insert(5, 50)
     assert opt.is_none(): "insert 5 should return none"
     assert m.len() == 3: "len after 3 inserts should be 3"
-    assert not m.is_empty(): "map should not be empty after inserts"
+    assert ! m.is_empty(): "map should ! be empty after inserts"
 
     // insert：已存在 key 返回旧值，size 不变
     opt = m.insert(3, 300)
     assert opt.is_some(): "insert existing key 3 should return some"
     assert opt.unwrap() == 30: "insert existing key 3 should return old value 30"
-    assert m.len() == 3: "len should not change when inserting existing key"
+    assert m.len() == 3: "len should ! change when inserting existing key"
 
     // get / contains 测试
     assert m.contains(1): "map should contain key 1"
     assert m.contains(3): "map should contain key 3"
     assert m.contains(5): "map should contain key 5"
-    assert not m.contains(4): "map should not contain key 4"
+    assert ! m.contains(4): "map should ! contain key 4"
 
     opt = m.get(1)
     assert opt.is_some(): "get(1) should be some"
@@ -46,7 +46,7 @@ i32 main() {
     assert opt.is_none(): "get(4) should be none"
 
     // min_key / max_key 测试
-    Option<i32> key_opt
+    let key_opt: Option<i32>;
 
     key_opt = m.min_key()
     assert key_opt.is_some(): "min_key should be some"
@@ -126,11 +126,11 @@ i32 main() {
     assert opt.is_some(): "remove(3) should return some"
     assert opt.unwrap() == 300: "remove(3) should return value 300"
     assert m.len() == 2: "len after remove 3 should be 2"
-    assert not m.contains(3): "map should not contain key 3 after remove"
+    assert ! m.contains(3): "map should ! contain key 3 after remove"
 
     opt = m.remove(3)
     assert opt.is_none(): "remove non-exist 3 should return none"
-    assert m.len() == 2: "len should not change when removing non-exist key"
+    assert m.len() == 2: "len should ! change when removing non-exist key"
 
     // 删除后重新检查 min/max 和边界
     key_opt = m.min_key()

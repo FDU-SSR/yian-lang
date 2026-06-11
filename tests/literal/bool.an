@@ -2,19 +2,19 @@
 //
 // Expected output: 0
 
-i32 main() {
-    bool t = true
-    bool f = false
-    assert t != f: "true should not equal false"
+fn main() -> i32 {
+    let t: bool = true;
+    let f: bool = false;
+    assert t != f: "true should ! equal false";
 
-    bool and_result = true and false
-    assert and_result == false: "true and false should be false"
+    let and_result: bool = true && false;
+    assert and_result == false: "true && false should be false";
 
-    bool or_result = true or false
-    assert or_result == true: "true or false should be true"
+    let or_result: bool = true || false;
+    assert or_result == true: "true || false should be true";
 
-    bool not_result = not true
-    assert not_result == false: "not true should be false"
+    let not_result: bool = ! true;
+    assert not_result == false: "! true should be false";
 
-    return 0
+    return 0;
 }

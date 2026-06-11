@@ -1,14 +1,14 @@
 struct pyc_object{
-    char type
-    char* data
+    type: char,
+    data: char*,
 } 
 
 struct RefNode{
-    pyc_object* data
+    data: pyc_object*,
 }
 
-pyc_object* get_none_object() {
-    char* tmp0 = dyn char[4]
+fn get_none_object() -> pyc_object* {
+    let tmp0: char* = dyn char[4]
     tmp0 [0] = 'N'
     tmp0 [1] = 'o'
     tmp0 [2] = 'n'
@@ -16,23 +16,23 @@ pyc_object* get_none_object() {
     return dyn pyc_object('N', tmp0)
 }
 
-i32 free_object(pyc_object* obj) {
+fn free_object(pyc_object* obj) -> i32 {
     del (*obj).data
     del obj
     return 0
 }
 
-RefNode* create_ref_node(pyc_object* data) {
+fn create_ref_node(pyc_object* data) -> RefNode* {
     return dyn RefNode(data)
 }
 
-pyc_object* get_object(char* input) {
-    u8 code = input[0]
-    u8 flag = code & 0x80
-    u8 type = code & ~0x80
+fn get_object(char* input) -> pyc_object* {
+    let code: u8 = input[0]
+    let flag: u8 = code & 0x80
+    let type: u8 = code & ~0x80
     
-    pyc_object* ret = dyn pyc_object
-    RefNode* ref = dyn RefNode
+    let ret: pyc_object* = dyn pyc_object
+    let ref: RefNode* = dyn RefNode
     
     if flag != 0 {
         ret = get_none_object()
@@ -43,10 +43,10 @@ pyc_object* get_object(char* input) {
         assert 1==1 : "Not implemented"
     } 
 
-    if flag != 0 and ref.is_valid() {
+    if flag != 0 && ref.is_valid() {
         // err: Delete stack pointer
         free_object((*ref).data)
-        pyc_object** tmp = &ref.data
+        let tmp: pyc_object** = &ref.data
         *tmp = get_none_object()
     }
 
@@ -57,14 +57,14 @@ pyc_object* get_object(char* input) {
     return ret
 }
 
-i32 main() {
+fn main() -> i32 {
     //char[1] data = "\x81"
-    char* data = dyn char
+    let data: char* = dyn char
     *data = '\x81'
-    pyc_object* obj = get_object(data)
+    let obj: pyc_object* = get_object(data)
     // Use-after-free: obj was freed in get_object()
-    char c = (*obj).type
+    let c: char = (*obj).type
     // double free
-    free_object(obj)
+    fn free_object(obj)
     return 0
 }

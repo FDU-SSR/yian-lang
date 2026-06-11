@@ -3,19 +3,19 @@
 // Expected output: 0
 
 struct Person{
-    str name
-    i32 age
+    name: str,
+    age: i32,
 }
 
-i32 main()
+fn main() -> i32
 {
-    Person* p = dyn Person("Alice", 30)
+    let p: Person* = dyn Person("Alice", 30)
     assert p.age == 30: "Expected age to be 30"
 
     p.age = 31
     assert p.age == 31: "Expected age to be 31 after modification"
 
-    i32* arr = dyn i32[3]
+    let arr: i32* = dyn[3] i32
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30

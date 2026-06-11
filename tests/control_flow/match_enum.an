@@ -1,40 +1,63 @@
-// Test match statement with enum type
+// Test match statement with enum type, including multi-variant patterns
 //
-// Expected output: 0
+// Expected output:
+// BLUE
+// GREEN
+// GREEN
+// payload
 
-enum Color{
-    BLUE
-    RED
-    YELLOW, GREEN, BLACK
-    LOOK{
-        i32 who
-        i32 direction
-    }
-    MOVE{i32 who, i32 direction}
+from std.core.io import print;
+
+enum Color {
+    BLUE, RED, YELLOW, GREEN, BLACK,
+    LOOK {
+        who: i32,
+        direction: i32,
+    },
+    MOVE {
+        who: i32,
+        direction: i32,
+    },
 }
 
-i32 match_enum(Color c) {
+fn match_enum(c: Color) -> i32 {
     match c {
-        YELLOW { return 3 }
-        GREEN { return 4 }
-        BLACK { return 5 }
-        LOOK as l { return l.who + l.direction }
-        MOVE as m { return m.who + m.direction }
-        _ { return 0 }  // BLUE and RED
+        YELLOW => { return 3; },
+        GREEN => { return 4; },
+        BLACK => { return 5; },
+        LOOK(who, direction) => { return who + direction; },
+        MOVE(who, direction) => { return who + direction; },
+        _ => { return 0; },
     }
 }
 
-i32 main()
-{
-    Color c = Color.BLUE
+fn match_multi(c: Color) -> str {
+    match c {
+        BLUE | RED => { return "BLUE\n"; },
+        GREEN | BLACK => { return "GREEN\n"; },
+        _ => { return "OTHER\n"; },
+    }
+}
 
-    Color c3 = Color.LOOK(who = 1, direction = 2)
+fn main() -> i32 {
+    let c3: Color = Color.LOOK(who = 1, direction = 2);
+    let c4: Color = Color.MOVE(who = 1, direction = 2);
 
-    Color c4 = Color.MOVE(who = 1, direction = 2)
+    // Test multi-variant patterns
+    assert match_multi(Color.BLUE) == "BLUE\n": "multi-variant BLUE failed";
+    assert match_multi(Color.RED) == "BLUE\n": "multi-variant RED failed";
+    assert match_multi(Color.GREEN) == "GREEN\n": "multi-variant GREEN failed";
+    assert match_multi(Color.BLACK) == "GREEN\n": "multi-variant BLACK failed";
+    assert match_multi(Color.YELLOW) == "OTHER\n": "multi-variant fallback failed";
 
-    assert match_enum(c) == 0: "Match enum failed on BLUE"
-    assert match_enum(c3) == 3: "Match enum failed on LOOK"
-    assert match_enum(c4) == 3: "Match enum failed on MOVE"
+    // Test single-variant and payload patterns
+    assert match_enum(Color.BLUE) == 0: "Match enum failed on BLUE";
+    assert match_enum(c3) == 3: "Match enum failed on LOOK";
+    assert match_enum(c4) == 3: "Match enum failed on MOVE";
 
-    return 0
+    print(match_multi(Color.BLUE));
+    print(match_multi(Color.GREEN));
+    print(match_multi(Color.BLACK));
+    print("payload\n");
+    return 0;
 }

@@ -1,0 +1,17 @@
+// Test for importing public items from another module
+//
+// Expected output: 0
+
+from private import ExportableStruct;
+from private import make_non_exportable;
+from private import get_priv_field;
+
+fn main() -> i32 {
+    let es: ExportableStruct = ExportableStruct.new(10, 20);
+    assert es.pub_field == 10: "Expected pub_field to be 10";
+    assert get_priv_field(&es) == 20: "Expected priv_field to be 20";
+
+    assert make_non_exportable(1, 2).pub_field == 1: "Expected pub_field of NonExportableStruct to be 1";
+
+    return 0;
+}

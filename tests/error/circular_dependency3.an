@@ -3,17 +3,17 @@
 // Expected output: 0
 
 struct Node {
-    i32 data
-    Node* next
+    data: i32,
+    next: Node*,
 }
 
-i32 main() {
-    Node n
-    n.data = 10
-    n.next = &n
+fn main() -> i32 {
+    let n: Node;
+    n.data = 10;
+    n.next = &n;
 
-    assert n.data == 10: "n.data should be 10"
-    assert n.next.data == 10: "n.next.data should be 10"
+    assert n.data == 10: "n.data should be 10";
+    assert n.next.data == 10: "n.next.data should be 10";
 
-    return 0
+    return 0;
 }

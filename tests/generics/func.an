@@ -2,29 +2,29 @@
 //
 // Expected output: 0
 
-T add<T>(T a, T b) {
-    return a + b
+fn add<T>(a: T, b: T) -> T {
+    return a + b;
 }
 
-T abs<T>(T a) {
+fn abs<T>(a: T) -> T {
     if (a < 0) {
-        return -a
+        return -a;
     }
-    return a
+    return a;
 }
 
-i32 main() {
+fn main() -> i32 {
     // 1) explicit type arguments
-    i32 x = add<i32>(10, 20)
-    assert x == 30: "Expected 30"
-    i32 y = abs<i32>(-5)
-    assert y == 5: "Expected 5"
+    let x: i32 = add<i32>(10, 20);
+    assert x == 30: "Expected 30";
+    let y: i32 = abs<i32>(-5);
+    assert y == 5: "Expected 5";
 
     // 2) type inference
-    f64 m = add(1.5, 2.5)
-    assert m > 3.9 and m < 4.1: "Expected 4.0"
-    f64 n = abs(-3.2)
-    assert n > 3.1 and n < 3.3: "Expected 3.2"
+    let m: f64 = add(1.5, 2.5);
+    assert m > 3.9 && m < 4.1: "Expected 4.0";
+    let n: f64 = abs(-3.2);
+    assert n > 3.1 && n < 3.3: "Expected 3.2";
 
-    return 0
+    return 0;
 }

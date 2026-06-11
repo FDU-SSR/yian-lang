@@ -4,42 +4,44 @@
 // Command: Start
 // Command: Pause
 
-from std.core.io import print
+from std.core.io import print;
 
 enum Command {
-    Start
-    Stop
-    Pause {i32 duration}
+    Start,
+    Stop,
+    Pause {
+        duration: i32,
+    },
 }
 
 impl Command {
-    static pub Command new_start() {
-        return Command.Start
+    static pub fn new_start() -> Command {
+        return Command.Start;
     }
 
-    static pub Command new_stop() {
-        return Command.Stop
+    static pub fn new_stop() -> Command {
+        return Command.Stop;
     }
 
-    static pub Command new_pause(i32 duration) {
-        return Command.Pause(duration)
+    static pub fn new_pause(duration: i32) -> Command {
+        return Command.Pause(duration);
     }
 
-    pub execute() {
+    pub fn execute() {
         match *self {
-            Start { print("Command: Start\n") }
-            Stop { print("Command: Stop\n") }
-            Pause { print("Command: Pause\n") }
+            Start => { print("Command: Start\n"); },
+            Stop => { print("Command: Stop\n"); },
+            Pause => { print("Command: Pause\n"); },
         }
     }
 }
 
-i32 main() {
-    Command cmd1 = Command.new_start()
-    Command cmd2 = Command.new_pause(10)
+fn main() -> i32 {
+    let cmd1: Command = Command.new_start();
+    let cmd2: Command = Command.new_pause(10);
 
-    cmd1.execute()
-    cmd2.execute()
+    cmd1.execute();
+    cmd2.execute();
 
-    return 0
+    return 0;
 }

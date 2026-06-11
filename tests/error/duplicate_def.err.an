@@ -1,0 +1,15 @@
+// Test duplicate function definition error
+//
+// Expected compilation error: is already defined in the current scope
+
+fn foo() -> i32 {
+    return 1;
+}
+
+fn foo() -> i32 {
+    return 2;
+}
+
+fn main() -> i32 {
+    return 0;
+}

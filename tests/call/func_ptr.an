@@ -3,26 +3,26 @@
 // Expected output: 0
 
 struct Person{
-    pub i32 age
-    pub i32 score
+    pub age: i32,
+    pub score: i32,
 }
 
-i32 add(i32 a, i32 b) {
-    return a + b
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
 }
 
-Person make_person(i32 x, i32 y){
-    return Person(x, y)
+fn make_person(x: i32, y: i32) -> Person {
+    return Person(x, y);
 }
 
-i32 main() {
-    fn<i32(i32, i32)> add_func = &add
-    fn<Person(i32, i32)> person_func = &make_person
+fn main() -> i32 {
+    let add_func: fn(i32, i32) -> i32 = &add;
+    let person_func: fn(i32, i32) -> Person = &make_person;
 
-    Person p = person_func(2, 3)
-    assert p.age == 2 and p.score == 3: "person_func should return Person(2, 3)"
+    let p: Person = person_func(2, 3);
+    assert p.age == 2 && p.score == 3: "person_func should return Person(2, 3)";
     
-    assert add_func(1, 2) == 3: "add_func should return 3"
+    assert add_func(1, 2) == 3: "add_func should return 3";
     
-    return 0
+    return 0;
 }

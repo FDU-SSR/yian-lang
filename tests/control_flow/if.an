@@ -2,12 +2,12 @@
 //
 // Expected output: 0
 
-i32 main() {
-   i32 a = 3
+fn main() -> i32 {
+   let a: i32 = 3;
    if a > 10 {
-      panic("a is greater than 10")
+      panic("a is greater than 10");
    } else {
-      assert a == 3: "If-else condition failed"
-      return 0
+      assert a == 3: "If-else condition failed";
+      return 0;
    }
 }

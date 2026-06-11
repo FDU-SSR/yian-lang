@@ -1,11 +1,11 @@
 enum Option<T> {
-    None
+    None,
     Some{T value}
 }
 
-Option<char*> g_ptr = Option<char*>.None
+let g_ptr: Option<char*> = Option<char*>.None
 
-use_g_ptr() {
+fn use_g_ptr() {
 	match g_ptr {
 		Some as some:
 			*(some.value) = 'a'
@@ -13,7 +13,7 @@ use_g_ptr() {
 	}
 }
 
-free_g_ptr() {
+fn free_g_ptr() {
 	match g_ptr {
 		Some as some:
 			del some.value
@@ -23,10 +23,10 @@ free_g_ptr() {
 	}
 }
 
-i32 main() {
+fn main() -> i32 {
 	g_ptr = Option<char*>.Some(dyn char)
-	use_g_ptr()
-	free_g_ptr()
-	free_g_ptr()
+	fn use_g_ptr()
+	fn free_g_ptr()
+	fn free_g_ptr()
 	return 0
 }

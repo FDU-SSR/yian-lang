@@ -1,0 +1,14 @@
+// Test while loop — count from 1 to N and sum
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let sum: i32 = 0;
+    let i: i32 = 1;
+    while i <= 10 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    assert sum == 55: "while loop sum failed";
+    return 0;
+}

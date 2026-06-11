@@ -1,25 +1,25 @@
 struct Person {
-    i32 age
-    f64 height
+    age: i32,
+    height: f64,
 }
 
 impl Person {
     i32 get_age() {
-        return self.age
+        return self.age;
     }
 
-    set_height(f64 height) {
-        self.height = height
+    fn set_height(height: f64) {
+        self.height = height;
     }
 }
 
-i32 main() {
-    Person* p = dyn Person(10, 100.0)
+fn main() -> i32 {
+    let p: Person* = dyn Person(10, 100.0)
     p.set_height(200.0)
     p.age += 1
-    i32 age = p.get_age()
-    f64 height = p.height
+    let age: i32 = p.get_age()
+    let height: f64 = p.height
     assert age == 11: "fail 1"
-    assert p.height < 200.1 and p.height > 199.9: "fail 2"
+    assert p.height < 200.1 && p.height > 199.9: "fail 2"
     return 0
 }

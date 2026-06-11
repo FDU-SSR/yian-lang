@@ -3,33 +3,33 @@
 // Expected output: 0
 
 impl i32 {
-    pub i32 casted_add<U>(U other) {
-        return *self + i32(other)
+    pub fn casted_add<U>(other: U) -> i32 {
+        return *self + i32(other);
     }
 }
 
 trait CastedSubtract<T> {
-    T casted_subtract<U>(U other);
+    fn casted_subtract<U>(other: U) -> T;
 }
 
 impl CastedSubtract<i32> for i32 {
-    i32 casted_subtract<U>(U other) {
-        return *self - i32(other)
+    fn casted_subtract<U>(other: U) -> i32 {
+        return *self - i32(other);
     }
 }
 
 
-i32 main() {
-    i32 a = 50
-    i32 b = a.casted_add<f64>(25.5)
-    assert b == 75: "Expected casted_add result 75"
-    i32 c = a.casted_add(20.5)
-    assert c == 70: "Expected casted_add result 70"
+fn main() -> i32 {
+    let a: i32 = 50;
+    let b: i32 = a.casted_add<f64>(25.5);
+    assert b == 75: "Expected casted_add result 75";
+    let c: i32 = a.casted_add(20.5);
+    assert c == 70: "Expected casted_add result 70";
 
-    i32 d = a.casted_subtract<f64>(15.5)
-    assert d == 35: "Expected casted_subtract result 35"
-    i32 e = a.casted_subtract(10.5)
-    assert e == 40: "Expected casted_subtract result 40"
+    let d: i32 = a.casted_subtract<f64>(15.5);
+    assert d == 35: "Expected casted_subtract result 35";
+    let e: i32 = a.casted_subtract(10.5);
+    assert e == 40: "Expected casted_subtract result 40";
 
-    return 0
+    return 0;
 }

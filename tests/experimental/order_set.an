@@ -1,14 +1,14 @@
-from option import Option
-from std.bak.ordered_set import OrderedSet
+from option import Option;
+from std.bak.ordered_set import OrderedSet;
 
-i32 main() {
+fn main() -> i32 {
     // 新建空有序集合
-    OrderedSet<i32> s = OrderedSet<i32>.new()
+    let s: OrderedSet<i32> = OrderedSet<i32>.new()
     assert s.len() == 0: "new len != 0"
-    assert s.is_empty(): "new set is not empty"
+    assert s.is_empty(): "new set is ! empty"
 
     // insert：新 key 返回 true，size 增长
-    bool inserted
+    let inserted: bool;
 
     inserted = s.insert(3)
     assert inserted: "insert 3 should return true"
@@ -20,21 +20,21 @@ i32 main() {
     inserted = s.insert(5)
     assert inserted: "insert 5 should return true"
     assert s.len() == 3: "len after 3 inserts should be 3"
-    assert not s.is_empty(): "set should not be empty after inserts"
+    assert ! s.is_empty(): "set should ! be empty after inserts"
 
     // insert：已存在 key 返回 false，size 不变
     inserted = s.insert(3)
-    assert not inserted: "insert existing key 3 should return false"
-    assert s.len() == 3: "len should not change when inserting existing key"
+    assert ! inserted: "insert existing key 3 should return false"
+    assert s.len() == 3: "len should ! change when inserting existing key"
 
     // contains 测试
     assert s.contains(1): "set should contain 1"
     assert s.contains(3): "set should contain 3"
     assert s.contains(5): "set should contain 5"
-    assert not s.contains(4): "set should not contain 4"
+    assert ! s.contains(4): "set should ! contain 4"
 
     // min / max 测试
-    Option<i32> opt
+    let opt: Option<i32>;
 
     opt = s.min()
     assert opt.is_some(): "min should be some"
@@ -73,16 +73,16 @@ i32 main() {
     assert opt.is_none(): "upper_bound(5) should be none"
 
     // remove 测试
-    bool removed
+    let removed: bool;
 
     removed = s.remove(3)
     assert removed: "remove(3) should return true"
     assert s.len() == 2: "len after remove 3 should be 2"
-    assert not s.contains(3): "set should not contain 3 after remove"
+    assert ! s.contains(3): "set should ! contain 3 after remove"
 
     removed = s.remove(3)
-    assert not removed: "remove non-exist 3 should return false"
-    assert s.len() == 2: "len should not change when removing non-exist key"
+    assert ! removed: "remove non-exist 3 should return false"
+    assert s.len() == 2: "len should ! change when removing non-exist key"
 
     // 删除后重新检查 min/max 和边界
     opt = s.min()

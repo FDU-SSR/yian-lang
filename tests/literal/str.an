@@ -6,14 +6,14 @@
 // Line1
 // Line2	Tabbed
 
-from std.core.io import print
+from std.core.io import print;
 
-i32 main() {
-    str hello = "Hello, World!"
-    print(hello)
-    str chinese = "你好，世界！"
-    print(chinese)
-    str escape = "Line1\nLine2\tTabbed"
-    print(escape)
-    return 0
+fn main() -> i32 {
+    let hello: str = "Hello, World!";
+    print(hello);
+    let chinese: str = "你好，世界！";
+    print(chinese);
+    let escape: str = "Line1\nLine2\tTabbed";
+    print(escape);
+    return 0;
 }

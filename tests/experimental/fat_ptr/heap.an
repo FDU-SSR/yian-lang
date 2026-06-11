@@ -1,8 +1,8 @@
-i32 main() {
-    i32* pa = dyn i32
+fn main() -> i32 {
+    let pa: i32* = dyn i32
     *pa = 6
     *pa += 6
-    i32 res = *pa + *pa
+    let res: i32 = *pa + *pa
     assert res == 24: "res != 24"
     return 0
 }

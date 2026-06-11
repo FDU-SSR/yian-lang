@@ -1,13 +1,38 @@
-// Test match statement with char type
+// Test match statement with char type, including multi-char patterns
 //
-// Expected output: 0
+// Expected output:
+// b matched
+// vowel
+// digit
 
-i32 main() {
-    char a = 'b'
-    match a {
-        'a' { panic("Matched a") }
-        'b' { return 0 }
-        'c', 'd' { panic("Matched c or d") }
-        _ { panic("Matched default case") }
+from std.core.io import print;
+
+fn classify_char(c: char) -> str {
+    match c {
+        'a', 'e', 'i', 'o', 'u' => { return "vowel\n"; },
+        'A', 'E', 'I', 'O', 'U' => { return "VOWEL\n"; },
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => { return "digit\n"; },
+        _ => { return "other\n"; },
     }
+}
+
+fn main() -> i32 {
+    // Test single char match
+    let a: char = 'b';
+    match a {
+        'a' => { panic("Matched a"); },
+        'b' => { print("b matched\n"); },
+        'c', 'd' => { panic("Matched c || d"); },
+        _ => { panic("Matched default case"); },
+    }
+
+    // Test multi-char patterns
+    assert classify_char('a') == "vowel\n": "vowel classification failed";
+    assert classify_char('E') == "VOWEL\n": "VOWEL classification failed";
+    assert classify_char('z') == "other\n": "consonant classification failed";
+    assert classify_char('7') == "digit\n": "digit classification failed";
+
+    print(classify_char('a'));
+    print(classify_char('7'));
+    return 0;
 }

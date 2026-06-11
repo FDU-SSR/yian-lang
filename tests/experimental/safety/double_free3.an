@@ -1,13 +1,13 @@
-i32* gp
+let gp: i32*;
 
-free_gp() {
-    del gp
+fn free_gp() {
+    del gp;
 }
 
-main() {
+fn main() {
     i32 *p = dyn i32(5)
-    gp = p
+    gp = p;
 
-    del p
-    free_gp()
+    del p;
+    free_gp();
 }
