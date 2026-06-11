@@ -6,6 +6,8 @@ from iter import Iterator, IntoIterator;
 from convert import From, Into;
 from ops import PartialEq, Index;
 from range import Range;
+from fmt import ToString;
+from string import String;
 
 impl str {
     // Create a str from a byte slice
@@ -200,5 +202,11 @@ impl Hash<Murmur3Hasher> for str {
     fn hash(hasher: Murmur3Hasher) {
         let bytes: u8[] = self.as_slice();
         hasher.write(bytes);
+    }
+}
+
+impl ToString for str {
+    fn to_string() -> String {
+        return String.from(*self);
     }
 }

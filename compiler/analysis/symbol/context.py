@@ -29,7 +29,7 @@ class SymbolCtx:
         self.add_symbol(name="void", type_id=TypeCtx.void_id, kind=SymbolKind.Type)
         self.add_symbol(name="bool", type_id=TypeCtx.bool_id, kind=SymbolKind.Type)
         self.add_symbol(name="char", type_id=TypeCtx.char_id, kind=SymbolKind.Type)
-        self.add_symbol(name="string", type_id=TypeCtx.str_id, kind=SymbolKind.Type)
+        self.add_symbol(name="str", type_id=TypeCtx.str_id, kind=SymbolKind.Type)
 
         self.add_symbol(name="i8", type_id=TypeCtx.i8_id, kind=SymbolKind.Type)
         self.add_symbol(name="i16", type_id=TypeCtx.i16_id, kind=SymbolKind.Type)

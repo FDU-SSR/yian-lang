@@ -1,3 +1,5 @@
+from range import Range;
+
 pub struct RawVec<T> {
     data: T*,
     cap: u64,
@@ -5,10 +7,9 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        return Self(
-            data = bitcast<T*>(0u64),
-            cap = 0
-        )
+        let res: Self
+        res.cap = 0;
+        return res;
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
@@ -16,7 +17,7 @@ impl<T> RawVec<T> {
             return Self.new();
         }
         // Allocate memory for capacity elements
-        let data: T* = dyn T[capacity];
+        let data: T* = dyn[capacity] T;
         return Self(
             data = data,
             cap = capacity
@@ -33,14 +34,14 @@ impl<T> RawVec<T> {
 
     pub fn grow() {
         let old_cap: u64 = self.cap;
-        u64 new_cap
+        let new_cap: u64;
         if old_cap == 0 {
             new_cap = 4;
         } else {
             new_cap = old_cap * 2;
         }
 
-        let new_data: T* = dyn T[new_cap];
+        let new_data: T* = dyn[new_cap] T;
 
         if old_cap > 0 {
             // Copy existing elements to the new buffer
