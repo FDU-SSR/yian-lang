@@ -590,9 +590,8 @@ class CfgBuilder:
         2. write the value to the buffer
         """
         size = IR.IntLiteral(1, type_id=TypeCtx.u64_id)
-        buffer = self.__build_malloc(expr.type_id, size)
-
         value = self.__resolve_val(expr.value)
+        buffer = self.__build_malloc(value.type_id, size)
         self.__build_store(value, buffer)
         return buffer
 
