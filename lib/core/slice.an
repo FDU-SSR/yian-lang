@@ -80,6 +80,31 @@ impl<T> SliceIter<T> {
     pub fn len() -> u64 {
         return self.end - self.ptr;
     }
+
+    pub RevSliceIter<T> rev() {
+        return RevSliceIter<T>(
+            ptr = self.end,
+            begin = self.ptr
+        )
+    }
+}
+
+pub struct RevSliceIter<T> {
+    pub T* ptr
+    pub T* begin
+}
+
+impl<T> RevSliceIter<T> {
+    pub u64 len() {
+        return self.ptr - self.begin
+    }
+
+    pub SliceIter<T> rev() {
+        return SliceIter<T>(
+            ptr = self.begin,
+            end = self.ptr
+        )
+    }
 }
 
 impl<T> Iterator<T> for SliceIter<T> {
@@ -90,6 +115,16 @@ impl<T> Iterator<T> for SliceIter<T> {
         let current: T* = self.ptr;
         self.ptr += 1
         return Option<T>.Some(*current);
+    }
+}
+
+impl<T> Iterator<T> for RevSliceIter<T> {
+    Option<T> next() {
+        if self.ptr == self.begin {
+            return Option<T>.None
+        }
+        self.ptr -= 1
+        return Option<T>.Some(*self.ptr)
     }
 }
 

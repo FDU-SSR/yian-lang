@@ -39,6 +39,20 @@ impl str {
         return first_char.is_some() && first_char.unwrap() == prefix;
     }
 
+    pub bool starts_with(str prefix) {
+        u8[] self_bytes = self.as_slice()
+        u8[] prefix_bytes = prefix.as_slice()
+        if prefix_bytes.len() > self_bytes.len() {
+            return false
+        }
+        for i in 0..prefix_bytes.len() {
+            if self_bytes[i] != prefix_bytes[i] {
+                return false
+            }
+        }
+        return true
+    }
+
     // Check if the str contains the given character
     pub fn contains_char(c: char) -> bool {
         for ch in self.chars() {
@@ -91,6 +105,18 @@ impl CharIter {
     pub fn len() -> u64 {
         return self.byte_iter.len();
     }
+
+    pub RevCharIter rev() {
+        return RevCharIter(self.byte_iter.rev())
+    }
+
+    pub String collect() {
+        String out = String.new()
+        for ch in self {
+            out += ch
+        }
+        return out
+    }
 }
 
 impl Iterator<char> for CharIter {
@@ -135,6 +161,82 @@ impl Iterator<char> for CharIter {
 impl IntoIterator<CharIter> for CharIter {
     fn into_iter() -> CharIter {
         return *self;
+    }
+}
+
+pub struct RevCharIter {
+    pub RevSliceIter<u8> byte_iter
+}
+
+impl RevCharIter {
+    pub u64 len() {
+        return self.byte_iter.len()
+    }
+
+    pub CharIter rev() {
+        return CharIter(self.byte_iter.rev())
+    }
+
+    pub String collect() {
+        String out = String.new()
+        for ch in self {
+            out += ch
+        }
+        return out
+    }
+}
+
+impl Iterator<char> for RevCharIter {
+    pub Option<char> next() {
+        Option<u8> b1_opt = self.byte_iter.next()
+
+        if b1_opt.is_none() {
+            return Option<char>.None
+        }
+
+        u8 b1 = b1_opt.unwrap_or(0)
+
+        if b1 < 128 {
+            return Option<char>.Some(char(b1))
+        }
+
+        Option<u8> b2_opt = self.byte_iter.next()
+        if b2_opt.is_none() {
+            return Option<char>.None
+        }
+        u8 b2 = b2_opt.unwrap_or(0)
+
+        if (b2 & 224) == 192 {
+            return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b1 & 63)))
+        }
+
+        Option<u8> b3_opt = self.byte_iter.next()
+        if b3_opt.is_none() {
+            return Option<char>.None
+        }
+        u8 b3 = b3_opt.unwrap_or(0)
+
+        if (b3 & 240) == 224 {
+            return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)))
+        }
+
+        Option<u8> b4_opt = self.byte_iter.next()
+        if b4_opt.is_none() {
+            return Option<char>.None
+        }
+        u8 b4 = b4_opt.unwrap_or(0)
+
+        if (b4 & 248) == 240 {
+            return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)))
+        }
+
+        return Option<char>.None
+    }
+}
+
+impl IntoIterator<RevCharIter> for RevCharIter {
+    RevCharIter into_iter() {
+        return *self
     }
 }
 

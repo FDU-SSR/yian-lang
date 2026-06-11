@@ -28,6 +28,33 @@ impl u64 {
         n |= n >> 32
         return n + 1;
     }
+
+    pub align_up(u64 alignment) {
+        if alignment == 0 {
+            panic("alignment must be greater than 0")
+        }
+        u64 mask = alignment - 1
+        *self = (*self + mask) & ~mask
+    }
+
+    pub String to_string_radix(u64 radix) {
+        if radix < 2 or radix > 36 {
+            panic("radix must be between 2 and 36")
+        }
+        if *self == 0 {
+            return String.from("0")
+        }
+
+        u64 n = *self
+        String digits = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        String out = String.new()
+        while n > 0 {
+            u64 digit = n % radix
+            out += char(digits.as_slice()[digit])
+            n /= radix
+        }
+        return out.chars().rev().collect()
+    }
 }
 
 impl Hash<Murmur3Hasher> for u64 {
