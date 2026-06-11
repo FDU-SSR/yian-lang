@@ -30,7 +30,7 @@ class LLFunction:
     # -- entry block --
 
     def add_entry_block(self) -> None:
-        self.__entry_block = self.new_block(".entry")
+        self.__entry_block = self.new_block("entry")
 
     @property
     def entry_block(self) -> ir.Block:
