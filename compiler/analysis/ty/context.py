@@ -501,7 +501,7 @@ class TypeCtx:
 
         Handles two cases:
         - Pointer types: return the pointee type directly
-        - Types implementing the Deref trait: resolve deref() return type's pointee
+        - Types implementing the Deref trait: return deref()'s return type
 
         Returns None if the type cannot be dereferenced.
         """

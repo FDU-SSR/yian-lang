@@ -52,23 +52,34 @@ class ImplRegistry:
 
     def find_deref_target(self, type_id: int) -> int | None:
         """
-        If `type_id` implements the `Deref` trait, return the target type
-        (the pointee of the deref() return type). Otherwise return None.
+        If `type_id` implements the `Deref` trait, return the return type
+        of the deref() method. Otherwise return None.
 
         Used by TypeCtx.try_deref to support auto-deref via the Deref trait.
         """
-        deref_trait_id = self.__ctx.deref_id
+        deref_trait_ty = self.__ctx[self.__ctx.deref_id]
+        assert isinstance(deref_trait_ty, Type.TraitType)
+
+        def is_deref_impl(impl: Impl) -> bool:
+            """Check whether *impl* is a Deref trait implementation."""
+            if impl.trait is None or "deref" not in impl.methods:
+                return False
+            impl_trait_ty = self.__ctx[impl.trait]
+            return (
+                isinstance(impl_trait_ty, Type.TraitType)
+                and impl_trait_ty.custom_def is deref_trait_ty.custom_def
+            )
 
         # 1) Non-generic trait impls that match the exact target type
-        for impl in self.__trait_impl_cache.get(type_id, []):
-            if impl.trait == deref_trait_id and "deref" in impl.methods:
+        for impl in self.__trait_impl_cache[type_id]:
+            if is_deref_impl(impl):
                 return self.__resolve_deref_target(impl, {})
 
         # 2) Generic trait impls — try to unify impl.target against type_id
         # Use name-based index to avoid scanning all generic trait impls
         base_name = self.__target_base_name(type_id)
         for impl in self.__trait_generic_impl_by_name.get(base_name, []):
-            if impl.trait != deref_trait_id or "deref" not in impl.methods:
+            if not is_deref_impl(impl):
                 continue
             inference = GenericInference(self.__ctx, SrcSpan.empty())
             try:
@@ -81,18 +92,14 @@ class ImplRegistry:
         return None
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
-        """Given a Deref impl and substitutions, resolve the final target pointee type."""
+        """Given a Deref impl and substitutions, return the return type of deref()."""
         deref_method_id = impl.methods["deref"]
         instantiated_id = deref_method_id
         if substs:
             instantiated_id = self.__ctx.instantiate(deref_method_id, substs)
         method_ty = self.__ctx[instantiated_id]
         assert isinstance(method_ty, Type.MethodType)
-        return_type_id = self.__ctx.get_return_type(instantiated_id)
-        return_ty = self.__ctx[return_type_id]
-        if isinstance(return_ty, Type.PointerType):
-            return return_ty.pointee_type
-        return None
+        return self.__ctx.get_return_type(instantiated_id)
 
     def __check_impl(self, impl: Impl) -> None:
         """
