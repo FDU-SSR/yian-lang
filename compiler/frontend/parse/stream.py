@@ -7,6 +7,23 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 
+# ------------------------------------------------------------------
+# frozenset常量：consume_separated / consume_until 的参数
+# 避免在热路径上重复构造set字面量
+# ------------------------------------------------------------------
+
+SEP_COMMA = frozenset({Tok.PunctuatorKind.Comma})
+SEP_DOT = frozenset({Tok.PunctuatorKind.Dot})
+SEP_PIPE = frozenset({Tok.PunctuatorKind.Pipe})
+TERM_SEMICOLON = frozenset({Tok.PunctuatorKind.Semicolon})
+TERM_RPAREN = frozenset({Tok.PunctuatorKind.RParen})
+TERM_RBRACE = frozenset({Tok.PunctuatorKind.RBrace})
+TERM_RANGLE = frozenset({Tok.PunctuatorKind.RAngle})
+TERM_RBRACKET = frozenset({Tok.PunctuatorKind.RBracket})
+TERM_FAT_ARROW = frozenset({Tok.PunctuatorKind.FatArrow})
+SEMI_OR_COMMA = frozenset({Tok.PunctuatorKind.Semicolon, Tok.PunctuatorKind.Comma})
+EMPTY_SET: frozenset[Tok.PunctuatorKind] = frozenset()
+
 
 class TokenStream:
     def __init__(self, tokens: list[Token]):
@@ -69,7 +86,7 @@ class TokenStream:
                     break
         return attrs
 
-    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: set[Tok.PunctuatorKind], terminators: set[Tok.PunctuatorKind]) -> list[ItemType]:
+    def consume_separated[ItemType](self, item_parser: Callable[[], ItemType], separators: frozenset[Tok.PunctuatorKind], terminators: frozenset[Tok.PunctuatorKind]) -> list[ItemType]:
         """Consumes a separated list of items parsed by the given item_parser function."""
         items: list[ItemType] = []
         token = self.peek()
@@ -84,7 +101,7 @@ class TokenStream:
                 break
         return items
 
-    def consume_until[ItemType](self, item_parser: Callable[[], ItemType], terminators: set[Tok.PunctuatorKind]) -> list[ItemType]:
+    def consume_until[ItemType](self, item_parser: Callable[[], ItemType], terminators: frozenset[Tok.PunctuatorKind]) -> list[ItemType]:
         """Consumes items parsed by the given item_parser function until a terminator is encountered."""
         items: list[ItemType] = []
         while True:

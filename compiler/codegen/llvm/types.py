@@ -104,17 +104,17 @@ class LLTypeCtx:
     def __handle_tuple(self, type_def: Type.TupleType) -> ir.Type:
         return ir.LiteralStructType([self.__get_raw_type(element_type) for element_type in type_def.element_types])
 
-    def __handle_struct(self, type_id: int, type_def: Type.StructType) -> ir.Type:
+    def __handle_struct(self, type_id: int, _type_def: Type.StructType) -> ir.Type:
         identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
         self.__storage[type_id] = identified
-        identified.set_body(*[self.__get_raw_type(f.type_id) for f in type_def.get_fields(self.__type_ctx)])  # type: ignore
+        identified.set_body(*[self.__get_raw_type(f.type_id) for f in self.__type_ctx.get_struct_fields(type_id)])  # type: ignore
         return identified  # type: ignore
 
-    def __handle_enum(self, type_id: int, type_def: Type.EnumType) -> ir.Type:
+    def __handle_enum(self, type_id: int, _type_def: Type.EnumType) -> ir.Type:
         identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
         self.__storage[type_id] = identified
         max_size, max_align = 0, 1
-        for variant in type_def.get_variants(self.__type_ctx):
+        for variant in self.__type_ctx.get_enum_variants(type_id):
             if variant.payload_type is None:
                 continue
             variant_size, variant_align = self.__stable_layout(variant.payload_type)

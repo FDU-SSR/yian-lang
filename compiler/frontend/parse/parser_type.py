@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from collections.abc import Callable
 
 from compiler.frontend.lex.token import (Identifier, IntLiteral, Keyword,
                                          KeywordKind, Punctuator,
@@ -9,7 +9,8 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as Ty
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.error import ParseError
-from compiler.frontend.parse.stream import TokenStream
+from compiler.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
+                                            TERM_RPAREN, TokenStream)
 from compiler.frontend.lex.position import SrcSpan
 
 
@@ -40,24 +41,24 @@ class TypeParser:
 
         return base
 
-    MAPPING: dict[KeywordKind, ASTType] = {
-        KeywordKind.I8: Ty.IntType(span=SrcSpan.empty(), width=1, signed=True),
-        KeywordKind.U8: Ty.IntType(span=SrcSpan.empty(), width=1, signed=False),
-        KeywordKind.I16: Ty.IntType(span=SrcSpan.empty(), width=2, signed=True),
-        KeywordKind.U16: Ty.IntType(span=SrcSpan.empty(), width=2, signed=False),
-        KeywordKind.I32: Ty.IntType(span=SrcSpan.empty(), width=4, signed=True),
-        KeywordKind.U32: Ty.IntType(span=SrcSpan.empty(), width=4, signed=False),
-        KeywordKind.I64: Ty.IntType(span=SrcSpan.empty(), width=8, signed=True),
-        KeywordKind.U64: Ty.IntType(span=SrcSpan.empty(), width=8, signed=False),
-        KeywordKind.F32: Ty.FloatType(span=SrcSpan.empty(), width=4),
-        KeywordKind.F64: Ty.FloatType(span=SrcSpan.empty(), width=8),
-        KeywordKind.Int: Ty.IntType(span=SrcSpan.empty(), width=4, signed=True),  # default int type is i32
-        KeywordKind.Uint: Ty.IntType(span=SrcSpan.empty(), width=4, signed=False),  # default uint type is u32
-        KeywordKind.Float: Ty.FloatType(span=SrcSpan.empty(), width=8),  # default float type is f64
-        KeywordKind.Bool: Ty.BoolType(span=SrcSpan.empty()),
-        KeywordKind.Str: Ty.StrType(span=SrcSpan.empty()),
-        KeywordKind.Char: Ty.CharType(span=SrcSpan.empty()),
-        KeywordKind.Void: Ty.VoidType(span=SrcSpan.empty()),
+    MAPPING: dict[KeywordKind, Callable[[SrcSpan], ASTType]] = {
+        KeywordKind.I8: lambda span: Ty.IntType(span=span, width=1, signed=True),
+        KeywordKind.U8: lambda span: Ty.IntType(span=span, width=1, signed=False),
+        KeywordKind.I16: lambda span: Ty.IntType(span=span, width=2, signed=True),
+        KeywordKind.U16: lambda span: Ty.IntType(span=span, width=2, signed=False),
+        KeywordKind.I32: lambda span: Ty.IntType(span=span, width=4, signed=True),
+        KeywordKind.U32: lambda span: Ty.IntType(span=span, width=4, signed=False),
+        KeywordKind.I64: lambda span: Ty.IntType(span=span, width=8, signed=True),
+        KeywordKind.U64: lambda span: Ty.IntType(span=span, width=8, signed=False),
+        KeywordKind.F32: lambda span: Ty.FloatType(span=span, width=4),
+        KeywordKind.F64: lambda span: Ty.FloatType(span=span, width=8),
+        KeywordKind.Int: lambda span: Ty.IntType(span=span, width=4, signed=True),   # default int type is i32
+        KeywordKind.Uint: lambda span: Ty.IntType(span=span, width=4, signed=False),  # default uint type is u32
+        KeywordKind.Float: lambda span: Ty.FloatType(span=span, width=8),             # default float type is f64
+        KeywordKind.Bool: lambda span: Ty.BoolType(span=span),
+        KeywordKind.Str: lambda span: Ty.StrType(span=span),
+        KeywordKind.Char: lambda span: Ty.CharType(span=span),
+        KeywordKind.Void: lambda span: Ty.VoidType(span=span),
     }
 
     def __parse_base(self) -> ASTType:
@@ -65,14 +66,12 @@ class TypeParser:
         token = self.__stream.next()
 
         if isinstance(token, Keyword) and token.kind in self.MAPPING:
-            ty = deepcopy(self.MAPPING[token.kind])
-            ty.span = token.span
-            return ty
+            return self.MAPPING[token.kind](token.span)
 
         if isinstance(token, Keyword) and token.kind == KeywordKind.Fn:
             # function type, e.g., `fn(int, str) -> bool`
             self.__stream.consume_punctuator(PunctuatorKind.LParen)
-            param_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
+            param_types = self.__stream.consume_separated(self.parse_type, SEP_COMMA, TERM_RPAREN)
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
             arrow_token = self.__stream.peek()
@@ -90,7 +89,7 @@ class TypeParser:
 
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
             # tuple type, e.g., `(int, str)`
-            element_types = self.__stream.consume_separated(self.parse_type, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
+            element_types = self.__stream.consume_separated(self.parse_type, SEP_COMMA, TERM_RPAREN)
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
             return Ty.TupleType(span=token.span, element_types=element_types)
 
@@ -101,8 +100,8 @@ class TypeParser:
         self.__stream.consume_punctuator(PunctuatorKind.LAngle)
         generic_args = self.__stream.consume_separated(
             self.parse_generic_arg,
-            {PunctuatorKind.Comma},
-            {PunctuatorKind.RAngle},
+            SEP_COMMA,
+            TERM_RANGLE,
         )
         self.__stream.consume_punctuator(PunctuatorKind.RAngle)
 

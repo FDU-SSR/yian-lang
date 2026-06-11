@@ -4,6 +4,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import NoReturn
@@ -104,6 +105,12 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=0,
         choices=[0, 1, 2, 3],
         help="Optimization level passed to clang (default: 0).",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help="Print per-phase timing information.",
     )
     return parser.parse_args(argv)
 
@@ -312,20 +319,32 @@ def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
+    timings: dict[str, float] = {}
+    t0 = time.perf_counter() if args.profile else 0.0
+
     # extract .an files from input paths
     src_files = collect_an_files(args.paths)
 
     # lex all source files
+    lex_start = time.perf_counter() if args.profile else 0.0
     token_lists: list[list[Token]] = __lex(src_files)
+    if args.profile:
+        timings["lex"] = time.perf_counter() - lex_start
 
     if args.token is not None:
         __write_text_output(args.token, __format_token_output(src_files, token_lists))
 
     # parse all token lists into ASTs
+    parse_start = time.perf_counter() if args.profile else 0.0
     programs: list[AST.Program] = __parse(token_lists)
+    if args.profile:
+        timings["parse"] = time.perf_counter() - parse_start
 
     # desugar ASTs
+    desugar_start = time.perf_counter() if args.profile else 0.0
     programs = __desugar(programs)
+    if args.profile:
+        timings["desugar"] = time.perf_counter() - desugar_start
 
     if args.ast is not None:
         __write_text_output(args.ast, __format_ast_output(src_files, programs))
@@ -336,11 +355,14 @@ def main(argv: list[str] | None = None) -> int:
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx()
 
+    resolve_start = time.perf_counter() if args.profile else 0.0
     global_resolver = GlobalResolve(unit_datas, type_ctx)
     try:
         global_resolver.run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
+    if args.profile:
+        timings["global_resolve"] = time.perf_counter() - resolve_start
 
     # Run final checks on the type space (e.g. self-referential type detection)
     try:
@@ -349,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    type_check_start = time.perf_counter() if args.profile else 0.0
     type_checker = TypeCheck(unit_datas, type_ctx)
     try:
         type_checker.run()
@@ -358,12 +381,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     def_points = type_checker.export()
+    if args.profile:
+        timings["type_check"] = time.perf_counter() - type_check_start
 
     if args.hir is not None:
         __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
 
     # HIR → CFG IR pass
+    cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
+    if args.profile:
+        timings["cfg_codegen"] = time.perf_counter() - cfg_start
 
     if args.cfg is not None:
         __write_text_output(args.cfg, __format_cfg_output(cfg_functions))
@@ -376,9 +404,13 @@ def main(argv: list[str] | None = None) -> int:
         unit_names = __build_unit_names(unit_datas)
 
         # CFG → LLVM IR pass
+        llvm_start = time.perf_counter() if args.profile else 0.0
         llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names)
+        if args.profile:
+            timings["llvm_codegen"] = time.perf_counter() - llvm_start
 
         # Emitter
+        emit_start = time.perf_counter() if args.profile else 0.0
         emitter = Emitter()
 
         # Debug: dump LLVM IR
@@ -396,6 +428,17 @@ def main(argv: list[str] | None = None) -> int:
             obj_path = build_dir / (stem + ".o")
             emitter.emit_module(llvm_module, str(build_dir), "obj", stem)
             __link_exe(obj_path, output_path, args.O)
+        if args.profile:
+            timings["emit"] = time.perf_counter() - emit_start
+
+    if args.profile:
+        total = time.perf_counter() - t0
+        print(f"\n{' Phase ':-^40}", file=sys.stderr)
+        for phase, elapsed in timings.items():
+            pct = elapsed / total * 100 if total > 0 else 0
+            print(f"  {phase:<20} {elapsed:8.4f}s  ({pct:5.1f}%)", file=sys.stderr)
+        print(f"  {'total':<20} {total:8.4f}s", file=sys.stderr)
+        print(f"{'':-^40}", file=sys.stderr)
 
     return 0
 

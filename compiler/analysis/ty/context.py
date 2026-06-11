@@ -92,6 +92,16 @@ class TypeCtx:
         self.__impl_registry = ImplRegistry(self)
         self.__procedures: dict[int, tuple[AST.Block, int]] = {}  # procedure_id -> procedure block
 
+        # Caches for hot-path type queries — the type_id fully encodes the
+        # generic instantiation, so the cache key is just the type_id.
+        self.__fields_cache: dict[int, list[Type.StructField]] = {}
+        self.__variants_cache: dict[int, list[Type.EnumVariant]] = {}
+        self.__params_cache: dict[int, list[Type.Parameter]] = {}
+        self.__return_type_cache: dict[int, int] = {}
+        self.__receiver_type_cache: dict[int, int] = {}
+        self.__methods_cache: dict[int, dict[str, int]] = {}
+        self.__default_literals_cache: dict[int, int] = {}
+
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
 
@@ -248,10 +258,109 @@ class TypeCtx:
         return type_ops.is_integer_type(self, type_id, include_literals)
 
     def default_literals(self, type_id: int) -> int:
-        return type_ops.default_literals(self, type_id)
+        cached = self.__default_literals_cache.get(type_id)
+        if cached is not None:
+            return cached
+        result = type_ops.default_literals(self, type_id)
+        self.__default_literals_cache[type_id] = result
+        return result
 
     def contains_generic(self, type_id: int) -> bool:
         return type_ops.contains_generic(self, type_id)
+
+    # ------------------------------------------------------------------
+    # cached type queries
+    # ------------------------------------------------------------------
+
+    def get_struct_fields(self, type_id: int) -> list[Type.StructField]:
+        """Return the fields of a struct type, with caching."""
+        cached = self.__fields_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        assert isinstance(ty, Type.StructType)
+        fields = ty.get_fields(self)
+        self.__fields_cache[type_id] = fields
+        return fields
+
+    def get_struct_field_by_name(self, type_id: int, name: str) -> Type.StructField | None:
+        """Return a struct field by name, with caching (via get_struct_fields)."""
+        for field in self.get_struct_fields(type_id):
+            if field.name == name:
+                return field
+        return None
+
+    def get_enum_variants(self, type_id: int) -> list[Type.EnumVariant]:
+        """Return the variants of an enum type, with caching."""
+        cached = self.__variants_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        assert isinstance(ty, Type.EnumType)
+        variants = ty.get_variants(self)
+        self.__variants_cache[type_id] = variants
+        return variants
+
+    def get_enum_variant_by_name(self, type_id: int, name: str) -> Type.EnumVariant | None:
+        """Return an enum variant by name, with caching (via get_enum_variants)."""
+        for variant in self.get_enum_variants(type_id):
+            if variant.name == name:
+                return variant
+        return None
+
+    def get_params(self, type_id: int) -> list[Type.Parameter]:
+        """Return the parameters of a function or method type, with caching."""
+        cached = self.__params_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        if isinstance(ty, Type.FunctionType):
+            params = ty.parameters(self)
+        elif isinstance(ty, Type.MethodType):
+            params = ty.parameters(self)
+        else:
+            raise ValueError(f"Expected function or method type, got {type(ty).__name__}")
+        self.__params_cache[type_id] = params
+        return params
+
+    def get_return_type(self, type_id: int) -> int:
+        """Return the return type of a function or method type, with caching."""
+        cached = self.__return_type_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        if isinstance(ty, Type.FunctionType):
+            ret = ty.return_type(self)
+        elif isinstance(ty, Type.MethodType):
+            ret = ty.return_type(self)
+        else:
+            raise ValueError(f"Expected function or method type, got {type(ty).__name__}")
+        self.__return_type_cache[type_id] = ret
+        return ret
+
+    def get_receiver_type(self, type_id: int) -> int:
+        """Return the receiver type of a method type, with caching."""
+        cached = self.__receiver_type_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        assert isinstance(ty, Type.MethodType)
+        recv = ty.receiver_type(self)
+        self.__receiver_type_cache[type_id] = recv
+        return recv
+
+    def get_trait_methods(self, type_id: int) -> dict[str, int]:
+        """Return the methods of a trait type, with caching."""
+        cached = self.__methods_cache.get(type_id)
+        if cached is not None:
+            return cached
+        ty = self[type_id]
+        assert isinstance(ty, Type.TraitType)
+        methods = ty.get_methods(self)
+        self.__methods_cache[type_id] = methods
+        return methods
+
+    # ------------------------------------------------------------------
 
     def merge_types(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
         return type_ops.merge_types(self, left_type_id, right_type_id, span)
@@ -294,10 +403,10 @@ class TypeCtx:
                         for elem_id in element_types:
                             visit(elem_id)
                     case Type.StructType():
-                        for field in ty.get_fields(self):
+                        for field in self.get_struct_fields(ty.type_id):
                             visit(field.type_id)
                     case Type.EnumType():
-                        for variant in ty.get_variants(self):
+                        for variant in self.get_enum_variants(ty.type_id):
                             if variant.payload_type is not None:
                                 visit(variant.payload_type)
                     case _:
@@ -429,7 +538,7 @@ class TypeCtx:
         for deref_count, type_at_level in enumerate(chain):
             candidates: list[LookupResult] = []
 
-            for impl in self.__impl_registry.iter_impls():
+            for impl in self.__impl_registry.iter_candidate_impls(type_at_level):
                 if method_name not in impl.methods:
                     continue
 
@@ -455,7 +564,7 @@ class TypeCtx:
                     instantiated_method_ty = self[instantiated_method_id]
                     assert isinstance(instantiated_method_ty, Type.MethodType)
 
-                parameters = instantiated_method_ty.parameters(self)
+                parameters = self.get_params(instantiated_method_id)
                 if len(parameters) != len(args):
                     continue
 
@@ -493,7 +602,7 @@ class TypeCtx:
         if not isinstance(method_ty, Type.MethodType):
             raise CompilerError(f"Method lookup for type '{self.get_name(iter_type_id)}' did not resolve to a method type")
 
-        return_type_id = method_ty.return_type(self)
+        return_type_id = self.get_return_type(lookup.method_id)
         return_ty = self[return_type_id]
         if isinstance(return_ty, Type.EnumType) and return_ty.custom_def.name == "Option" and len(return_ty.generic_args) == 1:
             return return_ty.generic_args[0]

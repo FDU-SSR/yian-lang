@@ -290,7 +290,7 @@ class CallDispatcher:
         struct_ty = self.__ctx.type_ctx[struct_type_id]
         assert isinstance(struct_ty, Type.StructType)
 
-        fields = struct_ty.get_fields(self.__ctx.type_ctx)
+        fields = self.__ctx.type_ctx.get_struct_fields(struct_type_id)
         coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
 
         instantiated_struct_id = inference.instantiate(struct_type_id)
@@ -378,7 +378,7 @@ class CallDispatcher:
         # payload_type 非 None 时必定是 StructType
         payload_ty = self.__ctx.type_ctx[variant.payload_type]
         assert isinstance(payload_ty, Type.StructType)
-        fields = payload_ty.get_fields(self.__ctx.type_ctx)
+        fields = self.__ctx.type_ctx.get_struct_fields(payload_ty.type_id)
         if len(args) != len(fields):
             raise AnalysisError(f"variant '{variant.name}' expects {len(fields)} arguments, got {len(args)}", span)
 
@@ -486,7 +486,7 @@ class CallDispatcher:
 
         payload_ty = self.__ctx.type_ctx[variant.payload_type]
         assert isinstance(payload_ty, Type.StructType)
-        fields = payload_ty.get_fields(self.__ctx.type_ctx)
+        fields = self.__ctx.type_ctx.get_struct_fields(payload_ty.type_id)
         field_by_name = {field.name: field for field in fields}
 
         resolved_values: dict[str, HIR.Expr] = {}

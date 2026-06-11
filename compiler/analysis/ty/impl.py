@@ -33,6 +33,8 @@ class ImplRegistry:
         self.__trait_impl_cache: dict[int, list[Impl]] = defaultdict(list)  # target type -> list of trait impls for the target type
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
+        self.__generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic impls
+        self.__trait_generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic trait impls
 
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
         impl = Impl(span=span, generics=generics, target=target, trait=trait)
@@ -63,7 +65,9 @@ class ImplRegistry:
                 return self.__resolve_deref_target(impl, {})
 
         # 2) Generic trait impls — try to unify impl.target against type_id
-        for impl in self.__trait_generic_impl_cache:
+        # Use name-based index to avoid scanning all generic trait impls
+        base_name = self.__target_base_name(type_id)
+        for impl in self.__trait_generic_impl_by_name.get(base_name, []):
             if impl.trait != deref_trait_id or "deref" not in impl.methods:
                 continue
             inference = GenericInference(self.__ctx, SrcSpan.empty())
@@ -84,7 +88,7 @@ class ImplRegistry:
             instantiated_id = self.__ctx.instantiate(deref_method_id, substs)
         method_ty = self.__ctx[instantiated_id]
         assert isinstance(method_ty, Type.MethodType)
-        return_type_id = method_ty.return_type(self.__ctx)
+        return_type_id = self.__ctx.get_return_type(instantiated_id)
         return_ty = self.__ctx[return_type_id]
         if isinstance(return_ty, Type.PointerType):
             return return_ty.pointee_type
@@ -149,16 +153,16 @@ class ImplRegistry:
         assert isinstance(trait_method_ty, Type.MethodType)
         impl_method_ty = self.__ctx[impl_method]
         assert isinstance(impl_method_ty, Type.MethodType)
-        receiver_type = impl_method_ty.receiver_type(self.__ctx)
+        receiver_type = self.__ctx.get_receiver_type(impl_method)
 
         if receiver_type != target_type:
             return False
-        if trait_method_ty.receiver_type(self.__ctx) != trait_type:
+        if self.__ctx.get_receiver_type(trait_method) != trait_type:
             return False
-        if not self.__impl_compatible(trait_type, target_type, trait_method_ty.return_type(self.__ctx), impl_method_ty.return_type(self.__ctx)):
+        if not self.__impl_compatible(trait_type, target_type, self.__ctx.get_return_type(trait_method), self.__ctx.get_return_type(impl_method)):
             return False
-        trait_params = trait_method_ty.parameters(self.__ctx)
-        impl_params = impl_method_ty.parameters(self.__ctx)
+        trait_params = self.__ctx.get_params(trait_method)
+        impl_params = self.__ctx.get_params(impl_method)
         if len(trait_params) != len(impl_params):
             return False
         for trait_param, impl_param in zip(trait_params, impl_params):
@@ -203,5 +207,35 @@ class ImplRegistry:
                 self.__trait_impl_cache[impl.target].append(impl)
             elif impl.trait is None and len(impl.generics) > 0:
                 self.__generic_impl_cache.append(impl)
+                self.__generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
                 self.__trait_generic_impl_cache.append(impl)
+                self.__trait_generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
+
+    def __target_base_name(self, type_id: int) -> str:
+        """Return the simple (non-generic) name of a type for indexing purposes."""
+        ty = self.__ctx[type_id]
+        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType)):
+            return ty.custom_def.name
+        if isinstance(ty, Type.ArrayType):
+            return "[]"
+        if isinstance(ty, Type.SliceType):
+            return "[]"
+        if isinstance(ty, Type.PointerType):
+            return "*"
+        if isinstance(ty, Type.TupleType):
+            return "()"
+        if isinstance(ty, Type.FunctionPointerType):
+            return "fn"
+        return self.__ctx.get_name(type_id)
+
+    def iter_candidate_impls(self, type_id: int) -> list[Impl]:
+        """Return the impls that could potentially match the given type_id.
+
+        Combines exact-match caches and name-matched generic impls to avoid
+        scanning all impls in method_lookup.
+        """
+        exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
+        base_name = self.__target_base_name(type_id)
+        generic = self.__generic_impl_by_name.get(base_name, []) + self.__trait_generic_impl_by_name.get(base_name, [])
+        return exact + generic

@@ -330,7 +330,7 @@ Expr: TypeAlias = (
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | SysRead
+    | SizeOf | BitCast | SysRead | SysWrite
     | Tuple | Array
     | Var | Literal | Ty
 )
@@ -344,5 +344,4 @@ Stmt: TypeAlias = (
     | Match
     | Block
     | Expr
-    | SysWrite
 )

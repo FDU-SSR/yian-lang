@@ -26,32 +26,38 @@ class Desugar:
     def __init__(self, program: AST.Program):
         self.__program = program
 
-        self.__processors: list[Callable[[AST.Block], None]] = [
-            self.__process_for_loops,
-            self.__process_while_loops,
-            self.__process_asserts,
-            self.__process_if_chains,
-            self.__process_range_exprs,
-            self.__process_member_tests,
-        ]
-
     def run(self) -> None:
-        for processor in self.__processors:
-            for item in self.__program.items:
-                match item:
-                    case AST.FuncDef():
-                        processor(item.body)
-                    case AST.Impl():
-                        for method in item.items:
-                            processor(method.body)
-                    case AST.TraitDef():
-                        for trait_item in item.items:
-                            if isinstance(trait_item, AST.MethodDef):
-                                processor(trait_item.body)
-                    case _:
-                        continue
+        """Apply desugaring in two passes (down from six).
 
-    def __process_nested_blocks(self, stmt: AST.Stmt, processor: Callable[[AST.Block], None]) -> None:
+        Pass 1 — control-flow lowering: for, while, assert, elif chains.
+        Pass 2 — expression rewriting: range (a..b), member test (x in y).
+
+        Each pass walks the entire AST once, applying all transformations
+        that share the same traversal pattern.
+        """
+        for item in self.__program.items:
+            match item:
+                case AST.FuncDef():
+                    self.__process_control_flow(item.body)
+                    self.__process_expr_rewrite(item.body)
+                case AST.Impl():
+                    for method in item.items:
+                        self.__process_control_flow(method.body)
+                        self.__process_expr_rewrite(method.body)
+                case AST.TraitDef():
+                    for trait_item in item.items:
+                        if isinstance(trait_item, AST.MethodDef):
+                            self.__process_control_flow(trait_item.body)
+                            self.__process_expr_rewrite(trait_item.body)
+                case _:
+                    continue
+
+    # ------------------------------------------------------------------
+    # shared traversal helpers
+    # ------------------------------------------------------------------
+
+    def __recurse_blocks(self, stmt: AST.Stmt, processor: Callable[[AST.Block], None]) -> None:
+        """Apply *processor* to every nested block inside *stmt*."""
         match stmt:
             case AST.Block():
                 processor(stmt)
@@ -73,79 +79,44 @@ class Desugar:
             case _:
                 return
 
-    def __process_for_loops(self, block: AST.Block) -> None:
+    # ------------------------------------------------------------------
+    # Pass 1 — control-flow lowering
+    # ------------------------------------------------------------------
+
+    def __process_control_flow(self, block: AST.Block) -> None:
+        """Lower for, while, assert, and elif chains in a single traversal."""
         desugared_stmts: list[AST.Stmt] = []
 
         for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_for_loops)
+            self.__recurse_blocks(stmt, self.__process_control_flow)
 
             if isinstance(stmt, AST.For):
                 desugared_stmts.append(self.__desugar_for(stmt))
-            else:
-                desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
-
-    def __process_while_loops(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
-
-        for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_while_loops)
-
-            if isinstance(stmt, AST.While):
+            elif isinstance(stmt, AST.While):
                 desugared_stmts.append(self.__desugar_while(stmt))
-            else:
-                desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
-
-    def __process_asserts(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
-
-        for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_asserts)
-
-            if isinstance(stmt, AST.Assert):
+            elif isinstance(stmt, AST.Assert):
                 desugared_stmts.append(self.__desugar_assert(stmt))
-            else:
-                desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
-
-    def __process_if_chains(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
-
-        for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_if_chains)
-
-            if isinstance(stmt, AST.If) and stmt.elif_branches:
+            elif isinstance(stmt, AST.If) and stmt.elif_branches:
                 desugared_stmts.append(self.__desugar_if_chain(stmt))
             else:
                 desugared_stmts.append(stmt)
 
         block.stmts = desugared_stmts
 
-    def __process_range_exprs(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
+    # ------------------------------------------------------------------
+    # Pass 2 — expression rewriting
+    # ------------------------------------------------------------------
 
+    def __process_expr_rewrite(self, block: AST.Block) -> None:
+        """Desugar range expressions and member tests in a single traversal."""
         for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_range_exprs)
+            self.__recurse_blocks(stmt, self.__process_expr_rewrite)
+            self.__rewrite_exprs_in_stmt(stmt)
 
-            self.__desugar_range_in_stmt(stmt)
-            desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
-
-    def __process_member_tests(self, block: AST.Block) -> None:
-        desugared_stmts: list[AST.Stmt] = []
-
-        for stmt in block.stmts:
-            self.__process_nested_blocks(stmt, self.__process_member_tests)
-
-            self.__desugar_member_test_in_stmt(stmt)
-            desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
+    def __rewrite_exprs_in_stmt(self, stmt: AST.Stmt) -> None:
+        """Apply both range and member-test desugaring to all expressions in a statement."""
+        self.__apply_expr_visitor(stmt, self.__desugar_range)
+        self.__apply_expr_visitor(stmt, self.__desugar_member_test)
 
     def __desugar_assert(self, stmt: AST.Assert) -> AST.If:
         message = stmt.message
@@ -316,15 +287,7 @@ class Desugar:
             case _:
                 pass
 
-    def __desugar_range_in_stmt(self, stmt: AST.Stmt) -> None:
-        """Walk expression fields within a statement and desugar any Range operators."""
-        self.__desugar_expr_in_stmt(stmt, self.__desugar_range)
-
-    def __desugar_member_test_in_stmt(self, stmt: AST.Stmt) -> None:
-        """Walk expression fields within a statement and desugar any In operators."""
-        self.__desugar_expr_in_stmt(stmt, self.__desugar_member_test)
-
-    def __desugar_expr_in_stmt(self, stmt: AST.Stmt, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
+    def __apply_expr_visitor(self, stmt: AST.Stmt, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
         """Apply expr_visitor to all expression fields within a statement."""
         match stmt:
             case AST.VarDecl(init_expr=expr) if expr is not None:

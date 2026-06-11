@@ -5,7 +5,9 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
 from compiler.frontend.parse.parser_type import TypeParser
-from compiler.frontend.parse.stream import TokenStream
+from compiler.frontend.parse.stream import (SEP_COMMA, SEP_PIPE,
+                                            TERM_FAT_ARROW, TERM_RBRACE,
+                                            TERM_RPAREN, TokenStream)
 
 
 class StmtParser:
@@ -62,7 +64,7 @@ class StmtParser:
 
     def __parse_block(self) -> AST.Block:
         span = self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace).span
-        stmts = self.__stream.consume_until(self.parse_stmt, {Tok.PunctuatorKind.RBrace})
+        stmts = self.__stream.consume_until(self.parse_stmt, TERM_RBRACE)
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace)
         return AST.Block(stmts=stmts, span=span)
 
@@ -141,7 +143,7 @@ class StmtParser:
         expr = self.__expr_parser.parse_expr()
 
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace)
-        arms = self.__stream.consume_until(self.__parse_match_arm, {Tok.PunctuatorKind.RBrace})
+        arms = self.__stream.consume_until(self.__parse_match_arm, TERM_RBRACE)
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace)
 
         return AST.Match(span=span, expr=expr, arms=arms)
@@ -221,22 +223,22 @@ class StmtParser:
         next_token = self.__stream.peek()
         match next_token:
             case Tok.IntLiteral():
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.Punctuator(kind=Tok.PunctuatorKind.Minus):
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
+                values = self.__stream.consume_separated(self.__parse_int_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
                 return AST.IntPattern(span=values[0].span, values=values)
             case Tok.CharLiteral():
-                values = self.__stream.consume_separated(self.__parse_char_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
+                values = self.__stream.consume_separated(self.__parse_char_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
                 return AST.CharPattern(span=values[0].span, values=values)
             case Tok.StrLiteral():
-                values = self.__stream.consume_separated(self.__parse_str_pattern_value, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.FatArrow})
+                values = self.__stream.consume_separated(self.__parse_str_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
                 return AST.StrPattern(span=values[0].span, values=values)
             case Tok.Identifier():
                 next_next_token = self.__stream.peek_nth(1)
                 if isinstance(next_next_token, Tok.Punctuator) and next_next_token.kind == Tok.PunctuatorKind.LParen:
                     return self.__parse_enum_payload_pattern()
-                variants = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Pipe}, {Tok.PunctuatorKind.FatArrow})
+                variants = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_PIPE, TERM_FAT_ARROW)
                 return AST.EnumPattern(span=variants[0].span, variants=variants)
             case Tok.Keyword(kind=Tok.KeywordKind.Underscore):
                 span = self.__stream.consume_keyword(Tok.KeywordKind.Underscore).span
@@ -283,7 +285,7 @@ class StmtParser:
         variant_token = self.__stream.consume_identifier()
 
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        fields = self.__stream.consume_separated(self.__stream.consume_identifier, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+        fields = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_COMMA, TERM_RPAREN)
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
         return AST.PayloadPattern(span=variant_token.span, variant=variant_token, fields=fields)

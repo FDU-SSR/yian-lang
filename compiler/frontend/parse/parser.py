@@ -9,7 +9,10 @@ from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
 from compiler.frontend.parse.parser_stmt import StmtParser
 from compiler.frontend.parse.parser_type import TypeParser
-from compiler.frontend.parse.stream import TokenStream
+from compiler.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA, SEP_COMMA,
+                                            SEP_DOT, TERM_RANGLE,
+                                            TERM_RBRACE, TERM_RPAREN,
+                                            TERM_SEMICOLON, TokenStream)
 
 
 class Parser:
@@ -64,7 +67,7 @@ class Parser:
         match self.__stream.next():
             case Keyword(KeywordKind.Import, span):
                 # Parse `import xxx.yyy as zzz;`
-                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot}, set())
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_DOT, EMPTY_SET)
                 target = paths.pop()
                 match self.__stream.peek():
                     case Keyword(KeywordKind.As, _):
@@ -75,13 +78,13 @@ class Parser:
                         result = [AST.Import(span=span, paths=paths, target=target, alias=None)]
                 # consume any trailing semicolons/commas between imports
                 token = self.__stream.peek()
-                if isinstance(token, Punctuator) and token.kind in {PunctuatorKind.Semicolon, PunctuatorKind.Comma}:
+                if isinstance(token, Punctuator) and token.kind in SEMI_OR_COMMA:
                     self.__stream.advance()
                 return result
 
             case Keyword(KeywordKind.From, span):
                 # Parse `from xxx.yyy import zzz as zzz_alias, www as www_alias;`
-                paths = self.__stream.consume_separated(self.__stream.consume_identifier, {PunctuatorKind.Dot}, set())
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_DOT, EMPTY_SET)
 
                 self.__stream.consume_keyword(KeywordKind.Import)
 
@@ -95,7 +98,7 @@ class Parser:
                         case _:
                             return target, None
 
-                targets_and_aliases = self.__stream.consume_separated(parse_target, {PunctuatorKind.Comma}, {PunctuatorKind.Semicolon})
+                targets_and_aliases = self.__stream.consume_separated(parse_target, SEP_COMMA, TERM_SEMICOLON)
                 targets, aliases = zip(*targets_and_aliases)
 
                 # each target corresponds to a separate import stmt
@@ -141,8 +144,8 @@ class Parser:
 
         params = self.__stream.consume_separated(
             parse_param,
-            {PunctuatorKind.Comma},
-            {PunctuatorKind.RAngle},
+            SEP_COMMA,
+            TERM_RANGLE,
         )
         self.__stream.consume_punctuator(PunctuatorKind.RAngle)
         return params
@@ -173,7 +176,7 @@ class Parser:
             target = ty
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        items = self.__stream.consume_until(self.__parse_method_def, {PunctuatorKind.RBrace})
+        items = self.__stream.consume_until(self.__parse_method_def, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items)
@@ -185,7 +188,7 @@ class Parser:
         generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        fields = self.__stream.consume_separated(self.__parse_field_info, {PunctuatorKind.Comma}, {PunctuatorKind.RBrace})
+        fields = self.__stream.consume_separated(self.__parse_field_info, SEP_COMMA, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.StructDef(span=name.span, attrs=attrs, name=name, generics=generics, fields=fields)
@@ -197,7 +200,7 @@ class Parser:
         generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        variants = self.__stream.consume_separated(self.__parse_variant_info, {PunctuatorKind.Comma}, {PunctuatorKind.RBrace})
+        variants = self.__stream.consume_separated(self.__parse_variant_info, SEP_COMMA, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.EnumDef(span=name.span, attrs=attrs, name=name, generics=generics, variants=variants)
@@ -209,7 +212,7 @@ class Parser:
         generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-        items = self.__stream.consume_until(self.__parse_trait_item, {PunctuatorKind.RBrace})
+        items = self.__stream.consume_until(self.__parse_trait_item, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
@@ -222,7 +225,7 @@ class Parser:
         name = self.__stream.consume_identifier()
         generics = self.__parse_generics()
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
+        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
         token = self.__stream.peek()
@@ -239,7 +242,7 @@ class Parser:
             decl = self.__parse_method_decl()
 
         block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
-        body = self.__stream.consume_until(self.__parse_stmt, {PunctuatorKind.RBrace})
+        body = self.__stream.consume_until(self.__parse_stmt, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         block = AST.Block(span=block_span, stmts=body)
@@ -263,7 +266,7 @@ class Parser:
         token = self.__stream.peek()
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
             self.__stream.consume_punctuator(PunctuatorKind.LBrace)
-            fields = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RBrace})
+            fields = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RBRACE)
             self.__stream.consume_punctuator(PunctuatorKind.RBrace)
         else:
             fields: list[AST.VarInfo] = []
@@ -296,7 +299,7 @@ class Parser:
         generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, {PunctuatorKind.Comma}, {PunctuatorKind.RParen})
+        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
         token = self.__stream.peek()
@@ -307,7 +310,7 @@ class Parser:
             ret_type = None
 
         block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
-        body = self.__stream.consume_until(self.__parse_stmt, {PunctuatorKind.RBrace})
+        body = self.__stream.consume_until(self.__parse_stmt, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
         block = AST.Block(span=block_span, stmts=body)

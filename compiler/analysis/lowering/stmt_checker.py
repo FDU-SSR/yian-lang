@@ -236,7 +236,7 @@ class StmtChecker:
                         raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
                     payload_ty = ctx.type_ctx[variant.payload_type]
                     assert isinstance(payload_ty, Type.StructType)
-                    field_types = [f.type_id for f in payload_ty.get_fields(ctx.type_ctx)]
+                    field_types = [f.type_id for f in ctx.type_ctx.get_struct_fields(payload_ty.type_id)]
                     if len(pat.fields) != len(field_types):
                         raise AnalysisError(
                             f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields",

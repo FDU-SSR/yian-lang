@@ -130,7 +130,7 @@ class LLBuilder:
         for idx in indices[1:]:
             ty = self.__type_ctx[pointee_type_id]
             if isinstance(ty, Type.StructType):
-                fields = ty.get_fields(self.__type_ctx)
+                fields = self.__type_ctx.get_struct_fields(ty.type_id)
                 pointee_type_id = fields[idx].type_id
             elif isinstance(ty, Type.TupleType):
                 pointee_type_id = ty.element_types[idx]
@@ -246,7 +246,7 @@ class LLBuilder:
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         base_type = self.__type_ctx[base.type_id]
         if isinstance(base_type, Type.StructType):
-            fields = base_type.get_fields(self.__type_ctx)
+            fields = self.__type_ctx.get_struct_fields(base.type_id)
             field_type = fields[index].type_id
         elif isinstance(base_type, Type.TupleType):
             field_type = base_type.element_types[index]
@@ -354,7 +354,7 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
-        payload_fields = payload_type_def.get_fields(self.__type_ctx)
+        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         gep_val = self.__builder.gep(matched.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type_id)).ir_type  # type: ignore

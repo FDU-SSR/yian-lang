@@ -43,7 +43,7 @@ class TypeCheck:
         body, unit_id = self.__type_ctx.get_procedure(type_id)
 
         unit = self.__units[unit_id]
-        dp = DefPoint(type_id=type_id, unit_id=unit_id, ast_body=body, symbol_ctx=unit.symbol_ctx.clone())
+        dp = DefPoint(type_id=type_id, unit_id=unit_id, ast_body=body, symbol_ctx=unit.symbol_ctx)
         self.__def_points[type_id] = dp
         self.__worklist.append(dp)
 
@@ -72,7 +72,7 @@ class TypeCheck:
                         raise AnalysisError("Multiple 'main' functions found", item.span)
                     symbol = unit.symbol_ctx.lookup("main")
                     assert symbol is not None
-                    main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx.clone())
+                    main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx)
                     self.__worklist.append(main_def_point)
                     self.__def_points[symbol.type_id] = main_def_point
         if not self.__worklist:

@@ -200,8 +200,6 @@ class CfgBuilder:
                 self.__translate_delete(stmt)
             case HIR.Match():
                 self.__translate_match(stmt)
-            case HIR.SysWrite():
-                self.__translate_sys_write(stmt)
             case _:
                 self.__translate_expr_stmt(stmt)
 
@@ -309,11 +307,6 @@ class CfgBuilder:
 
         self.__switch_to(merge_block)
 
-    def __translate_sys_write(self, stmt: HIR.SysWrite) -> None:
-        fd = self.__resolve_val(stmt.fd)
-        buf = self.__resolve_val(stmt.buf)
-        self.__emit(IR.SysWrite(fd, buf))
-
     # ------------------------------------------------------------------
     # Match helpers
     # ------------------------------------------------------------------
@@ -377,6 +370,8 @@ class CfgBuilder:
                 return self.__resolve_bit_cast(expr)
             case HIR.SysRead():
                 return self.__resolve_sys_read(expr)
+            case HIR.SysWrite():
+                return self.__resolve_sys_write(expr)
             case HIR.Tuple():
                 return self.__resolve_tuple(expr)
             case HIR.Array():
@@ -530,7 +525,7 @@ class CfgBuilder:
     def __resolve_struct_construct(self, expr: HIR.StructConstruct) -> IR.Value:
         struct_type = self.__type_ctx[expr.struct_id]
         assert isinstance(struct_type, Type.StructType)
-        fields = struct_type.get_fields(self.__type_ctx)
+        fields = self.__type_ctx.get_struct_fields(expr.struct_id)
         field_vals = [self.__resolve_val(expr.field_values[field.name]) for field in fields]
         return self.__build_aggregate_construct(expr.struct_id, field_vals)
 
@@ -563,7 +558,7 @@ class CfgBuilder:
             assert expr.variant.payload_type is not None
             payload_type = self.__type_ctx[expr.variant.payload_type]
             assert isinstance(payload_type, Type.StructType)
-            fields = payload_type.get_fields(self.__type_ctx)
+            fields = self.__type_ctx.get_struct_fields(expr.variant.payload_type)
             payload_fields = [self.__resolve_val(expr.args[field.name]) for field in fields]
 
         return self.__build_variant_construct(expr.enum_id, expr.variant, payload_fields, expr.type_id)
@@ -611,6 +606,11 @@ class CfgBuilder:
         fd = self.__resolve_val(expr.fd)
         buf = self.__resolve_val(expr.buf)
         return self.__build_sys_read(fd, buf)
+
+    def __resolve_sys_write(self, expr: HIR.SysWrite) -> IR.Value:
+        fd = self.__resolve_val(expr.fd)
+        buf = self.__resolve_val(expr.buf)
+        return self.__build_sys_write(fd, buf)
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]
@@ -762,6 +762,10 @@ class CfgBuilder:
     def __build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
         return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
+
+    def __build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
+        self.__emit(IR.SysWrite(fd=fd, buf=buf))
+        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.void_id)
 
     def __emit_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
         """Emit a phi node into the current block's dedicated phi list."""

@@ -5,7 +5,9 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.parse.parser_type import TypeParser
-from compiler.frontend.parse.stream import TokenStream
+from compiler.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
+                                            TERM_RBRACKET, TERM_RPAREN,
+                                            TokenStream)
 
 
 class ExprParser:
@@ -96,7 +98,7 @@ class ExprParser:
                 next_token = self.__stream.peek()
                 if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.LAngle:
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-                    generics = self.__stream.consume_separated(self.__type_parser.parse_generic_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RAngle})
+                    generics = self.__stream.consume_separated(self.__type_parser.parse_generic_arg, SEP_COMMA, TERM_RANGLE)
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
                     return AST.TypeItem(span=ident.span, name=ident, generics=generics)
 
@@ -119,7 +121,7 @@ class ExprParser:
                         self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
                         return AST.Tuple(span=token.span, elements=items)
 
-                    items += self.__stream.consume_separated(self.parse_expr, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+                    items += self.__stream.consume_separated(self.parse_expr, SEP_COMMA, TERM_RPAREN)
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
                     return AST.Tuple(span=token.span, elements=items)
 
@@ -129,7 +131,7 @@ class ExprParser:
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LBracket):
                 # array expression
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LBracket)
-                items = self.__stream.consume_separated(self.parse_expr, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RBracket})
+                items = self.__stream.consume_separated(self.parse_expr, SEP_COMMA, TERM_RBRACKET)
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
                 return AST.Array(span=token.span, elements=items)
             case _:
@@ -144,7 +146,7 @@ class ExprParser:
                 case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                     # function call
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-                    args = self.__stream.consume_separated(self.parse_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+                    args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
                     expr = AST.Call(span=expr.span + token.span, callee=expr, args=args)
@@ -159,7 +161,7 @@ class ExprParser:
                         case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                             # method call
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-                            args = self.__stream.consume_separated(self.parse_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+                            args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
                             expr = AST.MethodCall(span=expr.span, receiver=expr, method_name=field_or_method_name, generics=[], args=args)
@@ -167,11 +169,11 @@ class ExprParser:
                             # Generic method call: expr.name<T>(args)
                             # LAngle means no preceding whitespace — always generic opening
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-                            generics = self.__stream.consume_separated(self.__type_parser.parse_type, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RAngle})
+                            generics = self.__stream.consume_separated(self.__type_parser.parse_type, SEP_COMMA, TERM_RANGLE)
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
 
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-                            args = self.__stream.consume_separated(self.parse_arg, {Tok.PunctuatorKind.Comma}, {Tok.PunctuatorKind.RParen})
+                            args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
                             self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
 
                             expr = AST.MethodCall(span=expr.span, receiver=expr, method_name=field_or_method_name, generics=generics, args=args)
