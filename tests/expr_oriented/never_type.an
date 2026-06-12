@@ -1,0 +1,17 @@
+// Test: never type `!` as return type
+// never is subtype of everything
+
+fn exit_fn() -> ! {
+    panic("exiting");
+}
+
+fn main() -> i32 {
+    // never is subtype of i32, so this is valid
+    let x: i32 = if true {
+        42
+    } else {
+        exit_fn()  // diverges, never reached
+    };
+    assert x == 42: "never type test failed";
+    return 0;
+}

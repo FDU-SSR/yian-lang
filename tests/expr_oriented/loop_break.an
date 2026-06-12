@@ -1,0 +1,9 @@
+// Expression-oriented: loop with break value
+
+fn main() -> i32 {
+    let x: i32 = loop {
+        break 42;
+    };
+    assert x == 42: "loop break value failed";
+    return 0;
+}

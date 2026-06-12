@@ -1,0 +1,11 @@
+// Expression-oriented: match as expression
+
+fn main() -> i32 {
+    let x: i32 = match 1 {
+        1 => { 100 },
+        2 => { 200 },
+        _ => { 300 },
+    };
+    assert x == 100: "match expression failed";
+    return 0;
+}
