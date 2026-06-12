@@ -231,8 +231,23 @@ def is_float_literal_type(ctx: TypeCtx, type_id: int) -> bool:
     return isinstance(ty, Type.FloatLiteralType)
 
 
-def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
-    """Merge two candidate types into one compatible result."""
+def merge_types(ctx: TypeCtx, type_ids: list[int], span: SrcSpan) -> int:
+    """Merge a list of candidate types into one compatible result.
+
+    Filters out ``never`` types (compatible with everything), then
+    pairwise-merges the remainder.
+    """
+    non_never = [t for t in type_ids if t != ctx.never_id]
+    if not non_never:
+        return ctx.never_id
+    result = non_never[0]
+    for t in non_never[1:]:
+        result = __merge_two(ctx, result, t, span)
+    return result
+
+
+def __merge_two(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
+    """Merge exactly two types (never already filtered out by caller)."""
     if left_type_id == right_type_id:
         return left_type_id
 
@@ -249,23 +264,23 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
         raise AnalysisError(f"const value mismatch: {left_ty.value} vs {right_ty.value}", span)
 
     if is_int_literal_type(ctx, left_type_id):
-        return _merge_int_literal(ctx, left_type_id, right_type_id, span)
+        return __merge_int_literal(ctx, left_type_id, right_type_id, span)
     if is_float_literal_type(ctx, left_type_id):
-        return _merge_float_literal(ctx, left_type_id, right_type_id, span)
+        return __merge_float_literal(ctx, left_type_id, right_type_id, span)
     if is_int_literal_type(ctx, right_type_id):
-        return _merge_int_literal(ctx, right_type_id, left_type_id, span)
+        return __merge_int_literal(ctx, right_type_id, left_type_id, span)
     if is_float_literal_type(ctx, right_type_id):
-        return _merge_float_literal(ctx, right_type_id, left_type_id, span)
+        return __merge_float_literal(ctx, right_type_id, left_type_id, span)
 
     if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
-        return ctx.alloc_pointer(merge_types(ctx, left_ty.pointee_type, right_ty.pointee_type, span))
+        return ctx.alloc_pointer(__merge_two(ctx, left_ty.pointee_type, right_ty.pointee_type, span))
 
     if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
-        return ctx.alloc_slice(merge_types(ctx, left_ty.element_type, right_ty.element_type, span))
+        return ctx.alloc_slice(__merge_two(ctx, left_ty.element_type, right_ty.element_type, span))
 
     if isinstance(left_ty, Type.ArrayType) and isinstance(right_ty, Type.ArrayType):
-        merged_length = merge_types(ctx, left_ty.length, right_ty.length, span)
-        return ctx.alloc_array(merge_types(ctx, left_ty.element_type, right_ty.element_type, span), merged_length)
+        merged_length = __merge_two(ctx, left_ty.length, right_ty.length, span)
+        return ctx.alloc_array(__merge_two(ctx, left_ty.element_type, right_ty.element_type, span), merged_length)
 
     if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
         if len(left_ty.element_types) != len(right_ty.element_types):
@@ -274,7 +289,7 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
                 span,
             )
         return ctx.alloc_tuple([
-            merge_types(ctx, left_element_type, right_element_type, span)
+            __merge_two(ctx, left_element_type, right_element_type, span)
             for left_element_type, right_element_type in zip(left_ty.element_types, right_ty.element_types)
         ])
 
@@ -285,8 +300,8 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
                 span,
             )
         return ctx.alloc_function_pointer(
-            [merge_types(ctx, left_param_type, right_param_type, span) for left_param_type, right_param_type in zip(left_ty.parameter_types, right_ty.parameter_types)],
-            merge_types(ctx, left_ty.return_type, right_ty.return_type, span),
+            [__merge_two(ctx, left_param_type, right_param_type, span) for left_param_type, right_param_type in zip(left_ty.parameter_types, right_ty.parameter_types)],
+            __merge_two(ctx, left_ty.return_type, right_ty.return_type, span),
         )
 
     if isinstance(left_ty, Type.CustomType) and isinstance(right_ty, Type.CustomType):
@@ -301,7 +316,7 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
                 span,
             )
         return ctx.alloc_instance(left_type_id, [
-            merge_types(ctx, left_arg, right_arg, span)
+            __merge_two(ctx, left_arg, right_arg, span)
             for left_arg, right_arg in zip(left_ty.generic_args, right_ty.generic_args)
         ])
 
@@ -311,7 +326,7 @@ def merge_types(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
     )
 
 
-def _merge_int_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
+def __merge_int_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
     other_ty = ctx[other_type_id]
     if isinstance(other_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
         return other_type_id
@@ -321,7 +336,7 @@ def _merge_int_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, s
     )
 
 
-def _merge_float_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
+def __merge_float_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
     other_ty = ctx[other_type_id]
     if isinstance(other_ty, (Type.FloatType, Type.FloatLiteralType)):
         return other_type_id

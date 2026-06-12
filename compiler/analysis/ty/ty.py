@@ -29,6 +29,11 @@ class VoidType:
 
 
 @dataclass
+class NeverType:
+    type_id: int
+
+
+@dataclass
 class BoolType:
     type_id: int
 
@@ -346,7 +351,7 @@ class AliasType:
 
 
 BasicType: TypeAlias = (
-    VoidType | BoolType | CharType | StrType
+    VoidType | NeverType | BoolType | CharType | StrType
     | IntType | FloatType
     | IntLiteralType | FloatLiteralType
 )
@@ -365,6 +370,7 @@ Ty: TypeAlias = BasicType | DerivedType | CustomType | GenericType | ConstGeneri
 
 
 class IntrinsicType(Enum):
+    Never = "!"
     Void = "void"
     Bool = "bool"
     Char = "char"

@@ -46,6 +46,7 @@ class TypeSpace:
         self.__space[ty.type_id] = ty
 
     def __add_intrinsic_types(self) -> None:
+        self.__force_add_type(Type.NeverType(type_id=self.__ctx.never_id))
         self.__force_add_type(Type.VoidType(type_id=self.__ctx.void_id))
         self.__force_add_type(Type.BoolType(type_id=self.__ctx.bool_id))
         self.__force_add_type(Type.CharType(type_id=self.__ctx.char_id))

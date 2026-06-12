@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 class TypeCtx:
     # intrinsic basic type IDs
+    never_id: int = 9
     void_id: int = 10
     bool_id: int = 11
     char_id: int = 12
@@ -112,6 +113,7 @@ class TypeCtx:
         return type_id in self.__space
 
     INTRINSIC_TYPE_DICT: dict[Type.IntrinsicType, int] = {
+        Type.IntrinsicType.Never: never_id,
         Type.IntrinsicType.Void: void_id,
         Type.IntrinsicType.Bool: bool_id,
         Type.IntrinsicType.Char: char_id,
@@ -362,8 +364,8 @@ class TypeCtx:
 
     # ------------------------------------------------------------------
 
-    def merge_types(self, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
-        return type_ops.merge_types(self, left_type_id, right_type_id, span)
+    def merge_types(self, type_ids: list[int], span: SrcSpan) -> int:
+        return type_ops.merge_types(self, type_ids, span)
 
     def finalize(self) -> None:
         """

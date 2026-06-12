@@ -55,6 +55,8 @@ class TypeResolver:
                 return self.__ctx.char_id
             case ASTTy.VoidType():
                 return self.__ctx.void_id
+            case ASTTy.NeverType():
+                return self.__ctx.never_id
             case ASTTy.ArrayType(element_type=element_type, size=size):
                 element_type_id = self.resolve(element_type, symbol_ctx)
                 size_id = self.__resolve_const_expr(size, symbol_ctx)

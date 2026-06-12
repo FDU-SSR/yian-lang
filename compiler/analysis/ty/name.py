@@ -21,6 +21,8 @@ class TypeFormatter:
         match ty:
             case Type.VoidType():
                 name = "void"
+            case Type.NeverType():
+                name = "!"
             case Type.BoolType():
                 name = "bool"
             case Type.CharType():
