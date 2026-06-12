@@ -179,7 +179,7 @@ def __export_method_def(method_def: AST.MethodDef, guides: list[bool], is_last: 
     return res
 
 
-def __export_stmt(stmt: AST.Stmt, guides: list[bool], is_last: bool) -> str:
+def __export_stmt(stmt: AST.Expr, guides: list[bool], is_last: bool) -> str:
     match stmt:
         case AST.Block():
             return __export_stmt_block(stmt, guides, is_last)
@@ -205,10 +205,10 @@ def __export_stmt(stmt: AST.Stmt, guides: list[bool], is_last: bool) -> str:
             return __export_assert(stmt, guides, is_last)
         case AST.Delete():
             return __export_delete(stmt, guides, is_last)
+        case AST.Semi():
+            return __export_stmt_expr(stmt.expr, guides, is_last)
         case AST.Binary() | AST.Unary() | AST.Call() | AST.MethodCall() | AST.FieldAccess() | AST.DynValue() | AST.DynBuffer() | AST.TypeItem() | AST.Identifier() | AST.Literal() | AST.Tuple() | AST.Array():
             return __export_stmt_expr(stmt, guides, is_last)
-        case _:
-            raise TypeError(f"Unsupported statement: {type(stmt)!r}")
 
 
 def __export_stmt_block(stmt: AST.Block, guides: list[bool], is_last: bool) -> str:
