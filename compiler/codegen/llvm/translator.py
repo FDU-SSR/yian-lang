@@ -180,9 +180,10 @@ class LLTranslator:
     def __terminator(self, builder: LLBuilder, terminator: IR.Terminator) -> None:
         match terminator:
             case IR.Ret(value=value):
-                builder.ret(self.__resolve(builder, value))
-            case IR.RetVoid():
-                builder.ret(None)
+                if value.type_id == TypeCtx.void_id:
+                    builder.ret(None)
+                else:
+                    builder.ret(self.__resolve(builder, value))
             case IR.Br(target=target):
                 builder.br(target.label)
             case IR.CondBr(cond=cond, then_block=then_block, else_block=else_block):

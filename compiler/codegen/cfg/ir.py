@@ -212,11 +212,6 @@ class Ret:
 
 
 @dataclass
-class RetVoid:
-    """Return void from function."""
-
-
-@dataclass
 class Br:
     """Unconditional branch."""
     target: Block
@@ -244,7 +239,7 @@ class Panic:
     message: Value  # must be `str` type
 
 
-Terminator: TypeAlias = Ret | RetVoid | Br | CondBr | Match | Panic
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

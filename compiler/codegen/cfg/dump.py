@@ -206,9 +206,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
         case IR.Ret(value=value):
             return f"ret {__dump_value(value)}"
 
-        case IR.RetVoid():
-            return "ret"
-
         case IR.Br(target=target):
             return f"br {target.label}"
 

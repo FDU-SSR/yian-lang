@@ -4,6 +4,8 @@ CFG IR builder — lowers a single HIR function/method body into a CFG Function.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.ty.type_ops import default_literals
@@ -14,28 +16,34 @@ from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 
+@dataclass
+class LoopCtx:
+    header: IR.Block
+    exit: IR.Block
+    break_values: list[tuple[IR.Block, IR.Value]] = field(default_factory=list[tuple[IR.Block, IR.Value]])
+
+
 class CfgBuilder:
     """Per-function builder that lowers HIR statements/expressions into CFG IR."""
 
     def __init__(self, type_ctx: TypeCtx, dp: DefPoint, func_name: str) -> None:
         self.__type_ctx = type_ctx
         self.__symbol_ctx = dp.symbol_ctx
+        self.__dp = dp
+        self.__func_name = func_name
         self.__counter = 0
-        # loop context stacks
-        self.__loop_header: list[IR.Block] = []
-        self.__loop_exit: list[IR.Block] = []
+        self.__loops: list[LoopCtx] = []
+        self.__func: IR.Function = IR.Function(name="", type_id=0, blocks=[], entry=IR.Block(""))  # placeholder; replaced in build()
 
+    # ------------------------------------------------------------------
+    # public entry point
+    # ------------------------------------------------------------------
+
+    def build(self) -> IR.Function:
+        dp = self.__dp
         entry_block = IR.Block("entry")
-        self.__func = IR.Function(
-            name=func_name,
-            type_id=dp.type_id,
-            blocks=[entry_block],
-            entry=entry_block,
-        )
+        self.__func = IR.Function(name=self.__func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block)
         self.__current_block = entry_block
-
-        func_type = self.__type_ctx[dp.type_id]
-        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
 
         # ── register parameters ──
         self.__func.params = dp.params.copy()
@@ -47,7 +55,14 @@ class CfgBuilder:
 
         # ── translate the body ──
         assert dp.body is not None
-        self.__translate_block(dp.body)
+        body_val = self.__translate_block(dp.body)
+
+        if self.__current_block.terminator is None:
+            func_type = self.__type_ctx[dp.type_id]
+            assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
+            ret_ty = func_type.return_type(self.__type_ctx)
+            if ret_ty != TypeCtx.void_id:
+                self.__set_terminator(IR.Ret(body_val))
 
         # ── dead code elimination ──
         self.__eliminate_dead_code()
@@ -55,11 +70,6 @@ class CfgBuilder:
         # ── termination guard ──
         self.__guard_termination(dp)
 
-    # ------------------------------------------------------------------
-    # public result
-    # ------------------------------------------------------------------
-
-    def build(self) -> IR.Function:
         return self.__func
 
     # ------------------------------------------------------------------
@@ -100,7 +110,7 @@ class CfgBuilder:
                         worklist.append(arm.body)
                     if term.default is not None:
                         worklist.append(term.default)
-                case IR.Ret() | IR.RetVoid() | IR.Panic():
+                case IR.Ret() | IR.Panic():
                     pass
 
         # ── filter blocks ──
@@ -120,7 +130,7 @@ class CfgBuilder:
     def __guard_termination(self, dp: DefPoint) -> None:
         """Ensure every block has a terminator.
 
-        - void-returning functions: patch unterminated blocks with ``RetVoid``.
+        - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
         - non-void-returning functions: raise ``CodegenError`` if any block is unterminated.
         """
         func_type = self.__type_ctx[dp.type_id]
@@ -131,7 +141,7 @@ class CfgBuilder:
             if block.terminator is not None:
                 continue
             if return_type == TypeCtx.void_id:
-                block.terminator = IR.RetVoid()
+                block.terminator = IR.Ret(self.__void_reg())
             else:
                 raise CodegenError(
                     f"Function '{self.__func.name}' has unterminated block '{block.label}'; "
@@ -165,92 +175,72 @@ class CfgBuilder:
     def __switch_to(self, block: IR.Block) -> None:
         self.__current_block = block
 
+    def __void_reg(self) -> IR.Value:
+        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.void_id)
+
+    def __never_reg(self) -> IR.Value:
+        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.never_id)
+
     # ------------------------------------------------------------------
     # block translation
     # ------------------------------------------------------------------
 
-    def __translate_block(self, block: HIR.Block) -> None:
+    def __translate_block(self, block: HIR.Block) -> IR.Value:
+        """Translate a block, returning the value of the last expression."""
+        last_val: IR.Value = self.__void_reg()
         for stmt in block.stmts:
-            self.__translate_stmt(stmt)
-            # Stop if the current block was terminated
+            last_val = self.__resolve_val(stmt)
             if self.__current_block.terminator is not None:
-                break
+                # Mid-block terminator (return/break/continue/panic) → divergent.
+                return last_val
+        return last_val
 
     # ------------------------------------------------------------------
-    # statement translation
+    # expression handlers
     # ------------------------------------------------------------------
 
-    def __translate_stmt(self, stmt: HIR.Stmt) -> None:
-        match stmt:
-            case HIR.Block():
-                self.__translate_block(stmt)
-            case HIR.Return():
-                self.__translate_return(stmt)
-            case HIR.If():
-                self.__translate_if(stmt)
-            case HIR.Loop():
-                self.__translate_loop(stmt)
-            case HIR.Break():
-                self.__set_terminator(IR.Br(self.__loop_exit[-1]))
-            case HIR.Continue():
-                self.__set_terminator(IR.Br(self.__loop_header[-1]))
-            case HIR.Panic():
-                self.__translate_panic(stmt)
-            case HIR.Delete():
-                self.__translate_delete(stmt)
-            case HIR.Match():
-                self.__translate_match(stmt)
-            case _:
-                self.__translate_expr_stmt(stmt)
+    def __translate_return(self, stmt: HIR.Return) -> IR.Value:
+        val = self.__resolve_val(stmt.value) if stmt.value is not None else self.__void_reg()
+        self.__set_terminator(IR.Ret(val))
+        return self.__never_reg()
 
-    # ------------------------------------------------------------------
-    # specific statement handlers
-    # ------------------------------------------------------------------
-
-    def __translate_return(self, stmt: HIR.Return) -> None:
-        if stmt.value is not None:
-            val = self.__resolve_val(stmt.value)
-            self.__set_terminator(IR.Ret(val))
-        else:
-            self.__set_terminator(IR.RetVoid())
-
-    def __translate_if(self, stmt: HIR.If) -> None:
+    def __translate_if(self, stmt: HIR.If) -> IR.Value:
         cond_val = self.__resolve_val(stmt.cond)
 
         then_block = self.__new_block("if.then")
-        else_block = None
-        if stmt.else_branch is not None:
-            else_block = self.__new_block("if.else")
+        else_block = self.__new_block("if.else") if stmt.else_branch else None
         merge_block = self.__new_block("if.merge")
 
-        target_else = else_block if else_block else merge_block
-        self.__set_terminator(IR.CondBr(cond_val, then_block, target_else))
+        self.__set_terminator(IR.CondBr(cond_val, then_block, else_block or merge_block))
 
-        # then
         self.__switch_to(then_block)
-        self.__translate_block(stmt.then_branch)
+        then_val = self.__translate_block(stmt.then_branch)
         if self.__current_block.terminator is None:
             self.__set_terminator(IR.Br(merge_block))
+        then_end = self.__current_block
+        incoming = [(then_end, then_val)]
 
-        # else
         if stmt.else_branch is not None:
             assert else_block is not None
             self.__switch_to(else_block)
-            self.__translate_block(stmt.else_branch)
+            else_val = self.__translate_block(stmt.else_branch)
             if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
+            else_end = self.__current_block
+            incoming.append((else_end, else_val))
 
         self.__switch_to(merge_block)
 
-    def __translate_loop(self, stmt: HIR.Loop) -> None:
+        phi = self.__emit_phi(incoming)
+        phi.type_id = stmt.type_id
+        return phi
+
+    def __translate_loop(self, stmt: HIR.Loop) -> IR.Value:
         body_block = self.__new_block("loop.body")
         exit_block = self.__new_block("loop.exit")
 
-        # Branch from current to the loop body
         self.__set_terminator(IR.Br(body_block))
-
-        self.__loop_header.append(body_block)
-        self.__loop_exit.append(exit_block)
+        self.__loops.append(LoopCtx(header=body_block, exit=exit_block))
 
         self.__switch_to(body_block)
         self.__translate_block(stmt.body)
@@ -259,18 +249,27 @@ class CfgBuilder:
 
         self.__switch_to(exit_block)
 
-        self.__loop_header.pop()
-        self.__loop_exit.pop()
+        # Build phi from break values (if any non-divergent breaks)
+        loop = self.__loops.pop()
+        if loop.break_values:
+            phi = self.__emit_phi(loop.break_values)
+            phi.type_id = stmt.type_id
+            return phi
+        if stmt.type_id == TypeCtx.void_id:
+            return self.__void_reg()
+        return self.__never_reg()
 
-    def __translate_panic(self, stmt: HIR.Panic) -> None:
+    def __translate_panic(self, stmt: HIR.Panic) -> IR.Value:
         msg_val = self.__resolve_val(stmt.message)
         self.__set_terminator(IR.Panic(msg_val))
+        return self.__never_reg()
 
-    def __translate_delete(self, stmt: HIR.Delete) -> None:
+    def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
         self.__emit(IR.Delete(ptr))
+        return self.__void_reg()
 
-    def __translate_match(self, stmt: HIR.Match) -> None:
+    def __translate_match(self, stmt: HIR.Match) -> IR.Value:
         """Unified lowering for NewMatch covering integer, char, and enum patterns."""
         val = self.__resolve_val(stmt.value)
 
@@ -289,11 +288,11 @@ class CfgBuilder:
 
         self.__set_terminator(IR.Match(value=val, arms=arms, default=default_block))
 
-        # Translate arm bodys
+        # Translate arm bodies and collect values for phi (if expression-typed)
+        arm_values: list[tuple[IR.Block, IR.Value]] = []
         index = 0
         for arm in stmt.arms:
             if arm.pattern is None:
-                # default arm
                 assert default_block is not None
                 current_block = default_block
             else:
@@ -301,11 +300,34 @@ class CfgBuilder:
                 index += 1
 
             self.__switch_to(current_block)
-            self.__translate_block(arm.body)
+            arm_val = self.__translate_block(arm.body)
             if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
+            arm_values.append((self.__current_block, arm_val))
 
         self.__switch_to(merge_block)
+
+        phi = self.__emit_phi(arm_values)
+        phi.type_id = stmt.type_id
+        return phi
+
+    def __translate_break(self, stmt: HIR.Break) -> IR.Value:
+        if stmt.value is not None:
+            val = self.__resolve_val(stmt.value)
+            self.__loops[-1].break_values.append((self.__current_block, val))
+        self.__set_terminator(IR.Br(self.__loops[-1].exit))
+        return self.__never_reg()
+
+    def __translate_semi(self, stmt: HIR.Semi) -> IR.Value:
+        self.__resolve_val(stmt.expr)
+        if stmt.type_id == TypeCtx.never_id:
+            return self.__never_reg()
+        return self.__void_reg()
+
+    def __translate_let(self, stmt: HIR.Let) -> IR.Value:
+        if stmt.init is not None:
+            self.__resolve_val(stmt.init)
+        return self.__void_reg()
 
     # ------------------------------------------------------------------
     # Match helpers
@@ -329,10 +351,6 @@ class CfgBuilder:
             fields=fields
         )
 
-    def __translate_expr_stmt(self, expr: HIR.Expr) -> None:
-        # Evaluate for side effects, discard result
-        self.__resolve_val(expr)
-
     # ------------------------------------------------------------------
     # expression lowering: resolve_val (value) / __resolve_addr (address)
     # ------------------------------------------------------------------
@@ -340,6 +358,31 @@ class CfgBuilder:
     def __resolve_val(self, expr: HIR.Expr) -> IR.Value:
         """Lower *expr* to a value."""
         match expr:
+            # --- expression-oriented control flow ---
+            case HIR.Block():
+                return self.__translate_block(expr)
+            case HIR.If():
+                return self.__translate_if(expr)
+            case HIR.Loop():
+                return self.__translate_loop(expr)
+            case HIR.Match():
+                return self.__translate_match(expr)
+            case HIR.Return():
+                return self.__translate_return(expr)
+            case HIR.Break():
+                return self.__translate_break(expr)
+            case HIR.Continue():
+                self.__set_terminator(IR.Br(self.__loops[-1].header))
+                return self.__void_reg()
+            case HIR.Delete():
+                return self.__translate_delete(expr)
+            case HIR.Panic():
+                return self.__translate_panic(expr)
+            case HIR.Semi():
+                return self.__translate_semi(expr)
+            case HIR.Let():
+                return self.__translate_let(expr)
+            # --- original expressions ---
             case HIR.Binary():
                 return self.__resolve_binary(expr)
             case HIR.Unary():
@@ -449,7 +492,9 @@ class CfgBuilder:
     def __resolve_assign(self, expr: HIR.Binary) -> IR.Value:
         lhs_addr = self.__resolve_addr(expr.left)
         rhs_val = self.__resolve_val(expr.right)
-        self.__build_store(rhs_val, lhs_addr)
+        # never-typed values are never produced; skip the store
+        if rhs_val.type_id != self.__type_ctx.never_id:
+            self.__build_store(rhs_val, lhs_addr)
         return rhs_val
 
     def __resolve_logical(self, expr: HIR.Binary) -> IR.Value:
@@ -520,7 +565,11 @@ class CfgBuilder:
 
     def __resolve_call(self, expr: HIR.Call) -> IR.Value:
         arg_vals = [self.__resolve_val(arg) for arg in expr.args]
-        return self.__build_call(expr.func, arg_vals, expr.type_id)
+        result = self.__build_call(expr.func, arg_vals, expr.type_id)
+        # If the callee returns never, control never returns — terminate block
+        if expr.type_id == self.__type_ctx.never_id:
+            self.__set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))
+        return result
 
     def __resolve_struct_construct(self, expr: HIR.StructConstruct) -> IR.Value:
         struct_type = self.__type_ctx[expr.struct_id]
@@ -769,7 +818,7 @@ class CfgBuilder:
 
     def __build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         self.__emit(IR.SysWrite(fd=fd, buf=buf))
-        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.void_id)
+        return self.__void_reg()
 
     def __emit_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
         """Emit a phi node into the current block's dedicated phi list."""
