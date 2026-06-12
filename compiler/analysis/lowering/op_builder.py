@@ -628,7 +628,7 @@ class OpBuilder:
         right_operand_type = self.__get_operand_type(right.type_id, allowed_operand_types)
 
         if OperandType.Overloaded not in {left_operand_type, right_operand_type}:
-            operand_type_id = self.__type_ctx.merge_types(left.type_id, right.type_id, span)
+            operand_type_id = self.__type_ctx.merge_types([left.type_id, right.type_id], span)
             left = self.__evaluator.coerce(left, operand_type_id)
             right = self.__evaluator.coerce(right, operand_type_id)
             if result_type_id is None:

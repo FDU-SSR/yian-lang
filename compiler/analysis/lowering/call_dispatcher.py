@@ -17,12 +17,9 @@ from compiler.frontend.parse.operator import UnaryOperator
 if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
-# Built-in instruction names that form expressions (they return values).
-BUILTIN_EXPR_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write"})
-
-# Built-in instruction names that form statements (they do not return values).
-# When used in expression context, they produce a descriptive error.
-BUILTIN_STMT_ONLY_NAMES = frozenset({"panic", "memcpy"})
+# Built-in instruction names — all are expressions with different return types:
+#   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "memcpy"})
 
 
 class CallDispatcher:
@@ -82,10 +79,8 @@ class CallDispatcher:
         assert self.__ctx.symbol_ctx is not None
 
         # Intercept built-in instruction names before the symbol lookup.
-        if callee.name in BUILTIN_STMT_ONLY_NAMES:
-            raise AnalysisError(f"'{callee.name}' is a statement and cannot be used as an expression", callee.span)
-        if callee.name in BUILTIN_EXPR_NAMES:
-            return self.__handle_builtin_expr(node, callee)
+        if callee.name in BUILTIN_NAMES:
+            return self.__handle_builtin(node, callee)
 
         symbol = self.__ctx.symbol_ctx.lookup(callee.name)
         if symbol is None:
@@ -105,8 +100,10 @@ class CallDispatcher:
             case SymbolKind.ConstGeneric:
                 raise AnalysisError(f"'{callee.name}' is a generic constant and cannot be called", node.span)
 
-    def __handle_builtin_expr(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
-        """Lower a call to a built-in expression name into the appropriate HIR node."""
+    def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
+        """Lower a call to a built-in name into the appropriate HIR node."""
+        if callee.name == "panic":
+            return self.__handle_panic(node)
         if callee.name == "sizeof":
             return self.__handle_sizeof(node)
         if callee.name == "bitcast":
@@ -115,7 +112,17 @@ class CallDispatcher:
             return self.__handle_sys_write(node)
         if callee.name == "sys_read":
             return self.__handle_sys_read(node)
-        raise AnalysisError(f"Unknown built-in expression '{callee.name}'", callee.span)
+        raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
+
+    def __handle_panic(self, stmt: AST.Call) -> HIR.Panic:
+        if any(arg.name is not None for arg in stmt.args):
+            raise AnalysisError("named arguments are not supported for 'panic'", stmt.span)
+        if len(stmt.args) != 1:
+            raise AnalysisError(f"'panic' expects exactly 1 argument, got {len(stmt.args)}", stmt.span)
+
+        message = self.__expr.value(stmt.args[0].value)
+        message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
+        return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
 
     def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
         """Lower `sizeof(type)` into HIR.SizeOf.
