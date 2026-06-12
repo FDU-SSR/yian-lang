@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, Callable
 
 from compiler.analysis.unit import hir as HIR
 
@@ -9,8 +9,6 @@ if TYPE_CHECKING:
     from compiler.analysis.symbol.context import SymbolCtx
     from compiler.analysis.ty.context import TypeCtx
     from compiler.analysis.unit.unit_data import UnitData
-
-ItemType = TypeVar("ItemType")
 
 
 def __gen_prefix(guides: list[bool], is_last: bool) -> str:
@@ -31,7 +29,7 @@ def __line(guides: list[bool], is_last: bool, text: str) -> str:
     return __gen_prefix(guides, is_last) + text + "\n"
 
 
-def __export_items_with_handler(items: list[ItemType], guides: list[bool], handler: Callable[[ItemType, list[bool], bool], str]) -> str:
+def __export_items_with_handler[ItemType](items: list[ItemType], guides: list[bool], handler: Callable[[ItemType, list[bool], bool], str]) -> str:
     res = ""
     for idx, item in enumerate(items):
         res += handler(item, guides, idx == len(items) - 1)
@@ -69,8 +67,8 @@ def __export_expr_items(label: str, items: list[HIR.Expr], guides: list[bool], p
     return res
 
 
-def __export_stmt_list(stmts: list[HIR.Stmt], guides: list[bool], type_ctx: TypeCtx | None) -> str:
-    return __export_items_with_handler(stmts, guides, lambda stmt, g, last: __export_stmt(stmt, g, last, type_ctx))
+def __export_stmt_list(stmts: list[HIR.Expr], guides: list[bool], type_ctx: TypeCtx | None) -> str:
+    return __export_items_with_handler(stmts, guides, lambda stmt, g, last: __export_expr(stmt, g, last, type_ctx))
 
 
 def __export_block(block: HIR.Block, guides: list[bool], type_ctx: TypeCtx | None) -> str:
@@ -78,7 +76,7 @@ def __export_block(block: HIR.Block, guides: list[bool], type_ctx: TypeCtx | Non
 
 
 def __export_block_node(block: HIR.Block, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Block: span={__format_span(block.span)}")
+    res = __line(guides, is_last, f"Block: span={__format_span(block.span)} type_id={block.type_id}")
     if block.stmts:
         res += __export_stmt_list(block.stmts, guides + [False], type_ctx)
     else:
@@ -86,91 +84,44 @@ def __export_block_node(block: HIR.Block, guides: list[bool], is_last: bool, typ
     return res
 
 
-def __export_stmt(stmt: HIR.Stmt, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    match stmt:
-        case HIR.Block():
-            return __export_block_node(stmt, guides, is_last, type_ctx)
-        case HIR.Return():
-            return __export_return(stmt, guides, is_last, type_ctx)
-        case HIR.If():
-            return __export_if(stmt, guides, is_last, type_ctx)
-        case HIR.Loop():
-            return __export_loop(stmt, guides, is_last, type_ctx)
-        case HIR.Break():
-            return __line(guides, is_last, f"Break: span={__format_span(stmt.span)}")
-        case HIR.Continue():
-            return __line(guides, is_last, f"Continue: span={__format_span(stmt.span)}")
-        case HIR.Panic():
-            res = __line(guides, is_last, f"Panic: span={__format_span(stmt.span)}")
-            res += __export_expr_child("Message", stmt.message, guides, is_last, True, type_ctx)
-            return res
-        case HIR.Delete():
-            res = __line(guides, is_last, f"Delete: span={__format_span(stmt.span)}")
-            res += __export_expr_child("Target", stmt.target, guides, is_last, True, type_ctx)
-            return res
-        case HIR.Match():
-            return __export_match(stmt, guides, is_last, type_ctx)
-        case HIR.SysWrite():
-            return __export_sys_write(stmt, guides, is_last, type_ctx)
-        case _:
-            return __export_expr_stmt(stmt, guides, is_last, type_ctx)
-
-
-def __export_return(stmt: HIR.Return, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Return: span={__format_span(stmt.span)}")
-    if stmt.value is not None:
-        res += __export_expr_child("Value", stmt.value, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_if(stmt: HIR.If, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"If: span={__format_span(stmt.span)}")
-    res += __export_expr_child("Condition", stmt.cond, guides, is_last, False, type_ctx)
-    has_else = stmt.else_branch is not None
-    res += __export_block_child("Then", stmt.then_branch, guides, is_last, not has_else, type_ctx)
-    if stmt.else_branch is not None:
-        res += __export_block_child("Else", stmt.else_branch, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_loop(stmt: HIR.Loop, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Loop: span={__format_span(stmt.span)}")
-    res += __export_block_child("Body", stmt.body, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_match_arm(arm: HIR.MatchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    if arm.pattern is None:
-        header = "NewMatchArm: _"
-    elif isinstance(arm.pattern, HIR.IntPattern):
-        header = f"NewMatchArm: int={arm.pattern.value} type_id={arm.pattern.type_id}"
-    elif isinstance(arm.pattern, HIR.CharPattern):
-        header = f"NewMatchArm: char={arm.pattern.value!r}"
-    else:
-        unpacked = arm.pattern.unpack_fields if arm.pattern.unpack_fields is not None else []
-        header = f"NewMatchArm: variant={arm.pattern.variant.name} unpack_fields={unpacked}"
-    res = __line(guides, is_last, header)
-    res += __export_block_child("Body", arm.body, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_match(stmt: HIR.Match, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"NewMatch: span={__format_span(stmt.span)}")
-    res += __export_expr_child("Value", stmt.value, guides, is_last, False, type_ctx)
-    child_guides = guides + [not is_last]
-    res += __line(child_guides, True, "Arms:")
-    res += __export_items_with_handler(stmt.arms, child_guides + [False], lambda arm, g, last: __export_match_arm(arm, g, last, type_ctx))
-    return res
-
-
-def __export_expr_stmt(stmt: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"ExprStmt: span={__format_span(stmt.span)}")
-    res += __export_expr(stmt, guides + [not is_last], True, type_ctx)
-    return res
-
-
 def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     match expr:
+        # --- control flow / statement-like ---
+        case HIR.Block():
+            return __export_block_node(expr, guides, is_last, type_ctx)
+        case HIR.Return():
+            return __export_return(expr, guides, is_last, type_ctx)
+        case HIR.If():
+            return __export_if(expr, guides, is_last, type_ctx)
+        case HIR.Loop():
+            return __export_loop(expr, guides, is_last, type_ctx)
+        case HIR.Break():
+            val_str = f" value={repr(expr.value)}" if expr.value is not None else ""
+            return __line(guides, is_last, f"Break: span={__format_span(expr.span)} type_id={expr.type_id}{val_str}")
+        case HIR.Continue():
+            return __line(guides, is_last, f"Continue: span={__format_span(expr.span)} type_id={expr.type_id}")
+        case HIR.Panic():
+            res = __line(guides, is_last, f"Panic: span={__format_span(expr.span)} type_id={expr.type_id}")
+            res += __export_expr_child("Message", expr.message, guides, is_last, True, type_ctx)
+            return res
+        case HIR.Delete():
+            res = __line(guides, is_last, f"Delete: span={__format_span(expr.span)}")
+            res += __export_expr_child("Target", expr.target, guides, is_last, True, type_ctx)
+            return res
+        case HIR.Match():
+            return __export_match(expr, guides, is_last, type_ctx)
+        case HIR.SysWrite():
+            return __export_sys_write(expr, guides, is_last, type_ctx)
+        case HIR.Semi():
+            res = __line(guides, is_last, f"Semi: span={__format_span(expr.span)} type_id={expr.type_id}")
+            res += __export_expr_child("Expr", expr.expr, guides, is_last, True, type_ctx)
+            return res
+        case HIR.Let():
+            res = __line(guides, is_last, f"Let: span={__format_span(expr.span)} type_id={expr.type_id}")
+            if expr.init is not None:
+                res += __export_expr_child("Init", expr.init, guides, is_last, True, type_ctx)
+            return res
+        # --- pure expressions ---
         case HIR.Binary():
             return __export_binary(expr, guides, is_last, type_ctx)
         case HIR.Unary():
@@ -219,6 +170,53 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __line(guides, is_last, f"BoolLiteral: {expr.value} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
         case HIR.Ty():
             return __line(guides, is_last, f"Ty: {__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+
+
+def __export_return(stmt: HIR.Return, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"Return: span={__format_span(stmt.span)}")
+    if stmt.value is not None:
+        res += __export_expr_child("Value", stmt.value, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_if(stmt: HIR.If, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"If: span={__format_span(stmt.span)}")
+    res += __export_expr_child("Condition", stmt.cond, guides, is_last, False, type_ctx)
+    has_else = stmt.else_branch is not None
+    res += __export_block_child("Then", stmt.then_branch, guides, is_last, not has_else, type_ctx)
+    if stmt.else_branch is not None:
+        res += __export_block_child("Else", stmt.else_branch, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_loop(stmt: HIR.Loop, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"Loop: span={__format_span(stmt.span)}")
+    res += __export_block_child("Body", stmt.body, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_match_arm(arm: HIR.MatchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    if arm.pattern is None:
+        header = "NewMatchArm: _"
+    elif isinstance(arm.pattern, HIR.IntPattern):
+        header = f"NewMatchArm: int={arm.pattern.value} type_id={arm.pattern.type_id}"
+    elif isinstance(arm.pattern, HIR.CharPattern):
+        header = f"NewMatchArm: char={arm.pattern.value!r}"
+    else:
+        unpacked = arm.pattern.unpack_fields if arm.pattern.unpack_fields is not None else []
+        header = f"NewMatchArm: variant={arm.pattern.variant.name} unpack_fields={unpacked}"
+    res = __line(guides, is_last, header)
+    res += __export_block_child("Body", arm.body, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_match(stmt: HIR.Match, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"NewMatch: span={__format_span(stmt.span)}")
+    res += __export_expr_child("Value", stmt.value, guides, is_last, False, type_ctx)
+    child_guides = guides + [not is_last]
+    res += __line(child_guides, True, "Arms:")
+    res += __export_items_with_handler(stmt.arms, child_guides + [False], lambda arm, g, last: __export_match_arm(arm, g, last, type_ctx))
+    return res
 
 
 def __export_binary(expr: HIR.Binary, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
