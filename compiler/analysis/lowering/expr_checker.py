@@ -425,6 +425,7 @@ class ExprChecker:
         assert self.__ctx.symbol_ctx is not None
 
         value_expr = self.value(stmt.expr)
+        value_expr.type_id = self.__ctx.type_ctx.default_literals(value_expr.type_id)
         value_type = self.__ctx.type_ctx[value_expr.type_id]
 
         if isinstance(value_type, (Type.IntType, Type.CharType, Type.EnumType)):
