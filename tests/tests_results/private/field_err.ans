@@ -1,2 +1,1 @@
-Exit code 1
 Field 'priv_field' of struct 'ExportableStruct' is private and cannot be accessed from unit
