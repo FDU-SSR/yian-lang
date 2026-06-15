@@ -255,7 +255,7 @@ impl Iterator<(u64, char)> for CharIndicesIter {
     pub fn next() -> Option<(u64, char)> {
         let pre_len: u64 = self.iter.byte_iter.len();
         match self.iter.next() {
-            None => { Option<(u64, char)>.None },
+            None => Option<(u64, char)>.None,
             Some(val) => {
                 u64 index = self.front_offset
                 u64 len = self.iter.byte_iter.len()

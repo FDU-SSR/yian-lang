@@ -62,9 +62,9 @@ pub enum Ordering {
 impl PartialEq<Ordering> for Ordering {
     fn eq(rhs: Ordering) -> bool {
         match *self {
-            Less => { match rhs { Less => { true }, _ => { false } } },
-            Equal => { match rhs { Equal => { true }, _ => { false } } },
-            Greater => { match rhs { Greater => { true }, _ => { false } } },
+            Less => match rhs { Less => true, _ => false },
+            Equal => match rhs { Equal => true, _ => false },
+            Greater => match rhs { Greater => true, _ => false },
         }
     }
 }
@@ -74,31 +74,31 @@ pub trait PartialOrd<Rhs> {
 
     fn lt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => { true },
-            _ => { false },
+            Less => true,
+            _ => false,
         }
     }
 
     fn le(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => { true },
-            Equal => { true },
-            _ => { false },
+            Less => true,
+            Equal => true,
+            _ => false,
         }
     }
 
     fn gt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Greater => { true },
-            _ => { false },
+            Greater => true,
+            _ => false,
         }
     }
 
     fn ge(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => { false },
-            Equal => { true },
-            Greater => { true },
+            Less => false,
+            Equal => true,
+            Greater => true,
         }
     }
 }

@@ -14,8 +14,8 @@ impl<T> Option<T> {
     // Check if the Option is Some || None
     pub fn is_some() -> bool {
         match *self {
-            None => { false },
-            Some => { true },
+            None => false,
+            Some => true,
         }
     }
 
@@ -26,23 +26,23 @@ impl<T> Option<T> {
     // Unwrap the value if it is Some, otherwise panic (|| return an error)
     pub fn unwrap() -> T {
         match *self {
-            None => { panic("Called unwrap on a None value") },
-            Some(val) => { val },
+            None => panic("Called unwrap on a None value"),
+            Some(val) => val,
         }
     }
 
     // Unwrap the value if it is Some, otherwise return the provided default value
     pub fn unwrap_or(default: T) -> T {
         match *self {
-            None => { default },
-            Some(val) => { val },
+            None => default,
+            Some(val) => val,
         }
     }
 
     // Take the value out of the Option, leaving None in its place.
     pub fn take() -> Option<T> {
         match *self {
-            None => { Option<T>.None },
+            None => Option<T>.None,
             Some(val) => {
                 *self = Option<T>.None;
                 Option<T>.Some(val)
@@ -68,8 +68,8 @@ impl<T> Option<T> {
 impl<T> Clone for Option<T> {
     pub fn clone() -> Self {
         match *self {
-            None => { Option<T>.None },
-            Some(val) => { Option<T>.Some(val.clone()) },
+            None => Option<T>.None,
+            Some(val) => Option<T>.Some(val.clone()),
         }
     }
 }
