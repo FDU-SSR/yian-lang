@@ -364,7 +364,8 @@ class ExprChecker:
             if stmt.init_expr is None:
                 raise AnalysisError("cannot infer the type of a variable without an initializer", stmt.span)
             init_expr = self.value(stmt.init_expr)
-            var_type_id = init_expr.type_id
+            var_type_id = self.__ctx.type_ctx.default_literals(init_expr.type_id)
+            init_expr = self.coerce(init_expr, var_type_id)
         else:
             var_type_id = self.__ctx.resolve_type(stmt.var_type)
             init_expr = self.coerce(self.value(stmt.init_expr), var_type_id) if stmt.init_expr is not None else None
