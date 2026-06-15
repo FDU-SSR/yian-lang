@@ -386,7 +386,13 @@ class ExprParser:
             self.__stream.advance()
         pattern = self.__parse_pattern()
         self.__stream.consume_punctuator(Tok.PunctuatorKind.FatArrow)
-        block = self.parse_block()
+        # 如果 arm 体以 '{' 开头，解析为 block；否则解析为裸表达式并包装为 block
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LBrace:
+            block = self.parse_block()
+        else:
+            expr = self.parse_expr()
+            block = AST.Block(span=expr.span, stmts=[expr])
         token = self.__stream.peek()
         if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
             self.__stream.advance()

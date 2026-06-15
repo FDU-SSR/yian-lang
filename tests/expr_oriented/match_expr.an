@@ -1,11 +1,29 @@
 // Expression-oriented: match as expression
 
 fn main() -> i32 {
+    // Block-style match arms
     let x: i32 = match 1 {
         1 => { 100 },
         2 => { 200 },
         _ => { 300 },
     };
     assert x == 100: "match expression failed";
+
+    // Bare expression match arms (no braces)
+    let y: i32 = match 2 {
+        1 => 100,
+        2 => 200,
+        _ => 300,
+    };
+    assert y == 200: "bare expr match arm failed";
+
+    // Mixed: blocks and bare expressions
+    let z: i32 = match 3 {
+        1 => 100,
+        2 => { 200 },
+        _ => 300,
+    };
+    assert z == 300: "mixed match arm failed";
+
     return 0;
 }
