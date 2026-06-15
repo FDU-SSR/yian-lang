@@ -5,6 +5,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
 from compiler.frontend.parse.ast_export import export_program
+from compiler.frontend.parse.ast_type import DeducedType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 if TYPE_CHECKING:
@@ -252,6 +253,8 @@ class VarDecl:
 
     def __repr__(self) -> str:
         init_str = f" = {self.init_expr}" if self.init_expr else ""
+        if isinstance(self.var_type, DeducedType):
+            return f"let {self.name.name}{init_str}"
         return f"let {self.name.name}: {self.var_type}{init_str}"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.parse.parser_type import TypeParser
@@ -353,14 +354,26 @@ class ExprParser:
     def __parse_var_decl(self) -> AST.VarDecl:
         self.__stream.consume_keyword(Tok.KeywordKind.Let)
         var_name = self.__stream.consume_identifier()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
-        var_type = self.__type_parser.parse_type()
+
         next_token = self.__stream.peek()
-        if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
+        if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Colon:
+            # Explicit type annotation: let x: Type [= expr]
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
+            var_type = self.__type_parser.parse_type()
+            next_token = self.__stream.peek()
+            if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
+                self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+                init_expr = self.parse_expr()
+            else:
+                init_expr = None
+        elif isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
+            # Type inference: let x = expr
             self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+            var_type = ASTTy.DeducedType(span=var_name.span)
             init_expr = self.parse_expr()
         else:
-            init_expr = None
+            raise ParseError("Expected ':' or '=' after variable name", next_token.span)
+
         return AST.VarDecl(span=var_name.span, name=var_name, var_type=var_type, init_expr=init_expr)
 
     # ------------------------------------------------------------------
