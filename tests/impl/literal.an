@@ -1,0 +1,20 @@
+// Test calling methods on literal values
+//
+// Expected output: 0
+
+impl i32 {
+    pub fn is_positive() -> bool {
+        *self > 0
+    }
+
+    pub fn add_one() -> i32 {
+        *self + 1
+    }
+}
+
+fn main() -> i32 {
+    assert 5i32.is_positive(): "5 should be positive";
+    assert !(-3i32).is_positive(): "-3 should not be positive";
+    assert 10i32.add_one() == 11: "10 + 1 should be 11";
+    return 0;
+}
