@@ -1,7 +1,6 @@
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
-from compiler.analysis.lowering.stmt_checker import StmtChecker
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -26,7 +25,6 @@ class TypeCheck:
 
         self.__sem_ctx = SemCtx(type_ctx)
         self.__expr_helper = ExprChecker(self.__sem_ctx)
-        self.__stmt_helper = StmtChecker(self.__expr_helper)
 
         # wire sem_ctx reachable-def reporter to our enqueue function
         self.__sem_ctx.set_def_reporter(self.__report_def_point)
@@ -151,7 +149,7 @@ class TypeCheck:
 
         self.__current_params = list(self.__sem_ctx.locals)
 
-        return self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)
+        return self.__expr_helper.check_block(def_point.ast_body)
 
     def __check_method(self, def_point: DefPoint) -> HIR.Block:
         method_ty = self.__type_ctx[self.__current_type_id]
@@ -194,4 +192,4 @@ class TypeCheck:
 
         self.__current_params = list(self.__sem_ctx.locals)
 
-        return self.__stmt_helper.check_block(def_point.ast_body, self.__sem_ctx)
+        return self.__expr_helper.check_block(def_point.ast_body)

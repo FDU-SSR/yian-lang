@@ -56,7 +56,7 @@ class Desugar:
     # shared traversal helpers
     # ------------------------------------------------------------------
 
-    def __recurse_blocks(self, stmt: AST.Stmt, processor: Callable[[AST.Block], None]) -> None:
+    def __recurse_blocks(self, stmt: AST.Expr, processor: Callable[[AST.Block], None]) -> None:
         """Apply *processor* to every nested block inside *stmt*."""
         match stmt:
             case AST.Block():
@@ -85,19 +85,28 @@ class Desugar:
 
     def __process_control_flow(self, block: AST.Block) -> None:
         """Lower for, while, assert, and elif chains in a single traversal."""
-        desugared_stmts: list[AST.Stmt] = []
+        desugared_stmts: list[AST.Expr] = []
 
         for stmt in block.stmts:
             self.__recurse_blocks(stmt, self.__process_control_flow)
 
-            if isinstance(stmt, AST.For):
-                desugared_stmts.append(self.__desugar_for(stmt))
-            elif isinstance(stmt, AST.While):
-                desugared_stmts.append(self.__desugar_while(stmt))
-            elif isinstance(stmt, AST.Assert):
-                desugared_stmts.append(self.__desugar_assert(stmt))
-            elif isinstance(stmt, AST.If) and stmt.elif_branches:
-                desugared_stmts.append(self.__desugar_if_chain(stmt))
+            # Unwrap Semi to check for desugar-able constructs inside
+            inner = stmt.expr if isinstance(stmt, AST.Semi) else stmt
+            semi = isinstance(stmt, AST.Semi)
+
+            if isinstance(inner, AST.For):
+                desugared = self.__desugar_for(inner)
+            elif isinstance(inner, AST.While):
+                desugared = self.__desugar_while(inner)
+            elif isinstance(inner, AST.Assert):
+                desugared = self.__desugar_assert(inner)
+            elif isinstance(inner, AST.If) and inner.elif_branches:
+                desugared = self.__desugar_if_chain(inner)
+            else:
+                desugared = None
+
+            if desugared is not None:
+                desugared_stmts.append(AST.Semi(span=stmt.span, expr=desugared) if semi else desugared)
             else:
                 desugared_stmts.append(stmt)
 
@@ -111,9 +120,11 @@ class Desugar:
         """Desugar range expressions and member tests in a single traversal."""
         for stmt in block.stmts:
             self.__recurse_blocks(stmt, self.__process_expr_rewrite)
-            self.__rewrite_exprs_in_stmt(stmt)
+            # Unwrap Semi to apply expression rewriting to the inner expression
+            target = stmt.expr if isinstance(stmt, AST.Semi) else stmt
+            self.__rewrite_exprs_in_stmt(target)
 
-    def __rewrite_exprs_in_stmt(self, stmt: AST.Stmt) -> None:
+    def __rewrite_exprs_in_stmt(self, stmt: AST.Expr) -> None:
         """Apply both range and member-test desugaring to all expressions in a statement."""
         self.__apply_expr_visitor(stmt, self.__desugar_range)
         self.__apply_expr_visitor(stmt, self.__desugar_member_test)
@@ -287,7 +298,7 @@ class Desugar:
             case _:
                 pass
 
-    def __apply_expr_visitor(self, stmt: AST.Stmt, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
+    def __apply_expr_visitor(self, stmt: AST.Expr, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
         """Apply expr_visitor to all expression fields within a statement."""
         match stmt:
             case AST.VarDecl(init_expr=expr) if expr is not None:

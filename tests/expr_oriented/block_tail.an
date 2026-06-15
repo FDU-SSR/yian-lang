@@ -1,0 +1,7 @@
+// Expression-oriented: block as expression (implicit return)
+// The last expression without semicolon is the return value.
+
+fn main() -> i32 {
+    let x: i32 = 42;
+    x  // implicit return (no semicolon)
+}

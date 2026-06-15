@@ -8,11 +8,11 @@ from compiler.frontend.parse.ast_export import export_program
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 if TYPE_CHECKING:
+    from compiler.frontend.lex.position import SrcSpan
     from compiler.frontend.lex.token import CharLiteral, IntLiteral
     from compiler.frontend.lex.token import Literal as LexLiteral
     from compiler.frontend.lex.token import StrLiteral
     from compiler.frontend.parse.ast_type import ASTType, ConstExpr
-    from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass
@@ -231,7 +231,16 @@ class MethodDecl:
 @dataclass
 class Block:
     span: SrcSpan
-    stmts: list[Stmt]
+    stmts: list[Expr]
+
+
+@dataclass
+class Semi:
+    span: SrcSpan
+    expr: Expr
+
+    def __repr__(self) -> str:
+        return f"{self.expr};"
 
 
 @dataclass
@@ -314,9 +323,11 @@ class Match:
 @dataclass
 class Break:
     span: SrcSpan
+    expr: Expr | None = None
 
     def __repr__(self) -> str:
-        return "break"
+        expr_str = f" {self.expr}" if self.expr else ""
+        return f"break{expr_str}"
 
 
 @dataclass
@@ -580,16 +591,12 @@ Expr: TypeAlias = (
     | DynValue | DynBuffer
     | TypeItem | Identifier | Literal
     | Tuple | Array
-)
-
-
-Stmt: TypeAlias = (
-    Block
+    | Block
     | VarDecl
     | If | For | While | Loop | Match
     | Return | Break | Continue | Assert
     | Delete
-    | Expr
+    | Semi
 )
 
 Pattern: TypeAlias = (

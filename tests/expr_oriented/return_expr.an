@@ -1,0 +1,12 @@
+// Expression-oriented: return as expression (never type) in if branch
+// never is subtype of everything, so `return 0` in one branch is valid
+
+fn main() -> i32 {
+    let x: i32 = if true {
+        42
+    } else {
+        return 0;
+    };
+    assert x == 42: "return as expression failed";
+    return 0;
+}

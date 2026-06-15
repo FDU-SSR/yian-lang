@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import (Identifier, IntLiteral, Keyword,
                                          KeywordKind, Punctuator,
                                          PunctuatorKind)
@@ -11,7 +12,6 @@ from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
                                             TERM_RPAREN, TokenStream)
-from compiler.frontend.lex.position import SrcSpan
 
 
 class TypeParser:
@@ -67,6 +67,9 @@ class TypeParser:
 
         if isinstance(token, Keyword) and token.kind in self.MAPPING:
             return self.MAPPING[token.kind](token.span)
+
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Exclamation:
+            return Ty.NeverType(span=token.span)
 
         if isinstance(token, Keyword) and token.kind == KeywordKind.Fn:
             # function type, e.g., `fn(int, str) -> bool`

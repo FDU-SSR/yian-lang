@@ -14,13 +14,17 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 @dataclass
 class Block:
     span: SrcSpan
-    stmts: list[Stmt]
+    stmts: list[Expr]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Return:
     span: SrcSpan
     value: Expr | None
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -29,28 +33,39 @@ class If:
     cond: Expr
     then_branch: Block
     else_branch: Block | None
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Loop:
     span: SrcSpan
     body: Block
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Break:
     span: SrcSpan
+    type_id: int
+    is_place: bool
+    value: Expr | None = None
 
 
 @dataclass
 class Continue:
     span: SrcSpan
+    type_id: int
+    is_place: bool
 
 
 @dataclass
 class Panic:
     span: SrcSpan
     message: Expr
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -66,6 +81,26 @@ class SysWrite:
 class Delete:
     span: SrcSpan
     target: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class Semi:
+    """Expression statement: ``expr;`` — discards value, type is void."""
+    span: SrcSpan
+    expr: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class Let:
+    """Let declaration expression — always returns void."""
+    span: SrcSpan
+    init: Expr | None
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -81,6 +116,8 @@ class Match:
     span: SrcSpan
     value: Expr
     arms: list[MatchArm]
+    type_id: int
+    is_place: bool
 
 
 @dataclass
@@ -333,15 +370,12 @@ Expr: TypeAlias = (
     | SizeOf | BitCast | SysRead | SysWrite
     | Tuple | Array
     | Var | Literal | Ty
-)
-
-
-Stmt: TypeAlias = (
-    Return | Break | Continue
+    | Block
+    | Return | Break | Continue
     | If | Loop
     | Panic
     | Delete
     | Match
-    | Block
-    | Expr
+    | Semi
+    | Let
 )

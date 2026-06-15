@@ -80,13 +80,6 @@ class GenericInference:
                     self.__span,
                 )
 
-            if len(expected_ty.generic_args) != len(actual_ty.generic_args):
-                # TODO: this check is redundant because expected_ty.custom_def == actual_ty.custom_def
-                raise AnalysisError(
-                    f"generic argument count mismatch between '{self.__type_ctx.get_name(expected_type_id)}' and '{self.__type_ctx.get_name(actual_type_id)}'",
-                    self.__span,
-                )
-
             for expected_arg, actual_arg in zip(expected_ty.generic_args, actual_ty.generic_args):
                 self.constrain(expected_arg, actual_arg)
             return
@@ -210,7 +203,7 @@ class GenericInference:
             if merged_type_id is None:
                 merged_type_id = resolved_candidate
             else:
-                merged_type_id = self.__type_ctx.merge_types(merged_type_id, resolved_candidate, self.__span)
+                merged_type_id = self.__type_ctx.merge_types([merged_type_id, resolved_candidate], self.__span)
 
         assert merged_type_id is not None
         merged_type_id = self.__type_ctx.default_literals(merged_type_id)

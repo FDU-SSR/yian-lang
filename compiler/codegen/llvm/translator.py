@@ -52,6 +52,10 @@ class LLTranslator:
 
     def __resolve(self, builder: LLBuilder, value: IR.Value) -> LLValue:
         if isinstance(value, IR.Reg):
+            if value.type_id in (TypeCtx.void_id, TypeCtx.never_id):
+                # Virtual register — void/never values have no LLVM representation.
+                ll_type = self.__ll_type_ctx.get_ll_type(value.type_id)
+                return LLValue(value.type_id, ir.Constant(ll_type.ir_type, ir.Undefined))  # type: ignore
             return self.func.reg(value.name)
         if isinstance(value, IR.IntLiteral):
             return LLValue(value.type_id,
@@ -102,6 +106,8 @@ class LLTranslator:
             # phi
             builder.position_at(block.label, where=BuilderPosition.Phi)
             for phi in block.phis:
+                if phi.result.type_id in (TypeCtx.void_id, TypeCtx.never_id):
+                    continue  # void/never phis have no LLVM representation
                 builder.phi(phi.result.type_id,
                             [(src.label, self.__resolve(builder, val)) for src, val in phi.incoming],
                             phi.result.name)
@@ -180,9 +186,10 @@ class LLTranslator:
     def __terminator(self, builder: LLBuilder, terminator: IR.Terminator) -> None:
         match terminator:
             case IR.Ret(value=value):
-                builder.ret(self.__resolve(builder, value))
-            case IR.RetVoid():
-                builder.ret(None)
+                if value.type_id == TypeCtx.void_id:
+                    builder.ret(None)
+                else:
+                    builder.ret(self.__resolve(builder, value))
             case IR.Br(target=target):
                 builder.br(target.label)
             case IR.CondBr(cond=cond, then_block=then_block, else_block=else_block):

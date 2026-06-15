@@ -7,10 +7,9 @@ from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser_expr import ExprParser
-from compiler.frontend.parse.parser_stmt import StmtParser
 from compiler.frontend.parse.parser_type import TypeParser
-from compiler.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA, SEP_COMMA,
-                                            SEP_DOT, TERM_RANGLE,
+from compiler.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA,
+                                            SEP_COMMA, SEP_DOT, TERM_RANGLE,
                                             TERM_RBRACE, TERM_RPAREN,
                                             TERM_SEMICOLON, TokenStream)
 
@@ -21,7 +20,6 @@ class Parser:
 
         self.__type_parser = TypeParser(self.__stream)
         self.__expr_parser = ExprParser(self.__stream, self.__type_parser)
-        self.__stmt_parser = StmtParser(self.__stream, self.__expr_parser, self.__type_parser)
 
     def parse(self) -> AST.Program:
         """
@@ -241,13 +239,9 @@ class Parser:
         if decl is None:
             decl = self.__parse_method_decl()
 
-        block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
-        body = self.__stream.consume_until(self.__parse_stmt, TERM_RBRACE)
-        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+        body = self.__expr_parser.parse_block()
 
-        block = AST.Block(span=block_span, stmts=body)
-
-        return AST.MethodDef(span=decl.span, decl=decl, body=block)
+        return AST.MethodDef(span=decl.span, decl=decl, body=body)
 
     def __parse_field_info(self) -> AST.FieldInfo:
         attrs = self.__stream.consume_attrs()
@@ -309,16 +303,9 @@ class Parser:
         else:
             ret_type = None
 
-        block_span = self.__stream.consume_punctuator(PunctuatorKind.LBrace).span
-        body = self.__stream.consume_until(self.__parse_stmt, TERM_RBRACE)
-        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+        body = self.__expr_parser.parse_block()
 
-        block = AST.Block(span=block_span, stmts=body)
-
-        return AST.FuncDef(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=block)
-
-    def __parse_stmt(self) -> AST.Stmt:
-        return self.__stmt_parser.parse_stmt()
+        return AST.FuncDef(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=body)
 
     def __parse_type(self) -> AST.ASTType:
         return self.__type_parser.parse_type()

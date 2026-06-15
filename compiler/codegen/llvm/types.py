@@ -60,6 +60,7 @@ class LLTypeCtx:
         ty_def = self.__type_ctx[type_id]
         match ty_def:
             case Type.VoidType():    result = self.__void
+            case Type.NeverType():   result = self.__void
             case Type.BoolType():    result = self.__i1
             case Type.CharType():    result = self.__i32
             case Type.StrType():     result = self.__str_ll_type
@@ -161,7 +162,7 @@ class LLTypeCtx:
             return cached
         type_def = self.__type_ctx[type_id]
 
-        if isinstance(type_def, Type.VoidType):
+        if isinstance(type_def, (Type.VoidType, Type.NeverType)):
             result = (0, 1)
         elif isinstance(type_def, Type.BoolType):
             result = (1, 1)

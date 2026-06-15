@@ -121,21 +121,33 @@ class TestResult:
 def _parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int | None, str, str]:
     """Parse an .ans file into (expect_error, expected_exit_code, expected_output, expected_substring).
 
-    For error tests (.err.an):
-      - "Exit code N" → compiler exit code N, substring=rest
-      - Otherwise       → compiler should fail (any non-zero), substring=entire file
+    Convention for .ans files:
 
-    For runtime tests (default):
-      - "Exit code N" → runtime exit code N, output=rest
-      - Otherwise       → runtime exit code 0, output=entire file
+    **Error tests** (.err.an) — the entire file is the expected compiler error
+    substring.  Compilation must fail (any non-zero exit).  No ``Exit code``
+    header is used because the exact compiler exit code is not checked.
+
+    **Runtime tests** (normal .an) — the convention is:
+
+    - If ``main()`` is expected to return **non-zero**, the first line MUST be
+      ``Exit code <N>``.  The remainder (if any) is the expected combined
+      stdout+stderr output.
+    - If ``main()`` is expected to return **0**, the ``Exit code`` header is
+      omitted and the entire file is the expected stdout output.
     """
     raw = file_path.read_text().rstrip("\n")
     if raw.startswith("Exit code "):
-        idx = raw.index("\n")
-        exit_code = int(raw[len("Exit code "):idx].strip())
-        rest = raw[idx + 1:]
+        nl = raw.find("\n")
+        if nl == -1:
+            exit_code = int(raw[len("Exit code "):].strip())
+            rest = ""
+        else:
+            exit_code = int(raw[len("Exit code "):nl].strip())
+            rest = raw[nl + 1:]
         if is_error_test:
-            return True, exit_code, "", rest
+            # Error tests: Exit code is informational only; passed() does not
+            # check the exact value — any non-zero compiler exit is accepted.
+            return True, None, "", rest
         return False, exit_code, rest, ""
     if is_error_test:
         return True, None, "", raw

@@ -1,0 +1,10 @@
+// Expression-oriented: block as value in let binding
+
+fn main() -> i32 {
+    let x: i32 = {
+        let y: i32 = 10;
+        y + 32  // tail expression = 42
+    };
+    assert x == 42: "block expression failed";
+    return 0;
+}

@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
+    from compiler.frontend.lex.position import SrcSpan
     from compiler.frontend.lex.token import Token
     from compiler.frontend.parse.ast import Identifier
-    from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass
@@ -82,6 +82,14 @@ class VoidType:
 
     def __repr__(self) -> str:
         return "void"
+
+
+@dataclass
+class NeverType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "!"
 
 
 @dataclass
@@ -175,7 +183,7 @@ class DeducedType:
 
 
 ASTType: TypeAlias = (
-    IntType | FloatType | BoolType | StrType | CharType | VoidType
+    IntType | FloatType | BoolType | StrType | CharType | VoidType | NeverType
     | ArrayType | TupleType | PointerType | SliceType
     | NamedType
     | InstanceType

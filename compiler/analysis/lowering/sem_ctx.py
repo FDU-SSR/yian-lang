@@ -6,26 +6,16 @@ from typing import Callable, Optional
 
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit import hir as HIR
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 
 
-class LoopKind(Enum):
-    For = "for"
-    While = "while"
-    Loop = "loop"
-
-
 @dataclass
 class LoopFrame:
     span: SrcSpan
-    kind: LoopKind
-    break_allowed: bool = True
-    continue_allowed: bool = True
-    continue_prefix_stmts: list[HIR.Stmt] = field(default_factory=list[HIR.Stmt])
+    break_value_type_ids: list[int] = field(default_factory=list[int])
 
 
 class DefKind(Enum):
