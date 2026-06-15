@@ -14,38 +14,38 @@ impl<T> Option<T> {
     // Check if the Option is Some || None
     pub fn is_some() -> bool {
         match *self {
-            None => { return false; },
-            Some => { return true; },
+            None => { false },
+            Some => { true },
         }
     }
 
     pub fn is_none() -> bool {
-        return !self.is_some();
+        !self.is_some()
     }
 
     // Unwrap the value if it is Some, otherwise panic (|| return an error)
     pub fn unwrap() -> T {
         match *self {
-            None => { panic("Called unwrap on a None value"); },
-            Some(val) => { return val; },
+            None => { panic("Called unwrap on a None value") },
+            Some(val) => { val },
         }
     }
 
     // Unwrap the value if it is Some, otherwise return the provided default value
     pub fn unwrap_or(default: T) -> T {
         match *self {
-            None => { return default; },
-            Some(val) => { return val; },
+            None => { default },
+            Some(val) => { val },
         }
     }
 
     // Take the value out of the Option, leaving None in its place.
     pub fn take() -> Option<T> {
         match *self {
-            None => { return Option<T>.None; },
+            None => { Option<T>.None },
             Some(val) => {
                 *self = Option<T>.None;
-                return Option<T>.Some(val);
+                Option<T>.Some(val)
             },
         }
     }
@@ -55,11 +55,11 @@ impl<T> Option<T> {
         match *self {
             None => {
                 *self = Option<T>.Some(val);
-                return Option<T>.None;
+                Option<T>.None
             },
             Some(old_val) => {
                 *self = Option<T>.Some(val);
-                return Option<T>.Some(old_val);
+                Option<T>.Some(old_val)
             },
         }
     }
@@ -68,8 +68,8 @@ impl<T> Option<T> {
 impl<T> Clone for Option<T> {
     pub fn clone() -> Self {
         match *self {
-            None => { return Option<T>.None; },
-            Some(val) => { return Option<T>.Some(val.clone()); },
+            None => { Option<T>.None },
+            Some(val) => { Option<T>.Some(val.clone()) },
         }
     }
 }

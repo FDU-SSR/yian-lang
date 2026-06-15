@@ -13,22 +13,23 @@ fn append_unsigned_digits(out: String*, value: u64) {
 }
 
 fn unsigned_to_string(value: u64) -> String {
-    let out: String = String.new();
+    let out = String.new();
     append_unsigned_digits(&out, value);
-    return out;
+    out
 }
+
 fn signed_to_string(value: i64) -> String {
     if value >= 0 {
         return unsigned_to_string(u64(value));
     }
 
-    let out: String = String.new();
+    let out = String.new();
     out.push('-');
 
     let mag: u64 = u64(value);
     mag = 0u64 - mag;
     append_unsigned_digits(&out, mag);
-    return out;
+    out
 }
 
 fn float_to_string(value: f64) -> String {
@@ -40,7 +41,7 @@ fn float_to_string(value: f64) -> String {
         return String.from("0");
     }
 
-    let out: String = String.new();
+    let out = String.new();
     if value < 0.0 {
         out.push('-');
         value = -value;
@@ -67,88 +68,85 @@ fn float_to_string(value: f64) -> String {
         }
     }
 
-    return out;
+    out
 }
 
 impl ToString for u8 {
     fn to_string() -> String {
-        return unsigned_to_string(u64(*self));
+        unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u16 {
     fn to_string() -> String {
-        return unsigned_to_string(u64(*self));
+        unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u32 {
     fn to_string() -> String {
-        return unsigned_to_string(u64(*self));
+        unsigned_to_string(u64(*self))
     }
 }
 
 impl ToString for u64 {
     fn to_string() -> String {
-        return unsigned_to_string(*self);
+        unsigned_to_string(*self)
     }
 }
 
 impl ToString for i8 {
     fn to_string() -> String {
-        return signed_to_string(i64(*self));
+        signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i16 {
     fn to_string() -> String {
-        return signed_to_string(i64(*self));
+        signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i32 {
     fn to_string() -> String {
-        return signed_to_string(i64(*self));
+        signed_to_string(i64(*self))
     }
 }
 
 impl ToString for i64 {
     fn to_string() -> String {
-        return signed_to_string(*self);
+        signed_to_string(*self)
     }
 }
 
 impl ToString for f32 {
     fn to_string() -> String {
-        return float_to_string(f64(*self));
+        float_to_string(f64(*self))
     }
 }
 
 impl ToString for f64 {
     fn to_string() -> String {
-        return float_to_string(*self);
+        float_to_string(*self)
     }
 }
 
 impl ToString for bool {
     fn to_string() -> String {
-        if *self {
-            return String.from("true");
-        }
-        return String.from("false");
+        if *self { String.from("true") } else { String.from("false") }
     }
 }
 
 impl ToString for char {
     fn to_string() -> String {
-        let out: String = String.new();
+        let out = String.new();
         out.push(*self);
-        return out;
+        out
     }
 }
 
 impl ToString for void {
     fn to_string() -> String {
-        return String.from("void");
+        String.from("void")
     }
 }

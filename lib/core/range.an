@@ -10,7 +10,7 @@ pub struct Range<T> {
 
 impl<T> Clone for Range<T> {
     fn clone() -> Self {
-        return Self(
+        Self(
             start=self.start.clone(),
             end=self.end.clone()
         )
@@ -19,7 +19,7 @@ impl<T> Clone for Range<T> {
 
 impl<T> PartialEq<Range<T>> for Range<T> {
     fn eq(other: Range<T>) -> bool {
-        return self.start == other.start && self.end == other.end;
+        self.start == other.start && self.end == other.end
     }
 }
 
@@ -28,15 +28,15 @@ impl<T> Iterator<T> for Range<T> {
         if self.start < self.end {
             let value: T = self.start;
             self.start += 1
-            return Option<T>.Some(value);
+            Option<T>.Some(value)
         } else {
-            return Option<T>.None;
+            Option<T>.None
         }
     }
 }
 
 impl<T> IntoIterator<Range<T>> for Range<T> {
     fn into_iter() -> Range<T> {
-        return *self;
+        *self
     }
 }

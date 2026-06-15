@@ -31,13 +31,13 @@ pub fn eprint(s: str) {
 // The trailing newline is NOT included in the returned String.
 // Returns a heap-allocated String since the input length is unknown.
 pub fn readline() -> String {
-    let result: String = String.new();
+    let result = String.new();
     loop {
         u8[1] ch
         ch[0] = 0
         let s: str = sys_read(0, ch);
-        let data: u8[] = s.as_slice();
-        let n: u64 = data.len();
+        let data = s.as_slice();
+        let n = data.len();
         if n == 0 {
             break;
         }
@@ -47,7 +47,7 @@ pub fn readline() -> String {
         }
         result.push_str(s);
     }
-    return result;
+    result
 }
 
 // =====================================================================
@@ -56,22 +56,19 @@ pub fn readline() -> String {
 
 // Open a file for reading only (O_RDONLY = 0).
 pub fn open_rdonly(path: str) -> i32 {
-    let fd: i32 = open(path, 0);
-    return fd;
+    open(path, 0)
 }
 
 // Open a file for writing (creates or truncates).
 // flags = O_WRONLY | O_CREAT | O_TRUNC = 577
 pub fn open_wronly(path: str) -> i32 {
-    let fd: i32 = open(path, 577);
-    return fd;
+    open(path, 577)
 }
 
 // Open a file for appending (creates if not exists).
 // flags = O_WRONLY | O_CREAT | O_APPEND = 1089
 pub fn open_append(path: str) -> i32 {
-    let fd: i32 = open(path, 1089);
-    return fd;
+    open(path, 1089)
 }
 
 // =====================================================================
@@ -82,22 +79,22 @@ pub fn open_append(path: str) -> i32 {
 // The reading is done with a 32-byte probe buffer in a loop.
 pub fn read_file(path: str) -> str {
     let fd: i32 = open(path, 0);
-    let buf: Vec<u8> = Vec<u8>.new();
+    let buf = Vec<u8>.new();
     loop {
         u8[32] probe
         for i in 0u64..32 {
             probe[i] = 0
         }
         let s: str = sys_read(fd, probe);
-        let data: u8[] = s.as_slice();
-        let n: u64 = data.len();
+        let data = s.as_slice();
+        let n = data.len();
         if n == 0 {
             break;
         }
         buf.extend_from_slice(data);
     }
     close(fd);
-    return str.from(buf.as_slice());
+    str.from(buf.as_slice())
 }
 
 // Write a str to a file at the given path (creates or truncates).

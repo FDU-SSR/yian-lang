@@ -49,7 +49,7 @@ pub trait Shr<Rhs, Output> {
 pub trait PartialEq<Rhs> {
     fn eq(rhs: Rhs) -> bool;
     fn ne(rhs: Rhs) -> bool {
-        return ! self.eq(rhs);
+        !self.eq(rhs)
     }
 }
 
@@ -62,9 +62,9 @@ pub enum Ordering {
 impl PartialEq<Ordering> for Ordering {
     fn eq(rhs: Ordering) -> bool {
         match *self {
-            Less => { match rhs { Less => { return true } _ => { return false } } }
-            Equal => { match rhs { Equal => { return true } _ => { return false } } }
-            Greater => { match rhs { Greater => { return true } _ => { return false } } }
+            Less => { match rhs { Less => { true }, _ => { false } } },
+            Equal => { match rhs { Equal => { true }, _ => { false } } },
+            Greater => { match rhs { Greater => { true }, _ => { false } } },
         }
     }
 }
@@ -74,67 +74,41 @@ pub trait PartialOrd<Rhs> {
 
     fn lt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => {
-                return true
-            }
-            _ => {
-                return false
-            }
+            Less => { true },
+            _ => { false },
         }
     }
 
     fn le(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => {
-                return true
-            }
-            Equal => {
-                return true
-            }
-            _ => {
-                return false
-            }
+            Less => { true },
+            Equal => { true },
+            _ => { false },
         }
     }
 
     fn gt(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Greater => {
-                return true
-            }
-            _ => {
-                return false
-            }
+            Greater => { true },
+            _ => { false },
         }
     }
 
     fn ge(rhs: Rhs) -> bool {
         match self.partial_cmp(rhs) {
-            Less => {
-                return false
-            }
-            Equal => {
-                return true
-            }
-            Greater => {
-                return true
-            }
+            Less => { false },
+            Equal => { true },
+            Greater => { true },
         }
     }
 }
 
 pub fn max<T>(a: T, b: T) -> T {
-    if a < b {
-        return b;
-    }
-    return a;
+    if a < b { b } else { a }
 }
 
 pub fn min<T>(a: T, b: T) -> T {
-    if a < b {
-        return a;
-    }
-    return b;
+    if a < b { a } else { b }
 }
 
 pub trait Index<Idx, Target> {

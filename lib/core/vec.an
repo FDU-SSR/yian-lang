@@ -15,7 +15,7 @@ pub struct Vec<T> {
 impl<T> Vec<T> {
     // Create a new, empty Vec
     static pub fn new() -> Self {
-        return Self(
+        Self(
             raw_vec = RawVec<T>.new(),
             len = 0
         )
@@ -23,7 +23,7 @@ impl<T> Vec<T> {
 
     // Create a Vec with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
-        return Self(
+        Self(
             raw_vec = RawVec<T>.with_capacity(capacity),
             len = 0
         )
@@ -31,18 +31,18 @@ impl<T> Vec<T> {
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
-        return from_raw_parts(self.raw_vec.ptr(), self.len);
+        from_raw_parts(self.raw_vec.ptr(), self.len)
     }
 
     // Push an element to the end
     pub fn push(value: T) {
-        let len: u64 = self.len;
+        let len = self.len;
 
         if len == self.raw_vec.capacity() {
             self.raw_vec.grow();
         }
 
-        let end: T* = self.raw_vec.ptr() + len;
+        let end = self.raw_vec.ptr() + len;
         *end = value;
         self.len += 1
     }
@@ -58,18 +58,18 @@ impl<T> Vec<T> {
     // Pop an element from the end, returning None if empty
     pub fn pop() -> Option<T> {
         if self.len == 0 {
-            return Option<T>.None;
+            Option<T>.None
         } else {
             self.len -= 1
-            let end: T* = self.raw_vec.ptr() + self.len;
-            return Option<T>.Some(*end);
+            let end = self.raw_vec.ptr() + self.len;
+            Option<T>.Some(*end)
         }
     }
 
     // Insert an element at index, shifting elements to the right
     // Panics if index > len
     pub fn insert(index: u64, value: T) {
-        let len: u64 = self.len;
+        let len = self.len;
         if index > len {
             panic("index out of bounds");
         }
@@ -78,17 +78,17 @@ impl<T> Vec<T> {
             self.raw_vec.grow();
         }
 
-        let buf: T* = self.raw_vec.ptr();
-        
+        let buf = self.raw_vec.ptr();
+
         // Shift elements to the right
         // Use memmove logic: copy memory from p to p + 1
         // Since we don't have built-in memmove yet, we iterate backwards
-        let i: u64 = len;
+        let i = len;
         while i > index {
             buf[i] = buf[i - 1]
             i -= 1
         }
-        
+
         buf[index] = value
         self.len += 1
     }
@@ -96,44 +96,44 @@ impl<T> Vec<T> {
     // Remove an element at index, shifting elements to the left, returning the removed element
     // Panics if index >= len
     pub fn remove(index: u64) -> T {
-        let len: u64 = self.len;
+        let len = self.len;
         if index >= len {
             panic("index out of bounds");
         }
 
-        let buf: T* = self.raw_vec.ptr();
+        let buf = self.raw_vec.ptr();
 
-        let ret: T = buf[index] // The element to remove;
+        let ret = buf[index]; // The element to remove;
 
         // Shift elements to the left
-        let i: u64 = index;
+        let i = index;
         while i < len - 1 {
             buf[i] = buf[i + 1]
             i += 1
         }
 
         self.len -= 1
-        return ret;
+        ret
     }
 
     // Remove the last element, replacing it with the element at end, returning the removed element
     // Panics if index >= len
     pub fn swap_remove(index: u64) -> T {
-        let len: u64 = self.len;
+        let len = self.len;
         if index >= len {
             panic("index out of bounds");
         }
 
-        let buf: T* = self.raw_vec.ptr();
-        let ret: T = buf[index] // The element to remove;
+        let buf = self.raw_vec.ptr();
+        let ret = buf[index]; // The element to remove;
         self.len -= 1
-        
+
         if index != self.len {
              // Move the last element to the removed spot
             buf[index] = buf[self.len]
         }
-        
-        return ret;
+
+        ret
     }
 
     // Extend the Vec with a slice
@@ -172,12 +172,12 @@ impl<T> Vec<T> {
 
     // Check if the Vec is empty
     pub fn is_empty() -> bool {
-        return self.len == 0;
+        self.len == 0
     }
 
     // Get the capacity
     pub fn capacity() -> u64 {
-        return self.raw_vec.capacity();
+        self.raw_vec.capacity()
     }
 }
 
@@ -185,7 +185,7 @@ impl<T> Vec<T> {
 // This will clone the elements in the Vec, so it requires T to be Clone
 impl<T> Clone for Vec<T> {
     pub fn clone() -> Self {
-        return self.as_slice().to_vec();
+        self.as_slice().to_vec()
     }
 }
 
@@ -194,13 +194,13 @@ impl<T> Index<u64, T*> for Vec<T> {
         if index >= self.len {
             panic("index out of bounds");
         }
-        return self.raw_vec.ptr() + index;
+        self.raw_vec.ptr() + index
     }
 }
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
     pub fn eq(rhs: Vec<T>) -> bool {
-        return self.as_slice() == rhs.as_slice();
+        self.as_slice() == rhs.as_slice()
     }
 }
 
@@ -208,7 +208,7 @@ impl<T> PartialEq<Vec<T>> for Vec<T> {
 // This will clone the elements from the slice into the Vec
 impl<T> From<T[]> for Vec<T> {
     pub static fn from(value: T[]) -> Self {
-        return value.to_vec();
+        value.to_vec()
     }
 }
 
@@ -216,23 +216,23 @@ impl<T> From<T[]> for Vec<T> {
 // This will return a slice reference to the elements in the Vec
 impl<T> Into<Vec<T>> for T[] {
     pub fn into() -> Vec<T> {
-        return Vec<T>.from(*self);
+        Vec<T>.from(*self)
     }
 }
 
 // Implement Deref for Vec<T> to allow dereferencing to a slice
 impl<T> Deref<T[]> for Vec<T> {
     pub fn deref() -> T[] {
-        return self.as_slice();
+        self.as_slice()
     }
 }
 
 // Implement Add for Vec<T> to concatenate two Vecs
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
-        let result: Vec<T> = Vec<T>.with_capacity(self.len + rhs.len);
+        let result = Vec<T>.with_capacity(self.len + rhs.len);
         result.extend(self.clone());
         result.extend(rhs.clone());
-        return result;
+        result
     }
 }

@@ -14,51 +14,51 @@ impl<T> T[] {
     // Convert a slice to a SliceStruct
     fn as_struct() -> SliceStruct<T> {
         let ret: SliceStruct<T>* = bitcast<SliceStruct<T>*>(self);
-        return *ret;
+        *ret
     }
 
     // Get the raw pointer to the slice data
     pub fn ptr() -> T* {
-        return self.as_struct().ptr;
+        self.as_struct().ptr
     }
 
     // Get length of the slice
     pub fn len() -> u64 {
-        return self.as_struct().len;
+        self.as_struct().len
     }
 
     // Get element at index
     pub fn get(index: u64) -> Option<T> {
-        let len: u64 = self.len();
+        let len = self.len();
         if index >= len {
             return Option<T>.None;
         }
-        let ptr: T* = self.as_struct().ptr + index;
-        return Option<T>.Some(*ptr);
+        let ptr = self.as_struct().ptr + index;
+        Option<T>.Some(*ptr)
     }
 
     // Get first element of the slice
     pub fn first() -> Option<T> {
-        return self.get(0);
+        self.get(0)
     }
 
     // Get last element of the slice
     pub fn last() -> Option<T> {
-        let len: u64 = self.len();
+        let len = self.len();
         if len == 0 {
             return Option<T>.None;
         }
-        return self.get(len - 1);
+        self.get(len - 1)
     }
 
     // Clone the slice into a Vec
     pub fn to_vec() -> Vec<T> {
-        let s: SliceStruct<T> = self.as_struct();
-        let vec: Vec<T> = Vec<T>.with_capacity(s.len);
+        let s = self.as_struct();
+        let vec = Vec<T>.with_capacity(s.len);
         for i in 0..s.len {
             vec.push(s.ptr[i]);
         }
-        return vec;
+        vec
     }
 }
 
@@ -68,7 +68,7 @@ pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
         len = len
     )
     let ret: T[]* = bitcast<T[]*>(&slice_struct);
-    return *ret;
+    *ret
 }
 
 pub struct SliceIter<T> {
@@ -78,11 +78,11 @@ pub struct SliceIter<T> {
 
 impl<T> SliceIter<T> {
     pub fn len() -> u64 {
-        return self.end - self.ptr;
+        self.end - self.ptr
     }
 
     pub fn rev() -> RevSliceIter<T>  {
-        return RevSliceIter<T>(
+        RevSliceIter<T>(
             ptr = self.end,
             begin = self.ptr
         )
@@ -96,11 +96,11 @@ pub struct RevSliceIter<T> {
 
 impl<T> RevSliceIter<T> {
     pub fn len() -> u64 {
-        return self.ptr - self.begin
+        self.ptr - self.begin
     }
 
     pub fn rev() -> SliceIter<T> {
-        return SliceIter<T>(
+        SliceIter<T>(
             ptr = self.begin,
             end = self.ptr
         )
@@ -112,9 +112,9 @@ impl<T> Iterator<T> for SliceIter<T> {
         if self.ptr == self.end {
             return Option<T>.None;
         }
-        let current: T* = self.ptr;
+        let current = self.ptr;
         self.ptr += 1
-        return Option<T>.Some(*current);
+        Option<T>.Some(*current)
     }
 }
 
@@ -124,14 +124,14 @@ impl<T> Iterator<T> for RevSliceIter<T> {
             return Option<T>.None
         }
         self.ptr -= 1
-        return Option<T>.Some(*self.ptr)
+        Option<T>.Some(*self.ptr)
     }
 }
 
 impl<T> IntoIterator<SliceIter<T>> for T[] {
     pub fn into_iter() -> SliceIter<T> {
-        let s: SliceStruct<T> = self.as_struct();
-        return SliceIter<T>(
+        let s = self.as_struct();
+        SliceIter<T>(
             ptr = s.ptr,
             end = s.ptr + s.len
         )
@@ -140,7 +140,7 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
 
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
-        return SliceIter<T>(
+        SliceIter<T>(
             ptr = bitcast<T*>(self),
             end = bitcast<T*>(self) + N
         )
@@ -157,13 +157,13 @@ impl<T> PartialEq<T[]> for T[] {
                 return false;
             }
         }
-        return true;
+        true
     }
 }
 
 impl<T> Index<u64, T*> for T[] {
     fn index(index: u64) -> T* {
-        return self.ptr() + index;
+        self.ptr() + index
     }
 }
 
@@ -172,8 +172,8 @@ impl<T> Index<Range<u64>, T[]> for T[] {
         if range.end > self.len() {
             panic("Range out of bounds");
         }
-        let start_ptr: T* = self.ptr() + range.start;
-        let len: u64 = range.end - range.start;
-        return from_raw_parts(start_ptr, len);
+        let start_ptr = self.ptr() + range.start;
+        let len = range.end - range.start;
+        from_raw_parts(start_ptr, len)
     }
 }

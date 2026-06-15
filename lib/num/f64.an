@@ -12,8 +12,8 @@ impl Hash<Murmur3Hasher> for f64 {
 
 impl From<str> for f64 {
     pub static fn from(value: str) -> Self {
-        let bytes: u8[] = value.as_slice();
-        let len: u64 = bytes.len();
+        let bytes = value.as_slice();
+        let len = bytes.len();
         if len == 0 {
             panic("invalid f64: empty string");
         }
@@ -28,14 +28,14 @@ impl From<str> for f64 {
 
         let i: u64 = 0;
         while i < len {
-            let b: u8 = bytes[i];
+            let b = bytes[i];
             if b == b'.' {
                 if seen_dot {
                     panic("invalid f64: multiple dots");
                 }
                 seen_dot = true;
             } elif b >= b'0' && b <= b'9' {
-                let digit: u8 = b - b'0';
+                let digit = b - b'0';
                 if ! seen_dot {
                     has_int_digit = true;
                     int_part = int_part * 10 + u64(digit);
@@ -57,6 +57,6 @@ impl From<str> for f64 {
             panic("invalid f64: malformed decimal");
         }
 
-        return f64(int_part) + frac_part;
+        f64(int_part) + frac_part
     }
 }

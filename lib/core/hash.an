@@ -63,7 +63,7 @@ impl Hasher for Murmur3Hasher {
         state = state * 0xc4ceb9fe1a85ec53;
         state ^= state >> 33
 
-        return state;
+        state
     }
 
     fn write(bytes: u8[]) {
@@ -121,12 +121,12 @@ pub struct Murmur3BuildHasher {
 
 impl Murmur3BuildHasher {
     static pub fn with_seed(seed: u64) -> Self {
-        return Self(seed);
+        Self(seed)
     }
 }
 
 impl BuildHasher<Murmur3Hasher> for Murmur3BuildHasher {
     fn build_hasher() -> Murmur3Hasher {
-        return Murmur3Hasher.with_seed(self.seed);
+        Murmur3Hasher.with_seed(self.seed)
     }
 }
