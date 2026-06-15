@@ -67,6 +67,9 @@ class CfgBuilder:
         # ── dead code elimination ──
         self.__eliminate_dead_code()
 
+        # ── sort blocks in RPO for phi resolution ──
+        self.__sort_blocks_rpo()
+
         # ── termination guard ──
         self.__guard_termination(dp)
 
@@ -126,6 +129,72 @@ class CfgBuilder:
                 if phi.incoming:
                     surviving_phis.append(phi)
             block.phis = surviving_phis
+
+    def __sort_blocks_rpo(self) -> None:
+        """Reorder ``self.__func.blocks`` in reverse post-order.
+
+        Reverse post-order guarantees that for every forward edge
+        A -> B in the CFG, block A appears before block B in the
+        ordered list.  This ensures that when the LLVM translator
+        iterates blocks in list order, every phi node's predecessor
+        values have already been registered.
+
+        Back edges (edges that form cycles, e.g. loop back edges)
+        are detected via an ``in_progress`` set and are skipped.
+        This is safe because loop headers in the current lowering
+        do not carry phi nodes that depend on back-edge values.
+        """
+        # ── build successor map (same pattern as __eliminate_dead_code) ──
+        successors: dict[int, list[IR.Block]] = {}
+        for block in self.__func.blocks:
+            succs: list[IR.Block] = []
+            if block.terminator is not None:
+                match block.terminator:
+                    case IR.Br(target=target):
+                        succs.append(target)
+                    case IR.CondBr(then_block=then, else_block=else_):
+                        succs.append(then)
+                        succs.append(else_)
+                    case IR.Match(arms=arms, default=default):
+                        for arm in arms:
+                            succs.append(arm.body)
+                        if default is not None:
+                            succs.append(default)
+                    case IR.Ret() | IR.Panic():
+                        pass
+            successors[id(block)] = succs
+
+        # ── add phi incoming edges ──
+        # If block B has a phi with incoming from block P, P must appear
+        # before B.  Add B as a successor of P so the DFS visits P first.
+        for block in self.__func.blocks:
+            for phi in block.phis:
+                for pred, _ in phi.incoming:
+                    successors.setdefault(id(pred), []).append(block)
+
+        # ── DFS from entry, collecting postorder ──
+        visited: set[int] = set()
+        in_progress: set[int] = set()
+        postorder: list[IR.Block] = []
+
+        def dfs(block: IR.Block) -> None:
+            bid = id(block)
+            if bid in visited:
+                return
+            if bid in in_progress:
+                return  # back edge — block already on the DFS stack, skip
+            in_progress.add(bid)
+            for succ in successors.get(bid, []):
+                dfs(succ)
+            in_progress.discard(bid)
+            visited.add(bid)
+            postorder.append(block)
+
+        dfs(self.__func.entry)
+
+        # RPO = reverse of postorder
+        # After DCE every block is reachable from entry, so |rpo| == |blocks|
+        self.__func.blocks = list(reversed(postorder))
 
     def __guard_termination(self, dp: DefPoint) -> None:
         """Ensure every block has a terminator.
@@ -215,10 +284,13 @@ class CfgBuilder:
 
         self.__switch_to(then_block)
         then_val = self.__translate_block(stmt.then_branch)
-        if self.__current_block.terminator is None:
+        then_reaches_merge = self.__current_block.terminator is None
+        if then_reaches_merge:
             self.__set_terminator(IR.Br(merge_block))
         then_end = self.__current_block
-        incoming = [(then_end, then_val)]
+        incoming: list[tuple[IR.Block, IR.Value]] = []
+        if then_reaches_merge:
+            incoming.append((then_end, then_val))
 
         if stmt.else_branch is not None:
             assert else_block is not None
@@ -226,10 +298,15 @@ class CfgBuilder:
             else_val = self.__translate_block(stmt.else_branch)
             if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
-            else_end = self.__current_block
-            incoming.append((else_end, else_val))
+                incoming.append((self.__current_block, else_val))
 
         self.__switch_to(merge_block)
+
+        if not incoming:
+            # All branches diverge — no phi needed.
+            if stmt.type_id == TypeCtx.void_id:
+                return self.__void_reg()
+            return self.__never_reg()
 
         phi = self.__emit_phi(incoming)
         phi.type_id = stmt.type_id
@@ -303,9 +380,15 @@ class CfgBuilder:
             arm_val = self.__translate_block(arm.body)
             if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
-            arm_values.append((self.__current_block, arm_val))
+                arm_values.append((self.__current_block, arm_val))
 
         self.__switch_to(merge_block)
+
+        if not arm_values:
+            # All arms diverge — no phi needed.
+            if stmt.type_id == TypeCtx.void_id:
+                return self.__void_reg()
+            return self.__never_reg()
 
         phi = self.__emit_phi(arm_values)
         phi.type_id = stmt.type_id
