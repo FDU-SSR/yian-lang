@@ -15,82 +15,82 @@ pub trait Clone {
 // Integer types
 impl Clone for i8 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for i16 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for i32 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for i64 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for u8 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for u16 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for u32 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for u64 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 // Floating-point types
 impl Clone for f32 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 impl Clone for f64 {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 // Boolean type
 impl Clone for bool {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 // Character type
 impl Clone for char {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }
 
 // Void type
 impl Clone for void {
     pub fn clone() -> Self {
-        return *self;
+        *self
     }
 }

@@ -13,41 +13,41 @@ pub struct String {
 impl String {
     // Create a new empty String
     static pub fn new() -> Self {
-        return Self(
+        Self(
             data = Vec<u8>.new()
         )
     }
 
     // Create a new String with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
-        return Self(
+        Self(
             data = Vec<u8>.with_capacity(capacity)
         )
     }
 
     // Extract str from String
     pub fn as_str() -> str {
-        return str.from(self.data.as_slice());
+        str.from(self.data.as_slice())
     }
 
     // Get the byte slice of the String
     pub fn as_slice() -> u8[] {
-        return self.data.as_slice();
+        self.data.as_slice()
     }
 
     // Get capacity of String in bytes
     pub fn capacity() -> u64 {
-        return self.data.capacity();
+        self.data.capacity()
     }
 
     // Get length of String in bytes
     pub fn len() -> u64 {
-        return self.data.len();
+        self.data.len()
     }
 
     // Check if the String is empty
     pub fn is_empty() -> bool {
-        return self.len() == 0;
+        self.len() == 0
     }
 
     // Push a String to the end(copy)
@@ -86,13 +86,13 @@ impl String {
             return Option<char>.None;
         }
 
-        let len: u64 = self.len();
-        let bytes: u8[] = self.as_slice();
+        let len = self.len();
+        let bytes = self.as_slice();
 
         // Find the start of the last UTF-8 character
         let i: u64 = 1;
         while i <= 4 && i <= len {
-            let byte: u8 = bytes[len - i];
+            let byte = bytes[len - i];
             // Check if the byte is a valid UTF-8 continuation byte
             if (byte & 0xC0) != 0x80 {
                 let code: u32 = 0;
@@ -118,7 +118,7 @@ impl String {
 
     // Trimed version of the String
     pub fn trimmed() -> String {
-        return String.from(self.trim());
+        String.from(self.trim())
     }
 
     // Clear the contents of the String
@@ -139,7 +139,7 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
-        return String(
+        String(
             data = self.data.clone()
         )
     }
@@ -148,48 +148,48 @@ impl Clone for String {
 // Implement PartialEq for String to compare with another String
 impl PartialEq<String> for String {
     pub fn eq(other: String) -> bool {
-        return self.as_str() == other.as_str();
+        self.as_str() == other.as_str()
     }
 }
 
 // Implement PartialEq for String to compare with a str slice
 impl PartialEq<str> for String {
     pub fn eq(other: str) -> bool {
-        return self.as_str() == other;
+        self.as_str() == other
     }
 }
 
 // Implement Add for String to concatenate with another String
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {
-        let result: String = self.clone();
+        let result = self.clone();
         result.push_str(other.as_str());
-        return result;
+        result
     }
 }
 
 // Implement Add for String to concatenate with a str slice
 impl Add<str, String> for String {
     pub fn add(other: str) -> String {
-        let result: String = self.clone();
+        let result = self.clone();
         result.push_str(other);
-        return result;
+        result
     }
 }
 
 // Implement Add for String to concatenate with a char
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
-        let result: String = self.clone();
+        let result = self.clone();
         result.push(other);
-        return result;
+        result
     }
 }
 
 // Implement Deref to allow String to be used as a str slice
 impl Deref<str> for String {
     pub fn deref() -> str {
-        return self.as_str();
+        self.as_str()
     }
 }
 
@@ -197,7 +197,7 @@ impl Deref<str> for String {
 // This will clone the data from the str slice into the String
 impl From<str> for String {
     static pub fn from(value: str) -> Self {
-        return Self(
+        Self(
             data = Vec<u8>.from(value.as_slice())
         )
     }
@@ -206,19 +206,19 @@ impl From<str> for String {
 // Implement Into<String> for str to allow converting a str slice into a String
 impl Into<String> for str {
     pub fn into() -> String {
-        return String.from(*self);
+        String.from(*self)
     }
 }
 
 // Implement Index for String to allow indexing into the String as a str slice
 impl Index<Range<u64>, str> for String {
     pub fn index(range: Range<u64>) -> str {
-        return self.as_str()[range];
+        self.as_str()[range]
     }
 }
 
 impl ToString for String {
     pub fn to_string() -> String {
-        return *self;
+        *self
     }
 }

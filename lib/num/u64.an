@@ -5,12 +5,12 @@ from std.core.string import String;
 
 impl u64 {
     pub fn rotate_left(n: u64) {
-        let shift: u64 = n % 64;
+        let shift = n % 64;
         if shift == 0 {
             return;
         }
-        let left_part: u64 = *self << shift;
-        let right_part: u64 = *self >> (64 - shift);
+        let left_part = *self << shift;
+        let right_part = *self >> (64 - shift);
         *self = left_part | right_part;
     }
 
@@ -27,14 +27,14 @@ impl u64 {
         n |= n >> 8
         n |= n >> 16
         n |= n >> 32
-        return n + 1;
+        n + 1
     }
 
     pub fn align_up(alignment: u64) {
         if alignment == 0 {
             panic("alignment must be greater than 0");
         }
-        let mask: u64 = alignment - 1;
+        let mask = alignment - 1;
         *self = (*self + mask) & !mask;
     }
 
@@ -47,14 +47,14 @@ impl u64 {
         }
 
         let n: u64 = *self;
-        let digits: String = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-        let out: String = String.new();
+        let digits = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        let out = String.new();
         while n > 0 {
-            let digit: u64 = n % radix;
+            let digit = n % radix;
             out += char(digits.as_slice()[digit]);
             n /= radix;
         }
-        return out.chars().rev().collect();
+        out.chars().rev().collect()
     }
 }
 
@@ -68,8 +68,8 @@ impl Hash<Murmur3Hasher> for u64 {
 
 impl From<str> for u64 {
     pub static fn from(value: str) -> Self {
-        let bytes: u8[] = value.as_slice();
-        let len: u64 = bytes.len();
+        let bytes = value.as_slice();
+        let len = bytes.len();
         if len == 0 {
             panic("invalid u64: empty string");
         }
@@ -78,12 +78,12 @@ impl From<str> for u64 {
         let max_u64: u64 = 18446744073709551615u64;
         let i: u64 = 0;
         while i < len {
-            let b: u8 = bytes[i];
+            let b = bytes[i];
             if b < b'0' || b > b'9' {
                 panic("invalid u64: contains non-digit");
             }
 
-            let digit: u64 = u64(b - b'0');
+            let digit = u64(b - b'0');
             if out > (max_u64 - digit) / 10 {
                 panic("invalid u64: overflow");
             }
@@ -91,6 +91,6 @@ impl From<str> for u64 {
             i += 1
         }
 
-        return out;
+        out
     }
 }

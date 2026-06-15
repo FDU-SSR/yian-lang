@@ -4,7 +4,7 @@ from slice import from_raw_parts;
 
 impl<T> Index<u64, T*> for T* {
     fn index(index: u64) -> T* {
-        return *self + index;
+        *self + index
     }
 }
 
@@ -12,6 +12,6 @@ impl<T> Index<Range<u64>, T[]> for T* {
     fn index(range: Range<u64>) -> T[] {
         let start: T* = *self + range.start;
         let len: u64 = range.end - range.start;
-        return from_raw_parts(start, len);
+        from_raw_parts(start, len)
     }
 }

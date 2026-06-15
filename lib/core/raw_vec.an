@@ -18,22 +18,22 @@ impl<T> RawVec<T> {
         }
         // Allocate memory for capacity elements
         let data: T* = dyn[capacity] T;
-        return Self(
+        Self(
             data = data,
             cap = capacity
         )
     }
 
     pub fn ptr() -> T* {
-        return self.data;
+        self.data
     }
 
     pub fn capacity() -> u64 {
-        return self.cap;
+        self.cap
     }
 
     pub fn grow() {
-        let old_cap: u64 = self.cap;
+        let old_cap = self.cap;
         let new_cap: u64;
         if old_cap == 0 {
             new_cap = 4;
@@ -57,7 +57,7 @@ impl<T> RawVec<T> {
     }
 
     pub fn reserve(len: u64, additional: u64) {
-        let required_cap: u64 = len + additional;
+        let required_cap = len + additional;
         if self.cap >= required_cap {
             return;
         }
@@ -72,18 +72,18 @@ impl<T> RawVec<T> {
         }
 
         let new_data: T* = dyn T[new_cap];
-        
+
         // Copy valid elements
         if len > 0 {
             for i in 0..len {
                 new_data[i] = self.data[i]
             }
         }
-        
+
         if self.cap > 0 {
             del self.data;
         }
-        
+
         self.data = new_data;
         self.cap = new_cap;
     }
@@ -92,7 +92,7 @@ impl<T> RawVec<T> {
         if self.cap <= len {
             return;
         }
-        
+
         if len == 0 {
             if self.cap > 0 {
                 del self.data;
@@ -103,16 +103,16 @@ impl<T> RawVec<T> {
         }
 
         let new_data: T* = dyn T[len];
-        
+
         // Copy valid elements
         for i in 0..len {
             new_data[i] = self.data[i]
         }
-        
+
         if self.cap > 0 {
             del self.data;
         }
-        
+
         self.data = new_data;
         self.cap = len;
     }

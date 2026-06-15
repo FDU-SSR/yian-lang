@@ -13,24 +13,24 @@ pub struct HashSet<T> {
 
 impl<T> HashSet<T> {
     static pub fn new() -> Self {
-        return Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0));
+        Self.with_capacity_and_hasher(0, Murmur3BuildHasher.with_seed(0))
     }
-    
-    static pub fn with_capacity(capacity: u64) -> Self {
-        return Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0));
-    }
-    
-    static pub fn with_capacity_and_hasher(capacity: u64, hasher_builder: Murmur3BuildHasher) -> Self {
-        let actual_capacity: u64 = Self.next_power_of_two(capacity);
 
-        let growth_left: u64 = Self.calculate_growth_left(actual_capacity);
+    static pub fn with_capacity(capacity: u64) -> Self {
+        Self.with_capacity_and_hasher(capacity, Murmur3BuildHasher.with_seed(0))
+    }
+
+    static pub fn with_capacity_and_hasher(capacity: u64, hasher_builder: Murmur3BuildHasher) -> Self {
+        let actual_capacity = if capacity == 0 { 0u64 } else { capacity.next_power_of_two() };
+
+        let growth_left = Self.calculate_growth_left(actual_capacity);
         let ctrls: u8* = dyn u8[actual_capacity];
         for i in 0..actual_capacity {
             ctrls[i] = 0b1111_1111
         }
         let buckets: T* = dyn T[actual_capacity];
 
-        return Self(
+        Self(
             buckets,
             ctrls,
             0,
@@ -41,20 +41,20 @@ impl<T> HashSet<T> {
     }
 
     static pub fn calculate_growth_left(capacity: u64) -> u64 {
-        return capacity * 3 / 4;
+        capacity * 3 / 4
     }
 
     pub fn insert(value: T) -> bool {
         if self.growth_left == 0 {
             self.resize(self.capacity * 2);
         }
-        let hash: u64 = self.hash_value(value);
-        let primary_index: u64 = hash & (self.capacity - 1);
-        let h2: u8 = self.get_h2(hash);
-        let index: u64 = primary_index;
+        let hash = self.hash_value(value);
+        let primary_index = hash & (self.capacity - 1);
+        let h2 = self.get_h2(hash);
+        let index = primary_index;
         for i in 0..self.capacity {
-            let ctrl_byte: u8 = self.ctrls[index];
-            
+            let ctrl_byte = self.ctrls[index];
+
             if ctrl_byte == 0b1111_1111 || ctrl_byte == 0b1000_0000 {
                 self.ctrls[index] = h2
                 self.buckets[index] = value
@@ -66,24 +66,24 @@ impl<T> HashSet<T> {
             }
             index = (index + 1) & (self.capacity - 1);
         }
-        return false;
+        false
     }
 
     pub fn contains(value: T) -> bool {
         if self.capacity == 0 {
             return false;
         }
-        let hash: u64 = self.hash_value(value);
-        let primary_index: u64 = hash & (self.capacity - 1);
-        let h2: u8 = self.get_h2(hash);
-        let index: u64 = primary_index;
+        let hash = self.hash_value(value);
+        let primary_index = hash & (self.capacity - 1);
+        let h2 = self.get_h2(hash);
+        let index = primary_index;
         for i in 0..self.capacity {
-            let ctrl_byte: u8 = self.ctrls[index];
-            
+            let ctrl_byte = self.ctrls[index];
+
             if ctrl_byte == 0b1111_1111 {
                 return false;
             }
-            
+
             if ctrl_byte == h2 {
                 if self.buckets[index] == value {
                     return true;
@@ -91,25 +91,25 @@ impl<T> HashSet<T> {
             }
             index = (index + 1) & (self.capacity - 1);
         }
-        
-        return false;
+
+        false
     }
 
     pub fn remove(value: T) -> bool {
         if self.capacity == 0 {
             return false;
         }
-        let hash: u64 = self.hash_value(value);
-        let primary_index: u64 = hash & (self.capacity - 1);
-        let h2: u8 = self.get_h2(hash);
-        let index: u64 = primary_index;
+        let hash = self.hash_value(value);
+        let primary_index = hash & (self.capacity - 1);
+        let h2 = self.get_h2(hash);
+        let index = primary_index;
         for i in 0..self.capacity {
-            let ctrl_byte: u8 = self.ctrls[index];
-            
+            let ctrl_byte = self.ctrls[index];
+
             if ctrl_byte == 0b1111_1111 {
                 return false;
             }
-            
+
             if ctrl_byte == h2 {
                 if self.buckets[index] == value {
                     self.ctrls[index] = 0b1000_0000
@@ -119,15 +119,15 @@ impl<T> HashSet<T> {
             }
             index = (index + 1) & (self.capacity - 1);
         }
-        return false;
+        false
     }
 
     pub fn len() -> u64 {
-        return self.size;
+        self.size
     }
 
     pub fn is_empty() -> bool {
-        return self.size == 0;
+        self.size == 0
     }
 
     pub fn clear() {
@@ -146,18 +146,18 @@ impl<T> HashSet<T> {
         if h2 == 0xFF || h2 == 0x80 {
             h2 = (h2 & 0x7F) | 0x40;
         }
-        return h2;
+        h2
     }
 
     fn resize(new_capacity: u64) {
-        let actual_capacity: u64 = Self.next_power_of_two(new_capacity);
+        let actual_capacity = new_capacity.next_power_of_two();
         if actual_capacity == self.capacity {
             return;
         }
 
         let old_ctrls: u8* = self.ctrls;
         let old_buckets: T* = self.buckets;
-        let old_capacity: u64 = self.capacity;
+        let old_capacity = self.capacity;
 
         let new_ctrls: u8* = dyn u8[actual_capacity];
         for i in 0..actual_capacity {
@@ -168,15 +168,15 @@ impl<T> HashSet<T> {
         self.capacity = actual_capacity;
         self.growth_left = Self.calculate_growth_left(actual_capacity);
         self.size = 0;
-        if old_capacity > 0 { 
+        if old_capacity > 0 {
             for i in 0..old_capacity {
-                let ctrl_byte: u8 = old_ctrls[i];
+                let ctrl_byte = old_ctrls[i];
                 if ctrl_byte != 0xFF && ctrl_byte != 0x80 {
-                    let hash: u64 = self.hash_value(old_buckets[i]);
-                    let h2: u8 = self.get_h2(hash);
-                    let primary_index: u64 = hash & (actual_capacity - 1);
+                    let hash = self.hash_value(old_buckets[i]);
+                    let h2 = self.get_h2(hash);
+                    let primary_index = hash & (actual_capacity - 1);
                     for j in 0..actual_capacity {
-                        let new_ctrl_byte: u8 = new_ctrls[primary_index];
+                        let new_ctrl_byte = new_ctrls[primary_index];
                         if new_ctrl_byte == 0b1111_1111 {
                             new_ctrls[primary_index] = h2
                             new_buckets[primary_index] = old_buckets[i]
@@ -197,28 +197,9 @@ impl<T> HashSet<T> {
     }
 
     pub fn hash_value(value: T) -> u64 {
-        let hasher: Murmur3Hasher = self.hasher_builder.build_hasher();
+        let hasher = self.hasher_builder.build_hasher();
         value.hash(hasher);
-        return hasher.finish();
-    }
-
-    static pub fn next_power_of_two(n: u64) -> u64 {
-        if n == 0 {
-            return 0;
-        }
-        
-        if n <= 1 {
-            return 1;
-        }
-        
-        n -= 1
-        n |= n >> 1
-        n |= n >> 2
-        n |= n >> 4
-        n |= n >> 8
-        n |= n >> 16
-        n |= n >> 32
-        return n + 1;
+        hasher.finish()
     }
 }
 
@@ -232,21 +213,21 @@ pub struct HashSetIter<T> {
 impl<T> Iterator<T> for HashSetIter<T> {
     pub fn next() -> Option<T> {
         while self.index < self.capacity {
-            let ctrl_byte: u8 = self.ctrls[self.index];
+            let ctrl_byte = self.ctrls[self.index];
             if ctrl_byte != 0b1111_1111 && ctrl_byte != 0b1000_0000 {
-                let value: T = self.buckets[self.index];
+                let value = self.buckets[self.index];
                 self.index += 1
                 return Option<T>.Some(value);
             }
             self.index += 1
         }
-        return Option<T>.None;
+        Option<T>.None
     }
 }
 
 impl<T> IntoIterator<HashSetIter<T>> for HashSet<T> {
     pub fn into_iter() -> HashSetIter<T> {
-        return HashSetIter<T>(
+        HashSetIter<T>(
             buckets=self.buckets,
             ctrls=self.ctrls,
             capacity=self.capacity,

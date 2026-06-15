@@ -14,34 +14,34 @@ impl str {
     // TODO: this is currently just a bitcast, but we should validate that the byte slice is valid UTF-8 and return an error if not
     static fn from_slice(s: u8[]) -> Self {
         let ret: str* = bitcast<str*>(&s);
-        return *ret;
+        *ret
     }
 
     // Get the byte slice of the str
     pub fn as_slice() -> u8[] {
         let ret: u8[]* = bitcast<u8[]*>(self);
-        return *ret;
+        *ret
     }
 
     // Get an iterator over the characters of the str
     pub fn chars() -> CharIter {
-        return CharIter(self.as_slice().into_iter());
+        CharIter(self.as_slice().into_iter())
     }
 
     // Get an iterator over the characters and their byte indices
     pub fn char_indices() -> CharIndicesIter {
-        return CharIndicesIter(0, self.chars());
+        CharIndicesIter(0, self.chars())
     }
 
     // Check if the str starts with the given prefix character
     pub fn starts_with_char(prefix: char) -> bool {
-        let first_char: Option<char> = self.chars().next();
-        return first_char.is_some() && first_char.unwrap() == prefix;
+        let first_char = self.chars().next();
+        first_char.is_some() && first_char.unwrap() == prefix
     }
 
     pub fn starts_with(prefix: str) -> bool {
-        let self_bytes: u8[] = self.as_slice();
-        let prefix_bytes: u8[] = prefix.as_slice();
+        let self_bytes = self.as_slice();
+        let prefix_bytes = prefix.as_slice();
         if prefix_bytes.len() > self_bytes.len() {
             return false;
         }
@@ -50,7 +50,7 @@ impl str {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     // Check if the str contains the given character
@@ -60,12 +60,12 @@ impl str {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     fn is_char_boundary(index: u64) -> bool {
-        let bytes: u8[] = self.as_slice();
-        let len: u64 = bytes.len();
+        let bytes = self.as_slice();
+        let len = bytes.len();
 
         if index > len {
             return false;
@@ -74,26 +74,26 @@ impl str {
             return true;
         }
 
-        return (bytes[index] & 192) != 128;
+        (bytes[index] & 192) != 128
     }
-    
+
     // Trim whitespace from both ends of the String
     pub fn trim() -> str {
         let bytes: u8[] = self.as_slice();
         let start: u64 = 0;
-        let end: u64 = self.len();
+        let end = bytes.len();
         while start < end && bytes[start].is_ascii_whitespace() {
             start += 1
         }
         while end > start && bytes[end - 1].is_ascii_whitespace() {
             end -= 1
         }
-        return str.from(self.data.as_slice()[start..end]);
+        str.from(bytes[start..end])
     }
 
     // Parse the str into specified type T, panicking if parsing fails
     pub fn parse<T>() -> T {
-        return T.from(*self);
+        T.from(*self)
     }
 }
 
@@ -103,19 +103,19 @@ pub struct CharIter {
 
 impl CharIter {
     pub fn len() -> u64 {
-        return self.byte_iter.len();
+        self.byte_iter.len()
     }
 
     pub fn rev() -> RevCharIter {
-        return RevCharIter(self.byte_iter.rev())
+        RevCharIter(self.byte_iter.rev())
     }
 
     pub fn collect() -> String {
-        let out: String = String.new();
+        let out = String.new();
         for ch in self {
             out += ch;
         }
-        return out;
+        out
     }
 }
 
@@ -126,7 +126,7 @@ impl Iterator<char> for CharIter {
         if b1_opt.is_none() {
             return Option<char>.None;
         }
-        let b1: u8 = b1_opt.unwrap_or(0) // We know it's Some, so unwrap is safe;
+        let b1: u8 = b1_opt.unwrap_or(0); // We know it's Some, so unwrap is safe;
 
         if b1 < 128 { // 0xxxxxxx
             return Option<char>.Some(char(b1));
@@ -160,7 +160,7 @@ impl Iterator<char> for CharIter {
 
 impl IntoIterator<CharIter> for CharIter {
     fn into_iter() -> CharIter {
-        return *self;
+        *self
     }
 }
 
@@ -170,19 +170,19 @@ pub struct RevCharIter {
 
 impl RevCharIter {
     pub fn len() -> u64 {
-        return self.byte_iter.len()
+        self.byte_iter.len()
     }
 
     pub fn rev() -> CharIter {
-        return CharIter(self.byte_iter.rev())
+        CharIter(self.byte_iter.rev())
     }
 
     pub fn collect() -> String {
-        let out: String = String.new();
+        let out = String.new();
         for ch in self {
             out += ch;
         }
-        return out;
+        out
     }
 }
 
@@ -236,7 +236,7 @@ impl Iterator<char> for RevCharIter {
 
 impl IntoIterator<RevCharIter> for RevCharIter {
     fn into_iter() -> RevCharIter {
-        return *self;
+        *self
     }
 }
 
@@ -247,7 +247,7 @@ pub struct CharIndicesIter {
 
 impl IntoIterator<CharIndicesIter> for CharIndicesIter {
     fn into_iter() -> CharIndicesIter {
-        return *self;
+        *self
     }
 }
 
@@ -255,39 +255,39 @@ impl Iterator<(u64, char)> for CharIndicesIter {
     pub fn next() -> Option<(u64, char)> {
         let pre_len: u64 = self.iter.byte_iter.len();
         match self.iter.next() {
-            None => { return Option<(u64, char)>.None }
+            None => Option<(u64, char)>.None,
             Some(val) => {
                 u64 index = self.front_offset
                 u64 len = self.iter.byte_iter.len()
                 self.front_offset += pre_len - len
-                return Option<(u64, char)>.Some((index, val))
-            }
+                Option<(u64, char)>.Some((index, val))
+            },
         }
     }
 }
 
 impl From<u8[]> for str {
     pub static fn from(value: u8[]) -> Self {
-        return Self.from_slice(value);
+        Self.from_slice(value)
     }
 }
 
 impl Into<u8[]> for str {
     pub fn into() -> u8[] {
-        return self.as_slice();
+        self.as_slice()
     }
 }
 
 impl PartialEq<str> for str {
     pub fn eq(other: str) -> bool {
-        return self.as_slice() == other.as_slice();
+        self.as_slice() == other.as_slice()
     }
 }
 
 impl Index<Range<u64>, str> for str {
     pub fn index(range: Range<u64>) -> str {
-        let bytes: u8[] = self.as_slice();
-        let len: u64 = bytes.len();
+        let bytes = self.as_slice();
+        let len = bytes.len();
 
         if range.start > range.end || range.end > len {
             panic("index out of bounds");
@@ -296,7 +296,7 @@ impl Index<Range<u64>, str> for str {
             panic("str slice index is ! on a char boundary");
         }
 
-        return Self.from_slice(bytes[range.start..range.end]);
+        Self.from_slice(bytes[range.start..range.end])
     }
 }
 
@@ -309,6 +309,6 @@ impl Hash<Murmur3Hasher> for str {
 
 impl ToString for str {
     fn to_string() -> String {
-        return String.from(*self);
+        String.from(*self)
     }
 }
