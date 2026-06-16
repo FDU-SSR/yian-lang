@@ -429,8 +429,16 @@ class ExprChecker:
         value_expr.type_id = self.__ctx.type_ctx.default_literals(value_expr.type_id)
         value_type = self.__ctx.type_ctx[value_expr.type_id]
 
-        if isinstance(value_type, (Type.IntType, Type.CharType, Type.EnumType)):
-            return self.__lower_match_new_match(stmt, value_expr)
+        is_ref = False
+        inner_type = value_type
+        if isinstance(value_type, Type.PointerType):
+            pointee_type = self.__ctx.type_ctx[value_type.pointee_type]
+            if isinstance(pointee_type, (Type.IntType, Type.CharType, Type.EnumType)):
+                is_ref = True
+                inner_type = pointee_type
+
+        if isinstance(inner_type, (Type.IntType, Type.CharType, Type.EnumType)):
+            return self.__lower_match(stmt, value_expr, is_ref=is_ref)
         return self.__lower_match_with_partial_eq(stmt, value_expr)
 
     def lower_return(self, stmt: AST.Return) -> HIR.Return:
@@ -489,8 +497,14 @@ class ExprChecker:
         self.__ctx.push_local(symbol_id)
         return symbol_id
 
-    def __lower_match_new_match(self, stmt: AST.Match, value_expr: HIR.Expr) -> HIR.Match:
+    def __lower_match(self, stmt: AST.Match, value_expr: HIR.Expr, is_ref: bool = False) -> HIR.Match:
         assert self.__ctx.symbol_ctx is not None
+
+        enum_type_id = value_expr.type_id
+        if is_ref:
+            value_type = self.__ctx.type_ctx[value_expr.type_id]
+            assert isinstance(value_type, Type.PointerType)
+            enum_type_id = value_type.pointee_type
 
         arms: list[HIR.MatchArm] = []
         arm_body_types: list[int] = []
@@ -501,7 +515,7 @@ class ExprChecker:
                     body = self.check_block(arm_block)
                     arm_body_types.append(body.type_id)
                     for lit in pat.values:
-                        pattern: HIR.Pattern | None = HIR.IntPattern(pat.span, lit.value, value_expr.type_id)
+                        pattern: HIR.Pattern | None = HIR.IntPattern(pat.span, lit.value, enum_type_id)
                         arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
                 case AST.CharPattern():
                     body = self.check_block(arm_block)
@@ -513,11 +527,11 @@ class ExprChecker:
                     body = self.check_block(arm_block)
                     arm_body_types.append(body.type_id)
                     for ident in pat.variants:
-                        variant = self.__resolve_enum_variant(ident, value_expr.type_id)
+                        variant = self.__resolve_enum_variant(ident, enum_type_id)
                         pattern = HIR.EnumPattern(pat.span, variant, None)
                         arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
                 case AST.PayloadPattern():
-                    variant = self.__resolve_enum_variant(pat.variant, value_expr.type_id)
+                    variant = self.__resolve_enum_variant(pat.variant, enum_type_id)
                     if variant.payload_type is None:
                         raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
                     payload_ty = self.__ctx.type_ctx[variant.payload_type]
@@ -532,7 +546,8 @@ class ExprChecker:
                     try:
                         unpack_fields: list[int] = []
                         for ident, ftype in zip(pat.fields, field_types):
-                            sym_id = self.__declare_local_symbol(ident, ftype)
+                            binding_type = self.__ctx.type_ctx.alloc_pointer(ftype) if is_ref else ftype
+                            sym_id = self.__declare_local_symbol(ident, binding_type)
                             unpack_fields.append(sym_id)
                         body = self.check_block(arm_block)
                         arm_body_types.append(body.type_id)
@@ -549,7 +564,7 @@ class ExprChecker:
 
         match_type_id = self.__ctx.type_ctx.merge_types(arm_body_types, stmt.span)
         match_type_id = self.__ctx.type_ctx.default_literals(match_type_id)
-        return HIR.Match(span=stmt.span, value=value_expr, arms=arms, type_id=match_type_id, is_place=False)
+        return HIR.Match(span=stmt.span, value=value_expr, arms=arms, type_id=match_type_id, is_place=False, is_ref=is_ref)
 
     def __resolve_enum_variant(self, ident: AST.Identifier, enum_type_id: int) -> Type.EnumVariant:
         enum_ty = self.__ctx.type_ctx[enum_type_id]

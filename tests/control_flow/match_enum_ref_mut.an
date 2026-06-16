@@ -1,0 +1,35 @@
+// Test mutation through match &enum reference bindings
+//
+// When matching on &enum, the reference bindings should allow
+// mutation of the original value through dereference.
+
+enum E {
+    A { n: i32 },
+    B { n: i32 },
+}
+
+fn main() -> i32 {
+    let e: E = E.A(42);
+
+    // Mutate through the reference binding
+    match &e {
+        A(n) => {
+            *n = 99;
+        },
+        _ => {
+            assert false;
+        },
+    }
+
+    // Verify the original was mutated
+    match e {
+        A(n) => {
+            assert n == 99;
+        },
+        _ => {
+            assert false;
+        },
+    }
+
+    return 0;
+}

@@ -208,22 +208,38 @@ class LLTranslator:
         matched_type = self.__type_ctx[t.value.type_id]
         default_label = t.default.label if t.default else ""
 
-        if isinstance(matched_type, (Type.IntType, Type.CharType, Type.BoolType)):
+        is_enum_ref = t.is_ref
+        inner_type = matched_type
+        if is_enum_ref:
+            assert isinstance(matched_type, Type.PointerType)
+            inner_type = self.__type_ctx[matched_type.pointee_type]
+
+        if isinstance(inner_type, (Type.IntType, Type.CharType, Type.BoolType)):
             cases = [(self.__resolve(builder, arm.pattern.value), arm.body.label)
                      for arm in t.arms
                      if isinstance(arm.pattern, (IR.IntPattern, IR.CharPattern))]
             builder.switch(matched, cases, default_label)
 
-        elif isinstance(matched_type, Type.EnumType):
-            disc = builder.extract_value(matched, 0, "disc")
+        elif isinstance(inner_type, Type.EnumType):
+            if is_enum_ref:
+                # matched is a pointer to the enum (&E). Load it to extract discriminant.
+                enum_val = builder.load(matched, "enum_val_ref")
+                disc = builder.extract_value(enum_val, 0, "disc_ref")
+            else:
+                disc = builder.extract_value(matched, 0, "disc")
+
             cases = [(builder.i32(arm.pattern.variant.discriminant), arm.body.label)
                      for arm in t.arms
                      if isinstance(arm.pattern, IR.EnumPattern)]
 
-            # Alloca the matched value so unpack_enum_payload can GEP on a pointer.
-            # Must happen before switch terminates the block.
-            matched_ptr = builder.alloca(matched.type_id)
-            builder.store(matched, matched_ptr)
+            if not is_enum_ref:
+                # Alloca the matched value so unpack_enum_payload can GEP on a pointer.
+                # Must happen before switch terminates the block.
+                matched_ptr = builder.alloca(matched.type_id)
+                builder.store(matched, matched_ptr)
+            else:
+                # Ref mode: matched IS already a pointer to the enum; no copy needed.
+                matched_ptr = matched
 
             builder.switch(disc, cases, default_label)
 
@@ -235,9 +251,14 @@ class LLTranslator:
                         and arm.pattern.variant.payload_type is not None:
                     field_pairs = [(i, f.symbol_id) for i, f in enumerate(arm.pattern.fields)]
                     builder.position_at(arm.body.label, where=BuilderPosition.First)
-                    builder.unpack_enum_payload(
-                        matched_ptr, arm.body.label,
-                        arm.pattern.variant.payload_type, field_pairs)
+                    if is_enum_ref:
+                        builder.unpack_enum_payload_ref(
+                            matched_ptr, arm.body.label,
+                            arm.pattern.variant.payload_type, field_pairs)
+                    else:
+                        builder.unpack_enum_payload(
+                            matched_ptr, arm.body.label,
+                            arm.pattern.variant.payload_type, field_pairs)
 
             # Restore builder to original block so __build can continue correctly.
             builder.position_at(saved_label)

@@ -363,7 +363,7 @@ class CfgBuilder:
             block = self.__new_block("match.arm")
             arms.append(IR.MatchArm(pattern=pattern, body=block))
 
-        self.__set_terminator(IR.Match(value=val, arms=arms, default=default_block))
+        self.__set_terminator(IR.Match(value=val, arms=arms, default=default_block, is_ref=stmt.is_ref))
 
         # Translate arm bodies and collect values for phi (if expression-typed)
         arm_values: list[tuple[IR.Block, IR.Value]] = []

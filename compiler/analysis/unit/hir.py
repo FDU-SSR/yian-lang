@@ -118,6 +118,7 @@ class Match:
     arms: list[MatchArm]
     type_id: int
     is_place: bool
+    is_ref: bool = False
 
 
 @dataclass

@@ -231,6 +231,7 @@ class Match:
     value: Value  # must be integer/char/enum
     arms: list[MatchArm]
     default: Block | None
+    is_ref: bool = False
 
 
 @dataclass

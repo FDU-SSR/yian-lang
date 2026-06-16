@@ -368,6 +368,35 @@ class LLBuilder:
             alloca_ptr = self.__func.get_var_ptr(symbol_id)
             self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
 
+    def unpack_enum_payload_ref(
+        self, matched: LLValue, block_label: str,
+        payload_type_id: int, fields: list[tuple[int, int]],
+    ) -> None:
+        """Unpack enum variant payload fields into reference variable allocas.
+
+        ``matched`` is a pointer to the enum (type ``&E``, not a stack copy).
+        ``fields`` is ``(field_index, symbol_id)`` pairs.
+
+        Unlike ``unpack_enum_payload`` which loads field values and stores
+        copies, this method GEPs to each field and stores the *pointer*
+        directly into the variable's alloca. The resulting bindings are
+        references (&T) pointing into the original enum value.
+        """
+        payload_type_def = self.__type_ctx[payload_type_id]
+        assert isinstance(payload_type_def, Type.StructType)
+        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
+
+        gep_val = self.__builder.gep(matched.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
+        payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type_id)).ir_type  # type: ignore
+        payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
+
+        for field_index, symbol_id in fields:
+            if field_index >= len(payload_fields):
+                break
+            field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True)  # type: ignore
+            alloca_ptr = self.__func.get_var_ptr(symbol_id)
+            self.__builder.store(field_ptr, alloca_ptr.ir_val)  # type: ignore
+
     # -- sys --
 
     def sys_write(self, fd: LLValue, buf: LLValue) -> None:
