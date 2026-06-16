@@ -354,7 +354,6 @@ class ExprChecker:
         finally:
             self.__ctx.exit_scope()
         block_type_id = stmts[-1].type_id if stmts else TypeCtx.void_id
-        block_type_id = self.__ctx.type_ctx.default_literals(block_type_id)
         return HIR.Block(span=ast_block.span, stmts=stmts, type_id=block_type_id, is_place=False)
 
     def lower_var_decl(self, stmt: AST.VarDecl) -> HIR.Let:

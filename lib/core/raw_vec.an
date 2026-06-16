@@ -34,12 +34,7 @@ impl<T> RawVec<T> {
 
     pub fn grow() {
         let old_cap = self.cap;
-        let new_cap: u64;
-        if old_cap == 0 {
-            new_cap = 4;
-        } else {
-            new_cap = old_cap * 2;
-        }
+        let new_cap: u64 = if old_cap == 0 { 4 } else { old_cap * 2 }
 
         let new_data: T* = dyn[new_cap] T;
 
