@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "memcpy"})
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic"})
 
 
 class CallDispatcher:

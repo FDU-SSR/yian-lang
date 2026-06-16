@@ -1,4 +1,5 @@
 from range import Range;
+from mem import memcpy;
 
 pub struct RawVec<T> {
     data: T*,
@@ -34,16 +35,14 @@ impl<T> RawVec<T> {
 
     pub fn grow() {
         let old_cap = self.cap;
-        let new_cap: u64 = if old_cap == 0 { 4 } else { old_cap * 2 }
+        let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
 
         let new_data: T* = dyn[new_cap] T;
 
         if old_cap > 0 {
             // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
-            for i in 0..old_cap {
-                new_data[i] = self.data[i]
-            }
+            memcpy(new_data, self.data, old_cap);
             del self.data;
         }
 
@@ -57,7 +56,7 @@ impl<T> RawVec<T> {
             return;
         }
 
-        let new_cap: u64 = self.cap * 2;
+        let new_cap = self.cap * 2;
         if new_cap < required_cap {
             new_cap = required_cap;
         }
@@ -70,9 +69,7 @@ impl<T> RawVec<T> {
 
         // Copy valid elements
         if len > 0 {
-            for i in 0..len {
-                new_data[i] = self.data[i]
-            }
+            memcpy(new_data, self.data, len);
         }
 
         if self.cap > 0 {
@@ -92,7 +89,6 @@ impl<T> RawVec<T> {
             if self.cap > 0 {
                 del self.data;
             }
-            self.data = bitcast<T*>(0u64);
             self.cap = 0;
             return;
         }
@@ -100,9 +96,7 @@ impl<T> RawVec<T> {
         let new_data: T* = dyn T[len];
 
         // Copy valid elements
-        for i in 0..len {
-            new_data[i] = self.data[i]
-        }
+        memcpy(new_data, self.data, len);
 
         if self.cap > 0 {
             del self.data;

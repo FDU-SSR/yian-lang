@@ -1,8 +1,4 @@
-// A marker trait indicating that a type's values can be duplicated simply by copying bits.
-//
-// When a type implements Copy, assignments and passing the type to functions
-// will copy the value instead of moving it.
-pub trait Copy {}
+from range import Range;
 
 // A trait for types that can be cloned to create a duplicate of the value.
 //
@@ -92,5 +88,11 @@ impl Clone for char {
 impl Clone for void {
     pub fn clone() -> Self {
         *self
+    }
+}
+
+pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
+    for i in 0..count {
+        dest[i] = src[i];
     }
 }
