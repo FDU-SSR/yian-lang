@@ -1,0 +1,19 @@
+// Test nullptr comparison (== and !=)
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let p: i32* = nullptr;
+    let q: i32* = nullptr;
+
+    assert p == nullptr: "p == nullptr";
+    assert nullptr == p: "nullptr == p";
+    assert p == q: "nullptr == nullptr";
+
+    let x: i32 = 42;
+    let r: i32* = &x;
+    assert r != nullptr: "r != nullptr";
+    assert nullptr != r: "nullptr != r";
+
+    return 0;
+}
