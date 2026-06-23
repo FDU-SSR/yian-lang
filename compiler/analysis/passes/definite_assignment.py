@@ -4,9 +4,19 @@ Definite assignment analysis for the YIAN compiler.
 This pass walks the typed HIR after type checking and determines whether
 every variable use is reachable from a preceding assignment on all paths.
 
-The analysis result is stored on each :class:`DefPoint` as ``validity`` and
-is consumed by downstream passes (e.g. drop cleanup) as well as by error
-reporting for uses of potentially-uninitialised variables.
+Per-field tracking
+------------------
+For structs and tuples the analysis tracks each field independently.
+Assigning ``s.field = v`` marks only *field* as VALID, not the whole
+variable.  A whole-variable read succeeds when either the whole variable
+is explicitly VALID or every field is VALID (recursively).
+
+The state dictionary uses :class:`StateKey` keys::
+
+    StateKey(sym_id)                  whole variable
+    StateKey(sym_id, ("name",))       struct field
+    StateKey(sym_id, (0,))            tuple element
+    StateKey(sym_id, ("a", 0))        nested: field ``a``, then tuple element 0
 """
 
 from __future__ import annotations
@@ -16,6 +26,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
@@ -33,43 +44,64 @@ class VarState(Enum):
     UNCERTAIN = auto()  # assigned on some paths but not all
 
 
+# ------------------------------------------------------------------
+# state key
+# ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StateKey:
+    """Key into the per-variable / per-field validity state dictionary.
+
+    *path* is ``()`` for the whole variable, otherwise a sequence of
+    field names (:class:`str`) and tuple indices (:class:`int`).
+    """
+
+    sym_id: int
+    path: tuple[int | str, ...] = ()
+
+
+def __whole(sym_id: int) -> StateKey:
+    return StateKey(sym_id)
+
+
+# ------------------------------------------------------------------
+
+
 @dataclass
 class FuncAnalysis:
     """Per-function result of definite assignment analysis."""
 
     uncertain_vars: set[int] = field(default_factory=set[int])
-    """Symbol ids of variables that become UNCERTAIN at any reachable point."""
+    """Symbol ids whose whole variable or any field is UNCERTAIN."""
 
-    exit_state: dict[int, VarState] = field(default_factory=dict[int, VarState])
-    """Per-variable state at the function's normal (block-end) exit."""
+    exit_state: dict[StateKey, VarState] = field(default_factory=dict[StateKey, VarState])
+    """Per-variable / per-field state at the function's block-end exit."""
 
 
 class DefiniteAssignment:
     """Definite assignment analysis pass.
 
-    Walks the HIR body of every :class:`DefPoint` and checks that every
-    non-assignment variable use is guarded by a preceding assignment on all
-    reachable control-flow paths.
-
     Usage::
 
-        da = DefiniteAssignment(def_points)
+        da = DefiniteAssignment(def_points, type_ctx)
         da.run()
         errors = da.export_errors()
-        # raise / print errors ...
         for type_id, dp in def_points.items():
             dp.validity = da.export_analysis(type_id)
     """
 
-    def __init__(self, def_points: dict[int, DefPoint]) -> None:
+    def __init__(self, def_points: dict[int, DefPoint],
+                 type_ctx: TypeCtx) -> None:
         self.__def_points = def_points
+        self.__type_ctx = type_ctx
         self.__errors: list[AnalysisError] = []
         self.__analyses: dict[int, FuncAnalysis] = {}
 
         # Per-definition transient state (reset for each DefPoint)
         self.__symbol_ctx = None
         self.__uncertain_vars: set[int] = set()
-        self.__exit_state: dict[int, VarState] | None = None
+        self.__exit_state: dict[StateKey, VarState] | None = None
 
     # ------------------------------------------------------------------
     # public API
@@ -87,7 +119,7 @@ class DefiniteAssignment:
         return self.__errors
 
     def export_analysis(self, type_id: int) -> FuncAnalysis | None:
-        """Return the :class:`FuncAnalysis` for the given *type_id*, or ``None``."""
+        """Return the :class:`FuncAnalysis` for the given *type_id*."""
         return self.__analyses.get(type_id)
 
     # ------------------------------------------------------------------
@@ -101,10 +133,10 @@ class DefiniteAssignment:
         self.__uncertain_vars = set()
         self.__exit_state = None
 
-        # Initial state: params are VALID, other locals are INVALID
-        state: dict[int, VarState] = {}
+        # Initial state: params are VALID (whole), other locals INVALID.
+        state: dict[StateKey, VarState] = {}
         for loc in dp.locals:
-            state[loc] = VarState.VALID if loc in dp.params else VarState.INVALID
+            state[__whole(loc)] = (VarState.VALID if loc in dp.params else VarState.INVALID)
 
         final_state = self.__check_expr(dp.body, state)
 
@@ -118,10 +150,10 @@ class DefiniteAssignment:
         )
 
     # ==================================================================
-    # core walker — returns the state *after* the expression
+    # core walker
     # ==================================================================
 
-    def __check_expr(self, expr: HIR.Expr, state: dict[int, VarState]) -> dict[int, VarState]:
+    def __check_expr(self, expr: HIR.Expr, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         """Walk *expr* and return the variable state after it."""
 
         # -- control flow -------------------------------------------------
@@ -225,10 +257,14 @@ class DefiniteAssignment:
 
         # -- access -------------------------------------------------------
         if isinstance(expr, HIR.FieldAccess):
-            return self.__check_expr(expr.receiver, state)
+            state = self.__check_expr(expr.receiver, state)
+            self.__check_field_read(expr, state)
+            return state
 
         if isinstance(expr, HIR.TupleAccess):
-            return self.__check_expr(expr.receiver, state)
+            state = self.__check_expr(expr.receiver, state)
+            self.__check_tuple_read(expr, state)
+            return state
 
         if isinstance(expr, HIR.DynValue):
             return self.__check_expr(expr.value, state)
@@ -257,14 +293,14 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Delete):
             return self.__check_expr(expr.target, state)
 
-        # -- leaf nodes (no children to walk) -----------------------------
+        # -- leaf nodes ---------------------------------------------------
         return state
 
     # ==================================================================
     # control-flow helpers
     # ==================================================================
 
-    def __check_if(self, expr: HIR.If, state: dict[int, VarState]) -> dict[int, VarState]:
+    def __check_if(self, expr: HIR.If, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         state = self.__check_expr(expr.cond, state)
         then_state = self.__check_expr(expr.then_branch, dict(state))
         then_diverges = expr.then_branch.type_id == TypeCtx.never_id
@@ -272,7 +308,6 @@ class DefiniteAssignment:
         if expr.else_branch is not None:
             else_state = self.__check_expr(expr.else_branch, dict(state))
             else_diverges = expr.else_branch.type_id == TypeCtx.never_id
-
             if then_diverges and else_diverges:
                 return then_state
             if then_diverges:
@@ -281,22 +316,19 @@ class DefiniteAssignment:
                 return then_state
             return self.__merge_states(then_state, else_state)
 
-        # No else branch — implicit else preserves pre-if state.
         if then_diverges:
             return then_state
         return self.__merge_states(then_state, dict(state))
 
-    def __check_loop(self, expr: HIR.Loop, state: dict[int, VarState]) -> dict[int, VarState]:
-        """Walk the loop body once; variables changed inside become UNCERTAIN."""
+    def __check_loop(self, expr: HIR.Loop, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         pre_state = dict(state)
         body_state = self.__check_expr(expr.body, dict(pre_state))
-        merged: dict[int, VarState] = {}
+        merged: dict[StateKey, VarState] = {}
         all_keys = set(pre_state.keys()) | set(body_state.keys())
         for k in all_keys:
             pre_val = pre_state.get(k, VarState.INVALID)
             body_val = body_state.get(k, VarState.INVALID)
             if pre_val == VarState.VALID:
-                # Already valid before loop — stays valid.
                 merged[k] = VarState.VALID
             elif pre_val == body_val:
                 merged[k] = pre_val
@@ -304,29 +336,24 @@ class DefiniteAssignment:
                 merged[k] = VarState.UNCERTAIN
         return merged
 
-    def __check_match(self, expr: HIR.Match, state: dict[int, VarState]) -> dict[int, VarState]:
+    def __check_match(self, expr: HIR.Match, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         state = self.__check_expr(expr.value, state)
 
-        arm_states: list[dict[int, VarState]] = []
+        arm_states: list[dict[StateKey, VarState]] = []
         for arm in expr.arms:
             arm_state = dict(state)
-            # Enum pattern bindings are VALID inside the arm
             if (arm.pattern is not None
                     and isinstance(arm.pattern, HIR.EnumPattern)
                     and arm.pattern.unpack_fields is not None):
                 for sym_id in arm.pattern.unpack_fields:
-                    arm_state[sym_id] = VarState.VALID
+                    arm_state[__whole(sym_id)] = VarState.VALID
             arm_state = self.__check_expr(arm.body, arm_state)
-            # Arms that always diverge (panic / return / break) do not
-            # contribute to the post-match state — their code is unreachable.
             if arm.body.type_id != TypeCtx.never_id:
                 arm_states.append(arm_state)
 
         if not arm_states:
-            # All arms diverge — no state flows past the match.
             return state
 
-        # Merge across surviving arms only (not with pre-match state).
         merged = arm_states[0]
         for arm_state in arm_states[1:]:
             merged = self.__merge_states(merged, arm_state)
@@ -336,18 +363,17 @@ class DefiniteAssignment:
     # expression-specific handlers
     # ==================================================================
 
-    def __check_let(self, expr: HIR.Let, state: dict[int, VarState]) -> dict[int, VarState]:
+    def __check_let(self, expr: HIR.Let, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         sym_id = expr.symbol_id
         if expr.init is not None:
-            # init is Binary(op=Assign, left=Var, right=…)
             state = self.__check_expr(expr.init, state)
             if sym_id is not None:
-                state = {**state, sym_id: VarState.VALID}
+                state = {**state, __whole(sym_id): VarState.VALID}
         elif sym_id is not None:
-            state = {**state, sym_id: VarState.INVALID}
+            state = {**state, __whole(sym_id): VarState.INVALID}
         return state
 
-    def __check_binary(self, expr: HIR.Binary, state: dict[int, VarState]) -> dict[int, VarState]:
+    def __check_binary(self, expr: HIR.Binary, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         op = expr.op
 
         if op == BinaryOperator.Assign:
@@ -355,64 +381,66 @@ class DefiniteAssignment:
             return self.__walk_assign_target(expr.left, state)
 
         if op.is_compound_assign():
-            # Read-modify-write: left must already be VALID
             state = self.__check_expr(expr.left, state)
             state = self.__check_expr(expr.right, state)
             return state
 
-        # All other binary ops
         state = self.__check_expr(expr.left, state)
         state = self.__check_expr(expr.right, state)
         return state
 
-    def __walk_assign_target(self, target: HIR.Expr,
-                             state: dict[int, VarState]) -> dict[int, VarState]:
+    # ==================================================================
+    # assignment target walking
+    # ==================================================================
+
+    def __walk_assign_target(self, target: HIR.Expr, state: dict[StateKey, VarState], path: tuple[int | str, ...] = ()) -> dict[StateKey, VarState]:
         """Walk *target* as the left-hand side of an assignment.
 
-        Only a direct variable or a field/tuple-element access marks the
-        root variable as VALID.  Writing through an index expression
-        (``arr[i] = v``) or a dereference (``*ptr = v``) does **not** make
-        the container / pointer variable valid — element-wise writes do not
-        constitute a whole-value assignment.
+        *path* accumulates field/element names as we recurse through
+        ``FieldAccess`` / ``TupleAccess``.  When we reach the root
+        ``Var`` the accumulated path determines the state key.
         """
         if isinstance(target, HIR.Var):
-            # a = b — direct whole-variable assignment.
-            return {**state, target.symbol_id: VarState.VALID}
+            sym_id = target.symbol_id
+            if not path:
+                # Whole-variable assignment  s = …
+                key = __whole(sym_id)
+                state = {**state, key: VarState.VALID}
+                # Remove stale per-field entries — whole VALID subsumes them.
+                state = {k: v for k, v in state.items() if not (k.sym_id == sym_id and k.path)}
+            else:
+                # Field / element assignment  s.field = …  or  s.0 = …
+                key = StateKey(sym_id, path)
+                state = {**state, key: VarState.VALID}
+            return state
 
-        if isinstance(target, (HIR.FieldAccess, HIR.TupleAccess)):
-            # a.field = b  or  a.0 = b — field/element write on a
-            # struct/tuple IS a write to the composite.
-            return self.__walk_assign_target(target.receiver, state)
+        if isinstance(target, HIR.FieldAccess):
+            return self.__walk_assign_target(
+                target.receiver, state, (*path, target.field.name))
+
+        if isinstance(target, HIR.TupleAccess):
+            return self.__walk_assign_target(target.receiver, state, (*path, target.index))
 
         if isinstance(target, HIR.Unary) and target.op == UnaryOperator.Deref:
-            # *ptr = 3 — ptr is a pointer variable whose stored address we
-            # must read; it must be VALID.  The write does NOT make ptr valid.
             if isinstance(target.operand, HIR.Var):
                 return self.__check_expr(target.operand, state)
-            # arr[i] = 3 or other complex expression under the deref.
-            # Walk sub-expressions for nested state changes but do NOT flag
-            # Var nodes as uses and do NOT mark any Var as VALID.
             return self.__walk_neutral(target.operand, state)
 
-        # For anything else (method calls, calls, invokes, …) walk
-        # sub-expressions neutrally — no Var validity checks, no marks.
         return self.__walk_neutral(target, state)
 
-    def __walk_neutral(self, expr: HIR.Expr,
-                       state: dict[int, VarState]) -> dict[int, VarState]:
-        """Walk *expr* tracking nested assignments / declarations but
-        treating Var nodes as transparent — they are neither checked for
-        validity nor marked VALID.
+    # ==================================================================
+    # neutral walker (no Var checks, no Var marks)
+    # ==================================================================
 
-        This is used for sub-expressions inside an assignment target that
-        are not themselves the ultimate target (e.g. the index operand of
-        ``arr[i] = v``, or a function call that returns a pointer).
-        """
-        # -- transparent (neither check nor mark) --------------------------
+    def __walk_neutral(self, expr: HIR.Expr, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+        """Walk *expr* tracking nested state changes but treating
+        ``Var`` nodes as transparent."""
+
+        # -- transparent ---------------------------------------------------
         if isinstance(expr, HIR.Var):
             return state
 
-        # -- state-changing (process fully) --------------------------------
+        # -- state-changing ------------------------------------------------
         if isinstance(expr, HIR.Let):
             return self.__check_let(expr, state)
 
@@ -456,8 +484,6 @@ class DefiniteAssignment:
             return self.__merge_states(then_state, dict(state))
 
         if isinstance(expr, HIR.Loop):
-            # Loop body may contain assignments — process them, but mark
-            # changed vars UNCERTAIN just as in __check_loop.
             return self.__check_loop(expr, state)
 
         if isinstance(expr, HIR.Match):
@@ -485,7 +511,7 @@ class DefiniteAssignment:
             self.__record_exit_state(state)
             return state
 
-        # -- calls (recurse into args) -------------------------------------
+        # -- calls ---------------------------------------------------------
         if isinstance(expr, HIR.Call):
             for arg in expr.args:
                 state = self.__walk_neutral(arg, state)
@@ -563,28 +589,137 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Delete):
             return self.__walk_neutral(expr.target, state)
 
-        # -- leaf nodes ----------------------------------------------------
         return state
+
+    # ==================================================================
+    # field-level read checks
+    # ==================================================================
+
+    def __check_field_read(self, expr: HIR.FieldAccess, state: dict[StateKey, VarState]) -> None:
+        """Check that reading *expr* (a struct field) is valid."""
+        path: list[int | str] = [expr.field.name]
+        receiver = expr.receiver
+        while isinstance(receiver, (HIR.FieldAccess, HIR.TupleAccess)):
+            if isinstance(receiver, HIR.FieldAccess):
+                path.append(receiver.field.name)
+            else:
+                path.append(receiver.index)
+            receiver = receiver.receiver
+
+        if isinstance(receiver, HIR.Var):
+            sym_id = receiver.symbol_id
+            path.reverse()
+            key = StateKey(sym_id, tuple(path))
+            self.__check_key_valid(key, sym_id, state, expr.span, receiver.type_id)
+
+    def __check_tuple_read(self, expr: HIR.TupleAccess, state: dict[StateKey, VarState]) -> None:
+        """Check that reading *expr* (a tuple element) is valid."""
+        path: list[int | str] = [expr.index]
+        receiver = expr.receiver
+        while isinstance(receiver, (HIR.FieldAccess, HIR.TupleAccess)):
+            if isinstance(receiver, HIR.FieldAccess):
+                path.append(receiver.field.name)
+            else:
+                path.append(receiver.index)
+            receiver = receiver.receiver
+
+        if isinstance(receiver, HIR.Var):
+            sym_id = receiver.symbol_id
+            path.reverse()
+            key = StateKey(sym_id, tuple(path))
+            self.__check_key_valid(key, sym_id, state, expr.span,
+                                   receiver.type_id)
+
+    def __check_key_valid(self, key: StateKey, sym_id: int, state: dict[StateKey, VarState], span: SrcSpan, type_id: int) -> None:
+        """Report an error unless *key* (or its whole-variable ancestor)
+        is definitely VALID."""
+        # 1. Whole variable VALID → all fields implicitly VALID.
+        whole = __whole(sym_id)
+        if state.get(whole) is VarState.VALID:
+            return
+
+        # 2. Exact field path VALID.
+        cur = state.get(key, VarState.INVALID)
+        if cur == VarState.VALID:
+            return
+
+        # 3. Recursive inference: are all sub-fields VALID?
+        if self.__all_fields_valid(sym_id, type_id, key.path, state):
+            return
+
+        name = self.__var_name(sym_id)
+        if cur == VarState.INVALID:
+            self.__errors.append(AnalysisError(
+                f"variable '{name}' (field) is used before it is "
+                f"definitely assigned", span,
+            ))
+        else:
+            self.__uncertain_vars.add(sym_id)
+            self.__errors.append(AnalysisError(
+                f"variable '{name}' (field) may not be assigned on all "
+                f"code paths before this use", span,
+            ))
+
+    # ==================================================================
+    # recursive all-fields-valid inference
+    # ==================================================================
+
+    def __all_fields_valid(self, sym_id: int, type_id: int, prefix: tuple[int | str, ...], state: dict[StateKey, VarState]) -> bool:
+        """Return True when every field / element of the type at *type_id*
+        is provably VALID under the given *prefix*."""
+        ty = self.__type_ctx[type_id]
+        if isinstance(ty, Type.StructType):
+            fields = self.__type_ctx.get_struct_fields(type_id)
+            return all(
+                self.__is_field_or_whole_valid(sym_id, (*prefix, f.name), f.type_id, state)
+                for f in fields
+            )
+        if isinstance(ty, Type.TupleType):
+            return all(
+                self.__is_field_or_whole_valid(sym_id, (*prefix, i), elem_type, state)
+                for i, elem_type in enumerate(ty.element_types)
+            )
+        return False
+
+    def __is_field_or_whole_valid(self, sym_id: int, key_suffix: tuple[int | str, ...], type_id: int, state: dict[StateKey, VarState]) -> bool:
+        key = StateKey(sym_id, key_suffix)
+        if state.get(key) is VarState.VALID:
+            return True
+        if state.get(__whole(sym_id)) is VarState.VALID:
+            return True
+        # Recurse into nested struct / tuple
+        return self.__all_fields_valid(sym_id, type_id, key_suffix, state)
 
     # ==================================================================
     # state helpers
     # ==================================================================
 
-    def __check_var_use(self, sym_id: int, state: dict[int, VarState],
-                        span: SrcSpan) -> None:
-        """Report an error if *sym_id* is not definitely VALID at a use site."""
-        cur = state.get(sym_id, VarState.INVALID)
+    def __check_var_use(self, sym_id: int, state: dict[StateKey, VarState], span: SrcSpan) -> None:
+        """Report an error if the whole variable *sym_id* is not
+        definitely VALID at a use site."""
+        whole = __whole(sym_id)
+        cur = state.get(whole, VarState.INVALID)
         name = self.__var_name(sym_id)
+
+        if cur == VarState.VALID:
+            return
+
+        # Try recursive inference
+        assert self.__symbol_ctx is not None
+        sym = self.__symbol_ctx.get(sym_id)
+        if self.__all_fields_valid(sym_id, sym.type_id, (), state):
+            return
 
         if cur == VarState.INVALID:
             self.__errors.append(AnalysisError(
-                f"variable '{name}' is used before it is definitely assigned", span,
+                f"variable '{name}' is used before it is definitely "
+                f"assigned", span,
             ))
-        elif cur == VarState.UNCERTAIN:
+        else:
             self.__uncertain_vars.add(sym_id)
             self.__errors.append(AnalysisError(
-                f"variable '{name}' may not be assigned on all code paths before this use",
-                span,
+                f"variable '{name}' may not be assigned on all code "
+                f"paths before this use", span,
             ))
 
     def __var_name(self, sym_id: int) -> str:
@@ -594,11 +729,10 @@ class DefiniteAssignment:
             return sym.name
         return f"<{sym_id}>"
 
-    def __merge_states(self, s1: dict[int, VarState],
-                       s2: dict[int, VarState]) -> dict[int, VarState]:
+    def __merge_states(self, s1: dict[StateKey, VarState], s2: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
         """Merge two states at a control-flow join point."""
         all_keys = set(s1.keys()) | set(s2.keys())
-        merged: dict[int, VarState] = {}
+        merged: dict[StateKey, VarState] = {}
         for k in all_keys:
             v1 = s1.get(k, VarState.INVALID)
             v2 = s2.get(k, VarState.INVALID)
@@ -610,8 +744,7 @@ class DefiniteAssignment:
                 merged[k] = VarState.UNCERTAIN
         return merged
 
-    def __record_exit_state(self, state: dict[int, VarState]) -> None:
-        """Merge *state* into the cumulative exit-state for the current function."""
+    def __record_exit_state(self, state: dict[StateKey, VarState]) -> None:
         if self.__exit_state is None:
             self.__exit_state = dict(state)
         else:

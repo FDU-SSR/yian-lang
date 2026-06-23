@@ -387,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- Definite Assignment Analysis ---
     da_start = time.perf_counter() if args.profile else 0.0
-    da_pass = DefiniteAssignment(def_points)
+    da_pass = DefiniteAssignment(def_points, type_ctx)
     da_pass.run()
     da_errors = da_pass.export_errors()
     if da_errors:
