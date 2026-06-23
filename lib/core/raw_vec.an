@@ -8,9 +8,7 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        let res: Self
-        res.cap = 0;
-        return res;
+        Self(nullptr, 0)
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {

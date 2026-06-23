@@ -4,16 +4,15 @@
 
 struct Node {
     data: i32,
-    next: Node*,
+    next: Option<Node*>,
 }
 
 fn main() -> i32 {
-    let n: Node;
-    n.data = 10;
-    n.next = &n;
+    let n: Node = Node(data=10, next=Option<Node*>.None);
+    n.next = Option<Node*>.Some(&n);
 
     assert n.data == 10: "n.data should be 10";
-    assert n.next.data == 10: "n.next.data should be 10";
+    assert n.next.unwrap().data == 10: "n.next.data should be 10";
 
     return 0;
 }
