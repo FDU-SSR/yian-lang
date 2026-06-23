@@ -101,6 +101,7 @@ class Let:
     init: Expr | None
     type_id: int
     is_place: bool
+    symbol_id: int | None = None
 
 
 @dataclass

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
@@ -383,6 +384,18 @@ def main(argv: list[str] | None = None) -> int:
     def_points = type_checker.export()
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start
+
+    # --- Definite Assignment Analysis ---
+    da_start = time.perf_counter() if args.profile else 0.0
+    da_pass = DefiniteAssignment(def_points)
+    da_pass.run()
+    da_errors = da_pass.export_errors()
+    if da_errors:
+        __print_source_error(da_errors[0].span, da_errors[0])
+    for type_id, dp in def_points.items():
+        dp.validity = da_pass.export_analysis(type_id)
+    if args.profile:
+        timings["definite_assignment"] = time.perf_counter() - da_start
 
     if args.hir is not None:
         __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))

@@ -376,7 +376,7 @@ class ExprChecker:
             var = HIR.Var(span=stmt.name.span, symbol_id=symbol_id, type_id=var_type_id, is_place=True)
             init_hir = self.assign(stmt.span, var, init_expr)
 
-        return HIR.Let(span=stmt.span, init=init_hir, type_id=TypeCtx.void_id, is_place=False)
+        return HIR.Let(span=stmt.span, init=init_hir, type_id=TypeCtx.void_id, is_place=False, symbol_id=symbol_id)
 
     def lower_semi(self, stmt: AST.Semi) -> HIR.Expr:
         expr = self.value(stmt.expr)

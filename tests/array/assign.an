@@ -3,7 +3,7 @@
 // Expected output: 0
 
 fn main() -> i32 {
-    let buff1: i32[5];
+    let buff1: i32[5] = [0, 0, 0, 0, 0];
     let buff2: i32[5];
     for i in 0..5i32 {
         buff1[u64(i)] = i * 10       // buff1 = [0, 10, 20, 30, 40]
