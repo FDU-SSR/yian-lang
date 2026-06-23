@@ -306,7 +306,13 @@ class StringLiteral:
     type_id: int
 
 
-Literal: TypeAlias = IntLiteral | FloatLiteral | BoolLiteral | CharLiteral | StringLiteral
+@dataclass
+class NullptrLiteral:
+    """Null pointer literal"""
+    type_id: int
+
+
+Literal: TypeAlias = IntLiteral | FloatLiteral | BoolLiteral | CharLiteral | StringLiteral | NullptrLiteral
 
 Value: TypeAlias = Literal | Reg
 

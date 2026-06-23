@@ -116,6 +116,9 @@ class ExprParser:
             case Tok.Keyword(kind=Tok.KeywordKind.False_):
                 self.__stream.consume_keyword(Tok.KeywordKind.False_)
                 return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="false", span=token.span, value=False))
+            case Tok.Keyword(kind=Tok.KeywordKind.Nullptr):
+                self.__stream.consume_keyword(Tok.KeywordKind.Nullptr)
+                return AST.Literal(span=token.span, literal=Tok.NullptrLiteral(raw="nullptr", span=token.span))
             case Tok.Identifier() | Tok.Keyword():
                 ident = self.__stream.consume_identifier()
 

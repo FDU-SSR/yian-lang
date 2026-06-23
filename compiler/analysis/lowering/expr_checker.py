@@ -189,6 +189,8 @@ class ExprChecker:
                 return HIR.StrLiteral(span=node.span, value=literal.value, type_id=TypeCtx.str_id, is_place=False)
             case Tok.BoolLiteral():
                 return HIR.BoolLiteral(span=node.span, value=literal.value, type_id=TypeCtx.bool_id, is_place=False)
+            case Tok.NullptrLiteral():
+                return HIR.NullptrLiteral(span=node.span, type_id=TypeCtx.null_ptr_id, is_place=False)
 
     def __handle_tuple(self, node: AST.Tuple) -> HIR.Expr:
         elements = [self.value(element) for element in node.elements]
@@ -260,6 +262,11 @@ class ExprChecker:
             case HIR.FloatLiteral():
                 if not isinstance(expected_ty, (Type.FloatType, Type.FloatLiteralType)):
                     raise AnalysisError(f"cannot coerce float literal to '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
+                expr.type_id = expected
+                return expr
+            case HIR.NullptrLiteral():
+                if not isinstance(expected_ty, Type.PointerType):
+                    raise AnalysisError(f"cannot coerce nullptr to '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.type_id = expected
                 return expr
             case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty():

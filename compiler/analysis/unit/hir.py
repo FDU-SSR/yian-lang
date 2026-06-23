@@ -371,13 +371,20 @@ class BoolLiteral:
 
 
 @dataclass
+class NullptrLiteral:
+    span: SrcSpan
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
     is_place: bool
 
 
-Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
+Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral | NullptrLiteral
 
 
 Expr: TypeAlias = (

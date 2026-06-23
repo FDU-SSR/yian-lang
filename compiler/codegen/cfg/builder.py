@@ -506,7 +506,7 @@ class CfgBuilder:
                 return self.__resolve_array_repeat(expr)
             case HIR.Var():
                 return self.__resolve_var(expr)
-            case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral():
+            case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral() | HIR.NullptrLiteral():
                 return self.__resolve_literal(expr)
             case HIR.Ty():
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
@@ -781,6 +781,8 @@ class CfgBuilder:
                 return IR.CharLiteral(value=expr.value, type_id=TypeCtx.char_id)
             case HIR.BoolLiteral():
                 return IR.BoolLiteral(value=expr.value, type_id=TypeCtx.bool_id)
+            case HIR.NullptrLiteral():
+                return IR.NullptrLiteral(type_id=expr.type_id)
             case HIR.StrLiteral():
                 return IR.StringLiteral(value=expr.value, type_id=TypeCtx.str_id)
 

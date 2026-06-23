@@ -1,0 +1,8 @@
+// Test nullptr literal basic usage
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let p: i32* = nullptr;
+    return 0;
+}
