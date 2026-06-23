@@ -3,22 +3,23 @@
 // Expected output: 0
 
 fn main() -> i32 {
-    let arr: i32[10];
+    // TODO: lacking support for array initialization with a single value, e.g. [0; 10]
+    let arr: i32[10] = [0; 10];
     for i in 0..10u64 {
-        arr[i] = i32(i)
+        arr[i] = i32(i);
     }
 
     let p: i32* = &arr[0];
     for i in 0..10u64 {
-        p[i] += 66
+        p[i] += 66;
     }
     assert arr[0] == 66: "Expected 66";
 
     let begin: i32* = &arr[0];
     let end: i32* = begin + 10;
     while begin < end {
-        *begin += 1
-        begin += 1
+        *begin += 1;
+        begin += 1;
     }
     assert arr[9] == 76: "Expected 76";
 

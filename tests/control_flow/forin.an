@@ -3,15 +3,15 @@
 // Expected output: 0
 
 fn main() -> i32 {
-    // add up 1024 elements of an array
-    let arr: i32[1024];
+    // TODO: lacking support for array initialization with a single value, e.g. [0; 1024]
+    let arr: i32[1024] = [0; 1024];
     for i in 0u64..1024 {
-        arr[i] = i32(i)
+        arr[i] = i32(i);
     }
 
     let sum: i32 = 0;
     for elem in arr {
-        sum += elem
+        sum += elem;
     }
 
     assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2";

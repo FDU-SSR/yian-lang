@@ -8,22 +8,18 @@ struct Pair {
 }
 
 fn main() -> i32 {
-    let tuple1: (Pair, Pair)
-    let tuple2: (i32, Pair)[3]
-
-    tuple1[0] = Pair(10, 20)
-    tuple1[1].first = 30
-    tuple2[1][1].second = 10
+    let tuple1: (Pair, Pair) = (Pair(10, 20), Pair(30, 40));
+    let tuple2: (i32, Pair)[3] = [(1, Pair(2, 3)), (4, Pair(5, 6)), (7, Pair(8, 9))];
 
     assert tuple1[0].first == 10: "tuple1[0].first should be 10";
     assert tuple1[0].second == 20: "tuple1[0].second should be 20";
     assert tuple1[1].first == 30: "tuple1[1].first should be 30";
-    assert tuple2[1][1].second == 10: "tuple2[1].second should be 10";
+    assert tuple2[1][1].second == 6: "tuple2[1].second should be 6";
 
-    tuple2[0][0] = 5
+    tuple2[0][0] = 5;
     assert tuple2[0][0] == 5: "tuple2[0][0] should be 5";
 
-    tuple2[2][1] = Pair(15, 25)
+    tuple2[2][1] = Pair(15, 25);
     assert tuple2[2][1].first == 15: "tuple2[2][1].first should be 15";
     assert tuple2[2][1].second == 25: "tuple2[2][1].second should be 25";
 
