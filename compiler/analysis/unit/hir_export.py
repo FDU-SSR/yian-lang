@@ -156,6 +156,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_tuple(expr, guides, is_last, type_ctx)
         case HIR.Array():
             return __export_array(expr, guides, is_last, type_ctx)
+        case HIR.ArrayRepeat():
+            return __export_array_repeat(expr, guides, is_last, type_ctx)
         case HIR.Var():
             return __line(guides, is_last, f"Var: symbol_id={expr.symbol_id} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
         case HIR.IntLiteral():
@@ -353,6 +355,12 @@ def __export_array(expr: HIR.Array, guides: list[bool], is_last: bool, type_ctx:
         res += __export_expr_items("Elements", expr.elements, guides, is_last, True, type_ctx)
     else:
         res += __line(guides, True, "Elements: []")
+    return res
+
+
+def __export_array_repeat(expr: HIR.ArrayRepeat, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"ArrayRepeat: element_type={__format_type(type_ctx, expr.element_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_items("Element", [expr.element], guides, is_last, True, type_ctx)
     return res
 
 

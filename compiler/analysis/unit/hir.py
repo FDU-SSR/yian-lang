@@ -307,6 +307,22 @@ class Array:
 
 
 @dataclass
+class ArrayRepeat:
+    """Array repeat literal ``[value; count]``.
+
+    The repeat count is encoded in *type_id* → :class:`Type.ArrayType.length`
+    so that both concrete (``LiteralValueType``) and generic
+    (``ConstGenericType``) lengths work without a separate field.
+    """
+
+    span: SrcSpan
+    element_type: int  # type_id
+    element: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Var:
     span: SrcSpan
     symbol_id: int
@@ -370,7 +386,7 @@ Expr: TypeAlias = (
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite
-    | Tuple | Array
+    | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty
     | Block
     | Return | Break | Continue

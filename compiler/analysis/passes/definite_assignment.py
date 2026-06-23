@@ -220,6 +220,9 @@ class DefiniteAssignment:
                 state = self.__check_expr(e, state)
             return state
 
+        if isinstance(expr, HIR.ArrayRepeat):
+            return self.__check_expr(expr.element, state)
+
         # -- access -------------------------------------------------------
         if isinstance(expr, HIR.FieldAccess):
             return self.__check_expr(expr.receiver, state)
@@ -525,6 +528,9 @@ class DefiniteAssignment:
             for e in expr.elements:
                 state = self.__walk_neutral(e, state)
             return state
+
+        if isinstance(expr, HIR.ArrayRepeat):
+            return self.__walk_neutral(expr.element, state)
 
         if isinstance(expr, HIR.FieldAccess):
             return self.__walk_neutral(expr.receiver, state)

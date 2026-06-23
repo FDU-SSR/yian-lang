@@ -295,6 +295,9 @@ class Desugar:
                 expr.elements = [visitor(e) for e in expr.elements]
             case AST.Array():
                 expr.elements = [visitor(e) for e in expr.elements]
+            case AST.ArrayRepeat():
+                expr.element = visitor(expr.element)
+                expr.count = visitor(expr.count)
             case _:
                 pass
 

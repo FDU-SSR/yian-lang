@@ -502,6 +502,8 @@ class CfgBuilder:
                 return self.__resolve_tuple(expr)
             case HIR.Array():
                 return self.__resolve_array(expr)
+            case HIR.ArrayRepeat():
+                return self.__resolve_array_repeat(expr)
             case HIR.Var():
                 return self.__resolve_var(expr)
             case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral():
@@ -750,6 +752,17 @@ class CfgBuilder:
 
     def __resolve_array(self, expr: HIR.Array) -> IR.Value:
         elements = [self.__resolve_val(element) for element in expr.elements]
+        return self.__build_array_construct(expr.type_id, elements)
+
+    def __resolve_array_repeat(self, expr: HIR.ArrayRepeat) -> IR.Value:
+        elem_val = self.__resolve_val(expr.element)
+        array_ty = self.__type_ctx[expr.type_id]
+        assert isinstance(array_ty, Type.ArrayType)
+        length_ty = self.__type_ctx[array_ty.length]
+        assert isinstance(length_ty, Type.LiteralValueType), (
+            f"array repeat count must be concrete at codegen, got {type(length_ty).__name__}"
+        )
+        elements = [elem_val] * length_ty.value
         return self.__build_array_construct(expr.type_id, elements)
 
     def __resolve_var(self, expr: HIR.Var) -> IR.Value:

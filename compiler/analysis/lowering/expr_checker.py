@@ -79,6 +79,8 @@ class ExprChecker:
                 return self.__handle_tuple(expr)
             case AST.Array():
                 return self.__handle_array(expr)
+            case AST.ArrayRepeat():
+                return self.__handle_array_repeat(expr)
 
     def __handle_binary(self, node: AST.Binary) -> HIR.Expr:
         return self.__op_builder.build_binary(node.span, node.op, node.left, node.right)
@@ -206,6 +208,38 @@ class ExprChecker:
         type_id = self.__ctx.type_ctx.alloc_array(element_type_id, length_id)
         return HIR.Array(span=node.span, element_type=element_type_id, elements=elements, type_id=type_id, is_place=False)
 
+    def __handle_array_repeat(self, node: AST.ArrayRepeat) -> HIR.Expr:
+        element = self.value(node.element)
+        element_type_id = self.__ctx.type_ctx.default_literals(element.type_id)
+
+        count_expr = self.value(node.count)
+        count_type_id = self.__extract_count_type_id(count_expr, node.span)
+
+        type_id = self.__ctx.type_ctx.alloc_array(element_type_id, count_type_id)
+        return HIR.ArrayRepeat(span=node.span, element_type=element_type_id,
+                               element=element, type_id=type_id, is_place=False)
+
+    def __extract_count_type_id(self, expr: HIR.Expr, span: SrcSpan) -> int:
+        """Extract the length type_id for :meth:`alloc_array` from a count expression.
+
+        - A literal integer creates a fresh ``LiteralValueType``.
+        - An already-resolved ``LiteralValueType`` (e.g. from a const generic
+          that has been instantiated) is used as-is.
+        - A ``HIR.Ty`` whose type is a ``ConstGenericType`` is used as-is
+          (generic array ``[T; N]`` — the length will be resolved during
+          monomorphisation).
+        """
+        cty = self.__ctx.type_ctx[expr.type_id]
+        if isinstance(cty, Type.LiteralValueType):
+            return expr.type_id
+        if isinstance(expr, HIR.IntLiteral):
+            return self.__ctx.type_ctx.alloc_literal_value(
+                expr.value, self.__ctx.type_ctx.u64_id)
+        if isinstance(expr, HIR.Ty):
+            return expr.type_id
+        raise AnalysisError(
+            "array repeat count must be a compile-time constant", span)
+
     def coerce(self, expr: HIR.Expr, expected: int) -> HIR.Expr:
         if expr.type_id == expected:
             return expr
@@ -250,6 +284,13 @@ class ExprChecker:
                 if not isinstance(expected_ty, Type.ArrayType):
                     raise AnalysisError(f"Expected array type but got '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.elements = [self.coerce(element, expected_ty.element_type) for element in expr.elements]
+                expr.element_type = expected_ty.element_type
+                expr.type_id = expected
+                return expr
+            case HIR.ArrayRepeat():
+                if not isinstance(expected_ty, Type.ArrayType):
+                    raise AnalysisError(f"Expected array type but got '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
+                expr.element = self.coerce(expr.element, expected_ty.element_type)
                 expr.element_type = expected_ty.element_type
                 expr.type_id = expected
                 return expr

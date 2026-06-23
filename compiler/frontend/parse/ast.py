@@ -557,6 +557,16 @@ class Array:
 
 
 @dataclass
+class ArrayRepeat:
+    span: SrcSpan
+    element: Expr
+    count: Expr
+
+    def __repr__(self) -> str:
+        return f"[{self.element}; {self.count}]"
+
+
+@dataclass
 class Identifier:
     span: SrcSpan
     name: str
@@ -593,7 +603,7 @@ Expr: TypeAlias = (
     | Call | MethodCall
     | DynValue | DynBuffer
     | TypeItem | Identifier | Literal
-    | Tuple | Array
+    | Tuple | Array | ArrayRepeat
     | Block
     | VarDecl
     | If | For | While | Loop | Match

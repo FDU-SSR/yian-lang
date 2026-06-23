@@ -153,9 +153,30 @@ class ExprParser:
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
                 return expr
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LBracket):
-                # array expression
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LBracket)
-                items = self.__stream.consume_separated(self.parse_expr, SEP_COMMA, TERM_RBRACKET)
+
+                # [] — empty array literal (rejected later by type checker)
+                next_tok = self.__stream.peek()
+                if isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.RBracket:
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
+                    return AST.Array(span=token.span, elements=[])
+
+                first = self.parse_expr()
+                next_tok = self.__stream.peek()
+
+                # [value; count] — array repeat syntax
+                if isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.Semicolon:
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Semicolon)
+                    count = self.parse_expr()
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
+                    return AST.ArrayRepeat(span=token.span, element=first, count=count)
+
+                # [elem1, elem2, ...] or [elem] — comma-separated array
+                items = [first]
+                if isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.Comma:
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
+                    rest = self.__stream.consume_separated(self.parse_expr, SEP_COMMA, TERM_RBRACKET)
+                    items.extend(rest)
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
                 return AST.Array(span=token.span, elements=items)
             case _:
