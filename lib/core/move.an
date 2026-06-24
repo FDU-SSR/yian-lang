@@ -1,3 +1,5 @@
+from range import Range;
+
 // A trait for types that support move semantics.
 //
 // move() transfers ownership: the original value is invalidated and
@@ -5,8 +7,8 @@
 // must not be used — doing so is a runtime error.
 pub trait Move {
     fn move() -> Self {
-        let res = *self;
-        invalidate();
+        let res = bitcopy(*self);
+        self.invalidate();
         res
     }
 

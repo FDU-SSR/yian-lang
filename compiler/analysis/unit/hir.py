@@ -378,6 +378,14 @@ class NullptrLiteral:
 
 
 @dataclass
+class BitCopy:
+    span: SrcSpan
+    value: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -403,4 +411,5 @@ Expr: TypeAlias = (
     | Match
     | Semi
     | Let
+    | BitCopy
 )

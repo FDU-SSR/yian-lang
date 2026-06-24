@@ -37,6 +37,8 @@ def is_simple_assign_source(expr: HIR.Expr) -> bool:
         return True
     if isinstance(expr, (HIR.Call, HIR.MethodCall, HIR.Invoke)):
         return True
+    if isinstance(expr, HIR.BitCopy):
+        return True
     return False
 
 

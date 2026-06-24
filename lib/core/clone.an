@@ -1,3 +1,5 @@
+from range import Range;
+
 // A trait for types that can be cloned to create a duplicate of the value.
 //
 // The clone method should return a new instance of the type equivalent to the original.

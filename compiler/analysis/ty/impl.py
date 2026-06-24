@@ -242,9 +242,13 @@ class ImplRegistry:
         assert isinstance(method_ty, Type.MethodType)
 
         method_ty.custom_def = deepcopy(trait_method_ty.custom_def)
+        old_self = trait_method_ty.custom_def.receiver_type
 
         method_ty.custom_def.generics = trait_method_ty.custom_def.generics + impl.generics
         method_ty.custom_def.receiver_type = target_type
+        method_ty.custom_def.return_type = self.__subst_trait_self(method_ty.custom_def.return_type, old_self, target_type)
+        for param in method_ty.custom_def.parameters:
+            param.type_id = self.__subst_trait_self(param.type_id, old_self, target_type)
 
         method_ty.generic_args = trait_method_ty.generic_args + impl.generics
 
@@ -252,6 +256,27 @@ class ImplRegistry:
         self.__ctx.add_procedure(method_type_id, *self.__ctx.get_procedure(trait_method_id))
 
         return method_type_id
+
+    def __subst_trait_self(self, type_id: int, old_self: int, new_target: int) -> int:
+        """Replace *old_self* with *new_target* inside *type_id*, recursively."""
+        if type_id == old_self:
+            return new_target
+        ty = self.__ctx[type_id]
+        if isinstance(ty, Type.PointerType):
+            return self.__ctx.alloc_pointer(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
+        if isinstance(ty, Type.SliceType):
+            return self.__ctx.alloc_slice(self.__subst_trait_self(ty.element_type, old_self, new_target))
+        if isinstance(ty, Type.ArrayType):
+            return self.__ctx.alloc_array(self.__subst_trait_self(ty.element_type, old_self, new_target), ty.length)
+        if isinstance(ty, Type.TupleType):
+            return self.__ctx.alloc_tuple([self.__subst_trait_self(et, old_self, new_target) for et in ty.element_types])
+        if isinstance(ty, Type.FunctionPointerType):
+            return self.__ctx.alloc_function_pointer([self.__subst_trait_self(pt, old_self, new_target) for pt in ty.parameter_types], self.__subst_trait_self(ty.return_type, old_self, new_target))
+        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType, Type.AliasType)):
+            if ty.generic_args:
+                return self.__ctx.alloc_instance(type_id, [self.__subst_trait_self(ga, old_self, new_target) for ga in ty.generic_args])
+            return type_id
+        return type_id
 
     def __cache_impls(self) -> None:
         """

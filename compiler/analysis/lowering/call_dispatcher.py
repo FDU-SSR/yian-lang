@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic"})
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy"})
 
 
 class CallDispatcher:
@@ -105,6 +105,8 @@ class CallDispatcher:
         """Lower a call to a built-in name into the appropriate HIR node."""
         if callee.name == "panic":
             return self.__handle_panic(node)
+        if callee.name == "bitcopy":
+            return self.__handle_bitcopy(node)
         if callee.name == "sizeof":
             return self.__handle_sizeof(node)
         if callee.name == "bitcast":
@@ -124,6 +126,14 @@ class CallDispatcher:
         message = self.__expr.value(stmt.args[0].value)
         message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
         return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
+
+    def __handle_bitcopy(self, node: AST.Call) -> HIR.Expr:
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'bitcopy'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'bitcopy' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.value(node.args[0].value)
+        return HIR.BitCopy(span=node.span, value=value, type_id=value.type_id, is_place=False)
 
     def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
         """Lower `sizeof(type)` into HIR.SizeOf.

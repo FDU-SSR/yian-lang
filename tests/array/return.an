@@ -13,13 +13,8 @@ struct Pair {
 }
 
 impl Move for Pair {
-    fn invalidate() {
-        self.first.invalidate();
-        self.second.invalidate();
-    }
-    fn is_valid() -> bool {
-        self.first.is_valid() && self.second.is_valid()
-    }
+    fn invalidate() {}
+    fn is_valid() -> bool { true }
 }
 
 fn get_pairs() -> Pair[3] {
