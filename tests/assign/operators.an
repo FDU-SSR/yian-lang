@@ -1,0 +1,35 @@
+// Test: non-consuming operator (==) with PartialEq via pointer params
+//
+// Expected output: 0
+
+from std.core.ops import PartialEq;
+
+struct BigInt {
+    value: i64,
+}
+
+impl Clone for BigInt {
+    pub fn clone() -> Self { BigInt(self.value) }
+}
+
+impl Move for BigInt {
+    fn invalidate() {}
+    fn is_valid() -> bool { true }
+}
+
+impl PartialEq<BigInt> for BigInt {
+    fn eq(rhs: BigInt*) -> bool {
+        self.value == (*rhs).value
+    }
+}
+
+fn main() -> i32 {
+    let a: BigInt = BigInt(10);
+    let b: BigInt = BigInt(10);
+    let c: BigInt = BigInt(99);
+
+    assert a == b: "a should equal b";
+    assert a != c: "a should not equal c";
+
+    return 0;
+}
