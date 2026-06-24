@@ -24,6 +24,7 @@ PRELUDE_IMPORTS: list[tuple[list[str], str]] = [
     (["std", "core", "range"], "Range"),
     (["std", "core", "ops"], "Ordering"),
     (["std", "core", "clone"], "Clone"),
+    (["std", "core", "move"], "Move"),
 ]
 
 

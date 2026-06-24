@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.lowering.assign_check import check_simple_assign_source
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -299,6 +300,9 @@ class CallDispatcher:
 
         fields = self.__ctx.type_ctx.get_struct_fields(struct_type_id)
         coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
+        for field_value in coerced_fields.values():
+            if not self.__ctx.type_ctx.is_simple_type(field_value.type_id):
+                check_simple_assign_source(field_value, self.__ctx.type_ctx, span)
 
         instantiated_struct_id = inference.instantiate(struct_type_id)
         return HIR.StructConstruct(span=span, struct_id=instantiated_struct_id, field_values=coerced_fields, type_id=instantiated_struct_id, is_place=False)
@@ -377,6 +381,9 @@ class CallDispatcher:
 
         if self.__has_named_arg(args):
             coerced_args = self.__resolve_named_variant_args(span, variant, args)
+            for val in coerced_args.values():
+                if not self.__ctx.type_ctx.is_simple_type(val.type_id):
+                    check_simple_assign_source(val, self.__ctx.type_ctx, span)
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
 
         if variant.payload_type is None:
@@ -397,6 +404,9 @@ class CallDispatcher:
             inference.constrain(field_type_id, arg_value.type_id)
 
         coerced_values = [self.__expr.coerce(val, inference.instantiate(field_type_id)) for field_type_id, val in zip(field_type_ids, arg_values)]
+        for val in coerced_values:
+            if not self.__ctx.type_ctx.is_simple_type(val.type_id):
+                check_simple_assign_source(val, self.__ctx.type_ctx, span)
         args_dict = {field.name: val for field, val in zip(fields, coerced_values)}
         return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=args_dict, type_id=enum_type_id, is_place=False)
 

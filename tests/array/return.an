@@ -12,12 +12,22 @@ struct Pair {
     pub second: i32,
 }
 
+impl Move for Pair {
+    fn invalidate() {
+        self.first.invalidate();
+        self.second.invalidate();
+    }
+    fn is_valid() -> bool {
+        self.first.is_valid() && self.second.is_valid()
+    }
+}
+
 fn get_pairs() -> Pair[3] {
     let p1: Pair = Pair(1, 2);
     let p2: Pair = Pair(2, 3);
     let p3: Pair = Pair(3, 4);
-    let arr: Pair[3] = [p1, p2, p3];
-    return arr;
+    let arr: Pair[3] = [p1.move(), p2.move(), p3.move()];
+    return arr.move();
 }
 
 fn main() -> i32 {
