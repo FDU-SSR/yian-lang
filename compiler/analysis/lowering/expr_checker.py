@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.lowering.assign_check import check_simple_assign_source
+from compiler.analysis.lowering.assign_check import (
+    build_assign, check_simple_assign_source)
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.op_builder import OpBuilder
 from compiler.analysis.lowering.sem_ctx import LoopFrame, SemCtx
@@ -365,10 +366,10 @@ class ExprChecker:
         return self.call_method(iterator, "next", None, [])
 
     def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> HIR.Expr:
-        return self.call_method(lhs, "eq", None, [rhs])
+        rhs_ptr = HIR.Unary(span=rhs.span, op=UnaryOperator.AddrOf, operand=rhs, type_id=self.__ctx.type_ctx.alloc_pointer(rhs.type_id), is_place=False)
+        return self.call_method(lhs, "eq", None, [rhs_ptr])
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
-        from compiler.analysis.lowering.assign_check import build_assign
         return build_assign(self.__ctx.type_ctx, self.coerce, span, target, value)
 
     def logical_not(self, operand: HIR.Expr) -> HIR.Expr:

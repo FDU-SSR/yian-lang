@@ -7,10 +7,15 @@ struct Pair {
     pub second: i32,
 }
 
+impl Move for Pair {
+    fn invalidate(){}
+    fn is_valid() -> bool { true }
+}
+
 fn create_pair_and_number(a: i32, b: i32, num: i32) -> (Pair, i32) {
     let p: Pair = Pair(a, b);
-    let tmp: (Pair, i32) = (p, num)
-    return tmp;
+    let tmp: (Pair, i32) = (p.move(), num)
+    return tmp.move();
 }
 
 fn sum_tuple(t: (i32, i32)) -> i32 {

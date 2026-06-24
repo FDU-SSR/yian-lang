@@ -280,7 +280,7 @@ impl Into<u8[]> for str {
 
 impl PartialEq<str> for str {
     pub fn eq(other: str*) -> bool {
-        self.as_slice() == (*other).as_slice()
+        self.as_slice() == other.as_slice()
     }
 }
 

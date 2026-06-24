@@ -20,8 +20,8 @@ impl<T> Container<T> {
 }
 
 impl<T> Index<u64, T*> for Container<T> {
-    fn index(idx: u64) -> T* {
-        return self.items + idx;
+    fn index(idx: u64*) -> T* {
+        return self.items + *idx;
     }
 }
 
