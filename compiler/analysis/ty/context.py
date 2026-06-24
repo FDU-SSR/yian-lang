@@ -260,6 +260,23 @@ class TypeCtx:
     def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
         return type_ops.is_integer_type(self, type_id, include_literals)
 
+    def is_simple_type(self, type_id: int) -> bool:
+        """Return True for types that support direct bitwise-copy assignment.
+
+        Simple types (§2.1) are always simple. Composite types are simple
+        when all their elements / fields are simple (§5.1).
+        """
+        ty = self[type_id]
+        if isinstance(ty, (Type.IntType, Type.FloatType, Type.BoolType,
+                           Type.CharType, Type.StrType, Type.PointerType,
+                           Type.FunctionPointerType, Type.SliceType)):
+            return True
+        if isinstance(ty, Type.ArrayType):
+            return self.is_simple_type(ty.element_type)
+        if isinstance(ty, Type.TupleType):
+            return all(self.is_simple_type(et) for et in ty.element_types)
+        return False
+
     def default_literals(self, type_id: int) -> int:
         cached = self.__default_literals_cache.get(type_id)
         if cached is not None:

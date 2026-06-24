@@ -279,24 +279,24 @@ impl Into<u8[]> for str {
 }
 
 impl PartialEq<str> for str {
-    pub fn eq(other: str) -> bool {
-        self.as_slice() == other.as_slice()
+    pub fn eq(other: str*) -> bool {
+        self.as_slice() == (*other).as_slice()
     }
 }
 
 impl Index<Range<u64>, str> for str {
-    pub fn index(range: Range<u64>) -> str {
+    pub fn index(range: Range<u64>*) -> str {
         let bytes = self.as_slice();
         let len = bytes.len();
 
-        if range.start > range.end || range.end > len {
+        if (*range).start > (*range).end || (*range).end > len {
             panic("index out of bounds");
         }
-        if ! self.is_char_boundary(range.start) || ! self.is_char_boundary(range.end) {
+        if ! self.is_char_boundary((*range).start) || ! self.is_char_boundary((*range).end) {
             panic("str slice index is ! on a char boundary");
         }
 
-        Self.from_slice(bytes[range.start..range.end])
+        Self.from_slice(bytes[(*range).start..(*range).end])
     }
 }
 

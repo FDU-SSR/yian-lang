@@ -311,6 +311,9 @@ class ExprChecker:
                 if isinstance(expr_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
                     expr.operand = self.coerce(expr.operand, expected)
                     expr.type_id = expected
+                elif isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.PointerType):
+                    expr.operand = self.coerce(expr.operand, expected_ty.pointee_type)
+                    expr.type_id = expected
                 return expr
             case HIR.DynValue():
                 if not isinstance(expected_ty, Type.PointerType):
@@ -356,25 +359,8 @@ class ExprChecker:
         return self.call_method(lhs, "eq", None, [rhs])
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
-        if not target.is_place:
-            raise AnalysisError("assignment target must be an l-value", span)
-
-        # never value can be assigned to anything (it's never actually produced)
-        if value.type_id == TypeCtx.never_id:
-            pass
-        elif target.type_id != value.type_id:
-            target_name = self.__ctx.type_ctx.get_name(target.type_id)
-            value_name = self.__ctx.type_ctx.get_name(value.type_id)
-            raise AnalysisError(f"cannot assign value of type '{value_name}' to '{target_name}'", span)
-
-        return HIR.Binary(
-            span=span,
-            op=BinaryOperator.Assign,
-            left=target,
-            right=value,
-            type_id=target.type_id,
-            is_place=False,
-        )
+        from compiler.analysis.lowering.assign_check import build_assign
+        return build_assign(self.__ctx.type_ctx, self.coerce, span, target, value)
 
     def logical_not(self, operand: HIR.Expr) -> HIR.Expr:
         if operand.type_id != TypeCtx.bool_id:

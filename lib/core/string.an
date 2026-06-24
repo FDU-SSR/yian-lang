@@ -1,5 +1,5 @@
 from vec import Vec;
-from mem import Clone;
+from clone import Clone;
 from ops import PartialEq, Add, Deref, Index;
 from convert import From, Into;
 from option import Option;
@@ -147,15 +147,15 @@ impl Clone for String {
 
 // Implement PartialEq for String to compare with another String
 impl PartialEq<String> for String {
-    pub fn eq(other: String) -> bool {
-        self.as_str() == other.as_str()
+    pub fn eq(other: String*) -> bool {
+        self.as_str() == (*other).as_str()
     }
 }
 
 // Implement PartialEq for String to compare with a str slice
 impl PartialEq<str> for String {
-    pub fn eq(other: str) -> bool {
-        self.as_str() == other
+    pub fn eq(other: str*) -> bool {
+        self.as_str() == *other
     }
 }
 
@@ -212,8 +212,8 @@ impl Into<String> for str {
 
 // Implement Index for String to allow indexing into the String as a str slice
 impl Index<Range<u64>, str> for String {
-    pub fn index(range: Range<u64>) -> str {
-        self.as_str()[range]
+    pub fn index(range: Range<u64>*) -> str {
+        self.as_str()[*range]
     }
 }
 

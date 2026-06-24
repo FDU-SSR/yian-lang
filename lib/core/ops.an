@@ -47,8 +47,8 @@ pub trait Shr<Rhs, Output> {
 }
 
 pub trait PartialEq<Rhs> {
-    fn eq(rhs: Rhs) -> bool;
-    fn ne(rhs: Rhs) -> bool {
+    fn eq(rhs: Rhs*) -> bool;
+    fn ne(rhs: Rhs*) -> bool {
         !self.eq(rhs)
     }
 }
@@ -60,26 +60,26 @@ pub enum Ordering {
 }
 
 impl PartialEq<Ordering> for Ordering {
-    fn eq(rhs: Ordering) -> bool {
+    fn eq(rhs: Ordering*) -> bool {
         match *self {
-            Less => match rhs { Less => true, _ => false },
-            Equal => match rhs { Equal => true, _ => false },
-            Greater => match rhs { Greater => true, _ => false },
+            Less => match *rhs { Less => true, _ => false },
+            Equal => match *rhs { Equal => true, _ => false },
+            Greater => match *rhs { Greater => true, _ => false },
         }
     }
 }
 
 pub trait PartialOrd<Rhs> {
-    fn partial_cmp(rhs: Rhs) -> Ordering;
+    fn partial_cmp(rhs: Rhs*) -> Ordering;
 
-    fn lt(rhs: Rhs) -> bool {
+    fn lt(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
             Less => true,
             _ => false,
         }
     }
 
-    fn le(rhs: Rhs) -> bool {
+    fn le(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
             Less => true,
             Equal => true,
@@ -87,14 +87,14 @@ pub trait PartialOrd<Rhs> {
         }
     }
 
-    fn gt(rhs: Rhs) -> bool {
+    fn gt(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
             Greater => true,
             _ => false,
         }
     }
 
-    fn ge(rhs: Rhs) -> bool {
+    fn ge(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
             Less => false,
             Equal => true,
@@ -112,7 +112,7 @@ pub fn min<T>(a: T, b: T) -> T {
 }
 
 pub trait Index<Idx, Target> {
-    fn index(index: Idx) -> Target;
+    fn index(idx: Idx*) -> Target;
 }
 
 pub trait Deref<Target> {

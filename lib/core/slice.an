@@ -148,12 +148,12 @@ impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
 }
 
 impl<T> PartialEq<T[]> for T[] {
-    pub fn eq(other: T[]) -> bool {
-        if self.len() != other.len() {
+    pub fn eq(other: T[]*) -> bool {
+        if self.len() != (*other).len() {
             return false;
         }
         for i in 0..self.len() {
-            if self.get(i).unwrap() != other.get(i).unwrap() {
+            if self.get(i).unwrap() != (*other).get(i).unwrap() {
                 return false;
             }
         }
@@ -162,18 +162,18 @@ impl<T> PartialEq<T[]> for T[] {
 }
 
 impl<T> Index<u64, T*> for T[] {
-    fn index(index: u64) -> T* {
-        self.ptr() + index
+    fn index(index: u64*) -> T* {
+        self.ptr() + *index
     }
 }
 
 impl<T> Index<Range<u64>, T[]> for T[] {
-    fn index(range: Range<u64>) -> T[] {
-        if range.end > self.len() {
+    fn index(range: Range<u64>*) -> T[] {
+        if (*range).end > self.len() {
             panic("Range out of bounds");
         }
-        let start_ptr = self.ptr() + range.start;
-        let len = range.end - range.start;
+        let start_ptr = self.ptr() + (*range).start;
+        let len = (*range).end - (*range).start;
         from_raw_parts(start_ptr, len)
     }
 }

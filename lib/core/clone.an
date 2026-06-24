@@ -1,0 +1,53 @@
+// A trait for types that can be cloned to create a duplicate of the value.
+//
+// The clone method should return a new instance of the type equivalent to the original.
+pub trait Clone {
+    fn clone() -> Self;
+}
+
+// Implement clone for all basic types
+// Integer types
+impl Clone for i8  { pub fn clone() -> Self { *self } }
+impl Clone for i16 { pub fn clone() -> Self { *self } }
+impl Clone for i32 { pub fn clone() -> Self { *self } }
+impl Clone for i64 { pub fn clone() -> Self { *self } }
+impl Clone for u8  { pub fn clone() -> Self { *self } }
+impl Clone for u16 { pub fn clone() -> Self { *self } }
+impl Clone for u32 { pub fn clone() -> Self { *self } }
+impl Clone for u64 { pub fn clone() -> Self { *self } }
+
+// Floating-point types
+impl Clone for f32 { pub fn clone() -> Self { *self } }
+impl Clone for f64 { pub fn clone() -> Self { *self } }
+
+// Boolean type
+impl Clone for bool { pub fn clone() -> Self { *self } }
+
+// Character type
+impl Clone for char { pub fn clone() -> Self { *self } }
+
+// Void type
+impl Clone for void { pub fn clone() -> Self { *self } }
+
+impl<T, const N: u64> Clone for T[N] if T: Clone {
+    fn clone() -> Self {
+        // TODO: Optimize this
+        let res = [(*self)[0].clone(); N];
+        for i in 0..N {
+            res[i] = (*self)[i].clone();
+        }
+        res
+    }
+}
+
+impl<T1, T2> Clone for (T1, T2) if T1: Clone, T2: Clone {
+    fn clone() -> Self { ((*self)[0].clone(), (*self)[1].clone()) }
+}
+
+impl<T1, T2, T3> Clone for (T1, T2, T3) if T1: Clone, T2: Clone, T3: Clone {
+    fn clone() -> Self { ((*self)[0].clone(), (*self)[1].clone(), (*self)[2].clone()) }
+}
+
+impl<T1, T2, T3, T4> Clone for (T1, T2, T3, T4) if T1: Clone, T2: Clone, T3: Clone, T4: Clone {
+    fn clone() -> Self { ((*self)[0].clone(), (*self)[1].clone(), (*self)[2].clone(), (*self)[3].clone()) }
+}

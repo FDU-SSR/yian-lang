@@ -1,6 +1,5 @@
 from option import Option;
-
-from mem import Clone;
+from clone import Clone;
 
 pub enum Result<T, E> {
     Ok { val: T, },

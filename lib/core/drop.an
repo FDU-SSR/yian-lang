@@ -1,0 +1,11 @@
+// A trait for types that need explicit resource cleanup.
+//
+// drop() releases resources held by the value. If the type also
+// implements Move, drop() should be a no-op when the value is in
+// an invalidated state (i.e., after move() was called).
+//
+// yian does NOT automatically call drop(). Users must call it
+// manually when a value is no longer needed.
+pub trait Drop {
+    fn drop();
+}

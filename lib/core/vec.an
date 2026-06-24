@@ -1,7 +1,7 @@
 from raw_vec import RawVec;
 
 from ops import Index, PartialEq, Deref, Add;
-from mem import Clone;
+from clone import Clone;
 from option import Option;
 from convert import From, Into;
 
@@ -190,17 +190,17 @@ impl<T> Clone for Vec<T> {
 }
 
 impl<T> Index<u64, T*> for Vec<T> {
-    pub fn index(index: u64) -> T* {
-        if index >= self.len {
+    pub fn index(index: u64*) -> T* {
+        if *index >= self.len {
             panic("index out of bounds");
         }
-        self.raw_vec.ptr() + index
+        self.raw_vec.ptr() + *index
     }
 }
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
-    pub fn eq(rhs: Vec<T>) -> bool {
-        self.as_slice() == rhs.as_slice()
+    pub fn eq(rhs: Vec<T>*) -> bool {
+        self.as_slice() == (*rhs).as_slice()
     }
 }
 
