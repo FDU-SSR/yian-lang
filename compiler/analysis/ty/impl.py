@@ -21,6 +21,7 @@ class Impl:
     target: int
     trait: int | None
     methods: dict[str, int] = field(default_factory=dict[str, int])
+    conditions: dict[int, list[int]] = field(default_factory=dict[int, list[int]])  # generic_type_id -> [required_trait_type_id, ...]
 
 
 class ImplRegistry:
@@ -36,8 +37,8 @@ class ImplRegistry:
         self.__generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic impls
         self.__trait_generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic trait impls
 
-    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
-        impl = Impl(span=span, generics=generics, target=target, trait=trait)
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
+        impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
         self.__impls.append(impl)
         return impl
 
@@ -87,9 +88,58 @@ class ImplRegistry:
                 substs = inference.substitutions()
             except AnalysisError:
                 continue
+            if not self.check_conditions(impl, substs):
+                continue
             return self.__resolve_deref_target(impl, substs)
 
         return None
+
+    def check_conditions(self, impl: Impl, substs: dict[int, int], visited: set[tuple[int, int]] | None = None) -> bool:
+        """Return True if all trait conditions on *impl* are satisfied under *substs*."""
+        if not impl.conditions:
+            return True
+        if visited is None:
+            visited = set()
+        for generic_id, required_traits in impl.conditions.items():
+            concrete_type_id = substs.get(generic_id, generic_id)
+            for trait_id in required_traits:
+                substed_trait = self.__ctx.instantiate(trait_id, substs)
+                if not self.has_impl(concrete_type_id, substed_trait, visited):
+                    return False
+        return True
+
+    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
+        """Check whether *type_id* implements *trait_id*."""
+        if visited is None:
+            visited = set()
+        key = (type_id, trait_id)
+        if key in visited:
+            return False
+        visited.add(key)
+
+        # Check exact match
+        for impl in self.__trait_impl_cache.get(type_id, []):
+            if impl.trait == trait_id:
+                return self.check_conditions(impl, {}, visited)
+
+        # Check generic impls via name-based index
+        base_name = self.__target_base_name(type_id)
+        for impl in self.__trait_generic_impl_by_name.get(base_name, []):
+            if impl.trait is None:
+                continue
+            impl_trait = self.__ctx[impl.trait]
+            target_trait = self.__ctx[trait_id]
+            if not (isinstance(impl_trait, Type.TraitType) and isinstance(target_trait, Type.TraitType) and impl_trait.custom_def is target_trait.custom_def):
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            if self.check_conditions(impl, substs, visited):
+                return True
+        return False
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
         """Given a Deref impl and substitutions, return the return type of deref()."""

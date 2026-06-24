@@ -173,11 +173,36 @@ class Parser:
             trait = None
             target = ty
 
+        # optional if-clause: `if T: Clone, U: Debug`
+        conditions: list[tuple[AST.Identifier, list[AST.ASTType]]] = []
+        token = self.__stream.peek()
+        if isinstance(token, Keyword) and token.kind == KeywordKind.If:
+            self.__stream.consume_keyword(KeywordKind.If)
+            conditions = self.__parse_impl_conditions()
+
         self.__stream.consume_punctuator(PunctuatorKind.LBrace)
         items = self.__stream.consume_until(self.__parse_method_def, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
-        return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items)
+        return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items, conditions=conditions)
+
+    def __parse_impl_conditions(self) -> list[tuple[AST.Identifier, list[AST.ASTType]]]:
+        conditions: list[tuple[AST.Identifier, list[AST.ASTType]]] = []
+        while True:
+            ident = self.__stream.consume_identifier()
+            self.__stream.consume_punctuator(PunctuatorKind.Colon)
+            traits: list[AST.ASTType] = [self.__parse_type()]
+            token = self.__stream.peek()
+            while isinstance(token, Punctuator) and token.kind == PunctuatorKind.Plus:
+                self.__stream.consume_punctuator(PunctuatorKind.Plus)
+                traits.append(self.__parse_type())
+                token = self.__stream.peek()
+            conditions.append((ident, traits))
+            token = self.__stream.peek()
+            if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.Comma):
+                break
+            self.__stream.consume_punctuator(PunctuatorKind.Comma)
+        return conditions
 
     def __parse_struct(self, attrs: list[AST.Attr]) -> AST.StructDef:
         self.__stream.consume_keyword(KeywordKind.Struct)

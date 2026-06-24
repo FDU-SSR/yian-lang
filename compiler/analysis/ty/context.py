@@ -463,8 +463,8 @@ class TypeCtx:
             else:
                 return type_id
 
-    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
-        return self.__impl_registry.register_impl(span, generics, target, trait)
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
+        return self.__impl_registry.register_impl(span, generics, target, trait, conditions)
 
     def check_impls(self) -> None:
         """
@@ -550,6 +550,9 @@ class TypeCtx:
                     receiver_inference.constrain(impl.target, type_at_level)
                     impl_substs = receiver_inference.substitutions()
                 except AnalysisError:
+                    continue
+
+                if not self.__impl_registry.check_conditions(impl, impl_substs):
                     continue
 
                 method_id = impl.methods[method_name]

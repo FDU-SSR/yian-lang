@@ -382,7 +382,14 @@ class GlobalResolve:
         if impl.trait is not None:
             trait_type_id = self.__type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
 
-        impl_obj = self.__type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id)
+        conditions: dict[int, list[int]] = {}
+        for param_name, trait_types in impl.conditions:
+            symbol = unit.symbol_ctx.lookup(param_name.name)
+            assert symbol is not None, f"condition parameter '{param_name.name}' not found"
+            generic_id = symbol.type_id
+            conditions[generic_id] = [self.__type_ctx.resolve_type(tt, unit.symbol_ctx) for tt in trait_types]
+
+        impl_obj = self.__type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id, conditions)
 
         for item in impl.items:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)

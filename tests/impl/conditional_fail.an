@@ -1,0 +1,30 @@
+// Test conditional impl: satisfied constraint → method available
+//
+// Expected output: 0
+
+trait MyClone {
+    fn my_clone() -> Self;
+}
+
+impl MyClone for i32 {
+    fn my_clone() -> i32 {
+        *self
+    }
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> MyClone for Wrapper<T> if T: MyClone {
+    fn my_clone() -> Self {
+        let v = self.value.my_clone();
+        Wrapper(v)
+    }
+}
+
+fn main() -> i32 {
+    let w: Wrapper<i32> = Wrapper(10);
+    assert w.my_clone().value == 10: "clone should work for i32";
+    return 0;
+}
