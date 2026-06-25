@@ -259,6 +259,9 @@ class CallDispatcher:
         parameters = func_ty.parameters(self.__ctx.type_ctx)
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
+        for arg in coerced_args:
+            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
+                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
 
         instantiated_func_id = inference.instantiate(func_type_id)
         # report reachable instantiated function to the semantic context
@@ -371,6 +374,9 @@ class CallDispatcher:
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 
         coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
+        for arg in coerced_args:
+            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
+                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
         # report reachable instantiated method to the semantic context
         self.__ctx.report_def(lookup.method_id)
 
