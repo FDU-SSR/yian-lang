@@ -65,7 +65,7 @@ impl<T> RawVec<T> {
             new_cap = 4;
         }
 
-        let new_data: T* = dyn T[new_cap];
+        let new_data: T* = dyn[new_cap] T;
 
         // Copy valid elements
         if len > 0 {

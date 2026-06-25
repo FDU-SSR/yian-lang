@@ -1,10 +1,8 @@
 // Test Option chained operations
 //
-// Expected output:
-// chain ok
+// Expected output: 0
 
 from std.core.option import Option;
-from std.core.io import print;
 
 fn main() -> i32 {
     // Chain: Some -> take -> is_none
@@ -28,6 +26,5 @@ fn main() -> i32 {
     assert cloned.unwrap_or(0) == 77: "cloned should be 77";
     assert opt3.unwrap_or(0) == 77: "original should still be 77";
 
-    print("chain ok\n");
     return 0;
 }

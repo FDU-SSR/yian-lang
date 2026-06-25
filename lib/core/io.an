@@ -47,7 +47,7 @@ pub fn readline() -> String {
         }
         result.push_str(s);
     }
-    result
+    result.move()
 }
 
 // =====================================================================
