@@ -11,6 +11,11 @@ pub trait Move {
         self.invalidate();
         res
     }
+    fn validity_assert() {
+        if !self.is_valid() {
+            panic("use of invalidated value\n");
+        }
+    }
 
     fn invalidate();
     fn is_valid() -> bool;

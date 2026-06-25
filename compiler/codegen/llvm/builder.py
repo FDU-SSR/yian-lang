@@ -148,10 +148,10 @@ class LLBuilder:
 
     def binary(self, op: BinaryOperator, lhs: LLValue, rhs: LLValue, result: str) -> LLValue:
         if op.is_comparison():
-            ir_val = self.__cmp_impl(op, lhs.ir_val, rhs.ir_val)
+            ir_val = self.__cmp_impl(op, lhs.ir_val, rhs.ir_val, lhs.type_id)
             result_val = LLValue(self.__type_ctx.bool_id, ir_val)
         else:
-            ir_val = self.__arith_impl(op, lhs.ir_val, rhs.ir_val)
+            ir_val = self.__arith_impl(op, lhs.ir_val, rhs.ir_val, lhs.type_id)
             result_val = LLValue(lhs.type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -232,7 +232,7 @@ class LLBuilder:
                 ir_val = self.__builder.select(pos, raw, zero_i)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
-        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
+        elif isinstance(src, (Type.PointerType, Type.NullPtrType)) and isinstance(dst, Type.PointerType):
             ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
         else:
             raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
@@ -477,13 +477,16 @@ class LLBuilder:
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
 
-    def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+    def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
         predicate = {
             BinaryOperator.Eq: "==", BinaryOperator.Neq: "!=",
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",
             BinaryOperator.Leq: "<=", BinaryOperator.Geq: ">=",
         }[op]
         if isinstance(lhs.type, (ir.IntType, ir.PointerType)):  # type: ignore
+            ty = self.__type_ctx[type_id]
+            if isinstance(ty, Type.IntType) and not ty.signed:
+                return self.__builder.icmp_unsigned(predicate, lhs, rhs)  # type: ignore
             return self.__builder.icmp_signed(predicate, lhs, rhs)  # type: ignore
         return self.__builder.fcmp_ordered(predicate, lhs, rhs)  # type: ignore
 
@@ -501,7 +504,15 @@ class LLBuilder:
         BinaryOperator.Mod: "frem",
     }
 
-    def __arith_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+    def __arith_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
         if isinstance(lhs.type, ir.types._BaseFloatType):  # type: ignore
             return getattr(self.__builder, self.FLOAT_ARITH_OPS[op])(lhs, rhs)
+        ty = self.__type_ctx[type_id]
+        if isinstance(ty, Type.IntType) and not ty.signed:
+            if op == BinaryOperator.Div:
+                return self.__builder.udiv(lhs, rhs)  # type: ignore
+            if op == BinaryOperator.Mod:
+                return self.__builder.urem(lhs, rhs)  # type: ignore
+            if op == BinaryOperator.Shr:
+                return self.__builder.lshr(lhs, rhs)  # type: ignore
         return getattr(self.__builder, self.ARITH_OPS[op])(lhs, rhs)

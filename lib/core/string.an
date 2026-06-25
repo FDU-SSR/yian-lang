@@ -5,6 +5,8 @@ from convert import From, Into;
 from option import Option;
 from range import Range;
 from fmt import ToString;
+from move import Move;
+from drop import Drop;
 
 pub struct String {
     data: Vec<u8>,
@@ -13,50 +15,53 @@ pub struct String {
 impl String {
     // Create a new empty String
     static pub fn new() -> Self {
-        Self(
-            data = Vec<u8>.new()
-        )
+        Self(data=Vec<u8>.new())
     }
 
     // Create a new String with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
-        Self(
-            data = Vec<u8>.with_capacity(capacity)
-        )
+        Self(data = Vec<u8>.with_capacity(capacity))
     }
 
     // Extract str from String
     pub fn as_str() -> str {
+        self.validity_assert();
         str.from(self.data.as_slice())
     }
 
     // Get the byte slice of the String
     pub fn as_slice() -> u8[] {
+        self.validity_assert();
         self.data.as_slice()
     }
 
     // Get capacity of String in bytes
     pub fn capacity() -> u64 {
+        self.validity_assert();
         self.data.capacity()
     }
 
     // Get length of String in bytes
     pub fn len() -> u64 {
+        self.validity_assert();
         self.data.len()
     }
 
     // Check if the String is empty
     pub fn is_empty() -> bool {
+        self.validity_assert();
         self.len() == 0
     }
 
     // Push a String to the end(copy)
     pub fn push_str(s: str) {
+        self.validity_assert();
         self.data.extend_from_slice(s.as_slice());
     }
 
     // Push a single char to the end
     pub fn push(c: char) {
+        self.validity_assert();
         let code: u32 = u32(c);
 
         if code <= 0x7F {
@@ -82,6 +87,7 @@ impl String {
 
     // Pop a char from the end and return it
     pub fn pop() -> Option<char> {
+        self.validity_assert();
         if self.is_empty() {
             return Option<char>.None;
         }
@@ -118,37 +124,39 @@ impl String {
 
     // Trimed version of the String
     pub fn trimmed() -> String {
+        self.validity_assert();
         String.from(self.trim())
     }
 
     // Clear the contents of the String
     pub fn clear() {
+        self.validity_assert();
         self.data.clear();
     }
 
     // Reserve additional capacity in bytes
     pub fn reserve(additional: u64) {
+        self.validity_assert();
         self.data.reserve(additional);
     }
 
     // Shrink the capacity to fit the size
     pub fn shrink_to_fit() {
+        self.validity_assert();
         self.data.shrink_to_fit();
     }
 }
 
 impl Clone for String {
     pub fn clone() -> Self {
-        String(
-            data = self.data.clone()
-        )
+        String(data=self.data.clone())
     }
 }
 
 // Implement PartialEq for String to compare with another String
 impl PartialEq<String> for String {
     pub fn eq(other: String*) -> bool {
-        self.as_str() == (*other).as_str()
+        self.as_str() == other.as_str()
     }
 }
 
@@ -162,8 +170,9 @@ impl PartialEq<str> for String {
 // Implement Add for String to concatenate with another String
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {
-        let result = self.clone();
+        let result = self.move();
         result.push_str(other.as_str());
+        other.drop();
         result
     }
 }
@@ -171,7 +180,7 @@ impl Add<String, String> for String {
 // Implement Add for String to concatenate with a str slice
 impl Add<str, String> for String {
     pub fn add(other: str) -> String {
-        let result = self.clone();
+        let result = self.move();
         result.push_str(other);
         result
     }
@@ -180,7 +189,7 @@ impl Add<str, String> for String {
 // Implement Add for String to concatenate with a char
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
-        let result = self.clone();
+        let result = self.move();
         result.push(other);
         result
     }
@@ -197,9 +206,7 @@ impl Deref<str> for String {
 // This will clone the data from the str slice into the String
 impl From<str> for String {
     static pub fn from(value: str) -> Self {
-        Self(
-            data = Vec<u8>.from(value.as_slice())
-        )
+        Self(data=Vec<u8>.from(value.as_slice()))
     }
 }
 
@@ -217,8 +224,22 @@ impl Index<Range<u64>, str> for String {
     }
 }
 
+// Implement ToString for String to allow converting a String into a String (clone)
 impl ToString for String {
     pub fn to_string() -> String {
-        *self
+        self.clone()
+    }
+}
+
+// Implement Move for String to allow moving a String, invalidating the original
+impl Move for String {
+    pub fn invalidate() { self.data.invalidate(); }
+    pub fn is_valid() -> bool { self.data.is_valid() }
+}
+
+// Implement Drop for String to allow dropping a String, freeing its resources
+impl Drop for String {
+    pub fn drop() {
+        self.data.drop();
     }
 }

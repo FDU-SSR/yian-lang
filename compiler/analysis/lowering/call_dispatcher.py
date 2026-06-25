@@ -195,7 +195,7 @@ class CallDispatcher:
         # Validate that both the value and target are pointer types.
         value_ty = self.__ctx.type_ctx[value.type_id]
         target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, Type.PointerType):
+        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
             raise AnalysisError(
                 f"'bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
                 node.args[0].span,
