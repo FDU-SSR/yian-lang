@@ -191,7 +191,7 @@ def discover_tests() -> list[TestCase]:
         rel = an_file.relative_to(TESTS_DIR)
 
         # Exclude tests_results/ and lib/.
-        if rel.parts[0] in ("tests_results", "lib"):
+        if rel.parts[0] in ("tests_results"):
             continue
 
         src_rel = str(rel)
