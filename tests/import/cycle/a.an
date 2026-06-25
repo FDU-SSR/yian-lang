@@ -2,6 +2,7 @@
 
 from b import unwrap_value;
 
+@BitCopy
 pub struct Value<T> {
     pub value: T,
 }

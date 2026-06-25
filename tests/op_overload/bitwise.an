@@ -4,6 +4,7 @@
 
 from std.core.ops import BitAnd, BitOr, BitXor, BitNot, Shl, Shr;
 
+@BitCopy
 struct Value<T> {
     pub value: T,
 }
