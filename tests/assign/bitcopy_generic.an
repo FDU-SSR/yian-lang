@@ -1,0 +1,17 @@
+// Test: generic @BitCopy struct with simple type arguments supports direct assignment
+//
+// Expected output: 0
+
+@BitCopy
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn main() -> i32 {
+    let p1: Pair<i32, bool> = Pair<i32, bool>(first = 1, second = true);
+    let p2 = p1;  // ok: i32 and bool are both BitCopy
+    assert p2.first == 1: "first should be 1";
+    assert p2.second: "second should be true";
+    return 0;
+}

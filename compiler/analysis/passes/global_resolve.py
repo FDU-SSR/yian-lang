@@ -64,9 +64,11 @@ class GlobalResolve:
         """Collects all global symbols in the unit."""
         for item in unit.items():
             match item:
-                case AST.Alias(name=name, attrs=attrs):
+                case AST.Alias(name=name, attrs=attrs, annots=annots, span=span):
+                    if annots:
+                        raise AnalysisError(f"annotation '@{annots[0].kind.value}' is not allowed on typedef declarations", annots[0].span)
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_alias(name.name)
+                    type_id = self.__type_ctx.alloc_alias(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -81,9 +83,11 @@ class GlobalResolve:
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
 
-                case AST.FuncDef(name=name, attrs=attrs):
+                case AST.FuncDef(name=name, attrs=attrs, annots=annots, span=span):
+                    if annots:
+                        raise AnalysisError(f"annotation '@{annots[0].kind.value}' is not allowed on function declarations", annots[0].span)
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_function(name.name)
+                    type_id = self.__type_ctx.alloc_function(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -98,9 +102,9 @@ class GlobalResolve:
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
 
-                case AST.StructDef(name=name, attrs=attrs):
+                case AST.StructDef(name=name, attrs=attrs, annots=annots, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_struct(name.name)
+                    type_id = self.__type_ctx.alloc_struct(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -115,10 +119,12 @@ class GlobalResolve:
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
                     ty.custom_def.unit_id = unit.unit_id
+                    if any(annot.kind == AST.AnnotKind.BitCopy for annot in annots):
+                        ty.custom_def.is_bitcopy = True
 
-                case AST.EnumDef(name=name, attrs=attrs):
+                case AST.EnumDef(name=name, attrs=attrs, annots=annots, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_enum(name.name)
+                    type_id = self.__type_ctx.alloc_enum(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -133,10 +139,14 @@ class GlobalResolve:
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
                     ty.custom_def.unit_id = unit.unit_id
+                    if any(annot.kind == AST.AnnotKind.BitCopy for annot in annots):
+                        ty.custom_def.is_bitcopy = True
 
-                case AST.TraitDef(name=name, attrs=attrs):
+                case AST.TraitDef(name=name, attrs=attrs, annots=annots, span=span):
+                    if annots:
+                        raise AnalysisError(f"annotation '@{annots[0].kind.value}' is not allowed on trait declarations", annots[0].span)
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_trait(name.name)
+                    type_id = self.__type_ctx.alloc_trait(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -150,6 +160,10 @@ class GlobalResolve:
                     assert isinstance(ty, Type.TraitType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
+
+                case AST.Impl(annots=annots):
+                    if annots:
+                        raise AnalysisError(f"annotation '@{annots[0].kind.value}' is not allowed on impl blocks", annots[0].span)
 
                 case _:
                     # other items are ignored in this pass
@@ -323,7 +337,7 @@ class GlobalResolve:
             if len(variant.fields) > 0:
                 field_names = [field.name.name for field in variant.fields]
                 field_types = [self.__type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
-                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types, generics=ty.custom_def.generics)
+                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types, generics=ty.custom_def.generics, span=variant.span)
             variants.append(Type.EnumVariant(
                 name=variant.name.name,
                 payload_type=payload_type_id,
@@ -403,7 +417,7 @@ class GlobalResolve:
 
     def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: list[int], receiver_type_id: int, is_header: bool) -> int:
         # alloc in type space
-        type_id = self.__type_ctx.alloc_method(decl.name.name)
+        type_id = self.__type_ctx.alloc_method(decl.name.name, span=decl.span)
 
         # alloc in symbol space
         symbol_attrs = self.__convert_attrs(decl.attrs)

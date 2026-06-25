@@ -237,7 +237,7 @@ class ImplRegistry:
         assert isinstance(trait_method_ty, Type.MethodType)
 
         # alloc a new method type
-        method_type_id = self.__ctx.alloc_method(trait_method_ty.custom_def.name)
+        method_type_id = self.__ctx.alloc_method(trait_method_ty.custom_def.name, span=trait_method_ty.custom_def.span)
         method_ty = self.__ctx[method_type_id]
         assert isinstance(method_ty, Type.MethodType)
 

@@ -96,6 +96,7 @@ class TypeCtx:
 
         # Caches for hot-path type queries — the type_id fully encodes the
         # generic instantiation, so the cache key is just the type_id.
+        self.__span_cache: dict[int, SrcSpan] = {}
         self.__fields_cache: dict[int, list[Type.StructField]] = {}
         self.__variants_cache: dict[int, list[Type.EnumVariant]] = {}
         self.__params_cache: dict[int, list[Type.Parameter]] = {}
@@ -103,6 +104,7 @@ class TypeCtx:
         self.__receiver_type_cache: dict[int, int] = {}
         self.__methods_cache: dict[int, dict[str, int]] = {}
         self.__default_literals_cache: dict[int, int] = {}
+        self.__simple_type_cache: dict[int, bool] = {}
 
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
@@ -215,26 +217,26 @@ class TypeCtx:
     def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
         return self.__space.alloc_function_pointer(param_types, return_type)
 
-    def alloc_alias(self, name: str) -> int:
-        return self.__space.alloc_alias(name)
+    def alloc_alias(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_alias(name, span)
 
-    def alloc_struct(self, name: str) -> int:
-        return self.__space.alloc_struct(name)
+    def alloc_struct(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_struct(name, span)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int]) -> int:
-        return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics)
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan) -> int:
+        return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics, span)
 
-    def alloc_enum(self, name: str) -> int:
-        return self.__space.alloc_enum(name)
+    def alloc_enum(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_enum(name, span)
 
-    def alloc_trait(self, name: str) -> int:
-        return self.__space.alloc_trait(name)
+    def alloc_trait(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_trait(name, span)
 
-    def alloc_method(self, name: str) -> int:
-        return self.__space.alloc_method(name)
+    def alloc_method(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_method(name, span)
 
-    def alloc_function(self, name: str) -> int:
-        return self.__space.alloc_function(name)
+    def alloc_function(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_function(name, span)
 
     def alloc_range(self, type_id: int) -> int:
         return self.__space.alloc_range(type_id)
@@ -264,18 +266,76 @@ class TypeCtx:
         """Return True for types that support direct bitwise-copy assignment.
 
         Simple types (§2.1) are always simple. Composite types are simple
-        when all their elements / fields are simple (§5.1).
+        when all their elements / fields are simple (§5.1). User-defined
+        structs/enums with @BitCopy annotation are validated at assignment time.
+
+        Results are cached in __simple_type_cache keyed by (resolved) type_id.
         """
+        type_id = self.resolve_aliases(type_id)
+
+        cached = self.__simple_type_cache.get(type_id)
+        if cached is not None:
+            return cached
+
         ty = self[type_id]
         if isinstance(ty, (Type.IntType, Type.FloatType, Type.BoolType,
                            Type.CharType, Type.StrType, Type.PointerType,
                            Type.FunctionPointerType, Type.SliceType)):
+            self.__simple_type_cache[type_id] = True
             return True
         if isinstance(ty, Type.ArrayType):
-            return self.is_simple_type(ty.element_type)
+            result = self.is_simple_type(ty.element_type)
+            self.__simple_type_cache[type_id] = result
+            return result
         if isinstance(ty, Type.TupleType):
-            return all(self.is_simple_type(et) for et in ty.element_types)
+            result = all(self.is_simple_type(et) for et in ty.element_types)
+            self.__simple_type_cache[type_id] = result
+            return result
+        if isinstance(ty, Type.StructType) and ty.custom_def.is_bitcopy:
+            self.__validate_bitcopy_struct(type_id)
+            self.__simple_type_cache[type_id] = True
+            return True
+        if isinstance(ty, Type.EnumType) and ty.custom_def.is_bitcopy:
+            self.__validate_bitcopy_enum(type_id)
+            self.__simple_type_cache[type_id] = True
+            return True
+
+        self.__simple_type_cache[type_id] = False
         return False
+
+    def __validate_bitcopy_struct(self, type_id: int) -> None:
+        """Validate that all fields of a @BitCopy struct are BitCopy types.
+
+        Raises AnalysisError on failure. The caller is responsible for
+        checking/updating __simple_type_cache.
+        """
+        fields = self.get_struct_fields(type_id)
+        for field in fields:
+            if not self.is_simple_type(field.type_id):
+                raise AnalysisError(
+                    f"type '{self.get_name(field.type_id)}' is not BitCopy\n"
+                    f"note: all fields of a @BitCopy struct must be BitCopy types",
+                    self.get_span(type_id)
+                )
+
+    def __validate_bitcopy_enum(self, type_id: int) -> None:
+        """Validate that all variant payloads of a @BitCopy enum are BitCopy types.
+
+        Raises AnalysisError on failure. The caller is responsible for
+        checking/updating __simple_type_cache.
+        """
+        variants = self.get_enum_variants(type_id)
+        for variant in variants:
+            if variant.payload_type is None:
+                continue
+            payload_fields = self.get_struct_fields(variant.payload_type)
+            for field in payload_fields:
+                if not self.is_simple_type(field.type_id):
+                    raise AnalysisError(
+                        f"type '{self.get_name(field.type_id)}' in variant '{variant.name}' is not BitCopy\n"
+                        f"note: all variant payloads of a @BitCopy enum must be BitCopy types",
+                        self.get_span(type_id)
+                    )
 
     def default_literals(self, type_id: int) -> int:
         cached = self.__default_literals_cache.get(type_id)
@@ -292,11 +352,20 @@ class TypeCtx:
     # cached type queries
     # ------------------------------------------------------------------
 
+    def get_span(self, type_id: int) -> SrcSpan:
+        """Return the source span of a type, with caching."""
+        if type_id in self.__span_cache:
+            return self.__span_cache[type_id]
+        ty = self[type_id]
+        assert isinstance(ty, (Type.AliasType, Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType))
+        span = ty.custom_def.span
+        self.__span_cache[type_id] = span
+        return span
+
     def get_struct_fields(self, type_id: int) -> list[Type.StructField]:
         """Return the fields of a struct type, with caching."""
-        cached = self.__fields_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__fields_cache:
+            return self.__fields_cache[type_id]
         ty = self[type_id]
         assert isinstance(ty, Type.StructType)
         fields = ty.get_fields(self)
@@ -312,9 +381,8 @@ class TypeCtx:
 
     def get_enum_variants(self, type_id: int) -> list[Type.EnumVariant]:
         """Return the variants of an enum type, with caching."""
-        cached = self.__variants_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__variants_cache:
+            return self.__variants_cache[type_id]
         ty = self[type_id]
         assert isinstance(ty, Type.EnumType)
         variants = ty.get_variants(self)
@@ -330,9 +398,8 @@ class TypeCtx:
 
     def get_params(self, type_id: int) -> list[Type.Parameter]:
         """Return the parameters of a function or method type, with caching."""
-        cached = self.__params_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__params_cache:
+            return self.__params_cache[type_id]
         ty = self[type_id]
         if isinstance(ty, Type.FunctionType):
             params = ty.parameters(self)
@@ -345,9 +412,8 @@ class TypeCtx:
 
     def get_return_type(self, type_id: int) -> int:
         """Return the return type of a function or method type, with caching."""
-        cached = self.__return_type_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__return_type_cache:
+            return self.__return_type_cache[type_id]
         ty = self[type_id]
         if isinstance(ty, Type.FunctionType):
             ret = ty.return_type(self)
@@ -360,9 +426,8 @@ class TypeCtx:
 
     def get_receiver_type(self, type_id: int) -> int:
         """Return the receiver type of a method type, with caching."""
-        cached = self.__receiver_type_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__receiver_type_cache:
+            return self.__receiver_type_cache[type_id]
         ty = self[type_id]
         assert isinstance(ty, Type.MethodType)
         recv = ty.receiver_type(self)
@@ -371,9 +436,8 @@ class TypeCtx:
 
     def get_trait_methods(self, type_id: int) -> dict[str, int]:
         """Return the methods of a trait type, with caching."""
-        cached = self.__methods_cache.get(type_id)
-        if cached is not None:
-            return cached
+        if type_id in self.__methods_cache:
+            return self.__methods_cache[type_id]
         ty = self[type_id]
         assert isinstance(ty, Type.TraitType)
         methods = ty.get_methods(self)

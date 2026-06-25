@@ -1,0 +1,16 @@
+// Test: @BitCopy enum supports direct assignment
+//
+// Expected output: 0
+
+@BitCopy
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let c1 = Color.Red;
+    let c2 = c1;  // ok: Color is @BitCopy
+    return 0;
+}

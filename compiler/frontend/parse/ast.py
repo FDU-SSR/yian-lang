@@ -76,6 +76,7 @@ class Import:
 @dataclass
 class Alias:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -110,9 +111,30 @@ class Attr:
         return self.kind.value
 
 
+class AnnotKind(Enum):
+    BitCopy = "BitCopy"
+
+    @classmethod
+    def try_from_name(cls, name: str) -> AnnotKind | None:
+        try:
+            return cls(name)
+        except ValueError:
+            return None
+
+
+@dataclass
+class Annot:
+    span: SrcSpan
+    kind: AnnotKind
+
+    def __repr__(self) -> str:
+        return f"@{self.kind.value}"
+
+
 @dataclass
 class FuncDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -143,6 +165,7 @@ class FieldInfo:
 @dataclass
 class StructDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -169,6 +192,7 @@ class VariantInfo:
 @dataclass
 class EnumDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -184,6 +208,7 @@ class EnumDef:
 @dataclass
 class Impl:
     span: SrcSpan
+    annots: list[Annot]
     generics: list[GenericParam]
     target: ASTType
     trait: ASTType | None
@@ -201,6 +226,7 @@ class Impl:
 @dataclass
 class TraitDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]

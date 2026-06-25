@@ -28,30 +28,37 @@ class Parser:
         items: list[AST.ProgramItem] = []
 
         while not self.__stream.at_end():
+            annots = self.__stream.consume_annots()
             attrs = self.__stream.consume_attrs()
             match self.__stream.peek():
                 case Keyword(KeywordKind.Import, _):
+                    if annots:
+                        raise ParseError("Annotations are not allowed on import statements", annots[0].span)
                     if attrs:
                         raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
                     items.extend(self.__parse_import())
                 case Keyword(KeywordKind.From, _):
+                    if annots:
+                        raise ParseError("Annotations are not allowed on import statements", annots[0].span)
                     if attrs:
                         raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
                     items.extend(self.__parse_import())
                 case Keyword(KeywordKind.Typedef, _):
-                    items.append(self.__parse_alias(attrs=attrs))
+                    items.append(self.__parse_alias(annots=annots, attrs=attrs))
                 case Keyword(KeywordKind.Impl, _):
+                    if annots:
+                        raise ParseError("Annotations are not allowed on impl blocks", annots[0].span)
                     if attrs:
                         raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
-                    items.append(self.__parse_impl())
+                    items.append(self.__parse_impl(annots=annots))
                 case Keyword(KeywordKind.Struct, _):
-                    items.append(self.__parse_struct(attrs=attrs))
+                    items.append(self.__parse_struct(annots=annots, attrs=attrs))
                 case Keyword(KeywordKind.Enum, _):
-                    items.append(self.__parse_enum(attrs=attrs))
+                    items.append(self.__parse_enum(annots=annots, attrs=attrs))
                 case Keyword(KeywordKind.Trait, _):
-                    items.append(self.__parse_trait(attrs=attrs))
+                    items.append(self.__parse_trait(annots=annots, attrs=attrs))
                 case Keyword(KeywordKind.Fn, _):
-                    items.append(self.__parse_func_def(attrs=attrs))
+                    items.append(self.__parse_func_def(annots=annots, attrs=attrs))
                 case _:
                     raise ParseError(f"Expected a declaration keyword (fn, struct, enum, trait, impl, typedef, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
 
@@ -148,15 +155,15 @@ class Parser:
         self.__stream.consume_punctuator(PunctuatorKind.RAngle)
         return params
 
-    def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:
+    def __parse_alias(self, annots: list[AST.Annot], attrs: list[AST.Attr]) -> AST.Alias:
         self.__stream.consume_keyword(KeywordKind.Typedef)
         name = self.__stream.consume_identifier()
         generics = self.__parse_generics()
         self.__stream.consume_punctuator(PunctuatorKind.Equal)
         target = self.__parse_type()
-        return AST.Alias(span=name.span, attrs=attrs, name=name, generics=generics, target=target)
+        return AST.Alias(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, target=target)
 
-    def __parse_impl(self) -> AST.Impl:
+    def __parse_impl(self, annots: list[AST.Annot]) -> AST.Impl:
         span = self.__stream.consume_keyword(KeywordKind.Impl).span
         generics = self.__parse_generics()
 
@@ -184,7 +191,7 @@ class Parser:
         items = self.__stream.consume_until(self.__parse_method_def, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
-        return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items, conditions=conditions)
+        return AST.Impl(span=span, annots=annots, generics=generics, target=target, trait=trait, items=items, conditions=conditions)
 
     def __parse_impl_conditions(self) -> list[tuple[AST.Identifier, list[AST.ASTType]]]:
         conditions: list[tuple[AST.Identifier, list[AST.ASTType]]] = []
@@ -204,7 +211,7 @@ class Parser:
             self.__stream.consume_punctuator(PunctuatorKind.Comma)
         return conditions
 
-    def __parse_struct(self, attrs: list[AST.Attr]) -> AST.StructDef:
+    def __parse_struct(self, annots: list[AST.Annot], attrs: list[AST.Attr]) -> AST.StructDef:
         self.__stream.consume_keyword(KeywordKind.Struct)
 
         name = self.__stream.consume_identifier()
@@ -214,9 +221,9 @@ class Parser:
         fields = self.__stream.consume_separated(self.__parse_field_info, SEP_COMMA, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
-        return AST.StructDef(span=name.span, attrs=attrs, name=name, generics=generics, fields=fields)
+        return AST.StructDef(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, fields=fields)
 
-    def __parse_enum(self, attrs: list[AST.Attr]) -> AST.EnumDef:
+    def __parse_enum(self, annots: list[AST.Annot], attrs: list[AST.Attr]) -> AST.EnumDef:
         self.__stream.consume_keyword(KeywordKind.Enum)
 
         name = self.__stream.consume_identifier()
@@ -226,9 +233,9 @@ class Parser:
         variants = self.__stream.consume_separated(self.__parse_variant_info, SEP_COMMA, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
-        return AST.EnumDef(span=name.span, attrs=attrs, name=name, generics=generics, variants=variants)
+        return AST.EnumDef(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, variants=variants)
 
-    def __parse_trait(self, attrs: list[AST.Attr]) -> AST.TraitDef:
+    def __parse_trait(self, annots: list[AST.Annot], attrs: list[AST.Attr]) -> AST.TraitDef:
         self.__stream.consume_keyword(KeywordKind.Trait)
 
         name = self.__stream.consume_identifier()
@@ -238,7 +245,7 @@ class Parser:
         items = self.__stream.consume_until(self.__parse_trait_item, TERM_RBRACE)
         self.__stream.consume_punctuator(PunctuatorKind.RBrace)
 
-        return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
+        return AST.TraitDef(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, items=items)
 
     def __parse_method_decl(self) -> AST.MethodDecl:
         attrs = self.__stream.consume_attrs()
@@ -311,7 +318,7 @@ class Parser:
         self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
         return decl
 
-    def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
+    def __parse_func_def(self, annots: list[AST.Annot], attrs: list[AST.Attr]) -> AST.FuncDef:
         self.__stream.consume_keyword(KeywordKind.Fn)
 
         name = self.__stream.consume_identifier()
@@ -330,7 +337,7 @@ class Parser:
 
         body = self.__expr_parser.parse_block()
 
-        return AST.FuncDef(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=body)
+        return AST.FuncDef(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=body)
 
     def __parse_type(self) -> AST.ASTType:
         return self.__type_parser.parse_type()

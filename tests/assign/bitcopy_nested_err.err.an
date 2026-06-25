@@ -1,0 +1,23 @@
+// Test: @BitCopy struct containing a non-@BitCopy struct is rejected
+//
+// Expected: compilation error
+
+struct Inner {
+    data: i64,
+}
+
+impl Clone for Inner {
+    pub fn clone() -> Self { Inner(self.data) }
+}
+
+@BitCopy
+struct Outer {
+    a: i32,
+    b: Inner,
+}
+
+fn main() -> i32 {
+    let o1 = Outer(1, Inner(42));
+    let o2 = o1;
+    return 0;
+}

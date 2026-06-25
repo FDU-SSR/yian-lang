@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from compiler.analysis.ty import ty as Type
 from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.ty.context import TypeCtx
@@ -144,13 +145,13 @@ class TypeSpace:
         self.__function_pointer_cache[key] = function_pointer_ty_id
         return function_pointer_ty_id
 
-    def alloc_alias(self, name: str) -> int:
-        alias_def = Type.AliasDef(name=name)
+    def alloc_alias(self, name: str, span: SrcSpan) -> int:
+        alias_def = Type.AliasDef(name=name, span=span)
         alias_ty = Type.AliasType(type_id=-1, custom_def=alias_def)
         return self.__add_type(alias_ty)
 
-    def alloc_struct(self, name: str) -> int:
-        struct_def = Type.StructDef(name=name)
+    def alloc_struct(self, name: str, span: SrcSpan) -> int:
+        struct_def = Type.StructDef(name=name, span=span)
         struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
 
         if name == "Range":
@@ -158,19 +159,19 @@ class TypeSpace:
 
         return self.__add_type(struct_ty)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int]) -> int:
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan) -> int:
         if len(field_names) != len(field_types):
             raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
 
-        struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}")
+        struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}", span=span)
         struct_def.generics = generics.copy()
         for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
             struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index))
         struct_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generics.copy())
         return self.__add_type(struct_ty)
 
-    def alloc_enum(self, name: str) -> int:
-        enum_def = Type.EnumDef(name=name)
+    def alloc_enum(self, name: str, span: SrcSpan) -> int:
+        enum_def = Type.EnumDef(name=name, span=span)
         enum_ty = Type.EnumType(type_id=-1, custom_def=enum_def)
 
         if name == "Option":
@@ -180,8 +181,8 @@ class TypeSpace:
 
         return self.__add_type(enum_ty)
 
-    def alloc_trait(self, name: str) -> int:
-        trait_def = Type.TraitDef(name=name)
+    def alloc_trait(self, name: str, span: SrcSpan) -> int:
+        trait_def = Type.TraitDef(name=name, span=span)
         trait_ty = Type.TraitType(type_id=-1, custom_def=trait_def)
 
         intrinsic_mapping = {
@@ -210,13 +211,13 @@ class TypeSpace:
 
         return self.__add_type(trait_ty)
 
-    def alloc_method(self, name: str) -> int:
-        method_def = Type.MethodDef(name=name)
+    def alloc_method(self, name: str, span: SrcSpan) -> int:
+        method_def = Type.MethodDef(name=name, span=span)
         method_ty = Type.MethodType(type_id=-1, custom_def=method_def)
         return self.__add_type(method_ty)
 
-    def alloc_function(self, name: str) -> int:
-        function_def = Type.FunctionDef(name=name)
+    def alloc_function(self, name: str, span: SrcSpan) -> int:
+        function_def = Type.FunctionDef(name=name, span=span)
         function_ty = Type.FunctionType(type_id=-1, custom_def=function_def)
         return self.__add_type(function_ty)
 
