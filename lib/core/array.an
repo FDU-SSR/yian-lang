@@ -2,6 +2,12 @@ from ops import Index;
 from range import Range;
 from slice import from_raw_parts;
 
+impl<T, const N: u64> T[N] {
+    fn as_slice() -> T[] {
+        from_raw_parts(bitcast<T*>(self), N)
+    }
+}
+
 impl<T, const N: u64> Index<u64, T*> for T[N] {
     fn index(index: u64*) -> T* {
         if *index >= N {

@@ -124,10 +124,10 @@ impl File {
     pub fn read_to_string() -> Result<String, IoError> {
         self.validity_assert();
         let result = String.new();
-        let buf = dyn[4096] u8;
+        let buf: u8[4096];
+        assume_init(buf);
         loop {
-            let buf_str = str.from(from_raw_parts(buf, 4096u64));
-            let s: str = sys_read(self.fd, buf_str);
+            let s: str = sys_read(self.fd, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -135,7 +135,6 @@ impl File {
             }
             result.push_str(s);
         }
-        del buf;
         Result<String, IoError>.Ok(val = result.move())
     }
 
@@ -185,7 +184,7 @@ impl Move for File {
 
 impl Drop for File {
     pub fn drop() {
-        if self.is_valid() && self.fd >= 0 {
+        if self.is_valid() {
             close(self.fd);
             self.invalidate();
         }
@@ -202,10 +201,10 @@ impl Stdin {
     // Read a single line, excluding the trailing newline.
     pub static fn read_line() -> Result<String, IoError> {
         let result = String.new();
-        let buf = dyn[256] u8;
+        let buf: u8[256];
+        assume_init(buf);
         loop {
-            let buf_str = str.from(from_raw_parts(buf, 256u64));
-            let s: str = sys_read(0, buf_str);
+            let s: str = sys_read(0, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -215,12 +214,12 @@ impl Stdin {
             let found: i32 = -1;
             for i in 0u64..n {
                 if data[i] == 10u8 {
-                    found = i as i32;
+                    found = i32(i);
                     break;
                 }
             }
             if found >= 0 {
-                let newline_pos: u64 = found as u64;
+                let newline_pos = u64(found);
                 if newline_pos > 0 {
                     let line_data = str.from(data[0u64..newline_pos]);
                     result.push_str(line_data);
@@ -229,7 +228,6 @@ impl Stdin {
             }
             result.push_str(s);
         }
-        del buf;
         Result<String, IoError>.Ok(val = result.move())
     }
 
@@ -242,10 +240,10 @@ impl Stdin {
     // Read all of stdin into a String.
     pub static fn read_to_string() -> Result<String, IoError> {
         let result = String.new();
-        let buf = dyn[4096] u8;
+        let buf: u8[4096];
+        assume_init(buf);
         loop {
-            let buf_str = str.from(from_raw_parts(buf, 4096u64));
-            let s: str = sys_read(0, buf_str);
+            let s: str = sys_read(0, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -297,10 +295,6 @@ impl Stderr {
 
 pub fn print(s: str) {
     sys_write(1, s);
-}
-
-pub fn eprint(s: str) {
-    sys_write(2, s);
 }
 
 pub fn readline() -> String {
