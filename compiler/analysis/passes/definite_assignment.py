@@ -293,6 +293,16 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Delete):
             return self.__check_expr(expr.target, state)
 
+        if isinstance(expr, HIR.AssumeInit):
+            # Mark the variable VALID *before* checking, so the Var use
+            # inside assume_init itself does not trigger a DA error.
+            if isinstance(expr.value, HIR.Var):
+                sym_id = expr.value.symbol_id
+                state = {**state, _whole(sym_id): VarState.VALID}
+                state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
+            state = self.__check_expr(expr.value, state)
+            return state
+
         # -- leaf nodes ---------------------------------------------------
         return state
 
@@ -588,6 +598,15 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.Delete):
             return self.__walk_neutral(expr.target, state)
+
+        if isinstance(expr, HIR.AssumeInit):
+            # Mark the variable VALID before walking, matching __check_expr.
+            if isinstance(expr.value, HIR.Var):
+                sym_id = expr.value.symbol_id
+                state = {**state, _whole(sym_id): VarState.VALID}
+                state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
+            state = self.__walk_neutral(expr.value, state)
+            return state
 
         return state
 

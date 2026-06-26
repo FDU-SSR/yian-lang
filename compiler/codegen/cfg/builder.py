@@ -496,6 +496,8 @@ class CfgBuilder:
                 return self.__resolve_bit_cast(expr)
             case HIR.BitCopy():
                 return self.__resolve_val(expr.value)
+            case HIR.AssumeInit():
+                return self.__resolve_val(expr.value)
             case HIR.SysRead():
                 return self.__resolve_sys_read(expr)
             case HIR.SysWrite():

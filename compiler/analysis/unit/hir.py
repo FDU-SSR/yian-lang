@@ -403,6 +403,14 @@ class BitCopy:
 
 
 @dataclass
+class AssumeInit:
+    span: SrcSpan
+    value: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -429,4 +437,5 @@ Expr: TypeAlias = (
     | Semi
     | Let
     | BitCopy
+    | AssumeInit
 )

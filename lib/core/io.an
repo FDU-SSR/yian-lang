@@ -23,6 +23,7 @@ from range import Range;
 // IoError — structured I/O error
 // =====================================================================
 
+@BitCopy
 pub enum IoErrorKind {
     NotFound,
     PermissionDenied,
@@ -38,12 +39,6 @@ pub struct IoError {
     msg:  String,
 }
 
-// IoErrorKind is a simple C-like enum — trivial move semantics.
-impl Move for IoErrorKind {
-    fn invalidate() {}
-    fn is_valid() -> bool { true }
-}
-
 impl IoError {
     pub fn kind() -> IoErrorKind {
         self.kind
@@ -54,9 +49,8 @@ impl IoError {
     }
 
     pub static fn new(kind: IoErrorKind, msg: str) -> Self {
-        let s = String.new();
-        s.push_str(msg);
-        Self(kind = kind.move(), msg = s.move())
+        let s = String.from(msg);
+        Self(kind = kind, msg = s.move())
     }
 
     pub static fn not_found(msg: str) -> Self {
@@ -68,8 +62,7 @@ impl IoError {
     }
 
     pub static fn unexpected_eof() -> Self {
-        let s = String.new();
-        s.push_str("unexpected EOF");
+        let s = String.from("unexpected EOF");
         Self(kind = IoErrorKind.UnexpectedEof, msg = s.move())
     }
 

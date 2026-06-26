@@ -1,4 +1,4 @@
-// Test print and eprint (stdout/stderr write via library)
+// Test print and eprint (stdout/stderr via convenience functions)
 //
 // Expected output:
 // stdout ok
@@ -7,6 +7,5 @@ from std.core.io import print;
 
 fn main() -> i32 {
     print("stdout ok\n");
-
     return 0;
 }

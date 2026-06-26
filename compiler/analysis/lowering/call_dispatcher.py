@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close"})
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -120,6 +120,8 @@ class CallDispatcher:
                 return self.__handle_open(node)
             case "close":
                 return self.__handle_close(node)
+            case "assume_init":
+                return self.__handle_assume_init(node)
             case _:
                 raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
 
@@ -140,6 +142,15 @@ class CallDispatcher:
             raise AnalysisError(f"'bitcopy' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.BitCopy(span=node.span, value=value, type_id=value.type_id, is_place=False)
+
+    def __handle_assume_init(self, node: AST.Call) -> HIR.Expr:
+        """Lower `assume_init(expr)` into HIR.AssumeInit."""
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'assume_init'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.value(node.args[0].value)
+        return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
 
     def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
         """Lower `sizeof(type)` into HIR.SizeOf.

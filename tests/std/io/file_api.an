@@ -1,0 +1,40 @@
+// Test File API: open, write_all, read_to_string, drop
+//
+// Expected output: 0
+
+from std.core.io import File, OpenMode;
+
+fn main() -> i32 {
+    let path = "/tmp/yian_test_file_api.txt";
+
+    // Write with File API
+    let f = File.open(path, OpenMode.Write).unwrap();
+    f.write_all("Hello, File API!\n").unwrap();
+    f.drop();
+
+    // Read back
+    let f2 = File.open(path, OpenMode.Read).unwrap();
+    let content = f2.read_to_string().unwrap();
+    f2.drop();
+
+    assert content.as_str() == "Hello, File API!\n": "read_to_string should match";
+
+    // Append mode
+    let f3 = File.open(path, OpenMode.Append).unwrap();
+    f3.write_all("second line\n").unwrap();
+    f3.drop();
+
+    let f4 = File.open(path, OpenMode.Read).unwrap();
+    let content2 = f4.read_to_string().unwrap();
+    f4.drop();
+
+    assert content2.as_str() == "Hello, File API!\nsecond line\n": "append should add";
+
+    // fd() accessor
+    let f5 = File.open(path, OpenMode.Read).unwrap();
+    let raw_fd: i32 = f5.fd();
+    assert raw_fd >= 0: "fd should be valid";
+    f5.drop();
+
+    return 0;
+}
