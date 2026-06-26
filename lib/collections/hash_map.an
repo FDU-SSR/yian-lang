@@ -2,6 +2,7 @@ from std.core.option import Option;
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.ops import Index;
 from std.core.iter import Iterator, IntoIterator;
+from std.core.range import Range;
 
 pub struct HashMap<K, V> {
     buckets: Bucket<K, V>*,
@@ -27,15 +28,14 @@ impl<K, V> HashMap<K, V> {
     }
 
     static pub fn with_capacity_and_hasher(capacity: u64, hasher_builder: Murmur3BuildHasher) -> Self {
-        let actual_capacity: u64;
-        actual_capacity = capacity.next_power_of_two();
+        let actual_capacity = capacity.next_power_of_two();
 
         let growth_left = Self.calculate_growth_left(actual_capacity);
-        let ctrls: u8* = dyn u8[actual_capacity];
+        let ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
             ctrls[i] =  0b1111_1111
         }
-        let buckets: Bucket<K, V>* = dyn Bucket<K, V>[actual_capacity]
+        let buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
 
         Self(
             buckets,
@@ -69,7 +69,7 @@ impl<K, V> HashMap<K, V> {
                 self.size += 1
                 self.growth_left -= 1
                 return;
-            } elif ctrl_byte == h2 && self.buckets[index].key == *key {
+            } elif ctrl_byte == h2 && self.buckets[index].key == key {
                 key.drop()
                 self.buckets[index].value = value.move()
                 return;
@@ -78,9 +78,9 @@ impl<K, V> HashMap<K, V> {
         }
     }
 
-    pub fn get(key: K*) -> Option<V> {
+    pub fn get(key: K*) -> Option<V*> {
         if self.capacity == 0 {
-            return Option<V>.None;
+            return Option<V*>.None;
         }
         let hash = self.hash_key(key);
         let primary_index = hash & (self.capacity - 1);
@@ -90,24 +90,24 @@ impl<K, V> HashMap<K, V> {
             let ctrl_byte = self.ctrls[index];
 
             if ctrl_byte == 0b1111_1111 {
-                return Option<V>.None;
+                return Option<V*>.None;
             }
 
             if ctrl_byte == h2 {
-                let bucket: Bucket<K, V> = self.buckets[index]
+                let bucket: Bucket<K, V>* = &self.buckets[index]
                 if bucket.key == *key {
-                    return Option<V>.Some(bucket.value);
+                    return Option<V*>.Some(&bucket.value);
                 }
             }
             index = (index + 1) & (self.capacity - 1);
         }
 
-        Option<V>.None
+        Option<V*>.None
     }
 
-    pub fn remove(key: K*) {
+    pub fn remove(key: K*) -> bool {
         if self.capacity == 0 {
-            return;
+            return false;
         }
         let hash = self.hash_key(key);
         let primary_index = hash & (self.capacity - 1);
@@ -117,19 +117,22 @@ impl<K, V> HashMap<K, V> {
             let ctrl_byte = self.ctrls[index];
 
             if ctrl_byte == 0b1111_1111 {
-                return;
+                return false;
             }
 
             if ctrl_byte == h2 {
-                let bucket: Bucket<K, V> = self.buckets[index]
+                let bucket: Bucket<K, V>* = &self.buckets[index]
                 if bucket.key == *key {
                     self.ctrls[index] = 0b1000_0000
                     self.size -= 1
-                    return;
+                    bucket.key.drop()
+                    bucket.value.drop()
+                    return true;
                 }
             }
             index = (index + 1) & (self.capacity - 1);
         }
+        false
     }
 
     pub fn contains(key: K*) -> bool {
@@ -149,6 +152,11 @@ impl<K, V> HashMap<K, V> {
             return;
         }
         for i in 0..self.capacity {
+            let ctrl = self.ctrls[i];
+            if ctrl != 0b1111_1111 && ctrl != 0b1000_0000 {
+                self.buckets[i].key.drop();
+                self.buckets[i].value.drop();
+            }
             self.ctrls[i] = 0b1111_1111
         }
         self.size = 0;
@@ -173,11 +181,11 @@ impl<K, V> HashMap<K, V> {
         let old_buckets: Bucket<K, V>* = self.buckets
         let old_capacity = self.capacity;
 
-        let new_ctrls: u8* = dyn u8[actual_capacity];
+        let new_ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
             new_ctrls[i] =  0b1111_1111
         }
-        let new_buckets: Bucket<K, V>* = dyn Bucket<K, V>[actual_capacity]
+        let new_buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
 
         self.capacity = actual_capacity;
         self.growth_left = Self.calculate_growth_left(actual_capacity);
@@ -254,18 +262,18 @@ pub struct HashMapKeyIter<K, V> {
     index: u64,
 }
 
-impl<K, V> Iterator<K> for HashMapKeyIter<K, V> {
-    pub fn next() -> Option<K> {
+impl<K, V> Iterator<K*> for HashMapKeyIter<K, V> {
+    pub fn next() -> Option<K*> {
         while self.index < self.capacity {
             let ctrl_byte = self.ctrls[self.index];
             if ctrl_byte != 0b1111_1111 && ctrl_byte != 0b1000_0000 {
-                let key = self.buckets[self.index].key;
+                let key: K* = &self.buckets[self.index].key;
                 self.index += 1
-                return Option<K>.Some(key);
+                return Option<K*>.Some(key);
             }
             self.index += 1
         }
-        Option<K>.None
+        Option<K*>.None
     }
 }
 

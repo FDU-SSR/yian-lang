@@ -94,7 +94,14 @@ class LLBuilder:
         self.__func.set_reg(result, alloca_val)
 
     def malloc(self, type_id: int, size: LLValue, result: str) -> None:
-        raw = self.__call_intrinsic(IntrinsicKind.Malloc, [size])
+        # Convert element count to byte count for C's malloc
+        elem_size = self.__ll_type_ctx.get_type_size(type_id)
+        if elem_size == 1:
+            byte_size = size
+        else:
+            byte_size_ir = self.__builder.mul(size.ir_val, ir.Constant(ir.IntType(64), elem_size))  # type: ignore
+            byte_size = LLValue(self.__type_ctx.u64_id, byte_size_ir)  # type: ignore
+        raw = self.__call_intrinsic(IntrinsicKind.Malloc, [byte_size])
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
         ptr_ll_type = self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type
         ir_val = self.__builder.bitcast(raw.ir_val, ptr_ll_type)  # type: ignore

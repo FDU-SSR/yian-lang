@@ -483,9 +483,7 @@ class OpBuilder:
                 fn_ptr_type_id = self.__type_ctx.alloc_function_pointer(param_type_ids, ret_type_id)
                 return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, fn_ptr_type_id, is_place=False)
 
-        if not operand_hir.is_place:
-            raise AnalysisError("address-of operator requires a place expression", span)
-
+        # rvalue addr-of is allowed — CFG builder will alloca a stack temporary
         ptr_type_id = self.__type_ctx.alloc_pointer(operand_hir.type_id)
         return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
 

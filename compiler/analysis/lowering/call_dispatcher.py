@@ -32,7 +32,7 @@ class CallDispatcher:
         lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
 
         if lookup is None:
-            raise AnalysisError(f"Unknown {context_name} '{method_name}'", span)
+            raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
 
         # auto-deref: insert deref nodes for each level in the deref chain
         for _ in range(lookup.deref_count):

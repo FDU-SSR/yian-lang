@@ -1,6 +1,7 @@
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
+from std.core.range import Range;
 
 pub struct HashSet<T> {
     buckets: T*,
@@ -21,7 +22,7 @@ impl<T> HashSet<T> {
     }
 
     static pub fn with_capacity_and_hasher(capacity: u64, hasher_builder: Murmur3BuildHasher) -> Self {
-        let actual_capacity = if capacity == 0 { 0u64 } else { capacity.next_power_of_two() };
+        let actual_capacity = capacity.next_power_of_two();
 
         let growth_left = Self.calculate_growth_left(actual_capacity);
         let ctrls: u8* = dyn u8[actual_capacity];
@@ -48,7 +49,7 @@ impl<T> HashSet<T> {
         if self.growth_left == 0 {
             self.resize(self.capacity * 2);
         }
-        let hash = self.hash_value(value);
+        let hash = self.hash_value(&value);
         let primary_index = hash & (self.capacity - 1);
         let h2 = self.get_h2(hash);
         let index = primary_index;
@@ -61,7 +62,7 @@ impl<T> HashSet<T> {
                 self.size += 1
                 self.growth_left -= 1
                 return true;
-            } elif ctrl_byte == h2 && self.buckets[index] == value {
+            } elif ctrl_byte == h2 && self.buckets[index] == *value {
                 return false;
             }
             index = (index + 1) & (self.capacity - 1);
@@ -69,7 +70,7 @@ impl<T> HashSet<T> {
         false
     }
 
-    pub fn contains(value: T) -> bool {
+    pub fn contains(value: T*) -> bool {
         if self.capacity == 0 {
             return false;
         }
@@ -85,7 +86,7 @@ impl<T> HashSet<T> {
             }
 
             if ctrl_byte == h2 {
-                if self.buckets[index] == value {
+                if self.buckets[index] == *value {
                     return true;
                 }
             }
@@ -95,7 +96,7 @@ impl<T> HashSet<T> {
         false
     }
 
-    pub fn remove(value: T) -> bool {
+    pub fn remove(value: T*) -> bool {
         if self.capacity == 0 {
             return false;
         }
@@ -111,9 +112,10 @@ impl<T> HashSet<T> {
             }
 
             if ctrl_byte == h2 {
-                if self.buckets[index] == value {
+                if self.buckets[index] == *value {
                     self.ctrls[index] = 0b1000_0000
                     self.size -= 1
+                    self.buckets[index].drop();
                     return true;
                 }
             }
@@ -135,6 +137,10 @@ impl<T> HashSet<T> {
             return;
         }
         for i in 0..self.capacity {
+            let ctrl = self.ctrls[i];
+            if ctrl != 0b1111_1111 && ctrl != 0b1000_0000 {
+                self.buckets[i].drop();
+            }
             self.ctrls[i] = 0b1111_1111
         }
         self.size = 0;
@@ -172,7 +178,7 @@ impl<T> HashSet<T> {
             for i in 0..old_capacity {
                 let ctrl_byte = old_ctrls[i];
                 if ctrl_byte != 0xFF && ctrl_byte != 0x80 {
-                    let hash = self.hash_value(old_buckets[i]);
+                    let hash = self.hash_value(&old_buckets[i]);
                     let h2 = self.get_h2(hash);
                     let primary_index = hash & (actual_capacity - 1);
                     for j in 0..actual_capacity {
@@ -196,7 +202,7 @@ impl<T> HashSet<T> {
         // del old_buckets
     }
 
-    pub fn hash_value(value: T) -> u64 {
+    pub fn hash_value(value: T*) -> u64 {
         let hasher = self.hasher_builder.build_hasher();
         value.hash(hasher);
         hasher.finish()
@@ -210,18 +216,18 @@ pub struct HashSetIter<T> {
     index: u64,
 }
 
-impl<T> Iterator<T> for HashSetIter<T> {
-    pub fn next() -> Option<T> {
+impl<T> Iterator<T*> for HashSetIter<T> {
+    pub fn next() -> Option<T*> {
         while self.index < self.capacity {
             let ctrl_byte = self.ctrls[self.index];
             if ctrl_byte != 0b1111_1111 && ctrl_byte != 0b1000_0000 {
-                let value = self.buckets[self.index];
+                let value: T* = &self.buckets[self.index];
                 self.index += 1
-                return Option<T>.Some(value);
+                return Option<T*>.Some(value);
             }
             self.index += 1
         }
-        Option<T>.None
+        Option<T*>.None
     }
 }
 
