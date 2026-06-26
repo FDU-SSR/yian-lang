@@ -25,11 +25,11 @@ impl<T> HashSet<T> {
         let actual_capacity = capacity.next_power_of_two();
 
         let growth_left = Self.calculate_growth_left(actual_capacity);
-        let ctrls: u8* = dyn u8[actual_capacity];
+        let ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
             ctrls[i] = 0b1111_1111
         }
-        let buckets: T* = dyn T[actual_capacity];
+        let buckets: T* = dyn[actual_capacity] T;
 
         Self(
             buckets,
@@ -62,7 +62,7 @@ impl<T> HashSet<T> {
                 self.size += 1
                 self.growth_left -= 1
                 return true;
-            } elif ctrl_byte == h2 && self.buckets[index] == *value {
+            } elif ctrl_byte == h2 && self.buckets[index] == value {
                 return false;
             }
             index = (index + 1) & (self.capacity - 1);
@@ -165,11 +165,11 @@ impl<T> HashSet<T> {
         let old_buckets: T* = self.buckets;
         let old_capacity = self.capacity;
 
-        let new_ctrls: u8* = dyn u8[actual_capacity];
+        let new_ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
             new_ctrls[i] = 0b1111_1111
         }
-        let new_buckets: T* = dyn T[actual_capacity];
+        let new_buckets: T* = dyn[actual_capacity] T;
 
         self.capacity = actual_capacity;
         self.growth_left = Self.calculate_growth_left(actual_capacity);
