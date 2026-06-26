@@ -177,6 +177,19 @@ class SysRead:
 
 
 @dataclass
+class Open:
+    result: Reg
+    path: Value
+    flags: Value
+
+
+@dataclass
+class Close:
+    result: Reg
+    fd: Value
+
+
+@dataclass
 class FuncPtr:
     """Create a function pointer from a function type."""
     result: Reg
@@ -197,7 +210,7 @@ Stmt: TypeAlias = (
     | Call | Invoke
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead
+    | SysWrite | SysRead | Open | Close
 )
 
 # ---------------------------------------------------------------------------

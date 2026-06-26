@@ -1,5 +1,10 @@
 from vec import Vec;
 from string import String;
+from result import Result;
+from move import Move;
+from drop import Drop;
+from slice import from_raw_parts;
+from range import Range;
 
 // =====================================================================
 // File open flags (Linux x86_64)
@@ -12,101 +17,338 @@ from string import String;
 // O_APPEND   = 1024
 // O_WRONLY | O_CREAT | O_TRUNC  = 577
 // O_WRONLY | O_CREAT | O_APPEND = 1089
+// O_RDWR | O_CREAT              = 66
 
 // =====================================================================
-// Terminal I/O
+// IoError — structured I/O error
 // =====================================================================
 
-// Print a string to stdout (fd 1).
+pub enum IoErrorKind {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    InvalidInput,
+    UnexpectedEof,
+    Interrupted,
+    Other,
+}
+
+pub struct IoError {
+    kind: IoErrorKind,
+    msg:  String,
+}
+
+// IoErrorKind is a simple C-like enum — trivial move semantics.
+impl Move for IoErrorKind {
+    fn invalidate() {}
+    fn is_valid() -> bool { true }
+}
+
+impl IoError {
+    pub fn kind() -> IoErrorKind {
+        self.kind
+    }
+
+    pub fn msg() -> str {
+        self.msg.as_str()
+    }
+
+    pub static fn new(kind: IoErrorKind, msg: str) -> Self {
+        let s = String.new();
+        s.push_str(msg);
+        Self(kind = kind.move(), msg = s.move())
+    }
+
+    pub static fn not_found(msg: str) -> Self {
+        Self.new(IoErrorKind.NotFound, msg)
+    }
+
+    pub static fn permission_denied(msg: str) -> Self {
+        Self.new(IoErrorKind.PermissionDenied, msg)
+    }
+
+    pub static fn unexpected_eof() -> Self {
+        let s = String.new();
+        s.push_str("unexpected EOF");
+        Self(kind = IoErrorKind.UnexpectedEof, msg = s.move())
+    }
+
+    pub static fn other(msg: str) -> Self {
+        Self.new(IoErrorKind.Other, msg)
+    }
+}
+
+// =====================================================================
+// OpenMode
+// =====================================================================
+
+pub enum OpenMode {
+    Read,
+    Write,
+    Append,
+    ReadWrite,
+}
+
+// =====================================================================
+// File — owning file handle
+// =====================================================================
+
+pub struct File {
+    fd: i32,
+}
+
+impl File {
+    // Open a file at `path` with the given `mode`.
+    pub static fn open(path: str, mode: OpenMode) -> Result<File, IoError> {
+        let flags: i32 = match mode {
+            Read      => 0,
+            Write     => 577,
+            Append    => 1089,
+            ReadWrite => 66,
+        };
+        let fd: i32 = open(path, flags);
+        if fd < 0 {
+            return Result<File, IoError>.Err(msg = IoError.not_found("cannot open file"));
+        }
+        Result<File, IoError>.Ok(val = File(fd = fd))
+    }
+
+    // Return the raw file descriptor.
+    pub fn fd() -> i32 {
+        self.validity_assert();
+        self.fd
+    }
+
+    // Read up to buf.len() bytes into the provided buffer.
+    // Returns the number of bytes read. 0 means EOF.
+    pub fn read(buf: u8[]) -> Result<u64, IoError> {
+        self.validity_assert();
+        let s: str = sys_read(self.fd, buf);
+        Result<u64, IoError>.Ok(val = s.as_slice().len())
+    }
+
+    // Read the entire remaining content into a String.
+    pub fn read_to_string() -> Result<String, IoError> {
+        self.validity_assert();
+        let result = String.new();
+        let buf = dyn[4096] u8;
+        loop {
+            let buf_str = str.from(from_raw_parts(buf, 4096u64));
+            let s: str = sys_read(self.fd, buf_str);
+            let data = s.as_slice();
+            let n = data.len();
+            if n == 0 {
+                break;
+            }
+            result.push_str(s);
+        }
+        del buf;
+        Result<String, IoError>.Ok(val = result.move())
+    }
+
+    // Write a str to the file. Returns the number of bytes written.
+    pub fn write(data: str) -> Result<u64, IoError> {
+        self.validity_assert();
+        sys_write(self.fd, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    // Write the entire str to the file.
+    pub fn write_all(data: str) -> Result<u64, IoError> {
+        self.validity_assert();
+        sys_write(self.fd, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    // Close the file descriptor explicitly.
+    // After close(), the File is invalidated and should not be used.
+    pub fn close() -> Result<i32, IoError> {
+        self.validity_assert();
+        let ret: i32 = close(self.fd);
+        self.invalidate();
+        if ret < 0 {
+            return Result<i32, IoError>.Err(msg = IoError.other("close failed"));
+        }
+        Result<i32, IoError>.Ok(val = ret)
+    }
+}
+
+// ------------------------------------------------------------------
+// Move — moved-from files have fd = -2 (sentinel)
+// ------------------------------------------------------------------
+
+impl Move for File {
+    fn invalidate() {
+        self.fd = -2;
+    }
+    fn is_valid() -> bool {
+        self.fd != -2
+    }
+}
+
+// ------------------------------------------------------------------
+// Drop — closes the fd if still valid
+// ------------------------------------------------------------------
+
+impl Drop for File {
+    pub fn drop() {
+        if self.is_valid() && self.fd >= 0 {
+            close(self.fd);
+            self.invalidate();
+        }
+    }
+}
+
+// =====================================================================
+// Stdin / Stdout / Stderr — standard stream wrappers
+// =====================================================================
+
+pub struct Stdin {}
+
+impl Stdin {
+    // Read a single line, excluding the trailing newline.
+    pub static fn read_line() -> Result<String, IoError> {
+        let result = String.new();
+        let buf = dyn[256] u8;
+        loop {
+            let buf_str = str.from(from_raw_parts(buf, 256u64));
+            let s: str = sys_read(0, buf_str);
+            let data = s.as_slice();
+            let n = data.len();
+            if n == 0 {
+                break;
+            }
+            // scan for newline within the chunk
+            let found: i32 = -1;
+            for i in 0u64..n {
+                if data[i] == 10u8 {
+                    found = i as i32;
+                    break;
+                }
+            }
+            if found >= 0 {
+                let newline_pos: u64 = found as u64;
+                if newline_pos > 0 {
+                    let line_data = str.from(data[0u64..newline_pos]);
+                    result.push_str(line_data);
+                }
+                break;
+            }
+            result.push_str(s);
+        }
+        del buf;
+        Result<String, IoError>.Ok(val = result.move())
+    }
+
+    // Read up to buf.len() bytes from stdin.
+    pub static fn read(buf: u8[]) -> Result<u64, IoError> {
+        let s: str = sys_read(0, buf);
+        Result<u64, IoError>.Ok(val = s.as_slice().len())
+    }
+
+    // Read all of stdin into a String.
+    pub static fn read_to_string() -> Result<String, IoError> {
+        let result = String.new();
+        let buf = dyn[4096] u8;
+        loop {
+            let buf_str = str.from(from_raw_parts(buf, 4096u64));
+            let s: str = sys_read(0, buf_str);
+            let data = s.as_slice();
+            let n = data.len();
+            if n == 0 {
+                break;
+            }
+            result.push_str(s);
+        }
+        del buf;
+        Result<String, IoError>.Ok(val = result.move())
+    }
+}
+
+pub struct Stdout {}
+
+impl Stdout {
+    pub static fn write(data: str) -> Result<u64, IoError> {
+        sys_write(1, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    pub static fn write_all(data: str) -> Result<u64, IoError> {
+        sys_write(1, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    // no-op for unbuffered output; reserved for future buffering
+    pub static fn flush() {}
+}
+
+pub struct Stderr {}
+
+impl Stderr {
+    pub static fn write(data: str) -> Result<u64, IoError> {
+        sys_write(2, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    pub static fn write_all(data: str) -> Result<u64, IoError> {
+        sys_write(2, data);
+        Result<u64, IoError>.Ok(val = data.as_slice().len())
+    }
+
+    pub static fn flush() {}
+}
+
+// =====================================================================
+// Terminal I/O convenience functions
+// =====================================================================
+
 pub fn print(s: str) {
     sys_write(1, s);
 }
 
-// Print a string to stderr (fd 2).
 pub fn eprint(s: str) {
     sys_write(2, s);
 }
 
-// Read a line from stdin (fd 0), stopping at newline or EOF.
-// The trailing newline is NOT included in the returned String.
-// Returns a heap-allocated String since the input length is unknown.
 pub fn readline() -> String {
-    let result = String.new();
-    loop {
-        u8[1] ch
-        ch[0] = 0
-        let s: str = sys_read(0, ch);
-        let data = s.as_slice();
-        let n = data.len();
-        if n == 0 {
-            break;
-        }
-        // '\n' == 10
-        if ch[0] == 10 {
-            break;
-        }
-        result.push_str(s);
-    }
-    result.move()
+    Stdin.read_line().unwrap()
 }
 
 // =====================================================================
-// Open mode wrappers
+// High-level file I/O convenience functions
 // =====================================================================
 
-// Open a file for reading only (O_RDONLY = 0).
-pub fn open_rdonly(path: str) -> i32 {
-    open(path, 0)
+pub fn read_file(path: str) -> String {
+    let f = File.open(path, OpenMode.Read).unwrap();
+    let content = f.read_to_string().unwrap();
+    f.drop();
+    return content.move();
 }
 
-// Open a file for writing (creates or truncates).
-// flags = O_WRONLY | O_CREAT | O_TRUNC = 577
-pub fn open_wronly(path: str) -> i32 {
-    open(path, 577)
-}
-
-// Open a file for appending (creates if not exists).
-// flags = O_WRONLY | O_CREAT | O_APPEND = 1089
-pub fn open_append(path: str) -> i32 {
-    open(path, 1089)
-}
-
-// =====================================================================
-// High-level file I/O
-// =====================================================================
-
-// Open a file and read its entire content, returning as str.
-// The reading is done with a 32-byte probe buffer in a loop.
-pub fn read_file(path: str) -> str {
-    let fd: i32 = open(path, 0);
-    let buf = Vec<u8>.new();
-    loop {
-        u8[32] probe
-        for i in 0u64..32 {
-            probe[i] = 0
-        }
-        let s: str = sys_read(fd, probe);
-        let data = s.as_slice();
-        let n = data.len();
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(data);
-    }
-    close(fd);
-    str.from(buf.as_slice())
-}
-
-// Write a str to a file at the given path (creates or truncates).
 pub fn write_file(path: str, content: str) {
-    let fd: i32 = open(path, 577);
-    sys_write(fd, content);
-    close(fd);
+    let f = File.open(path, OpenMode.Write).unwrap();
+    f.write_all(content).unwrap();
+    f.drop();
 }
 
-// Append a str to a file at the given path (creates if not exists).
 pub fn append_file(path: str, content: str) {
-    let fd: i32 = open(path, 1089);
-    sys_write(fd, content);
-    close(fd);
+    let f = File.open(path, OpenMode.Append).unwrap();
+    f.write_all(content).unwrap();
+    f.drop();
+}
+
+// =====================================================================
+// Low-level open wrappers (return Result<File, IoError>)
+// =====================================================================
+
+pub fn open_rdonly(path: str) -> Result<File, IoError> {
+    File.open(path, OpenMode.Read)
+}
+
+pub fn open_wronly(path: str) -> Result<File, IoError> {
+    File.open(path, OpenMode.Write)
+}
+
+pub fn open_append(path: str) -> Result<File, IoError> {
+    File.open(path, OpenMode.Append)
 }

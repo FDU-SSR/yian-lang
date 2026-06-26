@@ -500,6 +500,10 @@ class CfgBuilder:
                 return self.__resolve_sys_read(expr)
             case HIR.SysWrite():
                 return self.__resolve_sys_write(expr)
+            case HIR.Open():
+                return self.__resolve_open(expr)
+            case HIR.Close():
+                return self.__resolve_close(expr)
             case HIR.Tuple():
                 return self.__resolve_tuple(expr)
             case HIR.Array():
@@ -748,6 +752,15 @@ class CfgBuilder:
         buf = self.__resolve_val(expr.buf)
         return self.__build_sys_write(fd, buf)
 
+    def __resolve_open(self, expr: HIR.Open) -> IR.Value:
+        path = self.__resolve_val(expr.path)
+        flags = self.__resolve_val(expr.flags)
+        return self.__build_open(path, flags)
+
+    def __resolve_close(self, expr: HIR.Close) -> IR.Value:
+        fd = self.__resolve_val(expr.fd)
+        return self.__build_close(fd)
+
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]
         return self.__build_aggregate_construct(expr.type_id, field_vals)
@@ -913,12 +926,20 @@ class CfgBuilder:
         return self.__emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
 
     def __build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.str_id)
         return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
     def __build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         self.__emit(IR.SysWrite(fd=fd, buf=buf))
         return self.__void_reg()
+
+    def __build_open(self, path: IR.Value, flags: IR.Value) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i32_id)
+        return self.__emit(IR.Open(result=result, path=path, flags=flags)).result
+
+    def __build_close(self, fd: IR.Value) -> IR.Value:
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i32_id)
+        return self.__emit(IR.Close(result=result, fd=fd)).result
 
     def __emit_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
         """Emit a phi node into the current block's dedicated phi list."""

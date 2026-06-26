@@ -290,6 +290,23 @@ class SysRead:
 
 
 @dataclass
+class Open:
+    span: SrcSpan
+    path: Expr   # str
+    flags: Expr  # i32
+    type_id: int  # i32
+    is_place: bool
+
+
+@dataclass
+class Close:
+    span: SrcSpan
+    fd: Expr     # i32
+    type_id: int  # i32
+    is_place: bool
+
+
+@dataclass
 class Tuple:
     span: SrcSpan
     field_values: list[Expr]
@@ -400,7 +417,7 @@ Expr: TypeAlias = (
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | SysRead | SysWrite
+    | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty
     | Block

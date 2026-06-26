@@ -5,7 +5,7 @@
 fn main() -> i32 {
     // O_WRONLY | O_CREAT | O_TRUNC = 577
     let wfd: i32 = open("/tmp/yian_test_low.txt", 577);
-    write(wfd, "low-level test");
+    sys_write(wfd, "low-level test");
     close(wfd);
 
     // Read it back with low-level read (O_RDONLY = 0)
@@ -14,7 +14,7 @@ fn main() -> i32 {
     for i in 0u64..32 {
         buf[i] = 0
     }
-    let result: str = read(rfd, buf);
+    let result: str = sys_read(rfd, buf);
     close(rfd);
 
     assert result == "low-level test": "low-level read should match low-level write";

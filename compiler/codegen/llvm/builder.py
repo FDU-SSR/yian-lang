@@ -405,9 +405,29 @@ class LLBuilder:
         ])
 
     def sys_read(self, fd: LLValue, buf: LLValue, result: str) -> None:
-        raw = self.__call_intrinsic(IntrinsicKind.Read, [
-            fd, self.__extract_value_raw(buf, 0), self.__extract_value_raw(buf, 1),
+        buf_ptr = self.__extract_value_raw(buf, 0)
+        buf_len = self.__extract_value_raw(buf, 1)
+        bytes_read = self.__call_intrinsic(IntrinsicKind.Read, [
+            fd, buf_ptr, buf_len,
         ])
+        # construct str {i8*, i64} = {buf_ptr, bytes_read}
+        str_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.str_id).ir_type
+        undef = ir.Constant(str_ll_type, ir.Undefined)  # type: ignore
+        ir_val = self.__builder.insert_value(undef, buf_ptr.ir_val, 0)  # type: ignore
+        ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 1)  # type: ignore
+        self.__func.set_reg(result, LLValue(self.__type_ctx.str_id, ir_val))  # type: ignore
+
+    def open(self, path: LLValue, flags: LLValue, result: str) -> None:
+        # path is a str ({i8*, i64}) — extract the data pointer
+        # mode is hardcoded to 0o644 = 420 (rw-r--r--)
+        mode = self.i32(420)
+        raw = self.__call_intrinsic(IntrinsicKind.Open, [
+            self.__extract_value_raw(path, 0), flags, mode,
+        ])
+        self.__func.set_reg(result, raw)
+
+    def close(self, fd: LLValue, result: str) -> None:
+        raw = self.__call_intrinsic(IntrinsicKind.Close, [fd])
         self.__func.set_reg(result, raw)
 
     # ------------------------------------------------------------------
@@ -474,6 +494,8 @@ class LLBuilder:
                 return self.__type_ctx.void_id
             case IntrinsicKind.Write | IntrinsicKind.Read:
                 return self.__type_ctx.u64_id
+            case IntrinsicKind.Open | IntrinsicKind.Close:
+                return self.__type_ctx.i32_id
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
 

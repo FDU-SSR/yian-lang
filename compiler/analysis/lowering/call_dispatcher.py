@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy"})
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close"})
 
 
 class CallDispatcher:
@@ -103,19 +103,25 @@ class CallDispatcher:
 
     def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         """Lower a call to a built-in name into the appropriate HIR node."""
-        if callee.name == "panic":
-            return self.__handle_panic(node)
-        if callee.name == "bitcopy":
-            return self.__handle_bitcopy(node)
-        if callee.name == "sizeof":
-            return self.__handle_sizeof(node)
-        if callee.name == "bitcast":
-            raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
-        if callee.name == "sys_write":
-            return self.__handle_sys_write(node)
-        if callee.name == "sys_read":
-            return self.__handle_sys_read(node)
-        raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
+        match callee.name:
+            case "panic":
+                return self.__handle_panic(node)
+            case "bitcopy":
+                return self.__handle_bitcopy(node)
+            case "sizeof":
+                return self.__handle_sizeof(node)
+            case "bitcast":
+                raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
+            case "sys_write":
+                return self.__handle_sys_write(node)
+            case "sys_read":
+                return self.__handle_sys_read(node)
+            case "open":
+                return self.__handle_open(node)
+            case "close":
+                return self.__handle_close(node)
+            case _:
+                raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
 
     def __handle_panic(self, stmt: AST.Call) -> HIR.Panic:
         if any(arg.name is not None for arg in stmt.args):
@@ -245,6 +251,38 @@ class CallDispatcher:
             fd=fd,
             buf=buf,
             type_id=self.__ctx.type_ctx.str_id,
+            is_place=False,
+        )
+
+    def __handle_open(self, node: AST.Call) -> HIR.Expr:
+        """Lower `open(path, flags)` into HIR.Open."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'open'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'open' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        path = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.str_id)
+        flags = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.i32_id)
+        return HIR.Open(
+            span=node.span,
+            path=path,
+            flags=flags,
+            type_id=self.__ctx.type_ctx.i32_id,
+            is_place=False,
+        )
+
+    def __handle_close(self, node: AST.Call) -> HIR.Expr:
+        """Lower `close(fd)` into HIR.Close."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'close'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'close' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
+        return HIR.Close(
+            span=node.span,
+            fd=fd,
+            type_id=self.__ctx.type_ctx.i32_id,
             is_place=False,
         )
 
