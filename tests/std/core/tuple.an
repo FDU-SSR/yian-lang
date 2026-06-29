@@ -1,0 +1,46 @@
+// Test tuple functions
+//
+// Expected output: 0
+
+fn main() -> int {
+    let tuple2 = (Vec<u8>.new(), Vec<bool>.new());
+    tuple2[0].push(1);
+    tuple2[1].push(true);
+
+    let tuple3 = (Vec<u8>.new(), Vec<bool>.new(), Vec<char>.new());
+    tuple3[0].push(1);
+    tuple3[1].push(true);
+    tuple3[2].push('a');
+
+    // Test cloning
+    let cloned_tuple2 = tuple2.clone();
+    assert cloned_tuple2[0][0] == 1;
+    assert cloned_tuple2[1][0] == true;
+    assert &cloned_tuple2[0][0] != &tuple2[0][0]; // Ensure deep copy
+    assert &cloned_tuple2[1][0] != &tuple2[1][0]; // Ensure deep copy
+
+    let cloned_tuple3 = tuple3.clone();
+    assert cloned_tuple3[0][0] == 1;
+    assert cloned_tuple3[1][0] == true;
+    assert cloned_tuple3[2][0] == 'a';
+    assert &cloned_tuple3[0][0] != &tuple3[0][0]; // Ensure deep copy
+    assert &cloned_tuple3[1][0] != &tuple3[1][0]; // Ensure deep copy
+    assert &cloned_tuple3[2][0] != &tuple3[2][0]; // Ensure deep copy
+
+    // Test moving
+    let moved_tuple2 = tuple2.move();
+    assert moved_tuple2[0][0] == 1;
+    assert moved_tuple2[1][0] == true;
+    assert !tuple2[0].is_valid(); // Ensure original is invalidated
+    assert !tuple2[1].is_valid(); // Ensure original is invalidated
+
+    let moved_tuple3 = tuple3.move();
+    assert moved_tuple3[0][0] == 1;
+    assert moved_tuple3[1][0] == true;
+    assert moved_tuple3[2][0] == 'a';
+    assert !tuple3[0].is_valid(); // Ensure original is invalidated
+    assert !tuple3[1].is_valid(); // Ensure original is invalidated
+    assert !tuple3[2].is_valid(); // Ensure original is invalidated
+
+    return 0;
+}

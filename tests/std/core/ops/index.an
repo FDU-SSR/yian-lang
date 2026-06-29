@@ -13,9 +13,9 @@ impl<T> Container<T> {
     static pub fn new(size: u64, default_value: T) -> Self {
         let items: T* = dyn[size] T;
         for i in 0..size {
-            items[i] = default_value
+            items[i] = default_value.clone();
         }
-        return Self(items, size);
+        Self(items, size)
     }
 }
 
@@ -30,7 +30,7 @@ fn main() -> i32 {
     assert c[0] == 42: "Expected 42";
     assert c[4] == 42: "Expected 42";
 
-    c[2] = 100
+    c[2] = 100;
     assert c[2] == 100: "Expected 100";
 
     return 0;

@@ -10,7 +10,7 @@ struct Ptr<T> {
 
 impl<T> Deref<T*> for Ptr<T> {
     fn deref() -> T* {
-        return self.ptr;
+        self.ptr
     }
 }
 

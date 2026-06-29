@@ -1,10 +1,19 @@
 from ops import Index;
 from range import Range;
+from vec import Vec;
 from slice import from_raw_parts;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
         from_raw_parts(bitcast<T*>(self), N)
+    }
+
+    fn to_vec() -> Vec<T> {
+        self.as_slice().to_vec()
+    }
+
+    fn ptr() -> T* {
+        bitcast<T*>(self)
     }
 }
 

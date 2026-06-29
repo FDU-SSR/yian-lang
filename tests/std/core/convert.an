@@ -1,0 +1,29 @@
+// Test for From and Into traits
+//
+// Expected output: 0
+
+from std.core.convert import From;
+
+struct FakeI32 {
+    value: i32,
+}
+
+impl From<i32> for FakeI32 {
+    static fn from(value: i32*) -> Self {
+        return FakeI32 (value=*value);
+    }
+}
+
+fn main() -> int {
+    let x: i32 = 42;
+
+    // Test From trait
+    let fake_from = FakeI32.from(&x);
+    assert fake_from.value == 42;
+
+    // Test Into trait
+    let fake: FakeI32 = x.into();
+    assert fake.value == 42;
+
+    return 0;
+}

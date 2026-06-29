@@ -1,0 +1,40 @@
+from std.core.ops import PartialOrd, Ordering, PartialEq, max, min;
+
+enum Size {
+    Small,
+    Medium,
+    Large,
+}
+
+impl PartialOrd<Size> for Size {
+    fn partial_cmp(rhs: Size*) -> Ordering {
+        match self {
+            Small => match rhs { Small => Ordering.Equal, _ => Ordering.Less },
+            Medium => match rhs { Small => Ordering.Greater, Medium => Ordering.Equal, Large => Ordering.Less },
+            Large => match rhs { Large => Ordering.Equal, _ => Ordering.Greater },
+        }
+    }
+}
+
+impl PartialEq<Size> for Size {
+    fn eq(rhs: Size*) -> bool {
+        match self {
+            Small => match rhs { Small => true, _ => false },
+            Medium => match rhs { Medium => true, _ => false },
+            Large => match rhs { Large => true, _ => false },
+        }
+    }
+}
+
+fn main() -> i32 {
+    let small = Size.Small;
+    let medium = Size.Medium;
+    let large = Size.Large;
+
+    assert small < medium: "Expected Small < Medium";
+    assert max(small, medium) == medium: "Expected max(Small, Medium) == Medium";
+    assert min(medium, large) == medium: "Expected min(Medium, Large) == Medium";
+    assert small != large: "Expected Small != Large";
+
+    return 0;
+}

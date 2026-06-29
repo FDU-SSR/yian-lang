@@ -81,9 +81,8 @@ pub trait PartialOrd<Rhs> {
 
     fn le(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
-            Less => true,
-            Equal => true,
-            _ => false,
+            Greater => false,
+            _ => true,
         }
     }
 
@@ -97,8 +96,7 @@ pub trait PartialOrd<Rhs> {
     fn ge(rhs: Rhs*) -> bool {
         match self.partial_cmp(rhs) {
             Less => false,
-            Equal => true,
-            Greater => true,
+            _ => true,
         }
     }
 }

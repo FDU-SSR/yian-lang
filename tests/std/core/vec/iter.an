@@ -1,0 +1,27 @@
+// Test Vec iterator functions
+//
+// Expected output: 0
+
+fn main() -> int {
+    let vec = [0u8, 1, 2, 3, 4].to_vec();
+
+    // Test reference iterator
+    for x in &vec {
+        assert *x == vec[u64(x)];
+    }
+    assert vec.is_valid(); // Ensure original is still valid
+
+    // Test moving cloned iterator
+    for x in vec.clone() {
+        assert x == vec[u64(x)];
+    }
+    assert vec.is_valid(); // Ensure original is still valid
+
+    // Test moving iterator
+    for x in vec.move() {
+        // nop
+    }
+    assert !vec.is_valid(); // Ensure original is invalidated
+
+    return 0;
+}

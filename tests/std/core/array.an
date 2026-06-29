@@ -1,0 +1,51 @@
+// Test standard library array functions
+//
+// Expected output: 0
+
+fn main() -> int {
+    let arr = [0u8, 1, 2, 3, 4];
+
+    // Test as_slice method
+    let slice = arr.as_slice();
+    assert slice.len() == 5;
+    assert slice[0] == 0;
+    assert slice[4] == 4;
+
+    // Test to_vec method
+    let vec = arr.to_vec();
+    assert vec.len() == 5;
+    assert vec[0] == 0;
+    assert vec[4] == 4;
+
+    // Test indexing
+    assert arr[0] == 0;
+    assert arr[4] == 4;
+
+    // Test range indexing
+    let range = 1u64..4;
+    let sub_slice = arr[range];
+    assert sub_slice.len() == 3;
+    assert sub_slice[0] == 1;
+    assert sub_slice[2] == 3;
+
+    let vec_arr = [Vec<u8>.new(), Vec<u8>.new(), Vec<u8>.new()];
+    vec_arr[0].push(1);
+    vec_arr[1].push(2);
+    vec_arr[2].push(3);
+
+    // Test cloning
+    let cloned_vec_arr = vec_arr.clone();
+    assert cloned_vec_arr[0][0] == 1;
+    assert cloned_vec_arr[1][0] == 2;
+    assert cloned_vec_arr[2][0] == 3;
+    assert &cloned_vec_arr[0][0] != &vec_arr[0][0]; // Ensure deep copy
+
+    // Test moving
+    let moved_vec_arr = vec_arr.move();
+    assert moved_vec_arr[0][0] == 1;
+    assert moved_vec_arr[1][0] == 2;
+    assert moved_vec_arr[2][0] == 3;
+    assert !vec_arr[0].is_valid(); // Ensure original is invalidated
+
+    return 0;
+}

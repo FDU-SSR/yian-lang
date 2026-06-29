@@ -46,15 +46,15 @@ impl<T> Shr<Value<T>, Value<T>> for Value<T> {
 }
 
 fn main() -> i32 {
-    let a: Value<i32> = Value<i32>(6)   // 0b0110;
-    let b: Value<i32> = Value<i32>(3)   // 0b0011;
+    let a: Value<i32> = Value<i32>(6);   // 0b0110
+    let b: Value<i32> = Value<i32>(3);   // 0b0011
 
-    assert (a & b).value == 2: "Expected 2"   // 0b0010;
-    assert (a | b).value == 7: "Expected 7"   // 0b0111;
-    assert (a ^ b).value == 5: "Expected 5"   // 0b0101;
-    assert (~a).value == -7: "Expected -7"    // Two's complement;
-    assert (a << b).value == 48: "Expected 48" // 0b110000;
-    assert (a >> b).value == 0: "Expected 0"   // 0b0000;
+    assert (a & b).value == 2: "Expected 2";   // 0b0010
+    assert (a | b).value == 7: "Expected 7";   // 0b0111
+    assert (a ^ b).value == 5: "Expected 5";   // 0b0101
+    assert (~a).value == -7: "Expected -7";    // Two's complement
+    assert (a << b).value == 48: "Expected 48"; // 0b110000
+    assert (a >> b).value == 0: "Expected 0";   // 0b0000
 
     return 0;
 }
