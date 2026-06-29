@@ -276,6 +276,7 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
+    cmd += ["-O3"]
     exe_path: Path | None = None
     if test.expect_error:
         cmd += ["-t", "none"]

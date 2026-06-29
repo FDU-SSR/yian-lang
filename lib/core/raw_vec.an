@@ -93,7 +93,7 @@ impl<T> RawVec<T> {
             return;
         }
 
-        let new_data: T* = dyn T[len];
+        let new_data: T* = dyn[len] T;
 
         // Copy valid elements
         memcpy(new_data, self.data, len);
