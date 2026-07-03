@@ -34,6 +34,21 @@ class CallDispatcher:
         if lookup is None:
             raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
 
+        # Static call site (Self.foo() / Type.foo()) requires a static method
+        # and has no auto-deref (there is no instance to deref).
+        if isinstance(receiver, HIR.Ty):
+            method_ty = self.__ctx.type_ctx[lookup.method_id]
+            assert isinstance(method_ty, Type.MethodType)
+            if not method_ty.custom_def.is_static:
+                type_name = self.__ctx.type_ctx.get_name(receiver.type_id)
+                raise AnalysisError(
+                    f"cannot call instance method '{method_name}' as a static method on '{type_name}'; "
+                    f"declare it 'static fn' or call it on an instance",
+                    span,
+                )
+            # Static calls have no auto-deref chain — skip directly to build.
+            return self.build_method_call(span, receiver, lookup, args, context_name)
+
         # auto-deref: insert deref nodes for each level in the deref chain
         for _ in range(lookup.deref_count):
             current_ty = self.__ctx.type_ctx[receiver.type_id]

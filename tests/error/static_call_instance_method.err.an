@@ -1,0 +1,25 @@
+// Test that calling an instance method statically produces an error
+//
+// Expected: compiler error
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    pub fn x_val() -> i32 {
+        self.x
+    }
+}
+
+fn main() -> i32 {
+    let p: Point = Point(1, 2);
+    // OK: instance call
+    let a: i32 = p.x_val();
+
+    // ERROR: static call on instance method
+    let b: i32 = Point.x_val();
+
+    return 0;
+}
