@@ -62,8 +62,8 @@ impl<T> T[] {
 pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
     let slice_struct: SliceStruct<T> = SliceStruct<T>(
         ptr = ptr,
-        len = len
-    )
+        len = len,
+    );
     *bitcast<T[]*>(&slice_struct)
 }
 

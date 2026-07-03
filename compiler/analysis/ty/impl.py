@@ -34,8 +34,7 @@ class ImplRegistry:
         self.__trait_impl_cache: dict[int, list[Impl]] = defaultdict(list)  # target type -> list of trait impls for the target type
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
-        self.__generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic impls
-        self.__trait_generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic trait impls
+
 
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
         impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
@@ -77,9 +76,7 @@ class ImplRegistry:
                 return self.__resolve_deref_target(impl, {})
 
         # 2) Generic trait impls — try to unify impl.target against type_id
-        # Use name-based index to avoid scanning all generic trait impls
-        base_name = self.__target_base_name(type_id)
-        for impl in self.__trait_generic_impl_by_name.get(base_name, []):
+        for impl in self.__trait_generic_impl_cache:
             if not is_deref_impl(impl):
                 continue
             inference = GenericInference(self.__ctx, SrcSpan.empty())
@@ -122,9 +119,8 @@ class ImplRegistry:
             if impl.trait == trait_id:
                 return self.check_conditions(impl, {}, visited)
 
-        # Check generic impls via name-based index
-        base_name = self.__target_base_name(type_id)
-        for impl in self.__trait_generic_impl_by_name.get(base_name, []):
+        # Check generic impls
+        for impl in self.__trait_generic_impl_cache:
             if impl.trait is None:
                 continue
             impl_trait = self.__ctx[impl.trait]
@@ -289,35 +285,16 @@ class ImplRegistry:
                 self.__trait_impl_cache[impl.target].append(impl)
             elif impl.trait is None and len(impl.generics) > 0:
                 self.__generic_impl_cache.append(impl)
-                self.__generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
                 self.__trait_generic_impl_cache.append(impl)
-                self.__trait_generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
-
-    def __target_base_name(self, type_id: int) -> str:
-        """Return the simple (non-generic) name of a type for indexing purposes."""
-        ty = self.__ctx[type_id]
-        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType)):
-            return ty.custom_def.name
-        if isinstance(ty, Type.ArrayType):
-            return "[]"
-        if isinstance(ty, Type.SliceType):
-            return "[]"
-        if isinstance(ty, Type.PointerType):
-            return "*"
-        if isinstance(ty, Type.TupleType):
-            return "()"
-        if isinstance(ty, Type.FunctionPointerType):
-            return "fn"
-        return self.__ctx.get_name(type_id)
 
     def iter_candidate_impls(self, type_id: int) -> list[Impl]:
         """Return the impls that could potentially match the given type_id.
 
-        Combines exact-match caches and name-matched generic impls to avoid
-        scanning all impls in method_lookup.
+        Returns exact matches plus all generic impls. Downstream
+        GenericInference.constrain in method_lookup performs the actual
+        matching/filtering.
         """
         exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
-        base_name = self.__target_base_name(type_id)
-        generic = self.__generic_impl_by_name.get(base_name, []) + self.__trait_generic_impl_by_name.get(base_name, [])
+        generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
         return exact + generic
