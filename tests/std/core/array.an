@@ -33,6 +33,13 @@ fn main() -> int {
     vec_arr[1].push(2);
     vec_arr[2].push(3);
 
+    // Test iteration over array
+    let sum = 0u8;
+    for num in arr {
+        sum += *num;
+    }
+    assert sum == 10;
+
     // Test cloning
     let cloned_vec_arr = vec_arr.clone();
     assert cloned_vec_arr[0][0] == 1;

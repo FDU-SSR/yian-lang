@@ -1,7 +1,7 @@
-from ops import Index;
+from ops import Index, IntoIterator;
 from range import Range;
 from vec import Vec;
-from slice import from_raw_parts;
+from slice import from_raw_parts, SliceIter;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
@@ -34,5 +34,14 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
         let start: T* = bitcast<T*>(self) + (*range).start;
         let len: u64 = (*range).end - (*range).start;
         from_raw_parts(start, len)
+    }
+}
+
+impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
+    pub fn into_iter() -> SliceIter<T> {
+        SliceIter<T>(
+            ptr = bitcast<T*>(self),
+            end = bitcast<T*>(self) + N
+        )
     }
 }

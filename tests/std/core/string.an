@@ -104,6 +104,46 @@ fn main() -> i32 {
     let deref_str: str = *s_deref;
     assert deref_str == "DerefTest": "deref should return correct str representation";
 
+    // 测试 trimmed() — delegates to str.trim() via Deref
+    let s_trim: String = String.from("  hello  ");
+    let s_trimmed: String = s_trim.trimmed();
+    assert s_trimmed == "hello": "trimmed should remove surrounding whitespace";
+
+    // 测试 Add<char>
+    let s_add_char: String = String.from("AB");
+    let s_added_char: String = s_add_char + 'C';
+    assert s_added_char == "ABC": "add char should append character";
+
+    // 测试 Into<String> for str
+    let s_into: String = "Hello".into();
+    assert s_into == "Hello": "Into<String> should convert str to String";
+
+    // 测试 Index<Range<u64>, str>
+    let s_idx: String = String.from("HelloWorld");
+    let sub: str = s_idx[0u64..5];
+    assert sub == "Hello": "index range should return substring";
+
+    // 测试 ToString
+    let s_tostr: String = String.from("ToString");
+    let s_tostr2: String = s_tostr.to_string();
+    assert s_tostr == s_tostr2: "to_string should return equivalent string";
+
+    // 测试 Move trait
+    let s_move: String = String.from("MoveTest");
+    assert s_move.is_valid(): "should be valid before move";
+    let s_moved: String = s_move.move();
+    assert s_moved.is_valid(): "moved string should be valid";
+    assert !s_move.is_valid(): "original should be invalid after move";
+
+    // 测试大量拼接 (merged from edge.an)
+    let s_large: String = String.new();
+    let i: i32 = 0;
+    while i < 100 {
+        s_large.push('a');
+        i += 1;
+    }
+    assert s_large.len() == 100: "large string len should be 100 after 100 pushes";
+
     return 0;
 }
 

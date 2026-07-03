@@ -1,17 +1,16 @@
 from option import Option;
 from clone import Clone;
+from move import Move;
 
 pub enum Result<T, E> {
-    Ok { val: T, },
-    Err {
-        msg: E,
-    },
+    Ok { val: T },
+    Err { msg: E },
 }
 
 impl<T, E> Result<T, E> {
     // Check if the Result is Ok or Err
     pub fn is_ok() -> bool {
-        match *self {
+        match self {
             Ok => true,
             Err => false,
         }
@@ -22,47 +21,47 @@ impl<T, E> Result<T, E> {
     }
 
     // Unwrap the value if it is Ok, otherwise return the provided default value
-    pub fn unwrap_or(default: T) -> T {
-        match *self {
+    pub fn unwrap_or(default: T*) -> T* {
+        match self {
             Ok(val) => val,
             _ => default,
         }
     }
 
-    pub fn unwrap() -> T {
-        match *self {
+    pub fn unwrap() -> T* {
+        match self {
             Ok(val) => val,
             Err(err) => panic("Called unwrap on an Err value"),
         }
     }
 
     // Unwrap the error message if it is Err, otherwise return the provided default error message
-    pub fn unwrap_or_err(default: E) -> E {
-        match *self {
-            Err(err) => err.msg,
+    pub fn unwrap_or_err(default: E*) -> E* {
+        match self {
+            Err(err) => err,
             _ => default,
         }
     }
 
-    pub fn unwrap_err() -> E {
-        match *self {
-            Err(err) => err.msg,
+    pub fn unwrap_err() -> E* {
+        match self {
+            Err(err) => err,
             Ok(val) => panic("Called unwrap_err on an Ok value"),
         }
     }
 
     // Convert the Result into an Option, discarding the error message if it is Err
     pub fn ok() -> Option<T> {
-        match *self {
-            Ok(val) => Option<T>.Some(val),
+        match self {
+            Ok(val) => Option<T>.Some(val.clone()),
             _ => Option<T>.None,
         }
     }
 
     // Convert the Result into an Option, discarding the value if it is Ok
     pub fn err() -> Option<E> {
-        match *self {
-            Err(err) => Option<E>.Some(err.msg),
+        match self {
+            Err(err) => Option<E>.Some(err.clone()),
             _ => Option<E>.None,
         }
     }
@@ -70,9 +69,9 @@ impl<T, E> Result<T, E> {
 
 impl<T, E> Clone for Result<T, E> {
     pub fn clone() -> Self {
-        match *self {
+        match self {
             Ok(val) => Result<T, E>.Ok(val.clone()),
-            Err(err) => Result<T, E>.Err(err.msg.clone()),
+            Err(err) => Result<T, E>.Err(err.clone()),
         }
     }
 }

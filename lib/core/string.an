@@ -149,6 +149,7 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
+        self.validity_assert();
         String(data=self.data.clone())
     }
 }
@@ -156,6 +157,8 @@ impl Clone for String {
 // Implement PartialEq for String to compare with another String
 impl PartialEq<String> for String {
     pub fn eq(other: String*) -> bool {
+        self.validity_assert();
+        other.validity_assert();
         self.as_str() == other.as_str()
     }
 }
@@ -163,6 +166,7 @@ impl PartialEq<String> for String {
 // Implement PartialEq for String to compare with a str slice
 impl PartialEq<str> for String {
     pub fn eq(other: str*) -> bool {
+        self.validity_assert();
         self.as_str() == *other
     }
 }
@@ -170,6 +174,8 @@ impl PartialEq<str> for String {
 // Implement Add for String to concatenate with another String
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {
+        self.validity_assert();
+        other.validity_assert();
         let result = self.move();
         result.push_str(other.as_str());
         other.drop();
@@ -180,6 +186,7 @@ impl Add<String, String> for String {
 // Implement Add for String to concatenate with a str slice
 impl Add<str, String> for String {
     pub fn add(other: str) -> String {
+        self.validity_assert();
         let result = self.move();
         result.push_str(other);
         result
@@ -189,6 +196,7 @@ impl Add<str, String> for String {
 // Implement Add for String to concatenate with a char
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
+        self.validity_assert();
         let result = self.move();
         result.push(other);
         result
@@ -198,6 +206,7 @@ impl Add<char, String> for String {
 // Implement Deref to allow String to be used as a str slice
 impl Deref<str> for String {
     pub fn deref() -> str {
+        self.validity_assert();
         self.as_str()
     }
 }
@@ -220,6 +229,7 @@ impl Into<String> for str {
 // Implement Index for String to allow indexing into the String as a str slice
 impl Index<Range<u64>, str> for String {
     pub fn index(range: Range<u64>*) -> str {
+        self.validity_assert();
         self.as_str()[*range]
     }
 }
@@ -227,6 +237,7 @@ impl Index<Range<u64>, str> for String {
 // Implement ToString for String to allow converting a String into a String (clone)
 impl ToString for String {
     pub fn to_string() -> String {
+        self.validity_assert();
         self.clone()
     }
 }

@@ -24,23 +24,36 @@ fn main() -> i32 {
     assert res1.unwrap_or_err(999) == 999: "res1 should unwrap to default error code 999";
     assert res2.unwrap_or_err(999) == 1: "res2 should unwrap to error code 1";
 
-    // Convert to Option
-    Option<i32> opt1 = res1.ok()
-    Option<ErrorCode> opt2 = res2.err()
-    assert opt1.is_some(): "opt1 should be Some";
-    assert opt1.unwrap_or(0) == 42: "opt1 should unwrap to 42";
-    assert opt2.is_some(): "opt2 should be Some";
-    assert opt2.unwrap_or(0) == 1: "opt2 should unwrap to 1";
+    // Convert to Option — positive paths
+    let opt1: Option<i32> = res1.ok();
+    let opt2: Option<ErrorCode> = res2.err();
+    assert opt1.is_some(): "ok() on Ok should be Some";
+    assert *opt1.unwrap() == 42: "ok() on Ok should preserve value";
+    assert opt2.is_some(): "err() on Err should be Some";
+    assert *opt2.unwrap() == 1: "err() on Err should preserve error";
 
-    // Clone res1
+    // Convert to Option — negative paths
+    let opt3: Option<ErrorCode> = res1.err();
+    assert opt3.is_none(): "err() on Ok should be None";
+    let opt4: Option<i32> = res2.ok();
+    assert opt4.is_none(): "ok() on Err should be None";
+
+    // unwrap — returns T* on Ok
+    assert *res1.unwrap() == 42: "unwrap on Ok should return the value";
+
+    // unwrap_err — returns E* on Err
+    assert *res2.unwrap_err() == 1: "unwrap_err on Err should return the error";
+
+    // Clone res1 — verify clone equals original, original unchanged
     let res3: Result<i32, ErrorCode> = res1.clone();
     assert res3.is_ok(): "res3 should be Ok";
-    assert res3.unwrap_or(0) == 42: "res3 should unwrap to 42";
+    assert *res3.unwrap() == 42: "res3 should unwrap to 42";
+    assert res1.is_ok(): "original should be unchanged after clone";
 
     // Clone res2
     let res4: Result<i32, ErrorCode> = res2.clone();
     assert res4.is_err(): "res4 should be Err";
-    assert res4.unwrap_or_err(0) == 1: "res4 should unwrap to error code 1";
+    assert *res4.unwrap_err() == 1: "res4 should unwrap to error code 1";
 
     return 0;
 }

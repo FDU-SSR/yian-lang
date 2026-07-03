@@ -34,11 +34,13 @@ impl<T> Vec<T> {
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
+        self.validity_assert();
         from_raw_parts(self.raw_vec.ptr(), self.len)
     }
 
     // Push an element to the end(value is moved into the Vec)
     pub fn push(value: T) {
+        self.validity_assert();
         let len = self.len;
 
         if len == self.raw_vec.capacity() {
@@ -52,6 +54,8 @@ impl<T> Vec<T> {
 
     // Extend another Vec to the end, consuming the other Vec
     pub fn extend(other: Vec<T>) {
+        self.validity_assert();
+        other.validity_assert();
         // reserve enough capacity for the new elements
         self.reserve(other.len);
 
@@ -68,6 +72,7 @@ impl<T> Vec<T> {
 
     // Pop an element from the end, returning None if empty
     pub fn pop() -> Option<T> {
+        self.validity_assert();
         if self.len == 0 {
             Option<T>.None
         } else {
@@ -80,6 +85,7 @@ impl<T> Vec<T> {
     // Insert an element at index, shifting elements to the right
     // Panics if index > len
     pub fn insert(index: u64, value: T) {
+        self.validity_assert();
         let len = self.len;
         if index > len {
             panic("index out of bounds");
@@ -105,6 +111,7 @@ impl<T> Vec<T> {
     // Remove an element at index, shifting elements to the left, returning the removed element
     // Panics if index >= len
     pub fn remove(index: u64) -> T {
+        self.validity_assert();
         let len = self.len;
         if index >= len {
             panic("index out of bounds");
@@ -128,6 +135,7 @@ impl<T> Vec<T> {
     // Remove the element at index, replacing it with the element at end, returning the removed element
     // Panics if index >= len
     pub fn swap_remove(index: u64) -> T {
+        self.validity_assert();
         let len = self.len;
         if index >= len {
             panic("index out of bounds");
@@ -148,6 +156,7 @@ impl<T> Vec<T> {
     // Extend the Vec with a slice
     // This will clone the elements from the slice into the Vec, since slices are semantically not owned
     pub fn extend_from_slice(slice: T[]) {
+        self.validity_assert();
         // reserve enough capacity for the new elements
         self.reserve(slice.len());
 
@@ -159,6 +168,7 @@ impl<T> Vec<T> {
 
     // Shorten the Vec, keeping the first `len` elements
     pub fn truncate(len: u64) {
+        self.validity_assert();
         if len > self.len {
             return;
         }
@@ -174,16 +184,19 @@ impl<T> Vec<T> {
 
     // Remove all elements
     pub fn clear() {
+        self.validity_assert();
         self.truncate(0);
     }
 
     // Reserve capacity for at least `additional` more elements
     pub fn reserve(additional: u64) {
+        self.validity_assert();
         self.raw_vec.reserve(self.len, additional);
     }
 
     // Shrinks the capacity as much as possible
     pub fn shrink_to_fit() {
+        self.validity_assert();
         if self.len < self.raw_vec.capacity() {
             self.raw_vec.shrink_to_fit(self.len);
         }
@@ -191,11 +204,13 @@ impl<T> Vec<T> {
 
     // Check if the Vec is empty
     pub fn is_empty() -> bool {
+        self.validity_assert();
         self.len == 0
     }
 
     // Get the capacity
     pub fn capacity() -> u64 {
+        self.validity_assert();
         self.raw_vec.capacity()
     }
 }
@@ -204,12 +219,14 @@ impl<T> Vec<T> {
 // This will clone the elements in the Vec, so it requires T to be Clone
 impl<T> Clone for Vec<T> {
     pub fn clone() -> Self {
+        self.validity_assert();
         self.as_slice().to_vec()
     }
 }
 
 impl<T> Index<u64, T*> for Vec<T> {
     pub fn index(index: u64*) -> T* {
+        self.validity_assert();
         if *index >= self.len {
             panic("index out of bounds");
         }
@@ -219,6 +236,8 @@ impl<T> Index<u64, T*> for Vec<T> {
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
     pub fn eq(rhs: Vec<T>*) -> bool {
+        self.validity_assert();
+        rhs.validity_assert();
         self.as_slice() == rhs.as_slice()
     }
 }
@@ -242,6 +261,7 @@ impl<T> Into<Vec<T>> for T[] {
 // Implement Deref for Vec<T> to allow dereferencing to a slice
 impl<T> Deref<T[]> for Vec<T> {
     pub fn deref() -> T[] {
+        self.validity_assert();
         self.as_slice()
     }
 }
@@ -249,6 +269,8 @@ impl<T> Deref<T[]> for Vec<T> {
 // Implement Add for Vec<T> to concatenate two Vecs
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
+        self.validity_assert();
+        rhs.validity_assert();
         let res = self.move();
         res.extend(rhs);
         res

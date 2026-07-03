@@ -11,8 +11,8 @@ pub trait IntoIterator<T> {
     fn into_iter() -> T;
 }
 
-impl<T> IntoIterator<T> for T if T: Iterator<T> {
+impl<T, U> IntoIterator<T> for T if T: Iterator<U> {
     fn into_iter() -> T {
-        return *self;
+        self.clone()
     }
 }
