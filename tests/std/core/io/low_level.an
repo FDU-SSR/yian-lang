@@ -21,7 +21,7 @@ fn main() -> i32 {
         return 2;
     }
     let buf = dyn[64] u8;
-    let result: str = sys_read(rfd, str.from(from_raw_parts(buf, 64u64)));
+    let result: str = sys_read(rfd, str.from(&from_raw_parts(buf, 64u64)));
     close(rfd);
     let n = result.as_slice().len();
     del buf;

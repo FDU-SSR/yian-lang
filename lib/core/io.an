@@ -49,7 +49,7 @@ impl IoError {
     }
 
     pub static fn new(kind: IoErrorKind, msg: str) -> Self {
-        let s = String.from(msg);
+        let s = String.from(&msg);
         Self(kind = kind, msg = s.move())
     }
 
@@ -62,7 +62,7 @@ impl IoError {
     }
 
     pub static fn unexpected_eof() -> Self {
-        let s = String.from("unexpected EOF");
+        let s = String.from(&"unexpected EOF");
         Self(kind = IoErrorKind.UnexpectedEof, msg = s.move())
     }
 

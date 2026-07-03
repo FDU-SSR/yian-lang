@@ -17,12 +17,12 @@ fn main() -> i32 {
     assert res2.is_err(): "res2 should be Err";
 
     // Unwrap with a default value
-    assert res1.unwrap_or(100) == 42: "res1 should unwrap to 42";
-    assert res2.unwrap_or(100) == 100: "res2 should unwrap to 100";
+    assert *res1.unwrap_or(&100) == 42: "res1 should unwrap to 42";
+    assert *res2.unwrap_or(&100) == 100: "res2 should unwrap to 100";
 
     // Unwrap the error code with a default value
-    assert res1.unwrap_or_err(999) == 999: "res1 should unwrap to default error code 999";
-    assert res2.unwrap_or_err(999) == 1: "res2 should unwrap to error code 1";
+    assert *res1.unwrap_or_err(&999) == 999: "res1 should unwrap to default error code 999";
+    assert *res2.unwrap_or_err(&999) == 1: "res2 should unwrap to error code 1";
 
     // Convert to Option — positive paths
     let opt1: Option<i32> = res1.ok();

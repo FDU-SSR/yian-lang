@@ -23,8 +23,8 @@ fn main() -> i32 {
     assert elem1.is_none(): "Expected out of bounds access to return None";
 
     // Direct indexing via Index<u64, T*>
-    assert *slice[0] == 2: "slice[0] should be 2";
-    assert *slice[2] == 4: "slice[2] should be 4";
+    assert slice[0] == 2: "slice[0] should be 2";
+    assert slice[2] == 4: "slice[2] should be 4";
 
     // Test first and last elements
     let first: Option<i32*> = slice.first();

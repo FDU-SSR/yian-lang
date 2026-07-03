@@ -35,7 +35,6 @@ class ImplRegistry:
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
 
-
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
         impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
         self.__impls.append(impl)
@@ -135,6 +134,14 @@ class ImplRegistry:
                 continue
             if self.check_conditions(impl, substs, visited):
                 return True
+
+        # Simple types implicitly implement Move and Clone.
+        if self.__ctx.is_simple_type(type_id):
+            trait_ty = self.__ctx[trait_id]
+            if isinstance(trait_ty, Type.TraitType):
+                if trait_ty.custom_def.name in ("Move", "Clone"):
+                    return True
+
         return False
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:

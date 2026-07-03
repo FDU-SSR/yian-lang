@@ -11,7 +11,7 @@ fn main() -> int {
     assert &p[0] == &arr[0];
 
     // test slicing
-    let slice = p[0..3];
+    let slice = p[0u64..3];
     assert slice.len() == 3;
     assert slice[0] == 42;
     assert slice[1] == 43;

@@ -89,7 +89,44 @@ class CallDispatcher:
         receiver = self.__expr.value(node.receiver)
         if isinstance(receiver, HIR.Ty):
             return self.__handle_static_or_variant_method_call(node, receiver)
+
+        # For simple types, move() and clone() are identity operations
+        # after stripping pointer indirections (bitcopy(*self) ≡ *self).
+        if node.method_name.name in ("move", "clone"):
+            simple_result = self.__try_simple_move_clone(node.span, receiver)
+            if simple_result is not None:
+                return simple_result
+
         return self.__handle_instance_method_call(node, receiver)
+
+    def __try_simple_move_clone(self, span: SrcSpan, receiver: HIR.Expr) -> HIR.Expr | None:
+        """If *receiver*'s value type (after stripping pointer indirections)
+        is simple, return the auto-deref'd value.  Otherwise return None.
+
+        For simple types, move() / clone() are identity operations:
+        bitcopy(*self) ≡ *self, and invalidate() is a no-op.
+        """
+        # Resolve the value type by stripping pointer indirections.
+        type_id = receiver.type_id
+        deref_count = 0
+        while True:
+            ty = self.__ctx.type_ctx[type_id]
+            if isinstance(ty, Type.PointerType):
+                type_id = ty.pointee_type
+                deref_count += 1
+            else:
+                break
+
+        if not self.__ctx.type_ctx.is_simple_type(type_id):
+            return None
+
+        # Apply the same number of pointer derefs.
+        result = receiver
+        for _ in range(deref_count):
+            ty = self.__ctx.type_ctx[result.type_id]
+            assert isinstance(ty, Type.PointerType)
+            result = HIR.Unary(span, UnaryOperator.Deref, result, ty.pointee_type, is_place=False)
+        return result
 
     def __handle_named_call(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None

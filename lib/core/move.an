@@ -21,20 +21,9 @@ pub trait Move {
     fn is_valid() -> bool;
 }
 
-// Simple types: invalidate is a no-op, always valid
-impl Move for i8  { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for i16 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for i32 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for i64 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for u8  { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for u16 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for u32 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for u64 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for f32 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for f64 { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for bool { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for char { fn invalidate() {} fn is_valid() -> bool { true } }
-impl Move for void { fn invalidate() {} fn is_valid() -> bool { true } }
+// Simple types (int, float, bool, char, void, pointer, slice, etc.)
+// automatically implement Move — invalidate() is a no-op and is_valid()
+// always returns true.  The compiler handles this in has_impl.
 
 impl<T, const N: u64> Move for T[N] if T: Move {
     fn invalidate() {

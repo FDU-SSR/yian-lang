@@ -34,11 +34,11 @@ fn signed_to_string(value: i64) -> String {
 
 fn float_to_string(value: f64) -> String {
     if value != value {
-        return String.from("NaN");
+        return String.from(&"NaN");
     }
 
     if value == 0.0 {
-        return String.from("0");
+        return String.from(&"0");
     }
 
     let out = String.new();
@@ -133,7 +133,7 @@ impl ToString for f64 {
 
 impl ToString for bool {
     fn to_string() -> String {
-        if *self { String.from("true") } else { String.from("false") }
+        if *self { String.from(&"true") } else { String.from(&"false") }
     }
 }
 
@@ -147,6 +147,6 @@ impl ToString for char {
 
 impl ToString for void {
     fn to_string() -> String {
-        String.from("void")
+        String.from(&"void")
     }
 }

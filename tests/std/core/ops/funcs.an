@@ -1,5 +1,6 @@
 from std.core.ops import PartialOrd, Ordering, PartialEq, max, min;
 
+@BitCopy
 enum Size {
     Small,
     Medium,
