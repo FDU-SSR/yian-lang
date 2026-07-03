@@ -6,7 +6,7 @@ fn main() -> i32 {
     let indexes: u64[3] = [0, 1, 2];
     let values: i32[3] = [0, 0, 0];
     for index in indexes {
-        values[index] = i32(index * 10);
+        values[*index] = i32(*index * 10);
     }
 
     assert values[0] == 0: "values[0] should be 0";

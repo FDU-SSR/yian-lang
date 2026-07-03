@@ -65,7 +65,7 @@ fn main() -> i32 {
 
     let opt: Option<i32> = Calculator.try_get_positive(r1);
     assert opt.is_some(): "should be Some";
-    assert opt.unwrap_or(0) == 84: "unwrap should be 84";
+    assert *opt.unwrap() == 84: "unwrap should be 84";
 
     let opt2: Option<i32> = Calculator.try_get_positive(-5);
     assert opt2.is_none(): "should be None";

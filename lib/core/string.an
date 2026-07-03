@@ -26,7 +26,7 @@ impl String {
     // Extract str from String
     pub fn as_str() -> str {
         self.validity_assert();
-        str.from(self.data.as_slice())
+        str.from(&self.data.as_slice())
     }
 
     // Get the byte slice of the String
@@ -215,7 +215,7 @@ impl Deref<str> for String {
 // This will clone the data from the str slice into the String
 impl From<str> for String {
     static pub fn from(value: str*) -> Self {
-        Self(data=Vec<u8>.from(value.as_slice()))
+        Self(data=Vec<u8>.from(&value.as_slice()))
     }
 }
 
