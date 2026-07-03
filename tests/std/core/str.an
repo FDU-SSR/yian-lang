@@ -85,18 +85,18 @@ fn main() -> i32 {
     // ---- str.from() (via From<u8[]>) validates and panics on invalid ----
 
     // Valid: should succeed
-    let s_from: str = str.from(ascii[0u64..3]);
+    let s_from: str = str.from(&ascii[0u64..3]);
     assert s_from.as_slice() == ascii[0u64..3]: "str.from with valid bytes should work";
 
     // ---- chars() iteration over multi-byte ----
-    let s_hello: str = str.from(zhong[0u64..3]);
-    let mut chars = s_hello.chars();
+    let s_hello: str = str.from(&zhong[0u64..3]);
+    let chars = s_hello.chars();
     assert chars.next().is_some(): "should yield one char";
     assert chars.next().is_none(): "should be exhausted";
 
     // ---- slicing at char boundaries ----
     let mixed: u8[6] = [228, 189, 160, 229, 165, 189]; // "你好"
-    let s_mixed: str = str.from(mixed[0u64..6]);
+    let s_mixed: str = str.from(&mixed[0u64..6]);
     // slice at char boundary (byte 3)
     let s_first_char: str = s_mixed[0u64..3];
     assert s_first_char.as_slice() == mixed[0u64..3]: "first char should be 3 bytes";

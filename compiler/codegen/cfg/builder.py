@@ -585,7 +585,6 @@ class CfgBuilder:
     def __resolve_assign(self, expr: HIR.Binary) -> IR.Value:
         lhs_addr = self.__resolve_addr(expr.left)
         rhs_val = self.__resolve_val(expr.right)
-        # never-typed values are never produced; skip the store
         if rhs_val.type_id != self.__type_ctx.never_id:
             self.__build_store(rhs_val, lhs_addr)
         return rhs_val

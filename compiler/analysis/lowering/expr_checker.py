@@ -324,6 +324,12 @@ class ExprChecker:
                 elif isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.PointerType):
                     expr.operand = self.coerce(expr.operand, expected_ty.pointee_type)
                     expr.type_id = expected
+                elif expr.type_id != expected:
+                    raise AnalysisError(
+                        f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' "
+                        f"but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
+                        expr.span,
+                    )
                 return expr
             case HIR.DynValue():
                 if not isinstance(expected_ty, Type.PointerType):

@@ -148,7 +148,7 @@ impl str {
             return true;
         }
 
-        (bytes[index] & 192) != 128
+        return (bytes[index] & 192) != 128;
     }
 
     // Trim whitespace from both ends of the String
@@ -196,12 +196,12 @@ impl CharIter {
 
 impl Iterator<char> for CharIter {
     pub fn next() -> Option<char> {
-        let b1_opt: Option<u8> = self.byte_iter.next();
+        let b1_opt = self.byte_iter.next();
 
         if b1_opt.is_none() {
             return Option<char>.None;
         }
-        let b1: u8 = *b1_opt.unwrap(); // We know it's Some, so unwrap is safe;
+        let b1: u8 = **b1_opt.unwrap(); // We know it's Some, so unwrap is safe;
 
         if b1 < 128 { // 0xxxxxxx
             return Option<char>.Some(char(b1));
@@ -209,22 +209,22 @@ impl Iterator<char> for CharIter {
 
         // 2-byte: 110xxxxx 10xxxxxx
         if (b1 & 224) == 192 {
-            let b2: u8 = *self.byte_iter.next().unwrap();
+            let b2: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 31) << 6) | u32(b2 & 63)));
         }
 
         // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
         if (b1 & 240) == 224 {
-            let b2: u8 = *self.byte_iter.next().unwrap();
-            let b3: u8 = *self.byte_iter.next().unwrap();
+            let b2: u8 = **self.byte_iter.next().unwrap();
+            let b3: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b3 & 63)));
         }
 
         // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
         if (b1 & 248) == 240 {
-            let b2: u8 = *self.byte_iter.next().unwrap();
-            let b3: u8 = *self.byte_iter.next().unwrap();
-            let b4: u8 = *self.byte_iter.next().unwrap();
+            let b2: u8 = **self.byte_iter.next().unwrap();
+            let b3: u8 = **self.byte_iter.next().unwrap();
+            let b4: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
         }
 
@@ -372,7 +372,7 @@ impl Index<Range<u64>, str> for str {
         if range.start > range.end || range.end > len {
             panic("index out of bounds");
         }
-        if ! self.is_char_boundary(range.start) || ! self.is_char_boundary(range.end) {
+        if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
             panic("str slice index is ! on a char boundary");
         }
 
