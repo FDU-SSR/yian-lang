@@ -344,8 +344,8 @@ impl Iterator<(u64, char)> for CharIndicesIter {
 }
 
 impl From<u8[]> for str {
-    pub static fn from(value: u8[]) -> Self {
-        match Self.from_slice(value) {
+    pub static fn from(value: u8[]*) -> Self {
+        match Self.from_slice(*value) {
             Some(s) => s,
             None => panic("invalid UTF-8 sequence"),
         }

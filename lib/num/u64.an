@@ -67,7 +67,7 @@ impl Hash<Murmur3Hasher> for u64 {
 }
 
 impl From<str> for u64 {
-    pub static fn from(value: str) -> Self {
+    pub static fn from(value: str*) -> Self {
         let bytes = value.as_slice();
         let len = bytes.len();
         if len == 0 {

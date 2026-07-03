@@ -214,7 +214,7 @@ impl Deref<str> for String {
 // Implement From<str> for String to allow creating a String from a str slice
 // This will clone the data from the str slice into the String
 impl From<str> for String {
-    static pub fn from(value: str) -> Self {
+    static pub fn from(value: str*) -> Self {
         Self(data=Vec<u8>.from(value.as_slice()))
     }
 }

@@ -1,7 +1,8 @@
-from ops import Index, IntoIterator;
+from ops import Index;
 from range import Range;
 from vec import Vec;
 from slice import from_raw_parts, SliceIter;
+from iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {

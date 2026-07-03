@@ -245,7 +245,7 @@ impl<T> PartialEq<Vec<T>> for Vec<T> {
 // Implement From for Vec<T> to create a Vec from a slice
 // This will clone the elements from the slice into the Vec
 impl<T> From<T[]> for Vec<T> {
-    pub static fn from(value: T[]) -> Self {
+    pub static fn from(value: T[]*) -> Self {
         value.to_vec()
     }
 }
