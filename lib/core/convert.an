@@ -5,11 +5,3 @@ pub trait From<Src> {
 pub trait Into<Dst> {
     fn into() -> Dst;
 }
-
-// TODO: into() is not functioning well
-// Multiple impls of Into will cause ambiguity
-impl<T, Src> Into<Src> for T if T: From<Src> {
-    fn into() -> Src {
-        return T.from(self);
-    }
-}

@@ -21,9 +21,5 @@ fn main() -> int {
     let fake_from = FakeI32.from(&x);
     assert fake_from.value == 42;
 
-    // Test Into trait
-    let fake: FakeI32 = x.into();
-    assert fake.value == 42;
-
     return 0;
 }
