@@ -7,6 +7,7 @@ from convert import From, Into;
 from move import Move;
 from drop import Drop;
 from mem import memcpy;
+from range import Range;
 
 from slice import from_raw_parts;
 
@@ -272,7 +273,7 @@ impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
         self.validity_assert();
         rhs.validity_assert();
         let res = self.move();
-        res.extend(rhs);
+        res.extend(rhs.move());
         res
     }
 }

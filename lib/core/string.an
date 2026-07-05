@@ -1,7 +1,7 @@
 from vec import Vec;
 from clone import Clone;
 from ops import PartialEq, Add, Deref, Index;
-from convert import From, Into;
+from convert import From;
 from option import Option;
 from range import Range;
 from fmt import ToString;
@@ -125,7 +125,7 @@ impl String {
     // Trimed version of the String
     pub fn trimmed() -> String {
         self.validity_assert();
-        String.from(self.trim())
+        String.from(&self.trim())
     }
 
     // Clear the contents of the String
@@ -216,13 +216,6 @@ impl Deref<str> for String {
 impl From<str> for String {
     static pub fn from(value: str*) -> Self {
         Self(data=Vec<u8>.from(&value.as_slice()))
-    }
-}
-
-// Implement Into<String> for str to allow converting a str slice into a String
-impl Into<String> for str {
-    pub fn into() -> String {
-        String.from(*self)
     }
 }
 

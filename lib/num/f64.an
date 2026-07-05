@@ -36,24 +36,24 @@ impl From<str> for f64 {
                 seen_dot = true;
             } elif b >= b'0' && b <= b'9' {
                 let digit = b - b'0';
-                if ! seen_dot {
+                if !seen_dot {
                     has_int_digit = true;
                     int_part = int_part * 10 + u64(digit);
                 } else {
                     has_frac_digit = true;
-                    divisor *= 10.0
-                    frac_part += f64(digit) / divisor
+                    divisor *= 10.0;
+                    frac_part += f64(digit) / divisor;
                 }
             } else {
                 panic("invalid f64: contains illegal character");
             }
-            i += 1
+            i += 1;
         }
 
-        if ! seen_dot {
+        if !seen_dot {
             panic("invalid f64: missing dot");
         }
-        if ! has_int_digit || ! has_frac_digit {
+        if !has_int_digit || !has_frac_digit {
             panic("invalid f64: malformed decimal");
         }
 

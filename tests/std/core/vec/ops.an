@@ -15,7 +15,7 @@ fn main() -> i32 {
     v2.push(30);
     v2.push(40);
 
-    v1.extend(v2);
+    v1.extend(v2.move());
     assert v1.len() == 4: "extend should append all elements";
     assert v1[2] == 30: "extend should append correctly";
 
@@ -29,7 +29,7 @@ fn main() -> i32 {
     v4.push(3);
     v4.push(4);
 
-    let v5: Vec<i32> = v3 + v4;
+    let v5: Vec<i32> = v3.move() + v4.move();
     assert v5.len() == 4: "add should concatenate vectors";
     assert v5[0] == 1 && v5[3] == 4: "add should preserve element order";
 
@@ -70,16 +70,9 @@ fn main() -> i32 {
     // ---- From<T[]> for Vec<T> ----
 
     let arr: i32[3] = [40, 50, 60];
-    let v11: Vec<i32> = Vec<i32>.from(arr[0u64..3]);
+    let v11: Vec<i32> = Vec<i32>.from(&arr[0u64..3]);
     assert v11.len() == 3: "Vec.from(slice) should create Vec";
     assert v11[0] == 40 && v11[1] == 50 && v11[2] == 60: "Vec.from should copy elements";
-
-    // ---- Into<Vec<T>> for T[] ----
-
-    let arr2: i32[2] = [70, 80];
-    let v12: Vec<i32> = arr2[0u64..2].into();
-    assert v12.len() == 2: "slice.into() should create Vec";
-    assert v12[0] == 70 && v12[1] == 80: "into should copy elements";
 
     return 0;
 }

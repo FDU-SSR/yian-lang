@@ -14,7 +14,7 @@ fn main() -> i32 {
     let s_cap: String = String.with_capacity(100);
     assert s_cap.capacity() == 100: "with_capacity should set capacity";
     
-    let s_from: String = String.from("Hello, World!");
+    let s_from: String = String.from(&"Hello, World!");
     assert s_from.len() == 13: "from should set correct length";
     assert s_from == "Hello, World!": "from should set correct content";
 
@@ -44,10 +44,10 @@ fn main() -> i32 {
     assert s_push == "HelloWorld": "string content should match after push_str";
     
     // 测试 pop
-    let s_pop: String = String.from("Test");
+    let s_pop: String = String.from(&"Test");
     let c1: Option<char> = s_pop.pop();
     assert c1.is_some(): "pop should return Some for non-empty string";
-    assert c1.unwrap() == 't': "pop should return last character";
+    assert *c1.unwrap() == 't': "pop should return last character";
     assert s_pop == "Tes": "string content should be updated after pop";
 
     s_pop = String.new();
@@ -55,17 +55,17 @@ fn main() -> i32 {
     assert c2.is_none(): "pop should return None for empty string";
 
     // 测试 clear
-    let s_clear: String = String.from("NotEmpty");
+    let s_clear: String = String.from(&"NotEmpty");
     s_clear.clear();
     assert s_clear.is_empty(): "clear should empty the string";
     
     // 测试 as_str
-    let s_asstr: String = String.from("TestAsStr");
+    let s_asstr: String = String.from(&"TestAsStr");
     let raw_str: str = s_asstr.as_str();
     assert raw_str == "TestAsStr": "as_str should return correct str representation";
 
     // 测试 as_slice
-    let s_asbytes: String = String.from("Bytes");
+    let s_asbytes: String = String.from(&"Bytes");
     let bytes: u8[] = s_asbytes.as_slice();
     assert bytes.len() == 5: "as_slice should return correct byte length";
     assert bytes[0] == b'B': "as_slice should return correct byte content";
@@ -75,22 +75,22 @@ fn main() -> i32 {
     assert bytes[4] == b's': "as_slice should return correct byte content";
 
     // 测试 PartialEq trait
-    let s_eq1: String = String.from("Hi");
-    let s_eq2: String = String.from("Hi");
-    let s_eq3: String = String.from("Bye");
+    let s_eq1: String = String.from(&"Hi");
+    let s_eq2: String = String.from(&"Hi");
+    let s_eq3: String = String.from(&"Bye");
     assert s_eq1 == s_eq2: "eq should return true for equal strings";
     assert s_eq1 != s_eq3: "eq should return false for different strings";
     
     // 测试 Add trait
-    let s_add1: String = String.from("ABC");
-    let s_add2: String = String.from("DEF");
-    let s_add3: String = s_add1 + s_add2;
-    let s_add4: String = s_add1 + "XYZ";
+    let s_add1: String = String.from(&"ABC");
+    let s_add2: String = String.from(&"DEF");
+    let s_add3: String = s_add1.clone() + s_add2.clone();
+    let s_add4: String = s_add1.clone() + "XYZ";
     assert s_add3 == "ABCDEF": "add should concatenate two strings";
     assert s_add4 == "ABCXYZ": "add should concatenate string && str";
     
     // 测试 Clone trait
-    let s_clone1: String = String.from("CloneMe");
+    let s_clone1: String = String.from(&"CloneMe");
     let s_clone2: String = s_clone1.clone();
     assert s_clone1 == s_clone2: "clone should create identical copy";
 
@@ -100,36 +100,32 @@ fn main() -> i32 {
     assert s_clone2 == "CloneMe!": "cloned string should reflect modifications";
 
     // 测试 Deref trait
-    let s_deref: String = String.from("DerefTest");
+    let s_deref: String = String.from(&"DerefTest");
     let deref_str: str = *s_deref;
     assert deref_str == "DerefTest": "deref should return correct str representation";
 
     // 测试 trimmed() — delegates to str.trim() via Deref
-    let s_trim: String = String.from("  hello  ");
+    let s_trim: String = String.from(&"  hello  ");
     let s_trimmed: String = s_trim.trimmed();
     assert s_trimmed == "hello": "trimmed should remove surrounding whitespace";
 
     // 测试 Add<char>
-    let s_add_char: String = String.from("AB");
+    let s_add_char: String = String.from(&"AB");
     let s_added_char: String = s_add_char + 'C';
     assert s_added_char == "ABC": "add char should append character";
 
-    // 测试 Into<String> for str
-    let s_into: String = "Hello".into();
-    assert s_into == "Hello": "Into<String> should convert str to String";
-
     // 测试 Index<Range<u64>, str>
-    let s_idx: String = String.from("HelloWorld");
+    let s_idx: String = String.from(&"HelloWorld");
     let sub: str = s_idx[0u64..5];
     assert sub == "Hello": "index range should return substring";
 
     // 测试 ToString
-    let s_tostr: String = String.from("ToString");
+    let s_tostr: String = String.from(&"ToString");
     let s_tostr2: String = s_tostr.to_string();
     assert s_tostr == s_tostr2: "to_string should return equivalent string";
 
     // 测试 Move trait
-    let s_move: String = String.from("MoveTest");
+    let s_move: String = String.from(&"MoveTest");
     assert s_move.is_valid(): "should be valid before move";
     let s_moved: String = s_move.move();
     assert s_moved.is_valid(): "moved string should be valid";

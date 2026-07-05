@@ -628,15 +628,26 @@ class CfgBuilder:
         # ── rhs block ──
         self.__switch_to(rhs_block)
         rhs_val = self.__resolve_val(expr.right)
-        if rhs_block.terminator is None:
+        # __resolve_val may have switched current_block (nested logical).
+        # The block that actually produced rhs_val is where we ended up.
+        rhs_end_block = self.__current_block
+
+        # Bridge rhs_end_block to merge if it doesn't already have a terminator.
+        if rhs_end_block.terminator is None:
             self.__set_terminator(IR.Br(merge_block))
 
         # ── merge block ──
         self.__switch_to(merge_block)
-        return self.__emit_phi([
+        result = self.__emit_phi([
             (entry_block, short_circuit_value),
-            (rhs_block, rhs_val),
+            (rhs_end_block, rhs_val),
         ])
+        # The merge block needs a terminator so it is not left dangling.
+        # Create a continuation block that callers can append to.
+        cont_block = self.__new_block("logical.cont")
+        self.__set_terminator(IR.Br(cont_block))
+        self.__switch_to(cont_block)
+        return result
 
     def __resolve_unary(self, expr: HIR.Unary) -> IR.Value:
         """

@@ -23,22 +23,22 @@ fn main() -> i32 {
     assert v2.len() == 1: "len should be 1 after reuse";
     let val: Option<i32> = v2.pop();
     assert val.is_some(): "should have value";
-    assert val.unwrap_or(0) == 42: "should be 42";
+    assert *val.unwrap() == 42: "should be 42";
 
     // Edge case 3: large number of elements
-    let v3: Vec<i32> = Vec<i32>.with_capacity(1000);
+    let v3 = Vec<i32>.with_capacity(1000);
     let i: i32 = 0;
     while i < 1000 {
         v3.push(i);
         i += 1;
     }
     assert v3.len() == 1000: "should have 1000 elements";
-    let first: Option<i32> = v3.get(0);
+    let first = v3.get(0);
     assert first.is_some(): "first should exist";
-    assert first.unwrap_or(-1) == 0: "first should be 0";
-    let last: Option<i32> = v3.get(999);
+    assert **first.unwrap() == 0: "first should be 0";
+    let last = v3.get(999);
     assert last.is_some(): "last should exist";
-    assert last.unwrap_or(-1) == 999: "last should be 999";
+    assert **last.unwrap() == 999: "last should be 999";
 
     return 0;
 }

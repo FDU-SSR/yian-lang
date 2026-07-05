@@ -205,6 +205,17 @@ class TypeSpace:
             "Deref": self.__ctx.deref_id,
             "Delete": self.__ctx.delete_id,
             "Drop": self.__ctx.drop_id,
+            # Compound assignment
+            "AddAssign": self.__ctx.add_assign_id,
+            "SubAssign": self.__ctx.sub_assign_id,
+            "MulAssign": self.__ctx.mul_assign_id,
+            "DivAssign": self.__ctx.div_assign_id,
+            "RemAssign": self.__ctx.rem_assign_id,
+            "BitAndAssign": self.__ctx.bitand_assign_id,
+            "BitOrAssign": self.__ctx.bitor_assign_id,
+            "BitXorAssign": self.__ctx.bitxor_assign_id,
+            "ShlAssign": self.__ctx.shl_assign_id,
+            "ShrAssign": self.__ctx.shr_assign_id,
         }
         if name in intrinsic_mapping:
             trait_ty.type_id = intrinsic_mapping[name]

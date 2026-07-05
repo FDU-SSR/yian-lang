@@ -53,13 +53,13 @@ fn main() -> i32 {
 
     // ---- From<str> for u64 (parse) ----
 
-    let p1: u64 = u64.from("0");
+    let p1: u64 = u64.from(&"0");
     assert p1 == 0: "parse '0' should be 0";
 
-    let p2: u64 = u64.from("42");
+    let p2: u64 = u64.from(&"42");
     assert p2 == 42: "parse '42' should be 42";
 
-    let p3: u64 = u64.from("18446744073709551615");
+    let p3: u64 = u64.from(&"18446744073709551615");
     assert p3 == 18446744073709551615u64: "parse max u64";
 
     return 0;

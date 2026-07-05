@@ -162,7 +162,7 @@ impl str {
         while end > start && bytes[end - 1].is_ascii_whitespace() {
             end -= 1
         }
-        str.from(bytes[start..end])
+        str.from(&bytes[start..end])
     }
 
     // Parse the str into specified type T, panicking if parsing fails

@@ -16,7 +16,7 @@ fn main() -> i32 {
     assert !v1.is_empty(): "vector with elements should not be empty";
 
     let pop_opt: Option<i32> = v1.pop();
-    assert pop_opt.unwrap() == 3: "pop should return last element";
+    assert *pop_opt.unwrap() == 3: "pop should return last element";
     assert v1.len() == 2: "pop should decrease size";
 
     // pop on empty

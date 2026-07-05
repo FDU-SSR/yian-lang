@@ -43,11 +43,11 @@ impl u64 {
             panic("radix must be between 2 and 36");
         }
         if *self == 0 {
-            return String.from("0");
+            return String.from(&"0");
         }
 
         let n: u64 = *self;
-        let digits = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        let digits = String.from(&"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
         let out = String.new();
         while n > 0 {
             let digit = n % radix;

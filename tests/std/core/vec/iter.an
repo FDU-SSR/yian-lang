@@ -7,13 +7,13 @@ fn main() -> int {
 
     // Test reference iterator
     for x in &vec {
-        assert *x == vec[u64(x)];
+        assert *x == vec[u64(*x)];
     }
     assert vec.is_valid(); // Ensure original is still valid
 
     // Test moving cloned iterator
     for x in vec.clone() {
-        assert x == vec[u64(x)];
+        assert *x == vec[u64(*x)];
     }
     assert vec.is_valid(); // Ensure original is still valid
 
