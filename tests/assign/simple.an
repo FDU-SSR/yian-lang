@@ -1,0 +1,20 @@
+// Test: simple types always support direct assignment and arithmetic
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let a: i32 = 1;
+    let b: i32 = a;
+    let c = a + b;
+    assert c == 2: "1 + 1 should be 2";
+
+    let d: bool = true;
+    let e: bool = d;
+    assert e: "true should be true";
+
+    let p: i32* = &a;
+    let q: i32* = p;
+    assert *p == 1: "pointer deref should give 1";
+
+    return 0;
+}

@@ -1,0 +1,84 @@
+// HashSet test with Murmur3Hasher, key type i64
+//
+// Expected output: 0
+
+from std.core.hash import Murmur3BuildHasher;
+from std.collections.hash_set import HashSet;
+
+fn main() -> i32 {
+    // === Test 1: basic construction ===
+    let set1: HashSet<i64> = HashSet<i64>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert set1.len() == 0: "new set should have len 0";
+    assert set1.is_empty(): "new set should be empty";
+
+    // === Test 2: insert & contains ===
+    let set2: HashSet<i64> = HashSet<i64>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(42)
+    )
+
+    assert set2.insert(10): "first insert should succeed";
+    assert set2.len() == 1: "len should be 1";
+    assert set2.contains(&10i64): "contains should find 10";
+
+    assert set2.insert(20): "insert 20 should succeed";
+    assert set2.insert(30): "insert 30 should succeed";
+    assert set2.len() == 3: "len should be 3";
+
+    // === Test 3: duplicate insert ===
+    assert ! set2.insert(10i64): "duplicate insert should return false";
+    assert set2.len() == 3: "len should not change after duplicate";
+
+    // === Test 4: contains missing elements ===
+    assert ! set2.contains(&99i64): "should not contain 99";
+    assert ! set2.contains(&0i64): "should not contain 0";
+
+    // === Test 5: remove ===
+    assert set2.remove(&20i64): "remove 20 should succeed";
+    assert set2.len() == 2: "len should be 2 after remove";
+    assert ! set2.contains(&20i64): "20 should be gone";
+    assert set2.contains(&10i64): "10 should still exist";
+    assert set2.contains(&30i64): "30 should still exist";
+
+    // remove non-existent element
+    assert ! set2.remove(&999i64): "remove missing should return false";
+    assert set2.len() == 2: "len unchanged after removing missing";
+
+    // === Test 6: clear ===
+    set2.clear();
+    assert set2.len() == 0: "clear should reset len";
+    assert set2.is_empty(): "clear should make set empty";
+    assert ! set2.contains(&10i64): "10 should be gone after clear";
+
+    // === Test 7: batch insert triggers resize ===
+    let set3: HashSet<i64> = HashSet<i64>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(7)
+    )
+    for i in 0i64..20 {
+        set3.insert(i);
+    }
+    assert set3.len() == 20: "should have 20 elements after batch insert";
+    for i in 0i64..20 {
+        assert set3.contains(&i): "should contain all inserted values";
+    }
+    assert ! set3.contains(&20i64): "should not contain 20";
+
+    // === Test 8: different seed ===
+    let set4: HashSet<i64> = HashSet<i64>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(123)
+    )
+    set4.insert(100);
+    set4.insert(200);
+    set4.insert(300);
+    assert set4.contains(&100i64): "seed 123: contains 100";
+    assert set4.contains(&200i64): "seed 123: contains 200";
+    assert set4.contains(&300i64): "seed 123: contains 300";
+    assert ! set4.contains(&400i64): "seed 123: not contains 400";
+
+    return 0;
+}

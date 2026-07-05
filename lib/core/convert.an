@@ -1,5 +1,5 @@
 pub trait From<Src> {
-    static fn from(value: Src) -> Self;
+    static fn from(value: Src*) -> Self;
 }
 
 pub trait Into<Dst> {

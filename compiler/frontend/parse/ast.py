@@ -1,19 +1,28 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
 from compiler.frontend.parse.ast_export import export_program
 from compiler.frontend.parse.ast_type import DeducedType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.frontend.parse.ast_type import ASTType, ConstExpr
 
 if TYPE_CHECKING:
     from compiler.frontend.lex.position import SrcSpan
     from compiler.frontend.lex.token import CharLiteral, IntLiteral
     from compiler.frontend.lex.token import Literal as LexLiteral
     from compiler.frontend.lex.token import StrLiteral
-    from compiler.frontend.parse.ast_type import ASTType, ConstExpr
+
+
+@dataclass
+class Identifier:
+    span: SrcSpan
+    name: str
+
+    def __repr__(self) -> str:
+        return self.name
 
 
 @dataclass
@@ -67,6 +76,7 @@ class Import:
 @dataclass
 class Alias:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -101,9 +111,30 @@ class Attr:
         return self.kind.value
 
 
+class AnnotKind(Enum):
+    BitCopy = "BitCopy"
+
+    @classmethod
+    def try_from_name(cls, name: str) -> AnnotKind | None:
+        try:
+            return cls(name)
+        except ValueError:
+            return None
+
+
+@dataclass
+class Annot:
+    span: SrcSpan
+    kind: AnnotKind
+
+    def __repr__(self) -> str:
+        return f"@{self.kind.value}"
+
+
 @dataclass
 class FuncDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -134,6 +165,7 @@ class FieldInfo:
 @dataclass
 class StructDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -160,6 +192,7 @@ class VariantInfo:
 @dataclass
 class EnumDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -175,10 +208,12 @@ class EnumDef:
 @dataclass
 class Impl:
     span: SrcSpan
+    annots: list[Annot]
     generics: list[GenericParam]
     target: ASTType
     trait: ASTType | None
     items: list[MethodDef]
+    conditions: list[tuple[Identifier, list[ASTType]]] = field(default_factory=list[tuple[Identifier, list[ASTType]]])  # [(param_name, [TraitA, TraitB]), ...]
 
     def __repr__(self) -> str:
         generics_str = f"<{', '.join(str(gen) for gen in self.generics)}>" if self.generics else ""
@@ -191,6 +226,7 @@ class Impl:
 @dataclass
 class TraitDef:
     span: SrcSpan
+    annots: list[Annot]
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
@@ -564,15 +600,6 @@ class ArrayRepeat:
 
     def __repr__(self) -> str:
         return f"[{self.element}; {self.count}]"
-
-
-@dataclass
-class Identifier:
-    span: SrcSpan
-    name: str
-
-    def __repr__(self) -> str:
-        return self.name
 
 
 @dataclass

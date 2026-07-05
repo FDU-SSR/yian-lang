@@ -67,6 +67,7 @@ class LLTypeCtx:
             case Type.IntType():     result = self.__handle_int(ty_def)
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
+            case Type.NullPtrType(): result = self.__ptr
             case Type.SliceType():   result = self.__handle_slice(ty_def)
             case Type.ArrayType():   result = self.__handle_array(ty_def)
             case Type.TupleType():   result = self.__handle_tuple(ty_def)

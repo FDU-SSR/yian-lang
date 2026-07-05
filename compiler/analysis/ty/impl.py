@@ -21,6 +21,7 @@ class Impl:
     target: int
     trait: int | None
     methods: dict[str, int] = field(default_factory=dict[str, int])
+    conditions: dict[int, list[int]] = field(default_factory=dict[int, list[int]])  # generic_type_id -> [required_trait_type_id, ...]
 
 
 class ImplRegistry:
@@ -33,11 +34,9 @@ class ImplRegistry:
         self.__trait_impl_cache: dict[int, list[Impl]] = defaultdict(list)  # target type -> list of trait impls for the target type
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
-        self.__generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic impls
-        self.__trait_generic_impl_by_name: dict[str, list[Impl]] = defaultdict(list)  # target base name -> list of generic trait impls
 
-    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None) -> Impl:
-        impl = Impl(span=span, generics=generics, target=target, trait=trait)
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
+        impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
         self.__impls.append(impl)
         return impl
 
@@ -76,9 +75,7 @@ class ImplRegistry:
                 return self.__resolve_deref_target(impl, {})
 
         # 2) Generic trait impls — try to unify impl.target against type_id
-        # Use name-based index to avoid scanning all generic trait impls
-        base_name = self.__target_base_name(type_id)
-        for impl in self.__trait_generic_impl_by_name.get(base_name, []):
+        for impl in self.__trait_generic_impl_cache:
             if not is_deref_impl(impl):
                 continue
             inference = GenericInference(self.__ctx, SrcSpan.empty())
@@ -87,9 +84,65 @@ class ImplRegistry:
                 substs = inference.substitutions()
             except AnalysisError:
                 continue
+            if not self.check_conditions(impl, substs):
+                continue
             return self.__resolve_deref_target(impl, substs)
 
         return None
+
+    def check_conditions(self, impl: Impl, substs: dict[int, int], visited: set[tuple[int, int]] | None = None) -> bool:
+        """Return True if all trait conditions on *impl* are satisfied under *substs*."""
+        if not impl.conditions:
+            return True
+        if visited is None:
+            visited = set()
+        for generic_id, required_traits in impl.conditions.items():
+            concrete_type_id = substs.get(generic_id, generic_id)
+            for trait_id in required_traits:
+                substed_trait = self.__ctx.instantiate(trait_id, substs)
+                if not self.has_impl(concrete_type_id, substed_trait, visited):
+                    return False
+        return True
+
+    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
+        """Check whether *type_id* implements *trait_id*."""
+        if visited is None:
+            visited = set()
+        key = (type_id, trait_id)
+        if key in visited:
+            return False
+        visited.add(key)
+
+        # Check exact match
+        for impl in self.__trait_impl_cache.get(type_id, []):
+            if impl.trait == trait_id:
+                return self.check_conditions(impl, {}, visited)
+
+        # Check generic impls
+        for impl in self.__trait_generic_impl_cache:
+            if impl.trait is None:
+                continue
+            impl_trait = self.__ctx[impl.trait]
+            target_trait = self.__ctx[trait_id]
+            if not (isinstance(impl_trait, Type.TraitType) and isinstance(target_trait, Type.TraitType) and impl_trait.custom_def is target_trait.custom_def):
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            if self.check_conditions(impl, substs, visited):
+                return True
+
+        # Simple types implicitly implement Move and Clone.
+        if self.__ctx.is_simple_type(type_id):
+            trait_ty = self.__ctx[trait_id]
+            if isinstance(trait_ty, Type.TraitType):
+                if trait_ty.custom_def.name in ("Move", "Clone"):
+                    return True
+
+        return False
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
         """Given a Deref impl and substitutions, return the return type of deref()."""
@@ -187,14 +240,18 @@ class ImplRegistry:
         assert isinstance(trait_method_ty, Type.MethodType)
 
         # alloc a new method type
-        method_type_id = self.__ctx.alloc_method(trait_method_ty.custom_def.name)
+        method_type_id = self.__ctx.alloc_method(trait_method_ty.custom_def.name, span=trait_method_ty.custom_def.span)
         method_ty = self.__ctx[method_type_id]
         assert isinstance(method_ty, Type.MethodType)
 
         method_ty.custom_def = deepcopy(trait_method_ty.custom_def)
+        old_self = trait_method_ty.custom_def.receiver_type
 
         method_ty.custom_def.generics = trait_method_ty.custom_def.generics + impl.generics
         method_ty.custom_def.receiver_type = target_type
+        method_ty.custom_def.return_type = self.__subst_trait_self(method_ty.custom_def.return_type, old_self, target_type)
+        for param in method_ty.custom_def.parameters:
+            param.type_id = self.__subst_trait_self(param.type_id, old_self, target_type)
 
         method_ty.generic_args = trait_method_ty.generic_args + impl.generics
 
@@ -202,6 +259,27 @@ class ImplRegistry:
         self.__ctx.add_procedure(method_type_id, *self.__ctx.get_procedure(trait_method_id))
 
         return method_type_id
+
+    def __subst_trait_self(self, type_id: int, old_self: int, new_target: int) -> int:
+        """Replace *old_self* with *new_target* inside *type_id*, recursively."""
+        if type_id == old_self:
+            return new_target
+        ty = self.__ctx[type_id]
+        if isinstance(ty, Type.PointerType):
+            return self.__ctx.alloc_pointer(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
+        if isinstance(ty, Type.SliceType):
+            return self.__ctx.alloc_slice(self.__subst_trait_self(ty.element_type, old_self, new_target))
+        if isinstance(ty, Type.ArrayType):
+            return self.__ctx.alloc_array(self.__subst_trait_self(ty.element_type, old_self, new_target), ty.length)
+        if isinstance(ty, Type.TupleType):
+            return self.__ctx.alloc_tuple([self.__subst_trait_self(et, old_self, new_target) for et in ty.element_types])
+        if isinstance(ty, Type.FunctionPointerType):
+            return self.__ctx.alloc_function_pointer([self.__subst_trait_self(pt, old_self, new_target) for pt in ty.parameter_types], self.__subst_trait_self(ty.return_type, old_self, new_target))
+        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType, Type.AliasType)):
+            if ty.generic_args:
+                return self.__ctx.alloc_instance(type_id, [self.__subst_trait_self(ga, old_self, new_target) for ga in ty.generic_args])
+            return type_id
+        return type_id
 
     def __cache_impls(self) -> None:
         """
@@ -214,35 +292,16 @@ class ImplRegistry:
                 self.__trait_impl_cache[impl.target].append(impl)
             elif impl.trait is None and len(impl.generics) > 0:
                 self.__generic_impl_cache.append(impl)
-                self.__generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
                 self.__trait_generic_impl_cache.append(impl)
-                self.__trait_generic_impl_by_name[self.__target_base_name(impl.target)].append(impl)
-
-    def __target_base_name(self, type_id: int) -> str:
-        """Return the simple (non-generic) name of a type for indexing purposes."""
-        ty = self.__ctx[type_id]
-        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType)):
-            return ty.custom_def.name
-        if isinstance(ty, Type.ArrayType):
-            return "[]"
-        if isinstance(ty, Type.SliceType):
-            return "[]"
-        if isinstance(ty, Type.PointerType):
-            return "*"
-        if isinstance(ty, Type.TupleType):
-            return "()"
-        if isinstance(ty, Type.FunctionPointerType):
-            return "fn"
-        return self.__ctx.get_name(type_id)
 
     def iter_candidate_impls(self, type_id: int) -> list[Impl]:
         """Return the impls that could potentially match the given type_id.
 
-        Combines exact-match caches and name-matched generic impls to avoid
-        scanning all impls in method_lookup.
+        Returns exact matches plus all generic impls. Downstream
+        GenericInference.constrain in method_lookup performs the actual
+        matching/filtering.
         """
         exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
-        base_name = self.__target_base_name(type_id)
-        generic = self.__generic_impl_by_name.get(base_name, []) + self.__trait_generic_impl_by_name.get(base_name, [])
+        generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
         return exact + generic

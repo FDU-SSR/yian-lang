@@ -1,0 +1,44 @@
+// Test ToString on integer types (unsigned + signed)
+//
+// Expected output: 0
+
+from std.core.fmt import ToString;
+
+fn main() -> i32 {
+    // -- unsigned -------------------------------------------------------
+    let u8v: u8 = 255u8;
+    assert u8v.to_string() == "255": "u8";
+
+    let u16v: u16 = 65535u16;
+    assert u16v.to_string() == "65535": "u16";
+
+    let u32v: u32 = 4294967295u32;
+    assert u32v.to_string() == "4294967295": "u32";
+
+    let u64v: u64 = 18446744073709551615u64;
+    assert u64v.to_string() == "18446744073709551615": "u64";
+
+    let u8z: u8 = 0u8;
+    assert u8z.to_string() == "0": "u8 zero";
+
+    // -- signed ---------------------------------------------------------
+    let i8v: i8 = i8(-42);
+    assert i8v.to_string() == "-42": "i8";
+
+    let i16v: i16 = i16(-1234);
+    assert i16v.to_string() == "-1234": "i16";
+
+    let i32v: i32 = -123456;
+    assert i32v.to_string() == "-123456": "i32";
+
+    let i64v: i64 = -1234567890123i64;
+    assert i64v.to_string() == "-1234567890123": "i64";
+
+    let i8z: i8 = i8(0);
+    assert i8z.to_string() == "0": "i8 zero";
+
+    let i8p: i8 = i8(100);
+    assert i8p.to_string() == "100": "i8 positive";
+
+    return 0;
+}

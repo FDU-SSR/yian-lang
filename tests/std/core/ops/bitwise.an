@@ -1,0 +1,60 @@
+// Test bitwise operator overloading
+//
+// Expected output: 0
+
+from std.core.ops import BitAnd, BitOr, BitXor, BitNot, Shl, Shr;
+
+@BitCopy
+struct Value<T> {
+    pub value: T,
+}
+
+impl<T> BitAnd<Value<T>, Value<T>> for Value<T> {
+    fn bit_and(rhs: Self) -> Self {
+        return Self(self.value & rhs.value);
+    }
+}
+
+impl<T> BitOr<Value<T>, Value<T>> for Value<T> {
+    fn bit_or(rhs: Self) -> Self {
+        return Self(self.value | rhs.value);
+    }
+}
+
+impl<T> BitXor<Value<T>, Value<T>> for Value<T> {
+    fn bit_xor(rhs: Self) -> Self {
+        return Self(self.value ^ rhs.value);
+    }
+}
+
+impl<T> BitNot<Value<T>> for Value<T> {
+    fn bit_not() -> Self {
+        return Self(~self.value);
+    }
+}
+
+impl<T> Shl<Value<T>, Value<T>> for Value<T> {
+    fn shl(rhs: Self) -> Self {
+        return Self(self.value << rhs.value);
+    }
+}
+
+impl<T> Shr<Value<T>, Value<T>> for Value<T> {
+    fn shr(rhs: Self) -> Self {
+        return Self(self.value >> rhs.value);
+    }
+}
+
+fn main() -> i32 {
+    let a: Value<i32> = Value<i32>(6);   // 0b0110
+    let b: Value<i32> = Value<i32>(3);   // 0b0011
+
+    assert (a & b).value == 2: "Expected 2";   // 0b0010
+    assert (a | b).value == 7: "Expected 7";   // 0b0111
+    assert (a ^ b).value == 5: "Expected 5";   // 0b0101
+    assert (~a).value == -7: "Expected -7";    // Two's complement
+    assert (a << b).value == 48: "Expected 48"; // 0b110000
+    assert (a >> b).value == 0: "Expected 0";   // 0b0000
+
+    return 0;
+}

@@ -181,6 +181,10 @@ class LLTranslator:
                 builder.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
             case IR.SysRead():
                 builder.sys_read(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf), stmt.result.name)
+            case IR.Open():
+                builder.open(self.__resolve(builder, stmt.path), self.__resolve(builder, stmt.flags), stmt.result.name)
+            case IR.Close():
+                builder.close(self.__resolve(builder, stmt.fd), stmt.result.name)
 
     # ------------------------------------------------------------------
     # terminators

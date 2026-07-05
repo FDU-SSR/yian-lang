@@ -1,0 +1,156 @@
+// Test for String implementation
+//
+// Expected output: 0
+
+from std.core.string import String;
+from std.core.option import Option;
+
+fn main() -> i32 {
+    // 测试 String 构造方法
+    let s_new: String = String.new();
+    assert s_new.len() == 0: "new() should create empty string";
+    assert s_new.is_empty(): "new() should create empty string";
+    
+    let s_cap: String = String.with_capacity(100);
+    assert s_cap.capacity() == 100: "with_capacity should set capacity";
+    
+    let s_from: String = String.from(&"Hello, World!");
+    assert s_from.len() == 13: "from should set correct length";
+    assert s_from == "Hello, World!": "from should set correct content";
+
+    // 测试 reserve
+    let s_reserve: String = String.new();
+    let old_capacity: u64 = s_reserve.capacity();
+    s_reserve.reserve(50);
+    assert s_reserve.capacity() >= old_capacity + 50: "reserve should increase capacity";
+
+    // 测试 shrink_to_fit
+    let s_shrink: String = String.with_capacity(100);
+    s_shrink.push_str("Shrink me");
+    s_shrink.shrink_to_fit();
+    assert s_shrink.capacity() == s_shrink.len(): "shrink_to_fit should reduce capacity to length";
+
+    // 测试 push
+    let s_push: String = String.new();
+    s_push.push('H');
+    s_push.push('e');
+    s_push.push('l');
+    s_push.push('l');
+    s_push.push('o');
+    assert s_push == "Hello": "string content should match pushed characters";
+
+    // 测试 push_str
+    s_push.push_str("World");
+    assert s_push == "HelloWorld": "string content should match after push_str";
+    
+    // 测试 pop
+    let s_pop: String = String.from(&"Test");
+    let c1: Option<char> = s_pop.pop();
+    assert c1.is_some(): "pop should return Some for non-empty string";
+    assert *c1.unwrap() == 't': "pop should return last character";
+    assert s_pop == "Tes": "string content should be updated after pop";
+
+    s_pop = String.new();
+    let c2: Option<char> = s_pop.pop();
+    assert c2.is_none(): "pop should return None for empty string";
+
+    // 测试 clear
+    let s_clear: String = String.from(&"NotEmpty");
+    s_clear.clear();
+    assert s_clear.is_empty(): "clear should empty the string";
+    
+    // 测试 as_str
+    let s_asstr: String = String.from(&"TestAsStr");
+    let raw_str: str = s_asstr.as_str();
+    assert raw_str == "TestAsStr": "as_str should return correct str representation";
+
+    // 测试 as_slice
+    let s_asbytes: String = String.from(&"Bytes");
+    let bytes: u8[] = s_asbytes.as_slice();
+    assert bytes.len() == 5: "as_slice should return correct byte length";
+    assert bytes[0] == b'B': "as_slice should return correct byte content";
+    assert bytes[1] == b'y': "as_slice should return correct byte content";
+    assert bytes[2] == b't': "as_slice should return correct byte content";
+    assert bytes[3] == b'e': "as_slice should return correct byte content";
+    assert bytes[4] == b's': "as_slice should return correct byte content";
+
+    // 测试 PartialEq trait
+    let s_eq1: String = String.from(&"Hi");
+    let s_eq2: String = String.from(&"Hi");
+    let s_eq3: String = String.from(&"Bye");
+    assert s_eq1 == s_eq2: "eq should return true for equal strings";
+    assert s_eq1 != s_eq3: "eq should return false for different strings";
+    
+    // 测试 Add trait
+    let s_add1: String = String.from(&"ABC");
+    let s_add2: String = String.from(&"DEF");
+    let s_add3: String = s_add1.clone() + s_add2.clone();
+    let s_add4: String = s_add1.clone() + "XYZ";
+    assert s_add3 == "ABCDEF": "add should concatenate two strings";
+    assert s_add4 == "ABCXYZ": "add should concatenate string && str";
+    
+    // 测试 Clone trait
+    let s_clone1: String = String.from(&"CloneMe");
+    let s_clone2: String = s_clone1.clone();
+    assert s_clone1 == s_clone2: "clone should create identical copy";
+
+    s_clone2.push('!');
+    assert s_clone1 != s_clone2: "modifying clone should ! affect original";
+    assert s_clone1 == "CloneMe": "original string should remain unchanged after clone modification";
+    assert s_clone2 == "CloneMe!": "cloned string should reflect modifications";
+
+    // 测试 Deref trait
+    let s_deref: String = String.from(&"DerefTest");
+    let deref_str: str = *s_deref;
+    assert deref_str == "DerefTest": "deref should return correct str representation";
+
+    // 测试 trimmed() — delegates to str.trim() via Deref
+    let s_trim: String = String.from(&"  hello  ");
+    let s_trimmed: String = s_trim.trimmed();
+    assert s_trimmed == "hello": "trimmed should remove surrounding whitespace";
+
+    // 测试 Add<char>
+    let s_add_char: String = String.from(&"AB");
+    let s_added_char: String = s_add_char + 'C';
+    assert s_added_char == "ABC": "add char should append character";
+
+    // 测试 Index<Range<u64>, str>
+    let s_idx: String = String.from(&"HelloWorld");
+    let sub: str = s_idx[0u64..5];
+    assert sub == "Hello": "index range should return substring";
+
+    // 测试 ToString
+    let s_tostr: String = String.from(&"ToString");
+    let s_tostr2: String = s_tostr.to_string();
+    assert s_tostr == s_tostr2: "to_string should return equivalent string";
+
+    // 测试 AddAssign trait (+= String, str, char)
+    let s_aaeq: String = String.from(&"Hello");
+    s_aaeq += " World";
+    assert s_aaeq == "Hello World": "add_assign str should append in-place";
+
+    s_aaeq += String.from(&"!");
+    assert s_aaeq == "Hello World!": "add_assign String should append in-place";
+
+    s_aaeq += '\n';
+    assert s_aaeq == "Hello World!\n": "add_assign char should append in-place";
+
+    // 测试 Move trait
+    let s_move: String = String.from(&"MoveTest");
+    assert s_move.is_valid(): "should be valid before move";
+    let s_moved: String = s_move.move();
+    assert s_moved.is_valid(): "moved string should be valid";
+    assert !s_move.is_valid(): "original should be invalid after move";
+
+    // 测试大量拼接 (merged from edge.an)
+    let s_large: String = String.new();
+    let i: i32 = 0;
+    while i < 100 {
+        s_large.push('a');
+        i += 1;
+    }
+    assert s_large.len() == 100: "large string len should be 100 after 100 pushes";
+
+    return 0;
+}
+

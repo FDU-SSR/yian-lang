@@ -5,6 +5,7 @@ from ops import PartialEq, Index;
 from range import Range;
 
 // A struct representation of a slice
+@BitCopy
 struct SliceStruct<T> {
     pub ptr: T*,
     pub len: u64,
@@ -13,8 +14,7 @@ struct SliceStruct<T> {
 impl<T> T[] {
     // Convert a slice to a SliceStruct
     fn as_struct() -> SliceStruct<T> {
-        let ret: SliceStruct<T>* = bitcast<SliceStruct<T>*>(self);
-        *ret
+        *bitcast<SliceStruct<T>*>(self)
     }
 
     // Get the raw pointer to the slice data
@@ -28,35 +28,32 @@ impl<T> T[] {
     }
 
     // Get element at index
-    pub fn get(index: u64) -> Option<T> {
-        let len = self.len();
-        if index >= len {
-            return Option<T>.None;
+    pub fn get(index: u64) -> Option<T*> {
+        if index >= self.len() {
+            return Option<T*>.None;
         }
         let ptr = self.as_struct().ptr + index;
-        Option<T>.Some(*ptr)
+        Option<T*>.Some(ptr)
     }
 
     // Get first element of the slice
-    pub fn first() -> Option<T> {
+    pub fn first() -> Option<T*> {
         self.get(0)
     }
 
     // Get last element of the slice
-    pub fn last() -> Option<T> {
-        let len = self.len();
-        if len == 0 {
-            return Option<T>.None;
+    pub fn last() -> Option<T*> {
+        if self.len() == 0 {
+            return Option<T*>.None;
         }
-        self.get(len - 1)
+        self.get(self.len() - 1)
     }
 
     // Clone the slice into a Vec
     pub fn to_vec() -> Vec<T> {
-        let s = self.as_struct();
-        let vec = Vec<T>.with_capacity(s.len);
-        for i in 0..s.len {
-            vec.push(s.ptr[i]);
+        let vec = Vec<T>.with_capacity(self.len());
+        for i in 0..self.len() {
+            vec.push(self.ptr()[i].clone());
         }
         vec
     }
@@ -65,12 +62,12 @@ impl<T> T[] {
 pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
     let slice_struct: SliceStruct<T> = SliceStruct<T>(
         ptr = ptr,
-        len = len
-    )
-    let ret: T[]* = bitcast<T[]*>(&slice_struct);
-    *ret
+        len = len,
+    );
+    *bitcast<T[]*>(&slice_struct)
 }
 
+@BitCopy
 pub struct SliceIter<T> {
     pub ptr: T*,
     pub end: T*,
@@ -89,6 +86,7 @@ impl<T> SliceIter<T> {
     }
 }
 
+@BitCopy
 pub struct RevSliceIter<T> {
     pub ptr: T*,
     pub begin: T*,
@@ -107,24 +105,24 @@ impl<T> RevSliceIter<T> {
     }
 }
 
-impl<T> Iterator<T> for SliceIter<T> {
-    fn next() -> Option<T> {
+impl<T> Iterator<T*> for SliceIter<T> {
+    fn next() -> Option<T*> {
         if self.ptr == self.end {
-            return Option<T>.None;
+            return Option<T*>.None;
         }
         let current = self.ptr;
         self.ptr += 1
-        Option<T>.Some(*current)
+        Option<T*>.Some(current)
     }
 }
 
-impl<T> Iterator<T> for RevSliceIter<T> {
-    pub fn next() -> Option<T> {
+impl<T> Iterator<T*> for RevSliceIter<T> {
+    pub fn next() -> Option<T*> {
         if self.ptr == self.begin {
-            return Option<T>.None
+            return Option<T*>.None
         }
         self.ptr -= 1
-        Option<T>.Some(*self.ptr)
+        Option<T*>.Some(self.ptr)
     }
 }
 
@@ -138,22 +136,13 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
     }
 }
 
-impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
-    pub fn into_iter() -> SliceIter<T> {
-        SliceIter<T>(
-            ptr = bitcast<T*>(self),
-            end = bitcast<T*>(self) + N
-        )
-    }
-}
-
 impl<T> PartialEq<T[]> for T[] {
-    pub fn eq(other: T[]) -> bool {
+    pub fn eq(other: T[]*) -> bool {
         if self.len() != other.len() {
             return false;
         }
         for i in 0..self.len() {
-            if self.get(i).unwrap() != other.get(i).unwrap() {
+            if self.ptr()[i] != other.ptr()[i] {
                 return false;
             }
         }
@@ -162,13 +151,13 @@ impl<T> PartialEq<T[]> for T[] {
 }
 
 impl<T> Index<u64, T*> for T[] {
-    fn index(index: u64) -> T* {
-        self.ptr() + index
+    fn index(index: u64*) -> T* {
+        self.ptr() + *index
     }
 }
 
 impl<T> Index<Range<u64>, T[]> for T[] {
-    fn index(range: Range<u64>) -> T[] {
+    fn index(range: Range<u64>*) -> T[] {
         if range.end > self.len() {
             panic("Range out of bounds");
         }

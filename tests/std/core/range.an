@@ -1,0 +1,58 @@
+// Test the Range type and its methods
+//
+// Expected output: 0
+
+from std.core.range import Range;
+from std.core.option import Option;
+
+fn main() -> i32 {
+    // Construction via .. syntax
+    let r: Range<u64> = 0u64..5;
+    assert r.start == 0: "range start should be 0";
+    assert r.end == 5: "range end should be 5";
+
+    // PartialEq: identical ranges are equal
+    let r2: Range<u64> = 0u64..5;
+    assert r == r2: "identical ranges should be equal";
+    let r3: Range<u64> = 1u64..5;
+    assert !(r == r3): "different ranges should not be equal";
+
+    // Iterator: next() yields values from start to end-1
+    let iter: Range<u64> = 0u64..3;
+    let n0: Option<u64> = iter.next();
+    assert n0.is_some(): "first next should be Some";
+    assert *n0.unwrap() == 0: "first value should be 0";
+    let n1: Option<u64> = iter.next();
+    assert n1.is_some(): "second next should be Some";
+    assert *n1.unwrap() == 1: "second value should be 1";
+    let n2: Option<u64> = iter.next();
+    assert n2.is_some(): "third next should be Some";
+    assert *n2.unwrap() == 2: "third value should be 2";
+    let n3: Option<u64> = iter.next();
+    assert n3.is_none(): "fourth next should be None (past end)";
+
+    // Clone: clone is independent from original
+    let r4: Range<u64> = 10u64..15;
+    let cloned: Range<u64> = r4.clone();
+    assert cloned == r4: "clone should equal original";
+    // Advance original — clone should be unaffected
+    let _ = r4.next();
+    assert r4.start == 11: "original start should advance after next";
+    assert cloned.start == 10: "cloned start should be unchanged";
+
+    // for-in loop (uses IntoIterator blanket impl)
+    let sum: u64 = 0;
+    for x in 0u64..6 {
+        sum += x;
+    }
+    assert sum == 15: "sum of 0..5 should be 15";
+
+    // for-in does not consume original (into_iter clones)
+    let r5: Range<u64> = 100u64..103;
+    for x in r5 {
+        // iterate once
+    }
+    assert r5.start == 100: "for-in should not mutate original range";
+
+    return 0;
+}

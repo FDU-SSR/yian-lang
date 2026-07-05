@@ -1,0 +1,20 @@
+// Test ToString on bool and char
+//
+// Expected output: 0
+
+from std.core.fmt import ToString;
+
+fn main() -> i32 {
+    // bool
+    let b1: bool = true;
+    assert b1.to_string() == "true": "true";
+
+    let b2: bool = false;
+    assert b2.to_string() == "false": "false";
+
+    // char
+    let ch: char = 'A';
+    assert ch.to_string() == "A": "char";
+
+    return 0;
+}

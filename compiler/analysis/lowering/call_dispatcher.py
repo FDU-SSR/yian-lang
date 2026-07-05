@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.lowering.assign_check import check_simple_assign_source
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import LookupResult
+from compiler.analysis.ty.context import LookupResult, TypeCtx
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic"})
+BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -31,7 +32,22 @@ class CallDispatcher:
         lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
 
         if lookup is None:
-            raise AnalysisError(f"Unknown {context_name} '{method_name}'", span)
+            raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
+
+        # Static call site (Self.foo() / Type.foo()) requires a static method
+        # and has no auto-deref (there is no instance to deref).
+        if isinstance(receiver, HIR.Ty):
+            method_ty = self.__ctx.type_ctx[lookup.method_id]
+            assert isinstance(method_ty, Type.MethodType)
+            if not method_ty.custom_def.is_static:
+                type_name = self.__ctx.type_ctx.get_name(receiver.type_id)
+                raise AnalysisError(
+                    f"cannot call instance method '{method_name}' as a static method on '{type_name}'; "
+                    f"declare it 'static fn' or call it on an instance",
+                    span,
+                )
+            # Static calls have no auto-deref chain — skip directly to build.
+            return self.build_method_call(span, receiver, lookup, args, context_name)
 
         # auto-deref: insert deref nodes for each level in the deref chain
         for _ in range(lookup.deref_count):
@@ -73,7 +89,50 @@ class CallDispatcher:
         receiver = self.__expr.value(node.receiver)
         if isinstance(receiver, HIR.Ty):
             return self.__handle_static_or_variant_method_call(node, receiver)
+
+        # For simple types, Move/Clone trait methods are trivial.
+        if node.method_name.name in ("move", "clone", "invalidate", "is_valid"):
+            simple_result = self.__try_simple_move_trait(node.span, receiver, node.method_name.name)
+            if simple_result is not None:
+                return simple_result
+
         return self.__handle_instance_method_call(node, receiver)
+
+    def __try_simple_move_trait(self, span: SrcSpan, receiver: HIR.Expr, method_name: str) -> HIR.Expr | None:
+        """If *receiver*'s value type (after stripping pointer indirections)
+        is simple, return the trivial result.  Otherwise return None.
+
+        - move / clone: auto-deref to the value (bitcopy(*self) ≡ *self).
+        - invalidate:    no-op.
+        - is_valid:      always true.
+        """
+        # Resolve the value type by stripping pointer indirections.
+        type_id = receiver.type_id
+        deref_count = 0
+        while True:
+            ty = self.__ctx.type_ctx[type_id]
+            if isinstance(ty, Type.PointerType):
+                type_id = ty.pointee_type
+                deref_count += 1
+            else:
+                break
+
+        if not self.__ctx.type_ctx.is_simple_type(type_id):
+            return None
+
+        if method_name == "is_valid":
+            return HIR.BoolLiteral(span=span, value=True, type_id=TypeCtx.bool_id, is_place=False)
+
+        if method_name == "invalidate":
+            return HIR.Nop(span=span, type_id=TypeCtx.void_id, is_place=False)
+
+        # move / clone: auto-deref to the value.
+        result = receiver
+        for _ in range(deref_count):
+            ty = self.__ctx.type_ctx[result.type_id]
+            assert isinstance(ty, Type.PointerType)
+            result = HIR.Unary(span, UnaryOperator.Deref, result, ty.pointee_type, is_place=False)
+        return result
 
     def __handle_named_call(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
@@ -102,17 +161,27 @@ class CallDispatcher:
 
     def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         """Lower a call to a built-in name into the appropriate HIR node."""
-        if callee.name == "panic":
-            return self.__handle_panic(node)
-        if callee.name == "sizeof":
-            return self.__handle_sizeof(node)
-        if callee.name == "bitcast":
-            raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
-        if callee.name == "sys_write":
-            return self.__handle_sys_write(node)
-        if callee.name == "sys_read":
-            return self.__handle_sys_read(node)
-        raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
+        match callee.name:
+            case "panic":
+                return self.__handle_panic(node)
+            case "bitcopy":
+                return self.__handle_bitcopy(node)
+            case "sizeof":
+                return self.__handle_sizeof(node)
+            case "bitcast":
+                raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
+            case "sys_write":
+                return self.__handle_sys_write(node)
+            case "sys_read":
+                return self.__handle_sys_read(node)
+            case "open":
+                return self.__handle_open(node)
+            case "close":
+                return self.__handle_close(node)
+            case "assume_init":
+                return self.__handle_assume_init(node)
+            case _:
+                raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
 
     def __handle_panic(self, stmt: AST.Call) -> HIR.Panic:
         if any(arg.name is not None for arg in stmt.args):
@@ -123,6 +192,23 @@ class CallDispatcher:
         message = self.__expr.value(stmt.args[0].value)
         message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
         return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
+
+    def __handle_bitcopy(self, node: AST.Call) -> HIR.Expr:
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'bitcopy'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'bitcopy' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.value(node.args[0].value)
+        return HIR.BitCopy(span=node.span, value=value, type_id=value.type_id, is_place=False)
+
+    def __handle_assume_init(self, node: AST.Call) -> HIR.Expr:
+        """Lower `assume_init(expr)` into HIR.AssumeInit."""
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for 'assume_init'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.value(node.args[0].value)
+        return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
 
     def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
         """Lower `sizeof(type)` into HIR.SizeOf.
@@ -184,7 +270,7 @@ class CallDispatcher:
         # Validate that both the value and target are pointer types.
         value_ty = self.__ctx.type_ctx[value.type_id]
         target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, Type.PointerType):
+        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
             raise AnalysisError(
                 f"'bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
                 node.args[0].span,
@@ -237,6 +323,38 @@ class CallDispatcher:
             is_place=False,
         )
 
+    def __handle_open(self, node: AST.Call) -> HIR.Expr:
+        """Lower `open(path, flags)` into HIR.Open."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'open'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'open' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        path = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.str_id)
+        flags = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.i32_id)
+        return HIR.Open(
+            span=node.span,
+            path=path,
+            flags=flags,
+            type_id=self.__ctx.type_ctx.i32_id,
+            is_place=False,
+        )
+
+    def __handle_close(self, node: AST.Call) -> HIR.Expr:
+        """Lower `close(fd)` into HIR.Close."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for 'close'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'close' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
+        return HIR.Close(
+            span=node.span,
+            fd=fd,
+            type_id=self.__ctx.type_ctx.i32_id,
+            is_place=False,
+        )
+
     def __handle_function_call(self, span: SrcSpan, func_type_id: int, func_name: str, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):
             raise AnalysisError(f"named arguments are not supported for function call '{func_name}'", span)
@@ -248,6 +366,9 @@ class CallDispatcher:
         parameters = func_ty.parameters(self.__ctx.type_ctx)
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
+        for arg in coerced_args:
+            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
+                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
 
         instantiated_func_id = inference.instantiate(func_type_id)
         # report reachable instantiated function to the semantic context
@@ -299,6 +420,9 @@ class CallDispatcher:
 
         fields = self.__ctx.type_ctx.get_struct_fields(struct_type_id)
         coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
+        for field_value in coerced_fields.values():
+            if not self.__ctx.type_ctx.is_simple_type(field_value.type_id):
+                check_simple_assign_source(field_value, self.__ctx.type_ctx, span)
 
         instantiated_struct_id = inference.instantiate(struct_type_id)
         return HIR.StructConstruct(span=span, struct_id=instantiated_struct_id, field_values=coerced_fields, type_id=instantiated_struct_id, is_place=False)
@@ -357,6 +481,9 @@ class CallDispatcher:
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 
         coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
+        for arg in coerced_args:
+            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
+                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
         # report reachable instantiated method to the semantic context
         self.__ctx.report_def(lookup.method_id)
 
@@ -377,6 +504,9 @@ class CallDispatcher:
 
         if self.__has_named_arg(args):
             coerced_args = self.__resolve_named_variant_args(span, variant, args)
+            for val in coerced_args.values():
+                if not self.__ctx.type_ctx.is_simple_type(val.type_id):
+                    check_simple_assign_source(val, self.__ctx.type_ctx, span)
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
 
         if variant.payload_type is None:
@@ -397,6 +527,9 @@ class CallDispatcher:
             inference.constrain(field_type_id, arg_value.type_id)
 
         coerced_values = [self.__expr.coerce(val, inference.instantiate(field_type_id)) for field_type_id, val in zip(field_type_ids, arg_values)]
+        for val in coerced_values:
+            if not self.__ctx.type_ctx.is_simple_type(val.type_id):
+                check_simple_assign_source(val, self.__ctx.type_ctx, span)
         args_dict = {field.name: val for field, val in zip(fields, coerced_values)}
         return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=args_dict, type_id=enum_type_id, is_place=False)
 

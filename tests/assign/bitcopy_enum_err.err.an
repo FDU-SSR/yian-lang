@@ -1,0 +1,23 @@
+// Test: @BitCopy enum with non-BitCopy variant payload is rejected
+//
+// Expected: compilation error
+
+struct Data {
+    value: i64,
+}
+
+impl Clone for Data {
+    pub fn clone() -> Self { Data(self.value) }
+}
+
+@BitCopy
+enum BadEnum {
+    A { val: i32 },
+    B { val: Data },
+}
+
+fn main() -> i32 {
+    let e1 = BadEnum.A(val = 1);
+    let e2 = e1;
+    return 0;
+}

@@ -200,7 +200,7 @@ class Lexer:
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
-            if any(c in ".eEpP" for c in tok_str):
+            if any(c in ".pP" for c in tok_str) or (not tok_str.startswith(("0x", "0X")) and any(c in "eE" for c in tok_str)):
                 value, suffix = Tok.parse_float_value(tok_str)
                 return Tok.FloatLiteral(tok_str, span, value, suffix)
             value, suffix = Tok.parse_integer_value(tok_str)

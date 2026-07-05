@@ -328,5 +328,28 @@ class Desugar:
             case AST.Binary():
                 stmt.left = expr_visitor(stmt.left)
                 stmt.right = expr_visitor(stmt.right)
+            case AST.Unary():
+                stmt.operand = expr_visitor(stmt.operand)
+            case AST.Call():
+                stmt.callee = expr_visitor(stmt.callee)
+                for arg in stmt.args:
+                    arg.value = expr_visitor(arg.value)
+            case AST.MethodCall():
+                stmt.receiver = expr_visitor(stmt.receiver)
+                for arg in stmt.args:
+                    arg.value = expr_visitor(arg.value)
+            case AST.FieldAccess():
+                stmt.receiver = expr_visitor(stmt.receiver)
+            case AST.Tuple():
+                stmt.elements = [expr_visitor(e) for e in stmt.elements]
+            case AST.Array():
+                stmt.elements = [expr_visitor(e) for e in stmt.elements]
+            case AST.ArrayRepeat():
+                stmt.element = expr_visitor(stmt.element)
+                stmt.count = expr_visitor(stmt.count)
+            case AST.DynValue():
+                stmt.value = expr_visitor(stmt.value)
+            case AST.DynBuffer():
+                stmt.size = expr_visitor(stmt.size)
             case _:
                 pass

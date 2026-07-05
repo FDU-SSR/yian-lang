@@ -1,0 +1,69 @@
+// Test slice functionality
+//
+// Expected output: 0
+
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn main() -> i32 {
+    let arr: i32[5] = [1, 2, 3, 4, 5];
+    let slice: i32[] = arr[1u64..4] // This should be a slice containing [2, 3, 4];
+
+    // Test length of the slice
+    assert slice.len() == 3: "Expected slice length to be 3";
+
+    // ptr() — get raw pointer to first element
+    let p: i32* = slice.ptr();
+    assert *p == 2: "ptr should point to first element";
+
+    // Test getting elements from the slice
+    let elem0: Option<i32*> = slice.get(0);
+    assert elem0.is_some(): "get(0) should be Some";
+    let elem1: Option<i32*> = slice.get(3); // Out of bounds
+    assert elem1.is_none(): "Expected out of bounds access to return None";
+
+    // Direct indexing via Index<u64, T*>
+    assert slice[0] == 2: "slice[0] should be 2";
+    assert slice[2] == 4: "slice[2] should be 4";
+
+    // Test first and last elements
+    let first: Option<i32*> = slice.first();
+    assert first.is_some(): "first should be Some";
+    let last: Option<i32*> = slice.last();
+    assert last.is_some(): "last should be Some";
+
+    // Empty slice edge cases
+    let empty: i32[] = arr[2u64..2];
+    assert empty.len() == 0: "empty slice should have len 0";
+    assert empty.first().is_none(): "first on empty slice should be None";
+    assert empty.last().is_none(): "last on empty slice should be None";
+    assert empty.get(0).is_none(): "get on empty slice should be None";
+
+    // PartialEq — compare slices
+    let s1: i32[] = arr[0u64..3];
+    let s2: i32[] = arr[0u64..3];
+    let s3: i32[] = arr[1u64..4];
+    assert s1 == s2: "identical slices should be equal";
+    assert !(s1 == s3): "different slices should not be equal";
+
+    // Test converting slice to Vec
+    let vec: Vec<i32> = slice.to_vec();
+    assert vec.len() == 3: "Expected Vec length to be 3";
+    assert vec[0] == 2 && vec[1] == 3 && vec[2] == 4: "Expected Vec elements to be [2, 3, 4]";
+
+    // Test forward iterating over the slice (IntoIterator → SliceIter)
+    let sum: i32 = 0;
+    for i in slice {
+        sum += *i;
+    }
+    assert sum == 9: "sum of slice [2,3,4] should be 9";
+
+    // Test reverse iteration (SliceIter.rev() → RevSliceIter)
+    let rev_sum: i32 = 0;
+    for i in slice.into_iter().rev() {
+        rev_sum += *i;
+    }
+    assert rev_sum == 9: "reverse sum should also be 9";
+
+    return 0;
+}

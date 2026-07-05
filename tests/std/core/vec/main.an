@@ -1,0 +1,33 @@
+// Test Vec construction, capacity management, and basic queries
+//
+// Expected output: 0
+
+from std.core.vec import Vec;
+
+fn main() -> i32 {
+    // ---- construction ----
+
+    let v1: Vec<i32> = Vec<i32>.new();
+    assert v1.len() == 0: "new() should create empty vector";
+    assert v1.is_empty(): "new() should create empty vector";
+
+    let v2: Vec<i32> = Vec<i32>.with_capacity(10);
+    assert v2.capacity() == 10: "with_capacity should set capacity";
+    assert v2.len() == 0: "with_capacity should not affect len";
+    assert v2.is_empty(): "with_capacity should create empty vector";
+
+    // ---- capacity management ----
+
+    let v3: Vec<i32> = Vec<i32>.new();
+    v3.reserve(100);
+    assert v3.capacity() >= 100: "reserve should increase capacity";
+
+    let v4: Vec<i32> = Vec<i32>.new();
+    v4.reserve(50);
+    v4.push(1);
+    v4.push(2);
+    v4.shrink_to_fit();
+    assert v4.capacity() == 2: "shrink_to_fit should reduce capacity to len";
+
+    return 0;
+}

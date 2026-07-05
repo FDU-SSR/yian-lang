@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypeAlias
 
+from compiler.frontend.lex.position import SrcSpan
+
 if TYPE_CHECKING:
     from compiler.analysis.ty.context import TypeCtx
 
@@ -132,9 +134,11 @@ class StructField:
 @dataclass
 class StructDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     fields: list[StructField] = field(default_factory=list[StructField])
     unit_id: int = -1
+    is_bitcopy: bool = False
 
 
 @dataclass
@@ -182,9 +186,11 @@ class EnumVariant:
 @dataclass
 class EnumDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     variants: list[EnumVariant] = field(default_factory=list[EnumVariant])
     unit_id: int = -1
+    is_bitcopy: bool = False
 
 
 @dataclass
@@ -235,6 +241,7 @@ class Parameter:
 @dataclass
 class FunctionDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     parameters: list[Parameter] = field(default_factory=list[Parameter])
     return_type: int = -1
@@ -269,6 +276,7 @@ class FunctionType:
 @dataclass
 class MethodDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     receiver_type: int = -1
     parameters: list[Parameter] = field(default_factory=list[Parameter])
@@ -309,6 +317,7 @@ class MethodType:
 @dataclass
 class TraitDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     methods: dict[str, int] = field(default_factory=dict[str, int])  # method name -> method type id
 
@@ -344,6 +353,7 @@ class FunctionPointerType:
 @dataclass
 class AliasDef:
     name: str
+    span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     aliased_type: int = -1
 

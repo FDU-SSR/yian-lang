@@ -1,0 +1,26 @@
+// A trait for types that need explicit resource cleanup.
+//
+// drop() releases resources held by the value. If the type also
+// implements Move, drop() should be a no-op when the value is in
+// an invalidated state (i.e., after move() was called).
+//
+// yian does NOT automatically call drop(). Users must call it
+// manually when a value is no longer needed.
+pub trait Drop {
+    fn drop();
+}
+
+// Simple types: drop is a no-op — no resources to release.
+impl Drop for i8  { pub fn drop() {} }
+impl Drop for i16 { pub fn drop() {} }
+impl Drop for i32 { pub fn drop() {} }
+impl Drop for i64 { pub fn drop() {} }
+impl Drop for u8  { pub fn drop() {} }
+impl Drop for u16 { pub fn drop() {} }
+impl Drop for u32 { pub fn drop() {} }
+impl Drop for u64 { pub fn drop() {} }
+impl Drop for f32 { pub fn drop() {} }
+impl Drop for f64 { pub fn drop() {} }
+impl Drop for bool { pub fn drop() {} }
+impl Drop for char { pub fn drop() {} }
+impl Drop for void { pub fn drop() {} }

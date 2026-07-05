@@ -1,0 +1,61 @@
+// Test arithmetic operator overloading
+//
+// Expected output: 0
+
+from std.core.ops import Add, Sub, Mul, Div, Rem, Neg;
+
+@BitCopy
+struct Value<T> {
+    pub value: T,
+}
+
+impl<T> Add<Value<T>, Value<T>> for Value<T> {
+    fn add(rhs: Self) -> Self {
+        return Self(self.value + rhs.value);
+    }
+}
+
+impl<T> Sub<Value<T>, Value<T>> for Value<T> {
+    fn sub(rhs: Self) -> Self {
+        return Self(self.value - rhs.value);
+    }
+}
+
+impl<T> Mul<Value<T>, Value<T>> for Value<T> {
+    fn mul(rhs: Self) -> Self {
+        return Self(self.value * rhs.value);
+    }
+}
+
+impl<T> Div<Value<T>, Value<T>> for Value<T> {
+    fn div(rhs: Self) -> Self {
+        return Self(self.value / rhs.value);
+    }
+}
+
+impl<T> Rem<Value<T>, Value<T>> for Value<T> {
+    fn rem(rhs: Self) -> Self {
+        return Self(self.value % rhs.value);
+    }
+}
+
+impl<T> Neg<Value<T>> for Value<T> {
+    fn neg() -> Self {
+        return Self(-self.value);
+    }
+}
+
+
+fn main() -> i32 {
+    let a: Value<i32> = Value<i32>(10);
+    let b: Value<i32> = Value<i32>(20);
+
+    assert (a + b).value == 30: "Expected 30";
+    assert (b - a).value == 10: "Expected 10";
+    assert (a * b).value == 200: "Expected 200";
+    assert (b / a).value == 2: "Expected 2";
+    assert (b % a).value == 0: "Expected 0";
+    assert (-a).value == -10: "Expected -10";
+
+    return 0;
+}

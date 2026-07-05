@@ -1,0 +1,25 @@
+// Test ToString on floating-point types
+//
+// Expected output: 0
+
+from std.core.fmt import ToString;
+
+fn main() -> i32 {
+    // f32
+    let f32v: f32 = 1.25_f32;
+    assert f32v.to_string() == "1.25": "f32";
+
+    // f64 — fractional
+    let f64v: f64 = -3.5;
+    assert f64v.to_string() == "-3.5": "f64 negative";
+
+    // f64 — integer-like
+    let f64_int: f64 = 10.0;
+    assert f64_int.to_string() == "10": "f64 integer-like";
+
+    // f64 — zero
+    let f64z: f64 = 0.0;
+    assert f64z.to_string() == "0": "f64 zero";
+
+    return 0;
+}

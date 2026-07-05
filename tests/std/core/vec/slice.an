@@ -1,0 +1,57 @@
+// Test Vec slice/view access: as_slice, Deref, get, first, last, extend_from_slice
+//
+// Expected output: 0
+
+from std.core.vec import Vec;
+from std.core.option import Option;
+
+fn main() -> i32 {
+    let v: Vec<i32> = Vec<i32>.new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    // ---- as_slice / Deref ----
+
+    let s: i32[] = v.as_slice();
+    assert s.len() == 3: "as_slice length should match";
+    assert s[0] == 10: "as_slice element 0 should match";
+    assert s[2] == 30: "as_slice element 2 should match";
+
+    let deref_s: i32[] = *v;
+    assert deref_s.len() == 3: "deref should return slice with same len";
+
+    // ---- get (via slice auto-deref) ----
+
+    let g0: Option<i32*> = v.get(0);
+    assert g0.is_some(): "get(0) should be Some";
+    let g2: Option<i32*> = v.get(2);
+    assert g2.is_some(): "get(2) should be Some";
+    let g_out: Option<i32*> = v.get(10);
+    assert g_out.is_none(): "get out of bounds should return None";
+
+    // ---- first / last (via slice auto-deref) ----
+
+    let f: Option<i32*> = v.first();
+    assert f.is_some(): "first should be Some";
+    let l: Option<i32*> = v.last();
+    assert l.is_some(): "last should be Some";
+
+    // ---- index operator ----
+
+    assert v[0] == 10: "index 0 should be 10";
+    assert v[1] == 20: "index 1 should be 20";
+    assert v[2] == 30: "index 2 should be 30";
+
+    // ---- extend_from_slice ----
+
+    let v2: Vec<i32> = Vec<i32>.new();
+    v2.push(1);
+    let arr: i32[2] = [2, 3];
+    v2.extend_from_slice(arr[0u64..2]);
+    assert v2.len() == 3: "extend_from_slice should append elements";
+    assert v2[1] == 2: "extend_from_slice element 1 should be 2";
+    assert v2[2] == 3: "extend_from_slice element 2 should be 3";
+
+    return 0;
+}

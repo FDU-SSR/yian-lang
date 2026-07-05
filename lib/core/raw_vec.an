@@ -1,4 +1,6 @@
 from range import Range;
+from move import Move;
+from drop import Drop;
 from mem import memcpy;
 
 pub struct RawVec<T> {
@@ -63,7 +65,7 @@ impl<T> RawVec<T> {
             new_cap = 4;
         }
 
-        let new_data: T* = dyn T[new_cap];
+        let new_data: T* = dyn[new_cap] T;
 
         // Copy valid elements
         if len > 0 {
@@ -91,7 +93,7 @@ impl<T> RawVec<T> {
             return;
         }
 
-        let new_data: T* = dyn T[len];
+        let new_data: T* = dyn[len] T;
 
         // Copy valid elements
         memcpy(new_data, self.data, len);
@@ -102,5 +104,25 @@ impl<T> RawVec<T> {
 
         self.data = new_data;
         self.cap = len;
+    }
+}
+
+// Implement Move for RawVec<T> to allow moving the RawVec without dropping its contents
+impl<T> Move for RawVec<T> {
+    fn invalidate() {
+        self.data = bitcast<T*>(nullptr) + 1;
+    }
+    fn is_valid() -> bool {
+        self.data != bitcast<T*>(nullptr) + 1
+    }
+}
+
+// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources
+impl<T> Drop for RawVec<T> {
+    fn drop() {
+        if self.is_valid() {
+            del self.data;
+            self.invalidate();
+        }
     }
 }

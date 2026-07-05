@@ -1,0 +1,31 @@
+// Test conditional impl: trait implementation with trait bounds
+//
+// Expected output: 0
+
+trait MyClone {
+    fn my_clone() -> Self;
+}
+
+impl MyClone for i32 {
+    fn my_clone() -> i32 {
+        *self
+    }
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> MyClone for Wrapper<T> if T: MyClone {
+    fn my_clone() -> Self {
+        let v = self.value.my_clone();
+        Wrapper(v)
+    }
+}
+
+fn main() -> i32 {
+    let w: Wrapper<i32> = Wrapper(42);
+    let c = w.my_clone();
+    assert c.value == 42: "value should be 42";
+    return 0;
+}

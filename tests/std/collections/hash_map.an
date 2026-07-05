@@ -1,0 +1,96 @@
+// HashMap test with Murmur3Hasher, key/value type i64
+//
+// Expected output: 0
+
+from std.core.hash import Murmur3BuildHasher;
+from std.collections.hash_map import HashMap;
+
+fn main() -> i32 {
+    // === Test 1: basic construction ===
+    let map1: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert map1.len() == 0: "new map should have len 0";
+    assert map1.is_empty(): "new map should be empty";
+
+    // === Test 2: insert & get ===
+    let map2: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(42)
+    )
+
+    map2.insert(1, 100);
+    assert map2.len() == 1: "len should be 1";
+    assert **map2.get(&1).unwrap() == 100: "get(1) should return 100";
+    assert map2.contains(&1): "contains(1) should be true";
+
+    map2.insert(2, 200);
+    map2.insert(3, 300);
+    assert map2.len() == 3: "len should be 3";
+    assert **map2.get(&2).unwrap() == 200: "get(2) should return 200";
+    assert **map2.get(&3).unwrap() == 300: "get(3) should return 300";
+
+    // === Test 3: overwrite ===
+    map2.insert(1, 999);
+    assert map2.len() == 3: "len unchanged after overwrite";
+    assert **map2.get(&1).unwrap() == 999: "get(1) should return updated value";
+
+    // === Test 4: get missing key ===
+    assert map2.get(&99).is_none(): "get missing key should return None";
+    assert ! map2.contains(&99): "contains missing key should be false";
+
+    // === Test 5: remove ===
+    assert map2.remove(&2): "remove existing should return true";
+    assert map2.len() == 2: "len should be 2 after remove";
+    assert map2.get(&2).is_none(): "removed key should return None";
+    assert **map2.get(&1).unwrap() == 999: "key 1 still exists";
+    assert **map2.get(&3).unwrap() == 300: "key 3 still exists";
+
+    assert ! map2.remove(&99): "remove missing should return false";
+    assert map2.len() == 2: "len unchanged after removing missing";
+
+    // === Test 6: clear ===
+    map2.clear();
+    assert map2.len() == 0: "clear should reset len";
+    assert map2.is_empty(): "clear should make map empty";
+    assert map2.get(&1).is_none(): "key 1 gone after clear";
+
+    // === Test 7: batch insert triggers resize ===
+    let map3: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(7)
+    )
+    for i in 0i64..20 {
+        map3.insert(i, i * 10);
+    }
+    assert map3.len() == 20: "should have 20 entries";
+    for i in 0i64..20 {
+        assert **map3.get(&i).unwrap() == i * 10: "value should match key * 10";
+    }
+    assert map3.get(&20).is_none(): "should not contain key 20";
+
+    // === Test 8: different seed ===
+    let map4: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(123)
+    )
+    map4.insert(100, 1);
+    map4.insert(200, 2);
+    map4.insert(300, 3);
+    assert **map4.get(&100).unwrap() == 1: "seed 123: get 100";
+    assert **map4.get(&200).unwrap() == 2: "seed 123: get 200";
+    assert **map4.get(&300).unwrap() == 3: "seed 123: get 300";
+    assert map4.get(&400).is_none(): "seed 123: 400 not present";
+
+    // === Test 9: index access ===
+    // Index operator auto-wraps argument with & — use map5[k] not map5[&k]
+    let map5: HashMap<i64, i64> = HashMap<i64, i64>.new()
+    map5.insert(1, 100);
+    // Index returns V* and auto-derefs — use map5[k] directly
+    assert map5[1] == 100: "index access should return value";
+    map5[1] = 999
+    assert map5[1] == 999: "index assignment should update value";
+
+    return 0;
+}

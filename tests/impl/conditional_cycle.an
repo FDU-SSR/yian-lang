@@ -1,0 +1,27 @@
+// Test: has_impl cycle detection — mutual conditional impls should
+// terminate without infinite-looping when method lookup triggers
+// condition verification.
+//
+// Expected output: 0
+
+trait A {
+    fn a() -> i32;
+}
+
+trait B {
+    fn b() -> i32;
+}
+
+struct S {}
+
+impl A for S if S: B {
+    fn a() -> i32 { 42 }
+}
+
+impl B for S if S: A {
+    fn b() -> i32 { 43 }
+}
+
+fn main() -> i32 {
+    return 0;
+}

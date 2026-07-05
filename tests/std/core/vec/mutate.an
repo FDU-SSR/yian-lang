@@ -1,0 +1,74 @@
+// Test Vec element mutation: push, pop, insert, remove, swap_remove, truncate, clear
+//
+// Expected output: 0
+
+from std.core.vec import Vec;
+from std.core.option import Option;
+
+fn main() -> i32 {
+    // ---- push / pop ----
+
+    let v1: Vec<i32> = Vec<i32>.new();
+    v1.push(1);
+    v1.push(2);
+    v1.push(3);
+    assert v1.len() == 3: "push should increase size";
+    assert !v1.is_empty(): "vector with elements should not be empty";
+
+    let pop_opt: Option<i32> = v1.pop();
+    assert *pop_opt.unwrap() == 3: "pop should return last element";
+    assert v1.len() == 2: "pop should decrease size";
+
+    // pop on empty
+    let v_empty: Vec<i32> = Vec<i32>.new();
+    assert v_empty.pop().is_none(): "pop on empty should return None";
+
+    // ---- insert / remove ----
+
+    let v2: Vec<i32> = Vec<i32>.new();
+    v2.push(10);
+    v2.push(30);
+    v2.insert(1, 20);
+    assert v2.len() == 3: "insert should increase size";
+    assert v2[0] == 10: "insert should not affect earlier elements";
+    assert v2[1] == 20: "insert should place element at index";
+    assert v2[2] == 30: "insert should shift later elements";
+
+    let removed: i32 = v2.remove(0);
+    assert removed == 10: "remove should return removed element";
+    assert v2.len() == 2: "remove should decrease size";
+    assert v2[0] == 20: "remove should shift remaining elements left";
+
+    // ---- swap_remove ----
+
+    let v3: Vec<i32> = Vec<i32>.new();
+    v3.push(100);
+    v3.push(200);
+    v3.push(300);
+    let sw_removed: i32 = v3.swap_remove(0);
+    assert sw_removed == 100: "swap_remove should return removed element";
+    assert v3.len() == 2: "swap_remove should decrease size";
+    assert v3[0] == 300: "swap_remove should move last element to removed spot";
+
+    // ---- truncate / clear ----
+
+    let v4: Vec<i32> = Vec<i32>.new();
+    v4.push(1);
+    v4.push(2);
+    v4.push(3);
+    v4.push(4);
+    v4.truncate(2);
+    assert v4.len() == 2: "truncate should reduce size";
+    assert v4[0] == 1 && v4[1] == 2: "truncate should keep first N elements";
+
+    v4.clear();
+    assert v4.len() == 0: "clear should set size to 0";
+    assert v4.is_empty(): "clear should make vector empty";
+
+    // clear + reuse
+    v4.push(42);
+    assert v4.len() == 1: "should be reusable after clear";
+    assert v4[0] == 42: "reused vec should hold new value";
+
+    return 0;
+}

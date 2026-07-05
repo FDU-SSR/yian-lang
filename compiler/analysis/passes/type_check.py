@@ -47,7 +47,6 @@ class TypeCheck:
 
     def run(self) -> None:
         self.__find_main()
-        self.__enqueue_non_generic_functions()
 
         processed_def: set[int] = set()
         while self.__worklist:
@@ -76,29 +75,6 @@ class TypeCheck:
                     self.__def_points[symbol.type_id] = main_def_point
         if not self.__worklist:
             raise CompilerError("No 'main' function found")
-
-    def __enqueue_non_generic_functions(self) -> None:
-        """Enqueue all non-generic top-level functions for type-checking.
-
-        Unlike monomorphized instances of generic functions (which are lazily
-        enqueued when discovered via call sites), plain non-generic functions
-        must be type-checked unconditionally -- even if they are never called
-        from any reachable code path.
-
-        Standard library functions (under lib/) are excluded because they
-        reference compiler intrinsics that are only resolvable via the normal
-        call-dispatch path, not through standalone body type-checking.
-        """
-        for unit in self.__units.values():
-            # Skip standard library units -- they reference intrinsics
-            # (open, close, sys_read, sys_write) that are not regular symbols.
-            if "lib" in unit.path.parts:
-                continue
-            for item in unit.items():
-                if isinstance(item, AST.FuncDef) and not item.generics:
-                    symbol = unit.symbol_ctx.lookup(item.name.name)
-                    if symbol is not None:
-                        self.__report_def_point(symbol.type_id)
 
     def __type_check_def(self, def_point: DefPoint) -> None:
         self.__current_type_id = def_point.type_id

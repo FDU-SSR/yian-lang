@@ -327,14 +327,10 @@ class OpBuilder:
         return builtin_expr
 
     def __build_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
+        from compiler.analysis.lowering.assign_check import build_assign
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
-
-        if not left_hir.is_place:
-            raise AnalysisError("left operand of assignment must be a place expression", span)
-
-        right_hir = self.__evaluator.coerce(right_hir, left_hir.type_id)
-        return HIR.Binary(span, BinaryOperator.Assign, left_hir, right_hir, left_hir.type_id, is_place=False)
+        return build_assign(self.__type_ctx, self.__evaluator.coerce, span, left_hir, right_hir)
 
     def __build_add_assign(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:
         left_hir = self.__evaluator.value(left)
@@ -487,9 +483,7 @@ class OpBuilder:
                 fn_ptr_type_id = self.__type_ctx.alloc_function_pointer(param_type_ids, ret_type_id)
                 return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, fn_ptr_type_id, is_place=False)
 
-        if not operand_hir.is_place:
-            raise AnalysisError("address-of operator requires a place expression", span)
-
+        # rvalue addr-of is allowed — CFG builder will alloca a stack temporary
         ptr_type_id = self.__type_ctx.alloc_pointer(operand_hir.type_id)
         return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
 
@@ -677,6 +671,15 @@ class OpBuilder:
 
     def __resolve_overloaded_operator(self, span: SrcSpan, op: BinaryOperator | UnaryOperator, receiver: HIR.Expr, args: list[HIR.Expr]) -> HIR.MethodCall | None:
         trait_kind, method_name = self.__OP_INFO[op]
+
+        # Non-consuming operators take pointer params — wrap args with &.
+        if trait_kind in (Type.IntrinsicCustomType.PartialEq,
+                          Type.IntrinsicCustomType.PartialOrd,
+                          Type.IntrinsicCustomType.Index):
+            args = [HIR.Unary(span=span, op=UnaryOperator.AddrOf, operand=arg,
+                              type_id=self.__type_ctx.alloc_pointer(arg.type_id),
+                              is_place=False)
+                    for arg in args]
 
         trait_id = TypeCtx.intrinsic_custom_type(trait_kind)
 

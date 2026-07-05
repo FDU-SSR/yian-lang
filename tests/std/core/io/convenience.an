@@ -1,0 +1,27 @@
+// Test convenience functions: read_file, write_file, append_file
+//
+// Expected output: 0
+
+from std.core.io import read_file, write_file, append_file;
+
+fn main() -> i32 {
+    let path = "/tmp/yian_test_conv.txt";
+
+    // write_file + read_file
+    write_file(path, "convenience test\n");
+    let s = read_file(path);
+    assert s.as_str() == "convenience test\n": "write_file then read_file";
+
+    // write_file overwrites
+    write_file(path, "overwritten\n");
+    let s2 = read_file(path);
+    assert s2.as_str() == "overwritten\n": "write_file should overwrite";
+
+    // append_file
+    write_file(path, "first\n");
+    append_file(path, "second\n");
+    let s3 = read_file(path);
+    assert s3.as_str() == "first\nsecond\n": "append_file should append";
+
+    return 0;
+}

@@ -1,0 +1,21 @@
+// Test pointer operations
+//
+// Expected output: 0
+
+fn main() -> int {
+    let arr = [42i32, 43, 44];
+    let p = arr.ptr();
+
+    // test indexing
+    assert p[0] == 42;
+    assert &p[0] == &arr[0];
+
+    // test slicing
+    let slice = p[0u64..3];
+    assert slice.len() == 3;
+    assert slice[0] == 42;
+    assert slice[1] == 43;
+    assert slice[2] == 44;
+
+    return 0;
+}

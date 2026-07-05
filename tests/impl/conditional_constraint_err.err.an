@@ -1,0 +1,34 @@
+// Test conditional impl: constraint not satisfied → compile error
+//
+// Expected: compilation error (NoClone does not implement MyClone)
+
+trait MyClone {
+    fn my_clone() -> Self;
+}
+
+impl MyClone for i32 {
+    fn my_clone() -> i32 {
+        *self
+    }
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> MyClone for Wrapper<T> if T: MyClone {
+    fn my_clone() -> Self {
+        let v = self.value.my_clone();
+        Wrapper(v)
+    }
+}
+
+struct NoClone {
+    x: i32,
+}
+
+fn main() -> i32 {
+    let n: Wrapper<NoClone> = Wrapper(NoClone(5));
+    n.my_clone();
+    return 0;
+}

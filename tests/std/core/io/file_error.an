@@ -1,0 +1,23 @@
+// Test File error handling: open missing file, is_err, unwrap panic
+//
+// Expected output: 0
+
+from std.core.io import File, OpenMode;
+
+fn main() -> i32 {
+    // Open a non-existent file — should return Err
+    let r = File.open("/tmp/_nonexistent_yian_test_file_.txt", OpenMode.Read);
+    assert r.is_err(): "opening missing file should be Err";
+
+    // Open should succeed for a valid write
+    let r2 = File.open("/tmp/yian_test_err_handling.txt", OpenMode.Write);
+    assert r2.is_ok(): "opening for write should be Ok";
+    r2.unwrap().drop();
+
+    // Re-open for reading should work
+    let r3 = File.open("/tmp/yian_test_err_handling.txt", OpenMode.Read);
+    assert r3.is_ok(): "re-opening should be Ok";
+    r3.unwrap().drop();
+
+    return 0;
+}

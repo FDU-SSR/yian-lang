@@ -1,0 +1,53 @@
+// Test u8 ASCII classification methods
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    // ---- is_ascii_whitespace ----
+
+    assert b' '.is_ascii_whitespace(): "space should be whitespace";
+    assert b'\t'.is_ascii_whitespace(): "tab should be whitespace";
+    assert b'\n'.is_ascii_whitespace(): "newline should be whitespace";
+    assert b'\r'.is_ascii_whitespace(): "carriage return should be whitespace";
+    assert !b'A'.is_ascii_whitespace(): "letter should not be whitespace";
+    assert !b'0'.is_ascii_whitespace(): "digit should not be whitespace";
+
+    // ---- is_ascii_alpha ----
+
+    assert b'A'.is_ascii_alpha(): "uppercase A should be alpha";
+    assert b'Z'.is_ascii_alpha(): "uppercase Z should be alpha";
+    assert b'a'.is_ascii_alpha(): "lowercase a should be alpha";
+    assert b'z'.is_ascii_alpha(): "lowercase z should be alpha";
+    assert !b'0'.is_ascii_alpha(): "digit should not be alpha";
+    assert !b' '.is_ascii_alpha(): "space should not be alpha";
+
+    // ---- is_ascii_digit ----
+
+    assert b'0'.is_ascii_digit(): "0 should be digit";
+    assert b'5'.is_ascii_digit(): "5 should be digit";
+    assert b'9'.is_ascii_digit(): "9 should be digit";
+    assert !b'A'.is_ascii_digit(): "letter should not be digit";
+    assert !b'/'.is_ascii_digit(): "slash should not be digit";   // before '0'
+    assert !b':'.is_ascii_digit(): "colon should not be digit";   // after '9'
+
+    // ---- is_ascii_alphanumeric ----
+
+    assert b'A'.is_ascii_alphanumeric(): "letter should be alphanumeric";
+    assert b'z'.is_ascii_alphanumeric(): "lowercase should be alphanumeric";
+    assert b'0'.is_ascii_alphanumeric(): "digit should be alphanumeric";
+    assert b'9'.is_ascii_alphanumeric(): "9 should be alphanumeric";
+    assert !b' '.is_ascii_alphanumeric(): "space should not be alphanumeric";
+
+    // ---- is_ascii_hex_digit ----
+
+    assert b'0'.is_ascii_hex_digit(): "0 should be hex digit";
+    assert b'9'.is_ascii_hex_digit(): "9 should be hex digit";
+    assert b'A'.is_ascii_hex_digit(): "A should be hex digit";
+    assert b'F'.is_ascii_hex_digit(): "F should be hex digit";
+    assert b'a'.is_ascii_hex_digit(): "a should be hex digit";
+    assert b'f'.is_ascii_hex_digit(): "f should be hex digit";
+    assert !b'G'.is_ascii_hex_digit(): "G should not be hex digit";
+    assert !b'g'.is_ascii_hex_digit(): "g should not be hex digit";
+
+    return 0;
+}

@@ -1,0 +1,107 @@
+// Test str type, UTF-8 validation, and iteration
+//
+// Expected output: 0
+
+from std.core.option import Option;
+
+fn main() -> i32 {
+    // ---- from_slice: valid UTF-8 ----
+
+    // ASCII
+    let ascii: u8[3] = [65, 66, 67]; // "ABC"
+    let s_ascii: Option<str> = str.from_slice(ascii[0u64..3]);
+    assert s_ascii.is_some(): "ASCII should be valid";
+    assert s_ascii.unwrap().as_slice() == ascii[0u64..3];
+
+    // 2-byte: U+00A9 © → C2 A9
+    let copyright: u8[2] = [194, 169];
+    let s_cp: Option<str> = str.from_slice(copyright[0u64..2]);
+    assert s_cp.is_some(): "2-byte UTF-8 should be valid";
+
+    // 3-byte: U+4E2D 中 → E4 B8 AD
+    let zhong: u8[3] = [228, 184, 173];
+    let s_zhong: Option<str> = str.from_slice(zhong[0u64..3]);
+    assert s_zhong.is_some(): "3-byte UTF-8 should be valid";
+
+    // 4-byte: U+1F600 😀 → F0 9F 98 80
+    let grin: u8[4] = [240, 159, 152, 128];
+    let s_grin: Option<str> = str.from_slice(grin[0u64..4]);
+    assert s_grin.is_some(): "4-byte UTF-8 should be valid";
+
+    // ---- from_slice: invalid UTF-8 ----
+
+    // Invalid leading byte (0xFE)
+    let bad_lead: u8[1] = [254];
+    assert str.from_slice(bad_lead[0u64..1]).is_none(): "0xFE is not a valid leading byte";
+
+    // Continuation byte as first byte
+    let cont_first: u8[1] = [128];
+    assert str.from_slice(cont_first[0u64..1]).is_none(): "continuation byte at start is invalid";
+
+    // Truncated 2-byte sequence
+    let trunc2: u8[1] = [194]; // 110xxxxx without continuation
+    assert str.from_slice(trunc2[0u64..1]).is_none(): "truncated 2-byte should be invalid";
+
+    // Truncated 3-byte sequence
+    let trunc3: u8[2] = [228, 184]; // E4 B8 without third byte
+    assert str.from_slice(trunc3[0u64..2]).is_none(): "truncated 3-byte should be invalid";
+
+    // Truncated 4-byte sequence
+    let trunc4: u8[3] = [240, 159, 152]; // F0 9F 98 without fourth byte
+    assert str.from_slice(trunc4[0u64..3]).is_none(): "truncated 4-byte should be invalid";
+
+    // Invalid continuation byte (not 10xxxxxx)
+    let bad_cont: u8[2] = [194, 65]; // C2 followed by ASCII 'A' instead of 10xxxxxx
+    assert str.from_slice(bad_cont[0u64..2]).is_none(): "invalid continuation byte should fail";
+
+    // Overlong encoding of ASCII (C0 80 instead of 00)
+    let overlong1: u8[2] = [192, 128]; // would encode U+0000
+    assert str.from_slice(overlong1[0u64..2]).is_none(): "overlong 2-byte should be invalid";
+
+    // Overlong encoding of U+007F (C1 BF)
+    let overlong2: u8[2] = [193, 191];
+    assert str.from_slice(overlong2[0u64..2]).is_none(): "overlong U+007F should be invalid";
+
+    // Overlong 3-byte encoding (E0 80 80 instead of 0000)
+    let overlong3: u8[3] = [224, 128, 128];
+    assert str.from_slice(overlong3[0u64..3]).is_none(): "overlong 3-byte should be invalid";
+
+    // Overlong 4-byte encoding (F0 80 80 80)
+    let overlong4: u8[4] = [240, 128, 128, 128];
+    assert str.from_slice(overlong4[0u64..4]).is_none(): "overlong 4-byte should be invalid";
+
+    // Surrogate pair (U+D800 → ED A0 80)
+    let surrogate: u8[3] = [237, 160, 128];
+    assert str.from_slice(surrogate[0u64..3]).is_none(): "surrogate U+D800 should be invalid";
+
+    // Surrogate pair upper bound (U+DFFF → ED BF BF)
+    let surrogate2: u8[3] = [237, 191, 191];
+    assert str.from_slice(surrogate2[0u64..3]).is_none(): "surrogate U+DFFF should be invalid";
+
+    // Beyond U+10FFFF (F5 80 80 80 or higher)
+    let beyond_max: u8[4] = [245, 128, 128, 128];
+    assert str.from_slice(beyond_max[0u64..4]).is_none(): "beyond U+10FFFF should be invalid";
+
+    // ---- str.from() (via From<u8[]>) validates and panics on invalid ----
+
+    // Valid: should succeed
+    let s_from: str = str.from(&ascii[0u64..3]);
+    assert s_from.as_slice() == ascii[0u64..3]: "str.from with valid bytes should work";
+
+    // ---- chars() iteration over multi-byte ----
+    let s_hello: str = str.from(&zhong[0u64..3]);
+    let chars = s_hello.chars();
+    assert chars.next().is_some(): "should yield one char";
+    assert chars.next().is_none(): "should be exhausted";
+
+    // ---- slicing at char boundaries ----
+    let mixed: u8[6] = [228, 189, 160, 229, 165, 189]; // "你好"
+    let s_mixed: str = str.from(&mixed[0u64..6]);
+    // slice at char boundary (byte 3)
+    let s_first_char: str = s_mixed[0u64..3];
+    assert s_first_char.as_slice() == mixed[0u64..3]: "first char should be 3 bytes";
+    let s_second_char: str = s_mixed[3u64..6];
+    assert s_second_char.as_slice() == mixed[3u64..6]: "second char should be 3 bytes";
+
+    return 0;
+}

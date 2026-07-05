@@ -20,13 +20,13 @@ impl u64 {
             return 1;
         }
 
-        n -= 1
-        n |= n >> 1
-        n |= n >> 2
-        n |= n >> 4
-        n |= n >> 8
-        n |= n >> 16
-        n |= n >> 32
+        n -= 1;
+        n |= n >> 1;
+        n |= n >> 2;
+        n |= n >> 4;
+        n |= n >> 8;
+        n |= n >> 16;
+        n |= n >> 32;
         n + 1
     }
 
@@ -35,7 +35,7 @@ impl u64 {
             panic("alignment must be greater than 0");
         }
         let mask = alignment - 1;
-        *self = (*self + mask) & !mask;
+        *self = (*self + mask) & ~mask;
     }
 
     pub fn to_string_radix(radix: u64) -> String {
@@ -43,11 +43,11 @@ impl u64 {
             panic("radix must be between 2 and 36");
         }
         if *self == 0 {
-            return String.from("0");
+            return String.from(&"0");
         }
 
         let n: u64 = *self;
-        let digits = String.from("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        let digits = String.from(&"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
         let out = String.new();
         while n > 0 {
             let digit = n % radix;
@@ -67,7 +67,7 @@ impl Hash<Murmur3Hasher> for u64 {
 }
 
 impl From<str> for u64 {
-    pub static fn from(value: str) -> Self {
+    pub static fn from(value: str*) -> Self {
         let bytes = value.as_slice();
         let len = bytes.len();
         if len == 0 {

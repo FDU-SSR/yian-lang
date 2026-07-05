@@ -1,0 +1,33 @@
+// Test: non-simple types — construction, clone, move, reassignment
+//
+// Expected output: 0
+
+struct BigInt {
+    value: i64,
+}
+
+impl Clone for BigInt {
+    pub fn clone() -> Self { BigInt(self.value) }
+}
+
+impl Move for BigInt {
+    fn invalidate() {}
+    fn is_valid() -> bool { true }
+}
+
+fn main() -> i32 {
+    let a: BigInt = BigInt(42);
+    assert a.value == 42: "a.value should be 42";
+
+    let b = a.clone();
+    assert b.value == 42: "b.value should be 42";
+    assert a.value == 42: "a should still be valid after clone";
+
+    let c = a.move();
+    assert c.value == 42: "c.value should be 42";
+
+    let d: BigInt = BigInt(10);
+    assert d.value == 10: "d.value should be 10";
+
+    return 0;
+}

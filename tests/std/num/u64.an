@@ -1,0 +1,66 @@
+// Test u64 utility methods: rotate_left, next_power_of_two, align_up,
+// to_string_radix, From<str>
+//
+// Expected output: 0
+
+from std.core.string import String;
+
+fn main() -> i32 {
+    // ---- rotate_left ----
+
+    let r1: u64 = 1u64;
+    r1.rotate_left(1);
+    assert r1 == 2: "rotate_left(1) on 1 should give 2";
+
+    let r2: u64 = 0x8000000000000000u64;
+    r2.rotate_left(1);
+    assert r2 == 1: "rotate_left(1) on MSB should wrap to 1";
+
+    let r3: u64 = 0x123456789ABCDEF0u64;
+    r3.rotate_left(0);
+    assert r3 == 0x123456789ABCDEF0u64: "rotate_left(0) should be identity";
+
+    // ---- next_power_of_two ----
+
+    assert 1u64.next_power_of_two() == 1: "np2 of 1 should be 1";
+    assert 2u64.next_power_of_two() == 2: "np2 of 2 should be 2";
+    assert 3u64.next_power_of_two() == 4: "np2 of 3 should be 4";
+    assert 5u64.next_power_of_two() == 8: "np2 of 5 should be 8";
+    assert 100u64.next_power_of_two() == 128: "np2 of 100 should be 128";
+    assert 0u64.next_power_of_two() == 1: "np2 of 0 should be 1";
+
+    // ---- align_up ----
+
+    let a1: u64 = 5;
+    a1.align_up(4);
+    assert a1 == 8: "align_up(5, 4) should give 8";
+
+    let a2: u64 = 8;
+    a2.align_up(4);
+    assert a2 == 8: "align_up(8, 4) should give 8 (already aligned)";
+
+    let a3: u64 = 0;
+    a3.align_up(16);
+    assert a3 == 0: "align_up(0, 16) should give 0";
+
+    // ---- to_string_radix ----
+
+    assert 0u64.to_string_radix(10) == "0": "0 in base 10";
+    assert 255u64.to_string_radix(16) == "FF": "255 in base 16";
+    assert 10u64.to_string_radix(2) == "1010": "10 in base 2";
+    assert 42u64.to_string_radix(8) == "52": "42 in base 8";
+    assert 36u64.to_string_radix(36) == "10": "36 in base 36";
+
+    // ---- From<str> for u64 (parse) ----
+
+    let p1: u64 = u64.from(&"0");
+    assert p1 == 0: "parse '0' should be 0";
+
+    let p2: u64 = u64.from(&"42");
+    assert p2 == 42: "parse '42' should be 42";
+
+    let p3: u64 = u64.from(&"18446744073709551615");
+    assert p3 == 18446744073709551615u64: "parse max u64";
+
+    return 0;
+}

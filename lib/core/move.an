@@ -1,0 +1,75 @@
+from range import Range;
+
+// A trait for types that support move semantics.
+//
+// move() transfers ownership: the original value is invalidated and
+// the returned value is the new owner. After move(), the original
+// must not be used — doing so is a runtime error.
+pub trait Move {
+    fn move() -> Self {
+        let res = bitcopy(*self);
+        self.invalidate();
+        res
+    }
+    fn validity_assert() {
+        if !self.is_valid() {
+            panic("use of invalidated value\n");
+        }
+    }
+
+    fn invalidate();
+    fn is_valid() -> bool;
+}
+
+// Simple types (int, float, bool, char, void, pointer, slice, etc.)
+// automatically implement Move — invalidate() is a no-op and is_valid()
+// always returns true.  The compiler handles this in has_impl.
+
+impl<T, const N: u64> Move for T[N] if T: Move {
+    fn invalidate() {
+        for i in 0..N {
+            (*self)[i].invalidate();
+        }
+    }
+    fn is_valid() -> bool {
+        for i in 0..N {
+            if !(*self)[i].is_valid() {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T1, T2> Move for (T1, T2) if T1: Move, T2: Move {
+    fn invalidate() {
+        (*self)[0].invalidate();
+        (*self)[1].invalidate();
+    }
+    fn is_valid() -> bool {
+        (*self)[0].is_valid() && (*self)[1].is_valid()
+    }
+}
+
+impl<T1, T2, T3> Move for (T1, T2, T3) if T1: Move, T2: Move, T3: Move {
+    fn invalidate() {
+        (*self)[0].invalidate();
+        (*self)[1].invalidate();
+        (*self)[2].invalidate();
+    }
+    fn is_valid() -> bool {
+        (*self)[0].is_valid() && (*self)[1].is_valid() && (*self)[2].is_valid()
+    }
+}
+
+impl<T1, T2, T3, T4> Move for (T1, T2, T3, T4) if T1: Move, T2: Move, T3: Move, T4: Move {
+    fn invalidate() {
+        (*self)[0].invalidate();
+        (*self)[1].invalidate();
+        (*self)[2].invalidate();
+        (*self)[3].invalidate();
+    }
+    fn is_valid() -> bool {
+        (*self)[0].is_valid() && (*self)[1].is_valid() && (*self)[2].is_valid() && (*self)[3].is_valid()
+    }
+}

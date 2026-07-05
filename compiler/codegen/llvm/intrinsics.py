@@ -14,6 +14,8 @@ class IntrinsicKind(Enum):
     Free = auto()
     Write = auto()
     Read = auto()
+    Open = auto()
+    Close = auto()
     Exit = auto()
     MemCopy = auto()
     SysRandom = auto()
@@ -25,6 +27,8 @@ class IntrinsicManager:
         IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType(ir.IntType(8))], "free"),
         IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "write"),
         IntrinsicKind.Read:      (ir.IntType(64), [ir.IntType(32), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "read"),
+        IntrinsicKind.Open:      (ir.IntType(32), [ir.PointerType(ir.IntType(8)), ir.IntType(32), ir.IntType(32)], "open"),
+        IntrinsicKind.Close:     (ir.IntType(32), [ir.IntType(32)], "close"),
         IntrinsicKind.Exit:      (ir.VoidType(), [ir.IntType(32)], "exit"),
         IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(ir.IntType(8)), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "memcpy"),
         IntrinsicKind.SysRandom: (ir.IntType(32), [], "rand"),

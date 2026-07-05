@@ -1,4 +1,4 @@
-from mem import Clone;
+from clone import Clone;
 from ops import PartialEq;
 from option import Option;
 from iter import Iterator, IntoIterator;
@@ -18,7 +18,7 @@ impl<T> Clone for Range<T> {
 }
 
 impl<T> PartialEq<Range<T>> for Range<T> {
-    fn eq(other: Range<T>) -> bool {
+    fn eq(other: Range<T>*) -> bool {
         self.start == other.start && self.end == other.end
     }
 }
@@ -26,17 +26,11 @@ impl<T> PartialEq<Range<T>> for Range<T> {
 impl<T> Iterator<T> for Range<T> {
     fn next() -> Option<T> {
         if self.start < self.end {
-            let value: T = self.start;
-            self.start += 1
-            Option<T>.Some(value)
+            let value = self.start.clone();
+            self.start += 1;
+            Option<T>.Some(value.move())
         } else {
             Option<T>.None
         }
-    }
-}
-
-impl<T> IntoIterator<Range<T>> for Range<T> {
-    fn into_iter() -> Range<T> {
-        *self
     }
 }

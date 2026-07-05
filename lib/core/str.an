@@ -10,17 +10,91 @@ from fmt import ToString;
 from string import String;
 
 impl str {
-    // Create a str from a byte slice
-    // TODO: this is currently just a bitcast, but we should validate that the byte slice is valid UTF-8 and return an error if not
-    static fn from_slice(s: u8[]) -> Self {
+    // Create a str from a byte slice without validation.
+    // Caller must guarantee the byte slice is valid UTF-8.
+    static fn from_slice_unchecked(s: u8[]) -> Self {
         let ret: str* = bitcast<str*>(&s);
         *ret
     }
 
+    // Create a str from a byte slice with UTF-8 validation.
+    // Returns None if the byte slice contains invalid UTF-8 sequences.
+    pub static fn from_slice(s: u8[]) -> Option<Self> {
+        if !Self.is_valid_utf8(s) {
+            return Option<str>.None;
+        }
+        let ret: str* = bitcast<str*>(&s);
+        Option<str>.Some(*ret)
+    }
+
+    // Validate that a byte slice is a well-formed UTF-8 sequence.
+    static fn is_valid_utf8(bytes: u8[]) -> bool {
+        let len = bytes.len();
+        let i: u64 = 0;
+
+        while i < len {
+            let b1 = bytes[i];
+
+            // ASCII: 0xxxxxxx
+            if b1 < 128 {
+                i += 1;
+                continue;
+            }
+
+            // 2-byte: 110xxxxx 10xxxxxx
+            if (b1 & 224) == 192 {
+                if i + 1 >= len { return false; }
+                let b2 = bytes[i + 1];
+                if (b2 & 192) != 128 { return false; }
+                // overlong: codepoint < U+0080 encoded as 2 bytes
+                if b1 < 194 { return false; }
+                i += 2;
+                continue;
+            }
+
+            // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+            if (b1 & 240) == 224 {
+                if i + 2 >= len { return false; }
+                let b2 = bytes[i + 1];
+                let b3 = bytes[i + 2];
+                if (b2 & 192) != 128 { return false; }
+                if (b3 & 192) != 128 { return false; }
+                // surrogate: U+D800–U+DFFF → ED A0 80 – ED BF BF
+                if b1 == 237 && b2 >= 160 { return false; }
+                // overlong: codepoint < U+0800 encoded as 3 bytes
+                if b1 == 224 && b2 < 160 { return false; }
+                i += 3;
+                continue;
+            }
+
+            // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+            if (b1 & 248) == 240 {
+                if i + 3 >= len { return false; }
+                let b2 = bytes[i + 1];
+                let b3 = bytes[i + 2];
+                let b4 = bytes[i + 3];
+                if (b2 & 192) != 128 { return false; }
+                if (b3 & 192) != 128 { return false; }
+                if (b4 & 192) != 128 { return false; }
+                // beyond U+10FFFF: max is F4 8F BF BF
+                if b1 > 244 { return false; }
+                if b1 == 244 && b2 > 143 { return false; }
+                // overlong: codepoint < U+10000 encoded as 4 bytes
+                if b1 == 240 && b2 < 144 { return false; }
+                i += 4;
+                continue;
+            }
+
+            // Invalid leading byte (10xxxxxx, 11111xxx, etc.)
+            return false;
+        }
+
+        true
+    }
+
     // Get the byte slice of the str
     pub fn as_slice() -> u8[] {
-        let ret: u8[]* = bitcast<u8[]*>(self);
-        *ret
+        *bitcast<u8[]*>(self)
     }
 
     // Get an iterator over the characters of the str
@@ -74,7 +148,7 @@ impl str {
             return true;
         }
 
-        (bytes[index] & 192) != 128
+        return (bytes[index] & 192) != 128;
     }
 
     // Trim whitespace from both ends of the String
@@ -88,7 +162,7 @@ impl str {
         while end > start && bytes[end - 1].is_ascii_whitespace() {
             end -= 1
         }
-        str.from(bytes[start..end])
+        str.from(&bytes[start..end])
     }
 
     // Parse the str into specified type T, panicking if parsing fails
@@ -97,6 +171,7 @@ impl str {
     }
 }
 
+@BitCopy
 pub struct CharIter {
     pub byte_iter: SliceIter<u8>,
 }
@@ -121,12 +196,12 @@ impl CharIter {
 
 impl Iterator<char> for CharIter {
     pub fn next() -> Option<char> {
-        let b1_opt: Option<u8> = self.byte_iter.next();
+        let b1_opt = self.byte_iter.next();
 
         if b1_opt.is_none() {
             return Option<char>.None;
         }
-        let b1: u8 = b1_opt.unwrap_or(0); // We know it's Some, so unwrap is safe;
+        let b1: u8 = **b1_opt.unwrap(); // We know it's Some, so unwrap is safe;
 
         if b1 < 128 { // 0xxxxxxx
             return Option<char>.Some(char(b1));
@@ -134,22 +209,22 @@ impl Iterator<char> for CharIter {
 
         // 2-byte: 110xxxxx 10xxxxxx
         if (b1 & 224) == 192 {
-            let b2: u8 = self.byte_iter.next().unwrap_or(0);
+            let b2: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 31) << 6) | u32(b2 & 63)));
         }
 
         // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
         if (b1 & 240) == 224 {
-            let b2: u8 = self.byte_iter.next().unwrap_or(0);
-            let b3: u8 = self.byte_iter.next().unwrap_or(0);
+            let b2: u8 = **self.byte_iter.next().unwrap();
+            let b3: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b3 & 63)));
         }
 
         // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
         if (b1 & 248) == 240 {
-            let b2: u8 = self.byte_iter.next().unwrap_or(0);
-            let b3: u8 = self.byte_iter.next().unwrap_or(0);
-            let b4: u8 = self.byte_iter.next().unwrap_or(0);
+            let b2: u8 = **self.byte_iter.next().unwrap();
+            let b3: u8 = **self.byte_iter.next().unwrap();
+            let b4: u8 = **self.byte_iter.next().unwrap();
             return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
         }
 
@@ -164,6 +239,7 @@ impl IntoIterator<CharIter> for CharIter {
     }
 }
 
+@BitCopy
 pub struct RevCharIter {
     pub byte_iter: RevSliceIter<u8>
 }
@@ -188,43 +264,43 @@ impl RevCharIter {
 
 impl Iterator<char> for RevCharIter {
     pub fn next() -> Option<char> {
-        let b1_opt: Option<u8> = self.byte_iter.next();
+        let b1_opt = self.byte_iter.next();
 
         if b1_opt.is_none() {
             return Option<char>.None;
         }
 
-        let b1: u8 = b1_opt.unwrap_or(0);
+        let b1: u8 = **b1_opt.unwrap();
 
         if b1 < 128 {
             return Option<char>.Some(char(b1));
         }
 
-        let b2_opt: Option<u8> = self.byte_iter.next();
+        let b2_opt = self.byte_iter.next();
         if b2_opt.is_none() {
             return Option<char>.None;
         }
-        let b2: u8 = b2_opt.unwrap_or(0);
+        let b2: u8 = **b2_opt.unwrap();
 
         if (b2 & 224) == 192 {
             return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b1 & 63)));
         }
 
-        let b3_opt: Option<u8> = self.byte_iter.next();
+        let b3_opt = self.byte_iter.next();
         if b3_opt.is_none() {
             return Option<char>.None;
         }
-        let b3: u8 = b3_opt.unwrap_or(0);
+        let b3: u8 = **b3_opt.unwrap();
 
         if (b3 & 240) == 224 {
             return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));
         }
 
-        let b4_opt: Option<u8> = self.byte_iter.next();
+        let b4_opt = self.byte_iter.next();
         if b4_opt.is_none() {
             return Option<char>.None;
         }
-        let b4: u8 = b4_opt.unwrap_or(0);
+        let b4: u8 = **b4_opt.unwrap();
 
         if (b4 & 248) == 240 {
             return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));
@@ -240,6 +316,7 @@ impl IntoIterator<RevCharIter> for RevCharIter {
     }
 }
 
+@BitCopy
 pub struct CharIndicesIter {
     pub front_offset: u64,
     pub iter: CharIter,
@@ -267,8 +344,11 @@ impl Iterator<(u64, char)> for CharIndicesIter {
 }
 
 impl From<u8[]> for str {
-    pub static fn from(value: u8[]) -> Self {
-        Self.from_slice(value)
+    pub static fn from(value: u8[]*) -> Self {
+        match Self.from_slice(*value) {
+            Some(s) => s,
+            None => panic("invalid UTF-8 sequence"),
+        }
     }
 }
 
@@ -279,24 +359,24 @@ impl Into<u8[]> for str {
 }
 
 impl PartialEq<str> for str {
-    pub fn eq(other: str) -> bool {
+    pub fn eq(other: str*) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
 
 impl Index<Range<u64>, str> for str {
-    pub fn index(range: Range<u64>) -> str {
+    pub fn index(range: Range<u64>*) -> str {
         let bytes = self.as_slice();
         let len = bytes.len();
 
         if range.start > range.end || range.end > len {
             panic("index out of bounds");
         }
-        if ! self.is_char_boundary(range.start) || ! self.is_char_boundary(range.end) {
+        if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
             panic("str slice index is ! on a char boundary");
         }
 
-        Self.from_slice(bytes[range.start..range.end])
+        Self.from_slice_unchecked(bytes[range.start..range.end])
     }
 }
 
@@ -309,6 +389,6 @@ impl Hash<Murmur3Hasher> for str {
 
 impl ToString for str {
     fn to_string() -> String {
-        String.from(*self)
+        String.from(self)
     }
 }

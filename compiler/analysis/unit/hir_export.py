@@ -152,6 +152,10 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_bit_cast(expr, guides, is_last, type_ctx)
         case HIR.SysRead():
             return __export_sys_read(expr, guides, is_last, type_ctx)
+        case HIR.AssumeInit():
+            res = __line(guides, is_last, f"AssumeInit: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+            return res
         case HIR.Tuple():
             return __export_tuple(expr, guides, is_last, type_ctx)
         case HIR.Array():

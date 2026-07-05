@@ -290,6 +290,23 @@ class SysRead:
 
 
 @dataclass
+class Open:
+    span: SrcSpan
+    path: Expr   # str
+    flags: Expr  # i32
+    type_id: int  # i32
+    is_place: bool
+
+
+@dataclass
+class Close:
+    span: SrcSpan
+    fd: Expr     # i32
+    type_id: int  # i32
+    is_place: bool
+
+
+@dataclass
 class Tuple:
     span: SrcSpan
     field_values: list[Expr]
@@ -378,6 +395,30 @@ class NullptrLiteral:
 
 
 @dataclass
+class BitCopy:
+    span: SrcSpan
+    value: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class AssumeInit:
+    span: SrcSpan
+    value: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class Nop:
+    """No-operation — semantically empty (e.g. invalidate on simple types)."""
+    span: SrcSpan
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -392,7 +433,7 @@ Expr: TypeAlias = (
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | SysRead | SysWrite
+    | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty
     | Block
@@ -403,4 +444,7 @@ Expr: TypeAlias = (
     | Match
     | Semi
     | Let
+    | BitCopy
+    | AssumeInit
+    | Nop
 )

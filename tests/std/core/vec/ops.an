@@ -1,0 +1,78 @@
+// Test Vec operators, conversions, and traits: extend, Add, Clone, PartialEq, From, Into
+//
+// Expected output: 0
+
+from std.core.vec import Vec;
+
+fn main() -> i32 {
+    // ---- extend (consume another Vec) ----
+
+    let v1: Vec<i32> = Vec<i32>.new();
+    v1.push(10);
+    v1.push(20);
+
+    let v2: Vec<i32> = Vec<i32>.new();
+    v2.push(30);
+    v2.push(40);
+
+    v1.extend(v2.move());
+    assert v1.len() == 4: "extend should append all elements";
+    assert v1[2] == 30: "extend should append correctly";
+
+    // ---- Add trait ----
+
+    let v3: Vec<i32> = Vec<i32>.new();
+    v3.push(1);
+    v3.push(2);
+
+    let v4: Vec<i32> = Vec<i32>.new();
+    v4.push(3);
+    v4.push(4);
+
+    let v5: Vec<i32> = v3.move() + v4.move();
+    assert v5.len() == 4: "add should concatenate vectors";
+    assert v5[0] == 1 && v5[3] == 4: "add should preserve element order";
+
+    // ---- Clone ----
+
+    let v6: Vec<i32> = Vec<i32>.new();
+    v6.push(100);
+    v6.push(200);
+
+    let v7: Vec<i32> = v6.clone();
+    assert v7.len() == 2: "clone should copy size";
+    assert v7 == v6: "clone should create equal vector";
+
+    // modify original — clone should be independent
+    v6.push(300);
+    assert v7.len() == 2: "clone should be independent of original";
+
+    // ---- PartialEq ----
+
+    let v8: Vec<i32> = Vec<i32>.new();
+    v8.push(1);
+    v8.push(2);
+
+    let v9: Vec<i32> = Vec<i32>.new();
+    v9.push(1);
+    v9.push(2);
+
+    assert v8 == v9: "equal vectors should be equal";
+    assert !(v8 != v9): "equal vectors should not be unequal";
+
+    let v10: Vec<i32> = Vec<i32>.new();
+    v10.push(1);
+    v10.push(3);
+
+    assert v8 != v10: "different vectors should not be equal";
+    assert !(v8 == v10): "different vectors should not compare equal";
+
+    // ---- From<T[]> for Vec<T> ----
+
+    let arr: i32[3] = [40, 50, 60];
+    let v11: Vec<i32> = Vec<i32>.from(&arr[0u64..3]);
+    assert v11.len() == 3: "Vec.from(slice) should create Vec";
+    assert v11[0] == 40 && v11[1] == 50 && v11[2] == 60: "Vec.from should copy elements";
+
+    return 0;
+}
