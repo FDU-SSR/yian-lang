@@ -1,6 +1,6 @@
 from vec import Vec;
 from clone import Clone;
-from ops import PartialEq, Add, Deref, Index;
+from ops import PartialEq, Add, AddAssign, Deref, Index;
 from convert import From;
 from option import Option;
 from range import Range;
@@ -8,64 +8,82 @@ from fmt import ToString;
 from move import Move;
 from drop import Drop;
 
+// A growable UTF-8 string stored as a Vec<u8>.
+// Supports mutation, concatenation, and deref to str.
 pub struct String {
     data: Vec<u8>,
 }
 
+// =============================================================================
+// Construction
+// =============================================================================
+
 impl String {
-    // Create a new empty String
+    // Create a new empty String.
     static pub fn new() -> Self {
         Self(data=Vec<u8>.new())
     }
 
-    // Create a new String with specified capacity
+    // Create a new String with pre-allocated byte capacity.
     static pub fn with_capacity(capacity: u64) -> Self {
         Self(data = Vec<u8>.with_capacity(capacity))
     }
+}
 
-    // Extract str from String
+// =============================================================================
+// Query — read-only access to length, capacity, content
+// =============================================================================
+
+impl String {
+    // Return the string contents as a str slice.
     pub fn as_str() -> str {
         self.validity_assert();
         str.from(&self.data.as_slice())
     }
 
-    // Get the byte slice of the String
+    // Return the underlying byte slice.
     pub fn as_slice() -> u8[] {
         self.validity_assert();
         self.data.as_slice()
     }
 
-    // Get capacity of String in bytes
+    // Return the allocated byte capacity.
     pub fn capacity() -> u64 {
         self.validity_assert();
         self.data.capacity()
     }
 
-    // Get length of String in bytes
+    // Return the byte length.
     pub fn len() -> u64 {
         self.validity_assert();
         self.data.len()
     }
 
-    // Check if the String is empty
+    // Return true if the string is empty.
     pub fn is_empty() -> bool {
         self.validity_assert();
         self.len() == 0
     }
+}
 
-    // Push a String to the end(copy)
+// =============================================================================
+// Mutation — push, pop, clear, capacity management
+// =============================================================================
+
+impl String {
+    // Append a str slice (copied).
     pub fn push_str(s: str) {
         self.validity_assert();
         self.data.extend_from_slice(s.as_slice());
     }
 
-    // Push a single char to the end
+    // Append a single char, encoding it as UTF-8.
     pub fn push(c: char) {
         self.validity_assert();
         let code: u32 = u32(c);
 
         if code <= 0x7F {
-            // 1 byte
+            // 1 byte — ASCII range
             self.data.push(u8(code));
         } elif code <= 0x7FF {
             // 2 bytes
@@ -85,7 +103,7 @@ impl String {
         }
     }
 
-    // Pop a char from the end and return it
+    // Pop the last char from the string, returning None if empty.
     pub fn pop() -> Option<char> {
         self.validity_assert();
         if self.is_empty() {
@@ -95,15 +113,14 @@ impl String {
         let len = self.len();
         let bytes = self.as_slice();
 
-        // Find the start of the last UTF-8 character
+        // Walk backward through continuation bytes (10xxxxxx) to find the
+        // start of the last UTF-8 character.
         let i: u64 = 1;
         while i <= 4 && i <= len {
             let byte = bytes[len - i];
-            // Check if the byte is a valid UTF-8 continuation byte
             if (byte & 0xC0) != 0x80 {
                 let code: u32 = 0;
 
-                // Decode the UTF-8 character based on the number of bytes
                 if i == 1 {
                     code = u32(byte);
                 } elif i == 2 {
@@ -122,30 +139,34 @@ impl String {
         return Option<char>.None;
     }
 
-    // Trimed version of the String
+    // Return a whitespace-trimmed copy of the string.
     pub fn trimmed() -> String {
         self.validity_assert();
         String.from(&self.trim())
     }
 
-    // Clear the contents of the String
+    // Clear the contents, leaving an empty string.
     pub fn clear() {
         self.validity_assert();
         self.data.clear();
     }
 
-    // Reserve additional capacity in bytes
+    // Reserve at least `additional` bytes of capacity.
     pub fn reserve(additional: u64) {
         self.validity_assert();
         self.data.reserve(additional);
     }
 
-    // Shrink the capacity to fit the size
+    // Shrink capacity to fit the current length.
     pub fn shrink_to_fit() {
         self.validity_assert();
         self.data.shrink_to_fit();
     }
 }
+
+// =============================================================================
+// Clone
+// =============================================================================
 
 impl Clone for String {
     pub fn clone() -> Self {
@@ -154,7 +175,10 @@ impl Clone for String {
     }
 }
 
-// Implement PartialEq for String to compare with another String
+// =============================================================================
+// PartialEq — compare String with String / str
+// =============================================================================
+
 impl PartialEq<String> for String {
     pub fn eq(other: String*) -> bool {
         self.validity_assert();
@@ -163,7 +187,6 @@ impl PartialEq<String> for String {
     }
 }
 
-// Implement PartialEq for String to compare with a str slice
 impl PartialEq<str> for String {
     pub fn eq(other: str*) -> bool {
         self.validity_assert();
@@ -171,7 +194,10 @@ impl PartialEq<str> for String {
     }
 }
 
-// Implement Add for String to concatenate with another String
+// =============================================================================
+// Add — concatenate with String / str / char (consumes both operands)
+// =============================================================================
+
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {
         self.validity_assert();
@@ -183,7 +209,6 @@ impl Add<String, String> for String {
     }
 }
 
-// Implement Add for String to concatenate with a str slice
 impl Add<str, String> for String {
     pub fn add(other: str) -> String {
         self.validity_assert();
@@ -193,7 +218,6 @@ impl Add<str, String> for String {
     }
 }
 
-// Implement Add for String to concatenate with a char
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
         self.validity_assert();
@@ -203,7 +227,40 @@ impl Add<char, String> for String {
     }
 }
 
-// Implement Deref to allow String to be used as a str slice
+// =============================================================================
+// AddAssign — append String / str / char in-place
+// =============================================================================
+
+impl AddAssign<String, String> for String {
+    fn add_assign(other: String) -> String {
+        self.validity_assert();
+        other.validity_assert();
+        self.push_str(other.as_str());
+        other.drop();
+        *self
+    }
+}
+
+impl AddAssign<str, String> for String {
+    fn add_assign(other: str) -> String {
+        self.validity_assert();
+        self.push_str(other);
+        *self
+    }
+}
+
+impl AddAssign<char, String> for String {
+    fn add_assign(other: char) -> String {
+        self.validity_assert();
+        self.push(other);
+        *self
+    }
+}
+
+// =============================================================================
+// Deref — String → str
+// =============================================================================
+
 impl Deref<str> for String {
     pub fn deref() -> str {
         self.validity_assert();
@@ -211,15 +268,20 @@ impl Deref<str> for String {
     }
 }
 
-// Implement From<str> for String to allow creating a String from a str slice
-// This will clone the data from the str slice into the String
+// =============================================================================
+// From / Into — create String from str
+// =============================================================================
+
 impl From<str> for String {
     static pub fn from(value: str*) -> Self {
         Self(data=Vec<u8>.from(&value.as_slice()))
     }
 }
 
-// Implement Index for String to allow indexing into the String as a str slice
+// =============================================================================
+// Index — substring via Range<u64>
+// =============================================================================
+
 impl Index<Range<u64>, str> for String {
     pub fn index(range: Range<u64>*) -> str {
         self.validity_assert();
@@ -227,7 +289,10 @@ impl Index<Range<u64>, str> for String {
     }
 }
 
-// Implement ToString for String to allow converting a String into a String (clone)
+// =============================================================================
+// ToString
+// =============================================================================
+
 impl ToString for String {
     pub fn to_string() -> String {
         self.validity_assert();
@@ -235,13 +300,19 @@ impl ToString for String {
     }
 }
 
-// Implement Move for String to allow moving a String, invalidating the original
+// =============================================================================
+// Move — ownership transfer
+// =============================================================================
+
 impl Move for String {
     pub fn invalidate() { self.data.invalidate(); }
     pub fn is_valid() -> bool { self.data.is_valid() }
 }
 
-// Implement Drop for String to allow dropping a String, freeing its resources
+// =============================================================================
+// Drop — free backing buffer
+// =============================================================================
+
 impl Drop for String {
     pub fn drop() {
         self.data.drop();

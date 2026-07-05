@@ -35,7 +35,7 @@ impl u64 {
             panic("alignment must be greater than 0");
         }
         let mask = alignment - 1;
-        *self = (*self + mask) & !mask;
+        *self = (*self + mask) & ~mask;
     }
 
     pub fn to_string_radix(radix: u64) -> String {

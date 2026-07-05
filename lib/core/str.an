@@ -264,43 +264,43 @@ impl RevCharIter {
 
 impl Iterator<char> for RevCharIter {
     pub fn next() -> Option<char> {
-        let b1_opt: Option<u8> = self.byte_iter.next();
+        let b1_opt = self.byte_iter.next();
 
         if b1_opt.is_none() {
             return Option<char>.None;
         }
 
-        let b1: u8 = *b1_opt.unwrap();
+        let b1: u8 = **b1_opt.unwrap();
 
         if b1 < 128 {
             return Option<char>.Some(char(b1));
         }
 
-        let b2_opt: Option<u8> = self.byte_iter.next();
+        let b2_opt = self.byte_iter.next();
         if b2_opt.is_none() {
             return Option<char>.None;
         }
-        let b2: u8 = *b2_opt.unwrap();
+        let b2: u8 = **b2_opt.unwrap();
 
         if (b2 & 224) == 192 {
             return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b1 & 63)));
         }
 
-        let b3_opt: Option<u8> = self.byte_iter.next();
+        let b3_opt = self.byte_iter.next();
         if b3_opt.is_none() {
             return Option<char>.None;
         }
-        let b3: u8 = *b3_opt.unwrap();
+        let b3: u8 = **b3_opt.unwrap();
 
         if (b3 & 240) == 224 {
             return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));
         }
 
-        let b4_opt: Option<u8> = self.byte_iter.next();
+        let b4_opt = self.byte_iter.next();
         if b4_opt.is_none() {
             return Option<char>.None;
         }
-        let b4: u8 = *b4_opt.unwrap();
+        let b4: u8 = **b4_opt.unwrap();
 
         if (b4 & 248) == 240 {
             return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));

@@ -124,6 +124,17 @@ fn main() -> i32 {
     let s_tostr2: String = s_tostr.to_string();
     assert s_tostr == s_tostr2: "to_string should return equivalent string";
 
+    // 测试 AddAssign trait (+= String, str, char)
+    let s_aaeq: String = String.from(&"Hello");
+    s_aaeq += " World";
+    assert s_aaeq == "Hello World": "add_assign str should append in-place";
+
+    s_aaeq += String.from(&"!");
+    assert s_aaeq == "Hello World!": "add_assign String should append in-place";
+
+    s_aaeq += '\n';
+    assert s_aaeq == "Hello World!\n": "add_assign char should append in-place";
+
     // 测试 Move trait
     let s_move: String = String.from(&"MoveTest");
     assert s_move.is_valid(): "should be valid before move";

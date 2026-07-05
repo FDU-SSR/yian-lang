@@ -7,7 +7,7 @@ from compiler.analysis.lowering.assign_check import check_simple_assign_source
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import LookupResult
+from compiler.analysis.ty.context import LookupResult, TypeCtx
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
@@ -90,21 +90,21 @@ class CallDispatcher:
         if isinstance(receiver, HIR.Ty):
             return self.__handle_static_or_variant_method_call(node, receiver)
 
-        # For simple types, move() and clone() are identity operations
-        # after stripping pointer indirections (bitcopy(*self) ≡ *self).
-        if node.method_name.name in ("move", "clone"):
-            simple_result = self.__try_simple_move_clone(node.span, receiver)
+        # For simple types, Move/Clone trait methods are trivial.
+        if node.method_name.name in ("move", "clone", "invalidate", "is_valid"):
+            simple_result = self.__try_simple_move_trait(node.span, receiver, node.method_name.name)
             if simple_result is not None:
                 return simple_result
 
         return self.__handle_instance_method_call(node, receiver)
 
-    def __try_simple_move_clone(self, span: SrcSpan, receiver: HIR.Expr) -> HIR.Expr | None:
+    def __try_simple_move_trait(self, span: SrcSpan, receiver: HIR.Expr, method_name: str) -> HIR.Expr | None:
         """If *receiver*'s value type (after stripping pointer indirections)
-        is simple, return the auto-deref'd value.  Otherwise return None.
+        is simple, return the trivial result.  Otherwise return None.
 
-        For simple types, move() / clone() are identity operations:
-        bitcopy(*self) ≡ *self, and invalidate() is a no-op.
+        - move / clone: auto-deref to the value (bitcopy(*self) ≡ *self).
+        - invalidate:    no-op.
+        - is_valid:      always true.
         """
         # Resolve the value type by stripping pointer indirections.
         type_id = receiver.type_id
@@ -120,7 +120,13 @@ class CallDispatcher:
         if not self.__ctx.type_ctx.is_simple_type(type_id):
             return None
 
-        # Apply the same number of pointer derefs.
+        if method_name == "is_valid":
+            return HIR.BoolLiteral(span=span, value=True, type_id=TypeCtx.bool_id, is_place=False)
+
+        if method_name == "invalidate":
+            return HIR.Nop(span=span, type_id=TypeCtx.void_id, is_place=False)
+
+        # move / clone: auto-deref to the value.
         result = receiver
         for _ in range(deref_count):
             ty = self.__ctx.type_ctx[result.type_id]

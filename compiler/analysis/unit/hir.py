@@ -411,6 +411,14 @@ class AssumeInit:
 
 
 @dataclass
+class Nop:
+    """No-operation — semantically empty (e.g. invalidate on simple types)."""
+    span: SrcSpan
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -438,4 +446,5 @@ Expr: TypeAlias = (
     | Let
     | BitCopy
     | AssumeInit
+    | Nop
 )
