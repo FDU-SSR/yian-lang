@@ -335,10 +335,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
     # ── initialise compiler log ──────────────────────────────────────────
-    from compiler.utils.log import CompilerLog
+    from compiler.utils.log import CompilerLog, LogLevel
     log_file = str(args.log_file) if args.log_file else ""
     CompilerLog.init(spec=args.log_spec, file=log_file)
+    ch_main = CompilerLog.get("main")
 
+    ch_main.info(f"compiling {len(args.paths)} source file(s)")
     timings: dict[str, float] = {}
     t0 = time.perf_counter() if args.profile else 0.0
 
@@ -348,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     # lex all source files
     lex_start = time.perf_counter() if args.profile else 0.0
     token_lists: list[list[Token]] = __lex(src_files)
+    ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
     if args.profile:
         timings["lex"] = time.perf_counter() - lex_start
 
@@ -357,12 +360,14 @@ def main(argv: list[str] | None = None) -> int:
     # parse all token lists into ASTs
     parse_start = time.perf_counter() if args.profile else 0.0
     programs: list[AST.Program] = __parse(token_lists)
+    ch_main.debug(f"parsed {sum(len(p.items) for p in programs)} top-level items")
     if args.profile:
         timings["parse"] = time.perf_counter() - parse_start
 
     # desugar ASTs
     desugar_start = time.perf_counter() if args.profile else 0.0
     programs = __desugar(programs)
+    ch_main.debug("desugaring complete")
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
@@ -381,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         global_resolver.run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
+    ch_main.debug(f"global resolve complete — {len(unit_datas)} units")
     if args.profile:
         timings["global_resolve"] = time.perf_counter() - resolve_start
 
@@ -401,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     def_points = type_checker.export()
+    ch_main.debug(f"type-checked {len(def_points)} definitions")
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start
 
@@ -422,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
+    ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start
 
