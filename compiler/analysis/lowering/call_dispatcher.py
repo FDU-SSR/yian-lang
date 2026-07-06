@@ -14,6 +14,9 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import UnaryOperator
+from compiler.utils.log import CompilerLog
+
+ch_call = lambda: CompilerLog.get("call_dispatch")
 
 if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
@@ -29,6 +32,7 @@ class CallDispatcher:
         self.__expr = expr
 
     def dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr], context_name: str) -> HIR.Expr:
+        ch_call().trace(lambda: f"dispatch '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}")
         lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
 
         if lookup is None:

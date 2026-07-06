@@ -14,7 +14,9 @@ from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.utils.log import CompilerLog
 
+ch_cfg = lambda: CompilerLog.get("cfg.logical")
 
 @dataclass
 class LoopCtx:
@@ -612,6 +614,7 @@ class CfgBuilder:
           merge:
             %r = phi [(entry, true), (rhs, %b)]
         """
+        ch_cfg().trace(lambda: f"logical {expr.op} at {expr.span}")
         cond_val = self.__resolve_val(expr.left)
 
         rhs_block = self.__new_block("logical.rhs")

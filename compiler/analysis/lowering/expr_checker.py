@@ -16,8 +16,10 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.utils.log import CompilerLog
 
-
+# Lazy channel accessors — called at runtime, after CompilerLog is initialised.
+ch_expr = lambda: CompilerLog.get("type_check.expr")
 class ExprChecker:
     """Expression checker and lowering facade.
 
@@ -32,6 +34,7 @@ class ExprChecker:
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
+        ch_expr().trace(lambda: f"value({type(expr).__name__})")
         match expr:
             # --- control-flow / statement-like expressions ---
             case AST.Block():
