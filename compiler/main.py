@@ -266,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
     # ── initialise compiler log ──────────────────────────────────────────
-    log_file = str(args.log_file) if args.log_file else ""
+    log_file = str(args.log_file) if args.log_file else "build/compile.log"
     CompilerLog.init(spec=args.log_spec, file=log_file)
     ch_main = CompilerLog.get("main")
 

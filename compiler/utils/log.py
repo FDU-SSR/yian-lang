@@ -74,6 +74,8 @@ class FileOutput(LogOutput):
     """Write log messages to a file.  Line-buffered."""
 
     def __init__(self, path: str) -> None:
+        from pathlib import Path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.__file = open(path, "w", encoding="utf-8", buffering=1)  # pylint: disable=consider-using-with
 
     def write(self, text: str) -> None:

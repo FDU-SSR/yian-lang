@@ -97,10 +97,11 @@ python3 -m compiler.main --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib 
 | `DEBUG` | 详细过程 + 中间产物 dump |
 | `TRACE` | 每条指令/每次函数调用    |
 
-### 3.3 `--log-file` — 输出到文件
+### 3.3 `--log-file` — 覆盖默认日志路径
+
+默认日志写入 `build/compile.log`。用 `--log-file` 覆盖：
 
 ```bash
-# 同时输出到 stderr 和文件
 python3 -m compiler.main --log-spec "all=DEBUG" --log-file /tmp/debug.log lib tests/array/assign.an
 ```
 
@@ -174,8 +175,9 @@ python3 -m compiler.main -t ll -o output.ll lib tests/array/assign.an
 
 ## 5. 日志输出位置
 
-- **默认**：stderr（标准错误）
-- `--log-file PATH`：同时写入文件
+- **默认**：写入 `build/compile.log`，同时输出到 stderr
+- stderr 输出可以用 `2>/dev/null` 丢弃
+- `--log-file PATH`：覆盖默认路径
 - `YIAN_LOG_FILE=PATH`：环境变量方式指定额外文件
 - 日志不影响 stdout，编译产物（如 `-t exe`）正常输出
 
