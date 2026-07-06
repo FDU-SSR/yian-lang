@@ -4,7 +4,6 @@ Phase 1: LogLevel, LogOutput, LogFormatter — zero compiler dependencies.
 Phase 2: LogChannel, NoopChannel.
 Phase 3: CompilerLog (singleton), LogFilter, configuration parsing.
 """
-# pylint: disable=too-few-public-methods
 
 from __future__ import annotations
 
@@ -19,7 +18,15 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
+    from compiler.analysis.ty.context import TypeCtx
+    from compiler.analysis.unit.def_point import DefPoint
+    from compiler.analysis.unit.hir import Block as HIRBlock
+    from compiler.analysis.unit.unit_data import UnitData
+    from compiler.codegen.cfg.ir import Function as CfgFunction
     from compiler.frontend.lex.position import SrcSpan
+    from compiler.frontend.lex.token import Token
+    from compiler.frontend.parse.ast import Program as ASTProgram
 
 
 # =============================================================================
@@ -140,6 +147,8 @@ class LogFilter:
 
 # ── LogChannel ────────────────────────────────────────────────────────────────
 
+_SEP = "─" * 60
+
 
 class LogChannel:
     """Per-subsystem log channel with level, filter, indent, and scope support.
@@ -203,6 +212,45 @@ class LogChannel:
     def trace(self, msg: str | Callable[[], str], span: SrcSpan | None = None) -> None:
         self.__emit(LogLevel.TRACE, msg, span)
 
+    # ── structured dump ────────────────────────────────────────────────
+
+    def dump_tokens(self, label: str, tokens: list[Token], level: LogLevel = LogLevel.DEBUG) -> None:
+        """Emit a per-token dump (same format as ``--token`` output)."""
+        if not self.enabled(level):
+            return
+        lines = [f"── tokens: {label} ──"]
+        for i, tok in enumerate(tokens):
+            lines.append(f"  {i:>4}: {tok}")
+        lines.append(_SEP)
+        self.__write_multiline(level, lines)
+
+    def dump_ast(self, label: str, program: ASTProgram, level: LogLevel = LogLevel.DEBUG) -> None:
+        """Emit an AST dump (same format as ``--ast`` output)."""
+        if not self.enabled(level):
+            return
+        from compiler.frontend.parse.ast_export import export_program
+        self.__write_multiline(level, [f"── AST: {label} ──", export_program(program), _SEP])
+
+    def dump_hir(self, label: str, block: HIRBlock, level: LogLevel = LogLevel.DEBUG) -> None:
+        """Emit an HIR block dump (same format as ``--hir`` output)."""
+        if not self.enabled(level):
+            return
+        from compiler.analysis.unit.hir_export import export_block
+        self.__write_multiline(level, [f"── HIR: {label} ──", export_block(block), _SEP])
+
+    def dump_cfg(self, label: str, func: CfgFunction, level: LogLevel = LogLevel.DEBUG) -> None:
+        """Emit a CFG function dump (same format as ``--cfg`` output)."""
+        if not self.enabled(level):
+            return
+        from compiler.codegen.cfg.dump import dump as dump_one
+        self.__write_multiline(level, [f"── CFG: {label} ──", dump_one(func), _SEP])
+
+    def dump_ir(self, label: str, module_text: str, level: LogLevel = LogLevel.DEBUG) -> None:
+        """Emit LLVM IR dump (same format as ``--emit-llvm`` output)."""
+        if not self.enabled(level):
+            return
+        self.__write_multiline(level, [_SEP, f"── LLVM IR: {label} ──", _SEP, module_text, _SEP])
+
     # ── indent ────────────────────────────────────────────────────────────
 
     def push_indent(self) -> None:
@@ -259,6 +307,15 @@ class LogChannel:
         text = self.__formatter.format(level, self.__name, self.__depth, msg, span)
         self.__output.write(text)
 
+    def __write_multiline(self, level: LogLevel, lines: list[str]) -> None:
+        """Write pre-formatted lines as a block (no filter, each line formatted)."""
+        if not self.enabled(level):
+            return
+        for line in lines:
+            self.__output.write(
+                self.__formatter.format(level, self.__name, self.__depth, line, None)
+            )
+
 
 # ── NoopChannel ───────────────────────────────────────────────────────────────
 
@@ -314,6 +371,23 @@ class NoopChannel:
     def scope(self, label: str = "", level: LogLevel | None = None) -> AbstractContextManager[None]:
         # pylint: disable=unused-argument
         return self.__noop_ctx()
+
+    # ── structured dump (no-ops) ──────────────────────────────────────
+
+    def dump_tokens(self, label: str = "", tokens: list[Token] = None, level: LogLevel = LogLevel.DEBUG) -> None:  # type: ignore[override]
+        pass
+
+    def dump_ast(self, label: str = "", program: ASTProgram = None, level: LogLevel = LogLevel.DEBUG) -> None:  # type: ignore[override]
+        pass
+
+    def dump_hir(self, label: str = "", block: HIRBlock = None, level: LogLevel = LogLevel.DEBUG) -> None:  # type: ignore[override]
+        pass
+
+    def dump_cfg(self, label: str = "", func: CfgFunction = None, level: LogLevel = LogLevel.DEBUG) -> None:  # type: ignore[override]
+        pass
+
+    def dump_ir(self, label: str = "", module_text: str = "", level: LogLevel = LogLevel.DEBUG) -> None:
+        pass
 
 
 # =============================================================================
@@ -449,3 +523,47 @@ class CompilerLog:
         spec = os.environ.get("YIAN_LOG", "")
         noop = spec.upper() == "OFF"
         return cls(spec=spec, noop=noop)
+
+
+# =============================================================================
+# Shared output formatters — single source of truth for all compiler dumps.
+# Used by both the log system (dump_* methods) and main.py's --token/--ast/etc.
+# =============================================================================
+
+
+def format_token_output(src_files: list["Path"], token_lists: list[list[Token]]) -> str:
+    """Multi-file token dump, same as ``--token`` output."""
+    sections: list[str] = []
+    for src_file, tokens in zip(src_files, token_lists):
+        lines = [f"Tokens for {src_file}:"]
+        lines.extend(f"  {token}" for token in tokens)
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections) + ("\n" if sections else "")
+
+
+def format_ast_output(src_files: list["Path"], programs: list[ASTProgram]) -> str:
+    """Multi-file AST dump, same as ``--ast`` output."""
+    sections: list[str] = []
+    for src_file, program in zip(src_files, programs):
+        sections.append(f"AST for {src_file}:\n{program.export().rstrip()}")
+    return "\n\n".join(sections) + ("\n" if sections else "")
+
+
+def format_hir_output(
+    unit_datas: dict[int, UnitData],
+    def_points: dict[int, DefPoint],
+    type_ctx: TypeCtx,
+) -> str:
+    """Full HIR bundle dump, same as ``--hir`` output."""
+    from compiler.analysis.unit.hir_export import export_hir_bundle
+    return export_hir_bundle(unit_datas, def_points, type_ctx)
+
+
+def format_cfg_output(functions: dict[int, CfgFunction]) -> str:
+    """Multi-function CFG dump, same as ``--cfg`` output."""
+    from compiler.codegen.cfg.dump import dump as dump_one
+    sections: list[str] = []
+    for type_id in sorted(functions.keys()):
+        func = functions[type_id]
+        sections.append(dump_one(func))
+    return "\n\n".join(sections) + ("\n" if sections else "")

@@ -11,16 +11,15 @@ from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
+from compiler.utils.log import CompilerLog
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
-from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
-from compiler.codegen.cfg.dump import dump as dump_cfg
 from compiler.codegen.cfg.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
@@ -50,41 +49,6 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         metavar="PATH",
         help="Input path(s).",
-    )
-    parser.add_argument(
-        "--token",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write token output to PATH.",
-    )
-    parser.add_argument(
-        "--ast",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write AST output to PATH.",
-    )
-    parser.add_argument(
-        "--hir",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write HIR output to PATH.",
-    )
-    parser.add_argument(
-        "--cfg",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write CFG output to PATH.",
-    )
-    parser.add_argument(
-        "--emit-llvm",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write LLVM IR output to PATH.",
     )
     parser.add_argument(
         "-t", "--target",
@@ -187,31 +151,6 @@ def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
     sys.exit(-1)
 
 
-def __write_text_output(output_path: Path, content: str) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(content)
-
-
-def __format_token_output(src_files: list[Path], token_lists: list[list[Token]]) -> str:
-    sections: list[str] = []
-    for src_file, tokens in zip(src_files, token_lists):
-        lines = [f"Tokens for {src_file}:"]
-        lines.extend(f"  {token}" for token in tokens)
-        sections.append("\n".join(lines))
-    return "\n\n".join(sections) + ("\n" if sections else "")
-
-
-def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> str:
-    sections: list[str] = []
-    for src_file, program in zip(src_files, programs):
-        sections.append(f"AST for {src_file}:\n{program.export().rstrip()}")
-    return "\n\n".join(sections) + ("\n" if sections else "")
-
-
-def __format_hir_output(unit_datas: dict[int, UnitData], def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> str:
-    return export_hir_bundle(unit_datas, def_points, type_ctx)
-
-
 def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
     translator = CfgTranslator(type_ctx)
@@ -220,14 +159,6 @@ def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_I
     except CodegenError as error:
         __print_source_error(error.span, error)
     return translator.export()
-
-
-def __format_cfg_output(functions: dict[int, CFG_IR.Function]) -> str:
-    sections: list[str] = []
-    for type_id in sorted(functions.keys()):
-        func = functions[type_id]
-        sections.append(dump_cfg(func))
-    return "\n\n".join(sections) + ("\n" if sections else "")
 
 
 def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
@@ -335,7 +266,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
     # ── initialise compiler log ──────────────────────────────────────────
-    from compiler.utils.log import CompilerLog, LogLevel
     log_file = str(args.log_file) if args.log_file else ""
     CompilerLog.init(spec=args.log_spec, file=log_file)
     ch_main = CompilerLog.get("main")
@@ -351,11 +281,9 @@ def main(argv: list[str] | None = None) -> int:
     lex_start = time.perf_counter() if args.profile else 0.0
     token_lists: list[list[Token]] = __lex(src_files)
     ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
+    ch_main.dump_tokens("all", [t for tl in token_lists for t in tl])
     if args.profile:
         timings["lex"] = time.perf_counter() - lex_start
-
-    if args.token is not None:
-        __write_text_output(args.token, __format_token_output(src_files, token_lists))
 
     # parse all token lists into ASTs
     parse_start = time.perf_counter() if args.profile else 0.0
@@ -371,8 +299,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
-    if args.ast is not None:
-        __write_text_output(args.ast, __format_ast_output(src_files, programs))
+    for program in programs:
+        ch_main.dump_ast(str(program.span.start.path) if hasattr(program, 'span') else "program", program)
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
@@ -423,18 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["definite_assignment"] = time.perf_counter() - da_start
 
-    if args.hir is not None:
-        __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
-
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start
-
-    if args.cfg is not None:
-        __write_text_output(args.cfg, __format_cfg_output(cfg_functions))
 
     # Derive output path and run codegen (skip only when --target none)
     if args.target != "none":
@@ -453,9 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         emit_start = time.perf_counter() if args.profile else 0.0
         emitter = Emitter()
 
-        # Debug: dump LLVM IR
-        if args.emit_llvm is not None:
-            emitter.emit_ll(llvm_module, str(args.emit_llvm))
+        ch_main.dump_ir("module", str(llvm_module))
 
         # Emit target output
         if args.target in ("ll", "bc", "obj", "asm"):
