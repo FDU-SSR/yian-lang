@@ -9,6 +9,9 @@ from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.error import CompilerError
 from compiler.frontend.parse import ast as AST
+from compiler.utils.log import CompilerLog
+
+ch_tc = lambda: CompilerLog.get("type_check")
 
 
 class TypeCheck:
@@ -54,7 +57,7 @@ class TypeCheck:
             if def_point.type_id in processed_def:
                 continue
             processed_def.add(def_point.type_id)
-
+            ch_tc().trace(lambda: f"checking {self.__type_ctx.get_name(def_point.type_id)}")
             self.__type_check_def(def_point)
 
     def export(self) -> dict[int, DefPoint]:

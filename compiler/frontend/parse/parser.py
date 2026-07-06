@@ -12,7 +12,9 @@ from compiler.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA,
                                             SEP_COMMA, SEP_DOT, TERM_RANGLE,
                                             TERM_RBRACE, TERM_RPAREN,
                                             TERM_SEMICOLON, TokenStream)
+from compiler.utils.log import CompilerLog
 
+ch_parse = lambda: CompilerLog.get("parse")
 
 class Parser:
     def __init__(self, tokens: list[Token]):
@@ -61,6 +63,8 @@ class Parser:
                     items.append(self.__parse_func_def(annots=annots, attrs=attrs))
                 case _:
                     raise ParseError(f"Expected a declaration keyword (fn, struct, enum, trait, impl, typedef, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+            if items:
+                ch_parse().trace(lambda: f"parsed {type(items[-1]).__name__}")
 
         return AST.Program(
             span=SrcSpan.combine_all([item.span for item in items]),

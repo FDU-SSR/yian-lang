@@ -20,6 +20,7 @@ from compiler.utils.log import CompilerLog
 
 # Lazy channel accessors — called at runtime, after CompilerLog is initialised.
 ch_expr = lambda: CompilerLog.get("type_check.expr")
+ch_coerce = lambda: CompilerLog.get("type_check.coerce")
 class ExprChecker:
     """Expression checker and lowering facade.
 
@@ -258,6 +259,7 @@ class ExprChecker:
     def coerce(self, expr: HIR.Expr, expected: int) -> HIR.Expr:
         if expr.type_id == expected:
             return expr
+        ch_coerce().trace(lambda: f"coerce {self.__ctx.type_ctx.get_name(expr.type_id)} -> {self.__ctx.type_ctx.get_name(expected)}")
 
         # never is subtype of everything — no coercion needed
         if expr.type_id == TypeCtx.never_id:
