@@ -230,8 +230,11 @@ class LogChannel:
         """Emit an AST dump (same format as ``--ast`` output)."""
         if not self.enabled(level):
             return
-        from compiler.frontend.parse.ast_export import export_program
-        self.__write_multiline(level, [f"── AST: {label} ──", export_program(program), _SEP])
+        try:
+            from compiler.frontend.parse.ast_export import export_program
+            self.__write_multiline(level, [f"── AST: {label} ──", export_program(program), _SEP])
+        except Exception:
+            self.__write_multiline(level, [f"── AST: {label} ──", f"<export failed: {program}>", _SEP])
 
     def dump_hir(self, label: str, block: HIRBlock, level: LogLevel = LogLevel.DEBUG) -> None:
         """Emit an HIR block dump (same format as ``--hir`` output)."""

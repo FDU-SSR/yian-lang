@@ -12,6 +12,10 @@ from typing import NoReturn
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.utils.log import CompilerLog
+from compiler.utils.log import (
+    format_ast_output, format_cfg_output,
+    format_hir_output, format_token_output,
+)
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
@@ -283,7 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     lex_start = time.perf_counter() if args.profile else 0.0
     token_lists: list[list[Token]] = __lex(src_files)
     ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
-    ch_main.dump_tokens("all", [t for tl in token_lists for t in tl])
+    Path("build").mkdir(parents=True, exist_ok=True)
+    (Path("build") / "tokens.txt").write_text(format_token_output(src_files, token_lists), encoding="utf-8")
     if args.profile:
         timings["lex"] = time.perf_counter() - lex_start
 
@@ -301,8 +306,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
-    for program in programs:
-        ch_main.dump_ast(str(program.span.start.path) if hasattr(program, 'span') else "program", program)
+    try:
+        (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
+    except TypeError:
+        ch_main.debug("ast export skipped — unsupported node type")
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
@@ -357,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
+    (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
+    (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start
 
@@ -377,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         emit_start = time.perf_counter() if args.profile else 0.0
         emitter = Emitter()
 
-        ch_main.dump_ir("module", str(llvm_module))
+        (Path("build") / "ir.ll").write_text(str(llvm_module), encoding="utf-8")
 
         # Emit target output — all under build/ by default
         out_dir = output_path.parent
