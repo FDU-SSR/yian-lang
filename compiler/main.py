@@ -113,6 +113,20 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Print per-phase timing information.",
     )
+    parser.add_argument(
+        "--log-spec",
+        type=str,
+        metavar="SPEC",
+        default="",
+        help="Log configuration, e.g. 'all=INFO,type_check=DEBUG'.",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        metavar="PATH",
+        default=None,
+        help="Write log output to PATH in addition to stderr.",
+    )
     return parser.parse_args(argv)
 
 
@@ -319,6 +333,11 @@ def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
+
+    # ── initialise compiler log ──────────────────────────────────────────
+    from compiler.utils.log import CompilerLog
+    log_file = str(args.log_file) if args.log_file else ""
+    CompilerLog.init(spec=args.log_spec, file=log_file)
 
     timings: dict[str, float] = {}
     t0 = time.perf_counter() if args.profile else 0.0

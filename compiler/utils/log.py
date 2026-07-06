@@ -8,6 +8,7 @@ Phase 3: CompilerLog (singleton), LogFilter, configuration parsing.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -313,3 +314,138 @@ class NoopChannel:
     def scope(self, label: str = "", level: LogLevel | None = None) -> AbstractContextManager[None]:
         # pylint: disable=unused-argument
         return self.__noop_ctx()
+
+
+# =============================================================================
+# Phase 3 — CompilerLog (singleton), configuration parsing
+# =============================================================================
+
+
+class CompilerLog:
+    """Global singleton that manages named ``LogChannel`` instances.
+
+    Configuration is parsed from a comma-separated spec string::
+
+        "all=INFO,type_check=TRACE@is_char_boundary,cfg=DEBUG"
+
+    The spec can come from the ``YIAN_LOG`` environment variable or
+    the ``--log-spec`` CLI argument (the latter takes precedence).
+    """
+
+    __instance: CompilerLog | None = None
+
+    @dataclass
+    class __SpecEntry:
+        """A single parsed entry from a log configuration string."""
+        channel: str
+        level: LogLevel
+        filter: LogFilter | None = None
+
+    # ── singleton access ───────────────────────────────────────────────────
+
+    @classmethod
+    def instance(cls) -> CompilerLog:
+        """Return the global singleton, initialising from ENV if needed."""
+        if cls.__instance is None:
+            cls.__instance = cls.__from_env()
+        return cls.__instance
+
+    @classmethod
+    def init(cls, spec: str = "", file: str = "", *, noop: bool = False) -> CompilerLog:
+        """Explicitly initialise the singleton (CLI takes precedence over ENV).
+
+        Args:
+            spec: Comma-separated configuration string.
+            file: Optional path for an additional log file.
+            noop: If True, all channels are silent.
+        """
+        cls.__instance = cls(spec=spec, file=file, noop=noop)
+        return cls.__instance
+
+    # ── convenience ────────────────────────────────────────────────────────
+
+    @classmethod
+    def get(cls, name: str) -> LogChannel:
+        """Shorthand for ``CompilerLog.instance().channel(name)``."""
+        return cls.instance().channel(name)
+
+    # ── constructor ────────────────────────────────────────────────────────
+
+    def __init__(self, spec: str = "", file: str = "", *, noop: bool = False) -> None:
+        self.__noop = noop
+        self.__output = self.__make_output(file)
+        self.__channels: dict[str, LogChannel] = {}
+        self.__default_level = LogLevel.INFO
+        self.__entries: list[CompilerLog.__SpecEntry] = []
+        if spec:
+            self.__parse_spec(spec)
+        elif env_spec := os.environ.get("YIAN_LOG", ""):
+            self.__parse_spec(env_spec)
+
+    # ── channel factory ────────────────────────────────────────────────────
+
+    def channel(self, name: str) -> LogChannel:
+        """Return (or lazily create) the ``LogChannel`` for *name*."""
+        if name not in self.__channels:
+            if self.__noop:
+                ch: LogChannel = NoopChannel()  # type: ignore[assignment]
+            else:
+                ch = LogChannel(name=name, level=self.__default_level, output=self.__output)
+                self.__apply_spec(ch)
+            self.__channels[name] = ch
+        return self.__channels[name]
+
+    def configure(self, spec: str) -> None:
+        """Re-parse *spec* and apply it to all existing channels."""
+        self.__parse_spec(spec)
+        for ch in self.__channels.values():
+            if not isinstance(ch, NoopChannel):
+                self.__apply_spec(ch)
+
+    # ── spec parsing ───────────────────────────────────────────────────────
+
+    def __parse_spec(self, spec: str) -> None:
+        entries: list[CompilerLog.__SpecEntry] = []
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            entries.append(self.__parse_entry(part))
+        self.__entries = entries
+
+    def __parse_entry(self, part: str) -> CompilerLog.__SpecEntry:
+        name_val, _, filter_pat = part.partition("@")
+        name, _, val = name_val.partition("=")
+        if not val:
+            raise ValueError(f"invalid log spec: {part!r} (expected name=level)")
+        return CompilerLog.__SpecEntry(
+            channel=name.strip() or "all",
+            level=LogLevel.from_str(val.strip()),
+            filter=LogFilter(pattern=filter_pat.strip()) if filter_pat else None,
+        )
+
+    def __apply_spec(self, ch: LogChannel) -> None:
+        for entry in self.__entries:
+            if entry.channel == "all" or ch.name == entry.channel or ch.name.startswith(entry.channel + "."):
+                ch.level = entry.level
+                if entry.filter is not None:
+                    ch.filter = entry.filter
+                return  # first match wins
+
+    # ── output backend ─────────────────────────────────────────────────────
+
+    def __make_output(self, file: str) -> LogOutput:
+        outputs: list[LogOutput] = [StderrOutput()]
+        if file:
+            outputs.append(FileOutput(file))
+        if file_path := os.environ.get("YIAN_LOG_FILE"):
+            outputs.append(FileOutput(file_path))
+        return MultiOutput(outputs) if len(outputs) > 1 else outputs[0]
+
+    # ── ENV initialisation ─────────────────────────────────────────────────
+
+    @classmethod
+    def __from_env(cls) -> CompilerLog:
+        spec = os.environ.get("YIAN_LOG", "")
+        noop = spec.upper() == "OFF"
+        return cls(spec=spec, noop=noop)
