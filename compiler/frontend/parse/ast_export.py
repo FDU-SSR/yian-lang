@@ -206,7 +206,8 @@ def __export_stmt(stmt: AST.Expr, guides: list[bool], is_last: bool) -> str:
         case AST.Delete():
             return __export_delete(stmt, guides, is_last)
         case AST.Semi():
-            return __export_stmt_expr(stmt.expr, guides, is_last)
+            # Unwrap Semi — re-dispatch the inner expression as a statement
+            return __export_stmt(stmt.expr, guides, is_last)
         case AST.Binary() | AST.Unary() | AST.Call() | AST.MethodCall() | AST.FieldAccess() | AST.DynValue() | AST.DynBuffer() | AST.TypeItem() | AST.Identifier() | AST.Literal() | AST.Tuple() | AST.Array():
             return __export_stmt_expr(stmt, guides, is_last)
 
@@ -351,6 +352,24 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_tuple(expr, guides, is_last)
         case AST.Array():
             return __export_array(expr, guides, is_last)
+        case AST.Block():
+            return __export_stmt_block(expr, guides, is_last)
+        case AST.If():
+            return __export_if(expr, guides, is_last)
+        case AST.Loop():
+            return __export_loop(expr, guides, is_last)
+        case AST.Match():
+            return __export_match(expr, guides, is_last)
+        case AST.VarDecl():
+            return __export_var_decl(expr, guides, is_last)
+        case AST.Return():
+            return __export_return(expr, guides, is_last)
+        case AST.Break():
+            return __export_break(expr, guides, is_last)
+        case AST.Continue():
+            return __export_continue(expr, guides, is_last)
+        case AST.Semi():
+            return __export_stmt(expr.expr, guides, is_last)
         case _:
             raise TypeError(f"Unsupported expression: {type(expr)!r}")
 

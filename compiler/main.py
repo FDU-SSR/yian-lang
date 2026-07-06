@@ -306,10 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
-    try:
-        (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
-    except TypeError:
-        ch_main.debug("ast export skipped — unsupported node type")
+    (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
