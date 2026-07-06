@@ -195,15 +195,17 @@ def __derive_output(args: argparse.Namespace, src_files: list[Path]) -> Path:
         return args.output
 
     first_stem = src_files[0].stem if src_files else "output"
+    out_dir = Path("build")
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target == "exe":
-        return Path("a.out")
+        return out_dir / "a.out"
     if args.target == "ll":
-        return Path(first_stem + ".ll")
+        return out_dir / (first_stem + ".ll")
     if args.target == "bc":
-        return Path(first_stem + ".bc")
+        return out_dir / (first_stem + ".bc")
     if args.target == "obj":
-        return Path(first_stem + ".o")
+        return out_dir / (first_stem + ".o")
     if args.target == "asm":
         return Path(first_stem + ".s")
     return Path(first_stem)
@@ -377,16 +379,14 @@ def main(argv: list[str] | None = None) -> int:
 
         ch_main.dump_ir("module", str(llvm_module))
 
-        # Emit target output
+        # Emit target output — all under build/ by default
+        out_dir = output_path.parent
+        stem = output_path.stem if output_path.suffix else output_path.name
         if args.target in ("ll", "bc", "obj", "asm"):
-            out_dir = output_path.parent if output_path.parent != Path() else Path(".")
-            emitter.emit_module(llvm_module, str(out_dir), args.target, output_path.name.rsplit(".", 1)[0] if "." in output_path.name else output_path.name)
+            emitter.emit_module(llvm_module, str(out_dir), args.target, stem)
         elif args.target == "exe":
-            build_dir = Path("build")
-            build_dir.mkdir(exist_ok=True)
-            stem = output_path.stem if output_path.suffix else output_path.name
-            obj_path = build_dir / (stem + ".o")
-            emitter.emit_module(llvm_module, str(build_dir), "obj", stem)
+            obj_path = out_dir / (stem + ".o")
+            emitter.emit_module(llvm_module, str(out_dir), "obj", stem)
             __link_exe(obj_path, output_path, args.O)
         if args.profile:
             timings["emit"] = time.perf_counter() - emit_start

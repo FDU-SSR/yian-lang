@@ -47,11 +47,13 @@ python3 -m compiler.main -t ll lib tests/array/assign.an
 
 ### 2.3 `-o` / `--output` — 输出文件路径
 
+所有产物默认输出到 `build/` 目录。用 `-o` 覆盖：
+
 ```bash
-python3 -m compiler.main -o build/my_prog lib tests/array/assign.an
+python3 -m compiler.main -o my_prog lib tests/array/assign.an
 ```
 
-默认根据第一个输入文件自动推导输出路径。
+默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）等。
 
 ### 2.4 `-O` — 优化等级
 
