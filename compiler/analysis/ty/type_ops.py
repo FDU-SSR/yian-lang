@@ -58,17 +58,17 @@ def infer_common_type(ctx: TypeCtx, type_ids: list[int], span: SrcSpan, context_
             raise AnalysisError(f"{context_name} must have a compatible type, got [{element_names}]", span)
         return first_type_id
 
-    return _common_literal_type(ctx, type_ids, span)
+    return __common_literal_type(ctx, type_ids, span)
 
 
-def _common_literal_type(ctx: TypeCtx, type_ids: list[int], span: SrcSpan) -> int:
+def __common_literal_type(ctx: TypeCtx, type_ids: list[int], span: SrcSpan) -> int:
     result_type_id = type_ids[0]
     for next_type_id in type_ids[1:]:
-        result_type_id = _gcd_literal_type(ctx, result_type_id, next_type_id, span)
+        result_type_id = __gcd_literal_type(ctx, result_type_id, next_type_id, span)
     return result_type_id
 
 
-def _gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
+def __gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSpan) -> int:
     if left_type_id == right_type_id:
         return left_type_id
 
@@ -89,7 +89,7 @@ def _gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span:
             left_name = ctx.get_name(left_type_id)
             right_name = ctx.get_name(right_type_id)
             raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
-        element_type_id = _gcd_literal_type(ctx, left_ty.element_type, right_ty.element_type, span)
+        element_type_id = __gcd_literal_type(ctx, left_ty.element_type, right_ty.element_type, span)
         return ctx.alloc_array(element_type_id, left_ty.length)
 
     if isinstance(left_ty, Type.TupleType) and isinstance(right_ty, Type.TupleType):
@@ -98,7 +98,7 @@ def _gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span:
             right_name = ctx.get_name(right_type_id)
             raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
         element_types = [
-            _gcd_literal_type(ctx, left_elem, right_elem, span)
+            __gcd_literal_type(ctx, left_elem, right_elem, span)
             for left_elem, right_elem in zip(left_ty.element_types, right_ty.element_types)
         ]
         return ctx.alloc_tuple(element_types)

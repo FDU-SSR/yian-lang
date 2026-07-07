@@ -33,7 +33,7 @@ class SemCtx:
     - provide a minimal, safe API for helpers
     """
 
-    def __init__(self, type_ctx: TypeCtx, diagnostics: object | None = None):
+    def __init__(self, type_ctx: TypeCtx, diagnostics = None):  # opaque pass-through
         # session
         self.__type_ctx: TypeCtx = type_ctx
         self.__diagnostics = diagnostics
@@ -61,7 +61,7 @@ class SemCtx:
         return self.__type_ctx
 
     @property
-    def diagnostics(self) -> object | None:
+    def diagnostics(self):  # no type hint — opaque pass-through, never consumed by SemCtx
         return self.__diagnostics
 
     @property
