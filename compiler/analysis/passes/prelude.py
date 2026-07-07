@@ -5,6 +5,7 @@ Automatically prepends standard library imports to non-standard-library
 source files so that commonly-used symbols (Option, Result, Vec, etc.)
 are available without explicit imports.
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

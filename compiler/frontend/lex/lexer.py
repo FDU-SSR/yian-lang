@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # from compiler.frontend.lex.token import Identifier, Keyword, KeywordKind, Literal, Punctuator, PunctuatorKind, Token
 from pathlib import Path
 

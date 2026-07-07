@@ -5,6 +5,7 @@ Provides a single entry point for building assignment HIR nodes,
 ensuring consistent enforcement of the assignment constraints
 defined in bak/design.md §2.
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

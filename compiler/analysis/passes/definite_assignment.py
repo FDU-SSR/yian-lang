@@ -18,6 +18,7 @@ The state dictionary uses :class:`StateKey` keys::
     StateKey(sym_id, (0,))            tuple element
     StateKey(sym_id, ("a", 0))        nested: field ``a``, then tuple element 0
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

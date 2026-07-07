@@ -4,6 +4,7 @@ Phase 1: LogLevel, LogOutput, LogFormatter — zero compiler dependencies.
 Phase 2: LogChannel, NoopChannel.
 Phase 3: CompilerLog (singleton), LogFilter, configuration parsing.
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

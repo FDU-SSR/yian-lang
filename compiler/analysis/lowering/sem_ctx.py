@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Optional
+from typing import Callable
 
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
@@ -39,14 +39,14 @@ class SemCtx:
         self.__diagnostics = diagnostics
 
         # def (initialized by begin_def)
-        self.__unit_id: Optional[int] = None
-        self.__def_type_id: Optional[int] = None
-        self.__def_kind: Optional[DefKind] = None
-        self.__ast_body: Optional[AST.Block] = None
-        self.__return_type_id: Optional[int] = None
-        self.__receiver_type_id: Optional[int] = None
+        self.__unit_id: int | None = None
+        self.__def_type_id: int | None = None
+        self.__def_kind: DefKind | None = None
+        self.__ast_body: AST.Block | None = None
+        self.__return_type_id: int | None = None
+        self.__receiver_type_id: int | None = None
         self.__is_static: bool = False
-        self.__symbol_ctx: Optional[SymbolCtx] = None
+        self.__symbol_ctx: SymbolCtx | None = None
 
         # flow
         self.__locals: list[int] = []
@@ -65,27 +65,27 @@ class SemCtx:
         return self.__diagnostics
 
     @property
-    def unit_id(self) -> Optional[int]:
+    def unit_id(self) -> int | None:
         return self.__unit_id
 
     @property
-    def def_type_id(self) -> Optional[int]:
+    def def_type_id(self) -> int | None:
         return self.__def_type_id
 
     @property
-    def def_kind(self) -> Optional[DefKind]:
+    def def_kind(self) -> DefKind | None:
         return self.__def_kind
 
     @property
-    def ast_body(self) -> Optional[AST.Block]:
+    def ast_body(self) -> AST.Block | None:
         return self.__ast_body
 
     @property
-    def return_type_id(self) -> Optional[int]:
+    def return_type_id(self) -> int | None:
         return self.__return_type_id
 
     @property
-    def receiver_type_id(self) -> Optional[int]:
+    def receiver_type_id(self) -> int | None:
         return self.__receiver_type_id
 
     @property
@@ -93,7 +93,7 @@ class SemCtx:
         return self.__is_static
 
     @property
-    def symbol_ctx(self) -> Optional[SymbolCtx]:
+    def symbol_ctx(self) -> SymbolCtx | None:
         return self.__symbol_ctx
 
     @property
@@ -114,7 +114,7 @@ class SemCtx:
 
     # lifecycle
     def begin_def(self, *, unit_id: int, def_type_id: int, def_kind: DefKind, ast_body: AST.Block,
-                  return_type_id: int, receiver_type_id: Optional[int], is_static: bool, symbol_ctx: SymbolCtx) -> None:
+                  return_type_id: int, receiver_type_id: int | None, is_static: bool, symbol_ctx: SymbolCtx) -> None:
         self.__unit_id = unit_id
         self.__def_type_id = def_type_id
         self.__def_kind = def_kind
@@ -174,5 +174,5 @@ class SemCtx:
             raise CompilerError("No def reporter registered in SemCtx")
         self.__def_reporter(type_id)
 
-    def current_return_type(self) -> Optional[int]:
+    def current_return_type(self) -> int | None:
         return self.__return_type_id

@@ -10,6 +10,7 @@ Rules:
 - range expressions (a..b) => Range(a, b)
 - member test (x in y) => y.contains(x)
 """
+from __future__ import annotations
 
 
 from __future__ import annotations
