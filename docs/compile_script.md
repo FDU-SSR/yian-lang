@@ -1,116 +1,192 @@
-# yian_compiler.py 编译脚本说明
+# Yian 编译器命令行手册
 
-本文档详细说明 `scripts/yian_compiler.py` 的用途、参数、执行流程与常见问题，便于在命令行下稳定地完成 YIAN 工程编译。
+本文档说明如何通过命令行直接调用 `compiler/main.py` 编译 Yian 源码。
 
-## 1. 脚本定位
-
-`scripts/yian_compiler.py` 是一个统一入口，负责串联两段流程：
-
-1. 调用 `compiler/main.py` 生成 LLVM 后端产物。
-2. 根据目标类型输出最终文件：
-    - 目标为 ll：直接导出 LLVM IR 文本。
-    - 目标为 exe：先生成目标文件，再调用 clang 链接成可执行文件。
-
-脚本内部依赖 `scripts/compiler_api.py` 提供的编译管线实现。
-
-## 2. 基本用法
+## 1. 基本用法
 
 ```bash
-scripts/yian_compiler.py [src_paths]
+python3 -m compiler.main [options] <paths...>
 ```
 
-说明：
-
-1. `src_paths`：若干个源代码文件路径或者包含源文件的目录路径，编译器会自动递归查找 .an 文件进行编译。
-2. 源代码文件中必须包含且仅包含一个 `main` 函数作为程序入口。
-
-## 3. 参数说明
-
-通过命令行参数，用户可以控制编译过程的行为、输出类型与调试信息。
-
-### 3.1 `-h` / `--help` 输出帮助信息
-
-通过以下命令可以查看脚本的完整参数列表与说明：
+- `paths`：一个或多个 `.an` 源文件路径或包含源文件的目录。编译器会递归查找 `.an` 文件。
+- 如果用到了标准库，需要把 `lib` 目录也放进路径列表。
+- 源码中必须包含一个 `main` 函数作为程序入口。
 
 ```bash
-scripts/yian_compiler.py -h
+# 编译单个测试文件（含标准库）
+python3 -m compiler.main lib tests/array/assign.an
+
+# 编译多个文件
+python3 -m compiler.main lib tests/std/core/option.an tests/std/core/result.an
 ```
 
-### 3.2 `-d` / `--debug` 开启调试输出
+## 2. 命令行参数
 
-使用 `-d` 或 `--debug` 参数可以在编译过程中输出更多调试信息，帮助定位问题：
+### 2.1 输入路径
 
 ```bash
-scripts/yian_compiler.py -d tests/control_flow/for.an
+python3 -m compiler.main <path> [path...]
 ```
 
-### 3.3 `-p` / `--display` 显示中间结果
+位置参数，至少一个。可以是 `.an` 文件或目录。
 
-YIAN 使用静态分析工具 LIAN 的部分功能作为编译器的前端, 使用 `-p` 或 `--display` 参数可以在编译完成后调用 LIAN 的脚本显示编译过程中生成的中间结果(`dataframe.html`)：
+### 2.2 `-t` / `--target` — 输出目标类型
+
+| 值     | 说明                     |
+| ------ | ------------------------ |
+| `exe`  | 可执行文件（默认）       |
+| `none` | 仅做语义分析，不生成代码 |
+| `ll`   | LLVM IR 文本 (.ll)       |
+| `bc`   | LLVM bitcode (.bc)       |
+| `obj`  | 目标文件 (.o)            |
+| `asm`  | 汇编文件 (.s)            |
 
 ```bash
-scripts/yian_compiler.py -p tests/array/init.an
+python3 -m compiler.main -t ll lib tests/array/assign.an
 ```
 
-### 3.4 `-O*` 优化等级参数
+### 2.3 `-o` / `--output` — 输出文件路径
 
-编译器支持传递优化等级参数给底层的 clang 编译器，常用的优化等级包括：
-
-- `-O0`：无优化，适合调试。
-- `-O1`：基本优化，平衡编译时间和性能。
-- `-O2`：较高优化。
-- `-O3`：最高优化，可能增加编译时间和二进制大小。
-- `-Os`：优化代码大小。
-
-### 3.5 `--out PATH` / `--output PATH` 指定输出路径
-
-通过 `--out` 或 `--output` 参数可以指定编译产物的输出路径：
+所有产物默认输出到 `build/` 目录。用 `-o` 覆盖：
 
 ```bash
-scripts/yian_compiler.py tests/call/func.an --output build/func
+python3 -m compiler.main -o my_prog lib tests/array/assign.an
 ```
 
-如果未指定输出路径，脚本会默认将产物输出到 `tests/yian_workspace/objects` 目录下，文件名根据目标类型自动命名（如 `out.ll` 或 `out`）。
+默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）等。
 
-### 3.6 `--target TARGET` 指定编译目标类型
+### 2.4 `-O` — 优化等级
 
-通过 `--target` 参数可以指定编译产物的类型，支持以下选项：
+```bash
+python3 -m compiler.main -O2 lib tests/array/assign.an
+```
 
-- `ll`：输出 LLVM IR 文本文件（.ll）。
-- `exe`：输出可执行文件（默认）。
+可选值：`0`, `1`, `2`, `3`。传递给 clang 的优化等级，默认 0。
 
-## 4. 常见问题
+### 2.5 `--profile` — 打印各阶段耗时
 
-### 4.1 提示 missing compiler arguments
+```bash
+python3 -m compiler.main --profile lib tests/array/assign.an
+```
 
-原因：未提供任何编译输入（如源文件路径）。
+## 3. 日志与调试输出
 
-处理：至少提供一个有效的编译参数，例如 tests/control_flow/for.an。
+Yian 编译器内置了结构化日志系统，替代了旧的 `--token`、`--ast`、`--hir`、`--cfg`、`--emit-llvm` 参数。
 
-### 4.2 clang 相关错误
+### 3.1 `--log-spec` — 配置日志级别
 
-现象：target=exe 时失败。
+格式：`channel=level`，逗号分隔。支持前缀匹配（如 `type_check=DEBUG` 同时匹配 `type_check.coerce`）。
 
-处理建议：
+```bash
+# 显示所有阶段的 DEBUG 摘要
+python3 -m compiler.main --log-spec "all=DEBUG" lib tests/array/assign.an
 
-1. 确认系统已安装 clang。
-2. 检查传入的 -O\* 参数是否拼写正确。
-3. 确认编译阶段已生成对象文件（tests/yian_workspace/objects/output.o）。
+# 仅追踪类型检查中的表达式求值
+python3 -m compiler.main --log-spec "type_check.expr=TRACE" lib tests/array/assign.an
 
-### 4.3 找不到预期编译产物
+# 追踪方法调度 + CFG 逻辑展开
+python3 -m compiler.main --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib tests/array/assign.an
+```
 
-现象：报错 Expected compiler artifact not found。
+### 3.2 日志级别
 
-处理建议：
+| 级别    | 说明                     |
+| ------- | ------------------------ |
+| `OFF`   | 关闭                     |
+| `ERROR` | 仅致命错误               |
+| `WARN`  | 警告                     |
+| `INFO`  | 关键阶段摘要（**默认**） |
+| `DEBUG` | 详细过程 + 中间产物 dump |
+| `TRACE` | 每条指令/每次函数调用    |
 
-1. 优先检查 compiler/main.py 阶段是否已失败。
-2. 查看 tests/yian_workspace/objects 目录下是否生成 output.ll 或 output.o。
-3. 必要时加 -d 重新执行以获取更多上下文。
+### 3.3 `--log-file` — 覆盖默认日志路径
 
-## 5. 相关文件
+默认日志写入 `build/compile.log`。用 `--log-file` 覆盖：
 
-1. `scripts/yian_compiler.py`：命令行入口。
-2. `scripts/compiler_api.py`：编译管线与产物处理逻辑。
-3. `compiler/main.py`：核心编译命令实现。
-4. `lian/scripts/dfview.py`：中间结果展示工具。
+```bash
+python3 -m compiler.main --log-spec "all=DEBUG" --log-file /tmp/debug.log lib tests/array/assign.an
+```
 
+### 3.4 环境变量
+
+```bash
+# 等价于 --log-spec
+YIAN_LOG="all=DEBUG,type_check=TRACE" python3 -m compiler.main lib tests/array/assign.an
+
+# 等价于 --log-file
+YIAN_LOG_FILE=/tmp/debug.log python3 -m compiler.main lib tests/array/assign.an
+
+# 完全关闭日志
+YIAN_LOG="all=OFF" python3 -m compiler.main lib tests/array/assign.an
+```
+
+### 3.5 日志频道列表
+
+| 频道              | 说明                                    |
+| ----------------- | --------------------------------------- |
+| `main`            | 编译管线主流程                          |
+| `type_check`      | 类型检查                                |
+| `type_check.expr` | 表达式求值（TRACE 级输出每个 AST 节点） |
+| `call_dispatch`   | 方法/函数调度                           |
+| `cfg`             | 控制流图生成                            |
+| `cfg.logical`     | 短路逻辑展开                            |
+
+## 4. 常见工作流
+
+### 4.1 快速编译运行
+
+```bash
+python3 -m compiler.main lib tests/array/assign.an && ./build/a.out
+```
+
+### 4.2 调试类型错误
+
+```bash
+python3 -m compiler.main --log-spec "type_check=DEBUG,type_check.expr=TRACE" lib tests/my_test.an
+```
+
+### 4.3 查看各阶段摘要
+
+```bash
+python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
+```
+
+输出示例：
+
+```text
+[ INFO][main        ]compiling 2 source file(s)
+[DEBUG][main        ]lexed 17793 tokens from 34 file(s)
+[DEBUG][main        ]parsed 356 top-level items
+[DEBUG][main        ]desugaring complete
+[DEBUG][main        ]global resolve complete — 34 units
+[DEBUG][main        ]type-checked 5 definitions
+[DEBUG][main        ]generated 5 CFG functions
+```
+
+### 4.4 仅做语义检查（不生成代码）
+
+```bash
+python3 -m compiler.main -t none lib tests/array/assign.an
+```
+
+### 4.5 导出 LLVM IR
+
+```bash
+python3 -m compiler.main -t ll -o output.ll lib tests/array/assign.an
+```
+
+## 5. 日志输出位置
+
+- **默认**：写入 `build/compile.log`，同时输出到 stderr
+- stderr 输出可以用 `2>/dev/null` 丢弃
+- `--log-file PATH`：覆盖默认路径
+- `YIAN_LOG_FILE=PATH`：环境变量方式指定额外文件
+- 日志不影响 stdout，编译产物（如 `-t exe`）正常输出
+
+## 6. 相关文件
+
+| 文件                    | 说明             |
+| ----------------------- | ---------------- |
+| `compiler/main.py`      | 编译器入口       |
+| `compiler/utils/log.py` | 日志系统实现     |
+| `bak/quest_log.md`      | 日志系统设计文档 |

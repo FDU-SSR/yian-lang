@@ -11,16 +11,19 @@ from typing import NoReturn
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
+from compiler.utils.log import CompilerLog
+from compiler.utils.log import (
+    format_ast_output, format_cfg_output,
+    format_hir_output, format_token_output,
+)
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
-from compiler.analysis.unit.hir_export import export_hir_bundle
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
-from compiler.codegen.cfg.dump import dump as dump_cfg
 from compiler.codegen.cfg.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
@@ -52,41 +55,6 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         help="Input path(s).",
     )
     parser.add_argument(
-        "--token",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write token output to PATH.",
-    )
-    parser.add_argument(
-        "--ast",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write AST output to PATH.",
-    )
-    parser.add_argument(
-        "--hir",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write HIR output to PATH.",
-    )
-    parser.add_argument(
-        "--cfg",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write CFG output to PATH.",
-    )
-    parser.add_argument(
-        "--emit-llvm",
-        type=Path,
-        metavar="PATH",
-        default=None,
-        help="Write LLVM IR output to PATH.",
-    )
-    parser.add_argument(
         "-t", "--target",
         choices=["none", "exe", "ll", "bc", "obj", "asm"],
         default="exe",
@@ -112,6 +80,20 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Print per-phase timing information.",
+    )
+    parser.add_argument(
+        "--log-spec",
+        type=str,
+        metavar="SPEC",
+        default="",
+        help="Log configuration, e.g. 'all=INFO,type_check=DEBUG'.",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        metavar="PATH",
+        default=None,
+        help="Write log output to PATH in addition to stderr.",
     )
     return parser.parse_args(argv)
 
@@ -173,31 +155,6 @@ def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
     sys.exit(-1)
 
 
-def __write_text_output(output_path: Path, content: str) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(content)
-
-
-def __format_token_output(src_files: list[Path], token_lists: list[list[Token]]) -> str:
-    sections: list[str] = []
-    for src_file, tokens in zip(src_files, token_lists):
-        lines = [f"Tokens for {src_file}:"]
-        lines.extend(f"  {token}" for token in tokens)
-        sections.append("\n".join(lines))
-    return "\n\n".join(sections) + ("\n" if sections else "")
-
-
-def __format_ast_output(src_files: list[Path], programs: list[AST.Program]) -> str:
-    sections: list[str] = []
-    for src_file, program in zip(src_files, programs):
-        sections.append(f"AST for {src_file}:\n{program.export().rstrip()}")
-    return "\n\n".join(sections) + ("\n" if sections else "")
-
-
-def __format_hir_output(unit_datas: dict[int, UnitData], def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> str:
-    return export_hir_bundle(unit_datas, def_points, type_ctx)
-
-
 def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
     translator = CfgTranslator(type_ctx)
@@ -206,14 +163,6 @@ def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_I
     except CodegenError as error:
         __print_source_error(error.span, error)
     return translator.export()
-
-
-def __format_cfg_output(functions: dict[int, CFG_IR.Function]) -> str:
-    sections: list[str] = []
-    for type_id in sorted(functions.keys()):
-        func = functions[type_id]
-        sections.append(dump_cfg(func))
-    return "\n\n".join(sections) + ("\n" if sections else "")
 
 
 def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
@@ -250,15 +199,17 @@ def __derive_output(args: argparse.Namespace, src_files: list[Path]) -> Path:
         return args.output
 
     first_stem = src_files[0].stem if src_files else "output"
+    out_dir = Path("build")
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target == "exe":
-        return Path("a.out")
+        return out_dir / "a.out"
     if args.target == "ll":
-        return Path(first_stem + ".ll")
+        return out_dir / (first_stem + ".ll")
     if args.target == "bc":
-        return Path(first_stem + ".bc")
+        return out_dir / (first_stem + ".bc")
     if args.target == "obj":
-        return Path(first_stem + ".o")
+        return out_dir / (first_stem + ".o")
     if args.target == "asm":
         return Path(first_stem + ".s")
     return Path(first_stem)
@@ -320,6 +271,12 @@ def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
+    # ── initialise compiler log ──────────────────────────────────────────
+    log_file = str(args.log_file) if args.log_file else "build/compile.log"
+    CompilerLog.init(spec=args.log_spec, file=log_file)
+    ch_main = CompilerLog.get("main")
+
+    ch_main.info(f"compiling {len(args.paths)} source file(s)")
     timings: dict[str, float] = {}
     t0 = time.perf_counter() if args.profile else 0.0
 
@@ -329,26 +286,27 @@ def main(argv: list[str] | None = None) -> int:
     # lex all source files
     lex_start = time.perf_counter() if args.profile else 0.0
     token_lists: list[list[Token]] = __lex(src_files)
+    ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
+    Path("build").mkdir(parents=True, exist_ok=True)
+    (Path("build") / "tokens.txt").write_text(format_token_output(src_files, token_lists), encoding="utf-8")
     if args.profile:
         timings["lex"] = time.perf_counter() - lex_start
-
-    if args.token is not None:
-        __write_text_output(args.token, __format_token_output(src_files, token_lists))
 
     # parse all token lists into ASTs
     parse_start = time.perf_counter() if args.profile else 0.0
     programs: list[AST.Program] = __parse(token_lists)
+    ch_main.debug(f"parsed {sum(len(p.items) for p in programs)} top-level items")
     if args.profile:
         timings["parse"] = time.perf_counter() - parse_start
 
     # desugar ASTs
     desugar_start = time.perf_counter() if args.profile else 0.0
     programs = __desugar(programs)
+    ch_main.debug("desugaring complete")
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
-    if args.ast is not None:
-        __write_text_output(args.ast, __format_ast_output(src_files, programs))
+    (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
@@ -362,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         global_resolver.run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
+    ch_main.debug(f"global resolve complete — {len(unit_datas)} units")
     if args.profile:
         timings["global_resolve"] = time.perf_counter() - resolve_start
 
@@ -382,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     def_points = type_checker.export()
+    ch_main.debug(f"type-checked {len(def_points)} definitions")
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start
 
@@ -397,17 +357,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["definite_assignment"] = time.perf_counter() - da_start
 
-    if args.hir is not None:
-        __write_text_output(args.hir, __format_hir_output(unit_datas, def_points, type_ctx))
-
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
+    ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
+    (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
+    (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start
-
-    if args.cfg is not None:
-        __write_text_output(args.cfg, __format_cfg_output(cfg_functions))
 
     # Derive output path and run codegen (skip only when --target none)
     if args.target != "none":
@@ -426,20 +383,16 @@ def main(argv: list[str] | None = None) -> int:
         emit_start = time.perf_counter() if args.profile else 0.0
         emitter = Emitter()
 
-        # Debug: dump LLVM IR
-        if args.emit_llvm is not None:
-            emitter.emit_ll(llvm_module, str(args.emit_llvm))
+        (Path("build") / "ir.ll").write_text(str(llvm_module), encoding="utf-8")
 
-        # Emit target output
+        # Emit target output — all under build/ by default
+        out_dir = output_path.parent
+        stem = output_path.stem if output_path.suffix else output_path.name
         if args.target in ("ll", "bc", "obj", "asm"):
-            out_dir = output_path.parent if output_path.parent != Path() else Path(".")
-            emitter.emit_module(llvm_module, str(out_dir), args.target, output_path.name.rsplit(".", 1)[0] if "." in output_path.name else output_path.name)
+            emitter.emit_module(llvm_module, str(out_dir), args.target, stem)
         elif args.target == "exe":
-            build_dir = Path("build")
-            build_dir.mkdir(exist_ok=True)
-            stem = output_path.stem if output_path.suffix else output_path.name
-            obj_path = build_dir / (stem + ".o")
-            emitter.emit_module(llvm_module, str(build_dir), "obj", stem)
+            obj_path = out_dir / (stem + ".o")
+            emitter.emit_module(llvm_module, str(out_dir), "obj", stem)
             __link_exe(obj_path, output_path, args.O)
         if args.profile:
             timings["emit"] = time.perf_counter() - emit_start

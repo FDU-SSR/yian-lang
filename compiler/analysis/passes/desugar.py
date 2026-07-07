@@ -20,6 +20,9 @@ from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.utils.log import CompilerLog
+
+ch_desugar = lambda: CompilerLog.get("desugar")
 
 
 class Desugar:
@@ -106,6 +109,7 @@ class Desugar:
                 desugared = None
 
             if desugared is not None:
+                ch_desugar().trace(lambda: f"desugar {type(inner).__name__}")
                 desugared_stmts.append(AST.Semi(span=stmt.span, expr=desugared) if semi else desugared)
             else:
                 desugared_stmts.append(stmt)

@@ -14,7 +14,10 @@ from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.utils.log import CompilerLog
 
+ch_cfg = lambda: CompilerLog.get("cfg.logical")
+ch_cfg_block = lambda: CompilerLog.get("cfg.block")
 
 @dataclass
 class LoopCtx:
@@ -236,9 +239,11 @@ class CfgBuilder:
         block = IR.Block(f"{label}.{self.__counter}")
         self.__counter += 1
         self.__func.blocks.append(block)
+        ch_cfg_block().trace(lambda: f"new block {block.label}")
         return block
 
     def __set_terminator(self, term: IR.Terminator) -> None:
+        ch_cfg_block().trace(lambda: f"{self.__current_block.label} <- {type(term).__name__}")
         self.__current_block.terminator = term
 
     def __switch_to(self, block: IR.Block) -> None:
@@ -612,6 +617,7 @@ class CfgBuilder:
           merge:
             %r = phi [(entry, true), (rhs, %b)]
         """
+        ch_cfg().trace(lambda: f"logical {expr.op} at {expr.span}")
         cond_val = self.__resolve_val(expr.left)
 
         rhs_block = self.__new_block("logical.rhs")

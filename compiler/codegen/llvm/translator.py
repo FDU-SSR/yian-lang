@@ -13,7 +13,9 @@ from compiler.codegen.llvm.builder import BuilderPosition, LLBuilder
 from compiler.codegen.llvm.module import LLFunction, LLModule
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
+from compiler.utils.log import CompilerLog
 
+ch_llvm = lambda: CompilerLog.get("llvm")
 
 class LLTranslator:
     """CFG Functions → LLVM Module."""
@@ -129,6 +131,7 @@ class LLTranslator:
     # ------------------------------------------------------------------
 
     def __translate(self, builder: LLBuilder, stmt: IR.Stmt) -> None:
+        ch_llvm().trace(lambda: type(stmt).__name__)
         match stmt:
             case IR.VarPtr():
                 builder.var_ptr(stmt.var_ref.symbol_id, stmt.result.name)

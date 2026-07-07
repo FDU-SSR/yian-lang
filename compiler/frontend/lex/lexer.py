@@ -4,6 +4,9 @@ from pathlib import Path
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.token import Token
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
+from compiler.utils.log import CompilerLog
+
+ch_lex = lambda: CompilerLog.get("lex")
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 IN_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
@@ -103,6 +106,7 @@ class Lexer:
         while True:
             prev_was_ws = self.__skip_ignored()
             token = self.__next_token(prev_was_ws)
+            ch_lex().trace(lambda: str(token))
             self.__tokens.append(token)
             if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF:
                 break
