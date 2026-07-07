@@ -1,56 +1,31 @@
-# YIAN 语言概览
+# Yian 语言参考
 
-YIAN 是一个面向系统编程场景的静态类型语言，采用编译型工作流：将 `.an` 源码编译为可执行程序。
+本文档完整描述 Yian 编程语言的语法和语义。每个章节包含语法规则、来自 `tests/` 的可编译代码示例，以及常见陷阱。
 
-如果你第一次接触 YIAN，建议先阅读 [快速开始](00.quick_start.md)，再按顺序浏览后续章节。
+## 目录
 
-## YIAN 是什么
+| 章节 | 标题 | 说明 |
+|------|------|------|
+| [00](00.quick_start.md) | Quick Start | 30 分钟快速上手 |
+| [01](01.lexicon.md) | 词法 | 标识符、关键字、字面量、注释、运算符 |
+| [02](02.types.md) | 类型系统 | 基础类型、指针、数组、切片、元组、struct、enum、`@BitCopy` |
+| [03](03.variables.md) | 变量与声明 | `let` 声明、类型标注、类型推断 |
+| [04](04.functions.md) | 函数 | 定义、参数、返回值、泛型函数、函数指针 |
+| [05](05.methods.md) | 方法 | `impl` 块、实例方法、静态方法、可见性 |
+| [06](06.control_flow.md) | 控制流 | `if`/`elif`/`else`、`loop`、`while`、`for`-`in`、`break`/`continue` |
+| [07](07.match.md) | 模式匹配 | `match` 表达式、enum pattern、payload pattern |
+| [08](08.expressions.md) | 表达式 | 算术、比较、逻辑、位运算、赋值、内置函数 |
+| [09](09.operators.md) | 运算符重载 | `Add`、`PartialEq`、`Index`、`Deref`、复合赋值等全部 trait |
+| [10](10.generics.md) | 泛型 | 泛型函数/struct/enum、泛型 impl、条件约束 |
+| [11](11.structs_enums.md) | 结构体与枚举 | 定义、构造、字段访问、`@BitCopy` |
+| [12](12.traits_impls.md) | Trait 与 Impl | trait 定义、impl 实现、默认方法、条件 impl |
+| [13](13.modules.md) | 模块系统 | `import`、`from...import`、可见性、`std` 命名空间 |
+| [14](14.standard_library.md) | 标准库 | `Option`、`Result`、`Vec`、`String`、`Iterator` 等 |
+| [15](15.assign_semantics.md) | 赋值语义 | 简单类型、非简单类型、`.move()`、`.clone()`、`@BitCopy` |
 
-- 目标定位：提供清晰、可预测的语义与类型系统，适合构建需要性能与类型安全的程序。
-- 语言形态：类 C 风格语法，显式类型标注，函数与方法并重。
-- 工具链现状：当前仓库提供编译脚本、标准库源码与覆盖较广的测试用例，适合学习和实验。
+## 约定
 
-## 核心特性
-
-- 静态类型系统：包含基本类型、数组、元组、指针、函数类型、结构体、枚举、trait 等。
-- 泛型能力：支持泛型函数、泛型类型与泛型 trait，泛型在编译期实例化。
-- 方法系统：支持 inherent method 与 trait method，通过 `impl` 块组织行为。
-- 模块系统：以源文件为模块，使用 `from ... import ...` / `import ...` 组织多文件项目。
-- 表达式与控制流：覆盖常见字面量、算术与逻辑表达式，以及 if/for/while/match 等语句结构。
-- 标准库：提供 `std.core`、`std.collections`、`std.num` 等核心模块。
-
-## 一个最小程序
-
-```yian
-from std.core.io import print
-
-i32 main() {
-	print("Hello, yian!\n")
-	return 0
-}
-```
-
-编译并运行：
-
-```bash
-./scripts/yian_compiler.py hello.an
-./tests/yian_workspace/bin/out
-```
-
-## 文档导览
-
-- [00.quick_start.md](00.quick_start.md)：30-45 分钟跑通最小示例。
-- [01.intro.md](01.intro.md)：语法入口与程序结构。
-- [02.type_system.md](02.type_system.md)：类型系统全景。
-- [03.methods.md](03.methods.md)：方法、`impl` 与 trait 实现。
-- [04.statements.md](04.statements.md)：语句与控制流。
-- [05.generics.md](05.generics.md)：泛型机制与使用方式。
-- [06.modules.md](06.modules.md)：模块、导入与可见性。
-- [07.expression.md](07.expression.md)：表达式构成与规则。
-- [08.standard_library.md](08.standard_library.md)：标准库模块与常见类型。
-
-## 当前阶段说明
-
-- YIAN 仍在持续演进，部分特性与标准库接口可能会迭代。
-- 学习或验证语义时，建议结合 `tests/` 目录中的示例与用例一起阅读。
-- 如果你准备编写较完整的程序，优先熟悉类型系统、模块系统和标准库章节。
+- 所有代码示例均可通过 `python3 -m compiler.main lib <file>` 编译
+- 示例标注 `-- 来源: tests/...` 指明出处
+- 错误示例标注 `-- 期望: 编译错误`
+- 语法规则使用代码块表示
