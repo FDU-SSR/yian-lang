@@ -4,10 +4,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Callable
 
 from compiler.analysis.unit import hir as HIR
+from compiler.frontend.lex.position import SrcSpan
 
 if TYPE_CHECKING:
     from compiler.analysis.symbol.context import SymbolCtx
     from compiler.analysis.ty.context import TypeCtx
+    from compiler.analysis.unit.def_point import DefPoint
     from compiler.analysis.unit.unit_data import UnitData
 
 
@@ -42,7 +44,7 @@ def __format_type(type_ctx: TypeCtx | None, type_id: int) -> str:
     return type_ctx.get_name(type_id)
 
 
-def __format_span(span: object) -> str:
+def __format_span(span: SrcSpan) -> str:
     return str(span)
 
 
@@ -374,7 +376,7 @@ def export_block(block: HIR.Block, type_ctx: TypeCtx | None = None) -> str:
     return __export_block_node(block, [], True, type_ctx)
 
 
-def export_def_point(def_point: object, type_ctx: TypeCtx | None = None) -> str:
+def export_def_point(def_point: DefPoint, type_ctx: TypeCtx | None = None) -> str:
     type_id = getattr(def_point, "type_id", -1)
     unit_id = getattr(def_point, "unit_id", -1)
     locals_list = getattr(def_point, "locals", [])

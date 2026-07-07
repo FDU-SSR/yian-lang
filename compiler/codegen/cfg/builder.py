@@ -1,6 +1,7 @@
 """
 CFG IR builder — lowers a single HIR function/method body into a CFG Function.
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

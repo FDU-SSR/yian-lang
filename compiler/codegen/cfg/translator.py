@@ -3,6 +3,7 @@ HIR → CFG lowering.
 
 Translates typed HIR function / method definitions into CFG Function objects.
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

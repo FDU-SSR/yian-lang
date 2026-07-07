@@ -1,3 +1,7 @@
+"""Worklist-driven type checking — lowers AST function/method bodies to HIR."""
+
+from __future__ import annotations
+
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
