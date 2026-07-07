@@ -1,0 +1,10 @@
+// Test variable declaration without initialization
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let x: i32;
+    x = 42;
+    assert x == 42;
+    return 0;
+}
