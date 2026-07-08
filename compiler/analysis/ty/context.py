@@ -105,6 +105,7 @@ class TypeCtx:
         self.__methods_cache: dict[int, dict[str, int]] = {}
         self.__default_literals_cache: dict[int, int] = {}
         self.__simple_type_cache: dict[int, bool] = {}
+        self.__zst_cache: dict[int, bool] = {}
 
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
@@ -261,6 +262,20 @@ class TypeCtx:
 
     def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
         return type_ops.is_integer_type(self, type_id, include_literals)
+
+    def is_zst(self, type_id: int) -> bool:
+        """Return whether a type is a Zero-Sized Type (carries no runtime info).
+
+        See ``type_ops.is_zst`` for the recursive definition. Results are
+        cached by resolved type_id in ``__zst_cache``.
+        """
+        type_id = self.resolve_aliases(type_id)
+        cached = self.__zst_cache.get(type_id)
+        if cached is not None:
+            return cached
+        result = type_ops.is_zst(self, type_id)
+        self.__zst_cache[type_id] = result
+        return result
 
     def is_simple_type(self, type_id: int) -> bool:
         """Return True for types that support direct bitwise-copy assignment.

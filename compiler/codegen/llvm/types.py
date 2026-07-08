@@ -42,6 +42,15 @@ class LLTypeCtx:
         size, _ = self.__stable_layout(type_id)
         return size
 
+    def is_zst(self, type_id: int) -> bool:
+        """Return whether a type is a Zero-Sized Type (carries no runtime info).
+
+        Delegates to the type layer's authoritative predicate so codegen and
+        analysis agree. Consistent with ``get_type_size(...) == 0`` for
+        void/never/zero-length-arrays.
+        """
+        return self.__type_ctx.is_zst(type_id)
+
     # ------------------------------------------------------------------
     # type handlers
     # ------------------------------------------------------------------
