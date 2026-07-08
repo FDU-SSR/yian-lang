@@ -19,8 +19,16 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
 # Lazy channel accessors — called at runtime, after CompilerLog is initialised.
-ch_expr = lambda: CompilerLog.get("type_check.expr")
-ch_coerce = lambda: CompilerLog.get("type_check.coerce")
+
+
+def ch_expr():
+    return CompilerLog.get("type_check.expr")
+
+
+def ch_coerce():
+    return CompilerLog.get("type_check.coerce")
+
+
 class ExprChecker:
     """Expression checker and lowering facade.
 
