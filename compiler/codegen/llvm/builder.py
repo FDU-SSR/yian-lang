@@ -151,6 +151,11 @@ class LLBuilder:
                 pointee_type_id = ty.element_type
 
         result_type_id = self.__type_ctx.alloc_pointer(pointee_type_id)
+        if self.__ll_type_ctx.is_zst(pointee_type_id):
+            # Pointer to a zero-sized field/element: the address is never
+            # dereferenced (load/store through it are no-ops), and the base may
+            # be an erased `{}` with no index to GEP into — emit no gep.
+            return self.undef(result_type_id)
         idx_vals = [self.i32(i).ir_val for i in indices]
         ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
         result_val = LLValue(result_type_id, ir_val)
@@ -256,7 +261,6 @@ class LLBuilder:
     # -- aggregate --
 
     def extract_value(self, base: LLValue, index: int, result: str) -> LLValue:
-        ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         base_type = self.__type_ctx[base.type_id]
         if isinstance(base_type, Type.StructType):
             fields = self.__type_ctx.get_struct_fields(base.type_id)
@@ -269,6 +273,11 @@ class LLBuilder:
             field_type = self.__type_ctx.u32_id
         else:
             field_type = base.type_id
+        if self.__ll_type_ctx.is_zst(field_type):
+            # Extracting a zero-sized field yields nothing (and the base may be
+            # an erased `{}` with no indices to extract from).
+            return self.undef(field_type)
+        ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         result_val = LLValue(field_type, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -322,8 +331,14 @@ class LLBuilder:
 
     def __build_aggregate(self, type_id: int, field_values: list[LLValue]) -> LLValue:
         """Build an aggregate value by inserting each field value at its index."""
+        # An all-zero-sized aggregate erases to `{}` — there is nothing to
+        # build, and inserting into `{}` would be an out-of-range index.
+        if self.__ll_type_ctx.is_zst(type_id):
+            return self.undef(type_id)
         val = self.undef(type_id)
         for i, fv in enumerate(field_values):
+            if self.__ll_type_ctx.is_zst(fv.type_id):
+                continue  # zero-sized field: its `{}` slot stays undef
             val = self.insert_value(val, fv, i)
         return val
 
