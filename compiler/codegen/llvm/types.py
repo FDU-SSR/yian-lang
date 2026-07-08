@@ -147,7 +147,8 @@ class LLTypeCtx:
         # A zero-sized return type lowers to `void` (nothing is returned);
         # `void` is the only LLVM type legal in return position for a ZST.
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
-        params = [self.__get_raw_type(param_type) for param_type in param_type_ids]
+        # Zero-sized parameters carry no data and are dropped from the signature.
+        params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None:
             params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())
         return ir.FunctionType(ret, params)

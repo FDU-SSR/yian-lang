@@ -15,7 +15,10 @@ from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.utils.log import CompilerLog
 
-ch_llvm = lambda: CompilerLog.get("llvm")
+
+def ch_llvm():
+    return CompilerLog.get("llvm")
+
 
 class LLTranslator:
     """CFG Functions → LLVM Module."""
@@ -102,11 +105,17 @@ class LLTranslator:
         for symbol_id, var_ref in cfg.local_vars.items():
             func.set_alloca(symbol_id, builder.alloca(var_ref.type_id))
 
-        # store params
+        # store params — zero-sized params are dropped from the LLVM signature,
+        # so walk the real args and skip ZST params to keep alignment.
         builder.position_at(cfg.entry.label, where=BuilderPosition.End)
-        param_type_ids = [cfg.local_vars[sid].type_id for sid in cfg.params]
-        for arg, symbol_id in zip(func.arg_values(param_type_ids), cfg.params):
-            builder.store(arg, func.get_var_ptr(symbol_id))
+        ll_args = func.ir_func.args
+        arg_idx = 0
+        for symbol_id in cfg.params:
+            type_id = cfg.local_vars[symbol_id].type_id
+            if self.__ll_type_ctx.is_zst(type_id):
+                continue  # no LLVM argument for a zero-sized param
+            builder.store(LLValue(type_id, ll_args[arg_idx]), func.get_var_ptr(symbol_id))
+            arg_idx += 1
 
         # translate
         for block in cfg.blocks:
@@ -160,13 +169,19 @@ class LLTranslator:
             case IR.Delete():
                 builder.delete(self.__resolve(builder, stmt.ptr))
             case IR.Call():
-                builder.call_func(stmt.callee_type,
-                                  [self.__resolve(builder, a) for a in stmt.args],
-                                  stmt.result.name, stmt.result.type_id)
+                builder.call_func(
+                    stmt.callee_type,
+                    [self.__resolve(builder, a) for a in stmt.args if not self.__ll_type_ctx.is_zst(a.type_id)],
+                    stmt.result.name,
+                    stmt.result.type_id
+                )
             case IR.Invoke():
-                builder.call_value(self.__resolve(builder, stmt.callee),
-                                   [self.__resolve(builder, a) for a in stmt.args],
-                                   stmt.result.name, stmt.result.type_id)
+                builder.call_value(
+                    self.__resolve(builder, stmt.callee),
+                    [self.__resolve(builder, a) for a in stmt.args if not self.__ll_type_ctx.is_zst(a.type_id)],
+                    stmt.result.name,
+                    stmt.result.type_id
+                )
             case IR.Cast():
                 builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name)
             case IR.SizeOf():

@@ -282,6 +282,8 @@ class LLBuilder:
     def call(self, callee: LLFunction, args: list[LLValue], result: str, return_type_id: int) -> LLValue:
         resolved = [a.ir_val for a in args]
         ir_val = self.__builder.call(callee.ir_func, resolved)  # type: ignore
+        if self.__ll_type_ctx.is_zst(return_type_id):
+            return self.undef(return_type_id)  # `void` call: nothing to bind
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -294,6 +296,8 @@ class LLBuilder:
     def call_value(self, callee: LLValue, args: list[LLValue], result: str, return_type_id: int) -> LLValue:
         resolved_args = [a.ir_val for a in args]
         ir_val = self.__builder.call(callee.ir_val, resolved_args)  # type: ignore
+        if self.__ll_type_ctx.is_zst(return_type_id):
+            return self.undef(return_type_id)  # `void` call: nothing to bind
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val

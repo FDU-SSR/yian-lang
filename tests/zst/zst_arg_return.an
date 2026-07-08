@@ -1,0 +1,27 @@
+// Test zero-sized parameters and return values across function boundaries.
+// ZST params are dropped from the LLVM signature; real params around them must
+// still align. ZST returns lower to `ret void`.
+//
+// Expected output: 0
+
+// `z` is zero-sized and interspersed between real params — dropping it must not
+// shift `a`/`b`.
+fn add_with_zst(a: i32, z: void, b: i32) -> i32 {
+    return a + b;
+}
+
+// a zero-sized value flows in as a param; the function returns void.
+fn consume(x: void) {
+    return;
+}
+
+fn main() -> i32 {
+    let v: void;
+
+    assert add_with_zst(10, v, 20) == 30: "zst param must not shift real args";
+    assert add_with_zst(1, v, 2) == 3: "zst param must not shift real args (2)";
+
+    consume(v);
+
+    return 0;
+}
