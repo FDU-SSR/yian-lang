@@ -22,6 +22,7 @@ class LLTypeCtx:
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
+        self.__empty_struct: ir.LiteralStructType = ir.LiteralStructType([])  # type: ignore
         self.__i1: ir.IntType = ir.IntType(1)  # type: ignore
         self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
@@ -43,13 +44,16 @@ class LLTypeCtx:
         return size
 
     def is_zst(self, type_id: int) -> bool:
-        """Return whether a type is a Zero-Sized Type (carries no runtime info).
+        """Return whether a type is erased to the empty struct ``{}`` in codegen.
 
-        Delegates to the type layer's authoritative predicate so codegen and
-        analysis agree. Consistent with ``get_type_size(...) == 0`` for
-        void/never/zero-length-arrays.
+        A value of such a type carries no runtime information and is erased
+        (no SSA value, no load/store). This is anchored on the LLVM lowering:
+        a pointer to a ZST still lowers to a real ``{}*`` pointer (not ``{}``),
+        so it is *not* erased here — pointer-to-ZST erasure lands later (M5),
+        at which point this predicate folds back into the type layer's
+        ``is_zst``. Consistent with ``get_type_size(...) == 0`` for erased types.
         """
-        return self.__type_ctx.is_zst(type_id)
+        return self.__get_raw_type(type_id) is self.__empty_struct
 
     # ------------------------------------------------------------------
     # type handlers
@@ -67,6 +71,17 @@ class LLTypeCtx:
             return self.__storage[type_id]
 
         ty_def = self.__type_ctx[type_id]
+
+        # Zero-sized types are erased to an empty struct `{}` — a legal,
+        # zero-byte, verifier-safe stand-in usable as a value, field, array
+        # element, or pointee (unlike `void`, which is only legal as a
+        # function return type; that case is handled in __build_function_type).
+        # Pointers are excluded: a pointer to a ZST is still a real `{}*`
+        # 8-byte pointer until pointer-to-ZST erasure lands (M5).
+        if not isinstance(ty_def, Type.PointerType) and self.__type_ctx.is_zst(type_id):
+            self.__storage[type_id] = self.__empty_struct
+            return self.__empty_struct
+
         match ty_def:
             case Type.VoidType():    result = self.__void
             case Type.NeverType():   result = self.__void
@@ -135,7 +150,9 @@ class LLTypeCtx:
         return identified  # type: ignore
 
     def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
-        ret = self.__get_raw_type(ret_type_id)
+        # A zero-sized return type lowers to `void` (nothing is returned);
+        # `void` is the only LLVM type legal in return position for a ZST.
+        ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids]
         if receiver_type_id is not None:
             params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())

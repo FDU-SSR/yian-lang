@@ -54,8 +54,10 @@ class LLTranslator:
 
     def __resolve(self, builder: LLBuilder, value: IR.Value) -> LLValue:
         if isinstance(value, IR.Reg):
-            if value.type_id in (TypeCtx.void_id, TypeCtx.never_id):
-                # Virtual register — void/never values have no LLVM representation.
+            if self.__ll_type_ctx.is_zst(value.type_id):
+                # Zero-sized values have no LLVM representation — return an
+                # erased placeholder. Consumers of ZST values skip before
+                # ever emitting with it, so this is never materialized.
                 ll_type = self.__ll_type_ctx.get_ll_type(value.type_id)
                 return LLValue(value.type_id, ir.Constant(ll_type.ir_type, ir.Undefined))  # type: ignore
             return self.func.reg(value.name)
@@ -111,8 +113,8 @@ class LLTranslator:
             # phi
             builder.position_at(block.label, where=BuilderPosition.Phi)
             for phi in block.phis:
-                if phi.result.type_id in (TypeCtx.void_id, TypeCtx.never_id):
-                    continue  # void/never phis have no LLVM representation
+                if self.__ll_type_ctx.is_zst(phi.result.type_id):
+                    continue  # zero-sized phis have no LLVM representation
                 builder.phi(phi.result.type_id,
                             [(src.label, self.__resolve(builder, val)) for src, val in phi.incoming],
                             phi.result.name)
@@ -196,8 +198,8 @@ class LLTranslator:
     def __terminator(self, builder: LLBuilder, terminator: IR.Terminator) -> None:
         match terminator:
             case IR.Ret(value=value):
-                if value.type_id == TypeCtx.void_id:
-                    builder.ret(None)
+                if self.__ll_type_ctx.is_zst(value.type_id):
+                    builder.ret(None)  # zero-sized return: `ret void`
                 else:
                     builder.ret(self.__resolve(builder, value))
             case IR.Br(target=target):

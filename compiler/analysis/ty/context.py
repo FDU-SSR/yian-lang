@@ -292,6 +292,12 @@ class TypeCtx:
         if cached is not None:
             return cached
 
+        # Zero-sized types carry no runtime data, so a bitwise copy of zero
+        # bytes is always valid — they are trivially simple-assignable.
+        if self.is_zst(type_id):
+            self.__simple_type_cache[type_id] = True
+            return True
+
         ty = self[type_id]
         if isinstance(ty, (Type.IntType, Type.FloatType, Type.BoolType,
                            Type.CharType, Type.StrType, Type.PointerType,

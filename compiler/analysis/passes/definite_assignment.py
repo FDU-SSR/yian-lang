@@ -718,9 +718,14 @@ class DefiniteAssignment:
         if cur == VarState.VALID:
             return
 
-        # Try recursive inference
+        # Zero-sized variables carry no runtime data — they are vacuously
+        # always initialized, so a use is never "before assignment".
         assert self.__symbol_ctx is not None
         sym = self.__symbol_ctx.get(sym_id)
+        if self.__type_ctx.is_zst(sym.type_id):
+            return
+
+        # Try recursive inference
         if self.__all_fields_valid(sym_id, sym.type_id, (), state):
             return
 

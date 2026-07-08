@@ -1,0 +1,11 @@
+// Test zero-sized void local variables: declaration, no-op assignment, sizeof
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let v1: void;
+    let v2: void;
+    v1 = v2;  // no-op copy of a zero-sized value
+    assert sizeof(void) == 0: "sizeof(void) should be 0";
+    return 0;
+}

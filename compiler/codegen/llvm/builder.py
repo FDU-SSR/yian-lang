@@ -117,12 +117,18 @@ class LLBuilder:
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[ptr.type_id]
         assert isinstance(ptr_type, Type.PointerType)
+        if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
+            # Loading a zero-sized value yields nothing: emit no `load` and
+            # bind no register (the result is never consumed).
+            return self.undef(ptr_type.pointee_type)
         ir_val = self.__builder.load(ptr.ir_val)  # type: ignore
         result_val = LLValue(ptr_type.pointee_type, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
 
     def store(self, value: LLValue, ptr: LLValue) -> None:
+        if self.__ll_type_ctx.is_zst(value.type_id):
+            return  # storing a zero-sized value is a no-op
         self.__builder.store(value.ir_val, ptr.ir_val)  # type: ignore
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
