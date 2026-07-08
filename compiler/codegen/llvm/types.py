@@ -44,16 +44,12 @@ class LLTypeCtx:
         return size
 
     def is_zst(self, type_id: int) -> bool:
-        """Return whether a type is erased to the empty struct ``{}`` in codegen.
+        """Return whether a type is a Zero-Sized Type (carries no runtime info).
 
-        A value of such a type carries no runtime information and is erased
-        (no SSA value, no load/store). This is anchored on the LLVM lowering:
-        a pointer to a ZST still lowers to a real ``{}*`` pointer (not ``{}``),
-        so it is *not* erased here — pointer-to-ZST erasure lands later (M5),
-        at which point this predicate folds back into the type layer's
-        ``is_zst``. Consistent with ``get_type_size(...) == 0`` for erased types.
+        Delegates to the type layer's authoritative predicate so codegen and
+        analysis agree. Consistent with ``get_type_size(...) == 0``.
         """
-        return self.__get_raw_type(type_id) is self.__empty_struct
+        return self.__type_ctx.is_zst(type_id)
 
     # ------------------------------------------------------------------
     # type handlers
@@ -76,9 +72,7 @@ class LLTypeCtx:
         # zero-byte, verifier-safe stand-in usable as a value, field, array
         # element, or pointee (unlike `void`, which is only legal as a
         # function return type; that case is handled in __build_function_type).
-        # Pointers are excluded: a pointer to a ZST is still a real `{}*`
-        # 8-byte pointer until pointer-to-ZST erasure lands (M5).
-        if not isinstance(ty_def, Type.PointerType) and self.__type_ctx.is_zst(type_id):
+        if self.__type_ctx.is_zst(type_id):
             self.__storage[type_id] = self.__empty_struct
             return self.__empty_struct
 
