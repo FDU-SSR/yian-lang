@@ -119,6 +119,8 @@ class ExprParser:
             case Tok.Keyword(kind=Tok.KeywordKind.Nullptr):
                 self.__stream.consume_keyword(Tok.KeywordKind.Nullptr)
                 return AST.Literal(span=token.span, literal=Tok.NullptrLiteral(raw="nullptr", span=token.span))
+            case Tok.Keyword(kind=Tok.KeywordKind.Sizeof):
+                return self.__parse_sizeof()
             case Tok.Identifier() | Tok.Keyword():
                 ident = self.__stream.consume_identifier()
 
@@ -239,6 +241,14 @@ class ExprParser:
 
                 case _:
                     return expr
+
+    def __parse_sizeof(self) -> AST.SizeOf:
+        """Parse ``sizeof(type)`` — argument is unconditionally a type."""
+        kw = self.__stream.consume_keyword(Tok.KeywordKind.Sizeof)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        ty = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.SizeOf(span=kw.span, ty=ty)
 
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""

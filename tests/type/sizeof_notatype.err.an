@@ -1,0 +1,9 @@
+// sizeof(f) where f is a function name — the type parser resolves the name
+// and finds it is not a type (SymbolKind.Function, not Type).
+
+fn f() -> i32 { return 0; }
+
+fn main() -> i32 {
+    let s: u64 = sizeof(f);
+    return 0;
+}

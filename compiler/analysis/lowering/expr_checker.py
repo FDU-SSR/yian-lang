@@ -83,6 +83,8 @@ class ExprChecker:
                 return self.__handle_dyn_value(expr)
             case AST.DynBuffer():
                 return self.__handle_dyn_buffer(expr)
+            case AST.SizeOf():
+                return self.__handle_sizeof(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -116,6 +118,10 @@ class ExprChecker:
 
     def __handle_dyn_buffer(self, node: AST.DynBuffer) -> HIR.Expr:
         return self.__op_builder.build_dyn_buffer(node.span, node.target_type, node.size)
+
+    def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
+        type_id = self.__ctx.resolve_type(node.ty)
+        return HIR.SizeOf(span=node.span, target_type=type_id, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None

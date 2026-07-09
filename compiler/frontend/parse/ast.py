@@ -558,6 +558,15 @@ class DynBuffer:
 
 
 @dataclass
+class SizeOf:
+    span: SrcSpan
+    ty: ASTType
+
+    def __repr__(self) -> str:
+        return f"sizeof({self.ty})"
+
+
+@dataclass
 class TypeItem:
     """
     Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
@@ -629,6 +638,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | MethodCall
     | DynValue | DynBuffer
+    | SizeOf
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

@@ -1,0 +1,88 @@
+// sizeof accepts the full type grammar: primitives, pointer, slice, function,
+// never, array, tuple, generics, nesting, and const-generic array lengths.
+//
+// Expected output: (exit 0)
+
+// --- reference structs (indirect: sizeof(Wrapper) = sizeof(field type)) ---
+struct WP     { p: i32* }
+struct WS     { p: i32[] }
+struct WFn    { p: fn(i32) -> bool }
+struct WN     { p: ! }                       // never is zst; struct collapses
+
+struct T_pair   { a: i32, b: f64 }
+struct T_triple { a: i8, b: u16, c: f32 }
+struct T_tuparr { a: i32, b: u8[4] }
+struct T_nest   { p: (i32, u8), q: i64 }
+struct M_ptrarr { a: i32*, b: u8[4] }
+struct M_fnarr  { a: fn(i32) -> bool, b: i32[2] }
+struct M_ptru8  { a: i32*, b: u8 }
+
+struct WV { p: Vec<u8> }
+struct WO { p: Option<i32> }
+struct S { a: i32, b: u8 }
+enum E { A, B, C }
+
+fn main() -> i32 {
+    // ===== primitives =====
+    assert sizeof(i8)  == 1: "i8";
+    assert sizeof(i16) == 2: "i16";
+    assert sizeof(i32) == 4: "i32";
+    assert sizeof(i64) == 8: "i64";
+    assert sizeof(u8)  == 1: "u8";
+    assert sizeof(u16) == 2: "u16";
+    assert sizeof(u32) == 4: "u32";
+    assert sizeof(u64) == 8: "u64";
+    assert sizeof(f32) == 4: "f32";
+    assert sizeof(f64) == 8: "f64";
+    assert sizeof(bool) == 1: "bool";
+    assert sizeof(char) == 4: "char";
+    assert sizeof(str) == 16: "str";
+    assert sizeof(void) == 0: "void zst";
+
+    // ===== pointer / slice / fn / never =====
+    assert sizeof(i32*)            == sizeof(WP):   "pointer";
+    assert sizeof(i32**)           == sizeof(i32*):  "pointer-to-pointer";
+    assert sizeof(i32[])           == sizeof(WS):   "slice";
+    assert sizeof(fn(i32) -> bool) == sizeof(WFn):  "function type";
+    assert sizeof(!)               == 0:             "never zst";
+
+    // ===== arrays =====
+    assert sizeof(i32[4]) == sizeof(i32) * 4: "array T[N]";
+    assert sizeof(u8[5])  == sizeof(u8)  * 5: "array u8[5]";
+    assert sizeof(f64[2]) == sizeof(f64) * 2: "array f64[2]";
+    assert sizeof(bool[4]) == sizeof(bool) * 4: "array bool[4]";
+    assert sizeof(char[4]) == sizeof(char) * 4: "array char[4]";
+    assert sizeof(str[2])  == sizeof(str)  * 2: "array str[2]";
+    assert sizeof(void[4]) == 0:                   "void array zst";
+    assert sizeof(i32[0])  == 0:                   "zero-length array";
+    assert sizeof(i32[1])  == sizeof(i32):         "single-element array";
+    assert sizeof(S[3])    == sizeof(S) * 3:       "struct array";
+    assert sizeof(E[3])    == sizeof(E) * 3:       "enum array";
+    assert sizeof(i32[2][3]) == sizeof(i32) * 6:   "nested array";
+    assert sizeof(u8[4][0])  == 0:                  "outer zero-length nested";
+
+    // ===== arrays of pointer/slice/fn =====
+    assert sizeof(i32*[3])     == sizeof(WP) * 3:  "ptr-array";
+    assert sizeof(i32[][2])    == sizeof(WS) * 2:  "slice-array";
+    assert sizeof((fn(i32)->bool)[2]) == sizeof(WFn) * 2: "array of fnptr";
+
+    // ===== tuples =====
+    assert sizeof((i32, f64)) == sizeof(T_pair):   "tuple pair";
+    assert sizeof((i8, u16, f32)) == sizeof(T_triple): "tuple triple";
+    assert sizeof((i32,))     == sizeof(i32):       "single-element tuple";
+    assert sizeof((void, void)) == 0:                "all-zst tuple";
+    assert sizeof((i32, void))  == sizeof(i32):      "mixed-zst tuple";
+    assert sizeof((i32, u8[4])) == sizeof(T_tuparr): "tuple with array elem";
+    assert sizeof(((i32, u8), i64)) == sizeof(T_nest): "nested tuple";
+
+    // ===== generics =====
+    assert sizeof(Vec<u8>) == sizeof(WV):        "Vec<u8>";
+    assert sizeof(Option<i32>) == sizeof(WO):    "Option<i32>";
+
+    // ===== mixed nesting (layout-agnostic via equivalent structs) =====
+    assert sizeof((i32*, u8[4]))          == sizeof(M_ptrarr): "tuple(ptr, arr)";
+    assert sizeof((fn(i32)->bool, i32[2])) == sizeof(M_fnarr): "tuple(fn, arr)";
+    assert sizeof((i32*, u8)[2])          == sizeof(M_ptru8) * 2: "array of tuple(ptr,u8)";
+
+    return 0;
+}
