@@ -1,0 +1,26 @@
+// Built-in type constructors (library typedefs): Ptr / Slice / Array / Never.
+// Available without explicit import (injected by the prelude).
+//
+// Expected output: 0
+
+struct WP { p: i32* }
+struct WS { p: i32[] }
+
+impl<T> Ptr<T> {
+    static fn width() -> u64 { sizeof(Ptr<T>) }
+}
+
+fn main() -> i32 {
+    // sizeof / type position
+    assert sizeof(Ptr<i32>)      == sizeof(WP): "Ptr<i32>";
+    assert sizeof(Slice<i32>)    == sizeof(WS): "Slice<i32>";
+    assert sizeof(Array<i32, 4>) == sizeof(i32) * 4: "Array<i32,4>";
+    assert sizeof(Never)         == 0: "Never";
+    assert sizeof(Ptr<Ptr<i32>>) == sizeof(WP): "nested Ptr";
+
+    let p: Ptr<i32> = nullptr;
+
+    // static method receiver
+    assert Ptr<i32>.width() == 8: "static call on Ptr<i32>";
+    return 0;
+}
