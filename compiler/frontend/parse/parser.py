@@ -14,7 +14,9 @@ from compiler.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA,
                                             TERM_SEMICOLON, TokenStream)
 from compiler.utils.log import CompilerLog
 
-ch_parse = lambda: CompilerLog.get("parse")
+
+def ch_parse(): return CompilerLog.get("parse")
+
 
 class Parser:
     def __init__(self, tokens: list[Token]):
@@ -165,6 +167,7 @@ class Parser:
         generics = self.__parse_generics()
         self.__stream.consume_punctuator(PunctuatorKind.Equal)
         target = self.__parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
         return AST.Alias(span=name.span, annots=annots, attrs=attrs, name=name, generics=generics, target=target)
 
     def __parse_impl(self, annots: list[AST.Annot]) -> AST.Impl:

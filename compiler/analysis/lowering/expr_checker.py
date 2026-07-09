@@ -125,9 +125,8 @@ class ExprChecker:
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
         generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
-        type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
-        if generic_arg_ids:
-            type_id = self.__ctx.type_ctx.alloc_instance(type_id, generic_arg_ids)
+        type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
+        type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
 
         if symbol.kind == SymbolKind.Function:
             self.__ctx.report_def(type_id)
@@ -169,11 +168,12 @@ class ExprChecker:
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
-                ty = self.__ctx.type_ctx[symbol.type_id]
+                type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
+                ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
-                return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
+                return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
         literal = node.literal

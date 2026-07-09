@@ -553,7 +553,12 @@ class TypeCtx:
         return self.__resolver.resolve(ty, symbol_ctx)
 
     def resolve_aliases(self, type_id: int) -> int:
-        """Follow alias chains to the first non-alias concrete type."""
+        """Follow alias chains to the first non-alias concrete type.
+
+        For a generic alias instance (e.g. ``Ptr<i32>`` where
+        ``typedef Ptr<T> = T*``), the alias's generic arguments are
+        substituted into the aliased body before continuing.
+        """
         visited: set[int] = set()
         while True:
             if type_id in visited:
@@ -561,7 +566,11 @@ class TypeCtx:
             visited.add(type_id)
             ty = self[type_id]
             if isinstance(ty, Type.AliasType):
-                type_id = ty.custom_def.aliased_type
+                body = ty.custom_def.aliased_type
+                if ty.custom_def.generics:
+                    substs = dict(zip(ty.custom_def.generics, ty.generic_args))
+                    body = self.instantiate(body, substs)
+                type_id = body
             else:
                 return type_id
 

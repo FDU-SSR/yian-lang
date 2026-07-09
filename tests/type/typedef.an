@@ -7,10 +7,10 @@ struct Person{
     pub b: i32,
 }
 
-typedef Pr = Person
-typedef LL = i64
-typedef INT2 = i32
-typedef INT3 = i32
+typedef Pr = Person;
+typedef LL = i64;
+typedef INT2 = i32;
+typedef INT3 = i32;
 
 fn main() -> i32 {
     let a: i32 = 3;
