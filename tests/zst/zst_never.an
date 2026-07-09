@@ -1,0 +1,30 @@
+// never (!) is a zero-sized type. It can appear as an array element, tuple
+// element, parameter, and return type. It is already handled by is_zst and
+// codegen (maps to void), but was not covered by a dedicated test.
+//
+// Expected output: 0
+
+fn consume_never(z: !) -> void { return; }
+
+fn produce_never() -> ! {
+    loop {}  // diverges, never returns
+}
+
+fn main() -> i32 {
+    // sizeof
+    assert sizeof(!) == 0: "sizeof never";
+
+    // array of never (length > 0, still ZST)
+    assert sizeof(![4]) == 0: "array of never";
+    assert sizeof(![0]) == 0: "zero-length array of never";
+
+    // never in tuple
+    assert sizeof((i32, !)) == sizeof(i32): "tuple with never";
+    assert sizeof((!, i32)) == sizeof(i32): "tuple never first";
+    assert sizeof((!, !)) == 0: "all-never tuple";
+
+    // never as parameter / return — just check sizeof, no call needed
+    // (calling a diverging fn would terminate)
+
+    return 0;
+}
