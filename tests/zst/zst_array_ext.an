@@ -1,0 +1,27 @@
+// Extended ZST array coverage: element-is-ZST arrays (non-zero length),
+// multi-dimensional ZST arrays, and generic context.
+//
+// Expected output: 0
+
+impl<T, const N: u64> T[N] {
+    fn count() -> u64 { N }
+}
+
+fn main() -> i32 {
+    // non-zero length ZST arrays (element is ZST → whole array is ZST)
+    assert sizeof(void[3]) == 0: "void[3]";
+    assert sizeof(void[100]) == 0: "void[100]";
+
+    // multi-dimensional ZST arrays
+    assert sizeof(void[2][4]) == 0: "void[2][4]";
+
+    // ZST array in generic context
+    let arr: void[5];
+    assert arr.count() == 5: "generic count on ZST array";
+
+    // zero-length array of non-ZST element (length=0 → whole array is ZST)
+    assert sizeof(i32[0]) == 0: "i32[0]";
+    assert sizeof(i32[0][5]) == 0: "i32[0][5] nested zero-length";
+
+    return 0;
+}

@@ -5,7 +5,7 @@
 from std.core.result import Result;
 from std.core.option import Option;
 
-typedef ErrorCode = u64
+typedef ErrorCode = u64;
 
 fn main() -> i32 {
     // Create a Result with a value

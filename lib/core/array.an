@@ -42,7 +42,7 @@ impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
         SliceIter<T>(
             ptr = bitcast<T*>(self),
-            end = bitcast<T*>(self) + N
+            n = N,
         )
     }
 }

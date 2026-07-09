@@ -40,7 +40,20 @@ class TypeResolver:
         """
         Resolve an ASTType to a type ID in the type context.
 
-        This is used during type checking to convert the types written in the source code (AST) to the internal type representation.
+        This is used during type checking to convert the types written in the
+        source code (AST) to the internal type representation. Always returns the
+        alias-resolved concrete type.
+        """
+        return self.__ctx.resolve_aliases(self.__resolve(ty, symbol_ctx))
+
+    def __resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
+        """Resolve *ty* WITHOUT collapsing its top-level alias.
+
+        Sub-components are resolved through the public :meth:`resolve` (so each is
+        alias-collapsed), but a NamedType/InstanceType that names an alias is
+        returned uncollapsed — so a generic alias (``typedef Ptr<T> = T*``) can be
+        instantiated with its arguments before its body is substituted. The public
+        :meth:`resolve` collapses the final result.
         """
         match ty:
             case ASTTy.IntType(signed=signed, width=width):
@@ -71,16 +84,21 @@ class TypeResolver:
                 element_type_id = self.resolve(element_type, symbol_ctx)
                 return self.__ctx.alloc_slice(element_type_id)
             case ASTTy.NamedType(name=name):
-                # Look up the named type in the symbol context
                 symbol = symbol_ctx.lookup(name.name)
                 if symbol is None:
                     raise AnalysisError(f"Undefined type: {name}", ty.span)
                 if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
                     raise AnalysisError(f"{name} is not a type", ty.span)
-                return self.__ctx.resolve_aliases(symbol.type_id)
+                return symbol.type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
-                base_type_id = self.resolve(base, symbol_ctx)
+                # Hardcoded type constructors (Tuple / Fn) are not
+                # registered symbols — intercept by name first.
                 arg_ids = [self.__resolve_generic_arg(arg, symbol_ctx) for arg in generic_args]
+                if isinstance(base, ASTTy.NamedType):
+                    type_id = self.__ctx.try_builtin_ctor(base.name.name, arg_ids)
+                    if type_id is not None:
+                        return type_id
+                base_type_id = self.__resolve(base, symbol_ctx)
                 return self.__ctx.alloc_instance(base_type_id, arg_ids)
             case ASTTy.FunctionType(param_types=param_types, return_type=return_type):
                 param_type_ids = [self.resolve(pt, symbol_ctx) for pt in param_types]
@@ -95,7 +113,10 @@ class TypeResolver:
                 return self.__ctx.alloc_literal_value(v, self.__ctx.u64_id)
             case GenericConstExpr(name=name):
                 symbol = symbol_ctx.lookup(name.name)
-                assert symbol is not None, f"Undefined const generic '{name.name}'"
+                if symbol is None:
+                    raise AnalysisError(f"Undefined const generic '{name.name}'", const_expr.span)
+                if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
+                    raise AnalysisError(f"'{name.name}' is not a compile-time constant", const_expr.span)
                 return symbol.type_id
             case _:
                 raise AnalysisError(f"Unsupported const expression: {const_expr}", const_expr.span)

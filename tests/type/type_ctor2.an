@@ -1,0 +1,26 @@
+// Hardcoded built-in type constructors: Tuple<...> and Fn<(args,), ret>.
+// These CANNOT be library typedefs (variadic / type-unpacking needed).
+//
+// Expected output: 0
+
+struct WT { p: (i32, u8) }
+struct WF { p: fn(i32) -> bool }
+
+impl<A, B> Tuple<A, B> {
+    static fn size() -> u64 { sizeof(Tuple<A, B>) }
+}
+
+fn main() -> i32 {
+    // sizeof / type position
+    assert sizeof(Tuple<i32, u8>)    == sizeof(WT): "Tuple<i32,u8>";
+    assert sizeof(Fn<(i32,), bool>)   == sizeof(WF): "Fn<(i32,),bool>";
+    assert sizeof(Fn<(), void>)      == sizeof(fn() -> void): "Fn<(),void>";
+
+    // nesting (Tuple inside Ptr — Ptr is library typedef)
+    assert sizeof(Ptr<Tuple<i32, u8>>) == 8: "Ptr<Tuple<...>>";
+
+    // static method receiver — use sizeof() to avoid integer-literal return
+    assert Tuple<i32, u8>.size() == sizeof(WT): "static call on Tuple<...>";
+
+    return 0;
+}

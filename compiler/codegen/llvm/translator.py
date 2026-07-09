@@ -15,7 +15,10 @@ from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.utils.log import CompilerLog
 
-ch_llvm = lambda: CompilerLog.get("llvm")
+
+def ch_llvm():
+    return CompilerLog.get("llvm")
+
 
 class LLTranslator:
     """CFG Functions → LLVM Module."""
@@ -54,8 +57,10 @@ class LLTranslator:
 
     def __resolve(self, builder: LLBuilder, value: IR.Value) -> LLValue:
         if isinstance(value, IR.Reg):
-            if value.type_id in (TypeCtx.void_id, TypeCtx.never_id):
-                # Virtual register — void/never values have no LLVM representation.
+            if self.__ll_type_ctx.is_zst(value.type_id):
+                # Zero-sized values have no LLVM representation — return an
+                # erased placeholder. Consumers of ZST values skip before
+                # ever emitting with it, so this is never materialized.
                 ll_type = self.__ll_type_ctx.get_ll_type(value.type_id)
                 return LLValue(value.type_id, ir.Constant(ll_type.ir_type, ir.Undefined))  # type: ignore
             return self.func.reg(value.name)
@@ -100,19 +105,25 @@ class LLTranslator:
         for symbol_id, var_ref in cfg.local_vars.items():
             func.set_alloca(symbol_id, builder.alloca(var_ref.type_id))
 
-        # store params
+        # store params — zero-sized params are dropped from the LLVM signature,
+        # so walk the real args and skip ZST params to keep alignment.
         builder.position_at(cfg.entry.label, where=BuilderPosition.End)
-        param_type_ids = [cfg.local_vars[sid].type_id for sid in cfg.params]
-        for arg, symbol_id in zip(func.arg_values(param_type_ids), cfg.params):
-            builder.store(arg, func.get_var_ptr(symbol_id))
+        ll_args = func.ir_func.args
+        arg_idx = 0
+        for symbol_id in cfg.params:
+            type_id = cfg.local_vars[symbol_id].type_id
+            if self.__ll_type_ctx.is_zst(type_id):
+                continue  # no LLVM argument for a zero-sized param
+            builder.store(LLValue(type_id, ll_args[arg_idx]), func.get_var_ptr(symbol_id))
+            arg_idx += 1
 
         # translate
         for block in cfg.blocks:
             # phi
             builder.position_at(block.label, where=BuilderPosition.Phi)
             for phi in block.phis:
-                if phi.result.type_id in (TypeCtx.void_id, TypeCtx.never_id):
-                    continue  # void/never phis have no LLVM representation
+                if self.__ll_type_ctx.is_zst(phi.result.type_id):
+                    continue  # zero-sized phis have no LLVM representation
                 builder.phi(phi.result.type_id,
                             [(src.label, self.__resolve(builder, val)) for src, val in phi.incoming],
                             phi.result.name)
@@ -158,13 +169,19 @@ class LLTranslator:
             case IR.Delete():
                 builder.delete(self.__resolve(builder, stmt.ptr))
             case IR.Call():
-                builder.call_func(stmt.callee_type,
-                                  [self.__resolve(builder, a) for a in stmt.args],
-                                  stmt.result.name, stmt.result.type_id)
+                builder.call_func(
+                    stmt.callee_type,
+                    [self.__resolve(builder, a) for a in stmt.args if not self.__ll_type_ctx.is_zst(a.type_id)],
+                    stmt.result.name,
+                    stmt.result.type_id
+                )
             case IR.Invoke():
-                builder.call_value(self.__resolve(builder, stmt.callee),
-                                   [self.__resolve(builder, a) for a in stmt.args],
-                                   stmt.result.name, stmt.result.type_id)
+                builder.call_value(
+                    self.__resolve(builder, stmt.callee),
+                    [self.__resolve(builder, a) for a in stmt.args if not self.__ll_type_ctx.is_zst(a.type_id)],
+                    stmt.result.name,
+                    stmt.result.type_id
+                )
             case IR.Cast():
                 builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name)
             case IR.SizeOf():
@@ -196,8 +213,8 @@ class LLTranslator:
     def __terminator(self, builder: LLBuilder, terminator: IR.Terminator) -> None:
         match terminator:
             case IR.Ret(value=value):
-                if value.type_id == TypeCtx.void_id:
-                    builder.ret(None)
+                if self.__ll_type_ctx.is_zst(value.type_id):
+                    builder.ret(None)  # zero-sized return: `ret void`
                 else:
                     builder.ret(self.__resolve(builder, value))
             case IR.Br(target=target):

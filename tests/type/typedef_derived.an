@@ -1,0 +1,18 @@
+// typedef: alias to a derived type (pointer / slice / array).
+// Exercises alias resolution at the sizeof / codegen consumption point (Bug B).
+// Expected output: (exit 0)
+
+typedef IntPtr = i32*;
+typedef Bytes  = u8[];
+typedef Quad   = i32[4];
+
+struct WP { p: i32* }
+struct WS { p: u8[] }
+
+fn main() -> i32 {
+    assert sizeof(IntPtr) == sizeof(WP): "alias to pointer"
+    assert sizeof(Bytes)  == sizeof(WS): "alias to slice"
+    assert sizeof(Quad)   == sizeof(i32) * 4: "alias to array"
+    let p: IntPtr = nullptr
+    return 0
+}

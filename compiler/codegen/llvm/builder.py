@@ -94,6 +94,10 @@ class LLBuilder:
         self.__func.set_reg(result, alloca_val)
 
     def malloc(self, type_id: int, size: LLValue, result: str) -> None:
+        if self.__type_ctx.is_zst(type_id):
+            ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
+            self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
+            return
         # Convert element count to byte count for C's malloc
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
         if elem_size == 1:
@@ -108,6 +112,8 @@ class LLBuilder:
         self.__func.set_reg(result, LLValue(ptr_type_id, ir_val))  # type: ignore
 
     def delete(self, ptr: LLValue) -> None:
+        if self.__type_ctx.is_zst(ptr.type_id):
+            return  # freeing a ZST pointer is a no-op
         i8_ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         casted = self.__builder.bitcast(ptr.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
         self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
@@ -117,12 +123,18 @@ class LLBuilder:
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[ptr.type_id]
         assert isinstance(ptr_type, Type.PointerType)
+        if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
+            # Loading a zero-sized value yields nothing: emit no `load` and
+            # bind no register (the result is never consumed).
+            return self.undef(ptr_type.pointee_type)
         ir_val = self.__builder.load(ptr.ir_val)  # type: ignore
         result_val = LLValue(ptr_type.pointee_type, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
 
     def store(self, value: LLValue, ptr: LLValue) -> None:
+        if self.__ll_type_ctx.is_zst(value.type_id):
+            return  # storing a zero-sized value is a no-op
         self.__builder.store(value.ir_val, ptr.ir_val)  # type: ignore
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
@@ -132,8 +144,12 @@ class LLBuilder:
         else:
             pointee_type_id = base.type_id
 
-        # Apply indices after the implicit pointer dereference (index 0)
-        # to compute the final pointee type.
+        # If we are already pointing at ZST, every offset is meaningless —
+        # return undef before touching the (empty-struct) LLVM value.
+        if self.__ll_type_ctx.is_zst(pointee_type_id):
+            return self.undef(self.__type_ctx.alloc_pointer(pointee_type_id))
+
+        # Walk sub-indices to find the final pointee.
         for idx in indices[1:]:
             ty = self.__type_ctx[pointee_type_id]
             if isinstance(ty, Type.StructType):
@@ -145,6 +161,9 @@ class LLBuilder:
                 pointee_type_id = ty.element_type
 
         result_type_id = self.__type_ctx.alloc_pointer(pointee_type_id)
+        # A sub-index may have led into a ZST field — skip GEP.
+        if self.__ll_type_ctx.is_zst(pointee_type_id):
+            return self.undef(result_type_id)
         idx_vals = [self.i32(i).ir_val for i in indices]
         ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
         result_val = LLValue(result_type_id, ir_val)
@@ -167,6 +186,8 @@ class LLBuilder:
         """Pointer arithmetic: ptr + offset → gep ptr, offset"""
         ptr_ty = self.__type_ctx[base.type_id]
         assert isinstance(ptr_ty, Type.PointerType)
+        if self.__ll_type_ctx.is_zst(ptr_ty.pointee_type):
+            return self.undef(base.type_id)
         ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
         result_val = LLValue(base.type_id, ir_val)
         self.__func.set_reg(result, result_val)
@@ -240,7 +261,11 @@ class LLBuilder:
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, (Type.PointerType, Type.NullPtrType)) and isinstance(dst, Type.PointerType):
-            ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+            if self.__ll_type_ctx.is_zst(dst.pointee_type):
+                # both src and dst are ptr-to-ZST — no real cast, just undef
+                ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
+            else:
+                ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
         else:
             raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
         result_val = LLValue(to_type, ir_val)  # type: ignore
@@ -250,7 +275,6 @@ class LLBuilder:
     # -- aggregate --
 
     def extract_value(self, base: LLValue, index: int, result: str) -> LLValue:
-        ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         base_type = self.__type_ctx[base.type_id]
         if isinstance(base_type, Type.StructType):
             fields = self.__type_ctx.get_struct_fields(base.type_id)
@@ -263,6 +287,11 @@ class LLBuilder:
             field_type = self.__type_ctx.u32_id
         else:
             field_type = base.type_id
+        if self.__ll_type_ctx.is_zst(field_type):
+            # Extracting a zero-sized field yields nothing (and the base may be
+            # an erased `{}` with no indices to extract from).
+            return self.undef(field_type)
+        ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         result_val = LLValue(field_type, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -276,6 +305,8 @@ class LLBuilder:
     def call(self, callee: LLFunction, args: list[LLValue], result: str, return_type_id: int) -> LLValue:
         resolved = [a.ir_val for a in args]
         ir_val = self.__builder.call(callee.ir_func, resolved)  # type: ignore
+        if self.__ll_type_ctx.is_zst(return_type_id):
+            return self.undef(return_type_id)  # `void` call: nothing to bind
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -288,6 +319,8 @@ class LLBuilder:
     def call_value(self, callee: LLValue, args: list[LLValue], result: str, return_type_id: int) -> LLValue:
         resolved_args = [a.ir_val for a in args]
         ir_val = self.__builder.call(callee.ir_val, resolved_args)  # type: ignore
+        if self.__ll_type_ctx.is_zst(return_type_id):
+            return self.undef(return_type_id)  # `void` call: nothing to bind
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -312,8 +345,14 @@ class LLBuilder:
 
     def __build_aggregate(self, type_id: int, field_values: list[LLValue]) -> LLValue:
         """Build an aggregate value by inserting each field value at its index."""
+        # An all-zero-sized aggregate erases to `{}` — there is nothing to
+        # build, and inserting into `{}` would be an out-of-range index.
+        if self.__ll_type_ctx.is_zst(type_id):
+            return self.undef(type_id)
         val = self.undef(type_id)
         for i, fv in enumerate(field_values):
+            if self.__ll_type_ctx.is_zst(fv.type_id):
+                continue  # zero-sized field: its `{}` slot stays undef
             val = self.insert_value(val, fv, i)
         return val
 
@@ -338,7 +377,7 @@ class LLBuilder:
         disc_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(0).ir_val], inbounds=True)  # type: ignore
         self.__builder.store(self.i32(discriminant).ir_val, disc_ptr)  # type: ignore
 
-        if payload_type is not None:
+        if payload_type is not None and not self.__type_ctx.is_zst(payload_type):
             assert payload_fields is not None
             payload_val = self.__build_aggregate(payload_type, payload_fields)
             # Bitcast the payload array pointer (field 1) to the payload struct pointer
@@ -361,6 +400,8 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
+        if self.__type_ctx.is_zst(payload_type_id):
+            return  # ZST payload: nothing to unpack
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         gep_val = self.__builder.gep(matched.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
@@ -391,6 +432,8 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
+        if self.__type_ctx.is_zst(payload_type_id):
+            return  # ZST payload: no fields to unpack
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         gep_val = self.__builder.gep(matched.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
@@ -507,6 +550,10 @@ class LLBuilder:
                 return self.__type_ctx.u32_id
 
     def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
+        if self.__type_ctx.is_zst(type_id):
+            # All ZST values are indistinguishable — EQ is always true, NE always false
+            is_eq = op in (BinaryOperator.Eq,)
+            return ir.Constant(ir.IntType(1), 1 if is_eq else 0)  # type: ignore
         predicate = {
             BinaryOperator.Eq: "==", BinaryOperator.Neq: "!=",
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",

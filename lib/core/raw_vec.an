@@ -110,10 +110,10 @@ impl<T> RawVec<T> {
 // Implement Move for RawVec<T> to allow moving the RawVec without dropping its contents
 impl<T> Move for RawVec<T> {
     fn invalidate() {
-        self.data = bitcast<T*>(nullptr) + 1;
+        self.cap = ~0;
     }
     fn is_valid() -> bool {
-        self.data != bitcast<T*>(nullptr) + 1
+        self.cap != ~0
     }
 }
 

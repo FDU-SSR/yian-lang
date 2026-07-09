@@ -1,0 +1,34 @@
+// M5 ACCEPTANCE TEST — currently EXPECTED TO FAIL until pointer-to-ZST is
+// implemented (milestone M5). Empty structs `makef1`/`makef2` are zero-sized,
+// so the method-call chain passes a pointer-to-ZST receiver (`makef1*`), which
+// M5 must erase. Until then this fails codegen with `{}* != {}`.
+//
+// The non-empty-struct version of this call-chain coverage lives at
+// tests/type/call_chain.an (kept green).
+//
+// Expected output: 0
+
+struct makef1 {}
+struct makef2 {}
+
+fn f() -> makef1 {
+    return makef1();
+}
+
+impl makef1 {
+    fn f1() -> makef2 {
+        return makef2();
+    }
+}
+
+impl makef2 {
+    fn f2() -> i32 {
+        return 5;
+    }
+}
+
+fn main() -> i32 {
+    assert f().f1().f2() == 5: "call chain works";
+
+    return 0;
+}

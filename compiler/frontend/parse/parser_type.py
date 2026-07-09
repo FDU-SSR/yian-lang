@@ -50,6 +50,7 @@ class TypeParser:
         KeywordKind.U32: lambda span: Ty.IntType(span=span, width=4, signed=False),
         KeywordKind.I64: lambda span: Ty.IntType(span=span, width=8, signed=True),
         KeywordKind.U64: lambda span: Ty.IntType(span=span, width=8, signed=False),
+        KeywordKind.F16: lambda span: Ty.FloatType(span=span, width=2),
         KeywordKind.F32: lambda span: Ty.FloatType(span=span, width=4),
         KeywordKind.F64: lambda span: Ty.FloatType(span=span, width=8),
         KeywordKind.Int: lambda span: Ty.IntType(span=span, width=4, signed=True),   # default int type is i32
@@ -91,10 +92,33 @@ class TypeParser:
             return Ty.NamedType(span=token.span, name=AST.Identifier(span=token.span, name=token.name))
 
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
-            # tuple type, e.g., `(int, str)`
-            element_types = self.__stream.consume_separated(self.parse_type, SEP_COMMA, TERM_RPAREN)
+            # '(' already consumed by next() above.
+            #   ()       -> empty tuple
+            #   (T)      -> grouped type, just T (NOT a 1-tuple)
+            #   (T,)     -> single-element tuple
+            #   (A, B..) -> tuple
+            peeked = self.__stream.peek()
+            if isinstance(peeked, Punctuator) and peeked.kind == PunctuatorKind.RParen:
+                self.__stream.consume_punctuator(PunctuatorKind.RParen)
+                return Ty.TupleType(span=token.span, element_types=[])
+
+            first = self.parse_type()
+            peeked = self.__stream.peek()
+            if isinstance(peeked, Punctuator) and peeked.kind == PunctuatorKind.RParen:
+                # grouped type '(T)' — parentheses are just precedence
+                self.__stream.consume_punctuator(PunctuatorKind.RParen)
+                return first
+
+            self.__stream.consume_punctuator(PunctuatorKind.Comma)
+            peeked = self.__stream.peek()
+            if isinstance(peeked, Punctuator) and peeked.kind == PunctuatorKind.RParen:
+                # single-element tuple '(T,)'
+                self.__stream.consume_punctuator(PunctuatorKind.RParen)
+                return Ty.TupleType(span=token.span, element_types=[first])
+
+            rest = self.__stream.consume_separated(self.parse_type, SEP_COMMA, TERM_RPAREN)
             self.__stream.consume_punctuator(PunctuatorKind.RParen)
-            return Ty.TupleType(span=token.span, element_types=element_types)
+            return Ty.TupleType(span=token.span, element_types=[first] + rest)
 
         raise ParseError(f"Expected type but got '{token}'", token.span)
 

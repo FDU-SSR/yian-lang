@@ -154,6 +154,14 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_bit_cast(expr, guides, is_last, type_ctx)
         case HIR.SysRead():
             return __export_sys_read(expr, guides, is_last, type_ctx)
+        case HIR.Open():
+            return __export_open(expr, guides, is_last, type_ctx)
+        case HIR.Close():
+            return __export_close(expr, guides, is_last, type_ctx)
+        case HIR.BitCopy():
+            return __export_bit_copy(expr, guides, is_last, type_ctx)
+        case HIR.Nop():
+            return __line(guides, is_last, f"Nop: span={__format_span(expr.span)} type_id={expr.type_id}")
         case HIR.AssumeInit():
             res = __line(guides, is_last, f"AssumeInit: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
             res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
@@ -341,6 +349,25 @@ def __export_sys_read(expr: HIR.SysRead, guides: list[bool], is_last: bool, type
     return res
 
 
+def __export_open(expr: HIR.Open, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"Open: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Path", expr.path, guides, is_last, False, type_ctx)
+    res += __export_expr_child("Flags", expr.flags, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_close(expr: HIR.Close, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"Close: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Fd", expr.fd, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_bit_copy(expr: HIR.BitCopy, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"BitCopy: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Value", expr.value, guides, is_last, False, type_ctx)
+    return res
+
+
 def __export_sys_write(expr: HIR.SysWrite, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     res = __line(guides, is_last, f"SysWrite: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
     res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
@@ -417,7 +444,7 @@ def __export_symbol_ctx(symbol_ctx: SymbolCtx, title: str) -> str:
     return res
 
 
-def export_hir_bundle(unit_datas: Mapping[int, UnitData], def_points: Mapping[int, object], type_ctx: TypeCtx) -> str:
+def export_hir_bundle(unit_datas: Mapping[int, UnitData], def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> str:
     sections: list[str] = []
 
     sections.append(__export_type_space(type_ctx).rstrip())

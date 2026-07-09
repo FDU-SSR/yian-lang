@@ -1,0 +1,24 @@
+// Test tuples containing zero-sized elements, and all-zero-sized tuples.
+// (A compound type like `(i32, void)` does not parse in `sizeof` argument
+// position, so size is asserted through named wrapper structs.)
+//
+// Expected output: 0
+
+struct WrapMixed { p: (i32, void) }
+struct WrapAll { p: (void, void) }
+
+fn unit() -> void { return; }
+
+fn main() -> i32 {
+    let m: (i32, void) = (7, unit());
+    assert m[0] == 7: "real tuple element around a zst element works";
+
+    // all-zst tuple: construct and no-op copy, must not crash
+    let z: (void, void) = (unit(), unit());
+    let z2: (void, void) = z;
+
+    assert sizeof(WrapMixed) == sizeof(i32): "(i32, void) contributes only i32";
+    assert sizeof(WrapAll) == 0: "(void, void) is zero-sized";
+
+    return 0;
+}

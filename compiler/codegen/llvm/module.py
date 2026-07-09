@@ -59,13 +59,6 @@ class LLFunction:
     def block(self, label: str) -> ir.Block:
         return self.__blocks[label]
 
-    # -- parameter setup --
-
-    def arg_values(self, param_type_ids: list[int]) -> list[LLValue]:
-        """Return LLVM function arguments as LLValues with the given type_ids."""
-        return [LLValue(tid, self.__ir.args[i])
-                for i, tid in enumerate(param_type_ids) if i < len(self.__ir.args)]
-
     # -- register management --
 
     def set_reg(self, name: str, value: LLValue) -> None:

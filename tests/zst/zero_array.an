@@ -1,0 +1,17 @@
+// Test zero-length arrays (zero-sized): declaration and no-op copy
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let a: i32[0];
+    let b: i32[0];
+    b = a;  // no-op copy of a zero-sized array
+
+    // an array whose element is itself zero-sized is also zero-sized
+    let c: void[4];
+    let d: void[4];
+    d = c;
+
+    assert sizeof(void) == 0: "sizeof(void) should be 0";
+    return 0;
+}

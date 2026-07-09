@@ -1,0 +1,26 @@
+// Multi-element tuples and structs mixing ZST with non-ZST fields, nested
+// ZST tuples, and ZST arrays with non-zero length.
+//
+// Expected output: 0
+
+struct NoZst   { a: i32, c: f64 }               // i32+f64, no zst field
+struct Mixed3  { a: i32, z: void, c: f64 }
+struct Mixed5  { a: void, b: i32, c: void, d: f64, e: void }
+struct NestedZ { x: (void, void), y: i32 }
+struct AllZst2 { a: void, b: ! }
+
+fn main() -> i32 {
+    // mixed tuple / struct with zst fields — compare with equivalent no-zst struct
+    assert sizeof((i32, void, f64)) == sizeof(NoZst): "triple with zst";
+    assert sizeof((void, i32, void, f64, void)) == sizeof(NoZst): "quintuple with 3 zst";
+    assert sizeof(Mixed3) == sizeof(NoZst): "Mixed3 struct";
+
+    // ZST array with non-zero length
+    assert sizeof(void[4]) == 0: "void[4]";
+    assert sizeof(void[2][3]) == 0: "void[2][3] nested zst array";
+
+    // all-zst struct
+    assert sizeof(AllZst2) == 0: "all-zst struct with never";
+
+    return 0;
+}

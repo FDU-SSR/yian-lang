@@ -20,8 +20,6 @@ The state dictionary uses :class:`StateKey` keys::
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -60,10 +58,6 @@ class StateKey:
 
     sym_id: int
     path: tuple[int | str, ...] = ()
-
-
-def __whole(sym_id: int) -> StateKey:
-    return StateKey(sym_id)
 
 
 # ------------------------------------------------------------------
@@ -137,7 +131,7 @@ class DefiniteAssignment:
         # Initial state: params are VALID (whole), other locals INVALID.
         state: dict[StateKey, VarState] = {}
         for loc in dp.locals:
-            state[__whole(loc)] = (VarState.VALID if loc in dp.params else VarState.INVALID)
+            state[self.__whole(loc)] = (VarState.VALID if loc in dp.params else VarState.INVALID)
 
         final_state = self.__check_expr(dp.body, state)
 
@@ -299,7 +293,7 @@ class DefiniteAssignment:
             # inside assume_init itself does not trigger a DA error.
             if isinstance(expr.value, HIR.Var):
                 sym_id = expr.value.symbol_id
-                state = {**state, __whole(sym_id): VarState.VALID}
+                state = {**state, self.__whole(sym_id): VarState.VALID}
                 state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
             state = self.__check_expr(expr.value, state)
             return state
@@ -357,7 +351,7 @@ class DefiniteAssignment:
                     and isinstance(arm.pattern, HIR.EnumPattern)
                     and arm.pattern.unpack_fields is not None):
                 for sym_id in arm.pattern.unpack_fields:
-                    arm_state[__whole(sym_id)] = VarState.VALID
+                    arm_state[self.__whole(sym_id)] = VarState.VALID
             arm_state = self.__check_expr(arm.body, arm_state)
             if arm.body.type_id != TypeCtx.never_id:
                 arm_states.append(arm_state)
@@ -379,9 +373,9 @@ class DefiniteAssignment:
         if expr.init is not None:
             state = self.__check_expr(expr.init, state)
             if sym_id is not None:
-                state = {**state, __whole(sym_id): VarState.VALID}
+                state = {**state, self.__whole(sym_id): VarState.VALID}
         elif sym_id is not None:
-            state = {**state, __whole(sym_id): VarState.INVALID}
+            state = {**state, self.__whole(sym_id): VarState.INVALID}
         return state
 
     def __check_binary(self, expr: HIR.Binary, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
@@ -415,7 +409,7 @@ class DefiniteAssignment:
             sym_id = target.symbol_id
             if not path:
                 # Whole-variable assignment  s = …
-                key = __whole(sym_id)
+                key = self.__whole(sym_id)
                 state = {**state, key: VarState.VALID}
                 # Remove stale per-field entries — whole VALID subsumes them.
                 state = {k: v for k, v in state.items() if not (k.sym_id == sym_id and k.path)}
@@ -604,7 +598,7 @@ class DefiniteAssignment:
             # Mark the variable VALID before walking, matching __check_expr.
             if isinstance(expr.value, HIR.Var):
                 sym_id = expr.value.symbol_id
-                state = {**state, __whole(sym_id): VarState.VALID}
+                state = {**state, self.__whole(sym_id): VarState.VALID}
                 state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
             state = self.__walk_neutral(expr.value, state)
             return state
@@ -654,7 +648,7 @@ class DefiniteAssignment:
         """Report an error unless *key* (or its whole-variable ancestor)
         is definitely VALID."""
         # 1. Whole variable VALID → all fields implicitly VALID.
-        whole = __whole(sym_id)
+        whole = self.__whole(sym_id)
         if state.get(whole) is VarState.VALID:
             return
 
@@ -705,7 +699,7 @@ class DefiniteAssignment:
         key = StateKey(sym_id, key_suffix)
         if state.get(key) is VarState.VALID:
             return True
-        if state.get(__whole(sym_id)) is VarState.VALID:
+        if state.get(self.__whole(sym_id)) is VarState.VALID:
             return True
         # Recurse into nested struct / tuple
         return self.__all_fields_valid(sym_id, type_id, key_suffix, state)
@@ -717,16 +711,21 @@ class DefiniteAssignment:
     def __check_var_use(self, sym_id: int, state: dict[StateKey, VarState], span: SrcSpan) -> None:
         """Report an error if the whole variable *sym_id* is not
         definitely VALID at a use site."""
-        whole = __whole(sym_id)
+        whole = self.__whole(sym_id)
         cur = state.get(whole, VarState.INVALID)
         name = self.__var_name(sym_id)
 
         if cur == VarState.VALID:
             return
 
-        # Try recursive inference
+        # Zero-sized variables carry no runtime data — they are vacuously
+        # always initialized, so a use is never "before assignment".
         assert self.__symbol_ctx is not None
         sym = self.__symbol_ctx.get(sym_id)
+        if self.__type_ctx.is_zst(sym.type_id):
+            return
+
+        # Try recursive inference
         if self.__all_fields_valid(sym_id, sym.type_id, (), state):
             return
 
@@ -741,6 +740,10 @@ class DefiniteAssignment:
                 f"variable '{name}' may not be assigned on all code "
                 f"paths before this use", span,
             ))
+
+    @staticmethod
+    def __whole(sym_id: int) -> StateKey:
+        return StateKey(sym_id)
 
     def __var_name(self, sym_id: int) -> str:
         """Best-effort variable name for error messages."""

@@ -1,0 +1,26 @@
+// Extended pointer-to-ZST operations: nullptr assignment, deref no-op,
+// alloca, and through-struct access.
+//
+// Expected output: 0
+
+struct Empty {}
+struct WrapZ { e: Empty*, v: void* }
+
+fn main() -> i32 {
+    // nullptr can be assigned to ZST pointer
+    let p: void* = nullptr;
+    let q: Empty* = nullptr;
+    assert sizeof(void*) == 0: "sizeof ptr to void";
+    assert sizeof(Empty*) == 0: "sizeof ptr to empty struct";
+
+    // ZST pointer comparison always true (all indistinguishable)
+    assert p == p: "same ZST ptr == itself";
+    let r: void* = nullptr;
+    assert p == r: "two void* ZST ptrs both nullptr";
+    assert p == nullptr: "ZST pointer == nullptr";
+
+    // struct containing ZST pointer fields (the pointers are ZST)
+    assert sizeof(WrapZ) == 0: "struct of ZST ptr fields";
+
+    return 0;
+}

@@ -2,16 +2,16 @@
 //
 // Expected output: 0
 
-struct makef1 {}
-struct makef2 {}
+struct makef1 { a: i32 }
+struct makef2 { b: i32 }
 
 fn f() -> makef1 {
-    return makef1();
+    return makef1(1);
 }
 
 impl makef1 {
     fn f1() -> makef2 {
-        return makef2();
+        return makef2(2);
     }
 }
 

@@ -1,0 +1,25 @@
+// Test structs containing zero-sized fields, and all-zero-sized structs.
+// A ZST field occupies a `{}` slot: it adds no size and does not shift the
+// index of neighbouring real fields. A struct whose every field is zero-sized
+// is itself zero-sized.
+//
+// Expected output: 0
+
+struct Mixed { a: i32, z: void }
+struct AllZst { x: void, y: void }
+
+fn unit() -> void { return; }
+
+fn main() -> i32 {
+    let s: Mixed = Mixed(10, unit());
+    s.a = 42;
+    s.z = unit();                       // no-op store into a zero-sized field
+    assert s.a == 42: "real field around a zst field works";
+    assert sizeof(Mixed) == sizeof(i32): "zst field adds no size";
+
+    let az: AllZst = AllZst(unit(), unit());
+    az.x = unit();                      // field access on an all-zst struct
+    assert sizeof(AllZst) == 0: "all-zst struct is zero-sized";
+
+    return 0;
+}

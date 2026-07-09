@@ -1,0 +1,21 @@
+// Expression-bodied function returning a literal must be coerced to the
+// declared return type — regression test for impl-literal-return bug.
+//
+// Expected output: 0
+
+fn get_u8()  -> u8  { 100 }
+fn get_i64() -> i64 { -1  }
+fn get_f32() -> f32 { 3.14 }
+
+struct Wrapper { n: u64 }
+impl Wrapper {
+    static fn make() -> u64 { 7 }
+}
+
+fn main() -> i32 {
+    assert get_u8()  == 100: "u8 literal";
+    assert get_i64() == -1:  "i64 literal";
+    assert get_f32() >= 3.1 && get_f32() <= 3.2: "f32 literal";
+    assert Wrapper.make() == 7: "method literal";
+    return 0;
+}

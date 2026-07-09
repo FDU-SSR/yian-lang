@@ -70,59 +70,61 @@ pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
 @BitCopy
 pub struct SliceIter<T> {
     pub ptr: T*,
-    pub end: T*,
+    pub n: u64,   // remaining count (ZST-safe, also used for len())
 }
 
 impl<T> SliceIter<T> {
     pub fn len() -> u64 {
-        self.end - self.ptr
+        self.n
     }
 
     pub fn rev() -> RevSliceIter<T>  {
+        // ptr stays at the forward start; Rev moves backward from ptr+n
         RevSliceIter<T>(
-            ptr = self.end,
-            begin = self.ptr
+            ptr = self.ptr,
+            n = self.n,
         )
     }
 }
 
 @BitCopy
 pub struct RevSliceIter<T> {
-    pub ptr: T*,
-    pub begin: T*,
+    pub ptr: T*,    // forward start, stays fixed; next() returns ptr+n
+    pub n: u64,
 }
 
 impl<T> RevSliceIter<T> {
     pub fn len() -> u64 {
-        self.ptr - self.begin
+        self.n
     }
 
     pub fn rev() -> SliceIter<T> {
         SliceIter<T>(
-            ptr = self.begin,
-            end = self.ptr
+            ptr = self.ptr,
+            n = self.n,
         )
     }
 }
 
 impl<T> Iterator<T*> for SliceIter<T> {
     fn next() -> Option<T*> {
-        if self.ptr == self.end {
+        if self.n == 0 {
             return Option<T*>.None;
         }
         let current = self.ptr;
         self.ptr += 1
+        self.n -= 1
         Option<T*>.Some(current)
     }
 }
 
 impl<T> Iterator<T*> for RevSliceIter<T> {
     pub fn next() -> Option<T*> {
-        if self.ptr == self.begin {
+        if self.n == 0 {
             return Option<T*>.None
         }
-        self.ptr -= 1
-        Option<T*>.Some(self.ptr)
+        self.n -= 1
+        Option<T*>.Some(self.ptr + self.n)
     }
 }
 
@@ -131,7 +133,7 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
         let s = self.as_struct();
         SliceIter<T>(
             ptr = s.ptr,
-            end = s.ptr + s.len
+            n = s.len,
         )
     }
 }

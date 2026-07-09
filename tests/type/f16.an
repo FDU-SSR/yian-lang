@@ -1,0 +1,19 @@
+// Test f16 (half-precision) type and literal.
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let a: f16 = 1.5;
+    assert a > 1.4 && a < 1.6: "f16 value out of range";
+
+    let b: f16 = 2.5_f16;
+    assert b > 2.4 && b < 2.6: "f16 suffixed literal out of range";
+
+    assert sizeof(f16) == 2: "f16 is 2 bytes";
+    assert sizeof(f16[4]) == 8: "f16 array";
+
+    let c: f16 = a + b;
+    assert c > 3.9 && c < 4.1: "f16 arithmetic";
+
+    return 0;
+}

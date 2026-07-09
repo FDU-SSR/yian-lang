@@ -179,39 +179,6 @@ def __export_method_def(method_def: AST.MethodDef, guides: list[bool], is_last: 
     return res
 
 
-def __export_stmt(stmt: AST.Expr, guides: list[bool], is_last: bool) -> str:
-    match stmt:
-        case AST.Block():
-            return __export_stmt_block(stmt, guides, is_last)
-        case AST.VarDecl():
-            return __export_var_decl(stmt, guides, is_last)
-        case AST.Return():
-            return __export_return(stmt, guides, is_last)
-        case AST.If():
-            return __export_if(stmt, guides, is_last)
-        case AST.For():
-            return __export_for(stmt, guides, is_last)
-        case AST.While():
-            return __export_while(stmt, guides, is_last)
-        case AST.Loop():
-            return __export_loop(stmt, guides, is_last)
-        case AST.Match():
-            return __export_match(stmt, guides, is_last)
-        case AST.Break():
-            return __export_break(stmt, guides, is_last)
-        case AST.Continue():
-            return __export_continue(stmt, guides, is_last)
-        case AST.Assert():
-            return __export_assert(stmt, guides, is_last)
-        case AST.Delete():
-            return __export_delete(stmt, guides, is_last)
-        case AST.Semi():
-            # Unwrap Semi — re-dispatch the inner expression as a statement
-            return __export_stmt(stmt.expr, guides, is_last)
-        case AST.Binary() | AST.Unary() | AST.Call() | AST.MethodCall() | AST.FieldAccess() | AST.DynValue() | AST.DynBuffer() | AST.TypeItem() | AST.Identifier() | AST.Literal() | AST.Tuple() | AST.Array():
-            return __export_stmt_expr(stmt, guides, is_last)
-
-
 def __export_stmt_block(stmt: AST.Block, guides: list[bool], is_last: bool) -> str:
     res = __line(guides, is_last, "Block:")
     guides.append(not is_last)
@@ -252,6 +219,13 @@ def __export_stmt_if_elif(condition: AST.Expr, body: AST.Block, guides: list[boo
     res = __line(guides, is_last, "Elif:")
     res += __export_expr_child("Condition", condition, guides, is_last, False)
     res += __export_block_child("Body", body, guides, is_last, True)
+    return res
+
+
+def __export_array_repeat(stmt: AST.ArrayRepeat, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, "ArrayRepeat")
+    res += __export_expr_child("Element", stmt.element, guides, is_last, False)
+    res += __export_expr_child("Count", stmt.count, guides, is_last, True)
     return res
 
 
@@ -323,7 +297,7 @@ def __export_stmt_expr(stmt: AST.Expr, guides: list[bool], is_last: bool) -> str
 
 
 def __export_block(block: AST.Block, guides: list[bool]) -> str:
-    return __export_items_with_handler(block.stmts, guides, __export_stmt)
+    return __export_items_with_handler(block.stmts, guides, __export_stmt_expr)
 
 
 def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
@@ -342,6 +316,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_dyn_value(expr, guides, is_last)
         case AST.DynBuffer():
             return __export_dyn_buffer(expr, guides, is_last)
+        case AST.SizeOf():
+            return __export_sizeof(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -369,9 +345,17 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
         case AST.Continue():
             return __export_continue(expr, guides, is_last)
         case AST.Semi():
-            return __export_stmt(expr.expr, guides, is_last)
-        case _:
-            raise TypeError(f"Unsupported expression: {type(expr)!r}")
+            return __export_stmt_expr(expr.expr, guides, is_last)
+        case AST.ArrayRepeat():
+            return __export_array_repeat(expr, guides, is_last)
+        case AST.For():
+            return __export_for(expr, guides, is_last)
+        case AST.While():
+            return __export_while(expr, guides, is_last)
+        case AST.Assert():
+            return __export_assert(expr, guides, is_last)
+        case AST.Delete():
+            return __export_delete(expr, guides, is_last)
 
 
 def __export_binary(expr: AST.Binary, guides: list[bool], is_last: bool) -> str:
@@ -434,6 +418,10 @@ def __export_dyn_buffer(expr: AST.DynBuffer, guides: list[bool], is_last: bool) 
     res += __line(guides, False, f"TargetType: {expr.target_type}")
     res += __export_expr_child("Size", expr.size, guides, is_last, True)
     return res
+
+
+def __export_sizeof(expr: AST.SizeOf, guides: list[bool], is_last: bool) -> str:
+    return __line(guides, is_last, "SizeOf")
 
 
 def __export_type_item(expr: AST.TypeItem, guides: list[bool], is_last: bool) -> str:

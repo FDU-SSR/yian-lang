@@ -16,14 +16,17 @@ from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
 
-ch_call = lambda: CompilerLog.get("call_dispatch")
+
+def ch_call():
+    return CompilerLog.get("call_dispatch")
+
 
 if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sizeof", "bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
+BUILTIN_NAMES = frozenset({"bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -170,8 +173,6 @@ class CallDispatcher:
                 return self.__handle_panic(node)
             case "bitcopy":
                 return self.__handle_bitcopy(node)
-            case "sizeof":
-                return self.__handle_sizeof(node)
             case "bitcast":
                 raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
             case "sys_write":
@@ -213,32 +214,6 @@ class CallDispatcher:
             raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
-
-    def __handle_sizeof(self, node: AST.Call) -> HIR.Expr:
-        """Lower `sizeof(type)` into HIR.SizeOf.
-
-        The argument must evaluate to a type (HIR.Ty). This supports simple type
-        names like `sizeof(i32)` as well as generic types like `sizeof(Vec<u8>)`.
-        """
-        if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for 'sizeof'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'sizeof' expects exactly 1 argument, got {len(node.args)}", node.span)
-
-        # Evaluate the argument as an expression. For type names this will
-        # produce HIR.Ty, which carries the resolved type_id.
-        arg_hir = self.__expr.value(node.args[0].value)
-        if not isinstance(arg_hir, HIR.Ty):
-            raise AnalysisError("'sizeof' expects a type as its argument", node.args[0].span)
-
-        # sizeof returns usize (u64)
-        usize_type_id = self.__ctx.type_ctx.u64_id
-        return HIR.SizeOf(
-            span=node.span,
-            target_type=arg_hir.type_id,
-            type_id=usize_type_id,
-            is_place=False,
-        )
 
     def __handle_bitcast(self, node: AST.Call, callee: AST.TypeItem) -> HIR.Expr:
         """Lower `bitcast<ptr_type>(expr)` into HIR.BitCast.

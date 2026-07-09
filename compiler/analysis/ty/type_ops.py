@@ -233,6 +233,64 @@ def is_float_literal_type(ctx: TypeCtx, type_id: int) -> bool:
     return isinstance(ty, Type.FloatLiteralType)
 
 
+def is_zst(ctx: TypeCtx, type_id: int) -> bool:
+    """Return whether the given type is a Zero-Sized Type (ZST).
+
+    A type is a ZST iff its values carry no runtime information (at most one
+    observable inhabitant). Recursively:
+
+    - ``void`` / ``never`` are ZST;
+    - an array is ZST when its length is 0, or its element type is ZST;
+    - a tuple / struct is ZST when *every* element / field is ZST;
+    - an enum is ZST when it has zero variants, or a single variant whose
+      payload is ZST or absent;
+    - a pointer is ZST when its pointee is ZST (per the language spec: a
+      pointer to a ZST carries no observable address);
+    - everything else (numbers, ``bool``, ``char``, ``str``, slices, function
+      pointers, unresolved generics / literals) is not a ZST.
+
+    Cyclic occurrences (self-referential types reached through a pointer)
+    resolve to ``False``: such a type is only reachable through a non-ZST
+    pointer, so it is correctly treated as non-ZST.
+    """
+    visiting: set[int] = set()
+
+    def work(tid: int) -> bool:
+        tid = ctx.resolve_aliases(tid)
+        if tid in visiting:
+            return False
+        visiting.add(tid)
+        try:
+            ty = ctx[tid]
+            match ty:
+                case Type.VoidType() | Type.NeverType():
+                    return True
+                case Type.ArrayType(element_type=element_type):
+                    if ctx.try_extract_array_length(tid) == 0:
+                        return True
+                    return work(element_type)
+                case Type.TupleType(element_types=element_types):
+                    return all(work(element_type) for element_type in element_types)
+                case Type.PointerType(pointee_type=pointee_type):
+                    return work(pointee_type)
+                case Type.StructType():
+                    return all(work(f.type_id) for f in ctx.get_struct_fields(tid))
+                case Type.EnumType():
+                    variants = ctx.get_enum_variants(tid)
+                    if len(variants) == 0:
+                        return True
+                    if len(variants) == 1:
+                        payload = variants[0].payload_type
+                        return payload is None or work(payload)
+                    return False
+                case _:
+                    return False
+        finally:
+            visiting.discard(tid)
+
+    return work(type_id)
+
+
 def merge_types(ctx: TypeCtx, type_ids: list[int], span: SrcSpan) -> int:
     """Merge a list of candidate types into one compatible result.
 

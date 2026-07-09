@@ -455,7 +455,7 @@ class CompilerLog:
         self.__noop = noop
         self.__output = self.__make_output(file)
         self.__channels: dict[str, LogChannel] = {}
-        self.__default_level = LogLevel.INFO
+        self.__default_level = LogLevel.WARN
         self.__entries: list[CompilerLog.__SpecEntry] = []
         if spec:
             self.__parse_spec(spec)

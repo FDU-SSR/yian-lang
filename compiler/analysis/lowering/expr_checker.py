@@ -19,8 +19,16 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
 # Lazy channel accessors — called at runtime, after CompilerLog is initialised.
-ch_expr = lambda: CompilerLog.get("type_check.expr")
-ch_coerce = lambda: CompilerLog.get("type_check.coerce")
+
+
+def ch_expr():
+    return CompilerLog.get("type_check.expr")
+
+
+def ch_coerce():
+    return CompilerLog.get("type_check.coerce")
+
+
 class ExprChecker:
     """Expression checker and lowering facade.
 
@@ -75,6 +83,8 @@ class ExprChecker:
                 return self.__handle_dyn_value(expr)
             case AST.DynBuffer():
                 return self.__handle_dyn_buffer(expr)
+            case AST.SizeOf():
+                return self.__handle_sizeof(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -109,17 +119,26 @@ class ExprChecker:
     def __handle_dyn_buffer(self, node: AST.DynBuffer) -> HIR.Expr:
         return self.__op_builder.build_dyn_buffer(node.span, node.target_type, node.size)
 
+    def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
+        type_id = self.__ctx.resolve_type(node.ty)
+        return HIR.SizeOf(span=node.span, target_type=type_id, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
+
+        generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
+        # Hardcoded type constructors (Tuple / Fn) have no registered
+        # symbol — intercept by name before the symbol lookup.
+        type_id = self.__ctx.type_ctx.try_builtin_ctor(node.name.name, generic_arg_ids)
+        if type_id is not None:
+            return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
         symbol = self.__ctx.symbol_ctx.lookup(node.name.name)
         if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
-        generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
-        type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
-        if generic_arg_ids:
-            type_id = self.__ctx.type_ctx.alloc_instance(type_id, generic_arg_ids)
+        type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
+        type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
 
         if symbol.kind == SymbolKind.Function:
             self.__ctx.report_def(type_id)
@@ -161,11 +180,12 @@ class ExprChecker:
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
-                ty = self.__ctx.type_ctx[symbol.type_id]
+                type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
+                ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
-                return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=False)
+                return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
         literal = node.literal

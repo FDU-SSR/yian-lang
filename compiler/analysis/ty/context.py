@@ -105,6 +105,7 @@ class TypeCtx:
         self.__methods_cache: dict[int, dict[str, int]] = {}
         self.__default_literals_cache: dict[int, int] = {}
         self.__simple_type_cache: dict[int, bool] = {}
+        self.__zst_cache: dict[int, bool] = {}
 
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
@@ -217,6 +218,25 @@ class TypeCtx:
     def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
         return self.__space.alloc_function_pointer(param_types, return_type)
 
+    def try_builtin_ctor(self, name: str, arg_ids: list[int]) -> int | None:
+        """Resolve a hardcoded built-in type constructor.
+
+        ``Tuple<A, B, ...>`` and ``Fn<(A, B), R>`` are variadic or
+        type-structure-unpacking and cannot be expressed as library
+        ``typedef``.  Return the concrete type id, or ``None`` if
+        *name* is not a hardcoded constructor.
+        """
+        if name == "Tuple":
+            return self.alloc_tuple(arg_ids)
+        if name == "Fn":
+            if len(arg_ids) != 2:
+                raise CompilerError("Fn<...> requires exactly two arguments: (param_tuple, return_type)")
+            params_ty = self[arg_ids[0]]
+            if not isinstance(params_ty, Type.TupleType):
+                raise CompilerError("The first argument to Fn<...> must be a tuple type")
+            return self.alloc_function_pointer(params_ty.element_types, arg_ids[1])
+        return None
+
     def alloc_alias(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_alias(name, span)
 
@@ -262,6 +282,20 @@ class TypeCtx:
     def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
         return type_ops.is_integer_type(self, type_id, include_literals)
 
+    def is_zst(self, type_id: int) -> bool:
+        """Return whether a type is a Zero-Sized Type (carries no runtime info).
+
+        See ``type_ops.is_zst`` for the recursive definition. Results are
+        cached by resolved type_id in ``__zst_cache``.
+        """
+        type_id = self.resolve_aliases(type_id)
+        cached = self.__zst_cache.get(type_id)
+        if cached is not None:
+            return cached
+        result = type_ops.is_zst(self, type_id)
+        self.__zst_cache[type_id] = result
+        return result
+
     def is_simple_type(self, type_id: int) -> bool:
         """Return True for types that support direct bitwise-copy assignment.
 
@@ -276,6 +310,12 @@ class TypeCtx:
         cached = self.__simple_type_cache.get(type_id)
         if cached is not None:
             return cached
+
+        # Zero-sized types carry no runtime data, so a bitwise copy of zero
+        # bytes is always valid — they are trivially simple-assignable.
+        if self.is_zst(type_id):
+            self.__simple_type_cache[type_id] = True
+            return True
 
         ty = self[type_id]
         if isinstance(ty, (Type.IntType, Type.FloatType, Type.BoolType,
@@ -532,7 +572,12 @@ class TypeCtx:
         return self.__resolver.resolve(ty, symbol_ctx)
 
     def resolve_aliases(self, type_id: int) -> int:
-        """Follow alias chains to the first non-alias concrete type."""
+        """Follow alias chains to the first non-alias concrete type.
+
+        For a generic alias instance (e.g. ``Ptr<i32>`` where
+        ``typedef Ptr<T> = T*``), the alias's generic arguments are
+        substituted into the aliased body before continuing.
+        """
         visited: set[int] = set()
         while True:
             if type_id in visited:
@@ -540,7 +585,11 @@ class TypeCtx:
             visited.add(type_id)
             ty = self[type_id]
             if isinstance(ty, Type.AliasType):
-                type_id = ty.custom_def.aliased_type
+                body = ty.custom_def.aliased_type
+                if ty.custom_def.generics:
+                    substs = dict(zip(ty.custom_def.generics, ty.generic_args))
+                    body = self.instantiate(body, substs)
+                type_id = body
             else:
                 return type_id
 

@@ -1,0 +1,6 @@
+// A typedef must end with a semicolon; a missing ';' is a parse error.
+// Expected compilation error.
+
+typedef X = i64
+
+fn main() -> i32 { return 0; }

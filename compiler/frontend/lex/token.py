@@ -37,6 +37,7 @@ class KeywordKind(Enum):
     Assert = "assert"
     In = "in"
     Typeof = "typeof"
+    Sizeof = "sizeof"
     Del = "del"
     True_ = "true"
     False_ = "false"
