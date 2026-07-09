@@ -126,11 +126,17 @@ class ExprChecker:
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
 
+        generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
+        # Hardcoded type constructors (Tuple / Fn) have no registered
+        # symbol — intercept by name before the symbol lookup.
+        type_id = self.__ctx.type_ctx.try_builtin_ctor(node.name.name, generic_arg_ids)
+        if type_id is not None:
+            return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
+
         symbol = self.__ctx.symbol_ctx.lookup(node.name.name)
         if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
-        generic_arg_ids = [self.resolve_generic_arg(arg) for arg in node.generics]
         type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
         type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
 

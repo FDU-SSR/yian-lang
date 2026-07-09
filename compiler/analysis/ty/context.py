@@ -218,6 +218,25 @@ class TypeCtx:
     def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
         return self.__space.alloc_function_pointer(param_types, return_type)
 
+    def try_builtin_ctor(self, name: str, arg_ids: list[int]) -> int | None:
+        """Resolve a hardcoded built-in type constructor.
+
+        ``Tuple<A, B, ...>`` and ``Fn<(A, B), R>`` are variadic or
+        type-structure-unpacking and cannot be expressed as library
+        ``typedef``.  Return the concrete type id, or ``None`` if
+        *name* is not a hardcoded constructor.
+        """
+        if name == "Tuple":
+            return self.alloc_tuple(arg_ids)
+        if name == "Fn":
+            if len(arg_ids) != 2:
+                raise CompilerError("Fn<...> requires exactly two arguments: (param_tuple, return_type)")
+            params_ty = self[arg_ids[0]]
+            if not isinstance(params_ty, Type.TupleType):
+                raise CompilerError("The first argument to Fn<...> must be a tuple type")
+            return self.alloc_function_pointer(params_ty.element_types, arg_ids[1])
+        return None
+
     def alloc_alias(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_alias(name, span)
 

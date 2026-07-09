@@ -91,8 +91,14 @@ class TypeResolver:
                     raise AnalysisError(f"{name} is not a type", ty.span)
                 return symbol.type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
-                base_type_id = self.__resolve(base, symbol_ctx)
+                # Hardcoded type constructors (Tuple / Fn) are not
+                # registered symbols — intercept by name first.
                 arg_ids = [self.__resolve_generic_arg(arg, symbol_ctx) for arg in generic_args]
+                if isinstance(base, ASTTy.NamedType):
+                    type_id = self.__ctx.try_builtin_ctor(base.name.name, arg_ids)
+                    if type_id is not None:
+                        return type_id
+                base_type_id = self.__resolve(base, symbol_ctx)
                 return self.__ctx.alloc_instance(base_type_id, arg_ids)
             case ASTTy.FunctionType(param_types=param_types, return_type=return_type):
                 param_type_ids = [self.resolve(pt, symbol_ctx) for pt in param_types]
