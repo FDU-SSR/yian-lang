@@ -1,0 +1,8 @@
+// Module providing shared typedefs (imported by main.an).
+// Do not compile standalone.
+
+pub struct Vec2 { pub x: i32, pub y: i32 }
+
+pub typedef Point  = Vec2;
+pub typedef Meters = i64;
+pub typedef Ptr<T> = T*;

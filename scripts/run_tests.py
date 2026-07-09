@@ -40,6 +40,8 @@ MULTI_FILE_DIRS: set[str] = {
     "import/func",
     "import/cycle",
     "import/type",
+    "import/typedef",
+    "import/typedef_priv",
     "private/pub_field",
     "private/pub_import",
     "private/field_err",
