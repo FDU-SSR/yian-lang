@@ -24,3 +24,7 @@ impl Drop for f64 { pub fn drop() {} }
 impl Drop for bool { pub fn drop() {} }
 impl Drop for char { pub fn drop() {} }
 impl Drop for void { pub fn drop() {} }
+
+impl void {
+    static pub fn new() -> void { return; }
+}
