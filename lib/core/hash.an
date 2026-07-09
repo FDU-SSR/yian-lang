@@ -140,3 +140,8 @@ impl BuildHasher<Murmur3Hasher> for Murmur3BuildHasher {
         Murmur3Hasher.with_seed(self.seed)
     }
 }
+
+// ZST types carry no bytes — hashing is a no-op.
+impl Hash<Murmur3Hasher> for void {
+    fn hash(hasher: Murmur3Hasher) {}
+}

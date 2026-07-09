@@ -559,6 +559,14 @@ class OpBuilder:
         if builtin_expr is not None:
             return builtin_expr
 
+        # ZST values: all indistinguishable — EQ/LEQ/GEQ true, NE/LT/GT false.
+        if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq, BinaryOperator.Lt,
+                        BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
+            if self.__type_ctx.is_zst(left_hir.type_id):
+                op = desc.op
+                is_true = op in (BinaryOperator.Eq, BinaryOperator.Leq, BinaryOperator.Geq)
+                return HIR.BoolLiteral(span, is_true, TypeCtx.bool_id, is_place=False)
+
         if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq, BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
             left_ty = self.__type_ctx[left_hir.type_id]
             right_ty = self.__type_ctx[right_hir.type_id]
