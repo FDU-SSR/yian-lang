@@ -1,0 +1,33 @@
+// M6: Single-variant enum with ZST or no payload — the discriminant is
+// unnecessary and should be stripped, making the enum zero-sized.
+//
+// Expected output: 0
+
+// single variant, no payload — should be ZST
+enum E0 { Only }
+
+// single variant, ZST payload — should be ZST
+struct Empty {}
+enum EZ { Z { v: Empty } }
+
+// enum with void payload field
+enum EV { V { v: void } }
+
+// control: multi-variant enum — NOT ZST
+enum E2 { A, B }
+
+// control: single variant with non-ZST payload — NOT ZST
+enum EN { N { v: i32 } }
+
+fn main() -> i32 {
+    // ZST enums
+    assert sizeof(E0) == 0: "unit enum";
+    assert sizeof(EZ) == 0: "single variant ZST payload (empty struct)";
+    assert sizeof(EV) == 0: "single variant ZST payload (void)";
+
+    // non-ZST: verify unchanged
+    assert sizeof(E2) > 0: "multi-variant enum still has discriminant";
+    assert sizeof(EN) > 0: "single non-zst payload > 0";
+
+    return 0;
+}
