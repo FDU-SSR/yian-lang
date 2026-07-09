@@ -1,0 +1,19 @@
+// M8.2: Slice / array iteration with ZST elements.
+// ZST element pointers never advance (size 0), so iterator termination
+// must be count-based, not pointer-range-based.
+//
+// Expected output: 3
+
+fn unit() -> void { return; }
+
+fn main() -> i32 {
+    let arr: void[3];
+
+    let count: u64 = 0;
+    for x in arr {
+        count = count + 1;
+    }
+    assert count == 3: "for-in over zst array counts correctly";
+
+    return 0;
+}
