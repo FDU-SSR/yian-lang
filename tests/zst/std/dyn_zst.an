@@ -1,0 +1,23 @@
+// M8.3: dyn[n] T and del for ZST types.
+// M5 already handles malloc/dealloc for ZST — verify end-to-end.
+//
+// Expected output: 0
+
+struct Empty {}
+fn unit() -> void { return; }
+
+fn main() -> i32 {
+    // dyn[n] ZST: must not crash
+    let p: void* = dyn[5] void;
+    let q: Empty* = dyn[3] Empty;
+
+    // del on ZST pointer: must not crash
+    del p;
+    del q;
+
+    // read through pointer (no-op load)
+    let p2: void* = dyn[1] void;
+    let v: void = *p2;
+
+    return 0;
+}
