@@ -15,7 +15,9 @@ from compiler.error import CompilerError
 from compiler.frontend.parse import ast as AST
 from compiler.utils.log import CompilerLog
 
-ch_tc = lambda: CompilerLog.get("type_check")
+
+def ch_tc():
+    return CompilerLog.get("type_check")
 
 
 class TypeCheck:
@@ -132,7 +134,17 @@ class TypeCheck:
 
         self.__current_params = list(self.__sem_ctx.locals)
 
-        return self.__expr_helper.check_block(def_point.ast_body)
+        body = self.__expr_helper.check_block(def_point.ast_body)
+        return_type_id = func_ty.return_type(self.__type_ctx)
+        # Coerce unresolved literal types in expression-bodied functions
+        # (e.g. fn f() -> u64 { 2 }) to the declared return type.
+        if body.stmts:
+            last = body.stmts[-1]
+            last_ty = self.__type_ctx[last.type_id]
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
+                body.type_id = return_type_id
+        return body
 
     def __check_method(self, def_point: DefPoint) -> HIR.Block:
         method_ty = self.__type_ctx[self.__current_type_id]
@@ -175,4 +187,12 @@ class TypeCheck:
 
         self.__current_params = list(self.__sem_ctx.locals)
 
-        return self.__expr_helper.check_block(def_point.ast_body)
+        body = self.__expr_helper.check_block(def_point.ast_body)
+        return_type_id = method_ty.return_type(self.__type_ctx)
+        if body.stmts:
+            last = body.stmts[-1]
+            last_ty = self.__type_ctx[last.type_id]
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
+                body.type_id = return_type_id
+        return body
