@@ -1,0 +1,72 @@
+// M7: Comprehensive integration test exercising the full ZST pipeline.
+//
+// Expected output: 0
+
+struct Real    { a: i32, c: f64 }          // no ZST field — layout reference
+struct Mixed   { a: i32, z: void, c: f64 }
+struct Empty   {}
+struct AllZst  { x: void, y: void }
+struct WrapZst { p: void* }
+
+enum E0    { Only }
+enum EZst  { Z { v: Empty } }
+enum EMany { A, B }
+
+fn unit() -> void { return; }
+
+fn pass_through_zst(z: void, n: i32) -> i32 {
+    return n;   // z is ZST, stripped from params — call must still align
+}
+
+fn main() -> i32 {
+    // ---- void locals ----
+    let v1: void;
+    let v2: void;
+    v1 = v2;
+    assert sizeof(void) == 0: "sizeof(void)";
+
+    // ---- struct with ZST fields ----
+    let s: Mixed;
+    s.a = 42;
+    s.z = unit();
+    s.c = 3.14;
+    assert s.a == 42: "struct real field survives zst field";
+    assert sizeof(Mixed) == sizeof(Real): "mixed struct layout ok";
+
+    // ---- all-ZST struct ----
+    let az: AllZst = AllZst(x = unit(), y = unit());
+    assert sizeof(AllZst) == 0: "sizeof all-zst struct";
+
+    // ---- struct with ZST pointer field (pointers to ZST are ZST) ----
+    assert sizeof(WrapZst) == 0: "sizeof struct with zst ptr field";
+
+    // ---- tuple with ZST elements ----
+    assert sizeof((i32, void)) == sizeof(i32): "tuple with zst element";
+    assert sizeof((void, void)) == 0: "all-zst tuple";
+
+    // ---- ZST function parameter (must still align real params) ----
+    assert pass_through_zst(unit(), 7) == 7: "zst param stripped, real param aligned";
+
+    // ---- zero-length array ----
+    assert sizeof(i32[0]) == 0: "zero-length array";
+
+    // ---- array of ZST elements (non-zero length, still ZST) ----
+    assert sizeof(void[4]) == 0: "void array";
+
+    // ---- never type ----
+    assert sizeof(!) == 0: "sizeof never";
+
+    // ---- single-variant ZST enum ----
+    assert sizeof(E0) == 0: "unit enum zst";
+    assert sizeof(EZst) == 0: "single-variant zst payload";
+
+    // ---- multi-variant enum is NOT zst ----
+    assert sizeof(EMany) > 0: "multi-variant enum has discriminant";
+
+    // ---- ptr-to-ZST ----
+    let p: Empty* = nullptr;
+    assert sizeof(Empty*) == 0: "ptr to zst struct is zst";
+    assert p == p: "zst ptr equality";
+
+    return 0;
+}
