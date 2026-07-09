@@ -76,6 +76,13 @@ class LLTypeCtx:
             self.__storage[type_id] = self.__empty_struct
             return self.__empty_struct
 
+        # Pointer-to-ZST is itself ZST (§M5): erase to empty struct before
+        # the per-type match so it never reaches __handle_pointer.
+        if self.__type_ctx.is_zst(type_id):
+            result = self.__empty_struct
+            self.__storage[type_id] = result
+            return result
+
         match ty_def:
             case Type.VoidType():    result = self.__void
             case Type.NeverType():   result = self.__void
@@ -149,7 +156,7 @@ class LLTypeCtx:
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         # Zero-sized parameters carry no data and are dropped from the signature.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
-        if receiver_type_id is not None:
+        if receiver_type_id is not None and not self.is_zst(receiver_type_id):
             params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())
         return ir.FunctionType(ret, params)
 
@@ -183,6 +190,12 @@ class LLTypeCtx:
         if cached is not None:
             return cached
         type_def = self.__type_ctx[type_id]
+
+        # Pointer-to-ZST and other ZST types have zero size and alignment 1.
+        if self.__type_ctx.is_zst(type_id):
+            result = (0, 1)
+            self.__layout_cache[type_id] = result
+            return result
 
         if isinstance(type_def, (Type.VoidType, Type.NeverType)):
             result = (0, 1)

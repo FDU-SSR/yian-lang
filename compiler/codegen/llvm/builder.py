@@ -94,6 +94,9 @@ class LLBuilder:
         self.__func.set_reg(result, alloca_val)
 
     def malloc(self, type_id: int, size: LLValue, result: str) -> None:
+        if self.__type_ctx.is_zst(type_id):
+            self.__func.set_reg(result, LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id).ir_type, ir.Undefined)))  # type: ignore
+            return
         # Convert element count to byte count for C's malloc
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
         if elem_size == 1:
@@ -532,6 +535,10 @@ class LLBuilder:
                 return self.__type_ctx.u32_id
 
     def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
+        if self.__type_ctx.is_zst(type_id):
+            # All ZST values are indistinguishable — EQ is always true, NE always false
+            is_eq = op in (BinaryOperator.Eq,)
+            return ir.Constant(ir.IntType(1), 1 if is_eq else 0)  # type: ignore
         predicate = {
             BinaryOperator.Eq: "==", BinaryOperator.Neq: "!=",
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",
