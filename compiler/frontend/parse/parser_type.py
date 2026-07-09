@@ -50,6 +50,7 @@ class TypeParser:
         KeywordKind.U32: lambda span: Ty.IntType(span=span, width=4, signed=False),
         KeywordKind.I64: lambda span: Ty.IntType(span=span, width=8, signed=True),
         KeywordKind.U64: lambda span: Ty.IntType(span=span, width=8, signed=False),
+        KeywordKind.F16: lambda span: Ty.FloatType(span=span, width=2),
         KeywordKind.F32: lambda span: Ty.FloatType(span=span, width=4),
         KeywordKind.F64: lambda span: Ty.FloatType(span=span, width=8),
         KeywordKind.Int: lambda span: Ty.IntType(span=span, width=4, signed=True),   # default int type is i32
