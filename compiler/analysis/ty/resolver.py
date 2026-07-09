@@ -107,7 +107,10 @@ class TypeResolver:
                 return self.__ctx.alloc_literal_value(v, self.__ctx.u64_id)
             case GenericConstExpr(name=name):
                 symbol = symbol_ctx.lookup(name.name)
-                assert symbol is not None, f"Undefined const generic '{name.name}'"
+                if symbol is None:
+                    raise AnalysisError(f"Undefined const generic '{name.name}'", const_expr.span)
+                if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
+                    raise AnalysisError(f"'{name.name}' is not a compile-time constant", const_expr.span)
                 return symbol.type_id
             case _:
                 raise AnalysisError(f"Unsupported const expression: {const_expr}", const_expr.span)
