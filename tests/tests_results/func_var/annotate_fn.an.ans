@@ -1,0 +1,1 @@
+Expected type 'fn() -> void' but got 'foo'
