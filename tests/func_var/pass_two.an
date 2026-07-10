@@ -1,0 +1,18 @@
+// Two distinct functions with the same signature have distinct function-item
+// types, producing two separate monomorphizations of apply, each calling the
+// correct function directly.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+fn dbl(x: i32) -> i32 { return x * 2; }
+
+fn apply<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn main() -> i32 {
+    assert apply(add1, 10) == 11: "apply<add1>";
+    assert apply(dbl, 10) == 20: "apply<dbl>";
+    return 0;
+}
