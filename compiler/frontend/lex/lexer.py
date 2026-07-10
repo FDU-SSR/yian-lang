@@ -28,14 +28,15 @@ class LexError(ValueError):
 class CharStream:
     def __init__(self, path: Path):
         self.__source = path.read_text()
+        self.__src_len = len(self.__source)
         self.__index = 0
         self.pos = SrcPosition(0, 1, path)
 
     def at_end(self) -> bool:
-        return self.__index >= len(self.__source)
+        return self.__index >= self.__src_len
 
     def next(self) -> str:
-        if self.__index >= len(self.__source):
+        if self.__index >= self.__src_len:
             raise StopIteration("End of source code reached")
         ch = self.__source[self.__index]
         self.__index += 1
@@ -49,7 +50,7 @@ class CharStream:
         return ch
 
     def advance(self) -> None:
-        if self.at_end():
+        if self.__index >= self.__src_len:
             raise StopIteration("End of source code reached")
 
         if self.__source[self.__index] == "\n":
@@ -61,41 +62,93 @@ class CharStream:
         self.__index += 1
 
     def advance_n(self, n: int) -> None:
-        for _ in range(n):
-            self.advance()
+        for i in range(n):
+            if self.__index >= self.__src_len:
+                raise StopIteration("End of source code reached")
+            if self.__source[self.__index] == "\n":
+                self.pos.row += 1
+                self.pos.col = 1
+            else:
+                self.pos.col += 1
+            self.__index += 1
 
     def peek(self) -> str | None:
-        """
-        Peeks the next character
-        """
-        if self.__index >= len(self.__source):
+        if self.__index >= self.__src_len:
             return None
         return self.__source[self.__index]
 
     def peek_n(self, n: int) -> str | None:
-        """
-        Peeks a slice of the next n characters
-        """
-        if self.__index + n > len(self.__source):
+        if self.__index + n > self.__src_len:
             return None
         return self.__source[self.__index:self.__index + n]
 
-    def peek_nth(self, n: int) -> str | None:
-        """
-        Peeks the nth character after the current position (1-based index)
-        """
-        if self.__index + n >= len(self.__source):
-            return None
-        return self.__source[self.__index + n - 1]
-
     def consume(self, expected: str) -> str:
-        """
-        Consumes the prefix of the next characters if they match the expected string, and returns the consumed string.
-        """
-        if not self.peek_n(len(expected)) == expected:
-            raise ValueError(f"Expected '{expected}' but got '{self.peek_n(len(expected))}'")
-        self.advance_n(len(expected))
+        elen = len(expected)
+        if self.__index + elen > self.__src_len or self.__source[self.__index:self.__index + elen] != expected:
+            raise ValueError(f"Expected '{expected}'")
+        for ch in expected:
+            if ch == "\n":
+                self.pos.row += 1
+                self.pos.col = 1
+            else:
+                self.pos.col += 1
+        self.__index += elen
         return expected
+
+    # ── bulk-skip methods (operate directly on the string for speed) ──────
+
+    def skip_ws(self) -> bool:
+        """Skip whitespace characters in bulk. Returns True if any were skipped."""
+        src = self.__source
+        idx = self.__index
+        end = self.__src_len
+        start = idx
+        while idx < end and src[idx].isspace():
+            if src[idx] == "\n":
+                self.pos.row += 1
+                self.pos.col = 1
+            else:
+                self.pos.col += 1
+            idx += 1
+        self.__index = idx
+        return idx != start
+
+    def skip_line_comment(self) -> None:
+        """Skip to end of line (current position is just after '//')."""
+        src = self.__source
+        idx = self.__index
+        end = self.__src_len
+        while idx < end and src[idx] != "\n":
+            idx += 1
+        if idx < end:
+            idx += 1  # consume the newline
+        self.pos.row += 1
+        self.pos.col = 1
+        self.__index = idx
+
+    def peek_nth(self, n: int) -> str | None:
+        """Peek the nth character ahead (1-based)."""
+        pos = self.__index + n - 1
+        if pos >= self.__src_len:
+            return None
+        return self.__source[pos]
+
+    def skip_block_comment(self) -> None:
+        """Skip to '*/' (current position is just after '/*')."""
+        src = self.__source
+        idx = self.__index
+        end = self.__src_len
+        while idx + 1 < end and not (src[idx] == "*" and src[idx + 1] == "/"):
+            if src[idx] == "\n":
+                self.pos.row += 1
+                self.pos.col = 1
+            else:
+                self.pos.col += 1
+            idx += 1
+        if idx + 1 >= end:
+            raise LexError("Unterminated block comment", self.pos.into_span())
+        self.__index = idx + 2  # skip '*/'
+        self.pos.col += 2
 
 
 class Lexer:
@@ -122,24 +175,28 @@ class Lexer:
         return self.__tokens
 
     def __skip_ignored(self) -> bool:
-        """
-        Skips whitespace and comments. Returns True if any whitespace was consumed.
-        """
+        """Skip whitespace and comments. Returns True if any whitespace was consumed."""
         saw_whitespace = False
         while not self.__stream.at_end():
             ch = self.__stream.peek()
             if ch is None:
                 return saw_whitespace
             if ch.isspace():
-                self.__stream.advance()
+                self.__stream.skip_ws()
                 saw_whitespace = True
                 continue
-            if self.__stream.peek_n(2) == "//":
-                self.__skip_line_comment()
-                continue
-            if self.__stream.peek_n(2) == "/*":
-                self.__skip_block_comment()
-                continue
+            if ch == "/":
+                n2 = self.__stream.peek_n(2)
+                if n2 == "//":
+                    self.__stream.consume("//")
+                    self.__stream.skip_line_comment()
+                    saw_whitespace = True
+                    continue
+                if n2 == "/*":
+                    self.__stream.consume("/*")
+                    self.__stream.skip_block_comment()
+                    saw_whitespace = True
+                    continue
             return saw_whitespace
         return saw_whitespace
 
@@ -301,35 +358,6 @@ class Lexer:
             return Tok.IntLiteral(tok_str, span, Tok.parse_byte_value(tok_str), suffix="u8")
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
-
-    def __skip_line_comment(self) -> None:
-        """
-        Skips a line comment starting at the current slash.
-        """
-        # consume the initial '//'
-        self.__stream.consume("//")
-
-        while not self.__stream.at_end():
-            if self.__stream.peek() == "\n":
-                self.__stream.advance()
-                return
-            self.__stream.advance()
-
-    def __skip_block_comment(self) -> None:
-        """
-        Skips a block comment starting at / * and ending at * /. Nesting is not supported.
-        """
-        # consume the initial '/*'
-        self.__stream.consume("/*")
-
-        while not self.__stream.at_end():
-            if self.__stream.peek_n(2) == "*/":
-                self.__stream.consume("*/")
-                return
-            self.__stream.advance()
-
-        # reached end of file without closing */
-        raise LexError("Unterminated block comment", self.__stream.pos.into_span())
 
     def __lex_punctuator(self, tok_str: str, start_pos: SrcPosition, prev_was_ws: bool) -> Token:
         """
