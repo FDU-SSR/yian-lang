@@ -1,0 +1,13 @@
+// A function variable may be reassigned the same function; the copy of a
+// zero-sized function value is a no-op.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn main() -> i32 {
+    let f = add1;
+    f = add1;
+    assert f(1) == 2: "reassign same function";
+    return 0;
+}

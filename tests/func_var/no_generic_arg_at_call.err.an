@@ -1,0 +1,9 @@
+// A function variable is called like a function pointer: no generic
+// arguments are permitted at the call site.
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn main() -> i32 {
+    let f = add1;
+    return f<i32>(1);
+}

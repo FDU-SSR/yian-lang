@@ -39,6 +39,25 @@ class LLTypeCtx:
     def get_ll_type(self, type_id: int) -> LLType:
         return LLType(type_id, self.__get_raw_type(type_id))
 
+    def get_ll_func_type(self, type_id: int) -> ir.FunctionType:
+        """Build the LLVM function *signature* for a function-item or method type.
+
+        Bypasses ZST erasure: a function-item *value* is zero-sized (erased to
+        ``{}`` in value position), but the function itself must still be
+        declared/called with its real signature. Methods are not ZST, but share
+        this path so every declared callable is built consistently.
+        """
+        ty_def = self.__type_ctx[type_id]
+        match ty_def:
+            case Type.FunctionType():
+                sig = self.__handle_function(ty_def)
+            case Type.MethodType():
+                sig = self.__handle_method(ty_def)
+            case _:
+                raise ValueError(f"not a callable type: {type(ty_def).__name__}")
+        assert isinstance(sig, ir.FunctionType)
+        return sig
+
     def get_type_size(self, type_id: int) -> int:
         size, _ = self.__stable_layout(type_id)
         return size

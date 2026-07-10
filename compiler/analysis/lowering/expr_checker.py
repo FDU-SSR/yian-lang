@@ -177,6 +177,12 @@ class ExprChecker:
             case SymbolKind.Variable:
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Function:
+                if self.__ctx.type_ctx.contains_generic(symbol.type_id):
+                    raise AnalysisError(
+                        f"cannot use generic function '{node.name}' as a value; "
+                        f"a function variable must bind a concrete function",
+                        node.span,
+                    )
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:

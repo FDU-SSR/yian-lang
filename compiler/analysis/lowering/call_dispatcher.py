@@ -159,6 +159,9 @@ class CallDispatcher:
                 if self.__has_named_arg(node.args):
                     raise AnalysisError("named arguments are not supported for callable values", node.span)
                 callable_expr = HIR.Var(span=callee.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=False)
+                resolved = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
+                if isinstance(self.__ctx.type_ctx[resolved], Type.FunctionType):
+                    return self.__handle_fn_item_call(node.span, callable_expr, node.args)
                 return self.__handle_invocation(node.span, callable_expr, node.args)
             case SymbolKind.Type:
                 type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
@@ -362,6 +365,29 @@ class CallDispatcher:
             type_id=instantiated_func_ty.return_type(self.__ctx.type_ctx),
             is_place=False,
         )
+
+    def __handle_fn_item_call(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
+        """Call a value whose type is a function *item* (e.g. a function variable).
+
+        This is a fixed-signature direct dispatch, exactly like a function-pointer
+        call: arguments are coerced to the function's already-fixed parameter types
+        and **no** generic inference / generic arguments are accepted at the call
+        site. The callee's identity comes from its (concrete) function-item type.
+        """
+        if self.__has_named_arg(args):
+            raise AnalysisError("named arguments are not supported for callable values", span)
+
+        func_id = self.__ctx.type_ctx.resolve_aliases(callable_expr.type_id)
+        func_ty = self.__ctx.type_ctx[func_id]
+        assert isinstance(func_ty, Type.FunctionType)
+
+        parameters = func_ty.parameters(self.__ctx.type_ctx)
+        if len(parameters) != len(args):
+            raise AnalysisError(f"callable expects {len(parameters)} arguments, got {len(args)}", span)
+
+        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
+        self.__ctx.report_def(func_id)
+        return HIR.Call(span=span, func=func_id, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
 
     def __handle_invocation(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):

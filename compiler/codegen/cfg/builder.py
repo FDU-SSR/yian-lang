@@ -17,8 +17,10 @@ from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
-ch_cfg = lambda: CompilerLog.get("cfg.logical")
-ch_cfg_block = lambda: CompilerLog.get("cfg.block")
+
+def ch_cfg(): return CompilerLog.get("cfg.logical")
+def ch_cfg_block(): return CompilerLog.get("cfg.block")
+
 
 @dataclass
 class LoopCtx:
@@ -525,6 +527,8 @@ class CfgBuilder:
             case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral() | HIR.NullptrLiteral():
                 return self.__resolve_literal(expr)
             case HIR.Ty():
+                if self.__type_ctx.is_zst(expr.type_id):
+                    return IR.Reg(name=self.__new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
 
     def __resolve_addr(self, expr: HIR.Expr) -> IR.Value:
