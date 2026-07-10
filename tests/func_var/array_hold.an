@@ -1,0 +1,11 @@
+// Store function items in an array and call an element by index.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn main() -> i32 {
+    let arr = [add1, add1, add1];
+    assert arr[0](41) == 42: "call function item from an array element";
+    return 0;
+}

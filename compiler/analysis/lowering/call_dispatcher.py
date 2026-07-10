@@ -87,6 +87,9 @@ class CallDispatcher:
         callee = self.__expr.value(node.callee)
         if isinstance(callee, HIR.Ty):
             return self.__handle_type_call(node.span, callee, node.args)
+        resolved_callee = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
+        if isinstance(self.__ctx.type_ctx[resolved_callee], Type.FunctionType):
+            return self.__handle_fn_item_call(node.span, callee, node.args)
         if self.__is_function_pointer_type(callee.type_id):
             return self.__handle_invocation(node.span, callee, node.args)
 
@@ -387,7 +390,7 @@ class CallDispatcher:
 
         coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
         self.__ctx.report_def(func_id)
-        return HIR.Call(span=span, func=func_id, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
+        return HIR.Invoke(span=span, callable=callable_expr, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
 
     def __handle_invocation(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):

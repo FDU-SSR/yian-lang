@@ -1,0 +1,17 @@
+// Return a function item through a generic pass-through function, bind the
+// result, and call it. The generic return type F is inferred to add1's
+// function-item type; the returned value is ZST.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn identity_fn<F>(f: F) -> F {
+    return f;
+}
+
+fn main() -> i32 {
+    let g = identity_fn(add1);
+    assert g(41) == 42: "call function item returned through a generic";
+    return 0;
+}
