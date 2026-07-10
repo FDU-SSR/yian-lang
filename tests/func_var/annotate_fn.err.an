@@ -1,0 +1,11 @@
+// A function variable's type cannot be annotated: the function-item type is
+// unnameable, and annotating a function-pointer type `fn()->void` is a
+// different (non-ZST) type, so this is a type mismatch. Bind by inference
+// (let f = foo) or use `&foo` to obtain a function pointer.
+
+fn foo() -> void { return; }
+
+fn main() -> i32 {
+    let f: fn()->void = foo;
+    return 0;
+}

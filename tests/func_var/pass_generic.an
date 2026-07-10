@@ -1,0 +1,16 @@
+// Pass a function item as a generic argument and call it inside the callee.
+// F is inferred to add1's unique (ZST) function-item type; f(n) inside apply
+// lowers to a direct call to add1.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn apply<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn main() -> i32 {
+    assert apply(add1, 41) == 42: "call function item passed through a generic";
+    return 0;
+}

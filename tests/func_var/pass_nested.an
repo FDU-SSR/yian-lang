@@ -1,0 +1,20 @@
+// A function item forwarded through one generic layer into another, then
+// called. Exercises binding a generic param to a function-item type and
+// re-passing it.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn inner<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn outer<G>(g: G, n: i32) -> i32 {
+    return inner(g, n);
+}
+
+fn main() -> i32 {
+    assert outer(add1, 41) == 42: "function item forwarded through two generic layers";
+    return 0;
+}

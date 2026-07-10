@@ -1,0 +1,6 @@
+// Calling a non-function value is rejected.
+
+fn main() -> i32 {
+    let x = 5;
+    return x();
+}

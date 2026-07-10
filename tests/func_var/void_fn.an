@@ -1,0 +1,11 @@
+// Bind and call a function returning void, exercising the ZST return path.
+//
+// Expected output: 0
+
+fn noop() -> void { return; }
+
+fn main() -> i32 {
+    let f = noop;
+    f();
+    return 0;
+}

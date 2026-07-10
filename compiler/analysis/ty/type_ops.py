@@ -246,6 +246,8 @@ def is_zst(ctx: TypeCtx, type_id: int) -> bool:
       payload is ZST or absent;
     - a pointer is ZST when its pointee is ZST (per the language spec: a
       pointer to a ZST carries no observable address);
+    - a function *item* (the unique per-definition type of a named function)
+      is always ZST: its identity lives in the type, not in any runtime value;
     - everything else (numbers, ``bool``, ``char``, ``str``, slices, function
       pointers, unresolved generics / literals) is not a ZST.
 
@@ -283,6 +285,8 @@ def is_zst(ctx: TypeCtx, type_id: int) -> bool:
                         payload = variants[0].payload_type
                         return payload is None or work(payload)
                     return False
+                case Type.FunctionType():
+                    return True
                 case _:
                     return False
         finally:

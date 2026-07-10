@@ -1,0 +1,10 @@
+// A function variable must bind a concrete function. Binding a generic
+// function whose type parameters are unresolved is rejected, because the
+// call site cannot supply generic arguments.
+
+fn gen<T>(x: T) -> T { return x; }
+
+fn main() -> i32 {
+    let f = gen;
+    return 0;
+}

@@ -1,0 +1,19 @@
+// A generic that selects between two same-signature function items by a
+// runtime flag would need a common type; instead each branch returns its own
+// distinct function-item type. Here we verify returning then immediately
+// re-passing a function item across calls keeps dispatching correctly.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+fn dbl(x: i32) -> i32 { return x * 2; }
+
+fn pick<F>(f: F) -> F { return f; }
+
+fn main() -> i32 {
+    let a = pick(add1);
+    let b = pick(dbl);
+    assert a(10) == 11: "returned add1";
+    assert b(10) == 20: "returned dbl";
+    return 0;
+}

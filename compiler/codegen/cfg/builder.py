@@ -3,8 +3,6 @@ CFG IR builder — lowers a single HIR function/method body into a CFG Function.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from compiler.analysis.ty import ty as Type
@@ -17,8 +15,14 @@ from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
-ch_cfg = lambda: CompilerLog.get("cfg.logical")
-ch_cfg_block = lambda: CompilerLog.get("cfg.block")
+
+def ch_cfg():
+    return CompilerLog.get("cfg.logical")
+
+
+def ch_cfg_block():
+    return CompilerLog.get("cfg.block")
+
 
 @dataclass
 class LoopCtx:
@@ -525,6 +529,8 @@ class CfgBuilder:
             case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral() | HIR.NullptrLiteral():
                 return self.__resolve_literal(expr)
             case HIR.Ty():
+                if self.__type_ctx.is_zst(expr.type_id):
+                    return IR.Reg(name=self.__new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
 
     def __resolve_addr(self, expr: HIR.Expr) -> IR.Value:
@@ -693,6 +699,12 @@ class CfgBuilder:
     def __resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
         callee = self.__resolve_val(expr.callable)
         arg_vals = [self.__resolve_val(arg) for arg in expr.args]
+        resolved = self.__type_ctx.resolve_aliases(expr.callable.type_id)
+        if isinstance(self.__type_ctx[resolved], Type.FunctionType):
+            result = self.__build_call(resolved, arg_vals, expr.type_id)
+            if expr.type_id == self.__type_ctx.never_id:
+                self.__set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))
+            return result
         return self.__build_invoke(callee, arg_vals, expr.type_id)
 
     def __resolve_cast(self, expr: HIR.Cast) -> IR.Value:

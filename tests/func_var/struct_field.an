@@ -1,0 +1,19 @@
+// Store a function item in a (generic) struct field and call it. Since `h.f(x)`
+// parses as a method call, a function stored in a field is invoked with the
+// parenthesized form `(h.f)(x)` (or by binding it first).
+//
+// Expected output: 0
+
+struct Holder<F> { f: F }
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn main() -> i32 {
+    let h = Holder(f = add1);
+    assert (h.f)(41) == 42: "call function item stored in a struct field";
+
+    // Equivalent: bind the field to a variable, then call it.
+    let g = h.f;
+    assert g(1) == 2: "bind struct field then call";
+    return 0;
+}

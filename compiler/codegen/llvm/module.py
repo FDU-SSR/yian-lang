@@ -115,11 +115,10 @@ class LLModule:
     # -- function declaration --
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
-        func_ll_type = self.__type_ctx.get_ll_type(cfg_func.type_id)
-        assert isinstance(func_ll_type.ir_type, ir.FunctionType)
+        func_ir_type = self.__type_ctx.get_ll_func_type(cfg_func.type_id)
         # Keep "main" as-is for the linker; suffix type_id for generic instantiations that share a name.
         llvm_name = cfg_func.name if cfg_func.name == "main" else f"{cfg_func.name}.{cfg_func.type_id}"
-        ir_func = ir.Function(self.__module, func_ll_type.ir_type, name=llvm_name)
+        ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
         return func

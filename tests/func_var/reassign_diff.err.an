@@ -1,0 +1,11 @@
+// Each function has a unique type, even with the same signature, so a
+// function variable bound to foo cannot be reassigned a different function.
+
+fn foo() -> i32 { return 1; }
+fn bar() -> i32 { return 2; }
+
+fn main() -> i32 {
+    let f = foo;
+    f = bar;
+    return 0;
+}

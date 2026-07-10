@@ -1,0 +1,11 @@
+// Function variable: bind a function to a variable and call it.
+//
+// Expected output: 0
+
+fn add1(x: i32) -> i32 { return x + 1; }
+
+fn main() -> i32 {
+    let f = add1;                       // inferred: f : function item of add1 (ZST)
+    assert f(41) == 42: "call through function variable";
+    return 0;
+}
