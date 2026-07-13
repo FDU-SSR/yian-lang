@@ -84,7 +84,6 @@ class ExprParser:
         """Parses a primary expression."""
         token = self.__stream.peek()
         match token:
-            # --- expression-oriented control flow constructs ---
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LBrace):
                 return self.parse_block()
             case Tok.Keyword(kind=Tok.KeywordKind.Return):
@@ -109,7 +108,10 @@ class ExprParser:
                 return self.__parse_delete()
             case Tok.Keyword(kind=Tok.KeywordKind.Let):
                 return self.__parse_var_decl()
-            # --- original primary expressions ---
+            case Tok.Punctuator(kind=Tok.PunctuatorKind.Pipe):
+                return self.__parse_closure()
+            case Tok.Punctuator(kind=Tok.PunctuatorKind.PipePipe):
+                return self.__parse_closure()
             case Tok.Keyword(kind=Tok.KeywordKind.True_):
                 self.__stream.consume_keyword(Tok.KeywordKind.True_)
                 return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="true", span=token.span, value=True))
@@ -186,6 +188,82 @@ class ExprParser:
                 return AST.Array(span=token.span, elements=items)
             case _:
                 raise ParseError(f"Unexpected token '{token}' while parsing expression", token.span)
+
+    def __parse_closure(self) -> AST.ClosureExpr:
+        """Parse a closure expression ``|captures| (params) -> R { body }``."""
+        start_token = self.__stream.peek()
+        captures: list[AST.CaptureItem] = []
+
+        if isinstance(start_token, Tok.Punctuator) and start_token.kind == Tok.PunctuatorKind.PipePipe:
+            # ``||`` — empty capture list, both pipes consumed at once
+            start = self.__stream.consume_punctuator(Tok.PunctuatorKind.PipePipe)
+        else:
+            # ``|`` — may have captures or be ``||`` as two separate tokens
+            start = self.__stream.consume_punctuator(Tok.PunctuatorKind.Pipe)
+            next_token = self.__stream.peek()
+            if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Pipe:
+                # ``||`` as two separate Pipe tokens — empty capture list
+                self.__stream.consume_punctuator(Tok.PunctuatorKind.Pipe)
+            else:
+                # parse capture items: ident = expr, ...
+                while True:
+                    cap_name = self.__stream.consume_identifier()
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+                    cap_expr = self.__parse_expr_bp(5)  # min_bp=5 excludes | (BitOr lbp=4)
+                    captures.append(AST.CaptureItem(
+                        span=cap_name.span + cap_expr.span,
+                        name=cap_name,
+                        expr=cap_expr,
+                    ))
+
+                    cap_next = self.__stream.peek()
+                    if isinstance(cap_next, Tok.Punctuator) and cap_next.kind == Tok.PunctuatorKind.Comma:
+                        self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
+                    else:
+                        break
+
+                # consume closing pipe
+                self.__stream.consume_punctuator(Tok.PunctuatorKind.Pipe)
+
+        # --- parameter list ---
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        params: list[AST.VarInfo] = []
+        param_next = self.__stream.peek()
+        if not (isinstance(param_next, Tok.Punctuator) and param_next.kind == Tok.PunctuatorKind.RParen):
+            while True:
+                param_name = self.__stream.consume_identifier()
+                self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
+                param_type = self.__type_parser.parse_type()
+                params.append(AST.VarInfo(
+                    span=param_name.span,
+                    name=param_name,
+                    var_type=param_type,
+                ))
+
+                p_next = self.__stream.peek()
+                if isinstance(p_next, Tok.Punctuator) and p_next.kind == Tok.PunctuatorKind.Comma:
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
+                else:
+                    break
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+
+        # --- return type (optional, defaults to void) ---
+        return_type: AST.ASTType | None = None
+        ret_next = self.__stream.peek()
+        if isinstance(ret_next, Tok.Punctuator) and ret_next.kind == Tok.PunctuatorKind.Arrow:
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.Arrow)
+            return_type = self.__type_parser.parse_type()
+
+        # --- body ---
+        body = self.parse_block()
+
+        return AST.ClosureExpr(
+            span=start.span + body.span,
+            captures=captures,
+            params=params,
+            return_type=return_type,
+            body=body,
+        )
 
     def __parse_postfix(self, expr: AST.Expr) -> AST.Expr:
         """Parses postfix expressions (e.g., function calls, field access)."""

@@ -97,6 +97,8 @@ class ExprChecker:
                 return self.__handle_array(expr)
             case AST.ArrayRepeat():
                 return self.__handle_array_repeat(expr)
+            case AST.ClosureExpr():
+                raise AnalysisError("closures not yet implemented", expr.span)
 
     def __handle_binary(self, node: AST.Binary) -> HIR.Expr:
         return self.__op_builder.build_binary(node.span, node.op, node.left, node.right)

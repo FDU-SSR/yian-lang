@@ -1,0 +1,12 @@
+// Closure parse test: empty parameter list.
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let x: i32 = 42;
+    let c = |x_in = x| () -> i32 {
+        x_in
+    };
+    assert c() == 42: "no-param closure call";
+    return 0;
+}

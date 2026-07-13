@@ -1,0 +1,12 @@
+// Closure parse test: basic capture and call.
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let x: i32 = 5;
+    let c = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    assert c(10) == 15: "basic closure call";
+    return 0;
+}
