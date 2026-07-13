@@ -90,6 +90,8 @@ class CallDispatcher:
         resolved_callee = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
         if isinstance(self.__ctx.type_ctx[resolved_callee], Type.FunctionType):
             return self.__handle_fn_item_call(node.span, callee, node.args)
+        if isinstance(self.__ctx.type_ctx[resolved_callee], Type.ClosureType):
+            return self.__handle_closure_call(node.span, callee, node.args)
         if self.__is_function_pointer_type(callee.type_id):
             return self.__handle_invocation(node.span, callee, node.args)
 
@@ -165,6 +167,8 @@ class CallDispatcher:
                 resolved = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
                 if isinstance(self.__ctx.type_ctx[resolved], Type.FunctionType):
                     return self.__handle_fn_item_call(node.span, callable_expr, node.args)
+                if isinstance(self.__ctx.type_ctx[resolved], Type.ClosureType):
+                    return self.__handle_closure_call(node.span, callable_expr, node.args)
                 return self.__handle_invocation(node.span, callable_expr, node.args)
             case SymbolKind.Type:
                 type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
@@ -391,6 +395,22 @@ class CallDispatcher:
         coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
         self.__ctx.report_def(func_id)
         return HIR.Invoke(span=span, callable=callable_expr, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
+
+    def __handle_closure_call(self, span: SrcSpan, callee: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
+        """Call a value whose type is a ClosureType."""
+        if self.__has_named_arg(args):
+            raise AnalysisError("named arguments are not supported for closure calls", span)
+
+        closure_type_id = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
+        closure_ty = self.__ctx.type_ctx[closure_type_id]
+        assert isinstance(closure_ty, Type.ClosureType)
+
+        parameters = closure_ty.parameters
+        if len(parameters) != len(args):
+            raise AnalysisError(f"closure expects {len(parameters)} arguments, got {len(args)}", span)
+
+        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
+        return HIR.Invoke(span=span, callable=callee, args=coerced_args, type_id=closure_ty.return_type, is_place=False)
 
     def __handle_invocation(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):

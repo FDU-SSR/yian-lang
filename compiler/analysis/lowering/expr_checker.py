@@ -4,6 +4,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.assign_check import (
     build_assign, check_simple_assign_source)
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
+from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
 from compiler.analysis.lowering.sem_ctx import LoopFrame, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
@@ -39,6 +40,7 @@ class ExprChecker:
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
         self.__call_dispatcher = CallDispatcher(ctx, self)
+        self.__closure_helper = ClosureHelper(ctx, self)
         self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
@@ -98,7 +100,7 @@ class ExprChecker:
             case AST.ArrayRepeat():
                 return self.__handle_array_repeat(expr)
             case AST.ClosureExpr():
-                raise AnalysisError("closures not yet implemented", expr.span)
+                return self.__closure_helper.check_closure_expr(expr)
 
     def __handle_binary(self, node: AST.Binary) -> HIR.Expr:
         return self.__op_builder.build_binary(node.span, node.op, node.left, node.right)
@@ -312,7 +314,7 @@ class ExprChecker:
                     raise AnalysisError(f"cannot coerce nullptr to '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.type_id = expected
                 return expr
-            case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty():
+            case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty() | HIR.Closure():
                 if expr.type_id != expected:
                     raise AnalysisError(
                         f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",

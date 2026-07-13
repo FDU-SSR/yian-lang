@@ -93,7 +93,7 @@ class TypeCtx:
         self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
         self.__procedures: dict[int, tuple[AST.Block, int]] = {}  # procedure_id -> procedure block
-        self.__closure_bodies: dict[int, tuple[AST.Block, dict[str, HIR.Expr]]] = {}  # closure_type_id -> (body, captures)
+        self.__closure_bodies: dict[int, tuple[HIR.Block, dict[str, HIR.Expr]]] = {}  # closure_type_id -> (body, captures)
 
         # Caches for hot-path type queries — the type_id fully encodes the
         # generic instantiation, so the cache key is just the type_id.
@@ -262,10 +262,10 @@ class TypeCtx:
     def alloc_closure(self, captured_vars: list[Type.CapturedVar], parameters: list[Type.Parameter], return_type: int, span: SrcSpan) -> int:
         return self.__space.alloc_closure(captured_vars, parameters, return_type, span)
 
-    def store_closure_body(self, closure_type_id: int, body: AST.Block, capture_exprs: dict[str, HIR.Expr]) -> None:
+    def store_closure_body(self, closure_type_id: int, body: HIR.Block, capture_exprs: dict[str, HIR.Expr]) -> None:
         self.__closure_bodies[closure_type_id] = (body, capture_exprs)
 
-    def get_closure_body(self, closure_type_id: int) -> tuple[AST.Block, dict[str, HIR.Expr]]:
+    def get_closure_body(self, closure_type_id: int) -> tuple[HIR.Block, dict[str, HIR.Expr]]:
         return self.__closure_bodies[closure_type_id]
 
     def alloc_range(self, type_id: int) -> int:
@@ -339,6 +339,10 @@ class TypeCtx:
             return result
         if isinstance(ty, Type.TupleType):
             result = all(self.is_simple_type(et) for et in ty.element_types)
+            self.__simple_type_cache[type_id] = result
+            return result
+        if isinstance(ty, Type.ClosureType):
+            result = all(self.is_simple_type(cv.type_id) for cv in ty.captured_vars)
             self.__simple_type_cache[type_id] = result
             return result
         if isinstance(ty, Type.StructType) and ty.custom_def.is_bitcopy:

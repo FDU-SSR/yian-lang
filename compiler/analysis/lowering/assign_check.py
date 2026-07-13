@@ -7,8 +7,6 @@ defined in bak/design.md §2.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Callable
 
 from compiler.analysis.error import AnalysisError
@@ -35,6 +33,8 @@ def is_simple_assign_source(expr: HIR.Expr) -> bool:
     if isinstance(expr, (HIR.IntLiteral, HIR.FloatLiteral, HIR.CharLiteral, HIR.StrLiteral, HIR.BoolLiteral, HIR.NullptrLiteral)):
         return True
     if isinstance(expr, (HIR.StructConstruct, HIR.VariantConstruct, HIR.Array, HIR.ArrayRepeat, HIR.Tuple)):
+        return True
+    if isinstance(expr, HIR.Closure):
         return True
     if isinstance(expr, (HIR.Call, HIR.MethodCall, HIR.Invoke)):
         return True
