@@ -343,6 +343,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     def_points = type_checker.export()
+
+    # --- Closure lowering pass ---
+    from compiler.analysis.passes.closure_lowering import ClosureLowering
+    ClosureLowering(def_points, type_ctx).run()
+
     ch_main.debug(f"type-checked {len(def_points)} definitions")
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start

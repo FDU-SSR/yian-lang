@@ -526,6 +526,8 @@ class CfgBuilder:
                 return self.__resolve_array_repeat(expr)
             case HIR.Var():
                 return self.__resolve_var(expr)
+            case HIR.Closure():
+                return self.__resolve_closure(expr)
             case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral() | HIR.NullptrLiteral():
                 return self.__resolve_literal(expr)
             case HIR.Ty():
@@ -696,6 +698,16 @@ class CfgBuilder:
         field_vals = [self.__resolve_val(expr.field_values[field.name]) for field in fields]
         return self.__build_aggregate_construct(expr.struct_id, field_vals)
 
+    def __resolve_closure(self, expr: HIR.Closure) -> IR.Value:
+        """Lower HIR.Closure to struct construction."""
+        closure_ty = self.__type_ctx[expr.type_id]
+        assert isinstance(closure_ty, Type.ClosureType)
+        struct_type_id = closure_ty.struct_type_id
+        assert struct_type_id != -1, "closure not lowered"
+        fields = self.__type_ctx.get_struct_fields(struct_type_id)
+        field_vals = [self.__resolve_val(expr.captures[field.name]) for field in fields]
+        return self.__build_aggregate_construct(struct_type_id, field_vals)
+
     def __resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
         callee = self.__resolve_val(expr.callable)
         arg_vals = [self.__resolve_val(arg) for arg in expr.args]
@@ -705,6 +717,17 @@ class CfgBuilder:
             if expr.type_id == self.__type_ctx.never_id:
                 self.__set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))
             return result
+        if isinstance(self.__type_ctx[resolved], Type.ClosureType):
+            closure_ty = self.__type_ctx[resolved]
+            assert isinstance(closure_ty, Type.ClosureType)
+            call_method_id = closure_ty.call_method_type_id
+            if call_method_id == -1:
+                raise CodegenError(
+                    "closure calls are not yet supported (pending call method DefPoint fix)",
+                    expr.span)
+            receiver_addr = self.__resolve_addr(expr.callable)
+            return self.__build_call(
+                call_method_id, [receiver_addr] + arg_vals, expr.type_id)
         return self.__build_invoke(callee, arg_vals, expr.type_id)
 
     def __resolve_cast(self, expr: HIR.Cast) -> IR.Value:

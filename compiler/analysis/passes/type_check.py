@@ -90,12 +90,14 @@ class TypeCheck:
         self.__current_locals = []
 
         ty = self.__type_ctx[self.__current_type_id]
-        if isinstance(ty, Type.FunctionType):
+        if isinstance(ty, Type.ClosureType):
+            def_point.body = self.__check_closure(def_point)
+        elif isinstance(ty, Type.FunctionType):
             def_point.body = self.__check_function(def_point)
         elif isinstance(ty, Type.MethodType):
             def_point.body = self.__check_method(def_point)
         else:
-            raise CompilerError(f"Type with id {def_point.type_id} is not a function or method type")
+            raise CompilerError(f"Type with id {def_point.type_id} is not a function, method, or closure type")
 
         def_point.locals = self.__current_locals
         def_point.params = self.__current_params
@@ -189,6 +191,50 @@ class TypeCheck:
 
         body = self.__expr_helper.check_block(def_point.ast_body)
         return_type_id = method_ty.return_type(self.__type_ctx)
+        if body.stmts:
+            last = body.stmts[-1]
+            last_ty = self.__type_ctx[last.type_id]
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
+                body.type_id = return_type_id
+        return body
+
+    def __check_closure(self, def_point: DefPoint) -> HIR.Block:
+        """Type-check a closure body. Captures are injected as local variables.
+        The lowering pass later rewrites them to FieldAccess(self, field)."""
+        closure_ty = self.__type_ctx[def_point.type_id]
+        assert isinstance(closure_ty, Type.ClosureType)
+
+        self.__sem_ctx.begin_def(
+            unit_id=def_point.unit_id,
+            def_type_id=def_point.type_id,
+            def_kind=DefKind.Closure,
+            ast_body=def_point.ast_body,
+            return_type_id=closure_ty.return_type,
+            receiver_type_id=None,
+            is_static=False,
+            symbol_ctx=def_point.symbol_ctx.clone(),
+        )
+        self.__current_locals = self.__sem_ctx.locals
+
+        assert self.__sem_ctx.symbol_ctx is not None
+
+        # Inject capture variables as locals
+        for cv in closure_ty.captured_vars:
+            sid = self.__sem_ctx.symbol_ctx.add_symbol(cv.name, SymbolKind.Variable, cv.type_id)
+            if sid is not None:
+                self.__sem_ctx.push_local(sid)
+
+        # Inject parameters as locals
+        for param in closure_ty.parameters:
+            sid = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            if sid is not None:
+                self.__sem_ctx.push_local(sid)
+
+        self.__current_params = list(self.__sem_ctx.locals)
+
+        body = self.__expr_helper.check_block(def_point.ast_body)
+        return_type_id = closure_ty.return_type
         if body.stmts:
             last = body.stmts[-1]
             last_ty = self.__type_ctx[last.type_id]

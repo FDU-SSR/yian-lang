@@ -84,6 +84,19 @@ class SymbolCtx:
 
         return symbol_id
 
+    def add_symbol_with_id(self, symbol_id: int, name: str, kind: SymbolKind,
+                            type_id: int) -> bool:
+        """Add a symbol with a specific symbol_id. Returns False if ID exists."""
+        if symbol_id in self.__all_symbols:
+            return False
+        if name in self.__current_scope.symbols:
+            return False
+        self.__current_scope.symbols[name] = symbol_id
+        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=set())
+        self.__all_symbols[symbol_id] = symbol
+        self.__next_id = max(self.__next_id, symbol_id + 1)
+        return True
+
     def get(self, symbol_id: int) -> Symbol:
         """Gets a symbol by its ID."""
         return self.__all_symbols[symbol_id]

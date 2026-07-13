@@ -389,6 +389,8 @@ class ClosureType:
     parameters: list[Parameter] = field(default_factory=list[Parameter])
     return_type: int = -1
     span: SrcSpan | None = None
+    struct_type_id: int = -1        # anonymous struct, set during lowering
+    call_method_type_id: int = -1   # call method, set during lowering
 
 
 CustomType: TypeAlias = (

@@ -427,10 +427,11 @@ class Ty:
 
 @dataclass
 class Closure:
-    """Closure value — carries ClosureType and resolved capture expressions.
+    """Closure value — carries captured expressions.
 
-    Generated during TypeCheck. Lowered to StructConstruct at the HIR→CFG
-    boundary (M3).
+    ``type_id`` is the ClosureType type_id.  The variable binding keeps
+    ClosureType so the CallDispatcher recognises it as callable.
+    LLVM maps ClosureType to its struct_type_id for code generation.
     """
 
     span: SrcSpan
