@@ -419,6 +419,9 @@ class TypeCtx:
         self.__fields_cache[type_id] = fields
         return fields
 
+    def invalidate_struct_fields_cache(self, type_id: int) -> None:
+        self.__fields_cache.pop(type_id, None)
+
     def get_struct_field_by_name(self, type_id: int, name: str) -> Type.StructField | None:
         """Return a struct field by name, with caching (via get_struct_fields)."""
         for field in self.get_struct_fields(type_id):

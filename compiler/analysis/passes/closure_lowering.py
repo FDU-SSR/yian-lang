@@ -52,6 +52,16 @@ class ClosureLowering:
             dp.body = cast(HIR.Block, self.__rewrite_type_ids(dp.body))
             self.__rewrite_symbol_types(dp.symbol_ctx)
 
+        # --- Phase 3: rewrite ClosureType in TypeCtx type signatures ---
+        for type_id, ty in list(self.__type_ctx.items()):
+            if isinstance(ty, Type.StructType):
+                if self.__rewrite_struct_sig(ty):
+                    self.__type_ctx.invalidate_struct_fields_cache(type_id)
+            elif isinstance(ty, Type.FunctionType):
+                self.__rewrite_fn_sig(ty)
+            elif isinstance(ty, Type.MethodType):
+                self.__rewrite_method_sig(ty)
+
     # ------------------------------------------------------------------
     # Phase 1 — per-closure lowering
     # ------------------------------------------------------------------
@@ -196,6 +206,45 @@ class ClosureLowering:
         for _sid, sym in list(sym_ctx.items()):
             if self.__is_closure_type(sym.type_id):
                 sym.type_id = self.__struct_id(sym.type_id)
+
+    def __rewrite_method_sig(self, ty: Type.MethodType) -> None:
+        for i, ga in enumerate(ty.generic_args):
+            if self.__is_closure_type(ga):
+                ty.generic_args[i] = self.__struct_id(ga)
+        params = ty.custom_def.parameters
+        for i, p in enumerate(params):
+            if self.__is_closure_type(p.type_id):
+                params[i] = Type.Parameter(name=p.name, type_id=self.__struct_id(p.type_id))
+        ret = ty.custom_def.return_type
+        if self.__is_closure_type(ret):
+            ty.custom_def.return_type = self.__struct_id(ret)
+        recv = ty.custom_def.receiver_type
+        if self.__is_closure_type(recv):
+            ty.custom_def.receiver_type = self.__struct_id(recv)
+
+    def __rewrite_struct_sig(self, ty: Type.StructType) -> bool:
+        changed = False
+        for i, ga in enumerate(ty.generic_args):
+            if self.__is_closure_type(ga):
+                ty.generic_args[i] = self.__struct_id(ga)
+                changed = True
+        return changed
+
+    def __rewrite_fn_sig(self, ty: Type.FunctionType) -> None:
+        """Rewrite ClosureType in a FunctionType's signature and generic_args."""
+        # generic_args (e.g., monomorphized F=ClosureType → F=struct_type)
+        for i, ga in enumerate(ty.generic_args):
+            if self.__is_closure_type(ga):
+                ty.generic_args[i] = self.__struct_id(ga)
+        # parameter types
+        params = ty.custom_def.parameters
+        for i, p in enumerate(params):
+            if self.__is_closure_type(p.type_id):
+                params[i] = Type.Parameter(name=p.name, type_id=self.__struct_id(p.type_id))
+        # return type
+        ret = ty.custom_def.return_type
+        if self.__is_closure_type(ret):
+            ty.custom_def.return_type = self.__struct_id(ret)
 
     def __is_closure_type(self, type_id: int) -> bool:
         ty = self.__type_ctx[type_id]
