@@ -1,0 +1,13 @@
+fn apply<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn main() -> i32 {
+    let x: i32 = 5;
+    let closure = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    let result = apply(closure, 10);
+    assert result == 15: "closure through generic";
+    return 0;
+}

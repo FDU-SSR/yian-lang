@@ -117,6 +117,8 @@ class LLTypeCtx:
             case Type.TupleType():   result = self.__handle_tuple(ty_def)
             case Type.StructType():  result = self.__handle_struct(type_id, ty_def)
             case Type.EnumType():    result = self.__handle_enum(type_id, ty_def)
+            case Type.ClosureType():
+                result = self.__get_raw_type(ty_def.struct_type_id)
             case Type.MethodType():  result = self.__handle_method(ty_def)
             case Type.FunctionType(): result = self.__handle_function(ty_def)
             case Type.FunctionPointerType(): result = self.__handle_function_pointer(ty_def)

@@ -105,18 +105,6 @@ class ClosureLowering:
     def __rewrite_type_ids(self, expr: HIR.Expr) -> HIR.Expr:
         """Recursively replace ClosureType references with struct/method types."""
         match expr:
-            case HIR.Var(type_id=tid) if self.__is_closure_type(tid):
-                expr.type_id = self.__struct_id(tid)
-
-            case HIR.Closure(type_id=tid, captures=captures):
-                return HIR.StructConstruct(
-                    span=expr.span,
-                    struct_id=self.__struct_id(tid),
-                    field_values={k: self.__rewrite_type_ids(v) for k, v in captures.items()},
-                    type_id=self.__struct_id(tid),
-                    is_place=expr.is_place,
-                )
-
             case HIR.Invoke(callable=callee, args=args, type_id=ret_tid) \
                     if self.__is_closure_type(callee.type_id):
                 closure_tid = callee.type_id  # save before rewrite mutates it
@@ -126,6 +114,18 @@ class ClosureLowering:
                     method_id=self.__method_id(closure_tid),
                     args=[self.__rewrite_type_ids(a) for a in args],
                     type_id=ret_tid,
+                    is_place=expr.is_place,
+                )
+
+            case HIR.Var(type_id=tid) if self.__is_closure_type(tid):
+                expr.type_id = self.__struct_id(tid)
+
+            case HIR.Closure(type_id=tid, captures=captures):
+                return HIR.StructConstruct(
+                    span=expr.span,
+                    struct_id=self.__struct_id(tid),
+                    field_values={k: self.__rewrite_type_ids(v) for k, v in captures.items()},
+                    type_id=self.__struct_id(tid),
                     is_place=expr.is_place,
                 )
 
