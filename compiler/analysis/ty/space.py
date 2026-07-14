@@ -232,6 +232,16 @@ class TypeSpace:
         function_ty = Type.FunctionType(type_id=-1, custom_def=function_def)
         return self.__add_type(function_ty)
 
+    def alloc_closure(self, captured_vars: list[Type.CapturedVar], parameters: list[Type.Parameter], return_type: int, span: SrcSpan) -> int:
+        closure_ty = Type.ClosureType(
+            type_id=-1,
+            captured_vars=captured_vars,
+            parameters=parameters,
+            return_type=return_type,
+            span=span,
+        )
+        return self.__add_type(closure_ty)
+
     def alloc_range(self, type_id: int) -> int:
         return self.alloc_instance(self.__ctx.Range_id, [type_id])
 

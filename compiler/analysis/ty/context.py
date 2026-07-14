@@ -258,6 +258,9 @@ class TypeCtx:
     def alloc_function(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_function(name, span)
 
+    def alloc_closure(self, captured_vars: list[Type.CapturedVar], parameters: list[Type.Parameter], return_type: int, span: SrcSpan) -> int:
+        return self.__space.alloc_closure(captured_vars, parameters, return_type, span)
+
     def alloc_range(self, type_id: int) -> int:
         return self.__space.alloc_range(type_id)
 
@@ -329,6 +332,10 @@ class TypeCtx:
             return result
         if isinstance(ty, Type.TupleType):
             result = all(self.is_simple_type(et) for et in ty.element_types)
+            self.__simple_type_cache[type_id] = result
+            return result
+        if isinstance(ty, Type.ClosureType):
+            result = all(self.is_simple_type(cv.type_id) for cv in ty.captured_vars)
             self.__simple_type_cache[type_id] = result
             return result
         if isinstance(ty, Type.StructType) and ty.custom_def.is_bitcopy:
@@ -411,6 +418,9 @@ class TypeCtx:
         fields = ty.get_fields(self)
         self.__fields_cache[type_id] = fields
         return fields
+
+    def invalidate_struct_fields_cache(self, type_id: int) -> None:
+        self.__fields_cache.pop(type_id, None)
 
     def get_struct_field_by_name(self, type_id: int, name: str) -> Type.StructField | None:
         """Return a struct field by name, with caching (via get_struct_fields)."""
@@ -606,23 +616,23 @@ class TypeCtx:
 
     def add_procedure(self, type_id: int, body: AST.Block, unit_id: int) -> None:
         ty = self.__space[type_id]
-        if isinstance(ty, Type.FunctionType):
+        if isinstance(ty, (Type.FunctionType, Type.MethodType)):
             def_id = id(ty.custom_def)
-        elif isinstance(ty, Type.MethodType):
-            def_id = id(ty.custom_def)
+        elif isinstance(ty, Type.ClosureType):
+            def_id = type_id
         else:
-            raise CompilerError(f"Type ID {type_id} is not a function or method type and cannot be associated with a procedure")
+            raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
 
         self.__procedures[def_id] = (body, unit_id)
 
     def get_procedure(self, type_id: int) -> tuple[AST.Block, int]:
         ty = self.__space[type_id]
-        if isinstance(ty, Type.FunctionType):
+        if isinstance(ty, (Type.FunctionType, Type.MethodType)):
             def_id = id(ty.custom_def)
-        elif isinstance(ty, Type.MethodType):
-            def_id = id(ty.custom_def)
+        elif isinstance(ty, Type.ClosureType):
+            def_id = type_id
         else:
-            raise CompilerError(f"Type ID {type_id} is not a function or method type and cannot be associated with a procedure")
+            raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
 
         if def_id in self.__procedures:
             return self.__procedures[def_id]

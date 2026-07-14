@@ -376,12 +376,29 @@ DerivedType: TypeAlias = (
 )
 
 
+@dataclass
+class CapturedVar:
+    name: str
+    type_id: int
+
+
+@dataclass
+class ClosureType:
+    type_id: int
+    captured_vars: list[CapturedVar] = field(default_factory=list[CapturedVar])
+    parameters: list[Parameter] = field(default_factory=list[Parameter])
+    return_type: int = -1
+    span: SrcSpan | None = None
+    struct_type_id: int = -1        # anonymous struct, set during lowering
+    call_method_type_id: int = -1   # call method, set during lowering
+
+
 CustomType: TypeAlias = (
     StructType | EnumType | TraitType
     | MethodType | FunctionType | AliasType
 )
 
-Ty: TypeAlias = BasicType | DerivedType | CustomType | GenericType | ConstGenericType | LiteralValueType
+Ty: TypeAlias = BasicType | DerivedType | CustomType | ClosureType | GenericType | ConstGenericType | LiteralValueType
 
 
 class IntrinsicType(Enum):

@@ -1,0 +1,6 @@
+// Capturing a non-simple type without .move() or .clone() is rejected.
+fn main() -> i32 {
+    let v: Vec<i32> = Vec<i32>.new();
+    let c = |v_in = v| () { };
+    return 0;
+}

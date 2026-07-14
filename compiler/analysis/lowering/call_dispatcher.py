@@ -10,9 +10,9 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import LookupResult, TypeCtx
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
+from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
 # Built-in instruction names — all are expressions with different return types:
-#   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
+#   sizeof → u64,  sys_read/sys_write → void,  panic → never
+BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -77,23 +77,38 @@ class CallDispatcher:
         return self.build_method_call(span, receiver, lookup, args, context_name)
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:
-        # bitcast<ptr_type>(expr) — callee is a TypeItem with generic ptr type
-        if isinstance(node.callee, AST.TypeItem) and node.callee.name.name == "bitcast":
-            return self.__handle_bitcast(node, node.callee)
-
         if isinstance(node.callee, AST.Identifier):
-            return self.__handle_named_call(node, node.callee)
+            if node.callee.name in BUILTIN_NAMES:
+                return self.__handle_builtin(node, node.callee)
+            assert self.__ctx.symbol_ctx is not None
+            symbol = self.__ctx.symbol_ctx.lookup(node.callee.name)
+            if symbol is not None and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
+                return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
 
         callee = self.__expr.value(node.callee)
         if isinstance(callee, HIR.Ty):
             return self.__handle_type_call(node.span, callee, node.args)
-        resolved_callee = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
-        if isinstance(self.__ctx.type_ctx[resolved_callee], Type.FunctionType):
-            return self.__handle_fn_item_call(node.span, callee, node.args)
-        if self.__is_function_pointer_type(callee.type_id):
-            return self.__handle_invocation(node.span, callee, node.args)
+        resolved = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
+        ty = self.__ctx.type_ctx[resolved]
+        if isinstance(ty, Type.FunctionType):
+            params = ty.parameters(self.__ctx.type_ctx)
+            return self.__emit_concrete_call(node.span, callee, node.args, [p.type_id for p in params], ty.return_type(self.__ctx.type_ctx), resolved)
+        if isinstance(ty, Type.ClosureType):
+            return self.__emit_concrete_call(node.span, callee, node.args, [p.type_id for p in ty.parameters], ty.return_type, None)
+        if isinstance(ty, Type.FunctionPointerType):
+            return self.__emit_concrete_call(node.span, callee, node.args, ty.parameter_types, ty.return_type, None)
 
         raise AnalysisError("expression is not callable", node.span)
+
+    def __emit_concrete_call(self, span: SrcSpan, callee: HIR.Expr, args: list[AST.Arg], param_types: list[int], return_type: int, report_id: int | None) -> HIR.Expr:
+        if self.__has_named_arg(args):
+            raise AnalysisError("named arguments are not supported for callable values", span)
+        if len(param_types) != len(args):
+            raise AnalysisError(f"callable expects {len(param_types)} arguments, got {len(args)}", span)
+        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), pt) for arg, pt in zip(args, param_types)]
+        if report_id is not None:
+            self.__ctx.report_def(report_id)
+        return HIR.Invoke(span=span, callable=callee, args=coerced_args, type_id=return_type, is_place=False)
 
     def handle_method_call(self, node: AST.MethodCall) -> HIR.Expr:
         receiver = self.__expr.value(node.receiver)
@@ -144,34 +159,6 @@ class CallDispatcher:
             result = HIR.Unary(span, UnaryOperator.Deref, result, ty.pointee_type, is_place=False)
         return result
 
-    def __handle_named_call(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
-        assert self.__ctx.symbol_ctx is not None
-
-        # Intercept built-in instruction names before the symbol lookup.
-        if callee.name in BUILTIN_NAMES:
-            return self.__handle_builtin(node, callee)
-
-        symbol = self.__ctx.symbol_ctx.lookup(callee.name)
-        if symbol is None:
-            raise AnalysisError(f"Unknown identifier '{callee.name}'", callee.span)
-
-        match symbol.kind:
-            case SymbolKind.Function:
-                return self.__handle_function_call(node.span, symbol.type_id, callee.name, node.args)
-            case SymbolKind.Variable:
-                if self.__has_named_arg(node.args):
-                    raise AnalysisError("named arguments are not supported for callable values", node.span)
-                callable_expr = HIR.Var(span=callee.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=False)
-                resolved = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
-                if isinstance(self.__ctx.type_ctx[resolved], Type.FunctionType):
-                    return self.__handle_fn_item_call(node.span, callable_expr, node.args)
-                return self.__handle_invocation(node.span, callable_expr, node.args)
-            case SymbolKind.Type:
-                type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
-                return self.__handle_type_call(node.span, HIR.Ty(span=callee.span, type_id=type_id, is_place=False), node.args)
-            case SymbolKind.ConstGeneric:
-                raise AnalysisError(f"'{callee.name}' is a generic constant and cannot be called", node.span)
-
     def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         """Lower a call to a built-in name into the appropriate HIR node."""
         match callee.name:
@@ -179,8 +166,6 @@ class CallDispatcher:
                 return self.__handle_panic(node)
             case "bitcopy":
                 return self.__handle_bitcopy(node)
-            case "bitcast":
-                raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
             case "sys_write":
                 return self.__handle_sys_write(node)
             case "sys_read":
@@ -192,7 +177,7 @@ class CallDispatcher:
             case "assume_init":
                 return self.__handle_assume_init(node)
             case _:
-                raise AnalysisError(f"Unknown built-in '{callee.name}'", callee.span)
+                raise CompilerError("Unreachable Code")
 
     def __handle_panic(self, stmt: AST.Call) -> HIR.Panic:
         if any(arg.name is not None for arg in stmt.args):
@@ -220,59 +205,6 @@ class CallDispatcher:
             raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
-
-    def __handle_bitcast(self, node: AST.Call, callee: AST.TypeItem) -> HIR.Expr:
-        """Lower `bitcast<ptr_type>(expr)` into HIR.BitCast.
-
-        Requirements:
-        - Exactly 1 generic argument (the target pointer type)
-        - Exactly 1 call argument (the pointer expression to cast)
-        - Both must be pointer types
-        """
-        if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for 'bitcast'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'bitcast' expects exactly 1 argument, got {len(node.args)}", node.span)
-        if len(callee.generics) != 1:
-            raise AnalysisError(
-                f"'bitcast' expects exactly 1 generic argument (target pointer type), got {len(callee.generics)}",
-                callee.span,
-            )
-
-        # Resolve the target pointer type from the generic argument.
-        generic_arg = callee.generics[0]
-        if isinstance(generic_arg, (LiteralConstExpr, GenericConstExpr)):
-            raise AnalysisError(
-                "'bitcast' expects a type argument, got a const expression",
-                callee.span,
-            )
-        assert self.__ctx.symbol_ctx is not None
-        target_type_id = self.__ctx.resolve_type(generic_arg)
-
-        # Evaluate the expression argument (must be a pointer expression).
-        value = self.__expr.value(node.args[0].value)
-
-        # Validate that both the value and target are pointer types.
-        value_ty = self.__ctx.type_ctx[value.type_id]
-        target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
-            raise AnalysisError(
-                f"'bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
-                node.args[0].span,
-            )
-        if not isinstance(target_ty, Type.PointerType):
-            raise AnalysisError(
-                f"'bitcast' target type must be a pointer type, got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
-                callee.span,
-            )
-
-        return HIR.BitCast(
-            span=node.span,
-            value=value,
-            target_type=target_type_id,
-            type_id=target_type_id,
-            is_place=False,
-        )
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
         """Lower `sys_write(fd, buf)` into HIR.SysWrite."""
@@ -368,45 +300,6 @@ class CallDispatcher:
             type_id=instantiated_func_ty.return_type(self.__ctx.type_ctx),
             is_place=False,
         )
-
-    def __handle_fn_item_call(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
-        """Call a value whose type is a function *item* (e.g. a function variable).
-
-        This is a fixed-signature direct dispatch, exactly like a function-pointer
-        call: arguments are coerced to the function's already-fixed parameter types
-        and **no** generic inference / generic arguments are accepted at the call
-        site. The callee's identity comes from its (concrete) function-item type.
-        """
-        if self.__has_named_arg(args):
-            raise AnalysisError("named arguments are not supported for callable values", span)
-
-        func_id = self.__ctx.type_ctx.resolve_aliases(callable_expr.type_id)
-        func_ty = self.__ctx.type_ctx[func_id]
-        assert isinstance(func_ty, Type.FunctionType)
-
-        parameters = func_ty.parameters(self.__ctx.type_ctx)
-        if len(parameters) != len(args):
-            raise AnalysisError(f"callable expects {len(parameters)} arguments, got {len(args)}", span)
-
-        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param.type_id) for arg, param in zip(args, parameters)]
-        self.__ctx.report_def(func_id)
-        return HIR.Invoke(span=span, callable=callable_expr, args=coerced_args, type_id=func_ty.return_type(self.__ctx.type_ctx), is_place=False)
-
-    def __handle_invocation(self, span: SrcSpan, callable_expr: HIR.Expr, args: list[AST.Arg]) -> HIR.Expr:
-        if self.__has_named_arg(args):
-            raise AnalysisError("named arguments are not supported for callable values", span)
-
-        if not self.__is_function_pointer_type(callable_expr.type_id):
-            raise AnalysisError("expression is not callable", span)
-
-        callable_ty = self.__ctx.type_ctx[callable_expr.type_id]
-        assert isinstance(callable_ty, Type.FunctionPointerType)
-
-        if len(callable_ty.parameter_types) != len(args):
-            raise AnalysisError(f"callable expects {len(callable_ty.parameter_types)} arguments, got {len(args)}", span)
-
-        coerced_args = [self.__expr.coerce(self.__expr.value(arg.value), param_type) for arg, param_type in zip(args, callable_ty.parameter_types)]
-        return HIR.Invoke(span=span, callable=callable_expr, args=coerced_args, type_id=callable_ty.return_type, is_place=False)
 
     def __handle_type_call(self, span: SrcSpan, callable_type: HIR.Ty, args: list[AST.Arg]) -> HIR.Expr:
         ty = self.__ctx.type_ctx[callable_type.type_id]
@@ -663,6 +556,3 @@ class CallDispatcher:
 
     def __has_named_arg(self, args: list[AST.Arg]) -> bool:
         return any(arg.name is not None for arg in args)
-
-    def __is_function_pointer_type(self, type_id: int) -> bool:
-        return isinstance(self.__ctx.type_ctx[type_id], Type.FunctionPointerType)

@@ -318,6 +318,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_dyn_buffer(expr, guides, is_last)
         case AST.SizeOf():
             return __export_sizeof(expr, guides, is_last)
+        case AST.BitCast():
+            return __export_bitcast(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -356,6 +358,19 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_assert(expr, guides, is_last)
         case AST.Delete():
             return __export_delete(expr, guides, is_last)
+        case AST.ClosureExpr():
+            return __export_closure_expr(expr, guides, is_last)
+
+
+def __export_closure_expr(expr: AST.ClosureExpr, guides: list[bool], is_last: bool) -> str:
+    captures_str = ", ".join(repr(c) for c in expr.captures)
+    params_str = ", ".join(repr(p) for p in expr.params)
+    ret_str = f" -> {expr.return_type}" if expr.return_type is not None else ""
+    res = __line(guides, is_last, f"ClosureExpr: |{captures_str}| ({params_str}){ret_str}")
+    for cap in expr.captures:
+        res += __export_expr_child(f"Capture({cap.name.name})", cap.expr, guides, is_last, False)
+    res += __export_block_child("Body", expr.body, guides, is_last, True)
+    return res
 
 
 def __export_binary(expr: AST.Binary, guides: list[bool], is_last: bool) -> str:
@@ -422,6 +437,15 @@ def __export_dyn_buffer(expr: AST.DynBuffer, guides: list[bool], is_last: bool) 
 
 def __export_sizeof(expr: AST.SizeOf, guides: list[bool], is_last: bool) -> str:
     return __line(guides, is_last, "SizeOf")
+
+
+def __export_bitcast(expr: AST.BitCast, guides: list[bool], is_last: bool) -> str:
+    result = __line(guides, is_last, "BitCast")
+    guides.append(not is_last)
+    result += __line(guides, False, f"target_type: {expr.target_type}")
+    result += __export_expr(expr.value, guides, True)
+    guides.pop()
+    return result
 
 
 def __export_type_item(expr: AST.TypeItem, guides: list[bool], is_last: bool) -> str:

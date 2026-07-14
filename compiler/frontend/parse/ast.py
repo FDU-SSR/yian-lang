@@ -567,6 +567,16 @@ class SizeOf:
 
 
 @dataclass
+class BitCast:
+    span: SrcSpan
+    target_type: ASTType
+    value: Expr
+
+    def __repr__(self) -> str:
+        return f"bitcast<{self.target_type}>({self.value})"
+
+
+@dataclass
 class TypeItem:
     """
     Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
@@ -634,11 +644,40 @@ TraitItem: TypeAlias = (
 )
 
 
+@dataclass
+class CaptureItem:
+    """闭包捕获条目: ``name = expr``"""
+
+    span: SrcSpan
+    name: Identifier
+    expr: Expr
+
+    def __repr__(self) -> str:
+        return f"{self.name.name} = {self.expr}"
+
+
+@dataclass
+class ClosureExpr:
+    """闭包表达式 ``|captures| (params) -> R { body }``"""
+
+    span: SrcSpan
+    captures: list[CaptureItem]
+    params: list[VarInfo]
+    return_type: ASTType | None      # None 表示返回 void
+    body: Block
+
+    def __repr__(self) -> str:
+        captures_str = ", ".join(repr(c) for c in self.captures)
+        params_str = ", ".join(repr(p) for p in self.params)
+        ret_str = f" -> {self.return_type}" if self.return_type is not None else ""
+        return f"|{captures_str}| ({params_str}){ret_str} {{ ... }}"
+
+
 Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | MethodCall
     | DynValue | DynBuffer
-    | SizeOf
+    | SizeOf | BitCast
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block
@@ -647,6 +686,7 @@ Expr: TypeAlias = (
     | Return | Break | Continue | Assert
     | Delete
     | Semi
+    | ClosureExpr
 )
 
 Pattern: TypeAlias = (

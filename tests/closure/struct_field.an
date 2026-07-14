@@ -1,0 +1,12 @@
+struct Holder<F> { f: F }
+
+fn main() -> i32 {
+    let x: i32 = 10;
+    let closure = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    let h = Holder(f = closure);
+    let result = (h.f)(5);
+    assert result == 15: "closure in generic struct field";
+    return 0;
+}

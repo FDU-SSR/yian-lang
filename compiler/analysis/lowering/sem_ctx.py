@@ -21,6 +21,7 @@ class LoopFrame:
 class DefKind(Enum):
     Function = "function"
     Method = "method"
+    Closure = "closure"
 
 
 class SemCtx:
@@ -60,7 +61,9 @@ class SemCtx:
         return self.__type_ctx
 
     @property
-    def unit_id(self) -> int | None:
+    def unit_id(self) -> int:
+        if self.__unit_id is None:
+            raise CompilerError("SemCtx.unit_id accessed before begin_def()")
         return self.__unit_id
 
     @property

@@ -100,6 +100,11 @@ class TypeFormatter:
                 else:
                     generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
                     name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
+            case Type.ClosureType(parameters=params, return_type=ret, captured_vars=captures):
+                param_names = [f"{p.name}: {self.get_name(p.type_id)}" for p in params]
+                ret_name = self.get_name(ret)
+                captured_names = [f"{cv.name}: {self.get_name(cv.type_id)}" for cv in captures]
+                name = f"|{', '.join(captured_names)}| ({', '.join(param_names)}) -> {ret_name}"
 
         self.__name_cache[type_id] = name
         return name

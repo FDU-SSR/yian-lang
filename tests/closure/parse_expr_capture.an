@@ -1,0 +1,13 @@
+// Closure parse test: expression capture.
+//
+// Expected output: 0
+
+fn main() -> i32 {
+    let a: i32 = 3;
+    let b: i32 = 4;
+    let c = |sum = a + b| (x: i32) -> i32 {
+        sum * x
+    };
+    assert c(2) == 14: "expression capture closure";
+    return 0;
+}

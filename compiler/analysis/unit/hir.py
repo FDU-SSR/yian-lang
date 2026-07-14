@@ -425,6 +425,21 @@ class Ty:
     is_place: bool
 
 
+@dataclass
+class Closure:
+    """Closure value — carries captured expressions.
+
+    ``type_id`` is the ClosureType type_id.  The variable binding keeps
+    ClosureType so the CallDispatcher recognises it as callable.
+    LLVM maps ClosureType to its struct_type_id for code generation.
+    """
+
+    span: SrcSpan
+    type_id: int              # ClosureType type_id
+    captures: dict[str, Expr]  # capture_name → HIR expression for the captured value
+    is_place: bool
+
+
 Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral | NullptrLiteral
 
 
@@ -435,7 +450,7 @@ Expr: TypeAlias = (
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat
-    | Var | Literal | Ty
+    | Var | Literal | Ty | Closure
     | Block
     | Return | Break | Continue
     | If | Loop

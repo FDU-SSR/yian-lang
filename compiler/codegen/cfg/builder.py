@@ -12,6 +12,7 @@ from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.error import CodegenError
+from compiler.error import CompilerError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -532,6 +533,8 @@ class CfgBuilder:
                 if self.__type_ctx.is_zst(expr.type_id):
                     return IR.Reg(name=self.__new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
+            case HIR.Closure():
+                raise CompilerError(f"Closure lowering should have been completed before CFG building: {expr}")
 
     def __resolve_addr(self, expr: HIR.Expr) -> IR.Value:
         """Lower *expr* to an address.

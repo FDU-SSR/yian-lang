@@ -4,6 +4,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.assign_check import (
     build_assign, check_simple_assign_source)
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
+from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
 from compiler.analysis.lowering.sem_ctx import LoopFrame, SemCtx
 from compiler.analysis.symbol.symbol import SymbolKind
@@ -39,6 +40,7 @@ class ExprChecker:
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
         self.__call_dispatcher = CallDispatcher(ctx, self)
+        self.__closure_helper = ClosureHelper(ctx, self)
         self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
@@ -85,6 +87,8 @@ class ExprChecker:
                 return self.__handle_dyn_buffer(expr)
             case AST.SizeOf():
                 return self.__handle_sizeof(expr)
+            case AST.BitCast():
+                return self.__handle_bitcast(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -97,6 +101,8 @@ class ExprChecker:
                 return self.__handle_array(expr)
             case AST.ArrayRepeat():
                 return self.__handle_array_repeat(expr)
+            case AST.ClosureExpr():
+                return self.__closure_helper.check_closure_expr(expr)
 
     def __handle_binary(self, node: AST.Binary) -> HIR.Expr:
         return self.__op_builder.build_binary(node.span, node.op, node.left, node.right)
@@ -122,6 +128,33 @@ class ExprChecker:
     def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)
         return HIR.SizeOf(span=node.span, target_type=type_id, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+
+    def __handle_bitcast(self, node: AST.BitCast) -> HIR.Expr:
+        target_type_id = self.__ctx.resolve_type(node.target_type)
+        value = self.value(node.value)
+
+        value_ty = self.__ctx.type_ctx[value.type_id]
+        target_ty = self.__ctx.type_ctx[target_type_id]
+        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
+            raise AnalysisError(
+                f"'bitcast' expects a pointer expression, "
+                f"got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
+                node.span,
+            )
+        if not isinstance(target_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'bitcast' target type must be a pointer type, "
+                f"got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
+                node.span,
+            )
+
+        return HIR.BitCast(
+            span=node.span,
+            value=value,
+            target_type=target_type_id,
+            type_id=target_type_id,
+            is_place=False,
+        )
 
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
@@ -310,7 +343,7 @@ class ExprChecker:
                     raise AnalysisError(f"cannot coerce nullptr to '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.type_id = expected
                 return expr
-            case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty():
+            case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty() | HIR.Closure():
                 if expr.type_id != expected:
                     raise AnalysisError(
                         f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
