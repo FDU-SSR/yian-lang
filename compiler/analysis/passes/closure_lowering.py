@@ -30,7 +30,7 @@ class ClosureLowering:
         self.__def_points = def_points
         self.__type_ctx = type_ctx
         # Per-closure state for the HIR rewrite
-        self.__sid_to_field: dict[int, tuple[str, int]] = {}
+        self.__sid_to_field: dict[int, tuple[str, int, int]] = {}
         self.__self_sid: int = 0
         self.__struct_type_id: int = 0
         self.__self_ptr_type_id: int = 0
@@ -271,7 +271,7 @@ class ClosureLowering:
             if sid is not None:
                 field = self.__type_ctx.get_struct_field_by_name(struct_type_id, cv.name)
                 if field is not None:
-                    self.__sid_to_field[sid] = (cv.name, field.type_id)
+                    self.__sid_to_field[sid] = (cv.name, field.type_id, field.index)
         self.__self_sid = self_sid
         self.__struct_type_id = struct_type_id
         self.__self_ptr_type_id = self_ptr_type_id
@@ -283,9 +283,9 @@ class ClosureLowering:
 
     def __rewrite_one_capture(self, expr: HIR.Expr) -> HIR.Expr:
         if isinstance(expr, HIR.Var) and expr.symbol_id in self.__sid_to_field:
-            field_name, field_type_id = self.__sid_to_field[expr.symbol_id]
+            field_name, field_type_id, field_index = self.__sid_to_field[expr.symbol_id]
             field = StructField(name=field_name, type_id=field_type_id,
-                                access_mode=AccessMode.Private, index=0)
+                                access_mode=AccessMode.Private, index=field_index)
             # self is PointerType(struct); deref to get the struct value
             self_val = HIR.Var(
                 span=expr.span,
