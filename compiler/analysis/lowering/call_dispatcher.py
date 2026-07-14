@@ -12,7 +12,6 @@ from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -25,8 +24,8 @@ if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
 # Built-in instruction names — all are expressions with different return types:
-#   sizeof → u64,  bitcast → ptr,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"bitcast", "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
+#   sizeof → u64,  sys_read/sys_write → void,  panic → never
+BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -77,10 +76,6 @@ class CallDispatcher:
         return self.build_method_call(span, receiver, lookup, args, context_name)
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:
-        # bitcast<ptr_type>(expr) — callee is a TypeItem with generic ptr type
-        if isinstance(node.callee, AST.TypeItem) and node.callee.name.name == "bitcast":
-            return self.__handle_bitcast(node, node.callee)
-
         if isinstance(node.callee, AST.Identifier):
             return self.__handle_named_call(node, node.callee)
 
@@ -183,8 +178,6 @@ class CallDispatcher:
                 return self.__handle_panic(node)
             case "bitcopy":
                 return self.__handle_bitcopy(node)
-            case "bitcast":
-                raise AnalysisError("'bitcast' requires generic target type: use bitcast<ptr_type>(expr)", callee.span)
             case "sys_write":
                 return self.__handle_sys_write(node)
             case "sys_read":
@@ -224,59 +217,6 @@ class CallDispatcher:
             raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
-
-    def __handle_bitcast(self, node: AST.Call, callee: AST.TypeItem) -> HIR.Expr:
-        """Lower `bitcast<ptr_type>(expr)` into HIR.BitCast.
-
-        Requirements:
-        - Exactly 1 generic argument (the target pointer type)
-        - Exactly 1 call argument (the pointer expression to cast)
-        - Both must be pointer types
-        """
-        if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for 'bitcast'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'bitcast' expects exactly 1 argument, got {len(node.args)}", node.span)
-        if len(callee.generics) != 1:
-            raise AnalysisError(
-                f"'bitcast' expects exactly 1 generic argument (target pointer type), got {len(callee.generics)}",
-                callee.span,
-            )
-
-        # Resolve the target pointer type from the generic argument.
-        generic_arg = callee.generics[0]
-        if isinstance(generic_arg, (LiteralConstExpr, GenericConstExpr)):
-            raise AnalysisError(
-                "'bitcast' expects a type argument, got a const expression",
-                callee.span,
-            )
-        assert self.__ctx.symbol_ctx is not None
-        target_type_id = self.__ctx.resolve_type(generic_arg)
-
-        # Evaluate the expression argument (must be a pointer expression).
-        value = self.__expr.value(node.args[0].value)
-
-        # Validate that both the value and target are pointer types.
-        value_ty = self.__ctx.type_ctx[value.type_id]
-        target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
-            raise AnalysisError(
-                f"'bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
-                node.args[0].span,
-            )
-        if not isinstance(target_ty, Type.PointerType):
-            raise AnalysisError(
-                f"'bitcast' target type must be a pointer type, got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
-                callee.span,
-            )
-
-        return HIR.BitCast(
-            span=node.span,
-            value=value,
-            target_type=target_type_id,
-            type_id=target_type_id,
-            is_place=False,
-        )
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
         """Lower `sys_write(fd, buf)` into HIR.SysWrite."""

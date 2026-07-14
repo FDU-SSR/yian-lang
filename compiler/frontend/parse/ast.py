@@ -567,6 +567,16 @@ class SizeOf:
 
 
 @dataclass
+class BitCast:
+    span: SrcSpan
+    target_type: ASTType
+    value: Expr
+
+    def __repr__(self) -> str:
+        return f"bitcast<{self.target_type}>({self.value})"
+
+
+@dataclass
 class TypeItem:
     """
     Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
@@ -667,7 +677,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | MethodCall
     | DynValue | DynBuffer
-    | SizeOf
+    | SizeOf | BitCast
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

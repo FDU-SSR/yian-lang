@@ -123,6 +123,8 @@ class ExprParser:
                 return AST.Literal(span=token.span, literal=Tok.NullptrLiteral(raw="nullptr", span=token.span))
             case Tok.Keyword(kind=Tok.KeywordKind.Sizeof):
                 return self.__parse_sizeof()
+            case Tok.Keyword(kind=Tok.KeywordKind.Bitcast):
+                return self.__parse_bitcast()
             case Tok.Identifier() | Tok.Keyword():
                 ident = self.__stream.consume_identifier()
 
@@ -327,6 +329,17 @@ class ExprParser:
         ty = self.__type_parser.parse_type()
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.SizeOf(span=kw.span, ty=ty)
+
+    def __parse_bitcast(self) -> AST.BitCast:
+        """Parse ``bitcast<type>(expr)`` — reinterpret a pointer as a different pointer type."""
+        kw = self.__stream.consume_keyword(Tok.KeywordKind.Bitcast)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+        ty = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        value = self.parse_expr()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.BitCast(span=kw.span, target_type=ty, value=value)
 
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""

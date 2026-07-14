@@ -38,6 +38,7 @@ class KeywordKind(Enum):
     In = "in"
     Typeof = "typeof"
     Sizeof = "sizeof"
+    Bitcast = "bitcast"
     Del = "del"
     True_ = "true"
     False_ = "false"

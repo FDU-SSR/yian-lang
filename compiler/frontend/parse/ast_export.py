@@ -318,6 +318,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_dyn_buffer(expr, guides, is_last)
         case AST.SizeOf():
             return __export_sizeof(expr, guides, is_last)
+        case AST.BitCast():
+            return __export_bitcast(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -435,6 +437,15 @@ def __export_dyn_buffer(expr: AST.DynBuffer, guides: list[bool], is_last: bool) 
 
 def __export_sizeof(expr: AST.SizeOf, guides: list[bool], is_last: bool) -> str:
     return __line(guides, is_last, "SizeOf")
+
+
+def __export_bitcast(expr: AST.BitCast, guides: list[bool], is_last: bool) -> str:
+    result = __line(guides, is_last, "BitCast")
+    guides.append(not is_last)
+    result += __line(guides, False, f"target_type: {expr.target_type}")
+    result += __export_expr(expr.value, guides, True)
+    guides.pop()
+    return result
 
 
 def __export_type_item(expr: AST.TypeItem, guides: list[bool], is_last: bool) -> str:

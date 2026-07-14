@@ -13,8 +13,6 @@ Rules:
 from __future__ import annotations
 
 
-from __future__ import annotations
-
 from typing import Callable
 
 from compiler.frontend.lex import token as Tok
@@ -23,7 +21,9 @@ from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
-ch_desugar = lambda: CompilerLog.get("desugar")
+
+def ch_desugar():
+    return CompilerLog.get("desugar")
 
 
 class Desugar:

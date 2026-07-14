@@ -87,6 +87,8 @@ class ExprChecker:
                 return self.__handle_dyn_buffer(expr)
             case AST.SizeOf():
                 return self.__handle_sizeof(expr)
+            case AST.BitCast():
+                return self.__handle_bitcast(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -126,6 +128,33 @@ class ExprChecker:
     def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)
         return HIR.SizeOf(span=node.span, target_type=type_id, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+
+    def __handle_bitcast(self, node: AST.BitCast) -> HIR.Expr:
+        target_type_id = self.__ctx.resolve_type(node.target_type)
+        value = self.value(node.value)
+
+        value_ty = self.__ctx.type_ctx[value.type_id]
+        target_ty = self.__ctx.type_ctx[target_type_id]
+        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
+            raise AnalysisError(
+                f"'bitcast' expects a pointer expression, "
+                f"got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
+                node.span,
+            )
+        if not isinstance(target_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'bitcast' target type must be a pointer type, "
+                f"got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
+                node.span,
+            )
+
+        return HIR.BitCast(
+            span=node.span,
+            value=value,
+            target_type=target_type_id,
+            type_id=target_type_id,
+            is_place=False,
+        )
 
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
