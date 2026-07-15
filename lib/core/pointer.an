@@ -1,6 +1,6 @@
-from ops import Index;
-from range import Range;
-from slice import from_raw_parts;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.slice import from_raw_parts;
 
 impl<T> Index<u64, T*> for T* {
     fn index(index: u64*) -> T* {

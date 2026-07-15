@@ -1,15 +1,15 @@
-from raw_vec import RawVec;
+from std.core.raw_vec import RawVec;
 
-from ops import Index, PartialEq, Deref, Add;
-from clone import Clone;
-from option import Option;
-from convert import From, Into;
-from move import Move;
-from drop import Drop;
-from mem import memcpy;
-from range import Range;
+from std.core.ops import Index, PartialEq, Deref, Add;
+from std.core.clone import Clone;
+from std.core.option import Option;
+from std.core.convert import From, Into;
+from std.core.move import Move;
+from std.core.drop import Drop;
+from std.core.mem import memcpy;
+from std.core.range import Range;
 
-from slice import from_raw_parts;
+from std.core.slice import from_raw_parts;
 
 pub struct Vec<T> {
     raw_vec: RawVec<T>,

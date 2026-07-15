@@ -1,4 +1,4 @@
-from option import Option;
+from std.core.option import Option;
 
 // The Iterator trait defines a common interface for iterating over a sequence of values of type T. 
 pub trait Iterator<T> {

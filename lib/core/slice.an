@@ -1,8 +1,8 @@
-from option import Option;
-from vec import Vec;
-from iter import Iterator, IntoIterator;
-from ops import PartialEq, Index;
-from range import Range;
+from std.core.option import Option;
+from std.core.vec import Vec;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import PartialEq, Index;
+from std.core.range import Range;
 
 // A struct representation of a slice
 @BitCopy

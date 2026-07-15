@@ -1,6 +1,6 @@
-from option import Option;
-from clone import Clone;
-from move import Move;
+from std.core.option import Option;
+from std.core.clone import Clone;
+from std.core.move import Move;
 
 pub enum Result<T, E> {
     Ok { val: T },

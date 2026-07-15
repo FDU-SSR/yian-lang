@@ -1,7 +1,7 @@
-from clone import Clone;
-from ops import PartialEq;
-from option import Option;
-from iter import Iterator, IntoIterator;
+from std.core.clone import Clone;
+from std.core.ops import PartialEq;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
 
 pub struct Range<T> {
     pub start: T,
