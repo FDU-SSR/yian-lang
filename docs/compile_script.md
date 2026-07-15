@@ -69,6 +69,25 @@ python3 -m compiler.main -O2 lib tests/array/assign.an
 python3 -m compiler.main --profile lib tests/array/assign.an
 ```
 
+### 2.6 `--packages` — 包名导入解析
+
+```bash
+python3 -m compiler.main --packages pkg.json files...
+```
+
+接受一个 JSON 文件，包含包名→源文件根目录的映射：
+
+```json
+{
+  "myapp": "/path/to/myapp/src",
+  "stdlib": "/path/to/lib"
+}
+```
+
+启用 Package 模式：import 的第一段被作为包名解析。不传 `--packages` 时为 Standalone 模式，使用相对路径导入。
+
+通常不直接使用，由 `anx build` 自动生成并传入。
+
 ## 3. 日志与调试输出
 
 Yian 编译器内置了结构化日志系统，替代了旧的 `--token`、`--ast`、`--hir`、`--cfg`、`--emit-llvm` 参数。

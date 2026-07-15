@@ -19,7 +19,7 @@
 | [10](10.generics.md)         | 泛型          | 泛型函数/struct/enum、泛型 impl、条件约束                           |
 | [11](11.structs_enums.md)    | 结构体与枚举  | 定义、构造、字段访问、`@BitCopy`                                    |
 | [12](12.traits_impls.md)     | Trait 与 Impl | trait 定义、impl 实现、默认方法、条件 impl                          |
-| [13](13.modules.md)          | 模块系统      | `import`、`from...import`、可见性、`std` 命名空间                   |
+| [13](13.modules.md) | 模块系统 | `import`、`from...import`、可见性、Package/Standalone 模式、包名解析 |
 | [14](14.standard_library.md) | 标准库        | `Option`、`Result`、`Vec`、`String`、`Iterator` 等                  |
 | [15](15.assign_semantics.md) | 赋值语义      | 简单类型、非简单类型、`.move()`、`.clone()`、`@BitCopy`             |
 

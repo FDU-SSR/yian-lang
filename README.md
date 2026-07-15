@@ -17,6 +17,8 @@ pip install -r ./requirements.txt
 
 ## 编译 yian 代码
 
+### 直接调用编译器
+
 通过 `compiler.main` 模块调用编译器。若用到标准库，需把 `lib` 目录一并放入路径列表：
 
 ```bash
@@ -29,6 +31,27 @@ python3 -m compiler.main -t ll lib tests/array/assign.an
 # 按阶段打印日志
 python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
 ```
+
+### 使用 anx 包管理器
+
+anx 提供基于包名的项目管理和导入解析：
+
+```bash
+# 创建项目
+python3 -m anx.main new myapp
+
+# 创建库（无 main.an）
+python3 -m anx.main new --lib mylib
+
+# 构建并运行
+cd myapp
+python3 -m anx.main run
+
+# 仅类型检查
+python3 -m anx.main check
+```
+
+项目内使用包名导入（`from myapp.utils.math import add`），依赖在 `package.anx` 中声明。详见 [anx 设计文档](bak/anx_design.md)。
 
 编译器的完整命令行用法见[编译脚本文档](docs/compile_script.md)。
 
