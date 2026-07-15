@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,13 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         default=None,
         help="Write log output to PATH in addition to stderr.",
+    )
+    parser.add_argument(
+        "--packages",
+        type=Path,
+        metavar="PATH",
+        default=None,
+        help="Package map JSON file (enables package-mode import resolution).",
     )
     return parser.parse_args(argv)
 
@@ -316,8 +324,12 @@ def main(argv: list[str] | None = None) -> int:
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx()
 
+    pkg_roots: dict[str, Path] = {}
+    if args.packages:
+        pkg_roots = {k: Path(v) for k, v in json.loads(args.packages.read_text()).items()}
+
     resolve_start = time.perf_counter() if args.profile else 0.0
-    global_resolver = GlobalResolve(unit_datas, type_ctx)
+    global_resolver = GlobalResolve(unit_datas, type_ctx, pkg_roots)
     try:
         global_resolver.run()
     except AnalysisError as error:
