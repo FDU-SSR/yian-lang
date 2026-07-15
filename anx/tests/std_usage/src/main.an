@@ -1,0 +1,5 @@
+from std.core.ops import min;
+fn main() -> i32 {
+    assert min(3, 7) == 3;
+    return 0;
+}

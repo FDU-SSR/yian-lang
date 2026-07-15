@@ -1,5 +1,5 @@
 [tool.pyright]
-include = ["compiler"]
+include = ["compiler", "anx"]
 exclude = ["bak", "tests", "docs", "**/node_modules", "**/__pycache__", "**/.*"]
 typeCheckingMode = "strict"
 useLibraryCodeForTypes = true
