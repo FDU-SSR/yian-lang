@@ -1,9 +1,9 @@
 // Cross-module typedef sharing (like struct/enum): named, simple, and generic aliases.
 // Expected output: (exit 0)
 
-from shapes import Point
-from shapes import Meters
-from shapes import Ptr
+from tdeftest.shapes import Point
+from tdeftest.shapes import Meters
+from tdeftest.shapes import Ptr
 
 struct WP { p: i32* }
 

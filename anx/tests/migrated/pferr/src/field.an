@@ -2,7 +2,7 @@
 //
 // Expected compilation error: Field 'priv_field' of struct 'ExportableStruct' is private and cannot be accessed from unit field.err.an unless inside an impl for that struct
 
-from private import ExportableStruct;
+from pferr.private import ExportableStruct;
 
 fn main() -> i32 {
     let es: ExportableStruct = ExportableStruct.new(42, 84);

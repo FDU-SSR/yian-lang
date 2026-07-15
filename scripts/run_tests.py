@@ -36,17 +36,7 @@ EXTRA_SOURCES: dict[str, list[str]] = {
 }
 
 # Directories (relative to TESTS_DIR) whose .an files are compiled together.
-MULTI_FILE_DIRS: set[str] = {
-    "import/func",
-    "import/cycle",
-    "import/type",
-    "import/typedef",
-    "import/typedef_priv",
-    "private/pub_field",
-    "private/pub_import",
-    "private/field_err",
-    "private/import_err",
-}
+MULTI_FILE_DIRS: set[str] = set()
 
 
 # ---------------------------------------------------------------------------

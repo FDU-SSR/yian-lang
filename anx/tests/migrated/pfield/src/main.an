@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-from private import ExportableStruct;
+from pfpub.private import ExportableStruct;
 
 fn main() -> i32 {
     let es: ExportableStruct = ExportableStruct.new(42, 84);

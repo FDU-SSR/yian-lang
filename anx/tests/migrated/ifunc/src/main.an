@@ -2,8 +2,8 @@
 //
 // Expected output: 0
 
-from adder import adder;
-from sort import quick_sort;
+from iftest.adder import adder;
+from iftest.sort import quick_sort;
 
 fn main() -> i32 {
     let res: i32 = adder(10, 20);

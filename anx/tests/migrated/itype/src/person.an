@@ -1,6 +1,6 @@
 from std.core.io import print;
 
-from walkable import Walkable;
+from typetest.walkable import Walkable;
 
 pub struct Person {
     age: i32,

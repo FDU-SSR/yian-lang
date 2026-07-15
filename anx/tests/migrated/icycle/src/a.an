@@ -1,6 +1,6 @@
 // lib file in circular import cycle
 
-from b import unwrap_value;
+from cyctest.main import unwrap_value;
 
 @BitCopy
 pub struct Value<T> {

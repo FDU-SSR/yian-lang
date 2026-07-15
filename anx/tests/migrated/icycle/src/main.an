@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-from a import Value, lib_unwrap_value;
+from cyctest.a import Value, lib_unwrap_value;
 
 pub fn unwrap_value<T>(v: Value<T>) -> T {
     return v.value;

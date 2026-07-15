@@ -4,7 +4,7 @@
 
 from std.core.io import print;
 
-from person import Person;
+from typetest.person import Person;
 
 fn main() -> i32 {
     let p: Person = Person.new(25, 175.5);

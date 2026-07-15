@@ -2,9 +2,9 @@
 //
 // Expected output: 0
 
-from private import ExportableStruct;
-from private import make_non_exportable;
-from private import get_priv_field;
+from piptest.private import ExportableStruct;
+from piptest.private import make_non_exportable;
+from piptest.private import get_priv_field;
 
 fn main() -> i32 {
     let es: ExportableStruct = ExportableStruct.new(10, 20);
