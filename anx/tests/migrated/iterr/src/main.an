@@ -1,0 +1,9 @@
+// Importing a non-pub typedef must fail.
+// Expected compilation error: Symbol 'Secret' is not found in the imported unit
+
+from tderrtest.secret import Secret
+
+fn main() -> i32 {
+    let x: Secret = 1
+    return 0
+}

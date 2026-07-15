@@ -1,6 +1,6 @@
-from ops import min;
-from mem import memcpy;
-from range import Range;
+from std.core.ops import min;
+from std.core.mem import memcpy;
+from std.core.range import Range;
 
 pub trait Hasher {
     fn finish() -> u64;

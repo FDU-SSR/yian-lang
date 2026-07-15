@@ -1,13 +1,13 @@
 from std.core.hash import Murmur3Hasher, Hash;
 
-from slice import SliceIter, RevSliceIter;
-from option import Option;
-from iter import Iterator, IntoIterator;
-from convert import From, Into;
-from ops import PartialEq, Index;
-from range import Range;
-from fmt import ToString;
-from string import String;
+from std.core.slice import SliceIter, RevSliceIter;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.convert import From, Into;
+from std.core.ops import PartialEq, Index;
+from std.core.range import Range;
+from std.core.fmt import ToString;
+from std.core.string import String;
 
 impl str {
     // Create a str from a byte slice without validation.

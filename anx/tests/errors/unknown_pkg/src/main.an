@@ -1,0 +1,2 @@
+from nosuchpkg.foo import bar;
+fn main() -> i32 { return 0; }

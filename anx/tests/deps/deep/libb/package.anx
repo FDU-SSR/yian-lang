@@ -1,0 +1,5 @@
+[package]
+name = "libb"
+version = "0.1.0"
+[dependencies]
+libc = { path = "../libc" }

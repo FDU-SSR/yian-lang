@@ -1,4 +1,4 @@
-from range import Range;
+from std.core.range import Range;
 
 pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
     for i in 0..count {

@@ -1,0 +1,17 @@
+// Cross-module typedef sharing (like struct/enum): named, simple, and generic aliases.
+// Expected output: (exit 0)
+
+from tdeftest.shapes import Point
+from tdeftest.shapes import Meters
+from tdeftest.shapes import Ptr
+
+struct WP { p: i32* }
+
+fn main() -> i32 {
+    let p: Point = Point(3, 4)
+    assert p.x == 3: "imported alias-to-struct"
+    let m: Meters = 5
+    assert sizeof(Meters) == sizeof(i64): "imported simple alias"
+    assert sizeof(Ptr<i32>) == sizeof(WP): "imported generic alias"
+    return 0
+}

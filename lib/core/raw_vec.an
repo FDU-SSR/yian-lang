@@ -1,7 +1,7 @@
-from range import Range;
-from move import Move;
-from drop import Drop;
-from mem import memcpy;
+from std.core.range import Range;
+from std.core.move import Move;
+from std.core.drop import Drop;
+from std.core.mem import memcpy;
 
 pub struct RawVec<T> {
     data: T*,

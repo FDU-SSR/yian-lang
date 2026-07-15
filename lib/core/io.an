@@ -1,10 +1,10 @@
-from vec import Vec;
-from string import String;
-from result import Result;
-from move import Move;
-from drop import Drop;
-from slice import from_raw_parts;
-from range import Range;
+from std.core.vec import Vec;
+from std.core.string import String;
+from std.core.result import Result;
+from std.core.move import Move;
+from std.core.drop import Drop;
+from std.core.slice import from_raw_parts;
+from std.core.range import Range;
 
 // =====================================================================
 // File open flags (Linux x86_64)

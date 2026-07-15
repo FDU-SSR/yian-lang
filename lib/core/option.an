@@ -1,8 +1,8 @@
 // The Option type is an enum that can either be None || Some value of type T.
 // It is used to represent an optional value that may || may ! be present.
 
-from clone import Clone;
-from move import Move;
+from std.core.clone import Clone;
+from std.core.move import Move;
 
 pub enum Option<T> {
     None,

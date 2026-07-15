@@ -1,8 +1,8 @@
-from ops import Index;
-from range import Range;
-from vec import Vec;
-from slice import from_raw_parts, SliceIter;
-from iter import IntoIterator;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.vec import Vec;
+from std.core.slice import from_raw_parts, SliceIter;
+from std.core.iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {

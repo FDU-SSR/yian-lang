@@ -1,12 +1,12 @@
-from vec import Vec;
-from clone import Clone;
-from ops import PartialEq, Add, AddAssign, Deref, Index;
-from convert import From;
-from option import Option;
-from range import Range;
-from fmt import ToString;
-from move import Move;
-from drop import Drop;
+from std.core.vec import Vec;
+from std.core.clone import Clone;
+from std.core.ops import PartialEq, Add, AddAssign, Deref, Index;
+from std.core.convert import From;
+from std.core.option import Option;
+from std.core.range import Range;
+from std.core.fmt import ToString;
+from std.core.move import Move;
+from std.core.drop import Drop;
 
 // A growable UTF-8 string stored as a Vec<u8>.
 // Supports mutation, concatenation, and deref to str.

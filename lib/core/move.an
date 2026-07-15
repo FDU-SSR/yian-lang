@@ -1,4 +1,4 @@
-from range import Range;
+from std.core.range import Range;
 
 // A trait for types that support move semantics.
 //

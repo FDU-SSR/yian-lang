@@ -5,14 +5,13 @@ This is the first pass of the analysis phase.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 
 if TYPE_CHECKING:
@@ -21,12 +20,16 @@ if TYPE_CHECKING:
 
 
 class GlobalResolve:
-    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx) -> None:
+    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx,
+                 pkg_roots: dict[str, Path] | None = None) -> None:
         self.__units = units
         self.__type_ctx = type_ctx
 
         self.__path_lookup: dict[Path, UnitData] = {unit.path.resolve(): unit for unit in units.values()}
         self.__std_lookup: dict[tuple[str, ...], UnitData] = {}
+
+        self.__pkg_roots = pkg_roots or {}
+        self.__strict_pkg = len(self.__pkg_roots) > 0
 
         self.__build_std_lookup()
 
@@ -195,7 +198,7 @@ class GlobalResolve:
                 continue
 
             paths = [part.name for part in item.paths]
-            target_unit = self.__resolve_import_path(unit, paths)
+            target_unit = self.__resolve_import_path(unit, paths, item.span)
 
             if target_unit is None:
                 raise AnalysisError(f"Cannot resolve import path: {'.'.join(paths)}", item.span)
@@ -209,20 +212,29 @@ class GlobalResolve:
             imported_name = item.alias.name if item.alias is not None else item.target.name
             unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id)
 
-    def __resolve_import_path(self, unit: UnitData, paths: list[str]) -> UnitData | None:
-        """
-        Resolves the path of an import statement to a unit.
+    def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData | None:
+        """Resolve an import path to a UnitData.
 
-        Returns the resolved unit, or None if the path cannot be resolved.
+        - Package mode (--packages): first segment must be a known package name.
+        - Standalone mode: uses stdlib lookup + relative path fallback.
         """
         if len(paths) == 0:
             return None
 
-        # case 1: std lib import
+        root = self.__pkg_roots.get(paths[0])
+        if root is not None:
+            target_path = root.joinpath(*paths[1:]).with_suffix(".an")
+            return self.__path_lookup.get(target_path.resolve())
+
+        if self.__strict_pkg:
+            raise AnalysisError(
+                f"Unknown package '{paths[0]}' in import 'from {'.'.join(paths)} import ...'",
+                span,
+            )
+
         if paths[0] == "std":
             return self.__std_lookup.get(tuple(paths))
 
-        # case 2: relative import
         target_path = unit.path.parent.joinpath(*paths).with_suffix(".an")
         return self.__path_lookup.get(target_path.resolve())
 

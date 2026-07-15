@@ -1,4 +1,4 @@
-from string import String;
+from std.core.string import String;
 
 pub trait ToString {
     fn to_string() -> String;
