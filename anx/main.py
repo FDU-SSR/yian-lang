@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from anx.manifest import Manifest
-from anx.resolver import resolve
+from anx.resolver import CycleError, resolve
 from anx.scaffold import scaffold
 
 _YIAN_ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +23,11 @@ def cmd_new(args: argparse.Namespace) -> None:
 def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
     project = Path(project_dir).resolve()
     manifest = Manifest.from_file(project / "package.anx")
-    all_files, pkg_roots = resolve(manifest, _STD_LIB, cwd=project)
+    try:
+        all_files, pkg_roots = resolve(manifest, _STD_LIB, cwd=project)
+    except CycleError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     pkg_json = project / "build" / "pkg.json"
     pkg_json.parent.mkdir(parents=True, exist_ok=True)
