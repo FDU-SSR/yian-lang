@@ -1,0 +1,14 @@
+// Test f-string brace escaping with backslash
+
+from std.core.io import print;
+
+fn main() {
+    let s = f"\{not an expr\}";
+    print(s.as_str());
+    print("\n");
+
+    let x = 3;
+    let t = f"\{ {x} \}";
+    print(t.as_str());
+    print("\n");
+}

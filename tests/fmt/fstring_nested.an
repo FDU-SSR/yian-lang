@@ -1,0 +1,7 @@
+from std.core.io import print;
+fn main() {
+    let x = 5;
+    let s = f"if: {if x > 0 { "pos" } else { "neg" }}!";
+    print(s.as_str());
+    print("\n");
+}

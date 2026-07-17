@@ -1,0 +1,11 @@
+// Test f-string basic variable interpolation
+
+from std.core.io import print;
+
+fn main() {
+    let name = "Yian";
+    let ver = 1;
+    let msg = f"Welcome to {name} v{ver}!";
+    print(msg.as_str());
+    print("\n");
+}

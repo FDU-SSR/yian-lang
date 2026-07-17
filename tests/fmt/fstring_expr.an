@@ -1,0 +1,11 @@
+// Test f-string with arithmetic expressions
+
+from std.core.io import print;
+
+fn main() {
+    let a = 10;
+    let b = 20;
+    let msg = f"{a} + {b} = {a + b}";
+    print(msg.as_str());
+    print("\n");
+}
