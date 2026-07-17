@@ -78,6 +78,9 @@ class LLModule:
         self.__functions: dict[int, LLFunction] = {}  # type_id → LLFunction
         self.__string_counter = 0
         self.__strings: dict[bytes, ir.GlobalVariable] = {}
+        self.__yian_main_type_id: int | None = None
+        self.__argc_global: ir.GlobalVariable | None = None
+        self.__argv_global: ir.GlobalVariable | None = None
 
     # -- properties --
 
@@ -116,8 +119,12 @@ class LLModule:
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
         func_ir_type = self.__type_ctx.get_ll_func_type(cfg_func.type_id)
-        # Keep "main" as-is for the linker; suffix type_id for generic instantiations that share a name.
-        llvm_name = cfg_func.name if cfg_func.name == "main" else f"{cfg_func.name}.{cfg_func.type_id}"
+        # Rename Yian "main" → "__yian_main"; the real "main" is emitted later as a wrapper.
+        llvm_name = cfg_func.name if cfg_func.name != "main" else "__yian_main"
+        if cfg_func.name != "main":
+            llvm_name = f"{llvm_name}.{cfg_func.type_id}"
+        else:
+            self.__yian_main_type_id = cfg_func.type_id
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
@@ -125,3 +132,57 @@ class LLModule:
 
     def get_func(self, type_id: int) -> LLFunction:
         return self.__functions[type_id]
+
+    @property
+    def has_yian_main(self) -> bool:
+        return self.__yian_main_type_id is not None
+
+    @property
+    def yian_main_type_id(self) -> int:
+        assert self.__yian_main_type_id is not None
+        return self.__yian_main_type_id
+
+    @property
+    def argc_global(self) -> ir.GlobalVariable:
+        return self.__get_or_create_argc_global()
+
+    @property
+    def argv_global(self) -> ir.GlobalVariable:
+        return self.__get_or_create_argv_global()
+
+    def __get_or_create_argc_global(self) -> ir.GlobalVariable:
+        if self.__argc_global is None:
+            self.__argc_global = ir.GlobalVariable(
+                self.__module, ir.IntType(32), name="__yian_argc"
+            )
+            self.__argc_global.linkage = "internal"
+            self.__argc_global.initializer = ir.Constant(ir.IntType(32), 0)
+        return self.__argc_global
+
+    def __get_or_create_argv_global(self) -> ir.GlobalVariable:
+        if self.__argv_global is None:
+            self.__argv_global = ir.GlobalVariable(
+                self.__module, ir.PointerType(ir.PointerType(ir.IntType(8))), name="__yian_argv"
+            )
+            self.__argv_global.linkage = "internal"
+            self.__argv_global.initializer = ir.Constant(ir.PointerType(ir.PointerType(ir.IntType(8))), None)
+        return self.__argv_global
+
+    def emit_wrapper_main(self) -> None:
+        """Emit the C-compatible ``@main`` wrapper that stores argc/argv and calls ``__yian_main``."""
+        assert self.__yian_main_type_id is not None
+
+        argc_global = self.argc_global
+        argv_global = self.argv_global
+
+        wrapper_type = ir.FunctionType(ir.IntType(32), [ir.IntType(32), ir.PointerType(ir.PointerType(ir.IntType(8)))])
+        wrapper = ir.Function(self.__module, wrapper_type, name="main")
+        entry = wrapper.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+
+        builder.store(wrapper.args[0], argc_global)
+        builder.store(wrapper.args[1], argv_global)
+
+        yian_main_func = self.__functions[self.__yian_main_type_id]
+        builder.call(yian_main_func.ir_func, [])
+        builder.ret(ir.Constant(ir.IntType(32), 0))

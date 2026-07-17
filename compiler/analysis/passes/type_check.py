@@ -79,6 +79,17 @@ class TypeCheck:
                         raise AnalysisError("Multiple 'main' functions found", item.span)
                     symbol = unit.symbol_ctx.lookup("main")
                     assert symbol is not None
+
+                    main_ty = self.__type_ctx[symbol.type_id]
+                    assert isinstance(main_ty, Type.FunctionType)
+                    ret_ty = main_ty.return_type(self.__type_ctx)
+                    if ret_ty != self.__type_ctx.void_id:
+                        raise AnalysisError(
+                            f"main must return void, not {self.__type_ctx.get_name(ret_ty)}; "
+                            "use std.core.env.exit(code) for non-zero exit",
+                            item.span,
+                        )
+
                     main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx)
                     self.__worklist.append(main_def_point)
                     self.__def_points[symbol.type_id] = main_def_point
