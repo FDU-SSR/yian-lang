@@ -6,7 +6,7 @@ from std.core.option import Option;
 from std.core.convert import From, Into;
 from std.core.move import Move;
 from std.core.drop import Drop;
-from std.core.mem import memcpy;
+from std.core.mem import memmove;
 from std.core.range import Range;
 
 from std.core.slice import from_raw_parts;
@@ -64,7 +64,7 @@ impl<T> Vec<T> {
         let copy_len = other.len;
         let dest_ptr = self.raw_vec.ptr() + self.len;
         let src_ptr = other.raw_vec.ptr();
-        memcpy(dest_ptr, src_ptr, copy_len);
+        memmove(dest_ptr, src_ptr, copy_len);
         self.len += copy_len;
 
         // invalidate the other Vec to prevent double free
