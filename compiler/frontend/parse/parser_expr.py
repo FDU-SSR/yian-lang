@@ -139,6 +139,8 @@ class ExprParser:
             case Tok.IntLiteral() | Tok.FloatLiteral() | Tok.CharLiteral() | Tok.StrLiteral():
                 self.__stream.advance()
                 return AST.Literal(span=token.span, literal=token)
+            case Tok.FStrStart():
+                return self.__parse_fstring(token)
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
                 expr = self.parse_expr()
@@ -190,6 +192,73 @@ class ExprParser:
                 return AST.Array(span=token.span, elements=items)
             case _:
                 raise ParseError(f"Unexpected token '{token}' while parsing expression", token.span)
+
+    def __parse_fstring(self, start_token: Tok.FStrStart) -> AST.Expr:
+        """Parse an f-string: FStrStart (FStrLiteral | FStrExprBegin expr* FStrExprEnd)* FStrEnd
+
+        Desugars into a chain of ``+`` operations:
+            String.new() + literal1 + expr1.to_string() + literal2 + ...
+        """
+        span = start_token.span
+        self.__stream.advance()
+
+        segments: list[AST.Expr] = []
+
+        while True:
+            token = self.__stream.peek()
+
+            if isinstance(token, Tok.FStrLiteral):
+                self.__stream.advance()
+                lit = Tok.StrLiteral(
+                    raw=token.value,
+                    span=token.span,
+                    value=token.value,
+                )
+                segments.append(AST.Literal(span=token.span, literal=lit))
+                continue
+
+            if isinstance(token, Tok.FStrExprBegin):
+                self.__stream.advance()
+                expr = self.parse_expr()
+                self.__stream.advance()  # FStrExprEnd
+                method_call = AST.MethodCall(
+                    span=expr.span,
+                    receiver=expr,
+                    method_name=AST.Identifier(expr.span, "to_string"),
+                    generics=[],
+                    args=[],
+                )
+                segments.append(method_call)
+                continue
+
+            if isinstance(token, Tok.FStrEnd):
+                self.__stream.advance()
+                break
+
+            raise ParseError(f"Unexpected token '{token}' in f-string", token.span)
+
+        str_new = AST.MethodCall(
+            span=span,
+            receiver=AST.TypeItem(
+                span=span,
+                name=AST.Identifier(span, "String"),
+                generics=[],
+            ),
+            method_name=AST.Identifier(span, "new"),
+            generics=[],
+            args=[],
+        )
+
+        result: AST.Expr = str_new
+        for seg in segments:
+            result = AST.Binary(
+                span=span,
+                left=result,
+                op=BinaryOperator.Add,
+                right=seg,
+            )
+
+        return result
 
     def __parse_closure(self) -> AST.ClosureExpr:
         """Parse a closure expression ``|captures| (params) -> R { body }``."""

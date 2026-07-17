@@ -247,6 +247,48 @@ class NullptrLiteral:
         return self.raw
 
 
+@dataclass
+class FStrStart:
+    span: SrcSpan
+    raw: str
+
+    def __repr__(self) -> str:
+        return self.raw
+
+
+@dataclass
+class FStrLiteral:
+    span: SrcSpan
+    value: str
+
+    def __repr__(self) -> str:
+        return f"\"{self.value}\""
+
+
+@dataclass
+class FStrExprBegin:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "{"
+
+
+@dataclass
+class FStrExprEnd:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "}"
+
+
+@dataclass
+class FStrEnd:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "\""
+
+
 ESCAPE_SEQUENCES = {
     "n": "\n",
     "t": "\t",
@@ -431,4 +473,4 @@ def parse_float_value(raw: str) -> tuple[float, str | None]:
 
 Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral | NullptrLiteral
 
-Token: TypeAlias = Keyword | Identifier | Punctuator | Literal
+Token: TypeAlias = Keyword | Identifier | Punctuator | Literal | FStrStart | FStrLiteral | FStrExprBegin | FStrExprEnd | FStrEnd

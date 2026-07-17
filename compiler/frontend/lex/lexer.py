@@ -10,7 +10,10 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.utils.log import CompilerLog
 
-ch_lex = lambda: CompilerLog.get("lex")
+
+def ch_lex():
+    return CompilerLog.get("lex")
+
 
 START_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 IN_IDENTIFIER = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
@@ -62,7 +65,7 @@ class CharStream:
         self.__index += 1
 
     def advance_n(self, n: int) -> None:
-        for i in range(n):
+        for _ in range(n):
             if self.__index >= self.__src_len:
                 raise StopIteration("End of source code reached")
             if self.__source[self.__index] == "\n":
@@ -155,6 +158,9 @@ class Lexer:
     def __init__(self, path: Path):
         self.__stream = CharStream(path)
         self.__tokens: list[Token] = []
+        self.__fstring_buffer: list[Token] = []
+        self.__in_fstring_expr = False
+        self.__fstring_brace_depth = 0
 
     def lex(self) -> None:
         """
@@ -206,6 +212,9 @@ class Lexer:
 
         Assumes that the caller has already checked that there are more characters to read.
         """
+        if self.__fstring_buffer:
+            return self.__fstring_buffer.pop(0)
+
         if self.__stream.at_end():
             return Tok.Punctuator(Tok.PunctuatorKind.EOF, self.__stream.pos.into_span())
 
@@ -218,10 +227,28 @@ class Lexer:
             return self.__lex_char(start_pos)
         if ch == "b" and self.__stream.peek() == "'":
             return self.__lex_byte(start_pos)
+        if ch == "f" and self.__stream.peek() == '"':
+            return self.__lex_fstring(start_pos)
         if ch in START_IDENTIFIER:
             return self.__lex_identifier_or_keyword(ch, start_pos)
         if ch in START_NUMBER:
             return self.__lex_number(ch, start_pos)
+
+        # in f-string expression mode, } closes the expression
+        if self.__in_fstring_expr:
+            if ch == "{":
+                self.__fstring_brace_depth += 1
+                span = SrcSpan(start_pos, self.__stream.pos.clone())
+                return Tok.Punctuator(Tok.PunctuatorKind.LBrace, span)
+            if ch == "}":
+                self.__fstring_brace_depth -= 1
+                if self.__fstring_brace_depth == 0:
+                    self.__in_fstring_expr = False
+                    span = SrcSpan(start_pos, self.__stream.pos.clone())
+                    return Tok.FStrExprEnd(span)
+                span = SrcSpan(start_pos, self.__stream.pos.clone())
+                return Tok.Punctuator(Tok.PunctuatorKind.RBrace, span)
+
         return self.__lex_punctuator(ch, start_pos, prev_was_ws)
 
     def __lex_identifier_or_keyword(self, tok_str: str, start_pos: SrcPosition) -> Token:
@@ -358,6 +385,92 @@ class Lexer:
             return Tok.IntLiteral(tok_str, span, Tok.parse_byte_value(tok_str), suffix="u8")
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
+
+    def __lex_fstring(self, start_pos: SrcPosition) -> Token:
+        """Lex an entire f-string, appending all tokens to __fstring_buffer.
+
+        Returns the first token (FStrStart). Subsequent tokens are drained
+        from __fstring_buffer by __next_token.
+        """
+        buf: list[Token] = []
+        self.__stream.consume("\"")
+        span = SrcSpan(start_pos, self.__stream.pos.clone())
+        first = Tok.FStrStart(span, "f\"")
+
+        while not self.__stream.at_end():
+            ch = self.__stream.peek()
+            if ch is None:
+                break
+
+            if ch == '"':
+                self.__stream.advance()
+                buf.append(Tok.FStrEnd(SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone())))
+                self.__fstring_buffer = buf
+                return first
+
+            if ch == "{":
+                self.__stream.advance()
+                buf.append(Tok.FStrExprBegin(SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone())))
+                self.__in_fstring_expr = True
+                self.__fstring_brace_depth = 1
+                while True:
+                    self.__skip_ignored()
+                    tok = self.__next_token(True)
+                    buf.append(tok)
+                    if isinstance(tok, Tok.FStrExprEnd):
+                        break
+                continue
+
+            if ch == "}":
+                raise LexError(
+                    "unexpected '}' in f-string literal (use \\} for a literal brace)",
+                    SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone()),
+                )
+
+            self.__lex_fstring_literal(buf, span)
+
+        self.__fstring_buffer = buf
+        return first
+
+    def __lex_fstring_literal(self, buf: list[Token], fstr_span: SrcSpan) -> None:
+        """Lex a literal segment of an f-string and append FStrLiteral to *buf*."""
+        literal_buf = ""
+        literal_start = self.__stream.pos.clone()
+
+        while not self.__stream.at_end():
+            ch = self.__stream.peek()
+            if ch is None or ch == '"' or ch == "{":
+                break
+
+            if ch == "}":
+                raise LexError(
+                    "unexpected '}' in f-string literal (use \\} for a literal brace)",
+                    SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone()),
+                )
+
+            if ch == "\\":
+                self.__stream.advance()
+                next_ch = self.__stream.peek()
+                if next_ch is None:
+                    raise LexError(
+                        "unterminated f-string escape at end of file",
+                        SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone()),
+                    )
+                if next_ch in ("{", "}"):
+                    literal_buf += next_ch
+                    self.__stream.advance()
+                elif next_ch in Tok.ESCAPE_SEQUENCES:
+                    literal_buf += Tok.ESCAPE_SEQUENCES[next_ch]
+                    self.__stream.advance()
+                else:
+                    literal_buf += "\\" + next_ch
+                    self.__stream.advance()
+                continue
+
+            literal_buf += self.__stream.next()
+
+        if literal_buf:
+            buf.append(Tok.FStrLiteral(SrcSpan(literal_start, self.__stream.pos.clone()), literal_buf))
 
     def __lex_punctuator(self, tok_str: str, start_pos: SrcPosition, prev_was_ws: bool) -> Token:
         """
