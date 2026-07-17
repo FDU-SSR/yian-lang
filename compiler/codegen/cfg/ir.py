@@ -190,6 +190,28 @@ class Close:
 
 
 @dataclass
+class YianArgc:
+    result: Reg
+
+
+@dataclass
+class YianArgvPtr:
+    result: Reg
+    index: Value
+
+
+@dataclass
+class YianCstrlen:
+    result: Reg
+    ptr: Value
+
+
+@dataclass
+class YianExit:
+    code: Value
+
+
+@dataclass
 class FuncPtr:
     """Create a function pointer from a function type."""
     result: Reg
@@ -211,6 +233,7 @@ Stmt: TypeAlias = (
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close
+    | YianArgc | YianArgvPtr | YianCstrlen
 )
 
 # ---------------------------------------------------------------------------
@@ -253,7 +276,7 @@ class Panic:
     message: Value  # must be `str` type
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | YianExit
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures
