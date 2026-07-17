@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 66;
     let b: i32* = &a;
     let c: i32** = &b;
@@ -12,5 +12,4 @@ fn main() -> i32 {
 
     assert *****f == 66: "Expected *****f to be 66";
     
-    return 0;
 }

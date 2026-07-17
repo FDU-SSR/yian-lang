@@ -1,0 +1,14 @@
+// Test command-line arguments via std.core.env
+//
+// Run: build/a.out arg1 arg2 arg3
+// Expected output: prints each argument with "> " prefix
+
+from std.core.env import args;
+from std.core.io import print;
+
+fn main() {
+    let argv = args();
+    // Just verify args() compiles and runs without crashing
+    // The first arg (index 0) is always the program name
+    assert argv.len() > 0: "should have at least program name";
+}

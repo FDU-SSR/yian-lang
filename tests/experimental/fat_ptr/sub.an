@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let arr: i32[2];
     let p_arr: i32* = arr
     let p_arr_1: i32* = p_arr + 1

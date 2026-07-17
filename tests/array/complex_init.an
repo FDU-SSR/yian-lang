@@ -12,7 +12,7 @@ struct Person {
 }
 
 
-fn main() -> i32 {
+fn main() {
     let arr: i32[3] = [get_num(1), get_num(2), get_num(3)]
     assert arr[1] == 2: "arr[1] should be 2"
 
@@ -23,5 +23,4 @@ fn main() -> i32 {
     ]
     assert p_arr[2].score == 80: "p_arr[2].score should be 80"
 
-    return 0;
 }

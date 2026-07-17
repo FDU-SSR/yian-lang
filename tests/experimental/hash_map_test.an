@@ -64,7 +64,7 @@ impl Hash<DummyHasher> for MyKey {
 }
 
 // ---------- 测试开始 ----------
-fn main() -> i32 {
+fn main() {
     // === Test 1: 基础构造 ===
     let map1: SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher> = SwissTable<MyKey, i64, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         0,

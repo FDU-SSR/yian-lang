@@ -12,7 +12,7 @@ impl<T> T* {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let arr: i32[3] = [42, 43, 44];
     let ptr: i32* = &arr[0];
 
@@ -24,5 +24,4 @@ fn main() -> i32 {
     assert dptr.get_first() == 3.14: "First element should be 3.14";
     assert dptr.size_of() == 8: "Size of f64 should be 8";
 
-    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: f16 = 1.5;
     assert a > 1.4 && a < 1.6: "f16 value out of range";
 
@@ -15,5 +15,4 @@ fn main() -> i32 {
     let c: f16 = a + b;
     assert c > 3.9 && c < 4.1: "f16 arithmetic";
 
-    return 0;
 }

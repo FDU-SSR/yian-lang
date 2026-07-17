@@ -15,9 +15,8 @@ fn test_match(s: str) -> str {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     print(test_match("hello"));
     print(test_match("world"));
     print(test_match("unknown"));
-    return 0;
 }

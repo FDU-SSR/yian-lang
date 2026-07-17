@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> int {
+fn main() {
     let vec = [0u8, 1, 2, 3, 4].to_vec();
 
     // Test reference iterator
@@ -23,5 +23,4 @@ fn main() -> int {
     }
     assert !vec.is_valid(); // Ensure original is invalidated
 
-    return 0;
 }

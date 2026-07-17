@@ -5,7 +5,7 @@
 from std.core.string import String;
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // 测试 String 构造方法
     let s_new: String = String.new();
     assert s_new.len() == 0: "new() should create empty string";
@@ -151,6 +151,5 @@ fn main() -> i32 {
     }
     assert s_large.len() == 100: "large string len should be 100 after 100 pushes";
 
-    return 0;
 }
 

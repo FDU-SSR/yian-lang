@@ -36,12 +36,11 @@ impl Command {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let cmd1: Command = Command.new_start();
     let cmd2: Command = Command.new_pause(10);
 
     cmd1.execute();
     cmd2.execute();
 
-    return 0;
 }

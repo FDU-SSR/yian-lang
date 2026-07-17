@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let p: i32* = dyn i32[10]
     p[10] += 1  // Heap ptr index out of range
     return 0

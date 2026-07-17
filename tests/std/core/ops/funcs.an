@@ -27,7 +27,7 @@ impl PartialEq<Size> for Size {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let small = Size.Small;
     let medium = Size.Medium;
     let large = Size.Large;
@@ -37,5 +37,4 @@ fn main() -> i32 {
     assert min(medium, large) == medium: "Expected min(Medium, Large) == Medium";
     assert small != large: "Expected Small != Large";
 
-    return 0;
 }

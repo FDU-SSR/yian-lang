@@ -16,7 +16,7 @@ impl<T> Clone for Value<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let v1: Value<i32> = Value<i32>(data=42);
     let v2: Value<i32> = v1.clone();
     assert v2.data == 42: "Cloned value does ! match";
@@ -25,5 +25,4 @@ fn main() -> i32 {
     let v4: Value<f64> = v3.clone();
     assert v4.data > 3.13 && v4.data < 3.15: "Cloned value does ! match";
 
-    return 0;
 }

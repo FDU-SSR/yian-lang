@@ -14,7 +14,7 @@ fn times_two<T>(a: T) -> T {
     return a + a;
 }
 
-fn main() -> i32 {
+fn main() {
     // 1) explicit type arguments
     let x: i32 = times_ten<i32>(3);
     assert x == 30: "Expected 30";
@@ -27,5 +27,4 @@ fn main() -> i32 {
     let n: f64 = times_ten(1.5);
     assert n > 14.9 && n < 15.1: "Expected 15.0";
 
-    return 0;
 }

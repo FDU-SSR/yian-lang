@@ -17,7 +17,7 @@ struct Point {
     label: str,
 }
 
-fn main() -> i32 {
+fn main() {
     // Named arguments in struct constructor
     let p1: Person = Person(name="Alice", age=25);
     assert p1.name == "Alice": "named arg name failed";
@@ -38,5 +38,4 @@ fn main() -> i32 {
     print("\n");
     print(p2.name);
     print("\n");
-    return 0;
 }

@@ -6,7 +6,7 @@
 struct Empty {}
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     // dyn[n] ZST: must not crash
     let p: void* = dyn[5] void;
     let q: Empty* = dyn[3] Empty;
@@ -19,5 +19,4 @@ fn main() -> i32 {
     let p2: void* = dyn[1] void;
     let v: void = *p2;
 
-    return 0;
 }

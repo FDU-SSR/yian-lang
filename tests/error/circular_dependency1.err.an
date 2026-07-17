@@ -18,6 +18,5 @@ struct A4 {
     field1: A3,
 }
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

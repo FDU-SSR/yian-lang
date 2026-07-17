@@ -1,6 +1,6 @@
 from std.core.raw_vec import RawVec;
 
-fn main() -> i32 {
+fn main() {
     // new()
     let v: RawVec<i32> = RawVec<i32>.new();
     assert v.capacity() == 0: "initial capacity should be 0";
@@ -57,5 +57,4 @@ fn main() -> i32 {
     assert final_ptr[0] == 100: "shrink data copy fail 1";
     assert final_ptr[1] == 200: "shrink data copy fail 2";
 
-    return 0;
 }

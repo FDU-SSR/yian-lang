@@ -25,7 +25,7 @@ impl Person{
 }
 
 
-fn main() -> i32 {
+fn main() {
     let p1: Person* = dyn Person.new(25, "Alice");
     assert p1.get_age() == 25;
 
@@ -40,5 +40,4 @@ fn main() -> i32 {
 
     print(p3[0].get_name());
 
-    return 0;
 }

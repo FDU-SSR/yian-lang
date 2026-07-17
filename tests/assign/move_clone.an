@@ -15,7 +15,7 @@ impl Move for BigInt {
     fn is_valid() -> bool { true }
 }
 
-fn main() -> i32 {
+fn main() {
     let a: BigInt = BigInt(42);
     assert a.value == 42: "a.value should be 42";
 
@@ -29,5 +29,4 @@ fn main() -> i32 {
     let d: BigInt = BigInt(10);
     assert d.value == 10: "d.value should be 10";
 
-    return 0;
 }

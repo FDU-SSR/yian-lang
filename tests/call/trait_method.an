@@ -22,7 +22,7 @@ impl Walkable for Dog {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let d: Dog = Dog(5);
 
     assert Dog.walk_info() == 10: "Dog walk_info method failed";
@@ -30,5 +30,4 @@ fn main() -> i32 {
     let total_distance: i32 = d.walk(10);
     assert total_distance == 15: "Dog walk method failed";
 
-    return 0;
 }

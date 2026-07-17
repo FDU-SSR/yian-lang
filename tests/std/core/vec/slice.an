@@ -5,7 +5,7 @@
 from std.core.vec import Vec;
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     let v: Vec<i32> = Vec<i32>.new();
     v.push(10);
     v.push(20);
@@ -53,5 +53,4 @@ fn main() -> i32 {
     assert v2[1] == 2: "extend_from_slice element 1 should be 2";
     assert v2[2] == 3: "extend_from_slice element 2 should be 3";
 
-    return 0;
 }

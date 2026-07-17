@@ -41,7 +41,7 @@ impl<T> Summable<Value<T>> for Value<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 10;
     let b: i32 = 20;
     let c: i32 = a.sum(b);
@@ -62,5 +62,4 @@ fn main() -> i32 {
     assert Value<i32>.zero().data == 0: "Expected zero 0";
     assert v.zero_sum().data == 15: "Expected zero_sum 15";
 
-    return 0;
 }

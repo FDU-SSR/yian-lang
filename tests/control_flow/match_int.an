@@ -2,11 +2,11 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 42;
     match a {
         1 => { panic("Matched 1"); },
-        42 => { return 0; },
+        42 => { return; },
         -1, 0 => { panic("Matched -1 || 0"); },
         _ => { panic("Matched default case"); },
     }

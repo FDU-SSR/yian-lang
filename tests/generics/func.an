@@ -13,7 +13,7 @@ fn abs<T>(a: T) -> T {
     return a;
 }
 
-fn main() -> i32 {
+fn main() {
     // 1) explicit type arguments
     let x: i32 = add<i32>(10, 20);
     assert x == 30: "Expected 30";
@@ -26,5 +26,4 @@ fn main() -> i32 {
     let n: f64 = abs(-3.2);
     assert n > 3.1 && n < 3.3: "Expected 3.2";
 
-    return 0;
 }

@@ -5,8 +5,7 @@
 @BitCopy
 struct UnitLike {}
 
-fn main() -> i32 {
+fn main() {
     let u1 = UnitLike();
     let u2 = u1;  // ok: UnitLike is @BitCopy (vacuous truth)
-    return 0;
 }

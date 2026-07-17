@@ -9,7 +9,7 @@ struct Mixed5  { a: void, b: i32, c: void, d: f64, e: void }
 struct NestedZ { x: (void, void), y: i32 }
 struct AllZst2 { a: void, b: ! }
 
-fn main() -> i32 {
+fn main() {
     // mixed tuple / struct with zst fields — compare with equivalent no-zst struct
     assert sizeof((i32, void, f64)) == sizeof(NoZst): "triple with zst";
     assert sizeof((void, i32, void, f64, void)) == sizeof(NoZst): "quintuple with 3 zst";
@@ -22,5 +22,4 @@ fn main() -> i32 {
     // all-zst struct
     assert sizeof(AllZst2) == 0: "all-zst struct with never";
 
-    return 0;
 }

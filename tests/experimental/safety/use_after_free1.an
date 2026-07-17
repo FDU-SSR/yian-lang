@@ -6,7 +6,7 @@ fn sys_test() {
 	*p = q;
 }
 
-fn main() -> i32 {
+fn main() {
 	fn sys_test()
 	return 0
 }

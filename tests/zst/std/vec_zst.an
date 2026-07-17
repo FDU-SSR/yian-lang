@@ -6,7 +6,7 @@
 
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let v: Vec<void> = Vec<void>.new();
     assert v.is_empty(): "initial empty";
 
@@ -15,5 +15,4 @@ fn main() -> i32 {
 
     v.push(unit());
     // still not empty after second push — Drop at end must not panic
-    return 0;
 }

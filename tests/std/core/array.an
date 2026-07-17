@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> int {
+fn main() {
     let arr = [0u8, 1, 2, 3, 4];
 
     // Test as_slice method
@@ -54,5 +54,4 @@ fn main() -> int {
     assert moved_vec_arr[2][0] == 3;
     assert !vec_arr[0].is_valid(); // Ensure original is invalidated
 
-    return 0;
 }

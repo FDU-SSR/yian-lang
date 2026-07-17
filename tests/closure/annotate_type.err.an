@@ -1,5 +1,5 @@
 // Closure types are unnameable — annotating with fn pointer type fails.
-fn main() -> i32 {
+fn main() {
     let x: i32 = 5;
     let c: fn(i32) -> i32 = |x_in = x| (y: i32) -> i32 { x_in + y };
     return c(10);

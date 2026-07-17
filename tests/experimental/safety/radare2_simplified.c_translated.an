@@ -57,7 +57,7 @@ fn get_object(char* input) -> pyc_object* {
     return ret
 }
 
-fn main() -> i32 {
+fn main() {
     //char[1] data = "\x81"
     let data: char* = dyn char
     *data = '\x81'

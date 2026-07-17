@@ -7,7 +7,7 @@ struct Person{
     age: i32,
 }
 
-fn main() -> i32
+fn main()
 {
     let p: Person* = dyn Person("Alice", 30)
     assert p.age == 30: "Expected age to be 30"
@@ -24,5 +24,4 @@ fn main() -> i32
     arr += 1
     assert *arr == 20: "Expected *arr to be 20 after pointer arithmetic"
 
-    return 0
 }

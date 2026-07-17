@@ -28,7 +28,7 @@ impl<T> Accumulator<T> {
 }
 
 
-fn main() -> i32 {
+fn main() {
     func_var = func  // Assign function to variable
     let result: i32 = func_var()  // Call function via variable
     assert result == 42: "result should be 42"

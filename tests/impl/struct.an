@@ -17,8 +17,7 @@ impl Pair{
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Pair = Pair.new(3, 4);
     assert p.sum() == 7;
-    return 0;
 }

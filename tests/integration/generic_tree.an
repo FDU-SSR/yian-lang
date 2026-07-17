@@ -54,7 +54,7 @@ impl Calculator {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let calc: Calculator = Calculator.new();
 
     let r1: i32 = calc.execute(Operation.Add(a = 40, b = 44));
@@ -72,5 +72,4 @@ fn main() -> i32 {
 
     print("success: 84\n");
     print("doubled\n");
-    return 0;
 }

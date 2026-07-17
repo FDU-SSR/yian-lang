@@ -5,9 +5,8 @@
 
 fn add1(x: i32) -> i32 { return x + 1; }
 
-fn main() -> i32 {
+fn main() {
     let t = (add1, 5);
     assert t[0](41) == 42: "call function item from a tuple element";
     assert t[1] == 5: "normal tuple element survives the ZST element";
-    return 0;
 }

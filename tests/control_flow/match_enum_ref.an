@@ -8,7 +8,7 @@ enum E {
     B { n: i64 },
 }
 
-fn main() -> i32 {
+fn main() {
     let e: E = E.A(42);
 
     // match on &e: bindings should be &i32, &i64 (pointers)
@@ -22,5 +22,4 @@ fn main() -> i32 {
         },
     }
 
-    return 0;
 }

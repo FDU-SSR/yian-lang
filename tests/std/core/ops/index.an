@@ -25,7 +25,7 @@ impl<T> Index<u64, T*> for Container<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let c: Container<i32> = Container<i32>.new(5, 42);
     assert c[0] == 42: "Expected 42";
     assert c[4] == 42: "Expected 42";
@@ -33,5 +33,4 @@ fn main() -> i32 {
     c[2] = 100;
     assert c[2] == 100: "Expected 100";
 
-    return 0;
 }

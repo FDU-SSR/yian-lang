@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     // create a slice from array/pointer
     let arr: i32[5] = [1, 2, 3, 4, 5];
     let array_slice: i32[] = arr[1u64..4];
@@ -27,5 +27,4 @@ fn main() -> i32 {
     assert sub_slice[0] == 2: "sub_slice[0] should be 2";
     assert sub_slice[1] == 3: "sub_slice[1] should be 3";
 
-    return 0;
 }

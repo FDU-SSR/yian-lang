@@ -7,7 +7,7 @@ from tdeftest.shapes import Ptr
 
 struct WP { p: i32* }
 
-fn main() -> i32 {
+fn main() {
     let p: Point = Point(3, 4)
     assert p.x == 3: "imported alias-to-struct"
     let m: Meters = 5

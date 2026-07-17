@@ -6,7 +6,7 @@
 
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let arr: void[3];
 
     let count: u64 = 0;
@@ -15,5 +15,4 @@ fn main() -> i32 {
     }
     assert count == 3: "for-in over zst array counts correctly";
 
-    return 0;
 }

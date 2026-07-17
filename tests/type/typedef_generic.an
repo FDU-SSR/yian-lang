@@ -9,11 +9,10 @@ typedef Arr<T, const N: u64> = T[N];
 
 struct WP { p: i32* }
 
-fn main() -> i32 {
+fn main() {
     assert sizeof(Ptr<i32>)    == sizeof(WP): "generic alias to pointer"
     assert sizeof(MyBox<i32>)  == sizeof(Box<i32>): "generic alias to generic struct"
     assert sizeof(Arr<i32, 4>) == sizeof(i32) * 4: "generic alias to array (const generic)"
     let b: MyBox<i32> = MyBox<i32>(7)
     assert b.v == 7: "generic alias: construct + field"
-    return 0
 }

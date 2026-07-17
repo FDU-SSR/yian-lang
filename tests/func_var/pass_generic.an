@@ -10,7 +10,6 @@ fn apply<F>(f: F, n: i32) -> i32 {
     return f(n);
 }
 
-fn main() -> i32 {
+fn main() {
     assert apply(add1, 41) == 42: "call function item passed through a generic";
-    return 0;
 }

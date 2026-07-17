@@ -21,7 +21,7 @@ impl Person {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Person = Person.new(20, 65.5);
     assert p.age == 20 && p.weight > 65.0: "Person.new failed";
 
@@ -32,5 +32,4 @@ fn main() -> i32 {
         panic("Weight comparison failed");
     }
 
-    return 0;
 }

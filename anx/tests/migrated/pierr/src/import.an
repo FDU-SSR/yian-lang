@@ -4,6 +4,5 @@
 
 from pierr.private import NonExportableStruct;
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

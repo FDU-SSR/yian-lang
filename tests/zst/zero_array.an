@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32[0];
     let b: i32[0];
     b = a;  // no-op copy of a zero-sized array
@@ -13,5 +13,4 @@ fn main() -> i32 {
     d = c;
 
     assert sizeof(void) == 0: "sizeof(void) should be 0";
-    return 0;
 }

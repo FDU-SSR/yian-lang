@@ -7,7 +7,7 @@ struct Pair {
     pub second: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let tuple1: (Pair, Pair) = (Pair(10, 20), Pair(30, 40));
     let tuple2: (i32, Pair)[3] = [(1, Pair(2, 3)), (4, Pair(5, 6)), (7, Pair(8, 9))];
 
@@ -23,5 +23,4 @@ fn main() -> i32 {
     assert tuple2[2][1].first == 15: "tuple2[2][1].first should be 15";
     assert tuple2[2][1].second == 25: "tuple2[2][1].second should be 25";
 
-    return 0;
 }

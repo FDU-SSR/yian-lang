@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let t: bool = true;
     let f: bool = false;
     assert t != f: "true should ! equal false";
@@ -16,5 +16,4 @@ fn main() -> i32 {
     let not_result: bool = ! true;
     assert not_result == false: "! true should be false";
 
-    return 0;
 }

@@ -7,7 +7,7 @@ from std.core.option import Option;
 
 typedef ErrorCode = u64;
 
-fn main() -> i32 {
+fn main() {
     // Create a Result with a value
     let res1: Result<i32, ErrorCode> = Result<i32, ErrorCode>.Ok(42);
     let res2: Result<i32, ErrorCode> = Result<i32, ErrorCode>.Err(1);
@@ -55,5 +55,4 @@ fn main() -> i32 {
     assert res4.is_err(): "res4 should be Err";
     assert *res4.unwrap_err() == 1: "res4 should unwrap to error code 1";
 
-    return 0;
 }

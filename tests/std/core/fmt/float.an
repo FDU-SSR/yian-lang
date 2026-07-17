@@ -4,7 +4,7 @@
 
 from std.core.fmt import ToString;
 
-fn main() -> i32 {
+fn main() {
     // f32
     let f32v: f32 = 1.25_f32;
     assert f32v.to_string() == "1.25": "f32";
@@ -21,5 +21,4 @@ fn main() -> i32 {
     let f64z: f64 = 0.0;
     assert f64z.to_string() == "0": "f64 zero";
 
-    return 0;
 }

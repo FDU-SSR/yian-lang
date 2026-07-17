@@ -5,7 +5,7 @@
 from std.core.vec import Vec;
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // Edge case 1: pop from empty vector
     let v1: Vec<i32> = Vec<i32>.with_capacity(4);
     let popped: Option<i32> = v1.pop();
@@ -40,5 +40,4 @@ fn main() -> i32 {
     assert last.is_some(): "last should exist";
     assert **last.unwrap() == 999: "last should be 999";
 
-    return 0;
 }

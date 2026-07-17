@@ -5,7 +5,7 @@
 
 from std.core.string import String;
 
-fn main() -> i32 {
+fn main() {
     // ---- rotate_left ----
 
     let r1: u64 = 1u64;
@@ -62,5 +62,4 @@ fn main() -> i32 {
     let p3: u64 = u64.from(&"18446744073709551615");
     assert p3 == 18446744073709551615u64: "parse max u64";
 
-    return 0;
 }

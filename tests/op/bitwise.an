@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 0b1100  // 12 in decimal;
     let b: i32 = 0b1010  // 10 in decimal;
     let c: i32 = -1;
@@ -28,5 +28,4 @@ fn main() -> i32 {
     let signed_right_shift_result: i32 = c >> 1;
     assert signed_right_shift_result == -1: "Signed right shift failed";
 
-    return 0;
 }

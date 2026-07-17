@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     assert true: "This should ! fail";
     assert 1 + 1 == 2: "Math is broken";
     assert 6.9 < 7.0: "Float comparison failed";
@@ -14,5 +14,4 @@ fn main() -> i32 {
     assert *p == 10: "Dereferencing pointer failed";
     assert *p == *q: "Pointer dereference comparison failed";
 
-    return 0;
 }

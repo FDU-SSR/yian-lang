@@ -4,8 +4,7 @@
 
 from pferr.private import ExportableStruct;
 
-fn main() -> i32 {
+fn main() {
     let es: ExportableStruct = ExportableStruct.new(42, 84);
     assert es.priv_field == 84: "Expected priv_field to be 84";
-    return 0;
 }

@@ -48,7 +48,7 @@ impl Shape for Rectangle {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     // use Circle
     let circle: Circle = Circle(radius=2, x=0, y=0);
     let circle_area: i32 = circle.area();
@@ -65,5 +65,4 @@ fn main() -> i32 {
     assert rect.x == 2: "Rectangle move_by x";
     assert rect.y == 2: "Rectangle move_by y";
 
-    return 0;
 }

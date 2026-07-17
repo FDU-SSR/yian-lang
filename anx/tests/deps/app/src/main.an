@@ -1,5 +1,4 @@
 from mathlib.ops import add;
-fn main() -> i32 {
+fn main() {
     assert add(1, 2) == 3;
-    return 0;
 }

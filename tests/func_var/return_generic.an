@@ -10,8 +10,7 @@ fn identity_fn<F>(f: F) -> F {
     return f;
 }
 
-fn main() -> i32 {
+fn main() {
     let g = identity_fn(add1);
     assert g(41) == 42: "call function item returned through a generic";
-    return 0;
 }

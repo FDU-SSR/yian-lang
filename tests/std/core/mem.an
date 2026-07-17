@@ -4,7 +4,7 @@
 
 from std.core.mem import memcpy;
 
-fn main() -> int {
+fn main() {
     let src = [1u8, 2, 3, 4, 5];
     let dest = [0u8; 5];
 
@@ -13,5 +13,4 @@ fn main() -> int {
     assert dest[0] == 1;
     assert dest[4] == 5;
 
-    return 0;
 }

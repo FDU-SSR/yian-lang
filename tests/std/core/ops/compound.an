@@ -86,7 +86,7 @@ impl<T> ShrAssign<Value<u64>, Value<T>> for Value<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     // ---- arithmetic compound ----
 
     let a: Value<i32> = Value<i32>(10);
@@ -126,5 +126,4 @@ fn main() -> i32 {
     c >>= Value<u64>(2u64);
     assert c.value == 2: "shr_assign: 8 >> 2 = 2";
 
-    return 0;
 }

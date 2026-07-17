@@ -59,7 +59,7 @@ fn DeleteTree(tree: RawPtr<treeNode>)
 }
 
 
-fn main() -> i32 
+fn main() 
 {
     let N: u32 = 20
     let minDepth: u32 = 4

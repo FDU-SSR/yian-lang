@@ -14,7 +14,7 @@ fn sys_test() {
 	foo(&local_p);
 }
 
-fn main() -> i32 {
+fn main() {
 	fn sys_test()
 	return 0
 } 

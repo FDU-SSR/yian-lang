@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i8* = dyn 42i8;
     let val_a: i8 = *a;
     assert val_a == 42;
@@ -24,5 +24,4 @@ fn main() -> i32 {
     assert d[1] == 20;
     assert d[2] == 30;
 
-    return 0;
 }

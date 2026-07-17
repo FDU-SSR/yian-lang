@@ -27,8 +27,7 @@ impl makef2 {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     assert f().f1().f2() == 5: "call chain works";
 
-    return 0;
 }

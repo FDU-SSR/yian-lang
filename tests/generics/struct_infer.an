@@ -7,7 +7,7 @@ struct Pair<T, U> {
     pub second: U,
 }
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 1;
     let b: i64 = 2;
     let p1: Pair<i32, i64> = Pair<i32, i64>(first=a, second=b)
@@ -19,5 +19,4 @@ fn main() -> i32 {
     let p3: Pair<i32, i64> = Pair(a, b)
     assert p3.first == 1 && p3.second == 2: "Expected Pair(1, 2)";
 
-    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 1;
     let b: i32 = a;
     let c = a + b;
@@ -16,5 +16,4 @@ fn main() -> i32 {
     let q: i32* = p;
     assert *p == 1: "pointer deref should give 1";
 
-    return 0;
 }

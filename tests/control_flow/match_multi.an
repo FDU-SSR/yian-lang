@@ -38,7 +38,7 @@ fn test_enum(c: Color) -> str {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     assert test_int(2) == "small\n": "multi int pattern failed";
     assert test_int(20) == "medium\n": "multi int pattern failed";
     assert test_int(99) == "other\n": "multi int default failed";
@@ -53,5 +53,4 @@ fn main() -> i32 {
     print(test_int(2));
     print(test_char('a'));
     print(test_enum(Color.Red));
-    return 0;
 }

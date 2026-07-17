@@ -16,8 +16,7 @@ struct Bad {
     d: Data,
 }
 
-fn main() -> i32 {
+fn main() {
     let b1 = Bad(1, Data(42));
     let b2 = b1;
-    return 0;
 }

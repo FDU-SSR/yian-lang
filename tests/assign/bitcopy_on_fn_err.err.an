@@ -7,6 +7,6 @@ fn foo() -> i32 {
     return 42;
 }
 
-fn main() -> i32 {
+fn main() {
     return foo();
 }

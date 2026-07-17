@@ -68,7 +68,7 @@ impl Hash<DummyHasher> for MyVal {
 }
 
 // ---------- 测试开始 ----------
-fn main() -> i32 {
+fn main() {
     // 基础构造与容量
     let set1: HashSet<MyVal, DummyHasher, DummyBuildHasher> = HashSet<MyVal, DummyHasher, DummyBuildHasher>.with_capacity_and_hasher(
         0,

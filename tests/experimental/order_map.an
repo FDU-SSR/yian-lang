@@ -1,7 +1,7 @@
 from option import Option;
 from ordered_map import OrderedMap;
 
-fn main() -> i32 {
+fn main() {
     // 新建空有序映射
     let m: OrderedMap<i32, i32> = OrderedMap<i32, i32>.new()
     assert m.len() == 0: "new len != 0"

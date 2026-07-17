@@ -5,7 +5,7 @@
 from std.core.option import Option;
 from std.core.vec import Vec;
 
-fn main() -> i32 {
+fn main() {
     let arr: i32[5] = [1, 2, 3, 4, 5];
     let slice: i32[] = arr[1u64..4] // This should be a slice containing [2, 3, 4];
 
@@ -65,5 +65,4 @@ fn main() -> i32 {
     }
     assert rev_sum == 9: "reverse sum should also be 9";
 
-    return 0;
 }

@@ -37,7 +37,7 @@ impl<T> Pair<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     // 1) explicit type arguments
     let p1: Pair<i32> = Pair<i32>.new(10, 20);
     assert p1.sum() == 30: "Expected sum 30";
@@ -54,5 +54,4 @@ fn main() -> i32 {
     p2.swap();
     assert p2.first > 2.1 && p2.first < 2.3 && p2.second > 5.4 && p2.second < 5.6: "Expected swapped values";
 
-    return 0;
 }

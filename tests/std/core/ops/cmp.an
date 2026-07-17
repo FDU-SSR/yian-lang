@@ -26,7 +26,7 @@ impl<T> PartialOrd<Value<T>> for Value<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let a: Value<i32> = Value<i32>(5);
     let b: Value<i32> = Value<i32>(10);
     let c: Value<i32> = Value<i32>(5);
@@ -41,5 +41,4 @@ fn main() -> i32 {
     assert b > a: "Expected b > a";
     assert b >= c: "Expected b >= c";
 
-    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let A: char = 'A';
     let zhong: char = '中';
     let slash_n: char = '\n';
@@ -13,5 +13,4 @@ fn main() -> i32 {
     let hex_zhong: char = '\u{4E2D}';
     assert hex_zhong == zhong: "hex_zhong == zhong fail\n";
 
-    return 0;
 }

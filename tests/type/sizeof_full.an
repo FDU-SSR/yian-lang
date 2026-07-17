@@ -22,7 +22,7 @@ struct WO { p: Option<i32> }
 struct S { a: i32, b: u8 }
 enum E { A, B, C }
 
-fn main() -> i32 {
+fn main() {
     // ===== primitives =====
     assert sizeof(i8)  == 1: "i8";
     assert sizeof(i16) == 2: "i16";
@@ -84,5 +84,4 @@ fn main() -> i32 {
     assert sizeof((fn(i32)->bool, i32[2])) == sizeof(M_fnarr): "tuple(fn, arr)";
     assert sizeof((i32*, u8)[2])          == sizeof(M_ptru8) * 2: "array of tuple(ptr,u8)";
 
-    return 0;
 }

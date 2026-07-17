@@ -17,12 +17,11 @@ fn test_elif(x: i32) -> str {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     assert test_elif(1) == "A": "elif branch 1 failed";
     assert test_elif(2) == "B": "elif branch 2 failed";
     assert test_elif(3) == "C": "elif branch 3 failed";
     assert test_elif(99) == "other": "elif else branch failed";
 
     print(test_elif(2));
-    return 0;
 }

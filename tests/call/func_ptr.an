@@ -15,7 +15,7 @@ fn make_person(x: i32, y: i32) -> Person {
     return Person(x, y);
 }
 
-fn main() -> i32 {
+fn main() {
     let add_func: fn(i32, i32) -> i32 = &add;
     let person_func: fn(i32, i32) -> Person = &make_person;
 
@@ -24,5 +24,4 @@ fn main() -> i32 {
     
     assert add_func(1, 2) == 3: "add_func should return 3";
     
-    return 0;
 }

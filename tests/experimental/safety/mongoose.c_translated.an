@@ -21,7 +21,7 @@ fn decode_variable_length(char* buf, i32* bytes_consumed) -> i32 {
     }
     return value;
 }
-fn main() -> i32 {
+fn main() {
     let buf: char[3] = [u8(26), u8(27), u8(28)]
     let bytes_consumed: i32 = 0
     fn decode_variable_length(buf, &bytes_consumed)

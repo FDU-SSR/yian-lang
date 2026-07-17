@@ -16,8 +16,7 @@ struct Outer {
     b: Inner,
 }
 
-fn main() -> i32 {
+fn main() {
     let o1 = Outer(1, Inner(42));
     let o2 = o1;
-    return 0;
 }

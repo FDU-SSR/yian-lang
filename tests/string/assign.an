@@ -9,7 +9,7 @@ struct Person {
     age: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let s1: str = "Alice";
     print(s1);
 
@@ -22,5 +22,4 @@ fn main() -> i32 {
     let p_heap: Person* = dyn Person("Charlie", 25);
     print(p_heap.name);
 
-    return 0;
 }

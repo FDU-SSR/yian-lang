@@ -8,7 +8,7 @@ enum E {
     B { n: i32 },
 }
 
-fn main() -> i32 {
+fn main() {
     let e: E = E.A(42);
 
     // Mutate through the reference binding
@@ -31,5 +31,4 @@ fn main() -> i32 {
         },
     }
 
-    return 0;
 }

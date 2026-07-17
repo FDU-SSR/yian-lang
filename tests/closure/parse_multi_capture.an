@@ -2,12 +2,11 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 1;
     let b: i32 = 2;
     let c = |v1 = a, v2 = b| (x: i32) -> i32 {
         v1 + v2 + x
     };
     assert c(3) == 6: "multi-capture closure";
-    return 0;
 }

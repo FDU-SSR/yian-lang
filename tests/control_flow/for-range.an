@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     // TODO: lacking support for array initialization with a single value, e.g. [0; 1024]
     let arr: i32[1024] = [0i32; 1024];
     for i in 0u64..1024 {
@@ -16,5 +16,4 @@ fn main() -> i32 {
 
     assert sum == 1023 * 1024 / 2: "Expected sum to be 1023 * 1024 / 2";
 
-    return 0;
 }

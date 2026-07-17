@@ -10,7 +10,7 @@ fn produce_never() -> ! {
     loop {}  // diverges, never returns
 }
 
-fn main() -> i32 {
+fn main() {
     // sizeof
     assert sizeof(!) == 0: "sizeof never";
 
@@ -26,5 +26,4 @@ fn main() -> i32 {
     // never as parameter / return — just check sizeof, no call needed
     // (calling a diverging fn would terminate)
 
-    return 0;
 }

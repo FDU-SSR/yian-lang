@@ -11,7 +11,7 @@ struct Pair<T, U> {
     pub second: Value<U>,
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Pair<i32, f64> = Pair<i32, f64>(
         first=Value<i32>(data=10),
         second=Value<f64>(data=20.5)
@@ -19,5 +19,4 @@ fn main() -> i32 {
     assert p.first.data == 10: "Expected first.data 10";
     assert p.second.data > 20.4 && p.second.data < 20.6: "Expected second.data ~20.5";
 
-    return 0;
 }

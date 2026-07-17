@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let indexes: u64[3] = [0, 1, 2];
     let values: i32[3] = [0, 0, 0];
     for index in indexes {
@@ -13,5 +13,4 @@ fn main() -> i32 {
     assert values[1] == 10: "values[1] should be 10";
     assert values[2] == 20: "values[2] should be 20";
 
-    return 0;
 }

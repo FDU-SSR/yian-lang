@@ -5,7 +5,7 @@ fn exit_fn() -> ! {
     panic("exiting");
 }
 
-fn main() -> i32 {
+fn main() {
     // never is subtype of i32, so this is valid
     let x: i32 = if true {
         42
@@ -13,5 +13,4 @@ fn main() -> i32 {
         exit_fn()  // diverges, never reached
     };
     assert x == 42: "never type test failed";
-    return 0;
 }

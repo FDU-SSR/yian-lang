@@ -19,7 +19,7 @@ enum E2 { A, B }
 // control: single variant with non-ZST payload — NOT ZST
 enum EN { N { v: i32 } }
 
-fn main() -> i32 {
+fn main() {
     // ZST enums
     assert sizeof(E0) == 0: "unit enum";
     assert sizeof(EZ) == 0: "single variant ZST payload (empty struct)";
@@ -29,5 +29,4 @@ fn main() -> i32 {
     assert sizeof(E2) > 0: "multi-variant enum still has discriminant";
     assert sizeof(EN) > 0: "single non-zst payload > 0";
 
-    return 0;
 }

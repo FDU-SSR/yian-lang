@@ -17,7 +17,6 @@ fn call_void() {
     do_work(true);
 }
 
-fn main() -> i32 {
+fn main() {
     call_void();
-    return 0;
 }

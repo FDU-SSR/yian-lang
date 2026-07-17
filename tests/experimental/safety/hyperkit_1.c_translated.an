@@ -22,7 +22,7 @@ fn iovec_pull(iovec** iov, i32 iov_len, i32* result) -> i32 {
     }
     return 0
 }
-fn main() -> i32 {
+fn main() {
     i32 iov_len, result
     let iov_array: iovec[32];
     iovec *iov = iov_array

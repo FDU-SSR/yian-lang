@@ -11,8 +11,7 @@ fn apply<F>(f: F, n: i32) -> i32 {
     return f(n);
 }
 
-fn main() -> i32 {
+fn main() {
     assert apply(add1, 10) == 11: "apply<add1>";
     assert apply(dbl, 10) == 20: "apply<dbl>";
-    return 0;
 }

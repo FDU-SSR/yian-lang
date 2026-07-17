@@ -7,8 +7,7 @@ impl<T, const N: u64> T[N] {
     fn total_bytes() -> u64 { sizeof(T[N]) }
 }
 
-fn main() -> i32 {
+fn main() {
     let arr = [1u32, 2, 3, 4];
     assert arr.total_bytes() == sizeof(u32) * 4: "const-generic length in sizeof";
-    return 0;
 }

@@ -45,7 +45,7 @@ impl<T> Shr<Value<T>, Value<T>> for Value<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let a: Value<i32> = Value<i32>(6);   // 0b0110
     let b: Value<i32> = Value<i32>(3);   // 0b0011
 
@@ -56,5 +56,4 @@ fn main() -> i32 {
     assert (a << b).value == 48: "Expected 48"; // 0b110000
     assert (a >> b).value == 0: "Expected 0";   // 0b0000
 
-    return 0;
 }

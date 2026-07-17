@@ -14,12 +14,11 @@ impl From<i32> for FakeI32 {
     }
 }
 
-fn main() -> int {
+fn main() {
     let x: i32 = 42;
 
     // Test From trait
     let fake_from = FakeI32.from(&x);
     assert fake_from.value == 42;
 
-    return 0;
 }

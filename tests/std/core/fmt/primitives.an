@@ -4,7 +4,7 @@
 
 from std.core.fmt import ToString;
 
-fn main() -> i32 {
+fn main() {
     // bool
     let b1: bool = true;
     assert b1.to_string() == "true": "true";
@@ -16,5 +16,4 @@ fn main() -> i32 {
     let ch: char = 'A';
     assert ch.to_string() == "A": "char";
 
-    return 0;
 }

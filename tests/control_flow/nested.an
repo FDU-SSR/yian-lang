@@ -39,7 +39,7 @@ fn dispatch_loop(mode: i32) -> i32 {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     // match inside if
     let r1: i32 = classify_then_act(3);
     assert r1 == 25: "match inside if failed";
@@ -61,5 +61,4 @@ fn main() -> i32 {
 
     print("25\n");
     print("5050\n");
-    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 5;
     let b: i32 = 10;
 
@@ -21,5 +21,4 @@ fn main() -> i32 {
     assert equal == Ordering.Equal: "Enum equality check failed";
     assert greater == Ordering.Greater: "Enum equality check failed";
 
-    return 0;
 }

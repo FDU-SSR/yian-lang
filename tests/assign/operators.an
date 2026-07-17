@@ -23,7 +23,7 @@ impl PartialEq<BigInt> for BigInt {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let a: BigInt = BigInt(10);
     let b: BigInt = BigInt(10);
     let c: BigInt = BigInt(99);
@@ -31,5 +31,4 @@ fn main() -> i32 {
     assert a == b: "a should equal b";
     assert a != c: "a should not equal c";
 
-    return 0;
 }

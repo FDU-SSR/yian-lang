@@ -2,8 +2,7 @@
 //
 // Expected compilation error: expression is not callable
 
-fn main() -> i32 {
+fn main() {
     let x: i32 = 42;
     x();
-    return 0;
 }

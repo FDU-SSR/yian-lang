@@ -6,7 +6,6 @@ fn get_value() -> i32 {
     return "hello";
 }
 
-fn main() -> i32 {
+fn main() {
     get_value();
-    return 0;
 }

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 42;
     let p: i32* = &a;  // Address-of operator
 
@@ -11,5 +11,4 @@ fn main() -> i32 {
     *p = 100;
     assert a == 100: "Memory write via pointer failed";
 
-    return 0;
 }

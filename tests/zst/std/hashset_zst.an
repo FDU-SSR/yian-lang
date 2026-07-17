@@ -7,7 +7,7 @@ from std.collections.hash_set import HashSet;
 
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let s: HashSet<void> = HashSet<void>.new();
 
     // insert and check count
@@ -22,5 +22,4 @@ fn main() -> i32 {
     assert !ok2: "second insert returns false (already exists)";
     assert s.len() == 1: "size still 1";
 
-    return 0;
 }

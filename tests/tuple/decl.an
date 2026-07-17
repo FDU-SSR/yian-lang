@@ -7,7 +7,7 @@ struct Pair {
     pub second: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let tuple1: (Pair, Pair) = (Pair(1, 2), Pair(3, 4))
     let tuple2: (i32, Pair)[3] = [
         (1, Pair(2, 3)),
@@ -15,5 +15,4 @@ fn main() -> i32 {
         (3, Pair(4, 5)),
     ]
 
-    return 0;
 }

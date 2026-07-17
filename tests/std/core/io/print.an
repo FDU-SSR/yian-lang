@@ -5,7 +5,6 @@
 
 from std.core.io import print;
 
-fn main() -> i32 {
+fn main() {
     print("stdout ok\n");
-    return 0;
 }

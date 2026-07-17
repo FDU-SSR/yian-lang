@@ -2,7 +2,6 @@
 fn make_adder(x: i32) -> i32 {
     return |x_in = x| (y: i32) -> i32 { x_in + y };
 }
-fn main() -> i32 {
+fn main() {
     let r = make_adder(5);
-    return 0;
 }

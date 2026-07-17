@@ -4,7 +4,7 @@
 
 from std.core.io import File, OpenMode;
 
-fn main() -> i32 {
+fn main() {
     let path = "/tmp/yian_test_file_api.txt";
 
     // Write with File API
@@ -36,5 +36,4 @@ fn main() -> i32 {
     assert raw_fd >= 0: "fd should be valid";
     f5.drop();
 
-    return 0;
 }

@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let pa: i32* = dyn i32
     *pa = 6
     *pa += 6
