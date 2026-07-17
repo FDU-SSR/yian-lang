@@ -40,7 +40,7 @@ fn match_multi(c: Color) -> str {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let c3: Color = Color.LOOK(who = 1, direction = 2);
     let c4: Color = Color.MOVE(who = 1, direction = 2);
 
@@ -60,5 +60,4 @@ fn main() -> i32 {
     print(match_multi(Color.GREEN));
     print(match_multi(Color.BLACK));
     print("payload\n");
-    return 0;
 }

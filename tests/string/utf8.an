@@ -9,11 +9,10 @@
 
 from std.core.io import print;
 
-fn main() -> i32 {
+fn main() {
     print("你好易安!\n");
     print("Hello Yian!\n");
     print("こんにちは、イアン！\n");
     print("안녕하세요, 이안!\n");
     print("🤣🤣🤣🤣🤣🤣🤣🤣🤣\n");
-    return 0;
 }

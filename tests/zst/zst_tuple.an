@@ -9,7 +9,7 @@ struct WrapAll { p: (void, void) }
 
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let m: (i32, void) = (7, unit());
     assert m[0] == 7: "real tuple element around a zst element works";
 
@@ -20,5 +20,4 @@ fn main() -> i32 {
     assert sizeof(WrapMixed) == sizeof(i32): "(i32, void) contributes only i32";
     assert sizeof(WrapAll) == 0: "(void, void) is zero-sized";
 
-    return 0;
 }

@@ -1,5 +1,5 @@
 from ptr import RawPtr;
-fn main() -> i32 {
+fn main() {
     let p: i32* = RawPtr<i32>.new_object()
     *p = 100
     let v: i32 = *p

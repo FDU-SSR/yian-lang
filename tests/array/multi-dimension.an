@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let arr: i32[2][2][2] = [[[1,2], [3, 4]], [[5, 6], [7, 8]]];
     assert arr[0][1][1] == 4: "arr[0][1][1] should be 4";
 
@@ -15,5 +15,4 @@ fn main() -> i32 {
     let b: i32 = arr[1][1][1];
     assert a + b == 9: "a + b should be 9";
 
-    return 0;
 }

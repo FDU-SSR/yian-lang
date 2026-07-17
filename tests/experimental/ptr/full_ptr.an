@@ -1,5 +1,5 @@
 from ptr import FullPtr;
-fn main() -> i32 {
+fn main() {
     let p: FullPtr<i32> = FullPtr<i32>.new_object()
     *p = 100
     let v: i32 = *p

@@ -8,10 +8,9 @@ struct Point {
     y: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let p1 = Point(1, 2);
     let p2 = p1;  // ok: Point is @BitCopy
     assert p2.x == 1: "x should be 1";
     assert p2.y == 2: "y should be 2";
-    return 0;
 }

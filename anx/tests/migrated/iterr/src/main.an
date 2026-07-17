@@ -3,7 +3,7 @@
 
 from tderrtest.secret import Secret
 
-fn main() -> i32 {
+fn main() {
     let x: Secret = 1
     return 0
 }

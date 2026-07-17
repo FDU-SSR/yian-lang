@@ -46,7 +46,7 @@ impl<T> Neg<Value<T>> for Value<T> {
 }
 
 
-fn main() -> i32 {
+fn main() {
     let a: Value<i32> = Value<i32>(10);
     let b: Value<i32> = Value<i32>(20);
 
@@ -57,5 +57,4 @@ fn main() -> i32 {
     assert (b % a).value == 0: "Expected 0";
     assert (-a).value == -10: "Expected -10";
 
-    return 0;
 }

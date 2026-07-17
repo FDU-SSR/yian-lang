@@ -14,7 +14,7 @@ fn rfx_message_get_tile(RFX_MESSAGE* message, i32 index) -> i32 {
     let _vv4: i32 = _vv5[index]; // Problem: potential null pointer dereference
     return _vv4;
 }
-fn main() -> i32 {
+fn main() {
     let message: RFX_MESSAGE;
     let tmp1: i32* = &message.numTiles
     *tmp1 = 0

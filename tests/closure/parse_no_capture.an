@@ -2,10 +2,9 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let c = || (x: i32) -> i32 {
         x * 2
     };
     assert c(21) == 42: "no-capture closure call";
-    return 0;
 }

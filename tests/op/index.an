@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let arr: i32[5] = [10, 20, 30, 40, 50];
     assert arr[0] == 10: "arr[0] should be 10";
     
@@ -13,5 +13,4 @@ fn main() -> i32 {
     assert tup[0] == 42: "tup[0] should be 42";
     assert tup[1] == true: "tup[1] should be true";
 
-    return 0;
 }

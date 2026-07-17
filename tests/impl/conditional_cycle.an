@@ -22,6 +22,5 @@ impl B for S if S: A {
     fn b() -> i32 { 43 }
 }
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

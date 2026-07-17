@@ -7,7 +7,7 @@ struct Node {
     next: Node*,
 }
 
-fn main() -> i32 {
+fn main() {
     // Struct field initialization
     let n: Node;
     n.data = 42;
@@ -19,5 +19,4 @@ fn main() -> i32 {
     let p: Node* = n.next;
     // p is nullptr, so p.data would crash — don't dereference
 
-    return 0;
 }

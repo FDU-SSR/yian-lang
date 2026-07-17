@@ -6,6 +6,5 @@ struct LinkListNodeError {
     error_field: LinkListNodeError,
 }
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

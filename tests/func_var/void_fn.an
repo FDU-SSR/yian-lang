@@ -4,8 +4,7 @@
 
 fn noop() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let f = noop;
     f();
-    return 0;
 }

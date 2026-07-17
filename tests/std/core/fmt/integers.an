@@ -4,7 +4,7 @@
 
 from std.core.fmt import ToString;
 
-fn main() -> i32 {
+fn main() {
     // -- unsigned -------------------------------------------------------
     let u8v: u8 = 255u8;
     assert u8v.to_string() == "255": "u8";
@@ -40,5 +40,4 @@ fn main() -> i32 {
     let i8p: i8 = i8(100);
     assert i8p.to_string() == "100": "i8 positive";
 
-    return 0;
 }

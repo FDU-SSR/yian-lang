@@ -42,7 +42,7 @@ struct Table{
     Sub_pointer: fn(i32, i32) -> i32,
 }
 
-fn main() -> i32
+fn main()
 {
     let add_func: fn(i32, i32) -> i32 = &add
     let per_func: fn(i32, i32) -> Person = &make_person
@@ -71,5 +71,4 @@ fn main() -> i32
     let checksum: i32 = res + res2 + res3 + res4 + d + g + h
 
     assert checksum == 44 : "fail"
-    return 0
 }

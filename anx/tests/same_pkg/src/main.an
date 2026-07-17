@@ -1,5 +1,4 @@
 from duo.utils.math import add;
-fn main() -> i32 {
+fn main() {
     assert add(2, 5) == 7;
-    return 0;
 }

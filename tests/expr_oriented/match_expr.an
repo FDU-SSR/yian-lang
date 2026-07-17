@@ -1,6 +1,6 @@
 // Expression-oriented: match as expression
 
-fn main() -> i32 {
+fn main() {
     // Block-style match arms
     let x: i32 = match 1 {
         1 => { 100 },
@@ -25,5 +25,4 @@ fn main() -> i32 {
     };
     assert z == 300: "mixed match arm failed";
 
-    return 0;
 }

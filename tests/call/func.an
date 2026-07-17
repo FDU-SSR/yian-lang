@@ -10,7 +10,7 @@ fn sub(a: i8, b: i8) -> i8{
     return a - b;
 }
 
-fn main() -> i32{
+fn main(){
     let one: i8 = 1;
     let two: i8 = 2;
     let three: i8 = add(one, two);
@@ -19,5 +19,4 @@ fn main() -> i32{
     assert sub(three, one) == two: "Subtraction function failed";
     assert sub(three, two) == one: "Subtraction function failed";
 
-    return 0;
 }

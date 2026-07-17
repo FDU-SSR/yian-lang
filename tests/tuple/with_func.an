@@ -22,7 +22,7 @@ fn sum_tuple(t: (i32, i32)) -> i32 {
     return t[0] + t[1];
 }
 
-fn main() -> i32 {
+fn main() {
     let result: (Pair, i32) = create_pair_and_number(5, 10, 15)
     assert result[0].first == 5: "result[0].first should be 5";
     assert result[0].second == 10: "result[0].second should be 10";
@@ -32,5 +32,4 @@ fn main() -> i32 {
     let total: i32 = sum_tuple(num_tuple);
     assert total == 50: "total should be 50";
 
-    return 0;
 }

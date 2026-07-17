@@ -10,7 +10,7 @@ impl<A, B> Tuple<A, B> {
     static fn size() -> u64 { sizeof(Tuple<A, B>) }
 }
 
-fn main() -> i32 {
+fn main() {
     // sizeof / type position
     assert sizeof(Tuple<i32, u8>)    == sizeof(WT): "Tuple<i32,u8>";
     assert sizeof(Fn<(i32,), bool>)   == sizeof(WF): "Fn<(i32,),bool>";
@@ -22,5 +22,4 @@ fn main() -> i32 {
     // static method receiver — use sizeof() to avoid integer-literal return
     assert Tuple<i32, u8>.size() == sizeof(WT): "static call on Tuple<...>";
 
-    return 0;
 }

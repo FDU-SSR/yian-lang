@@ -14,7 +14,7 @@ impl<T> Deref<T*> for Ptr<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let value: i32 = 42;
     let p: Ptr<i32> = Ptr(&value);
     let p_val: i32 = *p;
@@ -24,5 +24,4 @@ fn main() -> i32 {
     *p = 100;
     assert value == 100: "Assignment through dereference failed";
 
-    return 0;
 }

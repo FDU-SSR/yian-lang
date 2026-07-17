@@ -15,7 +15,7 @@ fn safe_div(a: i32, b: i32) -> DivResult<i32> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let res1: DivResult<i32> = safe_div(10, 2);
     let res2: DivResult<i32> = safe_div(10, 0);
 
@@ -37,5 +37,4 @@ fn main() -> i32 {
     }
 
     assert val1 == 5: "safe_div(10, 2) should be 5";
-    return 0;
 }

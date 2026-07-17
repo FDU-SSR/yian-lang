@@ -4,7 +4,7 @@
 
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // Create an Option with a value
     let opt1: Option<i32> = Option<i32>.Some(42);
     let opt2: Option<i32> = Option<i32>.None;
@@ -48,5 +48,4 @@ fn main() -> i32 {
     assert !opt5.is_valid(): "opt5 should be invalid after invalidate";
     assert opt5.is_none(): "opt5 should be None after invalidate";
 
-    return 0;
 }

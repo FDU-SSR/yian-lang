@@ -33,7 +33,7 @@ impl str {
 }
 
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = -5;
     a.inc();
     assert a == -4;
@@ -46,5 +46,4 @@ fn main() -> i32 {
     let msg: str = "Hello, Yian!";
     msg.println();
 
-    return 0;
 }

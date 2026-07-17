@@ -5,7 +5,6 @@
 
 fn foo() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let f: fn()->void = foo;
-    return 0;
 }

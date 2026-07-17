@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let arr: i32[10];
     let parr: i32* = arr
     for u64 i = 0; i < 10; i += 1 {

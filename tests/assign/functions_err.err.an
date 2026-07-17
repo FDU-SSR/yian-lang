@@ -12,8 +12,7 @@ impl Clone for BigInt {
 
 fn consume(v: BigInt) -> i64 { v.value }
 
-fn main() -> i32 {
+fn main() {
     let x: BigInt = BigInt(42);
     consume(x);  // ERROR: non-simple type, must clone or move
-    return 0;
 }

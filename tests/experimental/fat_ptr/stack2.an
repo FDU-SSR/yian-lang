@@ -1,4 +1,4 @@
-fn main() -> i32 {
+fn main() {
     let a: i32;
     let pa: i32* = &a
     let pb: i32* = pa + 1  // OK

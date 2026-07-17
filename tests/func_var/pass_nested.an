@@ -14,7 +14,6 @@ fn outer<G>(g: G, n: i32) -> i32 {
     return inner(g, n);
 }
 
-fn main() -> i32 {
+fn main() {
     assert outer(add1, 41) == 42: "function item forwarded through two generic layers";
-    return 0;
 }

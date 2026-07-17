@@ -13,7 +13,7 @@ impl Person {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Person* = dyn Person(10, 100.0)
     p.set_height(200.0)
     p.age += 1

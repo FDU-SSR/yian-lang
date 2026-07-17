@@ -12,13 +12,12 @@ typedef LL = i64;
 typedef INT2 = i32;
 typedef INT3 = i32;
 
-fn main() -> i32 {
+fn main() {
     let a: i32 = 3;
     let b: LL = 12345;
     let c: INT2 = 4;
     let d: INT3 = 5;
     let p: Pr = Pr(a = 1, b = 2);
-    return 0
 }
 
 

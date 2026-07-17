@@ -14,7 +14,7 @@ fn true_func() -> bool {
     panic("true_func should ! be called\n");
 }
 
-fn main() -> i32 {
+fn main() {
     if false && false_func() {
         panic("This should ! be printed\n");
     }
@@ -26,5 +26,4 @@ fn main() -> i32 {
     let a: bool;
     a = true || true_func();
 
-    return 0;
 }

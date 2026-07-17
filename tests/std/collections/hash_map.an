@@ -5,7 +5,7 @@
 from std.core.hash import Murmur3BuildHasher;
 from std.collections.hash_map import HashMap;
 
-fn main() -> i32 {
+fn main() {
     // === Test 1: basic construction ===
     let map1: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
         0,
@@ -92,5 +92,4 @@ fn main() -> i32 {
     map5[1] = 999
     assert map5[1] == 999: "index assignment should update value";
 
-    return 0;
 }

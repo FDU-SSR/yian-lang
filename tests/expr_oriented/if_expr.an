@@ -1,8 +1,7 @@
 // Expression-oriented: if as expression
 // if returns the common supertype of both branches
 
-fn main() -> i32 {
+fn main() {
     let x: i32 = if true { 10 } else { 20 };
     assert x == 10: "if expression failed";
-    return 0;
 }

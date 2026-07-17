@@ -5,7 +5,7 @@
 from std.core.range import Range;
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // Construction via .. syntax
     let r: Range<u64> = 0u64..5;
     assert r.start == 0: "range start should be 0";
@@ -54,5 +54,4 @@ fn main() -> i32 {
     }
     assert r5.start == 100: "for-in should not mutate original range";
 
-    return 0;
 }

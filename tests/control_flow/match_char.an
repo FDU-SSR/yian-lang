@@ -16,7 +16,7 @@ fn classify_char(c: char) -> str {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     // Test single char match
     let a: char = 'b';
     match a {
@@ -34,5 +34,4 @@ fn main() -> i32 {
 
     print(classify_char('a'));
     print(classify_char('7'));
-    return 0;
 }

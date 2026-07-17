@@ -10,7 +10,7 @@ struct AllZst { x: void, y: void }
 
 fn unit() -> void { return; }
 
-fn main() -> i32 {
+fn main() {
     let s: Mixed = Mixed(10, unit());
     s.a = 42;
     s.z = unit();                       // no-op store into a zero-sized field
@@ -21,5 +21,4 @@ fn main() -> i32 {
     az.x = unit();                      // field access on an all-zst struct
     assert sizeof(AllZst) == 0: "all-zst struct is zero-sized";
 
-    return 0;
 }

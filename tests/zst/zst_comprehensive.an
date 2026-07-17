@@ -18,7 +18,7 @@ fn pass_through_zst(z: void, n: i32) -> i32 {
     return n;   // z is ZST, stripped from params — call must still align
 }
 
-fn main() -> i32 {
+fn main() {
     // ---- void locals ----
     let v1: void;
     let v2: void;
@@ -68,5 +68,4 @@ fn main() -> i32 {
     assert sizeof(Empty*) == 0: "ptr to zst struct is zst";
     assert p == p: "zst ptr equality";
 
-    return 0;
 }

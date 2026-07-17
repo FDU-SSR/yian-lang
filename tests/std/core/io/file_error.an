@@ -4,7 +4,7 @@
 
 from std.core.io import File, OpenMode;
 
-fn main() -> i32 {
+fn main() {
     // Open a non-existent file — should return Err
     let r = File.open("/tmp/_nonexistent_yian_test_file_.txt", OpenMode.Read);
     assert r.is_err(): "opening missing file should be Err";
@@ -19,5 +19,4 @@ fn main() -> i32 {
     assert r3.is_ok(): "re-opening should be Ok";
     r3.unwrap().drop();
 
-    return 0;
 }

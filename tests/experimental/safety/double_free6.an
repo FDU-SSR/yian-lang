@@ -12,7 +12,7 @@ fn sys_test() {
 	del rq.cmd;
 }
 
-fn main() -> i32 {
+fn main() {
 	fn sys_test()
 	return 0
 }

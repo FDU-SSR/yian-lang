@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32
+fn main()
 {
     let a: i32 = 1;
     let b: i32 = 2;
@@ -22,5 +22,4 @@ fn main() -> i32
     }
     assert c == 6: "! operator failed";
     
-    return 0
 }

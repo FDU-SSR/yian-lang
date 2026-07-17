@@ -6,7 +6,7 @@ struct Person{
     pub age: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let p1: i32* = dyn i32(25);
     del p1;
 
@@ -16,5 +16,4 @@ fn main() -> i32 {
     let p4: Person* = dyn Person(5);
     del p4;
 
-    return 0;
 }

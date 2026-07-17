@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> int {
+fn main() {
     let tuple2 = (Vec<u8>.new(), Vec<bool>.new());
     tuple2[0].push(1);
     tuple2[1].push(true);
@@ -42,5 +42,4 @@ fn main() -> int {
     assert !tuple3[1].is_valid(); // Ensure original is invalidated
     assert !tuple3[2].is_valid(); // Ensure original is invalidated
 
-    return 0;
 }

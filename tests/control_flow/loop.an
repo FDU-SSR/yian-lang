@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let i: i32 = 0;
     loop {
         if i != 5 {
@@ -13,5 +13,4 @@ fn main() -> i32 {
         }
     }
     assert i == 5: "Continue loop failed";
-    return 0;
 }

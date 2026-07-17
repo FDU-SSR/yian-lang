@@ -27,8 +27,7 @@ struct NoClone {
     x: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let n: Wrapper<NoClone> = Wrapper(NoClone(5));
     n.my_clone();
-    return 0;
 }

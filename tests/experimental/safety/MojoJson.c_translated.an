@@ -51,7 +51,7 @@ fn ParseString(char** jsonPtr) -> i32 {
     fn my_memcpy(str, strStart, length)
     return 0
 }
-fn main() -> i32 {
+fn main() {
     let input: char* = "\"abc"
     fn ParseString(&input)
     return 0

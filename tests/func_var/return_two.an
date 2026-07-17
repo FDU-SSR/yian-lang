@@ -10,10 +10,9 @@ fn dbl(x: i32) -> i32 { return x * 2; }
 
 fn pick<F>(f: F) -> F { return f; }
 
-fn main() -> i32 {
+fn main() {
     let a = pick(add1);
     let b = pick(dbl);
     assert a(10) == 11: "returned add1";
     assert b(10) == 20: "returned dbl";
-    return 0;
 }

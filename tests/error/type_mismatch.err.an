@@ -2,7 +2,6 @@
 //
 // Expected compilation error: Expected type
 
-fn main() -> i32 {
+fn main() {
     let x: bool = 42;
-    return 0;
 }

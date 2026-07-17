@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> int {
+fn main() {
     let arr = [42i32, 43, 44];
     let p = arr.ptr();
 
@@ -17,5 +17,4 @@ fn main() -> int {
     assert slice[1] == 43;
     assert slice[2] == 44;
 
-    return 0;
 }

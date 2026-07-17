@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let sum: i32 = 0;
     let n: i32 = 10;
     let i: i32 = 1;
@@ -15,6 +15,5 @@ fn main() -> i32 {
         i += 1
     }
     assert sum == 45: "Break in while loop failed";
-    return 0;
 }
 

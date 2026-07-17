@@ -1,5 +1,5 @@
 from ptr import Slice;
-fn main() -> i32 {
+fn main() {
     let p: Slice<i32> = Slice<i32>.new_array(10)
     *p = 100
     p[3] = 5

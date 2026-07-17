@@ -4,7 +4,7 @@
 
 from std.core.io import read_file, write_file, append_file;
 
-fn main() -> i32 {
+fn main() {
     let path = "/tmp/yian_test_conv.txt";
 
     // write_file + read_file
@@ -23,5 +23,4 @@ fn main() -> i32 {
     let s3 = read_file(path);
     assert s3.as_str() == "first\nsecond\n": "append_file should append";
 
-    return 0;
 }

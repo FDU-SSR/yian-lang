@@ -58,7 +58,7 @@ impl<T> Vector<T> {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let v: Vector<i32> = Vector<i32>.new();
     v.append(1);
     v.append(2);
@@ -81,5 +81,4 @@ fn main() -> i32 {
 
     assert sum == 15: "Sum should be 15";
     
-    return 0;
 }

@@ -3,7 +3,6 @@
 
 fn f() -> i32 { return 0; }
 
-fn main() -> i32 {
+fn main() {
     let s: u64 = sizeof(f);
-    return 0;
 }

@@ -4,7 +4,6 @@
 
 fn gen<T>(x: T) -> T { return x; }
 
-fn main() -> i32 {
+fn main() {
     let f = gen;
-    return 0;
 }

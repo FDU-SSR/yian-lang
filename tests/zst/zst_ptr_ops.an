@@ -6,7 +6,7 @@
 struct Empty {}
 struct WrapZ { e: Empty*, v: void* }
 
-fn main() -> i32 {
+fn main() {
     // nullptr can be assigned to ZST pointer
     let p: void* = nullptr;
     let q: Empty* = nullptr;
@@ -22,5 +22,4 @@ fn main() -> i32 {
     // struct containing ZST pointer fields (the pointers are ZST)
     assert sizeof(WrapZ) == 0: "struct of ZST ptr fields";
 
-    return 0;
 }

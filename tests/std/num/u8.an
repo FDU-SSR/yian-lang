@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     // ---- is_ascii_whitespace ----
 
     assert b' '.is_ascii_whitespace(): "space should be whitespace";
@@ -49,5 +49,4 @@ fn main() -> i32 {
     assert !b'G'.is_ascii_hex_digit(): "G should not be hex digit";
     assert !b'g'.is_ascii_hex_digit(): "g should not be hex digit";
 
-    return 0;
 }

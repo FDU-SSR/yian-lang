@@ -23,7 +23,7 @@ fn free_g_ptr() {
 	}
 }
 
-fn main() -> i32 {
+fn main() {
 	g_ptr = Option<char*>.Some(dyn char)
 	fn use_g_ptr()
 	fn free_g_ptr()

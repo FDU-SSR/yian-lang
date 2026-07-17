@@ -4,7 +4,7 @@
 
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // ---- from_slice: valid UTF-8 ----
 
     // ASCII
@@ -103,5 +103,4 @@ fn main() -> i32 {
     let s_second_char: str = s_mixed[3u64..6];
     assert s_second_char.as_slice() == mixed[3u64..6]: "second char should be 3 bytes";
 
-    return 0;
 }

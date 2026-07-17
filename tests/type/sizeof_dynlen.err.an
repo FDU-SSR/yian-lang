@@ -2,8 +2,7 @@
 // compile-time constant.  n is a local let-binding, not a const generic in
 // the unit's global symbol context.
 
-fn main() -> i32 {
+fn main() {
     let n: u64 = 4;
     let s: u64 = sizeof(i32[n]);
-    return 0;
 }

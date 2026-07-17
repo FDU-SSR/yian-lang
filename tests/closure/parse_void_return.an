@@ -2,12 +2,11 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let x: i32 = 0;
     let c = |x_ptr = &x| (delta: i32) {
         *x_ptr = *x_ptr + delta;
     };
     c(5);
     assert x == 5: "closure with void return";
-    return 0;
 }

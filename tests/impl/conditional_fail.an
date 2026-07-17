@@ -23,8 +23,7 @@ impl<T> MyClone for Wrapper<T> if T: MyClone {
     }
 }
 
-fn main() -> i32 {
+fn main() {
     let w: Wrapper<i32> = Wrapper(10);
     assert w.my_clone().value == 10: "clone should work for i32";
-    return 0;
 }

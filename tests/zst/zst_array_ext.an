@@ -7,7 +7,7 @@ impl<T, const N: u64> T[N] {
     fn count() -> u64 { N }
 }
 
-fn main() -> i32 {
+fn main() {
     // non-zero length ZST arrays (element is ZST → whole array is ZST)
     assert sizeof(void[3]) == 0: "void[3]";
     assert sizeof(void[100]) == 0: "void[100]";
@@ -23,5 +23,4 @@ fn main() -> i32 {
     assert sizeof(i32[0]) == 0: "i32[0]";
     assert sizeof(i32[0][5]) == 0: "i32[0][5] nested zero-length";
 
-    return 0;
 }

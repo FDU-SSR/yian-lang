@@ -1,5 +1,4 @@
 from std.core.io import print;
-fn main() -> i32 {
+fn main() {
     print("hello\n");
-    return 0;
 }

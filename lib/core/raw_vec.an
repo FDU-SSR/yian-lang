@@ -1,7 +1,7 @@
 from std.core.range import Range;
 from std.core.move import Move;
 from std.core.drop import Drop;
-from std.core.mem import memcpy;
+from std.core.mem import memmove;
 
 pub struct RawVec<T> {
     data: T*,
@@ -42,7 +42,7 @@ impl<T> RawVec<T> {
         if old_cap > 0 {
             // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
-            memcpy(new_data, self.data, old_cap);
+            memmove(new_data, self.data, old_cap);
             del self.data;
         }
 
@@ -69,7 +69,7 @@ impl<T> RawVec<T> {
 
         // Copy valid elements
         if len > 0 {
-            memcpy(new_data, self.data, len);
+            memmove(new_data, self.data, len);
         }
 
         if self.cap > 0 {
@@ -96,7 +96,7 @@ impl<T> RawVec<T> {
         let new_data: T* = dyn[len] T;
 
         // Copy valid elements
-        memcpy(new_data, self.data, len);
+        memmove(new_data, self.data, len);
 
         if self.cap > 0 {
             del self.data;

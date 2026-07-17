@@ -7,7 +7,6 @@ struct Person {
     age: i32,
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Person = Person("Alice", age=25);
-    return 0;
 }

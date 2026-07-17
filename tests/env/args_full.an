@@ -1,0 +1,13 @@
+// Test: validate CLI argument count and lengths
+//
+// CLI args from tests/input/env/args_full.an.args:  alice bob 42
+
+from std.core.env import args;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 4: "expected program name + 3 args";
+    assert argv[1] == "alice": "alice is 5 bytes";
+    assert argv[2] == "bob": "bob is 3 bytes";
+    assert argv[3] == "42": "42 is 2 bytes";
+}

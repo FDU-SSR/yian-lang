@@ -19,7 +19,7 @@ fn consume(v: BigInt) -> i64 { v.value }
 
 fn read(p: BigInt*) -> i64 { (*p).value }
 
-fn main() -> i32 {
+fn main() {
     let x: BigInt = BigInt(42);
     assert consume(x.move()) == 42: "move then consume";
 
@@ -30,5 +30,4 @@ fn main() -> i32 {
     let z: BigInt = BigInt(77);
     assert read(&z) == 77: "read via pointer";
 
-    return 0;
 }

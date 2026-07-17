@@ -186,6 +186,15 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.YianArgc(result=result):
+            return f"%{result.name} = yian_argc  [{__type_str(result.type_id)}]"
+
+        case IR.YianArgvPtr(result=result, index=index):
+            return f"%{result.name} = yian_argv_ptr {__dump_value(index)}  [{__type_str(result.type_id)}]"
+
+        case IR.YianCstrlen(result=result, ptr=ptr):
+            return f"%{result.name} = yian_cstrlen {__dump_value(ptr)}  [{__type_str(result.type_id)}]"
+
 
 def __dump_phi(phi: IR.Phi) -> str:
     inc_str = ", ".join(
@@ -225,6 +234,9 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.Panic(message=message):
             return f"panic {__dump_value(message)}"
+
+        case IR.YianExit(code=code):
+            return f"yian_exit {__dump_value(code)}"
 
 
 def __dump_match_arm(arm: IR.MatchArm) -> str:

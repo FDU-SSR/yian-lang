@@ -221,7 +221,8 @@ impl Stdin {
             if found >= 0 {
                 let newline_pos = u64(found);
                 if newline_pos > 0 {
-                    let line_data = str.from(data[0u64..newline_pos]);
+                    let byte_slice = data[0u64..newline_pos];
+                    let line_data = str.from(&byte_slice);
                     result.push_str(line_data);
                 }
                 break;

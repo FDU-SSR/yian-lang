@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let p: i32* = nullptr;
     let q: i32* = nullptr;
 
@@ -15,5 +15,4 @@ fn main() -> i32 {
     assert r != nullptr: "r != nullptr";
     assert nullptr != r: "nullptr != r";
 
-    return 0;
 }

@@ -10,7 +10,7 @@ struct MyStruct {
     e: i32*,
 }
 
-fn main() -> i32 {
+fn main() {
     let f: i32 = 100;
     let my_struct: MyStruct = MyStruct(
         5,
@@ -34,5 +34,4 @@ fn main() -> i32 {
     *(my_struct.e) = 5
     assert f == 5: "Expected f to be 5 after modification through pointer";
 
-    return 0;
 }

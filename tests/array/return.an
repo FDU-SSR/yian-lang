@@ -25,12 +25,11 @@ fn get_pairs() -> Pair[3] {
     return arr.move();
 }
 
-fn main() -> i32 {
+fn main() {
     let array: i32[3] = get_array2();
     assert array[0] + array[1] + array[2] == 6: "Sum of array elements should be 6";
 
     let pairs: Pair[3] = get_pairs();
     assert pairs[0].second + pairs[1].second + pairs[2].second == 9: "Sum of pairs' second fields should be 9";
 
-    return 0;
 }

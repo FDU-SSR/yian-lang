@@ -1,5 +1,4 @@
 from libb.core import magic;
-fn main() -> i32 {
+fn main() {
     assert magic() == 99;
-    return 0;
 }

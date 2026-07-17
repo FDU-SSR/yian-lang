@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let buff1: i32[5] = [0, 0, 0, 0, 0];
     let buff2: i32[5];
     for i in 0..5i32 {
@@ -28,5 +28,4 @@ fn main() -> i32 {
     assert buff1[3] == 30: "buff1[3] should be 30";
     assert buff1[4] == 40: "buff1[4] should be 40";
 
-    return 0;
 }

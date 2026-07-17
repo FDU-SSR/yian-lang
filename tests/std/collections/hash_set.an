@@ -5,7 +5,7 @@
 from std.core.hash import Murmur3BuildHasher;
 from std.collections.hash_set import HashSet;
 
-fn main() -> i32 {
+fn main() {
     // === Test 1: basic construction ===
     let set1: HashSet<i64> = HashSet<i64>.with_capacity_and_hasher(
         0,
@@ -80,5 +80,4 @@ fn main() -> i32 {
     assert set4.contains(&300i64): "seed 123: contains 300";
     assert ! set4.contains(&400i64): "seed 123: not contains 400";
 
-    return 0;
 }

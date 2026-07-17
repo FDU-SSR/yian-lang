@@ -121,7 +121,6 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
 venv/
 ENV/
 env.bak/
@@ -264,11 +263,9 @@ fabric.properties
 
 ###########
 # output
-output
 target
 out
 log
-env
 
 
 # OS generated files #
@@ -357,3 +354,4 @@ target
 CLAUDE.md
 .claude/*
 a.out
+opencode.json

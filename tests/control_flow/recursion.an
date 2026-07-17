@@ -27,7 +27,7 @@ fn is_odd(n: i32) -> bool {
     return is_even(n - 1);
 }
 
-fn main() -> i32 {
+fn main() {
     // Test simple recursion
     assert factorial(0) == 1: "factorial(0) failed";
     assert factorial(1) == 1: "factorial(1) failed";
@@ -45,5 +45,4 @@ fn main() -> i32 {
     assert factorial(5) == 120: "factorial verification";
     print("120\n");
     print("even\n");
-    return 0;
 }

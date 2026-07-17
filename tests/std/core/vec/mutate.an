@@ -5,7 +5,7 @@
 from std.core.vec import Vec;
 from std.core.option import Option;
 
-fn main() -> i32 {
+fn main() {
     // ---- push / pop ----
 
     let v1: Vec<i32> = Vec<i32>.new();
@@ -70,5 +70,4 @@ fn main() -> i32 {
     assert v4.len() == 1: "should be reusable after clear";
     assert v4[0] == 42: "reused vec should hold new value";
 
-    return 0;
 }

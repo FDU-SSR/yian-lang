@@ -2,12 +2,11 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let x: i32 = 10;
     let c = |p = &x| (d: i32) -> void {
         *p = *p + d;
     };
     c(5);
     assert x == 15: "pointer capture closure";
-    return 0;
 }

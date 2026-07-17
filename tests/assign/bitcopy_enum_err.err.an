@@ -16,8 +16,7 @@ enum BadEnum {
     B { val: Data },
 }
 
-fn main() -> i32 {
+fn main() {
     let e1 = BadEnum.A(val = 1);
     let e2 = e1;
-    return 0;
 }

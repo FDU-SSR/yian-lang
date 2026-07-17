@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let a: str = "Hello";
     let b: str = "World";
     let c: String = a.to_string() + b;
@@ -11,5 +11,4 @@ fn main() -> i32 {
     let d: String = a.to_string() + " " + b;
     assert d == "Hello World": "str concat with literal failed";
 
-    return 0;
 }

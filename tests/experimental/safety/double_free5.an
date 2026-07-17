@@ -76,7 +76,7 @@ fn sys_test() {
 	sg_ioctl();
 }
 
-fn main() -> i32 {
+fn main() {
 	fn sys_test()
 	return 0
 }

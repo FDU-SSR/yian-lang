@@ -40,7 +40,7 @@ fn early_return(x: i32) -> i32 {
     return 0;
 }
 
-fn main() -> i32 {
+fn main() {
     let p: Point = get_point();
     let s: Shape = get_shape();
     let t: (i32, i32) = get_tuple();
@@ -67,5 +67,4 @@ fn main() -> i32 {
     assert early_return(5) == 0: "early return 0 failed";
     assert early_return(20) == 100: "early return 100 failed";
 
-    return 0;
 }

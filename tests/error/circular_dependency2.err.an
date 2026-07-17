@@ -7,6 +7,5 @@ struct Node {
     next: Node,
 }
 
-fn main() -> i32 {
-    return 0;
+fn main() {
 }

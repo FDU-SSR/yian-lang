@@ -6,7 +6,7 @@
 
 struct Empty {}
 
-fn main() -> i32 {
+fn main() {
     // sizeof(ptr-to-ZST) == 0  (pointer itself is ZST)
     assert sizeof(void*) == 0: "sizeof(*void) == 0";
     assert sizeof(Empty*) == 0: "sizeof(*Empty) == 0";
@@ -20,5 +20,4 @@ fn main() -> i32 {
     let r2: void* = nullptr;
     assert r1 == r2: "ZST ptr equality always true";
 
-    return 0;
 }

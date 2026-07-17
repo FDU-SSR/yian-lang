@@ -8,12 +8,11 @@
 
 from std.core.io import print;
 
-fn main() -> i32 {
+fn main() {
     let hello: str = "Hello, World!";
     print(hello);
     let chinese: str = "你好，世界！";
     print(chinese);
     let escape: str = "Line1\nLine2\tTabbed";
     print(escape);
-    return 0;
 }

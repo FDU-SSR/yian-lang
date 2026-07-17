@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-fn main() -> i32 {
+fn main() {
     let dec: i32 = 42;
     let hex: i32 = 0x2A;
     assert dec == hex: "dec != hex";
@@ -20,5 +20,4 @@ fn main() -> i32 {
     let underline: u64 = 1_000_000;
     assert underline == 1000000: "underline != 1000000";
 
-    return 0;
 }

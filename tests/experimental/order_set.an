@@ -1,7 +1,7 @@
 from option import Option;
 from std.bak.ordered_set import OrderedSet;
 
-fn main() -> i32 {
+fn main() {
     // 新建空有序集合
     let s: OrderedSet<i32> = OrderedSet<i32>.new()
     assert s.len() == 0: "new len != 0"
