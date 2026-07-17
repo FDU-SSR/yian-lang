@@ -1,0 +1,11 @@
+// Test: read a line from stdin via Stdin.read_line()
+//
+// stdin from tests/input/env/stdin.an.stdin:  hello from stdin
+
+from std.core.io import Stdin;
+from std.core.string import String;
+
+fn main() {
+    let line = Stdin.read_line().unwrap();
+    assert *line == "hello from stdin";
+}

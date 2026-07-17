@@ -1,0 +1,12 @@
+// Test: exit with a code derived from CLI args
+//
+// CLI args from tests/input/env/exit_args.an.args:  7
+
+from std.core.env import args, exit;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 2: "expected program name + 1 arg";
+    // argv[1] is "7" — exit with code 7
+    exit(7);
+}
