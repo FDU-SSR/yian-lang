@@ -263,7 +263,6 @@ fabric.properties
 
 ###########
 # output
-output
 target
 out
 log

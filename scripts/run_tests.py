@@ -2,8 +2,12 @@
 """Batch test runner for the YIAN compiler.
 
 Discovers .an source files under tests/ and compiles each one with the
-standard library. Tests without a corresponding .ans file in tests_results/
+standard library. Tests without a corresponding .ans file in tests/output/
 are treated as success tests (expected exit code 0, no output comparison).
+
+Test inputs are discovered from tests/input/:
+  - <name>.args  → CLI arguments passed to the executable (whitespace-separated)
+  - <name>.stdin → content piped to the executable's stdin
 
 Usage:
     python scripts/run_tests.py                  # run all tests
@@ -24,7 +28,8 @@ from typing import TextIO
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
-RESULTS_DIR = TESTS_DIR / "tests_results"
+OUTPUT_DIR = TESTS_DIR / "output"
+INPUT_DIR = TESTS_DIR / "input"
 LIB_DIR = ROOT_DIR / "lib"
 BUILD_DIR = ROOT_DIR / "build"
 
@@ -64,6 +69,12 @@ class TestCase:
 
     expected_output: str = ""
     """Expected stdout content (empty = no output check)."""
+
+    cli_args: list[str] | None = None
+    """CLI arguments to pass to the compiled executable."""
+
+    stdin: str = ""
+    """Content to pipe to the executable's stdin."""
 
 
 @dataclass
@@ -155,7 +166,7 @@ def _find_ans(test_rel: str) -> Path | None:
       - "import/func"  (multi-file dir)     → …/import/func.ans
     """
     if not test_rel.endswith(".an"):
-        p = RESULTS_DIR / (test_rel + ".ans")
+        p = OUTPUT_DIR / (test_rel + ".ans")
         return p if p.exists() else None
 
     if test_rel.endswith(".err.an"):
@@ -163,8 +174,37 @@ def _find_ans(test_rel: str) -> Path | None:
     else:
         ans_name = test_rel + ".ans"
 
-    p = RESULTS_DIR / ans_name
+    p = OUTPUT_DIR / ans_name
     return p if p.exists() else None
+
+
+def _find_input(test_rel: str) -> tuple[list[str] | None, str]:
+    """Look for input files corresponding to *test_rel* in tests/input/.
+
+    Returns ``(cli_args, stdin)`` where:
+      - *cli_args* is a list of whitespace-split args (None if no .args file).
+      - *stdin* is the content of the .stdin file (empty string if not found).
+
+    *test_rel* follows the same naming convention as ``_find_ans``:
+      - "env/args.an"            → …/env/args.args, …/env/args.stdin
+      - "error/no_main.err.an"   → …/error/no_main.an.args  (strip .err)
+    """
+    base = test_rel
+    if base.endswith(".err.an"):
+        base = base[:-7] + ".an"
+
+    args_path = INPUT_DIR / (base + ".args")
+    cli_args: list[str] | None = None
+    if args_path.exists():
+        text = args_path.read_text().strip()
+        cli_args = text.split() if text else []
+
+    stdin = ""
+    stdin_path = INPUT_DIR / (base + ".stdin")
+    if stdin_path.exists():
+        stdin = stdin_path.read_text()
+
+    return cli_args, stdin
 
 
 def discover_tests() -> list[TestCase]:
@@ -182,8 +222,8 @@ def discover_tests() -> list[TestCase]:
     for an_file in sorted(TESTS_DIR.rglob("*.an")):
         rel = an_file.relative_to(TESTS_DIR)
 
-        # Exclude tests_results/ and lib/.
-        if rel.parts[0] in ("tests_results"):
+        # Exclude tests/output/ and tests/input/.
+        if rel.parts[0] in ("output", "input"):
             continue
 
         src_rel = str(rel)
@@ -221,6 +261,8 @@ def discover_tests() -> list[TestCase]:
             expected_output = ""
             expected_substr = ""
 
+        cli_args, stdin = _find_input(name)
+
         tests.append(TestCase(
             name=name,
             source_files=source_files,
@@ -228,11 +270,13 @@ def discover_tests() -> list[TestCase]:
             expected_substring=expected_substr,
             expected_exit_code=expected_exit_code,
             expected_output=expected_output,
+            cli_args=cli_args,
+            stdin=stdin,
         ))
 
     # Report orphaned .ans files (no matching source).
-    for ans_file in sorted(RESULTS_DIR.rglob("*.ans")):
-        ans_rel = ans_file.relative_to(RESULTS_DIR)
+    for ans_file in sorted(OUTPUT_DIR.rglob("*.ans")):
+        ans_rel = ans_file.relative_to(OUTPUT_DIR)
         if ans_rel.name.endswith(".an.ans"):
             source_name = str(ans_rel.parent / ans_rel.name[:-4])
             if (TESTS_DIR / source_name).exists():
@@ -263,7 +307,8 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
     """Compile *test* and return the result.
 
     If *run* is True and the test is not an error test: compile to executable,
-    run it, and capture stdout + exit code.
+    run it (with CLI args and stdin from tests/input/ if present),
+    and capture stdout + exit code.
     """
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
@@ -312,9 +357,13 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
     if run and not test.expect_error:
         assert exe_path is not None
         run_start = time.monotonic()
+        exe_cmd = [str(exe_path)]
+        if test.cli_args:
+            exe_cmd += test.cli_args
         run_proc = subprocess.run(
-            [str(exe_path)],
+            exe_cmd,
             cwd=ROOT_DIR,
+            input=test.stdin or None,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
