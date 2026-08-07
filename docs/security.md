@@ -1,220 +1,1257 @@
-# Key Lock
+# 胖指针内存安全机制——设计文档
 
-指针变量持有 address 和 key，内存管理块保存 lock 和指向实际数据的指针。使用指针访问内存时，key 和 lock 需要匹配。
+<!--
+  本文档为 YIAN 编译器胖指针内存安全机制的设计文档（骨架版）。
+  12 个 H2 章节标题是后续填充的锚点，不得改动；各章行数上限为允许值而非目标。
+  正文全中文；代码标识符与文献标题保留原文。
+-->
 
-同一时间只允许一个线程访问同一块内存。
+### 记号与术语
 
-```rust
-enum Ptr<T> {
-    Stack{
-        T* base                 // address
-        u64 offset              // 64 bit offset
-        u64 len                 // 64 bit len, offset < len
-    }
-    Heap{
-        u64 key                 // 64 bit key
-        MemoryBlock<T>* base    // memory block address
-        u64 offset              // 64 bit offset
-    }
-}
+> 本小节定义全文共用的记号与术语。正文中文；代码标识符（`data`/`lock_ptr`/`key`/`index`/`size`、CFG 节点名、函数名）与文献标题保留原文。
 
-struct MemoryBlock<T> {
-    u64 lock        // 64 bit lock
-    u64 size        // 64 bit size
-    T* data         // to buffer
-}
+胖指针共 5 个字段，此处仅列名与占位说明，精确形式化见第 2 章：
+
+- `data: T*`: 指向实际内存对象的指针（定义占位）
+- `lock_ptr: u64*`: 指向锁的指针（定义占位；修订后设计改为锁表条目地址）
+- `key: u64`: 锁的密钥（定义占位；修订后设计为单调生成）
+- `index: u64`: 实际内存对象相对原始地址的偏移，单位是元素个数（定义占位）
+- `size: u64`: 内存块内存储的元素个数，用于防止越界访问（定义占位）
+
+锁表与键（定义占位，修订后设计引入）：
+
+- 锁表 `LockTable`: 持久锁表，块释放时仅作废键而不释放锁项（定义占位）
+- 键 `Key`: 锁的密钥，由单调生成器产生（定义占位）
+
+**术语政策**：正文全中文；代码标识符与文献标题保留原文。
+
+## 1. 威胁模型与安全目标
+
+<!-- 章节上限: 150 行 -->
+
+本章界定本机制的防御范围：内存错误分类（§1.1）、攻击者能力假设（§1.2）、论证的 in/out 边界（§1.3）与安全目标（§1.4）。第 2 章的形式化定义即为满足这些目标而设计；第 5 章主定理的结论在 §1.3 的 in 类范围内成立。
+
+### 1.1 内存错误分类
+
+本设计针对以下四类内存错误。
+
+1. **空间越界读写**（spatial out-of-bounds）：对已分配对象（堆块或栈对象）界外位置的读写。典型来源：数组索引越界、负偏移、跨过对象末尾的多元素访问。
+2. **时序错误**（temporal errors）：悬垂指针（dangling pointer）、释放后使用（use-after-free, UAF）与双重释放（double-free）——对已释放块或已退出栈帧中地址的访问，以及对同一块的重复释放。
+3. **类型混淆**（type confusion）：以与对象实际类型不一致的静态类型访问内存，破坏「指针类型 = 对象类型」同一性。典型来源：无约束的 `bitcast` 将指针重解释为无关的 pointee 类型。
+4. **索引算术溢出**（index arithmetic overflow）：指针算术与索引计算在有限位宽下回绕，使界内检查失效（如 `index + n` 溢出后误判为在界内）。
+
+以下代码片段以 YIAN 语法给出四类错误的示意（标注处的访问在修订后设计中均于访问发生前 trap；`u64`/`i8` 为内建标量类型）：
+
+```yian
+// 类 1 空间越界：数组 arr 容量 3，访问下标 3 越过末尾
+let arr: u64[3] = [10, 20, 30];
+let p: u64* = &arr;
+let v: u64 = p[3];              // 越界读：index=3, size=3
+
+// 类 2 时序错误：块已释放，q 为悬垂指针
+let q: u64* = dyn u64;
+delete q;
+let w: u64 = *q;                // UAF：live(q) 在锁表寻址下为假
+
+// 类 3 类型混淆：把字节缓冲重解释为 u64 指针
+let buf: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+let r: u64* = bitcast<u64*>(&buf[0]);
+
+// 类 4 索引算术溢出：index + n 在数学整数上远超 size，in_bounds 恒假
+let s: u64* = dyn u64;
+let t: u64* = s + 0xFFFFFFFFFFFFFFFF;   // 无回绕语义下 index + n 不回绕，良构性失败
 ```
 
-申请内存, 构造堆指针
+失败轨迹叙述：类 1 的 `p[3]` 在无检查的裸指针语义下读得 `arr` 之后相邻内存的内容，结果取决于布局巧合；在修订后设计中 `p[3]` 的 `in_bounds(p, 4)` 检查（定义 12）先失败，程序于访问前 trap。类 2 的 `*q` 在无检查语义下可能读到被重新分配块的脏数据或恰好复活的旧值；修订后 `live(q)`（定义 8）查带外锁表，`q` 释放时锁项已置 `revoked`，检查失败即 trap。类 3 的 `bitcast` 在现状原型中合法（`expr_checker.py:132-157`），第 8 章收紧后按布局兼容前提（定义 27、规则 8.3.1）在编译期拒绝。类 4 的 `s + 0xFFFFFFFFFFFFFFFF` 在 64 位回绕下得回块内地址、躲过界内检查；修订后 `index + n` 按数学整数求值（§2.4 约定），结果 $0 + 2^{64}-1$ 远超 `size = 1`，在算术规则处 trap。
 
-```rust
-impl Ptr<T> {
-    static Ptr<T> new_object() {
-        // 生成 key 和 lock
-        u64 key_lock = generate_key_lock()
-        // 首先构造 MemoryBlock
-        T* data = dyn T
-        u64 size = sizeof(T)
-        MemoryBlock<T>* base = dyn MemoryBlock<T>(key_lock, size, data)
-        // 然后构造指针
-        return Ptr<T>.Heap(key_lock, base, 0)
-    }
-    static Ptr<T> new_array(u64 len) {
-        // 生成 key 和 lock
-        u64 key_lock = generate_key_lock()
-        // 首先构造 MemoryBlock
-        T* data = dyn T[len]
-        u64 size = sizeof(T) * len
-        MemoryBlock<T>* base = dyn MemoryBlock<T>(key_lock, size, data)
-        // 然后构造指针
-        return Ptr<T>.Heap(key_lock, base, 0)
-    }
-}
-```
+四类错误的对应章节：类 1/类 4 的空间防护在第 2 章定义 12 与第 3 章规则 3.2-3.3、3.10，论证在第 4 章 S1；类 2 的时序防护在定义 7-8 与规则 3.6、3.8，论证在第 4 章 T1 及 L-NOREUSE/L-REKEY；类 3 的类型防护在第 8 章规则 8.3.1，论证在第 4 章 T-TYPE。上表 in/out 归属（§1.3）即以此对应关系为据：类 1/2 为 in，类 3 受限，类 4 并入 in（空间机制完整性）。
 
-对栈变量取地址, 构造栈指针. 或者将数组赋值给指针, 使其转换为栈指针
+四类的防护分工：类 1 与类 4 由运行时全访问界检查承担（第 2 章 `in_bounds` 谓词，§2.4）；类 2 由运行时锁表键检查承担（第 2 章 `live` 谓词，§2.3）；类 3 由编译期类型系统约束承担（第 8 章，见 §1.3）。
 
-```rust
-impl Ptr<T> {
-    static Ptr<T> address(T* raw_ptr) {
-        return Ptr<T>.Stack(raw_ptr, 0, sizeof(T))
-    }
+### 1.2 攻击者模型
 
-    static Ptr<T> from_array(T* array, u64 len) {
-        return Ptr<T>.Stack(array, 0, len * sizeof(T))
-    }
-}
-```
+攻击者能力假设如下（本设计依赖的最小集合）。
 
-指针的读写
+- **可控输入**：攻击者可控制程序的全部外部输入（命令行参数、标准输入、文件与网络数据），并借此影响控制流与被检查的数据值。攻击者知情：了解源码、键生成算法与全部机制细节（无保密假设）。知情假设的含义：机制强度不依赖任何隐蔽性（security by obscurity 被排除），键的不可预测性（CSPRNG 路径，定义 10）与唯一性（单调路径）是唯一依赖的随机性来源，且攻击者知道生成算法也无力影响其输出。
+- **无任意内存写前置**：在发动一次被检查的内存访问之前，攻击者不具备任意写内存的能力。除程序语义允许且通过了运行时检查的写之外，攻击者不能改写对象数据、锁表或指针元数据。此假设排除「先写坏元数据、再绕过检查」的攻击路径，是 §1.3 元数据行与第 6 章收敛论证的前提。
+- **不可绕过检查**：攻击者不能直接改写锁表条目（锁表带外存储、由运行时独占维护，见 §2.3），也不能凭空构造一个键与活动锁项匹配的胖指针——胖指针只能由分配、取址、数组退化等良构操作产生（第 8 章类型约束）。
 
-```rust
-impl Ptr<T> {
-    T read() {
-        match self {
-            Stack as ptr:
-                return ptr.base[ptr.offset]
-            Heap as ptr:
-                // 检查 key 与 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查越界
-                assert(ptr.offset != ptr.base.size)
-                return ptr.base.data[ptr.offset]
-        }
-    }
+与假设直接对应的排除项见 §1.3 的 out 行：若攻击者已具备任意写前置，则可直接改写锁表与元数据，本机制对之失效。这是模型边界，而非机制缺陷。
 
-    write(T value) {
-        match self {
-            Stack as ptr:
-                ptr.base[ptr.offset] = value
-            Heap as ptr:
-                // 检查 key 与 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查越界
-                assert(ptr.offset != ptr.base.size)
-                ptr.base.data[ptr.offset] = value
-        }
-    }
-}
-```
+**攻击场景叙述（in 类程序内的攻击者可达行为）**：在上述假设内，攻击者能控制输入数据、能选择程序路径，但每次内存访问都被检查。以越界写为例：攻击者设法让程序执行 `arr[i] = v` 且 `i` 由输入控制，但该访问要么在 `in_bounds`（定义 12）处 trap、要么落在界内；攻击者无法利用一次「成功」的越界写去改写锁表（锁表带外，§2.3）、也无法改写任何指针的 `size`（元数据防伪假设，§6.5）。以 UAF 为例：攻击者让程序保留并复用已释放指针，但每次访问在 `live`（定义 8）处核对锁表键，释放即作废、永不复活（L-NOREUSE、L-REKEY）。攻击者唯一能影响的是「检查是否触发」，而非「触发后是否被放行」；trap 吸收态（§2.1）使检查失败后无任何后续访问可执行。
 
-释放内存
+### 1.3 论证边界：in/out 表
 
-```rust
-impl Ptr<T> {
-    delete() {
-        match self {
-            Stack: panic("Delete stack pointer")
-            Heap as ptr:
-                // 检查 key 和 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查是否有偏移
-                assert(ptr.offset == 0)
-                // 释放内存
-                del ptr.base.data
-                // 清空内存管理快
-                ptr.base.lock = 0
-                ptr.base.size = 0
-        }
-    }
-}
-```
+表 1 给出威胁模型的 in/out 边界。**in** = 本设计形式论证覆盖，第 5 章主定理的结论仅对 in 类成立；**out** = 明确排除，不在论证范围；**受限** = 由本设计中的其他机制或章节承担。
 
-指针运算：
+| 类别 | 错误形态 | 边界 | 承担机制 / 章节 |
+|---|---|---|---|
+| 空间 | 越界读写（堆/栈） | in | 运行时全访问界检查 `in_bounds`（§2.4） |
+| 时序 | UAF / 双释放 / 悬垂 | in | 运行时锁表键检查 `live`（§2.3） |
+| 算术 | 索引与指针算术溢出 | in | 数学整数语义 + 全访问检查（§2.4，空间机制完整性） |
+| 类型 | `bitcast` 类型混淆 | 受限 | 类型系统约束，**由第 8 章负责**（本章不解决） |
+| 并发 | 数据竞争 | out | 单线程模型；并发安全为局限（第 11 章） |
+| FFI | 跨 FFI 边界的裸指针越界 | out | 检查不跨越 FFI；为局限（第 11 章） |
+| 元数据 | 锁表/指针元数据任意改写 | out | 攻击者模型排除任意写前置（§1.2）；见第 6 章收敛论证 |
 
-```rust
-// 指针 + 整数
-impl Add<u64, Ptr<T>> for Ptr<T> {
-    Self add(u64 rhs) {
-        match self {
-            Stack as ptr:
-                ptr.offset += rhs * sizeof(T)
-                assert(ptr.offset <= ptr.len)
-            Heap as ptr:
-                // 检查 key 和 lock
-                assert(ptr.key == ptr.base.lock)
-                ptr.offset += rhs * sizeof(T)
-                assert(ptr.offset <= ptr.base.size)
-        }
-    }
-}
+说明：`bitcast` 类型混淆列为「受限」并移交第 8 章——本机制不试图在运行时判定对象真实类型，而由第 8 章收紧 `bitcast` 规则以保证「指针类型 = 对象类型」；第 3 章的运行时检查不为此承担责任。out 行失效的前提是 §1.2 攻击者假设被放宽（例如攻击者获得一次任意写），故 out 行的失效不构成 in 类论证的反例。
 
-// 指针 - 整数
-impl Sub<u64, Ptr<T>> for Ptr<T> {
-    Self sub(u64 rhs) {
-        match self {
-            Stack as ptr:
-                assert(ptr.offset >= rhs * sizeof(T))
-                ptr.offset -= rhs * sizeof(T)
-            Heap as ptr:
-                // 检查 key 和 lock
-                assert(ptr.key == ptr.base.lock)
-                assert(ptr.offset >= rhs * sizeof(T))
-                ptr.offset -= rhs * sizeof(T)
-        }
-    }
-}
+**表 1 的读法**：in 行是本设计的形式论证范围，第 4-5 章的全部不变量与定理只对这些错误形态承诺；out 行是模型边界，其失效前提（§1.2 假设放宽）被显式声明，故 out 行不削弱 in 类结论；「受限」行由其他机制（第 8 章）承担，本章与第 2-5 章不为该行负责。三类边界在 §5.5 与第 11 章重新声明，保证读者在任意章节都能定位论证范围的边界。
 
-// 指针 - 指针
-impl Sub<Ptr<T>, i64> for Ptr<T> {
-    i64 sub(Ptr<T> rhs) {
-        match self {
-            Stack as lptr:
-                match rhs {
-                    Heap: panic("Stack ptr - Heap ptr")
-                    Stack as rptr:
-                        assert(lptr.base == rptr.base)
-                        return (lptr.offset - rptr.offset) / sizeof(T)
-                }
-            Heap as lptr:
-                match rhs {
-                    Stack: panic("Heap ptr - Stack ptr")
-                    Heap as rptr:
-                        assert(lptr.base == rptr.base)
-                        assert(lptr.key == rptr.key)
-                        return (lptr.offset - rptr.offset) / sizeof(T)
-                }
-        }
-    }
-}
-```
+**表 1 与第 5 章的对应**：in 行（空间、时序、算术）恰好对应定理 5.1 的 G1-G3 负面结论，受限行对应 G4，out 行全部在 §5.5 显式排除；因此「定理结论范围 = 表 1 的 in 行 + 受限行」成立，读者可凭表 1 判断任何访问形态是否在论证内。
 
-## 通过指针进行遍历
+### 1.4 安全目标
 
-为了使用 `for...in` 遍历一个类型, 该类型必须满足下面的条件:
+给定通过第 8 章类型约束、且仅执行第 3 章良构操作的 YIAN 程序，本机制的安全目标如下。
 
-必须实现 `GetIterator` trait, 返回一个实现了 `Iterator` trait 的迭代器
+- **G1（空间）**：程序每一次跨度 $n \geq 1$ 个元素的读写，其访问区间整体落在被访问对象内，即第 2 章的 `in_bounds(p, n)` 成立；否则在访问发生前 trap。
+- **G2（时序）**：每一次读写与释放操作的对象在操作时刻时序有效（第 2 章 `live(p)`）；对象被释放或所在栈帧退出后，对其任何后续访问与重复释放均在访问发生前 trap。
+- **G3（算术）**：指针算术与索引计算不因溢出产生界外地址；`index + n` 与 `data + index·|T|` 按数学整数语义求值。
+- **G4（类型）**：指针的静态类型与其指向对象的动态类型一致（`bitcast` 约束，第 8 章）。
 
-```rust
-struct PtrIter<T> {
-    T* cur
-    T* end
-}
+G1-G3 由运行时检查（第 2 章表示 + 第 3 章规则）实现，G4 由编译期类型约束实现。目标的形式陈述（单句「若…则…」主定理）与论证梗概在第 5 章给出。
 
-impl Iterator<T> for PtrIter<T> {
-    Option<T> next() {
-        if self.cur == self.end {
-            return Option<T>.None
-        } else {
-            T res = *self.cur
-            self.cur += sizeof(T)
-            return Option<T>.Some(res)
-        }
-    }
-}
+**目标的操作化阅读**：四条目标可按「检查点 + 失效动作」逐条操作化。G1 的操作化检查点为每个读/写/拷贝前的 `in_bounds(p, n)`（定义 12），失效动作为 trap；G2 为每个访问与释放前的 `live(p)`（定义 8），失效动作同为 trap；G3 为算术与索引计算的数学整数求值（§2.4），实现侧检测到回绕即按 trap 处理；G4 为编译期定型（第 8 章规则 8.1.1-8.1.12、规则 8.3.1），失效动作是编译期拒绝而非运行时事件。四条目标中 G1-G3 落在运行时、G4 落在编译期，对应 §8.5 表 10 的分工；§5.1 定理 5.1 把四者拼合为一条 `ok(e) ⟺ pre(e)` 的等价式。
 
-impl GetIterator<PtrIter<T>> for Ptr<T> {
-    PtrIter<T> get_iterator() {
-        match self {
-            Stack as ptr:
-                T* begin = ptr.base + ptr.offset
-                T* end = ptr.base + ptr.len
-                return PtrIter<T>(begin, end)
-            Heap as ptr:
-                T* begin = ptr.base.data + ptr.offset
-                T* end = ptr.base.data + ptr.base.size
-                return PtrIter<T>(begin, end)
-        }
-    }
-}
-```
+## 2. 指针表示与形式化定义
+
+<!-- 章节上限: 400 行 -->
+
+本章定义形式化机器（§2.1-§2.3）与修订后的胖指针表示（§2.4），并给出堆分配与栈帧的生命周期协议（§2.5-§2.6）。全部符号在本章定义且只定义一次（R3），第 3-5 章的规则与不变量直接引用本章符号，不再重复定义；操作规则的完整集合在第 3 章给出。
+
+### 2.1 形式化机器概览
+
+本设计以小步操作语义（small-step operational semantics）描述机器行为。机器状态为配置：
+
+$$\langle \mu, \Lambda, C \rangle$$
+
+- $\mu$：存储（Store），§2.2；
+- $\Lambda$：锁表（LockTable），§2.3；
+- $C$：控制分量，即当前待执行的指令序列（程序点）。指令集与求值上下文在第 3 章定义。
+
+单步转移关系为 $\langle \mu, \Lambda, C \rangle \longrightarrow \langle \mu', \Lambda', C' \rangle$（正常步进），或 $\langle \mu, \Lambda, C \rangle \longrightarrow \text{trap}$（陷阱）。`trap` 是吸收终止态：运行时检查失败后程序立即以失败终止，不执行任何后续内存访问。读、写、分配、释放、取址各原子操作一步完成；第 3 章为每个操作给出转移规则。
+
+初始配置 $\langle \mu_0, \Lambda_0, C_0 \rangle$ 满足 $\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$（空存储、空锁表），$C_0$ 指向程序入口。
+
+**机器的读法**：$\mu$ 与 $\Lambda$ 是两片不相交的存储域：$\mu$ 承载程序对象（`Val`，定义 3），$\Lambda$ 承载锁项（`LockEntry`，定义 6），二者由运行时分别维护（定义 1 注）。配置三元组 $\langle \mu, \Lambda, C \rangle$ 的转移只由第 3 章规则驱动：正常步进修改 $\mu$/$\Lambda$/$C$ 至下一配置，检查失败转移到吸收态 `trap`。因为 `trap` 无后继转移，任何「检查失败后继续执行」的配置序列都不存在，§2.5-§2.6 协议与第 4-5 章论证全部建基于此。
+
+### 2.2 位置与存储
+
+**定义 1（地址域 `Addr`）**：可数无穷集，形式化为数学自然数 $\mathrm{Addr} \triangleq \mathbb{N}$；实现为 64 位无符号字节地址。`Addr` 同时为内存对象与锁表条目命名，两个子域由运行时分别维护（§2.3）。
+
+**定义 2（位置 `Loc`）**：位置是存储的可寻址单元：
+
+$$\mathrm{Loc} \triangleq \mathrm{Addr} \times \mathbb{N}$$
+
+位置 $\langle a, o \rangle$ 表示地址 $a$ 处字节偏移 $o$。地址 $a$ 亦记为位置 $\langle a, 0 \rangle$；字节地址算术 $a + d$ 在 `Addr` 上按字节进行。
+
+**定义 3（值域 `Val`）**：存储中可存放的值：
+
+$$\mathrm{Val} \triangleq \mathbb{Z} \uplus \mathrm{PtrVal}$$
+
+其中 $\mathbb{Z}$ 为整数（覆盖 `u64`/`i64` 等标量），`PtrVal` 为胖指针值（§2.4）。不影响讨论的其余标量类型可并入 $\mathbb{Z}$。
+
+**定义 4（存储 `Store`）**：存储是位置到值的部分映射：
+
+$$\mu : \mathrm{Loc} \rightharpoonup \mathrm{Val}$$
+
+$\mathrm{dom}(\mu)$ 为已分配位置集合。对未定义位置的读写均是非良构操作（在访问规则处 trap）。
+
+**存储域与锁表域的关系**：$\mathrm{dom}(\mu)$（已分配位置）与 $\mathrm{dom}(\Lambda)$（锁表条目）无交集且由运行时分别维护（定义 1 注）：$\mu$ 的域按分配/释放增减（规则 3.6.1-3.6.2、3.8.1-3.8.2），$\Lambda$ 的域只增不减（锁项持久保留，定义 7）。因此 `live(p)` 的锁表寻址 $\Lambda(p.\text{lock\_ptr})$ 永不触碰 $\mu$ 中可能已被回收的位置，时序检查自身不会触发 UAF（缺陷 1 的修订落点）。
+
+### 2.3 锁表、锁项与键
+
+**定义 5（键域 `Key`）**：
+
+$$\mathrm{Key} \triangleq \mathbb{N}$$
+
+键实现为 64 位无符号整数。修订后键不再承载栈/堆标志位（该职责移交锁项的 `kind` 字段，见定义 6），故可用完整 64 位域。
+
+**定义 6（锁项 `LockEntry`）**：锁项是锁表条目的内容：
+
+$$\mathrm{LockEntry} \triangleq (\{\text{heap}, \text{stack}\} \times \mathrm{Key}) \uplus \{\text{revoked}\}$$
+
+- $\langle \text{heap}, k \rangle$：守护某堆块的活动锁项，当前键为 $k$；
+- $\langle \text{stack}, k \rangle$：守护当前栈帧的活动锁项，当前键为 $k$；
+- $\text{revoked}$：已作废锁项（被释放的堆块或被退出的栈帧所遗留）。
+
+**定义 7（锁表 `LockTable`）**：锁表是地址到锁项的部分映射：
+
+$$\Lambda : \mathrm{Addr} \rightharpoonup \mathrm{LockEntry}$$
+
+锁表**持久**驻留：堆块释放与栈帧退出仅将对应锁项置为 `revoked`，**不释放锁项**（对「锁随块释放导致锁自身悬垂」缺陷的修订，依据见第 6 章）。锁表带外存储于受保护块与帧之外，故时序检查 $\Lambda(p.\text{lock\_ptr})$ 的查找本身永不访问已释放内存。
+
+**锁表条目工作示例**：设当前 $\Lambda = \{ e_0 \mapsto \langle \text{heap}, k_0 \rangle,\ e_1 \mapsto \text{revoked} \}$。指针 `p` 携带 `lock_ptr = e_0`、`key = k_0`：`live(p)` 为真；`lock_ptr = e_1` 的任何指针：条目为 `revoked`，`live` 为假。`e_1` 被新分配复用后变为 `⟨heap, k_1⟩`（$k_1 \ne k_0$，定义 10），携带旧键的指针仍不匹配。`is_heap(p)`（定义 9）与 `live(p)` 都只读 `Λ(p.lock_ptr)`，一次寻址同时完成 kind 判定与键比较，`Delete` 节点的三前提检查（§7.1）可合并为对同一锁项的一次读取。
+
+**定义 8（时序有效性谓词 `live`）**：指针 $p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$ 在时刻 $t$ 时序有效，当且仅当锁项存在、非 `revoked` 且其中存储的键与指针携带的键一致：
+
+$$\text{live}(p) \iff \Lambda(p.\text{lock\_ptr}) = \langle \text{kind}, p.\text{key} \rangle, \quad \text{kind} \in \{\text{heap}, \text{stack}\}$$
+
+**定义 9（堆/栈判定 `is_heap`）**：$\text{is\_heap}(p) \iff \Lambda(p.\text{lock\_ptr}) = \langle \text{heap}, p.\text{key} \rangle$。`delete` 与 `realloc` 仅对堆指针适用（第 3 章）。
+
+**定义 10（键生成器 `Gen`）**：$\mathrm{Gen} : () \to \mathrm{Key}$ 在每次堆分配与栈帧进入时调用。生成器必须满足以下两条要求之一：
+
+- **单调计数器**：内部计数器 $c$ 初值 $0$，每次调用返回 $c := c + 1$。任意两次调用返回不同键，且后调用返回的键严格更大。
+- **CSPRNG**：输出从 $\{0,1\}^{64}$ 均匀采样。任意两次不同调用的输出碰撞概率不超过 $2^{-64}$（可忽略）。
+
+两条要求的共同推论（键唯一性，形式化不变量在第 4 章陈述为引理）：任一时刻所有活动锁项中的键两两不同；任何被作废的键永不重新成为活动锁项的键。单调计数器给出严格保证；CSPRNG 以可忽略概率违反。
+
+**备注（实现缺陷）**：现行原型 `tests/experimental/ptr/ptr.an:3-5` 的 `random()` 返回常量 `1 | (1 << 63)`——每次调用同值，既非单调亦无唯一性，**不可用作键生成器**。若所有堆块共享同一键，任何一处的释放会使后续全部堆指针的时序检查误报；且作废条目被复用时旧键可能重新匹配，破坏时序安全性。§2.5-§2.6 的协议要求键由满足定义 10 的 `Gen` 产生。
+
+### 2.4 胖指针表示
+
+**定义 11（胖指针 `PtrVal`）**：胖指针是五元组：
+
+$$p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$$
+
+修订后表示 = **5 字段胖指针 + 带外持久锁表**：每个堆块与每个栈帧各占一个锁项（定义 6），键由满足定义 10 的 `Gen` 生成；`lock_ptr` 指向锁项而非块内元数据。各字段的类型、单位与约束如表 2 所示。「元素」指 pointee 类型 $T$ 的一个实例；`data` 与元素地址 $\text{data} + \text{index} \cdot |T|$ 以字节计（$|T|$ 为 $T$ 的字节大小）。
+
+表 2：5 字段精确表示（修订后）
+
+| 字段 | 类型 | 单位 | 含义 | 约束 |
+|---|---|---|---|---|
+| `data` | `Addr`（`T*`） | 字节 | 所指向内存对象的锚地址（基址） | 由分配/取址/退化建立，指向 $\mathrm{dom}(\mu)$ 中的对象 |
+| `lock_ptr` | `Addr`（`u64*`） | 无（地址） | 守护本对象的锁项地址；指向持久锁表条目（带外），非块内元数据 | $\text{lock\_ptr} \in \mathrm{dom}(\Lambda)$ |
+| `key` | `Key`（`u64`） | 无（键值） | 与 $\Lambda(\text{lock\_ptr})$ 中存储的键比较，判定时序有效性 | 由 `Gen` 生成（定义 10） |
+| `index` | `ℕ`（`u64`） | **元素个数** | 当前元素相对 `data` 的偏移 | 创建时置 0，指针算术更新；见 `in_bounds` |
+| `size` | `ℕ`（`u64`） | **元素个数** | 自 `data` 起可容纳的元素个数（容量） | 创建时置定；访问约束见 `in_bounds` |
+
+**定义 12（空间有效性谓词 `in_bounds`）**：对跨度 $n$ 个元素（$n \geq 0$）的访问：
+
+$$\text{in\_bounds}(p, n) \iff 0 \le p.\text{index} \;\wedge\; p.\text{index} + n \le p.\text{size}$$
+
+该谓词为**全访问检查**：要求整个访问区间 $[\text{index}, \text{index} + n)$ 落在对象内，而非仅检查访问起点。单元素读写即 $n = 1$；整段拷贝为 $n = m$（第 3 章）。
+
+**定义 13（良构性 `well_formed`）**：
+
+$$\text{well\_formed}(p) \iff 0 \le p.\text{index} \le p.\text{size}$$
+
+指针创建与算术保证良构。$\text{index} = \text{size}$ 的 one-past-end 指针允许存在与传递，但任何 $n \geq 1$ 的访问在 `in_bounds` 处失败——one-past-end 不可读写。
+
+**定义 14（安全访问谓词 `safe_access`）**：一次 $n$ 元素访问满足：
+
+$$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
+
+第 3 章每条访问规则的正常前提即 `safe_access`；前提不满足则转移到 `trap`。
+
+**锚定规则**：指针创建时建立锚点（`data` 置为锚地址、`index := 0`、`size` 置为锚地址处自 `data` 起的元素容量）：
+
+- 分配 `dyn T` / `dyn T[n]`：锚 = 块首（§2.5）；
+- 数组退化：锚 = 数组首地址，`size` = 数组长度；
+- 取址 `&x`：锚 = 变量地址，`size` = 变量元素容量（标量 1，数组为长度）；
+- 取址 `&s.field` / `&arr[i]`：锚 = 子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
+
+锚定规则的操作意义：锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），因此相等比较按 `(data, index)`（规则 3.4.2）是稳定的：两个指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放必须发生在锚点处，防止「带偏移释放」把非锚地址当作分配起点；子对象锚定指针（`&s.field`）的 `index` 恒为 0，可直接满足该前提并释放所属整个分配（§2.5 协议性质）。
+
+指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）。同一对象的不同锚定指针共享同一锁项，对象释放后一并时序失效。
+
+**单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行），对应 §1.1 类 4 的防护。
+
+**表 2 详解（表驱动工作示例）**：设 `dyn u64[3]` 返回 $p = \langle b, e, k, 0, 3 \rangle$，其中 $b$ 为块首地址、$e$ 为锁表条目、$k = \mathrm{Gen}()$（定义 10）。按表 2 逐字段核对：`data = b` 指向 `dom(μ)` 中块的锚地址；`lock_ptr = e`，$e \in \mathrm{dom}(\Lambda)$ 且 $\Lambda(e) = \langle \text{heap}, k \rangle$（定义 6）；`key = k` 与锁项存储键一致，故 `live(p)`（定义 8）成立；`index = 0` 为锚点；`size = 3` 为容量。指针算术 `p + 1` 得 $\langle b, e, k, 1, 3 \rangle$（§2.7 仅更新 `index`），`data`/`lock_ptr`/`key`/`size` 均不变；对 `p + 1` 的单元素访问 $n = 1$ 检查 `in_bounds(p', 1)`：$0 \le 1 \wedge 1 + 1 \le 3$ 成立。子对象取址 `&arr[1]`（规则 3.5.3）则重新锚定：$data' = b + |\texttt{u64}|$、`index' = 0`、`size' = 1`，锁字段继承，与算术路径区分。
+
+### 2.5 堆分配生命周期协议
+
+协议以配置 $\langle \mu, \Lambda, C \rangle$ 上的小步转移描述锁表与存储的变化（完整规则集在第 3 章）。
+
+**分配 `dyn T`**（单元素对象）：
+
+1. 取新鲜地址 $b$（$b \notin \mathrm{dom}(\mu)$），分配字节区间 $[b, b + |T|)$，并入 $\mathrm{dom}(\mu)$；
+2. 取锁表条目 $e$（新鲜或复用 `revoked` 条目），$k \leftarrow \mathrm{Gen}()$；
+3. $\Lambda(e) := \langle \text{heap}, k \rangle$；
+4. 返回指针 $\langle \text{data} = b, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$。
+
+**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + n \cdot |T|)$，返回 $\text{size} = n$。$n = 0$ 时 $\text{size} = 0$，不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败）。$n = 0$ 情形说明：空数组分配仍取锁项并生成键（$\Lambda(e) := \langle \text{heap}, k \rangle$），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），作废锁项并释放零字节区间。
+
+**释放 `delete p`**：
+
+前提（任一不满足即 `trap`）：
+
+- $\text{is\_heap}(p)$：不得释放栈指针；
+- $\text{live}(p)$：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
+- $p.\text{index} = 0$：指针必须位于对象锚点（分配/取址建立的 `data` 处），禁止释放带偏移指针。
+
+动作：
+
+1. $\Lambda(p.\text{lock\_ptr}) := \text{revoked}$（作废键；**锁项保留**于锁表，不释放）；
+2. 从 $\mathrm{dom}(\mu)$ 撤销块 $b = p.\text{data}$ 的字节区间；
+3. 指针 $p$ 的字段保持不变，但此后 $\text{live}(p)$ 恒为假。
+
+协议性质：由于键唯一性（定义 10 推论），`revoked` 条目即使被复用也只获得新键，旧指针的键永不重新匹配（锁不复用，第 4 章引理）；双释放与 UAF 均由 `live` 前提捕获。对重锚定子对象指针（如 `&s.field`）执行 `delete` 时，语义为释放其所属的整个分配，随后该分配的一切派生指针（无论锚定方式）均时序失效。协议性质的成因：`delete` 动作是「作废键 + 撤销块」两步的原子组合，作废发生在释放之前（规则 3.6.2 动作①②），故即使释放后分配器立即复用该地址，锁项已不匹配旧键，派生指针的时序失效与地址是否复用无关。
+
+**工作示例（堆配置转移序列）**：设初始配置 $\sigma_0$ 满足 $\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$（§2.1）。执行 `dyn u64[3]`：取新鲜地址 $b$，分配 $[b, b + 3 \cdot 8)$ 并入 $\mu_1$；取锁项 $e$（新鲜），$k \leftarrow \mathrm{Gen}()$，$\Lambda_1(e) := \langle \text{heap}, k \rangle$；返回 $p = \langle b, e, k, 0, 3 \rangle$。此时 $p.\text{lock\_ptr} = e \in \mathrm{dom}(\Lambda_1)$，$\mathrm{live}(p)$（定义 8）与 $\mathrm{in\_bounds}(p, n)$（$n \le 3$，定义 12）均成立。执行 `delete p`：三前提检查（`is_heap`、`live`、`index = 0`，规则 3.6.2）均通过；动作 $\Lambda_2(e) := \text{revoked}$，块区间自 $\mathrm{dom}(\mu_2)$ 撤销。此后 $\Lambda(p.\text{lock\_ptr}) = \text{revoked}$，`live(p)` 恒假；任何对 `p` 或派生指针的读写在 `live` 处 trap。若随后新分配 `dyn u64` 复用条目 $e$：$\Lambda_3(e) := \langle \text{heap}, k' \rangle$ 且 $k' \ne k$（定义 10 键唯一性），携带旧键 $k$ 的指针 `p` 依旧不匹配，时序安全不因条目复用而失效（L-NOREUSE，§4.5）。
+
+**工作示例（realloc 转移）**：接上例，对 `p = ⟨b, e, k, 0, 3⟩` 执行 `realloc(p, 5)`（规则 3.7.1）：先按规则 3.6.1 分配新块 `b'`、新锁项 `e'`、新键 `k'' ← Gen()`，$\Lambda(e') := \langle \text{heap}, k'' \rangle$；再按规则 3.10.1 拷贝 $m = \min(3, 5) = 3$ 个元素（两端 `in_bounds` 均成立）；最后按规则 3.6.2 释放旧块，$\Lambda(e) := \text{revoked}$。结果 `⟨b', e', k'', 0, 5⟩`；`p` 此后 `live` 恒假，旧键 $k$ 永不重新匹配。
+
+### 2.6 栈帧进入/退出协议
+
+栈采用**帧级锁**：每个栈帧一个活动锁项，帧内全部取址产生的指针共享该锁项与键。
+
+**帧进入 `enter f`**：
+
+1. 取锁表条目 $e_f$（新鲜或复用），$k_f \leftarrow \mathrm{Gen}()$；
+2. $\Lambda(e_f) := \langle \text{stack}, k_f \rangle$；当前帧锁为 $\langle e_f, k_f \rangle$；
+3. 在帧栈块上为局部变量分配地址（并入 $\mathrm{dom}(\mu)$）。
+
+**定义 15（帧内取址）**：指向当前帧锁 $\langle e_f, k_f \rangle$：
+
+- 标量局部 $x$：$\&x = \langle a_x, e_f, k_f, 0, 1 \rangle$；
+- 数组局部 $a : T[m]$：$\&a = \langle a_a, e_f, k_f, 0, m \rangle$；
+- 字段/元素取址 `&s.field`、`&arr[i]`：按 §2.4 锚定规则重新锚定，锁字段保持 $\langle e_f, k_f \rangle$（精确规则见第 3 章）。
+
+定义 15 的统一结构：帧内全部取址共享同一锁项 $e_f$ 与键 $k_f$，差异只在 `data`（槽地址）与 `size`（`cap` 容量）；因此同一帧内任意两个取址结果在 `live` 上同真同假，帧退出后一并失效。取址不访问内存（规则 3.5.1 无 trap 前提），故帧内取址在任何时刻（包括帧锁已作废后）都可执行，其后续读写才受 `live` 约束。
+
+**帧退出 `exit f`**：
+
+1. $\Lambda(e_f) := \text{revoked}$（作废帧锁键；锁项保留）；
+2. 将帧栈块的区间自 $\mathrm{dom}(\mu)$ 撤销；
+3. 帧内产生的所有指针此后 $\text{live}$ 恒为假：对已退出帧地址的访问（栈悬垂）在访问前提处 `trap`。
+
+**re-key 协议**：每次帧进入都调用 $\mathrm{Gen}$ 获得新键 $k_f$，即使该帧被递归或循环复用于同一条目 $e_f$，新键与上次调用生成的键也不同（定义 10）。因此上一轮调用遗留的栈指针无法匹配本轮帧锁（对栈帧锁复用缺陷的修订，第 6 章）。**粒度边界**：本协议以栈帧为守卫粒度；内层作用域的悬垂防护不在本协议内，作为局限在第 11 章讨论。
+
+**工作示例（栈帧配置转移序列）**：设函数 `g` 的帧锁条目为 $e_g$。首次调用 `g`：`enter g` 取条目 $e_g$、$k_1 \leftarrow \mathrm{Gen}()$、$\Lambda(e_g) := \langle \text{stack}, k_1 \rangle$（规则 3.8.1）；帧内 `&x` 得 $\langle a_x, e_g, k_1, 0, 1 \rangle$（定义 15）。`exit g`：$\Lambda(e_g) := \text{revoked}$（规则 3.8.2），该指针 `live` 恒假。第二次调用 `g` 复用同一条目 $e_g$：re-key 得 $k_2 \ne k_1$，$\Lambda(e_g) := \langle \text{stack}, k_2 \rangle$；上一轮遗留指针携带 $k_1$，与当前帧锁 $\langle \text{stack}, k_2 \rangle$ 在 `live` 处不匹配，栈悬垂访问 trap。若帧 `g` 内存在内层块 `{ let y; ... }`，`&y` 仍以帧锁 $\langle e_g, k_2 \rangle$ 守卫；`y` 出作用域后帧仍活动，帧级锁对该地址的访问不设防，属第 11 章粒度局限（§6.3）。
+
+### 2.7 指针操作与表示派生
+
+本节给出表示层派生关系，供第 3 章操作规则引用。表示层的整体原则：胖指针的 5 个字段中，只有 `index` 是可变的派生分量（算术/重锚定/折算都只改 `index` 或建立新锚），`data`/`lock_ptr`/`key`/`size` 在指针整个生命周期内不变；因此「同对象指针共享锁项与键」（§2.4 锚定规则）是表示层的结构性事实，派生指针的时序失效与母指针同步（L-NOREUSE/L-REKEY 的应用对象）。
+
+- **指针算术 $p \pm n$**：仅更新 `index`：$p + n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} + n, \text{size} \rangle$；结果须良构（定义 13）。`data`/`lock_ptr`/`key`/`size` 不变。
+- **指针减法 $p_1 - p_2$**：要求 $\text{lock\_ptr}$ 相等（同对象），结果为元素差 $\text{index}_1 - \text{index}_2$；规则见第 3 章。
+- **比较**：同对象比较基于 `index`；`live` 不作为比较前提（第 3 章）。
+- **索引与解引用**：`p[i]` 与 `*p` 的访问前提为 `safe_access`（定义 14）；规则见第 3 章。
+- **整段拷贝**：跨度 $m$ 元素的拷贝对两端指针各要求 `in_bounds(p, m)` 与 `in_bounds(q, m)`；规则见第 3 章。
+
+表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放；其 `lock_ptr` 指向锁表而非块内元数据，故元数据不与被保护数据相邻存储（对「内联元数据可伪造」弱点的缓解依据见第 6 章）。
+
+**派生关系工作示例**：设 `p = ⟨b, e, k, 1, 4⟩`（锚定 `u64[4]` 的中间位置）。
+`p + 2` 仅更新 `index`：得 `⟨b, e, k, 3, 4⟩`，`data`/`lock_ptr`/`key`/`size` 均不变（§2.7 指针算术）。
+`p - 1` 得 `⟨b, e, k, 0, 4⟩`。
+`p[2]` 归约为 `*(p + 2)`：先算术得 `⟨b, e, k, 3, 4⟩` 再按 `in_bounds` 检查解引用（规则 3.2.3）。
+`&p[2]` 重锚定：`data' = addr(b, 1) + 2·8`，`index' = 0`、`size' = 1`，锁继承（规则 3.5.3）。
+`q = &p[2]` 与 `p + 3` 的差异：前者 `(data, index) = (b + 24, 0)`、后者 `(b, 3)`，虽指向同一字节地址但表示不同，相等比较（规则 3.4.2）判定为不相等：重锚定与算术是两种不同的指针产生途径，表示不可混同。
+
+该示例的结论推广：重锚定（`&p[i]`、`&s.field`）与算术（`p ± n`）在表示上不可互换，前者重置 `index` 并折算 `data`、后者只改 `index`；两种途径产生指向同一字节地址但 `(data, index)` 不同的指针。这一不可混同性是相等比较（规则 3.4.2）与 `delete` 锚点前提（规则 3.6.2）一致性的基础，也是 §7.1 ElementPtr 双语义拆分（算术 vs 重锚定）的动机。
+
+## 3. 操作语义规则
+
+<!-- 章节上限: 400 行 -->
+
+本章为每个操作给出带 trap 的小步语义规则。规则基于第 2 章形式化机器（配置 $\langle \mu, \Lambda, C \rangle$、trap 吸收态，§2.1）与全部符号（`PtrVal`/`live`/`in_bounds`/`safe_access`/`is_heap`/`Gen`/`LockEntry` 等，定义 1-15），只引用不重定义；新定义自定义 16 起。每条规则标注对应 CFG 节点（`compiler/codegen/cfg/ir.py`），检查全部采用修订后设计：全访问检查 `in_bounds(p, n)`（`index + n ≤ size`）与锁表寻址的时序检查 `live(p)`。
+
+### 3.1 规则格式、指令集与公共约定
+
+**规则格式**：每条规则形如「操作名（→ CFG 节点）。前提：…；动作：…；结果：…。若前提不满足则 trap。」正常步进写作 $\langle \mu, \Lambda, C \rangle \longrightarrow \langle \mu', \Lambda', C' \rangle$；前提不满足时 $\longrightarrow \text{trap}$。`trap` 为吸收终止态（§2.1）：检查失败后不执行任何后续内存访问。
+
+**定义 16（操作指令集）**：本章给出小步规则的指令集（即 §2.1 所述指令集）：解引用读/写、索引读/写、指针算术、指针差、比较、取址、堆分配、释放、重分配、帧进入/退出、`bitcast`、整段拷贝。每条指令在 CFG 层的对应节点见表 3。
+
+表 3：源级操作与 CFG 节点映射
+
+| 源级操作 | 规则 | CFG 节点（`ir.py`） |
+|---|---|---|
+| 解引用读 `*p` | §3.2.1 | `Load` |
+| 解引用写 `*p = v` | §3.2.2 | `Store` |
+| 索引读 `p[i]` | §3.2.3 | `ElementPtr` + `Load` |
+| 索引写 `p[i] = v` | §3.2.4 | `ElementPtr` + `Store` |
+| 指针算术 `p + n` / `p − n` | §3.3.1-2 | `ElementPtr` |
+| 指针差 `p1 − p2` | §3.3.3 | `PtrDiff` |
+| 序/相等比较 | §3.4.1-2 | `Binary` |
+| 局部变量取址 `&x` | §3.5.1 | `VarPtr` / `Alloca` |
+| 字段取址 `&s.field` | §3.5.2 | `FieldPtr` |
+| 元素取址 `&arr[i]` | §3.5.3 | `VarPtr` + `ElementPtr` |
+| 堆分配 `dyn T` / `dyn T[n]` | §3.6.1 | `Malloc` |
+| 释放 `delete p` | §3.6.2 | `Delete` |
+| 重分配 `realloc(p, n)` | §3.7 | `Malloc` + `Delete` 组合 |
+| 帧进入 `enter f` / 帧退出 `exit f` | §3.8 | 帧级，CFG 无对应节点 |
+| `bitcast` | §3.9 | `Cast` |
+| 整段拷贝 | §3.10 | 现状库循环；建议 CFG 原语（第 7 章） |
+
+**定义 17（元素字节地址 `addr_T`）**：指针 `p` 指向类型 `T`，当前元素序号（相对 `p.index`）第 `i` 个元素的字节基址：
+
+$$\text{addr}_T(p, i) \triangleq p.\text{data} + (p.\text{index} + i) \cdot |T|$$
+
+$|T|$ 为 `T` 的字节大小（§2.4），在 CFG 层由 `SizeOf` 节点求值（`ir.py:135`）。解引用即 $i = 0$ 情形：$\text{addr}_T(p, 0) = p.\text{data} + p.\text{index} \cdot |T|$。`addr_T` 在数学整数上求值，无回绕（§2.4 单位与溢出约定）。
+
+**定义 18（访问足迹 `footprint`）**：跨度 $n \geq 0$ 个元素的访问所触及的位置集合：
+
+$$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle \mid 0 \le i < n,\; 0 \le o < |T| \} \subseteq \mathrm{Loc}$$
+
+`in_bounds(p, n)`（定义 12）保证足迹整体落在被访问对象内；对象已分配，故足迹 $\subseteq \mathrm{dom}(\mu)$。
+
+**one-past-end 处理**：`index = size` 的指针良构（定义 13），可存在与传递；但任何 $n \geq 1$ 的访问在 `in_bounds(p, n)` 处失败（$p.\text{index} + n \le p.\text{size}$ 不成立），故 one-past-end 不可读写。从 one-past-end 继续算术得 `index = size + 1 > size`，不满足良构性，在算术规则处 trap。
+
+**整数溢出防护**：本章规则按数学整数语义书写（无回绕）。实现须保证 `index + n`、`index · |T|`、`data + index · |T|` 等在 64 位域内不回绕（§2.4 约定）；实现侧检测到回绕时按 trap 处理（对应 §1.1 类 4）。
+
+**公共约定的使用形态**：规则正文统一采用「前提、动作、结果、trap 条件」四段式，前提用第 2 章谓词（`live`/`in_bounds`/`safe_access`/`is_heap`/`well_formed`）表达，动作与结果只改 μ、Λ 与指针字段，不引入求值上下文等额外机制；trap 条件即前提的否定，吸收态（§2.1）保证检查失败后无后续访问。读 §3.2-§3.10 时，前提集合与 §4 各不变量前提一一对应，这是 O-1/O-2a 枚举义务的文本依据。
+
+### 3.2 解引用与索引
+
+**规则 3.2.1（解引用读 `*p`）**（→ CFG `Load`）。前提：`safe_access(p, 1)`（定义 14），即 `live(p) ∧ in_bounds(p, 1)`；由定义 12，`in_bounds(p, 1) ⟺ 0 ≤ p.index ∧ p.index + 1 ≤ p.size`（全访问检查）。动作：读取 `footprint_T(p, 1) = {⟨addr_T(p, 0), o⟩ | 0 ≤ o < |T|}` 处存储的 `T` 值。结果：μ 不变，读得值参与后续计算。若前提不满足则 trap（悬垂读、越界读、one-past-end 读均在此 trap）。CFG 层：`Load` 节点（`ir.py:53`）；键与界检查插入于 `Load` 之前（第 7 章）。
+
+**示例与反例（解引用读）**：设 $p = \langle b, e, k, 0, 1 \rangle$（锚定 `dyn u64`）。`*p`：`live(p)` 成立（$\Lambda(e) = \langle \text{heap}, k \rangle$）、`in_bounds(p, 1)` 成立（$0 \le 0 \wedge 0 + 1 \le 1$），正常读得 $\mathrm{addr}_{\texttt{u64}}(p, 0) = b$ 处的值。若 `p` 已释放（$\Lambda(e) = \text{revoked}$）：`live(p)` 假，悬垂读 trap。若 $p = \langle b, e, k, 1, 1 \rangle$（one-past-end）：$1 + 1 > 1$，`in_bounds` 失败，trap。
+
+**规则 3.2.2（解引用写 `*p = v`）**（→ CFG `Store`）。前提：`safe_access(p, 1)`。动作：将 `v` 写入 `footprint_T(p, 1)` 全部位置。结果：μ 在 `footprint_T(p, 1)` 上更新为 `v`。若前提不满足则 trap。CFG 层：`Store` 节点（`ir.py:60`）。
+
+**示例与反例（解引用写）**：设 $p = \langle b, e, k, 0, 1 \rangle$（锚定 `dyn u64`）。`*p = 7`：`safe_access(p, 1)` 成立（$0 \le 0 \wedge 0 + 1 \le 1$），μ 在 `footprint = {⟨b, o⟩ | 0 ≤ o < 8}` 处更新为 7。写与读共享同一组前提（定义 14），故越界写与越界读在同一检查点被拒；对悬垂指针 `*p = 7` 在 `live` 处 trap，写不产生任何部分更新（§2.1 吸收态）。
+
+**规则 3.2.3（索引读 `p[i]`）**（→ CFG `ElementPtr` + `Load`）。语义：`p[i]` 是 `*(p + i)` 的语法糖：先按规则 3.3.1 得指针 `p + i`，再按规则 3.2.1 解引用。前提：`i` 为 `u64` 且 `safe_access(p, i + 1)`；由定义 12 等价于 `live(p) ∧ 0 ≤ p.index + i ∧ p.index + i + 1 ≤ p.size`（对第 `i` 个元素的全访问检查，覆盖起点与终点）。动作：读取 `footprint_T(p, i)` 处的值。结果：读得值。若前提不满足则 trap（越界索引、悬垂索引、one-past-end 元素访问）。现状注：库层 `p[i]` 经 `Index` trait 实现（`lib/core/pointer.an:5-9` 的 `*self + *index`；`lib/core/array.an:21-28` 先作 `*index >= N` 检查再算术）；该现状属 §3.11 描述范围，非规则本体。CFG 层：`p + i` 编译为 `ElementPtr`、解引用为 `Load`，故 `p[i]` 归约为 `ElementPtr` + `Load`。
+
+**示例与反例（索引读）**：设 $p = \langle b, e, k, 0, 3 \rangle$（锚定 `dyn u64[3]`）。`p[0]`：$0 \le 0 \wedge 0 + 0 + 1 \le 3$ 成立，正常读得第 0 元素。`p[2]`：$0 + 2 + 1 \le 3$ 成立，正常。`p[3]`：$0 + 3 + 1 = 4 > 3$，前提不满足，越界索引 trap（one-past-end 良构可存在，但不可读写，定义 13）。`p[18446744073709551615]`：按 §2.4 数学整数语义 $0 + 2^{64}-1 + 1 = 2^{64} > 3$，`in_bounds` 恒不成立，无回绕误判，trap（类 4 防护）。
+
+**规则 3.2.4（索引写 `p[i] = v`）**（→ CFG `ElementPtr` + `Store`）。前提：`safe_access(p, i + 1)`。动作：写 `v` 至 `footprint_T(p, i)`。结果：μ 更新。若前提不满足则 trap。CFG 层：`ElementPtr` + `Store`。
+
+**示例与反例（索引写）**：设 $p = \langle b, e, k, 0, 3 \rangle$。`p[1] = 42`：$0 \le 1 \wedge 1 + 1 \le 3$ 成立，μ 在 $\mathrm{footprint}_{\texttt{u64}}(p, 1) = \{\langle b + 8, o \rangle \mid 0 \le o < 8\}$ 处更新。`p[3] = 42`：$3 + 1 > 3$，越界写 trap，μ 无任何更新（trap 在访问发生前，§2.1）。`p[0] = v` 后若 `p` 悬垂：`live(p)` 假，写 trap。
+
+### 3.3 指针算术与指针差
+
+**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size`（结果良构，定义 13；`n` 为 `ℤ`，可为负，即 `p − |n|` 情形）且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$（§2.7）。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界的算术）。算术不访问内存，故不要求 `live`；对悬垂指针的算术本身合法，其后续读写由对应规则捕获。CFG 层：`builder.py:928-932` 将 `ptr + int` 路由为 `ElementPtr`。
+
+**示例与反例（指针算术）**：设 $p = \langle b, e, k, 1, 3 \rangle$。`p + 1`：$0 \le 2 \le 3$，得 $\langle b, e, k, 2, 3 \rangle$。`p + 2`：$0 \le 3 \le 3$，得 one-past-end $\langle b, e, k, 3, 3 \rangle$，良构成立、可传递，但对其任何 $n \ge 1$ 访问在 `in_bounds` 失败（定义 12-13）。`p + 3`：$4 > 3$，良构失败，算术本身 trap。`p - 1`：$0 \le 0 \le 3$，得 $\langle b, e, k, 0, 3 \rangle$，回到锚点。对悬垂指针 `dyn u64` 释放后执行算术不 trap（算术不查 `live`），其后续读写由 3.2.x 规则捕获。
+
+**规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。CFG 层：`builder.py:934-941` 先将偏移取负再路由为 `ElementPtr`。
+
+**示例（指针减）**：设 `p = ⟨b, e, k, 2, 4⟩`。`p − 2`：$0 \le 0 \le 4$，得 `⟨b, e, k, 0, 4⟩`（回到锚点）。`p − 3`：$0 - 3 = -3 < 0$，负方向越界，良构失败，trap。`p − 0` 得 `p` 自身。指针减的负向边界与正向对称：`index` 不允许越过 0（负偏移在 `ℤ` 下良构性失败，定义 13），与 §1.1 类 1 的负偏移越界防护一致。
+
+**规则 3.3.3（指针差 `p1 − p2`）**（→ CFG `PtrDiff`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象，§2.7）；两指针良构；`p1.index − p2.index` 无回绕。动作：无（不访问内存，不要求 `live`）。结果：元素差 `p1.index − p2.index`（`ℤ` 值）。若前提不满足（异对象指针差）则 trap。CFG 层：`PtrDiff` 节点（`ir.py:45`、`builder.py:950-952`）。
+
+**示例与反例（指针差）**：设 `p = ⟨b, e, k, 1, 3⟩`、`q = ⟨b, e, k, 3, 3⟩`（同对象派生）。`q − p`：`lock_ptr` 相等，结果为 $3 - 1 = 2$（元素差）。设 `r = ⟨b', e', k', 0, 3⟩`（异对象）：`r − p` 的 `lock_ptr` 不相等，异对象指针差 trap。设 `s = ⟨b, e, k, 3, 3⟩`（one-past-end）与 `p`：`s − p = 2` 合法（指针差不要求可访问，只要求同对象良构）。
+
+### 3.4 比较
+
+**规则 3.4.1（序比较 `p1 < p2`、`≤`、`>`、`≥`）**（→ CFG `Binary`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象）；`live` 不作为前提（§2.7：比较不访问内存，时序失效的指针仍可比较）。动作：按 `index` 比较，如 `p1 < p2 ⟺ p1.index < p2.index`。结果：布尔值。若前提不满足（跨对象序比较）则 trap。CFG 层：`Binary` 节点（`ir.py:75`，操作符 `BinaryOperator.Lt` 等）。
+
+**示例与反例（序比较）**：设 `p = ⟨b, e, k, 1, 3⟩`、`q = ⟨b, e, k, 3, 3⟩`（同对象）：`p < q` 为真（$1 < 3$）。异对象 `r = ⟨b', e', k', 0, 3⟩`：`p < r` 的 `lock_ptr` 不相等，跨对象序比较 trap（序比较不定义跨对象次序）。one-past-end 指针 `q`（`index = 3 = size`）与 `p` 序比较合法：良构性允许其存在（定义 13），比较不要求可访问。
+
+**规则 3.4.2（相等比较 `p1 == p2`、`p1 != p2`）**（→ CFG `Binary`）。前提：无（任何良构指针可比较，允许跨对象）。动作：比较 `(p1.data, p1.index)` 与 `(p2.data, p2.index)`。因 `data` 由分配/取址唯一锚定，异对象指针 `data` 不同，恒不相等。结果：布尔值。无 trap 前提。CFG 层：`Binary` 节点。
+
+**示例与反例（比较）**：设 `p = ⟨b, e, k, 1, 3⟩`、`q = ⟨b, e, k, 1, 3⟩`（同一锚定对象的同一位置）：`p == q` 为真。`p + 1` 与 `q`：`(data, index)` 分别为 `(b, 2)` 与 `(b, 1)`，不等。异对象 `r = ⟨b', e', k', 0, 3⟩`：`p == r` 恒假（`data` 不同），不 trap（相等比较允许跨对象）。已释放指针 `p` 与自身比较仍为真：比较不访问内存、不要求 `live`（§2.7），时序失效不使比较失效。
+
+### 3.5 取址与子对象锚定
+
+**定义 19（锚定容量 `cap`）**：类型 `T` 的自有元素容量：
+
+$$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{cases}$$
+
+标量取址容量为 1（仅自身）；数组取址容量为数组长度（定义 15）。
+
+**规则 3.5.1（局部变量取址 `&x`）**（→ CFG `VarPtr` / `Alloca`）。前提：`x` 为当前帧 `f` 的局部变量（帧锁 ⟨e_f, k_f⟩，定义 15）。动作：取 `x` 的帧栈地址 `a_x`（CFG 层由 `Alloca` 分配栈槽、`VarPtr` 取槽地址）。结果：标量 `x` 得 `⟨a_x, e_f, k_f, 0, 1⟩`；数组 `x : T[m]` 得 `⟨a_x, e_f, k_f, 0, m⟩`（`cap`）。取址不访问内存，无 trap 前提。CFG 层：`VarPtr`（`ir.py:15`、`builder.py:892-895`）＋`Alloca`（`ir.py:22`、`builder.py:897-899`）。
+
+**规则 3.5.2（字段取址 `&s.field`）**（→ CFG `FieldPtr`）。前提：`in_bounds(p_s, 1)`（`s` 整体在界内，非 one-past-end）；设字段 `field : T'` 在 `s` 内的字节偏移为 `δ`（由类型布局确定，`0 ≤ δ` 且 `δ + |T'| ≤ |S|`）。动作（子对象锚定，§2.4）：`data' := addr_T(p_s, 0) + δ`（字段字节基址），`index' := 0`，`size' := cap(T')`；`lock_ptr`/`key` 继承自 `s`（同对象共享锁项）。结果：`⟨data', p_s.lock_ptr, p_s.key, 0, cap(T')⟩`。若前提不满足则 trap（对 one-past-end 的 `s` 取字段）。CFG 层：`FieldPtr`（`ir.py:29`、`builder.py:901-903`）。
+
+**示例与反例（字段取址）**：设结构 `struct S { a: u64, b: u8 }`，`|S| = 16`、`|u64| = 8`、`|u8| = 1`，字段 `b` 偏移 `δ = 8`。锚定 `s = ⟨b_s, e, k, 0, 1⟩`：`&s.b` 得 `⟨b_s + 8, e, k, 0, 1⟩`（`data' = addr(b_s, 0) + 8`，`index' = 0`，`size' = cap(u8) = 1`）。对 one-past-end 的 `s = ⟨b_s, e, k, 1, 1⟩` 取字段：`in_bounds(p_s, 1)` 失败（$1 + 1 > 1$），trap。`&s.a` 得 `⟨b_s, e, k, 0, 1⟩`，与 `s` 同 `data`、不同锚定语义（索引已重锚定归零）。
+
+**规则 3.5.3（元素取址 `&arr[i]`）**（→ CFG `VarPtr` + `ElementPtr`）。前提：`safe_access(p, i + 1)`（元素 `i` 在界内且时序有效）。动作（子对象锚定）：`data' := addr_T(p, i)`，`index' := 0`，`size' := cap(T) = 1`；锁继承。结果：`⟨addr_T(p, i), p.lock_ptr, p.key, 0, 1⟩`。若前提不满足则 trap。CFG 层：`VarPtr`（数组基址）＋`ElementPtr`（`builder.py:946-948`，基址 + `i`）。注：`&s.field` 与 `&arr[i]` 的 `index` 语义即「重新锚定」——地址折算至子对象基址、`index` 归零、`size` 取子对象容量（§2.4 锚定规则）。
+
+**示例与反例（元素取址）**：设 `p = ⟨b, e, k, 0, 3⟩`（锚定 `u64[3]`）。`&p[1]`：`safe_access(p, 2)` 成立（$0 \le 0 \wedge 0 + 2 \le 3$），得 `⟨b + 8, e, k, 0, 1⟩`（`addr = b + 1·8`）。`&p[3]`：`safe_access(p, 4)` 失败（$0 + 4 > 3$），trap（one-past-end 元素不可取址）。已释放 `p` 的 `&p[0]`：`live(p)` 假，trap。对 `&p[1]` 所得指针的 `*` 解引用：其 `size = 1`，任何单元素访问均在界内，但释放整个块后该指针同样时序失效（锁继承自 `p`，§2.4 锚定规则）。
+
+### 3.6 分配与释放
+
+**规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），分配字节区间 `[b, b + n·|T|)`（单元素 `n = 1`）并入 μ；取锁项 `e`（新鲜或复用 `revoked` 条目），`k ← Gen()`（定义 10）；`Λ(e) := ⟨heap, k⟩`。结果：`⟨b, e, k, 0, n⟩`。CFG 层：`Malloc` 节点（`ir.py:67`、`builder.py:914-916`）；第 7 章在 `Malloc` 处插入锁项分配与键生成。
+
+**示例（分配）**：`dyn u64` 返回 `⟨b, e, k, 0, 1⟩`：`size = 1`，唯一可界内访问为单元素。`dyn u64[3]` 返回 `⟨b, e, k, 0, 3⟩`。`dyn u64[0]` 返回 `⟨b, e, k, 0, 0⟩`：`size = 0`，一切 $n \ge 1$ 访问在 `in_bounds` 失败（§2.5），空数组不可读写；其 `delete` 仍合法（`is_heap ∧ live ∧ index = 0`，规则 3.6.2）。两次分配得到的键 $k_1 \ne k_2$（定义 10 键唯一性），各自锁项独立。
+
+**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0`（锚点指针，禁止释放带偏移指针）。动作：① `Λ(p.lock_ptr) := revoked`（作废键，锁项保留）；② 从 `dom(μ)` 撤销块 `[p.data, p.data + p.size·|T|)`。结果：`p` 及同对象派生指针此后 `live` 恒为假（键不再匹配）。若前提不满足则 trap（双释放、栈指针释放、带偏移释放）。CFG 层：`Delete` 节点（`ir.py:100`）。
+
+**示例与反例（释放）**：设 $p = \langle b, e, k, 0, 3 \rangle$。`delete p` 正常：`is_heap(p)`（$\Lambda(e) = \langle \text{heap}, k \rangle$）、`live(p)`、`index = 0` 均满足，动作后 $\Lambda(e) := \text{revoked}$。再 `delete p`：$\Lambda(e) = \text{revoked}$，`live(p)` 为假，双释放 trap。带偏移指针 $q = \langle b, e, k, 2, 3 \rangle$：`q.index = 2 \ne 0`，禁止释放带偏移指针，trap（重锚定子对象指针 `&arr[2]` 亦同）。对栈指针 `&x` 执行 `delete`：`is_heap` 为假（帧锁为 `⟨stack, k_f⟩`），trap。
+
+### 3.7 重分配 realloc
+
+**规则 3.7.1（重分配 `realloc(p, n)`）**（→ CFG `Malloc` + `Delete` 组合）。前提：`is_heap(p) ∧ live(p) ∧ p.index = 0` 且 `n ≥ 0`。动作（§2.5 协议组合）：① 按规则 3.6.1 分配新块 `b'`、新锁项 `e'`、新键 `k' ← Gen()`，大小 `n·|T|`；② 按规则 3.10.1 整段拷贝 `m = min(p.size, n)` 个元素从旧块至新块（由新块刚分配与 `in_bounds(p, m)` 保证两端前提）；③ 按规则 3.6.2 释放旧块。结果：`⟨b', e', k', 0, n⟩`；原指针 `p` 失效。若任一前提不满足则 trap。CFG 层：现状编译为 `Malloc`（新块）＋拷贝（库循环或建议原语）＋`Delete`（旧块）的组合，无独立 `Realloc` 节点；新原语建议见第 7 章。
+
+**示例与反例（重分配）**：设 `p = ⟨b, e, k, 0, 3⟩`。`realloc(p, 5)`：拷贝 `m = min(3, 5) = 3` 个元素至新块，`in_bounds(p, 3)` 成立（$0 + 3 \le 3$），得 `⟨b', e', k', 0, 5⟩`，原 `p` 失效（其锁项已作废）。`realloc(p, 0)`：拷贝 `m = 0` 个元素（空拷贝），得 `⟨b', e', k', 0, 0⟩`。带偏移指针 `q = ⟨b, e, k, 2, 3⟩` 上执行 `realloc`：`q.index ≠ 0`，前提不满足，trap。已释放指针上 `realloc`：`live` 假，trap。
+
+### 3.8 栈帧进入与退出（re-key 协议）
+
+本组为帧级操作，作用于锁表与帧栈块，**CFG 层无对应节点**：帧进入/退出由函数调用协议整体承载（`Call`/`Invoke`/`Ret` 节点），不单独成节点。帧级操作不产生指针值、不访问内存，其作用体现在两个侧面：进入时建立帧锁（规则 3.8.1）、退出时作废帧锁（规则 3.8.2）；帧内取址（定义 15）引用当前帧锁生成指针，故帧锁的建立与作废直接决定帧内指针的时序有效性。
+
+**规则 3.8.1（帧进入 `enter f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：取锁项 `e_f`（新鲜或复用），`k_f ← Gen()`（**re-key：每次进入生成新键**，定义 10 保证与上次进入不同）；`Λ(e_f) := ⟨stack, k_f⟩`；当前帧锁 := `⟨e_f, k_f⟩`；帧栈块区间并入 `dom(μ)`。结果：帧内 `&x` 等取址以 `⟨e_f, k_f⟩` 为帧锁（定义 15）。
+
+**规则 3.8.2（帧退出 `exit f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：`Λ(e_f) := revoked`（作废帧锁键，锁项保留）；帧栈块区间自 `dom(μ)` 撤销。结果：帧内产生的全部指针此后 `live` 恒为假；对已退出帧地址的任何后续访问在访问规则处 trap（栈悬垂防护）。
+
+re-key 的时序意义：即使帧递归/循环复用条目 `e_f`，本轮键与上轮不同（定义 10），上轮遗留栈指针无法匹配本轮帧锁——对栈帧锁复用缺陷的修订（第 6 章）。
+
+**示例（帧进入/退出）**：`enter f` 后帧内 `&x`（标量）得 `⟨a_x, e_f, k_f, 0, 1⟩`、`&a`（数组 `u64[3]`）得 `⟨a_a, e_f, k_f, 0, 3⟩`（定义 15）。`exit f` 后两指针 `live` 恒假；对 `&x` 地址的读写经 `Λ(e_f) = revoked` 检查失败而 trap（栈悬垂）。帧 `f` 二次进入时 re-key 得新键，递归调用同一函数时每一层各有新键，任一层的返回悬垂指针均不匹配更深层的帧锁（L-REKEY）。
+
+### 3.9 bitcast
+
+**规则 3.9.1（`bitcast`）**（→ CFG `Cast`）。前提：第 8 章类型约束成立——pointee 由 `T` 改为 `U` 时布局兼容（`p.index·|T|` 与 `p.size·|T|` 均被 `|U|` 整除，不破坏对齐）；不访问内存，无 `live`/`in_bounds` 检查。动作：5 字段中 `data`/`lock_ptr`/`key` 不变，按字节长度重折算元素单位：`size' := ⌊(p.size·|T|)/|U|⌋`，`index' := ⌊(p.index·|T|)/|U|⌋`。结果：`⟨p.data, p.lock_ptr, p.key, index', size'⟩`。若前提不成立则为非良构程序（编译期拒绝，运行时规则不适用）。CFG 层：`Cast` 节点（`ir.py:122`、`builder.py:971-973`）。现状：`compiler/analysis/lowering/expr_checker.py:132-157` 允许任意指针转任意指针，第 8 章收紧。
+
+**示例（bitcast 折算）**：设 `p = ⟨b, e, k, 1, 4⟩` 且 pointee `u64`（`|u64| = 8`），转换为 `u8*`（`|u8| = 1`）：`|u8| = 1` 整除 `|u64| = 8`，前提成立；`index' = ⌊1·8/1⌋ = 8`、`size' = ⌊4·8/1⌋ = 32`，得 `⟨b, e, k, 8, 32⟩`（元素单位由 8 字节改为 1 字节）。反向 `u8*` 转 `u64*`：须 `|u64| = 8` 整除字节跨度，若当前 `index·|u8|` 非 8 的倍数则折算非整、前提不成立，编译期拒绝。`lock_ptr`/`key` 不变使时序检查在折算后依然有效。
+
+### 3.10 整段拷贝
+
+**规则 3.10.1（整段拷贝 `memcpy(dest, src, m)` / `memmove`）**（现状：库循环；建议 CFG 原语）。前提：`safe_access(dest, m) ∧ safe_access(src, m)`（两端各全访问检查，定义 14；`m ≥ 0`；`memmove` 允许区间重叠，`memcpy` 语义上要求无重叠或行为一致）。动作：语义为 `m` 次单元素拷贝的复合——对 `i = 0..m−1` 按规则 3.2.3/3.2.4 执行 `dest[i] := src[i]`；两端 `in_bounds(p, m)` 一次性检查通过后全程不再逐元素检查。结果：`dest` 指向的 `m` 个元素与 `src` 相同，μ 相应更新。若任一前提不满足则 trap（拷贝开始前 trap，不产生部分写入）。CFG 层：现状无独立节点——`lib/core/mem.an:4-14` 的 `memcpy`/`memmove` 为 for 循环逐元素拷贝（每个元素编译为 `ElementPtr` + `Load`/`Store`，各自检查）；建议新增 CFG 原语 MemCopy（单指令携带 `m` 与两端指针，一次性 `in_bounds(p, m)` 检查），设计见第 7 章。
+
+**示例与反例（整段拷贝）**：设 `dest = ⟨b_d, e_d, k_d, 0, 4⟩`、`src = ⟨b_s, e_s, k_s, 0, 4⟩`（各锚定 `dyn u64[4]`）。`memcpy(dest, src, 4)`：两端 $0 \le 0 \wedge 0 + 4 \le 4$ 均成立，一次性检查通过后整段拷贝，μ 更新 4 个元素。`memcpy(dest, src, 5)`：`dest` 端 $0 + 5 > 4$，前提不满足，拷贝开始前 trap，无部分写入（§2.1 吸收态）。设 `src` 已释放（$\Lambda(e_s) = \text{revoked}$）：`live(src)` 假，前提不满足，trap。设 `src = ⟨b_s, e_s, k_s, 3, 4⟩`（one-past-end 前一位）且 `m = 2`：$3 + 2 > 4$，`in_bounds(src, 2)` 失败，trap。
+
+### 3.11 现状 vs 修订：检查差异说明（非规则）
+
+本节描述现状实现与被修订的旧检查，**不作为规则**；本章规则本体（§3.2-§3.10）全部采用修订后设计。
+
+- **旧空间检查（已修订，只验起点）**：现状原型 `tests/experimental/ptr/ptr.an:321`（堆索引）与 `:313`（栈索引）用 `index * sizeof(T) + self.offset < mb.size`（栈为 `< self.key_or_len`），仅验证访问**起点**字节在界内；`:340`（堆解引用）用 `self.offset < mb.size`，同样只验起点。它们无法捕获「起点在界内、区间越过对象末尾」的多元素越界。`lib/core/array.an:23` 用 `*index >= N`、`lib/core/pointer.an:5-9` 的 `Index` 仅做 `*self + *index` 算术，同样只验起点或不检查。旧检查的三处落点（堆索引/栈索引/堆解引用）各自独立实现，检查形态不一，漂移由此产生。
+- **旧时序检查（已修订）**：现状 `ptr.an:46-49` 的 `__key_lock_match` 读取块内联的 `MemoryBlock.lock` 比较，属内联元数据方案；修订后 `live(p)` 经锁表寻址 `Λ(p.lock_ptr)` 比较键（定义 8），锁表带外存储使时序查找永不访问已释放内存（定义 7）。
+- **修订后（本章规则采用）**：全访问检查 `in_bounds(p, n) ⟺ 0 ≤ index ∧ index + n ≤ size`（定义 12，§3.2-§3.10 各读、写、拷贝规则的前提）；时序检查 `live(p)`（定义 8）。两者合为 `safe_access(p, n)`（定义 14）。
+
+差异的后果归纳：旧检查的可放行集合与修订后检查的可放行集合之差，恰好是多元素越界、one-past-end 附近访问与内联锁条件下的时序失效三类形态（§1.1 类 1-2、§6.4 反例）。§3.11 与 §3.2-§3.10 的关系是「对照记录 vs 规则本体」：本章规则全部按修订后设计陈述，旧检查只在本节作为被替换对象出现，不作为任何规则的前提或引理来源（对应 §4.2 对照说明与 R6 哨兵：旧规则形态不进入第 2-5 章规则）。
+
+## 4. 不变量与引理
+
+<!-- 章节上限: 300 行 -->
+
+本章把第 2-3 章表示与规则中的安全性要求升格为可陈述、可引用的不变量与引理。第 5 章主可靠性定理以 S1、T1、T-TYPE 三条不变量为直接前提，以 L-KEY、L-NOREUSE、L-REKEY 为中间结论支撑 T1 的作废永久性一侧。每条 = 陈述（闭公式）+ 论证梗概 + 证明义务，不给出 PLDI 级完整证明（明确排除）；论证范围限于第 1 章 §1.3 的 in 类程序：单线程、不跨 FFI、攻击者无任意写前置，且 `bitcast` 受第 8 章约束。符号全部沿用第 2-3 章（定义 1-19），不重复定义；新定义自编号 20 起。
+
+### 4.1 陈述规范、新定义与证明义务编号
+
+**陈述规范**：不变量与引理以全称闭式给出，自由变量全部显式量化。谓词带时间下标 $t$ 时，表示按第 $t$ 步后配置 $\langle \mu_t, \Lambda_t, C_t \rangle$ 的锁表 $\Lambda_t$ 求值（定义 8、定义 12），是既谓词的实例化而非新谓词。证明义务编号 O-1 至 O-6 与各条一一对应，供第 5 章逐条引用；带小写字母后缀（如 O-2a）的为同一义务的子义务。
+
+**符号闭合说明（R3 核对）**：本章陈述仅使用两类符号：第 2-3 章已定义（`PtrVal`/`live`/`in_bounds`/`is_heap`/`Gen`/`LockEntry`/`LockTable`，定义 1-19）与本章自定义（定义 20-23：`Active`、`key_of`、`Trace`、`acc_t`、`del_t`、`ok`、`dyn_type_t`、`static_type`）。时间下标 $t$ 与量词 $\forall t, \forall p, n$ 是逻辑语言的一部分而非新记号。全部符号闭式可用，无自由变量泄漏；第 5 章只引用不重定义（§5.1 声明）。
+
+**定义 20（活动锁项 `Active` 与当前键 `key_of`）**：
+
+$$\mathrm{Active}(\Lambda) \triangleq \{ e \in \mathrm{dom}(\Lambda) \mid \Lambda(e) \neq \text{revoked} \}$$
+
+$\mathrm{key\_of}(\Lambda, e)$：当 $\Lambda(e) = \langle \text{kind}, k \rangle$（定义 6）时等于 $k$；当 $\Lambda(e) = \text{revoked}$ 时无定义。
+
+**定义 21（运行轨迹 `Trace`）**：轨迹 $\sigma$ 是配置的有限或无限序列 $\sigma_0 \longrightarrow \sigma_1 \longrightarrow \cdots$，其中 $\sigma_0 = \langle \mu_0, \Lambda_0, C_0 \rangle$ 为初始配置（§2.1，$\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$），每步按第 3 章规则转移，直至 `trap` 或程序终止。$\Lambda_t$、$\mu_t$ 为 $\sigma_t$ 的锁表与存储分量；$\sigma \in \mathrm{Trace}(P)$ 表示 $P$ 的一次合法运行（单步均按第 3 章规则转移）。
+
+**定义 22（访问事件与成功判定 `ok`）**：轨迹第 $t$ 步对指针 $p$ 执行一次读、写或整段拷贝（跨度 $n \ge 1$）记事件 $\mathrm{acc}_t(p, n)$；对 $p$ 执行释放记事件 $\mathrm{del}_t(p)$。事件成功 $\mathrm{ok}(\cdot)$ 当且仅当该步按第 3 章规则正常转移（前提满足，非 `trap`）。事件记法的读法：`acc_t`/`del_t` 把「某步发生某操作」从规则转移中抽象出来，使第 4 章不变量能对「事件成功」而非「配置转移」陈述；`ok` 与规则前提的等价由第 3 章规则结构保证（前提满足则正常转移，否则 trap），这正是定理 5.1 `ok(e) ⟺ pre(e)` 的事件层来源。
+
+**定义 23（对象动态类型 `dyn_type` 与静态类型 `static_type`）**：$\mathrm{dyn\_type}_t(a)$ 为时刻 $t$ 锚定于地址 $a$ 的对象的动态类型，由建立该对象的分配（`dyn T` / `dyn T[n]`，§2.5）或取址（§3.5）的静态类型唯一决定；$a \notin \mathrm{dom}(\mu_t)$ 时无定义。$\mathrm{static\_type}(p)$ 为指针表达式 $p$ 的编译期静态类型，由类型检查与第 8 章定型规则给出，非运行时对象。
+
+新定义（定义 20-23）与第 2-3 章符号（定义 1-19）的闭合性核对见证据文件 `.omo/evidence/security-md-paper-grade/task-6-security-md-paper-grade.md`（R3）。
+
+### 4.2 空间不变量 S1
+
+**不变量 S1（空间不变量）**：对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+
+$$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{in\_bounds}(p, n)$$
+
+即程序运行期间每一次成功的 $n$ 元素访问，其访问区间整体落在界内：$0 \le p.\text{index} \wedge p.\text{index} + n \le p.\text{size}$（定义 12 的全访问检查）。
+
+**论证梗概**：对 $t$ 归纳。基步 $t = 0$ 无访问事件。归纳步按第 $t$ 步规则分情形：读/写/索引/整段拷贝规则（3.2.1-3.2.4、3.10.1）的正常前提均含 `safe_access(p, ·)`，而 `safe_access` 蕴含 `in_bounds`（定义 14），故成功访问处 `in_bounds` 成立；指针算术规则（3.3.1-3.3.2）要求结果良构（定义 13），良构性沿分配、取址（`index := 0`）与 `bitcast` 折算（§3.9）保持；§2.4 无回绕约定保证 `index + n` 在数学整数上精确求值（类 4，§1.1）。关键步骤为「成功 ⟹ 规则前提满足 ⟹ 前提含界检查」。
+
+关键步骤展开（对 O-1 的三个子义务）：① 规则前提枚举是语法可见的，读、写、索引、拷贝四条规则（3.2.1-3.2.4、3.10.1）的正常前提逐字含 `safe_access(p, n)`，无隐藏访问路径，`MemCopy` 原语（§7.5 建议）落地后拷贝检查收敛为两条 `in_bounds`；② 良构性保持沿归纳步逐一验证：分配（3.6.1）返回 `index = 0 ≤ n`，取址（3.5.1-3.5.3）重置 `index = 0`，算术（3.3.1-3.3.2）前提显式要求 `0 ≤ index + n ≤ size`，`bitcast` 折算（3.9.1）按 `⌊·⌋` 取整不越界；③ 无回绕由 §2.4 实现约定承担，实现侧把检测到的回绕按 trap 处理，使数学语义与机器语义一致。one-past-end 情形（`index = size`）在良构上允许（定义 13），但一切 `n ≥ 1` 访问在 `in_bounds` 处失败，故不构成 S1 反例。归纳的关键是规则前提含 `safe_access` 而 `safe_access` 蕴含 `in_bounds`，此蕴含在修订后检查定义（定义 12、14）下成立，旧检查（§3.11 只验起点）不进入论证。
+
+**义务 O-1**：证明每类成功访问的规则前提含 `in_bounds`（§3.2-§3.10 规则枚举）；证明良构性沿指针算术/取址/`bitcast` 保持；证明 `index + n` 无回绕（§2.4 约定，实现侧检测到回绕按 trap 处理）。该义务是第 5 章「无越界访问」结论的直接前提。O-1 的完成形态：提交一份规则前提逐条对照表（每条规则的行号、前提中的 `in_bounds`/`safe_access` 出现位置）与良构性保持的归纳步清单，供 §5.5 交付物清单勾销。
+
+对照说明（非规则）：旧实现仅验访问起点（`index * sizeof(T) + offset < size`，`tests/experimental/ptr/ptr.an:313,321,340`），无法捕获起点在界内、区间越过对象末尾的多元素越界；该旧规则已被定义 12 的 `index + n \le size` 取代，只作为已修订设计在 §3.11 描述，不作为本章任何规则或引理出现。对照的边界：S1 的陈述与证明只引用定义 12，旧检查是否放行某一访问不影响 S1 的成立与否，S1 对旧实现的放行集合不做任何承诺。
+
+### 4.3 时序不变量 T1
+
+**不变量 T1（时序不变量）**：对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+
+$$\forall t.\ \forall p, n.\ \big[\, \mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mathrm{ok}(\mathrm{del}_t(p)) \,\big] \Rightarrow \mathrm{live}_t(p)$$
+
+$\mathrm{live}_t(p) \iff \Lambda_t(p.\text{lock\_ptr}) = \langle \text{kind}, p.\text{key} \rangle$（定义 8 在时刻 $t$ 求值）。即每一次成功的读、写、拷贝与释放，其时序检查均在锁表寻址下通过。
+
+**论证梗概**：T1 分两侧。正向侧直接来自规则结构：读/写/拷贝的正常前提含 `safe_access`（蕴含 `live`），释放前提含 `live`（3.6.2），故成功即在访问时刻 `live` 成立。负向侧（作废永久性）为实质内容：对象被释放或帧退出后，其全部派生指针不得重新获得 `live`，须排除锁项复用后旧键重新匹配的路径；堆侧由 L-NOREUSE（§4.5）、栈侧由 L-REKEY（§4.6）保证，二者均依赖 L-KEY 的键唯一性（§4.4）。
+
+关键步骤展开：正向侧的子义务 O-2a 即逐条枚举 3.2.1-3.2.4、3.10.1、3.6.2 的正常前提并指出其中含 `live` 的显式出现，这是规则文本的直接核对，无推理跳跃。负向侧的 O-2b 需两种「复活」路径都被切断：堆条目被新分配复用（L-NOREUSE 断言新键 ≠ 旧键）与栈条目被递归/循环帧复用（L-REKEY 断言两轮进入的键不同）；两条路径的共同结构是「条目可复用，但键不可复用」，作废永久性的来源因此是键唯一性而非条目唯一性。派生指针的枚举沿 §2.4 锚定规则与 §2.7 派生关系闭合：算术只改 `index`、取址继承锁字段、`bitcast` 不改锁字段，故同对象全部指针共享 `lock_ptr`/`key`，一并失效。
+
+**义务 O-2**：O-2a 验证读/写/拷贝/释放规则的正常前提均含 `live`（§3.2-§3.10 枚举）；O-2b 以 L-NOREUSE 与 L-REKEY 证明作废永久性：对任何作废对象，其全部派生指针此后 $\mathrm{live}$ 恒为假。该义务是第 5 章「无 UAF、双释放、栈悬垂访问」结论的直接前提。
+
+对照说明（非规则）：旧实现 `__key_lock_match`（`ptr.an:46-49`）读取块内联的 `MemoryBlock.lock` 比较，属内联元数据方案；修订后 `live(p)` 经带外锁表寻址（定义 7-8），差异见 §3.11，本章不采用旧方案。对照的边界：T1 的陈述与证明只引用定义 8 的锁表寻址，旧实现的「读取块内锁」路径在证明中不存在；其失败机制（释放后读已释放内存）正是缺陷 1 的修订对象（§6.1），不进入 T1 的前提或结论。
+
+### 4.4 键单调性引理 L-KEY
+
+**引理 L-KEY（键单调性）**：设 `Gen` 满足定义 10（单调计数器或 CSPRNG），则对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+
+(i) **序列唯一性**：$\forall t_1 \ne t_2.\ k_{t_1} \leftarrow \mathrm{Gen}() \wedge k_{t_2} \leftarrow \mathrm{Gen}() \Rightarrow k_{t_1} \ne k_{t_2}$。
+
+(ii) **活动键两两不同**：$\forall t.\ \forall e \ne e' \in \mathrm{Active}(\Lambda_t).\ \mathrm{key\_of}(\Lambda_t, e) \ne \mathrm{key\_of}(\Lambda_t, e')$。
+
+(iii) **作废键永不重新成为活动键**：$\forall t_1 < t_2.\ \forall e.\ \mathrm{key\_of}(\Lambda_{t_1}, e)\ \text{有定义} \wedge \mathrm{key\_of}(\Lambda_{t_2}, e)\ \text{有定义} \Rightarrow \mathrm{key\_of}(\Lambda_{t_1}, e) \ne \mathrm{key\_of}(\Lambda_{t_2}, e)$。
+
+即 Gen 生成的键序列满足唯一性：任一时刻活动锁项的键两两不同；作废键永不重新成为活动键（同条目情形由 (iii)，跨条目情形由 (i)：任何键一经 Gen 生成便不会再次生成）。
+
+**论证梗概**：(i) 直接来自定义 10：单调计数器严格递增，两次调用输出不同；CSPRNG 输出碰撞概率 ≤ $2^{-64}$。锁表仅在分配/释放/重分配/帧进出规则（3.6.1、3.6.2、3.7.1、3.8.1、3.8.2）中修改，凡写入活动键 $\langle \text{kind}, k \rangle$ 必先 `k ← Gen()`，故 (ii) 中每个活动键均来自一次独立调用，由 (i) 得两两不同；(iii) 同理，条目重新激活时写入的是新调用输出，与自身全部历史键不同。关键步骤：作废键被作废后永不重新写入，键唯一性即作废永久性的来源。
+
+关键步骤展开：子义务 O-3b 的写入规则枚举以 §2.5-§2.6 协议为限，共五处修改锁表（分配 3.6.1、释放 3.6.2、重分配 3.7.1 的旧条目作废与新条目写入、帧进入 3.8.1、帧退出 3.8.2），其中写入活动键的只有分配、重分配与帧进入三处，且每处先执行 `k ← Gen()`；释放与帧退出只写 `revoked`，不产生活动键。由此 (iii) 的证明是直接的：条目 $e$ 自上次激活以来，只要再次写入活动键，写入值必为新调用输出，与 $e$ 的全部既往键（含被作废的 $k$）不同。单调计数器路径下 (i) 为严格不等式，CSPRNG 路径下 (i) 为概率意义（碰撞 ≤ $2^{-64}$），故 (iii) 相应为确定性或可忽略概率违反，后者与 §2.5-§2.6 协议一致。
+
+**义务 O-3**（时序安全的基石）：O-3a 证明 (i)（定义 10 的组合逻辑）；O-3b 证明锁表写入规则枚举完备，凡 $\Lambda(e) := \langle \text{kind}, k \rangle$ 者均以 `k ← Gen()` 产生；O-3c 由 (i) 推出 (ii) 与 (iii)。
+
+建模备注：CSPRNG 路径下形式论证在概率意义下成立，以可忽略概率违反；工程上接受该失败概率，与 §2.5-§2.6 协议一致。现行原型 `ptr.an` 的常量 `random()`（§2.5 备注）不满足定义 10，不可用作 `Gen`。
+
+### 4.5 锁不复用引理 L-NOREUSE
+
+**引理 L-NOREUSE（锁不复用）**：设 L-KEY 成立。对任意轨迹与任意时刻 $t_1 < t_1' < t_2$、任意 $e, k, k'$：
+
+$$\Lambda_{t_1}(e) = \langle \text{heap}, k \rangle \wedge \Lambda_{t_1'}(e) = \text{revoked} \wedge \Lambda_{t_2}(e) = \langle \text{heap}, k' \rangle \Rightarrow k' \ne k$$
+
+推论（旧指针永久失效）：持久锁表下，任何 $\text{lock\_ptr} = e$、$\text{key} = k$ 的指针 $p$，在 $t_2$ 及此后 $\mathrm{live}(p)$ 恒为假：
+
+$$\forall s \ge t_2.\ \neg \mathrm{live}_s(p)$$
+
+**论证梗概**：$t_2$ 时 $e$ 由分配/重分配规则（3.6.1、3.7.1）重新激活，写入的 $k'$ 是 `Gen` 的新调用输出；由 L-KEY(iii)，$k'$ 与 $e$ 的全部历史键不同，特别 $k' \ne k$。此后 $\Lambda_s(e)$ 只可能为 $\langle \text{heap}, k' \rangle$、$\langle \text{stack}, \cdot \rangle$ 或 `revoked`，永不等于 $\langle \text{kind}, k \rangle$，故 $\mathrm{live}(p)$（定义 8）恒为假。关键步骤：作废永久性的来源是键唯一性（作废的键永不重新写入），而非锁项不复用。
+
+关键步骤展开：推论「对任意 $s \ge t_2$，$\neg \mathrm{live}_s(p)$」的证明按 $\Lambda_s(e)$ 的三种可能逐情形穷举：若 $e$ 处于活动态，其存储键为 $k'$ 或更晚的重激活键，均不等于 $k$；若 $e$ 为 `revoked`，定义 8 右端不成立；无第四种可能（定义 6 的值域闭合）。故旧指针的失效与条目当前状态无关，是永久性的。注意本引理允许 $e$ 在 $t_1'$ 与 $t_2$ 之间被反复作废/重激活，只要每次重激活都写新键，推论对任意后续时刻成立；这正是持久锁表（定义 7）与 §2.5 步骤 1「锁项保留」设计的落点。
+
+**义务 O-4**（T1 负向侧的堆部分）：以 L-KEY 证明作废条目复用只获新键、旧指针键永不重新匹配；证明 $e$ 重新激活后至多存贮新键或 `revoked`（写入规则枚举）。
+
+**义务 O-4 的验证次序**：先枚举 $\Lambda$ 的全部写入点（分配 3.6.1、释放 3.6.2、重分配 3.7.1、帧进出 3.8.1-3.8.2），确认其中写活动键者必先 `Gen()`；再对每条重激活路径（3.6.1 的新鲜条目与复用 `revoked` 条目、3.7.1 的新条目）应用 L-KEY(iii) 得新键 ≠ 全部历史键；最后穷举 $\Lambda_s(e)$ 的三值域（定义 6）证明推论。次序固定后，O-4 可机械执行，无开放性反例分支。
+
+### 4.6 栈帧 re-key 引理 L-REKEY
+
+**引理 L-REKEY（栈帧 re-key）**：设 L-KEY 成立。对任意帧 $f$、任意锁项 $e_f$、任意两次帧进入时刻 $t_1 < t_2$ 与任意 $k_1, k_2$：
+
+$$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_f) = \langle \text{stack}, k_2 \rangle \Rightarrow k_1 \ne k_2$$
+
+推论（遗留指针失效）：帧递归或循环复用于同一条目 $e_f$ 时，本轮键 ≠ 上轮键；上一轮遗留的携带 $\langle e_f, k_1 \rangle$ 的栈指针在 $t_2$ 及此后 $\mathrm{live}$ 恒为假（帧退出规则 3.8.2 已先作废 $e_f$）。
+
+**论证梗概**：帧进入规则 3.8.1 每次执行 re-key：$k_f \leftarrow \mathrm{Gen}()$，与条目 $e_f$ 的既往键无关，包括上轮键 $k_1$。由 L-KEY(i)，$k_2 \ne k_1$ 即使 $t_1$ 与 $t_2$ 对应同一帧在同一条目上的递归或循环复用。上轮指针携带 $k_1$，按定义 8 与 $t_2$ 后的帧锁 $\langle \text{stack}, k_2 \rangle$ 不匹配。关键步骤：Gen 的跨调用唯一性即 re-key 协议（§2.6）有效性的依据。帧进入不要求 `enter f` 与 `exit f` 严格配对（异常路径可跳过部分规则），re-key 的每次独立调用使任何乱序进入都获得新键，键隔离不依赖配对完整性。
+
+关键步骤展开：本引理与 L-NOREUSE 的区别在于作废的时序来源。堆侧是显式 `delete` 置 `revoked`；栈侧是帧退出（3.8.2）先置 `revoked`、下一次帧进入（3.8.1）再写新键。若省去 re-key（初版缺陷 3 的情形），第二次进入沿用旧键 $k_1$，则上一轮遗留指针与当前帧锁不可区分，栈悬垂在地址恰好被复用为合法局部时躲过检查；re-key 使两轮进入的键必然不同，遗留指针在 `live` 处 trap。递归复用是同一情形：同一帧 `f` 在递归栈上多次进入，每次进入生成新键，任一更深层返回后其遗留指针均不匹配更深层的帧锁。帧退出先作废（3.8.2 动作①）保证 $t_1$ 与 $t_2$ 之间 $e_f$ 必经 `revoked` 态，re-key 的键隔离因此在时间上闭合。
+
+**义务 O-5**（T1 负向侧的栈部分）：以 L-KEY 证明同一条目两轮帧进入的键不同；证明帧退出先作废、上轮指针此后不匹配（规则 3.8.1-3.8.2 枚举）。
+
+**义务 O-5 的验证次序**：先确认规则 3.8.1 每次执行 re-key（`k_f ← Gen()` 无缓存）；再对同一帧在任意两次进入时刻 $t_1 < t_2$ 应用 L-KEY(i) 得 $k_2 \ne k_1$；再确认规则 3.8.2 在帧退出时先置 `revoked`，故 $t_1$ 与 $t_2$ 之间条目必经 `revoked` 态；最后核对遗留指针携带 $k_1$ 与当前帧锁 $\langle \text{stack}, k_2 \rangle$ 不匹配（定义 8）。递归与循环复用是同一次序的特例，无须单独论证。
+
+### 4.7 指针类型 = 对象类型不变量 T-TYPE
+
+**不变量 T-TYPE（指针类型 = 对象类型）**：对满足第 8 章类型约束的 in 类良构程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+
+$$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{static\_type}(p)$$
+
+即被访问对象的动态类型与指针的静态类型一致。该不变量由编译期类型系统承担：第 8 章负责 `bitcast` 约束收紧与完备性论证，运行时检查不为此承担责任（§1.3）；本章仅陈述并标注义务，与第 8 章互引。
+
+**论证梗概**：指针仅由分配（3.6.1）、取址（3.5.1-3.5.3）、数组退化与受限 `bitcast`（3.9）产生；分配与取址建立对象时其动态类型即静态类型（定义 23），子对象锚定继承 `data` 基址与静态类型。地址复用情形（已释放地址重新分配为异型对象）由 T1 排除：旧指针键已作废（L-NOREUSE），无法通过 `live` 前提访问新对象，故凡可被访问的对象，其当前属主指针必携带匹配键且静态类型即对象动态类型。`bitcast` 受第 8 章布局兼容前提约束（§3.9）。
+
+关键步骤展开：本不变量依赖「分配点类型可静态确定」。在 monomorphization 下（§8.1），每个分配/取址点在展开后的函数中对应确定类型，$\mathrm{alloc\_type}(p)$（定义 25）是单一类型，无 trait object 与动态分派，故 `dyn_type_t(p.data) = alloc_type(p)` 是编译期事实而非运行时观察。地址复用路径的排除依赖时序链：旧指针若想访问新对象，须先通过 `live` 前提，而旧键已作废（L-NOREUSE），故唯一可访问路径是携带新键的新指针，其静态类型即新对象类型。此论证把类型同一性从「运行时逐次判定」降为「编译期标注 + 时序检查」，与 §8.5 分工表（G4 由类型系统承担）一致。
+
+**义务 O-6**（T-TYPE，第 8 章承担）：证明第 8 章定型规则下指针静态类型与锚定对象动态类型一致；`bitcast` 布局兼容前提足以排除类型混淆；地址复用时旧指针无法访问新对象（依赖 O-2b / O-4）。
+
+**义务 O-6 与第 8 章的交付物对应**：O-6 的三项子目标分别对应第 8 章的三个节：子目标一对应 §8.1 值域闭合与 §8.2 分配点标注（定义 25-26）；子目标二对应 §8.3 布局兼容（定义 27、规则 8.3.1）；子目标三对应 §8.5 完备性论证对 T1 负向侧的引用。因此 O-6 是唯一跨章义务，其完成度由第 8 章现状改造（analysis 侧布局查询、根追踪）落地后核验。
+
+### 4.8 引理间依赖与第 5 章接口
+
+依赖关系：L-KEY（O-3）→ L-NOREUSE（O-4）→ T1（O-2）；L-KEY → L-REKEY（O-5）→ T1；S1（O-1）独立于时序链；T-TYPE（O-6）依赖 T1（经 O-2b / O-4）与第 8 章。
+
+| 条目 | 证明义务 | 在第 5 章的角色 |
+|---|---|---|
+| S1 | O-1 | 无越界访问结论的直接前提 |
+| T1 | O-2（O-2a / O-2b） | 无 UAF、双释放、栈悬垂结论的直接前提 |
+| L-KEY | O-3（O-3a / O-3b / O-3c） | 时序安全基石；T1 负向侧依据 |
+| L-NOREUSE | O-4 | T1 负向侧（堆） |
+| L-REKEY | O-5 | T1 负向侧（栈） |
+| T-TYPE | O-6 | 无类型混淆结论的前提（第 8 章承担） |
+
+第 5 章主可靠性定理将把「trap 之外的一切内存访问均安全」归结为：S1 排除越界（G1），T1 排除 UAF、双释放与栈悬垂（G2），T-TYPE 排除类型混淆（G4）；L-KEY 家族保障 T1 的作废永久性，即「检查当时通过、此后失效不可逆」的时序封闭性。本组不变量仅在 §1.3 in 类范围内成立；并发、FFI 等 out 情形不适用（第 11 章）。
+
+**依赖图核对（供 O-1 至 O-6 逐项实现时使用）**：依赖链上不存在环：S1 只依赖规则前提枚举与良构性保持，不依赖任何时序引理；L-KEY 依赖定义 10 与锁表写入规则，独立于 S1；L-NOREUSE 与 L-REKEY 均以 L-KEY 为前提，二者之间无互相依赖（堆侧与栈侧并行）；T1 正向侧（O-2a）依赖规则文本，负向侧（O-2b）依赖 L-NOREUSE 与 L-REKEY；T-TYPE 依赖 O-2b/O-4（地址复用排除）与第 8 章。因此证明义务可按 S1、L-KEY 两条链并行推进，T1 与 T-TYPE 在两条链完成后收口，无循环依赖。
+
+## 5. 可靠性论证
+
+<!-- 章节上限: 300 行 -->
+
+本章不做新的形式证明，而是把第 4 章的不变量与引理（S1/T1/L-KEY/L-NOREUSE/L-REKEY/T-TYPE）及其证明义务（O-1 至 O-6，含子义务）组织为一份可执行的可靠性论证：§5.1 给出单句主可靠性定理（R2），§5.2 给出义务↔引理映射表，§5.3 逐义务给出论证梗概，§5.4 说明三条不变量如何拼接进主定理，§5.5 显式声明论证范围与未承诺事项。论证层级为「梗概级」（S&P/CCS/USENIX 会议的严谨度）：每条结论给出关键论证步骤与反例排除方向，而非完整推导；未验证的证明义务以清单形式留给实现与定理证明器工作，PLDI 级完整证明不在本章范围。本章只引用第 2-4 章符号（定义 1-23）与规则，不定义任何新记号。
+
+### 5.1 主可靠性定理（R2）
+
+**定理 5.1（主可靠性定理）**：若程序 $P$ 通过第 8 章类型约束（不变量 T-TYPE，§4.7）且 $P$ 的全部指针操作良构（定义 13），则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0$（后者的前提即规则 3.6.2 的释放前提），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放、栈悬垂访问与类型混淆访问均不可能以正常完成方式出现。
+
+等价地，定理 5.1 即下述全称闭式：
+
+$$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n) \big] \;\wedge\; \big[ \mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \big]$$
+
+「在访问发生前转移至 `trap`」由机器结构保证：`trap` 为吸收终止态（§2.1），检查失败后不执行任何后续内存访问，故 trap 落在访问动作发生之前，不产生部分写入。定理 5.1 与 §1.4 安全目标 G1-G4 的对应关系如下。
+
+- **G1（空间）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{in\_bounds}(p, n)$（定义 12 的全访问检查），无越界访问正常完成。
+- **G2（时序）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mathrm{ok}(\mathrm{del}_t(p)) \Rightarrow \mathrm{live}_t(p)$，无 UAF、双释放、栈悬垂访问正常完成。
+- **G3（算术）**：$P$ 的操作良构 + §2.4 无回绕约定保证 `index + n`、`data + index·|T|` 按数学整数语义求值，`in_bounds` 不因回绕失效；此目标并入 O-1（见 §5.3.1）。
+- **G4（类型）**：由前件「通过第 8 章类型约束」给出（T-TYPE，O-6）：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{static\_type}(p)$，无类型混淆访问正常完成。
+
+### 5.2 证明义务清单与义务↔引理映射
+
+表 4 把第 4 章定义的证明义务（§4.1 编号，§4.2-§4.7 逐条陈述）组织为义务↔引理映射：行 = O-1 至 O-6（含子义务），列 = 支撑引理/不变量、对应安全目标、论证梗概要点。依赖关系沿用 §4.8：L-KEY（O-3）→ L-NOREUSE（O-4）→ T1（O-2）；L-KEY → L-REKEY（O-5）→ T1；S1（O-1）独立于时序链；T-TYPE（O-6）依赖 T1（经 O-2b/O-4）与第 8 章。
+
+表 4：证明义务 ↔ 引理映射
+
+| 证明义务 | 支撑引理 / 不变量 | 对应安全目标 | 论证梗概要点 |
+|---|---|---|---|
+| O-1 | S1（§4.2） | G1（空间），兼 G3（算术） | 规则前提枚举含 `in_bounds`；良构性沿算术/取址/`bitcast` 保持；`index + n` 无回绕 |
+| O-2a | T1（§4.3）正向侧 | G2（时序） | 读/写/拷贝/释放规则前提均含 `live`，成功即在访问时刻时序有效 |
+| O-2b | T1 负向侧；L-NOREUSE（§4.5）+ L-REKEY（§4.6） | G2（时序） | 作废永久性：释放/帧退出后全部派生指针 `live` 恒假 |
+| O-3a | L-KEY(i)（§4.4） | G2（基石） | 定义 10 组合逻辑：单调计数器严格递增 / CSPRNG 碰撞 ≤ 2⁻⁶⁴ |
+| O-3b | L-KEY(ii) | G2（基石） | 锁表写入规则枚举完备，凡活动键均来自 `Gen` 调用 |
+| O-3c | L-KEY(iii) | G2（基石） | 由 (i) 推出 (ii)(iii)：作废键永不重新成为活动键 |
+| O-4 | L-NOREUSE | G2（T1 堆侧） | 堆条目复用只获新键，旧指针键永不重新匹配 |
+| O-5 | L-REKEY | G2（T1 栈侧） | 同条目两轮帧进入键不同，遗留栈指针失效 |
+| O-6 | T-TYPE（§4.7，第 8 章承担） | G4（类型） | 静态类型 = 动态类型；`bitcast` 布局兼容排除类型混淆 |
+
+表中的「支撑」列为义务完成后可得的引理结论；义务未验证即主定理前件不成立，故本表同时是「未验证证明义务」的清单（§5.5）。
+
+表 4 的读法：每一行对应一个可独立推进的验证任务。O-1 与 O-2a 是纯枚举义务（规则文本核对），可由代码审查直接勾销；O-3a 是定义 10 的组合逻辑（单调计数器实现时可直接证明）；O-3b/O-3c 依赖写入规则枚举与 (i)，属轻量归纳；O-4/O-5 是 L-KEY 的直接应用，各两步；O-6 依赖第 8 章完整定型规则，是唯一跨章义务。义务间的唯一传递依赖是 O-3 → O-4/O-5 → O-2b，其余并行，与 §4.8 依赖图一致。
+
+### 5.3 逐义务论证梗概
+
+以下每条给出 2-4 句论证梗概（非完整证明），说明其如何拼接进定理 5.1。
+
+**O-1（S1 → G1）**：逐条检查第 3 章读、写、索引、整段拷贝规则（3.2.1-3.2.4、3.10.1）的正常前提，均含 `safe_access(p, n)`（定义 14），而 `safe_access` 蕴含 `in_bounds`，故成功访问处访问区间整体在界内，`¬in_bounds` 的越界访问不可能正常完成。良构性（定义 13）由分配、取址（`index := 0`）建立，沿指针算术（规则 3.3.1-3.3.2）与受限 `bitcast` 折算（规则 3.9.1）保持；`index + n` 按 §2.4 无回绕约定在数学整数上求值，类 4 溢出不产生界外地址。该义务排除 G1 的全部反例，并兼顾 G3：`in_bounds` 的正确性依赖算术不回绕。
+
+**O-2a（T1 正向侧 → G2）**：枚举读、写、拷贝（3.2.1-3.2.4、3.10.1）与释放（3.6.2）规则的正常前提，均含 `live`（经 `safe_access` 或直接），故每次成功访问与释放的时序检查在访问时刻通过。这是 T1 的正向侧：成功 ⟹ $\mathrm{live}_t(p)$；对已作废对象的访问在 `live` 处检查失败即 trap，UAF 与双释放在此被拦截。该义务是纯枚举核对，规则文本中 `live` 的显式出现即可勾销；其与 O-1 的差别是核对目标不同（O-1 核对 `in_bounds`、O-2a 核对 `live`），规则集相同。
+
+**O-2b（T1 负向侧 → G2）**：以 L-NOREUSE（堆侧，O-4）与 L-REKEY（栈侧，O-5）证明作废永久性：对象被释放或帧退出后，其全部派生指针此后 `live` 恒为假，不因锁项复用、条目重激活或帧递归复用而重新获得时序有效性。这使 G2 的排除在时间上封闭：一次作废即永久作废，任何后续访问与重复释放均在该事件处 trap，栈悬垂同理（帧退出后 `live` 恒假）。该义务是 T1 的实质部分，其与正向侧的分工是：正向侧管「检查当时通过」，负向侧管「失效不可逆」，二者合起来才构成 G2 的完整排除。
+
+**O-3a（L-KEY(i)）**：定义 10 的两种实现均给出键序列唯一性——单调计数器严格递增，任意两次调用输出不同；CSPRNG 从 $2^{64}$ 均匀采样，碰撞概率不超过 $2^{-64}$（可忽略）。这是整条时序链的最底层事实，供 O-3c 直接使用；§2.5 备注指出的常量 `random()` 不满足定义 10，不进入本论证。
+
+**O-3b（L-KEY(ii)）**：枚举锁表全部写入点（规则 3.6.1、3.6.2、3.7.1、3.8.1、3.8.2），凡写入活动键 $\langle \text{kind}, k \rangle$ 者必先执行 `k ← Gen()`；由 O-3a，每个活动键来自一次独立调用，故任一时刻活动锁项的键两两不同。该子义务排除「两对象共享活动键导致交叉失效」的路径。
+
+**O-3c（L-KEY(iii)）**：由 (i) 直接推出：条目重新激活时写入的是新调用输出，与该条目全部历史键不同；作废键永不重新成为活动键（同条目由 (iii)，跨条目由 (i)）。这是作废永久性的键层面来源，L-NOREUSE 与 L-REKEY 均以其为前提，故 O-3 是 T1 负向侧的基石（§4.8）。
+
+**O-4（L-NOREUSE → T1 堆侧）**：设堆条目 $e$ 在 $t_1$ 活动、$t_1'$ 作废、$t_2$ 重激活，由 O-3c 得新键 $k' \ne k$（旧键）；此后 $e$ 至多存贮 $\langle \text{heap}, k' \rangle$、$\langle \text{stack}, \cdot \rangle$ 或 `revoked`（写入规则枚举），永不等于 $\langle \text{kind}, k \rangle$。故携带 $\langle e, k \rangle$ 的旧指针此后 `live` 恒假，释放后的堆 UAF 与双释放被排除——即 §2.5「锁不复用」协议的形式化。
+
+**O-5（L-REKEY → T1 栈侧）**：帧进入规则 3.8.1 每次执行 re-key，两轮进入的键由独立 `Gen` 调用产生，由 O-3a 得 $k_2 \ne k_1$；帧退出规则 3.8.2 先作废 $e_f$。故上一轮遗留的携带 $\langle e_f, k_1 \rangle$ 的栈指针与当前帧锁 $\langle \text{stack}, k_2 \rangle$ 不匹配，栈悬垂访问在 `live` 处 trap——即 §2.6 re-key 协议的形式化。
+
+**O-6（T-TYPE → G4，第 8 章承担）**：第 8 章定型规则保证指针静态类型与锚定对象动态类型一致（定义 23）；`bitcast` 布局兼容前提（规则 3.9.1）足以排除类型混淆。地址复用情形依赖 T1：旧指针键已作废（O-2b/O-4），无法通过 `live` 前提访问新对象，故凡可访问对象必由携带匹配键且静态类型正确的指针访问。本章仅标注该接口，完整论证由第 8 章给出。O-6 的完成形态：提交第 8 章定型规则与定义 25-27 的闭合性核对表（§8.5 缺口核查的三条断言逐一勾销），并与 §8.1 值域闭合、§8.3 布局查询的现状改造一同交付。
+
+### 5.4 论证拼接结构
+
+定理 5.1 由三条不变量拼接而成，与 §4.8 依赖表一致：
+
+1. **S1（O-1）排除越界 → G1**：`ok(acc_t(p, n)) ⟹ in_bounds(p, n)` 直接给出「无越界访问正常完成」；G3 折叠进 O-1 的「无回绕」子义务。
+2. **T1（O-2a ∧ O-2b）排除时序错误 → G2**：正向侧（O-2a）保证成功事件在访问时刻 `live`；负向侧（O-2b）经 L-NOREUSE/L-REKEY 保证作废永久性，给出「无 UAF、双释放、栈悬垂访问正常完成」。
+3. **T-TYPE（O-6，第 8 章承担）排除类型混淆 → G4**：`ok(acc) ⟹ dyn_type = static_type`。
+4. **L-KEY 家族支撑 T1 的作废永久性**：L-KEY（O-3）→ L-NOREUSE（O-4）与 L-REKEY（O-5），保证「检查当时通过、此后失效不可逆」的时序封闭性；O-3 缺失则 O-4/O-5 无依据，T1 负向侧即失败。
+
+拼接的逐层对应：定理 5.1 的每条负面结论都可在第 4 章找到唯一的来源不变量，不存在「结论悬空」。G1 与 G3 共享 O-1 的规则前提枚举（越界与回绕在 `in_bounds` 一处收口，定义 12）；G2 的正向与负向两侧由 T1 的两条子义务分别承担；G4 由第 8 章单独承担且依赖 T1 的地址复用排除。逐层对应表即表 4 的「对应安全目标」列，§5.4 的上表是其在结论层的转写。
+
+拼接本身是命题逻辑的组合：定理 5.1 的等价式 `ok(e) ⟺ pre(e)` 来自第 3 章规则的结构（正常前提恰为规则前提，前提不满足则 trap），各不变量把规则前提分解为可证的子断言（`in_bounds`、`live`、类型一致），主定理的每条负面结论（无越界、无 UAF、无栈悬垂、无类型混淆）即相应不变量的直接转写。论证完整性 = 表 4 中全部义务（O-1 至 O-6）逐项完成。
+
+**结论逐条展开（G1-G4 与 in 类错误的示例对照）**：表 4 之下的对应关系以具体访问形态核对：
+
+| 负面结论 | 不变量来源 | 示例访问形态 | 检查点与失效动作 |
+|---|---|---|---|
+| 无越界访问 | S1（O-1）→ G1 | `p[3]`，`p = ⟨b, e, k, 0, 3⟩` | `in_bounds(p, 4)`（定义 12）不成立，trap |
+| 无 UAF / 双释放 | T1（O-2a/O-2b）→ G2 | 释放后 `*p`、再 `delete p` | `live(p)`（定义 8）为假，trap |
+| 无栈悬垂访问 | T1（O-2b，L-REKEY）→ G2 | 帧退出后对 `&x` 的访问 | 旧键 $k_1$ 与当前帧锁 $k_2$ 不匹配，trap |
+| 无类型混淆访问 | T-TYPE（O-6）→ G4 | `bitcast` 到布局不兼容类型后解引用 | 编译期拒绝（规则 8.3.1），运行时无此事件 |
+| 无回绕误判 | O-1 无回绕子义务 → G3 | `p + 2^{64}-1` | 数学整数求值，`in_bounds` 恒不成立，trap |
+
+上表每行把定理 5.1 的负面结论落到一个可构造的访问事件上：事件在规则前提处失败即 trap（§2.1 吸收态），不存在「检查通过但访问越界/悬垂/混淆」的余项。表内全部示例仅使用定义 1-27 已有符号，未引入新记号。
+
+### 5.5 论证范围与未承诺事项
+
+- **范围受 §1.3 in/out 边界约束**：定理 5.1 仅对 in 类成立——空间越界（堆/栈）与时序错误为 in 类；`bitcast` 类型混淆为「受限」类（由第 8 章承担，本章不解决）；并发数据竞争、跨 FFI 边界裸指针访问、锁表与指针元数据任意改写均为 out 类，不在本论证范围，不由此定理承诺（对应第 11 章局限）。in 类内部亦有不承诺子项：栈内层作用域粒度（帧级守卫为限，§6.3、第 11 章）与实现侧回绕检测（§2.4 约定交由实现承担，定理按其语义成立）。
+- **前置条件显式**：主定理前件「通过第 8 章类型约束且全部操作良构」不自动成立；类型检查不通过或出现非良构操作的程序不在结论范围。out 行失效的前提是 §1.2 攻击者假设被放宽（例如攻击者获得任意写前置），故 out 行失效不构成 in 类论证的反例。
+- **论证层级声明**：本章全部结论为「梗概级」（S&P/CCS/USENIX 严谨度）：给出关键论证步骤与反例排除方向，未给出 PLDI 级完整证明。表 4 中未验证的证明义务即交付物清单——逐项以实现侧验证或机械化定理证明勾销后，定理 5.1 才升格为已证定理；该清单是后续实现与验证工作的入口。
+- **不引用外部文献**：全部结论内部自洽于第 2-4 章的定义与规则，无外部文献依赖。
+
+## 6. 设计决策与修订
+
+<!-- 章节上限: 200 行 -->
+
+本章是全文的修订记录。第 2-5 章已按修订后设计写成：持久锁表（定义 7）、单调键生成（定义 10）、栈帧 re-key（§2.6、规则 3.8.1）、全访问界检查（定义 12）。本章集中回答「为什么这样修订」：对计划审查阶段识别的 6 个已知缺陷逐一处置，每项含缺陷机制（引用实现位置）、反例或失败轨迹、修订后机制与理由。处置类型三选一：**修订**（进入第 2-5 章正式设计）、**收敛论证**（在 §1.2 假设内成立，不改设计）、**重分类局限**（承认边界，移交第 11 章）。初版设计的完整沿革与逐项差异见第 12 章。
+
+表 5：6 个已知缺陷的处置总览
+
+| # | 缺陷 | 处置类型 | 落地位置（本文档） |
+|---|---|---|---|
+| 1 | 锁随块释放 → 锁自身 UAF | 修订：持久锁表 + 键作废 | 定义 7；§2.5；规则 3.6.2；L-NOREUSE（§4.5） |
+| 2 | key 生成未规定（实现为常量） | 修订：单调生成器要求 | 定义 5/6/10；§2.5 备注；L-KEY（§4.4） |
+| 3 | 栈帧锁复用；内层作用域粒度不足 | 修订（re-key）+ 重分类局限（粒度） | 定义 10；§2.6；规则 3.8.1-3.8.2；L-REKEY（§4.6）；粒度见第 11 章 |
+| 4 | index<size 只验起点 | 修订：index+n≤size 全访问检查 | 定义 12/13/14；规则 3.2.1-3.2.4、3.10.1；S1（§4.2） |
+| 5 | 内联元数据可伪造 | 收敛论证（§1.2 假设内成立） | §1.2 无任意写前置；§1.3 元数据行；§2.7 表示层约定 |
+| 6 | 并发 / bitcast / FFI 边界 | bitcast 移交第 8 章；并发与 FFI 重分类局限 | 规则 3.9.1；T-TYPE（§4.7，O-6）；§1.3 out 行；第 8 章与第 11 章 |
+
+### 6.1 缺陷 1：锁随块释放 → 锁自身 UAF（修订）
+
+**缺陷机制**：初版与原型把锁内联于被守护块头：`MemoryBlock{lock, size}`（`tests/experimental/ptr/ptr.an:7-10`），时序检查 `__key_lock_match()` 经 `bitcast<MemoryBlock*>(self.address)` 读取块内 `lock` 比较（`ptr.an:46-49`）；`delete()` 的序列是 `mb.lock = 0; del mb`（`ptr.an:228-235`）。锁与被守护块同生共死：块一经 `del`，锁所在内存即被收回，此后任何对该块的时序检查都成为对已释放内存的读。检查自身构成 UAF，时序安全建立在读取已释放内存之上，自相矛盾。
+
+**失败轨迹**：`p = dyn T`；`q = p`（复制指针）；`delete p`（`ptr.an:233-234`：写 `lock = 0` 后 `del mb`）；随后 `delete q` 在 `__key_lock_match()`（`ptr.an:46-49`）处再次读取 `*lock_ptr`，即对已释放锁的读。若该块已被重新分配，锁字段可能被新数据写成与 `q.key_or_len` 相同的值，双释放检查被绕过；若读入任意脏值，合法释放也被误杀。`realloc` 同样先在 `__key_lock_match()`（`ptr.an:162`）读取块头再操作，对悬垂指针执行即触发同一路径。轨迹的必然性：`delete p` 后锁与块同地址，任何指向该地址的读取都是对已回收内存的读取；该读取结果不受检查器控制，双释放/UAF 的判定建立在一个不可靠的读上。
+
+**修订后机制**：持久锁表 + 键作废。定义 7 声明锁表 `Λ` 持久驻留，释放仅作废条目（`Λ(e) := revoked`，§2.5 步骤 1、规则 3.6.2 动作①），锁项不随块释放；`live(p)`（定义 8）经 `Λ(p.lock_ptr)` 带外寻址，查找永不访问已释放内存。作废永久性由 L-KEY（§4.4）→ L-NOREUSE（§4.5）保证：条目重激活只获新键，旧键永不重新匹配。动机与 CETS 的持久锁表一致，相关工作在第 9 章。修订的落点：表示层从「锁内联于块头」变为「锁带外驻锁表」，检查路径从「读块头字段」变为「查锁表条目」，缺陷 1 的自我引用（检查读已释放内存）在结构上被消除。
+
+**理由**：时序检查的存储必须从对象生命周期解耦；只要锁与块同生共死，释放后的检查就必然触碰已回收内存。修订是结构性前提而非修补。
+
+**若不修订的后果**：所有对已释放块的时序检查都成为对未定义位置的读（§2.2），结果取决于分配器行为：块被复用为同型对象时锁字段可能恰好写回旧键、双释放/UAF 检查被绕过；块被释放给操作系统时检查可能触发段错误而非可诊断的 trap。时序安全在检查最需要生效的时刻（对象刚释放后）变得不可判定，§2.1 的 trap 吸收态失去意义。
+
+### 6.2 缺陷 2：key 生成未规定（修订）
+
+**缺陷机制**：初版对 `key` 的产生无任何规定。原型 `random()` 返回常量 `1u64 | (1u64 << 63)`（`ptr.an:3-5`），每次调用同值；且键与栈/堆标志位共用于 `key_or_len`（`ptr.an:35-45`），实际键空间被压成 63 位常量。
+
+**反例**：设所有堆块共享键 `K`。① 释放块 A 后块 B 的检查仍读 `B.lock`（`ptr.an:46-49`），而 A 的释放事件写入的 `0`（`ptr.an:233`）与 B 的状态无关，一处释放即可污染他处判断（共享键交叉失效）。② 键为可预测常量时，错误或攻击者可构造携带 `K` 的指针，时序检查退化为常真。③ 常量键下「作废永久性」不成立：条目重激活后键仍为 `K`，释放后的指针在新分配上重新通过检查，UAF 直接出现。
+
+反例③的展开：`p = dyn u64` 得键 `K`；`delete p` 将锁项置 `revoked`；随后 `q = dyn u64` 复用同一条目并写回键 `K`（常量键不变）。此时 `*p` 的 `live` 检查读取 `Λ(p.lock_ptr) = ⟨heap, K⟩` 与 `p.key = K` 匹配，检查通过，`p` 对 `q` 的块执行 UAF 读。只要键域固定，该路径对每一对（释放、再分配）都可复现，且第 4 章 L-NOREUSE 的 $k' \ne k$ 前提（§4.5）在常量键下恒不成立，作废永久性无任何事实支撑。
+
+**修订后机制**：定义 10 规定 `Gen` 必须满足单调计数器或 CSPRNG 之一；键域放宽为完整 64 位（定义 5），栈/堆区分移交锁项 `kind` 字段（定义 6）。键序列唯一性是 L-KEY（§4.4，义务 O-3）的前提，进而支撑 L-NOREUSE 与 L-REKEY。§2.5 备注显式声明常量 `random()` 不可用作 `Gen`。键域放宽的细节：初版把栈/堆标志与键共用一个 64 位值（`key_or_len`，`ptr.an:35-45`），键空间被压成 63 位；定义 6 的 `kind` 字段接管标志后，`key` 独占完整 64 位域，CSPRNG 路径的碰撞上界保持 $2^{-64}$。
+
+**理由**：第 4-5 章的全部时序负向结论依赖「任意两次 `Gen` 调用输出不同」。不规定生成器，作废永久性没有底层事实可依，修订是形式论证的前提。
+
+**若不修订的后果**：键为常量时 §4.4-§4.6 的 L-KEY/L-NOREUSE/L-REKEY 全部失效：作废键会随条目重激活原样复活，释放后的指针在新分配上重新通过 `live`，UAF 以完全可预测的方式出现；且第 4 章的证明义务 O-3 无从陈述，第 5 章定理 5.1 的时序结论失去前件，整条时序论证塌缩。
+
+### 6.3 缺陷 3：栈帧锁复用与内层作用域粒度（修订 + 重分类局限）
+
+**缺陷机制**：初版帧进入取锁后不重新打键；原型以 `key_or_len < 2^63` 判别栈指针（`ptr.an:36`），栈侧时序信息仅为一个固定标志，不含键。帧退出、再进入若复用同一条目且键不变，上一轮遗留栈指针的锁状态与新一轮帧锁不可区分。
+
+**失败轨迹**：`g()` 返回指向其局部 `x` 的地址；调用方 `h()` 先后两次调用 `g()`。第一轮退出后 `&x` 悬垂；第二轮 `g` 复用同一帧锁而不重新打键时，悬垂指针 `q` 的检查与第二轮帧内合法取址走同一条路径、得同一结果，栈悬垂不被识别，只有靠地址巧合才 trap。内层作用域同理：`{ let y; q = &y; }` 之后 `y` 出作用域但帧仍活动，帧级锁对 `q` 的访问不设防（粒度不足）。轨迹的关键在「状态不可区分」：不 re-key 时，两轮帧进入后锁表状态完全相同（同一锁项、同一键），检查器无法仅凭锁表区分第一轮的悬垂指针与第二轮的合法指针。
+
+**修订后机制（re-key）**：规则 3.8.1 规定每次帧进入都调用 `Gen` 取新键，§2.6 re-key 协议保证新键与条目既往键（含上轮）不同；L-REKEY（§4.6，义务 O-5）证明同一条目两轮进入的键不同，遗留指针携带旧键，与当前帧锁 `⟨stack, k₂⟩` 不匹配，在 `live` 处 trap。re-key 的成本形态：每帧进入一次 `Gen` 调用与一次锁项写入，与帧内取址次数无关；递归深度受限于 `Gen` 的 64 位键空间，与锁表持久驻留（定义 7）配合无额外内存增长。
+
+**重分类（内层作用域粒度）**：re-key 区分「帧轮次」但不区分「同一帧内已退出作用域的内层块」。块级粒度需编译期作用域生命周期分析（帧内块级锁或活跃集合），超出本次修订的最小集合。正式设计以帧为守卫粒度，内层作用域悬垂防护**重分类为局限**（第 11 章）：帧级 re-key 已覆盖占主体的函数级错误（返回悬垂、递归复用），块级属未来的精度增强。
+
+**若不修订的后果**：帧锁复用不 re-key 时，两次调用 `g()` 间上一轮遗留的栈指针与新一轮帧锁状态完全相同，栈悬垂仅在地址巧合时暴露，防护退化概率性；re-key 后栈悬垂在任何帧轮次边界处确定性地 trap。内层作用域粒度若不修订，`{ let y; q = &y; }` 后对 `q` 的访问在帧退出前全部放行，属可接受的精度取舍（第 11 章局限），而非正确性漏洞。
+
+### 6.4 缺陷 4：index<size 只验起点（修订）
+
+**缺陷机制**：初版与原型空间检查只验证访问起点字节。堆索引 `index * sizeof(T) + self.offset < mb.size`（`ptr.an:321`，栈侧 `< self.key_or_len`，`:313`）、堆解引用 `self.offset < mb.size`（`:340`）；库层 `lib/core/array.an:21-28` 的 `*index >= N` 检查与 `lib/core/pointer.an:5-9` 的 `Index`（仅 `*self + *index` 算术）同样只验起点或不检查。
+
+**失败轨迹/反例**：数组 `a : T[n]`，指针 `p` 锚定 `a`，`index = n-1`、`size = n`；`p + 1` 得 one-past-end（`index = n`，旧检查视其为合法）。多元素访问（如 `memcpy(dest, p, 2)`，规则 3.10.1 的跨度情形）起点字节 `(n-1)·|T|` 在界内、末字节 `(n+1)·|T|` 越过对象末尾：旧检查对起点成立而放行，实际写入 `a[n]`、`a[n+1]`。单元素访问起点即终点，故缺陷只在多元素访问与 one-past-end 附近暴露；旧实现把越界概率化，放行与否取决于数据巧合。数字轨迹：`n = 3`、`index = 2`、`size = 3` 时，`memcpy(dest, p, 2)` 的访问区间为元素 2、3（即 `a[3]` 越界），旧检查查起点元素 2 的字节在界内而放行，修订后 `in_bounds(p, 2)` 检查 $2 + 2 = 4 > 3$ 失败、trap。
+
+**修订后机制**：定义 12 精确化为全访问检查：`in_bounds(p, n) ⟺ 0 ≤ p.index ∧ p.index + n ≤ p.size`；定义 13 允许 one-past-end 存在与传递，但任何 `n ≥ 1` 访问在 `index + n ≤ size` 处失败；规则 3.2.1-3.2.4 的读、写、索引与规则 3.10.1 的整段拷贝均以 `in_bounds(p, n)` 为前提，拷贝对两端各查 `in_bounds(·, m)`。S1（§4.2，义务 O-1）据此给出「无越界访问正常完成」；单位与溢出由 §2.4 数学整数约定承担（G3）。
+
+**理由**：访问安全是区间性质（足迹，定义 18）而非点性质。只验起点使越过对象末尾的区间访问成为可能；修订后一次检查失败即 trap，无部分写入（规则 3.10.1 前提）。
+
+**若修订后的检查形态（补）**：修订后 `in_bounds(p, n)` 的检查对象是访问区间整体而非起点，拷贝在开始前一次性检查（规则 3.10.1），因此旧检查放行的 `memcpy(dest, p, 2)` 形态在新检查下于访问前 trap、无部分写入（§2.1）。该形态是 S1（§4.2）的直接落点：成功访问 ⟹ 区间在界内。以 `n = 3`、`index = 2` 为例，`in_bounds(p, 2)` 检查 $2 + 2 = 4 > 3$ 失败，trap；旧检查查起点元素 2（$2 \cdot |T| < 3 \cdot |T|$）成立而放行，二者之差即修订的净收益。
+
+**若不修订的后果**：多元素访问（整段拷贝、结构体跨越读取）在起点界内、终点越过对象末尾时被放行，越界写落在相邻对象上，破坏相邻分配的数据且不可被本机制诊断；`memcpy(dest, p, 2)`（规则 3.10.1 跨度情形）是确定性越界而非概率性，放行即产生真实的内存破坏。只验起点还会使 one-past-end 附近的多元素访问系统性地漏检（§6.4 失败轨迹）。
+
+### 6.5 缺陷 5：内联元数据可伪造（收敛论证）
+
+**缺陷机制**：初版把锁与大小内联于被守护块（`MemoryBlock` 于块头，`ptr.an:7-10`），是经典 fat-pointer 弱点：元数据与被保护数据同段可写，任何越界写可改写 `lock`/`size` 从而废除检查。修订后锁已移至带外锁表（定义 7），但 `size` 仍作为胖指针字段存放于存储。
+
+**处置：收敛论证（不修订）**。成立边界：仅在 §1.2「无任意写前置」假设内成立，即攻击者不能改写锁表、指针元数据或对象数据，除非通过运行时检查；该假设是威胁模型的 in/out 边界（§1.3 元数据行显式为 out）。在此假设内元数据不可伪造：胖指针只能由分配、取址、数组退化等良构操作产生（第 8 章类型约束），`size` 由 §2.4 锚定规则建立并沿算术/`bitcast` 保持（良构性，定义 13）；锁表由运行时独占维护、带外存储（§2.7 表示层约定）。「改写元数据绕过检查」的路径被假设排除，不构成 in 类论证的反例（§1.3 说明、§5.5 前置条件声明）。
+
+**反例形态与边界**：唯一候选反例是「先越界写改写某指针的 `size` 再扩大访问」。而任何越界写本身必须通过 `in_bounds` 才成功（规则 3.2.4），S1（§4.2）保证越界写在检查处 trap、无部分写入（规则 3.10.1），故不存在可作为写前置的越界；「直接改写锁表」则落在 out 行。反例形态的枚举：攻击者能改写的目标只有对象数据（经合法写）与指针值所在槽位（经合法写）；改对象数据不影响检查，改指针值须先通过该指针所属访问的检查，而检查通过的写是界内的、不触及元数据。候选路径全部封闭，收敛论证与 §1.2 假设严格一致，不越界承诺。
+
+**备选（未采用，第 11 章）**：若放宽至任意写前置，需 side-table 变体，即把全部指针元数据（含 `size`）移入带外 side table、指针仅存表索引；代价是每次访问多一次表寻址、指针体积再增、并引入表条目生命周期管理（与锁表同构）。该变体解决的是被 §1.2 排除的攻击形态，在现假设下无收益，仅作第 11 章未来工作的备选方向。
+
+**理由**：元数据不可伪造已由威胁模型假设（§1.2）与带外锁表表示共同保证；为已排除形态增加运行时成本与复杂度违背最小改动原则。
+
+**若不修订的后果（即收敛论证不成立的边界）**：若攻击者已具备任意写前置，可在放行一次越界写后把任一指针的 `size` 改写为巨大值、使后续访问全部通过 `in_bounds`，或直接改写锁表制造合法键，检查整体被废除。此失效不构成 in 类论证的反例，因 §1.2 假设已显式排除该前置（§1.3 out 行、§5.5）；把该形态纳入防护需 side-table 变体（§6.5 备选、第 11 章），代价为每次访问一次表寻址。
+
+### 6.6 缺陷 6：并发、bitcast 与 FFI 边界（移交第 8 章 + 重分类局限）
+
+**缺陷机制**：三处超出第 2-5 章形式化的闭包（单线程、纯 YIAN、带检查操作）。原型可作对照：`compiler/analysis/lowering/expr_checker.py:132-157` 的 `bitcast` 检查仅要求两端是指针，无 pointee 兼容约束，`ptr.an` 依赖此宽松性（如 `bitcast<MemoryBlock*>(self.address)`）访问块头。
+
+**处置一：bitcast 收紧，移交第 8 章**：类型混淆在 §1.3 列为「受限」类。修订接口已就位：规则 3.9.1 给出布局兼容前提（`p.index·|T|`、`p.size·|T|` 均被 `|U|` 整除），不变量 T-TYPE（§4.7）与义务 O-6 把「指针类型 = 对象类型」的论证责任标注给第 8 章，运行时检查不为此担责；`expr_checker.py:132-157` 的现状宽松性即第 8 章须收紧的对象。移交而非本章修订，因为类型约束属编译期机制，其完整形式化与可行性分析在第 8 章。
+
+**处置二：并发与 FFI，重分类局限**：两者均为 §1.3 的 out 行。并发：锁表操作与检查步骤的非原子性在单线程模型下无定义，多线程需锁表原子更新与竞争检测，重分类为局限（第 11 章）。FFI/ABI：胖指针 5 字段使指针体积较裸指针翻倍以上，C 侧不识别元数据、检查不跨越边界，重分类为局限（第 11 章）；ABI 兼容方案（按字段拆分传参或 side-table）属第 11 章方案空间。
+
+**理由**：bitcast 处置集中于第 8 章，使「类型同一性」论证由编译期机制一章完整承担，不与运行时检查交织；并发与 FFI 已在 §1.3 显式排除，本章钉死为局限，主定理 5.1 的结论范围（§5.5）随之保持精确。
+
+**若不修订的后果**：bitcast 维持任意转任意（`expr_checker.py:132-157`）时，`bitcast` 可在不经过任何运行时检查的情况下把指针重解释为任意 pointee，类型混淆成为编译期可达的确定性操作，T-TYPE 无从成立、O-6 无物可证；并发与 FFI 若不重分类为局限而纳入论证，锁表操作与检查步骤在并发下非原子、检查不跨 FFI 边界的事实将使定理 5.1 的「全部访问安全」承诺超出其可证范围，论证失效。
+
+六项处置合计：缺陷 1、2、4 为纯修订，缺陷 3 为修订 + 局限，缺陷 5 为收敛论证，缺陷 6 为移交 + 局限，全部落入「修订 / 收敛论证 / 重分类局限」三类，无留白。每处修订均在 §2.5-§2.6 协议、第 3 章规则与第 4 章引理中有对应落地，第 5 章论证按修订后设计陈述；初版与修订后的逐项差异见第 12 章。
+
+处置的整体一致性：三类处置对应三套可验证的落地：修订类（1、2、4 及 3 的 re-key 部分）进入第 2-5 章形式化，由第 4 章引理承担正确性；收敛论证类（5）不改设计、以 §1.2 假设为界，其边界在 §1.3 out 行显式声明；重分类类（并发、FFI、内层作用域粒度）不进入论证范围、移交第 11 章局限。三者互不重叠：任一缺陷恰属一类（缺陷 3 属修订 + 局限两段式，其修订段与局限段分属修订与重分类），第 5 章定理 5.1 的结论范围随重分类保持精确（§5.5）。
+
+## 7. CFG 层引入设计
+
+<!-- 章节上限: 350 行 -->
+
+本章把第 3 章「操作 ↔ CFG 节点」映射（表 3）深化到节点层，回答核心问题：把胖指针引入 CFG 层，是否如预想那样只需修改几个内存相关原语。论证分六步：§7.1 逐一分析 12 个内存节点的现状、表示变化与检查插入规则；§7.2 论证胖指针作为 5 字段值类型沿数据流传播的成本，检验「最小改动集」假设；§7.3 覆盖其余 24 类节点；§7.4 对比三种表示方案；§7.5 对比库层方案并给出新原语建议；§7.6 给出可行性结论与风险。本章是分析而非实现草图，不给 Python/LLVM 伪代码；符号与规则全部沿用第 2-3 章（定义 1-19、规则 3.2.1-3.10.1），不重新定义。
+
+### 7.1 十二个内存节点逐一分析
+
+分析格式统一为四段：**现状**（当前工作方式，引用 `ir.py` 行号与 LL 降低）→ **胖指针表示下的变化** → **检查插入规则**（引第 3 章）→ **可行性结论**。结论三档：**直接**（节点语义不变或仅编码选择）、**需改造**（翻译逻辑或表示须修改）、**不适用**（不涉及指针值）。
+
+**VarPtr**（`ir.py:15`）。现状：取局部变量槽地址，LL 层 `var_ptr` 直接返回 alloca 指针（`llvm/builder.py:83-85`），结果类型 `T*`。变化：结果须为 5 字段 `⟨a_x, e_f, k_f, 0, cap(T)⟩`（规则 3.5.1、定义 15），`data = a_x` 来自槽地址，`lock_ptr`/`key` 来自帧锁；帧锁 `⟨e_f, k_f⟩` 由帧进入协议（§2.6、规则 3.8.1）维护，CFG 层须在函数入口实体化为寄存器值并传入每个取址点。检查插入：取址无 trap 前提（规则 3.5.1）。结论：**需改造**（帧锁实体化 + 5 字段合成）。
+
+**Alloca**（`ir.py:22`）。现状：分配栈槽并存入初值（`alloca_store`，`llvm/builder.py:91-94`）。变化：若局部变量为指针类型，槽位由 8B 扩为 40B，其余槽位不变；若 `PointerType` 直接映射为 5 字段结构（§7.4 方案 A），槽位随类型表自动扩大，节点翻译逻辑免改。检查插入：无（分配非访问）。结论：**需改造**（仅槽位布局，强度最低）。
+
+**FieldPtr**（`ir.py:29`）。现状：GEP 基址加 `[0, field_index]`（`llvm/builder.py:140-171`）。变化：子对象重锚定（规则 3.5.2），`data' = addr_T(p_s, 0) + δ`，`index' = 0`，`size' = cap(T')`，锁字段继承；字段字节偏移 δ 由类型布局求得（`__stable_layout`，`types.py:207-250`）。检查插入：`in_bounds(p_s, 1)`（规则 3.5.2 前提，对 one-past-end 的 `s` 取字段 trap）。结论：**需改造**（重锚定 + 界检查 + 布局偏移）。
+
+**ElementPtr**（`ir.py:37`）。现状：单节点承载两种语义：指针算术 `p ± n`（`builder.py:928-941` 路由）与元素重锚定 `&arr[i]`（`builder.py:946-948`）。变化：算术仅更新 `index' = index + n` 且要求 `0 ≤ index + n ≤ size`（规则 3.3.1-3.3.2）；重锚定要求 `safe_access(p, i + 1)` 且 `data' = addr_T(p, i)`、`index' = 0`、`size' = cap(T)`（规则 3.5.3）。两种语义的检查与结果构造不同，现状单节点无法区分。检查插入：算术 → 良构检查（定义 13）；重锚定 → `safe_access(p, i + 1)`。结论：**需改造**（建议拆分模式，配套 §7.5 的 Index 节点）。
+
+**PtrDiff**（`ir.py:45`）。现状：`ptrtoint` 两端相减再除以 `|T|`（`llvm/builder.py:196-209`）。变化：改为字段运算：先比较 `lock_ptr` 相等（异对象 trap），再求 `index₁ − index₂`（规则 3.3.3）；元素差直接可得，免去 `|T|` 除法。检查插入：`lock_ptr` 相等 + 良构 + 无回绕。结论：**需改造**（但较现状更简单）。
+
+**Load**（`ir.py:53`）。现状：LL 直接 `load`（`llvm/builder.py:123-133`），pointee 为 ZST 时返回 undef。变化：先查 `safe_access(p, 1) = live(p) ∧ in_bounds(p, 1)`（规则 3.2.1），再以有效地址 `addr_T(p, 0) = p.data + p.index·|T|`（定义 17）取数；pointee 为指针类型时读得 40B 聚合。检查插入：`live`（锁表寻址 `Λ(p.lock_ptr)` 比较键，定义 8）与 `in_bounds`（定义 12）前插于 Load；第 3 章规则前提在此落地。结论：**需改造**（检查 + 地址折算，机制的收益点所在）。补充：地址折算把 `data + index·|T|` 在 LLVM 层化为一次 `getelementptr`，检查与取数共用同一折算结果，避免两次计算；pointee 为指针类型时的 40B 聚合读经 `load {T*, u64, u64, u64, u64}` 结构体实现（§7.4 方案 A 的类型映射）。
+
+**Store**（`ir.py:60`）。现状：LL `store`（`llvm/builder.py:135-138`）。变化：同 Load 的检查与地址折算（规则 3.2.2）；额外：value 为指针类型时写 40B 聚合。检查插入：`safe_access(p, 1)`。结论：**需改造**。补充：写检查与地址折算与 Load 对称；整段拷贝经建议 MemCopy 原语（§7.5）一次性检查后，Store 的逐元素检查被替换为一条拷贝原语的检查，这是 §10.3 每检查开销指标中「整段拷贝一次检查」收益的落地节点。
+
+**Malloc**（`ir.py:67`）。现状：元素数换算字节数 + `malloc` intrinsic + bitcast（`llvm/builder.py:96-112`），pointee 为 ZST 时返回 undef。变化：按规则 3.6.1：取锁项 `e`、`k ← Gen()`（定义 10）、`Λ(e) := ⟨heap, k⟩`，返回 `⟨b, e, k, 0, n⟩`；与持久锁表（定义 7）交互。检查插入：无 trap 前提（分配恒可执行）；插入锁项获取与键生成。结论：**需改造**（锁表运行时支持，超出纯 CFG 内改造）。补充：锁项获取与键生成由锁表运行时提供原语（取新鲜或复用 `revoked` 条目、`Gen` 调用），Malloc 翻译后表现为「运行时调用 + 5 字段聚合构造」；ZST 情形的返回 undef 路径与胖指针化冲突，须改为返回合法 `⟨b, e, k, 0, 0⟩`（`size = 0`，一切访问在 `in_bounds` 失败，规则 3.6.1 示例）。
+
+**Delete**（`ir.py:100`）。现状：bitcast 为 `i8*` 调 `free`（`llvm/builder.py:114-119`），ZST 指针释放为 no-op。变化：前提 `is_heap(p) ∧ live(p) ∧ p.index = 0`（规则 3.6.2），动作先 `Λ(p.lock_ptr) := revoked` 再释放块 `[p.data, p.data + p.size·|T|)`。检查插入：三前提检查（锁项 kind 判定 `is_heap`，定义 9；键比较 `live`；`index = 0`）。结论：**需改造**（三检查 + 锁表交互）。补充：三前提对同一锁项只做一次寻址（§2.3 锁表条目工作示例），`is_heap` 与 `live` 的键比较共享读取结果；释放块区间按 `p.size·|T|` 计算，须与分配点的 `size` 一致，`&s.field` 等重锚定指针的 `delete` 语义为释放所属整个分配（§2.5 协议性质），此时按根追踪信息（§8.4）取得分配点容量。
+
+**Cast**（`ir.py:122`）。现状：pointer→pointer 为单条 `bitcast`（`llvm/builder.py:263-268`）。变化：按规则 3.9.1 重折算单位：`index' = ⌊index·|T|/|U|⌋`、`size' = ⌊size·|T|/|U|⌋`，data/lock_ptr/key 不变；40B 聚合无法单条 bitcast，须字段提取重构或整段重解释。检查插入：无运行时检查（编译期布局兼容前提，第 8 章承担）。结论：**需改造**（表示重折算；编译期前提移交第 8 章）。
+
+**SizeOf**（`ir.py:135`）。现状：编译期常量折叠（`sizeof_const`，`llvm/builder.py:49-50`；布局表 `types.py:207-250`）。变化：节点语义不变，仍返回 `|T|` 字节；但布局表对 `PointerType` 的映射从 8B 变 40B（`types.py:229-230`），含指针的聚合类型尺寸随之变化。检查插入：无。结论：**直接**（节点免改，全局布局表受影响）。补充：`sizeof(T*)` 在胖指针表示下返回 40，故 `dyn T*[n]` 等指针数组的分配字节数、`data + index·|T|` 折算中的 `|T|` 均自动采用新布局；对 40B 指针的跨类型折算（§3.9）仍以 `|T|`/`|U|` 整除为前提，SizeOf 本身不引入任何检查点。
+
+**NullptrLiteral**（`ir.py:346`）。现状：空指针常量，LL 层为 null 常量（`llvm/translator.py:78-80`）。变化：5 字段编码 `⟨0, 0, 0, 0, 0⟩`；`lock_ptr = 0 ∉ dom(Λ)` 使对 null 的任何访问在 `live` 检查处自然 trap（定义 8）。检查插入：无（构造非访问，拒绝由既有 `live` 承担）。结论：**直接**（编码选择即可；须与第 8 章「指针只由良构操作产生」闭合，见 §7.6）。补充：null 编码的 `size = 0`、`index = 0` 满足良构性（定义 13，`0 ≤ 0 ≤ 0`），故 null 可安全参与指针算术与比较（规则 3.4.2 按 `(data, index)` 比较，`⟨0,0,0,0,0⟩` 与自身相等）；一切 `n ≥ 1` 访问在 `in_bounds` 处也失败，双保险使 null 上的读写无论如何均 trap。
+
+小结：12 节点中 2 个直接（SizeOf、NullptrLiteral）、10 个需改造（VarPtr/Alloca/FieldPtr/ElementPtr/PtrDiff/Load/Store/Malloc/Delete/Cast）、无「不适用」。运行时检查插入点共 6 个（FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete），Malloc/Delete 另含锁表交互；**检查插入面确实收敛**，这是「几个原语」预想的成立部分；预想的失败部分在 §7.2 论证。
+
+### 7.2 指针值流经节点的传播成本论证
+
+核心事实：胖指针是**值类型变更**而非单点改造：`PtrVal` 从单一 LLVM 指针（8B）变为 5 字段聚合（40B），凡搬运、合并、比较、返回指针值的节点都受影响。按四类传播机制分析本节的 12 个节点。
+
+**搬运（Call、Invoke、Ret）**。指针作为参数或返回值时，40B 聚合须跨越调用边界。函数签名表 `__build_function_type`（`types.py:172-197`）把**全部**含指针参数/返回的函数签名改写；调用处参数编组（`llvm/translator.py:173-186`）与返回处（`translator.py:223-227`）须传收聚合。这不是几个节点，而是跨全程序的所有含指针签名的函数。现状已有聚合先例：`SliceType` 映射为 `{ptr, i64}` 16B 结构（`types.py:142-143`），机制存在但 40B 量级不同（§7.6 风险 4）。翻译逻辑必改节点：3（Call、Invoke、Ret）。
+
+**合并（Phi、ExtractValue、AggregateConstruct）**。LLVM 一等聚合值使 `Phi` 可合并任意结构体值、`extractvalue`/`aggregate` 可拆装字段，三类节点对 40B 聚合**结构透明、翻译逻辑免改**。代价转移为机器成本：每次指针拷贝/合并搬运 40B 而非 8B，且合并后的聚合须在消费者处拆字段。翻译逻辑免改节点：3（结构透明）。
+
+**比较（Binary）**。指针相等比较按 `(data, index)` 二元组（规则 3.4.2），序比较先验 `lock_ptr` 相等再按 `index`（规则 3.4.1）。LLVM 无聚合 `icmp`，现状单条比较（`llvm/builder.py:579-593`）须改为「提取字段 + 比较 + 前提检查」，Binary 须新增指针分支。翻译逻辑必改节点：1（Binary）。
+
+**类型层与非承载（Ret、VarRef、Reg、FuncPtr、Unary、CondBr）**。Ret 属搬运组（签名改写）；VarRef 与 Reg 是类型载体，指针型槽位与 SSA 寄存器全部承载 40B 聚合，波及全部函数；FuncPtr 属函数指针（`FunctionPointerType`，`types.py:196-197`），非数据指针、不含 5 字段元数据，表示须显式排除之，且布局表（`types.py:229-230`）须拆分两类指针防误判（耦合风险）；Unary 不承载指针值（指针算术已路由至 ElementPtr，`builder.py:928-941`，Unary 仅整数/浮点/布尔运算，`llvm/builder.py:211-226`）；CondBr 条件恒为 bool（`ir.py:257`），指针比较在先行 Binary 完成。翻译逻辑免改节点：3（FuncPtr/Unary/CondBr，FuncPtr 另有布局耦合风险）。
+
+**量化汇总**。CFG 节点共 48 类：
+
+- 翻译逻辑必须修改的节点类 ≥14：§7.1 的 10 个内存节点 + Binary、Call、Invoke、Ret（4）；
+- 结构透明但搬运成本×5 的 3：Phi、ExtractValue、AggregateConstruct；
+- 类型层传播的 2：VarRef、Reg（波及全部指针型槽位/寄存器）；
+- 非承载免改的 3：Unary、CondBr、FuncPtr；
+- 两张全局表必须重写：布局表 `__stable_layout`（`types.py:207-250`）与函数签名表 `__build_function_type`（`types.py:172-197`），一处改动影响全部函数。
+
+故「受影响节点类」≥19（14 + 3 + 2），另加 2 张全局表；以「翻译逻辑必改」为硬性标准则 ≥14 节点类 + 2 张全局表。
+
+量化口径说明：上述三类（必改/结构透明/类型层传播）以「翻译逻辑是否须改写」区分。结构透明的 3 个节点翻译逻辑免改，但每个指针值的 Phi 合并、extractvalue 拆装、aggregate 构造都搬运 40B 聚合，成本随指针数据流量放大（§7.6 风险 4）；类型层传播的 2 个节点（VarRef、Reg）不写翻译逻辑，但全程序指针型槽位与寄存器的宽度按 40B 扩展，是「跨全程序」而非「跨节点」的成本。硬性标准（翻译逻辑必改）之下，§7.1 的 10 个内存节点 + Binary/Call/Invoke/Ret 共 14 个节点类 + 布局表/函数签名表 2 张全局表，即修正后结论的改动面。
+
+**verdict 语句**：**结论：最小改动集假设不成立。**「只需修改几个内存相关原语」在检查插入面成立（运行时检查插入点仅 6 个，§7.1），但在表示传播面不成立：8B → 40B 的值类型变更沿数据流传播，翻译逻辑必改节点 ≥14、结构透明成本放大 ≥3、类型层传播 ≥2，另加布局表与函数签名表，实际侵入面 ≥19 个节点类 + 2 张全局表，波及全部含指针参数的函数签名。前提的修正形态：若在 LLVM 类型层把 `PointerType` 直接映射为 5 字段结构（§7.4 方案 A），Phi/Store/Alloca/AggregateConstruct/ExtractValue 等一等聚合节点自动适配，侵入面收缩为「比较、调用、返回三类语义 + 6 个检查插入点 + 2 张表」；即便如此，「只需修改几个内存原语」仍不成立：比较与调用的语义修改是显式且跨全程序的。
+
+### 7.3 其余 24 类节点分组覆盖论证
+
+表 6：其余 24 类节点的分组排除理由
+
+| 分组 | 排除理由 |
+|---|---|---|
+| ArrayConstruct（`ir.py:150`） | 构造数组聚合值；元素中的指针仅内嵌搬运（与 AggregateConstruct 同构），无访问/检查/运算。数组元素指针仍是 `PtrVal` 值，其类型层宽度按 40B 参与聚合布局（§7.2 类型层传播），但不引入新的检查点 |
+| VariantConstruct（`ir.py:158`） | 枚举变体构造；payload 中的指针仅打包，无操作语义。变体 payload 含指针时该变体的布局同样按 40B 计入（布局表 `types.py:207-250`），但构造本身不访问内存 |
+| SysWrite（`ir.py:167`）/ SysRead（`ir.py:173`） | I/O 系统调用；`buf` 为裸字节指针/字符串，无胖指针参与，仅副作用。与运行时入口参数（YianArgc/YianArgvPtr）同属 FFI 边界（§1.3 out 行） |
+| Open（`ir.py:180`）/ Close（`ir.py:187`） | 文件系统调用；`path` 为 C 字符串裸指针，属 FFI 边界（§1.3 out 行） |
+| YianArgc（`ir.py:193`）/ YianArgvPtr（`ir.py:198`） | 运行时入口参数；argv 由运行时以 C 风格提供，非 YIAN 分配，检查不跨越（§1.3 out） |
+| YianCstrlen（`ir.py:204`） | 对 C 字符串求长，裸指针，无胖指针语义 |
+| YianExit（`ir.py:210`） | 进程退出，无内存访问 |
+| Br（`ir.py:251`） | 无条件跳转，无值操作 |
+| Match（`ir.py:265`） | 匹配值限整型/字符/枚举（节点注释），不含指针；分支体内的指针操作在各节点处理 |
+| Panic（`ir.py:274`） | message 为 `str`，无内存访问 |
+| Block（`ir.py:287`） | 基本块容器，仅组织 Phis/Stmts，无操作语义 |
+| 五种字面量（`ir.py:311-339`） | 非指针值；StringLiteral 为既有 `{ptr, i64}` slice 表示，不含锁/键字段，不产生胖指针。整型/浮点/布尔/字符字面量不含指针值 |
+| MatchArm（`ir.py:361`） | 匹配分支容器，无操作语义 |
+| 三种模式（`ir.py:368-380`） | 匹配模式仅绑定整型/字符/枚举判别值，不含指针绑定 |
+| Function（`ir.py:395`） | 函数容器无操作语义；函数签名经签名表受 §7.2 全局改造影响，属全局而非节点改造 |
+
+分组的判定标准：24 类节点按「是否承载指针值 + 是否有内存访问」两问排除。不承载指针值（ArrayConstruct 若含指针仅内嵌搬运、字面量、模式、匹配、跳转、容器类）或不涉及内存访问（I/O、退出、字符串长度、函数容器）者归入本表；凡承载指针值且参与访问语义者已在 §7.1（12 节点）或 §7.2（Call/Invoke/Ret/Binary/Phi/ExtractValue/AggregateConstruct/VarRef/Reg/FuncPtr/Unary/CondBr，12 节点）覆盖。两问判定避免按节点名逐一臆断，使覆盖闭合可复核。
+
+覆盖闭合：§7.1（12）+ §7.2（12）+ §7.3（24）= 48，与 `ir.py` 全部节点类一一对应，无遗漏。
+
+### 7.4 表示方案对比
+
+本节对比三种表示方案，回答「元数据放哪里」。方案 A（内联 5 字段）把全部元数据随指针值携带；方案 B（指针指向元数据）把元数据放用户内存、指针携带其地址；方案 C（旁路表）把元数据放带外表、指针仅存索引。三方案的取舍维度是体积、取数与防伪，§7.2 的表示传播成本在三方案下不同：A 波及全部指针值搬运（40B），B 体积减半但每次访问多一次取数，C 指针最小但每访问查表。
+
+表 7：三种表示方案对比
+
+| 维度 | A. 内联 5 字段 | B. 指针指向元数据 | C. 旁路表 |
+|---|---|---|---|
+| 指针体积 | 40B（5×8B） | 16B（addr + meta*） | 8B（裸地址，或 16B 含 index） |
+| 检查开销 | 字段在寄存器，检查免元数据取数（仅锁表寻址一次） | 每访问解引用 meta 指针，多 1-2 次内存读，含缓存未命中风险 | 每访问 side-table 查找（哈希/树），间接寻址 |
+| 防伪强度 | 元数据存于寄存器/槽位，由良构操作独占写入（§1.2 假设内；缺陷 5 收敛论证） | meta 存于用户内存，index/size 可被越界写改写（须借 §6.5 收敛论证）；锁部分仍带外 | 元数据完全带外，最强；指针值须经表登记，构造路径受限 |
+| ABI 影响 | 40B 聚合传参，超常见按值宽度，或拆寄存器/按内存传 | 16B 双字段较友好；meta 指针在 C 侧无意义 | 8B 与 C 兼容，但检查不跨 FFI 使兼容无收益 |
+| 实现复杂度 | 中：类型表 + 比较/调用/返回语义（§7.2） | 中：meta 分配/回收生命周期（与锁表同构） | 高：表结构、条目生命周期、性能 |
+
+分析：方案 A 与第 2 章形式化最贴合（`PtrVal` 即 5 元组，定义 11）：检查直接读寄存器字段、无额外取数，防伪落在 §1.2 假设与第 8 章良构操作约束内；代价为 40B 体积与 ABI 变化（第 6 章已列为局限，§6.6）。方案 B 体积减半，但把 index/size 放回用户内存，重复缺陷 5 的教训（元数据与数据同段可写），且每次访问多一次 meta 解引用。方案 C 防伪最强，但检查开销与实现复杂度最高，side-table 变体已在 §6.5 列为备选而非本轮设计。故 CFG 层采用方案 A，与第 2-5 章形式化一致；`SliceType` `{ptr, i64}`（`types.py:142-143`）证明「YIAN 类型 → 多字段 LLVM 结构」的映射机制已存在，方案 A 基建可复用。
+
+方案取舍的维度对比：三个方案的差异维度是体积、取数次数与防伪强度，三者不可兼得。方案 A 在「取数次数」上最优（字段在寄存器、仅锁表寻址一次，定义 8），在「体积」上最差（40B）；方案 C 在「防伪」上最优（元数据完全带外）但在「取数次数」上最差（每访问 side-table 查找）；方案 B 居中但重复内联元数据缺陷。本方案以 ABI 兼容性（§7.6 风险 1、第 11 章局限）换取检查路径的常数开销与形式化贴合，取舍依据是第 5 章定理的论证需求优先于 FFI 场景（§1.3 out 行）。
+
+### 7.5 库层方案 vs CFG 层方案
+
+本节回答「检查放哪一层」：现状库层（`lib/` 与原型）与建议 CFG 层的取舍。库层方案的检查与被检语言同层，历史路径、覆盖面受限于显式走 trait 的路径；CFG 层方案把检查下沉到 IR，全覆盖、可论证，代价是表示传播成本（§7.2）。对比以六个维度展开（表 8）：覆盖面、性能、可论证性、侵入面，另加可维护性与扩展性两点在表后讨论。
+
+表 8：库层方案与 CFG 层方案对比
+
+| 维度 | 库层方案（现状） | CFG 层方案（本设计） |
+|---|---|---|
+| 覆盖面 | 仅显式走 `Index`/切片/数组访问的路径（pointer.an:5-9 纯算术、array.an:21-28 手工检查）；绕过 trait 的裸 `*`/`[]` 与 memcpy 循环（mem.an:4-14）不受检 | 全部 `Load`/`Store`/`FieldPtr`/`ElementPtr`/`PtrDiff`/`Delete`/`Malloc` 统一插检，无路径绕过 |
+| 性能 | 检查内联于库代码；memcpy 逐元素检查（每元素 1 次 `safe_access`）；`Index` trait 分派间接 | 检查在 IR 层内联、无 trait 间接；MemCopy 整段 1 次检查；编译器可做检查合并与循环提升 |
+| 可论证性 | 检查与第 3 章规则对应隐式、易漂移（§3.11 现状注：多处只验起点或纯算术）；形式化须为「库函数调用」建模 | 检查插入点即规则前提落地（§7.1），规则 ↔ 节点一一对应，O-1/O-2a 的枚举义务在编译器中可查 |
+| 侵入面 | 只动 lib/ 与原型代码，不触编译器；每新内存操作须手工补检查 | 编译器表示层全局改造（§7.2：≥19 节点类 + 2 张表），一次性成本 |
+
+库层方案是历史路径：检查与被检语言同层，无法保证全路径覆盖，且同一访问存在两处实现（array.an:21-28 与 pointer.an:5-9）导致漂移（§3.11）。CFG 层方案把检查下沉到 IR，根因性解决覆盖面与可论证性，代价是 §7.2 论证的表示传播成本。
+
+表 8 之外的可维护性对比：库层方案每新增一个内存操作（如新 intrinsic 或新容器类型）须手工补检查，检查与操作的位置分离、易遗漏；CFG 层方案的检查插入点固定（§7.1 的 6 个节点），新操作经既有节点自动获检，规则 ↔ 节点对应表（表 3）保证可维护性。扩展性对比：库层方案下，`MemCopy`/`Index` 新原语（§7.5）须在库层重写为带检查的组合；CFG 层方案下新原语直接承载规则语义（规则 3.10.1、3.2.3），一次检查、语义闭合。二者在覆盖面上的差距随语言增长而放大。
+
+**新原语建议**（两项，把第 3 章的索引与整段拷贝形态固化到 IR）：
+
+1. **Index 节点**：源级 `p[i]` 现状经 `Index` trait 分派（pointer.an:5-9 仅算术无检查；array.an:21-28 手工检查）→ 建议 CFG `Index` 节点把 `p[i]` 直接编译为「重锚定 + Load/Store」的带检查组合（规则 3.2.3/3.2.4），消除 trait 间接与双实现漂移；与 §7.1 的 ElementPtr 双语义拆分配套。落地形态：`Index` 携带 `base` 指针与 `i`，内部按规则 3.2.3 执行 `in_bounds(base, i + 1)` 检查后生成有效地址，避免现状库层两处实现（pointer.an 纯算术、array.an 手工检查）对同一访问语义漂移（§3.11）。
+2. **MemCopy 原语**：现状 memcpy/memmove 为逐元素 for 循环（mem.an:4-14），每元素经 ElementPtr+Load+Store 各查一次 → 建议 CFG `MemCopy` 节点携带 `dest`/`src`/`count`，按规则 3.10.1 一次性 `safe_access(dest, m) ∧ safe_access(src, m)` 两端检查后整段拷贝。现状 `IntrinsicKind.MemCopy`（`intrinsics.py:34`）为死声明（无 CFG 节点引用，仅 `__intrinsic_return_type_id` 登记其返回类型），新原语可直接复用该外部声明，消除死代码并赋予语义；realloc（规则 3.7.1）的旧 → 新块拷贝同样受益。落地形态：一次检查通过后发出 LLVM 的 `memcpy` intrinsic 或逐元素降级，检查成本从每元素一次降为每拷贝一次。
+
+### 7.6 可行性结论与风险
+
+**可行性结论**：CFG 层引入胖指针**可行**，但「只需修改几个内存相关原语」的预想**不成立**。检查插入面小（运行时检查插入点 6 个 + Malloc/Delete 锁表交互，§7.1），表示传播面大（≥19 节点类 + 布局表/函数签名表 2 张全局表，§7.2）。修正后的结论：可行性取决于两点：① 在 LLVM 类型层把 `PointerType` 映射为 5 字段结构（§7.4 方案 A），使一等聚合节点自动适配；② 显式修改比较（Binary）、调用（Call/Invoke）、返回（Ret）与 6 个检查插入点的语义。两点成立时，第 3 章规则的全部前提可在 CFG 层逐节点落地，S1/T1 的枚举义务（O-1/O-2a）获得编译器内可查的对应；若不接受表示传播成本而退回库层方案（§7.5），覆盖面与可论证性不可恢复。
+
+结论的验收形态：可行性结论以「可落地」为判定而非「已实现」。落地的验收标准为三条：① 编译含指针的程序至 LLVM IR，`PointerType` 按 5 字段结构展开且 Phi/Alloca/Store 等聚合节点无须特判；② 6 个检查插入点在对应节点产生 `in_bounds`/`live` 检查且与第 3 章前提逐字对应；③ §10.5 负例集（越界/UAF/双释放/栈悬垂）逐一触发预期 trap 点。三条均达成即第 7 章设计闭环，进入第 11 章评测方向。
+
+**本章与前后章的接口**：第 7 章是「设计可行性」章，向上承接第 2-3 章形式化（规则前提即检查插入点）、向下供给第 10 章评估协议（实现成本的结构化清单）与第 11 章方向（CFG 层实现与评测）。第 7 章不定义新符号、不改写规则，全部结论以「节点 × 前提」表格与风险清单形式交付；规则 3.10.1 的 MemCopy 建议与 §7.5 的 Index 节点是仅有的两项新增原语建议，其语义仍以既有规则为前提。
+
+**风险清单**：
+
+1. **FFI/ABI**：指针 5 字段 40B vs 裸 8B（体积×5）；含指针参数/返回的函数签名全部改写（`types.py:172-197`）；C 侧不识别元数据、检查不跨边界（§1.3 out 行，第 11 章）。SliceType 16B 先例（`types.py:142-143`）存在但量级不同：40B 超常见按值传递宽度，可能触发 byval/按内存传参。缓解方向：按字段拆分传参或 side-table 变体（第 11 章）可在 ABI 边界恢复 8B 裸指针，但代价是检查不跨越，需在成本与覆盖间显式取舍。
+2. **ZST**：现状「指针-to-ZST 是 ZST」（`type_ops.py:276-277`），多个快路径依赖该性质：布局 `(0,1)`（`types.py:214`）、malloc/load/store 短路（`llvm/builder.py:97-99`、`126-129`、`136-137`）、调用丢弃 ZST 参数与 void 返回（`llvm/translator.py:176`、`183`、`224`）。胖指针为固定 5 字段后指针-to-ZST 不再是 ZST：放弃快路径则性能回归，保持 ZST 则破坏表示统一性，须显式决策。建议：以「指针-to-ZST 记 40B 但 ZST 对象本身仍 `(0,1)`」为默认，保留 ZST 对象快路径、仅改指针值体积。
+3. **指针比较**：`icmp` 直比改为字段比较（规则 3.4.1-3.4.2）；LLVM 无聚合 `icmp`，比较由 1 条变为「提取字段 + 2-3 条 + 前提检查」，Binary 须新增指针分支。序比较还需在比较前查 `lock_ptr` 相等（规则 3.4.1 前提），比较路径因此带上一次字段相等预检；相等比较按 `(data, index)` 二元组（规则 3.4.2），与序比较分支结构不同，Binary 指针分支内须再分序/等两路。
+4. **聚合传参**：5 字段按 ABI 传参可能按内存传递或拆分寄存器，调用约定与性能全局变化，与既有 SliceType（2 字段）量级不同。影响面是跨全程序的：任何含指针参数/返回的函数（§7.2 搬运组）签名与调用点均受影响，回退方案（库层方案）虽避免 ABI 变化但失去全路径覆盖（§7.5）。
+5. **函数指针耦合**：数据指针与函数指针共用布局分支（`types.py:229-230`）与签名构建（`types.py:196-197`）；胖指针化须显式排除 `FunctionPointerType`，防函数指针被误判为 40B。若漏排，函数指针按 40B 聚合取值将使间接调用退化为按内存读，既有调用约定全变；须在布局表与签名构建两处同时拆分两类指针。
+6. **null 编码**：NullptrLiteral 选 `⟨0, 0, 0, 0, 0⟩` 编码后，对 null 的访问经 `live` 检查（`lock_ptr = 0 ∉ dom(Λ)`）自然 trap；须与第 8 章「指针只由良构操作产生」闭合，防构造非规范编码绕过检查。第 8 章值域闭合（§8.1）已穷尽指针产生途径，非规范 5 元组无法由良构定型产生，故 `⟨0,0,0,0,0⟩` 之外不出现可逃逸的编码。
+
+## 8. 类型系统约束形式化
+
+<!-- 章节上限: 300 行 -->
+
+本章把「类型系统约束也是安全机制的一部分」落实为可陈述的形式化：§8.1 给出指针定型规则（判定式/规则式），§8.2 定义对象类型同一性与分配点类型标注，§8.3 收紧 bitcast 约束，§8.4 给出根/来源追踪设计（规定式），§8.5 给出类型约束与运行时检查的分工表及完备性论证。第 4 章不变量 T-TYPE（§4.7）与证明义务 O-6（第 5 章）在此承接；第 7 章 §7.6 风险 6（null 编码）要求的「指针只由良构操作产生」亦在本章定型规则中闭合。符号全部沿用第 2-5 章（定义 1-23、规则 3.2.1-3.10.1），不重新定义；新定义自编号 24 起。论证范围同 §1.3 的 in 类；本章只对指针值定型，不引入借用/生命周期分析，亦不重构语言其余类型系统。
+
+### 8.1 指针定型规则
+
+**定义 24（定型环境与判定式）**：定型环境 $\Gamma$ 是符号到类型的部分映射 $\Gamma : \mathrm{Sym} \rightharpoonup \mathrm{Ty}$，记录当前作用域的变量与常量类型。泛型在 monomorphization 下按实例代换定型，故 $\Gamma$ 中不含类型变量。判定式 $\Gamma \vdash e : T$ 读作「在环境 $\Gamma$ 下表达式 $e$ 具有类型 $T$」；$T^{*}$ 记 pointee 为 $T$ 的指针类型。
+
+**指针形成规则**（指针值产生的全部途径）：
+
+**规则 8.1.1（取址 $\&e$）**：
+
+$$\frac{\Gamma \vdash e : T \quad \text{$e$ 为左值表达式}}{\Gamma \vdash \&e : T^{*}}$$
+
+**规则 8.1.2（堆分配）**：
+
+$$\Gamma \vdash \texttt{dyn}\ T : T^{*} \qquad \Gamma \vdash \texttt{dyn}\ T[n] : T^{*}$$
+
+**规则 8.1.3（数组退化）**：
+
+$$\frac{\Gamma \vdash a : T[m]}{\Gamma \vdash a : T^{*}}$$
+
+**规则 8.1.4（空指针字面量）**：对任意类型 $T$ 有 $\Gamma \vdash \texttt{null} : T^{*}$（`coerce` 中的唯一指针隐转，`expr_checker.py:341-345`）。
+
+**指针使用规则**（表 9）：
+
+表 9：指针使用定型规则
+
+| 规则 | 判定式 | 说明 |
+|---|---|---|
+| 8.1.5 解引用 | $\Gamma \vdash p : T^{*} \Rightarrow \Gamma \vdash *p : T$ | 类型层解引用即 `try_deref`（`context.py:641-654`） |
+| 8.1.6 索引 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash i : \texttt{u64} \Rightarrow \Gamma \vdash p[i] : T$ | `p[i]` 是 `*(p + i)` 的语法糖（§2.7、规则 3.2.3） |
+| 8.1.7 指针加 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash n : \mathbb{Z} \Rightarrow \Gamma \vdash p + n : T^{*}$ | 元素级算术（规则 3.3.1） |
+| 8.1.8 指针减 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash n : \mathbb{Z} \Rightarrow \Gamma \vdash p - n : T^{*}$ | 等价 $p + (-n)$（规则 3.3.2） |
+| 8.1.9 指针差 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p - q : \texttt{u64}$ | 同 pointee（现状 `op_builder.py:277-290` 要求 type_id 相等） |
+| 8.1.10 相等比较 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p \mathrel{==} q : \texttt{bool}$ | 同 pointee；跨对象允许（规则 3.4.2） |
+| 8.1.11 序比较 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p < q : \texttt{bool}$ | 同 pointee；运行时要求 `lock_ptr` 相等（规则 3.4.1） |
+| 8.1.12 释放 | $\Gamma \vdash p : T^{*} \Rightarrow \Gamma \vdash \texttt{delete}\ p : \texttt{unit}$ | 前提同现状 `lower_delete`（`expr_checker.py:599-606`） |
+
+**规则逐条说明（表 9 的判定语义）**：规则 8.1.5 解引用与 8.1.6 索引把访问定型为类型层操作，运行时界/时序检查由第 3 章规则承担，两层分工见 §8.5 表 10；8.1.7-8.1.8 指针加/减是元素级算术，pointee 不变、`index` 位移量在定型层即限制为整数，杜绝整型指针算术；8.1.9 指针差要求同 pointee，运行时再查 `lock_ptr` 相等（规则 3.3.3）；8.1.10 相等比较允许跨对象（规则 3.4.2 按 `(data, index)`），8.1.11 序比较要求同 pointee 且运行时查 `lock_ptr` 相等（规则 3.4.1）；8.1.12 释放只对 `T*` 定型，运行时前提 `is_heap ∧ live ∧ index = 0`（规则 3.6.2）在类型层之后叠加。每条使用规则与第 3 章同名操作规则一一对应，定型层负责静态形态、运行时层负责动态前提，无交叉。
+
+**现状对照**：解引用、索引、取址的 HIR 构建对应 `__build_index`/`__build_deref`/`__build_addr_of`（`op_builder.py:427-488`）；指针算术对应 `__build_add`/`__build_sub`（`op_builder.py:220-303`）；比较仅接受 pointee 相等（`op_builder.py:570-585`）；分支合并在异 pointee 时递归合并（`type_ops.py:339-340`，§8.2 现状风险）。对照差异：现状 `__build_index` 经 `Index` trait 分派（`lib/core/pointer.an:5-9` 仅算术），8.1.6 的定型与运行时检查由 §7.5 Index 节点统一承担；现状比较的 pointee 相等约束与 8.1.10 的跨对象相等并不冲突，跨对象仅允许相等/不等、不允许序比较（8.1.11）。
+
+**指针值域闭合性**：形成规则 8.1.1-8.1.4 与受限 bitcast（规则 8.3.1）穷尽指针值的产生途径；指针类型数据的搬运（变量/字段读写、传参）保持类型不变。不存在从任意整数或字节数据构造指针的定型：`coerce` 无整型→指针分支（`expr_checker.py:318-427`），现状 `bitcast` 的任意转任意（§8.3 现状）是唯一开口，收紧后闭合。故 §7.6 风险 6 的 null 编码 $\langle 0, 0, 0, 0, 0 \rangle$ 不会被非规范数据伪造：非规范指针值无法由良构定型产生，其访问要么在 `live` 处自然 trap、要么在 bitcast 处被编译期拒绝。
+
+值域闭合的验证次序：逐个核对四条形成规则与规则 8.3.1 的左件，确认「规则输出 ≡ 指针值全集」。取址（8.1.1）输出 `T*`；分配（8.1.2）输出 `T*`；数组退化（8.1.3）输出 `T*`；null（8.1.4）输出 `T*`；受限 bitcast（8.3.1）输出 `U*`。指针作为 `Val` 的 `PtrVal` 分量存放（定义 3、§2.7），其搬运路径（变量、字段、参数、返回、聚合）均保持类型不变，无「把整数当指针」的定型入口。闭合性若成立，非规范 5 元组（如 `lock_ptr = 0` 之外的伪造键组合）即不可达，null 编码是唯一特殊编码。
+
+### 8.2 对象类型同一性与分配点类型标注
+
+**现状：PointerType 结构化、无名义身份**。`PointerType` 仅含 `(type_id, pointee_type)` 两字段（`ty.py:114-117`），不携带声明名或分配点信息；按 pointee 唯一化：`alloc_pointer` 以 `pointee_type` 为键查缓存（`space.py:99-106`，经 `TypeCtx.alloc_pointer` 委托，`context.py:206-207`），同一 pointee 只存在一个指针 type_id。推论：pointee 相同的指针静态不可区分（即使锚定不同对象），对象动态类型（定义 23）只能由对象的建立点决定，`static_type` 本身不足以区分「同一结构、不同分配点」的对象。另一现状风险：分支合并对异 pointee 指针递归 `__merge_two` 合并 pointee（`type_ops.py:339-340`），可能把不相容 pointee 静默合并，削弱 T-TYPE；本章以分配点标注收紧之。
+
+**定义 25（分配点类型标注 `annot` 与 `alloc_type`）**：给每个指针产生点（取址、分配、数组退化）标注其对象建立类型 $\mathrm{annot}(q)$；指针值 $p$ 的分配点类型 $\mathrm{alloc\_type}(p)$ 定义为产生 $p$ 的产生点的标注。在 monomorphization 下每个产生点实例化为确定函数中的确定类型，故 $\mathrm{alloc\_type}(p)$ 是编译器可静态确定的单一类型（无动态分派对象、无运行时类型标签）。
+
+**分配点标注工作示例**：同一结构体 `struct S { x: u64 }` 的两个分配点 `dyn S` 与 `dyn S[2]` 分别产生 `S*` 与 `S*`（pointee 相同、type_id 相同，现状 `space.py:99-106` 唯一化），但标注不同：`alloc_type` 分别为 `S` 与 `S[2]`。编译器据标注得知 `delete` 的目标是整数组（`size = 2`，规则 3.6.2 释放 `[p.data, p.data + 2·|S|)`）还是单元素（`size = 1`），T-TYPE 的静态验证（§8.4 用途①）由此按产生点而非仅按 pointee 区分对象。
+
+**定义 26（对象类型同一性）**：指针 $p$ 与被访问对象的类型同一性定义为：
+
+$$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p) \;\wedge\; \text{layout\_compat}(\mathrm{alloc\_type}(p), \mathrm{static\_type}(p))$$
+
+其中 $\mathrm{dyn\_type}_t$ 为第 4 章定义 23，`layout_compat` 为 §8.3 定义 27。该式是 T-TYPE（§4.7）的编译器侧版本：动态类型由锚定该地址的分配/取址点静态类型唯一决定，分配点标注使编译器在每个访问点静态知道 $\mathrm{alloc\_type}(p)$；地址复用情形由 T1 负向侧（O-2b）排除：旧指针键已作废，无法通过 `live` 访问新对象，故同一性在重新分配后仍成立。monomorphization 下该式精确成立：无 trait object 与动态类型，任何产生点的类型确定。
+
+### 8.3 bitcast 约束收紧
+
+**现状：任意转任意**。`__handle_bitcast` 仅要求源为 `PointerType`/`NullPtrType`、目标为 `PointerType`（`expr_checker.py:132-157`），无 pointee 兼容约束；LLVM 层 `cast` 对 pointer→pointer 直接单条 `bitcast`（`llvm/builder.py:263-268`）。故 `bitcast<MemoryBlock*>(self.address)` 一类任意重解释合法，是 §1.1 类 3（类型混淆）的唯一种子。
+
+**定义 27（布局兼容 `layout_compat`）**：类型对 $T, U$ 布局兼容当且仅当：
+
+$$\text{layout\_compat}(T, U) \iff |U| \mid |T| \;\wedge\; \text{align}(U) \le \text{align}(T)$$
+
+其中 $|T|$ 为字节尺寸、$\text{align}(T)$ 为对齐，$|U| \mid |T|$ 表示 $|T|$ 是 $|U|$ 的整数倍。
+
+**规则 8.3.1（受限 bitcast）**：
+
+$$\frac{\Gamma \vdash p : T^{*} \quad \text{layout\_compat}(T, U)}{\Gamma \vdash p \ \texttt{as}\ U^{*} : U^{*}}$$
+
+判定说明：$|U| \mid |T|$ 蕴含对任意运行时 $p.\text{index}$ 有 $|U| \mid p.\text{index} \cdot |T|$，故规则 3.9.1 的折算前提（$p.\text{index} \cdot |T|$、$p.\text{size} \cdot |T|$ 均被 $|U|$ 整除）恒成立，`size'`/`index'` 的取整精确无损；$\text{align}(U) \le \text{align}(T)$ 保证重解释后元素满足其对齐要求，`data` 锚点对齐不被破坏。规则 3.9.1 的编译期前提即由本判定承担；`Cast` 节点（`ir.py:122`）的表示重折算（第 7 章 §7.1 Cast）不变。
+
+判定示例：`u64*` 转 `u8*`：$|u8| = 1$ 整除 $|u64| = 8$，$\text{align}(u8) = 1 \le 8 = \text{align}(u64)$，前提成立，任意运行时 `index` 折算无损（规则 3.9.1 示例）。`u8*` 转 `u64*`：须 `index·1` 被 8 整除，运行时可能不成立，故定型层以「$|U| \mid |T|$ 而非 $|T| \mid |U|$」的方向性排除该转换，从源头杜绝对齐破坏；这正是 `layout_compat` 方向性（定义 27）的意义。
+
+**可行性注意（分析侧布局查询）**：现状布局、尺寸、对齐仅在 LLVM 降低期计算（`types.py:207-250` 的 `__stable_layout`：ZST 记 `(0, 1)`、指针按目标 ABI 取尺寸与对齐、数组/枚举递归求值），analysis 侧无 $|T|$/$\text{align}(T)$ 查询。收紧 bitcast 须在 analysis 侧新增布局查询，与 LLVM 侧共享同一布局规则，避免两侧漂移。现状依赖宽松 bitcast 的库与原型代码（如原型 `ptr.an` 的块头访问）在收紧后须改写为显式结构访问，属第 11 章实现范围，不改变本章规则。
+
+### 8.4 根/来源追踪设计（规定式）
+
+**现状：&s.field 丢根**。HIR 层 `&s.field` 为 `Unary(AddrOf, FieldAccess(Var s, "field"))`，在 `__build_addr_of`（`op_builder.py:474-488`）产生；到 CFG 经 `__resolve_addr`（`cfg/builder.py:547-570`）分解为 `FieldPtr`/`ElementPtr` 等地址节点，仅保留 `is_place` 与 `type_id`，生成该指针的根对象（变量 $s$ 或分配点）不再可追溯。后果：`delete` 语义（释放整个分配，规则 3.6.2）在编译期无法静态确定根；bitcast 合规性无法按根对象核验；运行时诊断无法报出越界/悬垂源自哪次分配。
+
+根追踪的编译期用途细化：① `delete` 的根一致性预检：编译期已知 `&s.field` 的根为 $s$，可静态判定该指针的 `delete` 目标是 $s$ 所属分配（整数组释放，规则 3.6.2 的 `p.size·|T|` 区间），避免仅凭运行时 `index = 0` 判定释放范围；② 越界诊断：trap 发生时据根键报出「对象 $s$ 的访问越界」而非仅报地址，错误报告形态与 ASan（§9.4）的工程化报告对齐；③ 与 §7.5 Index 节点配套：`&arr[i]` 的根为数组符号 `arr`，Index 节点的编译期根信息可与运行时检查点关联。
+
+**设计（规定式，不写实现代码）**：
+
+1. **HIR 层根注解**：每个指针产生点（取址、分配、数组退化）记录其根对象键。根键仿 definite_assignment.py 的 `StateKey` 模式（`definite_assignment.py:51-61`：冻结数据类，`sym_id + path` 元组；`__walk_assign_target` 沿 `FieldAccess`/`TupleAccess` 累积路径、在 `Var` 处归约，`definite_assignment.py:401-434`）：根键 =（对象符号 id, 字段/元素路径），堆分配以分配点唯一 id 为根键。
+2. **复用方式**：`StateKey` 的「符号 + 路径」结构天然覆盖 `&s.field`（符号 $s$ + 路径 `("field")`）、`&arr[i]`（数组符号 + 元素路径）与整变量取址 `&x`（空路径）；`dyn T`/`dyn T[n]` 以分配点 id 为根键，数组退化以被退化数组符号为根键。
+3. **插入点**：指针产生点 `__build_addr_of`（`op_builder.py:474-488`，取址）与分配构建 `build_dyn_value`/`build_dyn_buffer`（`op_builder.py:205-218`），在产生 HIR 指针值时同步记录根键；退化点随数组符号绑定。
+4. **用途**：① T-TYPE 的静态验证，同一根键的指针共享 `alloc_type`（定义 25）；② bitcast 合规性按根对象布局核验（定义 27）；③ `delete`/重锚定/比较的根一致性预检（异根序比较对应规则 3.4.1 的 `lock_ptr` 相等前提）。范围声明：追踪限于指针值本身，不引入借用检查或生命周期分析。
+
+### 8.5 类型约束与运行时检查分工表 + 完备性论证
+
+**分工表（表 10）**：按安全目标 G1-G4 组织类型系统（本章）与运行时检查（第 2-3 章）的分工。
+
+表 10：类型系统约束与运行时检查分工
+
+| 安全目标 | 类型系统保证（本章） | 运行时检查保证（第 2-3 章） |
+|---|---|---|
+| G1 空间 | 指针良构（定义 13）由定型规则 8.1.7-8.1.8 静态保证，无越界构造入口 | `in_bounds(p, n)` 全访问检查（定义 12），前提不满足即 trap（规则 3.2.1-3.2.4、3.10.1） |
+| G2 时序 | 不承诺（时序有效性本质动态，编译期不可判定） | `live(p)` 锁表键检查（定义 8）与释放前提（规则 3.6.2），不满足即 trap；作废永久性由 L-NOREUSE/L-REKEY（O-2b） |
+| G3 算术 | 定型规则限定指针算术为元素级（`T*` ± `n`），无整型→指针，回绕按 §2.4 数学语义排除 | 良构前提（定义 13）+ 无回绕实现约定（§2.4），回绕按 trap 处理 |
+| G4 类型 | bitcast 布局兼容（定义 27、规则 8.3.1）+ 分配点类型标注（定义 25-26），保证对象类型同一性 | 不承担（§1.3：运行时无类型判定） |
+
+**完备性论证（梗概级，承接 O-6）**：定理 5.1（§5.1）前件 = 「$P$ 通过第 8 章类型约束 ∧ $P$ 的全部指针操作良构」。本章把前件分解为三条可静态验证的断言：① 值域闭合，全部指针值由形成规则 8.1.1-8.1.4 与规则 8.3.1 产生，指针类型数据的搬运保持类型（§8.1）；② 类型同一性，每个可访问指针满足定义 26（动态类型 = 分配点类型且与静态类型布局兼容）；③ 良构前提可得，定型规则 8.1.7-8.1.8 与定义 13 一致，算术按数学整数语义求值（§2.4）。运行时部分（第 3 章）保证访问与释放规则前提在事件处求值（`in_bounds`、`live`），不满足即 trap（§2.1）。二者拼合即定理 5.1 的 `ok(e) ⟺ safe_access(e)` 结构：类型约束消除 G4 反例并保证对象类型在检查后不变，运行时检查消除 G1-G3 反例；地址复用路径由 T1 负向侧（O-2b）排除，使同一性论证在重新分配后仍成立。O-6 义务内容即：验证规则 8.1.1-8.1.12 与定义 25-27 的闭合性、`layout_compat` 足以排除类型混淆、标注在 monomorphization 下的精确性；本章为梗概级，完整证明留待实现侧验证（第 5 章 §5.5 交付物清单）。
+
+**完备性的缺口核查**：三条断言各有一个易漏口。值域闭合的漏口在 `bitcast`：规则 8.3.1 是唯一允许改变 pointee 的定型，布局兼容前提（定义 27）若漏判整除/对齐即出现非良构折算，须以 §8.3 可行性注意的 analysis 侧布局查询兜底；类型同一性的漏口在分配点标注精度：标注须在 monomorphization 后仍指唯一类型，若出现泛型实例间共享标注即失效（§8.2 分配点示例）；良构前提的漏口在 §2.4 无回绕约定由实现承担，若实现回绕未检测则 O-1 无回绕子义务落空。三处缺口均在本文档对应章节以「现状风险/可行性注意」标注，构成 O-6 实现时的核对清单。
+
+## 9. 相关工作
+
+<!-- 章节上限: 250 行 -->
+
+本章按 fat-pointer 谱系定位本方案（5 字段胖指针 + 带外持久锁表 + CFG 层分析，见第 2、7 章）的相关工作。谱系主线为：Austin 等人确立 fat-pointer 概念（PLDI 1994）→ SoftBound/HardBound 给出软件与硬件两支空间安全（PLDI 2009 / ASPLOS 2008）→ CETS 补全时序安全（ISMM 2010）→ CHERI 提出硬件能力模型（ISCA 2014）→ Low-Fat 探索零元数据堆界形态（CC 2016）；§9.1-§9.4 依此展开，§9.5 交代 Key Lock 历史背景，§9.6 记录未核实引用说明。每篇一段，给出作者/venue/年份与核实状态、核心思想，以及与本方案的同/异/可借鉴点；引用元数据来自已核实的 `.omo/notes/citations.md`（T2），未核实文献不以论据使用（§9.6）。
+
+### 9.1 空间安全：fat-pointer 谱系
+
+本方案的空间机制 `in_bounds`（定义 12）属 fat-pointer 谱系：界信息随指针携带、访问前检查。谱系内依次定位 Austin（鼻祖）、CCured 与 Cyclone（语言层形态）、SoftBound 与 HardBound（软件/硬件两支）、Baggy Bounds 与 Low-Fat（低开销形态）。谱系的分叉点有两个：元数据存放位置（内联于指针值 vs 带外 side table）与检查层级（语言层插桩 vs 编译期 IR 层 vs 硬件）。本方案选择「内联于指针值 + CFG 层插桩」（方案 A，§7.4），在谱系中的位置由 §9.1 各篇对照确定。
+
+**Austin、Breach 与 Sohi（PLDI 1994，已核实）**：《Efficient Detection of All Pointer and Array Access Errors》。fat-pointer 的鼻祖：每个指针携带基址与上界，指针算术与解引用时检查，声称覆盖全部指针与数组访问错误。与本方案相同的是「界随指针携带、按对象锚定」的空间模型（§2.4 锚定规则）；不同在于其以库/源代码改写插桩，本方案把检查前移至 CFG 层（第 7 章）并叠加时序维度。可借鉴点：「指针算术即检查」的覆盖思想是本方案 §2.7 算术良构性（定义 13）的直接来源。本方案对 Austin 方案局限的回应：其仅覆盖空间维度、且以库/改写插桩依赖目标源码可改写，本方案以 5 字段统一承载时序锁信息并在 CFG 层插桩（第 7 章），不再依赖源码改写。
+
+**CCured（Necula 等，POPL 2002，已核实）**：《CCured: Type-Safe Retrofitting of Legacy Code》。以类型推导把 C 指针划分为 SAFE/SEQ/WILD 三类，仅对 WILD 指针维持完整 fat-pointer 元数据，可静态证明安全的指针降为裸指针。与本方案不同：CCured 面向遗留 C 代码、须保留 WILD 逃生通道，本方案语言受静态类型约束（第 8 章）、指针产生途径封闭，无须按程序点分类降级。可借鉴点：其按可证性与访问方式分类、对可静态消除检查的指针降级的策略，可作为本方案未来按访问密度优化检查的方向（第 11 章）。本方案对 CCured 局限的回应：CCured 须为遗留 C 保留 WILD 逃生通道，检查覆盖不闭合，本方案语言指针产生途径封闭（§8.1 值域闭合）、无逃生通道，检查覆盖可形式化陈述（定理 5.1）。
+
+**Cyclone（Jim 等，USENIX ATC 2002，已核实）**：《Cyclone: A Safe Dialect of C》。C 的安全方言，指针区分不可空裸指针 `T *` 与带界 fat-pointer `T @`，编译期与运行期结合保证空间安全。与本方案同为「语言层内置安全指针」路线，其 `T @` 的基址/上界对应本方案 5 字段的 `data`/`size`；不同在于 Cyclone 须兼容 C 指针习惯而保留双轨表示，本方案以 5 字段统一所有指针。可借鉴点：Cyclone 对「静态可证安全指针」与「运行时检查指针」的分类，与本方案 §7.4 三种表示方案的复杂度权衡同源。本方案对 Cyclone 局限的回应：Cyclone 因兼容 C 指针习惯保留双轨表示，本方案语言无历史包袱、以 5 字段统一全部指针，消除了双轨之间的隐式转换面。
+
+**SoftBound（Nagarakatte 等，PLDI 2009，已核实）**：《SoftBound: Highly Compatible and Complete Spatial Memory Safety for C》。编译期插桩的软件空间安全：元数据存于独立绑定表（side table），指针算术更新元数据、访问前查表，兼容未改写的 C 源码与 ABI。与本方案不同：SoftBound 元数据与指针分离、以查表实现，本方案把元数据内联进 5 字段（方案 A，§7.4）、检查免二次取数；两者的查表/内联之争即本方案 §7.4 方案 A 与方案 C 的取舍。可借鉴点：SoftBound 的带外绑定表形态是本文档 §6.5 side-table 备选与 §7.4 方案 C 的对应文献，其「元数据独立于数据、不被越界写触及」的论证支撑本文档缺陷 5 的收敛论证。本方案对 SoftBound 局限的回应：SoftBound 查表开销随元数据粒度增长，本方案内联 5 字段（方案 A）使检查免二次取数，以体积换取访问路径上的常数开销。
+
+**HardBound（Devietti 等，ASPLOS 2008，已核实）**：《Hardbound: Architectural Support for Spatial Safety of the C Programming Language》。把 SoftBound 的界检查下沉到硬件：处理器寄存器维护基址/上界，带界寻址模式在每次访存时强制检查。与本方案不同：HardBound 为 ISA 级硬件方案，本方案是纯软件 CFG 层插桩（第 7 章）；相同在于都主张「界检查是访问语义的一部分」而非库层附加。可借鉴点：HardBound 把元数据存于处理器状态使之不可伪造的设计意图，与本方案 §1.2 攻击者模型（无任意写前置）下元数据防伪的论证目的一致。本方案对 HardBound 局限的回应：硬件方案改动指令集、依赖特定处理器，本方案纯软件实现不绑定 ISA，代价是防伪依赖威胁模型假设（第 11 章局限）。
+
+**Baggy Bounds（Akritidis 等，USENIX Security 2009，已核实）**：《Baggy Bounds Checking: An Efficient and Backwards-Compatible Defense against Out-of-Bounds Errors》。对象大小按 2 的幂向上取整，配合二进制伙伴分配器使对象独占 2 幂区间，界检查退化为一次 `addr & mask` 位运算。与本方案不同：Baggy 的界按 2 幂粗粒度、相邻对象合并检查，本方案 `size` 精确到元素个数（定义 12）；相同在于都以「界信息随指针携带」实现空间安全。可借鉴点：其「基址对齐 + 掩码」的廉价检查路径可作本方案 `in_bounds` 实现优化的参考（第 11 章）。本方案对 Baggy Bounds 局限的回应：Baggy 按 2 幂粗粒度合并相邻对象、界检查精度损失，本方案 `size` 精确到元素个数（定义 12），以略高的字段承载换取元素级界报精度。
+
+**Low-Fat Pointers（Duck 与 Yap，CC 2016 与 NDSS 2017，已核实）**：《Heap Bounds Protection with Low Fat Pointers》及后续栈界工作《Stack Bounds Protection with Low Fat Pointers》。把 2 幂区间基址编码进指针值本身（低位置零位携带容量），堆界检查无需任何元数据存取，后续工作把方案扩展到栈对象。与本方案相同：都主张空间界信息随指针值携带、检查免元数据取数；不同：Low-Fat 依赖 2 幂对齐地址编码与专门分配器，本方案以显式 `size` 字段承载、且同时携带时序锁信息（`lock_ptr`/`key`）。可借鉴点：Low-Fat 的零元数据检查形态是 §7.4 方案 A 追求目标的下界参照，其对齐约束在 YIAN 分配器上的适配性属第 11 章未来工作。本方案对 Low-Fat 局限的回应：Low-Fat 依赖 2 幂对齐地址编码与专门分配器，本方案以显式 `size` 字段承载界信息、不约束地址对齐，使现有分配器无须改造即可承接检查。
+
+### 9.2 时序安全：锁/键谱系
+
+本方案的时序机制 `live`（定义 8）属锁/键（lock-and-key）谱系：对象持有锁、指针携带键、访问时核对、释放即作废。该谱系由 CETS（ISMM 2010）确立编译期形态，Watchdog/WatchdogLite（ISCA 2012 / CGO 2014）给出硬件形态；本方案与 CETS 的持久锁表同构，第 6 章 §6.1 即以 CETS 为修订依据。谱系分叉点：锁的存放位置（对象头内联 vs 带外锁表 vs 硬件锁表）与栈侧的守卫机制（帧锁、硬件栈锁或复用常规机制）。本方案选择带外持久锁表 + 帧级 re-key（定义 7、规则 3.8.1），在谱系中的定位由 §9.2 各篇对照确定。
+
+**CETS（Nagarakatte 等，ISMM 2010，已核实）**：《CETS: Compiler Enforced Temporal Safety for C》。编译期时序安全：每个对象分配一个锁，指针携带锁引用，释放时作废锁，每次访存前校验锁活性，与 SoftBound 组合覆盖全部空间与时序错误。本方案时序机制与 CETS 直接同构：持久锁表 + 键作废（定义 7-8），§6.1 即引其持久锁表为修订缺陷 1 的依据；不同：CETS 的锁存于对象头（内联元数据），本方案把锁项移至带外持久锁表，杜绝「锁随块释放」导致的检查自反 UAF（缺陷 1）。可借鉴点：CETS 在 SPEC CPU 上的全程序插桩验证方法，供本方案第 10 章评估协议参考。本方案对 CETS 局限的回应：CETS 锁存于对象头、随对象同段存储，本方案把锁项移至带外持久锁表（定义 7），从根因上消除「锁随块释放」导致的检查自反 UAF（缺陷 1）。
+
+**Watchdog（Nagarakatte 等，ISCA 2012，已核实）**：《Watchdog: Hardware for Safe and Secure Manual Memory Management and Full Memory Safety》。硬件锁表：处理器内置锁表与 `lock`/`unlock` 指令，指针携带锁标识，硬件在每次访存时校验锁活性。与本方案相同：都以「指针携带锁引用、访问时查锁表」实现时序安全，是文献中与本方案时序设计最近的形态；不同：Watchdog 依赖专用硬件锁表，本方案锁表由软件运行时带外维护（定义 7）。可借鉴点：Watchdog 证明锁表检查可与空间检查正交组合，支撑本方案把 `live` 与 `in_bounds` 组合为 `safe_access`（定义 14）的分层结构。本方案对 Watchdog 局限的回应：Watchdog 依赖专用硬件锁表、无软件回退，本方案锁表由运行时带外维护（定义 7），在通用处理器上即可部署。
+
+**WatchdogLite（Nagarakatte 等，CGO 2014，已核实）**：《WatchdogLite: Hardware-Accelerated Compiler-Based Pointer Checking》。Watchdog 的轻量变体：仅对堆指针做硬件锁检查，栈指针复用常规硬件机制，大幅缩小指令集改动。与本方案不同：本方案栈侧以帧级锁 + re-key 协议（§2.6、规则 3.8.1）在纯软件层达成「帧退出即失效」，无须硬件栈锁。可借鉴点：其按指针来源（堆/栈）分流检查机制的分层思想，与本文档把栈内层作用域粒度重分类为局限（§6.3、第 11 章）的取舍方向一致。本方案对 WatchdogLite 局限的回应：WatchdogLite 栈侧依赖常规硬件机制、无栈悬垂专门防护，本方案以帧级锁 + re-key（§2.6、规则 3.8.1）在纯软件层覆盖栈时序错误。
+
+### 9.3 能力模型与硬件边界检查
+
+能力模型把「界信息不可伪造」提升为体系结构级保证，与本方案 §1.2 攻击者模型下的元数据防伪目标相通，但实现路径不同：硬件强制的不可伪造（CHERI）对照纯软件保证（本方案），以及硬件边界检查的工程失败案例（Intel MPX）。本节两篇对照回答一个问题：元数据防伪是否必须硬件化。CHERI 证明硬件可实现且更彻底，MPX 证明硬件方案也会因工程因素失败；本方案选择纯软件 CFG 层方案，其防伪强度定位在 §1.2 假设内（缺陷 5 收敛论证），上限参照即 CHERI（§7.4 方案 C）。
+
+**CHERI（Woodruff 等，ISCA 2014，已核实）**：《The CHERI Capability Model: Revisiting RISC in an Age of Risk》。在 RISC 指令集引入能力（capability）：指针携带不可伪造的权限边界（基址、长度、权限位），硬件强制边界检查。与本方案相同：都要求「指针携带的界信息不可被软件伪造」：CHERI 靠硬件能力 tag，本方案靠 §1.2 无任意写前置假设与第 8 章良构操作约束；不同：CHERI 为 ISA 级硬件方案、面向 C 系语言，本方案纯软件、面向 YIAN 静态类型语言。可借鉴点：CHERI 的能力 tag 语义是本文档 §6.5 side-table 备选与 §7.4 方案 C 防伪强度的上限参照。本方案对 CHERI 局限的回应：CHERI 为 ISA 级硬件方案、面向 C 系语言，本方案纯软件、面向 YIAN 静态类型语言，换取免硬件依赖；若目标平台提供能力支持，可作第 11 章硬件方向的升级路径。
+
+**Intel MPX（Oleksenko 等，POMACS 2018，已核实）**：《Intel MPX Explained: A Cross-layer Analysis of the Intel MPX System Stack》。对 Intel MPX 硬件边界检查系统的跨层实测剖析：检查粒度受限于 2 幂区间、边界表（bound tables）元数据膨胀、典型负载上开销普遍高于软件方案，最终被 Intel 停用。与本方案的关系：MPX 是「硬件边界检查」路线的反面案例，其失败教训（粗粒度、元数据开销、ABI 兼容）说明硬件方案并不天然优于软件 fat-pointer。可借鉴点：MPX 的教训已体现在本文档 §7.6 风险清单（FFI/ABI、聚合传参、指针体积）与 §7.4 方案对比中，本方案选择纯软件 CFG 层方案即基于这一对比。本方案对 MPX 局限的回应：MPX 边界表元数据膨胀、检查粒度粗，本方案元数据内联于 5 字段（方案 A）、`in_bounds` 精确到元素，避免以额外查表换取界检查。
+
+### 9.4 基线检测工具
+
+**AddressSanitizer（Serebryany 等，USENIX ATC 2012，已核实）**：《AddressSanitizer: A Fast Address Sanity Checker》。基于 shadow memory 的编译期插桩：每次访存前检查影子字节标记，红区（redzone）检测越界、隔离区（quarantine）检测 UAF，被 GCC/Clang 广泛集成。与本方案不同：ASan 面向未改写 C/C++、检测靠红区触发且不提供形式化保证，本方案检查精确到元素（定义 12）并有第 5 章定理支撑；相同：都把检查前插在编译期 IR 层（与第 7 章 CFG 层插桩路线一致）。可借鉴点：ASan 是第 10 章评估基线之一（§10.4），其工程化错误报告形态供本方案运行时诊断参考。本方案对 ASan 局限的回应：ASan 检测靠红区触发、不提供形式化保证，本方案检查精确到元素（定义 12）并有第 5 章定理支撑，工程便利性与形式保证由不同层分别承担；ASan 的 shadow-memory 形态与第 10 章评估对照（§10.4）用于说明检查精度与内存开销的取舍。
+
+### 9.5 Key Lock 历史背景
+
+本方案直接前身是本仓库 git HEAD 版的 Key Lock 设计（`docs/security.md`，220 行）：指针携带 address 与 key，被守护块头内联 `MemoryBlock{lock, size, data}`（该字段集为 git HEAD 版规格；工作区原型 `ptr.an:7-10` 的 `MemoryBlock` 仅保留 `lock`/`size`，数据经固定偏移紧随块头），访问时以 `key == lock` 匹配判定活性，堆指针以 `Ptr<T>::Heap(key, base, offset)`、栈指针以 `Ptr<T>::Stack(base, offset, len)` 枚举表示，释放时清空 `lock`/`size`。本方案是其演进而非替代：5 字段中的 `data` 对应 Key Lock 的 `base`、`size` 对应 `MemoryBlock.size`、时序检查的 `key == lock` 演进为经带外锁表的 `live(p)`（定义 8）；第 6 章表 5 的 6 个缺陷即针对 Key Lock 原型逐项识别，第 12 章给出逐字段/逐规则差异表，故本章不复述其设计。
+
+Key Lock 的设计动机与本方案的差异点：其一，Key Lock 把锁内联于块头，使锁与被守护块同生命周期，时序检查在块释放后读已释放内存（缺陷 1 的机制）；其二，其键由 `generate_key_lock()` 生成但语义未规定，原型退化为常量（缺陷 2 的机制）；其三，其栈指针 `Stack(base, offset, len)` 以 `offset < len` 判界、只验起点（缺陷 4 的机制）；其四，帧锁不复用 re-key，递归调用间遗留栈指针不可区分（缺陷 3 的机制）。这四条正是修订后设计的四个结构性变化点（定义 7、定义 10、定义 12、规则 3.8.1），Key Lock 因此是理解第 6 章六缺陷的完整对象。
+
+### 9.6 未核实引用说明
+
+早期文献清单曾以「WatchTower: Fast, Secure Memory Safety」（ASPLOS 2018）与「Buddy: Memory Safety for the C Language」（IEEE S&P 2020）为题引用两篇文献，另有一篇「Extensible Metadata for Memory Safety」（声称 OOPSLA 2016）。经 T2 检索核实（`.omo/notes/citations.md`）：三篇均未能在 dblp/OpenAlex/ACM DL 查得确切出处，判定为**未核实**，很可能为已核实文献的误记：「WatchTower」疑为 Watchdog（ISCA 2012，§9.2）的误记，「Buddy」疑为 Baggy Bounds Checking（USENIX Security 2009，§9.1）的误记（其机制即二进制伙伴分配器），「Extensible Metadata」的后续确证工作为 Low-Fat 栈界（NDSS 2017，§9.1）。本章正文不以未核实文献为论据，仅在此记录排查结论；§9.1-§9.5 所引文献均已核实。
+
+排查方法记录：以三篇文献的标题、作者与声称 venue 在 dblp、OpenAlex 与 ACM DL 三处交叉检索，无任何一条返回可匹配的条目；对疑似误记对象（Watchdog、Baggy Bounds、Low-Fat 栈界）反向检索其元数据，均与 §9.1-§9.2 的已核实条目一致。结论：三篇「文献」为早期清单的误记，已从正文论据中剔除。
+
+## 10. 评估方法论
+
+<!-- 章节上限: 200 行 -->
+
+### 10.1 评估目标与范围
+
+本章定义本方案实现完成后的评估协议：度量空间检查 `in_bounds`（定义 12）与时序检查 `live`（定义 8）的时间、内存与每检查开销，并与既有工具对照，回答「检查让程序慢多少、多占多少内存、是否值得换取第 5 章定理 5.1 的保证」。范围限于单线程、纯 YIAN、不跨 FFI 的 in 类程序（§1.3），与主定理结论范围一致。**未运行**：本文档为设计文档，评估协议已定义、未执行实测，具体数字留待 CFG 层实现后（第 11 章未来工作）按本章协议执行并回填。
+
+评估目标的三层含义：正确性目标（负例集逐条验证 trap 点，§10.5 步骤 4）、开销目标（时间/内存/每检查三个指标，§10.3）与对照目标（与无检查基线、ASan、SoftBound/CETS 三线对照，§10.4）。范围与主定理一致意味着评估结论只对 in 类程序有效：并发、FFI 场景的开销不在协议度量内，其局限在 §1.3 与第 11 章声明。
+
+### 10.2 基准
+
+基准分三层，覆盖从受控对照到全程序吞吐。
+
+1. **仓库内建基准（必测）**：`tests/experimental/ptr/` 的 Binary Trees 三变体：`binarytree_full.an`（`FullPtr` 全检查）、`binarytree_single.an`（`RawPtr` 无检查）、`binarytree_slice.an`（`Slice` 带界）。三者为同构的经典 Binary Trees 负载（深度 20、`check % 256 == 176` 断言），全部为指针密集的分配-遍历-释放负载，天然构成「无检查 / 带界 / 全检查」三档受控对照，直接刻画 5 字段表示的检查开销与内存放大。三变体同源的意义：差异仅在于指针类型（FullPtr/Slice/RawPtr），负载结构与输入完全相同，因此相对开销的差可归因于表示与检查，排除负载差异干扰。
+2. **Olden 基准套件**：经典指针密集型应用（bh、health、mst、perimeter 等），以堆对象图遍历与递归为主，是空间与时序检查的压力负载；须移植为 YIAN 源码。
+3. **SPEC CPU2017**：通用整数负载，覆盖非指针密集代码，度量检查前插对全程序吞吐与内存画像的影响；须移植代表性整数程序。
+
+移植完成度决定后两层是否进入正式评估：仓库内建基准为必测项，Olden 与 SPEC 的移植属第 11 章未来工作。
+
+### 10.3 指标
+
+- **运行时间开销**：被检版本与无检查基线的端到端运行时间之比；分基准报告，预期随动态访问密度变化（形态见 §10.6，无预设数值）。运行时间按基准内部分段报告（分配段、遍历段、释放段），以便区分检查前插成本与表示体积成本；分段以基准源码中的阶段注释为界。
+- **内存开销**：指针体积放大（8B→40B，§7.1）造成的堆/栈占用增量，与带外持久锁表（定义 7）的条目驻留量；锁项作废后保留、条目复用（§2.5），锁表规模与分配历史峰值相关。内存按峰值常驻与稳态两份报告：峰值反映指针体积放大与锁表累计，稳态反映条目复用下的驻留下界。
+- **每检查开销**：单次 `in_bounds` 与 `live` 的指令级代价（整数比较次数、锁表寻址次数），以及整段拷贝一次检查（规则 3.10.1）相对现状逐元素检查（§7.5）的收益。指令级代价以编译产物为对象统计检查路径的指令数形态，不预设具体数值，供 §10.6 形态对照。
+
+### 10.4 基线
+
+- **无检查基线**：`binarytree_single.an`（RawPtr）与关闭插桩的本编译器输出，作为时间与内存的绝对下界。
+- **AddressSanitizer**（USENIX ATC 2012，§9.4）：业界标准检测工具，作为工程可用性基线；其 shadow-memory 与红区机制的时间/内存形态与本方案不同，用于对照检查精度的取舍。
+- **SoftBound**（PLDI 2009，§9.1）与 **CETS**（ISMM 2010，§9.2）：学术谱系中与本方案最接近的软件方案（side-table 空间 + 持久锁时序），用于对照本方案「内联 5 字段 + 带外锁表」表示选择的优劣。
+
+可移植性说明：SoftBound/CETS 面向 C 源码，经各自工具链插桩后与本方案在同一机器、同一输入集对比；若工具链不可得，则以公开报告的开销形态作定性对照。
+
+基线选择依据：三条基线覆盖三种对照维度。无检查基线提供绝对开销下界（同源变体 `binarytree_single.an` 的 RawPtr 与关闭插桩的本编译器输出，二者差异即插桩成本）；ASan 提供工程可用性参照（其 shadow-memory 与红区机制的形态与本方案不同，用于对照检查精度与内存开销的取舍，§10.6）；SoftBound/CETS 提供学术谱系内最接近的软件方案对照（side-table 空间 + 持久锁时序 vs 本方案内联 5 字段 + 带外锁表），用于检验表示选择的开销影响。三条基线无须同时可得：无检查基线与 ASan 为必测，SoftBound/CETS 按工具链可得性降级为定性对照。
+
+### 10.5 协议
+
+1. **编译与运行**：被检程序经 `compiler.main`（含 CFG 层插桩）编译为 native exe，统一优化级别与输入集、同一机器。命令形态与 AGENTS.md 的 CLI 一致：`python3 -m compiler.main -O2 lib <bench>.an -o build/bench/<variant>`；基准文件取自 `tests/experimental/ptr/binarytree_*.an`（三变体同源，仅指针类型不同），被检变体与无检查基线的差异严格限定为插桩，编译参数逐项一致以保证对照有效。
+2. **重复与统计**：每个（基准 × 变体 × 基线）组合多次重复运行（预设不少于 5 次），取中位数与分布报告，排除冷启动与系统噪声。统计方法：先以少量试运行确认稳定窗口，再在窗口内重复采集；报告每次运行的端到端时间与常驻内存，汇总为中位数、四分位距与最小/最大值，不报告单次偶然值；同一机器、同一负载条件下进行，避免跨机折算。
+3. **正确性对照**：被检程序必须通过自身断言（如 Binary Trees 的 `check % 256 == 176`）；对注入的越界/UAF/双释放/栈悬垂样例，验证在相应检查点于访问发生前 trap（§2.1 吸收态），且无部分写入（规则 3.10.1）。注入样例以最小改动嵌入基准源码或独立构造为负例文件，保证断言路径与非注入基线一致。
+4. **负例集**：构造越界读写、one-past-end 访问、UAF、双释放、栈悬垂访问样例，逐一验证 trap 点与定理 5.1 对应规则一致。每条负例记录触发的规则号（如规则 3.2.1、3.6.2）、触发前提（`in_bounds`/`live`/`is_heap`）与 trap 前的指令序号，与 §5.4 结论逐条展开表逐行核对。
+
+### 10.6 预期结果形态
+
+- 时间开销预期随访问密度上升：指针密集负载（Binary Trees、Olden）的检查占比预期高于通用整数负载（SPEC）；三变体相对开销排序预期为 RawPtr < Slice < FullPtr。
+- 内存开销预期与指针体积线性相关：40B 表示（§7.1）使含指针聚合类型的占用放大，锁表持久驻留引入与对象规模近线性的小额开销，放大预期集中于指针密集数据结构。
+- 每检查开销：`in_bounds` 为常数次整数比较（定义 12）、`live` 为一次带外锁表寻址（定义 8），预期低于 SoftBound 的 side-table 查找；整段拷贝一次检查预期优于现状逐元素检查（§7.5）。
+- 检查精度：元素级全访问检查（定义 12）预期报出比 ASan 红区更精确的越界边界（访问区间越过末尾即 trap，而非触及红区才报）。
+- 形态对照用途：以上形态供实现完成后按 §10.5 协议实测对照，不作为预设结论；若实测与形态不符（如时间开销与访问密度不相关），须复核检查插入位置与表示布局，而非调整形态描述。
+
+以上全部为预期形态与相对趋势，无任何实测数值支撑。
+
+### 10.7 未运行声明
+
+**未运行**：本文档为设计文档，评估协议已定义、未执行实测，无任何性能数字可引用，具体数字留待 CFG 层实现后（第 11 章未来工作）按本章协议执行并回填，届时以实测结果替换 §10.6 的形态描述。未运行的客观原因：CFG 层插桩（第 7 章）尚未实现，`tests/experimental/ptr/` 现为库层原型（§7.5 现状），其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 方案 A 的 CFG 层插桩成本。因此本协议的交付物是「协议本身 + 预期形态」，而非任何实测表格；验收按 §10.5 步骤执行，不在本文档预填结果。
+
+## 11. 局限与未来工作
+
+<!-- 章节上限: 150 行 -->
+
+本章汇总第 1-10 章标出的边界，并列出未来工作的方向清单。局限是威胁模型（§1.2）与论证范围（§1.3 in/out 表）的诚实陈述，不构成机制缺陷；方向清单只列方向与动机，不排定路线图与优先级。
+
+### 11.1 局限
+
+**并发数据竞争（out）**：本机制与第 4-5 章全部形式化基于单线程模型（§1.3 in/out 行）。锁表操作（分配条目、作废键）与检查步骤（`live`、`in_bounds`）在单线程下原子；多线程下它们必须原子化，否则线程间对同一锁项或同一块的竞争使检查本身不可靠。本设计不含锁表原子化、锁项互斥或数据竞争检测，多线程内存安全不在论证范围（§5.5、§6.6）。
+
+**FFI/ABI 指针体积（out）**：胖指针 5 字段 40B，相对裸指针 8B 放大 5 倍（§7.1、§7.6 风险 1）。跨 FFI 边界 C 侧不识别元数据，检查不跨越边界（§1.3 out 行）；含指针参数的函数签名全部改写（`types.py:172-197`），40B 聚合可能按内存传参、调用约定全局变化（§7.6 风险 4）。ABI 兼容方案（按字段拆分传参或 side-table）属方向清单而非本轮设计（§6.6）。
+
+**元数据防伪依赖 §1.2 假设（out）**：锁表带外存储（定义 7）使锁表不被被保护数据覆盖，但 `size`/`index` 仍作为胖指针字段存放于存储（§6.5）。「元数据不可伪造」仅在 §1.2「无任意写前置」假设内成立：攻击者不能改写锁表或指针元数据，除非通过了运行时检查。若攻击者获得一次任意写前置，即可改写 `size` 扩大访问或改写 `lock_ptr`/`key`，检查被废除；该失效属 out 行边界（§1.3），不构成 in 类论证的反例（§5.5）。side-table 变体（§11.2）是解除该假设依赖的方向。
+
+**栈内层作用域粒度（out）**：栈守卫粒度为帧级锁（§2.6、规则 3.8.1）：每帧一个活动锁项，帧内全部取址共享该锁与键。re-key 区分帧轮次（L-REKEY），但不区分同一帧内已退出的内层块；`{ let y; q = &y; }` 之后 `q` 对 `y` 地址的访问在帧仍活动时不设防（§6.3）。块级粒度需编译期作用域生命周期分析（帧内块级锁或活跃集合），超出本次修订的最小集合，作为局限保留（§2.6 粒度边界、§6.3 重分类）。
+
+### 11.2 未来工作方向
+
+以下方向只列方向与动机，不排定路线图与优先级；具体取舍由实现阶段按第 10 章评估协议决定。
+
+- **side-table 变体**：把全部指针元数据（含 `size`）移入带外 side table、指针仅存表索引，使元数据在任意写前置下也不可被越界写触及（§6.5 备选、§7.4 方案 C）。动机：解除元数据防伪对 §1.2 假设的依赖，并改善 ABI 兼容；代价是每访问多一次表寻址、指针体积变化与表条目生命周期管理（与锁表同构）。
+- **硬件能力支持（CHERI 类）**：考察把界与时序信息交由硬件能力承载的可行性（CHERI，ISCA 2014，§9.3），用硬件 tag 保证元数据不可伪造。动机：为元数据防伪提供体系结构级保证，是 §6.5 收敛论证边界外的升级路径；须与纯软件锁表方案在性能与部署成本上对比（§7.4 方案 C 上限参照）。
+- **CFG 层实现与评测**：按第 7 章方案 A（内联 5 字段 + 锁表）实现 CFG 层插桩，随后按第 10 章评估协议执行实测并回填数字（§10.1、§10.7 未运行声明的后续）；Olden 与 SPEC CPU2017 的移植属此项（§10.2）。动机：把第 4-5 章的证明义务（O-1/O-2a）落实为编译器内可查的检查插入点，并验证 §10.6 预期的开销形态。
+- **检查优化**：对可静态证明安全的指针访问降级为裸指针或省略检查，仅在必要程序点维持完整元数据（CCured 式，POPL 2002，§9.1）；并考察廉价检查形态：Baggy 的掩码界检查（USENIX Security 2009，§9.1）与 Low-Fat 的零元数据编码及其在 YIAN 分配器上的对齐适配（CC 2016 / NDSS 2017，§9.1）。动机：缓解 40B 体积与检查开销；降级须与第 8 章值域闭合协调，保证不重新打开 §11.1 的边界。
+
+## 12. 与初版差异
+
+<!-- 章节上限: 100 行 -->
+
+本章对照 31 行初版设计（`.omo/baseline/security.md`，T1 快照）与修订后设计（第 2-5 章）逐字段/逐规则说明演进。初版即 git HEAD 版 Key Lock 设计（220 行）的压缩记录（§12.2），修订的动机与反例在第 6 章逐缺陷给出，本章只陈列差异与演进原因。
+
+### 12.1 差异表
+
+表 11：初版 31 行定义与修订后定义差异
+
+| 条目 | 初版 31 行定义 | 修订后定义 | 演进原因 |
+|---|---|---|---|
+| `data` | `T*`，指向实际内存对象的指针 | `Addr` 锚地址（基址），由分配/取址/退化建立（定义 11、§2.4 锚定规则） | 明确锚定语义：子对象取址重新锚定（规则 3.5.2-3.5.3），相等比较按 `(data, index)`（规则 3.4.2） |
+| `lock_ptr` | `u64*`，指向锁的指针；锁在块生命周期开始分配、结束时释放 | 指向带外持久锁表条目（定义 7），块释放/帧退出仅作废键、锁项保留 | 缺陷 1（§6.1）：锁随块释放导致检查自身 UAF；持久锁表解耦锁与块生命周期 |
+| `key` | `u64`，锁的密钥（生成未规定） | 由 `Gen` 单调生成（定义 10），完整 64 位域；栈/堆区分移交锁项 `kind` 字段（定义 6） | 缺陷 2（§6.2）：常量键下时序检查退化为常真；键唯一性支撑作废永久性（L-KEY） |
+| `index` | `u64`，相对原始地址的偏移，单位元素个数 | 元素偏移，创建置 0、算术更新；良构约束 `0 ≤ index ≤ size`（定义 13） | 锚定与算术分离（§2.7）；良构性支撑全访问检查 |
+| `size` | `u64`，内存块内存储的元素个数 | 自 `data` 起的元素容量；访问约束 `in_bounds`（定义 12） | 缺陷 4（§6.4）：`index < size` 只验起点，无法捕获多元素越界 |
+| 锁表 | 无显式锁表：锁内联于被守护块/帧 | 带外持久 `LockTable Λ`（定义 7），时序检查经 `Λ(p.lock_ptr)` 寻址（定义 8） | 缺陷 1/5（§6.1、§6.5）：内联元数据与数据同段可写 |
+| 时序检查 | 有效块满足 `*lock_ptr == key` | `live(p) ⟺ Λ(p.lock_ptr) = ⟨kind, p.key⟩`（定义 8） | 形式化为谓词；作废永久性由 L-NOREUSE/L-REKEY（O-2b）保证 |
+| 空间检查 | 有效块满足 `index < size` | `in_bounds(p, n) ⟺ 0 ≤ index ∧ index + n ≤ size`（定义 12） | 缺陷 4（§6.4）：访问安全是区间性质而非点性质 |
+
+### 12.2 Key Lock 历史背景
+
+初版设计（31 行基线）与 git HEAD 版 Key Lock 设计（220 行）同源：Key Lock 以 `Ptr<T>` 枚举表示指针，堆指针 `Heap{key, base, offset}` 携带键与块基址、栈指针 `Stack{base, offset, len}` 携带上下界；块头内联 `MemoryBlock{lock, size, data}`，`lock` 与 `key` 同值匹配判定活性，读/写/释放前断言 `key == lock`，堆索引断言 `offset != size`、栈索引断言 `offset < len`，`delete` 断言 `offset == 0` 后 `lock = 0`、`size = 0` 再释放数据块，指针算术在偏移更新后断言 `offset <= len`（栈）或 `offset <= base.size`（堆）。31 行基线把该设计压缩为 5 字段描述与时序/空间两条判定（`*lock_ptr == key`、`index < size`）。第 6 章表 5 的 6 个缺陷即针对该原型逐项识别，修订后设计（第 2-5 章）是对其的演进而非重写：`data` 继承 Key Lock 的 `base`、`size` 继承 `MemoryBlock.size`、`index` 继承 `offset`（单位由字节折算为元素），时序检查 `key == lock` 演进为经带外锁表的 `live(p)`（定义 8），空间检查 `index < size`（只验起点）演进为 `index + n ≤ size`（全访问，定义 12）；栈侧 `Stack{base, offset, len}` 演变为帧级锁 + re-key 协议（§2.6）。逐项修订动机见第 6 章，本节不复述。
