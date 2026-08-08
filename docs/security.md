@@ -186,9 +186,9 @@ $$\mathrm{LockEntry} \triangleq (\{\text{heap}, \text{stack}\} \times \mathrm{Ke
 
 $$\Lambda : \mathrm{Addr} \rightharpoonup \mathrm{LockEntry}$$
 
-锁槽物理存储于被守护块的块头或栈帧内（逻辑上仍以 $\Lambda$ 表示，谓词/引理结构不变）。锁槽随块存在：堆块释放与栈帧退出把对应锁槽写成 `SENTINEL`（定义 6），块入隔离期（§2.5）锁槽区保持可读——时序检查 $\Lambda(p.\text{lock\_ptr})$ 的查找读得确定性哨兵（隔离假设，§2.2），永不返回不确定脏值。**锁槽物理位置在块释放后可被分配器复用为它用（承载数据或其他锁），此时其值由复用方决定、不保证仍为 LockEntry 值**；时序检查 `live(p)`（定义 8）比较锁槽物理值与指针 key——具体为锁槽物理值 v 的键分量与指针 key 相等方判活性（v 非 LockEntry 形态时无匹配键分量，恒失配）——故复用为它用的任意非 LockEntry 值 v ≠ key 即 trap，安全与否只取决于 v 的键分量与 key 是否相等（攻击者无从构造相等，§1.2 三支柱 + §5.5 论证边界）。
+锁槽物理存储于被守护块的块头或栈帧内（逻辑上仍以 $\Lambda$ 表示，谓词/引理结构不变）。**块头布局（扩展）**：堆块头 = [锁槽 `e` | 分配点记录]，分配时写入块首数据地址 `block_origin(e)` 与**分配字节容量** `block_bytes(e)`（§2.5）；`Delete`/`realloc` 的原始指针校验（`is_origin`）从块头读取。栈帧头不含分配点记录（帧级指针不 delete）。锁槽随块存在：堆块释放与栈帧退出把对应锁槽写成 `SENTINEL`（定义 6），块入隔离期（§2.5）锁槽区保持可读——时序检查 $\Lambda(p.\text{lock\_ptr})$ 的查找读得确定性哨兵（隔离假设，§2.2），永不返回不确定脏值。**锁槽物理位置在块释放后可被分配器复用为它用（承载数据或其他锁），此时其值由复用方决定、不保证仍为 LockEntry 值**；时序检查 `live(p)`（定义 8）比较锁槽物理值与指针 key——具体为锁槽物理值 v 的键分量与指针 key 相等方判活性（v 非 LockEntry 形态时无匹配键分量，恒失配）——故复用为它用的任意非 LockEntry 值 v ≠ key 即 trap，安全与否只取决于 v 的键分量与 key 是否相等（攻击者无从构造相等，§1.2 三支柱 + §5.5 论证边界）。
 
-**锁槽工作示例**：设当前 $\Lambda = \{ e_0 \mapsto \langle \text{heap}, k_0 \rangle,\ e_1 \mapsto \text{SENTINEL} \}$（$e_0$ 位于某活动堆块块头、$e_1$ 位于某已释放块的块头）。指针 `p` 携带 `lock_ptr = e_0`、`key = k_0`：`live(p)` 为真；`lock_ptr = e_1` 的任何指针：锁槽值为 `SENTINEL`，`live` 为假。`e_1` 所在块被新分配复用后锁槽重写为 `⟨heap, k_1⟩`（$k_1 \ne k_0$，定义 10），携带旧键的指针仍不匹配。`e_1` 所在块被新分配复用时锁槽物理位置可能它用（承载数据或其他锁），其值未必重写为 `LockEntry`；但只要值（或其键分量）≠ 旧键，携带旧键的指针仍不匹配。`is_heap(p)`（定义 9）与 `live(p)` 都只读 `Λ(p.lock_ptr)`，一次读取同时完成 kind 判定与键比较，`Delete` 节点的三前提检查（《编译器实现》§7.1）可合并为对同一锁槽的一次读取。
+**锁槽工作示例**：设当前 $\Lambda = \{ e_0 \mapsto \langle \text{heap}, k_0 \rangle,\ e_1 \mapsto \text{SENTINEL} \}$（$e_0$ 位于某活动堆块块头、$e_1$ 位于某已释放块的块头）。指针 `p` 携带 `lock_ptr = e_0`、`key = k_0`：`live(p)` 为真；`lock_ptr = e_1` 的任何指针：锁槽值为 `SENTINEL`，`live` 为假。`e_1` 所在块被新分配复用后锁槽重写为 `⟨heap, k_1⟩`（$k_1 \ne k_0$，定义 10），携带旧键的指针仍不匹配。`e_1` 所在块被新分配复用时锁槽物理位置可能它用（承载数据或其他锁），其值未必重写为 `LockEntry`；但只要值（或其键分量）≠ 旧键，携带旧键的指针仍不匹配。`is_heap(p)`（定义 9）与 `live(p)` 都只读 `Λ(p.lock_ptr)`，一次读取同时完成 kind 判定与键比较，`Delete` 节点的四前提检查（《编译器实现》§7.1）中 `is_heap` 与 `live` 可合并为对同一锁槽的一次读取，`is_origin` 另读块头分配点记录（§2.5）。
 
 **定义 8（时序有效性谓词 `live`）**：指针 $p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$ 在时刻 $t$ 时序有效，当且仅当 $p.\text{lock\_ptr}$ 指向的块内/帧内锁槽中存储的键与指针携带的键一致；锁槽值为 `SENTINEL` 时恒假：
 
@@ -250,7 +250,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - 取址 `&x`：锚 = 变量地址，`size` = 变量元素容量（标量 1，数组为长度）；
 - 取址 `&s.field` / `&arr[i]`：锚 = 子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
 
-锚定规则的操作意义：锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），因此相等比较按 `(data, index)`（规则 3.4.2）是稳定的：两个指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放必须发生在锚点处，防止「带偏移释放」把非锚地址当作分配起点；子对象锚定指针（`&s.field`）的 `index` 恒为 0，可直接满足该前提并释放所属整个分配（§2.5 协议性质）。
+锚定规则的操作意义：锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），因此相等比较按 `(data, index)`（规则 3.4.2）是稳定的：两个指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放必须发生在锚点处，防止「带偏移释放」把非锚地址当作分配起点；子对象锚定指针（`&s.field`）的 `index` 恒为 0 但不满足原始指针判据（`is_origin`：`data` 指向块首**且字节跨度等于分配字节容量**，§2.5），`delete` 视为错误操作。
 
 指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）。同一对象的不同锚定指针共享同一锁槽，对象释放后一并时序失效。
 
@@ -265,10 +265,11 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 **分配 `dyn T`**（单元素对象）：
 
 1. 取新鲜地址 $b$（$b \notin \mathrm{dom}(\mu)$），分配字节区间 $[b, b + |T|)$，并入 $\mathrm{dom}(\mu)$；块首保留锁槽位置 $e$；
+1.5. 块头写入分配点记录：`block_origin(e) := b`、`block_bytes(e) := |T|`；
 2. 块头锁槽写入键：$k \leftarrow \mathrm{Gen}()$，$\Lambda(e) := \langle \text{heap}, k \rangle$（锁槽在块首）；
 3. 返回指针 $\langle \text{data} = b, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$，`lock_ptr` 指向块头锁槽。
 
-**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + n \cdot |T|)$，返回 $\text{size} = n$。$n = 0$ 时 $\text{size} = 0$，不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败）。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\Lambda(e) := \langle \text{heap}, k \rangle$），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并释放零字节区间。
+**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + n \cdot |T|)$，返回 $\text{size} = n$。1.5. 块头写入分配点记录：`block_origin(e) := b`、`block_bytes(e) := n·|T|`。$n = 0$ 时 $\text{size} = 0$，不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败）。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\Lambda(e) := \langle \text{heap}, k \rangle$），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并释放零字节区间。
 
 **释放 `delete p`**：
 
@@ -277,6 +278,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - $\text{is\_heap}(p)$：不得释放栈指针；
 - $\text{live}(p)$：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
 - $p.\text{index} = 0$：指针必须位于对象锚点（分配/取址建立的 `data` 处），禁止释放带偏移指针。
+- $\text{is\_origin}(p)$：指针必须指向块首且字节跨度等于分配字节容量——$p.\text{data} = \text{block\_origin}(p.\text{lock\_ptr})$ 且 $p.\text{size} \cdot |T| = \text{block\_bytes}(p.\text{lock\_ptr})$（$|T|$ 为 delete 处 pointee 字节大小，静态已知）；对重锚定子对象指针（`&s.field`、`&arr[i]`）执行 `delete` 视为错误操作（trap）。**求值顺序**：`is_origin` 在 `is_heap ∧ live` 之后求值（`live` 对 `lock_ptr = 0` 短路为假，`is_origin` 永不读地址 0 的块头）。
 
 动作：
 
@@ -284,9 +286,9 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 2. 块入隔离（隔离假设，§2.2）：内存保持映射可读，用户数据区逻辑上自 $\mathrm{dom}(\mu)$ 撤销，锁槽区留在 $\mathrm{dom}(\mu)$ 的保留子域；
 3. 指针 $p$ 的字段保持不变，但此后 $\text{live}(p)$ 恒为假。
 
-协议性质：由于键唯一性（定义 10 推论），锁槽即使被新分配复用也只写新键（活动锁槽路径）；若物理位置被它用为数据，其值由值失配不等式闭合（§1.2），旧指针的键永不重新匹配（锁不复用，第 4 章引理）；双释放与 UAF 均由 `live` 前提捕获。对重锚定子对象指针（如 `&s.field`）执行 `delete` 时，语义为释放其所属的整个分配，随后该分配的一切派生指针（无论锚定方式）均时序失效。协议性质的成因：`delete` 动作是「锁槽写 `SENTINEL` + 块入隔离」两步的原子组合，写哨兵发生在入隔离之前（规则 3.6.2 动作①②），故即使释放后分配器立即复用该地址，锁槽已写哨兵或新键、不匹配旧键，派生指针的时序失效与地址是否复用无关。
+协议性质：由于键唯一性（定义 10 推论），锁槽即使被新分配复用也只写新键（活动锁槽路径）；若物理位置被它用为数据，其值由值失配不等式闭合（§1.2），旧指针的键永不重新匹配（锁不复用，第 4 章引理）；双释放与 UAF 均由 `live` 前提捕获。`delete` 仅对原始指针适用（`is_origin`，§2.5）；对重锚定子对象指针执行 `delete` 视为错误操作（trap）。释放后该分配的一切派生指针（无论锚定方式）均时序失效——由锁槽写 `SENTINEL` 保证（动作①②），与释放目标是否原始无关。协议性质的成因：`delete` 动作是「锁槽写 `SENTINEL` + 块入隔离」两步的原子组合，写哨兵发生在入隔离之前（规则 3.6.2 动作①②），故即使释放后分配器立即复用该地址，锁槽已写哨兵或新键、不匹配旧键，派生指针的时序失效与地址是否复用无关。
 
-**工作示例（堆配置转移序列）**：设初始配置 $\sigma_0$ 满足 $\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$（§2.1）。执行 `dyn u64[3]`：取新鲜地址 $b$，分配 $[b, b + 3 \cdot 8)$ 并入 $\mu_1$；块头锁槽 $e$ 写入 $k \leftarrow \mathrm{Gen}()$，$\Lambda_1(e) := \langle \text{heap}, k \rangle$；返回 $p = \langle b, e, k, 0, 3 \rangle$。此时 $p.\text{lock\_ptr} = e$ 指向块头锁槽，$\mathrm{live}(p)$（定义 8）与 $\mathrm{in\_bounds}(p, n)$（$n \le 3$，定义 12）均成立。执行 `delete p`：三前提检查（`is_heap`、`live`、`index = 0`，规则 3.6.2）均通过；动作①锁槽写哨兵 $\Lambda_2(e) := \text{SENTINEL}$，动作②块入隔离（内存保持可读，用户数据区逻辑上自 $\mathrm{dom}(\mu_2)$ 撤销，锁槽区留在保留子域）。此后 $\Lambda(p.\text{lock\_ptr}) = \text{SENTINEL}$，`live(p)` 恒假；任何对 `p` 或派生指针的读写在 `live` 处 trap。若随后新分配 `dyn u64` 复用该块：锁槽重写 $\Lambda_3(e) := \langle \text{heap}, k' \rangle$ 且 $k' \ne k$（定义 10 键唯一性），携带旧键 $k$ 的指针 `p` 依旧不匹配，时序安全不因锁槽复用而失效（L-NOREUSE，§4.5）。
+**工作示例（堆配置转移序列）**：设初始配置 $\sigma_0$ 满足 $\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$（§2.1）。执行 `dyn u64[3]`：取新鲜地址 $b$，分配 $[b, b + 3 \cdot 8)$ 并入 $\mu_1$；块头锁槽 $e$ 写入 $k \leftarrow \mathrm{Gen}()$，$\Lambda_1(e) := \langle \text{heap}, k \rangle$；返回 $p = \langle b, e, k, 0, 3 \rangle$。此时 $p.\text{lock\_ptr} = e$ 指向块头锁槽，$\mathrm{live}(p)$（定义 8）与 $\mathrm{in\_bounds}(p, n)$（$n \le 3$，定义 12）均成立。执行 `delete p`：四前提检查（`is_heap`、`live`、`index = 0`、`is_origin`，规则 3.6.2）均通过；动作①锁槽写哨兵 $\Lambda_2(e) := \text{SENTINEL}$，动作②块入隔离（内存保持可读，用户数据区逻辑上自 $\mathrm{dom}(\mu_2)$ 撤销，锁槽区留在保留子域）。此后 $\Lambda(p.\text{lock\_ptr}) = \text{SENTINEL}$，`live(p)` 恒假；任何对 `p` 或派生指针的读写在 `live` 处 trap。若随后新分配 `dyn u64` 复用该块：锁槽重写 $\Lambda_3(e) := \langle \text{heap}, k' \rangle$ 且 $k' \ne k$（定义 10 键唯一性），携带旧键 $k$ 的指针 `p` 依旧不匹配，时序安全不因锁槽复用而失效（L-NOREUSE，§4.5）。
 
 **工作示例（realloc 转移）**：接上例，对 `p = ⟨b, e, k, 0, 3⟩` 执行 `realloc(p, 5)`（规则 3.7.1）：先按规则 3.6.1 分配新块 `b'`、新块头锁槽 `e'`、新键 `k'' ← Gen()`，$\Lambda(e') := \langle \text{heap}, k'' \rangle$；再按规则 3.10.1 拷贝 $m = \min(3, 5) = 3$ 个元素（两端 `in_bounds` 均成立）；最后按规则 3.6.2 释放旧块，锁槽写哨兵 $\Lambda(e) := \text{SENTINEL}$、旧块入隔离。结果 `⟨b', e', k'', 0, 5⟩`；`p` 此后 `live` 恒假，旧键 $k$ 永不重新匹配。
 
@@ -337,7 +339,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 `&p[2]` 重锚定：`data' = addr(b, 1) + 2·8`，`index' = 0`、`size' = 1`，锁继承（规则 3.5.3）。
 `q = &p[2]` 与 `p + 3` 的差异：前者 `(data, index) = (b + 24, 0)`、后者 `(b, 3)`，虽指向同一字节地址但表示不同，相等比较（规则 3.4.2）判定为不相等：重锚定与算术是两种不同的指针产生途径，表示不可混同。
 
-该示例的结论推广：重锚定（`&p[i]`、`&s.field`）与算术（`p ± n`）在表示上不可互换，前者重置 `index` 并折算 `data`、后者只改 `index`；两种途径产生指向同一字节地址但 `(data, index)` 不同的指针。这一不可混同性是相等比较（规则 3.4.2）与 `delete` 锚点前提（规则 3.6.2）一致性的基础，也是 《编译器实现》§7.1 ElementPtr 双语义拆分（算术 vs 重锚定）的动机。
+该示例的结论推广：重锚定（`&p[i]`、`&s.field`）与算术（`p ± n`）在表示上不可互换，前者重置 `index` 并折算 `data`、后者只改 `index`；两种途径产生指向同一字节地址但 `(data, index)` 不同的指针。这一不可混同性是相等比较（规则 3.4.2）与 `delete` 锚点前提（规则 3.6.2）一致性的基础，也是 《编译器实现》§7.1 ElementPtr 双语义拆分（算术 vs 重锚定）的动机。对重锚定子对象指针的 `delete` 由 `is_origin`（§2.5）拒绝。
 
 ## 3. 操作语义规则
 
@@ -454,15 +456,15 @@ $$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{
 
 **规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），分配字节区间 `[b, b + n·|T|)`（单元素 `n = 1`）并入 μ；块头锁槽写入键：取块头锁槽 `e`，`k ← Gen()`（定义 10）；`Λ(e) := ⟨heap, k⟩`。结果：`⟨b, e, k, 0, n⟩`，`lock_ptr = e` 指向块头锁槽。CFG 层：`Malloc` 节点（`ir.py:67`、`builder.py:914-916`）；《编译器实现》第 7 章在 `Malloc` 处插入块头锁槽写键。
 
-**示例（分配）**：`dyn u64` 返回 `⟨b, e, k, 0, 1⟩`：`size = 1`，唯一可界内访问为单元素。`dyn u64[3]` 返回 `⟨b, e, k, 0, 3⟩`。`dyn u64[0]` 返回 `⟨b, e, k, 0, 0⟩`：`size = 0`，一切 $n \ge 1$ 访问在 `in_bounds` 失败（§2.5），空数组不可读写；其 `delete` 仍合法（`is_heap ∧ live ∧ index = 0`，规则 3.6.2）。两次分配得到的键 $k_1 \ne k_2$（定义 10 键唯一性），各自锁槽独立。
+**示例（分配）**：`dyn u64` 返回 `⟨b, e, k, 0, 1⟩`：`size = 1`，唯一可界内访问为单元素。`dyn u64[3]` 返回 `⟨b, e, k, 0, 3⟩`。`dyn u64[0]` 返回 `⟨b, e, k, 0, 0⟩`：`size = 0`，一切 $n \ge 1$ 访问在 `in_bounds` 失败（§2.5），空数组不可读写；其 `delete` 仍合法（`is_heap ∧ live ∧ index = 0 ∧ is_origin`，规则 3.6.2）。两次分配得到的键 $k_1 \ne k_2$（定义 10 键唯一性），各自锁槽独立。
 
-**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0`（锚点指针，禁止释放带偏移指针）。**前提求值顺序**：`is_heap` 与 `live` 先于（或与 `index = 0` 并列）求值，且二者对 `p.lock_ptr = 0` 均短路为假（定义 8/9）——`delete(null)` 在 `live`/`is_heap` 处确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`Λ(p.lock_ptr) := SENTINEL`（先写哨兵，后入隔离）；② 块入隔离：内存保持映射可读，用户数据区逻辑上自 `dom(μ)` 撤销，锁槽区留在 `dom(μ)` 的保留子域（隔离假设，§2.2）。结果：`p` 及同对象派生指针此后 `live` 恒为假（锁槽读得 `SENTINEL`，键不再匹配）。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。CFG 层：`Delete` 节点（`ir.py:100`）。
+**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（锚点指针且为原始指针；`is_origin` 定义见 §2.5）。**前提求值顺序**：`is_heap` 与 `live` 先于（或与 `index = 0` 并列）求值，且二者对 `p.lock_ptr = 0` 均短路为假（定义 8/9）——`delete(null)` 在 `live`/`is_heap` 处确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`Λ(p.lock_ptr) := SENTINEL`（先写哨兵，后入隔离）；② 块入隔离：内存保持映射可读，用户数据区逻辑上自 `dom(μ)` 撤销，锁槽区留在 `dom(μ)` 的保留子域（隔离假设，§2.2）。结果：`p` 及同对象派生指针此后 `live` 恒为假（锁槽读得 `SENTINEL`，键不再匹配）。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。CFG 层：`Delete` 节点（`ir.py:100`）。
 
-**示例与反例（释放）**：设 $p = \langle b, e, k, 0, 3 \rangle$。`delete p` 正常：`is_heap(p)`（$\Lambda(e) = \langle \text{heap}, k \rangle$）、`live(p)`、`index = 0` 均满足，动作后锁槽写哨兵 $\Lambda(e) := \text{SENTINEL}$。再 `delete p`：$\Lambda(e) = \text{SENTINEL}$，`live(p)` 为假，双释放 trap。`delete(null)`：`live`/`is_heap` 对 `lock_ptr = 0` 短路为假（定义 8/9），前提不满足，确定性 trap。带偏移指针 $q = \langle b, e, k, 2, 3 \rangle$：`q.index = 2 \ne 0`，禁止释放带偏移指针，trap（重锚定子对象指针 `&arr[2]` 亦同）。对栈指针 `&x` 执行 `delete`：`is_heap` 为假（帧锁为 `⟨stack, k_f⟩`），trap。
+**示例与反例（释放）**：设 $p = \langle b, e, k, 0, 3 \rangle$。`delete p` 正常：`is_heap(p)`（$\Lambda(e) = \langle \text{heap}, k \rangle$）、`live(p)`、`index = 0`、`is_origin(p)` 均满足，动作后锁槽写哨兵 $\Lambda(e) := \text{SENTINEL}$。再 `delete p`：$\Lambda(e) = \text{SENTINEL}$，`live(p)` 为假，双释放 trap。`delete(null)`：`live`/`is_heap` 对 `lock_ptr = 0` 短路为假（定义 8/9），前提不满足，确定性 trap。带偏移指针 $q = \langle b, e, k, 2, 3 \rangle$：`q.index = 2 \ne 0`，禁止释放带偏移指针，trap（重锚定子对象指针 `&arr[2]` 亦同）。重锚定子对象指针 `&s.field` / `&arr[0]`：字节跨度 ≠ 分配字节容量（如 `&s.a`：8 ≠ 16），`is_origin` 不满足，trap（即使 `index = 0`）。对栈指针 `&x` 执行 `delete`：`is_heap` 为假（帧锁为 `⟨stack, k_f⟩`），trap。
 
 ### 3.7 重分配 realloc
 
-**规则 3.7.1（重分配 `realloc(p, n)`）**（→ CFG `Malloc` + `Delete` 组合）。前提：`is_heap(p) ∧ live(p) ∧ p.index = 0` 且 `n ≥ 0`；**前提求值顺序同规则 3.6.2**——`is_heap`/`live` 先于（或与 `index = 0` 并列）求值，对 `p.lock_ptr = 0` 均短路为假（定义 8/9），`realloc(null, ·)` 在 `live`/`is_heap` 处确定性 trap 而非读取地址 0 造成段错误。动作（§2.5 协议组合）：① 按规则 3.6.1 分配新块 `b'`、新块头锁槽 `e'`、新键 `k' ← Gen()`，大小 `n·|T|`；② 按规则 3.10.1 整段拷贝 `m = min(p.size, n)` 个元素从旧块至新块（由新块刚分配与 `in_bounds(p, m)` 保证两端前提）；③ 旧块锁槽写 `SENTINEL` + 入隔离（按规则 3.6.2 动作①②）。结果：`⟨b', e', k', 0, n⟩`；原指针 `p` 失效。若任一前提不满足则 trap。CFG 层：现状编译为 `Malloc`（新块）＋拷贝（库循环或建议原语）＋`Delete`（旧块）的组合，无独立 `Realloc` 节点；新原语建议见《编译器实现》第 7 章。
+**规则 3.7.1（重分配 `realloc(p, n)`）**（→ CFG `Malloc` + `Delete` 组合）。前提：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)` 且 `n ≥ 0`；**前提求值顺序同规则 3.6.2**——`is_heap`/`live` 先于（或与 `index = 0` 并列）求值，对 `p.lock_ptr = 0` 均短路为假（定义 8/9），`realloc(null, ·)` 在 `live`/`is_heap` 处确定性 trap 而非读取地址 0 造成段错误。动作（§2.5 协议组合）：① 按规则 3.6.1 分配新块 `b'`、新块头锁槽 `e'`、新键 `k' ← Gen()`，大小 `n·|T|`；② 按规则 3.10.1 整段拷贝 `m = min(p.size, n)` 个元素从旧块至新块（由新块刚分配与 `in_bounds(p, m)` 保证两端前提）；③ 旧块锁槽写 `SENTINEL` + 入隔离（按规则 3.6.2 动作①②）。结果：`⟨b', e', k', 0, n⟩`；原指针 `p` 失效。若任一前提不满足则 trap。CFG 层：现状编译为 `Malloc`（新块）＋拷贝（库循环或建议原语）＋`Delete`（旧块）的组合，无独立 `Realloc` 节点；新原语建议见《编译器实现》第 7 章。
 
 **示例与反例（重分配）**：设 `p = ⟨b, e, k, 0, 3⟩`。`realloc(p, 5)`：拷贝 `m = min(3, 5) = 3` 个元素至新块，`in_bounds(p, 3)` 成立（$0 + 3 \le 3$），得 `⟨b', e', k', 0, 5⟩`，原 `p` 失效（旧块锁槽已写 `SENTINEL`）。`realloc(p, 0)`：拷贝 `m = 0` 个元素（空拷贝），得 `⟨b', e', k', 0, 0⟩`。带偏移指针 `q = ⟨b, e, k, 2, 3⟩` 上执行 `realloc`：`q.index ≠ 0`，前提不满足，trap。已释放指针上 `realloc`：`live` 假，trap。`realloc(null, 5)`：`is_heap`/`live` 对 `lock_ptr = 0` 短路为假（定义 8/9），前提不满足，确定性 trap。
 
@@ -616,7 +618,7 @@ $$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_
 
 **标准库：审计可信基**。标准库内部 `bitcast`/`from_raw_parts` 的重解释按布局兼容审计准则核验（$|U| \mid |T|$ 且 $\text{align}(U) \le \text{align}(T)$；使用文件清单见《编译器实现》§8.3 审计准则）——与分配器行为（§2.5）、无回绕实现约定（§2.4）同为可信基假设，不进入本章论证。审计失守属标准库缺陷，不构成机制反例（§5.5）。
 
-**为什么运行时论证不需要它**：运行时检查（`in_bounds` 定义 12、`live` 定义 8）是类型无关的——检查对象是 5 元组的区间与锁键，不引用 `dyn_type`/`static_type`；S1（§4.2）、T1（§4.3）与 L-KEY 家族（§4.4-§4.6）的陈述与证明均不依赖类型同一性。类型混淆的唯一安全后果是 `delete` 释放范围（`p.size·|T|` 字节，规则 3.6.2）在混淆指针下超量释放——该通道已被上述语法级排除 + 标准库审计封闭，故定理 5.1（§5.1）无须把类型同一性列为前件或结论。
+**为什么运行时论证不需要它**：运行时检查（`in_bounds` 定义 12、`live` 定义 8）是类型无关的——检查对象是 5 元组的区间与锁键，不引用 `dyn_type`/`static_type`；S1（§4.2）、T1（§4.3）与 L-KEY 家族（§4.4-§4.6）的陈述与证明均不依赖类型同一性。类型混淆的唯一安全后果是 `delete` 释放范围（`p.size·|T|` 字节，规则 3.6.2）在混淆指针下超量释放——该通道已被上述语法级排除 + 标准库审计封闭，且 `delete` 仅允许原始指针（`is_origin` 字节容量校验，§2.5）——双重封闭，故定理 5.1（§5.1）无须把类型同一性列为前件或结论。
 
 ### 4.8 引理间依赖与第 5 章接口
 
@@ -643,11 +645,11 @@ $$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_
 
 ### 5.1 主可靠性定理（R2）
 
-**定理 5.1（主可靠性定理）**：若程序 $P$ 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out）且 $P$ 的全部指针操作良构（定义 13），则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0$（后者的前提即规则 3.6.2 的释放前提），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。
+**定理 5.1（主可靠性定理）**：若程序 $P$ 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out）且 $P$ 的全部指针操作良构（定义 13），则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \wedge \mathrm{is\_origin}(p)$（后者的前提即规则 3.6.2 的释放前提；`is_origin` 定义见 §2.5），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。
 
 等价地，定理 5.1 即下述全称闭式：
 
-$$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n) \big] \;\wedge\; \big[ \mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \big]$$
+$$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n) \big] \;\wedge\; \big[ \mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \wedge \mathrm{is\_origin}(p) \big]$$
 
 「在访问发生前转移至 `trap`」由机器结构保证：`trap` 为吸收终止态（§2.1），检查失败后不执行任何后续内存访问，故 trap 落在访问动作发生之前，不产生部分写入。定理 5.1 与 §1.4 安全目标 G1-G4 的对应关系如下（G4 以可信基边界排除，见 §4.7）。
 
