@@ -22,6 +22,7 @@ from compiler.utils.log import (
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
+from compiler.analysis.passes.restricted_ops import check_restricted_ops
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -320,6 +321,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
+
+    # reject restricted operations (bitcast, raw syscalls, ...) in non-stdlib code
+    restricted_start = time.perf_counter() if args.profile else 0.0
+    try:
+        check_restricted_ops(programs, src_files)
+    except AnalysisError as error:
+        __print_source_error(error.span, error)
+    if args.profile:
+        timings["restricted_ops"] = time.perf_counter() - restricted_start
 
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx()
