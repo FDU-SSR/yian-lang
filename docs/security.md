@@ -91,19 +91,18 @@ G1-G3 由运行时检查（第 2 章表示 + 第 3 章规则）实现并进入�
 ### 2.1 形式化机器概览
 
 本设计以小步操作语义（small-step operational semantics）描述机器行为。机器状态为配置：
-$$\langle \mu, \Lambda, C \rangle$$
+$$\langle \mu, C \rangle$$
 
-- $\mu$：存储（Store），§2.2；
-- $\Lambda$：锁表（LockTable），§2.3；
+- $\mu$：存储（Store），§2.2；锁槽是存储中块头/帧首的普通内容（定义 7），**不设独立的锁表状态分量**；
 - $C$：控制分量，即当前待执行的指令序列（程序点）。指令集与求值上下文在第 3 章定义。
 
-单步转移关系为 $\langle \mu, \Lambda, C \rangle \longrightarrow \langle \mu', \Lambda', C' \rangle$（正常步进），或 $\longrightarrow \text{trap}$（陷阱）。`trap` 是吸收终止态：检查失败后程序立即以失败终止，不执行任何后续内存访问。初始配置 $\langle \mu_0, \Lambda_0, C_0 \rangle$ 满足 $\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$，$C_0$ 指向程序入口。
+单步转移关系为 $\langle \mu, C \rangle \longrightarrow \langle \mu', C' \rangle$（正常步进），或 $\longrightarrow \text{trap}$（陷阱）。`trap` 是吸收终止态：检查失败后程序立即以失败终止，不执行任何后续内存访问。初始配置 $\langle \mu_0, C_0 \rangle$ 满足 $\mathrm{dom}(\mu_0) = \emptyset$，$C_0$ 指向程序入口。
 
-**机器的读法**：$\Lambda$ 是每块/每帧锁槽的逻辑映射（定义 7），物理存储于块头/帧内；$\mu$ 承载程序对象；配置转移只由第 3 章规则驱动，`trap` 无后继转移，故「检查失败后继续执行」的配置序列不存在，§2.5-§2.6 协议与第 4-5 章论证全部建基于此。
+**机器的读法**：锁槽是 $\mu$ 中的内存内容而非带外结构——锁槽物理存储于块头/帧首（定义 7），一切时序检查是对 $\mu$ 的读，与访问检查同域同语义；「运行时独占维护锁槽」不是公理，而是由布局（锁头在负载之前）+ 空间不变量 S1 推导的引理（L-UNREACH，§4.9）。配置转移只由第 3 章规则驱动，`trap` 无后继转移，故「检查失败后继续执行」的配置序列不存在，§2.5-§2.6 协议与第 4-5 章论证全部建基于此。
 
 ### 2.2 位置与存储
 
-**定义 1（地址域 `Addr`）**：可数无穷集，形式化为数学自然数 $\mathrm{Addr} \triangleq \mathbb{N}$；实现为 64 位无符号字节地址。`Addr` 同时为内存对象与锁槽命名；锁槽物理存储于块头/帧内，由运行时独占维护。
+**定义 1（地址域 `Addr`）**：可数无穷集，形式化为数学自然数 $\mathrm{Addr} \triangleq \mathbb{N}$；实现为 64 位无符号字节地址。`Addr` 同时为内存对象与锁槽命名；锁槽是块头/帧首的普通内存内容（定义 7），其地址由块首地址决定（$\text{lock\_addr}(b) = b$，定义 7）。
 
 **定义 2（位置 `Loc`）**：位置是存储的可寻址单元：
 $$\mathrm{Loc} \triangleq \mathrm{Addr} \times \mathbb{N}$$
@@ -117,9 +116,9 @@ $$\mathrm{Val} \triangleq \mathbb{Z} \uplus \mathrm{PtrVal}$$
 $$\mu : \mathrm{Loc} \rightharpoonup \mathrm{Val}$$
 $\mathrm{dom}(\mu)$ 为已分配位置集合。对未定义位置的读写均是非良构操作（在访问规则处 trap）。
 
-**存储域与锁槽域的关系（隔离假设）**：$\mathrm{dom}(\mu)$ 包含锁槽区：锁槽物理存储于块头/帧内，属 $\mathrm{dom}(\mu)$ 的保留子域，由运行时独占维护；锁槽区在隔离期内仍留在保留子域（未定义位置读为 trap 的前提不适用于该子域），故 `live(p)` 可能触碰已释放块的锁槽，其值在隔离期内确定性地为 `SENTINEL`（定义 6），检查不产生不确定读。隔离期结束、块被复用后，锁槽物理位置脱离保留子域，由复用方（分配器/新对象）支配，其时序安全性由 §2.3「锁槽复用」集中说明闭合。
+**存储域与锁槽域的关系（隔离假设）**：锁槽是 $\mathrm{dom}(\mu)$ 中的普通内容（定义 7），不设带外保留子域。释放/帧退出后、复用前（隔离期），锁槽位置**留在** $\mathrm{dom}(\mu)$ 且其值确定性地为 `SENTINEL`（定义 6），故 `live(p)` 可能触碰已释放块的锁槽，读值确定、检查不产生不确定读；同期该块负载区自 $\mathrm{dom}(\mu)$ 撤销。「未定义位置读为 trap」与隔离假设不冲突：隔离期内锁槽保持**定义**（值为 `SENTINEL`），trap 条款对锁槽永不触发；陈指针的 `live` 检查总是读到某个已定义值，不存在「未定义锁槽读」类别。隔离期结束、块被复用后，锁槽位置由复用方（分配器/新对象）支配，读值不再确定，其时序安全性由 §2.3「锁槽复用」集中说明闭合（值失配，L-NOREUSE/L-REKEY）。本假设是显式平台前提（释放内存保持映射可读，不 munmap），列入定理 5.1 前件（§5.5）。
 
-### 2.3 锁表、锁槽与键
+### 2.3 块布局、锁槽与键
 
 **定义 5（键域 `Key`）**：
 $$\mathrm{Key} \triangleq \mathbb{N}$$
@@ -132,50 +131,55 @@ $$\mathrm{LockEntry} \triangleq (\{\text{heap}, \text{stack}\} \times \mathrm{Ke
 - $\langle \text{stack}, k \rangle$：守护当前栈帧的活动锁槽值，当前键为 $k$；
 - $\text{SENTINEL}$：释放/帧退出把锁槽写成的哨兵值。它是 `LockEntry` 的一个**值**而非一种「态」——与 $\langle \text{heap}, k \rangle$ / $\langle \text{stack}, k \rangle$ 并列存放于锁槽；`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10），故任何指针键与其失配。
 
-**定义 7（锁表 `LockTable`）**：锁表是每块/每帧锁槽地址到锁槽值的部分映射：
-$$\Lambda : \mathrm{Addr} \rightharpoonup \mathrm{LockEntry}$$
-锁槽物理存储于被守护块的块头或栈帧内（逻辑上仍以 $\Lambda$ 表示），由运行时独占维护（§2.2 保留子域）。块头还含分配点记录（`block_origin`/`block_bytes`，供 `is_origin` 校验），栈帧头不含（帧级指针不 delete）——布局细节见 §2.5。锁槽的值域（`LockEntry`）见定义 6；键生成见定义 10；释放/帧退出写 `SENTINEL` 及隔离假设见 §2.5-§2.6 与 §2.2。**锁槽物理位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**，其时序安全性不依赖锁槽不可复用，而依赖「键不可复用」（键唯一性与值失配），集中说明见本节约末「锁槽复用」。
+**编码约定**：`LockEntry` 编码为单个机器字（`Val` 的 $\mathbb{Z}$ 分量）：$\langle \text{kind}, k \rangle$ 打包为「kind 标志位 + 键 $k$」，`SENTINEL` 编码为全 1 字（$\sim 0$）。论证只依赖三条性质：解码确定性、`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10）、时序检查为**全字编码相等**（定义 8）——具体位布局不影响论证。
 
-**定义 8（时序有效性谓词 `live`）**：指针 $p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$ 在时刻 $t$ 时序有效，当且仅当 $p.\text{lock\_ptr}$ 指向的块内/帧内锁槽中存储的键与指针携带的键一致；锁槽值为 `SENTINEL` 时恒假：
-$$\text{live}(p) \iff \Lambda(p.\text{lock\_ptr}) = \langle \text{kind}, p.\text{key} \rangle, \quad \text{kind} \in \{\text{heap}, \text{stack}\}$$
+**定义 7（块布局与锁槽 `LockSlot`）**：每个堆块与每个栈帧的布局为「锁头 + 负载」：以块首地址 $b$ 为基，字节区间 $[b,\, b + H + \text{bytes})$，其中 $H$ 为固定锁头字节数（实现常量，$H \ge w$，$w$ 为机器字宽），锁头区 $[b, b+H)$ **在负载之前**，负载区 $[b+H, b+H+\text{bytes})$。锁头首字（偏移 0）为**锁槽**，其地址即块首地址：
+$$\text{lock\_addr}(b) \triangleq b$$
+锁头其余部分存放分配点记录（`block_origin`/`block_bytes`，供 `is_origin` 校验，§2.5）；栈帧锁头不含记录（帧级指针不 delete）。**布局要点**：锁槽在负载之前，故一切受 `in_bounds` 约束的负载访问（足迹 ⊆ 负载区，定义 18）在结构上无法触及锁槽与记录——「经检查写不可达锁槽」是布局的直接推论，形式化为引理 L-UNREACH（§4.9），取代带外锁表的「运行时独占维护」公理。锁槽的值域（`LockEntry`）见定义 6；键生成见定义 10；释放/帧退出写 `SENTINEL` 及隔离假设见 §2.5-§2.6 与 §2.2。**锁槽位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**，其时序安全性不依赖锁槽不可复用，而依赖「键不可复用」（键唯一性与值失配），集中说明见本节约末「锁槽复用」。
+
+**锁槽读记号**：$\mu\langle e \rangle$ 表示地址 $e$ 处一个机器字的值（位置 $\langle e, 0 \rangle \dots \langle e, w-1 \rangle$ 的 $w$ 字节编码）；锁槽的读写均为整字操作。时序检查即读 $\mu\langle p.\text{lock\_ptr} \rangle$ 并与指针键比较。
+
+**定义 8（时序有效性谓词 `live`）**：指针 $p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$ 在时刻 $t$ 时序有效，当且仅当 $p.\text{lock\_ptr}$ 指向的块头/帧首锁槽（定义 7）中存储的值与指针携带的键一致；锁槽值为 `SENTINEL` 时恒假：
+$$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = \langle \text{kind}, p.\text{key} \rangle, \quad \text{kind} \in \{\text{heap}, \text{stack}\}$$
+其中等号为**编码相等**（定义 6 编码约定）：锁槽物理值 $v = \mu\langle p.\text{lock\_ptr} \rangle$ 与 $\langle \text{kind}, p.\text{key} \rangle$ 的编码全字相等，当且仅当 $v$ 是合法锁编码且其 kind、键分量分别与指针一致；$v$ 非 `LockEntry` 编码、或键分量不同，恒判假（值失配）。
 
 **null 短路**：当 $p.\text{lock\_ptr} = 0$（null 指针编码）时，$\text{live}(p)$ **短路为假**——不读地址 0 的物理槽位（防段错误），null 访问仍确定性 trap。「短路为假」是 null 时序处理的**唯一机制**：不采用哨兵槽方案（在地址 0 常驻值恒为哨兵的槽位），避免两种机制并存的选择二义。
 
-**定义 9（堆/栈判定 `is_heap`）**：$\text{is\_heap}(p) \iff \Lambda(p.\text{lock\_ptr}) = \langle \text{heap}, p.\text{key} \rangle$。与定义 8 相同，当 $p.\text{lock\_ptr} = 0$ 时 $\text{is\_heap}(p)$ **短路为假**（不读地址 0 的物理槽位）：null 的 `delete`/`realloc` 前提求值确定性 trap（规则 3.6.2/3.7.1 中 `is_heap` 与 `live` 并列求值），而非段错误。`delete` 与 `realloc` 仅对堆指针适用（第 3 章）。
+**定义 9（堆/栈判定 `is_heap`）**：$\text{is\_heap}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = \langle \text{heap}, p.\text{key} \rangle$。与定义 8 相同，当 $p.\text{lock\_ptr} = 0$ 时 $\text{is\_heap}(p)$ **短路为假**（不读地址 0 的物理槽位）：null 的 `delete`/`realloc` 前提求值确定性 trap（规则 3.6.2/3.7.1 中 `is_heap` 与 `live` 并列求值），而非段错误。`delete` 与 `realloc` 仅对堆指针适用（第 3 章）。
 
 **定义 10（键生成器 `Gen`）**：$\mathrm{Gen} : () \to \mathrm{Key}$ 在每次堆分配与栈帧进入时调用。生成器的输出域排除哨兵值 `SENTINEL`（`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$，定义 6）。生成器必须满足以下两条要求之一：
 
-- **单调计数器**：内部计数器 $c$ 初值 $1$（$0$ 保留给哨兵），每次调用返回 $c := c + 1$。任意两次调用返回不同键，且后调用返回的键严格更大。
-- **CSPRNG**：输出从 $\{0,1\}^{64}$ 均匀采样，并对哨兵值拒绝采样（采样值等于哨兵编码时重采样）。任意两次不同调用的输出碰撞概率不超过 $2^{-64}$（可忽略）。
+- **单调计数器**：内部计数器 $c$ 初值 $1$（哨兵编码全 1 字不可达：上界前程序资源耗尽，或以封顶 trap 处理），每次调用返回 $c := c + 1$。任意两次调用返回不同键，且后调用返回的键严格更大。
+- **CSPRNG**：输出从 $\{0,1\}^{64}$ 均匀采样，并对哨兵值拒绝采样（采样值等于哨兵编码全 1 字时重采样）。任意两次不同调用的输出碰撞概率不超过 $2^{-64}$（可忽略）。
 
 两条要求的共同推论（键唯一性，形式化不变量在第 4 章陈述为引理）：任一时刻所有活动锁槽中的键两两不同；任何被写 `SENTINEL` 的锁槽重新建立时获得的新键永不等于其旧键。单调计数器给出严格保证；CSPRNG 以可忽略概率违反。
 
 **备注（实现缺陷）**：现行原型 `bak/experimental_ptr/ptr.an` 的 `random()` 返回常量 `1 | (1 << 63)`，每次调用同值，既非单调亦无唯一性，**不可用作键生成器**：所有堆块共享同一键会使任何一处的释放导致后续全部堆指针时序检查误报，锁槽被复用时旧键可能重新匹配。§2.5-§2.6 的协议要求键由满足定义 10 的 `Gen` 产生。
 
-**锁槽复用（lock slot reuse）**：锁槽是物理资源，随对象分配/帧进入而生、随释放/帧退出而空出。本设计的时序安全**不要求锁槽不可复用**——「锁槽可复用，但键不可复用」是 §4.3 三条窗口的共同结构，作废永久性来自键唯一性与值失配（定义 6/10），而非锁槽唯一性。锁槽物理位置在块释放/帧退出后脱离守卫职责，可被分配器沿两条路径复用：
+**锁槽复用（lock slot reuse）**：锁槽是块头/帧首的物理内存（定义 7），随对象分配/帧进入而生、随释放/帧退出而空出。本设计的时序安全**不要求锁槽不可复用**——「锁槽可复用，但键不可复用」是 §4.3 三条窗口的共同结构，作废永久性来自键唯一性与值失配（定义 6/10），而非锁槽唯一性。锁槽位置在块释放/帧退出后脱离守卫职责，可被分配器沿两条路径复用：
 
 - **重激活路径**：锁槽重新激活为另一对象的活动锁槽，写入新键 $\langle \text{kind}, k' \rangle$——分配/重分配/帧进入规则（3.6.1、3.7.1、3.8.1）均先执行 `k' ← Gen()`（定义 10）；由 L-KEY(iii)（§4.4），$k'$ 与该锁槽全部历史键不同，旧指针键 $k$ 永不重新匹配。
-- **它用路径**：锁槽物理位置被复用作普通数据或其他锁，其值由复用方决定、不保证仍为 `LockEntry` 值。`live(p)`（定义 8）比较锁槽物理值 $v$ 与指针 key——具体为 $v$ 的键分量与 $p.\text{key}$ 相等方判活性；$v$ 非 `LockEntry` 形态时无匹配键分量、恒失配——故任意非 `LockEntry` 值 $v \ne p.\text{key}$ 即 trap。（`is_heap` 与 `live` 对同一锁槽只做一次读取，同时完成 kind 判定与键比较。）
+- **它用路径**：锁槽位置被复用作普通数据或其他锁，其值由复用方决定、不保证仍为 `LockEntry` 编码。`live(p)`（定义 8）把锁槽物理值 $v = \mu\langle p.\text{lock\_ptr} \rangle$ 与 $\langle \text{kind}, p.\text{key} \rangle$ 的编码比较：$v$ 非 `LockEntry` 编码、或键分量不同，均判失配——即任意非锁编码值 $v \ne \langle \text{kind}, p.\text{key} \rangle$（编码相等）恒 trap。（`is_heap` 与 `live` 对同一锁槽只做一次读取，同时完成 kind 判定与键比较。）
 
-作废后锁槽物理位置的取值穷举四情形（§4.5），均不匹配旧键 $k$：① 活动新键 $\langle \text{kind}, k' \rangle$（$k' \ne k$，L-KEY）；② `SENTINEL`（与一切键失配，L-SENTINEL）；③ 另一对象锁槽（其键亦来自 `Gen`，$\ne k$）；④ 任意非 `LockEntry` 数据值 $v$（值失配 $v \ne k$）。前三情形由键唯一性闭合，第四情形由值失配闭合。
+作废后锁槽位置的取值穷举四情形（§4.5），均不匹配旧键 $k$：① 活动新键 $\langle \text{kind}, k' \rangle$（$k' \ne k$，L-KEY）；② `SENTINEL`（与一切键失配，L-SENTINEL）；③ 另一对象锁槽（其键亦来自 `Gen`，$\ne k$）；④ 任意非 `LockEntry` 数据值 $v$（值失配 $v \ne k$，编码不等）。四情形在 $\mu$ 模型中均可正式表达，是 L-NOREUSE（§4.5）的正式内容而非散文补充；前三情形由键唯一性闭合，第四情形由值失配闭合。
 
-值失配论证依赖显式前提『锁槽物理位置不被复用为攻击者可经检查写达的数据』（§5.5 论证边界）：锁槽维护保持运行时独占（§2.2 保留子域），攻击者的任何写须通过 `in_bounds`/`live` 检查（§1.2），故攻击者不能定向把锁槽写成旧键 $k$。「攻击者无法预测旧键」本身不足以闭合定向写——攻击者持有悬垂指针即知旧键 $k$（`key` 是指针分量，§2.7），无需预测即可复制；前提成立时 $v = k$ 仅为巧合，概率 ≤ $2^{-64}$（§1.2 + §5.5）。
+值失配论证依赖两个前提（均列入定理 5.1 前件，§5.5）：**前提一（经检查写不可达锁槽）**——一切通过 `in_bounds`/`live` 检查的写足迹与活动锁头区不相交。该前提由布局（锁头在负载之前、负载访问足迹 ⊆ 负载区，定义 7/18）与 S1 推导为引理 L-UNREACH（§4.9），取代带外锁表的「运行时独占维护」公理——即「攻击者写不到锁槽」从假设变为可证命题。**前提二（定向写排除）**——『锁槽位置不被复用为攻击者可经检查写达的数据』。攻击者的任何写须通过 `in_bounds`/`live` 检查（§1.2），故攻击者不能定向把锁槽写成旧键 $k$。「攻击者无法预测旧键」本身不足以闭合定向写——攻击者持有悬垂指针即知旧键 $k$（`key` 是指针分量，§2.7），无需预测即可复制；前提成立时 $v = k$ 仅为巧合，概率 ≤ $2^{-64}$（§1.2 + §5.5）。
 
-**与隔离期的衔接**：释放/帧退出先写 `SENTINEL`、块入隔离期（规则 3.6.2/3.8.2），隔离期内锁槽区留在保留子域、读值确定性为 `SENTINEL`（隔离假设，§2.2）；隔离期结束、块被复用后，锁槽物理位置脱离保留子域、由复用方支配，安全由上述值失配闭合。
+**与隔离期的衔接**：释放/帧退出先写 `SENTINEL`、块入隔离期（规则 3.6.2/3.8.2），隔离期内锁槽位置留在 $\mathrm{dom}(\mu)$、读值确定性为 `SENTINEL`（隔离假设，§2.2，L-ISOLATION）；隔离期结束、块被复用后，锁槽位置由复用方支配，安全由上述值失配闭合。
 
 ### 2.4 胖指针表示
 
 **定义 11（胖指针 `PtrVal`）**：胖指针是五元组：
 $$p = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index}, \text{size} \rangle$$
-表示 = **5 字段胖指针 + 块头/帧内锁槽**：每个堆块与每个栈帧各有一个锁槽（定义 6），键由满足定义 10 的 `Gen` 生成；`lock_ptr` 指向块内/帧内锁槽。各字段的类型、单位与约束如表 2 所示。「元素」指 pointee 类型 $T$ 的一个实例；`data` 与元素地址 $\text{data} + \text{index} \cdot |T|$ 以字节计（$|T|$ 为 $T$ 的字节大小）。
+表示 = **5 字段胖指针 + 块头/帧首锁槽**：每个堆块与每个栈帧各有一个锁槽（定义 7），键由满足定义 10 的 `Gen` 生成；`lock_ptr` 指向块头/帧首锁槽。各字段的类型、单位与约束如表 2 所示。「元素」指 pointee 类型 $T$ 的一个实例；`data` 与元素地址 $\text{data} + \text{index} \cdot |T|$ 以字节计（$|T|$ 为 $T$ 的字节大小）。
 
 表 2：5 字段精确表示
 
 | 字段       | 类型             | 单位         | 含义                                                          | 约束                                                    |
 | ---------- | ---------------- | ------------ | ------------------------------------------------------------- | ------------------------------------------------------- |
-| `data`     | `Addr`（`T*`）   | 字节         | 所指向内存对象的锚地址（基址）                                | 由分配/取址/退化建立，指向 $\mathrm{dom}(\mu)$ 中的对象 |
-| `lock_ptr` | `Addr`（`u64*`） | 无（地址）   | 守护本对象的锁槽地址；指向块内/帧内锁槽                       | 锁槽地址 ∈ 已分配块头/帧                                |
-| `key`      | `Key`（`u64`）   | 无（键值）   | 与 $\Lambda(\text{lock\_ptr})$ 中存储的键比较，判定时序有效性 | 由 `Gen` 生成（定义 10）                                |
+| `data`     | `Addr`（`T*`）   | 字节         | 所指向内存对象**负载区**的锚地址（基址 = 块首 + 锁头字节数 $H$） | 由分配/取址/退化建立，指向 $\mathrm{dom}(\mu)$ 中的负载区（定义 7） |
+| `lock_ptr` | `Addr`（`u64*`） | 无（地址）   | 守护本对象的锁槽地址；指向块头/帧首锁槽（定义 7）             | 锁槽地址 = 对象块首/帧首地址（$\text{lock\_addr}(b) = b$）          |
+| `key`      | `Key`（`u64`）   | 无（键值）   | 与 $\mu\langle \text{lock\_ptr} \rangle$ 中存储的键比较，判定时序有效性 | 由 `Gen` 生成（定义 10）                                |
 | `index`    | `ℕ`（`u64`）     | **元素个数** | 当前元素相对 `data` 的偏移                                    | 创建时置 0，指针算术更新；见 `in_bounds`                |
 | `size`     | `ℕ`（`u64`）     | **元素个数** | 自 `data` 起可容纳的元素个数（容量）                          | 创建时置定；访问约束见 `in_bounds`                      |
 
@@ -193,27 +197,27 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 **锚定规则**：指针创建时建立锚点（`data` 置为锚地址、`index := 0`、`size` 置为锚地址处自 `data` 起的元素容量）：
 
-- 分配 `dyn T` / `dyn T[n]`：锚 = 块首（§2.5）；
+- 分配 `dyn T` / `dyn T[n]`：锚 = 负载首（块首 $b$ + 锁头字节数 $H$，§2.5）；
 - 数组退化：锚 = 数组首地址，`size` = 数组长度；
 - 取址 `&x`：锚 = 变量地址，`size` = 变量元素容量（标量 1，数组为长度）；
 - 取址 `&s.field` / `&arr[i]`：锚 = 子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
 
-锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），故相等比较按 `(data, index)`（规则 3.4.2）稳定：两指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放发生在锚点处；子对象锚定指针（`&s.field`）的 `index` 恒为 0 但不满足原始指针判据（`is_origin`：`data` 指向块首**且字节跨度等于分配字节容量**，§2.5），`delete` 视为错误操作。指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）；同一对象的不同锚定指针共享同一锁槽，对象释放后一并时序失效。
+锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），故相等比较按 `(data, index)`（规则 3.4.2）稳定：两指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放发生在锚点处；子对象锚定指针（`&s.field`）的 `index` 恒为 0 但不满足原始指针判据（`is_origin`：`data` 指向负载首**且字节跨度等于分配字节容量**，§2.5），`delete` 视为错误操作。指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）；同一对象的不同锚定指针共享同一锁槽，对象释放后一并时序失效。
 
 **单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行），对应 §1.1 类 4 的防护。
 
 ### 2.5 堆分配生命周期协议
 
-协议以配置 $\langle \mu, \Lambda, C \rangle$ 上的小步转移描述锁槽与存储的变化（完整规则集在第 3 章）。
+协议以配置 $\langle \mu, C \rangle$ 上的小步转移描述锁槽与存储的变化（完整规则集在第 3 章）。锁槽即块头/帧首的 $\mu$ 内容（定义 7），不设独立状态分量。
 
 **分配 `dyn T`**（单元素对象）：
 
-1. 取新鲜地址 $b$（$b \notin \mathrm{dom}(\mu)$），分配字节区间 $[b, b + |T|)$，并入 $\mathrm{dom}(\mu)$；块首保留锁槽位置 $e$；
-2. 块头写入分配点记录：`block_origin(e) := b`、`block_bytes(e) := |T|`；
-3. 块头锁槽写入键：$k \leftarrow \mathrm{Gen}()$，$\Lambda(e) := \langle \text{heap}, k \rangle$（锁槽在块首）；
-4. 返回指针 $\langle \text{data} = b, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$，`lock_ptr` 指向块头锁槽。
+1. 取新鲜地址 $b$（$b \notin \mathrm{dom}(\mu)$），按块布局（定义 7）分配锁头区 $[b, b + H)$ 与负载区 $[b + H, b + H + |T|)$，并入 $\mathrm{dom}(\mu)$；
+2. 锁头写入分配点记录（$\mu$ 中的块头字字段）：`block_origin(e) := b + H`、`block_bytes(e) := |T|`；
+3. 锁头首字（锁槽 $e = b$）写入键：$k \leftarrow \mathrm{Gen}()$，$\mu\langle e \rangle := \langle \text{heap}, k \rangle$；
+4. 返回指针 $\langle \text{data} = b + H, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$，`lock_ptr` 指向块头首字锁槽。
 
-**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + n \cdot |T|)$，返回 $\text{size} = n$；块头写入 `block_origin(e) := b`、`block_bytes(e) := n·|T|`。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\Lambda(e) := \langle \text{heap}, k \rangle$），$\text{size} = 0$ 不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并释放零字节区间。
+**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + H + n \cdot |T|)$，返回 $\text{size} = n$；锁头写入 `block_origin(e) := b + H`、`block_bytes(e) := n·|T|`。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\mu\langle e \rangle := \langle \text{heap}, k \rangle$），$\text{size} = 0$ 不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并释放零字节负载区。
 
 **释放 `delete p`**：
 前提（任一不满足即 `trap`）：
@@ -225,8 +229,8 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 动作：
 
-1. 锁槽写 `SENTINEL`：$\Lambda(p.\text{lock\_ptr}) := \text{SENTINEL}$（先写哨兵，后入隔离）；
-2. 块入隔离（隔离假设，§2.2）：内存保持映射可读，用户数据区逻辑上自 $\mathrm{dom}(\mu)$ 撤销，锁槽区留在 $\mathrm{dom}(\mu)$ 的保留子域；
+1. 锁槽写 `SENTINEL`：$\mu\langle p.\text{lock\_ptr} \rangle := \text{SENTINEL}$（先写哨兵，后入隔离）；
+2. 块入隔离（隔离假设，§2.2）：内存保持映射可读，用户数据区逻辑上自 $\mathrm{dom}(\mu)$ 撤销，锁头区（锁槽与分配点记录）留在 $\mathrm{dom}(\mu)$；
 3. 指针 $p$ 的字段保持不变，但此后 $\text{live}(p)$ 恒为假。
 
 协议性质：`delete` 是「锁槽写 `SENTINEL` + 块入隔离」两步的原子组合，写哨兵发生在入隔离之前（规则 3.6.2 动作①②），故即使释放后分配器立即复用该地址，锁槽已写哨兵或新键、不匹配旧键——释放后该分配的一切派生指针（无论锚定方式）均时序失效；双释放与 UAF 均由 `live` 前提捕获。`delete` 仅对原始指针适用（`is_origin`），对重锚定子对象指针执行 `delete` 视为错误操作（trap）。
@@ -237,8 +241,8 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 **帧进入 `enter f`**：
 
-1. 帧首锁槽 $e_f$ 就位（每帧一个），$k_f \leftarrow \mathrm{Gen}()$；
-2. 帧锁槽写键：$\Lambda(e_f) := \langle \text{stack}, k_f \rangle$；当前帧锁为 $\langle e_f, k_f \rangle$；
+1. 帧首锁槽 $e_f$ 就位（每帧一个，位于帧首字，定义 7），$k_f \leftarrow \mathrm{Gen}()$；
+2. 帧锁槽写键：$\mu\langle e_f \rangle := \langle \text{stack}, k_f \rangle$；当前帧锁为 $\langle e_f, k_f \rangle$；
 3. 在帧栈块上为局部变量分配地址（并入 $\mathrm{dom}(\mu)$）。
 
 **定义 15（帧内取址）**：指向当前帧锁 $\langle e_f, k_f \rangle$：
@@ -251,7 +255,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 **帧退出 `exit f`**：
 
-1. 帧锁槽写 `SENTINEL`：$\Lambda(e_f) := \text{SENTINEL}$；
+1. 帧锁槽写 `SENTINEL`：$\mu\langle e_f \rangle := \text{SENTINEL}$；
 2. 将帧栈块的区间自 $\mathrm{dom}(\mu)$ 撤销（栈内存恒映射，隔离期内读死帧锁槽确定性得哨兵；复用后由 L-REKEY/值失配闭合）；
 3. 帧内产生的所有指针此后 $\text{live}$ 恒为假：对已退出帧地址的访问（栈悬垂）在访问前提处 `trap`。
 
@@ -267,17 +271,17 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - **索引与解引用**：`p[i]` 与 `*p` 的访问前提为 `safe_access`（定义 14）；规则见第 3 章。
 - **整段拷贝**：跨度 $m$ 元素的拷贝对两端指针各要求 `in_bounds(p, m)` 与 `in_bounds(q, m)`；规则见第 3 章。
 
-表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧内锁槽，锁槽元数据与被保护数据相邻存储。「内联元数据可伪造」弱点的缓解不依赖存储位置隔离，而依靠哨兵机制与 §1.2 无任意写前置：攻击者无任意写即无法在释放前改写锁槽，释放后锁槽在隔离期内读得确定性哨兵。
+表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧首锁槽，锁槽元数据与被保护数据相邻存储。「内联元数据可伪造」弱点的缓解依靠：**① 布局分离**——锁头在负载之前、负载访问足迹 ⊆ 负载区（定义 7/18），活动锁槽对一切经检查写结构性不可达，形式化为 L-UNREACH（§4.9）；**② 隔离期哨兵**——释放后锁槽在隔离期内读得确定性 `SENTINEL`（隔离假设，§2.2）；**③ 键唯一性与值失配**——块被复用后锁槽可被改写，但新值不匹配旧键（§2.3 锁槽复用）。三者共同闭合释放前/隔离期/复用后三个时段，攻击者无任意写前置（§1.2）作为全局前提。
 
 重锚定（`&p[i]`、`&s.field`）与算术（`p ± n`）在表示上不可互换：前者重置 `index` 并折算 `data`、后者只改 `index`，两种途径可产生指向同一字节地址但 `(data, index)` 不同的指针。这一不可混同性是相等比较（规则 3.4.2）与 `delete` 锚点前提（规则 3.6.2）一致性的基础，也是《编译器实现》§7.1 ElementPtr 双语义拆分（算术 vs 重锚定）的动机；对重锚定子对象指针的 `delete` 由 `is_origin`（§2.5）拒绝。
 
 ## 3. 操作语义规则
 
-本章为每个操作给出带 trap 的小步语义规则。规则基于第 2 章形式化机器（配置 $\langle \mu, \Lambda, C \rangle$、trap 吸收态，§2.1）与全部符号（`PtrVal`/`live`/`in_bounds`/`safe_access`/`is_heap`/`Gen`/`LockEntry` 等，定义 1-15），只引用不重定义；新定义自定义 16 起。每条规则标注对应 CFG 节点（`compiler/codegen/cfg/ir.py`），检查全部采用本设计：全访问检查 `in_bounds(p, n)` 与块内/帧内锁槽寻址的时序检查 `live(p)`（定义 8，含 null 短路）。
+本章为每个操作给出带 trap 的小步语义规则。规则基于第 2 章形式化机器（配置 $\langle \mu, C \rangle$、trap 吸收态，§2.1；锁槽即块头/帧首的 $\mu$ 内容，定义 7，不设独立状态分量）与全部符号（`PtrVal`/`live`/`in_bounds`/`safe_access`/`is_heap`/`Gen`/`LockEntry` 等，定义 1-15），只引用不重定义；新定义自定义 16 起。每条规则标注对应 CFG 节点（`compiler/codegen/cfg/ir.py`），检查全部采用本设计：全访问检查 `in_bounds(p, n)` 与块头/帧首锁槽寻址的时序检查 `live(p)`（定义 8，含 null 短路）。
 
 ### 3.1 规则格式、指令集与公共约定
 
-**规则格式**：每条规则形如「操作名（→ CFG 节点）。前提：…；动作：…；结果：…。若前提不满足则 trap。」正常步进写作 $\langle \mu, \Lambda, C \rangle \longrightarrow \langle \mu', \Lambda', C' \rangle$；前提不满足时 $\longrightarrow \text{trap}$。`trap` 为吸收终止态（§2.1）：检查失败后不执行任何后续内存访问。
+**规则格式**：每条规则形如「操作名（→ CFG 节点）。前提：…；动作：…；结果：…。若前提不满足则 trap。」正常步进写作 $\langle \mu, C \rangle \longrightarrow \langle \mu', C' \rangle$；前提不满足时 $\longrightarrow \text{trap}$。`trap` 为吸收终止态（§2.1）：检查失败后不执行任何后续内存访问。
 
 **定义 16（操作指令集）**：本章给出小步规则的指令集（即 §2.1 所述指令集）：解引用读/写、索引读/写、指针算术、指针差、比较、取址、堆分配、释放、重分配、帧进入/退出、`bitcast`、整段拷贝。每条指令在 CFG 层的对应节点见表 3。
 
@@ -350,9 +354,9 @@ $$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{
 
 ### 3.6 分配与释放
 
-**规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），分配字节区间 `[b, b + n·|T|)`（单元素 `n = 1`）并入 μ；块头锁槽写入键：取块头锁槽 `e`，`k ← Gen()`（定义 10）；`Λ(e) := ⟨heap, k⟩`。结果：`⟨b, e, k, 0, n⟩`，`lock_ptr = e` 指向块头锁槽。CFG 层：`Malloc` 节点；《编译器实现》第 7 章在 `Malloc` 处插入块头锁槽写键。
+**规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），按块布局（定义 7）分配锁头区 `[b, b + H)` 与负载区 `[b + H, b + H + n·|T|)`（单元素 `n = 1`）并入 μ；锁头写入分配点记录 `block_origin(e) := b + H`、`block_bytes(e) := n·|T|`；锁头首字锁槽 `e = b` 写入键：`k ← Gen()`（定义 10）；`μ⟨e⟩ := ⟨heap, k⟩`。结果：`⟨b + H, e, k, 0, n⟩`，`data` 指向负载首，`lock_ptr = e = b` 指向块头首字锁槽。CFG 层：`Malloc` 节点；《编译器实现》第 7 章在 `Malloc` 处插入块头锁槽写键。
 
-**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（锚点指针且为原始指针；`is_origin` 定义见 §2.5）。**前提求值顺序**：`is_heap` 与 `live` 先于（或与 `index = 0` 并列）求值，且二者对 `p.lock_ptr = 0` 均短路为假（定义 8/9）——`delete(null)` 在 `live`/`is_heap` 处确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`Λ(p.lock_ptr) := SENTINEL`（先写哨兵，后入隔离）；② 块入隔离：内存保持映射可读，用户数据区逻辑上自 `dom(μ)` 撤销，锁槽区留在保留子域（隔离假设，§2.2）。结果：`p` 及同对象派生指针此后 `live` 恒为假。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。
+**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（锚点指针且为原始指针；`is_origin` 定义见 §2.5）。**前提求值顺序**：`is_heap` 与 `live` 先于（或与 `index = 0` 并列）求值，且二者对 `p.lock_ptr = 0` 均短路为假（定义 8/9）——`delete(null)` 在 `live`/`is_heap` 处确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`μ⟨p.lock_ptr⟩ := SENTINEL`（先写哨兵，后入隔离）；② 块入隔离：内存保持映射可读，用户数据区逻辑上自 `dom(μ)` 撤销，锁头区（锁槽与分配点记录）留在 `dom(μ)`（隔离假设，§2.2）。结果：`p` 及同对象派生指针此后 `live` 恒为假。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。
 
 ### 3.7 重分配 realloc
 
@@ -362,9 +366,9 @@ $$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{
 
 本组为帧级操作，作用于帧锁槽与帧栈块，**CFG 层无对应节点**：帧进入/退出由函数调用协议整体承载（`Call`/`Invoke`/`Ret` 节点），不单独成节点；帧内取址（定义 15）引用当前帧锁生成指针，故帧锁槽的键/哨兵写入直接决定帧内指针的时序有效性。
 
-**规则 3.8.1（帧进入 `enter f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：帧首锁槽 `e_f` 就位，`k_f ← Gen()`（**re-key：每次进入生成新键**，定义 10 保证与上次进入不同）；帧锁槽写键 `Λ(e_f) := ⟨stack, k_f⟩`；当前帧锁 := `⟨e_f, k_f⟩`；帧栈块区间并入 `dom(μ)`。结果：帧内 `&x` 等取址以 `⟨e_f, k_f⟩` 为帧锁（定义 15）。
+**规则 3.8.1（帧进入 `enter f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：帧首锁槽 `e_f` 就位（帧首字，定义 7），`k_f ← Gen()`（**re-key：每次进入生成新键**，定义 10 保证与上次进入不同）；帧锁槽写键 `μ⟨e_f⟩ := ⟨stack, k_f⟩`；当前帧锁 := `⟨e_f, k_f⟩`；帧栈块区间并入 `dom(μ)`。结果：帧内 `&x` 等取址以 `⟨e_f, k_f⟩` 为帧锁（定义 15）。
 
-**规则 3.8.2（帧退出 `exit f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：帧锁槽写哨兵 `Λ(e_f) := SENTINEL`；帧栈块区间自 `dom(μ)` 撤销（栈内存恒映射，隔离期内读死帧锁槽确定性得哨兵；复用后由 L-REKEY/值失配闭合）。结果：帧内产生的全部指针此后 `live` 恒为假；对已退出帧地址的任何后续访问在访问规则处 trap（栈悬垂防护）。
+**规则 3.8.2（帧退出 `exit f`）**（帧级，CFG 无对应节点）。前提：无。动作（§2.6）：帧锁槽写哨兵 `μ⟨e_f⟩ := SENTINEL`；帧栈块区间自 `dom(μ)` 撤销（栈内存恒映射，隔离期内读死帧锁槽确定性得哨兵；复用后由 L-REKEY/值失配闭合）。结果：帧内产生的全部指针此后 `live` 恒为假；对已退出帧地址的任何后续访问在访问规则处 trap（栈悬垂防护）。
 
 ### 3.9 bitcast
 
@@ -376,17 +380,17 @@ $$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{
 
 ## 4. 不变量与引理
 
-本章把第 2-3 章表示与规则中的安全性要求升格为可陈述、可引用的不变量与引理。第 5 章主可靠性定理以 S1、T1 两条不变量为直接前提（类型混淆排除为可信基边界，§4.7），以 L-KEY、L-SENTINEL、L-NOREUSE、L-REKEY 为中间结论支撑 T1 的作废永久性一侧。每条 = 陈述（闭公式）+ 论证梗概 + 证明义务，不给出 PLDI 级完整证明（明确排除）；论证范围限于 §1.3 的 in 类程序（单线程、不跨 FFI、攻击者无任意写前置，`bitcast` 等受限操作由语法级禁令排除于用户代码、标准库为审计可信基）。符号全部沿用第 2-3 章（定义 1-19），不重复定义；新定义自编号 20 起。
+本章把第 2-3 章表示与规则中的安全性要求升格为可陈述、可引用的不变量与引理。第 5 章主可靠性定理以 S1、T1 两条不变量为直接前提（类型混淆排除为可信基边界，§4.7），以 L-KEY、L-SENTINEL、L-NOREUSE、L-REKEY、L-UNREACH、L-ISOLATION 为中间结论支撑 T1 的作废永久性一侧。每条 = 陈述（闭公式）+ 论证梗概 + 证明义务，不给出 PLDI 级完整证明（明确排除）；论证范围限于 §1.3 的 in 类程序（单线程、不跨 FFI、攻击者无任意写前置，`bitcast` 等受限操作由语法级禁令排除于用户代码、标准库为审计可信基）。符号全部沿用第 2-3 章（定义 1-19），不重复定义；新定义自编号 20 起。
 
 ### 4.1 陈述规范、新定义与证明义务编号
 
-**陈述规范**：不变量与引理以全称闭式给出，自由变量全部显式量化。谓词带时间下标 $t$ 时，表示按第 $t$ 步后配置 $\langle \mu_t, \Lambda_t, C_t \rangle$ 的锁表 $\Lambda_t$ 求值（定义 8、定义 12），是既谓词的实例化而非新谓词。证明义务编号 O-1 至 O-5 与各条一一对应，供第 5 章逐条引用；带小写字母后缀（如 O-2a）的为同一义务的子义务。**符号闭合说明（R3 核对）**：本章陈述仅使用两类符号：第 2-3 章已定义（`PtrVal`/`live`/`in_bounds`/`is_heap`/`Gen`/`LockEntry`/`LockTable`，定义 1-19）与本章自定义（定义 20-23：`Active`、`key_of`、`Trace`、`acc_t`、`del_t`、`ok`、`dyn_type_t`、`static_type`）。时间下标 $t$ 与量词 $\forall t, \forall p, n$ 是逻辑语言的一部分而非新记号；第 5 章只引用不重定义。
+**陈述规范**：不变量与引理以全称闭式给出，自由变量全部显式量化。谓词带时间下标 $t$ 时，表示按第 $t$ 步后配置 $\langle \mu_t, C_t \rangle$ 的锁槽内容求值（锁槽即 $\mu$ 中的块头/帧首字，定义 7；`live`/`in_bounds` 的定义 8/12 均为 $\mu$ 读），是既谓词的实例化而非新谓词。证明义务编号 O-1 至 O-7 与各条一一对应，供第 5 章逐条引用；带小写字母后缀（如 O-2a）的为同一义务的子义务。**符号闭合说明（R3 核对）**：本章陈述仅使用两类符号：第 2-3 章已定义（`PtrVal`/`live`/`in_bounds`/`is_heap`/`Gen`/`LockEntry`/锁槽记号 $\mu\langle \cdot \rangle$，定义 1-19）与本章自定义（定义 20-23：`Active`、`key_of`、`Trace`、`acc_t`、`del_t`、`ok`、`dyn_type_t`、`static_type`）。时间下标 $t$ 与量词 $\forall t, \forall p, n$ 是逻辑语言的一部分而非新记号；第 5 章只引用不重定义。
 
-**定义 20（活动锁槽 `Active` 与当前键 `key_of`）**：
-$$\mathrm{Active}(\Lambda) \triangleq \{ e \in \mathrm{dom}(\Lambda) \mid \Lambda(e) \neq \text{SENTINEL} \}$$
-$\mathrm{key\_of}(\Lambda, e)$：当 $\Lambda(e) = \langle \text{kind}, k \rangle$（定义 6）时等于 $k$；当 $\Lambda(e) = \text{SENTINEL}$ 时无定义。
+**定义 20（活动锁槽 `Active` 与当前键 `key_of`）**：锁槽地址 $e$ 在时刻 $t$ 活动，当且仅当其 $\mu$ 内容（定义 7 锁槽读记号）为活动锁编码：
+$$\mathrm{Active}_t \triangleq \{ e \in \mathrm{Addr} \mid \mu_t\langle e \rangle = \langle \text{kind}, k \rangle \ \text{对某}\ \text{kind} \in \{\text{heap}, \text{stack}\},\ k \in \mathrm{Key} \}$$
+$\mathrm{key\_of}_t(e)$：当 $\mu_t\langle e \rangle = \langle \text{kind}, k \rangle$（定义 6 编码）时等于 $k$；当 $\mu_t\langle e \rangle = \text{SENTINEL}$ 或非 `LockEntry` 编码时无定义。`Active` 由 $\mu$ 内容直接判定（重守卫）：锁槽没有独立于存储的存在性，活动性即「该地址当前存的是活动锁编码」。
 
-**定义 21（运行轨迹 `Trace`）**：轨迹 $\sigma$ 是配置的有限或无限序列 $\sigma_0 \longrightarrow \sigma_1 \longrightarrow \cdots$，其中 $\sigma_0 = \langle \mu_0, \Lambda_0, C_0 \rangle$ 为初始配置（§2.1，$\mathrm{dom}(\mu_0) = \mathrm{dom}(\Lambda_0) = \emptyset$），每步按第 3 章规则转移，直至 `trap` 或程序终止。$\Lambda_t$、$\mu_t$ 为 $\sigma_t$ 的锁表与存储分量；$\sigma \in \mathrm{Trace}(P)$ 表示 $P$ 的一次合法运行。
+**定义 21（运行轨迹 `Trace`）**：轨迹 $\sigma$ 是配置的有限或无限序列 $\sigma_0 \longrightarrow \sigma_1 \longrightarrow \cdots$，其中 $\sigma_0 = \langle \mu_0, C_0 \rangle$ 为初始配置（§2.1，$\mathrm{dom}(\mu_0) = \emptyset$），每步按第 3 章规则转移，直至 `trap` 或程序终止。$\mu_t$ 为 $\sigma_t$ 的存储分量（锁槽即 $\mu_t$ 中的块头/帧首内容，定义 7）。$\sigma \in \mathrm{Trace}(P)$ 表示 $P$ 的一次合法运行。
 
 **定义 22（访问事件与成功判定 `ok`）**：轨迹第 $t$ 步对指针 $p$ 执行一次读、写或整段拷贝（跨度 $n \ge 1$）记事件 $\mathrm{acc}_t(p, n)$；对 $p$ 执行释放记事件 $\mathrm{del}_t(p)$。事件成功 $\mathrm{ok}(\cdot)$ 当且仅当该步按第 3 章规则正常转移（前提满足，非 `trap`）；`ok` 与规则前提的等价由第 3 章规则结构保证，这正是定理 5.1 `ok(e) ⟺ pre(e)` 的事件层来源。
 
@@ -413,37 +417,37 @@ $$\forall t.\ \forall p, n.\ \big[\, \mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mat
 **引理 L-KEY（键单调性）**：设 `Gen` 满足定义 10（单调计数器或 CSPRNG），则对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
 
 - (i) **序列唯一性**：$\forall t_1 \ne t_2.\ k_{t_1} \leftarrow \mathrm{Gen}() \wedge k_{t_2} \leftarrow \mathrm{Gen}() \Rightarrow k_{t_1} \ne k_{t_2}$。
-- (ii) **活动键两两不同**：$\forall t.\ \forall e \ne e' \in \mathrm{Active}(\Lambda_t).\ \mathrm{key\_of}(\Lambda_t, e) \ne \mathrm{key\_of}(\Lambda_t, e')$。
-- (iii) **作废键永不重新成为活动键**：$\forall t_1 < t_2.\ \forall e.\ \mathrm{key\_of}(\Lambda_{t_1}, e)\ \text{有定义} \wedge \mathrm{key\_of}(\Lambda_{t_2}, e)\ \text{有定义} \Rightarrow \mathrm{key\_of}(\Lambda_{t_1}, e) \ne \mathrm{key\_of}(\Lambda_{t_2}, e)$。
-- (iv) **哨兵不匹配**：$\forall t.\ \forall e.\ \Lambda_t(e) = \text{SENTINEL} \Rightarrow \forall p.\ \big( p.\text{lock\_ptr} = e \Rightarrow \neg \mathrm{live}_t(p) \big)$。
+- (ii) **活动键两两不同**：$\forall t.\ \forall e \ne e' \in \mathrm{Active}_t.\ \mathrm{key\_of}_t(e) \ne \mathrm{key\_of}_t(e')$。
+- (iii) **作废键永不重新成为活动键**：$\forall t_1 < t_2.\ \forall e.\ \mathrm{key\_of}_{t_1}(e)\ \text{有定义} \wedge \mathrm{key\_of}_{t_2}(e)\ \text{有定义} \Rightarrow \mathrm{key\_of}_{t_1}(e) \ne \mathrm{key\_of}_{t_2}(e)$。
+- (iv) **哨兵不匹配**：$\forall t.\ \forall e.\ \mu_t\langle e \rangle = \text{SENTINEL} \Rightarrow \forall p.\ \big( p.\text{lock\_ptr} = e \Rightarrow \neg \mathrm{live}_t(p) \big)$。
 
 **论证梗概**：(i) 直接来自定义 10：单调计数器严格递增，两次调用输出不同；CSPRNG 输出碰撞概率 ≤ $2^{-64}$。锁槽仅在分配/释放/重分配/帧进出规则（3.6.1、3.6.2、3.7.1、3.8.1、3.8.2）中写入，凡写入活动键 $\langle \text{kind}, k \rangle$ 必先 `k ← Gen()`，故 (ii) 中每个活动键均来自一次独立调用，由 (i) 得两两不同；(iii) 同理，锁槽重新激活时写入的是新调用输出，与自身全部历史键不同。子义务 O-3b 的写入规则枚举以 §2.5-§2.6 协议为限：写入活动键的只有分配、重分配与帧进入三处，且每处先执行 `k ← Gen()`；释放与帧退出只写 `SENTINEL`，不产生活动键。单调计数器路径下 (i) 为严格不等式，CSPRNG 路径下为概率意义（碰撞 ≤ $2^{-64}$），故 (iii) 相应为确定性或可忽略概率违反。
 
-**义务 O-3**（时序安全的基石）：O-3a 证明 (i)（定义 10 的组合逻辑）；O-3b 证明锁槽写入规则枚举完备，凡 $\Lambda(e) := \langle \text{kind}, k \rangle$ 者均以 `k ← Gen()` 产生；O-3c 由 (i) 推出 (ii) 与 (iii)；O-3d 证明哨兵不匹配 (iv)（`SENTINEL` $\notin$ ran(Gen)，定义 10）——由定义 5/6/10 直接核对，无归纳结构。**建模备注**：CSPRNG 路径下形式论证在概率意义下成立，以可忽略概率违反；现行原型 `ptr.an`（`bak/experimental_ptr/ptr.an`，§2.3 备注）的常量 `random()` 不满足定义 10，不可用作 `Gen`。
+**义务 O-3**（时序安全的基石）：O-3a 证明 (i)（定义 10 的组合逻辑）；O-3b 证明锁槽写入规则枚举完备，凡 $\mu\langle e \rangle := \langle \text{kind}, k \rangle$ 者均以 `k ← Gen()` 产生；O-3c 由 (i) 推出 (ii) 与 (iii)；O-3d 证明哨兵不匹配 (iv)（`SENTINEL` $\notin$ ran(Gen)，定义 10）——由定义 5/6/10 直接核对，无归纳结构。**建模备注**：CSPRNG 路径下形式论证在概率意义下成立，以可忽略概率违反；现行原型 `ptr.an`（`bak/experimental_ptr/ptr.an`，§2.3 备注）的常量 `random()` 不满足定义 10，不可用作 `Gen`。
 
 **引理 L-SENTINEL（哨兵不匹配）**（即 L-KEY(iv)，独立陈述，义务并入 O-3 的子义务 O-3d）：设 `Gen` 满足定义 10（`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$），则对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
-$$\forall t.\ \forall p.\ \Lambda_t(p.\text{lock\_ptr}) = \text{SENTINEL} \Rightarrow \neg \mathrm{live}_t(p)$$
-**论证梗概**：`SENTINEL` 是 `LockEntry` 值而非 `Key` 值（定义 5/6）：`LockEntry` 以不交并 $(\{\text{heap}, \text{stack}\} \times \mathrm{Key}) \uplus \{\text{SENTINEL}\}$ 定义，$\langle \text{kind}, k \rangle$ 与 `SENTINEL` 分属不相交的注入分量，任何具体值不可等同。又任何指针键 $p.\text{key}$ 均来自 `Gen` 的一次调用（§2.5-§2.6 协议），且 `SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10），故指针键不可能取哨兵编码。由此 `live` 的右端 $\Lambda(p.\text{lock\_ptr}) = \langle \text{kind}, p.\text{key} \rangle$（定义 8）在锁槽值为 `SENTINEL` 时恒不成立。关键步骤：哨兵失配是值域级别的闭合，由定义 6 的值域结构与定义 10 的域排除共同保证，与键唯一性互补而不重叠——隔离期的时序失效即由此引理承担，复用期仍由 L-NOREUSE/L-REKEY 承担。
+$$\forall t.\ \forall p.\ \mu_t\langle p.\text{lock\_ptr} \rangle = \text{SENTINEL} \Rightarrow \neg \mathrm{live}_t(p)$$
+**论证梗概**：`SENTINEL` 是 `LockEntry` 值而非 `Key` 值（定义 5/6）：`LockEntry` 以不交并 $(\{\text{heap}, \text{stack}\} \times \mathrm{Key}) \uplus \{\text{SENTINEL}\}$ 定义，$\langle \text{kind}, k \rangle$ 与 `SENTINEL` 分属不相交的注入分量，任何具体值不可等同。又任何指针键 $p.\text{key}$ 均来自 `Gen` 的一次调用（§2.5-§2.6 协议），且 `SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10），故指针键不可能取哨兵编码。由此 `live` 的右端 $\mu\langle p.\text{lock\_ptr} \rangle = \langle \text{kind}, p.\text{key} \rangle$（定义 8）在锁槽值为 `SENTINEL` 时恒不成立。关键步骤：哨兵失配是值域级别的闭合，由定义 6 的值域结构与定义 10 的域排除共同保证，与键唯一性互补而不重叠——隔离期的时序失效即由此引理承担，复用期仍由 L-NOREUSE/L-REKEY 承担。
 
 **义务标注**：并入 O-3 为子义务 O-3d（由定义 5/6/10 直接核对，无归纳结构）。
 
 ### 4.5 锁不复用引理 L-NOREUSE
 
 **引理 L-NOREUSE（锁不复用）**：设 L-KEY 成立。对任意轨迹与任意时刻 $t_1 < t_1' < t_2$、任意 $e, k, k'$：
-$$\Lambda_{t_1}(e) = \langle \text{heap}, k \rangle \wedge \Lambda_{t_1'}(e) = \text{SENTINEL} \wedge \Lambda_{t_2}(e) = \langle \text{heap}, k' \rangle \Rightarrow k' \ne k$$
+$$\mu_{t_1}\langle e \rangle = \langle \text{heap}, k \rangle \wedge \mu_{t_1'}\langle e \rangle = \text{SENTINEL} \wedge \mu_{t_2}\langle e \rangle = \langle \text{heap}, k' \rangle \Rightarrow k' \ne k$$
 推论（旧指针永久失效）：任何 $\text{lock\_ptr} = e$、$\text{key} = k$ 的指针 $p$，在 $t_2$ 及此后 $\mathrm{live}(p)$ 恒为假：
 $$\forall s \ge t_2.\ \neg \mathrm{live}_s(p)$$
 
-**论证梗概**：$t_2$ 时 $e$ 由分配/重分配规则（3.6.1、3.7.1）重新激活，写入的 $k'$ 是 `Gen` 的新调用输出；由 L-KEY(iii)，$k'$ 与 $e$ 的全部历史键不同，特别 $k' \ne k$。此后锁槽物理位置 $e$ 的取值分四情形：若仍为活动锁槽则为 $\langle \text{kind}, k' \rangle$（L-KEY 保证 $k' \ne k$）；若为 `SENTINEL` 则与一切键失配（L-SENTINEL）；若被复用作另一对象锁槽，其键亦来自 `Gen`、$\ne k$（同 L-KEY）；若被分配器复用为任意非 `LockEntry` 数据值 $v$，则 $v \ne k$——定向写情形在两条路径（CSPRNG 与单调）下均由显式前提「锁槽物理位置不被复用为攻击者可经检查写达的数据（锁槽维护保持运行时独占，§2.3/§2.2 保留子域）」排除（该前提为何必需、机制与论证见 §2.3「锁槽复用」集中说明；§1.2 + §5.5）；前提成立时 $v$ 由非攻击者定向的值构成，$v = k$ 仅为巧合，概率 ≤ $2^{-64}$，故 $\mathrm{live}(p)$ 恒假。本引理允许 $e$ 在 $t_1'$ 与 $t_2$ 之间被反复作废/重激活，只要每次重激活都写新键；$t_1'$ 至 $t_2$ 之间的隔离期窗口由 L-SENTINEL 闭合，作废自 $t_1'$ 即开始。
+**论证梗概**：$t_2$ 时 $e$ 由分配/重分配规则（3.6.1、3.7.1）重新激活，写入的 $k'$ 是 `Gen` 的新调用输出；由 L-KEY(iii)，$k'$ 与 $e$ 的全部历史键不同，特别 $k' \ne k$。此后锁槽物理位置 $e$ 的取值分四情形：若仍为活动锁槽则为 $\langle \text{kind}, k' \rangle$（L-KEY 保证 $k' \ne k$）；若为 `SENTINEL` 则与一切键失配（L-SENTINEL）；若被复用作另一对象锁槽，其键亦来自 `Gen`、$\ne k$（同 L-KEY）；若被分配器复用为任意非 `LockEntry` 数据值 $v$，则 $v \ne k$——经检查的写无法到达该位置（前提一：经检查写不可达锁槽，由布局推导为 L-UNREACH，§4.9），攻击者的定向写须通过 `in_bounds`/`live` 检查（§1.2）故不能把锁槽写成旧键 $k$（前提二：定向写排除）；前提一、二均列入定理 5.1 前件（§5.5）。前提成立时 $v$ 由非攻击者定向的值构成，$v = k$ 仅为巧合，概率 ≤ $2^{-64}$，故 $\mathrm{live}(p)$ 恒假。本引理允许 $e$ 在 $t_1'$ 与 $t_2$ 之间被反复作废/重激活，只要每次重激活都写新键；$t_1'$ 至 $t_2$ 之间的隔离期窗口由 L-SENTINEL 闭合，作废自 $t_1'$ 即开始。
 
-**义务 O-4**（T1 负向侧的堆部分）：以 L-KEY 证明作废锁槽复用只获新键、旧指针键永不重新匹配；证明 $e$ 重新激活后只存贮活动新键或 `SENTINEL`，或（它用路径）任意非 `LockEntry` 值——由值失配不等式 $v \ne k$ 闭合（定向写在两条路径下均由「锁槽物理位置不被复用为攻击者可经检查写达的数据」前提排除，§2.3「锁槽复用」集中说明；巧合值概率 ≤ $2^{-64}$）。
+**义务 O-4**（T1 负向侧的堆部分）：以 L-KEY 证明作废锁槽复用只获新键、旧指针键永不重新匹配；证明 $e$ 重新激活后只存贮活动新键或 `SENTINEL`，或（它用路径）任意非 `LockEntry` 值——由值失配不等式 $v \ne k$ 闭合（前提一「经检查写不可达锁槽」由 L-UNREACH（§4.9）与 §1.2 承担，前提二「定向写排除」一并列入定理 5.1 前件（§5.5）；巧合值概率 ≤ $2^{-64}$）。
 
-**义务 O-4 的验证次序**：先枚举 $\Lambda$ 的全部写入点（分配 3.6.1、释放 3.6.2、重分配 3.7.1、帧进出 3.8.1-3.8.2），确认其中写活动键者必先 `Gen()`；再对每条重激活路径应用 L-KEY(iii) 得新键 ≠ 全部历史键；最后穷举锁槽物理位置取值的四情形证明推论：前三情形由 L-KEY/L-SENTINEL 闭合，第四情形（它用为任意值）由值失配不等式 $v \ne k$ 闭合（定向写由前提排除，巧合概率 ≤ $2^{-64}$）。次序固定后，O-4 可机械执行，无开放性反例分支。
+**义务 O-4 的验证次序**：先枚举锁槽（$\mu$ 内容）的全部写入点（分配 3.6.1、释放 3.6.2、重分配 3.7.1、帧进出 3.8.1-3.8.2），确认其中写活动键者必先 `Gen()`；再对每条重激活路径应用 L-KEY(iii) 得新键 ≠ 全部历史键；最后穷举锁槽物理位置取值的四情形证明推论：前三情形由 L-KEY/L-SENTINEL 闭合，第四情形（它用为任意值）由值失配不等式 $v \ne k$ 闭合（前提一「经检查写不可达锁槽」由 L-UNREACH（§4.9）+ §1.2 承担，前提二「定向写排除」列入定理 5.1 前件（§5.5）；巧合概率 ≤ $2^{-64}$）。次序固定后，O-4 可机械执行，无开放性反例分支。
 
 ### 4.6 栈帧 re-key 引理 L-REKEY
 
 **引理 L-REKEY（栈帧 re-key）**：设 L-KEY 成立。对任意帧 $f$、任意锁槽 $e_f$、任意两次帧进入时刻 $t_1 < t_2$ 与任意 $k_1, k_2$：
-$$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_f) = \langle \text{stack}, k_2 \rangle \Rightarrow k_1 \ne k_2$$
+$$\mu_{t_1}\langle e_f \rangle = \langle \text{stack}, k_1 \rangle \wedge \mu_{t_2}\langle e_f \rangle = \langle \text{stack}, k_2 \rangle \Rightarrow k_1 \ne k_2$$
 推论（遗留指针失效）：帧递归或循环复用于同一锁槽 $e_f$ 时，本轮键 ≠ 上轮键；上一轮遗留的携带 $\langle e_f, k_1 \rangle$ 的栈指针在 $t_2$ 及此后 $\mathrm{live}$ 恒为假（帧退出规则 3.8.2 已先写哨兵）。
 
 **论证梗概**：帧进入规则 3.8.1 每次执行 re-key：$k_f \leftarrow \mathrm{Gen}()$，与锁槽 $e_f$ 的既往键无关，包括上轮键 $k_1$。由 L-KEY(i)，$k_2 \ne k_1$ 即使 $t_1$ 与 $t_2$ 对应同一帧在同一锁槽上的递归或循环复用；上轮指针携带 $k_1$，按定义 8 与 $t_2$ 后的帧锁 $\langle \text{stack}, k_2 \rangle$ 不匹配。若省去 re-key，第二次进入沿用旧键 $k_1$，则上一轮遗留指针与当前帧锁不可区分，栈悬垂在地址恰好被复用为合法局部时躲过检查；re-key 使两轮进入的键必然不同，遗留指针在 `live` 处 trap。帧进入不要求 `enter f` 与 `exit f` 严格配对（异常路径可跳过部分规则），re-key 的每次独立调用使任何乱序进入都获得新键，键隔离不依赖配对完整性。帧退出先写哨兵（3.8.2 动作①）保证 $t_1$ 与 $t_2$ 之间 $e_f$ 必经 `SENTINEL` 态，隔离期指针失配由 L-SENTINEL 闭合。
@@ -462,7 +466,7 @@ $$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_
 
 ### 4.8 引理间依赖与第 5 章接口
 
-依赖关系：L-KEY（O-3）→ L-SENTINEL（O-3d）→ T1 负向侧（O-2b）；L-KEY（O-3）→ L-NOREUSE（O-4）→ T1 负向侧；L-KEY → L-REKEY（O-5）→ T1 负向侧；S1（O-1）独立于时序链；类型混淆排除不依赖本章引理（可信基边界，§4.7）。
+依赖关系：L-KEY（O-3）→ L-SENTINEL（O-3d）→ T1 负向侧（O-2b）；L-KEY（O-3）→ L-NOREUSE（O-4）→ T1 负向侧；L-KEY → L-REKEY（O-5）→ T1 负向侧；S1（O-1）→ L-UNREACH（O-6）→ L-NOREUSE（O-4 前提一）；隔离假设（§2.2，定理 5.1 前件）→ L-ISOLATION（O-7）→ T1 负向侧（隔离期，与 L-SENTINEL 互补）；S1 本身独立于时序链；类型混淆排除不依赖本章引理（可信基边界，§4.7）。
 
 | 引理/不变量 | 证明义务                  | 在第 5 章的角色                      |
 | ----------- | ------------------------- | ------------------------------------ |
@@ -472,16 +476,35 @@ $$\Lambda_{t_1}(e_f) = \langle \text{stack}, k_1 \rangle \wedge \Lambda_{t_2}(e_
 | L-SENTINEL  | O-3d（并入 O-3）          | T1 负向侧（隔离期）                  |
 | L-NOREUSE   | O-4                       | T1 负向侧（堆复用期，含它用值失配）  |
 | L-REKEY     | O-5                       | T1 负向侧（栈复用期）                |
+| L-UNREACH   | O-6                       | 值失配前提一：经检查写不可达锁槽（布局推论） |
+| L-ISOLATION | O-7                       | T1 负向侧（隔离期确定性读）          |
 
-第 5 章主可靠性定理将把「trap 之外的一切内存访问均安全」归结为：S1 排除越界（G1），T1 排除 UAF、双释放与栈悬垂（G2），类型混淆由可信基边界排除（§4.7，G4）；L-KEY 家族保障 T1 的作废永久性，即「检查当时通过、此后失效不可逆」的时序封闭性。本组不变量仅在 §1.3 in 类范围内成立；并发、FFI 等 out 情形不适用。**依赖图核对**：依赖链上不存在环：S1 只依赖规则前提枚举与良构性保持，不依赖任何时序引理；L-KEY 依赖定义 10 与锁槽写入规则，独立于 S1；L-SENTINEL 由 L-KEY 的 (iv) 直接导出（定义 5/6/10 核对，无归纳结构），与 L-NOREUSE、L-REKEY 互不依赖；L-NOREUSE 与 L-REKEY 均以 L-KEY 为前提，二者之间无互相依赖（堆侧与栈侧并行）；T1 正向侧（O-2a）依赖规则文本，负向侧（O-2b）依赖 L-SENTINEL、L-NOREUSE 与 L-REKEY；类型混淆排除（§4.7）不依赖本章任何引理。因此证明义务可按 S1、L-KEY 两条链并行推进，T1 在两条链完成后收口，无循环依赖。
+第 5 章主可靠性定理将把「trap 之外的一切内存访问均安全」归结为：S1 排除越界（G1），T1 排除 UAF、双释放与栈悬垂（G2），类型混淆由可信基边界排除（§4.7，G4）；L-KEY 家族保障 T1 的作废永久性，即「检查当时通过、此后失效不可逆」的时序封闭性。本组不变量仅在 §1.3 in 类范围内成立；并发、FFI 等 out 情形不适用。**依赖图核对**：依赖链上不存在环：S1 只依赖规则前提枚举与良构性保持，不依赖任何时序引理；L-UNREACH 是 S1 + 块布局（定义 7）的直接推论，随 S1 链推进、为 O-4 前提一提供依据，不依赖时序引理；L-ISOLATION 依赖隔离假设（§2.2，定理 5.1 前件）与规则 3.6.2/3.8.2 的写哨兵顺序，独立于 S1 与 L-KEY；L-KEY 依赖定义 10 与锁槽写入规则，独立于 S1；L-SENTINEL 由 L-KEY 的 (iv) 直接导出（定义 5/6/10 核对，无归纳结构），与 L-NOREUSE、L-REKEY 互不依赖；L-NOREUSE 与 L-REKEY 均以 L-KEY 为前提，二者之间无互相依赖（堆侧与栈侧并行），L-NOREUSE 另以 L-UNREACH 为值失配前提一的依据；T1 正向侧（O-2a）依赖规则文本，负向侧（O-2b）依赖 L-SENTINEL、L-NOREUSE、L-REKEY 与 L-ISOLATION；类型混淆排除（§4.7）不依赖本章任何引理。因此证明义务可按 S1（含 L-UNREACH）、L-KEY、隔离假设（含 L-ISOLATION）三条链并行推进，T1 在三条链完成后收口，无循环依赖。
+
+### 4.9 锁槽可达性与隔离期引理
+
+**引理 L-UNREACH（活动锁头区经检查写不可达）**：设块布局（定义 7）与 S1 成立。对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+$$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{ft}(p, n) \cap \mathrm{Hdr}_t = \emptyset$$
+其中访问足迹 $\mathrm{ft}(p, n) \triangleq [p.\text{data} + p.\text{index}\cdot|T|,\ p.\text{data} + (p.\text{index} + n)\cdot|T|)$（字节区间），$\mathrm{Hdr}_t \triangleq \bigcup_b [b, b + H)$ 为 $t$ 时刻所有活动/隔离堆块的锁头区与活动帧锁头区（定义 7；栈帧锁头仅含锁槽，不含分配点记录）。
+
+**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽与分配点记录均位于锁头区，故活动锁槽与记录对一切经检查的读/写不可达。「经检查写不可达锁槽」由此从带外锁表的「运行时独占维护」公理降格为**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
+
+**义务 O-6**：验证分配锚定 $p.\text{data} = b + H$（§2.5、规则 3.6.1、表 2）；验证 `in_bounds` 足迹 ⊆ 负载区（定义 12 与 S1）；验证锁头区与负载区不交（定义 7 布局：锁头在负载之前）。该义务是 L-NOREUSE 值失配前提一的依据。
+
+**引理 L-ISOLATION（隔离期确定性读）**：设隔离假设（§2.2）成立。对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$，对任意时刻 $t$ 与任意处于隔离期的锁槽地址 $e$（自释放/帧退出写入 `SENTINEL` 起，至该块被重新分配为止）：
+$$\mu_t\langle e \rangle = \text{SENTINEL}$$
+
+**论证梗概**：释放规则 3.6.2 动作①先写 $\mu\langle p.\text{lock\_ptr} \rangle := \text{SENTINEL}$ 再入隔离（动作②）；帧退出规则 3.8.2 动作①同样先写哨兵。锁槽写入点枚举（分配 3.6.1、释放 3.6.2、重分配 3.7.1、帧进出 3.8.1-3.8.2，与 O-3b/O-4 共用同一枚举）中，隔离期内唯一触碰该位置的写入是再次分配（重激活，写入新键）——它标志隔离期结束、进入复用期（其时序安全由 L-KEY/L-NOREUSE/值失配闭合，§2.3）；其余写入均不发生，故隔离期内锁槽内容保持 `SENTINEL`。「内存保持映射可读（不 munmap）」是平台前提（§2.2、§5.5），保证隔离期读锁槽是确定性的 $\mu$ 读而非 trap。
+
+**义务 O-7**：验证释放/帧退出规则先写哨兵（3.6.2/3.8.2 动作①）；验证隔离期内锁槽无其他写入（写入规则枚举，与 O-3b/O-4 一致）；确认内存保持映射可读的平台上界（§5.5 前件）。该义务是 T1 负向侧隔离期窗口的依据，与 L-SENTINEL 互补：L-ISOLATION 保证隔离期锁槽内容确定，L-SENTINEL 保证该内容与一切指针键失配。
 
 ## 5. 可靠性论证
 
-本章不做新的形式证明，而是把第 4 章的不变量与引理（S1/T1/L-KEY/L-SENTINEL/L-NOREUSE/L-REKEY）及其证明义务（O-1 至 O-5，含子义务）组织为一份可执行的可靠性论证：§5.1 给出单句主可靠性定理，§5.2 给出义务↔引理映射表，§5.3 逐义务给出论证梗概，§5.4 说明拼接结构，§5.5 显式声明论证范围与未承诺事项。论证层级为「梗概级」（S&P/CCS/USENIX 会议的严谨度），未验证的证明义务以清单形式留给实现与定理证明器工作，PLDI 级完整证明不在本章范围。本章只引用第 2-4 章符号（定义 1-23）与规则，不定义任何新记号。
+本章不做新的形式证明，而是把第 4 章的不变量与引理（S1/T1/L-KEY/L-SENTINEL/L-NOREUSE/L-REKEY/L-UNREACH/L-ISOLATION）及其证明义务（O-1 至 O-7，含子义务）组织为一份可执行的可靠性论证：§5.1 给出单句主可靠性定理，§5.2 给出义务↔引理映射表，§5.3 逐义务给出论证梗概，§5.4 说明拼接结构，§5.5 显式声明论证范围与未承诺事项。论证层级为「梗概级」（S&P/CCS/USENIX 会议的严谨度），未验证的证明义务以清单形式留给实现与定理证明器工作，PLDI 级完整证明不在本章范围。本章只引用第 2-4 章符号（定义 1-23）与规则，不定义任何新记号。
 
 ### 5.1 主可靠性定理（R2）
 
-**定理 5.1（主可靠性定理）**：若程序 $P$ 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out）且 $P$ 的全部指针操作良构（定义 13），则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \wedge \mathrm{is\_origin}(p)$（后者的前提即规则 3.6.2 的释放前提；`is_origin` 定义见 §2.5），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。等价地，定理 5.1 即下述全称闭式：
+**定理 5.1（主可靠性定理）**：若程序 $P$ 满足以下前件——① 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out）；② $P$ 的全部指针操作良构（定义 13）；③ 块布局成立（定义 7：锁头在负载之前、分配锚定 $p.\text{data} = b + H$，§2.5）；④ 隔离假设成立（§2.2，释放内存保持映射可读）；⑤ 经检查写不可达锁头区成立（L-UNREACH，§4.9）；⑥ 定向写排除成立（§5.5 论证边界）——则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \wedge \mathrm{is\_origin}(p)$（后者的前提即规则 3.6.2 的释放前提；`is_origin` 定义见 §2.5），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。等价地，定理 5.1 即下述全称闭式：
 $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n) \big] \;\wedge\; \big[ \mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge p.\text{index} = 0 \wedge \mathrm{is\_origin}(p) \big]$$
 
 「在访问发生前转移至 `trap`」由机器结构保证：`trap` 为吸收终止态（§2.1），检查失败后不执行任何后续内存访问，故 trap 落在访问动作发生之前，不产生部分写入。定理 5.1 与 §1.4 安全目标 G1-G4 的对应关系如下（G4 以可信基边界排除，见 §4.7）。
@@ -493,7 +516,7 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 ### 5.2 证明义务清单与义务↔引理映射
 
-表 4 把第 4 章定义的证明义务（§4.1 编号，§4.2-§4.6 逐条陈述）组织为义务↔引理映射：行 = O-1 至 O-5（含子义务），列 = 支撑引理/不变量、对应安全目标、论证梗概要点。依赖关系沿用 §4.8。
+表 4 把第 4 章定义的证明义务（§4.1 编号，§4.2-§4.9 逐条陈述）组织为义务↔引理映射：行 = O-1 至 O-7（含子义务），列 = 支撑引理/不变量、对应安全目标、论证梗概要点。依赖关系沿用 §4.8。
 
 表 4：证明义务 ↔ 引理映射
 
@@ -508,8 +531,10 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 | O-3d     | L-SENTINEL（§4.4）                                                | G2（T1 负向侧隔离期）     | 哨兵不匹配：锁槽读得 `SENTINEL` 时任何指针键失配（定义 5/6/10）                                   |
 | O-4      | L-NOREUSE                                                         | G2（T1 堆侧）             | 堆锁槽复用只获新键，旧指针键永不重新匹配                                                          |
 | O-5      | L-REKEY                                                           | G2（T1 栈侧）             | 同锁槽两轮帧进入键不同，遗留栈指针失效                                                            |
+| O-6      | L-UNREACH（§4.9）                                                | 值失配前提一（布局推论）  | 分配锚定 data = b+H；in_bounds 足迹 ⊆ 负载区；锁头区与负载区不交                               |
+| O-7      | L-ISOLATION（§4.9）                                              | G2（T1 隔离期）           | 释放/帧退出先写哨兵；隔离期内锁槽无其他写入；内存保持映射可读                                   |
 
-表中的「支撑」列为义务完成后可得的引理结论；义务未验证即主定理前件不成立，故本表同时是「未验证证明义务」的清单（§5.5）。**表 4 的读法**：O-1 与 O-2a 是纯枚举义务，可由代码审查直接勾销；O-3a 是定义 10 的组合逻辑；O-3b/O-3c 依赖写入规则枚举与 (i)，属轻量归纳；O-3d 由定义 5/6/10 直接核对，无归纳结构；O-4/O-5 是 L-KEY 的直接应用；类型混淆排除依赖《编译器实现》第 8 章受限操作检查与审计准则（§4.7），不在表 4 义务范围内。义务间的唯一传递依赖是 O-3 → O-3d → O-2b 与 O-3 → O-4/O-5 → O-2b，其余并行，与 §4.8 依赖图一致。
+表中的「支撑」列为义务完成后可得的引理结论；义务未验证即主定理前件不成立，故本表同时是「未验证证明义务」的清单（§5.5）。**表 4 的读法**：O-1 与 O-2a 是纯枚举义务，可由代码审查直接勾销；O-3a 是定义 10 的组合逻辑；O-3b/O-3c 依赖写入规则枚举与 (i)，属轻量归纳；O-3d 由定义 5/6/10 直接核对，无归纳结构；O-4/O-5 是 L-KEY 的直接应用；O-6 是 S1 + 块布局的直接推论（验证锚定与布局，无时序内容）；O-7 是释放/帧退出写哨兵顺序 + 写入规则枚举 + 平台前提的直接核对；类型混淆排除依赖《编译器实现》第 8 章受限操作检查与审计准则（§4.7），不在表 4 义务范围内。义务间的传递依赖是 O-3 → O-3d → O-2b、O-3 → O-4/O-5 → O-2b、O-1 → O-6 → O-4（值失配前提一）与隔离假设前件 → O-7 → O-2b，其余并行，与 §4.8 依赖图一致。
 
 ### 5.3 逐义务论证梗概
 
@@ -517,7 +542,7 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 **O-2a（T1 正向侧 → G2）**：枚举读、写、拷贝（3.2.1-3.2.4、3.10.1）与释放（3.6.2）规则的正常前提，均含 `live`（经 `safe_access` 或直接），故每次成功访问与释放的时序检查在访问时刻通过；`lock_ptr = 0` 时短路为假，null 访问在检查处确定性 trap。这是纯枚举核对，规则文本中 `live` 的显式出现即可勾销。
 
-**O-2b（T1 负向侧 → G2）**：作废永久性由双窗口闭合。隔离期窗口——释放/帧退出后、锁槽复用前，锁槽被写为 `SENTINEL`（规则 3.6.2 动作①、3.8.2），L-SENTINEL（O-3d）保证任何指针键与哨兵失配，该读是确定性的（隔离假设，§2.2）；复用期窗口——锁槽物理位置被复用（重激活写新键、或它用为数据/其他锁）：重激活路径由 L-NOREUSE（O-4）/L-REKEY（O-5）保证新键 ≠ 旧键，它用路径由值失配不等式闭合（§2.3「锁槽复用」集中说明）。定向写由『锁槽物理位置不被复用为攻击者可经检查写达的数据』前提排除（两路径共同），巧合 v=k 概率 ≤ 2⁻⁶⁴（见 §5.5）。两窗口拼接覆盖作废之后的全部时间：一次作废即永久作废，任何后续访问与重复释放均在该事件处 trap，栈悬垂同理。
+**O-2b（T1 负向侧 → G2）**：作废永久性由双窗口闭合。隔离期窗口——释放/帧退出后、锁槽复用前，锁槽被写为 `SENTINEL`（规则 3.6.2 动作①、3.8.2），该写先于入隔离、隔离期内无其他写入（L-ISOLATION，O-7），故锁槽内容确定性为哨兵；L-SENTINEL（O-3d）保证任何指针键与哨兵失配。复用期窗口——锁槽物理位置被复用（重激活写新键、或它用为数据/其他锁）：重激活路径由 L-NOREUSE（O-4）/L-REKEY（O-5）保证新键 ≠ 旧键，它用路径由值失配不等式闭合（§2.3「锁槽复用」集中说明）。它用路径依赖前提一（经检查写不可达锁槽，L-UNREACH（O-6）由布局推导）与前提二（定向写排除）：攻击者的写须通过 `in_bounds`/`live` 检查（§1.2），故不能定向把锁槽写成旧键；两前提列入定理 5.1 前件（§5.5），巧合 v=k 概率 ≤ 2⁻⁶⁴。两窗口拼接覆盖作废之后的全部时间：一次作废即永久作废，任何后续访问与重复释放均在该事件处 trap，栈悬垂同理。
 
 **O-3a（L-KEY(i)）**：定义 10 的两种实现均给出键序列唯一性——单调计数器严格递增，任意两次调用输出不同；CSPRNG 从 $2^{64}$ 均匀采样，碰撞概率不超过 $2^{-64}$（可忽略）。这是整条时序链的最底层事实，供 O-3c 直接使用。
 
@@ -527,22 +552,27 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 **O-3d（L-SENTINEL，哨兵不匹配）**：由定义 5/6/10 直接核对：`SENTINEL` 是 `LockEntry` 值而非 `Key` 值，且 `SENTINEL` ∉ ran(Gen)，故锁槽值为 `SENTINEL` 时任何指针键与之失配；结合隔离假设（§2.2），隔离期内锁槽读得哨兵是确定性的，该窗口内全部派生指针 `live` 恒假。该子义务无归纳结构，是 O-2b 隔离期窗口的直接依据。
 
-**O-4（L-NOREUSE → T1 堆侧）**：设堆锁槽 $e$ 在 $t_1$ 活动、$t_1'$ 写哨兵（规则 3.6.2 动作①）、$t_2$ 重激活，由 O-3c 得新键 $k' \ne k$；此后锁槽物理位置 $e$ 的取值分四情形（活动新键/`SENTINEL`/它用为另一对象锁槽/它用为任意非 `LockEntry` 值），均不匹配旧键。定向写由『锁槽物理位置不被复用为攻击者可经检查写达的数据』前提排除（两路径共同，§2.3「锁槽复用」集中说明），巧合 v=k 概率 ≤ 2⁻⁶⁴（见 §5.5）。故携带 $\langle e, k \rangle$ 的旧指针此后 `live` 恒假，释放后的堆 UAF 与双释放被排除——即 §2.5「锁不复用」协议的形式化。
+**O-4（L-NOREUSE → T1 堆侧）**：设堆锁槽 $e$ 在 $t_1$ 活动、$t_1'$ 写哨兵（规则 3.6.2 动作①）、$t_2$ 重激活，由 O-3c 得新键 $k' \ne k$；此后锁槽物理位置 $e$ 的取值分四情形（活动新键/`SENTINEL`/它用为另一对象锁槽/它用为任意非 `LockEntry` 值），均不匹配旧键：情形①-③由键唯一性与哨兵失配闭合，情形④由值失配不等式闭合——它用路径上的数据写入须通过 `in_bounds`/`live` 检查，锁头区不可达（L-UNREACH（O-6），布局推论）且攻击者不能定向写入（前提二，定向写排除，§5.5）。巧合 v=k 概率 ≤ 2⁻⁶⁴。故携带 $\langle e, k \rangle$ 的旧指针此后 `live` 恒假，释放后的堆 UAF 与双释放被排除——即 §2.5「锁不复用」协议的形式化。
 
 **O-5（L-REKEY → T1 栈侧）**：帧进入规则 3.8.1 每次执行 re-key，两轮进入的键由独立 `Gen` 调用产生，由 O-3a 得 $k_2 \ne k_1$；帧退出规则 3.8.2 先把帧锁槽写为哨兵。故上一轮遗留的携带 $\langle e_f, k_1 \rangle$ 的栈指针与当前帧锁槽 $\langle \text{stack}, k_2 \rangle$ 不匹配，栈悬垂访问在 `live` 处 trap——即 §2.6 re-key 协议的形式化。
 
-**类型混淆排除（原 O-6，已降级）**：原类型混淆防护义务随 §1.3 类型行 out 化取消——用户代码经受限操作检查不含 `bitcast`/`from_raw_parts`（语法级），标准库重解释按审计准则核验（《编译器实现》§8.3 审计准则、§8.5 缺口核查），不进入本章论证。
+**O-6（L-UNREACH → 值失配前提一）**：三项验证（锚定 $p.\text{data} = b + H$、`in_bounds` 足迹 ⊆ 负载区、锁头区与负载区不交）均无时序内容，由分配规则（3.6.1）与定义 12/7 直接核对；「经检查写不可达锁槽」是 S1 + 块布局的推论——凡通过 `in_bounds` 的写足迹落在负载区，锁槽所在锁头区不可达，故它用路径上的数据写入不可能落在锁槽上。该义务供 O-4 情形④使用，列入定理 5.1 前件⑤。
+
+**O-7（L-ISOLATION → T1 隔离期窗口）**：三项核对——释放/帧退出先写哨兵（规则 3.6.2/3.8.2 动作①）；隔离期内无其他写入（写入规则枚举，与 O-3b/O-4 共用：3.6.1/3.6.2/3.7.1/3.8.1-3.8.2，唯一触碰隔离期锁槽的写入是重激活——它标志隔离期结束进入复用期，其时序安全由 L-KEY/L-NOREUSE/值失配闭合）；平台前提内存保持映射可读（不 munmap，§2.2）。完成即得隔离期锁槽恒为 `SENTINEL`，与 L-SENTINEL（O-3d）拼接闭合 T1 隔离期窗口；该义务列入定理 5.1 前件④。
+
+**类型混淆排除（不占义务编号，§4.7 可信基边界）**：类型混淆防护随 §1.3 类型行 out 化取消——用户代码经受限操作检查不含 `bitcast`/`from_raw_parts`（语法级），标准库重解释按审计准则核验（《编译器实现》§8.3 审计准则、§8.5 缺口核查），不进入本章论证。
 
 ### 5.4 论证拼接结构
 
-定理 5.1 由两条不变量（S1、T1）与 L-KEY 家族支撑拼接而成，与 §4.8 依赖表一致：
+定理 5.1 由两条不变量（S1、T1）与 L-KEY 家族及锁槽可达性/隔离性引理（L-UNREACH、L-ISOLATION）支撑拼接而成，与 §4.8 依赖表一致：
 
 1. **S1（O-1）排除越界 → G1**：`ok(acc_t(p, n)) ⟹ in_bounds(p, n)` 直接给出「无越界访问正常完成」；G3 折叠进 O-1 的「无回绕」子义务。
 2. **T1（O-2a ∧ O-2b）排除时序错误 → G2**：正向侧（O-2a）保证成功事件在访问时刻 `live`；负向侧（O-2b）经 L-SENTINEL、L-NOREUSE/L-REKEY 保证作废永久性，给出「无 UAF、双释放、栈悬垂访问正常完成」。
 3. **类型混淆排除（§4.7，可信基边界）**：不进入定理 5.1——由受限操作检查 + 标准库审计承担（《编译器实现》第 8 章）。
 4. **L-KEY 家族支撑 T1 的作废永久性**：L-KEY（O-3）→ L-SENTINEL（O-3d）与 L-NOREUSE（O-4）、L-REKEY（O-5），保证「检查当时通过、此后失效不可逆」的时序封闭性；O-3 缺失则 O-3d/O-4/O-5 无依据，T1 负向侧即失败。
+5. **锁槽可达性与隔离期确定性（O-6/O-7）补足复用安全的地基**：L-UNREACH（O-6）把「经检查写不可达锁槽」降为布局推论（O-4 情形④前提一），L-ISOLATION（O-7）给出隔离期锁槽内容确定性为 `SENTINEL`（O-2b 隔离期窗口）——二者分别支撑值失配路径与隔离期读，缺失则情形④与隔离期窗口失去依据，T1 负向侧同样失败。
 
-拼接的逐层对应：定理 5.1 的每条负面结论都可在第 4 章找到唯一的来源不变量——G1 与 G3 共享 O-1 的规则前提枚举（越界与回绕在 `in_bounds` 一处收口），G2 的正向与负向两侧由 T1 的两条子义务分别承担，G4 由受限操作检查 + 标准库审计承担（§4.7）；逐层对应表即表 4 的「对应安全目标」列。拼接本身是命题逻辑的组合：定理 5.1 的等价式 `ok(e) ⟺ pre(e)` 来自第 3 章规则的结构，各不变量把规则前提分解为可证的子断言（`in_bounds`、`live`），主定理的每条负面结论即相应不变量的直接转写；论证完整性 = 表 4 中全部义务（O-1 至 O-5）逐项完成。
+拼接的逐层对应：定理 5.1 的每条负面结论都可在第 4 章找到唯一的来源不变量——G1 与 G3 共享 O-1 的规则前提枚举（越界与回绕在 `in_bounds` 一处收口），G2 的正向与负向两侧由 T1 的两条子义务分别承担，G4 由受限操作检查 + 标准库审计承担（§4.7）；逐层对应表即表 4 的「对应安全目标」列。拼接本身是命题逻辑的组合：定理 5.1 的等价式 `ok(e) ⟺ pre(e)` 来自第 3 章规则的结构，各不变量把规则前提分解为可证的子断言（`in_bounds`、`live`），主定理的每条负面结论即相应不变量的直接转写；论证完整性 = 表 4 中全部义务（O-1 至 O-7）逐项完成。
 
 **结论逐条展开（G1-G3 与 in 类错误的示例对照）**：表 4 之下的对应关系以具体访问形态核对：
 
@@ -559,8 +589,8 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 - **范围受 §1.3 in/out 边界约束**：定理 5.1 仅对 in 类成立——空间越界（堆/栈）与时序错误为 in 类；`bitcast` 类型混淆为 out 类（可信基假设：受限操作检查禁于标准库外 + 标准库审计，《编译器实现》§8.3）；并发数据竞争、跨 FFI 边界裸指针访问、锁槽与指针元数据任意改写均为 out 类，不在本论证范围，不由此定理承诺。in 类内部亦有不承诺子项：栈内层作用域粒度（帧级守卫为限）与实现侧回绕检测（§2.4 约定交由实现承担，定理按其语义成立）。
 - **标准库可信基假设**：定理 5.1 前件要求用户代码不含受限操作（`bitcast`/`from_raw_parts` 等，受限操作检查，语法级）；标准库内部使用受限操作的代码按《编译器实现》§8.3 审计准则核验（布局兼容），属可信基假设（与分配器行为、无回绕实现约定同构）——审计失守不构成机制反例。该假设是 G4 排除的依据（§1.3 类型行 out、§4.7）。
-- **隔离假设前提**：时序检查可能触碰已释放块的锁槽，其读值确定性为 `SENTINEL`——释放后内存保持映射可读（不 munmap，§2.2 隔离期），锁槽区留在 $\mathrm{dom}(\mu)$ 的保留子域；实现若把释放内存归还操作系统（munmap），读锁槽由 trap 退化为段错误，该情形在论证范围外（《编译器实现》§11.1 局限）。**论证边界声明**：锁槽物理位置在隔离期内读值确定性为 `SENTINEL`；隔离期结束、块被复用后物理位置可被分配器复用为它用（承载数据/其他锁），其值非 `SENTINEL` 但仍安全——因 `live` 只要求值 ≠ 指针 `key`（机制见 §2.3「锁槽复用」集中说明）。定向写由『锁槽物理位置不被复用为攻击者可经检查写达的数据』前提排除（两路径共同），巧合 v=k 概率 ≤ 2⁻⁶⁴（见 §5.5）。此前提是两路径共同（而非仅单调路径）的论证边界，放宽即失效（《编译器实现》§11.1）。
-- **前置条件显式**：主定理前件「通过《编译器实现》第 8 章类型约束且全部操作良构」不自动成立；类型检查不通过或出现非良构操作的程序不在结论范围。out 行失效的前提是 §1.2 攻击者假设被放宽（例如攻击者获得任意写前置），故 out 行失效不构成 in 类论证的反例。
+- **隔离假设前提（定理 5.1 前件④）**：时序检查可能触碰已释放块的锁槽，其读值确定性为 `SENTINEL`——释放后内存保持映射可读（不 munmap，§2.2 隔离期），锁槽区留在 $\mathrm{dom}(\mu)$ 中作为普通内容（块头首字，定义 7），隔离期读即确定性 μ 读；实现若把释放内存归还操作系统（munmap），读锁槽由 trap 退化为段错误，该情形在论证范围外（《编译器实现》§11.1 局限）。**论证边界声明**：锁槽物理位置在隔离期内读值确定性为 `SENTINEL`（L-ISOLATION，O-7）；隔离期结束、块被复用后物理位置可被分配器复用为它用（承载数据/其他锁），其值非 `SENTINEL` 但仍安全——因 `live` 只要求值 ≠ 指针 `key`（机制见 §2.3「锁槽复用」集中说明）。复用期它用路径的安全依赖两个前件（均列入定理 5.1）：前提一「经检查写不可达锁槽」由 L-UNREACH（O-6）给出——它是 S1 + 块布局的推论（凡通过 `in_bounds` 的写足迹落在负载区，锁槽所在锁头区不可达，§4.9），保证数据写不可能落在锁槽上；前提二「定向写排除」保证攻击者不能把锁槽定向写成旧键（攻击者的写须通过 `in_bounds`/`live` 检查，§1.2）。巧合 v=k 概率 ≤ 2⁻⁶⁴。放宽即失效（《编译器实现》§11.1）。
+- **前置条件显式**：定理 5.1 的六条前件（① 类型约束、② 良构性、③ 块布局、④ 隔离假设、⑤ 经检查写不可达锁槽（L-UNREACH）、⑥ 定向写排除）均不自动成立——类型检查不通过或出现非良构操作的程序不在结论范围；③⑤ 由 §4.9 的义务 O-6 逐项验证，④ 由 O-7 验证，⑥ 是 §1.2 攻击者模型（写须通过检查）的直接推论。out 行失效的前提是 §1.2 攻击者假设被放宽（例如攻击者获得任意写前置），故 out 行失效不构成 in 类论证的反例。
 - **论证层级声明**：本章全部结论为「梗概级」（S&P/CCS/USENIX 严谨度）：给出关键论证步骤与反例排除方向，未给出 PLDI 级完整证明。表 4 中未验证的证明义务即交付物清单——逐项以实现侧验证或机械化定理证明勾销后，定理 5.1 才升格为已证定理。
 - **不引用外部文献**：全部结论内部自洽于第 2-4 章的定义与规则，无外部文献依赖。
 
