@@ -130,9 +130,9 @@ $$\mathrm{LockEntry} \triangleq \mathrm{Key} \uplus \{\text{SENTINEL}\}$$
 
 **编码约定**：`LockEntry` 编码为单个机器字（`Val` 的 $\mathbb{Z}$ 分量）：键的最高位即堆/栈标志位（0 = 栈、1 = 堆），其余 63 位为键体，`SENTINEL` 编码为全 1 字（$\sim 0$）。论证只依赖三条性质：解码确定性、`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10）、时序检查为**全字相等**（定义 8）——具体位布局不影响论证。
 
-**定义 7（块布局与锁槽 `LockSlot`）**：每个堆块与每个栈帧的布局为「锁头 + 负载」：以块首地址 $b$ 为基，字节区间 $[b,\, b + H + \text{bytes})$，其中 $H$ 为固定锁头字节数（实现常量，$H \ge w$，$w$ 为机器字宽），锁头区 $[b, b+H)$ **在负载之前**，负载区 $[b+H, b+H+\text{bytes})$。锁头首字（偏移 0）为**锁槽**，其地址即块首地址：
+**定义 7（块布局与锁槽 `LockSlot`）**：每个堆块与每个栈帧的布局为「锁头 + 负载」：以块首地址 $b$ 为基，字节区间 $[b,\, b + H + \text{bytes})$，其中 $H$ 为锁头字节数（$H = w$，$w$ 为机器字宽，锁头仅锁槽一个字），锁头区 $[b, b+H)$ **在负载之前**，负载区 $[b+H, b+H+\text{bytes})$。锁头首字（偏移 0）为**锁槽**，其地址即块首地址：
 $$\text{lock\_addr}(b) \triangleq b$$
-锁头其余部分存放分配点记录（`block_origin`/`block_bytes`，供 `is_origin` 校验，§2.5）；栈帧锁头不含记录（帧级指针不 delete）。**布局要点**：锁槽在负载之前，故一切受 `in_bounds` 约束的负载访问（足迹 ⊆ 负载区，定义 18）在结构上无法触及锁槽与记录——「经检查写不可达锁槽」是布局的直接推论，形式化为引理 L-UNREACH（§4.9）。锁槽的值域（`LockEntry`）见定义 6；键生成见定义 10；释放/帧退出写 `SENTINEL` 及立即复用约定见 §2.5-§2.6 与 §2.2。**锁槽位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**，其时序安全性不依赖锁槽不可复用，而依赖「键不可复用」（键唯一性与值失配），集中说明见本节约末「锁槽复用」。
+**布局要点**：锁槽在负载之前，故一切受 `in_bounds` 约束的负载访问（足迹 ⊆ 负载区，定义 18）在结构上无法触及锁槽——「经检查写不可达锁槽」是布局的直接推论，形式化为引理 L-UNREACH（§4.9）。锁槽的值域（`LockEntry`）见定义 6；键生成见定义 10；释放/帧退出写 `SENTINEL` 及立即复用约定见 §2.5-§2.6 与 §2.2。**锁槽位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**，其时序安全性不依赖锁槽不可复用，而依赖「键不可复用」（键唯一性与值失配），集中说明见本节约末「锁槽复用」。
 
 **锁槽读记号**：$\mu\langle e \rangle$ 表示地址 $e$ 处一个机器字的值（位置 $\langle e, 0 \rangle \dots \langle e, w-1 \rangle$ 的 $w$ 字节编码）；锁槽的读写均为整字操作。时序检查即读 $\mu\langle p.\text{lock\_ptr} \rangle$ 并与指针键比较。
 
@@ -197,7 +197,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - 取址 `&x`：锚 = 变量地址，`size` = 变量元素容量（标量 1，数组为长度）；
 - 取址 `&s.field` / `&arr[i]`：锚 = 子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
 
-锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），故相等比较按 `(data, index)`（规则 3.4.2）稳定：两指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放发生在锚点处；子对象锚定指针（`&s.field`）的 `index` 恒为 0 但不满足原始指针判据（`is_origin`：`data` 指向负载首**且字节跨度等于分配字节容量**，§2.5），`delete` 视为错误操作。指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）；同一对象的不同锚定指针共享同一锁槽，对象释放后一并时序失效。
+锚点一旦建立，`data` 在指针整个生命周期内不变（算术只改 `index`、`bitcast` 只改单位、取址建立新锚），故相等比较按 `(data, index)`（规则 3.4.2）稳定：两指针相等当且仅当指向同一对象的同一元素。`delete` 的锚点前提（`index = 0`，规则 3.6.2）要求释放发生在锚点处；子对象锚定指针（`&s.field`）的 `index` 恒为 0 但不满足原始指针判据（`is_origin`：`data` 指向负载首，`data = lock_ptr + H`，§2.5），`delete` 视为错误操作。指针算术保持 `data`/`lock_ptr`/`key`/`size` 不变，仅更新 `index`（§2.7）；同一对象的不同锚定指针共享同一锁槽，对象释放后一并时序失效。
 
 **单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行），对应 §1.1 类 4 的防护。
 
@@ -208,11 +208,10 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 **分配 `dyn T`**（单元素对象）：
 
 1. 取新鲜地址 $b$（$b \notin \mathrm{dom}(\mu)$），按块布局（定义 7）分配锁头区 $[b, b + H)$ 与负载区 $[b + H, b + H + |T|)$，并入 $\mathrm{dom}(\mu)$；
-2. 锁头写入分配点记录（$\mu$ 中的块头字字段）：`block_origin(e) := b + H`、`block_bytes(e) := |T|`；
-3. 锁头首字（锁槽 $e = b$）写入键：$k \leftarrow \mathrm{Gen}()$（堆键最高位 1），$\mu\langle e \rangle := k$；
-4. 返回指针 $\langle \text{data} = b + H, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$，`lock_ptr` 指向块头首字锁槽。
+2. 锁头首字（锁槽 $e = b$）写入键：$k \leftarrow \mathrm{Gen}()$（堆键最高位 1），$\mu\langle e \rangle := k$；
+3. 返回指针 $\langle \text{data} = b + H, \text{lock\_ptr} = e, \text{key} = k, \text{index} = 0, \text{size} = 1 \rangle$，`lock_ptr` 指向块头首字锁槽。
 
-**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + H + n \cdot |T|)$，返回 $\text{size} = n$；锁头写入 `block_origin(e) := b + H`、`block_bytes(e) := n·|T|`。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\mu\langle e \rangle := k$，堆键最高位 1），$\text{size} = 0$ 不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并释放零字节负载区。
+**分配 `dyn T[n]`**（数组）：步骤同上，字节区间 $[b, b + H + n \cdot |T|)$，返回 $\text{size} = n$。$n = 0$ 情形说明：空数组分配仍建立锁槽并生成键（$\mu\langle e \rangle := k$，堆键最高位 1），$\text{size} = 0$ 不产生任何可界内访问（一切 $n' \geq 1$ 访问在 `in_bounds` 失败），指针可安全参与比较与算术，只是不可读写；其 `delete` 走规则 3.6.2 正常路径（`index = 0` 满足），锁槽写 `SENTINEL` 并整块交还分配器（负载零字节）。
 
 **释放 `delete p`**：
 前提（任一不满足即 `trap`）：
@@ -220,7 +219,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - $\text{is\_heap}(p)$：不得释放栈指针；
 - $\text{live}(p)$：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
 - $p.\text{index} = 0$：指针必须位于对象锚点，禁止释放带偏移指针；
-- $\text{is\_origin}(p)$：指针必须指向块首且字节跨度等于分配字节容量——$p.\text{data} = \text{block\_origin}(p.\text{lock\_ptr})$ 且 $p.\text{size} \cdot |T| = \text{block\_bytes}(p.\text{lock\_ptr})$（$|T|$ 为 delete 处 pointee 字节大小，静态已知）；对重锚定子对象指针（`&s.field`、`&arr[i]`）执行 `delete` 视为错误操作（trap）。**求值顺序**：`is_origin` 在 `is_heap ∧ live` 之后求值（`live` 对 `lock_ptr = 0` 短路为假，`is_origin` 永不读地址 0 的块头）。
+- $\text{is\_origin}(p)$：$p.\text{data} = p.\text{lock\_ptr} + H$（`data` 指向负载首——原始分配指针的 `data` 恒等于块首加锁头字节数；重锚定子对象指针 `data` 偏离 `lock_ptr + H`，被拒）。对重锚定子对象指针（`&s.field`、`&arr[i]`）执行 `delete` 视为错误操作（trap）——`&arr[i>0]`、`&s.field`（δ > 0）的 `data` 偏离 `lock_ptr + H` 被拒；`&arr[0]`、首字段（δ = 0）的 `data` 恰等于 `lock_ptr + H` 通过 `is_origin`，`delete` 动作②整块交还分配器（范围由分配器元数据决定），与原始指针 `delete` 等价，语义无害。**求值顺序**：`is_origin` 为纯字段检查，不读锁槽与块头。
 
 动作：
 
@@ -228,7 +227,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 2. 块立即交还分配器（立即复用约定，§2.2）：锁槽随即由复用方支配（写入新键或任意值）；
 3. 指针 $p$ 的字段保持不变，但此后 $\text{live}(p)$ 恒为假。
 
-协议性质：`delete` 是「锁槽写 `SENTINEL` + 块交还分配器」两步的原子组合，写哨兵先于块交还（规则 3.6.2 动作①②），故释放后锁槽写哨兵或新键、均不匹配旧键（立即复用约定）——释放后该分配的一切派生指针（无论锚定方式）均时序失效；双释放与 UAF 均由 `live` 前提捕获。`delete` 仅对原始指针适用（`is_origin`），对重锚定子对象指针执行 `delete` 视为错误操作（trap）。
+协议性质：`delete` 是「锁槽写 `SENTINEL` + 块交还分配器」两步的原子组合，写哨兵先于块交还（规则 3.6.2 动作①②），故释放后锁槽写哨兵或新键、均不匹配旧键（立即复用约定）——释放后该分配的一切派生指针（无论锚定方式）均时序失效；双释放与 UAF 均由 `live` 前提捕获。`delete` 仅对原始指针适用（`is_origin`），对重锚定子对象指针执行 `delete` 视为错误操作（trap）——`&arr[0]`、首字段（δ = 0）等重锚定后 `data = lock_ptr + H` 的指针除外：动作②整块交还，与原始指针等价。
 
 ### 2.6 栈帧进入/退出协议
 
@@ -349,13 +348,13 @@ $$\text{cap}(T) = \begin{cases} 1, & T \text{ 为标量} \\ m, & T = T'[m] \end{
 
 ### 3.6 分配与释放
 
-**规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），按块布局（定义 7）分配锁头区 `[b, b + H)` 与负载区 `[b + H, b + H + n·|T|)`（单元素 `n = 1`）并入 μ；锁头写入分配点记录 `block_origin(e) := b + H`、`block_bytes(e) := n·|T|`；锁头首字锁槽 `e = b` 写入键：`k ← Gen()`（定义 10，堆键最高位 1）；`μ⟨e⟩ := k`。结果：`⟨b + H, e, k, 0, n⟩`，`data` 指向负载首，`lock_ptr = e = b` 指向块头首字锁槽。CFG 层：`Malloc` 节点；《编译器实现》第 7 章在 `Malloc` 处插入块头锁槽写键。
+**规则 3.6.1（堆分配 `dyn T` / `dyn T[n]`）**（→ CFG `Malloc`）。前提：无（分配总是可执行；实现层面地址空间耗尽作为 trap 前提处理）。动作（§2.5 协议）：取新鲜地址 `b`（`b ∉ dom(μ)`），按块布局（定义 7）分配锁头区 `[b, b + H)` 与负载区 `[b + H, b + H + n·|T|)`（单元素 `n = 1`）并入 μ；锁头首字锁槽 `e = b` 写入键：`k ← Gen()`（定义 10，堆键最高位 1）；`μ⟨e⟩ := k`。结果：`⟨b + H, e, k, 0, n⟩`，`data` 指向负载首，`lock_ptr = e = b` 指向块头首字锁槽。CFG 层：`Malloc` 节点；《编译器实现》第 7 章在 `Malloc` 处插入块头锁槽写键。
 
-**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（锚点指针且为原始指针；`is_origin` 定义见 §2.5）。**前提求值顺序**：`is_heap` 为纯位判定（定义 9，不读锁槽）；`live` 先于（或与 `index = 0` 并列）求值，且对 `p.lock_ptr = 0` 短路为假（定义 8）——`delete(null)` 在 `is_heap` 处（键为 0、最高位为 0）确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`μ⟨p.lock_ptr⟩ := SENTINEL`；② 块立即交还分配器（立即复用约定，§2.2）：锁槽随即由复用方支配。结果：`p` 及同对象派生指针此后 `live` 恒为假。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。
+**规则 3.6.2（释放 `delete p`）**（→ CFG `Delete`）。前提（§2.5，任一不满足即 trap）：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（锚点指针且为原始指针；`is_origin` 定义见 §2.5）。**前提求值顺序**：`is_heap` 为纯位判定（定义 9，不读锁槽）；`live` 先于（或与 `index = 0` 并列）求值，且对 `p.lock_ptr = 0` 短路为假（定义 8）；`is_origin` 为纯字段检查（§2.5），不读锁槽与块头——`delete(null)` 在 `is_heap` 处（键为 0、最高位为 0）确定性 trap，而非读取地址 0 的物理槽位造成段错误。动作：① 锁槽写哨兵：`μ⟨p.lock_ptr⟩ := SENTINEL`；② 块立即交还分配器（立即复用约定，§2.2）：锁槽随即由复用方支配。释放范围 = 整块（含锁头），由分配器元数据决定，与 `p.size·|T|` 无关。结果：`p` 及同对象派生指针此后 `live` 恒为假。若前提不满足则 trap（双释放、栈指针释放、带偏移释放、null 释放）。
 
 ### 3.7 重分配 realloc
 
-**规则 3.7.1（重分配 `realloc(p, n)`）**（→ CFG `Malloc` + `Delete` 组合）。前提：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)` 且 `n ≥ 0`；**前提求值顺序同规则 3.6.2**——`is_heap` 为纯位判定；`live` 对 `p.lock_ptr = 0` 短路为假，`realloc(null, ·)` 在 `is_heap` 处确定性 trap 而非段错误。动作（§2.5 协议组合）：① 按规则 3.6.1 分配新块 `b'`、新块头锁槽 `e'`、新键 `k' ← Gen()`，大小 `n·|T|`；② 按规则 3.10.1 整段拷贝 `m = min(p.size, n)` 个元素从旧块至新块；③ 旧块锁槽写 `SENTINEL` + 块立即交还分配器（按规则 3.6.2 动作①②）。结果：`⟨b', e', k', 0, n⟩`；原指针 `p` 失效。若任一前提不满足则 trap。CFG 层：现状编译为 `Malloc` + 拷贝 + `Delete` 的组合，无独立 `Realloc` 节点。
+**规则 3.7.1（重分配 `realloc(p, n)`）**（→ CFG `Malloc` + `Delete` 组合）。前提：`is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)` 且 `n ≥ 0`；**前提求值顺序同规则 3.6.2**——`is_heap` 为纯位判定；`live` 对 `p.lock_ptr = 0` 短路为假；`is_origin` 为纯字段检查——`realloc(null, ·)` 在 `is_heap` 处确定性 trap 而非段错误。动作（§2.5 协议组合）：① 按规则 3.6.1 分配新块 `b'`、新块头锁槽 `e'`、新键 `k' ← Gen()`，大小 `n·|T|`；② 按规则 3.10.1 整段拷贝 `m = min(p.size, n)` 个元素从旧块至新块；③ 旧块锁槽写 `SENTINEL` + 块立即交还分配器（按规则 3.6.2 动作①②）。结果：`⟨b', e', k', 0, n⟩`；原指针 `p` 失效。若任一前提不满足则 trap。CFG 层：现状编译为 `Malloc` + 拷贝 + `Delete` 的组合，无独立 `Realloc` 节点。
 
 ### 3.8 栈帧进入与退出（re-key 协议）
 
@@ -455,7 +454,7 @@ $$\mu_{t_1}\langle e_f \rangle = k_1 \wedge \mu_{t_2}\langle e_f \rangle = k_2 \
 
 **标准库：审计可信基**。标准库内部 `bitcast`/`from_raw_parts` 的重解释按布局兼容审计准则核验（$|U| \mid |T|$ 且 $\text{align}(U) \le \text{align}(T)$；使用文件清单见《编译器实现》§8.3 审计准则）——与分配器行为（§2.5）、无回绕实现约定（§2.4）同为可信基假设，不进入本章论证。审计失守属标准库缺陷，不构成机制反例（§5.5）。
 
-**为什么运行时论证不需要它**：运行时检查（`in_bounds` 定义 12、`live` 定义 8）是类型无关的——检查对象是 5 元组的区间与锁键，不引用 `dyn_type`/`static_type`；S1（§4.2）、T1（§4.3）与 L-KEY 家族（§4.4-§4.6）的陈述与证明均不依赖类型同一性。类型混淆的唯一安全后果是 `delete` 释放范围（`p.size·|T|` 字节，规则 3.6.2）在混淆指针下超量释放——该通道已被上述语法级排除 + 标准库审计封闭，且 `delete` 仅允许原始指针（`is_origin` 字节容量校验，§2.5）——双重封闭，故定理 5.1（§5.1）无须把类型同一性列为前件或结论。
+**为什么运行时论证不需要它**：运行时检查（`in_bounds` 定义 12、`live` 定义 8）是类型无关的——检查对象是 5 元组的区间与锁键，不引用 `dyn_type`/`static_type`；S1（§4.2）、T1（§4.3）与 L-KEY 家族（§4.4-§4.6）的陈述与证明均不依赖类型同一性。类型混淆的潜在安全后果——`delete` 超量释放——被整块交还语义结构性排除：释放范围 = 分配器元数据决定的整块（规则 3.6.2 动作②），与 `p.size·|T|` 无关；`bitcast` 保持 `data`/`lock_ptr` 不变（规则 3.9.1），混淆指针的 `delete` 仍交还其所属整块。叠加语法级排除 + 标准库审计 + `delete` 仅允许原始指针（`is_origin` 负载首校验，§2.5）的封闭，故定理 5.1（§5.1）无须把类型同一性列为前件或结论。
 
 ### 4.8 引理间依赖与第 5 章接口
 
@@ -477,9 +476,9 @@ $$\mu_{t_1}\langle e_f \rangle = k_1 \wedge \mu_{t_2}\langle e_f \rangle = k_2 \
 
 **引理 L-UNREACH（活动锁头区经检查写不可达）**：设块布局（定义 7）与 S1 成立。对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
 $$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{ft}(p, n) \cap \mathrm{Hdr}_t = \emptyset$$
-其中访问足迹 $\mathrm{ft}(p, n) \triangleq [p.\text{data} + p.\text{index}\cdot|T|,\ p.\text{data} + (p.\text{index} + n)\cdot|T|)$（字节区间），$\mathrm{Hdr}_t \triangleq \bigcup_b [b, b + H)$ 为 $t$ 时刻所有活动堆块的锁头区与活动帧锁头区（定义 7；栈帧锁头仅含锁槽，不含分配点记录）。
+其中访问足迹 $\mathrm{ft}(p, n) \triangleq [p.\text{data} + p.\text{index}\cdot|T|,\ p.\text{data} + (p.\text{index} + n)\cdot|T|)$（字节区间），$\mathrm{Hdr}_t \triangleq \bigcup_b [b, b + H)$ 为 $t$ 时刻所有活动堆块的锁头区与活动帧锁头区（定义 7；栈帧锁头仅含锁槽）。
 
-**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽与分配点记录均位于锁头区，故活动锁槽与记录对一切经检查的读/写不可达。「经检查写不可达锁槽」由此从带外锁表的「运行时独占维护」公理降格为**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
+**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽位于锁头区，故活动锁槽对一切经检查的读/写不可达。「经检查写不可达锁槽」由此从带外锁表的「运行时独占维护」公理降格为**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
 
 **义务 O-6**：验证分配锚定 $p.\text{data} = b + H$（§2.5、规则 3.6.1、表 2）；验证 `in_bounds` 足迹 ⊆ 负载区（定义 12 与 S1）；验证锁头区与负载区不交（定义 7 布局：锁头在负载之前）。该义务是 L-NOREUSE 值失配前提一的依据。
 
