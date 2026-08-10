@@ -393,13 +393,13 @@ $$\forall t.\ \forall p, n.\ \big[\, \mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mat
 
 **论证梗概**：(i) 直接来自定义 10：单调计数器严格递增，两次调用输出不同；CSPRNG 输出碰撞概率 ≤ $2^{-63}$。锁槽仅在分配/释放/帧进出规则（3.6.1、3.6.2、3.7.1、3.7.2）中写入，凡写入活动键 $k$ 必先 `k ← Gen()`，故 (ii) 中每个活动键均来自一次独立调用，由 (i) 得两两不同；(iii) 同理，锁槽重新激活时写入的是新调用输出，与自身全部历史键不同。子义务 O-3b 的写入规则枚举以 §2.5-§2.6 协议为限：写入活动键的只有分配与帧进入两处，且每处先执行 `k ← Gen()`；释放与帧退出只写 `SENTINEL`，不产生活动键。单调计数器路径下 (i) 为严格不等式，CSPRNG 路径下为概率意义（碰撞 ≤ $2^{-63}$），故 (iii) 相应为确定性或可忽略概率违反。
 
-**义务 O-3**（时序安全的基石）：O-3a 证明 (i)（定义 10 的组合逻辑）；O-3b 证明锁槽写入规则枚举完备，凡 $\mu\langle e \rangle := k$ 者均以 `k ← Gen()` 产生；O-3c 由 (i) 推出 (ii) 与 (iii)；O-3d 证明哨兵不匹配 (iv)（`SENTINEL` $\notin$ ran(Gen)，定义 10）——由定义 5/6/10 直接核对，无归纳结构。**建模备注**：CSPRNG 路径下形式论证在概率意义下成立，以可忽略概率违反；现行原型 `ptr.an`（`bak/experimental_ptr/ptr.an`，§2.3 备注）的常量 `random()` 不满足定义 10，不可用作 `Gen`。
+**义务 O-3**（时序安全的基石）：O-3a 证明 (i)（定义 10 的组合逻辑）；O-3b 证明锁槽写入规则枚举完备，凡 $\mu\langle e \rangle := k$ 者均以 `k ← Gen()` 产生；O-3c 由 (i) 推出 (ii) 与 (iii)；O-3d 证明哨兵不匹配 (iv)（`SENTINEL` $\notin$ ran(Gen)，定义 10）——由定义 5/6/10 直接核对，无归纳结构。**建模备注**：CSPRNG 路径下形式论证在概率意义下成立，以可忽略概率违反；现行原型 `ptr.an`（`bak/experimental_ptr/ptr.an`）的常量 `random()` 不满足定义 10，不可用作 `Gen`。
 
-**引理 L-SENTINEL（哨兵不匹配）**（即 L-KEY(iv)，哨兵情形并入统一值失配，义务并入 O-3 的子义务 O-3d）：设 `Gen` 满足定义 10（`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$），则对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
+**引理 L-SENTINEL（哨兵不匹配）**（即 L-KEY(iv)）：设 `Gen` 满足定义 10（`SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$），则对任意 in 类程序 $P$ 与任意轨迹 $\sigma \in \mathrm{Trace}(P)$：
 $$\forall t.\ \forall p.\ \mu_t\langle p.\text{lock\_ptr} \rangle = \text{SENTINEL} \Rightarrow \neg \mathrm{live}_t(p)$$
 **论证梗概**：`SENTINEL` 是 `LockEntry` 值而非 `Key` 值（定义 5/6）：`LockEntry` 以不交并 $\mathrm{Key} \uplus \{\text{SENTINEL}\}$ 定义，键值与 `SENTINEL` 分属不相交的注入分量，任何具体值不可等同。又任何指针键 $p.\text{key}$ 均来自 `Gen` 的一次调用（§2.5-§2.6 协议），且 `SENTINEL` $\notin \mathrm{ran}(\mathrm{Gen})$（定义 10），故指针键不可能取哨兵编码。由此 `live` 的右端 $\mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$（定义 8）在锁槽值为 `SENTINEL` 时恒不成立。关键步骤：哨兵失配是值域级别的闭合，由定义 6 的值域结构与定义 10 的域排除共同保证，与键唯一性互补而不重叠——`SENTINEL` 是『锁槽内容与旧键失配』统一命题中值失配的一种情形。
 
-**义务标注**：并入 O-3 为子义务 O-3d（由定义 5/6/10 直接核对，无归纳结构）。
+**义务标注**：O-3d 由定义 5/6/10 直接核对，无归纳结构。
 
 ### 4.5 锁不复用引理 L-NOREUSE
 
@@ -441,7 +441,7 @@ $$\mu_{t_1}\langle e_f \rangle = k_1 \wedge \mu_{t_2}\langle e_f \rangle = k_2 \
 | S1          | O-1                       | 无越界访问结论的直接前提                     |
 | T1          | O-2（O-2a / O-2b）        | 无 UAF、双释放、栈悬垂结论的直接前提         |
 | L-KEY       | O-3（O-3a / O-3b / O-3c） | 时序安全基石；T1 负向侧依据                  |
-| L-SENTINEL  | O-3d（并入 O-3）          | T1 负向侧（值失配）                          |
+| L-SENTINEL  | O-3d                     | T1 负向侧（值失配）                          |
 | L-NOREUSE   | O-4                       | T1 负向侧（堆复用期，含它用值失配）          |
 | L-REKEY     | O-5                       | T1 负向侧（栈复用期）                        |
 | L-UNREACH   | O-6                       | 值失配前提一：经检查写不可达锁槽（布局推论） |
@@ -454,7 +454,7 @@ $$\mu_{t_1}\langle e_f \rangle = k_1 \wedge \mu_{t_2}\langle e_f \rangle = k_2 \
 $$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{ft}(p, n) \cap \mathrm{Hdr}_t = \emptyset$$
 其中访问足迹 $\mathrm{ft}(p, n) \triangleq [p.\text{data} + p.\text{index}\cdot|T|,\ p.\text{data} + (p.\text{index} + n)\cdot|T|)$（字节区间），$\mathrm{Hdr}_t \triangleq \bigcup_b [b, b + H)$ 为 $t$ 时刻所有活动堆块的锁头区与活动帧锁头区（定义 7；栈帧锁头仅含锁槽）。
 
-**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽位于锁头区，故活动锁槽对一切经检查的读/写不可达。「经检查写不可达锁槽」由此从带外锁表的「运行时独占维护」公理降格为**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
+**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽位于锁头区，故活动锁槽对一切经检查的读/写不可达。「经检查写不可达锁槽」是**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
 
 **义务 O-6**：验证分配锚定 $p.\text{data} = b + H$（§2.5、规则 3.6.1、表 2）；验证 `in_bounds` 足迹 ⊆ 负载区（定义 12 与 S1）；验证锁头区与负载区不交（定义 7 布局：锁头在负载之前）。该义务是 L-NOREUSE 值失配前提一的依据。
 
@@ -471,7 +471,7 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 - **G1（空间）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{in\_bounds}(p, n)$（定义 12 的全访问检查），无越界访问正常完成。
 - **G2（时序）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mathrm{ok}(\mathrm{del}_t(p)) \Rightarrow \mathrm{live}_t(p)$，无 UAF、双释放、栈悬垂访问正常完成。
-- **G3（算术）**：$P$ 的操作良构 + §2.4 无回绕约定保证 `index + n`、`data + index·|T|` 按数学整数语义求值，`in_bounds` 不因回绕失效；此目标并入 O-1。
+- **G3（算术）**：$P$ 的操作良构 + §2.4 无回绕约定保证 `index + n`、`data + index·|T|` 按数学整数语义求值，`in_bounds` 不因回绕失效；此目标由 O-1 承担。
 - **G4（类型）**：不进入定理 5.1——类型混淆由可信基边界排除（§4.7：用户代码语法级无 `bitcast`/`from_raw_parts`，标准库审计），定理 5.1 不承诺「无类型混淆访问」；该承诺由受限操作检查 + 标准库审计承担（《编译器实现》§8.3）。
 
 ### 5.2 证明义务清单与义务↔引理映射
@@ -528,9 +528,9 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 本章陈述最终机制的四个关键设计选择及其动机（仅陈述最终机制本身，不回溯历史）。
 
-- **锁槽内置块头/帧 + 释放写哨兵 + 立即复用约定**：锁槽随对象携带（定义 7），释放/帧退出把锁槽写成 `SENTINEL`（规则 3.6.2/3.7.2），锁槽随即由复用方支配（立即复用约定，§2.2）；读值或为 `SENTINEL` 或为新值，均与旧键失配，使时序检查 `live(p)`（定义 8）的作废判定不依赖锁槽不可复用——不引入带外锁表，消除锁表维护开销。
+- **锁槽内置块头/帧 + 释放写哨兵 + 立即复用约定**：锁槽随对象携带（定义 7），释放/帧退出把锁槽写成 `SENTINEL`（规则 3.6.2/3.7.2），锁槽随即由复用方支配（立即复用约定，§2.2）；读值或为 `SENTINEL` 或为新值，均与旧键失配，使时序检查 `live(p)`（定义 8）的作废判定不依赖锁槽不可复用。
 - **单调键生成 `Gen`（定义 10）与键唯一性**：任意两次 `Gen` 调用输出不同，键序列唯一性是 L-KEY（§4.4）的前提，进而支撑作废永久性（L-NOREUSE/L-REKEY）与锁槽复用值失配论证（§2.3「锁槽复用」集中说明）。
 - **全访问界检查 `in_bounds(p, n) ⟺ 0 ≤ index ∧ index + n ≤ size`（定义 12）**：访问安全是区间性质而非点性质，一次检查失败即 trap（§2.1 吸收态），覆盖多元素越界与 one-past-end 访问。
-- **CFG 层 + 内联 5 字段表示（《编译器实现》§7.4 方案 A）与元数据防伪**：检查插入点即第 3 章规则前提落地；元数据不可伪造依赖 §1.2 无任意写前置假设（§1.3 out 行显式声明），不引入 side-table（《编译器实现》§11.2 方向）。
+- **CFG 层 + 内联 5 字段表示（《编译器实现》§7.4 方案 A）与元数据防伪**：检查插入点即第 3 章规则前提落地；元数据不可伪造依赖 §1.2 无任意写前置假设（§1.3 out 行显式声明）。
 
 论证边界：主定理 5.1 的结论范围受 §1.3 in/out 表约束；out 行失效的前提是 §1.2 假设被放宽，不构成 in 类论证的反例（§5.5）。

@@ -18,10 +18,10 @@
 **Load**（`ir.py:53`）。现状：LL 直接 `load`，pointee 为 ZST 时返回 undef。变化：先查 `safe_access(p, 1) = live(p) ∧ in_bounds(p, 1)`（规则 3.2.1），再以有效地址 `addr_T(p, 0) = p.data + p.index·|T|`（定义 17）取数；pointee 为指针类型时读得 40B 聚合。检查插入：`live`（块内/帧内锁槽寻址 `μ(p.lock_ptr)` 比较键，定义 8，含 null 短路）与 `in_bounds`（定义 12）前插于 Load，《形式化论证》第 3 章规则前提在此落地。结论：**需改造**（检查 + 地址折算，机制的收益点所在）。补充：地址折算把 `data + index·|T|` 在 LLVM 层化为一次 `getelementptr`，检查与取数共用同一折算结果，避免两次计算；**无回绕机制（O-1 子义务落地）**：以宽整数（如 i128）计算 `data + index·|T|`（数学整数语义天然无回绕），或对 64 位 GEP 的地址折算做显式溢出检测（如 `llvm.uadd.with.overflow`）并在溢出时按 trap 处理——`nsw` 仅声明无回绕、溢出为 poison 而非 trap，不可单独作为落点；二选一落地 O-1。各内存节点（Load/Store/FieldPtr/ElementPtr/Delete）的地址折算共用该机制，不在每节点重复。
 **Store**（`ir.py:60`）。现状：LL `store`。变化：同 Load 的检查与地址折算（规则 3.2.2）；额外：value 为指针类型时写 40B 聚合。检查插入：`safe_access(p, 1)`。结论：**需改造**。
 **Malloc**（`ir.py:67`）。现状：元素数换算字节数 + `malloc` intrinsic + bitcast，pointee 为 ZST 时返回 undef。变化：按规则 3.6.1：块头锁槽写入键 `k ← Gen()`（定义 10，堆键最高位 1）、`μ(e) := k`，返回 `⟨b + H, e, k, 0, n⟩`，`lock_ptr` 指向块头锁槽；与块头布局（定义 7）交互。检查插入：无 trap 前提（分配恒可执行）；插入块头锁槽写键。结论：**需改造**（块头布局 + 写键）。补充：翻译后在块头写键 + 5 字段聚合构造（锁头仅锁槽，H=w；`is_origin` 为纯字段检查 `data = lock_ptr + H`，无需块头记录）；ZST 情形返回合法 `⟨b + H, e, k, 0, 0⟩`，`size = 0`，一切访问在 `in_bounds` 失败（规则 3.6.1）。
-**Delete**（`ir.py:100`）。现状：bitcast 为 `i8*` 调 `free`，ZST 指针释放为 no-op。变化：前提 `is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（规则 3.6.2；前提求值顺序 `is_heap` 为纯位判定（定义 9，不读锁槽）；`live` 先于或并列 `index = 0`，且对 `lock_ptr = 0` 短路为假——`delete(null)` 确定性 trap；`is_origin` 定义见《形式化论证》§2.5），动作先 `μ(p.lock_ptr) := SENTINEL`，锁槽随后即由复用方支配（用户数据区逻辑上撤销、锁槽区留在 `dom(μ)`；内存保持可读为实现选择，论证按《形式化论证》§2.2 立即复用约定，不依赖隔离）。检查插入：四前提检查（最高位判定 `is_heap`，定义 9，纯位检查不读锁槽；键比较 `live`；`index = 0`；`is_origin` 为纯字段检查 `data = lock_ptr + H`）。结论：**需改造**（四检查 + 锁槽写哨兵）。补充：`live` 单独读锁槽比较键，`is_heap` 为纯位判定（定义 9，不读锁槽）；`is_origin` 为纯字段检查 `data = lock_ptr + H`（不读锁槽与块头）；释放范围 = 整块（含锁头），交还分配器以 `lock_ptr`（块首）寻址、范围由分配器元数据决定，不按 `p.size·|T|` 计算；Malloc 写块头锁槽键、Delete 写哨兵——重锚定子对象指针（`&s.field`、`&arr[i]`）`delete` 视为错误操作（trap），即使 `index = 0`——`&arr[0]`、首字段（`data = lock_ptr + H`）通过 `is_origin`，`delete` 等价整块交还，语义无害；不再依赖根追踪（§8.4 降级为诊断用途）。
+**Delete**（`ir.py:100`）。现状：bitcast 为 `i8*` 调 `free`，ZST 指针释放为 no-op。变化：前提 `is_heap(p) ∧ live(p) ∧ p.index = 0 ∧ is_origin(p)`（规则 3.6.2；前提求值顺序 `is_heap` 为纯位判定（定义 9，不读锁槽）；`live` 先于或并列 `index = 0`，且对 `lock_ptr = 0` 短路为假——`delete(null)` 确定性 trap；`is_origin` 定义见《形式化论证》§2.5），动作先 `μ(p.lock_ptr) := SENTINEL`，锁槽随后即由复用方支配（用户数据区逻辑上撤销、锁槽区留在 `dom(μ)`；内存保持可读为实现选择，论证按《形式化论证》§2.2 立即复用约定，不依赖隔离）。检查插入：四前提检查（最高位判定 `is_heap`，定义 9，纯位检查不读锁槽；键比较 `live`；`index = 0`；`is_origin` 为纯字段检查 `data = lock_ptr + H`）。结论：**需改造**（四检查 + 锁槽写哨兵）。补充：`live` 单独读锁槽比较键，`is_heap` 为纯位判定（定义 9，不读锁槽）；`is_origin` 为纯字段检查 `data = lock_ptr + H`（不读锁槽与块头）；释放范围 = 整块（含锁头），交还分配器以 `lock_ptr`（块首）寻址、范围由分配器元数据决定，不按 `p.size·|T|` 计算；Malloc 写块头锁槽键、Delete 写哨兵——重锚定子对象指针（`&s.field`、`&arr[i]`）`delete` 视为错误操作（trap），即使 `index = 0`——`&arr[0]`、首字段（`data = lock_ptr + H`）通过 `is_origin`，`delete` 等价整块交还，语义无害。
 **Cast**（`ir.py:122`）。现状：pointer→pointer 为单条 `bitcast`。变化：按规则 3.8.1 重折算单位：`index' = ⌊index·|T|/|U|⌋`、`size' = ⌊size·|T|/|U|⌋`，data/lock_ptr/key 不变；40B 聚合无法单条 bitcast，须字段提取重构或整段重解释。检查插入：无运行时检查（编译期受限操作检查：`bitcast` 仅限标准库，第 8 章承担）。结论：**需改造**（表示重折算；编译期前提移交第 8 章）。
 **SizeOf**（`ir.py:135`）。现状：编译期常量折叠（`sizeof_const`），返回 `|T|` 字节。变化：节点语义不变；但布局表对 `PointerType` 的映射从 8B 变 40B（`types.py:229-230`），含指针的聚合类型尺寸随之变化。检查插入：无。结论：**直接**（节点免改，全局布局表受影响）。补充：`sizeof(T*)` 在胖指针表示下返回 40，故 `dyn T*[n]` 等指针数组的分配字节数、`data + index·|T|` 折算中的 `|T|` 均自动采用新布局；跨类型折算仍以 `|T|`/`|U|` 整除为前提（规则 3.8.1），SizeOf 本身不引入任何检查点。
-**NullptrLiteral**（`ir.py:346`）。现状：空指针常量，LL 层为 null 常量。变化：5 字段编码 `⟨0, 0, 0, 0, 0⟩`；`lock_ptr = 0` 时 `live` 短路为假（定义 8）；`is_heap` 为纯位判定（定义 9），null 的键 0 天然判非堆，null 访问确定性 trap——不依赖「`lock_ptr = 0 ∉ dom(μ)`」的论证（本设计下 `live` 读地址 0 物理槽位 = 段错误，必须以短路为假替代；唯一机制，不引入哨兵槽备选）。检查插入：无（构造非访问，拒绝由既有 `live` 承担）。结论：**直接**（编码选择即可；须与第 8 章「指针只由良构操作产生」闭合，见 §7.6）。补充：null 编码的 `size = 0`、`index = 0` 满足良构性（定义 13，`0 ≤ 0 ≤ 0`），故 null 可安全参与指针算术与比较；一切 `n ≥ 1` 访问在 `in_bounds` 处也失败，双保险使 null 上的读写无论如何均 trap。
+**NullptrLiteral**（`ir.py:346`）。现状：空指针常量，LL 层为 null 常量。变化：5 字段编码 `⟨0, 0, 0, 0, 0⟩`；`lock_ptr = 0` 时 `live` 短路为假（定义 8）；`is_heap` 为纯位判定（定义 9），null 的键 0 天然判非堆，null 访问确定性 trap（本设计下 `live` 读地址 0 物理槽位 = 段错误，须以短路为假处理）。检查插入：无（构造非访问，拒绝由既有 `live` 承担）。结论：**直接**（编码选择即可；须与第 8 章「指针只由良构操作产生」闭合，见 §7.6）。补充：null 编码的 `size = 0`、`index = 0` 满足良构性（定义 13，`0 ≤ 0 ≤ 0`），故 null 可安全参与指针算术与比较；一切 `n ≥ 1` 访问在 `in_bounds` 处也失败，双保险使 null 上的读写无论如何均 trap。
 
 小结：12 节点中 2 个直接（SizeOf、NullptrLiteral）、10 个需改造（VarPtr/Alloca/FieldPtr/ElementPtr/PtrDiff/Load/Store/Malloc/Delete/Cast）、无「不适用」。运行时检查插入点共 6 个（FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete），Malloc/Delete 另含锁槽交互（块头写键/写哨兵）；检查插入面确实收敛，这是「几个原语」预想的成立部分；预想的失败部分在 §7.2 论证。
 
@@ -65,7 +65,7 @@
 
 ### 7.4 表示方案对比
 
-CFG 层采用内联 5 字段表示（方案 A）：`PointerType` 在 LLVM 类型层映射为 5 字段结构体（40B），检查直接读取寄存器字段、无额外元数据取数；布局表 `__stable_layout` 与函数签名表 `__build_function_type` 相应变化。`SliceType` 的 `{ptr, i64}` 映射（`types.py:142-143`）证明「YIAN 类型 → 多字段 LLVM 结构」的机制已存在，方案 A 可复用其基建。带外 side-table 变体不采用（列为未来工作，§11.2）。
+CFG 层采用内联 5 字段表示（方案 A）：`PointerType` 在 LLVM 类型层映射为 5 字段结构体（40B），检查直接读取寄存器字段、无额外元数据取数；布局表 `__stable_layout` 与函数签名表 `__build_function_type` 相应变化。`SliceType` 的 `{ptr, i64}` 映射（`types.py:142-143`）证明「YIAN 类型 → 多字段 LLVM 结构」的机制已存在，方案 A 可复用其基建。带外 side-table 变体列为未来工作（§11.2）。
 
 ### 7.5 库层方案 vs CFG 层方案
 
@@ -90,7 +90,7 @@ CFG 层采用内联 5 字段表示（方案 A）：`PointerType` 在 LLVM 类型
 
 ## 8. 类型系统约束形式化
 
-本章把「类型系统约束也是安全机制的一部分」落实为可陈述的形式化：§8.1 给出指针定型规则（判定式/规则式），§8.2 定义对象类型同一性与分配点类型标注，§8.3 给出受限操作检查（bitcast 仅限标准库），§8.4 给出根/来源追踪设计（规定式），§8.5 给出类型约束与运行时检查的分工表及完备性论证。类型混淆排除（降级为可信基边界，不占义务编号，《形式化论证》§4.7）的编译期侧在此承接；第 7 章 §7.6 风险 6（null 编码）要求的「指针只由良构操作产生」亦在本章定型规则中闭合。符号全部沿用《形式化论证》第 2-5 章（定义 1-23、规则 3.2.1-3.8.1），不重新定义；新定义自编号 24 起。论证范围同《形式化论证》§1.3 的 in 类；本章只对指针值定型，不引入借用/生命周期分析，亦不重构语言其余类型系统。
+本章把「类型系统约束也是安全机制的一部分」落实为可陈述的形式化：§8.1 给出指针定型规则（判定式/规则式），§8.2 定义对象类型同一性与分配点类型标注，§8.3 给出受限操作检查（bitcast 仅限标准库），§8.4 给出根/来源追踪设计（规定式），§8.5 给出类型约束与运行时检查的分工表及完备性论证。类型混淆排除（可信基边界，《形式化论证》§4.7）的编译期侧在此承接；第 7 章 §7.6 风险 6（null 编码）要求的「指针只由良构操作产生」亦在本章定型规则中闭合。符号全部沿用《形式化论证》第 2-5 章（定义 1-23、规则 3.2.1-3.8.1），不重新定义；新定义自编号 24 起。论证范围同《形式化论证》§1.3 的 in 类；本章只对指针值定型，不引入借用/生命周期分析，亦不重构语言其余类型系统。
 
 ### 8.1 指针定型规则
 
@@ -144,28 +144,28 @@ $$\frac{\Gamma \vdash a : T[m]}{\Gamma \vdash a : T^{*}}$$
 
 $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
-其中 $\mathrm{dyn\_type}_t$ 为《形式化论证》第 4 章定义 23。该式是对象类型同一性的编译器侧陈述（类型混淆排除现以可信基边界承担：用户代码无 `bitcast`，标准库审计，《形式化论证》§1.3 类型行 out）：动态类型由锚定该地址的分配/取址点静态类型唯一决定，分配点标注使编译器在每个访问点静态知道 $\mathrm{alloc\_type}(p)$。用户代码无 `bitcast`（§8.3），`static_type` 恒等于产生点的建立类型（算术保持 pointee、重锚定重新建立），故「动态类型 = 分配点类型」直接蕴含「动态类型 = 静态类型」，无须布局兼容合取项；标准库内部 `bitcast` 重解释的同一性由 §8.3 审计准则保证，不进入用户代码论证。地址复用情形由 T1 负向侧（O-2b）排除：旧指针键已作废，无法通过 `live` 访问新对象，故同一性在重新分配后仍成立。monomorphization 下该式精确成立：无 trait object 与动态类型，任何产生点的类型确定。
+其中 $\mathrm{dyn\_type}_t$ 为《形式化论证》第 4 章定义 23。该式是对象类型同一性的编译器侧陈述（类型混淆排除以可信基边界承担：用户代码无 `bitcast`，标准库审计，《形式化论证》§1.3 类型行 out）：动态类型由锚定该地址的分配/取址点静态类型唯一决定，分配点标注使编译器在每个访问点静态知道 $\mathrm{alloc\_type}(p)$。用户代码无 `bitcast`（§8.3），`static_type` 恒等于产生点的建立类型（算术保持 pointee、重锚定重新建立），故「动态类型 = 分配点类型」直接蕴含「动态类型 = 静态类型」，无须布局兼容合取项；标准库内部 `bitcast` 重解释的同一性由 §8.3 审计准则保证，不进入用户代码论证。地址复用情形由 T1 负向侧（O-2b）排除：旧指针键已作废，无法通过 `live` 访问新对象，故同一性在重新分配后仍成立。monomorphization 下该式精确成立：无 trait object 与动态类型，任何产生点的类型确定。
 
 ### 8.3 受限操作检查：bitcast 与指针伪造封闭
 
 **现状：任意转任意（标准库内保持）**。`__handle_bitcast` 仅要求源为 `PointerType`/`NullPtrType`、目标为 `PointerType`（`expr_checker.py:132-157`），无 pointee 兼容约束；LLVM 层 `cast` 对 pointer→pointer 直接单条 `bitcast`（`llvm/builder.py:263-268`）。故 `bitcast<MemoryBlock*>(self.address)` 一类任意重解释在类型检查层合法，是类型混淆（类 3）的种子。该语义在标准库内保持（标准库为审计可信基）；标准库外由受限操作检查把 `bitcast` 整体禁止——类型混淆的种子从源头被编译期拒绝。
 
-**受限操作检查（已实现机制，取代布局兼容约束）**：`compiler/analysis/passes/restricted_ops.py` 定义受限名集合 `RESTRICTED_BUILTIN_NAMES = {sys_read, sys_write, open, close, __yian_argc, __yian_argv_ptr, __yian_cstrlen, __yian_exit, assume_init, bitcopy}` 与 `RESTRICTED_STDLIB_FUNCS = {from_raw_parts}`。受限操作覆盖三类：`bitcast`（类 3 类型混淆的唯一重解释入口，AST `BitCast` 节点直接拦截）、系统调用与运行时入口（`sys_read`/`sys_write`/`open`/`close`/`__yian_*`，FFI 边界）、绕过内部机制的构造器与搬移原语（无检查的切片构造 `from_raw_parts`、绕过 definite-assignment 的 `assume_init`、内部搬移 `bitcopy`）。检查在 `inject_prelude` 之后、`GlobalResolve` 之前运行（`main.py`），以「解析路径含 `lib` 组件」判定标准库（`__is_stdlib_file`），对标准库外出现的首个受限操作报 `AnalysisError`「restricted operation '…' is only allowed in the standard library」并终止编译。检查为语法级（AST 节点/调用名判定），不引入 analysis 侧布局查询；`from_raw_parts`（`lib/core/slice.an:62`）被禁意味着用户代码不能以任意 `(ptr, len)` 构造切片——指针伪造的另一条路径被封闭。**实现注意（理论优先）**：标准库判定现状为「解析路径含 `lib` 组件」路径分量启发式（`__is_stdlib_file`）——用户工程下任何名为 `lib` 的目录内文件会被误判为标准库而豁免受限操作检查，削弱「用户代码不含受限操作」的理论前提。按理论优先原则不弱化前提，标准库身份应以编译器显式传入的 lib 根路径的规范解析判定（并补 `check_restricted_ops` 覆盖测试），属第 11 章实现范围。
+**受限操作检查**：`compiler/analysis/passes/restricted_ops.py` 定义受限名集合 `RESTRICTED_BUILTIN_NAMES = {sys_read, sys_write, open, close, __yian_argc, __yian_argv_ptr, __yian_cstrlen, __yian_exit, assume_init, bitcopy}` 与 `RESTRICTED_STDLIB_FUNCS = {from_raw_parts}`。受限操作覆盖三类：`bitcast`（类 3 类型混淆的唯一重解释入口，AST `BitCast` 节点直接拦截）、系统调用与运行时入口（`sys_read`/`sys_write`/`open`/`close`/`__yian_*`，FFI 边界）、绕过内部机制的构造器与搬移原语（无检查的切片构造 `from_raw_parts`、绕过 definite-assignment 的 `assume_init`、内部搬移 `bitcopy`）。检查在 `inject_prelude` 之后、`GlobalResolve` 之前运行（`main.py`），以「解析路径含 `lib` 组件」判定标准库（`__is_stdlib_file`），对标准库外出现的首个受限操作报 `AnalysisError`「restricted operation '…' is only allowed in the standard library」并终止编译。检查为语法级（AST 节点/调用名判定），不引入 analysis 侧布局查询；`from_raw_parts`（`lib/core/slice.an:62`）被禁意味着用户代码不能以任意 `(ptr, len)` 构造切片——指针伪造的另一条路径被封闭。**实现注意（理论优先）**：标准库判定现状为「解析路径含 `lib` 组件」路径分量启发式（`__is_stdlib_file`）——用户工程下任何名为 `lib` 的目录内文件会被误判为标准库而豁免受限操作检查，削弱「用户代码不含受限操作」的理论前提。按理论优先原则不弱化前提，标准库身份应以编译器显式传入的 lib 根路径的规范解析判定（并补 `check_restricted_ops` 覆盖测试），属第 11 章实现范围。
 
-**标准库审计准则（原定义 27、规则 8.3.1 降级）**：标准库内部的重解释须满足布局兼容——$|U| \mid |T|$ 且 $\text{align}(U) \le \text{align}(T)$——使规则 3.8.1 的折算（`index' = ⌊index·|T|/|U|⌋`、`size' = ⌊size·|T|/|U|⌋`）精确无损且不破坏对齐。方向性以「$|U| \mid |T|$ 而非 $|T| \mid |U|$」排除反向转换（`u8*` 转 `u64*` 在任意 `index` 下可能折算非整，从源头杜绝对齐破坏）。该条件不再由编译器强制，降级为标准库审计准则（与运行时/分配器同等的可信基假设）：`lib/` 现使用 `bitcast` 的 10 个文件（`lib/core/hash.an`、`lib/core/slice.an`、`lib/core/array.an`、`lib/core/str.an`、`lib/num/*.an`）与使用 `from_raw_parts` 的 4 个文件（`lib/core/slice.an`、`lib/core/vec.an`、`lib/core/env.an`、`lib/core/array.an`）按此准则审计。依赖宽松 bitcast 的原型代码（如原型 `ptr.an` 的块头访问）已随受限操作检查迁入 `bak/experimental_ptr/`，不再进入审计范围。
+**标准库审计准则**：标准库内部的重解释须满足布局兼容——$|U| \mid |T|$ 且 $\text{align}(U) \le \text{align}(T)$——使规则 3.8.1 的折算（`index' = ⌊index·|T|/|U|⌋`、`size' = ⌊size·|T|/|U|⌋`）精确无损且不破坏对齐。方向性以「$|U| \mid |T|$ 而非 $|T| \mid |U|$」排除反向转换（`u8*` 转 `u64*` 在任意 `index` 下可能折算非整，从源头杜绝对齐破坏）。该条件由标准库审计准则承担（与运行时/分配器同等的可信基假设）：`lib/` 现使用 `bitcast` 的 10 个文件（`lib/core/hash.an`、`lib/core/slice.an`、`lib/core/array.an`、`lib/core/str.an`、`lib/num/*.an`）与使用 `from_raw_parts` 的 4 个文件（`lib/core/slice.an`、`lib/core/vec.an`、`lib/core/env.an`、`lib/core/array.an`）按此准则审计。依赖宽松 bitcast 的原型代码（如原型 `ptr.an` 的块头访问）不进入审计范围。
 
 ### 8.4 根/来源追踪设计（规定式）
 
-**现状：&s.field 丢根**。HIR 层 `&s.field` 为 `Unary(AddrOf, FieldAccess(Var s, "field"))`，在 `__build_addr_of`（`op_builder.py:474-488`）产生；到 CFG 经 `__resolve_addr` 分解为 `FieldPtr`/`ElementPtr` 等地址节点，仅保留 `is_place` 与 `type_id`，生成该指针的根对象（变量 $s$ 或分配点）不再可追溯。后果：运行时诊断无法报出越界/悬垂源自哪次分配（`delete` 已不依赖根追踪——`is_origin` 为纯字段检查 `data = lock_ptr + H`，§7.1 Delete）。
+**现状：&s.field 丢根**。HIR 层 `&s.field` 为 `Unary(AddrOf, FieldAccess(Var s, "field"))`，在 `__build_addr_of`（`op_builder.py:474-488`）产生；到 CFG 经 `__resolve_addr` 分解为 `FieldPtr`/`ElementPtr` 等地址节点，仅保留 `is_place` 与 `type_id`，生成该指针的根对象（变量 $s$ 或分配点）不再可追溯。后果：运行时诊断无法报出越界/悬垂源自哪次分配（`is_origin` 为纯字段检查 `data = lock_ptr + H`，§7.1 Delete）。
 
-根追踪的编译期用途细化：① `delete` 的编译期诊断增强（可选，非安全必需）：静态识别对重锚定指针的 `delete` 并给出告警（`&arr[0]`、首字段等通过 `is_origin` 者可选豁免）；释放范围 = 整块交还分配器（与 `size·|T|` 无关；`is_origin` 为纯字段检查），不再依赖根追踪；② 越界诊断：trap 发生时据根键报出「对象 $s$ 的访问越界」而非仅报地址，错误报告形态与 ASan（§9.4）的工程化报告对齐；③ 元素取址：`&arr[i]` 的根为数组符号 `arr`，元素取址的编译期根信息可与运行时检查点关联。
+根追踪的编译期用途细化：① `delete` 的编译期诊断增强（可选，非安全必需）：静态识别对重锚定指针的 `delete` 并给出告警（`&arr[0]`、首字段等通过 `is_origin` 者可选豁免）；释放范围 = 整块交还分配器（与 `size·|T|` 无关；`is_origin` 为纯字段检查）；② 越界诊断：trap 发生时据根键报出「对象 $s$ 的访问越界」而非仅报地址，错误报告形态与 ASan（§9.4）的工程化报告对齐；③ 元素取址：`&arr[i]` 的根为数组符号 `arr`，元素取址的编译期根信息可与运行时检查点关联。
 
 **设计（规定式，不写实现代码）**：
 
 1. **HIR 层根注解**：每个指针产生点（取址、分配、数组退化）记录其根对象键。根键仿 definite_assignment.py 的 `StateKey` 模式（`definite_assignment.py:51-61`：冻结数据类，`sym_id + path` 元组；`__walk_assign_target` 沿 `FieldAccess`/`TupleAccess` 累积路径、在 `Var` 处归约，`definite_assignment.py:401-434`）：根键 =（对象符号 id, 字段/元素路径），堆分配以分配点唯一 id 为根键。
 2. **复用方式**：`StateKey` 的「符号 + 路径」结构天然覆盖 `&s.field`（符号 $s$ + 路径 `("field")`）、`&arr[i]`（数组符号 + 元素路径）与整变量取址 `&x`（空路径）；`dyn T`/`dyn T[n]` 以分配点 id 为根键，数组退化以被退化数组符号为根键。
 3. **插入点**：指针产生点 `__build_addr_of`（`op_builder.py:474-488`，取址）与分配构建 `build_dyn_value`/`build_dyn_buffer`（`op_builder.py:205-218`），在产生 HIR 指针值时同步记录根键；退化点随数组符号绑定。
-4. **用途**：① 对象类型同一性的静态核验（类型混淆排除的编译期侧，随《形式化论证》§4.7 降级为可信基边界、保留编译期核验价值），同一根键的指针共享 `alloc_type`（定义 25）；② 重锚定/比较的根一致性预检（异根序比较对应规则 3.4.1 的 `lock_ptr` 相等前提）。范围声明：追踪限于指针值本身，不引入借用检查或生命周期分析。
+4. **用途**：① 对象类型同一性的静态核验（类型混淆排除的编译期侧，《形式化论证》§4.7 可信基边界），同一根键的指针共享 `alloc_type`（定义 25）；② 重锚定/比较的根一致性预检（异根序比较对应规则 3.4.1 的 `lock_ptr` 相等前提）。范围声明：追踪限于指针值本身，不引入借用检查或生命周期分析。
 
 ### 8.5 类型约束与运行时检查分工表 + 完备性论证
 
@@ -180,7 +180,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 | G3 算术 | 定型规则限定指针算术为元素级（`T*` ± `n`），无整型→指针，回绕按《形式化论证》§2.4 数学语义排除 | 良构前提（定义 13）+ 无回绕实现约定（《形式化论证》§2.4），回绕按 trap 处理 |
 | G4 类型 | 受限操作检查：`bitcast`/`from_raw_parts` 仅限标准库（§8.3）+ 分配点类型标注（定义 25-26），保证对象类型同一性 | 不承担（《形式化论证》§1.3：运行时无类型判定） |
 
-**完备性论证（梗概级，承接类型约束侧的完备性义务）**：定理 5.1（《形式化论证》§5.1）的五条前件中，本章承担 ①（类型约束）与 ②（良构性）两条（其余三条由《形式化论证》§4.9 义务 O-6 与 §1.2 攻击者模型承担，见《形式化论证》§5.5）。本章把承担的 ①② 分解为三条可静态验证的断言：① 值域闭合，全部用户代码指针值由形成规则 8.1.1-8.1.4 产生（`bitcast`/`from_raw_parts` 被受限操作检查禁于标准库外，标准库为审计可信基，§8.3），指针类型数据的搬运保持类型（§8.1）；② 类型同一性，每个可访问指针满足定义 26（动态类型 = 分配点类型；用户代码无 `bitcast`，静态类型恒等于产生点类型）；③ 良构前提可得，定型规则 8.1.7-8.1.8 与定义 13 一致，算术按数学整数语义求值（《形式化论证》§2.4）。运行时部分（《形式化论证》第 3 章）保证访问与释放规则前提在事件处求值（`in_bounds`、`live`），不满足即 trap。二者拼合即定理 5.1 的 `ok(e) ⟺ safe_access(e)` 结构：类型约束在可信基边界内消除 G4 反例并保证对象类型在检查后不变（不进入定理 5.1），运行时检查消除 G1-G3 反例；地址复用路径由 T1 负向侧（O-2b）排除（含锁槽物理位置被它用为任意值的情形——其值由值失配不等式闭合，继承 O-2b 的值失配论证），使同一性论证在重新分配后仍成立。本章完备性义务（类型混淆防护，《形式化论证》§4.7 以可信基边界承担、不占义务编号）即：验证规则 8.1.1-8.1.12 与定义 25-26 的闭合性、受限操作检查（受限名集合）足以排除用户代码的指针伪造与类型混淆、标注在 monomorphization 下的精确性；本章为梗概级，完整证明留待实现侧验证。
+**完备性论证（梗概级，承接类型约束侧的完备性义务）**：定理 5.1（《形式化论证》§5.1）的五条前件中，本章承担 ①（类型约束）与 ②（良构性）两条（其余三条由《形式化论证》§4.9 义务 O-6 与 §1.2 攻击者模型承担，见《形式化论证》§5.5）。本章把承担的 ①② 分解为三条可静态验证的断言：① 值域闭合，全部用户代码指针值由形成规则 8.1.1-8.1.4 产生（`bitcast`/`from_raw_parts` 被受限操作检查禁于标准库外，标准库为审计可信基，§8.3），指针类型数据的搬运保持类型（§8.1）；② 类型同一性，每个可访问指针满足定义 26（动态类型 = 分配点类型；用户代码无 `bitcast`，静态类型恒等于产生点类型）；③ 良构前提可得，定型规则 8.1.7-8.1.8 与定义 13 一致，算术按数学整数语义求值（《形式化论证》§2.4）。运行时部分（《形式化论证》第 3 章）保证访问与释放规则前提在事件处求值（`in_bounds`、`live`），不满足即 trap。二者拼合即定理 5.1 的 `ok(e) ⟺ safe_access(e)` 结构：类型约束在可信基边界内消除 G4 反例并保证对象类型在检查后不变（不进入定理 5.1），运行时检查消除 G1-G3 反例；地址复用路径由 T1 负向侧（O-2b）排除（含锁槽物理位置被它用为任意值的情形——其值由值失配不等式闭合，继承 O-2b 的值失配论证），使同一性论证在重新分配后仍成立。本章完备性义务（类型混淆防护，《形式化论证》§4.7 以可信基边界承担）即：验证规则 8.1.1-8.1.12 与定义 25-26 的闭合性、受限操作检查（受限名集合）足以排除用户代码的指针伪造与类型混淆、标注在 monomorphization 下的精确性；本章为梗概级，完整证明留待实现侧验证。
 
 **完备性的缺口核查**：三条断言各有一个易漏口。值域闭合的漏口在受限操作检查的覆盖：受限名集合须穷尽全部指针伪造/重解释途径（`bitcast`、`from_raw_parts` 已列），新增受限操作未同步登记即重新开口，须以受限名集合与标准库依赖的审计盘点兜底；类型同一性的漏口在分配点标注精度：标注须在 monomorphization 后仍指唯一类型，若出现泛型实例间共享标注即失效（§8.2 分配点示例）；另一漏口在分支合并：pointee 类型不同的指针合并须被拒绝（§8.2 收紧机制），否则 `static_type` 偏离产生点类型；良构前提的漏口在《形式化论证》§2.4 无回绕约定由实现承担，若实现回绕未检测则 O-1 无回绕子义务落空。四处缺口均在本文档对应章节以「现状风险/审计准则」标注，构成类型约束侧的完备性义务实现时的核对清单。
 
@@ -233,7 +233,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
 基准分三层，覆盖从受控对照到全程序吞吐。
 
-1. **仓库内建基准（必测）**：`bak/experimental_ptr/`（原 `tests/experimental/ptr/`，随受限操作检查引入迁入 `bak/`）的 Binary Trees 三变体：`binarytree_full.an`（`FullPtr` 全检查）、`binarytree_single.an`（`RawPtr` 无检查）、`binarytree_slice.an`（`Slice` 带界）。三者为同构的经典 Binary Trees 负载（深度 20、`check % 256 == 176` 断言），全部为指针密集的分配-遍历-释放负载，天然构成「无检查 / 带界 / 全检查」三档受控对照，直接刻画 5 字段表示的检查开销与内存放大。三变体同源的意义：差异仅在于指针类型（FullPtr/Slice/RawPtr），负载结构与输入完全相同，因此相对开销的差可归因于表示与检查，排除负载差异干扰。
+1. **仓库内建基准（必测）**：`bak/experimental_ptr/`的 Binary Trees 三变体：`binarytree_full.an`（`FullPtr` 全检查）、`binarytree_single.an`（`RawPtr` 无检查）、`binarytree_slice.an`（`Slice` 带界）。三者为同构的经典 Binary Trees 负载（深度 20、`check % 256 == 176` 断言），全部为指针密集的分配-遍历-释放负载，天然构成「无检查 / 带界 / 全检查」三档受控对照，直接刻画 5 字段表示的检查开销与内存放大。三变体同源的意义：差异仅在于指针类型（FullPtr/Slice/RawPtr），负载结构与输入完全相同，因此相对开销的差可归因于表示与检查，排除负载差异干扰。
 2. **Olden 基准套件**：经典指针密集型应用（bh、health、mst、perimeter 等），以堆对象图遍历与递归为主，是空间与时序检查的压力负载；须移植为 YIAN 源码。
 3. **SPEC CPU2017**：通用整数负载，覆盖非指针密集代码，度量检查前插对全程序吞吐与内存画像的影响；须移植代表性整数程序。
 
@@ -272,7 +272,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
 ### 10.7 未运行声明
 
-**未运行**：本文档为设计文档，评估协议已定义、未执行实测，无任何性能数字可引用，具体数字留待 CFG 层实现后（第 11 章未来工作）按本章协议执行并回填，届时以实测结果替换 §10.6 的形态描述。未运行的客观原因：CFG 层插桩（第 7 章）尚未实现，`bak/experimental_ptr/`（原 `tests/experimental/ptr/`，路径见 §10.2）现为库层原型（§7.5 现状），其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 的 CFG 层插桩成本。因此本协议的交付物是「协议本身 + 预期形态」，而非任何实测表格；验收按 §10.5 步骤执行，不在本文档预填结果。
+**未运行**：本文档为设计文档，评估协议已定义、未执行实测，无任何性能数字可引用，具体数字留待 CFG 层实现后（第 11 章未来工作）按本章协议执行并回填，届时以实测结果替换 §10.6 的形态描述。未运行的客观原因：CFG 层插桩（第 7 章）尚未实现，`bak/experimental_ptr/`（路径见 §10.2）现为库层原型（§7.5 现状），其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 的 CFG 层插桩成本。因此本协议的交付物是「协议本身 + 预期形态」，而非任何实测表格；验收按 §10.5 步骤执行，不在本文档预填结果。
 
 ## 11. 局限与未来工作
 
