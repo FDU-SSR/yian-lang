@@ -310,15 +310,15 @@ $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle 
 
 ### 3.3 指针算术与指针差
 
-**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size`（结果良构，定义 13；偏移 $n$ 在数学域为 `ℤ`——类型层定型为 `u64`（《编译器实现》§8.1 规则 8.1.7），负向移动 $p − n$ 由规则 3.3.2 承担）且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$（§2.7）。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。算术不访问内存，故不要求 `live`；对悬垂指针的算术本身合法，其后续读写由对应规则捕获。
+**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size` 且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。
 
-**规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`（类型层 $n$ 定型为 `u64`，《编译器实现》§8.1 规则 8.1.8）：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。
+**规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。
 
-**规则 3.3.3（指针差 `p1 − p2`）**（→ CFG `PtrDiff`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象，§2.7）；两指针良构；`p1.index − p2.index` 无回绕。动作：无（不访问内存，不要求 `live`）。结果：元素差 `p1.index − p2.index`（ℤ 值；数学域 `ℤ`——类型层定型为 `i64`，《编译器实现》§8.1 规则 8.1.9）。若前提不满足（异对象指针差）则 trap。
+**规则 3.3.3（指针差 `p1 − p2`）**（→ CFG `PtrDiff`）。前提：`p1.data = p2.data`；两指针良构；`p1.index − p2.index` 无回绕。动作：无。结果：元素差 `p1.index − p2.index`。若前提不满足（异对象指针差）则 trap。
 
 ### 3.4 比较
 
-**规则 3.4.1（序比较 `p1 < p2`、`≤`、`>`、`≥`）**（→ CFG `Binary`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象）；`live` 不作为前提（§2.7：比较不访问内存，时序失效的指针仍可比较）。动作：按 `index` 比较，如 `p1 < p2 ⟺ p1.index < p2.index`。结果：布尔值。若前提不满足（跨对象序比较）则 trap。
+**规则 3.4.1（序比较 `p1 < p2`、`≤`、`>`、`≥`）**（→ CFG `Binary`）。前提：`p1.data = p2.data`；`live` 不作为前提。动作：按 `index` 比较，如 `p1 < p2 ⟺ p1.index < p2.index`。结果：布尔值。若前提不满足（跨对象序比较）则 trap。
 
 **规则 3.4.2（相等比较 `p1 == p2`、`p1 != p2`）**（→ CFG `Binary`）。前提：无（任何良构指针可比较，允许跨对象）。动作：比较 `(p1.data, p1.index)` 与 `(p2.data, p2.index)`；因 `data` 由分配/取址唯一锚定，异对象指针 `data` 不同，恒不相等。结果：布尔值。无 trap 前提。
 
