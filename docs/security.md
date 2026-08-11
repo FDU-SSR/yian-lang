@@ -213,9 +213,9 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 **释放 `delete p`**：
 前提（任一不满足即 `trap`）：
 
-- $\text{is\_heap}(p)$：不得释放栈指针；
-- $\text{live}(p)$：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
-- $\text{is\_raw}(p)$：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首且未带偏移。子对象指针（`&s.field`）与偏移指针（`p ± n`、`&arr[i≠0]`）均偏离原始锚点。`is_raw` 为纯字段检查，不读锁槽与块头。
+- `is_heap(p)`：不得释放栈指针；
+- `live(p)`：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
+- `is_raw(p)`：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首且未带偏移。子对象指针（`&s.field`）与偏移指针（`p ± n`、`&arr[i≠0]`）均偏离原始锚点。`is_raw` 为纯字段检查，不读锁槽与块头。
 
 动作：
 
@@ -245,7 +245,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 1. 帧锁槽写 `SENTINEL`：$\mu\langle e_f \rangle := \text{SENTINEL}$；
 2. 将帧栈块的区间自 $\mathrm{dom}(\mu)$ 撤销；
-3. 帧内产生的所有指针此后 $\text{live}$ 恒为假：对已退出帧地址的访问（栈悬垂）在访问前提处 `trap`。
+3. 帧内产生的所有指针此后 `live` 恒为假：对已退出帧地址的访问（栈悬垂）在访问前提处 `trap`。
 
 **re-key 协议**：每次帧进入都调用 $\mathrm{Gen}$ 获得新键 $k_f$，即使该帧被递归或循环复用于同一帧锁槽 $e_f$，新键与上次调用生成的键也不同（定义 10），因此上一轮调用遗留的栈指针无法匹配本轮帧锁。
 
@@ -382,7 +382,7 @@ $$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \math
 $$\forall t.\ \forall p, n.\ \big[\, \mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mathrm{ok}(\mathrm{del}_t(p)) \,\big] \Rightarrow \mathrm{live}_t(p)$$
 **论证梗概**：正向侧直接来自规则结构：读/写的正常前提含 `safe_access`（蕴含 `live`），释放前提含 `live`（3.6.2），故成功即在访问时刻 `live` 成立（子义务 O-2a 即逐条枚举 3.2.1-3.2.2、3.6.2 的正常前提，是规则文本的直接核对）。负向侧（作废永久性）为实质内容，由『锁槽内容与旧键失配』统一闭合：重激活写新键（L-NOREUSE）、栈锁槽被复用（L-REKEY）、它用为任意值或哨兵（值失配不等式）——哨兵与普通数据就碰撞概率无区别，统一由 $v \ne k$ 闭合。
 
-**义务 O-2**：O-2a 验证读/写/释放规则的正常前提均含 `live`（§3.2-§3.8 枚举）；O-2b 以 L-NOREUSE 与 L-REKEY（及统一值失配）证明作废永久性：对任何作废对象，其全部派生指针此后 $\mathrm{live}$ 恒为假。该义务是第 5 章「无 UAF、双释放、栈悬垂访问」结论的直接前提。
+**义务 O-2**：O-2a 验证读/写/释放规则的正常前提均含 `live`（§3.2-§3.8 枚举）；O-2b 以 L-NOREUSE 与 L-REKEY（及统一值失配）证明作废永久性：对任何作废对象，其全部派生指针此后 `live` 恒为假。该义务是第 5 章「无 UAF、双释放、栈悬垂访问」结论的直接前提。
 
 ### 4.4 键单调性引理 L-KEY
 
@@ -421,7 +421,7 @@ $$\mu_{t_1}\langle e_f \rangle = k_1 \wedge \mu_{t_2}\langle e_f \rangle = k_2 \
 
 ### 4.7 类型混淆的排除（可信基边界）
 
-**用户代码：语法级排除（受限操作检查）**。`bitcast`（重解释，唯一改变 pointee 的操作）与 `from_raw_parts`（无检查的 `(ptr, len)` 指针构造）由受限操作检查禁于标准库外（`restricted_ops.py`，在类型检查前、`inject_prelude` 后运行，《编译器实现》§8.3）。故用户代码中不存在改变指针静态类型或从非指针数据构造指针的通道：指针仅由分配（规则 3.6.1）、取址（规则 3.5.1-3.5.2）、数组退化与 null 字面量（《编译器实现》§8.1）产生，`static_type` 恒等于产生点的建立类型（《编译器实现》§8.2 定义 25-26），`dyn_type_t(p.data) = static_type(p)`（定义 23）对用户代码指针是编译期事实。
+**用户代码：语法级排除（受限操作检查）**。`bitcast`（重解释，唯一改变 pointee 的操作）与 `from_raw_parts`（无检查的 `(ptr, len)` 指针构造）由受限操作检查禁于标准库外（`restricted_ops.py`，在类型检查前、`inject_prelude` 后运行，《编译器实现》§8.3）。故用户代码中不存在改变指针静态类型或从非指针数据构造指针的通道：指针仅由分配（规则 3.6.1）、取址（规则 3.5.1-3.5.2）、数组退化与 null 字面量（《编译器实现》§8.1）产生，`static_type` 恒等于产生点的建立类型（《编译器实现》§8.2 定义 25-26），$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{static\_type}(p)$（定义 23）对用户代码指针是编译期事实。
 
 **标准库：审计可信基**。标准库内部 `bitcast`/`from_raw_parts` 的重解释按布局兼容审计准则核验（$|U| \mid |T|$ 且 $\text{align}(U) \le \text{align}(T)$；使用文件清单见《编译器实现》§8.3 审计准则）——与分配器行为（§2.5）、无回绕实现约定（§2.4）同为可信基假设，不进入本章论证。审计失守属标准库缺陷，不构成机制反例（§5.5）。
 
@@ -523,7 +523,7 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 
 - **锁槽内置块头/帧 + 释放写哨兵 + 立即复用约定**：锁槽随对象携带（定义 7），释放/帧退出把锁槽写成 `SENTINEL`（规则 3.6.2/3.7.2），锁槽随即由复用方支配（立即复用约定，§2.2）；读值或为 `SENTINEL` 或为新值，均与旧键失配，使时序检查 `live(p)`（定义 8）的作废判定不依赖锁槽不可复用。
 - **单调键生成 `Gen`（定义 10）与键唯一性**：任意两次 `Gen` 调用输出不同，键序列唯一性是 L-KEY（§4.4）的前提，进而支撑作废永久性（L-NOREUSE/L-REKEY）与锁槽复用值失配论证（§2.3「锁槽复用」集中说明）。
-- **全访问界检查 `in_bounds(p, n) ⟺ 0 ≤ index ∧ index + n ≤ size`（定义 12）**：访问安全是区间性质而非点性质，一次检查失败即 trap（§2.1 吸收态），覆盖多元素越界与 one-past-end 访问。
+- **全访问界检查 $\text{in\_bounds}(p, n) \iff 0 \le \text{index} \wedge \text{index} + n \le \text{size}$（定义 12）**：访问安全是区间性质而非点性质，一次检查失败即 trap（§2.1 吸收态），覆盖多元素越界与 one-past-end 访问。
 - **CFG 层 + 内联 5 字段表示（《编译器实现》§7.4 方案 A）与元数据防伪**：检查插入点即第 3 章规则前提落地；元数据不可伪造依赖 §1.2 无任意写前置假设（§1.3 out 行显式声明）。
 
 论证边界：主定理 5.1 的结论范围受 §1.3 in/out 表约束；out 行失效的前提是 §1.2 假设被放宽，不构成 in 类论证的反例（§5.5）。
