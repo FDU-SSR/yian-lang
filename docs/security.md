@@ -253,8 +253,8 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 本节给出表示层派生关系，供第 3 章操作规则引用。表示层整体原则：胖指针 5 个字段中只有 `index` 是可变的派生分量（算术/重锚定/折算都只改 `index` 或建立新锚），`data`/`lock_ptr`/`key`/`size` 在指针整个生命周期内不变；「同对象指针共享锁槽与键」（§2.4 锚定规则）是表示层的结构性事实，派生指针的时序失效与母指针同步（L-NOREUSE/L-REKEY 的应用对象）。
 
-- **指针算术 $p \pm n$**：仅更新 `index`：$p + n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} + n, \text{size} \rangle$；结果须良构（定义 13）。`data`/`lock_ptr`/`key`/`size` 不变。
-- **指针减法 $p_1 - p_2$**：要求 $\text{data}$ 相等（同对象），结果为元素差 $\text{index}_1 - \text{index}_2$；规则见第 3 章。
+- **指针算术 $p \pm n$**（类型层：偏移 $n$ 定型为 `u64`，见《编译器实现》§8.1 规则 8.1.7-8.1.8；负向移动 $p - n$ 由规则 3.3.2 表达）：仅更新 `index`：$p + n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} + n, \text{size} \rangle$；结果须良构（定义 13）。`data`/`lock_ptr`/`key`/`size` 不变。
+- **指针减法 $p_1 - p_2$**（类型层：结果定型为 `i64`，见《编译器实现》§8.1 规则 8.1.9）：要求 $\text{data}$ 相等（同对象），结果为元素差 $\text{index}_1 - \text{index}_2$；规则见第 3 章。
 - **比较**：同对象比较基于 `index`；`live` 不作为比较前提（第 3 章）。
 - **解引用与索引**：`*p` 访问前提为 `safe_access`（定义 14）；`p[i]` 系 `*(p+i)` 语法糖（规则 3.3.1+3.2.1）。
 
@@ -308,11 +308,11 @@ $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle 
 
 ### 3.3 指针算术与指针差
 
-**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size`（结果良构，定义 13；`n` 为 `ℤ`，可为负，即 `p − |n|` 情形）且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$（§2.7）。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。算术不访问内存，故不要求 `live`；对悬垂指针的算术本身合法，其后续读写由对应规则捕获。
+**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size`（结果良构，定义 13；偏移 $n$ 在数学域为 `ℤ`——类型层定型为 `u64`（《编译器实现》§8.1 规则 8.1.7），负向移动 $p − n$ 由规则 3.3.2 承担）且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$（§2.7）。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。算术不访问内存，故不要求 `live`；对悬垂指针的算术本身合法，其后续读写由对应规则捕获。
 
-**规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。
+**规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`（类型层 $n$ 定型为 `u64`，《编译器实现》§8.1 规则 8.1.8）：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。
 
-**规则 3.3.3（指针差 `p1 − p2`）**（→ CFG `PtrDiff`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象，§2.7）；两指针良构；`p1.index − p2.index` 无回绕。动作：无（不访问内存，不要求 `live`）。结果：元素差 `p1.index − p2.index`（`ℤ` 值）。若前提不满足（异对象指针差）则 trap。
+**规则 3.3.3（指针差 `p1 − p2`）**（→ CFG `PtrDiff`）。前提：`p1.lock_ptr = p2.lock_ptr`（同对象，§2.7）；两指针良构；`p1.index − p2.index` 无回绕。动作：无（不访问内存，不要求 `live`）。结果：元素差 `p1.index − p2.index`（ℤ 值；数学域 `ℤ`——类型层定型为 `i64`，《编译器实现》§8.1 规则 8.1.9）。若前提不满足（异对象指针差）则 trap。
 
 ### 3.4 比较
 
