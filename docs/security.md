@@ -215,12 +215,12 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 - $\text{is\_heap}(p)$：不得释放栈指针；
 - $\text{live}(p)$：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
-- $\text{is\_raw}(p)$（原始分配指针）：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首（原始分配指针的 `data` 恒等于块首加锁头字节数）且未带偏移。子对象指针（字段取址重锚定 `&s.field`）与偏移指针（算术 `p ± n`、`&arr[i≠0]`）均偏离原始锚点：前者偏 `data`、后者偏 `index`，统一由 `is_raw` 排除（任一不满足即 trap）。`is_raw` 为纯字段检查，不读锁槽与块头。
+- $\text{is\_raw}(p)$：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首且未带偏移。子对象指针（`&s.field`）与偏移指针（`p ± n`、`&arr[i≠0]`）均偏离原始锚点。`is_raw` 为纯字段检查，不读锁槽与块头。
 
 动作：
 
 1. 锁槽写 `SENTINEL`：$\mu\langle p.\text{lock\_ptr} \rangle := \text{SENTINEL}$；
-2. 块立即交还分配器（立即复用约定，§2.2）：锁槽随即由复用方支配（写入新键或任意值）；
+2. 块立即交还分配器：锁槽随即由复用方支配（写入新键或任意值）；
 3. 指针 $p$ 的字段保持不变，但此后 $\text{live}(p)$ 恒为假。
 
 ### 2.6 栈帧进入/退出协议
@@ -229,7 +229,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 **帧进入 `enter f`**：
 
-1. 帧首锁槽 $e_f$ 就位（每帧一个，位于帧首字，定义 7），$k_f \leftarrow \mathrm{Gen}()$；
+1. 帧首锁槽 $e_f$ 就位（每帧一个，位于帧首字），$k_f \leftarrow \mathrm{Gen}()$；
 2. 帧锁槽写键：$\mu\langle e_f \rangle := k_f$（栈键最高位 0）；当前帧锁为 $\langle e_f, k_f \rangle$；
 3. 在帧栈块上为局部变量分配地址（并入 $\mathrm{dom}(\mu)$）。
 
@@ -239,7 +239,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - 数组局部 $a : T[m]$：$\&a = \langle a_a, e_f, k_f, 0, m \rangle$；
 - 字段取址 `&s.field`：按 §2.4 锚定规则重新锚定。
 
-帧内全部取址共享同一锁槽 $e_f$ 与键 $k_f$，差异只在 `data`（槽地址）与 `size`（`cap` 容量），故同一帧内任意两个取址结果在 `live` 上同真同假，帧退出后一并失效。取址不访问内存，故帧内取址在任何时刻都可执行，其后续读写才受 `live` 约束。
+帧内全部取址共享同一锁槽 $e_f$ 与键 $k_f$，差异只在 `data`（槽地址）与 `size`（容量），故同一帧内任意两个取址结果在 `live` 上同真同假，帧退出后一并失效。取址不访问内存，故帧内取址在任何时刻都可执行，其后续读写才受 `live` 约束。
 
 **帧退出 `exit f`**：
 
@@ -251,12 +251,12 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 ### 2.7 指针操作与表示派生
 
-本节给出表示层派生关系，供第 3 章操作规则引用。表示层整体原则：胖指针 5 个字段中只有 `index` 是可变的派生分量（算术/重锚定/折算都只改 `index` 或建立新锚），`data`/`lock_ptr`/`key`/`size` 在指针整个生命周期内不变；「同对象指针共享锁槽与键」（§2.4 锚定规则）是表示层的结构性事实，派生指针的时序失效与母指针同步（L-NOREUSE/L-REKEY 的应用对象）。
+表示层整体原则：胖指针 5 个字段中只有 `index` 是可变的派生分量（算术/重锚定/折算都只改 `index` 或建立新锚），`data`/`lock_ptr`/`key`/`size` 在指针整个生命周期内不变；「同对象指针共享锁槽与键」是表示层的结构性事实，派生指针的时序失效与母指针同步。
 
-- **指针算术 $p \pm n$**（类型层：偏移 $n$ 定型为 `u64`，见《编译器实现》§8.1 规则 8.1.7-8.1.8；负向移动 $p - n$ 由规则 3.3.2 表达）：仅更新 `index`：$p + n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} + n, \text{size} \rangle$；结果须良构（定义 13）。`data`/`lock_ptr`/`key`/`size` 不变。
-- **指针减法 $p_1 - p_2$**（类型层：结果定型为 `i64`，见《编译器实现》§8.1 规则 8.1.9）：要求 $\text{data}$ 相等（同对象），结果为元素差 $\text{index}_1 - \text{index}_2$；规则见第 3 章。
-- **比较**：同对象比较基于 `index`；`live` 不作为比较前提（第 3 章）。
-- **解引用与索引**：`*p` 访问前提为 `safe_access`（定义 14）；`p[i]` 系 `*(p+i)` 语法糖（规则 3.3.1+3.2.1）。
+- **指针算术 $p \pm n$**：仅更新 `index`：$p \pm n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} \pm n, \text{size} \rangle$。
+- **指针减法 $p_1 - p_2$**：要求 $\text{data}$ 相等（同对象），结果为元素差 $\text{index}_1 - \text{index}_2$。
+- **比较**：同对象比较基于 `index`；`live` 不作为比较前提。
+- **解引用与索引**：`*p` 访问前提为 `safe_access`。
 
 表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧首锁槽，锁槽元数据与被保护数据相邻存储。
 
@@ -268,9 +268,9 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 ### 3.1 规则格式、指令集与公共约定
 
-**规则格式**：每条规则形如「操作名（→ CFG 节点）。前提：…；动作：…；结果：…。若前提不满足则 trap。」正常步进写作 $\langle \mu, C \rangle \longrightarrow \langle \mu', C' \rangle$；前提不满足时 $\longrightarrow \text{trap}$。`trap` 为吸收终止态（§2.1）：检查失败后不执行任何后续内存访问。
+**规则格式**：每条规则形如「操作名（→ CFG 节点）。前提：…；动作：…；结果：…。若前提不满足则 trap。」正常步进写作 $\langle \mu, C \rangle \longrightarrow \langle \mu', C' \rangle$；前提不满足时 $\longrightarrow \text{trap}$。`trap` 为吸收终止态：检查失败后不执行任何后续内存访问。
 
-**定义 16（操作指令集）**：本章给出小步规则的指令集（即 §2.1 所述指令集）：解引用读/写、指针算术、指针差、比较、取址、堆分配、释放、帧进入/退出、`bitcast`。索引读/写、元素取址系算术+解引用/取址的语法糖，不列指令集。每条指令在 CFG 层的对应节点见表 3。
+**定义 16（操作指令集）**：本章给出小步规则的指令集：解引用读/写、指针算术、指针差、比较、取址、堆分配、释放、帧进入/退出、`bitcast`。每条指令在 CFG 层的对应节点见表 3。
 
 表 3：源级操作与 CFG 节点映射
 
@@ -288,21 +288,23 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 | 帧进入 `enter f` / 帧退出 `exit f` | §3.7     | 帧级，CFG 无对应节点 |
 | `bitcast`                          | §3.8     | `Cast`               |
 
-注：`p[i]` 系 `*(p+i)` 语法糖、`&arr[i]` 系 `&(p+i)` 语法糖，CFG 层由算术（`ElementPtr`）+解引用/取址复合，不列源级操作；`memcpy` 系库函数组合，不具操作地位。
-
 **定义 17（元素字节地址 `addr_T`）**：指针 `p` 指向类型 `T`，当前元素序号（相对 `p.index`）第 `i` 个元素的字节基址：
+
 $$\text{addr}_T(p, i) \triangleq p.\text{data} + (p.\text{index} + i) \cdot |T|$$
-$|T|$ 为 `T` 的字节大小（§2.4），在 CFG 层由 `SizeOf` 节点求值。解引用即 $i = 0$ 情形：$\text{addr}_T(p, 0) = p.\text{data} + p.\text{index} \cdot |T|$。`addr_T` 在数学整数上求值，无回绕（§2.4 单位与溢出约定）。
+
+$|T|$ 为 `T` 的字节大小。解引用即 $i = 0$ 情形：$\text{addr}_T(p, 0) = p.\text{data} + p.\text{index} \cdot |T|$。`addr_T` 在数学整数上求值，无回绕。
 
 **定义 18（访问足迹 `footprint`）**：跨度 $n \geq 0$ 个元素的访问所触及的位置集合：
 $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle \mid 0 \le i < n,\; 0 \le o < |T| \} \subseteq \mathrm{Loc}$$
-`in_bounds(p, n)`（定义 12）保证足迹整体落在被访问对象内；对象已分配，故足迹 $\subseteq \mathrm{dom}(\mu)$。
+`in_bounds(p, n)` 保证足迹整体落在被访问对象内；对象已分配，故足迹 $\subseteq \mathrm{dom}(\mu)$。
 
-**one-past-end 处理**：`index = size` 的指针良构（定义 13），可存在与传递；但任何 $n \geq 1$ 的访问在 `in_bounds(p, n)` 处失败，故 one-past-end 不可读写；从 one-past-end 继续算术得 `index = size + 1 > size`，不满足良构性，在算术规则处 trap。**整数溢出防护**：本章规则按数学整数语义书写（无回绕）；实现须保证 `index + n`、`index · |T|`、`data + index · |T|` 等在 64 位域内不回绕（§2.4 约定），实现侧检测到回绕时按 trap 处理（对应 §1.1 类 4）。
+**one-past-end 处理**：`index = size` 的指针良构，可存在与传递；但任何 $n \geq 1$ 的访问在 `in_bounds(p, n)` 处失败，故 one-past-end 不可读写；从 one-past-end 继续算术得 `index = size + 1 > size`，不满足良构性，在算术规则处 trap。
+
+**整数溢出防护**：本章规则按数学整数语义书写（无回绕）；实现须保证 `index + n`、`index · |T|`、`data + index · |T|` 等在 64 位域内不回绕，实现侧检测到回绕时按 trap 处理。
 
 ### 3.2 解引用
 
-**规则 3.2.1（解引用读 `*p`）**（→ CFG `Load`）。前提：`safe_access(p, 1)`（定义 14），即 `live(p) ∧ in_bounds(p, 1)`（全访问检查）。动作：读取 `footprint_T(p, 1)` 处存储的 `T` 值。结果：μ 不变，读得值参与后续计算。若前提不满足则 trap（悬垂读、越界读、one-past-end 读均在此 trap）。
+**规则 3.2.1（解引用读 `*p`）**（→ CFG `Load`）。前提：`safe_access(p, 1)`。动作：读取 `footprint_T(p, 1)` 处存储的 `T` 值。结果：μ 不变，读得值参与后续计算。若前提不满足则 trap（悬垂读、越界读、one-past-end 读均在此 trap）。
 
 **规则 3.2.2（解引用写 `*p = v`）**（→ CFG `Store`）。前提：`safe_access(p, 1)`。动作：将 `v` 写入 `footprint_T(p, 1)` 全部位置。结果：μ 在 `footprint_T(p, 1)` 上更新为 `v`。若前提不满足则 trap。
 
