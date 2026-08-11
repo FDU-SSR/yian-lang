@@ -194,7 +194,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - 分配 `dyn T` / `dyn T[n]`：锚 = 负载首（块首 $b$ + 锁头字节数 $H$）；
 - 数组退化：锚 = 数组首地址，`size` = 数组长度；
 - 取址 `&x`：锚 = 变量地址，`size` = 变量元素容量（标量 1，数组为长度）；
-- 取址 `&s.field` / `&arr[i]`：锚 = 子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
+- 取址 `&s.field`：锚 = 字段子对象地址，`size` = 该子对象自锚点起的元素容量（精确字节折算在第 3 章）。
 
 **单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行），对应 §1.1 类 4 的防护。
 
@@ -238,7 +238,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 - 标量局部 $x$：$\&x = \langle a_x, e_f, k_f, 0, 1 \rangle$；
 - 数组局部 $a : T[m]$：$\&a = \langle a_a, e_f, k_f, 0, m \rangle$；
-- 字段取址 `&s.field`：按 §2.4 锚定规则重新锚定；元素取址 `&arr[i]` 系 `&(p+i)` 语法糖（§2.7），锁字段保持 $\langle e_f, k_f \rangle$（精确规则见第 3 章）。
+- 字段取址 `&s.field`：按 §2.4 锚定规则重新锚定。
 
 帧内全部取址共享同一锁槽 $e_f$ 与键 $k_f$，差异只在 `data`（槽地址）与 `size`（`cap` 容量），故同一帧内任意两个取址结果在 `live` 上同真同假，帧退出后一并失效。取址不访问内存，故帧内取址在任何时刻都可执行，其后续读写才受 `live` 约束。
 
@@ -261,7 +261,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧首锁槽，锁槽元数据与被保护数据相邻存储。
 
-重锚定（`&s.field`、元素取址）与算术（`p ± n`）在表示上不可互换：前者重置 `index` 并折算 `data`、后者只改 `index`，两种途径可产生指向同一字节地址但 `(data, index)` 不同的指针。
+重锚定（`&s.field`）与算术（`p ± n`）在表示上不可互换：前者重置 `index` 并折算 `data`、后者只改 `index`。
 
 ## 3. 操作语义规则
 
