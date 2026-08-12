@@ -226,6 +226,10 @@ def discover_tests() -> list[TestCase]:
         if rel.parts[0] in ("output", "input"):
             continue
 
+        # Fat-pointer tests have their own runner (scripts/run_fat_tests.py).
+        if rel.parts[0] == "fat":
+            continue
+
         src_rel = str(rel)
 
         # Skip known helper files (e.g. private/private.an).

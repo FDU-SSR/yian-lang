@@ -1,0 +1,9 @@
+// Test that `from_raw_parts` is rejected outside the standard library.
+//
+// Expected compilation error: restricted operation
+
+fn main() {
+    let x: i32 = 1;
+    let p: i32* = &x;
+    let s: i32[] = from_raw_parts(p, 1);
+}

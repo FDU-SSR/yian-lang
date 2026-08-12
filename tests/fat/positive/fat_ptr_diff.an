@@ -1,0 +1,35 @@
+// Same-object pointer difference: ptr - ptr → i64 element offset
+// (规则 3.3.3; 定型规则 8.1.9, result typed i64). Complementary angle to
+// ptr_diff.an: larger array, different offsets, self-diff, explicit i64 width.
+//
+// Expected output: 0
+
+fn main() {
+    let arr: i32* = dyn[7] i32;
+    arr[0] = 0;
+    arr[1] = 10;
+    arr[2] = 20;
+    arr[3] = 30;
+    arr[4] = 40;
+    arr[5] = 50;
+    arr[6] = 60;
+
+    let p: i32* = arr;
+
+    // (p+5) - (p+1) → 4, typed i64
+    let diff: i64 = (p + 5) - (p + 1);
+    assert diff == 4: "diff == 4";
+    assert sizeof(i64) == 8: "ptr diff result is 8-byte i64";
+
+    // reverse: negative difference
+    let back: i64 = (p + 1) - (p + 5);
+    assert back == -4: "back == -4";
+
+    // self-diff is 0
+    let z: i64 = p - p;
+    assert z == 0: "self diff == 0";
+
+    // adjacent elements differ by 1
+    let adj: i64 = (p + 3) - (p + 2);
+    assert adj == 1: "adjacent diff == 1";
+}

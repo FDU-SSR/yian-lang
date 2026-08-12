@@ -1,0 +1,33 @@
+// ZST pointer comparison and arithmetic: a pointer whose pointee is
+// zero-sized is itself a ZST (size 0, §7.6 风险 2 裁决 — ZST 保持 ZST).
+// All such pointer values are indistinguishable, so == / != always behave as
+// equality; arithmetic participates without trapping (erased at codegen).
+//
+// Expected output: 0
+
+struct Empty {}
+
+fn main() {
+    // -- == / != on ZST pointers: all indistinguishable --
+    let p: Empty* = nullptr;
+    let q: Empty* = nullptr;
+    assert sizeof(Empty*) == 0: "Empty* is a ZST";
+    assert p == p: "ZST ptr == itself";
+    assert p == q: "two nullptr ZST ptrs equal";
+    assert p == nullptr: "ZST ptr == nullptr";
+    assert !(p != q): "ZST ptr != is false (indistinguishable)";
+    assert !(p != p): "ZST ptr != itself is false";
+
+    // void* ZST pointers likewise
+    let v1: void* = nullptr;
+    let v2: void* = nullptr;
+    assert v1 == v2: "void* == void*";
+    assert !(v1 != v2): "void* != void* is false";
+
+    // -- ZST pointer arithmetic participates without trapping --
+    // Empty* arithmetic is erased at codegen; all values indistinguishable
+    let e1: Empty* = p + 1;
+    assert e1 == p: "Empty* +1 == original (all indistinguishable)";
+    let e2: Empty* = p + 0;
+    assert e2 == p: "Empty* +0 == original";
+}

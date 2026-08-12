@@ -1,0 +1,16 @@
+// Fat-pointer delete of a subobject pointer — negative test
+//
+// delete 前提 is_raw(p):data 分量必须 p.data = p.lock_ptr + H(定义 9/规则 3.6.2)。
+// 字段取址 &s.b 重锚定后 index 归零但 data 指向 b 槽(偏移 lock_ptr + H + 8),
+// data 折算后 != lock_ptr + H → is_raw 拒 → llvm.trap → Exit code -4。
+
+struct S {
+    a: i32,
+    b: i32,
+}
+
+fn main() {
+    let s: S = S(1, 2);
+    let pf: i32* = &s.b;
+    del pf  // is_raw 拒: 非首字段 data 偏移 → trap
+}

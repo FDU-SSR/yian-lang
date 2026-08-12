@@ -1,0 +1,30 @@
+// Fat pointer: array of fat pointers (each element is a 40-byte fat pointer).
+//
+// Expected output: 0
+
+fn main() {
+    // Static checks: fat pointer is 5 × 8 = 40 bytes.
+    assert sizeof(i32*) == 40: "sizeof(i32*) == 40"
+    assert sizeof(i32*[3]) == sizeof(i32*) * 3: "ptr-array size"
+
+    // Stack array of pointers; each element points to a heap-allocated scalar.
+    let arr: i32*[4] = [nullptr, nullptr, nullptr, nullptr]
+    arr[0] = dyn i32(1)
+    arr[1] = dyn i32(2)
+    arr[2] = dyn i32(3)
+    arr[3] = dyn i32(4)
+
+    assert arr[0][0] == 1: "arr[0][0] == 1"
+    assert arr[3][0] == 4: "arr[3][0] == 4"
+
+    // Write through an element pointer, visible via the array.
+    arr[1][0] = 22
+    assert arr[1][0] == 22: "arr[1][0] == 22 after write"
+
+    // Heap array of pointers (i32**).
+    let h: i32** = dyn[2] i32*
+    h[0] = dyn i32(7)
+    h[1] = dyn i32(8)
+    assert h[0][0] == 7: "h[0][0] == 7"
+    assert h[1][0] == 8: "h[1][0] == 8"
+}

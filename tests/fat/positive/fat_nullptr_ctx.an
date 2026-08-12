@@ -1,0 +1,49 @@
+// Fat pointer: nullptr in multiple contexts (struct field, array element,
+// function return, comparison).
+//
+// Expected output: 0
+
+struct Node {
+    data: i32,
+    next: Node*,
+}
+
+fn empty() -> Node* {
+    return nullptr
+}
+
+fn main() {
+    // Struct field initialized to nullptr via constructor.
+    let n: Node = Node(42, nullptr)
+    assert n.data == 42: "n.data should be 42"
+    assert n.next == nullptr: "n.next should be nullptr"
+
+    // Reassign field to nullptr.
+    n.next = nullptr
+    assert n.next == nullptr: "n.next still nullptr"
+
+    // Array elements may be nullptr.
+    let arr: i32*[3] = [nullptr, nullptr, nullptr]
+    assert arr[0] == nullptr: "arr[0] == nullptr"
+    arr[1] = dyn i32(5)
+    assert arr[1] != nullptr: "arr[1] != nullptr"
+    assert arr[1][0] == 5: "arr[1][0] == 5"
+    assert arr[2] == nullptr: "arr[2] == nullptr"
+
+    // Function returning nullptr.
+    let p: Node* = empty()
+    assert p == nullptr: "empty() returns nullptr"
+    let q: Node* = empty()
+    assert p == q: "two nullptr results are equal"
+
+    // nullptr in a condition.
+    if p == nullptr {
+        assert n.next == nullptr: "n.next is still nullptr"
+    } else {
+        assert false: "unreachable branch"
+    }
+
+    // nullptr in a heap struct field.
+    let hp: Node* = dyn Node(1, nullptr)
+    assert hp.next == nullptr: "heap Node.next == nullptr"
+}

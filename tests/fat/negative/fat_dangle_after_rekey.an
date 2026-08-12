@@ -1,0 +1,13 @@
+// Fat-pointer stack-dangle negative test — 帧 re-key 后旧指针访问
+//
+// make() 返回 &x(帧锁 ⟨e_f, k₁⟩);第一次调用退出写 SENTINEL(规则 3.7.2),
+// 第二次调用 make() 进入帧时 re-key(规则 3.7.1:新键 k₂)。旧指针 p 携带旧键,
+// 访问 p[0] 经 live 锁槽键比较失败 → llvm.trap → SIGILL → Exit code -4。
+
+fn make() -> i32* { let x: i32 = 42; &x }
+
+fn main() {
+    let p: i32* = make();
+    make()  // 第二次调用触发帧锁槽 re-key(新键)
+    p[0] = 99  // 旧键失配 → live 失败 → trap
+}

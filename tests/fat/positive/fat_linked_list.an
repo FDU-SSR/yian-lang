@@ -1,0 +1,41 @@
+// Fat-pointer semantic composite: singly linked list
+// Builds a 3-node chain (1 -> 2 -> 3), walks it via next pointers,
+// compares against nullptr, then deletes every node.
+//
+// Coverage: dyn allocation + struct field access through pointer +
+//           pointer nullptr comparison + del (single-free path).
+//
+// Expected output: 0
+
+struct Node {
+    value: i32,
+    next: Node*,
+}
+
+fn main() {
+    // Build chain 1 -> 2 -> 3 (tail next = nullptr)
+    let n3: Node* = dyn Node(3, nullptr);
+    let n2: Node* = dyn Node(2, n3);
+    let n1: Node* = dyn Node(1, n2);
+
+    // Walk the chain and assert the value sequence (1, 2, 3)
+    let cur: Node* = n1;
+    let expected: i32 = 1;
+    while cur != nullptr {
+        assert cur.value == expected: "linked list value mismatch";
+        cur = cur.next;
+        expected += 1;
+    }
+    assert expected == 4: "expected exactly 3 visited nodes";
+
+    // Delete every node; save next before freeing current
+    let p: Node* = n1;
+    let count: i32 = 0;
+    while p != nullptr {
+        let q: Node* = p.next;
+        del p;
+        p = q;
+        count += 1;
+    }
+    assert count == 3: "expected exactly 3 deleted nodes";
+}

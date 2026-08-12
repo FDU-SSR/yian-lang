@@ -1,0 +1,36 @@
+// One-past-end pointer (index == size) is well-formed (docs/security.md §2.7
+// one-past-end 处理): it can be constructed, compared, and participate in
+// n == 0 arithmetic. It must NOT be dereferenced — reading/writing through it
+// traps on the negative side (negative/fat_oob_read_one_past.an).
+//
+// Expected output: 0
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    // end is constructible: index == size (4) is well-formed
+    let end: i32* = p + 4;
+    assert end == p + 4: "end == p+4";
+
+    // ordered comparison with in-bounds pointer (same object)
+    assert p < end: "p < end";
+    assert end > p: "end > p";
+    assert !(end < p): "!(end < p)";
+
+    // equality on one-past-end pointers
+    assert end == end: "end == end";
+    assert end != p: "end != p";
+
+    // one-past-end participates in n == 0 arithmetic; index stays at size
+    let e0: i32* = end + 0;
+    assert e0 == end: "end+0 == end";
+    let e0b: i32* = end - 0;
+    assert e0b == end: "end-0 == end";
+
+    // array contents remain accessible while `end` exists
+    assert p[3] == 4: "p[3] still accessible";
+}

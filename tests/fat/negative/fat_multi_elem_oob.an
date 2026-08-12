@@ -1,0 +1,25 @@
+// Fat-pointer multi-element out-of-bounds access negative test (t6, 规则 3.2.1)
+//
+// Pair 为 2 元素 struct;dyn[2] Pair 合法索引 0、1。
+// p[1].y 界内访问先填值;p[2].y 越过分配(2 个元素)访问,
+// 其解引用 index 2 + 1 > size 2 → in_bounds 失败 → trap。
+// 期望 Exit code -4。
+
+struct Pair {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p: Pair* = dyn[2] Pair;
+    p[0].x = 1;
+    p[0].y = 2;
+    p[1].x = 3;
+    p[1].y = 4;
+
+    let ok: i32 = p[1].y;   // 界内访问:index 1 + 1 == size 2 → 通过
+    assert ok == 4: "expected p[1].y == 4";
+
+    let v: i32 = p[2].y;    // 跨末访问:index 2 + 1 > size 2 → in_bounds 失败 → trap
+    assert v == 0: "unreachable"
+}

@@ -1,0 +1,35 @@
+// In-bounds pointer arithmetic on a dynamic allocation (规则 3.3.1-3.3.2):
+// p+n / p-n only update the index; n == 0 leaves the index untouched.
+// Access through derived in-bounds pointers reads the correct element.
+//
+// Expected output: 0
+
+fn main() {
+    let arr: i32* = dyn[5] i32;
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+    arr[3] = 40;
+    arr[4] = 50;
+
+    let p: i32* = arr;
+
+    // p+1, p+3, p+4 (last element)
+    assert *(p + 1) == 20: "*(p+1) == arr[1]";
+    assert *(p + 3) == 40: "*(p+3) == arr[3]";
+    assert *(p + 4) == 50: "*(p+4) == arr[4] (last element)";
+
+    // p-0: n == 0 arithmetic does not change the index
+    let q: i32* = p - 0;
+    assert q == p: "p-0 keeps index";
+    assert *q == 10: "*(p-0) == arr[0]";
+
+    // p+0 likewise
+    let r: i32* = p + 0;
+    assert r == p: "p+0 keeps index";
+    assert *r == 10: "*(p+0) == arr[0]";
+
+    // writing through a derived pointer is visible at the base
+    *(p + 2) = 99;
+    assert arr[2] == 99: "write through p+2 visible at arr[2]";
+}

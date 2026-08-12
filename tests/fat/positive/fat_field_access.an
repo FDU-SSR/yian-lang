@@ -1,0 +1,34 @@
+// Fat pointer: field read/write through a heap-allocated struct pointer.
+//
+// Expected output: 0
+
+struct Inner {
+    v: i32,
+}
+
+struct Node {
+    inner: Inner,
+    next: i32*,
+}
+
+fn main() {
+    // Heap-allocate a Node (fat pointer, 5-field representation).
+    let p: Node* = dyn Node(Inner(10), nullptr)
+    assert p.inner.v == 10: "Expected p.inner.v to be 10"
+
+    // Field write through the fat pointer.
+    p.inner.v = 11
+    assert p.inner.v == 11: "Expected p.inner.v to be 11 after write"
+
+    // Pointer field is a sub-pointer that can be re-dereferenced.
+    let arr: i32* = dyn[2] i32
+    arr[0] = 5
+    p.next = arr
+    let q: i32* = p.next
+    assert q[0] == 5: "Expected q[0] to be 5 via p.next"
+
+    // Write through the re-fetched sub-pointer, visible via all paths.
+    q[0] = 6
+    assert arr[0] == 6: "Expected arr[0] to be 6 after write via q"
+    assert p.next[0] == 6: "Expected p.next[0] to be 6"
+}

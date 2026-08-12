@@ -1,0 +1,38 @@
+// Comparison semantics, positive side (规则 3.4.1-3.4.2, §7.6 风险 3):
+// 1. same-object ordered comparison compares by index
+// 2. cross-object == / != are allowed, compared by the (data, index) pair
+// 3. nullptr comparison
+// (Cross-object ordered comparison traps — negative side, negative/cmp_fat.an)
+//
+// Expected output: 0
+
+fn main() {
+    // -- 1. same-object ordered comparison compares by index --
+    let arr: i32[4] = [10, 20, 30, 40];
+    let base: i32* = &arr[0];
+    let p1: i32* = base + 1;
+    let p2: i32* = base + 3;
+    assert base < p1: "base < p1";
+    assert p1 < p2: "p1 < p2";
+    assert p1 > base: "p1 > base";
+    assert p1 <= p1: "p1 <= p1";
+    assert p2 >= p1: "p2 >= p1";
+    assert !(p2 < p1): "!(p2 < p1)";
+    assert base < base + 1: "base < base+1";
+
+    // -- 2. cross-object == / != allowed, compared by (data, index) --
+    let a1: i32 = 1;
+    let b1: i32 = 2;
+    let pa: i32* = &a1;
+    let pb: i32* = &b1;
+    assert pa != pb: "cross-object != allowed (data differs)";
+    let qa: i32* = &a1;
+    assert pa == qa: "same address same index equal";
+    assert pa == &a1: "&a1 == &a1";
+
+    // -- 3. nullptr comparisons --
+    let n: i32* = nullptr;
+    assert n == nullptr: "nullptr == nullptr";
+    assert pa != nullptr: "pa != nullptr";
+    assert n != pa: "n != pa";
+}

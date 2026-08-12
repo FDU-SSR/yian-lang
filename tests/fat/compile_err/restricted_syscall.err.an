@@ -1,0 +1,8 @@
+// Test that the `sys_write` syscall is rejected outside the standard
+// library.
+//
+// Expected compilation error: restricted operation
+
+fn main() {
+    sys_write(1, "x");
+}

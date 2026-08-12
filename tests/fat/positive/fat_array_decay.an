@@ -1,0 +1,28 @@
+// Fat pointer: array decay T[N]→T* and re-anchor T[N]*→T*.
+//
+// Expected output: 0
+
+fn main() {
+    let arr: i32[4] = [1, 2, 3, 4]
+
+    // T[N] → T* (array decay)
+    let p: i32* = arr
+    assert p[0] == 1: "Expected p[0] to be 1"
+    assert p[3] == 4: "Expected p[3] to be 4"
+
+    // Write through the decayed pointer, visible on the array.
+    p[3] = 40
+    assert arr[3] == 40: "Expected arr[3] to be 40 after write via p"
+
+    // T[N]* → T* (re-anchor on &arr)
+    let p2: i32* = &arr
+    assert p2[1] == 2: "Expected p2[1] to be 2"
+    assert p2[3] == 40: "Expected p2[3] to be 40"
+
+    // Both pointers traverse the whole array.
+    for i in 0..4u64 {
+        p[i] += 1
+    }
+    assert arr[0] == 2: "Expected arr[0] to be 2 after loop"
+    assert p2[3] == 41: "Expected p2[3] to be 41 after loop"
+}

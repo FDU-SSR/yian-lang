@@ -1,0 +1,18 @@
+// Fat-pointer one-past-end READ negative test (t6, 规则 3.2.1)
+//
+// p + 4 是良构的 one-past-end 指针(index == size,定义 13 允许);
+// 但对其解引用 *end 触发 safe_access(p,1) = live(p) ∧ in_bounds(p,1),
+// in_bounds(p,1) 要求 index + 1 ≤ size → 4 + 1 > 4 → 失败 → trap。
+// 期望 Exit code -4。
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let end: i32* = p + 4;   // one-past-end: index == size,算术良构
+    let v: i32 = *end;       // one-past-end 读 → in_bounds(p,1) 失败 → trap
+    assert v == 5: "unreachable"
+}
