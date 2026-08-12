@@ -21,5 +21,5 @@ fn main() {
     let p: Ptr<i32> = nullptr;
 
     // static method receiver
-    assert Ptr<i32>.width() == 8: "static call on Ptr<i32>";
+    assert Ptr<i32>.width() == 40: "static call on Ptr<i32>";
 }

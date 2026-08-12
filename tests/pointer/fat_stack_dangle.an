@@ -1,0 +1,8 @@
+// Fat-pointer stack-dangle negative test (F2 fix, 规则 3.7.2 动作①)
+// make() returns &x (frame-lock ⟨e_f, k₁⟩); after return, frame-exit wrote
+// SENTINEL to e_f; accessing p later must trap (live: slot=SENTINEL ≠ k₁).
+fn make() -> i32* { let x: i32 = 42; &x }
+fn main() {
+    let p: i32* = make();
+    p[0] = 99   // stack dangle → trap (Exit code -4)
+}

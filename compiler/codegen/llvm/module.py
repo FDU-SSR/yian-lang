@@ -81,6 +81,10 @@ class LLModule:
         self.__yian_main_type_id: int | None = None
         self.__argc_global: ir.GlobalVariable | None = None
         self.__argv_global: ir.GlobalVariable | None = None
+        self.__key_heap_global: ir.GlobalVariable | None = None
+        self.__key_stack_global: ir.GlobalVariable | None = None
+        self.__trap_intrinsic: ir.Function | None = None
+        self.__lit_lock_global: ir.GlobalVariable | None = None
 
     # -- properties --
 
@@ -167,6 +171,49 @@ class LLModule:
             self.__argv_global.linkage = "internal"
             self.__argv_global.initializer = ir.Constant(ir.PointerType(ir.PointerType(ir.IntType(8))), None)
         return self.__argv_global
+
+    # -- fat-pointer mechanism globals (t8) --
+
+    def get_key_counter(self, is_heap: bool) -> ir.GlobalVariable:
+        """Gen 单调计数器全局(定义 10):堆/栈各一个 63 位计数,键 = 最高位标志拼接计数。
+
+        ``k ← Gen()`` 的 LLVM 发射:load 全局计数 → add 1 → store 回 → 堆键 or MSB
+        标志位。全局变量保证跨函数单调(同类内任意两次调用输出不同,定义 10)。
+        """
+        if is_heap:
+            if self.__key_heap_global is None:
+                self.__key_heap_global = self.__new_key_counter("__yian_key_heap")
+            return self.__key_heap_global
+        if self.__key_stack_global is None:
+            self.__key_stack_global = self.__new_key_counter("__yian_key_stack")
+        return self.__key_stack_global
+
+    def __new_key_counter(self, name: str) -> ir.GlobalVariable:
+        global_var = ir.GlobalVariable(self.__module, ir.IntType(64), name=name)  # type: ignore
+        global_var.linkage = "internal"
+        global_var.initializer = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        return global_var
+
+    def get_trap_intrinsic(self) -> ir.Function:
+        """``declare void @llvm.trap()`` — 运行期检查失败 → SIGILL → Exit code -4。"""
+        if self.__trap_intrinsic is None:
+            self.__trap_intrinsic = ir.Function(
+                self.__module, ir.FunctionType(ir.VoidType(), []), name="llvm.trap"
+            )
+        return self.__trap_intrinsic
+
+    def get_lit_lock(self) -> ir.GlobalVariable:
+        """字符串字面量锁槽:全局 i64,初值 = LITERAL_KEY(1),永不写。
+
+        字面量数据是全局只读区、生命周期为整个程序——live(p) 读该锁槽恒等于
+        键,字面量派生的指针恒 live;键 1 与任何真实帧键只在各自锁槽内比较,
+        无跨槽串扰(定义 8 以锁槽地址寻址)。
+        """
+        if self.__lit_lock_global is None:
+            self.__lit_lock_global = ir.GlobalVariable(self.__module, ir.IntType(64), name="__yian_lit_lock")  # type: ignore
+            self.__lit_lock_global.linkage = "internal"
+            self.__lit_lock_global.initializer = ir.Constant(ir.IntType(64), 1)  # type: ignore
+        return self.__lit_lock_global
 
     def emit_wrapper_main(self) -> None:
         """Emit the C-compatible ``@main`` wrapper that stores argc/argv and calls ``__yian_main``."""

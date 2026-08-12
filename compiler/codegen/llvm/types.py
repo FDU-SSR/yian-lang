@@ -29,6 +29,7 @@ class LLTypeCtx:
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
         self.__ptr: ir.PointerType = ir.PointerType(self.__i8)  # type: ignore
         self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
@@ -95,13 +96,6 @@ class LLTypeCtx:
             self.__storage[type_id] = self.__empty_struct
             return self.__empty_struct
 
-        # Pointer-to-ZST is itself ZST (§M5): erase to empty struct before
-        # the per-type match so it never reaches __handle_pointer.
-        if self.__type_ctx.is_zst(type_id):
-            result = self.__empty_struct
-            self.__storage[type_id] = result
-            return result
-
         match ty_def:
             case Type.VoidType():    result = self.__void
             case Type.NeverType():   result = self.__void
@@ -136,8 +130,10 @@ class LLTypeCtx:
             case 8: return ir.DoubleType()
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
-    def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
-        return ir.PointerType(self.__get_raw_type(type_def.pointee_type))
+    def __handle_pointer(self, _type_def: Type.PointerType) -> ir.Type:
+        # §7.4 方案 A: 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
+        # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
+        return self.__fat_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
         return ir.LiteralStructType([self.__get_raw_type(type_def.element_type).as_pointer(), self.__i64])
@@ -174,9 +170,15 @@ class LLTypeCtx:
         # `void` is the only LLVM type legal in return position for a ZST.
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         # Zero-sized parameters carry no data and are dropped from the signature.
+        # Pointer params/returns lower to the 5-field fat pointer aggregate
+        # (§7.4 方案 A); pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
-            params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())
+            # 接收者以 `&Self` 传递(CFG 层 `self` 变量类型为 `Self*` 胖指针):
+            # 签名参数须为胖指针聚合而非裸 `Self*`,否则 40B 槽与 8B 实参不匹配。
+            receiver_ptr_type = self.__type_ctx.alloc_pointer(receiver_type_id)
+            if not self.is_zst(receiver_ptr_type):
+                params.insert(0, self.__get_raw_type(receiver_ptr_type))
         return ir.FunctionType(ret, params)
 
     def __handle_function(self, type_def: Type.FunctionType) -> ir.Type:
@@ -226,7 +228,11 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
-        elif isinstance(type_def, (Type.PointerType, Type.FunctionPointerType)):
+        elif isinstance(type_def, Type.PointerType):
+            # §7.4 方案 A: fat pointer — 5 × 8B fields = 40B, align 8.
+            result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+        elif isinstance(type_def, Type.FunctionPointerType):
+            # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.ArrayType):
             element_size, element_align = self.__stable_layout(type_def.element_type)

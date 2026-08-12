@@ -8,6 +8,13 @@ from enum import Enum, auto
 
 from llvmlite import ir  # type: ignore[import-untyped]
 
+# 胖指针块头布局(定义 7):每个堆块布局为「锁头 + 负载」——块首 H 字节锁槽
+# (锁头仅锁槽,H = w = 8B),锁头区 [b, b+H) 在负载之前;分配锚定 data = b + H。
+# 本表 Malloc 内在函数在 t8 与块头锁槽写键交互(规则 3.6.1:锁槽首字写
+# k ← Gen(),堆键最高位 1),Free/Delete 与写 SENTINEL 交互(规则 3.6.2)。
+# 机制常量(SENTINEL / KeyGen / BlockHeader / FrameLock / 谓词)定义于
+# compiler/codegen/cfg/lockmech.py;本模块只声明 C 函数签名。
+
 
 class IntrinsicKind(Enum):
     Malloc = auto()

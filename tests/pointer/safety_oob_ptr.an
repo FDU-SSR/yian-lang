@@ -1,0 +1,23 @@
+// Fat-pointer out-of-bounds write negative test
+//
+// Covers the PtrDiff and Delete check insertion points (gate 2): pointer
+// difference (q - p) and delete (del p) both fire their CFG checks here.
+// The final out-of-bounds write r[4] traps at runtime (in_bounds fails:
+// index 4 + 1 > size 4). Runtime trap assertion (Exit code -4) is the t8 gate.
+
+fn main() {
+    let p: i32* = dyn[4] i32
+    p[0] = 1
+    p[1] = 2
+    p[2] = 3
+    p[3] = 4
+
+    let q: i32* = p + 2
+    let diff: u64 = q - p
+    assert diff == 2: "Expected diff to be 2"
+
+    del p
+
+    let r: i32* = dyn[4] i32
+    r[4] = 99  // OOB write: index 4 is one past the last element (0..3) → trap
+}

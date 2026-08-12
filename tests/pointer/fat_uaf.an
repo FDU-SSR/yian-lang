@@ -1,0 +1,11 @@
+// Fat-pointer use-after-free negative test (t9 建立的负例)
+//
+// del p 写块头锁槽 SENTINEL(规则 3.6.2 动作①);随后访问 *p 经 live 锁槽键比较
+// 失败 → llvm.trap → SIGILL → Exit code -4(t8 运行期 trap 语义)。
+
+fn main() {
+    let p: i32* = dyn[2] i32;
+    p[0] = 1;
+    del p;
+    p[0] = 99  // UAF: lock slot = SENTINEL → live 失败 → trap
+}

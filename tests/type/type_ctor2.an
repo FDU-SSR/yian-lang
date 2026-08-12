@@ -17,7 +17,7 @@ fn main() {
     assert sizeof(Fn<(), void>)      == sizeof(fn() -> void): "Fn<(),void>";
 
     // nesting (Tuple inside Ptr — Ptr is library typedef)
-    assert sizeof(Ptr<Tuple<i32, u8>>) == 8: "Ptr<Tuple<...>>";
+    assert sizeof(Ptr<Tuple<i32, u8>>) == 40: "Ptr<Tuple<...>>";
 
     // static method receiver — use sizeof() to avoid integer-literal return
     assert Tuple<i32, u8>.size() == sizeof(WT): "static call on Tuple<...>";
