@@ -13,8 +13,7 @@ impl str {
     // Create a str from a byte slice without validation.
     // Caller must guarantee the byte slice is valid UTF-8.
     static fn from_slice_unchecked(s: u8[]) -> Self {
-        let ret: str* = bitcast<str*>(&s);
-        *ret
+        __str_from_parts(__slice_get_ptr(s), __slice_get_len(s))
     }
 
     // Create a str from a byte slice with UTF-8 validation.
@@ -23,8 +22,7 @@ impl str {
         if !Self.is_valid_utf8(s) {
             return Option<str>.None;
         }
-        let ret: str* = bitcast<str*>(&s);
-        Option<str>.Some(*ret)
+        Option<str>.Some(__str_from_parts(__slice_get_ptr(s), __slice_get_len(s)))
     }
 
     // Validate that a byte slice is a well-formed UTF-8 sequence.
@@ -94,7 +92,7 @@ impl str {
 
     // Get the byte slice of the str
     pub fn as_slice() -> u8[] {
-        *bitcast<u8[]*>(self)
+        __slice_from_parts(__str_get_ptr(*self), __str_get_len(*self))
     }
 
     // Get an iterator over the characters of the str

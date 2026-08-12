@@ -7,15 +7,70 @@ from compiler.analysis.ty.ty import EnumVariant
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 # ---------------------------------------------------------------------------
+# 胖指针时序机制(块头锁槽 / 键 / 帧锁)——机制层常量与定义
+#
+# SENTINEL(全 1 字,定义 6 编码约定)与 Gen 单调计数器 KeyGen(定义 10)等机制
+# 常量、块头布局 BlockHeader(定义 7)、帧锁 FrameLock(§2.6、规则 3.7.1-3.7.2)
+# 与谓词 is_heap / live / is_raw(定义 9 / 8 / §2.5)定义于 lockmech.py,
+# 此处重导出供 CFG 层机制节点(t7 检查插入、t8 值层下降)引用。
+#
+#   - SENTINEL:释放 `delete p` 写块头锁槽、帧退出写帧锁槽的哨兵值
+#     (规则 3.6.2 / 3.7.2),全部返回路径。
+#   - KeyGen:Gen 单调计数器,堆键最高位 1、栈键最高位 0(定义 9-10)。
+#   - BlockHeader:块首 H 字节锁槽(锁头仅锁槽,H = w),分配锚定 data = b + H。
+#   - FrameLock:每帧一个活动锁槽,帧进入 re-key k_f ← Gen(),帧退出写 SENTINEL。
+#   - 谓词:is_heap 纯位判定 / live 锁槽键比较含 null 短路 / is_raw 纯字段检查。
+#
+# 本 todo(t9)只交付机制代码存在性;CFG 检查插入属 t7,LLVM 值层下降与
+# 运行期 trap 属 t8,本文件不承载检查节点。
+# ---------------------------------------------------------------------------
+from compiler.codegen.cfg.lockmech import (
+    BlockHeader,
+    FAT_DATA,
+    FAT_INDEX,
+    FAT_KEY,
+    FAT_LOCK_PTR,
+    FAT_SIZE,
+    FrameLock,
+    KeyGen,
+    SENTINEL,
+    is_heap,
+    is_raw,
+    live,
+)
+
+__all__ = [
+    "BlockHeader",
+    "FAT_DATA",
+    "FAT_INDEX",
+    "FAT_KEY",
+    "FAT_LOCK_PTR",
+    "FAT_SIZE",
+    "FrameLock",
+    "KeyGen",
+    "SENTINEL",
+    "is_heap",
+    "is_raw",
+    "live",
+]
+
+# ---------------------------------------------------------------------------
 # Statements
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class VarPtr:
-    """Get pointer to a local variable"""
+    """取局部变量槽地址,合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)。
+
+    data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(§2.6、规则 3.7.1,
+    函数入口实体化的寄存器值);index = 0;size = 1(取址总是指向单个元素
+    ——标量元素类型 T、数组元素类型 T[m])。
+    """
     result: Reg
     var_ref: VarRef
+    frame_lock_ptr: Value  # e_f:帧锁槽地址(函数入口 alloca 的 u64 栈槽)
+    frame_key: Value       # k_f:帧键(规则 3.7.1 帧进入 re-key)
 
 
 @dataclass
@@ -65,10 +120,17 @@ class Store:
 
 @dataclass
 class Malloc:
-    """Allocate memory on the heap"""
+    """Allocate memory on the heap.
+
+    胖指针语义(t7,规则 3.6.1):分配「锁头 + 负载」块,块头锁槽写键
+    μ⟨e⟩ := k(k ← Gen(),堆键 MSB 1;锁槽 = 块首首字,定义 7,BlockHeader);
+    返回 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(t8 构造)。
+    pointee 为 ZST 时保持快路径(undef,不写锁槽;key=None,§7.6 风险 2)。
+    """
     result: Reg
     type_id: int
     size: Value
+    key: Value | None = None  # k ← Gen();None = ZST 快路径(undef,不写锁槽)
 
 
 @dataclass
@@ -99,6 +161,113 @@ class ExtractValue:
 @dataclass
 class Delete:
     """Delete a pointer"""
+    ptr: Value
+
+
+# ---------------------------------------------------------------------------
+# 检查插入与锁槽机制节点(t7 检查点;LLVM 发射与运行期 trap 属 t8)
+#
+# §7.1 运行时检查插入点共 6 个:FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete。
+# 每个检查节点在 t8 落地为「前提不满足 → llvm.trap(SIGILL → Exit code -4)」;
+# 本文件承载节点存在性与语义,LLTranslator 的 case 由 t8 补充。
+# 锁槽交互:Malloc 块头写键(规则 3.6.1)、Delete 写 SENTINEL(规则 3.6.2)。
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GenKey:
+    """k ← Gen()(定义 10):堆/栈独立 63 位单调计数器。
+
+    Malloc 块头写键(规则 3.6.1,堆键 MSB 1)与帧进入 re-key(规则 3.7.1,
+    栈键 MSB 0)各生成一枚。LLVM 发射(全局计数器递增 + 标志位拼接)属 t8。
+    """
+    result: Reg
+    is_heap: bool
+
+
+@dataclass
+class WriteLockSlot:
+    """锁槽写值 μ⟨lock_ptr⟩ := value。
+
+    Delete 动作①写 SENTINEL(规则 3.6.2);Malloc 块头写键由 t8 的 malloc
+    下降内部完成(块首地址仅运行期可得),本节点用于已知锁槽地址的写。
+    """
+    lock_ptr: Value
+    value: Value
+
+
+@dataclass
+class CheckSafeAccess:
+    """safe_access(p,1) = live(p) ∧ in_bounds(p,1) 前检(规则 3.2.1-3.2.2)。
+
+    Load/Store 插入点。live = 锁槽键比较(定义 8,含 lock_ptr=0 短路为假);
+    in_bounds = 0 ≤ index ∧ index+1 ≤ size(定义 12)。t8 发射。
+    """
+    ptr: Value
+
+
+@dataclass
+class CheckInBounds:
+    """in_bounds(p_s,1)(规则 3.5.2,FieldPtr 重锚定前提)。
+
+    对 one-past-end 的 s 取字段 trap。t8 发射。
+    """
+    ptr: Value
+
+
+@dataclass
+class CheckElementArith:
+    """ElementPtr 算术良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)。
+
+    越过 one-past-end 或负方向越界 trap;无回绕子义务(O-1)由宽整数或
+    溢出检测落地(t8)。t8 发射。
+    """
+    base: Value
+    offset: Value
+
+
+@dataclass
+class CheckPtrDiff:
+    """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
+
+    异对象指针差 trap。t8 发射。
+    """
+    lhs: Value
+    rhs: Value
+
+
+@dataclass
+class CheckPtrCmp:
+    """序比较前提:data 相等(规则 3.4.1)。
+
+    跨对象序比较 trap(t10 发射)。相等比较(规则 3.4.2)按 (data, index)
+    二元组、无此前提,不插入本节点。
+    """
+    lhs: Value
+    rhs: Value
+
+
+@dataclass
+class PtrCmp:
+    """指针比较(规则 3.4.1-3.4.2,§7.6 风险 3)。
+
+    相等比较按 (data, index) 二元组;序比较在 CheckPtrCmp 前提(规则 3.4.1)
+    下按 index 比较。LLVM 无聚合 icmp,字段提取 + 前提检查属 t10。
+    """
+    result: Reg
+    op: BinaryOperator
+    lhs: Value
+    rhs: Value
+
+
+@dataclass
+class CheckDelete:
+    """Delete 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)(规则 3.6.2)。
+
+    四项 = is_heap 纯位判定(定义 9,不读锁槽)+ live 锁槽键比较(定义 8,
+    含 null 短路)+ is_raw 两分量:data = lock_ptr + H 与 index = 0(§2.5,
+    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均 trap。t8 发射。
+    """
     ptr: Value
 
 
@@ -170,6 +339,14 @@ class SysWrite:
 
 
 @dataclass
+class MemCopy:
+    """Byte-level memory copy — ``__memcpy(dest, src, count)``."""
+    dest: Value
+    src: Value
+    count: Value
+
+
+@dataclass
 class SysRead:
     result: Reg
     fd: Value
@@ -233,7 +410,11 @@ Stmt: TypeAlias = (
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close
+    | MemCopy
     | YianArgc | YianArgvPtr | YianCstrlen
+    | GenKey | WriteLockSlot
+    | CheckSafeAccess | CheckInBounds | CheckElementArith | CheckPtrDiff | CheckDelete
+    | CheckPtrCmp | PtrCmp
 )
 
 # ---------------------------------------------------------------------------
@@ -400,3 +581,4 @@ class Function:
     entry: Block  # entry block of the function/method, also included in `blocks`
     local_vars: dict[int, VarRef] = field(default_factory=dict[int, VarRef])  # symbol id -> VarRef for all local variables (including parameters)
     params: list[int] = field(default_factory=list[int])  # symbol ids of parameters, in order
+    frame_lock: tuple[Value, Value] | None = None  # ⟨e_f, k_f⟩:函数已实体化帧锁(规则 3.7.1);LLVM 层据此在全部返回路径 ret 前写 SENTINEL(规则 3.7.2 动作①)

@@ -42,6 +42,7 @@ class CfgBuilder:
         self.__func_name = func_name
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
+        self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(t7,规则 3.7.1)
         self.__func: IR.Function = IR.Function(name="", type_id=0, blocks=[], entry=IR.Block(""))  # placeholder; replaced in build()
 
     # ------------------------------------------------------------------
@@ -81,6 +82,12 @@ class CfgBuilder:
 
         # ── termination guard ──
         self.__guard_termination(dp)
+
+        # ── 帧锁实体化标记(规则 3.7.1)──
+        # 函数若实体化了帧锁(有帧锁 alloca),LLVM 层须在全部返回路径 ret 前
+        # 补发 WriteLockSlot(e_f, SENTINEL)(规则 3.7.2 动作①,帧退出写哨兵),
+        # 使栈悬垂访问经 live 键比较确定性 trap。标记随函数传给 LLTranslator。
+        self.__func.frame_lock = self.__frame_lock
 
         return self.__func
 
@@ -354,6 +361,17 @@ class CfgBuilder:
 
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
+        if self.__is_fat_pointer(ptr):
+            # t7 检查插入:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(规则 3.6.2;
+            # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
+            # data=lock_ptr+H 与 index=0)
+            self.__emit(IR.CheckDelete(ptr=ptr))
+            # 动作①:锁槽写 SENTINEL(规则 3.6.2)——提取 lock_ptr 字段寻址
+            lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
+            sentinel = IR.IntLiteral(value=IR.SENTINEL, type_id=TypeCtx.u64_id)
+            self.__emit(IR.WriteLockSlot(lock_ptr=lock_ptr, value=sentinel))
+            ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p) (规则 3.6.2) + 锁槽写 SENTINEL")
+        # 动作②:整块交还——t8 的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
         self.__emit(IR.Delete(ptr))
         return self.__void_reg()
 
@@ -515,6 +533,8 @@ class CfgBuilder:
                 return self.__resolve_sys_read(expr)
             case HIR.SysWrite():
                 return self.__resolve_sys_write(expr)
+            case HIR.MemCopy():
+                return self.__resolve_mem_copy(expr)
             case HIR.Open():
                 return self.__resolve_open(expr)
             case HIR.Close():
@@ -796,6 +816,13 @@ class CfgBuilder:
         buf = self.__resolve_val(expr.buf)
         return self.__build_sys_write(fd, buf)
 
+    def __resolve_mem_copy(self, expr: HIR.MemCopy) -> IR.Value:
+        dest = self.__resolve_val(expr.dest)
+        src = self.__resolve_val(expr.src)
+        count = self.__resolve_val(expr.count)
+        self.__emit(IR.MemCopy(dest=dest, src=src, count=count))
+        return self.__void_reg()
+
     def __resolve_open(self, expr: HIR.Open) -> IR.Value:
         path = self.__resolve_val(expr.path)
         flags = self.__resolve_val(expr.flags)
@@ -889,31 +916,106 @@ class CfgBuilder:
     # ir building helpers
     # ------------------------------------------------------------------
 
+    def __emit_frame_lock(self) -> tuple[IR.Value, IR.Value]:
+        """帧锁实体化(§2.6、规则 3.7.1):k_f ← Gen()(栈键 MSB 0),alloca 一个
+        u64 栈槽(锁槽),槽写键 μ⟨e_f⟩ := k_f 以 WriteLockSlot 表达。仅在首次
+        取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
+        终止符;无取址的函数不含帧锁节点。注意:Alloca 的初值为占位 0,t8
+        下降时改为存 k_f(帧锁槽写键);VarPtr 的 frame_key 已是 GenKey 结果。
+        帧退出写 SENTINEL(全部返回路径,规则 3.7.2 动作①)的发射属 t8。"""
+        if self.__frame_lock is not None:
+            return self.__frame_lock
+        saved_block = self.__current_block
+        self.__current_block = self.__func.entry
+        k_f = self.__build_gen_key(is_heap=False)
+        e_f = self.__build_alloca(k_f)
+        self.__emit(IR.WriteLockSlot(lock_ptr=e_f, value=k_f))
+        self.__current_block = saved_block
+        entry = self.__func.entry
+        frame_stmts = entry.stmts[-3:]
+        del entry.stmts[-3:]
+        entry.stmts[0:0] = frame_stmts
+        self.__frame_lock = (e_f, k_f)
+        return (e_f, k_f)
+
+    def __is_fat_pointer(self, ptr: IR.Value) -> bool:
+        """胖指针判定:PointerType 且 pointee 非 ZST。
+
+        指针-to-ZST 保持 ZST(§7.6 风险 2),走既有快路径、无检查;
+        FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
+        """
+        ty = self.__type_ctx[ptr.type_id]
+        if not isinstance(ty, Type.PointerType):
+            return False
+        return not self.__type_ctx.is_zst(ty.pointee_type)
+
+    def __build_gen_key(self, is_heap: bool) -> IR.Value:
+        """k ← Gen()(定义 10):堆键 MSB 1 / 栈键 MSB 0。"""
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        return self.__emit(IR.GenKey(result=result, is_heap=is_heap)).result
+
+    def __extract_fat_field(self, ptr: IR.Value, field_index: int) -> IR.Value:
+        """从 5 字段聚合提取字段(检查所需值提取:data/lock_ptr/key/index/size)。
+
+        指针字段(data/lock_ptr)类型为 u8*(裸字节地址);整数字段为 u64。
+        """
+        if field_index in (IR.FAT_DATA, IR.FAT_LOCK_PTR):
+            field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+        else:
+            field_type = TypeCtx.u64_id
+        return self.__build_extract_value(ptr, field_index, field_type)
+
     def __build_var_ptr(self, var_ref: IR.VarRef) -> IR.Value:
-        """Get the address of a local variable."""
+        """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)。
+
+        data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(首次取址时惰性
+        实体化于函数入口);index = 0;size = 1(取址总是指向单个元素,含数组取址)。
+        LLVM 下降属 t8。
+        """
+        e_f, k_f = self.__emit_frame_lock()
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
-        return self.__emit(IR.VarPtr(result=result, var_ref=var_ref)).result
+        return self.__emit(IR.VarPtr(
+            result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f,
+        )).result
 
     def __build_alloca(self, value: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
         return self.__emit(IR.Alloca(result=result, value=value)).result
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
+        # t7 检查插入:in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段 trap)
+        if self.__is_fat_pointer(base):
+            self.__emit(IR.CheckInBounds(ptr=base))
+            ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
         return self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__type_ctx[ptr.type_id]
         assert isinstance(ptr_type, Type.PointerType)
+        # t7 检查插入:safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)
+        if self.__is_fat_pointer(ptr):
+            self.__emit(IR.CheckSafeAccess(ptr=ptr))
+            ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.1)")
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
         return self.__emit(IR.Load(result=result, ptr=ptr)).result
 
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
+        # t7 检查插入:safe_access(p, 1)(规则 3.2.2,同 Load 的检查与地址折算)
+        if self.__is_fat_pointer(ptr):
+            self.__emit(IR.CheckSafeAccess(ptr=ptr))
+            ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.2)")
         self.__emit(IR.Store(ptr=ptr, value=value))
 
     def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
+        # t7:Malloc 块头锁槽写键 k ← Gen()(规则 3.6.1,堆键 MSB 1),返回
+        # 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(t8 构造);
+        # pointee 为 ZST 时维持快路径(undef,不写锁槽;key=None,§7.6 风险 2)。
+        key: IR.Value | None = None
+        if not self.__type_ctx.is_zst(type_id):
+            key = self.__build_gen_key(is_heap=True)
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
-        return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size)).result
+        return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
 
     def __build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         type_id = default_literals(self.__type_ctx, type_id)
@@ -940,16 +1042,41 @@ class CfgBuilder:
                 neg_offset = self.__build_binary(BinaryOperator.Sub, zero, rhs, rhs.type_id)
                 return self.__build_element_ptr(lhs, neg_offset, type_id)
 
+        # ── 指针比较字段化(规则 3.4.1-3.4.2,§7.6 风险 3,t10)──
+        # 胖指针(双方 PointerType 且 pointee 非 ZST)的比较路由至 PtrCmp:
+        # 序比较先插 CheckPtrCmp(data 相等前提,跨对象 trap);相等比较按
+        # (data, index) 二元组。FunctionPointerType 非 PointerType,不参与。
+        if op.is_comparison() and self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
+            return self.__build_ptr_cmp(op, lhs, rhs, type_id)
+
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
+        # t7 检查插入:算术 → 良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)
+        if self.__is_fat_pointer(base):
+            self.__emit(IR.CheckElementArith(base=base, offset=offset))
+            ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p') (定义 13;规则 3.3.1-3.3.2)")
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
         return self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        # t7 检查插入:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差 trap)
+        if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
+            self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
+            ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕 (规则 3.3.3)")
+        # 定型规则 8.1.9:指针差结果类型为 i64(t8 与 op_builder.py:288 同步)
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i64_id)
         return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
+
+    def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
+        # t10 检查插入:序比较先查 data 相等(规则 3.4.1 前提,跨对象序比较 trap);
+        # 相等比较(规则 3.4.2)按 (data, index) 二元组、无前提检查。
+        if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
+            self.__emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
+            ch_cfg_block().debug(lambda: "check insert PtrCmp: data 相等 (规则 3.4.1)")
+        result = IR.Reg(name=self.__new_name(), type_id=type_id)
+        return self.__emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def __build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
         type_id = default_literals(self.__type_ctx, type_id)
@@ -969,6 +1096,12 @@ class CfgBuilder:
         return self.__emit(IR.Invoke(result=result, callee=callee, args=args)).result
 
     def __build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
+        # t7:Cast 指针→指针语义(§7.1)——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
+        #   (5 字段结构重贴,LLVM 类型同为 {i8*,i8*,i64,i64,i64});涉及 ptr-to-ZST
+        #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射属 t8。
+        to_resolved = self.__type_ctx.resolve_aliases(to_type)
+        if isinstance(self.__type_ctx[to_resolved], Type.PointerType):
+            ch_cfg_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
         result = IR.Reg(name=self.__new_name(), type_id=to_type)
         return self.__emit(IR.Cast(result=result, value=value, to_type=to_type)).result
 

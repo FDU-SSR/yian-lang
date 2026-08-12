@@ -1,0 +1,10 @@
+// Test that the restricted slice/str fat-pointer primitives are rejected
+// outside the standard library.
+//
+// Expected compilation error: restricted operation
+
+fn main() {
+    let x: u64 = 42;
+    let p: u64* = &x;
+    let s: u64[] = __slice_from_parts(p, 1);
+}

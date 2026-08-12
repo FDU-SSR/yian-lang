@@ -172,6 +172,12 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             res = __line(guides, is_last, f"YianExit: span={__format_span(expr.span)}")
             res += __export_expr_child("Code", expr.code, guides, is_last, True, type_ctx)
             return res
+        case HIR.MemCopy():
+            res = __line(guides, is_last, f"MemCopy: span={__format_span(expr.span)}")
+            res += __export_expr_child("Dest", expr.dest, guides, is_last, False, type_ctx)
+            res += __export_expr_child("Src", expr.src, guides, is_last, False, type_ctx)
+            res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
+            return res
         case HIR.BitCopy():
             return __export_bit_copy(expr, guides, is_last, type_ctx)
         case HIR.Nop():

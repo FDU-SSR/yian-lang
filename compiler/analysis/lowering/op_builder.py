@@ -285,7 +285,7 @@ class OpBuilder:
                 op=BinaryOperator.Sub,
                 left=left_hir,
                 right=right_hir,
-                type_id=TypeCtx.u64_id,
+                type_id=TypeCtx.i64_id,
                 is_place=False,
             )
 

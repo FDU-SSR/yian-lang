@@ -9,8 +9,6 @@ from std.core.drop import Drop;
 from std.core.mem import memmove;
 from std.core.range import Range;
 
-from std.core.slice import from_raw_parts;
-
 pub struct Vec<T> {
     raw_vec: RawVec<T>,
     len: u64,
@@ -36,7 +34,7 @@ impl<T> Vec<T> {
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
         self.validity_assert();
-        from_raw_parts(self.raw_vec.ptr(), self.len)
+        __slice_from_parts(self.raw_vec.ptr(), self.len)
     }
 
     // Push an element to the end(value is moved into the Vec)

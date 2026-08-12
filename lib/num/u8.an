@@ -1,5 +1,4 @@
 from std.core.hash import Murmur3Hasher, Hash;
-from std.core.slice import from_raw_parts;
 
 impl u8 {
     pub fn is_ascii_whitespace() -> bool {
@@ -27,6 +26,8 @@ impl Hash<Murmur3Hasher> for u8 {
     fn hash(hasher: Murmur3Hasher) {
         let val: u8 = *self;
         let ptr: u8* = &val;
-        hasher.write(from_raw_parts(ptr, 1));
+        let buf: u8[1] = [0];
+        __memcpy(&buf, ptr, 1);
+        hasher.write(buf.as_slice());
     }
 }

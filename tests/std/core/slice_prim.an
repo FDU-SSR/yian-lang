@@ -1,0 +1,38 @@
+// Test the restricted slice/str fat-pointer primitives:
+//   __slice_from_parts / __slice_get_ptr / __slice_get_len
+//   __str_from_parts / __str_get_ptr / __str_get_len
+//
+// These builtins construct slice/str values from raw {ptr, len} parts
+// and extract their fields. They are confined to the standard library.
+//
+// Expected output: 0
+
+fn main() {
+    // --- slice construction from parts ---
+    let arr: u64[3] = [10, 20, 30];
+    let p: u64* = &arr[0];
+    let s: u64[] = __slice_from_parts(p, 3);
+
+    assert __slice_get_len(s) == 3: "slice length should be 3";
+    let sp: u64* = __slice_get_ptr(s);
+    assert sp == p: "slice ptr should match the source pointer";
+    assert *sp == 10: "first element should be readable through the slice ptr";
+    assert *(sp + 2) == 30: "third element should be readable through the slice ptr";
+
+    // A zero-length slice keeps the pointer and reports len 0.
+    let empty: u64[] = __slice_from_parts(p, 0);
+    assert __slice_get_len(empty) == 0: "empty slice should have len 0";
+    assert __slice_get_ptr(empty) == p: "empty slice should keep its pointer";
+
+    // --- str construction from parts ---
+    let msg: str = "hello";
+    let mp: u8* = __str_get_ptr(msg);
+    assert __str_get_len(msg) == 5: "str length should be 5";
+
+    let sub: str = __str_from_parts(mp, 2);
+    assert __str_get_len(sub) == 2: "sub-str length should be 2";
+    let sp2: u8* = __str_get_ptr(sub);
+    assert sp2 == mp: "sub-str ptr should match the source pointer";
+    assert *sp2 == 104: "first byte should be 'h' (104)";
+    assert *(sp2 + 1) == 101: "second byte should be 'e' (101)";
+}

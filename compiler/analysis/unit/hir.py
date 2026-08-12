@@ -450,6 +450,23 @@ class Nop:
 
 
 @dataclass
+class MemCopy:
+    """Byte-level memory copy builtin — ``__memcpy(dest, src, count)``.
+
+    ``dest`` and ``src`` are pointer-typed expressions (``T*`` / ``U*``,
+    possibly different pointee types); ``count`` is a ``u64`` byte length.
+    Semantics: unrestricted byte copy ``memcpy(dest, src, count)`` — hence
+    only available inside the stdlib (see ``restricted_ops``).
+    """
+    span: SrcSpan
+    dest: Expr
+    src: Expr
+    count: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -494,4 +511,5 @@ Expr: TypeAlias = (
     | BitCopy
     | AssumeInit
     | Nop
+    | MemCopy
 )

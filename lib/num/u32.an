@@ -1,10 +1,10 @@
 from std.core.hash import Murmur3Hasher, Hash;
-from std.core.slice import from_raw_parts;
 
 impl Hash<Murmur3Hasher> for u32 {
     fn hash(hasher: Murmur3Hasher) {
         let val: u32 = *self;
-        let ptr: u8* = bitcast<u8*>(&val);
-        hasher.write(from_raw_parts(ptr, 4));
+        let buf: u8[4] = [0, 0, 0, 0];
+        __memcpy(&buf, &val, 4);
+        hasher.write(buf.as_slice());
     }
 }

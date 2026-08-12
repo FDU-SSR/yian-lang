@@ -327,6 +327,19 @@ class ExprChecker:
         expected_ty = self.__ctx.type_ctx[expected]
         expr_ty = self.__ctx.type_ctx[expr.type_id]
 
+        # Array decay (docs/security-code.md §8.1.3): `a: T[N]` is coerced to
+        # `T*` pointing at the first element. A `T[N]` value is wrapped in an
+        # `AddrOf` (yielding a `T[N]*`) and re-anchored to `T*` via a pointer
+        # bitcast; a `T[N]*` pointer (e.g. `&a`) is re-anchored directly.
+        if isinstance(expected_ty, Type.PointerType) and isinstance(expr_ty, Type.ArrayType) and expected == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type):
+            addr = HIR.Unary(span=expr.span, op=UnaryOperator.AddrOf, operand=expr, type_id=self.__ctx.type_ctx.alloc_pointer(expr.type_id), is_place=False)
+            return HIR.BitCast(span=expr.span, value=addr, target_type=expected, type_id=expected, is_place=False)
+        if isinstance(expected_ty, Type.PointerType) and isinstance(expr_ty, Type.PointerType):
+            pointee_ty = self.__ctx.type_ctx[expr_ty.pointee_type]
+            if isinstance(pointee_ty, Type.ArrayType) and expected == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
+                # `T[N]*` → `T*`: re-anchor the pointee from `T[N]` to `T`.
+                return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
+
         match expr:
             case HIR.IntLiteral():
                 if not isinstance(expected_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):

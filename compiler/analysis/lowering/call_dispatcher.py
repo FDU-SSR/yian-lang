@@ -26,7 +26,13 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init", "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit"})
+# Fat-pointer primitives (restricted to the standard library via restricted_ops).
+BUILTIN_NAMES = frozenset({
+    "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init",
+    "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit", "__memcpy",
+    "__slice_from_parts", "__slice_get_ptr", "__slice_get_len",
+    "__str_from_parts", "__str_get_ptr", "__str_get_len",
+})
 
 
 class CallDispatcher:
@@ -184,6 +190,20 @@ class CallDispatcher:
                 return self.__handle_yian_cstrlen(node)
             case "__yian_exit":
                 return self.__handle_yian_exit(node)
+            case "__memcpy":
+                return self.__handle_mem_copy(node)
+            case "__slice_from_parts":
+                return self.__handle_slice_from_parts(node)
+            case "__slice_get_ptr":
+                return self.__handle_slice_get_ptr(node)
+            case "__slice_get_len":
+                return self.__handle_slice_get_len(node)
+            case "__str_from_parts":
+                return self.__handle_str_from_parts(node)
+            case "__str_get_ptr":
+                return self.__handle_str_get_ptr(node)
+            case "__str_get_len":
+                return self.__handle_str_get_len(node)
             case _:
                 raise CompilerError("Unreachable Code")
 
@@ -263,6 +283,163 @@ class CallDispatcher:
             type_id=self.__ctx.type_ctx.never_id,
             is_place=False,
         )
+
+    def __handle_mem_copy(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__memcpy(dest, src, count)` into HIR.MemCopy.
+
+        Signature pre-decided as ``(T*, T*, u64)``: the two pointers may
+        have *different* pointee types (e.g. ``&k`` is ``u64*`` while the
+        source is ``u8*``) — this is a byte-level copy, the pointee types
+        are only checked to be pointers.  ``count`` is coerced to ``u64``.
+        """
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__memcpy'", node.span)
+        if len(node.args) != 3:
+            raise AnalysisError(f"'__memcpy' expects exactly 3 arguments, got {len(node.args)}", node.span)
+
+        dest = self.__expr.value(node.args[0].value)
+        src = self.__expr.value(node.args[1].value)
+        count = self.__expr.coerce(self.__expr.value(node.args[2].value), self.__ctx.type_ctx.u64_id)
+
+        dest_ty = self.__ctx.type_ctx[dest.type_id]
+        src_ty = self.__ctx.type_ctx[src.type_id]
+        if not isinstance(dest_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'__memcpy' dest must be a pointer, got '{self.__ctx.type_ctx.get_name(dest.type_id)}'",
+                node.span,
+            )
+        if not isinstance(src_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'__memcpy' src must be a pointer, got '{self.__ctx.type_ctx.get_name(src.type_id)}'",
+                node.span,
+            )
+
+        return HIR.MemCopy(
+            span=node.span,
+            dest=dest,
+            src=src,
+            count=count,
+            type_id=self.__ctx.type_ctx.void_id,
+            is_place=False,
+        )
+
+    def __handle_slice_from_parts(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__slice_from_parts(ptr, len)` into a slice value {ptr, len}.
+
+        The element type is inferred from the pointer's pointee: passing a
+        ``T*`` yields a ``T[]`` fat pointer.
+        """
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__slice_from_parts'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'__slice_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        ptr = self.__expr.value(node.args[0].value)
+        ptr_ty = self.__ctx.type_ctx[ptr.type_id]
+        if not isinstance(ptr_ty, Type.PointerType):
+            raise AnalysisError(
+                f"'__slice_from_parts' expects a pointer as its first argument, "
+                f"got '{self.__ctx.type_ctx.get_name(ptr.type_id)}'",
+                node.span,
+            )
+        len_expr = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.u64_id)
+        slice_type = self.__ctx.type_ctx.alloc_slice(ptr_ty.pointee_type)
+        return HIR.Tuple(
+            span=node.span,
+            field_values=[ptr, len_expr],
+            type_id=slice_type,
+            is_place=False,
+        )
+
+    def __handle_slice_get_ptr(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__slice_get_ptr(slice)` into the slice's data pointer."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__slice_get_ptr'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'__slice_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        slice_expr = self.__expr.value(node.args[0].value)
+        slice_ty = self.__ctx.type_ctx[slice_expr.type_id]
+        if not isinstance(slice_ty, Type.SliceType):
+            raise AnalysisError(
+                f"'__slice_get_ptr' expects a slice argument, "
+                f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
+                node.span,
+            )
+        ptr_type = self.__ctx.type_ctx.alloc_pointer(slice_ty.element_type)
+        return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=0, type_id=ptr_type, is_place=False)
+
+    def __handle_slice_get_len(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__slice_get_len(slice)` into the slice's length."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__slice_get_len'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'__slice_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        slice_expr = self.__expr.value(node.args[0].value)
+        slice_ty = self.__ctx.type_ctx[slice_expr.type_id]
+        if not isinstance(slice_ty, Type.SliceType):
+            raise AnalysisError(
+                f"'__slice_get_len' expects a slice argument, "
+                f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
+                node.span,
+            )
+        return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=1, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+
+    def __handle_str_from_parts(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__str_from_parts(ptr, len)` into a str value {ptr, len}.
+
+        str shares the {ptr, i64} layout with slices; the pointer must be
+        ``u8*`` so the inserted value matches the LLVM struct field.
+        """
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__str_from_parts'", node.span)
+        if len(node.args) != 2:
+            raise AnalysisError(f"'__str_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
+
+        ptr = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id))
+        len_expr = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.u64_id)
+        return HIR.Tuple(
+            span=node.span,
+            field_values=[ptr, len_expr],
+            type_id=self.__ctx.type_ctx.str_id,
+            is_place=False,
+        )
+
+    def __handle_str_get_ptr(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__str_get_ptr(s)` into the string's data pointer."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__str_get_ptr'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'__str_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        s = self.__expr.value(node.args[0].value)
+        s_ty = self.__ctx.type_ctx[s.type_id]
+        if not isinstance(s_ty, Type.StrType):
+            raise AnalysisError(
+                f"'__str_get_ptr' expects a 'str' argument, "
+                f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
+                node.span,
+            )
+        ptr_type = self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id)
+        return HIR.TupleAccess(span=node.span, receiver=s, index=0, type_id=ptr_type, is_place=False)
+
+    def __handle_str_get_len(self, node: AST.Call) -> HIR.Expr:
+        """Lower `__str_get_len(s)` into the string's length."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__str_get_len'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'__str_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
+
+        s = self.__expr.value(node.args[0].value)
+        s_ty = self.__ctx.type_ctx[s.type_id]
+        if not isinstance(s_ty, Type.StrType):
+            raise AnalysisError(
+                f"'__str_get_len' expects a 'str' argument, "
+                f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
+                node.span,
+            )
+        return HIR.TupleAccess(span=node.span, receiver=s, index=1, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
         """Lower `sys_write(fd, buf)` into HIR.SysWrite."""

@@ -39,11 +39,25 @@ RESTRICTED_BUILTIN_NAMES = frozenset(
         "__yian_exit",
         "assume_init",
         "bitcopy",
+        "__memcpy",
     }
 )
 
 # Restricted stdlib function names: unchecked size-field construction.
-RESTRICTED_STDLIB_FUNCS = frozenset({"from_raw_parts"})
+# The fat-pointer primitives forge slice/str values from raw {ptr, len}
+# parts and are therefore confined to the standard library, exactly like
+# `from_raw_parts`.
+RESTRICTED_STDLIB_FUNCS = frozenset(
+    {
+        "from_raw_parts",
+        "__slice_from_parts",
+        "__slice_get_ptr",
+        "__slice_get_len",
+        "__str_from_parts",
+        "__str_get_ptr",
+        "__str_get_len",
+    }
+)
 
 RESTRICTED_CALL_NAMES = RESTRICTED_BUILTIN_NAMES | RESTRICTED_STDLIB_FUNCS
 
@@ -55,6 +69,18 @@ def __is_stdlib_file(path: Path) -> bool:
     ``prelude.__is_stdlib_file``.
     """
     return "lib" in path.resolve().parts
+
+
+def __is_test_harness_file(path: Path) -> bool:
+    """A file is part of the compiler's functional regression suite iff its
+    resolved path contains a ``tests/std`` component pair.
+
+    ``tests/std/`` mirrors the standard library layout and directly
+    exercises the restricted primitives; ``tests/error/`` is intentionally
+    *not* exempt so the restriction itself stays under negative test.
+    """
+    parts = path.resolve().parts
+    return any(part == "tests" and parts[i + 1] == "std" for i, part in enumerate(parts[:-1]))
 
 
 class RestrictedOpsChecker:
@@ -180,7 +206,7 @@ def check_restricted_ops(programs: list[AST.Program], src_files: list[Path]) -> 
     any non-stdlib program.  Standard-library programs are skipped.
     """
     for src_file, program in zip(src_files, programs):
-        if __is_stdlib_file(src_file):
+        if __is_stdlib_file(src_file) or __is_test_harness_file(src_file):
             continue
         checker = RestrictedOpsChecker()
         checker.check(program)
