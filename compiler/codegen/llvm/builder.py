@@ -328,15 +328,20 @@ class LLBuilder:
             ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
             self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
             return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
-        # Convert element count to byte count for C's malloc
+        # Convert element count to byte count for C's malloc.
+        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及 +8 锁头,一律在 i128
+        # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ trap。否则纯 64 位乘法
+        # 回绕(如 n=2^62+1,|T|=8 → 2^65 → 小值)会令物理分配过小,而胖指针
+        # size 字段 = n(元素数,无回绕),in_bounds 全部通过 → 越界访问逃过检查。
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
-        if elem_size == 1:
-            byte_size = size
-        else:
-            byte_size_ir = self.__builder.mul(size.ir_val, ir.Constant(ir.IntType(64), elem_size))  # type: ignore
-            byte_size = LLValue(self.__type_ctx.u64_id, byte_size_ir)  # type: ignore
+        i128: ir.IntType = ir.IntType(128)  # type: ignore
+        size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
+        total128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
         # 规则 3.6.1:块 = 锁头(H=8)+ 负载;块头锁槽写键(锁槽 = 块首首字)
-        total_ir = self.__builder.add(byte_size.ir_val, ir.Constant(ir.IntType(64), 8))  # type: ignore
+        total128 = self.__builder.add(total128, ir.Constant(i128, 8))  # type: ignore
+        fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "mof")
+        total_ir = self.__builder.trunc(total128, ir.IntType(64))  # type: ignore
         total = LLValue(self.__type_ctx.u64_id, total_ir)  # type: ignore
         raw = self.__call_intrinsic(IntrinsicKind.Malloc, [total])
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
