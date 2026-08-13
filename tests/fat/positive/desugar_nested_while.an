@@ -1,0 +1,17 @@
+// Regression: nested control flow with a trailing `;` must still be desugared.
+// The outer `while ...;` parses as AST.Semi(expr=While); the desugar pass must
+// recurse through Semi to lower the nested while/assert too. Without that, the
+// leftover While reaches expr_checker and compilation fails.
+//
+// Expected: exit 0, no output (a decrements to 0).
+
+fn main() {
+    let a: u64 = 3;
+    while a > 0 {          // trailing `;` → AST.Semi(expr=While)
+        while a > 1 {      // nested While must be desugared as well
+            a = a - 1;
+        };
+        a = a - 1;
+    };
+    assert a == 0: "fail";
+}

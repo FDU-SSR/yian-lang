@@ -80,6 +80,9 @@ class Desugar:
             case AST.Match():
                 for _, arm_block in stmt.arms:
                     processor(arm_block)
+            case AST.Semi():
+                # trailing `;` wraps a statement; recurse so nested control flow is still desugared
+                self.__recurse_blocks(stmt.expr, processor)
             case _:
                 return
 

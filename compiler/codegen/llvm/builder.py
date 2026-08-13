@@ -175,17 +175,29 @@ class LLBuilder:
             nxt = self.__builder.or_(nxt, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000))  # type: ignore
         return LLValue(self.__type_ctx.u64_id, nxt)  # type: ignore
 
+    def __split_block_name(self, suffix: str, kind: str, seq: int) -> str:
+        """分裂出的新块名:短 CFG 块标签作基名 + 单调序列保证唯一。
+
+        基名用 ``__current_cfg_block``(CFG 块标签,position_at 维护,跨分裂
+        不变)而非当前 LLVM 块名——后者随每次分裂拼接增长,直线序列(如 N 条
+        连续 ``t[i] = v``)可把单个标签推过 1024 字符,parse_assembly 截断后
+        各块共享同一前缀塌缩为一个块(缺陷 B)。超长回退短名作最后防线。
+        """
+        name = f"{self.__current_cfg_block}.{suffix}.{kind}.{seq}"
+        if len(name) > 1000:
+            name = f"b{seq}.{kind}"
+        return name
+
     def __emit_check(self, cond: LLValue, suffix: str) -> None:
         """检查失败 → llvm.trap(SIGILL → Exit code -4);通过 → 继续于新 ok 块。
 
         检查是 CFG 块中间的语句,必须分裂基本块:原块以条件分支结束,ok 块
         承载后续语句与终止符,trap 块 call llvm.trap + unreachable。
         """
-        label = self.__builder.block.name  # type: ignore
         seq = self.__check_seq
         self.__check_seq += 1
-        ok_block = self.__func.new_block(f"{label}.{suffix}.ok.{seq}")
-        trap_block = self.__func.new_block(f"{label}.{suffix}.trap.{seq}")
+        ok_block = self.__func.new_block(self.__split_block_name(suffix, "ok", seq))
+        trap_block = self.__func.new_block(self.__split_block_name(suffix, "trap", seq))
         self.__func.add_block(ok_block.name, ok_block)  # type: ignore
         self.__func.add_block(trap_block.name, trap_block)  # type: ignore
         self.__builder.cbranch(cond.ir_val, ok_block, trap_block)  # type: ignore
@@ -202,12 +214,11 @@ class LLBuilder:
         用于 live 的 null 短路(定义 8:lock_ptr = 0 时短路为假,不读地址 0
         物理槽位,避免段错误退化)。
         """
-        label = self.__builder.block.name  # type: ignore
         seq = self.__check_seq
         self.__check_seq += 1
-        then_block = self.__func.new_block(f"{label}.g.then.{seq}")
-        else_block = self.__func.new_block(f"{label}.g.else.{seq}")
-        merge_block = self.__func.new_block(f"{label}.g.merge.{seq}")
+        then_block = self.__func.new_block(self.__split_block_name("g", "then", seq))
+        else_block = self.__func.new_block(self.__split_block_name("g", "else", seq))
+        merge_block = self.__func.new_block(self.__split_block_name("g", "merge", seq))
         self.__builder.cbranch(guard, then_block, else_block)  # type: ignore
         then_builder = ir.IRBuilder(then_block)
         then_val = compute(then_builder)  # type: ignore[operator]
@@ -372,11 +383,10 @@ class LLBuilder:
         raw = self.__fat_data(lock_ptr).ir_val
         if isinstance(raw, ir.Constant) and raw.constant is None:  # type: ignore
             return
-        label = self.__builder.block.name  # type: ignore
         seq = self.__check_seq
         self.__check_seq += 1
-        do_store = self.__func.new_block(f"{label}.wls.store.{seq}")
-        skip_block = self.__func.new_block(f"{label}.wls.skip.{seq}")
+        do_store = self.__func.new_block(self.__split_block_name("wls", "store", seq))
+        skip_block = self.__func.new_block(self.__split_block_name("wls", "skip", seq))
         self.__func.add_block(do_store.name, do_store)  # type: ignore
         self.__func.add_block(skip_block.name, skip_block)  # type: ignore
         is_null = self.__builder.icmp_signed("==", raw, ir.Constant(raw.type, None))  # type: ignore
