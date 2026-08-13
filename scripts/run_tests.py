@@ -230,6 +230,10 @@ def discover_tests() -> list[TestCase]:
         if rel.parts[0] == "fat":
             continue
 
+        # Fat-pointer CVE experiments have their own runner (scripts/run_fat_cve.py).
+        if rel.parts[0] == "fat_cve":
+            continue
+
         src_rel = str(rel)
 
         # Skip known helper files (e.g. private/private.an).
