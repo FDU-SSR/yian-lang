@@ -66,11 +66,12 @@ class VarPtr:
     data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(§2.6、规则 3.7.1,
     函数入口实体化的寄存器值);index = 0;size = 1(取址总是指向单个元素
     ——标量元素类型 T、数组元素类型 T[m])。
+    raw 模式(t2):无帧锁,frame_lock_ptr/frame_key 均为 None(裸 8B 指针)。
     """
     result: Reg
     var_ref: VarRef
-    frame_lock_ptr: Value  # e_f:帧锁槽地址(函数入口 alloca 的 u64 栈槽)
-    frame_key: Value       # k_f:帧键(规则 3.7.1 帧进入 re-key)
+    frame_lock_ptr: Value | None  # e_f:帧锁槽地址(函数入口 alloca 的 u64 栈槽);raw 模式为 None
+    frame_key: Value | None       # k_f:帧键(规则 3.7.1 帧进入 re-key);raw 模式为 None
 
 
 @dataclass

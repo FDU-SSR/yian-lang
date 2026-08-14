@@ -1,0 +1,46 @@
+// raw_compat_mixed.an — 裸指针兼容:混合操作(分配 + 算术 + 字段 + 释放)
+//
+// 组合用例:链表构建/遍历/释放 + 栈数组指针算术与差、序比较,
+// 混合 dyn 分配、struct 字段访问、del。正确程序,
+// fat 与 raw 双模式都必须 exit 0。
+//
+// Expected output: 0
+
+struct Node {
+    value: i32,
+    next: Node*,
+}
+
+fn main() {
+    // 链表构建 + 遍历
+    let n3: Node* = dyn Node(3, nullptr);
+    let n2: Node* = dyn Node(2, n3);
+    let n1: Node* = dyn Node(1, n2);
+
+    let sum: i32 = 0;
+    let cur: Node* = n1;
+    while cur != nullptr {
+        sum += cur.value;
+        cur = cur.next;
+    }
+    assert sum == 6: "list sum == 6";
+
+    // 栈数组指针算术 + 差 + 序比较
+    let arr: i32[5] = [1, 2, 3, 4, 5];
+    let p: i32* = &arr[0];
+    assert *(p + 3) == 4: "*(p+3) == 4";
+    let diff: i64 = (p + 4) - p;
+    assert diff == 4: "ptr diff == 4";
+    assert p + 4 > p + 3: "p+4 > p+3";
+
+    // 释放整条链(先存 next 再 del)
+    let d: Node* = n1;
+    let count: i32 = 0;
+    while d != nullptr {
+        let nx: Node* = d.next;
+        del d;
+        d = nx;
+        count += 1;
+    }
+    assert count == 3: "deleted 3 nodes";
+}

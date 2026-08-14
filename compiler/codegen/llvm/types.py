@@ -15,10 +15,12 @@ from compiler.codegen.llvm.value import LLType
 class LLTypeCtx:
     """Maps Yian ``TypeCtx`` type IDs to ``ir.Type`` objects."""
 
-    def __init__(self, type_ctx: TypeCtx, module: ir.Module, unit_names: dict[int, str]) -> None:
+    def __init__(self, type_ctx: TypeCtx, module: ir.Module, unit_names: dict[int, str], raw_pointers: bool = False) -> None:
         self.__type_ctx = type_ctx
         self.__module = module
         self.__unit_names = unit_names
+        # 评测专用:raw_pointers 开启时指针按裸 8B 处理(无 5 字段元数据),仅供性能评测。
+        self.__raw_pointers = raw_pointers
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
@@ -130,9 +132,13 @@ class LLTypeCtx:
             case 8: return ir.DoubleType()
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
-    def __handle_pointer(self, _type_def: Type.PointerType) -> ir.Type:
+    def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
         # §7.4 方案 A: 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
+        # 评测专用(t1/t2):raw_pointers 下指针退化为裸 8B **有型**指针 T*(load/store/gep
+        # 需 pointee 布局;t1 用无型 i8* 致 store/gep 类型错配,t2 改为有型)。
+        if self.__raw_pointers:
+            return self.__get_raw_type(type_def.pointee_type).as_pointer()
         return self.__fat_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
@@ -230,7 +236,11 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.PointerType):
             # §7.4 方案 A: fat pointer — 5 × 8B fields = 40B, align 8.
-            result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+            # 评测专用(t1):raw_pointers 下指针为裸 8B,align 8。
+            if self.__raw_pointers:
+                result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
+            else:
+                result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.FunctionPointerType):
             # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore

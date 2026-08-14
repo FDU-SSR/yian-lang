@@ -38,9 +38,14 @@ def dump(func: IR.Function) -> str:
 def __dump_stmt(stmt: IR.Stmt) -> str:
     match stmt:
         case IR.VarPtr(result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f):
+            if e_f is None:
+                frame = "⟨-, -⟩"
+            else:
+                assert k_f is not None
+                frame = f"⟨{__dump_value(e_f)}, {__dump_value(k_f)}⟩"
             return (
                 f"%{result.name} = varptr {var_ref.name}"
-                f" ⟨{__dump_value(e_f)}, {__dump_value(k_f)}⟩"
+                f" {frame}"
                 f"  [{__type_str(var_ref.type_id)}]"
             )
 

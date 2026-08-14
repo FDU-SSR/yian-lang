@@ -1,0 +1,42 @@
+// raw_compat_field.an — 裸指针兼容:结构体字段访问 + 字段指针读写
+//
+// 通过堆分配结构体指针做字段读写,并经由外层结构的字段指针(indirection)
+// 读写被指向结构的字段。正确程序,fat 与 raw 双模式都必须 exit 0。
+//
+// Expected output: 0
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Wrap {
+    p: Point*,
+}
+
+fn main() {
+    let pt: Point* = dyn Point(1, 2);
+    assert pt.x == 1: "pt.x == 1";
+    assert pt.y == 2: "pt.y == 2";
+
+    // 字段写
+    pt.x = 10;
+    pt.y = 20;
+    assert pt.x == 10: "pt.x == 10 after write";
+    assert pt.y == 20: "pt.y == 20 after write";
+
+    // 字段指针(Wrap.p)解引用读写被指向结构
+    let w: Wrap* = dyn Wrap(pt);
+    assert w.p.x == 10: "w.p.x == 10 via field pointer";
+    w.p.y = 21;
+    assert pt.y == 21: "write via w.p.y visible at pt.y";
+
+    // 取出字段指针后独立使用
+    let inner: Point* = w.p;
+    assert inner.x + inner.y == 31: "inner.x + inner.y == 31";
+    inner.x = 100;
+    assert pt.x == 100: "write via inner visible at pt.x";
+
+    del w;
+    del pt;
+}

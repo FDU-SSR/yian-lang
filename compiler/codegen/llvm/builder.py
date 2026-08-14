@@ -27,11 +27,12 @@ class BuilderPosition(Enum):
 class LLBuilder:
     """High-level builder that emits LLVM IR for a single function."""
 
-    def __init__(self, func: LLFunction, module: LLModule, ll_type_ctx: LLTypeCtx, type_ctx: TypeCtx) -> None:
+    def __init__(self, func: LLFunction, module: LLModule, ll_type_ctx: LLTypeCtx, type_ctx: TypeCtx, raw_pointers: bool = False) -> None:
         self.__func = func
         self.__module = module
         self.__ll_type_ctx = ll_type_ctx
         self.__type_ctx = type_ctx
+        self.__raw_pointers = raw_pointers
         self.__builder: ir.IRBuilder
         self.__check_seq = 0
         self.__continuations: dict[str, str] = {}
@@ -70,7 +71,12 @@ class LLBuilder:
         )
 
     def __is_fat_type(self, type_id: int) -> bool:
-        """类型层胖指针判定:PointerType 且 pointee 非 ZST(与 CFG 层 __is_fat_pointer 对应)。"""
+        """类型层胖指针判定:PointerType 且 pointee 非 ZST(与 CFG 层 __is_fat_pointer 对应)。
+
+        评测专用(t1):raw_pointers 下恒 False,指针一律按裸 8B 处理。
+        """
+        if self.__raw_pointers:
+            return False
         ty = self.__type_ctx[type_id]
         return isinstance(ty, Type.PointerType) and not self.__type_ctx.is_zst(ty.pointee_type)
 
@@ -350,14 +356,24 @@ class LLBuilder:
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
         total128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
-        # 规则 3.6.1:块 = 锁头(H=8)+ 负载;块头锁槽写键(锁槽 = 块首首字)
-        total128 = self.__builder.add(total128, ir.Constant(i128, 8))  # type: ignore
+        if not self.__raw_pointers:
+            # 规则 3.6.1:块 = 锁头(H=8)+ 负载;块头锁槽写键(锁槽 = 块首首字)。
+            # raw 模式无锁头(块 = 负载,data = 块基址)。
+            total128 = self.__builder.add(total128, ir.Constant(i128, 8))  # type: ignore
+        # O-1 溢出检查(raw 模式保留:防御性,决策点已定)
         fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "mof")
         total_ir = self.__builder.trunc(total128, ir.IntType(64))  # type: ignore
         total = LLValue(self.__type_ctx.u64_id, total_ir)  # type: ignore
         raw = self.__call_intrinsic(IntrinsicKind.Malloc, [total])
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
+        if self.__raw_pointers:
+            # raw 模式:data = 块基址,直接返回裸指针(无锁头偏移、无 5 字段聚合)。
+            # malloc intrinsic 返回 i8*,须 bitcast 到有型 T*(raw 指针为 T*)。
+            typed = self.__builder.bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
+            result_val = LLValue(ptr_type_id, typed)  # type: ignore
+            self.__func.set_reg(result, result_val)
+            return result_val
         block_base = LLValue(ptr_type_id, raw.ir_val)  # type: ignore
         if key is not None:
             slot_ptr = self.__builder.bitcast(block_base.ir_val, ir.PointerType(ir.IntType(64)))  # type: ignore
@@ -860,6 +876,12 @@ class LLBuilder:
             # an erased `{}` with no indices to extract from).
             return self.undef(field_type)
         if isinstance(base_type, (Type.SliceType, Type.StrType)) and index == 0:
+            if self.__raw_pointers:
+                # raw 模式:slice/str 字段 0 即裸 8B 指针,直接提取;不合成 5 字段胖值
+                # (否则拿 8B 做 __build_fat 于 i8* insert_value → TypeError)
+                result_val = LLValue(field_type, self.__builder.extract_value(base.ir_val, 0))  # type: ignore
+                self.__func.set_reg(result, result_val)
+                return result_val
             # stdlib 边界 fat 合成:⟨data, e_f, k_f, 0, len⟩(t9 §1.6)——裸 8B 指针
             # 提升为胖指针,size = 切片长度;e_f/k_f 来自当前帧锁(惰性实体化)。
             result_val = self.__slice_ptr_fat(base, field_type)
@@ -1277,6 +1299,11 @@ class LLBuilder:
             BinaryOperator.Leq: "<=", BinaryOperator.Geq: ">=",
         }[op]
         if isinstance(lhs.type, (ir.IntType, ir.PointerType)):  # type: ignore
+            if isinstance(lhs.type, ir.PointerType) and lhs.type != rhs.type:  # type: ignore
+                # raw 模式:有型指针比较时不同 pointee 的 T* 不能直接 icmp → 统一 bitcast i8*
+                i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+                lhs = self.__builder.bitcast(lhs, i8_ptr)  # type: ignore
+                rhs = self.__builder.bitcast(rhs, i8_ptr)  # type: ignore
             ty = self.__type_ctx[type_id]
             if isinstance(ty, Type.IntType) and not ty.signed:
                 return self.__builder.icmp_unsigned(predicate, lhs, rhs)  # type: ignore

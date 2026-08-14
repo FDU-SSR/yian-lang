@@ -35,7 +35,7 @@ class LoopCtx:
 class CfgBuilder:
     """Per-function builder that lowers HIR statements/expressions into CFG IR."""
 
-    def __init__(self, type_ctx: TypeCtx, dp: DefPoint, func_name: str, no_fat_checks: bool = False) -> None:
+    def __init__(self, type_ctx: TypeCtx, dp: DefPoint, func_name: str, no_fat_checks: bool = False, raw_pointers: bool = False) -> None:
         self.__type_ctx = type_ctx
         self.__symbol_ctx = dp.symbol_ctx
         self.__dp = dp
@@ -43,6 +43,9 @@ class CfgBuilder:
         # 评测专用开关:开启时跳过 Check* 检查发射(构造无检查基线),保留 40B 表示/
         # 锁槽/帧锁。生产环境不应禁用检查。
         self.__no_fat_checks = no_fat_checks
+        # 评测专用开关:开启时指针一律按裸 8B 处理(无检查/锁槽/帧锁),供性能评测。
+        # 生产环境不应使用。
+        self.__raw_pointers = raw_pointers
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(t7,规则 3.7.1)
@@ -920,13 +923,16 @@ class CfgBuilder:
     # ir building helpers
     # ------------------------------------------------------------------
 
-    def __emit_frame_lock(self) -> tuple[IR.Value, IR.Value]:
+    def __emit_frame_lock(self) -> tuple[IR.Value | None, IR.Value | None]:
         """帧锁实体化(§2.6、规则 3.7.1):k_f ← Gen()(栈键 MSB 0),alloca 一个
         u64 栈槽(锁槽),槽写键 μ⟨e_f⟩ := k_f 以 WriteLockSlot 表达。仅在首次
         取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
         终止符;无取址的函数不含帧锁节点。注意:Alloca 的初值为占位 0,t8
         下降时改为存 k_f(帧锁槽写键);VarPtr 的 frame_key 已是 GenKey 结果。
-        帧退出写 SENTINEL(全部返回路径,规则 3.7.2 动作①)的发射属 t8。"""
+        帧退出写 SENTINEL(全部返回路径,规则 3.7.2 动作①)的发射属 t8。
+        raw 模式(t2):无帧锁——直接返回 None 帧字段,不实体化 GenKey/WriteLockSlot。"""
+        if self.__raw_pointers:
+            return (None, None)
         if self.__frame_lock is not None:
             return self.__frame_lock
         saved_block = self.__current_block
@@ -947,7 +953,11 @@ class CfgBuilder:
 
         指针-to-ZST 保持 ZST(§7.6 风险 2),走既有快路径、无检查;
         FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
+        评测模式 raw_pointers 下恒 False:指针一律按裸 8B 处理,全部
+        Check*/WriteLockSlot/Delete 检查与 PtrCmp 路由一并关闭(t1)。
         """
+        if self.__raw_pointers:
+            return False
         ty = self.__type_ctx[ptr.type_id]
         if not isinstance(ty, Type.PointerType):
             return False
@@ -1015,8 +1025,9 @@ class CfgBuilder:
         # t7:Malloc 块头锁槽写键 k ← Gen()(规则 3.6.1,堆键 MSB 1),返回
         # 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(t8 构造);
         # pointee 为 ZST 时维持快路径(undef,不写锁槽;key=None,§7.6 风险 2)。
+        # raw 模式(t2):无锁槽,key=None(省 GenKey)。
         key: IR.Value | None = None
-        if not self.__type_ctx.is_zst(type_id):
+        if not self.__type_ctx.is_zst(type_id) and not self.__raw_pointers:
             key = self.__build_gen_key(is_heap=True)
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
         return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result

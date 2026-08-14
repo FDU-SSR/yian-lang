@@ -23,13 +23,14 @@ def ch_llvm():
 class LLTranslator:
     """CFG Functions → LLVM Module."""
 
-    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str]) -> None:
+    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool = False) -> None:
         self.__type_ctx = type_ctx
+        self.__raw_pointers = raw_pointers
 
         ll_module = ir.Module(name="yian.module")
         ll_module.triple = "x86_64-unknown-linux-gnu"
 
-        self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names)
+        self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names, raw_pointers)
         self.__module = LLModule(ll_module, self.__ll_type_ctx)
         self.__func: LLFunction | None = None
 
@@ -99,7 +100,7 @@ class LLTranslator:
             else:
                 func.add_block(block.label, func.new_block(block.label))
 
-        builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx)
+        builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx, self.__raw_pointers)
         if cfg.frame_lock is not None:
             # 帧退出写 SENTINEL(规则 3.7.2 动作①):builder.ret() 前补发
             builder.set_frame_lock(cfg.frame_lock[0])
@@ -151,8 +152,8 @@ class LLTranslator:
             case IR.VarPtr():
                 builder.var_ptr(
                     stmt.var_ref.symbol_id, stmt.result.name,
-                    self.__resolve(builder, stmt.frame_lock_ptr),
-                    self.__resolve(builder, stmt.frame_key),
+                    self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
+                    self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
                 )
             case IR.Alloca():
                 builder.alloca_store(self.__resolve(builder, stmt.value), stmt.result.name)

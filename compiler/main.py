@@ -117,6 +117,16 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "评测专用:关闭检查仅为构造无检查基线;生产环境不应禁用检查."
         ),
     )
+    parser.add_argument(
+        "--raw-pointers",
+        action="store_true",
+        default=False,
+        help=(
+            "Use bare 8-byte pointers (no checks, no lock slots, no frame locks) across "
+            "CFG and LLVM layers. 评测专用:裸指针仅为性能评测基准,不提供任何内存安全保证;"
+            "生产环境不应使用."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -181,9 +191,10 @@ def __cfg(
     def_points: dict[int, DefPoint],
     type_ctx: TypeCtx,
     no_fat_checks: bool = False,
+    raw_pointers: bool = False,
 ) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
-    translator = CfgTranslator(type_ctx, no_fat_checks=no_fat_checks)
+    translator = CfgTranslator(type_ctx, no_fat_checks=no_fat_checks, raw_pointers=raw_pointers)
     try:
         translator.run(def_points)
     except CodegenError as error:
@@ -209,9 +220,10 @@ def __llvm_codegen(
     cfg_functions: dict[int, CFG_IR.Function],
     type_ctx: TypeCtx,
     unit_names: dict[int, str],
+    raw_pointers: bool = False,
 ) -> LLModule:
     """CFG IR → LLVM IR pass. Lowers CFG Functions into an LLVM Module."""
-    translator = LLTranslator(type_ctx, unit_names)
+    translator = LLTranslator(type_ctx, unit_names, raw_pointers=raw_pointers)
     try:
         translator.run(cfg_functions)
     except CodegenError as error:
@@ -403,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(def_points, type_ctx, no_fat_checks=args.no_fat_checks)
+    cfg_functions = __cfg(def_points, type_ctx, no_fat_checks=args.no_fat_checks, raw_pointers=args.raw_pointers)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
     (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
@@ -419,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # CFG → LLVM IR pass
         llvm_start = time.perf_counter() if args.profile else 0.0
-        llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names)
+        llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names, raw_pointers=args.raw_pointers)
         if args.profile:
             timings["llvm_codegen"] = time.perf_counter() - llvm_start
 
