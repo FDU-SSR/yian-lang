@@ -1,0 +1,86 @@
+// bench/ptr_traverse.an — 指针密集遍历基准 (pointer-dense traversal)
+//
+// 负载描述:
+//   构建一棵 N=10000 结点的满二叉树:每个结点用 dyn 单独堆分配
+//   (独立 lock slot),结点的 left/right 子指针存放在堆分配的
+//   TreeNode*[N] 胖指针数组里。建树后做 P=5000 次递归求和遍历
+//   (重复遍历模拟反复查询,每次访问都重新过检查),最后按数组顺序
+//   逐结点 del。
+//
+// 访问密度特征 (check 密度最高 — 几乎每次指针访问都过 CheckSafeAccess):
+//   - 建树阶段:  每结点 1× dyn 分配 (Malloc + lock-slot 初始化),
+//                 2× 子指针写回 (数组索引 = CheckElementArith +
+//                 CheckSafeAccess + 字段写 CheckSafeAccess)。
+//   - 遍历阶段:  每结点每趟递归访问 3× 字段读 (value/left/right,
+//                 各一次 CheckSafeAccess) + 1× nullptr 比较 (CheckPtrCmp),
+//                 共约 4 check / 结点 / 趟; × P=5000 趟。
+//   - 释放阶段:  每结点 1× del (Delete check)。
+//   总访问中遍历占绝对主导 (≈ 400×N check),是纯指针链式访问。
+//
+// 正确性: 树和 = sum(0..N-1) = N*(N-1)/2,断言保证遍历未被优化掉。
+//
+// 编译:   python3 -m compiler.main -O2 lib bench/ptr_traverse.an -o build/bench/ptr_traverse
+// 预期:   exit 0 (断言全过,无 trap)
+
+struct TreeNode {
+    value: i64,
+    left: TreeNode*,
+    right: TreeNode*,
+}
+
+fn tree_sum(n: TreeNode*) -> i64 {
+    if n == nullptr {
+        return 0;
+    }
+    let sum: i64 = tree_sum(n.left) + tree_sum(n.right);
+    return sum + n.value;
+}
+
+fn main() {
+    let n_nodes: u64 = 10000;
+    let passes: u64 = 5000;
+
+    // 堆分配的胖指针数组 (N × 40B),存每个结点的引用
+    let nodes: TreeNode** = dyn[n_nodes] TreeNode*;
+
+    // 逐结点分配 (每块独立 lock slot),值 = 结点下标
+    let i: u64 = 0;
+    while i < n_nodes {
+        nodes[i] = dyn TreeNode(i64(i), nullptr, nullptr);
+        i += 1;
+    }
+
+    // 按堆布局连边: 结点 i 的左/右孩子为 2i+1 / 2i+2
+    let j: u64 = 0;
+    while j < n_nodes {
+        let left_idx: u64 = 2 * j + 1;
+        let right_idx: u64 = 2 * j + 2;
+        if left_idx < n_nodes {
+            nodes[j].left = nodes[left_idx];
+        }
+        if right_idx < n_nodes {
+            nodes[j].right = nodes[right_idx];
+        }
+        j += 1;
+    }
+
+    // 递归求和遍历, 重复 passes 次 (每次都是全树指针访问, 全部过检查)
+    let total: i64 = 0;
+    let pass: u64 = 0;
+    while pass < passes {
+        total += tree_sum(nodes[0]);
+        pass += 1;
+    }
+
+    // 断言: sum(0..N-1) == N*(N-1)/2, 乘 passes 次遍历
+    let expected: i64 = i64(n_nodes) * (i64(n_nodes) - 1) / 2 * i64(passes);
+    assert total == expected: "ptr_traverse: tree traversal sum mismatch";
+
+    // 逐结点释放 (每块一次 Delete check)
+    let k: u64 = 0;
+    while k < n_nodes {
+        del nodes[k];
+        k += 1;
+    }
+    assert k == n_nodes: "ptr_traverse: all nodes freed";
+}

@@ -106,6 +106,17 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Package map JSON file (enables package-mode import resolution).",
     )
+    parser.add_argument(
+        "--no-fat-checks",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip emission of CFG-level fat-pointer access checks (CheckSafeAccess/"
+            "CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/CheckDelete) while "
+            "keeping the 40-byte fat-pointer representation, lock slots and frame locks. "
+            "评测专用:关闭检查仅为构造无检查基线;生产环境不应禁用检查."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -166,9 +177,13 @@ def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
     sys.exit(-1)
 
 
-def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_IR.Function]:
+def __cfg(
+    def_points: dict[int, DefPoint],
+    type_ctx: TypeCtx,
+    no_fat_checks: bool = False,
+) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
-    translator = CfgTranslator(type_ctx)
+    translator = CfgTranslator(type_ctx, no_fat_checks=no_fat_checks)
     try:
         translator.run(def_points)
     except CodegenError as error:
@@ -388,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(def_points, type_ctx)
+    cfg_functions = __cfg(def_points, type_ctx, no_fat_checks=args.no_fat_checks)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
     (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")

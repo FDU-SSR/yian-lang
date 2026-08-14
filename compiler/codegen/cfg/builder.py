@@ -35,11 +35,14 @@ class LoopCtx:
 class CfgBuilder:
     """Per-function builder that lowers HIR statements/expressions into CFG IR."""
 
-    def __init__(self, type_ctx: TypeCtx, dp: DefPoint, func_name: str) -> None:
+    def __init__(self, type_ctx: TypeCtx, dp: DefPoint, func_name: str, no_fat_checks: bool = False) -> None:
         self.__type_ctx = type_ctx
         self.__symbol_ctx = dp.symbol_ctx
         self.__dp = dp
         self.__func_name = func_name
+        # 评测专用开关:开启时跳过 Check* 检查发射(构造无检查基线),保留 40B 表示/
+        # 锁槽/帧锁。生产环境不应禁用检查。
+        self.__no_fat_checks = no_fat_checks
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(t7,规则 3.7.1)
@@ -365,12 +368,13 @@ class CfgBuilder:
             # t7 检查插入:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(规则 3.6.2;
             # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
             # data=lock_ptr+H 与 index=0)
-            self.__emit(IR.CheckDelete(ptr=ptr))
+            if not self.__no_fat_checks:
+                self.__emit(IR.CheckDelete(ptr=ptr))
+                ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p) (规则 3.6.2)")
             # 动作①:锁槽写 SENTINEL(规则 3.6.2)——提取 lock_ptr 字段寻址
             lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
             sentinel = IR.IntLiteral(value=IR.SENTINEL, type_id=TypeCtx.u64_id)
             self.__emit(IR.WriteLockSlot(lock_ptr=lock_ptr, value=sentinel))
-            ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p) (规则 3.6.2) + 锁槽写 SENTINEL")
         # 动作②:整块交还——t8 的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
         self.__emit(IR.Delete(ptr))
         return self.__void_reg()
@@ -984,7 +988,7 @@ class CfgBuilder:
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         # t7 检查插入:in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段 trap)
-        if self.__is_fat_pointer(base):
+        if self.__is_fat_pointer(base) and not self.__no_fat_checks:
             self.__emit(IR.CheckInBounds(ptr=base))
             ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
@@ -994,7 +998,7 @@ class CfgBuilder:
         ptr_type = self.__type_ctx[ptr.type_id]
         assert isinstance(ptr_type, Type.PointerType)
         # t7 检查插入:safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)
-        if self.__is_fat_pointer(ptr):
+        if self.__is_fat_pointer(ptr) and not self.__no_fat_checks:
             self.__emit(IR.CheckSafeAccess(ptr=ptr))
             ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.1)")
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
@@ -1002,7 +1006,7 @@ class CfgBuilder:
 
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
         # t7 检查插入:safe_access(p, 1)(规则 3.2.2,同 Load 的检查与地址折算)
-        if self.__is_fat_pointer(ptr):
+        if self.__is_fat_pointer(ptr) and not self.__no_fat_checks:
             self.__emit(IR.CheckSafeAccess(ptr=ptr))
             ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.2)")
         self.__emit(IR.Store(ptr=ptr, value=value))
@@ -1054,7 +1058,7 @@ class CfgBuilder:
 
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
         # t7 检查插入:算术 → 良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)
-        if self.__is_fat_pointer(base):
+        if self.__is_fat_pointer(base) and not self.__no_fat_checks:
             self.__emit(IR.CheckElementArith(base=base, offset=offset))
             ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p') (定义 13;规则 3.3.1-3.3.2)")
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
@@ -1062,7 +1066,7 @@ class CfgBuilder:
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
         # t7 检查插入:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差 trap)
-        if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
+        if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs) and not self.__no_fat_checks:
             self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕 (规则 3.3.3)")
         # 定型规则 8.1.9:指针差结果类型为 i64(t8 与 op_builder.py:288 同步)
@@ -1072,7 +1076,7 @@ class CfgBuilder:
     def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         # t10 检查插入:序比较先查 data 相等(规则 3.4.1 前提,跨对象序比较 trap);
         # 相等比较(规则 3.4.2)按 (data, index) 二元组、无前提检查。
-        if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
+        if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq) and not self.__no_fat_checks:
             self.__emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrCmp: data 相等 (规则 3.4.1)")
         result = IR.Reg(name=self.__new_name(), type_id=type_id)

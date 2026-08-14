@@ -1,0 +1,84 @@
+// bench/mixed.an — 混合负载基准 (mixed realistic workload)
+//
+// 负载描述:
+//   模拟真实程序: 一块 dyn[N] 分配的结构体数组 (对象池), N=60000。
+//     1. 填充 pass: 指针算术索引 arr[i] 写 id/score/next 三个字段。
+//     2. 求和 pass ×M=1600: 用指针游标 while p < end 整块遍历
+//        (指针比较 + 指针算术 + 解引用读),重复 M 趟模拟反复扫描。
+//     3. 指针差: end - begin == N (PtrDiff)。
+//     4. 链式扫描: 借助 next 字段沿数组做对象池链遍历
+//        (比较 cur != 哨兵, 通过指针解引用取 next),模拟链表式真实负载。
+//
+// 访问密度特征 (混合 — 三类检查都出现):
+//   - CheckElementArith + CheckSafeAccess: 每次 arr[i] / p.score 访问。
+//   - CheckPtrCmp: 每步 while p < end、while cur != 哨兵 比较。
+//   - pass2 每元素 ~3 check (deref + arith + cmp),是主力负载
+//     (≈ M×N ≈ 9600 万元素访问, 无索引间接、无分配)。
+//   - pass1/pass4 每元素 ~2 check; 无 dyn 分配 (分配检查不占主导)。
+//
+// 正确性: score = i, 遍历和 == M×N×(N-1)/2,两路断言相互印证。
+//
+// 已知缺陷约束 (详见 task-2.txt): 循环体内"读路径"胖指针返回调用
+// (如 arr[cur] 经 Index 返回 40B 胖指针) 每迭代向栈泄漏 ~24B。
+// 本负载链式扫描 pass4 恰含 2 个此类调用: N=60000 → 泄漏 ≈ 2.9MB < 8MB 栈,
+// 安全。主力 pass2 为纯指针游标 (FieldPtr+Load,无返回调用),零泄漏,
+// 故 M 可自由放大至计时目标。
+//
+// 编译:   python3 -m compiler.main -O2 lib bench/mixed.an -o build/bench/mixed
+// 预期:   exit 0 (断言全过,无 trap)
+
+struct Item {
+    id: i64,
+    score: i64,
+    next: u64,
+}
+
+fn main() {
+    let n: u64 = 60000;
+    let passes: u64 = 1600;
+    let arr: Item* = dyn[n] Item;
+
+    // ---- pass 1: 填充 (指针算术索引 + 字段写) ----
+    let i: u64 = 0;
+    while i < n {
+        arr[i].id = i64(i);
+        arr[i].score = i64(i);
+        arr[i].next = i + 1;
+        i += 1;
+    }
+    arr[n - 1].next = 18446744073709551615; // 链尾哨兵 (u64 最大)
+
+    // ---- pass 2: 指针游标求和 ×passes (ptr cmp + ptr arith + deref) ----
+    let begin: Item* = arr;
+    let end: Item* = begin + n;
+    let total: i64 = 0;
+    let pass: u64 = 0;
+    while pass < passes {
+        let p: Item* = begin;
+        while p < end {
+            total += p.score;
+            p += 1;
+        }
+        pass += 1;
+    }
+
+    // ---- pass 3: 指针差 (PtrDiff) ----
+    let count: i64 = end - begin;
+    assert count == i64(n): "mixed: ptr diff == n";
+
+    // ---- pass 4: 链式扫描 (next 字段链接遍历,一次) ----
+    let sum_next: i64 = 0;
+    let cur: u64 = 0;
+    let guard: u64 = 0;
+    while cur != 18446744073709551615 && guard < n {
+        sum_next += arr[cur].score;
+        cur = arr[cur].next;
+        guard += 1;
+    }
+
+    // ---- 闭式断言 ----
+    let expected: i64 = i64(n) * (i64(n) - 1) / 2 * i64(passes);
+    assert total == expected: "mixed: pointer-walk sum mismatch";
+    assert sum_next == expected / i64(passes): "mixed: chain-walk sum mismatch";
+    assert guard == n: "mixed: chain fully traversed";
+}

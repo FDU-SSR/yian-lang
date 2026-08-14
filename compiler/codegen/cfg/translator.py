@@ -24,8 +24,9 @@ class CfgTranslator:
         functions = translator.export()  # dict[int, Function]
     """
 
-    def __init__(self, type_ctx: TypeCtx) -> None:
+    def __init__(self, type_ctx: TypeCtx, no_fat_checks: bool = False) -> None:
         self.__type_ctx = type_ctx
+        self.__no_fat_checks = no_fat_checks
         self.__functions: dict[int, IR.Function] = {}
 
     def run(self, def_points: dict[int, DefPoint]) -> None:
@@ -53,9 +54,9 @@ class CfgTranslator:
         raise ValueError(f"Unsupported def type: {type(ty).__name__}")
 
     def __build_function(self, dp: DefPoint, ty: Type.FunctionType) -> IR.Function:
-        builder = CfgBuilder(self.__type_ctx, dp, ty.custom_def.name)
+        builder = CfgBuilder(self.__type_ctx, dp, ty.custom_def.name, self.__no_fat_checks)
         return builder.build()
 
     def __build_method(self, dp: DefPoint, ty: Type.MethodType) -> IR.Function:
-        builder = CfgBuilder(self.__type_ctx, dp, ty.custom_def.name)
+        builder = CfgBuilder(self.__type_ctx, dp, ty.custom_def.name, self.__no_fat_checks)
         return builder.build()
