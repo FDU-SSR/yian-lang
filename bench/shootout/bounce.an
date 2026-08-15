@@ -1,0 +1,153 @@
+// bench/shootout/bounce.an — 球弹跳模拟 (shootout bounce)
+//
+// 语义权威源: bak/old_exp/performance/c/bounce.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/bounce.an):
+//   原规模 ball_count=100000, 弹跳轮数 50000, 断言 bounces == 1841353453。
+//   规模调整: 胖模式下 100000×50000 = 5e9 次 bounce 远超可接受运行时长,
+//   折中为 ball_count=100000 × 轮数 10000 (三态同源码, 不影响归因; 断言
+//   值 bounces == 368285073 为 C 版同轮数 (10000) 实测值)。
+//
+// 算法: LCG 随机数 (seed = (seed*1309+13849) & 65535) 初始化 100000 个
+//       Ball (x/y 在 [0,500), 速度在 [-150,150))。每轮对每个球做
+//       bounce: 位置+=速度, 越过 300×300 边界则反弹 (反向取 abs 并钳制),
+//       计数 bounced 次数。轮数*球数 = 总弹跳判断次数。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout/bounce.an -o build/shootout_check/bounce
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+fn abs_int(x: i32) -> i32 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+@BitCopy
+struct Random {
+    seed: i32,
+}
+
+@BitCopy
+struct Ball {
+    x: i32,
+    y: i32,
+    x_vel: i32,
+    y_vel: i32,
+}
+
+@BitCopy
+struct RandomResult {
+    random_state: Random,
+    value: i32,
+}
+
+@BitCopy
+struct BallInitResult {
+    ball: Ball,
+    random_state: Random,
+}
+
+@BitCopy
+struct BounceResult {
+    ball: Ball,
+    bounced: bool,
+}
+
+fn Random_next(r: Random) -> RandomResult {
+    let new_seed: i32 = ((r.seed * 1309) + 13849) & 65535;
+    return RandomResult(Random(new_seed), new_seed);
+}
+
+fn BallInitResult_new(r: Random) -> BallInitResult {
+    let res1: RandomResult = Random_next(r);
+    let res2: RandomResult = Random_next(res1.random_state);
+    let res3: RandomResult = Random_next(res2.random_state);
+    let res4: RandomResult = Random_next(res3.random_state);
+
+    let new_ball: Ball = Ball(
+        res1.value % 500,
+        res2.value % 500,
+        (res3.value % 300) - 150,
+        (res4.value % 300) - 150
+    );
+    return BallInitResult(new_ball, res4.random_state);
+}
+
+fn Ball_bounce(b: Ball) -> BounceResult {
+    let x_limit: i32 = 300;
+    let y_limit: i32 = 300;
+    let bounced: bool = false;
+
+    let next_x: i32 = b.x + b.x_vel;
+    let next_y: i32 = b.y + b.y_vel;
+    let next_x_vel: i32 = b.x_vel;
+    let next_y_vel: i32 = b.y_vel;
+
+    let bounced_flag: bool = bounced;
+    if next_x > x_limit {
+        next_x = x_limit;
+        next_x_vel = -abs_int(b.x_vel);
+        bounced_flag = true;
+    }
+    if next_x < 0 {
+        next_x = 0;
+        next_x_vel = abs_int(b.x_vel);
+        bounced_flag = true;
+    }
+    if next_y > y_limit {
+        next_y = y_limit;
+        next_y_vel = -abs_int(b.y_vel);
+        bounced_flag = true;
+    }
+    if next_y < 0 {
+        next_y = 0;
+        next_y_vel = abs_int(b.y_vel);
+        bounced_flag = true;
+    }
+
+    let new_ball: Ball = Ball(next_x, next_y, next_x_vel, next_y_vel);
+    return BounceResult(new_ball, bounced_flag);
+}
+
+fn benchmark() -> i64 {
+    let random: Random = Random(74755);
+
+    let ball_count: u64 = 100000;
+    let rounds: u64 = 10000;
+    let bounces: i64 = 0;
+    let balls: Ball* = dyn[ball_count] Ball;
+
+    let i: u64 = 0;
+    while i < ball_count {
+        let init_res: BallInitResult = BallInitResult_new(random);
+        balls[i] = init_res.ball;
+        random = init_res.random_state;
+        i += 1;
+    }
+
+    let j: u64 = 0;
+    while j < rounds {
+        let k: u64 = 0;
+        while k < ball_count {
+            let bounce_res: BounceResult = Ball_bounce(balls[k]);
+            balls[k] = bounce_res.ball;
+            if bounce_res.bounced {
+                bounces += 1;
+            }
+            k += 1;
+        }
+        j += 1;
+    }
+
+    del balls;
+    return bounces;
+}
+
+fn main() {
+    let result: i64 = benchmark();
+    let expected: i64 = 368285073;
+    assert result == expected: "bounce count not expected";
+    print("bounce pass\n");
+}

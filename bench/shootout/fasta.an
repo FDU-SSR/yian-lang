@@ -1,0 +1,111 @@
+// bench/shootout/fasta.an — 随机 DNA 序列生成校验和 (shootout fasta)
+//
+// 语义权威源: bak/old_exp/performance/c/fasta.c (C 版, 取 compute-only
+//   部分: 不输出序列文本, 只累计字符校验和)
+// 规模参数取自原 .an (bak/old_exp/performance/an/fasta.an):
+//   原规模 n=25000000 (总迭代 10n = 2.5 亿), 断言 i32(checksum)%256 == -71。
+//   规模调整: n 保留原版 25000000 (实测全胖 ~9s < 60s), 断言值 -71
+//   与原版一致。
+//
+// 算法: LCG (g_seed*IA+IC)%IM 生成随机数 r, 按累积概率表选择碱基,
+//       与 repeat_fasta (alu 序列循环取碱基) 一起累计 checksum。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout/fasta.an -o build/shootout_check/fasta
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+@BitCopy
+struct AminoAcid {
+    symbol: u8,
+    prob: f64,
+}
+
+fn make_cumulative(genelist: AminoAcid*, count: u64, checksum: i64*) {
+    let p: f64 = 0.0;
+    let i: u64 = 0;
+    while i < count {
+        p += genelist[i].prob;
+        genelist[i].prob = p;
+        *checksum += i64(genelist[i].symbol);
+        i += 1;
+    }
+}
+
+fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64*) {
+    let i: u64 = 0;
+    while i < n {
+        *checksum += i64(seq[i % 287]);
+        i += 1;
+    }
+}
+
+fn random_fasta_compute_only(
+    genelist: AminoAcid*,
+    count: u64,
+    n: u64,
+    g_seed: i32*,
+    checksum: i64*,
+) {
+    let i: u64 = 0;
+    while i < n {
+        *g_seed = (*g_seed * 3877 + 29573) % 139968;
+        let r: f64 = f64(*g_seed) / 139968.0;
+
+        let selected: u8 = b' ';
+        let j: u64 = 0;
+        while j < count {
+            if r < genelist[j].prob {
+                selected = genelist[j].symbol;
+                break;
+            }
+            j += 1;
+        };
+        *checksum += i64(selected);
+        i += 1;
+    }
+}
+
+fn main() {
+    let alu: str = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+    let alu_bytes: u8[] = alu.as_slice();
+
+    let g_seed: i32 = 42;
+    let checksum: i64 = 0;
+
+    let iub: AminoAcid[15] = [
+        AminoAcid(b'a', 0.27),
+        AminoAcid(b'c', 0.12),
+        AminoAcid(b'g', 0.12),
+        AminoAcid(b't', 0.27),
+        AminoAcid(b'B', 0.02),
+        AminoAcid(b'D', 0.02),
+        AminoAcid(b'H', 0.02),
+        AminoAcid(b'K', 0.02),
+        AminoAcid(b'M', 0.02),
+        AminoAcid(b'N', 0.02),
+        AminoAcid(b'R', 0.02),
+        AminoAcid(b'S', 0.02),
+        AminoAcid(b'V', 0.02),
+        AminoAcid(b'W', 0.02),
+        AminoAcid(b'Y', 0.02),
+    ];
+    let homosapiens: AminoAcid[4] = [
+        AminoAcid(b'a', 0.3029549426680),
+        AminoAcid(b'c', 0.1979883004921),
+        AminoAcid(b'g', 0.1979883004921),
+        AminoAcid(b't', 0.3010684568318),
+    ];
+
+    let n: u64 = 25000000;
+
+    make_cumulative(&iub[0], 15, &checksum);
+    make_cumulative(&homosapiens[0], 4, &checksum);
+    random_fasta_compute_only(&homosapiens[0], 4, n * 5, &g_seed, &checksum);
+    random_fasta_compute_only(&iub[0], 15, n * 3, &g_seed, &checksum);
+    repeat_fasta_compute_only(alu_bytes, n * 2, &checksum);
+
+    let res: i32 = i32(checksum) % 256;
+    assert res == -71: "fasta: checksum is not correct";
+    print("fasta pass\n");
+}

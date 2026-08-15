@@ -1,0 +1,92 @@
+// bench/shootout/mand.an — Mandelbrot 集位图校验和 (shootout mandelbrot)
+//
+// 语义权威源: bak/old_exp/performance/c/mand.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/mand.an):
+//   原规模 w=h=16000, iter=50, 断言 checksum % 256 == 135。
+//   规模调整: 实测全胖模式 16000×16000 远超 60s, 折中为 w=h=8000,
+//   iter=50 (C 版实测 w=h=8000 时 checksum == 126, 断言值同步改为
+//   126; 三态同源码, 不影响归因)。
+//
+// 算法: 对 w×h 网格逐像素做 Mandelbrot 迭代 (最多 iter 次), 将每个
+//       像素是否在集合内按 8 位打包成字节, 字节累积异或得校验和。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout/mand.an -o build/shootout_check/mand
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+fn main() {
+    let w: i32 = 8000;
+    let h: i32 = 8000;
+    let bit_num: i32 = 0;
+    let byte_acc: i32 = 0;
+    let iter: i32 = 50;
+    let limit_sq: f64 = 4.0;
+    let checksum: i32 = 0;
+
+    let y: i32 = 0;
+    while y < h {
+        let x: i32 = 0;
+        while x < w {
+            let Zr: f64 = 0.0;
+            let Zi: f64 = 0.0;
+            let Tr: f64 = 0.0;
+            let Ti: f64 = 0.0;
+
+            let Cr: f64 = 2.0 * f64(x) / f64(w) - 1.5;
+            let Ci: f64 = 2.0 * f64(y) / f64(h) - 1.0;
+
+            let i: i32 = 0;
+            while i < iter {
+                if Tr + Ti > limit_sq {
+                    break;
+                }
+                let new_Zi: f64 = 2.0 * Zr * Zi + Ci;
+                let new_Zr: f64 = Tr - Ti + Cr;
+
+                Zr = new_Zr;
+                Zi = new_Zi;
+
+                Tr = Zr * Zr;
+                Ti = Zi * Zi;
+                i += 1;
+            }
+
+            let is_member: i32 = 0;
+            if Tr + Ti <= limit_sq {
+                is_member = 1;
+            }
+
+            byte_acc = (byte_acc * 2) % 256;
+            if is_member == 1 {
+                byte_acc |= 1;
+            }
+            bit_num += 1;
+
+            if bit_num == 8 {
+                checksum ^= byte_acc;
+                byte_acc = 0;
+                bit_num = 0;
+            }
+            x += 1;
+        }
+
+        if bit_num != 0 {
+            let remaining_bits: i32 = 8 - bit_num;
+            let shift: i32 = 1;
+            let j: i32 = 0;
+            while j < remaining_bits {
+                shift *= 2;
+                j += 1;
+            }
+            byte_acc = (byte_acc * shift) % 256;
+            checksum ^= byte_acc;
+            byte_acc = 0;
+            bit_num = 0;
+        }
+        y += 1;
+    }
+
+    assert checksum % 256 == 126: "mand: checksum is not correct";
+    print("mand pass\n");
+}
