@@ -345,6 +345,14 @@ class ExprChecker:
         # representation (dropping index/size fields) is t2's job — here we
         # relabel via BitCast and let codegen re-shape the value.
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
+            # Raw pointer mode: a bare `T*` carries no length, so downgrading it
+            # to `T[]` would fabricate a size out of thin air. Reject it and ask
+            # the user to materialize the slice explicitly.
+            if self.__ctx.type_ctx.raw_pointers:
+                raise AnalysisError(
+                    f"cannot coerce '{self.__ctx.type_ctx.get_name(expr.type_id)}' to '{self.__ctx.type_ctx.get_name(expected)}' in raw pointer mode; use from_raw_parts(ptr, len) instead",
+                    expr.span,
+                )
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)

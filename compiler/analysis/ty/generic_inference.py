@@ -57,6 +57,22 @@ class GenericInference:
             self.constrain(expected_ty.element_type, actual_ty.element_type)
             return
 
+        # Tiered-pointer degradation: a concrete `T[]`/`T&` annotation accepts a
+        # `T*`/`T[]` value (the tiered coerce reshapes after inference). Gated on
+        # non-generic expected types so generic method-lookup receiver targets
+        # (`T[]` for `T*`) stay unambiguous.
+        if isinstance(expected_ty, Type.SliceType) and not self.__type_ctx.contains_generic(expected_type_id) and isinstance(actual_ty, Type.PointerType):
+            self.constrain(expected_ty.element_type, actual_ty.pointee_type)
+            return
+
+        if isinstance(expected_ty, Type.RefType) and not self.__type_ctx.contains_generic(expected_type_id) and isinstance(actual_ty, Type.PointerType):
+            self.constrain(expected_ty.pointee_type, actual_ty.pointee_type)
+            return
+
+        if isinstance(expected_ty, Type.RefType) and not self.__type_ctx.contains_generic(expected_type_id) and isinstance(actual_ty, Type.SliceType):
+            self.constrain(expected_ty.pointee_type, actual_ty.element_type)
+            return
+
         if isinstance(expected_ty, Type.ArrayType) and isinstance(actual_ty, Type.ArrayType):
             self.constrain(expected_ty.element_type, actual_ty.element_type)
             self.constrain(expected_ty.length, actual_ty.length)

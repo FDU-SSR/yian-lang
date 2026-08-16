@@ -359,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         timings["restricted_ops"] = time.perf_counter() - restricted_start
 
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
-    type_ctx = TypeCtx()
+    type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
 
     pkg_roots: dict[str, Path] = {}
     if args.packages:
