@@ -175,6 +175,8 @@ $$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$$
 
 表示 = **分级字段 + 块头/帧首锁槽**：每个堆块与每个栈帧各有一个锁槽，键由满足定义 10 的 `Gen` 生成；`lock_ptr` 指向块头/帧首锁槽。各级字段的类型、单位与约束如表 2 所示。「元素」指 pointee 类型 $T$ 的一个实例；`data` 与元素地址 $\text{data} + \text{index} \cdot |T|$ 以字节计（$|T|$ 为 $T$ 的字节大小）。
 
+**评测模式（raw_pointers）表示退化（2026-08）**：`--raw-pointers` 为评测专用模式（《编译器实现》§7.4），三级表示整体退化——`T*` 与 `T&` 均映射为裸有型指针 `T*`（8B），`T[]`/`str` 映射为 2 字段 `{data, size}`（16B）：锁字段（`lock_ptr`/`key`）、`index`/`size` 元数据、块头/帧首锁槽与运行时检查一并关闭，定义 8/12/14 在退化表示下无对应字段。**安全论证不适用**：第 4-5 章全部不变量与定理 5.1 仅对 fat 模式（默认）成立（§5.1 范围声明）。另一评测模式 `--no-fat-checks` 表示不变（仍 40/32/24B，锁槽/帧锁保留），仅省略检查发射，用于隔离检查开销（《编译器实现》§10.7）。
+
 表 2：三级精确表示（`T*` 40B / `T[]` 32B / `T&` 24B）
 
 | 档位 | 字段       | 类型             | 单位         | 含义                                                                  | 约束                                                             |
@@ -297,6 +299,8 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - `T[] → T&`：删 `size`（`T[]` 的 `data` 已折叠，取首元素）。
 
 `nullptr` 三档兼容：null 字面量可 coerce 到 `T*`/`T[]`/`T&`（均为全零编码，`size`/`index` 按档位取 0，`live` 因 `lock_ptr = 0` 短路为假，定义 8）。
+
+**raw_pointers 模式下的 coerce 链（评测专用）**：`T*→T[]` 在 raw 模式**编译期拒绝**——裸 `T*`（8B）不携带长度信息，降级将凭空构造 `size`；`coerce()` 统一入口报错含「use from_raw_parts(ptr, len) instead」（《编译器实现》§8.1），提示改用 `from_raw_parts(ptr, len)` 显式构造。`T*→T&` 与 `T[]→T&` 在 raw 下保留且无损：前者为 identity（`T*`/`T&` 同编码为裸 `T*`），后者取字段 0（`T[]` 的 `data` 即首元素地址）。`nullptr→T[]` 保留（三档兼容）。守卫位于 `coerce()` 统一入口，覆盖直赋（`let` 初始化）、实参（经 `generic_inference` 分级降级容忍后到 `coerce`）与 `return` 三路径。raw 模式不承载安全论证（§5.1），但该类型层约束在 raw 模式下照常生效。
 
 表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧首锁槽，锁槽元数据与被保护数据相邻存储。
 
@@ -492,6 +496,8 @@ $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathr
 「在访问发生前转移至 `trap`」由机器结构保证：`trap` 为吸收终止态（§2.1），检查失败后不执行任何后续内存访问，故 trap 落在访问动作发生之前，不产生部分写入。定理 5.1 与 §1.4 安全目标 G1-G4 的对应关系如下（G4 以可信基边界排除，见 §4.6）。
 
 **分级说明（前件结构不变）**：定理 5.1 的 `safe_access` 按定义 14 分级实例化——`T*`/`T[]` 派生指针全检查（`live ∧ in_bounds`），`T&` 引用仅 `live`（`in_bounds` 对 `T&` 恒真，定义 12 退化）。前件① 扩展为含分级定型规则，但定理的「每事件 ⟺ 检查通过」结构、五条前件编号与 G1-G3 承诺均不变：`T&` 免 `in_bounds` 不改变空间不变量 S1 的陈述（`in_bounds` 对 `T&` 恒真，S1 的 `ok(acc) ⇒ in_bounds` 对 `T&` 事件平凡成立），时序不变量 T1 与作废永久性论证对各级指针同一（锁字段继承，§2.7）。
+
+**评测模式范围声明（raw_pointers）**：定理 5.1 与其五条前件仅对 fat 模式（默认）成立。`--raw-pointers` 评测模式下指针退化为裸 8B 表示、运行时检查全部关闭（§2.4 表示退化），`in_bounds`/`live` 不再发射，故**安全论证不适用于 raw 模式**——raw 模式仅供性能评测，不承诺任何内存安全性质；其类型层约束仍生效（`T*→T[]` 在 raw 下被 coerce 拒绝，§2.7）。`--no-fat-checks` 表示不变、仅省略检查发射，其运行结果同样不承载安全承诺，仅用于测量检查开销（《编译器实现》§10.7）。
 
 - **G1（空间）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{in\_bounds}(p, n)$（定义 12 的全访问检查），无越界访问正常完成。**分级说明**：对 `T&` 引用，`in_bounds` 恒真（定义 12 退化），故 G1 对 `T&` 事件平凡成立——`T&` 免空间检查（仅 `live`），不削弱 G1 承诺。
 - **G2（时序）**：$\mathrm{ok}(\mathrm{acc}_t(p, n)) \vee \mathrm{ok}(\mathrm{del}_t(p)) \Rightarrow \mathrm{live}_t(p)$，无 UAF、双释放、栈悬垂访问正常完成。
