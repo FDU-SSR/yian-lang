@@ -46,6 +46,7 @@ def discover_fat_tests() -> list[TestCase]:
             continue
 
         src_rel = str(rel)
+
         fat_rel = f"fat/{src_rel}"
         is_err = src_rel.endswith(".err.an")
 

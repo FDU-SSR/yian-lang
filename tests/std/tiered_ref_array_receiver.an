@@ -1,0 +1,93 @@
+// T& receiver method-body array access (method-self-ref t7).
+//
+// Full-array access through a T& receiver, exercising the T&→T* array
+// re-anchor (size=N) that todo 6 fixed in llvm builder cast():
+//   - `self.arr[i]` with i≥1 via the Index trait (T[N] impl → bitcast<T*>(self))
+//   - `self.arr.ptr()[i]` full-array traversal
+//   - `self.arr.as_slice()` full-array slice
+//   - direct `impl i32[4]` receiver forms: `(*self)[i]`, `self.ptr()[i]`,
+//     `self.as_slice()` (self is i32[4]& inside these methods)
+//   - chained self.method() through the T& receiver
+//
+// Locking the cast() array re-anchor: before t6, T[N]&→T* produced size=1 and
+// every arr[i] with i≥1 trapped in fat mode (CheckInBounds/CheckElementArith).
+// After t6, full-array access must succeed. These forms run green in the fat
+// and nocheck compile states. The raw state (`--raw-pointers`) has a
+// pre-existing t1-t6 cast regression for array-typed refs (identity instead of
+// a type bitcast) — see .omo/evidence/method-self-ref/task-7.txt.
+//
+// Pure asserts, no stdout (success test, no .ans).
+//
+// Expected output: 0
+
+struct Holder {
+    arr: i32[4],
+}
+
+impl Holder {
+    // Index trait through the T& receiver (self.arr[i], i≥1).
+    pub fn get1() -> i32 {
+        return self.arr[1];
+    }
+
+    pub fn get3() -> i32 {
+        return self.arr[3];
+    }
+
+    // ptr() through the T& receiver: T&→T* array re-anchor size=N.
+    pub fn ptr_sum() -> i32 {
+        let s: i32 = 0;
+        for i in 0..4u64 {
+            s += self.arr.ptr()[i];
+        }
+        return s;
+    }
+
+    // as_slice() through the T& receiver: full-array slice.
+    pub fn slice_len() -> u64 {
+        return self.arr.as_slice().len();
+    }
+
+    // Chained self.method(): field access auto-derefs through the T&.
+    pub fn chain_sum() -> i32 {
+        return self.get1() + self.get3();
+    }
+}
+
+// Direct array-type receiver: self is i32[4]& inside these methods.
+impl i32[4] {
+    pub fn d1() -> i32 {
+        return (*self)[1];
+    }
+
+    pub fn d3() -> i32 {
+        return (*self)[3];
+    }
+
+    pub fn dptr() -> i32 {
+        return self.ptr()[2];
+    }
+
+    pub fn dslice() -> u64 {
+        return self.as_slice().len();
+    }
+}
+
+fn main() {
+    // --- array access through T& receiver methods (size=N re-anchor) ---
+    let h = Holder([10, 20, 30, 40]);
+    let hr: Holder& = &h;
+    assert hr.get1() == 20: "Index trait self.arr[1] through T&";
+    assert hr.get3() == 40: "Index trait self.arr[3] through T&";
+    assert hr.ptr_sum() == 100: "self.arr.ptr()[i] full-array traversal";
+    assert hr.slice_len() == 4: "self.arr.as_slice() full-array len";
+    assert hr.chain_sum() == 60: "chained self.method() through T&";
+
+    // Direct array-type receiver (self: i32[4]&).
+    let arr: i32[4] = [10, 20, 30, 40];
+    let ar: i32[4]& = &arr;
+    assert ar.d1() == 20: "(*self)[1] on i32[4]& receiver";
+    assert ar.d3() == 40: "(*self)[3] on i32[4]& receiver";
+    assert ar.dptr() == 30: "self.ptr()[2] on i32[4]& receiver";
+    assert ar.dslice() == 4: "self.as_slice() on i32[4]& receiver";
+}

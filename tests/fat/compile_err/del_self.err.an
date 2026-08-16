@@ -1,0 +1,22 @@
+// `del self` inside a method body must be rejected at the type level:
+// self is now a T& reference (t2), which has no ownership, so freeing
+// through it is a compile error (same family as tiered_delete_ref.err.an,
+// which rejects `del` on a T& variable).
+//
+// Expected compilation error: must be a pointer
+
+struct S {
+    v: i32,
+}
+
+impl S {
+    pub fn bad() {
+        del self;
+    }
+}
+
+fn main() {
+    let s = S(1);
+    let r: S& = &s;
+    r.bad();
+}

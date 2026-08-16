@@ -1,0 +1,43 @@
+// Tiered-pointer t: T& receiver method calls.
+// A live T& reference can directly call methods defined on the value type:
+// auto-deref must handle RefType receivers (previously RefType fell into the
+// Deref-trait path and assert-crashed on the missing trait impl). Covers a
+// direct method call on a T& variable and chained r.a().b() calls.
+//
+// Expected output: 0
+
+impl i32 {
+    pub fn double() -> i32 {
+        return *self * 2;
+    }
+}
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+impl Pair {
+    pub fn sum() -> i32 {
+        return self.a + self.b;
+    }
+
+    pub fn swap() -> Pair {
+        return Pair(self.b, self.a);
+    }
+}
+
+fn main() {
+    // T& variable directly calls a method defined on the value type.
+    let x: i32 = 21;
+    let r: i32& = &x;
+    let v: i32 = r.double();
+    assert v == 42: "T& direct method call";
+
+    // Chained r.a().b(): a() is called through the T& (auto-deref), b() on
+    // the returned value.
+    let p = Pair(1, 2);
+    let pr: Pair& = &p;
+    let s: i32 = pr.swap().sum();
+    assert s == 3: "chained T& method calls";
+}

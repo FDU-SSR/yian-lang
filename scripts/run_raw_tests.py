@@ -60,6 +60,7 @@ RAW_TESTS = [
     "fat/positive/raw_compat_field",
     "fat/positive/raw_compat_mixed",
     "std/raw_slice_ref",
+    "std/tiered_ref_receiver",
 ]
 
 # Must FAIL to compile in the raw state with an error mentioning
