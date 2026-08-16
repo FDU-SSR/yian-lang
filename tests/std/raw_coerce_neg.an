@@ -1,0 +1,25 @@
+// raw_coerce_neg.an — raw 模式 T*→T[] coerce 拒绝负例(双模式约定)
+//
+// 两形态 coerce(直赋 + 实参):
+//   fat 模式(默认):tiered coerce 合法,编译运行 exit 0、无输出(success 用例,
+//     被 run_tests.py 全量回归覆盖)。
+//   raw 模式(--raw-pointers):两形态均被类型检查拒绝,报错含 "from_raw_parts"
+//     (t2 守卫;scripts/run_raw_tests.py RAW_NEG_TESTS 硬断言该子串)。
+// 编译在首个违规行处报错即停(直赋在前)。
+//
+// Expected output: 0
+
+fn take(s: i32[]) {
+}
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+
+    // 形态一:直赋(`let s: i32[] = p;` 是 T*→T[] 显式注解降级)。
+    let s: i32[] = p;
+    assert s.len() == 1: "direct assign coerces T* to T[]";
+
+    // 形态二:实参(调用点参数 coerce,`p: i32*` 传给 `s: i32[]`)。
+    take(p);
+}

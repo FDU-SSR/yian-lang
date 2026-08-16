@@ -311,17 +311,21 @@ def discover_tests() -> list[TestCase]:
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResult:
+def run_test(test: TestCase, dump: bool = False, run: bool = False, extra_args: list[str] = []) -> TestResult:
     """Compile *test* and return the result.
 
     If *run* is True and the test is not an error test: compile to executable,
     run it (with CLI args and stdin from tests/input/ if present),
     and capture stdout + exit code.
+
+    *extra_args* are appended to the compiler invocation after ``-O3`` (e.g.
+    ``--raw-pointers`` / ``--no-fat-checks`` for the dual-mode runners).
     """
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
     cmd += ["-O3"]
+    cmd += list(extra_args)
     exe_path: Path | None = None
     if test.expect_error:
         cmd += ["-t", "none"]
