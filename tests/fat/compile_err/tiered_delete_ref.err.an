@@ -1,0 +1,11 @@
+// delete on a T& reference must be rejected at the type level: references
+// have no ownership, so freeing through one is a compile error (distinct
+// from the plain "must be a pointer" message).
+//
+// Expected compilation error: must be a pointer, not a 'i32&'
+
+fn main() {
+    let x: i32 = 1;
+    let r: i32& = &x;
+    del r;
+}

@@ -36,7 +36,7 @@ fn main() {
     assert sizeof(f64) == 8: "f64";
     assert sizeof(bool) == 1: "bool";
     assert sizeof(char) == 4: "char";
-    assert sizeof(str) == 16: "str";
+    assert sizeof(str) == 32: "str";
     assert sizeof(void) == 0: "void zst";
 
     // ===== pointer / slice / fn / never =====

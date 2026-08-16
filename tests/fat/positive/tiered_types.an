@@ -1,0 +1,26 @@
+// Tiered-pointer type system (t1): the T& reference type, the coerce chain
+// T*→T[]→T& (triggered by explicit annotations), and nullptr compatibility
+// for every tier. `&x` still produces T* (unchanged); the downgrades are
+// type-layer operations (value shaping lands in t2).
+//
+// Expected output: 0
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+
+    // T* → T[]: the index folds into the data address, size is preserved.
+    let s: i32[] = p;
+    assert s.len() == 1: "T*→T[] preserves the element count"
+    assert s[0] == 42: "T*→T[] reads through the view"
+
+    // T* → T& and T[] → T&: single-element references.
+    let r: i32& = p;
+    let r2: i32& = s;
+
+    // nullptr is compatible with every tier.
+    let np: i32* = nullptr;
+    let ns: i32[] = nullptr;
+    let nr: i32& = nullptr;
+    assert ns.len() == 0: "nullptr slice has length 0"
+}
