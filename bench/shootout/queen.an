@@ -12,12 +12,17 @@
 //       (偏移 7999 保证下标非负)。place_queen 逐列放置, 回溯时恢复
 //       棋盘状态。solve_queens_once 每轮重建 4 个数组并求解一次。
 //
+// tiered-pointers t6 标注: 求解热路径 (is_safe/update_board_state/place_queen)
+//   的数组参数改为 bool[]/i32[] (块访问语义, 32B 表示, 免 index 字段)。
+//   solve_queens_once 局部保持 bool*/i32* (del 仅 T* 合法); 调用侧经
+//   let 绑定 T*→T[] 视图传递 (编译器不支持调用点自动降级)。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/queen.an -o build/shootout_check/queen
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
 
-fn is_safe(r: u64, c: u64, free_rows: bool*, free_maxs: bool*, free_mins: bool*) -> bool {
+fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
     if !free_rows[r] {
         return false;
     }
@@ -30,13 +35,13 @@ fn is_safe(r: u64, c: u64, free_rows: bool*, free_maxs: bool*, free_mins: bool*)
     return true;
 }
 
-fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool*, free_maxs: bool*, free_mins: bool*) {
+fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) {
     free_rows[r] = value;
     free_maxs[c + r] = value;
     free_mins[c - r + 7999] = value;
 }
 
-fn place_queen(c: u64, free_rows: bool*, free_maxs: bool*, free_mins: bool*, queen_rows: i32*) -> bool {
+fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], queen_rows: i32[]) -> bool {
     let r: u64 = 0;
     while r < 8000 {
         if is_safe(r, c, free_rows, free_maxs, free_mins) {
@@ -73,7 +78,11 @@ fn solve_queens_once() -> bool {
         j += 1;
     }
 
-    let ok: bool = place_queen(0, free_rows, free_maxs, free_mins, queen_rows);
+    let fr: bool[] = free_rows;
+    let fm: bool[] = free_maxs;
+    let fmi: bool[] = free_mins;
+    let qr: i32[] = queen_rows;
+    let ok: bool = place_queen(0, fr, fm, fmi, qr);
 
     del free_rows;
     del free_maxs;

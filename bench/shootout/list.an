@@ -11,6 +11,12 @@
 //       递归嵌套, 否则返回 z。最终 tail 结果指向原 z 表的中段, 断言
 //       其长度 == 30。free_list 释放整条链 (含头节点)。
 //
+// tiered-pointers t6 标注: tail 递归热路径 x/y/z 为可空链表指针
+//   (is_shorter_than/递归前移均需 != nullptr 判断), T& 不支持 nullptr
+//   比较, 保持 Element*。Element_length_method 的 self 改为 Element&
+//   (入参非空, 单元素解引用; 内部 current 保持 Element* 需 del)。
+//   Element_free_method/free_list 需要 del, 保持 Element*。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/list.an -o build/shootout_check/list
 // 预期: exit 0 (断言全过)
 
@@ -30,7 +36,7 @@ fn Element_make_list(length: i32) -> Element* {
     return e;
 }
 
-fn Element_length_method(self: Element*) -> i32 {
+fn Element_length_method(self: Element&) -> i32 {
     let len: i32 = 1;
     let current: Element* = self.next;
     while current != nullptr {
@@ -53,7 +59,8 @@ fn Element_length(e: Element*) -> i32 {
     if e == nullptr {
         return 0;
     }
-    return Element_length_method(e);
+    let sv: Element& = e;
+    return Element_length_method(sv);
 }
 
 fn is_shorter_than(x: Element*, y: Element*) -> bool {
