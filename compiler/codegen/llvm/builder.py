@@ -60,28 +60,34 @@ class LLBuilder:
     # ------------------------------------------------------------------
 
     def __is_fat(self, ll_val: LLValue) -> bool:
-        """判定 LLVM 值是否已是 5 字段胖指针聚合(40B 结构值)。
+        """判定 LLVM 值是否已是胖结构聚合(PointerType 40B / SliceType 32B / RefType 24B)。
 
-        胖指针 = PointerType 且其 LLVM 值形态为 LiteralStructType;从 slice/str
-        提取的裸 8B 指针(type_id 同为 PointerType)按 LLVM 值形态区分,不误判。
+        t2 三结构统一:三个指针族类型的 LLVM 值形态为 LiteralStructType 即视为胖值;
+        raw 模式无元数据(裸 T* / {T*, u64} / 裸 T*),恒 False。从 slice/str 提取的
+        裸 8B 指针(type_id 为 PointerType)按 LLVM 值形态(指针而非结构)不误判。
         """
-        return (
-            isinstance(self.__type_ctx[ll_val.type_id], Type.PointerType)
-            and isinstance(ll_val.ir_val.type, ir.LiteralStructType)  # type: ignore
-        )
+        if self.__raw_pointers:
+            return False
+        ty = self.__type_ctx[ll_val.type_id]
+        if isinstance(ty, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
+            return isinstance(ll_val.ir_val.type, ir.LiteralStructType)  # type: ignore
+        return False
 
     def __is_fat_type(self, type_id: int) -> bool:
-        """类型层胖指针判定:PointerType 且 pointee 非 ZST(与 CFG 层 __is_fat_pointer 对应)。
-
-        评测专用(t1):raw_pointers 下恒 False,指针一律按裸 8B 处理。
+        """类型层胖指针判定(t3 按 type_id 分派):PointerType(pointee 非 ZST)
+        5 字段 / SliceType·StrType 4 字段 / RefType 3 字段,均为胖结构值;
+        raw 模式(t1)恒 False,指针一律按裸 8B 处理。与 CFG 层 __is_fat_pointer
+        对应(后者专指 PointerType 的全检查路径)。
         """
         if self.__raw_pointers:
             return False
         ty = self.__type_ctx[type_id]
-        return isinstance(ty, Type.PointerType) and not self.__type_ctx.is_zst(ty.pointee_type)
+        if isinstance(ty, Type.PointerType):
+            return not self.__type_ctx.is_zst(ty.pointee_type)
+        return isinstance(ty, (Type.SliceType, Type.StrType, Type.RefType))
 
     def __extract_fat_field(self, ll_val: LLValue, index: int) -> LLValue:
-        """提取胖指针聚合字段;整数字段 u64、指针字段 u8*(与 FAT_* 下标约定一致)。"""
+        """提取胖指针聚合字段;整数字段 u64、指针字段 u8*(下标约定见 FAT_*/SLICE_*/REF_*)。"""
         ir_val = self.__builder.extract_value(ll_val.ir_val, index)  # type: ignore
         if index in (IR.FAT_DATA, IR.FAT_LOCK_PTR):
             field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
@@ -90,13 +96,23 @@ class LLBuilder:
         return LLValue(field_type, ir_val)  # type: ignore
 
     def __build_fat(self, data: LLValue, lock_ptr: LLValue, key: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
-        """按 5 字段聚合 ⟨data, lock_ptr, key, index, size⟩ 构造胖指针值。"""
+        """按结构构造胖值(t2 三结构):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
+        SliceType 4 字段 ⟨data,lock,key,size⟩(删 index)/ RefType 3 字段 ⟨data,lock,key⟩。
+        """
+        ty = self.__type_ctx[type_id]
         val = self.undef(type_id)
         val = self.insert_value(val, data, IR.FAT_DATA)
         val = self.insert_value(val, lock_ptr, IR.FAT_LOCK_PTR)
         val = self.insert_value(val, key, IR.FAT_KEY)
-        val = self.insert_value(val, index, IR.FAT_INDEX)
-        val = self.insert_value(val, size, IR.FAT_SIZE)
+        if isinstance(ty, Type.PointerType):
+            val = self.insert_value(val, index, IR.FAT_INDEX)
+            val = self.insert_value(val, size, IR.FAT_SIZE)
+        elif isinstance(ty, (Type.SliceType, Type.StrType)):
+            val = self.insert_value(val, size, IR.SLICE_SIZE)
+        elif isinstance(ty, Type.RefType):
+            pass
+        else:
+            raise ValueError(f"not a pointer-family type: {type(ty).__name__}")
         return val
 
     def __fat_data(self, ll_val: LLValue) -> LLValue:
@@ -126,47 +142,25 @@ class LLBuilder:
             return self.__build_fat(data, lock, key, zero, one, ll_val.type_id)
         return ll_val
 
-    def __slice_len_value(self, slice_addr: ir.Value) -> LLValue:
-        """从 slice 基址读 length 字段(偏移 1),供 16B 边界的 slice 字段指针标记。"""
-        len_ptr = self.__builder.gep(slice_addr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-        len_ir = self.__builder.load(len_ptr)  # type: ignore
-        return LLValue(self.__type_ctx.u64_id, len_ir)  # type: ignore
-
-    def __is_slice_field_marker(self, ll_val: LLValue) -> bool:
-        """编译期判定:slice/str 字段指针标记(lock=null 常量 且 data 非 null)。
-
-        fieldptr 对 16B slice/str 的 ptr 字段产生该标记;nullptr 全零编码的
-        data 也为 null,以 data 是否为 null 常量区分。无副作用(不发射指令)。
-        """
-        if not self.__is_fat(ll_val):
-            return False
-        lock_ir = self.__insertvalue_field(ll_val.ir_val, IR.FAT_LOCK_PTR)
-        data_ir = self.__insertvalue_field(ll_val.ir_val, IR.FAT_DATA)
-        lock_is_null = isinstance(lock_ir, ir.Constant) and lock_ir.constant is None  # type: ignore
-        data_is_null = isinstance(data_ir, ir.Constant) and data_ir.constant is None  # type: ignore
-        return lock_is_null and not data_is_null
-
-    @staticmethod
-    def __insertvalue_field(ir_val: ir.Value, index: int) -> ir.Value | None:
-        """沿 insertvalue 链取某字段的插入值;未知来源(load/phi)返回 None。"""
-        if isinstance(ir_val, ir.instructions.InsertValue):  # type: ignore
-            if ir_val.indices == [index]:  # type: ignore
-                return ir_val.value  # type: ignore
-            return LLBuilder.__insertvalue_field(ir_val.aggregate, index)  # type: ignore
-        return None
-
     def __fat_addr(self, ll_val: LLValue, pointee_type_id: int) -> LLValue:
         """定义 17 地址折算:有效地址 = data + index·|T|,一次 GEP(检查与取数共用)。
 
         对 fat 值提取 data/index 字段,bitcast 到 T* 后按元素索引 GEP;对裸 8B
-        指针直接使用(索引恒 0 语义)。O-1 无回摆由检查(well-formed)保障。
+        指针直接使用(索引恒 0 语义)。T&(t3)无 index 字段,恒指单个元素——
+        有效地址即 data。O-1 无回摆由检查(well-formed)保障。
         """
         if self.__is_fat(ll_val):
             data = self.__extract_fat_field(ll_val, IR.FAT_DATA).ir_val
-            index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
             pointee_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
-            typed = self.__builder.bitcast(data, pointee_ll.as_pointer())  # type: ignore
-            addr = self.__builder.gep(typed, [index], inbounds=False)  # type: ignore
+            ty = self.__type_ctx[ll_val.type_id]
+            if isinstance(ty, Type.RefType):
+                # T& 3 字段 {data, lock_ptr, key}:无 index,恒指单个元素——
+                # 有效地址 = data(bitcast 到 T* 供调用方按字段 GEP)
+                addr = self.__builder.bitcast(data, pointee_ll.as_pointer())  # type: ignore
+            else:
+                index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
+                typed = self.__builder.bitcast(data, pointee_ll.as_pointer())  # type: ignore
+                addr = self.__builder.gep(typed, [index], inbounds=False)  # type: ignore
         else:
             addr = ll_val.ir_val
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
@@ -264,12 +258,19 @@ class LLBuilder:
         return self.__builder.and_(live_val.ir_val, other)  # type: ignore
 
     def string_literal(self, value: str, type_id: int) -> LLValue:
-        """Create a ``{i8*, i64}`` struct value for a string literal."""
+        """Create a str value for a string literal:4 字段 {data, lock_ptr, key, size}(raw 2 字段)。
+
+        字面量数据是全局只读区、生命周期为整个程序——锁用全局字面量锁槽(恒 live)。
+        """
         encoded = value.encode("utf-8")
         global_var = self.__module.get_string_global(encoded)
         ptr = global_var.gep([ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])  # type: ignore
         length = ir.Constant(ir.IntType(64), len(encoded))  # type: ignore
-        return LLValue(type_id, ir.Constant.literal_struct([ptr, length]))  # type: ignore
+        if self.__raw_pointers:
+            return LLValue(type_id, ir.Constant.literal_struct([ptr, length]))  # type: ignore
+        lock_ir = self.__module.get_lit_lock().bitcast(ir.PointerType(ir.IntType(8)))  # type: ignore
+        key_ir = ir.Constant(ir.IntType(64), 1)  # type: ignore
+        return LLValue(type_id, ir.Constant.literal_struct([ptr, lock_ir, key_ir, length]))  # type: ignore
 
     # ------------------------------------------------------------------
     # builder position
@@ -433,21 +434,21 @@ class LLBuilder:
         self.__builder = ir.IRBuilder(skip_block)
 
     def nullptr_literal(self, type_id: int) -> LLValue:
-        """nullptr 编码 ⟨0, 0, 0, 0, 0⟩(§7.1 NullptrLiteral):全零 5 字段结构。"""
+        """nullptr 编码全零结构(t1 起含 slice/ref):指针字段 null,整数字段 0。"""
         ll_type = self.__ll_type_ctx.get_ll_type(type_id).ir_type
         if self.__ll_type_ctx.is_zst(type_id):
             return self.undef(type_id)
         if isinstance(ll_type, ir.LiteralStructType):
-            null_ptr = ir.Constant(ir.PointerType(ir.IntType(8)), None)  # type: ignore
             zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
-            ir_val = ir.Constant.literal_struct([null_ptr, null_ptr, zero, zero, zero])  # type: ignore
+            fields = [ir.Constant(ft, None) if isinstance(ft, ir.PointerType) else zero for ft in ll_type.elements]  # type: ignore
+            ir_val = ir.Constant.literal_struct(fields)  # type: ignore
         else:
             ir_val = ir.Constant(ll_type, None)  # type: ignore
         return LLValue(type_id, ir_val)  # type: ignore
 
     def check_safe_access(self, ptr: LLValue) -> None:
         """safe_access(p,1) = live(p) ∧ in_bounds(p,1)(规则 3.2.1-3.2.2)。"""
-        if not self.__is_fat(ptr) or self.__is_slice_field_marker(ptr):
+        if not self.__is_fat(ptr):
             return
         in_bounds = self.__check_in_bounds_cond(ptr)
         cond = self.__check_live_and(ptr, in_bounds.ir_val)
@@ -455,13 +456,24 @@ class LLBuilder:
 
     def check_in_bounds(self, ptr: LLValue) -> None:
         """in_bounds(p_s,1)(规则 3.5.2 重锚定前提)。"""
-        if not self.__is_fat(ptr) or self.__is_slice_field_marker(ptr):
+        if not self.__is_fat(ptr):
             return
         self.__emit_check(self.__check_in_bounds_cond(ptr), "ib")
 
+    def check_ref_access(self, ptr: LLValue) -> None:
+        """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers t3)。
+
+        引用无 index/size(3 字段 ⟨data,lock_ptr,key⟩),无越界概念;
+        live = 锁槽键比较(定义 8,含 null 短路)。live 失败 → llvm.trap。
+        """
+        if not self.__is_fat(ptr):
+            return
+        cond = self.__check_live(ptr)
+        self.__emit_check(cond, "ref")
+
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
         """定义 13 良构检查:0 ≤ index+offset ≤ size;无回摆以 i128 计算(O-1)。"""
-        if not self.__is_fat(base) or self.__is_slice_field_marker(base):
+        if not self.__is_fat(base):
             return
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(base, IR.FAT_SIZE).ir_val
@@ -513,7 +525,7 @@ class LLBuilder:
         `del self.data`)依赖 free(NULL) 语义,与 C 一致;write_lock_slot 对
         null 锁槽同样跳过。
         """
-        if not self.__is_fat(ptr) or self.__is_slice_field_marker(ptr):
+        if not self.__is_fat(ptr):
             return
         data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
         is_null = self.__builder.icmp_signed("==", data, ir.Constant(data.type, None))  # type: ignore
@@ -537,28 +549,15 @@ class LLBuilder:
 
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[ptr.type_id]
-        assert isinstance(ptr_type, Type.PointerType)
+        assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
             # Loading a zero-sized value yields nothing: emit no `load` and
             # bind no register (the result is never consumed).
             return self.undef(ptr_type.pointee_type)
         if self.__is_fat(ptr):
-            if self.__is_slice_field_marker(ptr):
-                # 16B slice/str 的 ptr 字段:读裸 8B 并合成 fat ⟨raw, &lit_lock, 1, 0, len⟩
-                eff_addr = self.__fat_addr(ptr, ptr_type.pointee_type).ir_val
-                raw_addr = self.__builder.bitcast(eff_addr, ir.PointerType(ir.PointerType(ir.IntType(8))))  # type: ignore
-                raw = self.__builder.load(raw_addr)  # type: ignore
-                size = self.__extract_fat_field(ptr, IR.FAT_SIZE)
-                lock_ir, key_ir = self.__lit_lock_pair()
-                data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), raw)  # type: ignore
-                lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-                key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
-                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                result_val = self.__build_fat(data, lock, key, zero, size, ptr_type.pointee_type)
-            else:
-                addr = self.__fat_addr(ptr, ptr_type.pointee_type)
-                ir_val = self.__builder.load(addr.ir_val)  # type: ignore
-                result_val = LLValue(ptr_type.pointee_type, ir_val)
+            addr = self.__fat_addr(ptr, ptr_type.pointee_type)
+            ir_val = self.__builder.load(addr.ir_val)  # type: ignore
+            result_val = LLValue(ptr_type.pointee_type, ir_val)
         else:
             ir_val = self.__builder.load(ptr.ir_val)  # type: ignore
             result_val = LLValue(ptr_type.pointee_type, ir_val)
@@ -570,7 +569,7 @@ class LLBuilder:
             return  # storing a zero-sized value is a no-op
         if self.__is_fat(ptr):
             ptr_type = self.__type_ctx[ptr.type_id]
-            assert isinstance(ptr_type, Type.PointerType)
+            assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
             addr = self.__fat_addr(ptr, ptr_type.pointee_type)
             self.__builder.store(value.ir_val, addr.ir_val)  # type: ignore
         else:
@@ -578,7 +577,7 @@ class LLBuilder:
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
         base_type = self.__type_ctx[base.type_id]
-        if isinstance(base_type, Type.PointerType):
+        if isinstance(base_type, (Type.PointerType, Type.RefType)):
             pointee_type_id = base_type.pointee_type
         else:
             pointee_type_id = base.type_id
@@ -599,7 +598,12 @@ class LLBuilder:
             elif isinstance(ty, Type.ArrayType):
                 pointee_type_id = ty.element_type
             elif isinstance(ty, Type.SliceType):
-                pointee_type_id = self.__type_ctx.alloc_pointer(ty.element_type) if idx == 0 else self.__type_ctx.u64_id
+                if idx == 0:
+                    pointee_type_id = self.__type_ctx.alloc_pointer(ty.element_type)
+                elif idx == 1:
+                    pointee_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+                else:
+                    pointee_type_id = self.__type_ctx.u64_id
             elif isinstance(ty, Type.StrType):
                 pointee_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id) if idx == 0 else self.__type_ctx.u64_id
 
@@ -619,16 +623,7 @@ class LLBuilder:
             key = self.__extract_fat_field(base, IR.FAT_KEY)
             zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
             one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-            if isinstance(base_def, Type.PointerType) and isinstance(self.__type_ctx[base_def.pointee_type], (Type.SliceType, Type.StrType)) and indices == [0, 0]:
-                # 16B slice/str 边界:ptr 字段是裸 8B 指针。fieldptr 结果标记为
-                # 「slice 字段指针」(lock=null,data=字段地址,size=切片长度),
-                # load 依标记读 8B 并合成 fat;checks 对标记跳过。
-                null_lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                                    ir.Constant(ir.PointerType(ir.IntType(8)), None))  # type: ignore
-                slice_len = self.__slice_len_value(addr.ir_val)
-                result_val = self.__build_fat(field_ptr, null_lock, zero, zero, slice_len, result_type_id)
-            else:
-                result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
+            result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
         else:
             idx_vals = [self.i32(i).ir_val for i in indices]
             ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
@@ -831,6 +826,65 @@ class LLBuilder:
                     ir_val = value.ir_val
             else:
                 ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+        elif isinstance(src, Type.RefType) and isinstance(dst, Type.RefType):
+            # T& → T&: 同为 3 字段布局(t2),identity 重贴。
+            ir_val = value.ir_val
+        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.RefType):
+            # T* → T&: 取前 3 字段 ⟨data, lock_ptr, key⟩(删 index+size,24B)。
+            if self.__raw_pointers:
+                ir_val = value.ir_val
+            elif self.__is_fat(value):
+                data = self.__extract_fat_field(value, IR.FAT_DATA)
+                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
+                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
+            else:
+                ir_val = value.ir_val
+        elif isinstance(src, Type.RefType) and isinstance(dst, Type.PointerType):
+            # T& → T*: 3 字段补 index=0、size=1(引用恒指向单个元素)。
+            if self.__raw_pointers:
+                ir_val = value.ir_val
+            elif self.__is_fat(value):
+                data = self.__extract_fat_field(value, IR.FAT_DATA)
+                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
+                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
+                ir_val = self.__build_fat(data, lock, key, zero, one, to_type).ir_val
+            else:
+                ir_val = value.ir_val
+        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.SliceType):
+            # T* → T[]: 4 字段 {data_eff, lock, key, size};index 折叠进 data 有效地址,
+            # lock/key 继承(src 锁继承),size 保留。
+            if self.__raw_pointers:
+                # raw 模式 slice 2 字段 {data, size}:size 无源,置 0。
+                data = self.__fat_addr(value, src.pointee_type)
+                slice_val = self.undef(to_type)
+                slice_val = self.insert_value(slice_val, data, 0)
+                slice_val = self.insert_value(slice_val, self.i64(0), 1)
+                ir_val = slice_val.ir_val
+            else:
+                data = self.__fat_addr(value, src.pointee_type)
+                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
+                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                size = self.__extract_fat_field(value, IR.FAT_SIZE)
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+        elif isinstance(src, Type.SliceType) and isinstance(dst, Type.RefType):
+            # T[] → T&: 取 4 字段切片 data/lock_ptr/key 合成 3 字段引用(真锁,非 lit lock)。
+            if self.__raw_pointers:
+                # raw 模式 slice {data, size}:引用 = data 地址(字段 0)。
+                ir_val = self.__builder.extract_value(value.ir_val, 0)  # type: ignore
+            else:
+                data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                               self.__builder.bitcast(self.__builder.extract_value(value.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
+                lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                               self.__builder.extract_value(value.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
+                key = LLValue(self.__type_ctx.u64_id,
+                              self.__builder.extract_value(value.ir_val, IR.FAT_KEY))  # type: ignore
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
         else:
             raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
         result_val = LLValue(to_type, ir_val)  # type: ignore
@@ -853,19 +907,27 @@ class LLBuilder:
         elif isinstance(base_type, Type.PointerType):
             # 5 字段胖指针 {data, lock_ptr, key, index, size}:data/lock 为 u8*,余为 u64
             field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id) if index in (0, 1) else self.__type_ctx.u64_id
+        elif isinstance(base_type, Type.RefType):
+            # 3 字段引用 {data, lock_ptr, key}:data/lock 为 u8*,key 为 u64
+            field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id) if index in (0, 1) else self.__type_ctx.u64_id
         elif isinstance(base_type, Type.SliceType):
-            # slice layout: { T*, i64 } — field 0 为裸 8B 指针
+            # slice layout (4 字段):{data: T*, lock_ptr: i8*, key: u64, size: u64};
+            # raw 模式 2 字段 {T*, u64}。字段 0 = data 裸地址。
             if index == 0:
                 field_type = self.__type_ctx.alloc_pointer(base_type.element_type)
             elif index == 1:
+                field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+            elif index in (2, 3):
                 field_type = self.__type_ctx.u64_id
             else:
                 raise ValueError(f"slice has no field {index}")
         elif isinstance(base_type, Type.StrType):
-            # str layout: { u8*, i64 } — field 0 为裸 8B 指针
+            # str layout (4 字段):{data: u8*, lock_ptr: i8*, key: u64, size: u64}
             if index == 0:
                 field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
             elif index == 1:
+                field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+            elif index in (2, 3):
                 field_type = self.__type_ctx.u64_id
             else:
                 raise ValueError(f"str has no field {index}")
@@ -882,9 +944,13 @@ class LLBuilder:
                 result_val = LLValue(field_type, self.__builder.extract_value(base.ir_val, 0))  # type: ignore
                 self.__func.set_reg(result, result_val)
                 return result_val
-            # stdlib 边界 fat 合成:⟨data, e_f, k_f, 0, len⟩(t9 §1.6)——裸 8B 指针
-            # 提升为胖指针,size = 切片长度;e_f/k_f 来自当前帧锁(惰性实体化)。
+            # T[]→T* 派生的锁继承:slice/str 4 字段的 data 提升为胖指针(真锁继承)。
             result_val = self.__slice_ptr_fat(base, field_type)
+            self.__func.set_reg(result, result_val)
+            return result_val
+        if isinstance(base_type, (Type.SliceType, Type.StrType)) and index == 3 and self.__raw_pointers:
+            # raw 模式 2 字段 {data, size}:语义下标 3(size)映射到 LLVM 字段 1。
+            result_val = LLValue(field_type, self.__builder.extract_value(base.ir_val, 1))  # type: ignore
             self.__func.set_reg(result, result_val)
             return result_val
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
@@ -893,21 +959,20 @@ class LLBuilder:
         return result_val
 
     def __slice_ptr_fat(self, base: LLValue, ptr_type_id: int) -> LLValue:
-        """把 slice/str 的裸 8B data 指针合成为 5 字段胖指针 ⟨data, e_f, k_f, 0, len⟩。
+        """把 4 字段 slice/str 的 data 合成为 5 字段胖指针 ⟨data, lock_ptr, key, 0, size⟩。
 
-        切片的 ptr 字段在类型层是 T*(胖),而 LLVM slice 布局仍为 {i8*, i64} 16B
-        (t6 决策,`sizeof(str) == 16` 断言约束)——取字段 0 时在值层提升为胖指针,
-        size = 切片长度。锁用全局字面量锁槽(恒 live):合成点常在 `as_struct` 等
-        薄包装内,帧锁会随返回失效并逃逸到调用者死栈帧,不得用帧锁。
+        t2 三结构:slice/str 自身携带真实 lock_ptr/key(size 下标 3),直接继承
+        (锁继承)——这是 T[]→T* 派生的锁继承来源。
         """
-        raw = self.__builder.extract_value(base.ir_val, 0)  # type: ignore
-        length = self.__builder.extract_value(base.ir_val, 1)  # type: ignore
-        lock_ir, key_ir = self.__lit_lock_pair()
-        data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), raw)  # type: ignore
-        lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-        key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+        data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                       self.__builder.bitcast(self.__builder.extract_value(base.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
+        lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                       self.__builder.extract_value(base.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
+        key = LLValue(self.__type_ctx.u64_id,
+                      self.__builder.extract_value(base.ir_val, IR.FAT_KEY))  # type: ignore
+        size = LLValue(self.__type_ctx.u64_id,
+                       self.__builder.extract_value(base.ir_val, IR.SLICE_SIZE))  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-        size = LLValue(self.__type_ctx.u64_id, length)  # type: ignore
         return self.__build_fat(data, lock, key, zero, size, ptr_type_id)
 
     def __lit_lock_pair(self) -> tuple[ir.Value, ir.Value]:
@@ -988,16 +1053,22 @@ class LLBuilder:
             return self.undef(type_id)
         type_def = self.__type_ctx[type_id]
         if isinstance(type_def, (Type.SliceType, Type.StrType)):
-            # 边界收窄:slice/str 为 {T*, i64} 16B——胖指针字段取有效地址(data +
-            # index·|T|)落槽(t9 §1.6 边界 fat 合成;SliceStruct 等显式结构保持 48B)
+            # t2 三结构:slice/str 4 字段 {data, lock_ptr, key, size}(raw 2 字段)。
+            # HIR 供给 {ptr, len}:正常模式 data = ptr 有效地址,lock/key 继承自
+            # ptr 的胖元数据(T* coerce 构造,锁继承),size = 显式 len。
             elem_type = type_def.element_type if isinstance(type_def, Type.SliceType) else self.__type_ctx.u8_id
             field_ptr_ll = self.__ll_type_ctx.get_ll_type(elem_type).ir_type.as_pointer()  # type: ignore
             raw = self.__fat_addr(field_values[0], elem_type)
             raw_ir = self.__builder.bitcast(raw.ir_val, field_ptr_ll)  # type: ignore
-            val = self.undef(type_id)
-            val = self.insert_value(val, LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir), 0)  # type: ignore
-            val = self.insert_value(val, field_values[1], 1)
-            return val
+            if self.__raw_pointers:
+                val = self.undef(type_id)
+                val = self.insert_value(val, LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir), 0)  # type: ignore
+                val = self.insert_value(val, field_values[1], 1)
+                return val
+            data = LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir)  # type: ignore
+            lock = self.__extract_fat_field(field_values[0], IR.FAT_LOCK_PTR)
+            key = self.__extract_fat_field(field_values[0], IR.FAT_KEY)
+            return self.__build_fat(data, lock, key, self.i64(0), field_values[1], type_id)
         val = self.undef(type_id)
         for i, fv in enumerate(field_values):
             if self.__ll_type_ctx.is_zst(fv.type_id):
@@ -1121,7 +1192,7 @@ class LLBuilder:
 
     def sys_write(self, fd: LLValue, buf: LLValue) -> None:
         self.__call_intrinsic(IntrinsicKind.Write, [
-            fd, self.__extract_value_raw(buf, 0), self.__extract_value_raw(buf, 1),
+            fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf),
         ])
 
     def mem_copy(self, dest: LLValue, src: LLValue, count: LLValue) -> None:
@@ -1144,19 +1215,25 @@ class LLBuilder:
 
     def sys_read(self, fd: LLValue, buf: LLValue, result: str) -> None:
         buf_ptr = self.__extract_value_raw(buf, 0)
-        buf_len = self.__extract_value_raw(buf, 1)
+        buf_len = self.__slice_len_field(buf)
         bytes_read = self.__call_intrinsic(IntrinsicKind.Read, [
             fd, buf_ptr, buf_len,
         ])
-        # construct str {i8*, i64} = {buf_ptr, bytes_read}
+        # construct str:4 字段 {data, lock_ptr, key, size}(raw 2 字段 {data, size});
+        # 正常模式 lock/key 继承自输入缓冲区 buf(t2 锁继承)。
         str_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.str_id).ir_type
         undef = ir.Constant(str_ll_type, ir.Undefined)  # type: ignore
         ir_val = self.__builder.insert_value(undef, buf_ptr.ir_val, 0)  # type: ignore
-        ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 1)  # type: ignore
+        if self.__raw_pointers:
+            ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 1)  # type: ignore
+        else:
+            ir_val = self.__builder.insert_value(ir_val, self.__extract_value_raw(buf, 1).ir_val, 1)  # type: ignore
+            ir_val = self.__builder.insert_value(ir_val, self.__extract_value_raw(buf, 2).ir_val, 2)  # type: ignore
+            ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 3)  # type: ignore
         self.__func.set_reg(result, LLValue(self.__type_ctx.str_id, ir_val))  # type: ignore
 
     def open(self, path: LLValue, flags: LLValue, result: str) -> None:
-        # path is a str ({i8*, i64}) — extract the data pointer
+        # path is a str — field 0 is the data pointer (4 字段布局同样适用)
         # mode is hardcoded to 0o644 = 420 (rw-r--r--)
         mode = self.i32(420)
         raw = self.__call_intrinsic(IntrinsicKind.Open, [
@@ -1167,33 +1244,6 @@ class LLBuilder:
     def close(self, fd: LLValue, result: str) -> None:
         raw = self.__call_intrinsic(IntrinsicKind.Close, [fd])
         self.__func.set_reg(result, raw)
-
-    # -- yian CLI / env --
-
-    def yian_argc(self, result: str) -> None:
-        argc_global = self.__module.argc_global
-        loaded = self.__builder.load(argc_global)  # type: ignore
-        # zext i32 → u64
-        extended = self.__builder.zext(loaded, ir.IntType(64))  # type: ignore
-        self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, extended))  # type: ignore
-
-    def yian_argv_ptr(self, index: LLValue, result: str) -> None:
-        argv_global = self.__module.argv_global
-        argv_val = self.__builder.load(argv_global)  # type: ignore
-        gep = self.__builder.gep(argv_val, [index.ir_val], inbounds=True)  # type: ignore
-        loaded = self.__builder.load(gep)  # type: ignore
-        ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-        # C argv 是裸 8B 指针:提升为胖指针(锁用全局字面量锁槽,恒 live)
-        fat = self.__promote_fat(LLValue(ptr_type_id, loaded))  # type: ignore
-        self.__func.set_reg(result, fat)
-
-    def yian_cstrlen(self, ptr: LLValue, result: str) -> None:
-        raw = self.__call_intrinsic(IntrinsicKind.StrLen, [self.__fat_data(ptr)])
-        self.__func.set_reg(result, raw)
-
-    def yian_exit(self, code: LLValue) -> None:
-        self.__call_intrinsic(IntrinsicKind.Exit, [code])
-        self.__builder.unreachable()
 
     # ------------------------------------------------------------------
     # terminators
@@ -1249,7 +1299,7 @@ class LLBuilder:
 
     def panic(self, msg: LLValue) -> None:
         self.__call_intrinsic(IntrinsicKind.Write, [
-            self.i32(2), self.__extract_value_raw(msg, 0), self.__extract_value_raw(msg, 1),
+            self.i32(2), self.__extract_value_raw(msg, 0), self.__slice_len_field(msg),
         ])
         self.__call_intrinsic(IntrinsicKind.Exit, [self.i32(1)])
         self.__builder.unreachable()
@@ -1257,6 +1307,11 @@ class LLBuilder:
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def __slice_len_field(self, base: LLValue) -> LLValue:
+        """slice/str 的 size 字段:4 字段布局下标 3;raw 模式 2 字段布局下标 1。"""
+        index = IR.SLICE_SIZE if not self.__raw_pointers else 1
+        return self.__extract_value_raw(base, index)
 
     def __extract_value_raw(self, base: LLValue, index: int) -> LLValue:
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
@@ -1280,8 +1335,6 @@ class LLBuilder:
                 return self.__type_ctx.i32_id
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
-            case IntrinsicKind.StrLen:
-                return self.__type_ctx.u64_id
 
     def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
         if self.__type_ctx.is_zst(type_id):
@@ -1311,10 +1364,21 @@ class LLBuilder:
         return self.__builder.fcmp_ordered(predicate, lhs, rhs)  # type: ignore
 
     def __fat_value_pair(self, v: ir.Value) -> tuple[ir.Value, ir.Value]:
-        """ir.Value 级别的 (data, index) 字段对:聚合提取字段;裸指针按 (自身, 0)。"""
+        """ir.Value 级别的 (data, second) 字段对(t2 三结构分派)。
+
+        第二字段按结构:5 字段指针取 index、4 字段 slice 取 size、3 字段 ref 取 key、
+        raw 2 字段 slice 取 size;裸指针按 (自身, 0)。
+        """
         if isinstance(v.type, ir.LiteralStructType):  # type: ignore
+            field_count = len(v.type.elements)  # type: ignore
+            if field_count >= 4:
+                second_idx = IR.FAT_INDEX
+            elif field_count == 3:
+                second_idx = IR.REF_KEY
+            else:
+                second_idx = 1
             return (self.__builder.extract_value(v, IR.FAT_DATA),  # type: ignore
-                    self.__builder.extract_value(v, IR.FAT_INDEX))  # type: ignore
+                    self.__builder.extract_value(v, second_idx))  # type: ignore
         return (self.__builder.bitcast(v, ir.PointerType(ir.IntType(8))),  # type: ignore
                 ir.Constant(ir.IntType(64), 0))  # type: ignore
 

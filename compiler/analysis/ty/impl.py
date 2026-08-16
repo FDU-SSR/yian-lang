@@ -267,6 +267,8 @@ class ImplRegistry:
         ty = self.__ctx[type_id]
         if isinstance(ty, Type.PointerType):
             return self.__ctx.alloc_pointer(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
+        if isinstance(ty, Type.RefType):
+            return self.__ctx.alloc_ref(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
         if isinstance(ty, Type.SliceType):
             return self.__ctx.alloc_slice(self.__subst_trait_self(ty.element_type, old_self, new_target))
         if isinstance(ty, Type.ArrayType):

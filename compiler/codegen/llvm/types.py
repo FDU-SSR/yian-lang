@@ -30,8 +30,15 @@ class LLTypeCtx:
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
         self.__ptr: ir.PointerType = ir.PointerType(self.__i8)  # type: ignore
-        self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        # str = slice(t2 tiered-pointers 表示层):4 字段 {data, lock_ptr, key, size} 32B;
+        # 评测专用(raw_pointers)下退化为 2 字段 {data, size} 16B。
+        if self.__raw_pointers:
+            self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        else:
+            self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64])  # type: ignore
         self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64, self.__i64])  # type: ignore
+        # 3 字段引用 {data, lock_ptr, key} 24B(t2;t1 临时同 5 字段布局已替换)。
+        self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
@@ -107,6 +114,7 @@ class LLTypeCtx:
             case Type.IntType():     result = self.__handle_int(ty_def)
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
+            case Type.RefType():     result = self.__handle_ref(ty_def)
             case Type.NullPtrType(): result = self.__ptr
             case Type.SliceType():   result = self.__handle_slice(ty_def)
             case Type.ArrayType():   result = self.__handle_array(ty_def)
@@ -141,8 +149,20 @@ class LLTypeCtx:
             return self.__get_raw_type(type_def.pointee_type).as_pointer()
         return self.__fat_pointer
 
+    def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
+        # 3 字段引用 ⟨data, lock_ptr, key⟩ 24B(t2;删 index+size)。
+        # Ref-to-ZST 在上层已擦除。评测专用(raw_pointers)下退化为裸 T*。
+        if self.__raw_pointers:
+            return self.__get_raw_type(type_def.pointee_type).as_pointer()
+        return self.__ref_pointer
+
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
-        return ir.LiteralStructType([self.__get_raw_type(type_def.element_type).as_pointer(), self.__i64])
+        # 4 字段切片 {data: T*, lock_ptr: i8*, key: u64, size: u64} 32B(t2 删 index)。
+        # 评测专用(raw_pointers)下退化为 2 字段 {T*, u64}。
+        data_type = self.__get_raw_type(type_def.element_type).as_pointer()
+        if self.__raw_pointers:
+            return ir.LiteralStructType([data_type, self.__i64])
+        return ir.LiteralStructType([data_type, self.__ptr, self.__i64, self.__i64])
 
     def __handle_array(self, type_def: Type.ArrayType) -> ir.Type:
         length_ty = self.__type_ctx[type_def.length]

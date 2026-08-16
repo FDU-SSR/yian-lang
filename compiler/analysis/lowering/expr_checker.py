@@ -340,6 +340,17 @@ class ExprChecker:
                 # `T[N]*` → `T*`: re-anchor the pointee from `T[N]` to `T`.
                 return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
 
+        # Tiered-pointer degradation (t1, docs/security.md §tiered-pointers):
+        # explicit annotation downgrades along T* → T[] → T&. The value-level
+        # representation (dropping index/size fields) is t2's job — here we
+        # relabel via BitCast and let codegen re-shape the value.
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
+            return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
+            return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
+        if isinstance(expr_ty, Type.SliceType) and isinstance(expected_ty, Type.RefType) and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
+            return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
+
         match expr:
             case HIR.IntLiteral():
                 if not isinstance(expected_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
@@ -352,7 +363,7 @@ class ExprChecker:
                 expr.type_id = expected
                 return expr
             case HIR.NullptrLiteral():
-                if not isinstance(expected_ty, Type.PointerType):
+                if not isinstance(expected_ty, (Type.PointerType, Type.SliceType, Type.RefType)):
                     raise AnalysisError(f"cannot coerce nullptr to '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.type_id = expected
                 return expr
@@ -614,6 +625,11 @@ class ExprChecker:
 
         target_expr = self.value(stmt.target)
         target_type = self.__ctx.type_ctx[target_expr.type_id]
+        if isinstance(target_type, (Type.SliceType, Type.RefType)):
+            raise AnalysisError(
+                f"delete target must be a pointer, not a '{self.__ctx.type_ctx.get_name(target_expr.type_id)}' view",
+                stmt.target.span,
+            )
         if not isinstance(target_type, Type.PointerType):
             raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
         return HIR.Delete(span=stmt.span, target=target_expr, type_id=TypeCtx.void_id, is_place=False)

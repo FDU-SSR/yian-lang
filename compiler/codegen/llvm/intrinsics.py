@@ -26,7 +26,6 @@ class IntrinsicKind(Enum):
     Exit = auto()
     MemCopy = auto()
     SysRandom = auto()
-    StrLen = auto()
 
 
 class IntrinsicManager:
@@ -40,7 +39,6 @@ class IntrinsicManager:
         IntrinsicKind.Exit:      (ir.VoidType(), [ir.IntType(32)], "exit"),
         IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(ir.IntType(8)), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "memcpy"),
         IntrinsicKind.SysRandom: (ir.IntType(32), [], "rand"),
-        IntrinsicKind.StrLen:    (ir.IntType(64), [ir.PointerType(ir.IntType(8))], "strlen"),
     }
 
     def __init__(self, module: ir.Module) -> None:

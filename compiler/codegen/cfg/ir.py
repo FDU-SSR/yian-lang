@@ -33,6 +33,13 @@ from compiler.codegen.cfg.lockmech import (
     FAT_SIZE,
     FrameLock,
     KeyGen,
+    REF_DATA,
+    REF_KEY,
+    REF_LOCK_PTR,
+    SLICE_DATA,
+    SLICE_KEY,
+    SLICE_LOCK_PTR,
+    SLICE_SIZE,
     SENTINEL,
     is_heap,
     is_raw,
@@ -48,6 +55,13 @@ __all__ = [
     "FAT_SIZE",
     "FrameLock",
     "KeyGen",
+    "REF_DATA",
+    "REF_KEY",
+    "REF_LOCK_PTR",
+    "SLICE_DATA",
+    "SLICE_KEY",
+    "SLICE_LOCK_PTR",
+    "SLICE_SIZE",
     "SENTINEL",
     "is_heap",
     "is_raw",
@@ -217,6 +231,17 @@ class CheckInBounds:
 
 
 @dataclass
+class CheckRefAccess:
+    """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers t3)。
+
+    引用恒指向单个元素、无算术/比较/delete(3 字段 ⟨data,lock_ptr,key⟩,
+    无 index/size),越界无概念——访问只需 live = 锁槽键比较(定义 8,
+    含 lock_ptr=0 短路为假)。T& Load/Store/FieldPtr 插入点。
+    """
+    ptr: Value
+
+
+@dataclass
 class CheckElementArith:
     """ElementPtr 算术良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)。
 
@@ -368,28 +393,6 @@ class Close:
 
 
 @dataclass
-class YianArgc:
-    result: Reg
-
-
-@dataclass
-class YianArgvPtr:
-    result: Reg
-    index: Value
-
-
-@dataclass
-class YianCstrlen:
-    result: Reg
-    ptr: Value
-
-
-@dataclass
-class YianExit:
-    code: Value
-
-
-@dataclass
 class FuncPtr:
     """Create a function pointer from a function type."""
     result: Reg
@@ -412,10 +415,9 @@ Stmt: TypeAlias = (
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close
     | MemCopy
-    | YianArgc | YianArgvPtr | YianCstrlen
     | GenKey | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckElementArith | CheckPtrDiff | CheckDelete
-    | CheckPtrCmp | PtrCmp
+    | CheckPtrCmp | PtrCmp | CheckRefAccess
 )
 
 # ---------------------------------------------------------------------------
@@ -458,7 +460,7 @@ class Panic:
     message: Value  # must be `str` type
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | YianExit
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

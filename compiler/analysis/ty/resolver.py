@@ -80,6 +80,9 @@ class TypeResolver:
             case ASTTy.PointerType(pointee_type=pointee_type):
                 pointee_type_id = self.resolve(pointee_type, symbol_ctx)
                 return self.__ctx.alloc_pointer(pointee_type_id)
+            case ASTTy.RefType(pointee_type=pointee_type):
+                pointee_type_id = self.resolve(pointee_type, symbol_ctx)
+                return self.__ctx.alloc_ref(pointee_type_id)
             case ASTTy.SliceType(element_type=element_type):
                 element_type_id = self.resolve(element_type, symbol_ctx)
                 return self.__ctx.alloc_slice(element_type_id)

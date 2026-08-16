@@ -135,7 +135,7 @@ class CfgBuilder:
                         worklist.append(arm.body)
                     if term.default is not None:
                         worklist.append(term.default)
-                case IR.Ret() | IR.Panic() | IR.YianExit():
+                case IR.Ret() | IR.Panic():
                     pass
 
         # ── filter blocks ──
@@ -182,7 +182,7 @@ class CfgBuilder:
                             succs.append(arm.body)
                         if default is not None:
                             succs.append(default)
-                    case IR.Ret() | IR.Panic() | IR.YianExit():
+                    case IR.Ret() | IR.Panic():
                         pass
             successors[id(block)] = succs
 
@@ -546,14 +546,6 @@ class CfgBuilder:
                 return self.__resolve_open(expr)
             case HIR.Close():
                 return self.__resolve_close(expr)
-            case HIR.YianArgc():
-                return self.__resolve_yian_argc(expr)
-            case HIR.YianArgvPtr():
-                return self.__resolve_yian_argv_ptr(expr)
-            case HIR.YianCstrlen():
-                return self.__resolve_yian_cstrlen(expr)
-            case HIR.YianExit():
-                return self.__resolve_yian_exit(expr)
             case HIR.Tuple():
                 return self.__resolve_tuple(expr)
             case HIR.Array():
@@ -784,6 +776,12 @@ class CfgBuilder:
 
     def __resolve_tuple_access(self, expr: HIR.TupleAccess) -> IR.Value:
         if expr.receiver.is_place:
+            receiver_ty = self.__type_ctx[expr.receiver.type_id]
+            if isinstance(receiver_ty, (Type.SliceType, Type.StrType)):
+                # t2 三结构:slice/str 字段须从值提取(fieldptr 只能取裸字段地址,
+                # 无法携带锁元数据)。读整个值再 extract_value。
+                value = self.__resolve_val(expr.receiver)
+                return self.__build_extract_value(value, expr.index, expr.type_id)
             addr = self.__resolve_tuple_access_addr(expr)
             return self.__build_load(addr)
 
@@ -838,25 +836,6 @@ class CfgBuilder:
     def __resolve_close(self, expr: HIR.Close) -> IR.Value:
         fd = self.__resolve_val(expr.fd)
         return self.__build_close(fd)
-
-    def __resolve_yian_argc(self, expr: HIR.YianArgc) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.YianArgc(result=result)).result
-
-    def __resolve_yian_argv_ptr(self, expr: HIR.YianArgvPtr) -> IR.Value:
-        index = self.__resolve_val(expr.index)
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id))
-        return self.__emit(IR.YianArgvPtr(result=result, index=index)).result
-
-    def __resolve_yian_cstrlen(self, expr: HIR.YianCstrlen) -> IR.Value:
-        ptr = self.__resolve_val(expr.ptr)
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.YianCstrlen(result=result, ptr=ptr)).result
-
-    def __resolve_yian_exit(self, expr: HIR.YianExit) -> IR.Value:
-        code = self.__resolve_val(expr.code)
-        self.__set_terminator(IR.YianExit(code=code))
-        return self.__never_reg()
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]
@@ -997,28 +976,48 @@ class CfgBuilder:
         return self.__emit(IR.Alloca(result=result, value=value)).result
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
-        # t7 检查插入:in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段 trap)
-        if self.__is_fat_pointer(base) and not self.__no_fat_checks:
-            self.__emit(IR.CheckInBounds(ptr=base))
-            ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
+        # t3 分级检查插入(按 type_id 分派):
+        #   PointerType → in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段 trap)
+        #   RefType     → 仅 live(r)(T& 免 in_bounds;引用无 index/size,恒指单个元素)
+        if not self.__no_fat_checks:
+            base_ty = self.__type_ctx[base.type_id]
+            if isinstance(base_ty, Type.RefType) and not self.__raw_pointers:
+                self.__emit(IR.CheckRefAccess(ptr=base))
+                ch_cfg_block().debug(lambda: "check insert FieldPtr(T&): live(r) 仅 live,免 in_bounds (tiered-pointers t3)")
+            elif self.__is_fat_pointer(base):
+                self.__emit(IR.CheckInBounds(ptr=base))
+                ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
         return self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__type_ctx[ptr.type_id]
-        assert isinstance(ptr_type, Type.PointerType)
-        # t7 检查插入:safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)
-        if self.__is_fat_pointer(ptr) and not self.__no_fat_checks:
-            self.__emit(IR.CheckSafeAccess(ptr=ptr))
-            ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.1)")
+        assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
+        # t3 分级检查插入(按 type_id 分派):
+        #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)
+        #   RefType     → 仅 live(r)(T& 免 in_bounds)
+        if not self.__no_fat_checks:
+            if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
+                self.__emit(IR.CheckRefAccess(ptr=ptr))
+                ch_cfg_block().debug(lambda: "check insert Load(T&): live(r) 仅 live,免 in_bounds (tiered-pointers t3)")
+            elif self.__is_fat_pointer(ptr):
+                self.__emit(IR.CheckSafeAccess(ptr=ptr))
+                ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.1)")
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
         return self.__emit(IR.Load(result=result, ptr=ptr)).result
 
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
-        # t7 检查插入:safe_access(p, 1)(规则 3.2.2,同 Load 的检查与地址折算)
-        if self.__is_fat_pointer(ptr) and not self.__no_fat_checks:
-            self.__emit(IR.CheckSafeAccess(ptr=ptr))
-            ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.2)")
+        ptr_type = self.__type_ctx[ptr.type_id]
+        # t3 分级检查插入(按 type_id 分派,同 Load 的检查与地址折算):
+        #   PointerType → safe_access(p, 1)(规则 3.2.2)
+        #   RefType     → 仅 live(r)(T& 免 in_bounds)
+        if not self.__no_fat_checks:
+            if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
+                self.__emit(IR.CheckRefAccess(ptr=ptr))
+                ch_cfg_block().debug(lambda: "check insert Store(T&): live(r) 仅 live,免 in_bounds (tiered-pointers t3)")
+            elif self.__is_fat_pointer(ptr):
+                self.__emit(IR.CheckSafeAccess(ptr=ptr))
+                ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.2)")
         self.__emit(IR.Store(ptr=ptr, value=value))
 
     def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:

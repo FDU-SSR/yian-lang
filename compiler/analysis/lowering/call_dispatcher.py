@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 # Fat-pointer primitives (restricted to the standard library via restricted_ops).
 BUILTIN_NAMES = frozenset({
     "sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init",
-    "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit", "__memcpy",
+    "__memcpy",
     "__slice_from_parts", "__slice_get_ptr", "__slice_get_len",
     "__str_from_parts", "__str_get_ptr", "__str_get_len",
 })
@@ -182,14 +182,6 @@ class CallDispatcher:
                 return self.__handle_close(node)
             case "assume_init":
                 return self.__handle_assume_init(node)
-            case "__yian_argc":
-                return self.__handle_yian_argc(node)
-            case "__yian_argv_ptr":
-                return self.__handle_yian_argv_ptr(node)
-            case "__yian_cstrlen":
-                return self.__handle_yian_cstrlen(node)
-            case "__yian_exit":
-                return self.__handle_yian_exit(node)
             case "__memcpy":
                 return self.__handle_mem_copy(node)
             case "__slice_from_parts":
@@ -233,56 +225,6 @@ class CallDispatcher:
             raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
-
-    def __handle_yian_argc(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_argc'", node.span)
-        if len(node.args) != 0:
-            raise AnalysisError(f"'__yian_argc' expects 0 arguments, got {len(node.args)}", node.span)
-        return HIR.YianArgc(
-            span=node.span,
-            type_id=self.__ctx.type_ctx.u64_id,
-            is_place=False,
-        )
-
-    def __handle_yian_argv_ptr(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_argv_ptr'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'__yian_argv_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
-        index = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.u64_id)
-        return HIR.YianArgvPtr(
-            span=node.span,
-            index=index,
-            type_id=self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id),
-            is_place=False,
-        )
-
-    def __handle_yian_cstrlen(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_cstrlen'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'__yian_cstrlen' expects exactly 1 argument, got {len(node.args)}", node.span)
-        ptr = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id))
-        return HIR.YianCstrlen(
-            span=node.span,
-            ptr=ptr,
-            type_id=self.__ctx.type_ctx.u64_id,
-            is_place=False,
-        )
-
-    def __handle_yian_exit(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'exit'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'exit' expects exactly 1 argument, got {len(node.args)}", node.span)
-        code = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
-        return HIR.YianExit(
-            span=node.span,
-            code=code,
-            type_id=self.__ctx.type_ctx.never_id,
-            is_place=False,
-        )
 
     def __handle_mem_copy(self, node: AST.Call) -> HIR.Expr:
         """Lower `__memcpy(dest, src, count)` into HIR.MemCopy.
@@ -384,7 +326,8 @@ class CallDispatcher:
                 f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
                 node.span,
             )
-        return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=1, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+        # t2 三结构:slice 4 字段 {data, lock_ptr, key, size}——长度字段下标 3。
+        return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_str_from_parts(self, node: AST.Call) -> HIR.Expr:
         """Lower `__str_from_parts(ptr, len)` into a str value {ptr, len}.
@@ -439,7 +382,8 @@ class CallDispatcher:
                 f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
                 node.span,
             )
-        return HIR.TupleAccess(span=node.span, receiver=s, index=1, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
+        # t2 三结构:str 与 slice 同 4 字段——长度字段下标 3。
+        return HIR.TupleAccess(span=node.span, receiver=s, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
         """Lower `sys_write(fd, buf)` into HIR.SysWrite."""

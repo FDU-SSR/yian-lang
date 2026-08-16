@@ -85,8 +85,7 @@ class TypeCheck:
                     ret_ty = main_ty.return_type(self.__type_ctx)
                     if ret_ty != self.__type_ctx.void_id:
                         raise AnalysisError(
-                            f"main must return void, not {self.__type_ctx.get_name(ret_ty)}; "
-                            "use std.core.env.exit(code) for non-zero exit",
+                            f"main must return void, not {self.__type_ctx.get_name(ret_ty)}",
                             item.span,
                         )
 

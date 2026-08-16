@@ -62,6 +62,20 @@ FAT_KEY = 2
 FAT_INDEX = 3
 FAT_SIZE = 4
 
+# 4 字段 slice/str 字段下标(t2 tiered-pointers 表示层,删 index):
+# {data: ptr, lock_ptr: ptr, key: u64, size: u64} 32B。data/lock_ptr/key 与
+# 5 字段指针同下标(FAT_DATA/FAT_LOCK_PTR/FAT_KEY 通用),仅 size 为下标 3。
+SLICE_DATA = 0
+SLICE_LOCK_PTR = 1
+SLICE_KEY = 2
+SLICE_SIZE = 3
+
+# 3 字段引用字段下标(t2,t1 临时同 5 字段布局已替换):{data, lock_ptr, key} 24B。
+# 引用不携带 index/size——引用恒指向单个元素。
+REF_DATA = 0
+REF_LOCK_PTR = 1
+REF_KEY = 2
+
 
 class KeyGen:
     """Gen 单调计数器(定义 10,预决:单调计数器;CSPRNG 不做)。

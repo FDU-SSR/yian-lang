@@ -134,6 +134,15 @@ class PointerType:
 
 
 @dataclass
+class RefType:
+    span: SrcSpan
+    pointee_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"{self.pointee_type}&"
+
+
+@dataclass
 class SliceType:
     span: SrcSpan
     element_type: ASTType
@@ -184,7 +193,7 @@ class DeducedType:
 
 ASTType: TypeAlias = (
     IntType | FloatType | BoolType | StrType | CharType | VoidType | NeverType
-    | ArrayType | TupleType | PointerType | SliceType
+    | ArrayType | TupleType | PointerType | RefType | SliceType
     | NamedType
     | InstanceType
     | FunctionType

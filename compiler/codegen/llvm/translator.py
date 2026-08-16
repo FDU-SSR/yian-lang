@@ -188,6 +188,8 @@ class LLTranslator:
                 builder.check_safe_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckInBounds():
                 builder.check_in_bounds(self.__resolve(builder, stmt.ptr))
+            case IR.CheckRefAccess():
+                builder.check_ref_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckElementArith():
                 builder.check_element_arith(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
             case IR.CheckPtrDiff():
@@ -235,12 +237,6 @@ class LLTranslator:
                 builder.open(self.__resolve(builder, stmt.path), self.__resolve(builder, stmt.flags), stmt.result.name)
             case IR.Close():
                 builder.close(self.__resolve(builder, stmt.fd), stmt.result.name)
-            case IR.YianArgc():
-                builder.yian_argc(stmt.result.name)
-            case IR.YianArgvPtr():
-                builder.yian_argv_ptr(self.__resolve(builder, stmt.index), stmt.result.name)
-            case IR.YianCstrlen():
-                builder.yian_cstrlen(self.__resolve(builder, stmt.ptr), stmt.result.name)
 
     # ------------------------------------------------------------------
     # terminators
@@ -259,8 +255,6 @@ class LLTranslator:
                 builder.condbr(self.__resolve(builder, cond), then_block.label, else_block.label)
             case IR.Panic(message=message):
                 builder.panic(self.__resolve(builder, message))
-            case IR.YianExit(code=code):
-                builder.yian_exit(self.__resolve(builder, code))
             case IR.Match():
                 self.__emit_match(builder, terminator)
 

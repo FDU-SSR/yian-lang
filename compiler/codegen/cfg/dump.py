@@ -131,6 +131,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckInBounds(ptr=ptr):
             return f"check_in_bounds {__dump_value(ptr)}  (规则 3.5.2)"
 
+        case IR.CheckRefAccess(ptr=ptr):
+            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers t3)"
+
         case IR.CheckElementArith(base=base, offset=offset):
             return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
 
@@ -241,15 +244,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Close(result=result, fd=fd):
             return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
 
-        case IR.YianArgc(result=result):
-            return f"%{result.name} = yian_argc  [{__type_str(result.type_id)}]"
-
-        case IR.YianArgvPtr(result=result, index=index):
-            return f"%{result.name} = yian_argv_ptr {__dump_value(index)}  [{__type_str(result.type_id)}]"
-
-        case IR.YianCstrlen(result=result, ptr=ptr):
-            return f"%{result.name} = yian_cstrlen {__dump_value(ptr)}  [{__type_str(result.type_id)}]"
-
 
 def __dump_phi(phi: IR.Phi) -> str:
     inc_str = ", ".join(
@@ -289,9 +283,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.Panic(message=message):
             return f"panic {__dump_value(message)}"
-
-        case IR.YianExit(code=code):
-            return f"yian_exit {__dump_value(code)}"
 
 
 def __dump_match_arm(arm: IR.MatchArm) -> str:

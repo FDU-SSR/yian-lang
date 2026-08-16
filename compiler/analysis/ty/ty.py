@@ -118,6 +118,12 @@ class PointerType:
 
 
 @dataclass
+class RefType:
+    type_id: int
+    pointee_type: int
+
+
+@dataclass
 class SliceType:
     type_id: int
     element_type: int
@@ -372,7 +378,7 @@ BasicType: TypeAlias = (
 )
 
 DerivedType: TypeAlias = (
-    ArrayType | TupleType | PointerType | SliceType | FunctionPointerType
+    ArrayType | TupleType | PointerType | RefType | SliceType | FunctionPointerType
 )
 
 
