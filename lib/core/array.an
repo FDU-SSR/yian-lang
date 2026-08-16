@@ -6,7 +6,7 @@ from std.core.iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
-        let p: T* = self;
+        let p: T* = bitcast<T*>(self);
         __slice_from_parts(p, N)
     }
 
@@ -15,7 +15,7 @@ impl<T, const N: u64> T[N] {
     }
 
     fn ptr() -> T* {
-        let p: T* = self;
+        let p: T* = bitcast<T*>(self);
         p
     }
 }
@@ -25,7 +25,7 @@ impl<T, const N: u64> Index<u64, T*> for T[N] {
         if *index >= N {
             panic("Index out of bounds\n");
         }
-        let p: T* = self;
+        let p: T* = bitcast<T*>(self);
         p + *index
     }
 }
@@ -35,7 +35,7 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
         if (*range).end > N {
             panic("Index out of bounds\n");
         }
-        let p: T* = self;
+        let p: T* = bitcast<T*>(self);
         let start: T* = p + (*range).start;
         let len: u64 = (*range).end - (*range).start;
         __slice_from_parts(start, len)
@@ -44,7 +44,7 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
 
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
-        let p: T* = self;
+        let p: T* = bitcast<T*>(self);
         SliceIter<T>(
             ptr = p,
             n = N,
