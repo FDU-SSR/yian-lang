@@ -21,6 +21,7 @@
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
 fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
     if !free_rows[r] {
@@ -78,10 +79,10 @@ fn solve_queens_once() -> bool {
         j += 1;
     }
 
-    let fr: bool[] = free_rows;
-    let fm: bool[] = free_maxs;
-    let fmi: bool[] = free_mins;
-    let qr: i32[] = queen_rows;
+    let fr: bool[] = from_raw_parts(free_rows, 8000);
+    let fm: bool[] = from_raw_parts(free_maxs, 16000);
+    let fmi: bool[] = from_raw_parts(free_mins, 16000);
+    let qr: i32[] = from_raw_parts(queen_rows, 8000);
     let ok: bool = place_queen(0, fr, fm, fmi, qr);
 
     del free_rows;
