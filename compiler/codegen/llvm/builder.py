@@ -70,7 +70,9 @@ class LLBuilder:
             return False
         ty = self.__type_ctx[ll_val.type_id]
         if isinstance(ty, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
-            return isinstance(ll_val.ir_val.type, ir.LiteralStructType)  # type: ignore
+            # 胖值须为多字段结构(40B/32B/24B);空结构 `{}`(ZST 擦除,ref/ptr-to-ZST
+            # 零运行时信息)按非胖处理——对它的任意字段操作均无意义(t6 修)。
+            return isinstance(ll_val.ir_val.type, ir.LiteralStructType) and len(ll_val.ir_val.type.elements) > 0  # type: ignore
         return False
 
     def __is_fat_type(self, type_id: int) -> bool:
@@ -830,11 +832,20 @@ class LLBuilder:
             # T& → T&: 同为 3 字段布局(t2),identity 重贴。
             ir_val = value.ir_val
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.RefType):
-            # T* → T&: 取前 3 字段 ⟨data, lock_ptr, key⟩(删 index+size,24B)。
+            # T* → T&: 有效地址折入 index·|T|(ref 无 index 字段),取 ⟨data', lock, key⟩。
             if self.__raw_pointers:
-                ir_val = value.ir_val
+                # raw 模式:裸指针。数组退化 T[N]*→T& 时位转换为元素指针
+                # (数组基址 = 首元素地址,与 fat 分支 __fat_addr 重锚定等价);
+                # 标量/同型引用类型一致,恒 identity。
+                src_pointee = self.__type_ctx[src.pointee_type]
+                if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
+                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                else:
+                    ir_val = value.ir_val
             elif self.__is_fat(value):
-                data = self.__extract_fat_field(value, IR.FAT_DATA)
+                eff = self.__fat_addr(value, src.pointee_type)
+                data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                               self.__builder.bitcast(eff.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
                 lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
                 key = self.__extract_fat_field(value, IR.FAT_KEY)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -842,16 +853,30 @@ class LLBuilder:
             else:
                 ir_val = value.ir_val
         elif isinstance(src, Type.RefType) and isinstance(dst, Type.PointerType):
-            # T& → T*: 3 字段补 index=0、size=1(引用恒指向单个元素)。
+            # T& → T*: 3 字段补 index=0;数组退化 T[N]&→T* 时重锚定 size=N,
+            # 否则 size=1(引用恒指向单个元素)。
             if self.__raw_pointers:
-                ir_val = value.ir_val
+                # raw 模式:裸指针。数组退化 T[N]&→T* 时位转换为元素指针
+                # (数组基址 = 首元素地址,与 fat 分支 data 重锚定等价);
+                # 标量/同型引用类型一致,恒 identity。
+                src_pointee = self.__type_ctx[src.pointee_type]
+                if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
+                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                else:
+                    ir_val = value.ir_val
             elif self.__is_fat(value):
                 data = self.__extract_fat_field(value, IR.FAT_DATA)
                 lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
                 key = self.__extract_fat_field(value, IR.FAT_KEY)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, one, to_type).ir_val
+                src_pointee = self.__type_ctx[src.pointee_type]
+                if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
+                    len_ty = self.__type_ctx[src_pointee.length]
+                    assert isinstance(len_ty, Type.LiteralValueType)
+                    size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
+                else:
+                    size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
+                ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
             else:
                 ir_val = value.ir_val
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.SliceType):
@@ -1173,7 +1198,7 @@ class LLBuilder:
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         matched_ty = self.__type_ctx[matched.type_id]
-        enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, Type.PointerType) else matched.type_id
+        enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, (Type.PointerType, Type.RefType)) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
         gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore

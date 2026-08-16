@@ -65,8 +65,8 @@ class CallDispatcher:
         # auto-deref: insert deref nodes for each level in the deref chain
         for _ in range(lookup.deref_count):
             current_ty = self.__ctx.type_ctx[receiver.type_id]
-            if isinstance(current_ty, Type.PointerType):
-                # pointer deref
+            if isinstance(current_ty, (Type.PointerType, Type.RefType)):
+                # pointer / reference deref (T& receivers take the direct path)
                 receiver = HIR.Unary(span, UnaryOperator.Deref, receiver, current_ty.pointee_type, is_place=True)
             else:
                 # Deref trait deref: call deref() method
@@ -142,7 +142,7 @@ class CallDispatcher:
         deref_count = 0
         while True:
             ty = self.__ctx.type_ctx[type_id]
-            if isinstance(ty, Type.PointerType):
+            if isinstance(ty, (Type.PointerType, Type.RefType)):
                 type_id = ty.pointee_type
                 deref_count += 1
             else:
@@ -161,7 +161,7 @@ class CallDispatcher:
         result = receiver
         for _ in range(deref_count):
             ty = self.__ctx.type_ctx[result.type_id]
-            assert isinstance(ty, Type.PointerType)
+            assert isinstance(ty, (Type.PointerType, Type.RefType))
             result = HIR.Unary(span, UnaryOperator.Deref, result, ty.pointee_type, is_place=False)
         return result
 

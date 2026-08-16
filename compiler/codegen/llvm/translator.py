@@ -270,7 +270,7 @@ class LLTranslator:
         is_enum_ref = t.is_ref
         inner_type = matched_type
         if is_enum_ref:
-            assert isinstance(matched_type, Type.PointerType)
+            assert isinstance(matched_type, (Type.PointerType, Type.RefType))
             inner_type = self.__type_ctx[matched_type.pointee_type]
 
         if isinstance(inner_type, (Type.IntType, Type.CharType, Type.BoolType)):

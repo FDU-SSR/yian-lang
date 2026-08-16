@@ -135,7 +135,7 @@ class ExprChecker:
 
         value_ty = self.__ctx.type_ctx[value.type_id]
         target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType)):
+        if not isinstance(value_ty, (Type.PointerType, Type.NullPtrType, Type.RefType)):
             raise AnalysisError(
                 f"'bitcast' expects a pointer expression, "
                 f"got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
@@ -576,7 +576,7 @@ class ExprChecker:
 
         is_ref = False
         inner_type = value_type
-        if isinstance(value_type, Type.PointerType):
+        if isinstance(value_type, (Type.PointerType, Type.RefType)):
             pointee_type = self.__ctx.type_ctx[value_type.pointee_type]
             if isinstance(pointee_type, (Type.IntType, Type.CharType, Type.EnumType)):
                 is_ref = True
@@ -657,7 +657,7 @@ class ExprChecker:
         enum_type_id = value_expr.type_id
         if is_ref:
             value_type = self.__ctx.type_ctx[value_expr.type_id]
-            assert isinstance(value_type, Type.PointerType)
+            assert isinstance(value_type, (Type.PointerType, Type.RefType))
             enum_type_id = value_type.pointee_type
 
         arms: list[HIR.MatchArm] = []

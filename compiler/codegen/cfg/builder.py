@@ -750,9 +750,38 @@ class CfgBuilder:
         if method_type.custom_def.is_static:
             return self.__build_call(expr.method_id, arg_vals, expr.type_id)
 
-        # non-static: pass receiver address as the first argument
+        # non-static: pass receiver address as the first argument.
+        # t4 调用侧 receiver 折算:方法签名 receiver 是 T&(24B,t3),而调用侧实参
+        # 几乎全是 T*(40B 胖指针)——值变量(VarPtr)、指针变量(p.method() auto-deref
+        # 后)、field 派生均如此;唯一"天然 24B"的是方法体内 self.method()(T& deref,
+        # __resolve_deref_addr 返回 operand 值即 T&)。统一折算到 alloc_ref(pointee):
+        # __build_cast 的 LLVM T*→T& 分支做 40B→24B 收缩,已是 T& 时走 T&→T& identity。
         receiver_addr = self.__resolve_addr(expr.receiver)
-        return self.__build_call(expr.method_id, [receiver_addr] + arg_vals, expr.type_id)
+        # t4→F2 修复:调用侧 T* receiver 折算(T*→T&)前恢复 in_bounds 检查。
+        # 折算删除 index/size 字段,方法体内 self 访问仅剩 CheckRefAccess(live),
+        # one-past-end 指针(index==size,定义 13 良构)的 in_bounds 语义随之丢失。
+        # 折算前对胖 T* receiver 发射 CheckInBounds(p,1)(规则 3.2.1/3.5.2,与
+        # FieldPtr/解引用同一前提);RefType receiver(方法体内 self.method())天然
+        # 24B 引用、无越界概念,__is_fat_pointer 恒 False 自动跳过;raw 模式无检查。
+        if not self.__no_fat_checks and self.__is_fat_pointer(receiver_addr):
+            self.__emit(IR.CheckInBounds(ptr=receiver_addr))
+            ch_cfg_block().debug(lambda: "check insert MethodCall receiver: in_bounds(p,1) (t4→F2, one-past-end 恢复)")
+        ref_type_id = self.__receiver_ref_type(receiver_addr)
+        receiver_ref = self.__build_cast(receiver_addr, ref_type_id)
+        return self.__build_call(expr.method_id, [receiver_ref] + arg_vals, expr.type_id)
+
+    def __receiver_ref_type(self, receiver_addr: IR.Value) -> int:
+        """t4: receiver 折算目标类型 = alloc_ref(接收者值类型)。
+
+        receiver_addr.type_id 形态:值变量/auto-deref 指针变量/field 派生为 T*
+        (pointee 即接收者值类型);方法体内 self.method() 已是 T&。两者 pointee
+        都是值类型,统一 alloc_ref;LLVM cast 按 src/dst 分派收缩或 identity。
+        """
+        resolved = self.__type_ctx.resolve_aliases(receiver_addr.type_id)
+        addr_ty = self.__type_ctx[resolved]
+        if isinstance(addr_ty, (Type.PointerType, Type.RefType)):
+            return self.__type_ctx.alloc_ref(addr_ty.pointee_type)
+        return receiver_addr.type_id
 
     def __resolve_variant_construct(self, expr: HIR.VariantConstruct) -> IR.Value:
         if expr.args is None:

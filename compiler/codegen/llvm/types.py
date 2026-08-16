@@ -200,11 +200,12 @@ class LLTypeCtx:
         # (§7.4 方案 A); pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
-            # 接收者以 `&Self` 传递(CFG 层 `self` 变量类型为 `Self*` 胖指针):
-            # 签名参数须为胖指针聚合而非裸 `Self*`,否则 40B 槽与 8B 实参不匹配。
-            receiver_ptr_type = self.__type_ctx.alloc_pointer(receiver_type_id)
-            if not self.is_zst(receiver_ptr_type):
-                params.insert(0, self.__get_raw_type(receiver_ptr_type))
+            # 接收者以 `T&` 值类型引用传递(t3):receiver_type_id 是值类型,
+            # alloc_ref 包出 T& 后经 __handle_ref 自动得 24B 3 字段
+            # {data, lock_ptr, key}。调用侧折算(40B→24B)由 todo 4 负责。
+            ref_type_id = self.__type_ctx.alloc_ref(receiver_type_id)
+            if not self.is_zst(ref_type_id):
+                params.insert(0, self.__get_raw_type(ref_type_id))
         return ir.FunctionType(ret, params)
 
     def __handle_function(self, type_def: Type.FunctionType) -> ir.Type:

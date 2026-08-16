@@ -33,7 +33,7 @@ class ClosureLowering:
         self.__sid_to_field: dict[int, tuple[str, int, int]] = {}
         self.__self_sid: int = 0
         self.__struct_type_id: int = 0
-        self.__self_ptr_type_id: int = 0
+        self.__self_ref_type_id: int = 0
 
     def run(self) -> None:
         # --- Phase 1: lower closure DefPoints ---
@@ -84,9 +84,9 @@ class ClosureLowering:
             if sid in capture_sid_set:
                 continue
             call_sym_ctx.add_symbol_with_id(sid, sym.name, sym.kind, sym.type_id)
-        # self is a pointer (like in __check_method)
-        self_ptr_type_id = self.__type_ctx.alloc_pointer(struct_type_id)
-        self_sid = call_sym_ctx.add_symbol("self", SymbolKind.Variable, self_ptr_type_id)
+        # self is a reference (like in __check_method)
+        self_ref_type_id = self.__type_ctx.alloc_ref(struct_type_id)
+        self_sid = call_sym_ctx.add_symbol("self", SymbolKind.Variable, self_ref_type_id)
         assert self_sid is not None
 
         # --- collect param sids ---
@@ -97,7 +97,7 @@ class ClosureLowering:
                 param_sids.append(sym.symbol_id)
 
         # --- rewrite call method body ---
-        self.__setup_rewrite(capture_sids, closure_ty.captured_vars, struct_type_id, self_ptr_type_id, self_sid)
+        self.__setup_rewrite(capture_sids, closure_ty.captured_vars, struct_type_id, self_ref_type_id, self_sid)
         assert dp.body is not None
         rewritten_body = self.__rewrite_capture_refs(dp.body)
 
@@ -264,7 +264,7 @@ class ClosureLowering:
     # Capture reference rewriting (Phase 1)
     # ------------------------------------------------------------------
 
-    def __setup_rewrite(self, capture_sids: dict[str, int], captured_vars: list[Type.CapturedVar], struct_type_id: int, self_ptr_type_id: int, self_sid: int) -> None:
+    def __setup_rewrite(self, capture_sids: dict[str, int], captured_vars: list[Type.CapturedVar], struct_type_id: int, self_ref_type_id: int, self_sid: int) -> None:
         self.__sid_to_field.clear()
         for cv in captured_vars:
             sid = capture_sids.get(cv.name)
@@ -274,7 +274,7 @@ class ClosureLowering:
                     self.__sid_to_field[sid] = (cv.name, field.type_id, field.index)
         self.__self_sid = self_sid
         self.__struct_type_id = struct_type_id
-        self.__self_ptr_type_id = self_ptr_type_id
+        self.__self_ref_type_id = self_ref_type_id
 
     def __rewrite_capture_refs(self, block: HIR.Block) -> HIR.Block:
         new_stmts = [self.__rewrite_one_capture(s) for s in block.stmts]
@@ -286,11 +286,11 @@ class ClosureLowering:
             field_name, field_type_id, field_index = self.__sid_to_field[expr.symbol_id]
             field = StructField(name=field_name, type_id=field_type_id,
                                 access_mode=AccessMode.Private, index=field_index)
-            # self is PointerType(struct); deref to get the struct value
+            # self is RefType(struct); deref to get the struct value
             self_val = HIR.Var(
                 span=expr.span,
                 symbol_id=self.__self_sid,
-                type_id=self.__self_ptr_type_id,
+                type_id=self.__self_ref_type_id,
                 is_place=True
             )
             deref_self = HIR.Unary(
