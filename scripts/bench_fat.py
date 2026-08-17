@@ -13,12 +13,18 @@ shootout-perf-eval task-3 扩展).
   表示成本 = ②nocheck − ①raw     (胖 40B 表示相对裸 8B 的开销)
   检查成本 = ③check − ②nocheck   (检查发射相对无检查胖的开销)
   总成本   = ③check − ①raw       (完整胖相对裸指针的总开销)
+  ①raw 数据跨套件取自 shootout_raw 套件 (同基准, 同 runs/pin 协议)
 
 套件:
-  shootout  自动发现 bench/shootout/*.an (14 基准); 附 c/cpp/rust 参考基线可选
-  raw       自动发现 bench/shootout_raw/*.an (14 基准, 维度① raw 语义适配套件:
+  shootout  胖指针专用: 自动发现 bench/shootout/*.an (14 基准), 编译/测量 check+nocheck
+            两态 (胖套件不编 raw 态: 裸模式下隐式 T*→T[] coerce 被拒, expr_checker.py
+            L351-355); 维度① raw 跨套件从 bench/shootout_raw 同基准补齐 (同 runs/pin
+            协议) → 三态报告; 附 c/cpp/rust 参考基线可选
+  raw       裸指针专用: 自动发现 bench/shootout_raw/*.an (14 基准, 维度① raw 语义适配套件:
             T*→T[] 显式用 from_raw_parts, 因裸模式下隐式 coerce 被拒); 以
             --raw-pointers 编译单态测量, 写 shootout-raw-results.md
+
+三态由两套组合: ②/③ 来自 shootout 套件 (check/nocheck), ① raw 来自 shootout_raw 套件。
 
 用法:
   python3 scripts/bench_fat.py --suite shootout         # shootout 套件, 写 shootout-results.md
@@ -28,7 +34,7 @@ shootout-perf-eval task-3 扩展).
   python3 scripts/bench_fat.py --runs 7                 # 每态运行次数 (默认 5, 协议要求 ≥5)
   python3 scripts/bench_fat.py --pin 4                  # taskset 绑核降噪
   python3 scripts/bench_fat.py --no-compile             # 不重新编译, 仅测量已存在二进制
-  python3 scripts/bench_fat.py --raw-only               # 仅编译+测量 raw 态
+  python3 scripts/bench_fat.py --raw-only               # 仅编译+测量 raw 态 (shootout 套件从 bench/shootout_raw 源)
   python3 scripts/bench_fat.py --max-state-sec 120      # 单态 warmup 超限则测量次数降到 3
   python3 scripts/bench_fat.py --compile-only           # 只编译不测量 (编译验证)
 
@@ -304,7 +310,11 @@ def run_suite(
     specs: list[BenchSpec],
     args: argparse.Namespace,
     do_ref: bool,
+    include_raw: bool = False,
 ) -> tuple[list[MeasRow], list[RefRow], list[str]]:
+    """编译+测量套件基准。胖套件场景 include_raw=False: 只编译/测量 check+nocheck 两态
+    (胖套件不编 raw 态: 裸模式下隐式 T*→T[] coerce 被拒), 维度①由 complement_raw
+    跨套件补齐; include_raw=True (旧行为) 时同套件编译/测量三态。"""
     rows: list[MeasRow] = []
     notes: list[str] = []
 
@@ -312,12 +322,15 @@ def run_suite(
         if not args.no_compile:
             compile_an(spec, no_checks=False)
             compile_an(spec, no_checks=True)
-            compile_an(spec, no_checks=False, raw=True)
-        for label, binp in (
+            if include_raw:
+                compile_an(spec, no_checks=False, raw=True)
+        states: list[tuple[str, Path]] = [
             ("check", spec_bin(spec)),
             ("nocheck", spec_bin(spec, "_nfc")),
-            ("raw", spec_bin(spec, "_raw")),
-        ):
+        ]
+        if include_raw:
+            states.append(("raw", spec_bin(spec, "_raw")))
+        for label, binp in states:
             samples, used, warm = measure(binp, args.runs, args.pin)
             if used < args.runs:
                 notes.append(
@@ -325,7 +338,8 @@ def run_suite(
                     f"测量次数降为 {used}"
                 )
             rows.append(MeasRow(bench=spec.name, state=label, stats=summarize(samples), used_runs=used))
-        print(f"[done] {spec.name}: 三态 (raw/nocheck/check) 各 {args.runs} 次", file=sys.stderr)
+        state_desc = "三态 (raw/nocheck/check)" if include_raw else "双态 (nocheck/check)"
+        print(f"[done] {spec.name}: {state_desc} 各 {args.runs} 次", file=sys.stderr)
 
     ref_rows: list[RefRow] = []
     if do_ref:
@@ -340,6 +354,46 @@ def run_suite(
                 print(f"[done] ref {spec.name} ({lang}): {args.runs} 次", file=sys.stderr)
 
     return rows, ref_rows, notes
+
+
+def _raw_suite_map() -> dict[str, BenchSpec]:
+    return {s.name: s for s in discover_shootout_raw()}
+
+
+def _raw_specs_for(specs: list[BenchSpec]) -> list[BenchSpec]:
+    """把胖套件基准映射到 raw 套件同名基准 (缺失者忽略)。"""
+    raw_map = _raw_suite_map()
+    return [raw_map[s.name] for s in specs if s.name in raw_map]
+
+
+def complement_raw(
+    specs: list[BenchSpec],
+    args: argparse.Namespace,
+) -> tuple[list[MeasRow], list[str]]:
+    """跨套件补齐维度①: 对每个胖套件基准, 从 bench/shootout_raw/<name>.an 以
+    --raw-pointers 编译并测量 raw 态 (同 runs/pin 协议)。raw 套件缺同名基准 →
+    警告并跳过 (报告标注 维度①未测)。"""
+    rows: list[MeasRow] = []
+    notes: list[str] = []
+    raw_map = _raw_suite_map()
+    for spec in specs:
+        raw_spec = raw_map.get(spec.name)
+        if raw_spec is None:
+            msg = f"{spec.name}: 维度①未测 (bench/shootout_raw 缺同名基准)"
+            print(f"[warn] {msg}", file=sys.stderr)
+            notes.append(msg)
+            continue
+        if not args.no_compile:
+            compile_an(raw_spec, no_checks=False, raw=True)
+        samples, used, warm = measure(spec_bin(raw_spec, "_raw"), args.runs, args.pin)
+        if used < args.runs:
+            notes.append(
+                f"{spec.name}/raw: warmup {warm:.1f}s > {args.max_state_sec:.0f}s, "
+                f"测量次数降为 {used}"
+            )
+        rows.append(MeasRow(bench=spec.name, state="raw", stats=summarize(samples), used_runs=used))
+        print(f"[done] {spec.name}: raw 态 (跨套件 bench/shootout_raw) {args.runs} 次", file=sys.stderr)
+    return rows, notes
 
 
 def _matrix_table(
@@ -368,12 +422,19 @@ def _attribution_table(
         "以维度①裸指针为基准: 表示成本 = ②nocheck − ①raw (胖 40B 表示相对裸 8B); "
         "检查成本 = ③check − ②nocheck (检查发射); 总成本 = ③check − ①raw。\n"
     )
+    md.append(
+        "维度① (raw) 数据来自 bench/shootout_raw 套件 (跨套件补齐, --raw-pointers 编译, "
+        "同 runs/pin 协议)。\n"
+    )
     md.append("| 基准 | 表示成本 Δms (②−①) | 检查成本 Δms (③−②) | 总成本 Δms (③−①) | 表示成本 ΔRSS (MB) | 总成本 ΔRSS (MB) |\n")
     md.append("|---|---|---|---|---|---|\n")
     for spec in specs:
         on = next(r for r in rows if r.bench == spec.name and r.state == "check")
         off = next(r for r in rows if r.bench == spec.name and r.state == "nocheck")
-        raw = next(r for r in rows if r.bench == spec.name and r.state == "raw")
+        raw = next((r for r in rows if r.bench == spec.name and r.state == "raw"), None)
+        if raw is None:
+            md.append(f"| {spec.name} (维度①未测) | — | — | — | — | — |\n")
+            continue
         rep_ms = off.stats.time.med - raw.stats.time.med
         chk_ms = on.stats.time.med - off.stats.time.med
         tot_ms = on.stats.time.med - raw.stats.time.med
@@ -401,14 +462,19 @@ def render_shootout(
     md.append("## 0) 环境与协议\n")
     md.append("".join(f"{l}\n" for l in machine_header()))
     md.append(
-        "- 三态编译 (`python3 -m compiler.main -O2 lib bench/shootout/<name>.an`"
-        " / 无检查加 `--no-fat-checks` / 裸指针加 `--raw-pointers`), 每态运行 "
+        "- 编译: ②/③ 态 `python3 -m compiler.main -O2 lib bench/shootout/<name>.an`"
+        " (nocheck 加 `--no-fat-checks`); ①raw 态跨套件编译 `bench/shootout_raw/<name>.an`"
+        " 加 `--raw-pointers`, 每态运行 "
         f"{args.runs} 次取中位数, 报告 IQR/min/max (docs/security-code.md §10.5, 同一机器同一负载)。\n"
     )
     md.append(
         "- 三态定义: ①raw = 裸 8B 指针 (--raw-pointers, 无锁槽/帧锁/检查, 零安全基线); "
         "②nocheck = 胖 40B 表示但检查关 (--no-fat-checks, 保留锁槽/帧锁); "
         "③check = 完整胖指针 (40B + 全部安全检查)。\n"
+    )
+    md.append(
+        "- 维度① (raw) 来源: `bench/shootout_raw/` 套件 (T*→T[] 显式 `from_raw_parts`, "
+        "因裸模式下隐式 coerce 被拒); 与 ②/③ 同基准、同 runs/pin 协议, 跨套件组合成三态。\n"
     )
     md.append(
         "- 指标: 端到端墙钟时间 (ms, `time.monotonic()` 包住 `/usr/bin/time -v` 执行) + "
@@ -427,7 +493,7 @@ def render_shootout(
         note = scale_note(spec) or "—"
         md.append(f"| {spec.name} | {note} |\n")
 
-    md.append("\n## 2) 14×3 实测时间矩阵 (维度①: 裸 / 胖无检查 / 完整胖)\n")
+    md.append("\n## 2) 14×3 实测时间矩阵 (①raw 跨套件自 shootout_raw / ②胖无检查 / ③完整胖)\n")
     md += _matrix_table(rows, state_label)
 
     md.append("\n## 3) 成本分解: 表示成本 / 检查成本 / 总成本\n")
@@ -468,6 +534,10 @@ def render_shootout(
     md.append(
         f"- 每态先 1 次 warmup (确认稳定窗口, 不计入样本), 再测 {args.runs} 次取中位数。\n"
         f"- 自适应降次: 若某态 warmup 超过 {args.max_state_sec:.0f}s, 该态测量次数降到 3。\n"
+    )
+    md.append(
+        "- 维度① raw 与 `--suite raw` 套件共用同一批二进制 "
+        "`build/bench/shootout_raw/<name>_raw`, 数据一致。\n"
     )
     md.append("- 分轮执行: 全量按批次后台运行, 每轮独立落盘, 最终单次全量会话重新生成本文件 (数据一致)。\n")
     if notes:
@@ -591,7 +661,8 @@ def main() -> int:
         "--suite",
         choices=("shootout", "raw"),
         default="shootout",
-        help="基准套件: shootout=自动发现 bench/shootout/ 三态 (默认); "
+        help="基准套件: shootout=自动发现 bench/shootout/ 编译/测量 check+nocheck, "
+        "维度① raw 跨套件从 bench/shootout_raw 补齐 (默认); "
         "raw=自动发现 bench/shootout_raw/ (维度① raw 语义适配套件), 以 --raw-pointers 单态测量",
     )
     ap.add_argument(
@@ -607,7 +678,7 @@ def main() -> int:
     )
     ap.add_argument("--pin", type=int, default=None, help="taskset 绑定的 CPU 编号 (降噪)")
     ap.add_argument("--no-compile", action="store_true", help="不重新编译, 仅测量已存在二进制")
-    ap.add_argument("--raw-only", action="store_true", help="仅编译+测量 raw 态 (增补维度①)")
+    ap.add_argument("--raw-only", action="store_true", help="仅编译+测量 raw 态 (增补维度①; shootout 套件从 bench/shootout_raw 源编译)")
     ap.add_argument(
         "--ref",
         action="store_true",
@@ -653,15 +724,17 @@ def main() -> int:
     is_raw_suite = args.suite == "raw"
 
     if args.compile_only:
-        for spec in specs:
-            if is_raw_suite or args.raw_only:
+        if is_raw_suite or args.raw_only:
+            # raw 态统一从 raw 套件源编译 (胖套件不编 raw)
+            raw_specs = specs if is_raw_suite else _raw_specs_for(specs)
+            for spec in raw_specs:
                 compile_an(spec, no_checks=False, raw=True)
                 print(f"[compile-only] {spec.name}: raw OK", file=sys.stderr)
-            else:
+        else:
+            for spec in specs:
                 compile_an(spec, no_checks=False)
                 compile_an(spec, no_checks=True)
-                compile_an(spec, no_checks=False, raw=True)
-                print(f"[compile-only] {spec.name}: check/nocheck/raw OK", file=sys.stderr)
+                print(f"[compile-only] {spec.name}: check/nocheck OK", file=sys.stderr)
         return 0
 
     if is_raw_suite:
@@ -690,27 +763,31 @@ def main() -> int:
         return 0
 
     if args.raw_only:
-        rows: list[MeasRow] = []
+        raw_rows, _ = complement_raw(specs, args)
         for spec in specs:
-            if not args.no_compile:
-                compile_an(spec, no_checks=False, raw=True)
-            samples, _, _ = measure(spec_bin(spec, "_raw"), args.runs, args.pin)
-            rows.append(MeasRow(bench=spec.name, state="raw", stats=summarize(samples)))
-        for spec in specs:
-            raw = next(r for r in rows if r.bench == spec.name)
+            r = next((x for x in raw_rows if x.bench == spec.name), None)
+            if r is None:
+                print(f"{spec.name:<16} ①裸指针    维度①未测")
+                continue
             print(
-                f"{spec.name:<16} ①裸指针    {fmt_ms(raw.stats.time.med):>10}   "
-                f"{fmt_rss_mb(raw.stats.rss.med):>8}"
+                f"{spec.name:<16} ①裸指针    {fmt_ms(r.stats.time.med):>10}   "
+                f"{fmt_rss_mb(r.stats.rss.med):>8}"
             )
         return 0
 
     rows, ref_rows, notes = run_suite(specs, args, do_ref=args.ref)
+    raw_rows, raw_notes = complement_raw(specs, args)
+    rows += raw_rows
+    notes += raw_notes
 
     render_shootout(specs, rows, ref_rows, notes, args)
     print("基准             态          时间中位数(ms)  峰值RSS(MB)")
     for spec in specs:
         for state in ("check", "nocheck", "raw"):
-            r = next(x for x in rows if x.bench == spec.name and x.state == state)
+            r = next((x for x in rows if x.bench == spec.name and x.state == state), None)
+            if r is None:
+                print(f"{spec.name:<16} {state:<8}  维度①未测")
+                continue
             print(
                 f"{spec.name:<16} {state:<8}  {fmt_ms(r.stats.time.med):>10}   "
                 f"{fmt_rss_mb(r.stats.rss.med):>8}"
