@@ -158,7 +158,7 @@ def compile_an(spec: BenchSpec, no_checks: bool, raw: bool = False) -> Path:
         bin_path = spec_bin(spec, "_nfc")
     else:
         bin_path = spec_bin(spec)
-    cmd = [sys.executable, "-m", "compiler.main", "-O2"]
+    cmd = [sys.executable, "-m", "compiler.main", "-O3"]
     if raw:
         cmd.append("--raw-pointers")
     elif no_checks:
@@ -480,7 +480,7 @@ def render_shootout(
     md.append("## 0) 环境与协议\n")
     md.append("".join(f"{l}\n" for l in machine_header()))
     md.append(
-        "- 编译: ②/③ 态 `python3 -m compiler.main -O2 lib bench/shootout/<name>.an`"
+        "- 编译: ②/③ 态 `python3 -m compiler.main -O3 lib bench/shootout/<name>.an`"
         " (nocheck 加 `--no-fat-checks`); ①raw 态跨套件编译 `bench/shootout_raw/<name>.an`"
         " 加 `--raw-pointers`, 每态运行 "
         f"{args.runs} 次取中位数, 报告 IQR/min/max (docs/security-code.md §10.5, 同一机器同一负载)。\n"
@@ -597,7 +597,7 @@ def render_raw(
     md.append("## 0) 环境与协议\n")
     md.append("".join(f"{l}\n" for l in machine_header()))
     md.append(
-        "- 编译: `python3 -m compiler.main -O2 --raw-pointers lib bench/shootout_raw/<name>.an`, "
+        "- 编译: `python3 -m compiler.main -O3 --raw-pointers lib bench/shootout_raw/<name>.an`, "
         f"每基准运行 {args.runs} 次取中位数, 报告 IQR/min/max (docs/security-code.md §10.5, "
         "同一机器同一负载)。\n"
     )
