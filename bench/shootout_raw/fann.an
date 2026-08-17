@@ -1,0 +1,105 @@
+// bench/shootout_raw/fann.an — fannkuchredux (shootout fannkuchredux)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/fann.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/fann.an):
+//   原规模 n=12 (12! = 479M 排列), 断言 max_flips == 65。
+//   规模调整: 实测全胖模式 n=12 远超 60s, 折中为 n=11 (11! = 39.9M
+//   排列, 断言 max_flips == 51, 与 C 版 n=11 实测一致)。
+//   (三态同源码, 不影响归因。)
+//
+// 算法: 经典 fannkuchredux —— 增量生成排列, 对每个排列反转前缀
+//        (首元素 k → 反转前 k+1 个), 统计最大反转次数与校验和。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/fann.an -o build/shootout_check/fann
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+fn fannkuchredux(n: u64) -> i32 {
+    let perm: i32[12] = [0; 12];
+    let perm1: i32[12] = [0; 12];
+    let count: i32[12] = [0; 12];
+    let max_flips_count: i32 = 0;
+    let perm_count: i32 = 0;
+    let checksum: i32 = 0;
+    let done: i32 = 0;
+
+    let i: u64 = 0;
+    while i < n {
+        perm1[i] = i32(i);
+        count[i] = 0;
+        i += 1;
+    }
+    let r: i32 = i32(n);
+
+    while done == 0 {
+        while r != 1 {
+            count[u64(r - 1)] = r;
+            r -= 1;
+        }
+
+        let j: u64 = 0;
+        while j < n {
+            perm[j] = perm1[j];
+            j += 1;
+        }
+        let flips_count: i32 = 0;
+        let k: i32 = perm[0];
+
+        while k != 0 {
+            let k2: i32 = (k + 1) >> 1;
+            let m: i32 = 0;
+            while m < k2 {
+                let temp: i32 = perm[u64(m)];
+                perm[u64(m)] = perm[u64(k - m)];
+                perm[u64(k - m)] = temp;
+                m += 1;
+            }
+            flips_count += 1;
+            k = perm[0];
+        }
+        if flips_count > max_flips_count {
+            max_flips_count = flips_count;
+        }
+
+        if perm_count % 2 == 0 {
+            checksum += flips_count;
+        } else {
+            checksum -= flips_count;
+        }
+
+        // incremental permutation generation (下一排列)
+        while true {
+            if r == i32(n) {
+                done = 1;
+                break;
+            }
+            let perm0: i32 = perm1[0];
+            let idx: u64 = 0;
+            while idx < u64(r) {
+                let j2: u64 = idx + 1;
+                perm1[idx] = perm1[j2];
+                idx = j2;
+            }
+            perm1[u64(r)] = perm0;
+            count[u64(r)] -= 1;
+            if count[u64(r)] > 0 {
+                break;
+            }
+            r += 1;
+        }
+
+        if done == 0 {
+            perm_count += 1;
+        }
+    }
+    return max_flips_count;
+}
+
+fn main() {
+    let n: u64 = 11;
+    let result: i32 = fannkuchredux(n);
+    assert result == 51: "fann: max_flips_count is not correct";
+    print("fann pass\n");
+}

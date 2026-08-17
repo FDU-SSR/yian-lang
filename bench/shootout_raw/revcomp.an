@@ -1,0 +1,120 @@
+// bench/shootout_raw/revcomp.an — 反向互补 (shootout revcomp, compute-only)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/revcomp.c (C 版, 取校验和部分,
+//   不输出反向互补序列文本)
+// 规模参数取自原 .an (bak/old_exp/performance/an/revcomp.an):
+//   原规模 iterations=25000000, 断言 i32(checksum)%256 == 64。
+//   规模调整: 实测全胖模式 25M 次远超 60s, 折中为 2000000 次。
+//   校验和随迭代次数线性变化 (每轮贡献恒定, 取模循环): C 版实测
+//   2M 次时 checksum%256 == 128 (原版 25M 为 64), 断言值按 C 版
+//   同规模实测更新 (三态同源码, 不影响归因)。
+//
+// 注: 当前语法下 str 按字节切片 (str.as_slice() -> u8[]) 表达字符级
+//     IO; 输入为固定 386 字节 FASTA 序列 (3 条), 每轮扫描全部序列并
+//     做反向互补, 累计 checksum。complement 表基于 "ATCGGCTA...N" 对。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/revcomp.an -o build/shootout_check/revcomp
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+fn main() {
+    let input: str = ">ONE Homo sapiens alu\nGGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\nGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\nCCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT\nACAAAAATTAGCCGGGCGTGGTGGCGGGCGCCTGTAATCCCA\n>TWO IUB ambiguity codes\nGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG\nAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC\nAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA\n>THREE Homo sapiens frequency\nTTT\nAAA\nGGG\nCCC\n";
+    let ibytes: u8[] = input.as_slice();
+
+    let tbl: u8[256] = [0; 256];
+    let pairs: str = "ATCGGCTAUAMKRYWWSSYRKMVBHDDHBVNN";
+    let pbytes: u8[] = pairs.as_slice();
+    let i: u64 = 0;
+    while i < pbytes.len() {
+        tbl[u64(pbytes[i])] = pbytes[i + 1];
+        i += 2;
+    };
+
+    let temp_buf: u8[400] = [0; 400];
+    let end: u64 = 386;
+    let checksum: i64 = 0;
+    let iterations: u64 = 2000000;
+
+    let iter: u64 = 0;
+    while iter < iterations {
+        let in_offset: u64 = 0;
+
+        while in_offset < end && ibytes[in_offset] != b'>' {
+            in_offset += 1;
+        };
+
+        while in_offset < end {
+            while in_offset < end && ibytes[in_offset] != b'\n' {
+                in_offset += 1;
+            };
+            if in_offset < end {
+                in_offset += 1;
+            };
+
+            let seq_start: u64 = in_offset;
+            while in_offset < end && ibytes[in_offset] != b'>' {
+                in_offset += 1;
+            };
+            let seq_end: u64 = in_offset;
+
+            let clean_len: u64 = 0;
+            let k: u64 = seq_start;
+            while k < seq_end {
+                let t: u8 = ibytes[k];
+                if t != b'\n' {
+                    temp_buf[clean_len] = t;
+                    clean_len += 1;
+                };
+                k += 1;
+            };
+
+            let left: i64 = 0;
+            let right: i64 = i64(clean_len) - 1;
+            while left < right {
+                let lc: u8 = temp_buf[u64(left)];
+                let lcomp: u8 = tbl[u64(lc)];
+                if lcomp != 0 {
+                    lc = lcomp;
+                };
+                let rc: u8 = temp_buf[u64(right)];
+                let rcomp: u8 = tbl[u64(rc)];
+                if rcomp != 0 {
+                    rc = rcomp;
+                };
+
+                temp_buf[u64(left)] = rc;
+                temp_buf[u64(right)] = lc;
+                checksum += i64(lc) + i64(rc);
+
+                left += 1;
+                right -= 1;
+            };
+
+            if clean_len % 2 == 1 {
+                let mid: u64 = clean_len / 2;
+                let mcomp: u8 = tbl[u64(temp_buf[mid])];
+                if mcomp != 0 {
+                    temp_buf[mid] = mcomp;
+                };
+                checksum += i64(temp_buf[mid]);
+            };
+
+            let newlines: u64 = 0;
+            if clean_len > 0 {
+                newlines = (clean_len - 1) / 60;
+            };
+            checksum += i64(newlines) * 10;
+
+            while in_offset < end && ibytes[in_offset] != b'>' {
+                in_offset += 1;
+            };
+        };
+        iter += 1;
+    };
+
+    let res: i32 = i32(checksum % 256);
+    assert res == 128: "revcomp: checksum is not correct";
+    print("revcomp pass\n");
+}

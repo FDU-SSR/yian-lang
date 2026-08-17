@@ -1,0 +1,110 @@
+// bench/shootout_raw/queen.an — N 皇后回溯 (shootout queens)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/queen.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/queen.an):
+//   原规模 8000 皇后, 求解 1000 次, 断言 overall_result == 1000。
+//   规模调整: 全胖模式单次求解 ~0.35s, 1000 次实测远超可接受运行时长,
+//   折中为求解 SOLVES=150 次 (每次均成功, 断言 overall_result == SOLVES;
+//   三态同源码, 不影响归因)。
+//
+// 算法: 经典 N 皇后回溯。free_rows[r] 标记行 r 是否空闲,
+//       free_maxs[r+c] 标记右对角线, free_mins[c-r+7999] 标记左对角线
+//       (偏移 7999 保证下标非负)。place_queen 逐列放置, 回溯时恢复
+//       棋盘状态。solve_queens_once 每轮重建 4 个数组并求解一次。
+//
+// tiered-pointers t6 标注: 求解热路径 (is_safe/update_board_state/place_queen)
+//   的数组参数改为 bool[]/i32[] (块访问语义, 32B 表示, 免 index 字段)。
+//   solve_queens_once 局部保持 bool*/i32* (del 仅 T* 合法); 调用侧经
+//   let 绑定 T*→T[] 视图传递 (编译器不支持调用点自动降级)。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/queen.an -o build/shootout_check/queen
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+from std.core.slice import from_raw_parts;
+
+fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
+    if !free_rows[r] {
+        return false;
+    }
+    if !free_maxs[r + c] {
+        return false;
+    }
+    if !free_mins[r - c + 7999] {
+        return false;
+    }
+    return true;
+}
+
+fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) {
+    free_rows[r] = value;
+    free_maxs[c + r] = value;
+    free_mins[c - r + 7999] = value;
+}
+
+fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], queen_rows: i32[]) -> bool {
+    let r: u64 = 0;
+    while r < 8000 {
+        if is_safe(r, c, free_rows, free_maxs, free_mins) {
+            queen_rows[r] = i32(c);
+            update_board_state(r, c, false, free_rows, free_maxs, free_mins);
+            if c == 7999 {
+                return true;
+            }
+            if place_queen(c + 1, free_rows, free_maxs, free_mins, queen_rows) {
+                return true;
+            }
+            update_board_state(r, c, true, free_rows, free_maxs, free_mins);
+        }
+        r += 1;
+    }
+    return false;
+}
+
+fn solve_queens_once() -> bool {
+    let free_rows: bool* = dyn[8000] bool;
+    let free_maxs: bool* = dyn[16000] bool;
+    let free_mins: bool* = dyn[16000] bool;
+    let queen_rows: i32* = dyn[8000] i32;
+
+    let i: u64 = 0;
+    while i < 8000 {
+        free_rows[i] = true;
+        i += 1;
+    }
+    let j: u64 = 0;
+    while j < 16000 {
+        free_maxs[j] = true;
+        free_mins[j] = true;
+        j += 1;
+    }
+
+    let fr: bool[] = from_raw_parts(free_rows, 8000);
+    let fm: bool[] = from_raw_parts(free_maxs, 16000);
+    let fmi: bool[] = from_raw_parts(free_mins, 16000);
+    let qr: i32[] = from_raw_parts(queen_rows, 8000);
+    let ok: bool = place_queen(0, fr, fm, fmi, qr);
+
+    del free_rows;
+    del free_maxs;
+    del free_mins;
+    del queen_rows;
+    return ok;
+}
+
+fn main() {
+    let SOLVES: u64 = 150;
+    let overall_result: i64 = 0;
+    let i: u64 = 0;
+    while i < SOLVES {
+        overall_result = overall_result + 1;
+        if !solve_queens_once() {
+            overall_result = 16000;
+            break;
+        }
+        i += 1;
+    }
+    assert overall_result == i64(SOLVES): "queens Error";
+    print("queen pass\n");
+}

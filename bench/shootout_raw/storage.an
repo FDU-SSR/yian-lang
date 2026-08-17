@@ -1,0 +1,106 @@
+// bench/shootout_raw/storage.an — 递归数组树分配/释放 (shootout storage)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/storage.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/storage.an):
+//   原规模 depth=17, 断言 count_arrays == 64570081。
+//   规模调整: 胖指针下 array_tree 结构体为 48 字节 (40B 子指针 + i32),
+//   depth=17 需峰值 ~14GB 堆, 超出本机 (15GB, 可用 ~12GB) 会被 OOM。
+//   depth 减至 16: 总节点数按几何级数缩至 1/3, 断言 count_arrays ==
+//   21523360 (同样来自 build_tree_depth 调用计数, C 语义不变; 三态同
+//   源码, 不影响归因)。
+//
+// 算法: build_tree_depth 递归建树 — depth==1 时按 LCG 随机分配
+//       (1..10) 个叶数组 (children=null), 否则分配 3 个内部节点并在
+//       children 挂子数组。每次调用计数 +1 (count_arrays)。free_tree
+//       递归释放全部子数组。LCG: stage = stage*1103515245 + 12345。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/storage.an -o build/shootout_check/storage
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+struct array_tree {
+    children: array_tree*,
+    child_count: i32,
+}
+
+struct Random {
+    stage: u64,
+}
+
+fn Random_init(r: Random*, seed: u64) {
+    r.stage = seed;
+}
+
+fn Random_next(r: Random*) -> u64 {
+    let LCG_A: u64 = 1103515245;
+    let LCG_C: u64 = 12345;
+    r.stage = r.stage * LCG_A + LCG_C;
+    return r.stage;
+}
+
+fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> array_tree* {
+    *count += 1;
+
+    if depth == 1 {
+        let n: u64 = Random_next(random) % 10 + 1;
+        let arr: array_tree* = dyn[n] array_tree;
+        let i: u64 = 0;
+        while i < n {
+            arr[i].children = nullptr;
+            arr[i].child_count = 0;
+            i += 1;
+        };
+        *out_count = i32(n);
+        return arr;
+    }
+
+    let n: u64 = 3;
+    let arr: array_tree* = dyn[n] array_tree;
+    let i: u64 = 0;
+    while i < n {
+        let child_count: i32 = 0;
+        arr[i].children = build_tree_depth(depth - 1, random, count, &child_count);
+        arr[i].child_count = child_count;
+        i += 1;
+    };
+    *out_count = i32(n);
+    return arr;
+}
+
+fn free_tree(arr: array_tree*, count: i32) {
+    if arr == nullptr {
+        return;
+    }
+    let i: u64 = 0;
+    while i < u64(count) {
+        if arr[i].children != nullptr && arr[i].child_count > 0 {
+            free_tree(arr[i].children, arr[i].child_count);
+        }
+        i += 1;
+    };
+    del arr;
+}
+
+fn benchmark_storage(root_depth: i32) -> i64 {
+    let random: Random* = dyn Random(12345);
+    Random_init(random, 12345);
+
+    let count: i64 = 0;
+    let root_count: i32 = 0;
+    let result: array_tree* = build_tree_depth(root_depth, random, &count, &root_count);
+
+    free_tree(result, root_count);
+    del random;
+
+    return count;
+}
+
+fn main() {
+    let root_depth: i32 = 16;
+    let result: i64 = benchmark_storage(root_depth);
+    let expected: i64 = 21523360;
+    assert result == expected: "storage count not expected";
+    print("storage pass\n");
+}

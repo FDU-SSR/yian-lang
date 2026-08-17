@@ -1,0 +1,203 @@
+// bench/shootout_raw/nbody.an — N 体引力模拟 (shootout nbody)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/nbody.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/nbody.an):
+//   原规模 n=50000000 步 advance, 断言 result == -1。
+//   规模调整: 实测全胖模式 50M 步远超 60s, 折中为 n=12000000 步
+//   (C 版实测 n=12M 与 50M 同为 result == -1, 断言值与原版一致;
+//   三态同源码, 不影响归因)。
+//
+// 注: 当前语法无 sqrt 内建, 用牛顿迭代 mysqrt 实现 (相对误差 ~1ulp,
+//     C 版 12M 步结果 -1 已实测对齐)。
+//
+// 算法: 5 天体 (太阳+4 行星) 牛顿引力积分, advance() 对每对天体
+//       更新速度与位置, energy() 计算系统总能量, 输出 (s2-s1)*1e5。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/nbody.an -o build/shootout_check/nbody
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+@BitCopy
+struct Planet {
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    mass: f64,
+}
+
+fn mysqrt(x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let r: f64 = (x + 1.0) * 0.5;
+    let i: u32 = 0;
+    while i < 40 {
+        r = (r + x / r) * 0.5;
+        i += 1;
+    }
+    return r;
+}
+
+fn advance(nbodies: u64, bodies: Planet*, dt: f64) {
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+        let j: u64 = i + 1;
+        while j < nbodies {
+            let b2: Planet = bodies[j];
+
+            let dx: f64 = b.x - b2.x;
+            let dy: f64 = b.y - b2.y;
+            let dz: f64 = b.z - b2.z;
+
+            let distanced: f64 = dx * dx + dy * dy + dz * dz;
+            let distance: f64 = mysqrt(distanced);
+            let mag: f64 = dt / (distanced * distance);
+
+            b.vx -= dx * b2.mass * mag;
+            b.vy -= dy * b2.mass * mag;
+            b.vz -= dz * b2.mass * mag;
+
+            b2.vx += dx * b.mass * mag;
+            b2.vy += dy * b.mass * mag;
+            b2.vz += dz * b.mass * mag;
+
+            bodies[j] = b2;
+            j += 1;
+        }
+        bodies[i] = b;
+        i += 1;
+    }
+
+    let k: u64 = 0;
+    while k < nbodies {
+        let b3: Planet = bodies[k];
+        b3.x += b3.vx * dt;
+        b3.y += b3.vy * dt;
+        b3.z += b3.vz * dt;
+        bodies[k] = b3;
+        k += 1;
+    }
+}
+
+fn energy(nbodies: u64, bodies: Planet*) -> f64 {
+    let e: f64 = 0.0;
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+
+        e += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
+
+        let j: u64 = i + 1;
+        while j < nbodies {
+            let b2: Planet = bodies[j];
+
+            let dx: f64 = b.x - b2.x;
+            let dy: f64 = b.y - b2.y;
+            let dz: f64 = b.z - b2.z;
+
+            let distance: f64 = mysqrt(dx * dx + dy * dy + dz * dz);
+
+            e -= (b.mass * b2.mass) / distance;
+            j += 1;
+        }
+        i += 1;
+    }
+    return e;
+}
+
+fn offset_momentum(nbodies: u64, bodies: Planet*) {
+    let px: f64 = 0.0;
+    let py: f64 = 0.0;
+    let pz: f64 = 0.0;
+    let pi: f64 = 3.141592653589793;
+    let solar_mass: f64 = 4.0 * pi * pi;
+
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+        px += b.vx * b.mass;
+        py += b.vy * b.mass;
+        pz += b.vz * b.mass;
+        i += 1;
+    }
+
+    let b0: Planet = bodies[0];
+    b0.vx = -px / solar_mass;
+    b0.vy = -py / solar_mass;
+    b0.vz = -pz / solar_mass;
+    bodies[0] = b0;
+}
+
+fn init_bodies(bodies: Planet*) {
+    let pi: f64 = 3.141592653589793;
+    let solar_mass: f64 = 4.0 * pi * pi;
+    let days_per_year: f64 = 365.21;
+
+    bodies[0] = Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass);
+    bodies[1] = Planet(
+        4.84143144246472090e+00,
+        -1.16032004402742839e+00,
+        -1.03622044471123109e-01,
+        1.66007664274403694e-03 * days_per_year,
+        7.69901118419740425e-03 * days_per_year,
+        -6.90460016972063023e-05 * days_per_year,
+        9.54791938424326609e-04 * solar_mass
+    );
+    bodies[2] = Planet(
+        8.34336671824457987e+00,
+        4.12479856412430479e+00,
+        -4.03523417114321381e-01,
+        -2.76742510726862411e-03 * days_per_year,
+        4.99852801234917238e-03 * days_per_year,
+        2.30417297573763929e-05 * days_per_year,
+        2.85885980666130812e-04 * solar_mass
+    );
+    bodies[3] = Planet(
+        1.28943695621391310e+01,
+        -1.51111514016986312e+01,
+        -2.23307578892655734e-01,
+        2.96460137564761618e-03 * days_per_year,
+        2.37847173959480950e-03 * days_per_year,
+        -2.96589568540237556e-05 * days_per_year,
+        4.36624404335156298e-05 * solar_mass
+    );
+    bodies[4] = Planet(
+        1.53796971148509165e+01,
+        -2.59193146099879641e+01,
+        1.79258772950371181e-01,
+        2.68067772490389322e-03 * days_per_year,
+        1.62824170038242295e-03 * days_per_year,
+        -9.51592254519715870e-05 * days_per_year,
+        5.15138902046611451e-05 * solar_mass
+    );
+}
+
+fn main() {
+    let n: u64 = 12000000;
+    let bodies: Planet* = dyn[5] Planet;
+
+    init_bodies(bodies);
+    offset_momentum(5, bodies);
+
+    let s1: f64 = energy(5, bodies);
+
+    let step: u64 = 0;
+    while step < n {
+        advance(5, bodies, 0.01);
+        step += 1;
+    }
+
+    let s2: f64 = energy(5, bodies);
+
+    let result: i32 = i32((s2 - s1) * 100000.0);
+    assert result == -1: "nbody: energy drift result is not correct";
+
+    del bodies;
+    print("nbody pass\n");
+}

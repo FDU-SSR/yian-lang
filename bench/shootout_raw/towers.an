@@ -1,0 +1,117 @@
+// bench/shootout_raw/towers.an — 汉诺塔指针栈模拟 (shootout towers)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/towers.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/towers.an):
+//   原规模 disks=30, 断言 moves_done == 1073741823 (2^30 - 1)。
+//   (规模未调整; 与 C 版语义一致。)
+//
+// 算法: 3 根柱子各存一张 TowersDisk 链表 (按 size 从大到小, 栈顶最小)。
+//       push_disk 把 disk 压到某柱 (校验 size 递增), pop_disk_from 弹出
+//       栈顶, move_top_disk 完成单次移动并计数, move_disks 递归汉诺塔。
+//       build_tower_at 建 0..disks 的塔, 结束后 free_pile 逐节点释放。
+//       总移动次数 = 2^disks - 1。
+//
+// tiered-pointers t6 标注: state 参数改为 TowersState& (单元素引用,
+//   经 T& 字段访问 piles/moves_done; 热路径 move_disks 递归每步传 state)。
+//   TowersDisk 链表字段/参数保持 TowersDisk* (可空 + del 仅 T* 合法)。
+//   benchmark 内 state 局部保持 TowersState* (del 需要), 经 let 绑定
+//   T*→T& 视图传给热路径函数。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/towers.an -o build/shootout_check/towers
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+struct TowersDisk {
+    size: i32,
+    next: TowersDisk*,
+}
+
+struct TowersState {
+    piles: TowersDisk*[3],
+    moves_done: i64,
+}
+
+fn push_disk(disk: TowersDisk*, pile: u64, state: TowersState&) {
+    if disk == nullptr {
+        return;
+    }
+    let top: TowersDisk* = state.piles[pile];
+    if top != nullptr {
+        if disk.size >= top.size {
+            return;
+        }
+    }
+    disk.next = top;
+    state.piles[pile] = disk;
+}
+
+fn pop_disk_from(pile: u64, state: TowersState&) -> TowersDisk* {
+    let top: TowersDisk* = state.piles[pile];
+    if top == nullptr {
+        return nullptr;
+    }
+    state.piles[pile] = top.next;
+    top.next = nullptr;
+    return top;
+}
+
+fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
+    let disk: TowersDisk* = pop_disk_from(from_pile, state);
+    push_disk(disk, to_pile, state);
+    state.moves_done = state.moves_done + 1;
+}
+
+fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
+    let i: i32 = disks;
+    while i >= 0 {
+        let disk: TowersDisk* = dyn TowersDisk(i, nullptr);
+        push_disk(disk, pile, state);
+        i -= 1;
+    }
+}
+
+fn move_disks(disks: i32, from_pile: u64, to_pile: u64, state: TowersState&) {
+    if disks == 1 {
+        move_top_disk(from_pile, to_pile, state);
+    } else {
+        let other_pile: u64 = u64(3 - i32(from_pile) - i32(to_pile));
+        move_disks(disks - 1, from_pile, other_pile, state);
+        move_top_disk(from_pile, to_pile, state);
+        move_disks(disks - 1, other_pile, to_pile, state);
+    }
+}
+
+fn free_pile(disk: TowersDisk*) {
+    while disk != nullptr {
+        let next: TowersDisk* = disk.next;
+        del disk;
+        disk = next;
+    };
+}
+
+fn benchmark() -> i64 {
+    let state: TowersState* = dyn TowersState([nullptr, nullptr, nullptr], 0);
+    let sv: TowersState& = state;
+    build_tower_at(0, 30, sv);
+    move_disks(30, 0, 1, sv);
+
+    let i: u64 = 0;
+    while i < 3 {
+        if state.piles[i] != nullptr {
+            free_pile(state.piles[i]);
+        }
+        i += 1;
+    }
+
+    let moves: i64 = state.moves_done;
+    del state;
+    return moves;
+}
+
+fn main() {
+    let result: i64 = benchmark();
+    assert result == 1073741823: "towers: moves_done should be 1073741823";
+    print("towers pass\n");
+}

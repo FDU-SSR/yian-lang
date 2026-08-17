@@ -1,0 +1,101 @@
+// bench/shootout_raw/binarytree.an — 二叉树递归构建/检查/删除 (shootout binary-trees)
+// raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+//
+// 语义权威源: bak/old_exp/performance/c/binarytree.c (C 版)
+// 规模参数取自原 .an (bak/old_exp/performance/an/binarytree.an):
+//   原规模 N=20, minDepth=4, 断言 check % 256 == 176。
+//   (规模未调整; 与 C 版语义一致。)
+//
+// 算法: BottomUpTree 递归建满二叉树 (每节点两子指针), ItemCheck 递归
+//       求和 (空子树贡献 1, 非空加左右子树的 ItemCheck), DeleteTree
+//       递归后序删除。main 分三段: stretch tree (maxDepth+1) 建删、
+//       longLived tree (maxDepth) 保留至最后、中间按 depth 步进 2 建
+//       删 1<<(maxDepth-depth+minDepth) 棵临时树并累计 check。
+//       三态同源码: 裸/胖无检查/完整胖 均 exit 0。
+//
+// tiered-pointers t6 标注: ItemCheck 参数改为 treeNode& (单元素解引用读,
+//   仅 live 检查, 免 in_bounds)。treeNode 字段 left/right 保持 treeNode*
+//   (可空且需 != nullptr 判断, T& 不支持 nullptr 比较)。调用侧经
+//   let 绑定 T*→T& 视图传递 (编译器不支持调用点自动降级)。
+//
+// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/binarytree.an -o build/shootout_check/binarytree
+// 预期: exit 0 (断言全过)
+
+from std.core.io import print;
+
+struct treeNode {
+    left: treeNode*,
+    right: treeNode*,
+}
+
+fn NewTreeNode(left: treeNode*, right: treeNode*) -> treeNode* {
+    return dyn treeNode(left, right);
+}
+
+fn BottomUpTree(depth: u64) -> treeNode* {
+    if depth > 0 {
+        let left_child: treeNode* = BottomUpTree(depth - 1);
+        let right_child: treeNode* = BottomUpTree(depth - 1);
+        return NewTreeNode(left_child, right_child);
+    }
+    return NewTreeNode(nullptr, nullptr);
+}
+
+fn ItemCheck(tree: treeNode&) -> i64 {
+    let res: i64 = 1;
+    if tree.left != nullptr {
+        res += ItemCheck(tree.left);
+    }
+    if tree.right != nullptr {
+        res += ItemCheck(tree.right);
+    }
+    return res;
+}
+
+fn DeleteTree(tree: treeNode*) {
+    if tree == nullptr {
+        return;
+    }
+    if tree.left != nullptr {
+        DeleteTree(tree.left);
+    }
+    if tree.right != nullptr {
+        DeleteTree(tree.right);
+    }
+    del tree;
+}
+
+fn main() {
+    let N: u64 = 20;
+    let minDepth: u64 = 4;
+    let maxDepth: u64 = N;
+    let check: i64 = 0;
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2;
+    }
+
+    let stretchDepth: u64 = maxDepth + 1;
+    let stretchTree: treeNode* = BottomUpTree(stretchDepth);
+    DeleteTree(stretchTree);
+
+    let longLivedTree: treeNode* = BottomUpTree(maxDepth);
+
+    let depth: u64 = minDepth;
+    while depth <= maxDepth {
+        let iterations: i64 = 1 << (maxDepth - depth + minDepth);
+        let i: i64 = 0;
+        while i < iterations {
+            let tempTree: treeNode* = BottomUpTree(depth);
+            check += ItemCheck(tempTree);
+            DeleteTree(tempTree);
+            i += 1;
+        }
+        depth += 2;
+    }
+
+    DeleteTree(longLivedTree);
+
+    assert check % 256 == 176: "binarytree: check % 256 mismatch";
+    print("binarytree pass\n");
+}

@@ -16,9 +16,13 @@ shootout-perf-eval task-3 扩展).
 
 套件:
   shootout  自动发现 bench/shootout/*.an (14 基准); 附 c/cpp/rust 参考基线可选
+  raw       自动发现 bench/shootout_raw/*.an (14 基准, 维度① raw 语义适配套件:
+            T*→T[] 显式用 from_raw_parts, 因裸模式下隐式 coerce 被拒); 以
+            --raw-pointers 编译单态测量, 写 shootout-raw-results.md
 
 用法:
   python3 scripts/bench_fat.py --suite shootout         # shootout 套件, 写 shootout-results.md
+  python3 scripts/bench_fat.py --suite raw              # raw 套件, 写 shootout-raw-results.md
   python3 scripts/bench_fat.py --names binarytree,list  # 只测指定基准 (逗号分隔)
   python3 scripts/bench_fat.py --ref                    # 附加编译运行 c/cpp/rust 参考基线
   python3 scripts/bench_fat.py --runs 7                 # 每态运行次数 (默认 5, 协议要求 ≥5)
@@ -52,7 +56,9 @@ LIB = ROOT / "lib"
 BENCH_DIR = ROOT / "bench"
 OUT_DIR = ROOT / "build" / "bench"
 RESULTS_SHOOTOUT = OUT_DIR / "shootout-results.md"
+RESULTS_SHOOTOUT_RAW = OUT_DIR / "shootout-raw-results.md"
 SHOOTOUT_DIR = BENCH_DIR / "shootout"
+SHOOTOUT_RAW_DIR = BENCH_DIR / "shootout_raw"
 REF_ROOT = ROOT / "bak" / "old_exp" / "performance"
 REF_OUT_DIR = OUT_DIR / "ref"
 
@@ -122,6 +128,13 @@ def discover_shootout() -> list[BenchSpec]:
     if not files:
         raise SystemExit(f"[suite] {SHOOTOUT_DIR} 无 .an 基准")
     return [BenchSpec(name=f.stem, subdir="shootout") for f in files]
+
+
+def discover_shootout_raw() -> list[BenchSpec]:
+    files = sorted(SHOOTOUT_RAW_DIR.glob("*.an"))
+    if not files:
+        raise SystemExit(f"[suite] {SHOOTOUT_RAW_DIR} 无 .an 基准")
+    return [BenchSpec(name=f.stem, subdir="shootout_raw") for f in files]
 
 
 def _env_plain() -> dict[str, str]:
@@ -474,15 +487,112 @@ def render_shootout(
     print(f"\n结果写入 {RESULTS_SHOOTOUT}\n")
 
 
+def render_raw(
+    specs: list[BenchSpec],
+    rows: list[MeasRow],
+    ref_rows: list[RefRow],
+    notes: list[str],
+    args: argparse.Namespace,
+) -> None:
+    """渲染 raw 适配套件 (shootout_raw) 报告: 维度① raw 语义单态测量, §0-§6 结构。"""
+    state_label = {"raw": "①裸指针"}
+    md: list[str] = []
+    md.append(
+        "# build/bench/shootout-raw-results.md — shootout_raw 基准 raw 态性能实测 (bench-two-suite task-1)\n"
+    )
+    md.append("## 0) 环境与协议\n")
+    md.append("".join(f"{l}\n" for l in machine_header()))
+    md.append(
+        "- 编译: `python3 -m compiler.main -O2 --raw-pointers lib bench/shootout_raw/<name>.an`, "
+        f"每基准运行 {args.runs} 次取中位数, 报告 IQR/min/max (docs/security-code.md §10.5, "
+        "同一机器同一负载)。\n"
+    )
+    md.append(
+        "- 本套件 = 三态评测的维度① (raw) 语义: T*→T[] 显式用 `from_raw_parts` "
+        "(裸模式下隐式 coerce 被拒, expr_checker.py L351-355); 全裸 8B 指针 "
+        "(--raw-pointers, 无锁槽/帧锁/检查), 零安全基线。\n"
+    )
+    md.append(
+        "- 基准源: `bench/shootout_raw/*.an` (14 基准, 与 `bench/shootout/` 语义一致, "
+        "仅 T*→T[] 构造方式不同; 规模调整记录见各基准头部注释)。\n"
+    )
+    if args.pin is not None:
+        md.append(f"- 降噪: `taskset -c {args.pin}` 绑定单核。\n")
+
+    md.append("\n## 1) 基准清单与规模 (14)\n")
+    md.append("| 基准 | 规模 / 调整说明 |\n|---|---|\n")
+    for spec in specs:
+        note = scale_note(spec) or "—"
+        md.append(f"| {spec.name} | {note} |\n")
+
+    md.append("\n## 2) 14 基准 raw 态实测时间矩阵 (维度①: 裸指针)\n")
+    md += _matrix_table(rows, state_label)
+
+    md.append("\n## 3) 成本分解\n")
+    md.append(
+        "- 本套件为单态 (维度① raw) 测量, 不做三态成本分解; 表示/检查/总成本归因见 "
+        "`shootout-results.md` (胖套件三态报告)。\n"
+    )
+
+    if ref_rows:
+        md.append("\n## 4) c/cpp/rust 参考基线 (仅记录参考数字, 不写对照结论)\n")
+        md.append(
+            "- 参考源: `bak/old_exp/performance/{c,cpp,rust}/` 对应基准。\n"
+            "- 编译: C/C++ `clang/clang++ -O2 -lm`; Rust `rustc -O`。\n"
+            "- 注意: 参考源采用**原规模参数** (未经 t1/t2 的规模缩减, 如 fann n=12、"
+            "sieve 5000 趟、queen 1000 次等), 与 .an 迁移版的规模不同, 故数字仅作跨语言参考, "
+            "不作三态/跨语言对照结论。\n"
+        )
+        md.append("| 基准 | C 中位 (ms) | C++ 中位 (ms) | Rust 中位 (ms) | C RSS (MB) | C++ RSS (MB) | Rust RSS (MB) |\n")
+        md.append("|---|---|---|---|---|---|---|\n")
+        for spec in specs:
+            cells: list[str] = []
+            rss_cells: list[str] = []
+            for lang in ("c", "cpp", "rust"):
+                rr = next((x for x in ref_rows if x.bench == spec.name and x.lang == lang), None)
+                if rr is None:
+                    cells.append("—")
+                    rss_cells.append("—")
+                else:
+                    cells.append(f"{fmt_ms(rr.stats.time.med)}")
+                    rss_cells.append(fmt_rss_mb(rr.stats.rss.med))
+            md.append(
+                f"| {spec.name} | {cells[0]} | {cells[1]} | {cells[2]} "
+                f"| {rss_cells[0]} | {rss_cells[1]} | {rss_cells[2]} |\n"
+            )
+
+    md.append("\n## 5) 测量说明\n")
+    md.append(
+        f"- 每基准先 1 次 warmup (确认稳定窗口, 不计入样本), 再测 {args.runs} 次取中位数。\n"
+        f"- 自适应降次: 若 warmup 超过 {args.max_state_sec:.0f}s, 测量次数降到 3。\n"
+    )
+    if notes:
+        md.append("- 触发记录:\n")
+        for n in notes:
+            md.append(f"  - {n}\n")
+
+    md.append("\n## 6) 原始样本 (附录)\n")
+    md.append("格式: 每样本 `wall_ms` (rss_kb)。\n")
+    for r in rows:
+        md.append(
+            f"- {r.bench} / {state_label[r.state]}: "
+            f"{', '.join(f'{t:.1f} ({rss})' for t, rss in zip(r.stats.time.raw, r.stats.rss.raw))}\n"
+        )
+
+    RESULTS_SHOOTOUT_RAW.write_text("".join(md), encoding="utf-8")
+    print(f"\n结果写入 {RESULTS_SHOOTOUT_RAW}\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="胖指针安全检查性能实测 (fat-perf-eval / raw-pointers-eval task-3; shootout-perf-eval task-3)"
     )
     ap.add_argument(
         "--suite",
-        choices=("shootout",),
+        choices=("shootout", "raw"),
         default="shootout",
-        help="基准套件: shootout=自动发现 bench/shootout/ (唯一套件, 默认)",
+        help="基准套件: shootout=自动发现 bench/shootout/ 三态 (默认); "
+        "raw=自动发现 bench/shootout_raw/ (维度① raw 语义适配套件), 以 --raw-pointers 单态测量",
     )
     ap.add_argument(
         "--names",
@@ -536,13 +646,15 @@ def main() -> int:
             print(f"[warn] 未找到基准: {', '.join(missing)}", file=sys.stderr)
         return [s for s in specs if s.name in name_filter]
 
-    specs = _filter(discover_shootout())
+    specs = _filter(discover_shootout_raw() if args.suite == "raw" else discover_shootout())
     if not specs:
         return 0
 
+    is_raw_suite = args.suite == "raw"
+
     if args.compile_only:
         for spec in specs:
-            if args.raw_only:
+            if is_raw_suite or args.raw_only:
                 compile_an(spec, no_checks=False, raw=True)
                 print(f"[compile-only] {spec.name}: raw OK", file=sys.stderr)
             else:
@@ -550,6 +662,31 @@ def main() -> int:
                 compile_an(spec, no_checks=True)
                 compile_an(spec, no_checks=False, raw=True)
                 print(f"[compile-only] {spec.name}: check/nocheck/raw OK", file=sys.stderr)
+        return 0
+
+    if is_raw_suite:
+        rows: list[MeasRow] = []
+        for spec in specs:
+            if not args.no_compile:
+                compile_an(spec, no_checks=False, raw=True)
+            samples, used, warm = measure(spec_bin(spec, "_raw"), args.runs, args.pin)
+            if used < args.runs:
+                print(
+                    f"[warn] {spec.name}: warmup {warm:.1f}s > {args.max_state_sec:.0f}s, "
+                    f"测量次数降为 {used}",
+                    file=sys.stderr,
+                )
+            rows.append(MeasRow(bench=spec.name, state="raw", stats=summarize(samples), used_runs=used))
+            print(f"[done] {spec.name}: raw 态 {args.runs} 次", file=sys.stderr)
+
+        render_raw(specs, rows, [], [], args)
+        print("基准             态          时间中位数(ms)  峰值RSS(MB)")
+        for spec in specs:
+            r = next(x for x in rows if x.bench == spec.name and x.state == "raw")
+            print(
+                f"{spec.name:<16} raw     {fmt_ms(r.stats.time.med):>10}   "
+                f"{fmt_rss_mb(r.stats.rss.med):>8}"
+            )
         return 0
 
     if args.raw_only:
