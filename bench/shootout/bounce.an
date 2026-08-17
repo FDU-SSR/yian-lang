@@ -118,11 +118,12 @@ fn benchmark() -> i64 {
     let rounds: u64 = 10000;
     let bounces: i64 = 0;
     let balls: Ball* = dyn[ball_count] Ball;
+    let balls_slice: Ball[] = balls;
 
     let i: u64 = 0;
     while i < ball_count {
         let init_res: BallInitResult = BallInitResult_new(random);
-        balls[i] = init_res.ball;
+        balls_slice[i] = init_res.ball;
         random = init_res.random_state;
         i += 1;
     }
@@ -131,8 +132,8 @@ fn benchmark() -> i64 {
     while j < rounds {
         let k: u64 = 0;
         while k < ball_count {
-            let bounce_res: BounceResult = Ball_bounce(balls[k]);
-            balls[k] = bounce_res.ball;
+            let bounce_res: BounceResult = Ball_bounce(balls_slice[k]);
+            balls_slice[k] = bounce_res.ball;
             if bounce_res.bounced {
                 bounces += 1;
             }

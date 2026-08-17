@@ -43,12 +43,10 @@ fn BottomUpTree(depth: u64) -> treeNode* {
 fn ItemCheck(tree: treeNode&) -> i64 {
     let res: i64 = 1;
     if tree.left != nullptr {
-        let l: treeNode& = tree.left;
-        res += ItemCheck(l);
+        res += ItemCheck(tree.left);
     }
     if tree.right != nullptr {
-        let r: treeNode& = tree.right;
-        res += ItemCheck(r);
+        res += ItemCheck(tree.right);
     }
     return res;
 }
@@ -88,8 +86,7 @@ fn main() {
         let i: i64 = 0;
         while i < iterations {
             let tempTree: treeNode* = BottomUpTree(depth);
-            let tv: treeNode& = tempTree;
-            check += ItemCheck(tv);
+            check += ItemCheck(tempTree);
             DeleteTree(tempTree);
             i += 1;
         }
