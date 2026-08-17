@@ -298,9 +298,13 @@ class LLBuilder:
     # statements
     # ------------------------------------------------------------------
 
-    def var_ptr(self, symbol_id: int, result: str, frame_lock_ptr: LLValue | None = None, frame_key: LLValue | None = None) -> LLValue:
+    def var_ptr(self, symbol_id: int, result: str, frame_lock_ptr: LLValue | None = None, frame_key: LLValue | None = None, raw: bool = False) -> LLValue:
         alloca_ptr = self.__func.get_var_ptr(symbol_id)
-        if self.__is_fat_type(alloca_ptr.type_id):
+        if raw or not self.__is_fat_type(alloca_ptr.type_id):
+            # lazy-lvalue-fat(todo1):裸取址(未取址左值)仅返回栈地址;raw 模式下
+            # __is_fat_type 恒 False(既有行为),此处同样裸返回。
+            result_val = alloca_ptr
+        else:
             # 5 字段合成 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
                            self.__builder.bitcast(alloca_ptr.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
@@ -318,8 +322,6 @@ class LLBuilder:
                 LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1)),  # type: ignore
                 alloca_ptr.type_id,
             )
-        else:
-            result_val = alloca_ptr
         self.__func.set_reg(result, result_val)
         return result_val
 
@@ -489,6 +491,15 @@ class LLBuilder:
         le_size = self.__builder.icmp_signed("<=", sum128, size128)  # type: ignore
         cond: ir.Value = self.__builder.and_(ge0, le_size)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "elarith")
+
+    def check_raw_bounds(self, index: LLValue, length: int) -> None:
+        """lazy-lvalue-fat(todo1)裸数组越界检查:0 ≤ index < length(编译期长度)。
+
+        未取址裸数组元素访问无胖元数据,单 unsigned 比较即达 fat 路径
+        CheckElementArith + CheckSafeAccess 的组合越界语义(索引已 coerce u64)。
+        """
+        cond = self.__builder.icmp_unsigned("<", index.ir_val, ir.Constant(ir.IntType(64), length))  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
         """规则 3.3.3 前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。"""
@@ -766,7 +777,7 @@ class LLBuilder:
 
     # -- cast --
 
-    def cast(self, value: LLValue, to_type: int, result: str) -> LLValue:
+    def cast(self, value: LLValue, to_type: int, result: str, raw: bool = False) -> LLValue:
         src = self.__type_ctx[value.type_id]
         dst = self.__type_ctx[to_type]
         dest_ll_type = self.__ll_type_ctx.get_ll_type(to_type).ir_type
@@ -806,6 +817,12 @@ class LLBuilder:
             if self.__ll_type_ctx.is_zst(dst.pointee_type):
                 # both src and dst are ptr-to-ZST — no real cast, just undef
                 ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
+            elif raw:
+                # lazy-lvalue-fat(todo1)裸强转:位转换到裸目标指针。normal 模式下
+                # *T 的 LLVM 型是 5 字段聚合,须手动取 pointee 的裸指针型
+                # (裸数组退化 T[N]*→T* 的纯地址重贴)。
+                pointee_ll = self.__ll_type_ctx.get_ll_type(dst.pointee_type).ir_type
+                ir_val = self.__builder.bitcast(value.ir_val, pointee_ll.as_pointer())  # type: ignore
             elif self.__is_fat(value):
                 # 指针→指针:5 字段结构重贴;数组退化 T[m]*→T* 时重锚定 + size=m
                 if isinstance(src, Type.PointerType) and isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType):
@@ -828,11 +845,13 @@ class LLBuilder:
                     ir_val = value.ir_val
             elif (
                 not self.__raw_pointers
+                and not raw
                 and isinstance(src, Type.PointerType)
                 and isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType)
             ):
                 # 裸指针源(如 rvalue 数组临时量的 Alloca 结果):T[m]* → T* 退化同样
-                # 合成胖值(裸指针 data 即基址 = 首元素地址,锁用字面量锁槽,同 __promote_fat)
+                # 合成胖值(裸指针 data 即基址 = 首元素地址,锁用字面量锁槽,同 __promote_fat)。
+                # lazy-lvalue-fat(todo1):raw 强转(未取址裸数组退化)位转换,不合成胖值。
                 arr_ty = self.__type_ctx[src.pointee_type]
                 assert isinstance(arr_ty, Type.ArrayType)
                 if arr_ty.element_type == dst.pointee_type:

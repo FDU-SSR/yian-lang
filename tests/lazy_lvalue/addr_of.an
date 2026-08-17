@@ -1,0 +1,23 @@
+// lazy-lvalue-fat:显式取址 &x 保持胖指针 + 检查;同一变量裸/胖混用行为一致。
+//
+// Expected output: 0
+
+fn main() {
+    let x: i32 = 5;
+    let p: i32* = &x;
+    *p = 42;
+    assert x == 42: "x should be 42 after *p = 42";
+    assert *p == 42: "read through fat pointer should be 42";
+
+    x = 7;
+    assert *p == 7: "raw write visible through pointer";
+
+    *p = 8;
+    assert x == 8: "pointer write visible through raw read";
+
+    let a: i32[3] = [1, 2, 3];
+    let pa: i32* = &a[0];
+    pa[1] = 20;
+    assert a[1] == 20: "a[1] should be 20 after pa[1] = 20";
+    assert pa[0] == 1: "pa[0] should be 1";
+}

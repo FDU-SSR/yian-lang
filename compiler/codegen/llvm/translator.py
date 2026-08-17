@@ -154,6 +154,7 @@ class LLTranslator:
                     stmt.var_ref.symbol_id, stmt.result.name,
                     self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
                     self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
+                    stmt.raw,
                 )
             case IR.Alloca():
                 builder.alloca_store(self.__resolve(builder, stmt.value), stmt.result.name)
@@ -192,6 +193,8 @@ class LLTranslator:
                 builder.check_ref_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckElementArith():
                 builder.check_element_arith(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
+            case IR.CheckRawBounds():
+                builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
             case IR.CheckPtrDiff():
                 builder.check_ptrdiff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
             case IR.CheckPtrCmp():
@@ -213,7 +216,7 @@ class LLTranslator:
                     stmt.result.type_id
                 )
             case IR.Cast():
-                builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name)
+                builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name, stmt.raw)
             case IR.SizeOf():
                 builder.sizeof_const(stmt.type_id, stmt.result.name)
             case IR.FuncPtr():

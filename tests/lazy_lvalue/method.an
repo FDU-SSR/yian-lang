@@ -1,0 +1,47 @@
+// lazy-lvalue-fat:方法 self receiver 保持胖指针传参(隐式取址正常开销)。
+//
+// Expected output: 0
+
+struct Counter {
+    n: i32,
+}
+
+impl Counter {
+    pub fn inc() {
+        self.n += 1;
+    }
+
+    pub fn get() -> i32 {
+        return self.n;
+    }
+
+    pub fn add(v: i32) {
+        self.n += v;
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    pub fn get_x() -> i32 {
+        return self.x;
+    }
+}
+
+fn main() {
+    let c: Counter = Counter(0);
+    c.inc();
+    c.inc();
+    assert c.get() == 2: "counter should be 2 after two inc()";
+    c.add(5);
+    assert c.get() == 7: "counter should be 7 after add(5)";
+    c.inc();
+
+    let p: Point = Point(3, 4);
+    assert p.get_x() == 3: "p.get_x() should be 3";
+    p.x = 9;
+    assert p.get_x() == 9: "p.get_x() should be 9 after raw field write";
+}

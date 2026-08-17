@@ -86,6 +86,7 @@ class VarPtr:
     var_ref: VarRef
     frame_lock_ptr: Value | None  # e_f:帧锁槽地址(函数入口 alloca 的 u64 栈槽);raw 模式为 None
     frame_key: Value | None       # k_f:帧键(规则 3.7.1 帧进入 re-key);raw 模式为 None
+    raw: bool = False             # lazy-lvalue-fat(todo1):裸取址(未取址左值)仅返回栈地址,不合成 5 字段
 
 
 @dataclass
@@ -253,6 +254,20 @@ class CheckElementArith:
 
 
 @dataclass
+class CheckRawBounds:
+    """裸数组越界检查(lazy-lvalue-fat todo1):index < length(编译期长度)。
+
+    未取址数组元素访问不合成胖指针(无 index/size 元数据),无法承载
+    CheckElementArith / CheckSafeAccess;对编译期长度 N 做单个 unsigned
+    比较 index < N——等价 fat 路径 CheckElementArith(0 ≤ index ≤ N)与
+    Load/Store CheckSafeAccess(index+1 ≤ N)的组合语义(索引已 coerce u64,
+    无负方向)。t8 发射。
+    """
+    index: Value
+    length: int
+
+
+@dataclass
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
 
@@ -324,6 +339,7 @@ class Cast:
     result: Reg
     value: Value
     to_type: int
+    raw: bool = False  # lazy-lvalue-fat(todo1):裸指针强转(数组退化 T[N]*→T* 位转换,不合成胖值)
 
 
 @dataclass
@@ -418,6 +434,7 @@ Stmt: TypeAlias = (
     | GenKey | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess
+    | CheckRawBounds
 )
 
 # ---------------------------------------------------------------------------

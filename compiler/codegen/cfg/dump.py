@@ -37,15 +37,16 @@ def dump(func: IR.Function) -> str:
 # pylint: disable=too-many-return-statements
 def __dump_stmt(stmt: IR.Stmt) -> str:
     match stmt:
-        case IR.VarPtr(result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f):
+        case IR.VarPtr(result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f, raw=raw):
             if e_f is None:
                 frame = "⟨-, -⟩"
             else:
                 assert k_f is not None
                 frame = f"⟨{__dump_value(e_f)}, {__dump_value(k_f)}⟩"
+            raw_tag = " [raw]" if raw else ""
             return (
                 f"%{result.name} = varptr {var_ref.name}"
-                f" {frame}"
+                f" {frame}{raw_tag}"
                 f"  [{__type_str(var_ref.type_id)}]"
             )
 
@@ -137,6 +138,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckElementArith(base=base, offset=offset):
             return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
 
+        case IR.CheckRawBounds(index=index, length=length):
+            return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
+
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
             return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.3.3)"
 
@@ -168,10 +172,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.Cast(result=result, value=value, to_type=to_type):
+        case IR.Cast(result=result, value=value, to_type=to_type, raw=raw):
+            raw_tag = " [raw]" if raw else ""
             return (
                 f"%{result.name} = cast {__dump_value(value)}"
-                f" to {__type_str(to_type)}"
+                f" to {__type_str(to_type)}{raw_tag}"
                 f"  [{__type_str(result.type_id)}]"
             )
 

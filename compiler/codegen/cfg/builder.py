@@ -49,6 +49,10 @@ class CfgBuilder:
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(t7,规则 3.7.1)
+        # lazy-lvalue-fat(todo1):裸指针寄存器名集合。未取址左值(VarPtr raw / Alloca)
+        # 及裸派生(Cast/FieldPtr/ElementPtr 沿裸基址)记入;胖指针判定与检查插入据此
+        # 分派——裸指针跳检查,胖指针原检查保留。名字由 __new_name() 生成,全局唯一。
+        self.__raw_ptrs: set[str] = set()
         self.__func: IR.Function = IR.Function(name="", type_id=0, blocks=[], entry=IR.Block(""))  # placeholder; replaced in build()
 
     # ------------------------------------------------------------------
@@ -592,6 +596,33 @@ class CfgBuilder:
             case _:
                 raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
 
+    def __resolve_addr_fat(self, expr: HIR.Expr) -> IR.Value:
+        """lazy-lvalue-fat(todo1):恒胖地址解析——显式 &x(AddrOf)与方法 self receiver。
+
+        与 __resolve_addr(自然形态,裸变量→裸地址)不同:变量的地址一律合成
+        5 字段胖指针(首次取址惰性实体化帧锁),派生地址(field/array/deref)
+        沿胖基址传播,后续 Load/Store/FieldPtr/ElementPtr 检查全保留。
+        """
+        if not expr.is_place:
+            val = self.__resolve_val(expr)
+            return self.__build_alloca(val)
+
+        match expr:
+            case HIR.Unary() if expr.op == UnaryOperator.Deref:
+                return self.__resolve_deref_addr(expr)
+            case HIR.FieldAccess():
+                return self.__resolve_field_access_addr(expr, fat=True)
+            case HIR.TupleAccess():
+                return self.__resolve_tuple_access_addr(expr, fat=True)
+            case HIR.ArrayAccess():
+                return self.__resolve_array_access_addr(expr, fat=True)
+            case HIR.Var():
+                return self.__resolve_var_addr(expr, fat=True)
+            case HIR.Ty():
+                return self.__build_func_ptr(expr.type_id)
+            case _:
+                raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
+
     # ------------------------------------------------------------------
     # value resolvors
     # ------------------------------------------------------------------
@@ -709,7 +740,7 @@ class CfgBuilder:
             ptr_val = self.__resolve_val(expr.operand)
             return self.__build_load(ptr_val)
         if expr.op == UnaryOperator.AddrOf:
-            return self.__resolve_addr(expr.operand)
+            return self.__resolve_addr_fat(expr.operand)
 
         # common case
         val = self.__resolve_val(expr.operand)
@@ -760,7 +791,7 @@ class CfgBuilder:
         # 后)、field 派生均如此;唯一"天然 24B"的是方法体内 self.method()(T& deref,
         # __resolve_deref_addr 返回 operand 值即 T&)。统一折算到 alloc_ref(pointee):
         # __build_cast 的 LLVM T*→T& 分支做 40B→24B 收缩,已是 T& 时走 T&→T& identity。
-        receiver_addr = self.__resolve_addr(expr.receiver)
+        receiver_addr = self.__resolve_addr_fat(expr.receiver)
         # t4→F2 修复:调用侧 T* receiver 折算(T*→T&)前恢复 in_bounds 检查。
         # 折算删除 index/size 字段,方法体内 self 访问仅剩 CheckRefAccess(live),
         # one-past-end 指针(index==size,定义 13 良构)的 in_bounds 语义随之丢失。
@@ -917,32 +948,41 @@ class CfgBuilder:
     def __resolve_deref_addr(self, expr: HIR.Unary) -> IR.Value:
         return self.__resolve_val(expr.operand)
 
-    def __resolve_field_access_addr(self, expr: HIR.FieldAccess) -> IR.Value:
-        base_addr = self.__resolve_addr(expr.receiver)
+    def __resolve_field_access_addr(self, expr: HIR.FieldAccess, *, fat: bool = False) -> IR.Value:
+        # lazy-lvalue-fat(todo1):fat=True(显式 & / 方法 receiver)时沿胖基址传播;
+        # 自然形态下基址裸/胖随其形态——裸变量 → 裸字段地址,胖指针(Deref 后)→ 胖。
+        base_addr = self.__resolve_addr_fat(expr.receiver) if fat else self.__resolve_addr(expr.receiver)
         return self.__build_field_ptr(base_addr, expr.field.index, expr.type_id)
 
-    def __resolve_tuple_access_addr(self, expr: HIR.TupleAccess) -> IR.Value:
-        base_addr = self.__resolve_addr(expr.receiver)
+    def __resolve_tuple_access_addr(self, expr: HIR.TupleAccess, *, fat: bool = False) -> IR.Value:
+        base_addr = self.__resolve_addr_fat(expr.receiver) if fat else self.__resolve_addr(expr.receiver)
         return self.__build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def __resolve_array_access(self, expr: HIR.ArrayAccess) -> IR.Value:
         addr = self.__resolve_array_access_addr(expr)
         return self.__build_load(addr)
 
-    def __resolve_array_access_addr(self, expr: HIR.ArrayAccess) -> IR.Value:
+    def __resolve_array_access_addr(self, expr: HIR.ArrayAccess, *, fat: bool = False) -> IR.Value:
         # T[N] 元素地址:数组指针退化为 T* 后按元素索引(LLVM cast 数组退化
         # 重锚定 data + size=N,等价旧 trait 路径的 bitcast<T*> + p + *index)。
-        base_addr = self.__resolve_addr(expr.array)
+        # lazy-lvalue-fat(todo1):裸数组基址(普通数组变量)走裸位转换 + 编译期
+        # 越界检查;胖基址(Deref 后)走原退化 + ElementPtr 良构检查。
+        base_addr = self.__resolve_addr_fat(expr.array) if fat else self.__resolve_addr(expr.array)
         elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
         elem_base = self.__build_cast(base_addr, elem_ptr_type)
         index_val = self.__resolve_val(expr.index)
+        if not fat and self.__is_raw_pointer(base_addr):
+            self.__emit(IR.CheckRawBounds(index=index_val, length=expr.length))
+            ch_cfg_block().debug(lambda: "check insert ArrayAccess(raw): index < length (lazy-lvalue-fat todo1, 裸数组越界)")
         return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
 
-    def __resolve_var_addr(self, expr: HIR.Var) -> IR.Value:
+    def __resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:
         if expr.symbol_id not in self.__func.local_vars:
             raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
         var_ref = self.__func.local_vars[expr.symbol_id]
-        return self.__build_var_ptr(var_ref)
+        if fat:
+            return self.__build_var_ptr_fat(var_ref)
+        return self.__build_var_ptr_raw(var_ref)
 
     # ------------------------------------------------------------------
     # ir building helpers
@@ -973,6 +1013,12 @@ class CfgBuilder:
         self.__frame_lock = (e_f, k_f)
         return (e_f, k_f)
 
+    def __is_raw_pointer(self, ptr: IR.Value) -> bool:
+        """lazy-lvalue-fat(todo1):裸指针判定——寄存器名在裸集合中(未取址左值
+        地址及其裸派生);字面量恒非裸。
+        """
+        return isinstance(ptr, IR.Reg) and ptr.name in self.__raw_ptrs
+
     def __is_fat_pointer(self, ptr: IR.Value) -> bool:
         """胖指针判定:PointerType 且 pointee 非 ZST。
 
@@ -980,8 +1026,12 @@ class CfgBuilder:
         FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
         评测模式 raw_pointers 下恒 False:指针一律按裸 8B 处理,全部
         Check*/WriteLockSlot/Delete 检查与 PtrCmp 路由一并关闭(t1)。
+        lazy-lvalue-fat(todo1):裸指针寄存器(未取址左值)同样恒 False——
+        裸地址无胖元数据,不可承载检查。
         """
         if self.__raw_pointers:
+            return False
+        if self.__is_raw_pointer(ptr):
             return False
         ty = self.__type_ctx[ptr.type_id]
         if not isinstance(ty, Type.PointerType):
@@ -1004,12 +1054,12 @@ class CfgBuilder:
             field_type = TypeCtx.u64_id
         return self.__build_extract_value(ptr, field_index, field_type)
 
-    def __build_var_ptr(self, var_ref: IR.VarRef) -> IR.Value:
+    def __build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
         """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)。
 
         data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(首次取址时惰性
         实体化于函数入口);index = 0;size = 1(取址总是指向单个元素,含数组取址)。
-        LLVM 下降属 t8。
+        LLVM 下降属 t8。lazy-lvalue-fat(todo1):显式 &x 与方法 receiver 专用。
         """
         e_f, k_f = self.__emit_frame_lock()
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
@@ -1017,9 +1067,23 @@ class CfgBuilder:
             result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f,
         )).result
 
+    def __build_var_ptr_raw(self, var_ref: IR.VarRef) -> IR.Value:
+        """lazy-lvalue-fat(todo1):裸取址——未取址左值(赋值/读取/字段派生基址)
+        仅返回栈槽地址,不合成 5 字段、不触发帧锁实体化(帧锁延迟到真正需要
+        胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
+        """
+        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
+        raw_ptr = self.__emit(IR.VarPtr(
+            result=result, var_ref=var_ref, frame_lock_ptr=None, frame_key=None, raw=True,
+        )).result
+        self.__raw_ptrs.add(raw_ptr.name)
+        return raw_ptr
+
     def __build_alloca(self, value: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
-        return self.__emit(IR.Alloca(result=result, value=value)).result
+        addr = self.__emit(IR.Alloca(result=result, value=value)).result
+        self.__raw_ptrs.add(addr.name)
+        return addr
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         # t3 分级检查插入(按 type_id 分派):
@@ -1034,7 +1098,11 @@ class CfgBuilder:
                 self.__emit(IR.CheckInBounds(ptr=base))
                 ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
-        return self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
+        field_ptr = self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
+        # lazy-lvalue-fat(todo1):沿裸基址的字段派生保持裸(检查已由基址判定跳过)
+        if self.__is_raw_pointer(base):
+            self.__raw_ptrs.add(field_ptr.name)
+        return field_ptr
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__type_ctx[ptr.type_id]
@@ -1118,7 +1186,11 @@ class CfgBuilder:
             self.__emit(IR.CheckElementArith(base=base, offset=offset))
             ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p') (定义 13;规则 3.3.1-3.3.2)")
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
-        return self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+        elem_ptr = self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+        # lazy-lvalue-fat(todo1):沿裸基址的算术派生保持裸(检查已由基址判定跳过)
+        if self.__is_raw_pointer(base):
+            self.__raw_ptrs.add(elem_ptr.name)
+        return elem_ptr
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
         # t7 检查插入:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差 trap)
@@ -1159,11 +1231,17 @@ class CfgBuilder:
         # t7:Cast 指针→指针语义(§7.1)——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
         #   (5 字段结构重贴,LLVM 类型同为 {i8*,i8*,i64,i64,i64});涉及 ptr-to-ZST
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射属 t8。
+        # lazy-lvalue-fat(todo1):裸源强转标 raw——LLVM 层位转换(不合成胖值);
+        # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
         to_resolved = self.__type_ctx.resolve_aliases(to_type)
         if isinstance(self.__type_ctx[to_resolved], Type.PointerType):
             ch_cfg_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
+        raw = self.__is_raw_pointer(value)
         result = IR.Reg(name=self.__new_name(), type_id=to_type)
-        return self.__emit(IR.Cast(result=result, value=value, to_type=to_type)).result
+        cast = self.__emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
+        if raw:
+            self.__raw_ptrs.add(cast.name)
+        return cast
 
     def __build_size_of(self, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
