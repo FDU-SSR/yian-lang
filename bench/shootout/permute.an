@@ -13,18 +13,23 @@
 //       v[i] 与 v[j]。总调用次数 = 1 + n*(1 + (n-1)*(1 + ...)) 即
 //       n=12 时为 2109842094。
 //
+// tiered-pointers t6 标注: 热路径 (swap_indices/permute_inner) 数组参数
+//   v 改为 i32[] (块访问语义, 免 index 字段), count 改为 i32& (引用)。
+//   benchmark_permute 局部 v 保持 i32* (del 仅 T* 合法); 调用侧隐式 coerce
+//   T*→T[] 传递 (expr_checker.py L347-356, 胖模式允许)。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/permute.an -o build/shootout_check/permute
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
 
-fn swap_indices(i: u64, j: u64, v: i32*) {
+fn swap_indices(i: u64, j: u64, v: i32[]) {
     let tmp: i32 = v[i];
     v[i] = v[j];
     v[j] = tmp;
 }
 
-fn permute_inner(n: i32, v: i32*, count: i32*) {
+fn permute_inner(n: i32, v: i32[], count: i32&) {
     *count += 1;
     if n != 0 {
         let n1: i32 = n - 1;

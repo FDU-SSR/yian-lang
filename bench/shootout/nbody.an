@@ -13,6 +13,11 @@
 // 算法: 5 天体 (太阳+4 行星) 牛顿引力积分, advance() 对每对天体
 //       更新速度与位置, energy() 计算系统总能量, 输出 (s2-s1)*1e5。
 //
+// tiered-pointers t6 标注: advance/energy/offset_momentum/init_bodies 的
+//   bodies 参数改为 Planet[] (块访问语义, 免 index 字段)。
+//   main 局部 bodies 保持 Planet* (del 仅 T* 合法); 调用侧隐式 coerce
+//   T*→T[] 传递 (expr_checker.py L347-356, 胖模式允许)。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/nbody.an -o build/shootout_check/nbody
 // 预期: exit 0 (断言全过)
 
@@ -42,7 +47,7 @@ fn mysqrt(x: f64) -> f64 {
     return r;
 }
 
-fn advance(nbodies: u64, bodies: Planet*, dt: f64) {
+fn advance(nbodies: u64, bodies: Planet[], dt: f64) {
     let i: u64 = 0;
     while i < nbodies {
         let b: Planet = bodies[i];
@@ -84,7 +89,7 @@ fn advance(nbodies: u64, bodies: Planet*, dt: f64) {
     }
 }
 
-fn energy(nbodies: u64, bodies: Planet*) -> f64 {
+fn energy(nbodies: u64, bodies: Planet[]) -> f64 {
     let e: f64 = 0.0;
     let i: u64 = 0;
     while i < nbodies {
@@ -110,7 +115,7 @@ fn energy(nbodies: u64, bodies: Planet*) -> f64 {
     return e;
 }
 
-fn offset_momentum(nbodies: u64, bodies: Planet*) {
+fn offset_momentum(nbodies: u64, bodies: Planet[]) {
     let px: f64 = 0.0;
     let py: f64 = 0.0;
     let pz: f64 = 0.0;
@@ -133,7 +138,7 @@ fn offset_momentum(nbodies: u64, bodies: Planet*) {
     bodies[0] = b0;
 }
 
-fn init_bodies(bodies: Planet*) {
+fn init_bodies(bodies: Planet[]) {
     let pi: f64 = 3.141592653589793;
     let solar_mass: f64 = 4.0 * pi * pi;
     let days_per_year: f64 = 365.21;

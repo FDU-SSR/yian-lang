@@ -1,5 +1,7 @@
 // bench/shootout_raw/nbody.an — N 体引力模拟 (shootout nbody)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+// tiered-pointers t6 标注: 各函数 bodies 参数改 Planet[]; main 局部 bodies
+//   保持 Planet* (del 仅 T* 合法), 调用侧经 let 绑定 from_raw_parts 视图传递。
 //
 // 语义权威源: bak/old_exp/performance/c/nbody.c (C 版)
 // 规模参数取自原 .an (bak/old_exp/performance/an/nbody.an):
@@ -18,6 +20,7 @@
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
 @BitCopy
 struct Planet {
@@ -43,7 +46,7 @@ fn mysqrt(x: f64) -> f64 {
     return r;
 }
 
-fn advance(nbodies: u64, bodies: Planet*, dt: f64) {
+fn advance(nbodies: u64, bodies: Planet[], dt: f64) {
     let i: u64 = 0;
     while i < nbodies {
         let b: Planet = bodies[i];
@@ -85,7 +88,7 @@ fn advance(nbodies: u64, bodies: Planet*, dt: f64) {
     }
 }
 
-fn energy(nbodies: u64, bodies: Planet*) -> f64 {
+fn energy(nbodies: u64, bodies: Planet[]) -> f64 {
     let e: f64 = 0.0;
     let i: u64 = 0;
     while i < nbodies {
@@ -111,7 +114,7 @@ fn energy(nbodies: u64, bodies: Planet*) -> f64 {
     return e;
 }
 
-fn offset_momentum(nbodies: u64, bodies: Planet*) {
+fn offset_momentum(nbodies: u64, bodies: Planet[]) {
     let px: f64 = 0.0;
     let py: f64 = 0.0;
     let pz: f64 = 0.0;
@@ -134,7 +137,7 @@ fn offset_momentum(nbodies: u64, bodies: Planet*) {
     bodies[0] = b0;
 }
 
-fn init_bodies(bodies: Planet*) {
+fn init_bodies(bodies: Planet[]) {
     let pi: f64 = 3.141592653589793;
     let solar_mass: f64 = 4.0 * pi * pi;
     let days_per_year: f64 = 365.21;
@@ -181,19 +184,20 @@ fn init_bodies(bodies: Planet*) {
 fn main() {
     let n: u64 = 12000000;
     let bodies: Planet* = dyn[5] Planet;
+    let bs: Planet[] = from_raw_parts(bodies, 5);
 
-    init_bodies(bodies);
-    offset_momentum(5, bodies);
+    init_bodies(bs);
+    offset_momentum(5, bs);
 
-    let s1: f64 = energy(5, bodies);
+    let s1: f64 = energy(5, bs);
 
     let step: u64 = 0;
     while step < n {
-        advance(5, bodies, 0.01);
+        advance(5, bs, 0.01);
         step += 1;
     }
 
-    let s2: f64 = energy(5, bodies);
+    let s2: f64 = energy(5, bs);
 
     let result: i32 = i32((s2 - s1) * 100000.0);
     assert result == -1: "nbody: energy drift result is not correct";

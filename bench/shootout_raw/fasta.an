@@ -1,5 +1,9 @@
 // bench/shootout_raw/fasta.an — 随机 DNA 序列生成校验和 (shootout fasta)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+// tiered-pointers t6 标注: make_cumulative 的 genelist 参数改 AminoAcid[]
+//   (调用侧经 from_raw_parts 视图), checksum 参数改 i64& (T*→T& raw 下
+//   保留 identity); repeat_fasta_compute_only 的 checksum 参数改 i64&。
+//   random_fasta_compute_only 保持 T*。无 del, 无 T* 局部。
 //
 // 语义权威源: bak/old_exp/performance/c/fasta.c (C 版, 取 compute-only
 //   部分: 不输出序列文本, 只累计字符校验和)
@@ -15,6 +19,7 @@
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
 @BitCopy
 struct AminoAcid {
@@ -22,7 +27,7 @@ struct AminoAcid {
     prob: f64,
 }
 
-fn make_cumulative(genelist: AminoAcid*, count: u64, checksum: i64*) {
+fn make_cumulative(genelist: AminoAcid[], count: u64, checksum: i64&) {
     let p: f64 = 0.0;
     let i: u64 = 0;
     while i < count {
@@ -33,7 +38,7 @@ fn make_cumulative(genelist: AminoAcid*, count: u64, checksum: i64*) {
     }
 }
 
-fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64*) {
+fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
     let i: u64 = 0;
     while i < n {
         *checksum += i64(seq[i % 287]);
@@ -100,8 +105,8 @@ fn main() {
 
     let n: u64 = 25000000;
 
-    make_cumulative(&iub[0], 15, &checksum);
-    make_cumulative(&homosapiens[0], 4, &checksum);
+    make_cumulative(from_raw_parts(&iub[0], 15), 15, &checksum);
+    make_cumulative(from_raw_parts(&homosapiens[0], 4), 4, &checksum);
     random_fasta_compute_only(&homosapiens[0], 4, n * 5, &g_seed, &checksum);
     random_fasta_compute_only(&iub[0], 15, n * 3, &g_seed, &checksum);
     repeat_fasta_compute_only(alu_bytes, n * 2, &checksum);

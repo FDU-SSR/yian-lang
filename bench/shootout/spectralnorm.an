@@ -13,6 +13,11 @@
 // 算法: 对称矩阵 A(i,j)=((i+j)(i+j+1)/2)+i+1, 迭代 10 次 mult_AtAv
 //        求谱范数 sqrt(dot_uv/dot_vv), 输出 res = int(spec*100) % 256。
 //
+// tiered-pointers t6 标注: 热路径 (dot/mult_Av/mult_Atv/mult_AtAv/normalize)
+//   数组参数改为 f64[] (块访问语义, 32B 表示, 免 index 字段)。
+//   main 局部 u/v/tmp 保持 f64* (del 仅 T* 合法); 调用侧隐式 coerce T*→T[]
+//   传递 (expr_checker.py L347-356, 胖模式允许)。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/spectralnorm.an -o build/shootout_check/spectralnorm
 // 预期: exit 0 (断言全过)
 
@@ -35,7 +40,7 @@ fn A(i: u64, j: u64) -> i32 {
     return i32((i + j) * (i + j + 1) / 2 + i + 1);
 }
 
-fn dot(v: f64*, w: f64*, n: u64) -> f64 {
+fn dot(v: f64[], w: f64[], n: u64) -> f64 {
     let sum: f64 = 0.0;
     let i: u64 = 0;
     while i < n {
@@ -45,7 +50,7 @@ fn dot(v: f64*, w: f64*, n: u64) -> f64 {
     return sum;
 }
 
-fn mult_Av(v: f64*, out: f64*, n: u64) {
+fn mult_Av(v: f64[], out: f64[], n: u64) {
     let i: u64 = 0;
     while i < n {
         let sum: f64 = 0.0;
@@ -59,7 +64,7 @@ fn mult_Av(v: f64*, out: f64*, n: u64) {
     }
 }
 
-fn mult_Atv(v: f64*, out: f64*, n: u64) {
+fn mult_Atv(v: f64[], out: f64[], n: u64) {
     let i: u64 = 0;
     while i < n {
         let sum: f64 = 0.0;
@@ -73,12 +78,12 @@ fn mult_Atv(v: f64*, out: f64*, n: u64) {
     }
 }
 
-fn mult_AtAv(v: f64*, out: f64*, n: u64, tmp: f64*) {
+fn mult_AtAv(v: f64[], out: f64[], n: u64, tmp: f64[]) {
     mult_Av(v, tmp, n);
     mult_Atv(tmp, out, n);
 }
 
-fn normalize(v: f64*, n: u64) {
+fn normalize(v: f64[], n: u64) {
     let norm: f64 = 0.0;
     let i: u64 = 0;
     while i < n {

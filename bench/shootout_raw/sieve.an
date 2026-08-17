@@ -1,5 +1,7 @@
 // bench/shootout_raw/sieve.an — 埃拉托斯特尼筛法 (shootout sieve)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+// tiered-pointers t6 标注: sieve 的 flags 参数改 bool[]; main 局部 flags
+//   保持 bool* (del 仅 T* 合法), 调用侧经 from_raw_parts 视图传递。
 //
 // 语义权威源: bak/old_exp/performance/c/sieve.c (C 版)
 // 规模参数取自原 .an (bak/old_exp/performance/an/sieve.an):
@@ -15,8 +17,9 @@
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
-fn sieve(flags: bool*, size: u64) -> i32 {
+fn sieve(flags: bool[], size: u64) -> i32 {
     let prime_count: i32 = 0;
     let i: u64 = 2;
     while i < size {
@@ -44,7 +47,7 @@ fn main() {
             flags[i] = true;
             i += 1;
         }
-        let prime_count: i32 = sieve(flags, SIEVE_SIZE);
+        let prime_count: i32 = sieve(from_raw_parts(flags, SIEVE_SIZE), SIEVE_SIZE);
         assert prime_count == 148933: "sieve: prime_count is not correct";
         iter += 1;
     }

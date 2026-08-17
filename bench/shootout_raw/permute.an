@@ -1,5 +1,8 @@
 // bench/shootout_raw/permute.an — 全排列递归交换 (shootout permute)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
+// tiered-pointers t6 标注: 热路径数组参数 v 改 i32[], count 改 i32&;
+//   benchmark_permute 局部 v 保持 i32* (del 仅 T* 合法), 调用侧经
+//   from_raw_parts 视图传递。
 //
 // 语义权威源: bak/old_exp/performance/c/permute.c (C 版)
 // 规模参数取自原 .an (bak/old_exp/performance/an/permute.an):
@@ -18,14 +21,15 @@
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
-fn swap_indices(i: u64, j: u64, v: i32*) {
+fn swap_indices(i: u64, j: u64, v: i32[]) {
     let tmp: i32 = v[i];
     v[i] = v[j];
     v[j] = tmp;
 }
 
-fn permute_inner(n: i32, v: i32*, count: i32*) {
+fn permute_inner(n: i32, v: i32[], count: i32&) {
     *count += 1;
     if n != 0 {
         let n1: i32 = n - 1;
@@ -48,7 +52,7 @@ fn benchmark_permute() -> i32 {
         v[i] = i32(i);
         i += 1;
     }
-    permute_inner(11, v, &count);
+    permute_inner(11, from_raw_parts(v, 11), &count);
     del v;
     return count;
 }
