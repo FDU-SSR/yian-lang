@@ -400,13 +400,24 @@ def _matrix_table(
     rows: list[MeasRow],
     state_label: dict[str, str],
 ) -> list[str]:
+    # 倍率基准 = 各基准自身 raw 态时间中位数 (同基准内相对, 不受机器负载影响)。
+    raw_med: dict[str, float] = {r.bench: r.stats.time.med for r in rows if r.state == "raw"}
     md: list[str] = []
-    md.append("| 基准 | 态 | 时间中位数 (ms) | IQR (ms) | min–max (ms) | 峰值 RSS 中位数 (MB) | RSS IQR (MB) |\n")
-    md.append("|---|---|---|---|---|---|---|\n")
+    md.append(
+        "| 基准 | 态 | 时间中位数 (ms) | 倍率 (vs ①raw) | IQR (ms) | min–max (ms) "
+        "| 峰值 RSS 中位数 (MB) | RSS IQR (MB) |\n"
+    )
+    md.append("|---|---|---|---|---|---|---|---|\n")
     for r in rows:
+        base = raw_med.get(r.bench)
+        if base is None or base == 0.0:
+            ratio = "—"
+        else:
+            ratio = f"{r.stats.time.med / base:.2f}×"
         md.append(
             f"| {r.bench} | {state_label[r.state]} "
-            f"| {fmt_ms(r.stats.time.med)} | {fmt_ms(r.stats.time.iqr)} "
+            f"| {fmt_ms(r.stats.time.med)} | {ratio} "
+            f"| {fmt_ms(r.stats.time.iqr)} "
             f"| {fmt_ms(r.stats.time.min)}–{fmt_ms(r.stats.time.max)} "
             f"| {fmt_rss_mb(r.stats.rss.med)} | {fmt_rss_mb(r.stats.rss.iqr)} |\n"
         )
@@ -419,14 +430,18 @@ def _attribution_table(
 ) -> list[str]:
     md: list[str] = []
     md.append(
-        "以维度①裸指针为基准: 表示成本 = ②nocheck − ①raw (胖 40B 表示相对裸 8B); "
-        "检查成本 = ③check − ②nocheck (检查发射); 总成本 = ③check − ①raw。\n"
+        "以维度①裸指针为基准: 表示成本倍率 = ②nocheck 中位 / ①raw 中位 "
+        "(胖 40B 表示相对裸 8B); 检查成本倍率 = ③check 中位 / ②nocheck 中位 (检查发射); "
+        "总成本倍率 = ③check 中位 / ①raw 中位。\n"
     )
     md.append(
         "维度① (raw) 数据来自 bench/shootout_raw 套件 (跨套件补齐, --raw-pointers 编译, "
         "同 runs/pin 协议)。\n"
     )
-    md.append("| 基准 | 表示成本 Δms (②−①) | 检查成本 Δms (③−②) | 总成本 Δms (③−①) | 表示成本 ΔRSS (MB) | 总成本 ΔRSS (MB) |\n")
+    md.append(
+        "| 基准 | 表示成本倍率 (②/①) | 检查成本倍率 (③/②) | 总成本倍率 (③/①) "
+        "| 表示成本 ΔRSS (MB) | 总成本 ΔRSS (MB) |\n"
+    )
     md.append("|---|---|---|---|---|---|\n")
     for spec in specs:
         on = next(r for r in rows if r.bench == spec.name and r.state == "check")
@@ -435,13 +450,16 @@ def _attribution_table(
         if raw is None:
             md.append(f"| {spec.name} (维度①未测) | — | — | — | — | — |\n")
             continue
-        rep_ms = off.stats.time.med - raw.stats.time.med
-        chk_ms = on.stats.time.med - off.stats.time.med
-        tot_ms = on.stats.time.med - raw.stats.time.med
+        raw_med = raw.stats.time.med
+        off_med = off.stats.time.med
+        on_med = on.stats.time.med
+        rep_x = f"{off_med / raw_med:.2f}×" if raw_med else "—"
+        chk_x = f"{on_med / off_med:.2f}×" if off_med else "—"
+        tot_x = f"{on_med / raw_med:.2f}×" if raw_med else "—"
         rep_rss = (off.stats.rss.med - raw.stats.rss.med) / 1024.0
         tot_rss = (on.stats.rss.med - raw.stats.rss.med) / 1024.0
         md.append(
-            f"| {spec.name} | {rep_ms:+.1f} | {chk_ms:+.1f} | {tot_ms:+.1f} "
+            f"| {spec.name} | {rep_x} | {chk_x} | {tot_x} "
             f"| {rep_rss:+.2f} | {tot_rss:+.2f} |\n"
         )
     return md
@@ -481,6 +499,11 @@ def render_shootout(
         "峰值常驻内存 (Maximum resident set size, KB)。\n"
     )
     md.append(
+        "- 倍率基准: 各态倍率 = 该态时间中位数 / 该基准 ①raw 态时间中位数 "
+        "(同基准内相对, 不受机器负载影响); §2 矩阵与 §3 成本分解均以倍率呈现, "
+        "ΔRSS 保持绝对 MB (内存非相对时间范畴)。\n"
+    )
+    md.append(
         "- 基准源: `bench/shootout/*.an` (14 基准, 当前胖指针语法, 迁移自 "
         "`bak/old_exp/performance`; 规模调整记录见各基准头部注释与 t1/t2 证据)。\n"
     )
@@ -493,14 +516,15 @@ def render_shootout(
         note = scale_note(spec) or "—"
         md.append(f"| {spec.name} | {note} |\n")
 
-    md.append("\n## 2) 14×3 实测时间矩阵 (①raw 跨套件自 shootout_raw / ②胖无检查 / ③完整胖)\n")
+    md.append("\n## 2) 14×3 实测时间矩阵 (倍率 vs ①raw)\n")
     md += _matrix_table(rows, state_label)
 
-    md.append("\n## 3) 成本分解: 表示成本 / 检查成本 / 总成本\n")
+    md.append("\n## 3) 成本分解 (倍率 vs ①raw): 表示成本 / 检查成本 / 总成本\n")
     md += _attribution_table(specs, rows)
     md.append(
-        "\n注: 表示成本含胖指针 5 字段读写 / 分配块锁槽头 / 帧锁保留带来的访存与占用; "
-        "检查成本含 CheckSafeAccess/CheckInBounds/CheckElementArith/CheckPtrCmp/GenKey/锁槽写等。\n"
+        "\n注: 倍率 = 各态时间中位数相对 ①raw (或前态) 的比值; 表示成本倍率含胖指针 5 字段读写 "
+        "/ 分配块锁槽头 / 帧锁保留带来的访存与占用; "
+        "检查成本倍率含 CheckSafeAccess/CheckInBounds/CheckElementArith/CheckPtrCmp/GenKey/锁槽写等。\n"
     )
 
     if ref_rows:
