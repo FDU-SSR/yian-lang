@@ -15,25 +15,20 @@ shootout-perf-eval task-3 扩展).
   总成本   = ③check − ①raw       (完整胖相对裸指针的总开销)
 
 套件:
-  core      默认; bench/ 下 3 个原始负载 (ptr_traverse/alloc_dense/mixed) + ASan 对照
   shootout  自动发现 bench/shootout/*.an (14 基准); 附 c/cpp/rust 参考基线可选
-  all       两套件都测
 
 用法:
-  python3 scripts/bench_fat.py                          # core 套件, 写 results.md
   python3 scripts/bench_fat.py --suite shootout         # shootout 套件, 写 shootout-results.md
-  python3 scripts/bench_fat.py --suite all              # 两套件都测
   python3 scripts/bench_fat.py --names binarytree,list  # 只测指定基准 (逗号分隔)
   python3 scripts/bench_fat.py --ref                    # 附加编译运行 c/cpp/rust 参考基线
   python3 scripts/bench_fat.py --runs 7                 # 每态运行次数 (默认 5, 协议要求 ≥5)
   python3 scripts/bench_fat.py --pin 4                  # taskset 绑核降噪
-  python3 scripts/bench_fat.py --skip-asan              # 跳过 ASan 对照 (core 套件)
   python3 scripts/bench_fat.py --no-compile             # 不重新编译, 仅测量已存在二进制
   python3 scripts/bench_fat.py --raw-only               # 仅编译+测量 raw 态
   python3 scripts/bench_fat.py --max-state-sec 120      # 单态 warmup 超限则测量次数降到 3
 
 独立脚本: 不触碰 scripts/run_tests.py / run_fat*.py 等测试 runner; 不修改基准源码。
-输出: build/bench/results.md (core) / build/bench/shootout-results.md (shootout)。
+输出: build/bench/shootout-results.md (shootout)。
 """
 
 from __future__ import annotations
@@ -54,9 +49,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "lib"
 BENCH_DIR = ROOT / "bench"
-ASAN_DIR = BENCH_DIR / "asan"
 OUT_DIR = ROOT / "build" / "bench"
-RESULTS_CORE = OUT_DIR / "results.md"
 RESULTS_SHOOTOUT = OUT_DIR / "shootout-results.md"
 SHOOTOUT_DIR = BENCH_DIR / "shootout"
 REF_ROOT = ROOT / "bak" / "old_exp" / "performance"
@@ -81,9 +74,7 @@ REF_LANG_CMD: dict[str, tuple[str, str, list[str]]] = {
 @dataclass(frozen=True)
 class BenchSpec:
     name: str
-    access_count: int | None
-    access_desc: str
-    subdir: str = ""  # "" = core 套件 (bench/), "shootout" = shootout 套件
+    subdir: str = "shootout"  # 相对 bench/ 的子目录
 
 
 @dataclass
@@ -104,7 +95,7 @@ class SampleSummary:
 @dataclass
 class MeasRow:
     bench: str
-    state: str  # "check" | "nocheck" | "raw" | "asan"
+    state: str  # "check" | "nocheck" | "raw"
     stats: SampleSummary
     used_runs: int = 0
 
@@ -114,40 +105,6 @@ class RefRow:
     bench: str
     lang: str  # "c" | "cpp" | "rust"
     stats: SampleSummary
-
-
-# 访问/检查次数估算依据 = 基准头部注释的密度特征 (task-2 记录), 仅 core 套件有:
-#   - ptr_traverse: P×N×4 = 5000×10000×4 = 2×10^8 检查承载访问
-#   - alloc_dense:  R1×8 + R2×2 = 220000×8 + 150000×2 ≈ 2×10^6 Malloc/Delete 路径事件
-#   - mixed:        M×N = 1600×60000 = 9.6×10^7 元素访问 (pass2 主力, 每元素 ≈3 check)
-CORE_BENCHES = [
-    BenchSpec(
-        name="ptr_traverse",
-        access_count=200_000_000,
-        access_desc=(
-            "P×N×4 = 5000×10000×4 = 2×10^8 检查承载访问 (遍历期每结点每趟 "
-            "3×CheckSafeAccess + 1×CheckPtrCmp, task-2 记录)"
-        ),
-    ),
-    BenchSpec(
-        name="alloc_dense",
-        access_count=2_060_000,
-        access_desc=(
-            "R1×8 + R2×2 = 220000×8 + 150000×2 = 2.06×10^6 ≈ 2×10^6 "
-            "Malloc/Delete 路径事件 (Phase A 每轮 4 grow = 4 malloc + 3 free "
-            "+ 1 drop free = 4 malloc + 4 free, Phase B 每轮 1 malloc + 1 del, "
-            "task-2 记录)"
-        ),
-    ),
-    BenchSpec(
-        name="mixed",
-        access_count=96_000_000,
-        access_desc=(
-            "M×N = 1600×60000 = 9.6×10^7 元素访问 (pass2 指针游标主力, 每元素 "
-            "≈3 check: CheckPtrCmp + CheckElementArith + CheckSafeAccess, task-2 记录)"
-        ),
-    ),
-]
 
 
 def spec_src(spec: BenchSpec) -> Path:
@@ -163,17 +120,7 @@ def discover_shootout() -> list[BenchSpec]:
     files = sorted(SHOOTOUT_DIR.glob("*.an"))
     if not files:
         raise SystemExit(f"[suite] {SHOOTOUT_DIR} 无 .an 基准")
-    return [
-        BenchSpec(name=f.stem, access_count=None, access_desc="", subdir="shootout")
-        for f in files
-    ]
-
-
-def _env_asan() -> dict[str, str]:
-    env = os.environ.copy()
-    env["LANG"] = "C"
-    env["ASAN_OPTIONS"] = "detect_leaks=0"
-    return env
+    return [BenchSpec(name=f.stem, subdir="shootout") for f in files]
 
 
 def _env_plain() -> dict[str, str]:
@@ -208,18 +155,6 @@ def compile_an(spec: BenchSpec, no_checks: bool, raw: bool = False) -> Path:
     return bin_path
 
 
-def compile_asan(spec: BenchSpec) -> Path:
-    """编译语义对齐的 ASan C 版 (仅 core 套件有 .c 源)。"""
-    c_file = ASAN_DIR / f"{spec.name}.c"
-    out = OUT_DIR / f"asan_{spec.name}"
-    cmd = ["clang", "-O2", "-fsanitize=address", str(c_file), "-o", str(out)]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
-    if res.returncode != 0:
-        raise SystemExit(f"[compile] ASan {spec.name} failed:\n{res.stdout}\n{res.stderr}")
-    return out
-
-
 def compile_ref(name: str, lang: str) -> Path | None:
     """编译 bak/old_exp/performance/<lang>/<name> 参考基线; 源不存在返回 None。"""
     subdir, ext, base = REF_LANG_CMD[lang]
@@ -241,7 +176,6 @@ def measure(
     binary: Path,
     runs: int,
     pin: int | None,
-    asan: bool = False,
     allow_nonzero: bool = False,
     max_state_sec: float = DEFAULT_MAX_STATE_SEC,
 ) -> tuple[list[tuple[float, int]], int, float]:
@@ -251,7 +185,7 @@ def measure(
     max_state_sec (默认 120s) 且 runs>3, 实际测量次数降到 3 (shootout-perf-eval 策略)。
     allow_nonzero=True 时容忍非零退出码 (参考基线 fann 等以退出码传结果)。
     """
-    env = _env_asan() if asan else _env_plain()
+    env = _env_plain()
     pre: list[str] = []
     if pin is not None:
         pre = ["taskset", "-c", str(pin)]
@@ -355,9 +289,8 @@ def scale_note(spec: BenchSpec) -> str:
 def run_suite(
     specs: list[BenchSpec],
     args: argparse.Namespace,
-    do_asan: bool,
     do_ref: bool,
-) -> tuple[list[MeasRow], list[MeasRow], list[RefRow], list[str]]:
+) -> tuple[list[MeasRow], list[RefRow], list[str]]:
     rows: list[MeasRow] = []
     notes: list[str] = []
 
@@ -380,19 +313,6 @@ def run_suite(
             rows.append(MeasRow(bench=spec.name, state=label, stats=summarize(samples), used_runs=used))
         print(f"[done] {spec.name}: 三态 (raw/nocheck/check) 各 {args.runs} 次", file=sys.stderr)
 
-    asan_rows: list[MeasRow] = []
-    if do_asan:
-        for spec in specs:
-            if not args.no_compile:
-                compile_asan(spec)
-            samples, used, _ = measure(
-                OUT_DIR / f"asan_{spec.name}", args.runs, args.pin, asan=True
-            )
-            asan_rows.append(
-                MeasRow(bench=spec.name, state="asan", stats=summarize(samples), used_runs=used)
-            )
-            print(f"[done] ASan {spec.name}: {args.runs} 次", file=sys.stderr)
-
     ref_rows: list[RefRow] = []
     if do_ref:
         for lang in ("c", "cpp", "rust"):
@@ -405,7 +325,7 @@ def run_suite(
                 ref_rows.append(RefRow(bench=spec.name, lang=lang, stats=summarize(samples)))
                 print(f"[done] ref {spec.name} ({lang}): {args.runs} 次", file=sys.stderr)
 
-    return rows, asan_rows, ref_rows, notes
+    return rows, ref_rows, notes
 
 
 def _matrix_table(
@@ -450,148 +370,6 @@ def _attribution_table(
             f"| {rep_rss:+.2f} | {tot_rss:+.2f} |\n"
         )
     return md
-
-
-def render_core(
-    specs: list[BenchSpec],
-    rows: list[MeasRow],
-    asan_rows: list[MeasRow],
-    ref_rows: list[RefRow],
-    notes: list[str],
-    args: argparse.Namespace,
-) -> None:
-    state_label = {"check": "③完整胖", "nocheck": "②胖无检查", "raw": "①裸指针"}
-    md: list[str] = []
-    md.append(
-        "# build/bench/results.md — 胖指针安全性能实测 (fat-perf-eval / raw-pointers-eval task-3)\n"
-    )
-    md.append("## 0) 环境与协议\n")
-    md.append("".join(f"{l}\n" for l in machine_header()))
-    md.append(
-        "- 三态编译 (`python3 -m compiler.main -O2 lib bench/<name>.an -o build/bench/<name>`"
-        " / 无检查加 `--no-fat-checks` / 裸指针加 `--raw-pointers`), 每态运行 "
-        f"{args.runs} 次取中位数, 报告 IQR/min/max (docs/security-code.md §10.5, 同一机器同一负载)。\n"
-    )
-    md.append(
-        "- 三态定义: ①raw = 裸 8B 指针 (--raw-pointers, 无锁槽/帧锁/检查, 零安全基线); "
-        "②nocheck = 胖 40B 表示但检查关 (--no-fat-checks, 保留锁槽/帧锁); "
-        "③check = 完整胖指针 (40B + 全部安全检查)。\n"
-    )
-    md.append(
-        "- 指标: 端到端墙钟时间 (ms, `time.monotonic()` 包住 `/usr/bin/time -v` 执行) + "
-        "峰值常驻内存 (Maximum resident set size, KB)。\n"
-    )
-    md.append(
-        "- 开/关差异严格限定为检查发射 (--no-fat-checks 保留 40B 胖指针表示 / 锁槽 / 帧锁, "
-        "task-1 记录); ASan 对照为手写语义对齐 C 版, `clang -O2 -fsanitize=address`, "
-        "`ASAN_OPTIONS=detect_leaks=0`。\n"
-    )
-    if args.pin is not None:
-        md.append(f"- 降噪: `taskset -c {args.pin}` 绑定单核。\n")
-    md.append("\n## 1) 每检查开销估算方法\n")
-    md.append(
-        "访问计数取自各基准头部注释的密度特征 (task-2 记录), 每检查开销 = "
-        "「开检查中位数时间 − 关中位数时间」/ 访问计数:\n"
-    )
-    md.append("| 基准 | 访问计数 (估算) | 估算来源 |\n|---|---|---|\n")
-    for spec in specs:
-        if spec.access_count is not None:
-            md.append(f"| {spec.name} | {spec.access_count:,} | {spec.access_desc} |\n")
-
-    md.append("\n## 2) 三维实测时间结果 (维度①: 裸 / 胖无检查 / 完整胖)\n")
-    md += _matrix_table(rows, state_label)
-
-    md.append("\n## 3) 成本分解: 表示成本 / 检查成本 / 总成本\n")
-    md += _attribution_table(specs, rows)
-    md.append(
-        "\n注: 表示成本含胖指针 5 字段读写 / 分配块锁槽头 / 帧锁保留带来的访存与占用; "
-        "检查成本含 CheckSafeAccess/CheckInBounds/CheckElementArith/CheckPtrCmp/GenKey/锁槽写等。\n"
-    )
-
-    md.append("\n## 4) 每检查开销与内存开销\n")
-    md.append("| 基准 | Δ时间 (检查开−关, ms) | 访问计数 | 每检查/每访问 (ns) | Δ峰值 RSS (开−关, MB) |\n")
-    md.append("|---|---|---|---|---|\n")
-    for spec in specs:
-        if spec.access_count is None:
-            continue
-        on = next(r for r in rows if r.bench == spec.name and r.state == "check")
-        off = next(r for r in rows if r.bench == spec.name and r.state == "nocheck")
-        delta_ms = on.stats.time.med - off.stats.time.med
-        per_check_ns = delta_ms * 1e6 / spec.access_count
-        delta_rss_mb = (on.stats.rss.med - off.stats.rss.med) / 1024.0
-        md.append(
-            f"| {spec.name} | {delta_ms:+.1f} | {spec.access_count:,} "
-            f"| {per_check_ns:+.2f} | {delta_rss_mb:+.2f} |\n"
-        )
-    md.append(
-        "\n注: 每检查开销 = Δ时间/访问计数。alloc_dense 的计数为 Malloc/Delete 路径事件"
-        " (每事件内含 GenKey/锁槽写/free 校验多项操作); mixed 计数为元素访问"
-        " (pass2 每元素 ≈3 个不同 check 类型), 故该两行是「每访问事件」开销而非单条检查指令。\n"
-    )
-
-    md.append("\n## 5) ASan 对照\n")
-    md.append("| 基准 | 态 | 时间中位数 (ms) | IQR (ms) | min–max (ms) | 峰值 RSS 中位数 (MB) |\n")
-    md.append("|---|---|---|---|---|---|\n")
-    for r in rows:
-        md.append(
-            f"| {r.bench} | {state_label[r.state]} "
-            f"| {fmt_ms(r.stats.time.med)} | {fmt_ms(r.stats.time.iqr)} "
-            f"| {fmt_ms(r.stats.time.min)}–{fmt_ms(r.stats.time.max)} "
-            f"| {fmt_rss_mb(r.stats.rss.med)} |\n"
-        )
-    for a in asan_rows:
-        md.append(
-            f"| {a.bench} | ASan (C, clang -O2) "
-            f"| {fmt_ms(a.stats.time.med)} | {fmt_ms(a.stats.time.iqr)} "
-            f"| {fmt_ms(a.stats.time.min)}–{fmt_ms(a.stats.time.max)} "
-            f"| {fmt_rss_mb(a.stats.rss.med)} |\n"
-        )
-
-    if ref_rows:
-        md.append("\n## 5.5) c/cpp/rust 参考基线 (仅记录参考数字, 不写对照结论)\n")
-        md.append(
-            "参考源: `bak/old_exp/performance/{c,cpp,rust}/` 对应基准 (原规模参数, "
-            "未做规模缩减; 与 .an 迁移版规模可能不同)。\n"
-        )
-        md.append("| 基准 | C (ms) | C++ (ms) | Rust (ms) | C RSS (MB) | C++ RSS (MB) | Rust RSS (MB) |\n")
-        md.append("|---|---|---|---|---|---|---|\n")
-        for spec in specs:
-            cells: list[str] = []
-            for lang in ("c", "cpp", "rust"):
-                rr = next((x for x in ref_rows if x.bench == spec.name and x.lang == lang), None)
-                if rr is None:
-                    cells.append("—")
-                else:
-                    cells.append(f"{fmt_ms(rr.stats.time.med)}")
-            rss_cells: list[str] = []
-            for lang in ("c", "cpp", "rust"):
-                rr = next((x for x in ref_rows if x.bench == spec.name and x.lang == lang), None)
-                rss_cells.append(fmt_rss_mb(rr.stats.rss.med) if rr is not None else "—")
-            md.append(
-                f"| {spec.name} | {cells[0]} | {cells[1]} | {cells[2]} "
-                f"| {rss_cells[0]} | {rss_cells[1]} | {rss_cells[2]} |\n"
-            )
-
-    if notes:
-        md.append("\n## 5.6) 测量说明 (自适应降次)\n")
-        for n in notes:
-            md.append(f"- {n}\n")
-
-    md.append("\n## 6) 原始样本 (附录)\n")
-    md.append("格式: 每样本 `wall_ms` (rss_kb)。\n")
-    for r in rows:
-        md.append(
-            f"- {r.bench} / {state_label[r.state]}: "
-            f"{', '.join(f'{t:.1f} ({rss})' for t, rss in zip(r.stats.time.raw, r.stats.rss.raw))}\n"
-        )
-    for a in asan_rows:
-        md.append(
-            f"- {a.bench} / ASan: "
-            f"{', '.join(f'{t:.1f} ({rss})' for t, rss in zip(a.stats.time.raw, a.stats.rss.raw))}\n"
-        )
-
-    RESULTS_CORE.write_text("".join(md), encoding="utf-8")
-    print(f"\n结果写入 {RESULTS_CORE}\n")
 
 
 def render_shootout(
@@ -701,9 +479,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--suite",
-        choices=("core", "shootout", "all"),
-        default="core",
-        help="基准套件: core=bench/ 3 负载 (默认), shootout=自动发现 bench/shootout/, all=两者",
+        choices=("shootout",),
+        default="shootout",
+        help="基准套件: shootout=自动发现 bench/shootout/ (唯一套件, 默认)",
     )
     ap.add_argument(
         "--names",
@@ -717,7 +495,6 @@ def main() -> int:
         help=f"每态运行次数 (默认 {DEFAULT_RUNS}, 协议要求 ≥5)",
     )
     ap.add_argument("--pin", type=int, default=None, help="taskset 绑定的 CPU 编号 (降噪)")
-    ap.add_argument("--skip-asan", action="store_true", help="跳过 ASan 对照编译与测量 (core 套件)")
     ap.add_argument("--no-compile", action="store_true", help="不重新编译, 仅测量已存在二进制")
     ap.add_argument("--raw-only", action="store_true", help="仅编译+测量 raw 态 (增补维度①)")
     ap.add_argument(
@@ -751,74 +528,36 @@ def main() -> int:
             print(f"[warn] 未找到基准: {', '.join(missing)}", file=sys.stderr)
         return [s for s in specs if s.name in name_filter]
 
-    suites: list[str] = []
-    if args.suite in ("core", "all"):
-        suites.append("core")
-    if args.suite in ("shootout", "all"):
-        suites.append("shootout")
+    specs = _filter(discover_shootout())
+    if not specs:
+        return 0
 
-    for suite in suites:
-        if suite == "core":
-            specs = _filter(list(CORE_BENCHES))
-            do_asan = not args.skip_asan
-        else:
-            specs = _filter(discover_shootout())
-            do_asan = False  # shootout 无语义对齐 ASan C 版
-        if not specs:
-            continue
+    if args.raw_only:
+        rows: list[MeasRow] = []
+        for spec in specs:
+            if not args.no_compile:
+                compile_an(spec, no_checks=False, raw=True)
+            samples, _, _ = measure(spec_bin(spec, "_raw"), args.runs, args.pin)
+            rows.append(MeasRow(bench=spec.name, state="raw", stats=summarize(samples)))
+        for spec in specs:
+            raw = next(r for r in rows if r.bench == spec.name)
+            print(
+                f"{spec.name:<16} ①裸指针    {fmt_ms(raw.stats.time.med):>10}   "
+                f"{fmt_rss_mb(raw.stats.rss.med):>8}"
+            )
+        return 0
 
-        if args.raw_only:
-            rows: list[MeasRow] = []
-            for spec in specs:
-                if not args.no_compile:
-                    compile_an(spec, no_checks=False, raw=True)
-                samples, _, _ = measure(spec_bin(spec, "_raw"), args.runs, args.pin)
-                rows.append(MeasRow(bench=spec.name, state="raw", stats=summarize(samples)))
-            for spec in specs:
-                raw = next(r for r in rows if r.bench == spec.name)
-                print(
-                    f"{spec.name:<16} ①裸指针    {fmt_ms(raw.stats.time.med):>10}   "
-                    f"{fmt_rss_mb(raw.stats.rss.med):>8}"
-                )
-            continue
+    rows, ref_rows, notes = run_suite(specs, args, do_ref=args.ref)
 
-        rows, asan_rows, ref_rows, notes = run_suite(
-            specs, args, do_asan=do_asan, do_ref=args.ref
-        )
-
-        if suite == "core":
-            render_core(specs, rows, asan_rows, ref_rows, notes, args)
-            print("基准         态          时间中位数(ms)  峰值RSS(MB)  每检查(ns)")
-            for spec in specs:
-                on = next(r for r in rows if r.bench == spec.name and r.state == "check")
-                off = next(r for r in rows if r.bench == spec.name and r.state == "nocheck")
-                raw = next(r for r in rows if r.bench == spec.name and r.state == "raw")
-                if spec.access_count is None:
-                    per_ns = 0.0
-                else:
-                    per_ns = (on.stats.time.med - off.stats.time.med) * 1e6 / spec.access_count
-                print(
-                    f"{spec.name:<12} ③完整胖    {fmt_ms(on.stats.time.med):>10}   "
-                    f"{fmt_rss_mb(on.stats.rss.med):>8}    {per_ns:+.2f}"
-                )
-                print(
-                    f"{'':12} ②胖无检查  {fmt_ms(off.stats.time.med):>10}   "
-                    f"{fmt_rss_mb(off.stats.rss.med):>8}"
-                )
-                print(
-                    f"{'':12} ①裸指针    {fmt_ms(raw.stats.time.med):>10}   "
-                    f"{fmt_rss_mb(raw.stats.rss.med):>8}"
-                )
-        else:
-            render_shootout(specs, rows, ref_rows, notes, args)
-            print("基准             态          时间中位数(ms)  峰值RSS(MB)")
-            for spec in specs:
-                for state in ("check", "nocheck", "raw"):
-                    r = next(x for x in rows if x.bench == spec.name and x.state == state)
-                    print(
-                        f"{spec.name:<16} {state:<8}  {fmt_ms(r.stats.time.med):>10}   "
-                        f"{fmt_rss_mb(r.stats.rss.med):>8}"
-                    )
+    render_shootout(specs, rows, ref_rows, notes, args)
+    print("基准             态          时间中位数(ms)  峰值RSS(MB)")
+    for spec in specs:
+        for state in ("check", "nocheck", "raw"):
+            r = next(x for x in rows if x.bench == spec.name and x.state == state)
+            print(
+                f"{spec.name:<16} {state:<8}  {fmt_ms(r.stats.time.med):>10}   "
+                f"{fmt_rss_mb(r.stats.rss.med):>8}"
+            )
     return 0
 
 

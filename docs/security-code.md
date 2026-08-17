@@ -273,7 +273,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
 基准分三层，覆盖从受控对照到全程序吞吐。
 
-1. **仓库内建基准（必测）**：`bench/` 下的 3 个新设计负载（不参考已过时的 `bak/experimental_ptr/`——其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 的 CFG 层插桩成本）：`ptr_traverse.an`（指针密集遍历——N=10000 结点满二叉树、逐结点 `dyn` 堆分配，P=5000 趟递归求和遍历，遍历期每结点每趟 3×`CheckSafeAccess` + 1×`CheckPtrCmp`，纯指针链式访问，检查密度最高）、`alloc_dense.an`（分配密集——Vec push/pop churn（R1=220000 轮，每轮 4 次 grow，0→4→8→16→32，共 4 malloc + 4 free）+ dyn 分配/释放循环（R2=150000 轮），Malloc/Delete 路径的 GenKey/锁槽写/free 校验占主导）、`mixed.an`（混合负载——dyn[60000] 对象池：指针算术索引写、指针游标整块遍历（M=1600 趟）、指针差、`next` 链式扫描，三类检查均出现、无分配检查）。三者覆盖「遍历密集 / 分配密集 / 混合」三档访问形态，直接刻画 CFG 层插桩的时间与内存开销；开/关两态差异严格限定为检查发射（`--no-fat-checks` 保留 40B 表示/锁槽/帧锁，§10.5），排除负载差异干扰。
+1. **仓库内建基准（必测）**：仓库内建基准已改为 `bench/shootout/` 下的 14 基准（2026-08 调整；原 3 负载 ptr_traverse/alloc_dense/mixed 已移除，其历史实测数据见 §10.7 归档）。`bench/shootout/` 为 shootout 风格基准迁移自 `bak/old_exp/performance`（规模调整记录见各基准头部注释与 t1/t2 证据），`bench/` 路径经 `__is_bench_file` 豁免受限操作检查（§8.3）。（不参考已过时的 `bak/experimental_ptr/`——其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 的 CFG 层插桩成本。）
 2. **Olden 基准套件**：经典指针密集型应用（bh、health、mst、perimeter 等），以堆对象图遍历与递归为主，是空间与时序检查的压力负载；须移植为 YIAN 源码。
 3. **SPEC CPU2017**：通用整数负载，覆盖非指针密集代码，度量检查前插对全程序吞吐与内存画像的影响；须移植代表性整数程序。
 
@@ -295,7 +295,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
 ### 10.5 协议
 
-1. **编译与运行**：被检程序经 `compiler.main`（含 CFG 层插桩）编译为 native exe，统一优化级别与输入集、同一机器。命令形态与 AGENTS.md 的 CLI 一致：`python3 -m compiler.main -O2 lib <bench>.an -o build/bench/<variant>`；基准文件取自 `bench/` 的 3 个负载（§10.2），被检变体与无检查基线的差异严格限定为插桩，编译参数逐项一致以保证对照有效。
+1. **编译与运行**：被检程序经 `compiler.main`（含 CFG 层插桩）编译为 native exe，统一优化级别与输入集、同一机器。命令形态与 AGENTS.md 的 CLI 一致：`python3 -m compiler.main -O2 lib <bench>.an -o build/bench/<variant>`；基准文件取自 `bench/shootout/`（§10.2），被检变体与无检查基线的差异严格限定为插桩，编译参数逐项一致以保证对照有效。
 2. **重复与统计**：每个（基准 × 变体 × 基线）组合多次重复运行（预设不少于 5 次），取中位数与分布报告，排除冷启动与系统噪声。统计方法：先以少量试运行确认稳定窗口，再在窗口内重复采集；报告每次运行的端到端时间与常驻内存，汇总为中位数、四分位距与最小/最大值，不报告单次偶然值；同一机器、同一负载条件下进行，避免跨机折算。
 3. **正确性对照**：被检程序必须通过自身断言（如 Binary Trees 的 `check % 256 == 176`）；对注入的越界/UAF/双释放/栈悬垂样例，验证在相应检查点于访问发生前 trap（吸收态）。注入样例以最小改动嵌入基准源码或独立构造为负例文件，保证断言路径与非注入基线一致。
 4. **负例集**：构造越界读写、one-past-end 访问、UAF、双释放、栈悬垂访问样例，逐一验证 trap 点与定理 5.1 对应规则一致。每条负例记录触发的规则号（如规则 3.2.1、3.6.2）、触发前提（`in_bounds`/`live`/`is_heap`）与 trap 前的指令序号，与结论逐条展开表逐行核对。
@@ -312,7 +312,7 @@ $$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
 
 ### 10.7 实测结果（已运行 2026-08-14）
 
-**已运行(2026-08-14)**：按 §10.5 协议在 `bench/` 下 3 个负载（§10.2）上完成实测，完整数据（含原始样本附录）见 `build/bench/results.md`，测量脚本 `scripts/bench_fat.py`。开/关两态差异严格限定为检查发射（`--no-fat-checks` 保留 40B 表示/锁槽/帧锁）；每态 1 次 warmup + 5 次正式运行取中位数（IQR/min/max 见附录），同一机器、`taskset -c 4` 绑核降噪。
+**已运行(2026-08-14)**：按 §10.5 协议在 `bench/` 下 3 个负载（§10.2）上完成实测，完整数据（含原始样本附录）见 `build/bench/results.md`，测量脚本 `scripts/bench_fat.py`。**注：3 个负载源码已于 2026-08 移除，以下为历史归档数据。**开/关两态差异严格限定为检查发射（`--no-fat-checks` 保留 40B 表示/锁槽/帧锁）；每态 1 次 warmup + 5 次正式运行取中位数（IQR/min/max 见附录），同一机器、`taskset -c 4` 绑核降噪。
 
 | 负载 | 检查开 (ms) | 检查关 (ms) | 时间比 | Δ时间 (ms) | 每检查/每访问开销 | Δ峰值 RSS |
 |---|---|---|---|---|---|---|
