@@ -16,15 +16,16 @@ shootout-perf-eval task-3 扩展).
   ①raw 数据跨套件取自 shootout_raw 套件 (同基准, 同 runs/pin 协议)
 
 套件:
-  shootout  胖指针专用: 自动发现 bench/shootout/*.an (14 基准), 编译/测量 check+nocheck
-            两态 (胖套件不编 raw 态: 裸模式下隐式 T*→T[] coerce 被拒, expr_checker.py
-            L351-355); 维度① raw 跨套件从 bench/shootout_raw 同基准补齐 (同 runs/pin
-            协议) → 三态报告; 附 c/cpp/rust 参考基线可选
+  shootout  胖指针专用: 自动发现 bench/shootout/*.an (14 基准), 每基准三态紧邻
+            编译/测量 check→nocheck→raw: raw 态从 bench/shootout_raw 同基准以
+            --raw-pointers 编译 (胖套件源不编 raw 态: 裸模式下隐式 T*→T[] coerce
+            被拒, expr_checker.py L351-355); 三态同一时间窗口内紧邻执行, 消除跨
+            会话系统状态漂移; 附 c/cpp/rust 参考基线可选
   raw       裸指针专用: 自动发现 bench/shootout_raw/*.an (14 基准, 维度① raw 语义适配套件:
             T*→T[] 显式用 from_raw_parts, 因裸模式下隐式 coerce 被拒); 以
             --raw-pointers 编译单态测量, 写 shootout-raw-results.md
 
-三态由两套组合: ②/③ 来自 shootout 套件 (check/nocheck), ① raw 来自 shootout_raw 套件。
+三态由每基准内三态紧邻组合: ②/③ 来自 shootout 套件 (check/nocheck), ① raw 来自 shootout_raw 套件。
 
 用法:
   python3 scripts/bench_fat.py --suite shootout         # shootout 套件, 写 shootout-results.md
@@ -310,26 +311,32 @@ def run_suite(
     specs: list[BenchSpec],
     args: argparse.Namespace,
     do_ref: bool,
-    include_raw: bool = False,
 ) -> tuple[list[MeasRow], list[RefRow], list[str]]:
-    """编译+测量套件基准。胖套件场景 include_raw=False: 只编译/测量 check+nocheck 两态
-    (胖套件不编 raw 态: 裸模式下隐式 T*→T[] coerce 被拒), 维度①由 complement_raw
-    跨套件补齐; include_raw=True (旧行为) 时同套件编译/测量三态。"""
+    """编译+测量套件基准, 每基准三态紧邻 (check→nocheck→raw): 同一时间窗口内连续
+    编译+测量三态, 消除跨会话系统状态漂移对维度①比较的假象。raw 态从
+    bench/shootout_raw/<name>.an 以 --raw-pointers 编译 (胖套件源不编 raw 态:
+    裸模式下隐式 T*→T[] coerce 被拒); 缺同名基准 → 警告并跳过 (报告标注 维度①未测)。"""
     rows: list[MeasRow] = []
     notes: list[str] = []
+    raw_map = _raw_suite_map()
 
     for spec in specs:
+        raw_spec = raw_map.get(spec.name)
         if not args.no_compile:
             compile_an(spec, no_checks=False)
             compile_an(spec, no_checks=True)
-            if include_raw:
-                compile_an(spec, no_checks=False, raw=True)
+            if raw_spec is not None:
+                compile_an(raw_spec, no_checks=False, raw=True)
         states: list[tuple[str, Path]] = [
             ("check", spec_bin(spec)),
             ("nocheck", spec_bin(spec, "_nfc")),
         ]
-        if include_raw:
-            states.append(("raw", spec_bin(spec, "_raw")))
+        if raw_spec is not None:
+            states.append(("raw", spec_bin(raw_spec, "_raw")))
+        else:
+            msg = f"{spec.name}: 维度①未测 (bench/shootout_raw 缺同名基准)"
+            print(f"[warn] {msg}", file=sys.stderr)
+            notes.append(msg)
         for label, binp in states:
             samples, used, warm = measure(binp, args.runs, args.pin)
             if used < args.runs:
@@ -338,8 +345,7 @@ def run_suite(
                     f"测量次数降为 {used}"
                 )
             rows.append(MeasRow(bench=spec.name, state=label, stats=summarize(samples), used_runs=used))
-        state_desc = "三态 (raw/nocheck/check)" if include_raw else "双态 (nocheck/check)"
-        print(f"[done] {spec.name}: {state_desc} 各 {args.runs} 次", file=sys.stderr)
+        print(f"[done] {spec.name}: 三态紧邻 (check/nocheck/raw) 各 {args.runs} 次", file=sys.stderr)
 
     ref_rows: list[RefRow] = []
     if do_ref:
@@ -755,10 +761,17 @@ def main() -> int:
                 compile_an(spec, no_checks=False, raw=True)
                 print(f"[compile-only] {spec.name}: raw OK", file=sys.stderr)
         else:
+            raw_map = _raw_suite_map()
             for spec in specs:
                 compile_an(spec, no_checks=False)
                 compile_an(spec, no_checks=True)
-                print(f"[compile-only] {spec.name}: check/nocheck OK", file=sys.stderr)
+                raw_spec = raw_map.get(spec.name)
+                if raw_spec is None:
+                    print(f"[warn] {spec.name}: 维度①未测 (bench/shootout_raw 缺同名基准)", file=sys.stderr)
+                    print(f"[compile-only] {spec.name}: check/nocheck OK", file=sys.stderr)
+                    continue
+                compile_an(raw_spec, no_checks=False, raw=True)
+                print(f"[compile-only] {spec.name}: check/nocheck/raw OK", file=sys.stderr)
         return 0
 
     if is_raw_suite:
@@ -800,9 +813,6 @@ def main() -> int:
         return 0
 
     rows, ref_rows, notes = run_suite(specs, args, do_ref=args.ref)
-    raw_rows, raw_notes = complement_raw(specs, args)
-    rows += raw_rows
-    notes += raw_notes
 
     render_shootout(specs, rows, ref_rows, notes, args)
     print("基准             态          时间中位数(ms)  峰值RSS(MB)")
