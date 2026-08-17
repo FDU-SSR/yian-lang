@@ -26,6 +26,7 @@ shootout-perf-eval task-3 扩展).
   python3 scripts/bench_fat.py --no-compile             # 不重新编译, 仅测量已存在二进制
   python3 scripts/bench_fat.py --raw-only               # 仅编译+测量 raw 态
   python3 scripts/bench_fat.py --max-state-sec 120      # 单态 warmup 超限则测量次数降到 3
+  python3 scripts/bench_fat.py --compile-only           # 只编译不测量 (编译验证)
 
 独立脚本: 不触碰 scripts/run_tests.py / run_fat*.py 等测试 runner; 不修改基准源码。
 输出: build/bench/shootout-results.md (shootout)。
@@ -508,11 +509,18 @@ def main() -> int:
         default=DEFAULT_MAX_STATE_SEC,
         help=f"单态 warmup 超限阈值 (秒), 超限则测量次数降到 3 (默认 {DEFAULT_MAX_STATE_SEC:.0f})",
     )
+    ap.add_argument(
+        "--compile-only",
+        action="store_true",
+        help="只编译不测量: 编译所选基准三态后退出 (编译验证)",
+    )
     args = ap.parse_args()
+    if args.compile_only and args.no_compile:
+        raise SystemExit("--compile-only 与 --no-compile 互斥")
 
     if args.runs < 1:
         raise SystemExit("--runs 必须 ≥ 1 (协议建议 ≥5)")
-    if not TIME_BIN or not os.path.exists(TIME_BIN):
+    if not args.compile_only and (not TIME_BIN or not os.path.exists(TIME_BIN)):
         raise SystemExit(f"缺少 {TIME_BIN} (GNU time); 需要 -v 输出峰值常驻内存")
     if args.pin is not None and shutil.which("taskset") is None:
         raise SystemExit("--pin 需要 taskset")
@@ -530,6 +538,18 @@ def main() -> int:
 
     specs = _filter(discover_shootout())
     if not specs:
+        return 0
+
+    if args.compile_only:
+        for spec in specs:
+            if args.raw_only:
+                compile_an(spec, no_checks=False, raw=True)
+                print(f"[compile-only] {spec.name}: raw OK", file=sys.stderr)
+            else:
+                compile_an(spec, no_checks=False)
+                compile_an(spec, no_checks=True)
+                compile_an(spec, no_checks=False, raw=True)
+                print(f"[compile-only] {spec.name}: check/nocheck/raw OK", file=sys.stderr)
         return 0
 
     if args.raw_only:
