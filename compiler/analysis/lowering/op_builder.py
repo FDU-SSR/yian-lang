@@ -443,6 +443,19 @@ class OpBuilder:
             elem_type = left_ty.element_types[index_val]
             return HIR.TupleAccess(span, left_hir, index_val, elem_type, is_place=left_hir.is_place)
 
+        # T[N] 整数索引 → 内联数组访问(不走 Index trait;性能优化, 越界检查在 CFG 层)
+        if isinstance(left_ty, Type.ArrayType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            # 仅 length 为编译期字面量时内联;泛型 N(ConstGenericType)保守回落 trait
+            length_ty = self.__type_ctx[left_ty.length]
+            if isinstance(length_ty, Type.LiteralValueType):
+                index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+                return HIR.ArrayAccess(
+                    span=span, array=left_hir, index=index_value,
+                    element_type=left_ty.element_type, type_id=left_ty.element_type,
+                    length=length_ty.value, is_place=left_hir.is_place,
+                )
+            # 非字面量 length:fall through to trait overload
+
         # 4) Index overload via trait
         overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
         if overloaded_expr is not None:

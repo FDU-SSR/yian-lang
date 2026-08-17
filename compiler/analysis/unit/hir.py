@@ -247,6 +247,19 @@ class TupleAccess:
 
 
 @dataclass
+class ArrayAccess:
+    """T[N] 定长数组元素访问(内联 GEP 路径, 不走 Index trait)。"""
+
+    span: SrcSpan
+    array: Expr            # T[N] 数组表达式(place)
+    index: Expr            # 整数索引表达式(已 coerce u64)
+    element_type: int      # T
+    type_id: int           # 访问结果的类型 id(= element_type,同其它 HIR 节点)
+    length: int            # N 编译期常量值(供越界检查)
+    is_place: bool = True  # 数组元素是 place(可读可写)
+
+
+@dataclass
 class DynValue:
     span: SrcSpan
     value: Expr
@@ -463,7 +476,7 @@ Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | Bool
 Expr: TypeAlias = (
     Binary | Unary
     | Call | StructConstruct | Invoke | Cast
-    | MethodCall | VariantConstruct | FieldAccess | TupleAccess
+    | MethodCall | VariantConstruct | FieldAccess | TupleAccess | ArrayAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat

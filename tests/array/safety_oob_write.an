@@ -1,0 +1,12 @@
+// Test out-of-bounds array write (inline GEP path)
+//
+// Writing past the end of a T[N] array traps at runtime
+// (memory safety violation, SIGILL mapped to Exit code -4).
+//
+// Expected runtime error: Exit code -4
+
+fn main() {
+    let arr: i32[3] = [1, 2, 3];
+    let idx: u64 = 5;
+    arr[idx] = 99  // OOB write;
+}

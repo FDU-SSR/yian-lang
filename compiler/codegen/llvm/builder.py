@@ -826,6 +826,28 @@ class LLBuilder:
                         ir_val = value.ir_val
                 else:
                     ir_val = value.ir_val
+            elif (
+                not self.__raw_pointers
+                and isinstance(src, Type.PointerType)
+                and isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType)
+            ):
+                # 裸指针源(如 rvalue 数组临时量的 Alloca 结果):T[m]* → T* 退化同样
+                # 合成胖值(裸指针 data 即基址 = 首元素地址,锁用字面量锁槽,同 __promote_fat)
+                arr_ty = self.__type_ctx[src.pointee_type]
+                assert isinstance(arr_ty, Type.ArrayType)
+                if arr_ty.element_type == dst.pointee_type:
+                    lock_ir, key_ir = self.__lit_lock_pair()
+                    data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                                   self.__builder.bitcast(value.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                    lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
+                    key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+                    zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                    len_ty = self.__type_ctx[arr_ty.length]
+                    assert isinstance(len_ty, Type.LiteralValueType)
+                    size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
+                    ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+                else:
+                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
             else:
                 ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, Type.RefType) and isinstance(dst, Type.RefType):

@@ -522,6 +522,8 @@ class CfgBuilder:
                 return self.__resolve_field_access(expr)
             case HIR.TupleAccess():
                 return self.__resolve_tuple_access(expr)
+            case HIR.ArrayAccess():
+                return self.__resolve_array_access(expr)
             case HIR.DynValue():
                 return self.__resolve_dyn_value(expr)
             case HIR.DynBuffer():
@@ -581,6 +583,8 @@ class CfgBuilder:
                 return self.__resolve_field_access_addr(expr)
             case HIR.TupleAccess():
                 return self.__resolve_tuple_access_addr(expr)
+            case HIR.ArrayAccess():
+                return self.__resolve_array_access_addr(expr)
             case HIR.Var():
                 return self.__resolve_var_addr(expr)
             case HIR.Ty():
@@ -920,6 +924,19 @@ class CfgBuilder:
     def __resolve_tuple_access_addr(self, expr: HIR.TupleAccess) -> IR.Value:
         base_addr = self.__resolve_addr(expr.receiver)
         return self.__build_field_ptr(base_addr, expr.index, expr.type_id)
+
+    def __resolve_array_access(self, expr: HIR.ArrayAccess) -> IR.Value:
+        addr = self.__resolve_array_access_addr(expr)
+        return self.__build_load(addr)
+
+    def __resolve_array_access_addr(self, expr: HIR.ArrayAccess) -> IR.Value:
+        # T[N] 元素地址:数组指针退化为 T* 后按元素索引(LLVM cast 数组退化
+        # 重锚定 data + size=N,等价旧 trait 路径的 bitcast<T*> + p + *index)。
+        base_addr = self.__resolve_addr(expr.array)
+        elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
+        elem_base = self.__build_cast(base_addr, elem_ptr_type)
+        index_val = self.__resolve_val(expr.index)
+        return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
 
     def __resolve_var_addr(self, expr: HIR.Var) -> IR.Value:
         if expr.symbol_id not in self.__func.local_vars:

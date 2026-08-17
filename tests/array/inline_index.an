@@ -1,0 +1,54 @@
+// Test inline GEP array indexing (T[N] + integer index)
+//
+// Covers: read a[i], write a[i] = v, address-of &a[i], loop indexing,
+// nested array access, and coexistence with range indexing (trait path).
+//
+// Expected output: inline-index pass
+
+from std.core.io import print;
+
+fn main() {
+    // read a[i]
+    let a: i32[4] = [10, 20, 30, 40];
+    let i: u64 = 1;
+    assert a[i] == 20: "read a[i] failed";
+    assert a[3] == 40: "read a[3] failed";
+
+    // write a[i] = v
+    a[i] = 99;
+    assert a[1] == 99: "write a[i] failed";
+    a[0] = 7;
+    assert a[0] == 7: "write a[0] failed";
+
+    // address-of &a[i] + deref
+    let p: i32* = &a[2];
+    assert *p == 30: "addr a[i] deref failed";
+    *p = 55;
+    assert a[2] == 55: "write via &a[i] failed";
+
+    // loop indexing (dynamic index hot path)
+    let sum: i64 = 0;
+    let k: u64 = 0;
+    while k < 4 {
+        sum += i64(a[k]);
+        k += 1
+    }
+    assert sum == 7 + 99 + 55 + 40: "loop indexing sum failed";
+
+    // nested array access (inner length 2, known-good literal form)
+    let m: i32[2][2] = [[1, 2], [3, 4]];
+    assert m[1][0] == 3: "nested read failed";
+    m[1][1] = 42;
+    assert m[1][1] == 42: "nested write failed";
+    let q: i32* = &m[0][1];
+    assert *q == 2: "nested addr failed";
+
+    // range indexing coexists (falls back to Index trait, not inline GEP)
+    let range = 1u64..3;
+    let sub: i32[] = a[range];
+    assert sub.len() == 2: "range slice len failed";
+    assert sub[0] == 99: "range slice [0] failed";
+    assert sub[1] == 55: "range slice [1] failed";
+
+    print("inline-index pass\n");
+}
