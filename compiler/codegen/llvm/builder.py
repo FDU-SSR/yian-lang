@@ -1132,7 +1132,22 @@ class LLBuilder:
         2. store discriminant into field 0
         3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
         4. load the complete enum value
+
+        niche enum(省略 tag,布局 = payload 类型):unit 变体 → 全零聚合;
+        payload 变体 → payload 直值(无 tag store)。
         """
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            if payload_type is None:
+                # unit 变体(None)→ 全零编码:指针字段 null、整数字段 0
+                ll_type = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
+                ir_val = self.__zero_const(ll_type)
+            else:
+                # payload 变体(Some)→ payload 直值(匿名单字段 struct 仅 1 字段)
+                assert payload_fields is not None and len(payload_fields) == 1
+                ir_val = self.__promote_fat(payload_fields[0]).ir_val
+            self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
+            return
+
         tmp_ptr = self.alloca(enum_type_id).ir_val
 
         # Store discriminant at field 0
@@ -1170,6 +1185,17 @@ class LLBuilder:
         matched_ty = self.__type_ctx[matched.type_id]
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, Type.PointerType) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
+
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            # niche enum:payload 即整个值(匿名单字段 struct 字段 0 = 值本身)
+            for field_index, symbol_id in fields:
+                if field_index >= len(payload_fields):
+                    break
+                field_value = self.__builder.load(base_ptr.ir_val)  # type: ignore
+                alloca_ptr = self.__func.get_var_ptr(symbol_id)
+                self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
+            return
+
         gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore
         payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
@@ -1205,6 +1231,17 @@ class LLBuilder:
         matched_ty = self.__type_ctx[matched.type_id]
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, (Type.PointerType, Type.RefType)) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
+
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            # niche enum:字段地址 = 值地址(base_ptr 即 payload 起始)
+            for field_index, symbol_id in fields:
+                if field_index >= len(payload_fields):
+                    break
+                alloca_ptr = self.__func.get_var_ptr(symbol_id)
+                field_ll = LLValue(self.__type_ctx.alloc_pointer(payload_fields[field_index].type_id), base_ptr.ir_val)  # type: ignore
+                self.__builder.store(self.__promote_fat(field_ll).ir_val, alloca_ptr.ir_val)  # type: ignore
+            return
+
         gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore
         payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
@@ -1324,6 +1361,24 @@ class LLBuilder:
         for case_value, target_label in cases:
             switch_instr.add_case(case_value.ir_val, self.__func.block(target_label))  # type: ignore
 
+    def niche_branch(self, value: LLValue, zero_label: str, nonzero_label: str) -> None:
+        """niche enum match:全零检测(逐字段 icmp+and)后分支。
+
+        ``value`` 是 niche enum 的值(LLVM 形态即 payload);全零 → zero_label
+        (unit 变体 arm),非全零 → nonzero_label(payload 变体 arm)。空标签
+        落到 unreachable 块(穷举 arm 时未覆盖的一侧不会执行)。
+        """
+        zero_cond = self.__is_all_zero(value)
+        zero_block = self.__func.block(zero_label) if zero_label else None
+        nonzero_block = self.__func.block(nonzero_label) if nonzero_label else None
+        if zero_block is None:
+            zero_block = self.__func.new_block("match.niche.zero")
+            ir.IRBuilder(zero_block).unreachable()
+        if nonzero_block is None:
+            nonzero_block = self.__func.new_block("match.niche.nonzero")
+            ir.IRBuilder(nonzero_block).unreachable()
+        self.__builder.cbranch(zero_cond.ir_val, zero_block, nonzero_block)  # type: ignore
+
     def unreachable(self) -> None:
         self.__builder.unreachable()
 
@@ -1347,6 +1402,18 @@ class LLBuilder:
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
         return LLValue(base.type_id, ir_val)
 
+    def __zero_const(self, ll_type: ir.Type) -> ir.Constant:
+        """全零常量(niche None 编码):指针 null、整数 0、结构逐字段归零。"""
+        if isinstance(ll_type, ir.LiteralStructType):
+            return ir.Constant.literal_struct([self.__zero_const(f) for f in ll_type.elements])  # type: ignore
+        if isinstance(ll_type, ir.PointerType):
+            return ir.Constant(ll_type, None)  # type: ignore
+        if isinstance(ll_type, ir.IntType):
+            return ir.Constant(ll_type, 0)  # type: ignore
+        if isinstance(ll_type, ir.types._BaseFloatType):  # type: ignore
+            return ir.Constant(ll_type, 0.0)  # type: ignore
+        raise ValueError(f"cannot build zero constant for {ll_type}")
+
     def __call_intrinsic(self, kind: IntrinsicKind, args: list[LLValue]) -> LLValue:
         callee = self.__module.intrinsics.get(kind)
         raw_args = [a.ir_val for a in args]
@@ -1365,6 +1432,28 @@ class LLBuilder:
                 return self.__type_ctx.i32_id
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
+
+    def __is_all_zero(self, value: LLValue) -> LLValue:
+        """niche 全零检测:LLVM 无聚合 icmp → 逐字段 icmp + and 归约。"""
+        ll_type = value.ir_val.type  # type: ignore
+        if isinstance(ll_type, ir.LiteralStructType):  # type: ignore
+            acc: ir.Value | None = None
+            for index in range(len(ll_type.elements)):  # type: ignore
+                field = self.__builder.extract_value(value.ir_val, index)  # type: ignore
+                is_zero = self.__is_field_zero(field)
+                acc = is_zero if acc is None else self.__builder.and_(acc, is_zero)  # type: ignore
+            assert acc is not None
+            return LLValue(self.__type_ctx.bool_id, acc)
+        return LLValue(self.__type_ctx.bool_id, self.__is_field_zero(value.ir_val))
+
+    def __is_field_zero(self, val: ir.Value) -> ir.Value:
+        if isinstance(val.type, ir.PointerType):  # type: ignore
+            return self.__builder.icmp_signed("==", val, ir.Constant(val.type, None))  # type: ignore
+        if isinstance(val.type, ir.IntType):  # type: ignore
+            return self.__builder.icmp_signed("==", val, ir.Constant(val.type, 0))  # type: ignore
+        if isinstance(val.type, ir.types._BaseFloatType):  # type: ignore
+            return self.__builder.fcmp_ordered("==", val, ir.Constant(val.type, 0.0))  # type: ignore
+        raise ValueError(f"unsupported zero-check field type: {val.type}")  # type: ignore
 
     def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
         if self.__type_ctx.is_zst(type_id):

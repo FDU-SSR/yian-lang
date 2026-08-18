@@ -1,0 +1,69 @@
+// niche Option match:全零检测替代 tag switch;Some 字段绑定直取 payload。
+//
+// 覆盖:None/Some 全分支、两分支顺序、Some 字段绑定、default arm、引用 match。
+//
+// Expected output: (empty, exit 0)
+
+fn main() {
+    let arr = [7i32, 8];
+    let p = arr.ptr();
+    let some: Option<i32*> = Option<i32*>.Some(p);
+    let none: Option<i32*> = Option<i32*>.None;
+
+    // Some/None 全分支,None 在前
+    let v1: i32 = match some {
+        None => -1,
+        Some(q) => q[0],
+    };
+    assert v1 == 7: "match Some(q) binds payload";
+
+    // None 分支(全零检测 → None arm)
+    let v2: i32 = match none {
+        None => -1,
+        Some(q) => q[0],
+    };
+    assert v2 == -1: "match None arm";
+
+    // default arm(`_ =>`)覆盖 None
+    let v3: i32 = match none {
+        Some(q) => q[0],
+        _ => 5,
+    };
+    assert v3 == 5: "default arm handles None";
+
+    // Option<str> match(from_slice 真实路径)
+    let ascii = [65u8, 66, 67];
+    let s: Option<str> = str.from_slice(ascii[0u64..3]);
+    let bad = [0xF5u8, 0x80, 0x80];
+    let n: Option<str> = str.from_slice(bad[0u64..3]);
+    let l1: u64 = match s {
+        Some(val) => val.as_slice().len(),
+        None => 0,
+    };
+    assert l1 == 3: "Option<str> Some bindings";
+    let l2: u64 = match n {
+        Some(val) => val.as_slice().len(),
+        None => 0,
+    };
+    assert l2 == 0: "Option<str> None bindings";
+
+    // 引用 match(match &opt):绑定为 &T,经 *q 取 payload
+    let rv: i32 = match &some {
+        Some(q) => (*q)[0],
+        None => -1,
+    };
+    assert rv == 7: "ref match Some(q)";
+
+    let rn: i32 = match &none {
+        Some(q) => (*q)[0],
+        None => -2,
+    };
+    assert rn == -2: "ref match None";
+
+    // 引用 match 后 payload 仍是原值(未破坏)
+    let after: i32 = match some {
+        Some(q) => q[0],
+        None => -1,
+    };
+    assert after == 7: "value intact after ref match";
+}

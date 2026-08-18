@@ -281,6 +281,10 @@ class LLTranslator:
             builder.switch(matched, cases, default_label)
 
         elif isinstance(inner_type, Type.EnumType):
+            if self.__ll_type_ctx.is_niche_enum(inner_type.type_id):
+                self.__emit_niche_match(builder, t, matched, is_enum_ref, default_label)
+                return
+
             if is_enum_ref:
                 # matched is a pointer to the enum (&E). Load it to extract discriminant.
                 enum_val = builder.load(matched, "enum_val_ref")
@@ -322,3 +326,49 @@ class LLTranslator:
 
             # Restore builder to original block so __build can continue correctly.
             builder.position_at(saved_label)
+
+    def __emit_niche_match(self, builder: LLBuilder, t: IR.Match, matched: LLValue, is_enum_ref: bool, default_label: str) -> None:
+        """niche enum match:全零检测替代 disc extract + switch。
+
+        unit 变体 arm → 全零分支;payload 变体 arm → 非全零分支;两者都缺失
+        时该侧落到 default(或 unreachable)。payload 变体 arm 在进入 arm 块后
+        直取 payload(unpack 层处理)。
+        """
+        if is_enum_ref:
+            enum_val = builder.load(matched, "enum_val_ref")
+            matched_ptr = matched
+        else:
+            enum_val = matched
+            # Alloca 匹配值供 unpack 层 GEP 直取 payload;须在分支终止本块前完成。
+            matched_ptr = builder.alloca(matched.type_id)
+            builder.store(matched, matched_ptr)
+
+        zero_label, nonzero_label = default_label, default_label
+        for arm in t.arms:
+            if not isinstance(arm.pattern, IR.EnumPattern):
+                continue
+            if arm.pattern.variant.payload_type is None:
+                zero_label = arm.body.label
+            else:
+                nonzero_label = arm.body.label
+
+        builder.niche_branch(enum_val, zero_label, nonzero_label)
+
+        saved_label = builder.current_block_label
+
+        for arm in t.arms:
+            if isinstance(arm.pattern, IR.EnumPattern) and arm.pattern.fields \
+                    and arm.pattern.variant.payload_type is not None:
+                field_pairs = [(i, f.symbol_id) for i, f in enumerate(arm.pattern.fields)]
+                builder.position_at(arm.body.label, where=BuilderPosition.First)
+                if is_enum_ref:
+                    builder.unpack_enum_payload_ref(
+                        matched_ptr, arm.body.label,
+                        arm.pattern.variant.payload_type, field_pairs)
+                else:
+                    builder.unpack_enum_payload(
+                        matched_ptr, arm.body.label,
+                        arm.pattern.variant.payload_type, field_pairs)
+
+        # Restore builder to original block so __build can continue correctly.
+        builder.position_at(saved_label)

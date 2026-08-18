@@ -1,0 +1,106 @@
+// niche 负向:不触发 niche 的 enum 形状保持 {i32, pad} 布局与 tag 语义。
+//
+// 3+ 变体 / 2+ payload / 多字段 struct payload / 嵌套 Option / 命名 struct
+// payload / Result(恒 2 payload) / ZST payload 一律不触发;全零编码仅限
+// 单元变体,不污染含 tag 的普通 enum。
+//
+// 注:DivResult<i32*>(1 unit + 1 指针 payload)恰好命中 niche 规则,故为 40B;
+// 它是规则的自然应用,而非例外。
+//
+// Expected output: (empty, exit 0)
+
+enum E3 { A, B, C { p: i32* } }
+enum E2p { A { p: i32* }, B { q: i32* } }
+enum E2f { None, Some { a: i32, b: i32 } }
+enum Z { None, Some { p: u8[0] } }
+enum DivResult<T> {
+    Ok { value: T },
+    DivByZero,
+}
+
+struct W { p: i32* }
+enum EW { None, Some { w: W } }
+
+fn main() {
+    // 3 变体(2 unit + 1 指针 payload)不触发
+    assert sizeof(E3) == 44: "3 variants keep {i32,pad}";
+    // 2 指针 payload 不触发
+    assert sizeof(E2p) == 44: "2 payload variants keep {i32,pad}";
+    // 多字段 struct payload 不触发
+    assert sizeof(E2f) == 12: "multi-field struct payload keeps {i32,pad}";
+    // 嵌套 Option<Option<T*>>:外层 payload 是 enum(非指针族),不触发
+    assert sizeof(Option<Option<i32*>>) == 44: "nested Option keeps {i32,pad}";
+    // Result 恒 2 payload(Ok/Err),不触发
+    assert sizeof(Result<i32*, str>) == 44: "Result keeps {i32,pad}";
+    // 命名单字段 struct payload:字段类型是 struct 而非指针族,不触发
+    assert sizeof(EW) == 44: "named single-field struct payload keeps {i32,pad}";
+    // ZST payload(is_zst 先于 niche)先擦除,{i32,pad} 无 payload
+    assert sizeof(Z) == 4: "ZST payload keeps {i32,pad}";
+    // DivResult<i32*> 恰好 1 unit + 1 指针 payload → 命中 niche,省略 tag
+    assert sizeof(DivResult<i32*>) == 40: "DivResult<i32*> qualifies as niche";
+
+    // 非 niche enum 行为不变:tag switch 仍然正确分派
+    let arr = [9i32];
+    let p = arr.ptr();
+    let c: E3 = E3.C(p);
+    let a: E3 = E3.A;
+    let v1: i32 = match c {
+        C(q) => q[0],
+        A => -1,
+        B => -2,
+    };
+    assert v1 == 9: "non-niche 3-variant match C";
+    let v2: i32 = match a {
+        C(q) => q[0],
+        A => -3,
+        B => -4,
+    };
+    assert v2 == -3: "non-niche unit arm A";
+
+    // 嵌套 Option 语义仍正常(外层走 tag,内层走 niche)
+    let inner_some: Option<i32*> = Option<i32*>.Some(p);
+    let outer: Option<Option<i32*>> = Option<Option<i32*>>.Some(inner_some.move());
+    let inner_none: Option<i32*> = Option<i32*>.None;
+    let outer_none: Option<Option<i32*>> = Option<Option<i32*>>.None;
+    let v3: i32 = match outer {
+        Some(inner) => match inner {
+            Some(q) => q[0],
+            None => -5,
+        },
+        None => -6,
+    };
+    assert v3 == 9: "nested Some(Some)";
+    let v4: i32 = match outer_none {
+        Some(inner) => 1,
+        None => -7,
+    };
+    assert v4 == -7: "nested outer None";
+
+    // Result 语义正常(Ok/Err 两 payload,均走 tag)
+    let r: Result<i32*, str> = Result<i32*, str>.Ok(p);
+    let e: Result<i32*, str> = Result<i32*, str>.Err("boom");
+    let v5: i32 = match r {
+        Ok(q) => q[0],
+        Err(msg) => -8,
+    };
+    assert v5 == 9: "Result Ok match";
+    let v6: i32 = match e {
+        Ok(q) => q[0],
+        Err(msg) => -9,
+    };
+    assert v6 == -9: "Result Err match";
+
+    // ZST payload enum 构造/匹配正常
+    let zn: Z = Z.Some([0u8; 0]);
+    let zz: Z = Z.None;
+    let v7: i32 = match zn {
+        Some(sv) => 1,
+        None => -10,
+    };
+    assert v7 == 1: "ZST payload Some";
+    let v8: i32 = match zz {
+        Some(sv) => 1,
+        None => -11,
+    };
+    assert v8 == -11: "ZST payload None";
+}

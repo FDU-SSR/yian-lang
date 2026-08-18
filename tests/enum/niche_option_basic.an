@@ -1,0 +1,47 @@
+// niche Option<指针族> 行为测试:构造/is_some/is_none/unwrap/unwrap_or。
+//
+// 构造 None 时编译器生成全零聚合;构造 Some 时 payload 直值(无 tag store)。
+// 语义与行为与非 niche enum 完全一致。
+//
+// Expected output: (empty, exit 0)
+
+fn main() {
+    let arr = [42i32, 43];
+    let p = arr.ptr();
+
+    // Some/None 构造
+    let some: Option<i32*> = Option<i32*>.Some(p);
+    let none: Option<i32*> = Option<i32*>.None;
+
+    assert some.is_some(): "Some(p).is_some()";
+    assert !some.is_none(): "Some(p).is_none() false";
+    assert none.is_none(): "None.is_none()";
+    assert !none.is_some(): "None.is_some() false";
+
+    // unwrap:Some 分支取 payload(全零检测通过后直取,无 field-1 GEP)
+    let up = some.unwrap();
+    assert up[0][0] == 42: "unwrap() reads payload pointer";
+
+    // unwrap_or:Some 返回 payload,None 返回默认值
+    let uo = some.unwrap_or(up);
+    assert uo[0][0] == 42: "unwrap_or(Some) → payload";
+    let uo2 = none.unwrap_or(up);
+    assert uo2[0][0] == 42: "unwrap_or(None) → default";
+
+    // 引用族 payload(Option<T&>)同样工作
+    let r: i32& = p;
+    let ref_some: Option<i32&> = Option<i32&>.Some(r);
+    let ref_none: Option<i32&> = Option<i32&>.None;
+    assert ref_some.is_some(): "Option<i32&>.Some.is_some()";
+    assert ref_none.is_none(): "Option<i32&>.None.is_none()";
+
+    // Option<str> 真实构造路径(from_slice:None = 非法 UTF-8)
+    let ascii = [65u8, 66, 67];
+    let s: Option<str> = str.from_slice(ascii[0u64..3]);
+    let bad = [0xF5u8, 0x80, 0x80];
+    let n: Option<str> = str.from_slice(bad[0u64..3]);
+    assert s.is_some(): "from_slice(valid).is_some()";
+    assert n.is_none(): "from_slice(invalid).is_none()";
+    let sv = s.unwrap();
+    assert sv.as_slice() == ascii[0u64..3]: "str.unwrap() payload preserved";
+}
