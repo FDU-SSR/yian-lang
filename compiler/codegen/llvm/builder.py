@@ -416,39 +416,11 @@ class LLBuilder:
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
         """μ⟨lock_ptr⟩ := value(规则 3.6.2 动作① SENTINEL / 3.7.1 帧锁写键)。
 
-        null 锁槽跳过:null delete 无块头可写,与 free(NULL) 语义一致。运行期
-        值无法编译期判定,以分支守卫(代价仅帧进入/删除路径)。
+        指针恒非空,锁槽恒可写(空容器持真实堆块)。
         """
         raw = self.__fat_data(lock_ptr).ir_val
-        if isinstance(raw, ir.Constant) and raw.constant is None:  # type: ignore
-            return
-        seq = self.__check_seq
-        self.__check_seq += 1
-        do_store = self.__func.new_block(self.__split_block_name("wls", "store", seq))
-        skip_block = self.__func.new_block(self.__split_block_name("wls", "skip", seq))
-        self.__func.add_block(do_store.name, do_store)  # type: ignore
-        self.__func.add_block(skip_block.name, skip_block)  # type: ignore
-        is_null = self.__builder.icmp_signed("==", raw, ir.Constant(raw.type, None))  # type: ignore
-        self.__builder.cbranch(is_null, skip_block, do_store)  # type: ignore
-        store_builder = ir.IRBuilder(do_store)
-        slot_ptr = store_builder.bitcast(raw, ir.PointerType(ir.IntType(64)))  # type: ignore
-        store_builder.store(value.ir_val, slot_ptr)  # type: ignore
-        store_builder.branch(skip_block)  # type: ignore
-        self.__continuations[self.__current_cfg_block] = skip_block.name
-        self.__builder = ir.IRBuilder(skip_block)
-
-    def nullptr_literal(self, type_id: int) -> LLValue:
-        """nullptr 编码全零结构(t1 起含 slice/ref):指针字段 null,整数字段 0。"""
-        ll_type = self.__ll_type_ctx.get_ll_type(type_id).ir_type
-        if self.__ll_type_ctx.is_zst(type_id):
-            return self.undef(type_id)
-        if isinstance(ll_type, ir.LiteralStructType):
-            zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
-            fields = [ir.Constant(ft, None) if isinstance(ft, ir.PointerType) else zero for ft in ll_type.elements]  # type: ignore
-            ir_val = ir.Constant.literal_struct(fields)  # type: ignore
-        else:
-            ir_val = ir.Constant(ll_type, None)  # type: ignore
-        return LLValue(type_id, ir_val)  # type: ignore
+        slot_ptr = self.__builder.bitcast(raw, ir.PointerType(ir.IntType(64)))  # type: ignore
+        self.__builder.store(value.ir_val, slot_ptr)  # type: ignore
 
     def check_safe_access(self, ptr: LLValue) -> None:
         """safe_access(p,1) = live(p) ∧ in_bounds(p,1)(规则 3.2.1-3.2.2)。"""
@@ -532,16 +504,10 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
-        """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
-
-        null 编码(⟨0,0,0,0,0⟩)放行——stdlib 空容器 Drop(RawVec<..>.new 后
-        `del self.data`)依赖 free(NULL) 语义,与 C 一致;write_lock_slot 对
-        null 锁槽同样跳过。
-        """
+        """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。"""
         if not self.__is_fat(ptr):
             return
         data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
-        is_null = self.__builder.icmp_signed("==", data, ir.Constant(data.type, None))  # type: ignore
         key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
         flag = self.__builder.and_(key, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000))  # type: ignore
         heap_ok = self.__builder.icmp_signed("!=", flag, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -554,8 +520,7 @@ class LLBuilder:
         raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
         live_ok = self.__check_live(ptr)
         raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
-        full = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
-        cond: ir.Value = self.__builder.or_(is_null, full)  # type: ignore
+        cond: ir.Value = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "del")
 
     # -- memory --
@@ -813,7 +778,7 @@ class LLBuilder:
                 ir_val = self.__builder.select(pos, raw, zero_i)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
-        elif isinstance(src, (Type.PointerType, Type.NullPtrType)) and isinstance(dst, Type.PointerType):
+        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
             if self.__ll_type_ctx.is_zst(dst.pointee_type):
                 # both src and dst are ptr-to-ZST — no real cast, just undef
                 ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
@@ -825,7 +790,7 @@ class LLBuilder:
                 ir_val = self.__builder.bitcast(value.ir_val, pointee_ll.as_pointer())  # type: ignore
             elif self.__is_fat(value):
                 # 指针→指针:5 字段结构重贴;数组退化 T[m]*→T* 时重锚定 + size=m
-                if isinstance(src, Type.PointerType) and isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType):
+                if isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType):
                     arr_ty = self.__type_ctx[src.pointee_type]
                     assert isinstance(arr_ty, Type.ArrayType)
                     if arr_ty.element_type == dst.pointee_type:
@@ -846,7 +811,6 @@ class LLBuilder:
             elif (
                 not self.__raw_pointers
                 and not raw
-                and isinstance(src, Type.PointerType)
                 and isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType)
             ):
                 # 裸指针源(如 rvalue 数组临时量的 Alloca 结果):T[m]* → T* 退化同样
@@ -1410,7 +1374,7 @@ class LLBuilder:
         if isinstance(lhs.type, ir.LiteralStructType) or isinstance(rhs.type, ir.LiteralStructType):  # type: ignore
             # 胖指针聚合比较兜底(规则 3.4.1-3.4.2,§7.6 风险 3):LLVM 无聚合
             # icmp → 字段比较。正常路径由 CFG 路由至 PtrCmp;此分支兜底 CFG
-            # 未路由的聚合操作数(如 nullptr 以未统一指针类型参与比较)。
+            # 未路由的聚合操作数。
             return self.__cmp_fat_values(op, lhs, rhs)
         predicate = {
             BinaryOperator.Eq: "==", BinaryOperator.Neq: "!=",

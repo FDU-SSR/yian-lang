@@ -114,7 +114,7 @@ def __gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span
 def is_literal_type(ctx: TypeCtx, type_id: int) -> bool:
     ty = ctx[type_id]
     match ty:
-        case Type.IntLiteralType() | Type.FloatLiteralType() | Type.NullPtrType():
+        case Type.IntLiteralType() | Type.FloatLiteralType():
             return True
         case Type.ArrayType(element_type=element_type):
             return is_literal_type(ctx, element_type)
@@ -147,8 +147,6 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
             return ctx.i32_id
         case Type.FloatLiteralType():
             return ctx.f64_id
-        case Type.NullPtrType():
-            return type_id
         case Type.PointerType(pointee_type=pointee_type):
             return ctx.alloc_pointer(default_literals(ctx, pointee_type))
         case Type.RefType(pointee_type=pointee_type):

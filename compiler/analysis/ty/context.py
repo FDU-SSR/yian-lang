@@ -45,7 +45,6 @@ class TypeCtx:
 
     int_literal_id: int = 25
     float_literal_id: int = 26
-    null_ptr_id: int = 27
 
     # intrinsic trait IDs
     add_id: int = 50

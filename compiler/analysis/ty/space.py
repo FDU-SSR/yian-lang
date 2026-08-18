@@ -70,7 +70,6 @@ class TypeSpace:
 
         self.__force_add_type(Type.IntLiteralType(type_id=self.__ctx.int_literal_id))
         self.__force_add_type(Type.FloatLiteralType(type_id=self.__ctx.float_literal_id))
-        self.__force_add_type(Type.NullPtrType(type_id=self.__ctx.null_ptr_id))
 
     def __add_type(self, ty: Type.Ty) -> int:
         if ty.type_id == -1:

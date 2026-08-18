@@ -30,7 +30,7 @@ def is_simple_assign_source(expr: HIR.Expr) -> bool:
     Per bak/design.md §2.2: simple assignment is allowed when the source is
     a literal, a construction expression, or a function/method call.
     """
-    if isinstance(expr, (HIR.IntLiteral, HIR.FloatLiteral, HIR.CharLiteral, HIR.StrLiteral, HIR.BoolLiteral, HIR.NullptrLiteral)):
+    if isinstance(expr, (HIR.IntLiteral, HIR.FloatLiteral, HIR.CharLiteral, HIR.StrLiteral, HIR.BoolLiteral)):
         return True
     if isinstance(expr, (HIR.StructConstruct, HIR.VariantConstruct, HIR.Array, HIR.ArrayRepeat, HIR.Tuple)):
         return True

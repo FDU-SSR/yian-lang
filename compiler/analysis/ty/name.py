@@ -38,8 +38,6 @@ class TypeFormatter:
                 name = "IntLiteralType"
             case Type.FloatLiteralType():
                 name = "FloatLiteralType"
-            case Type.NullPtrType():
-                name = "NullPtrType"
             case Type.PointerType(pointee_type=pointee_type):
                 pointee_name = self.get_name(pointee_type)
                 name = f"{pointee_name}*"

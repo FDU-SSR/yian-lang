@@ -76,8 +76,6 @@ class LLTranslator:
         if isinstance(value, IR.BoolLiteral):
             return LLValue(value.type_id,
                            ir.Constant(self.__ll_type_ctx.get_ll_type(value.type_id).ir_type, 1 if value.value else 0))
-        if isinstance(value, IR.NullptrLiteral):
-            return builder.nullptr_literal(value.type_id)
         if isinstance(value, IR.CharLiteral):
             return LLValue(value.type_id,
                            ir.Constant(self.__ll_type_ctx.get_ll_type(value.type_id).ir_type, ord(value.value)))

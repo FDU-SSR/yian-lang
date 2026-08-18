@@ -153,7 +153,7 @@ class TypeCheck:
         if body.stmts:
             last = body.stmts[-1]
             last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
                 body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
                 body.type_id = return_type_id
         return body
@@ -204,7 +204,7 @@ class TypeCheck:
         if body.stmts:
             last = body.stmts[-1]
             last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
                 body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
                 body.type_id = return_type_id
         return body
@@ -248,7 +248,7 @@ class TypeCheck:
         if body.stmts:
             last = body.stmts[-1]
             last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType, Type.NullPtrType)):
+            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
                 body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
                 body.type_id = return_type_id
         return body

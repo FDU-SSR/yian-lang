@@ -1,0 +1,6 @@
+// nullptr 关键字已移除(todo 2): 它不再被词法识别,编译必须失败。
+// 全可空由 Option<T*> 表达。
+
+fn main() {
+    let p: i32* = nullptr;
+}
