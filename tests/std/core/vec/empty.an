@@ -1,0 +1,67 @@
+// 空容器行为测试:Vec/String 空态 as_slice/len/cap/ptr + del 不 trap
+//
+// 空容器表示迁移(dyn[0] T 分配)后,空容器的 data 指针指向真实堆块(非全零),
+// 与后续 niche None 的全零编码不碰撞;del 空容器走正常释放路径,不 trap。
+// 本测试不使用 nullptr 字面量(删除 nullptr 后仍有效)。
+//
+// Expected output: (empty, exit 0)
+
+from std.core.vec import Vec;
+from std.core.string import String;
+
+fn main() {
+    // ---- Vec<u8> 空容器:创建 + as_slice + ptr 非全零 ----
+    let v: Vec<u8> = Vec<u8>.new();
+    assert v.len() == 0: "empty vec len should be 0";
+    assert v.is_empty(): "empty vec should be empty";
+    assert v.capacity() == 0: "empty vec capacity should be 0";
+
+    let s = v.as_slice();
+    assert s.len() == 0: "empty vec slice len should be 0";
+    let p: u8* = __slice_get_ptr(s);
+
+    // 两个独立空容器持有不同的存活堆块 → 指针非零且互异;
+    // 若空容器退化为全零编码,两者将相等,断言失败。
+    let v2: Vec<u8> = Vec<u8>.new();
+    let p2: u8* = __slice_get_ptr(v2.as_slice());
+    assert p != p2: "empty vecs must hold distinct live heap blocks (non-zero ptr)";
+
+    // ---- shrink_to_fit(0) 后 Drop 不 trap ----
+    // 旧缺陷:shrink 到空后 data 悬垂,随后 Drop 对已释放块 del → live trap
+    let v3: Vec<u8> = Vec<u8>.new();
+    v3.push(1);
+    v3.push(2);
+    v3.push(3);
+    v3.clear();
+    v3.shrink_to_fit();
+    assert v3.capacity() == 0: "shrink_to_fit on empty vec should set capacity 0";
+    assert v3.as_slice().len() == 0: "shrunk vec slice should be empty";
+    v3.drop();  // data 指向重新分配的 dyn[0] 块 → 正常释放,不 trap
+
+    // ---- 空→非空转换(grow/reserve 释放旧 dyn[0] 块,不泄漏不 trap)----
+    let v4: Vec<u8> = Vec<u8>.new();
+    v4.push(42);
+    assert v4.len() == 1: "push on empty vec should work";
+    assert v4[0] == 42: "pushed value should be readable";
+    v4.clear();
+    v4.reserve(100);
+    assert v4.capacity() >= 100: "reserve from empty should grow capacity";
+    assert v4.len() == 0: "reserve should not change len";
+
+    // ---- Vec<String> 空容器(泛型元素)----
+    let vs: Vec<String> = Vec<String>.new();
+    assert vs.len() == 0: "empty Vec<String> len should be 0";
+    let ss = vs.as_slice();
+    assert ss.len() == 0: "empty Vec<String> slice len should be 0";
+
+    // ---- String 空容器 ----
+    let st: String = String.new();
+    assert st.is_empty(): "empty string should be empty";
+    assert st.len() == 0: "empty string len should be 0";
+    assert st.capacity() == 0: "empty string capacity should be 0";
+    let sp: u8* = __slice_get_ptr(st.as_slice());
+    assert sp != p: "empty String data block should differ from empty Vec block";
+    // 显式 drop 空容器:data 为存活 dyn[0] 块 → 正常释放,不 trap
+    vs.drop();
+    st.drop();
+}

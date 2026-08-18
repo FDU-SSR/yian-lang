@@ -10,7 +10,9 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        Self(nullptr, 0)
+        // 空容器持真实堆块(dyn[0] 分配 8B 锁头,带堆键的合法胖指针):
+        // data/ptr 非零,heap_ok/live 全通过,与后续 niche None 的全零编码不碰撞。
+        Self(dyn[0] T, 0)
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
@@ -43,8 +45,9 @@ impl<T> RawVec<T> {
             // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
             memmove(new_data, self.data, old_cap);
-            del self.data;
         }
+        // data 恒为真实堆块(new() 即 dyn[0] 分配),旧块一律释放
+        del self.data;
 
         self.data = new_data;
         self.cap = new_cap;
@@ -72,9 +75,8 @@ impl<T> RawVec<T> {
             memmove(new_data, self.data, len);
         }
 
-        if self.cap > 0 {
-            del self.data;
-        }
+        // data 恒为真实堆块,旧块一律释放
+        del self.data;
 
         self.data = new_data;
         self.cap = new_cap;
@@ -85,22 +87,18 @@ impl<T> RawVec<T> {
             return;
         }
 
-        if len == 0 {
-            if self.cap > 0 {
-                del self.data;
-            }
-            self.cap = 0;
-            return;
-        }
-
+        // 统一走重新分配:len==0 时 new_data 为 dyn[0] 块(真实堆块,非悬垂)。
+        // 旧实现 shrink 到空后 del 旧块却不重置 data,随后 Drop 对已释放块
+        // 再 del → live 检查 trap;新实现 data 恒指向存活块,空容器 del 不 trap。
         let new_data: T* = dyn[len] T;
 
         // Copy valid elements
-        memmove(new_data, self.data, len);
-
-        if self.cap > 0 {
-            del self.data;
+        if len > 0 {
+            memmove(new_data, self.data, len);
         }
+
+        // data 恒为真实堆块,旧块一律释放
+        del self.data;
 
         self.data = new_data;
         self.cap = len;
