@@ -147,7 +147,7 @@ $$\text{lock\_addr}(b) \triangleq b$$
 $$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$$
 其中等号为**全字相等**：锁槽物理值 $v = \mu\langle p.\text{lock\_ptr} \rangle$ 与指针键 $p.\text{key}$ 相等；$v \ne p.\text{key}$（值失配，含哨兵与任意非键值）时恒判假。**分级无关**：`live` 只读 `lock_ptr`/`key` 两个字段，三级表示均有，故对 `T*`/`T[]`/`T&` 同一适用；锁字段在 coerce 降级中继承（§2.7），降级视图的 `live` 与母指针同真同假。
 
-**null 短路**：当 $p.\text{lock\_ptr} = 0$（null 指针编码）时，$\text{live}(p)$ **短路为假**。
+**niche None 防御**：可空性由 `Option<指针族>` 表达（nullptr 字面量已移除，2026-08），`None` 的 niche 布局为全零编码（指针字段全 0，含 $p.\text{lock\_ptr} = 0$），仅经 `match`/`unwrap` 消费。若 `None` 值泄漏到访问路径，`__check_live` 的 `lock_ptr \ne 0` guard（定义 8 的求值实现，`llvm/builder.py:237`）使 $\text{live}(p)$ 恒为假——guard 不成立即短路为假，不读地址 0 物理槽位，访问在 `safe_access` 处 trap。enum 布局纯实现细节，安全论证不依赖 tag 字段存在性。
 
 **定义 9（堆/栈判定 `is_heap`）**：$\text{is\_heap}(p) \iff \text{msb}(p.\text{key}) = 1$，其中 $\text{msb}$ 取 64 位键的最高位（0 = 栈、1 = 堆）。
 
@@ -298,9 +298,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 - `T* → T&`：删 `index` 与 `size`，$\text{data}' = \text{data} + \text{index}\cdot|T|$（引用取当前元素）；
 - `T[] → T&`：删 `size`（`T[]` 的 `data` 已折叠，取首元素）。
 
-`nullptr` 三档兼容：null 字面量可 coerce 到 `T*`/`T[]`/`T&`（均为全零编码，`size`/`index` 按档位取 0，`live` 因 `lock_ptr = 0` 短路为假，定义 8）。
-
-**raw_pointers 模式下的 coerce 链（评测专用）**：`T*→T[]` 在 raw 模式**编译期拒绝**——裸 `T*`（8B）不携带长度信息，降级将凭空构造 `size`；`coerce()` 统一入口报错含「use from_raw_parts(ptr, len) instead」（《编译器实现》§8.1），提示改用 `from_raw_parts(ptr, len)` 显式构造。`T*→T&` 与 `T[]→T&` 在 raw 下保留且无损：前者为 identity（`T*`/`T&` 同编码为裸 `T*`），后者取字段 0（`T[]` 的 `data` 即首元素地址）。`nullptr→T[]` 保留（三档兼容）。守卫位于 `coerce()` 统一入口，覆盖直赋（`let` 初始化）、实参（经 `generic_inference` 分级降级容忍后到 `coerce`）与 `return` 三路径。raw 模式不承载安全论证（§5.1），但该类型层约束在 raw 模式下照常生效。
+**raw_pointers 模式下的 coerce 链（评测专用）**：`T*→T[]` 在 raw 模式**编译期拒绝**——裸 `T*`（8B）不携带长度信息，降级将凭空构造 `size`；`coerce()` 统一入口报错含「use from_raw_parts(ptr, len) instead」（《编译器实现》§8.1），提示改用 `from_raw_parts(ptr, len)` 显式构造。`T*→T&` 与 `T[]→T&` 在 raw 下保留且无损：前者为 identity（`T*`/`T&` 同编码为裸 `T*`），后者取字段 0（`T[]` 的 `data` 即首元素地址）。守卫位于 `coerce()` 统一入口，覆盖直赋（`let` 初始化）、实参（经 `generic_inference` 分级降级容忍后到 `coerce`）与 `return` 三路径。raw 模式不承载安全论证（§5.1），但该类型层约束在 raw 模式下照常生效。
 
 表示层共同约定：胖指针在存储中以 `Val` 的 `PtrVal` 分量存放，其 `lock_ptr` 指向块头/帧首锁槽，锁槽元数据与被保护数据相邻存储。
 
@@ -454,7 +452,7 @@ $$\forall s \ge t_2.\ \neg \mathrm{live}_s(p)$$
 
 ### 4.6 类型混淆的排除（可信基边界）
 
-**用户代码：语法级排除（受限操作检查）**。`bitcast`（重解释，唯一改变 pointee 的操作）与 `from_raw_parts`（无检查的 `(ptr, len)` 指针构造）由受限操作检查禁于标准库外（`restricted_ops.py`，在类型检查前、`inject_prelude` 后运行，《编译器实现》§8.3）。故用户代码中不存在改变指针静态类型或从非指针数据构造指针的通道：指针仅由分配（规则 3.6.1）、取址（规则 3.5.1-3.5.2）、数组退化与 null 字面量（《编译器实现》§8.1）产生，`T[]`/`T&` 降级视图由 `T*` 经 coerce 链派生（§2.7、定义 11），`static_type` 恒等于产生点的建立类型（《编译器实现》§8.2 定义 25-26），$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{static\_type}(p)$（定义 23）对用户代码指针是编译期事实。
+**用户代码：语法级排除（受限操作检查）**。`bitcast`（重解释，唯一改变 pointee 的操作）与 `from_raw_parts`（无检查的 `(ptr, len)` 指针构造）由受限操作检查禁于标准库外（`restricted_ops.py`，在类型检查前、`inject_prelude` 后运行，《编译器实现》§8.3）。故用户代码中不存在改变指针静态类型或从非指针数据构造指针的通道：指针仅由分配（规则 3.6.1）、取址（规则 3.5.1-3.5.2）、数组退化（《编译器实现》§8.1）产生，`T[]`/`T&` 降级视图由 `T*` 经 coerce 链派生（§2.7、定义 11），`static_type` 恒等于产生点的建立类型（《编译器实现》§8.2 定义 25-26），$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{static\_type}(p)$（定义 23）对用户代码指针是编译期事实。
 
 **标准库：审计可信基**。标准库为可信基黑盒——其内部 `bitcast` 的元数据转化由《编译器实现》§8.3 承担（实现篇留白），理论论证不需要知道其内部细节——与分配器行为（§2.5）、无回绕实现约定（§2.4）同为可信基假设，不进入本章论证。审计失守属标准库缺陷，不构成机制反例（§5.5）。
 
