@@ -1,10 +1,11 @@
 // bench/shootout_raw/fasta.an — 随机 DNA 序列生成校验和 (shootout fasta)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
-// 签名升级 (2026-08): 三函数参数同 shootout 版 — genelist: AminoAcid[],
-//   g_seed: i32&, checksum: i64&。genelist 调用侧经 from_raw_parts 视图
-//   (裸模式下隐式 T*→T[] coerce 被拒, expr_checker.py L351-355),
-//   g_seed/checksum 的 T*→T& 折算在 raw 下保留 identity。函数体 deref
-//   (*g_seed = / *checksum +=) 原样保留。无 del, 无 T* 局部。
+// 签名升级 (2026-08): g_seed: i32&, checksum: i64& (T& 化, raw 下
+//   identity, 无劣化); genelist 初升 AminoAcid[] 后因重测超限 (+7.0%,
+//   热循环 {ptr,i64} 聚合参数放大 genelist[j] 提取开销) 恢复 AminoAcid* —
+//   raw 下 T* 直传裸指针, 去掉 from_raw_parts 视图。make_cumulative 冷路径
+//   保持 AminoAcid[] (仍经 from_raw_parts)。函数体 deref (*g_seed = /
+//   *checksum +=) 原样保留。无 del, 无 T* 局部。
 //
 // 语义权威源: bak/old_exp/performance/c/fasta.c (C 版, 取 compute-only
 //   部分: 不输出序列文本, 只累计字符校验和)
@@ -48,7 +49,7 @@ fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
 }
 
 fn random_fasta_compute_only(
-    genelist: AminoAcid[],
+    genelist: AminoAcid*,
     count: u64,
     n: u64,
     g_seed: i32&,
@@ -108,8 +109,8 @@ fn main() {
 
     make_cumulative(from_raw_parts(&iub[0], 15), 15, &checksum);
     make_cumulative(from_raw_parts(&homosapiens[0], 4), 4, &checksum);
-    random_fasta_compute_only(from_raw_parts(&homosapiens[0], 4), 4, n * 5, &g_seed, &checksum);
-    random_fasta_compute_only(from_raw_parts(&iub[0], 15), 15, n * 3, &g_seed, &checksum);
+    random_fasta_compute_only(&homosapiens[0], 4, n * 5, &g_seed, &checksum);
+    random_fasta_compute_only(&iub[0], 15, n * 3, &g_seed, &checksum);
     repeat_fasta_compute_only(alu_bytes, n * 2, &checksum);
 
     let res: i32 = i32(checksum) % 256;
