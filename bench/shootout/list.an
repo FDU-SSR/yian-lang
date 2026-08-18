@@ -11,12 +11,19 @@
 //       递归嵌套, 否则返回 z。最终 tail 结果指向原 z 表的中段, 断言
 //       其长度 == 30。free_list 释放整条链 (含头节点)。
 //
-// NULL 迁移 (2026-08): 链表尾哨兵改为 Option<Element*>(next 字段)。
+// NULL 迁移 (2026-08): 链表尾哨兵改为 Option 指针 (next 字段)。
 // Option<T*> 受赋值约束 (不可简单复制, clone 对 struct 指针 payload
 // 不实现) → 辅助函数 opt_copy/opt_next 经取址参数非破坏性重建 Option;
 // 遍历位置一律用 is_some/unwrap 读取。Element_length_method 的 self 为
 // Element& (入参非空, 单元素解引用; 内部 current 保持 Option 需遍历)。
 // Element_free_method/free_list 需要 del, 保持 Element*。
+//
+// Option<T&> 迁移 (2026-08): next 字段改为 Option<Element&> (niche
+// 24B, 省 16B/字段)。unwrap()[0] 对 Option<T&> 返回 T& (非 T*) → 读
+// 路径局部一律 Element& (字段访问经 T& 自动解引用, 零 bitcast); 节点
+// 本体分配保持 dyn Element(...) → Element*。del 路径 (Element_free_
+// method/free_list) 必须 bitcast<Element*>(unwrap 所得 T&) 得 T* 再
+// del (T&→T* 无隐式折算; bitcast 为 bench 豁免的受限原语)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/list.an -o build/shootout_check/list
 // 预期: exit 0 (断言全过)
@@ -25,80 +32,81 @@ from std.core.io import print;
 
 struct Element {
     val: i32,
-    next: Option<Element*>,
+    next: Option<Element&>,
 }
 
-// 非破坏性复制 Option<Element*>(Option 值禁止简单复制,clone 不实现于
+// 非破坏性复制 Option<Element&>(Option 值禁止简单复制,clone 不实现于
 // struct 指针 payload → 经取址 + unwrap 重建)
-fn opt_copy(src: Option<Element*>*) -> Option<Element*> {
+fn opt_copy(src: Option<Element&>*) -> Option<Element&> {
     if (*src).is_none() {
-        return Option<Element*>.None;
+        return Option<Element&>.None;
     }
-    return Option<Element*>.Some((*src).unwrap()[0]);
+    return Option<Element&>.Some((*src).unwrap()[0]);
 }
 
 // 取节点 opt 的 next(空/链尾 → None)
-fn opt_next(src: Option<Element*>*) -> Option<Element*> {
+fn opt_next(src: Option<Element&>*) -> Option<Element&> {
     if (*src).is_none() {
-        return Option<Element*>.None;
+        return Option<Element&>.None;
     }
-    let n: Element* = (*src).unwrap()[0];
+    let n: Element& = (*src).unwrap()[0];
     if n.next.is_none() {
-        return Option<Element*>.None;
+        return Option<Element&>.None;
     }
-    return Option<Element*>.Some(n.next.unwrap()[0]);
+    return Option<Element&>.Some(n.next.unwrap()[0]);
 }
 
-fn Element_make_list(length: i32) -> Option<Element*> {
+fn Element_make_list(length: i32) -> Option<Element&> {
     if length == 0 {
-        return Option<Element*>.None;
+        return Option<Element&>.None;
     }
-    let rest_of_list: Option<Element*> = Element_make_list(length - 1);
+    let rest_of_list: Option<Element&> = Element_make_list(length - 1);
     let e: Element* = dyn Element(length, rest_of_list.move());
-    return Option<Element*>.Some(e);
+    return Option<Element&>.Some(e);
 }
 
 fn Element_length_method(self: Element&) -> i32 {
     let len: i32 = 1;
-    let current: Option<Element*>;
+    let current: Option<Element&>;
     if self.next.is_some() {
-        current = Option<Element*>.Some(self.next.unwrap()[0]);
+        current = Option<Element&>.Some(self.next.unwrap()[0]);
     } else {
-        current = Option<Element*>.None;
+        current = Option<Element&>.None;
     };
     while current.is_some() {
         len = len + 1;
-        let cn: Element* = current.unwrap()[0];
+        let cn: Element& = current.unwrap()[0];
         if cn.next.is_some() {
-            current = Option<Element*>.Some(cn.next.unwrap()[0]);
+            current = Option<Element&>.Some(cn.next.unwrap()[0]);
         } else {
-            current = Option<Element*>.None;
+            current = Option<Element&>.None;
         };
     };
     return len;
 }
 
 fn Element_free_method(self: Element*) {
-    let current: Option<Element*>;
+    let current: Option<Element&>;
     if self.next.is_some() {
-        current = Option<Element*>.Some(self.next.unwrap()[0]);
+        current = Option<Element&>.Some(self.next.unwrap()[0]);
     } else {
-        current = Option<Element*>.None;
+        current = Option<Element&>.None;
     };
     while current.is_some() {
-        let cn: Element* = current.unwrap()[0];
-        let next: Option<Element*>;
+        let cn: Element& = current.unwrap()[0];
+        let next: Option<Element&>;
         if cn.next.is_some() {
-            next = Option<Element*>.Some(cn.next.unwrap()[0]);
+            next = Option<Element&>.Some(cn.next.unwrap()[0]);
         } else {
-            next = Option<Element*>.None;
+            next = Option<Element&>.None;
         };
-        del cn;
+        let ep: Element* = bitcast<Element*>(cn);
+        del ep;
         current = next.move();
     };
 }
 
-fn Element_length(e: Option<Element*>*) -> i32 {
+fn Element_length(e: Option<Element&>*) -> i32 {
     if (*e).is_none() {
         return 0;
     }
@@ -106,34 +114,34 @@ fn Element_length(e: Option<Element*>*) -> i32 {
     return Element_length_method(sv);
 }
 
-fn is_shorter_than(x: Option<Element*>*, y: Option<Element*>*) -> bool {
-    let x_tail: Option<Element*> = opt_copy(x);
-    let y_tail: Option<Element*> = opt_copy(y);
+fn is_shorter_than(x: Option<Element&>*, y: Option<Element&>*) -> bool {
+    let x_tail: Option<Element&> = opt_copy(x);
+    let y_tail: Option<Element&> = opt_copy(y);
     while y_tail.is_some() {
         if x_tail.is_none() {
             return true;
         }
-        let xn: Element* = x_tail.unwrap()[0];
-        let yn: Element* = y_tail.unwrap()[0];
+        let xn: Element& = x_tail.unwrap()[0];
+        let yn: Element& = y_tail.unwrap()[0];
         if xn.next.is_some() {
-            x_tail = Option<Element*>.Some(xn.next.unwrap()[0]);
+            x_tail = Option<Element&>.Some(xn.next.unwrap()[0]);
         } else {
-            x_tail = Option<Element*>.None;
+            x_tail = Option<Element&>.None;
         };
         if yn.next.is_some() {
-            y_tail = Option<Element*>.Some(yn.next.unwrap()[0]);
+            y_tail = Option<Element&>.Some(yn.next.unwrap()[0]);
         } else {
-            y_tail = Option<Element*>.None;
+            y_tail = Option<Element&>.None;
         };
     }
     return false;
 }
 
-fn tail(x: Option<Element*>, y: Option<Element*>, z: Option<Element*>) -> Option<Element*> {
+fn tail(x: Option<Element&>, y: Option<Element&>, z: Option<Element&>) -> Option<Element&> {
     if is_shorter_than(&y, &x) {
-        let next_x: Option<Element*> = opt_next(&x);
-        let next_y: Option<Element*> = opt_next(&y);
-        let next_z: Option<Element*> = opt_next(&z);
+        let next_x: Option<Element&> = opt_next(&x);
+        let next_y: Option<Element&> = opt_next(&y);
+        let next_z: Option<Element&> = opt_next(&z);
         return tail(
             tail(opt_copy(&next_x), opt_copy(&y), opt_copy(&z)),
             tail(opt_copy(&next_y), opt_copy(&z), opt_copy(&x)),
@@ -143,21 +151,22 @@ fn tail(x: Option<Element*>, y: Option<Element*>, z: Option<Element*>) -> Option
     return z.move();
 }
 
-fn free_list(e: Option<Element*>*) {
+fn free_list(e: Option<Element&>*) {
     if (*e).is_none() {
         return;
     }
-    let el: Element* = (*e).unwrap()[0];
-    Element_free_method(el);
-    del el;
+    let el: Element& = (*e).unwrap()[0];
+    let ep: Element* = bitcast<Element*>(el);
+    Element_free_method(ep);
+    del ep;
 }
 
 fn benchmark_list() -> i32 {
-    let x: Option<Element*> = Element_make_list(45);
-    let y: Option<Element*> = Element_make_list(30);
-    let z: Option<Element*> = Element_make_list(20);
+    let x: Option<Element&> = Element_make_list(45);
+    let y: Option<Element&> = Element_make_list(30);
+    let z: Option<Element&> = Element_make_list(20);
 
-    let result: Option<Element*> = tail(opt_copy(&x), opt_copy(&y), opt_copy(&z));
+    let result: Option<Element&> = tail(opt_copy(&x), opt_copy(&y), opt_copy(&z));
     let l: i32 = Element_length(&result);
 
     free_list(&x);
