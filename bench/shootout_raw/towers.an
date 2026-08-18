@@ -12,11 +12,12 @@
 //       build_tower_at 建 0..disks 的塔, 结束后 free_pile 逐节点释放。
 //       总移动次数 = 2^disks - 1。
 //
-// tiered-pointers t6 标注: state 参数改为 TowersState& (单元素引用,
-//   经 T& 字段访问 piles/moves_done; 热路径 move_disks 递归每步传 state)。
-//   TowersDisk 链表字段/参数保持 TowersDisk* (可空 + del 仅 T* 合法)。
-//   benchmark 内 state 局部保持 TowersState* (del 需要), 经 let 绑定
-//   T*→T& 视图传给热路径函数。
+// T& 迁移 (2026-08, 与 shootout 版同步): next 与 piles 元素由 Option
+// 指针 payload 升级为 Option<TowersDisk&> (raw 下 T& 退化为裸 8B,
+// Option<T&> 为 8B); push_disk 参数改 T& 避免热路径 bitcast (调用侧传
+// T* 隐式折算, raw 下保留 identity), 节点本体保持 dyn T 分配 (T*),
+// free_pile 释放路径 bitcast 回 T* 再 del (bitcast 在 raw 下同样可用;
+// 只跑一次, 可接受)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/towers.an -o build/shootout_check/towers
 // 预期: exit 0 (断言全过)
@@ -25,53 +26,53 @@ from std.core.io import print;
 
 struct TowersDisk {
     size: i32,
-    next: Option<TowersDisk*>,
+    next: Option<TowersDisk&>,
 }
 
 struct TowersState {
-    piles: Option<TowersDisk*>[3],
+    piles: Option<TowersDisk&>[3],
     moves_done: i64,
 }
 
-fn push_disk(disk: TowersDisk*, pile: u64, state: TowersState&) {
-    let top: Option<TowersDisk*>;
+fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
+    let top: Option<TowersDisk&>;
     if state.piles[pile].is_some() {
-        top = Option<TowersDisk*>.Some(state.piles[pile].unwrap()[0]);
+        top = Option<TowersDisk&>.Some(state.piles[pile].unwrap()[0]);
     } else {
-        top = Option<TowersDisk*>.None;
+        top = Option<TowersDisk&>.None;
     };
     if top.is_some() {
-        let tt: TowersDisk* = top.unwrap()[0];
+        let tt: TowersDisk& = top.unwrap()[0];
         if disk.size >= tt.size {
             return;
         }
     }
     disk.next = top.move();
-    state.piles[pile] = Option<TowersDisk*>.Some(disk);
+    state.piles[pile] = Option<TowersDisk&>.Some(disk);
 }
 
-fn pop_disk_from(pile: u64, state: TowersState&) -> Option<TowersDisk*> {
-    let top: Option<TowersDisk*>;
+fn pop_disk_from(pile: u64, state: TowersState&) -> Option<TowersDisk&> {
+    let top: Option<TowersDisk&>;
     if state.piles[pile].is_some() {
-        top = Option<TowersDisk*>.Some(state.piles[pile].unwrap()[0]);
+        top = Option<TowersDisk&>.Some(state.piles[pile].unwrap()[0]);
     } else {
-        top = Option<TowersDisk*>.None;
+        top = Option<TowersDisk&>.None;
     };
     if top.is_none() {
-        return Option<TowersDisk*>.None;
+        return Option<TowersDisk&>.None;
     }
-    let tt: TowersDisk* = top.unwrap()[0];
+    let tt: TowersDisk& = top.unwrap()[0];
     if tt.next.is_some() {
-        state.piles[pile] = Option<TowersDisk*>.Some(tt.next.unwrap()[0]);
+        state.piles[pile] = Option<TowersDisk&>.Some(tt.next.unwrap()[0]);
     } else {
-        state.piles[pile] = Option<TowersDisk*>.None;
+        state.piles[pile] = Option<TowersDisk&>.None;
     };
-    tt.next = Option<TowersDisk*>.None;
-    return Option<TowersDisk*>.Some(tt);
+    tt.next = Option<TowersDisk&>.None;
+    return Option<TowersDisk&>.Some(tt);
 }
 
 fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
-    let disk: Option<TowersDisk*> = pop_disk_from(from_pile, state);
+    let disk: Option<TowersDisk&> = pop_disk_from(from_pile, state);
     if disk.is_some() {
         push_disk(disk.unwrap()[0], to_pile, state);
     }
@@ -81,7 +82,7 @@ fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
 fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
     let i: i32 = disks;
     while i >= 0 {
-        let disk: TowersDisk* = dyn TowersDisk(i, Option<TowersDisk*>.None);
+        let disk: TowersDisk* = dyn TowersDisk(i, Option<TowersDisk&>.None);
         push_disk(disk, pile, state);
         i -= 1;
     };
@@ -98,16 +99,16 @@ fn move_disks(disks: i32, from_pile: u64, to_pile: u64, state: TowersState&) {
     }
 }
 
-fn free_pile(disk: TowersDisk*) {
-    let cur: TowersDisk* = disk;
+fn free_pile(disk: TowersDisk&) {
+    let cur: TowersDisk& = disk;
     loop {
-        let next: Option<TowersDisk*>;
+        let next: Option<TowersDisk&>;
         if cur.next.is_some() {
-            next = Option<TowersDisk*>.Some(cur.next.unwrap()[0]);
+            next = Option<TowersDisk&>.Some(cur.next.unwrap()[0]);
         } else {
-            next = Option<TowersDisk*>.None;
+            next = Option<TowersDisk&>.None;
         };
-        del cur;
+        del bitcast<TowersDisk*>(cur);
         if next.is_none() {
             break;
         };
@@ -117,7 +118,7 @@ fn free_pile(disk: TowersDisk*) {
 
 fn benchmark() -> i64 {
     let state: TowersState* = dyn TowersState(
-        [Option<TowersDisk*>.None, Option<TowersDisk*>.None, Option<TowersDisk*>.None], 0);
+        [Option<TowersDisk&>.None, Option<TowersDisk&>.None, Option<TowersDisk&>.None], 0);
     let sv: TowersState& = state;
     build_tower_at(0, 30, sv);
     move_disks(30, 0, 1, sv);

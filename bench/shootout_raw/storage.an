@@ -15,13 +15,20 @@
 //       children 挂子数组。每次调用计数 +1 (count_arrays)。free_tree
 //       递归释放全部子数组。LCG: stage = stage*1103515245 + 12345。
 //
+// T& 迁移 (2026-08, 与 shootout 版同步): children 字段由 Option 指针
+// payload 升级为 Option<array_tree&> (raw 下 T& 退化为裸 8B, Option<T&>
+// 为 8B); T& 丢 size 字段, free_tree 遍历用 bitcast + from_raw_parts
+// (ap, count) 重建数组视图 (raw 下同样可用), 释放路径 del ap (bitcast
+// 后 T*)。节点本体保持 dyn 数组分配 (T*)。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/storage.an -o build/shootout_check/storage
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
+from std.core.slice import from_raw_parts;
 
 struct array_tree {
-    children: Option<array_tree*>,
+    children: Option<array_tree&>,
     child_count: i32,
 }
 
@@ -40,7 +47,7 @@ fn Random_next(r: Random*) -> u64 {
     return r.stage;
 }
 
-fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> Option<array_tree*> {
+fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> Option<array_tree&> {
     *count += 1;
 
     if depth == 1 {
@@ -48,12 +55,12 @@ fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -
         let arr: array_tree* = dyn[n] array_tree;
         let i: u64 = 0;
         while i < n {
-            arr[i].children = Option<array_tree*>.None;
+            arr[i].children = Option<array_tree&>.None;
             arr[i].child_count = 0;
             i += 1;
         };
         *out_count = i32(n);
-        return Option<array_tree*>.Some(arr);
+        return Option<array_tree&>.Some(arr);
     }
 
     let n: u64 = 3;
@@ -66,22 +73,24 @@ fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -
         i += 1;
     };
     *out_count = i32(n);
-    return Option<array_tree*>.Some(arr);
+    return Option<array_tree&>.Some(arr);
 }
 
-fn free_tree(arr: Option<array_tree*>*, count: i32) {
+fn free_tree(arr: Option<array_tree&>*, count: i32) {
     if (*arr).is_none() {
         return;
     }
-    let aa: array_tree* = (*arr).unwrap()[0];
+    let aa: array_tree& = (*arr).unwrap()[0];
+    let ap: array_tree* = bitcast<array_tree*>(aa);
+    let view: array_tree[] = from_raw_parts(ap, u64(count));
     let i: u64 = 0;
     while i < u64(count) {
-        if aa[i].children.is_some() && aa[i].child_count > 0 {
-            free_tree(&aa[i].children, aa[i].child_count);
+        if view[i].children.is_some() && view[i].child_count > 0 {
+            free_tree(&view[i].children, view[i].child_count);
         }
         i += 1;
     };
-    del aa;
+    del ap;
 }
 
 fn benchmark_storage(root_depth: i32) -> i64 {
@@ -90,7 +99,7 @@ fn benchmark_storage(root_depth: i32) -> i64 {
 
     let count: i64 = 0;
     let root_count: i32 = 0;
-    let result: Option<array_tree*> = build_tree_depth(root_depth, random, &count, &root_count);
+    let result: Option<array_tree&> = build_tree_depth(root_depth, random, &count, &root_count);
 
     free_tree(&result, root_count);
     del random;

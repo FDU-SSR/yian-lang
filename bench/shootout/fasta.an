@@ -10,10 +10,11 @@
 // 算法: LCG (g_seed*IA+IC)%IM 生成随机数 r, 按累积概率表选择碱基,
 //       与 repeat_fasta (alu 序列循环取碱基) 一起累计 checksum。
 //
-// tiered-pointers t6 标注: make_cumulative 的 genelist 参数改为 AminoAcid[]
-//   (块访问语义), checksum 参数改为 i64&; repeat_fasta_compute_only 的
-//   checksum 参数改为 i64&。random_fasta_compute_only 保持 T* (g_seed 经
-//   LCG 读写, 与 checksum 同列但不在本批优化范围)。无 del, 无 T* 局部。
+// 签名升级 (2026-08): 三个函数参数全部升级 — make_cumulative/
+//   repeat_fasta_compute_only 的 genelist: AminoAcid[] + checksum: i64&;
+//   random_fasta_compute_only 同步升级 (genelist: AminoAcid[], g_seed:
+//   i32&, checksum: i64&)。函数体 deref (*g_seed = / *checksum +=) 原样
+//   保留 (去 deref 会 codegen 崩溃/类型拒绝)。无 del, 无 T* 局部。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/fasta.an -o build/shootout_check/fasta
 // 预期: exit 0 (断言全过)
@@ -46,11 +47,11 @@ fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
 }
 
 fn random_fasta_compute_only(
-    genelist: AminoAcid*,
+    genelist: AminoAcid[],
     count: u64,
     n: u64,
-    g_seed: i32*,
-    checksum: i64*,
+    g_seed: i32&,
+    checksum: i64&,
 ) {
     let i: u64 = 0;
     while i < n {

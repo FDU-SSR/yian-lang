@@ -13,10 +13,12 @@
 //       删 1<<(maxDepth-depth+minDepth) 棵临时树并累计 check。
 //       三态同源码: 裸/胖无检查/完整胖 均 exit 0。
 //
-// tiered-pointers t6 标注: ItemCheck 参数改为 treeNode& (单元素解引用读,
-//   仅 live 检查, 免 in_bounds)。treeNode 字段 left/right 保持 treeNode*
-//   (可空且需 != NULL 判断, T& 不支持 NULL 比较)。调用侧经
-//   let 绑定 T*→T& 视图传递 (编译器不支持调用点自动降级)。
+// Option<T&> 迁移 (2026-08, 与 shootout 版同步): left/right 改为
+// Option<treeNode&> (raw 下 T& 退化为裸 8B, Option<T&> 为 8B);
+// NewTreeNode/BottomUpTree 返回 Option<treeNode&>; dyn treeNode(...)
+// 保持 T* 分配。ItemCheck 读路径为 treeNode& 零 bitcast; DeleteTree
+// del 路径必须 bitcast<treeNode*>(unwrap 所得 T&) 得 T* 再 del
+// (T&→T* 无隐式折算; bitcast 在 raw 下同样可用, bench 豁免)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/binarytree.an -o build/shootout_check/binarytree
 // 预期: exit 0 (断言全过)
@@ -24,21 +26,21 @@
 from std.core.io import print;
 
 struct treeNode {
-    left: Option<treeNode*>,
-    right: Option<treeNode*>,
+    left: Option<treeNode&>,
+    right: Option<treeNode&>,
 }
 
-fn NewTreeNode(left: Option<treeNode*>, right: Option<treeNode*>) -> Option<treeNode*> {
-    return Option<treeNode*>.Some(dyn treeNode(left.move(), right.move()));
+fn NewTreeNode(left: Option<treeNode&>, right: Option<treeNode&>) -> Option<treeNode&> {
+    return Option<treeNode&>.Some(dyn treeNode(left.move(), right.move()));
 }
 
-fn BottomUpTree(depth: u64) -> Option<treeNode*> {
+fn BottomUpTree(depth: u64) -> Option<treeNode&> {
     if depth > 0 {
-        let left_child: Option<treeNode*> = BottomUpTree(depth - 1);
-        let right_child: Option<treeNode*> = BottomUpTree(depth - 1);
+        let left_child: Option<treeNode&> = BottomUpTree(depth - 1);
+        let right_child: Option<treeNode&> = BottomUpTree(depth - 1);
         return NewTreeNode(left_child.move(), right_child.move());
     }
-    return NewTreeNode(Option<treeNode*>.None, Option<treeNode*>.None);
+    return NewTreeNode(Option<treeNode&>.None, Option<treeNode&>.None);
 }
 
 fn ItemCheck(tree: treeNode&) -> i64 {
@@ -54,18 +56,19 @@ fn ItemCheck(tree: treeNode&) -> i64 {
     return res;
 }
 
-fn DeleteTree(tree: Option<treeNode*>) {
+fn DeleteTree(tree: Option<treeNode&>) {
     if tree.is_none() {
         return;
     }
-    let tt: treeNode* = tree.unwrap()[0];
+    let tt: treeNode& = tree.unwrap()[0];
     if tt.left.is_some() {
-        DeleteTree(Option<treeNode*>.Some(tt.left.unwrap()[0]));
+        DeleteTree(Option<treeNode&>.Some(tt.left.unwrap()[0]));
     }
     if tt.right.is_some() {
-        DeleteTree(Option<treeNode*>.Some(tt.right.unwrap()[0]));
+        DeleteTree(Option<treeNode&>.Some(tt.right.unwrap()[0]));
     }
-    del tt;
+    let tp: treeNode* = bitcast<treeNode*>(tt);
+    del tp;
 }
 
 fn main() {
@@ -79,17 +82,17 @@ fn main() {
     }
 
     let stretchDepth: u64 = maxDepth + 1;
-    let stretchTree: Option<treeNode*> = BottomUpTree(stretchDepth);
+    let stretchTree: Option<treeNode&> = BottomUpTree(stretchDepth);
     DeleteTree(stretchTree.move());
 
-    let longLivedTree: Option<treeNode*> = BottomUpTree(maxDepth);
+    let longLivedTree: Option<treeNode&> = BottomUpTree(maxDepth);
 
     let depth: u64 = minDepth;
     while depth <= maxDepth {
         let iterations: i64 = 1 << (maxDepth - depth + minDepth);
         let i: i64 = 0;
         while i < iterations {
-            let tempTree: Option<treeNode*> = BottomUpTree(depth);
+            let tempTree: Option<treeNode&> = BottomUpTree(depth);
             check = check + ItemCheck(tempTree.unwrap()[0]);
             DeleteTree(tempTree.move());
             i += 1;
