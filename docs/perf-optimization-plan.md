@@ -28,7 +28,7 @@
 
 ### 1.4 跨会话测量假象与修复摘要
 
-2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。
+2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。2026-08-19 Option<T&> 迁移后重测: check/raw = 1.01–2.48×(list 2.06×、towers 2.08×、binarytree 1.57×、storage 2.11×、fasta 1.68× 为 5 迁移基准),见 `docs/shootout-results.md`。
 
 ### 1.5 与历史报告的关系
 
@@ -105,7 +105,7 @@
 
 - **原理**: 40B 胖指针聚合(data / lock_ptr / key / index / size 5×8B)在热路径被反复字段提取,LLVM IR 中表现为大量 `extractvalue`(每字段一条)。三层分析第 1 层 IR 差分显示,表示差分的绝对主体即 extractvalue: nfc−raw 增量 99–164,为全部单项差分最大(analysis §1.1 / §2②)。字段链被拆散为多次独立取值,阻碍 LLVM 将 5 字段聚合视为整体优化。
 - **挂载点**: `compiler/codegen/llvm/builder.py` — `__extract_fat_field`(定义 L91)全部调用点(当前树实测 43 处),代表性集合: L127 / L155,163 / L239-253 / L404 / L482-514 / L543-549 / L635-671 / L714-726 / L835-937 / L1135-1136(覆盖 data / lock_ptr / key / index / size 全部字段提取;其中 L239-253、L482-514、L543-549、L635-671 为 2–5 字段成组提取,即「一次 load 全 5 字段」的合并目标)。LLVM 类型侧: `compiler/codegen/llvm/types.py` L39-41(`__fat_pointer` 5 字段 / `__ref_pointer` 3 字段 / `__str_ll_type`)。
-- **预期收益**: 现状表示成本为可消除上界: queen 23493ms(占总成本 96.3%,绝对冠军)、②−① 倍率 1.00–2.44×(多数基准 >1.3×)(analysis §2②)。本项针对其中字段提取/聚合搬运部分,不承诺全量消除;实际收益以实施后三态紧邻重测为准。
+- **预期收益**: 现状表示成本为可消除上界: list 191559ms(占总成本 78.8%,绝对冠军)、queen 23588ms(占总成本 93.3%,占比冠军)、②−① 倍率 0.99–1.99×(多数基准 >1.3×)(analysis §2②)。本项针对其中字段提取/聚合搬运部分,不承诺全量消除;实际收益以实施后三态紧邻重测为准。
 - **风险与安全影响**: LLVM 值语义约束: extractvalue 链合并须保持字段顺序与类型(data / lock_ptr / key / index / size),任一字段错位即破坏 live / in_bounds 检查所用元数据;合并只改聚合形态,不改检查发射逻辑。必须保持 fat 70 / fat_cve 80 不回归(检查节点数与 trap 行为不变)。
 - **验证方法**: 第 1 层 IR 差分复现(analysis 附录 B: `-t ll` 三态编译 + grep 计数 extractvalue / icmp / trap)+ 三态紧邻重测(`python3 scripts/bench_fat.py --suite shootout --pin 4`);回归 `python3 scripts/run_tests.py`、`python3 scripts/run_fat_tests.py`、`python3 scripts/run_fat_cve.py`。
 
@@ -121,7 +121,7 @@
 
 - **原理**: queen 回溯热路径(is_safe 33.43% + index 27.90% 自占)频繁构造/析构 40B 胖指针(update_board_state / place_queen),棋盘数组与回溯栈的胖指针元素反复聚合/提取。扁平化布局(数组只存裸 data、元数据单份保存)可消除每元素 40B 的构造/析构与字段提取开销。
 - **挂载点**: 基准源码级而非编译器: `bench/shootout/queen.an`(回溯数组)、`bench/shootout/list.an`(链表节点);对应 raw 套件 `bench/shootout_raw/` 需同步修改。
-- **预期收益**: 估计 — queen 表示成本 23493ms(占总成本 96.3%,analysis §2②)的部分消除;本项为源码级变体,收益以实施后三态紧邻重测为准。
+- **预期收益**: 估计 — queen 表示成本 23588ms(占总成本 93.3%,analysis §2②)的部分消除;本项为源码级变体,收益以实施后三态紧邻重测为准。
 - **风险与安全影响**: 基准语义保持(须与 raw 套件同步,del 语义不破坏);扁平化布局不可绕过安全检查——仅减少聚合构造开销,live / in_bounds 检查语义仍须保持;不影响编译产物安全属性。
 - **验证方法**: 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`(对比 queen / list 的 ③−① 倍率变化)+ 全量回归 `python3 scripts/run_tests.py`、`python3 scripts/run_fat_tests.py`、`python3 scripts/run_fat_cve.py` 确认基准等价。
 
@@ -131,11 +131,11 @@
 
 #### 4.2.1 热循环检查合并 + 字段复用
 
-- **原理**: list `is_shorter_than` 87.67% 自占,链表 O(n²) 两两比较,每步对胖指针取字段(data / size)并做检查(锁 + 越界);静态检查密度三人组最低(cfg 18 节点)但海量动态执行使绝对检查成本最高(14551ms)。热循环内相邻访问共享同一胖指针时,锁检查与字段提取可合并、复用。
+- **原理**: list `is_shorter_than` 87.67% 自占,链表 O(n²) 两两比较,每步对胖指针取字段(data / size)并做检查(锁 + 越界);静态检查密度三人组最低(cfg 18 节点)但海量动态执行使绝对检查成本最高(51500ms,占比 21.2%)。热循环内相邻访问共享同一胖指针时,锁检查与字段提取可合并、复用。
 - **挂载点**: CFG 检查发射的 Load / Store 对 `compiler/codegen/cfg/builder.py` L1095-1133(检查节点发射点: CheckRefAccess L1095 / L1115 / L1130、CheckInBounds L1098、CheckSafeAccess L1118 / L1133)+ 检查节点族 `compiler/codegen/cfg/ir.py` L216 起(CheckSafeAccess / CheckInBounds / CheckElementArith / CheckRefAccess / CheckRawBounds)。
-- **预期收益**: list 检查成本 14551ms(占总成本 58.3%,全部基准最高,analysis §2①)为可消除上界;本项针对动态频率型检查的合并/复用,不承诺全量消除,实际收益以实施后重测为准。
+- **预期收益**: list 检查成本 51500ms(占总成本 21.2%,仍为全部基准绝对最高,analysis §2①)为可消除上界;本项针对动态频率型检查的合并/复用,不承诺全量消除,实际收益以实施后重测为准。
 - **风险与安全影响**: 合并后须保持「每访问」语义等价: 相邻访问共享同一检查的前提是可证明同一指针处于同一有效窗口;任何错误合并即放宽 live / in_bounds 属性。fat 70 / fat_cve 80 不回归。
-- **验证方法**: `python3 scripts/run_tests.py`(回归)+ `python3 scripts/run_fat_tests.py`(fat 70)+ `python3 scripts/run_fat_cve.py`(fat_cve 80)+ 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`(对比 list ③−② 倍率,现状 1.46×)。
+- **验证方法**: `python3 scripts/run_tests.py`(回归)+ `python3 scripts/run_fat_tests.py`(fat 70)+ `python3 scripts/run_fat_cve.py`(fat_cve 80)+ 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`(对比 list ③−② 倍率,现状 1.12×)。
 
 #### 4.2.2 towers / fasta 挂载热点
 
@@ -151,9 +151,9 @@
 
 #### 4.3.1 固定形状矩阵循环索引提升
 
-- **原理**: spectralnorm 静态检查密度最高(cfg 27 节点、icmp 检查差分 +81)但检查绝对成本小(652ms / 8.7%);固定形状矩阵循环中 `0 ≤ i < size` 可静态证明,索引检查可提升到循环外或合并为每行 / 每矩阵一次。
+- **原理**: spectralnorm 静态检查密度最高(cfg 27 节点、icmp 检查差分 +81)但检查绝对成本小(888ms / 11.4%);固定形状矩阵循环中 `0 ≤ i < size` 可静态证明,索引检查可提升到循环外或合并为每行 / 每矩阵一次。
 - **挂载点**: 检查发射插入点 `compiler/codegen/cfg/builder.py` L1095-1133(Load / Store 检查发射)+ 检查节点族(`compiler/codegen/cfg/ir.py` CheckInBounds / CheckElementArith);提升逻辑落于检查发射的条件化,或由 LLVM 端 loop-invariant 化完成。
-- **预期收益**: 估计 — 分析无预测;现状检查成本 652ms(占 spectralnorm 总成本 8.7%,analysis §2①)为可消除上界,收益空间受限于检查绝对成本已小。
+- **预期收益**: 估计 — 分析无预测;现状检查成本 888ms(占 spectralnorm 总成本 11.4%,analysis §2①)为可消除上界,收益空间受限于检查绝对成本已小。
 - **风险与安全影响**: 提升越界可能放宽安全属性: 索引提升的前提是边界可静态证明(固定形状、无别名写),任何证明缺口即取消提升;必须保持 trap 语义(fat_cve 80 全绿为安全闸门)。
 - **验证方法**: `python3 scripts/run_fat_cve.py`(fat_cve 80 全绿)+ 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`(spectralnorm ③−② 现状 1.04×)。
 
