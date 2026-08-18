@@ -16,7 +16,6 @@ fn main() {
     let qa: i32* = &a1;
     assert pa == qa: "same-object same-index pointers should be equal";
     assert pa == &a1: "same address == same address";
-    assert pa != nullptr: "non-null pointer != nullptr";
 
     // -- assertion 2: same-object ordered comparison compares by index --
     let arr: i32[4] = [10, 20, 30, 40];

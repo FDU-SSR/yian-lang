@@ -11,5 +11,5 @@ fn main() {
     p[3] = 4;
 
     let q: i32* = p - 1;  // index 0 + (-1) < 0 → CheckElementArith 失败 → trap
-    assert q != nullptr: "unreachable"
+    assert false: "unreachable"
 }

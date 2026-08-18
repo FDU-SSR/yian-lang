@@ -21,7 +21,7 @@
 from std.core.io import print;
 
 struct array_tree {
-    children: array_tree*,
+    children: Option<array_tree*>,
     child_count: i32,
 }
 
@@ -40,7 +40,7 @@ fn Random_next(r: Random*) -> u64 {
     return r.stage;
 }
 
-fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> array_tree* {
+fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> Option<array_tree*> {
     *count += 1;
 
     if depth == 1 {
@@ -48,12 +48,12 @@ fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -
         let arr: array_tree* = dyn[n] array_tree;
         let i: u64 = 0;
         while i < n {
-            arr[i].children = nullptr;
+            arr[i].children = Option<array_tree*>.None;
             arr[i].child_count = 0;
             i += 1;
         };
         *out_count = i32(n);
-        return arr;
+        return Option<array_tree*>.Some(arr);
     }
 
     let n: u64 = 3;
@@ -66,21 +66,22 @@ fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -
         i += 1;
     };
     *out_count = i32(n);
-    return arr;
+    return Option<array_tree*>.Some(arr);
 }
 
-fn free_tree(arr: array_tree*, count: i32) {
-    if arr == nullptr {
+fn free_tree(arr: Option<array_tree*>*, count: i32) {
+    if (*arr).is_none() {
         return;
     }
+    let aa: array_tree* = (*arr).unwrap()[0];
     let i: u64 = 0;
     while i < u64(count) {
-        if arr[i].children != nullptr && arr[i].child_count > 0 {
-            free_tree(arr[i].children, arr[i].child_count);
+        if aa[i].children.is_some() && aa[i].child_count > 0 {
+            free_tree(&aa[i].children, aa[i].child_count);
         }
         i += 1;
     };
-    del arr;
+    del aa;
 }
 
 fn benchmark_storage(root_depth: i32) -> i64 {
@@ -89,9 +90,9 @@ fn benchmark_storage(root_depth: i32) -> i64 {
 
     let count: i64 = 0;
     let root_count: i32 = 0;
-    let result: array_tree* = build_tree_depth(root_depth, random, &count, &root_count);
+    let result: Option<array_tree*> = build_tree_depth(root_depth, random, &count, &root_count);
 
-    free_tree(result, root_count);
+    free_tree(&result, root_count);
     del random;
 
     return count;

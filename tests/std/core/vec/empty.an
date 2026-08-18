@@ -2,7 +2,6 @@
 //
 // 空容器表示迁移(dyn[0] T 分配)后,空容器的 data 指针指向真实堆块(非全零),
 // 与后续 niche None 的全零编码不碰撞;del 空容器走正常释放路径,不 trap。
-// 本测试不使用 nullptr 字面量(删除 nullptr 后仍有效)。
 //
 // Expected output: (empty, exit 0)
 
