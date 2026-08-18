@@ -28,7 +28,7 @@
 
 ### 1.4 跨会话测量假象与修复摘要
 
-2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。2026-08-19 Option<T&> 迁移后重测: check/raw = 1.01–2.48×(list 2.06×、towers 2.08×、binarytree 1.57×、storage 2.11×、fasta 1.68× 为 5 迁移基准),见 `docs/shootout-results.md`。
+2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。2026-08-19 Option<T&> 迁移后重测: check/raw = 1.01–2.48×(list 2.06×、towers 2.08×、binarytree 1.57×、storage 2.11× 为迁移重测值;fasta 原 1.68× 超限,genelist 恢复 T*(AminoAcid* )后定向重测 1.51× 达标),见 `docs/shootout-results.md`。
 
 ### 1.5 与历史报告的关系
 
@@ -139,11 +139,11 @@
 
 #### 4.2.2 towers / fasta 挂载热点
 
-- **原理**: towers 检查成本 4028ms(占总成本 44.5%)、fasta 895ms(48.4%),检查占比显著(≥44%),属动态频率型;两基准无三层归因(仅三态时间),瓶颈形态为外推: 每步取字段 + 检查。
+- **原理**: towers 检查成本 4028ms(占总成本 44.5%)、fasta 913ms(53.3%),检查占比显著(≥44%),属动态频率型;两基准无三层归因(仅三态时间),瓶颈形态为外推: 每步取字段 + 检查。(fasta 数值为 genelist 恢复 T* 修复后定向重测: ③−② = 5053.5−4140.7 = 912.8ms,占比 53.3%——修复消除聚合参数提取开销后,检查成本成为 fasta 主导项。)
 - **挂载点**: 基准源码级热点: `bench/shootout/towers.an`、`bench/shootout/fasta.an`(每步取字段处;对应 raw 套件 `bench/shootout_raw/` 同步)。
-- **预期收益**: 估计 — 无 perf 归因,仅三态时间;现状检查成本(towers 4028ms / fasta 895ms,analysis §2①)为可消除上界。
+- **预期收益**: 估计 — 无 perf 归因,仅三态时间;现状检查成本(towers 4028ms / fasta 913ms,analysis §2①)为可消除上界。
 - **风险与安全影响**: 同 4.2.1: 检查合并 / 字段复用须保持每访问语义等价,不得放宽 live / in_bounds 检查;fat 70 / fat_cve 80 不回归。
-- **验证方法**: 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`,对比 towers / fasta 的 ③−② 倍率(现状检查占比 44.5% / 48.4%)+ 回归 run_fat_tests / run_fat_cve。
+- **验证方法**: 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`,对比 towers / fasta 的 ③−② 倍率(现状检查占比 44.5% / 53.3%)+ 回归 run_fat_tests / run_fat_cve。
 
 ### 4.3 方向③: 检查分级 / 静态消除【第三优先】
 
