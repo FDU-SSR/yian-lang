@@ -36,18 +36,18 @@ struct Random {
     stage: u64,
 }
 
-fn Random_init(r: Random*, seed: u64) {
+fn Random_init(r: Random&, seed: u64) {
     r.stage = seed;
 }
 
-fn Random_next(r: Random*) -> u64 {
+fn Random_next(r: Random&) -> u64 {
     let LCG_A: u64 = 1103515245;
     let LCG_C: u64 = 12345;
     r.stage = r.stage * LCG_A + LCG_C;
     return r.stage;
 }
 
-fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -> Option<array_tree&> {
+fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -> Option<array_tree&> {
     *count += 1;
 
     if depth == 1 {
@@ -76,7 +76,7 @@ fn build_tree_depth(depth: i32, random: Random*, count: i64*, out_count: i32*) -
     return Option<array_tree&>.Some(arr);
 }
 
-fn free_tree(arr: Option<array_tree&>*, count: i32) {
+fn free_tree(arr: Option<array_tree&>&, count: i32) {
     if (*arr).is_none() {
         return;
     }
