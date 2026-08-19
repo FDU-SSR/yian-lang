@@ -597,11 +597,23 @@ class LLBuilder:
             field_addr = self.__builder.gep(addr.ir_val, idx_vals, inbounds=True)  # type: ignore
             field_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
                                 self.__builder.bitcast(field_addr, ir.PointerType(ir.IntType(8))))  # type: ignore
-            lock = self.__extract_fat_field(base, IR.FAT_LOCK_PTR)
-            key = self.__extract_fat_field(base, IR.FAT_KEY)
-            zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-            one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-            result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
+            if isinstance(base_def, Type.PointerType):
+                # PointerType base:锁字段继承、完全不提取;直插 data=field_addr、
+                # index=0、size=1(重锚定常量,非 base 原值,规则 3.5.2)
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
+                ir_val = self.__builder.insert_value(base.ir_val, field_ptr.ir_val, IR.FAT_DATA)  # type: ignore
+                ir_val = self.__builder.insert_value(ir_val, zero.ir_val, IR.FAT_INDEX)  # type: ignore
+                ir_val = self.__builder.insert_value(ir_val, one.ir_val, IR.FAT_SIZE)  # type: ignore
+                result_val = LLValue(result_type_id, ir_val)
+            else:
+                # RefType(3 字段)/SliceType(4 字段):FAT_INDEX/FAT_SIZE 越界或语义错——
+                # 保留 undef 重建路径(字段数由 __build_fat 类型分派)
+                lock = self.__extract_fat_field(base, IR.FAT_LOCK_PTR)
+                key = self.__extract_fat_field(base, IR.FAT_KEY)
+                zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
+                result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
         else:
             idx_vals = [self.i32(i).ir_val for i in indices]
             ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
@@ -628,15 +640,12 @@ class LLBuilder:
         if self.__ll_type_ctx.is_zst(ptr_ty.pointee_type):
             return self.undef(base.type_id)
         if self.__is_fat(base):
-            # 规则 3.3.1-3.3.2:算术仅更新 index' = index + n(检查已保证良构)
-            data = self.__extract_fat_field(base, IR.FAT_DATA)
-            lock = self.__extract_fat_field(base, IR.FAT_LOCK_PTR)
-            key = self.__extract_fat_field(base, IR.FAT_KEY)
+            # 规则 3.3.1-3.3.2:算术仅更新 index' = index + n(检查已保证良构)。
+            # 单字段直插保留 data/lock/key/size 原值,无需 5 提取 + undef 重建。
             index = self.__extract_fat_field(base, IR.FAT_INDEX)
-            size = self.__extract_fat_field(base, IR.FAT_SIZE)
             new_index = LLValue(self.__type_ctx.u64_id,
                                 self.__builder.add(index.ir_val, offset.ir_val))  # type: ignore
-            result_val = self.__build_fat(data, lock, key, new_index, size, base.type_id)
+            result_val = self.insert_value(base, new_index, IR.FAT_INDEX)
         else:
             ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
             result_val = LLValue(base.type_id, ir_val)
