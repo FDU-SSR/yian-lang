@@ -234,10 +234,28 @@ class LLBuilder:
         self.__builder = merge_builder
         return phi
 
-    def __check_live(self, ll_val: LLValue) -> LLValue:
-        """定义 8 live(p):锁槽键比较 μ⟨lock_ptr⟩ == key,含 null 短路。"""
-        lock_ptr = self.__extract_fat_field(ll_val, IR.FAT_LOCK_PTR).ir_val
+    def __extract_check_fields(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value, ir.Value, ir.Value]:
+        """一次提取 check 字段 bundle (lock, key, index, size)——仅 PointerType(5 字段)。
+
+        check_safe_access 用 bundle 一次取齐 live(lock/key)与 in_bounds(index/size)
+        两谓词所需字段,避免各谓词重复 extract;RefType(3 字段,无 index/size)不得经此。
+        """
+        ty = self.__type_ctx[ll_val.type_id]
+        if not isinstance(ty, Type.PointerType):
+            raise ValueError(f"check field bundle requires PointerType, got {type(ty).__name__}")
+        lock = self.__extract_fat_field(ll_val, IR.FAT_LOCK_PTR).ir_val
         key = self.__extract_fat_field(ll_val, IR.FAT_KEY).ir_val
+        index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
+        size = self.__extract_fat_field(ll_val, IR.FAT_SIZE).ir_val
+        return lock, key, index, size
+
+    def __check_live(self, lock_ptr: ir.Value, key: ir.Value) -> LLValue:
+        """定义 8 live(p):锁槽键比较 μ⟨lock_ptr⟩ == key,含 null 短路。
+
+        lock_ptr/key 由调用方预提取传入(check_delete/check_safe_access 复用提取,
+        避免重复 extract);锁槽 load 留在 __emit_guarded 守卫内——null 短路为假,
+        不读地址 0 物理槽位,避免段错误退化。
+        """
         guard = self.__builder.icmp_signed("!=", lock_ptr, ir.Constant(lock_ptr.type, None))  # type: ignore
 
         def compute(builder: ir.IRBuilder) -> ir.Value:
@@ -247,16 +265,14 @@ class LLBuilder:
 
         return LLValue(self.__type_ctx.bool_id, self.__emit_guarded(guard, compute))  # type: ignore
 
-    def __check_in_bounds_cond(self, ll_val: LLValue) -> LLValue:
+    def __check_in_bounds_cond(self, index: ir.Value, size: ir.Value) -> LLValue:
         """定义 12 in_bounds(p,1):0 ≤ index ∧ index+1 ≤ size,简化为 index < size(u64)。"""
-        index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
-        size = self.__extract_fat_field(ll_val, IR.FAT_SIZE).ir_val
         cond = self.__builder.icmp_unsigned("<", index, size)  # type: ignore
         return LLValue(self.__type_ctx.bool_id, cond)  # type: ignore
 
-    def __check_live_and(self, ll_val: LLValue, other: ir.Value) -> ir.Value:
+    def __check_live_and(self, lock_ptr: ir.Value, key: ir.Value, other: ir.Value) -> ir.Value:
         """live(p) ∧ other(i1 值)。"""
-        live_val = self.__check_live(ll_val)
+        live_val = self.__check_live(lock_ptr, key)
         return self.__builder.and_(live_val.ir_val, other)  # type: ignore
 
     def string_literal(self, value: str, type_id: int) -> LLValue:
@@ -426,15 +442,18 @@ class LLBuilder:
         """safe_access(p,1) = live(p) ∧ in_bounds(p,1)(规则 3.2.1-3.2.2)。"""
         if not self.__is_fat(ptr):
             return
-        in_bounds = self.__check_in_bounds_cond(ptr)
-        cond = self.__check_live_and(ptr, in_bounds.ir_val)
+        lock, key, index, size = self.__extract_check_fields(ptr)
+        in_bounds = self.__check_in_bounds_cond(index, size)
+        cond = self.__check_live_and(lock, key, in_bounds.ir_val)
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "safe")
 
     def check_in_bounds(self, ptr: LLValue) -> None:
         """in_bounds(p_s,1)(规则 3.5.2 重锚定前提)。"""
         if not self.__is_fat(ptr):
             return
-        self.__emit_check(self.__check_in_bounds_cond(ptr), "ib")
+        index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
+        size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+        self.__emit_check(self.__check_in_bounds_cond(index, size), "ib")
 
     def check_ref_access(self, ptr: LLValue) -> None:
         """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers t3)。
@@ -444,7 +463,9 @@ class LLBuilder:
         """
         if not self.__is_fat(ptr):
             return
-        cond = self.__check_live(ptr)
+        lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
+        key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
+        cond = self.__check_live(lock_ptr, key)
         self.__emit_check(cond, "ref")
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
@@ -518,7 +539,7 @@ class LLBuilder:
         expected = self.__builder.add(lock_int, ir.Constant(ir.IntType(64), 8))  # type: ignore
         raw_data_ok = self.__builder.icmp_signed("==", data_int, expected)  # type: ignore
         raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
-        live_ok = self.__check_live(ptr)
+        live_ok = self.__check_live(lock, key)
         raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         cond: ir.Value = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "del")
