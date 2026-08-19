@@ -101,12 +101,12 @@
 
 对应成本②(胖表示)+ 成本④(元数据传递)。本方向含 3 个条目。
 
-#### 4.1.1 字段访问合并(一次 load 全 5 字段)
+#### 4.1.1 字段访问合并(提取合并/往返消除)
 
 - **原理**: 40B 胖指针聚合(data / lock_ptr / key / index / size 5×8B)在热路径被反复字段提取,LLVM IR 中表现为大量 `extractvalue`(每字段一条)。三层分析第 1 层 IR 差分显示,表示差分的绝对主体即 extractvalue: nfc−raw 增量 99–164,为全部单项差分最大(analysis §1.1 / §2②)。字段链被拆散为多次独立取值,阻碍 LLVM 将 5 字段聚合视为整体优化。
-- **挂载点**: `compiler/codegen/llvm/builder.py` — `__extract_fat_field`(定义 L91)全部调用点(当前树实测 43 处),代表性集合: L127 / L155,163 / L239-253 / L404 / L482-514 / L543-549 / L635-671 / L714-726 / L835-937 / L1135-1136(覆盖 data / lock_ptr / key / index / size 全部字段提取;其中 L239-253、L482-514、L543-549、L635-671 为 2–5 字段成组提取,即「一次 load 全 5 字段」的合并目标)。LLVM 类型侧: `compiler/codegen/llvm/types.py` L39-41(`__fat_pointer` 5 字段 / `__ref_pointer` 3 字段 / `__str_ll_type`)。
+- **挂载点**: `compiler/codegen/llvm/builder.py` — `__extract_fat_field`(定义 L91)全部调用点(当前树实测 43 处),代表性集合: L127 / L155,163 / L239-253 / L404 / L482-514 / L543-549 / L635-671 / L714-726 / L835-937 / L1135-1136(覆盖 data / lock_ptr / key / index / size 全部字段提取;其中 L239-253、L482-514、L543-549、L635-671 为 2–5 字段成组提取,即「提取合并/往返消除」的合并目标——探索结论: LLVM `extractvalue` 多索引仅作用于嵌套路径,扁平 5 字段结构不可一次多取,故「一次 load 全 5 字段」不可实现;落地形态为成组提取合并(bundle,如 element_ptr 单 insert_value / check_safe_access bundle)+ 重复提取消除(往返消除,如 check_delete 的 live 检查去重))。LLVM 类型侧: `compiler/codegen/llvm/types.py` L39-41(`__fat_pointer` 5 字段 / `__ref_pointer` 3 字段 / `__str_ll_type`)。
 - **预期收益**: 现状表示成本为可消除上界: list 191559ms(占总成本 78.8%,绝对冠军)、queen 23588ms(占总成本 93.3%,占比冠军)、②−① 倍率 0.99–1.99×(多数基准 >1.3×)(analysis §2②)。本项针对其中字段提取/聚合搬运部分,不承诺全量消除;实际收益以实施后三态紧邻重测为准。
-- **风险与安全影响**: LLVM 值语义约束: extractvalue 链合并须保持字段顺序与类型(data / lock_ptr / key / index / size),任一字段错位即破坏 live / in_bounds 检查所用元数据;合并只改聚合形态,不改检查发射逻辑。必须保持 fat 70 / fat_cve 80 不回归(检查节点数与 trap 行为不变)。
+- **风险与安全影响**: LLVM 值语义约束: extractvalue 链合并须保持字段顺序与类型(data / lock_ptr / key / index / size),任一字段错位即破坏 live / in_bounds 检查所用元数据;合并只改聚合形态,不改检查发射逻辑。必须保持 fat 65 / fat_cve 76 不回归(检查节点数与 trap 行为不变)。
 - **验证方法**: 第 1 层 IR 差分复现(analysis 附录 B: `-t ll` 三态编译 + grep 计数 extractvalue / icmp / trap)+ 三态紧邻重测(`python3 scripts/bench_fat.py --suite shootout --pin 4`);回归 `python3 scripts/run_tests.py`、`python3 scripts/run_fat_tests.py`、`python3 scripts/run_fat_cve.py`。
 
 #### 4.1.2 栈上胖指针引用化 / 零拷贝传递
