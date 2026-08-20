@@ -525,7 +525,13 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
-        """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。"""
+        """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
+
+        del-view(todo1):is_raw 的 index 分量按类型分派——PointerType 5 字段
+        (FAT_INDEX=3 为 index)保留 index==0 检查;SliceType/StrType 4 字段
+        (下标 3 为 size)、RefType 3 字段均无 index 字段,分量恒真跳过,仅查
+        data==lock_ptr+8。
+        """
         if not self.__is_fat(ptr):
             return
         data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
@@ -533,14 +539,16 @@ class LLBuilder:
         flag = self.__builder.and_(key, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000))  # type: ignore
         heap_ok = self.__builder.icmp_signed("!=", flag, ir.Constant(ir.IntType(64), 0))  # type: ignore
         lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
-        index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
         lock_int = self.__builder.ptrtoint(lock, ir.IntType(64))  # type: ignore
         data_int = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
         expected = self.__builder.add(lock_int, ir.Constant(ir.IntType(64), 8))  # type: ignore
         raw_data_ok = self.__builder.icmp_signed("==", data_int, expected)  # type: ignore
-        raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
+        raw_cond: ir.Value = raw_data_ok
+        if isinstance(self.__type_ctx[ptr.type_id], Type.PointerType):
+            index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
+            raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
+            raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         live_ok = self.__check_live(lock, key)
-        raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         cond: ir.Value = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "del")
 

@@ -371,10 +371,11 @@ class CfgBuilder:
 
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
-        if self.__is_fat_pointer(ptr):
+        if self.__is_del_target(ptr):
             # t7 检查插入:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(规则 3.6.2;
             # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
-            # data=lock_ptr+H 与 index=0)
+            # data=lock_ptr+H 与 index=0;del-view: T*/T[]/T& 三族通用,仅
+            # PointerType 含 index 分量,Slice/Ref 退化为恒真)
             if not self.__no_fat_checks:
                 self.__emit(IR.CheckDelete(ptr=ptr))
                 ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p) (规则 3.6.2)")
@@ -1035,6 +1036,25 @@ class CfgBuilder:
         if not isinstance(ty, Type.PointerType):
             return False
         return not self.__type_ctx.is_zst(ty.pointee_type)
+
+    def __is_del_target(self, ptr: IR.Value) -> bool:
+        """del 专属目标判定:PointerType / SliceType / RefType(fat 且非 raw 时 True)。
+
+        del-view(todo1):T[]/T& 与 T* 同样支持整块释放——释放动作(WriteLockSlot
+        与 delete())只提取 FAT_LOCK_PTR=1,三族布局 data/lock_ptr/key 前缀相同。
+        两个 raw 守卫完整复刻 __is_fat_pointer(上方):评测模式 raw_pointers 恒
+        False;lazy-lvalue-fat 裸指针寄存器恒 False——否则 raw 下对裸 8B 指针
+        发射 WriteLockSlot 会写 data[0],内存破坏。指针-to-ZST 同 __is_fat_pointer
+        保持非胖(ZST 擦除为空结构,无字段可写、无检查可插)。
+        """
+        if self.__raw_pointers:
+            return False
+        if self.__is_raw_pointer(ptr):
+            return False
+        ty = self.__type_ctx[ptr.type_id]
+        if isinstance(ty, Type.PointerType):
+            return not self.__type_ctx.is_zst(ty.pointee_type)
+        return isinstance(ty, (Type.SliceType, Type.RefType))
 
     def __build_gen_key(self, is_heap: bool) -> IR.Value:
         """k ← Gen()(定义 10):堆键 MSB 1 / 栈键 MSB 0。"""

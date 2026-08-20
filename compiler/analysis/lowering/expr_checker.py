@@ -626,13 +626,11 @@ class ExprChecker:
 
         target_expr = self.value(stmt.target)
         target_type = self.__ctx.type_ctx[target_expr.type_id]
-        if isinstance(target_type, (Type.SliceType, Type.RefType)):
-            raise AnalysisError(
-                f"delete target must be a pointer, not a '{self.__ctx.type_ctx.get_name(target_expr.type_id)}' view",
-                stmt.target.span,
-            )
-        if not isinstance(target_type, Type.PointerType):
-            raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
+        if not isinstance(target_type, (Type.PointerType, Type.SliceType, Type.RefType)):
+            # del-view: T*/T[]/T& 均可作 del 目标(释放动作三族通用,is_raw
+            # data 分量运行期拦截偏移释放);其余类型仍拒绝——含 StrType(不可达
+            # 防御:str 始终为值类型,不会以指针形态出现)
+            raise AnalysisError("delete target must be a pointer, slice, or reference expression", stmt.target.span)
         return HIR.Delete(span=stmt.span, target=target_expr, type_id=TypeCtx.void_id, is_place=False)
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int) -> int:
