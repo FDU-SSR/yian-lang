@@ -15,7 +15,8 @@
 // 简单复制 → 遍历位置用 is_some/unwrap 非破坏性读取,字段写入用构造表达式。
 // T& 迁移 (2026-08): next 与 piles 元素由 Option 指针 payload 升级为
 // Option<TowersDisk&>(40B→24B);push_disk 参数改 T& 避免热路径 bitcast
-// (调用侧传 T* 隐式折算),节点本体保持 dyn T 分配 (T*),free_pile
+// (调用侧传 T* 隐式折算),节点本体直接 dyn T 分配并绑 T& (let T& = dyn,
+// 免 T* 中间绑定; let 绑定位直连 2026-08 冒烟确认),free_pile
 // 释放路径直接 del T& (del-view: del T& 合法, 零 bitcast)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/towers.an -o build/shootout_check/towers
@@ -81,7 +82,7 @@ fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
 fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
     let i: i32 = disks;
     while i >= 0 {
-        let disk: TowersDisk* = dyn TowersDisk(i, Option<TowersDisk&>.None);
+        let disk: TowersDisk& = dyn TowersDisk(i, Option<TowersDisk&>.None);
         push_disk(disk, pile, state);
         i -= 1;
     };
@@ -117,11 +118,10 @@ fn free_pile(disk: TowersDisk&) {
 }
 
 fn benchmark() -> i64 {
-    let state: TowersState* = dyn TowersState(
+    let state: TowersState& = dyn TowersState(
         [Option<TowersDisk&>.None, Option<TowersDisk&>.None, Option<TowersDisk&>.None], 0);
-    let sv: TowersState& = state;
-    build_tower_at(0, 30, sv);
-    move_disks(30, 0, 1, sv);
+    build_tower_at(0, 30, state);
+    move_disks(30, 0, 1, state);
 
     let i: u64 = 0;
     while i < 3 {

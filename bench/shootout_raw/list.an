@@ -15,7 +15,8 @@
 // Option<T&> 迁移 (2026-08, 与 shootout 版同步): next 字段改为
 // Option<Element&> (raw 下 T& 退化为裸 8B, Option<T&> 为 8B)。unwrap()[0]
 // 对 Option<T&> 返回 T& → 读路径局部一律 Element& (字段访问经 T& 自动
-// 解引用, 零 bitcast); 节点本体分配保持 dyn Element(...) → Element*。
+// 解引用, 零 bitcast); 节点本体直接 dyn Element(...) 绑 T& (let T& = dyn
+// 直连, 2026-08; binarytree 同款直连先例)。
 // del 直接作用于 unwrap 所得 T& (del-view: del T& 合法, 零 bitcast;
 // raw 下同样成立; T&→T* 无隐式折算, 故释放形参保持 T&)。
 //
@@ -55,8 +56,7 @@ fn Element_make_list(length: i32) -> Option<Element&> {
         return Option<Element&>.None;
     }
     let rest_of_list: Option<Element&> = Element_make_list(length - 1);
-    let e: Element* = dyn Element(length, rest_of_list.move());
-    return Option<Element&>.Some(e);
+    return Option<Element&>.Some(dyn Element(length, rest_of_list.move()));
 }
 
 fn Element_length_method(self: Element&) -> i32 {

@@ -93,7 +93,7 @@ fn free_tree(arr: Option<array_tree&>&, count: i32) {
 }
 
 fn benchmark_storage(root_depth: i32) -> i64 {
-    let random: Random* = dyn Random(12345);
+    let random: Random& = dyn Random(12345);
     Random_init(random, 12345);
 
     let count: i64 = 0;
