@@ -16,9 +16,8 @@
 // Option<Element&> (raw 下 T& 退化为裸 8B, Option<T&> 为 8B)。unwrap()[0]
 // 对 Option<T&> 返回 T& → 读路径局部一律 Element& (字段访问经 T& 自动
 // 解引用, 零 bitcast); 节点本体分配保持 dyn Element(...) → Element*。
-// del 路径 (Element_free_method/free_list) 必须 bitcast<Element*>(unwrap
-// 所得 T&) 得 T* 再 del (T&→T* 无隐式折算; bitcast 在 raw 下同样可用,
-// bench 豁免的受限原语)。
+// del 直接作用于 unwrap 所得 T& (del-view: del T& 合法, 零 bitcast;
+// raw 下同样成立; T&→T* 无隐式折算, 故释放形参保持 T&)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/list.an -o build/shootout_check/list
 // 预期: exit 0 (断言全过)
@@ -80,7 +79,7 @@ fn Element_length_method(self: Element&) -> i32 {
     return len;
 }
 
-fn Element_free_method(self: Element*) {
+fn Element_free_method(self: Element&) {
     let current: Option<Element&>;
     if self.next.is_some() {
         current = Option<Element&>.Some(self.next.unwrap()[0]);
@@ -95,8 +94,8 @@ fn Element_free_method(self: Element*) {
         } else {
             next = Option<Element&>.None;
         };
-        let ep: Element* = bitcast<Element*>(cn);
-        del ep;
+        // 先读 next 再释放 cn (无 UAF: next 已取, cn 释放后不再读)
+        del cn;
         current = next.move();
     };
 }
@@ -151,9 +150,9 @@ fn free_list(e: Option<Element&>*) {
         return;
     }
     let el: Element& = (*e).unwrap()[0];
-    let ep: Element* = bitcast<Element*>(el);
-    Element_free_method(ep);
-    del ep;
+    // 先释放后继链 (Element_free_method 释放 el.next 起), 再释放头节点
+    Element_free_method(el);
+    del el;
 }
 
 fn benchmark_list() -> i32 {

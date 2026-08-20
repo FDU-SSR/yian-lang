@@ -16,7 +16,7 @@
 // T& 迁移 (2026-08): next 与 piles 元素由 Option 指针 payload 升级为
 // Option<TowersDisk&>(40B→24B);push_disk 参数改 T& 避免热路径 bitcast
 // (调用侧传 T* 隐式折算),节点本体保持 dyn T 分配 (T*),free_pile
-// 释放路径 bitcast 回 T* 再 del(只跑一次,可接受)。
+// 释放路径直接 del T& (del-view: del T& 合法, 零 bitcast)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/towers.an -o build/shootout_check/towers
 // 预期: exit 0 (断言全过)
@@ -107,7 +107,8 @@ fn free_pile(disk: TowersDisk&) {
         } else {
             next = Option<TowersDisk&>.None;
         };
-        del bitcast<TowersDisk*>(cur);
+        // 先读 next 再释放 cur (无 UAF: next 已取, cur 释放后不再读)
+        del cur;
         if next.is_none() {
             break;
         };
