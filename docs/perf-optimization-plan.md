@@ -28,7 +28,9 @@
 
 ### 1.4 跨会话测量假象与修复摘要
 
-2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。2026-08-19 Option<T&> 迁移后重测: check/raw = 1.01–2.48×(list 2.06×、towers 2.08×、binarytree 1.57×、storage 2.11× 为迁移重测值;fasta 原 1.68× 超限,genelist 恢复 T*(AminoAcid* )后定向重测 1.51× 达标),见 `docs/shootout-results.md`。
+2026-08-18 的 O3 全量重测报告曾出现 **9 个基准"胖快于裸"**(check 态中位数 ≤ raw 态中位数),与三态语义直接矛盾(check 为 raw 的指令超集),经判定为测量假象而非性能事实。根因: 旧测量流程先跑完全部基准的胖形态再跑全部 raw 形态,两段时间窗系统状态不同,raw 段恰好系统慢 **~2.1×**(同一二进制在假象会话 raw 段比 O2 时代慢 2.11–2.28×,而 check 态同会话相位正常)。修复采用方案 A: 每基准内三态紧邻(check → nocheck → raw)连续测量,同基准三态共享同一系统状态窗口。重测确认: **14/14 基准 raw ≤ check(check/raw = 1.00–2.84×)**,0.47× 级假象消失。完整论证见 performance-analysis.md §0。2026-08-19 Option<T&> 迁移后重测: check/raw = 1.01–2.48×(list 2.06×、towers 2.08×、binarytree 1.57×、storage 2.11× 为迁移重测值;fasta 原 1.68× 超限,genelist 回退 T*(AminoAcid* )表示后定向重测 1.51× 达标),见 `docs/shootout-results.md`。
+
+2026-08-21 bench-rerun 全量三态重测(c8;每基准三态紧邻、无 --pin,同树同协议)与此前同日 01:30 的 c7(bench-ptr-to-view 收尾,无 --pin)构成两次独立复现测量,时间标签区分如下: c8 全 14 基准 check/raw = 0.96–2.32×(端点: nbody 0.96× / storage 2.32×;12/14 ≥ 1.00×,<1.00× 仅 mand 0.99×、nbody 0.96×,均落在 IQR 噪声带内,无系统性胖快于裸);fasta 三态中位数(c7 → c8): check 3628.1 → 3550.2ms、nocheck 2831.7 → 2866.1ms、raw 2904.8 → 2919.5ms,check/raw 1.25× → 1.22×,两轮 ②nocheck 均略小于 ①raw(c7 差 2.5% / c8 差 1.8%,IQR 内噪声倒置),Fix B 后 genelist T[] 化的 -27.9%(快于 T*)接受态保持。原始数据见 `build/bench/shootout-results.md`(c8)与 `.omo/evidence/bench-rerun/c7-shootout-results.md`(c7 快照)。
 
 ### 1.5 与历史报告的关系
 
@@ -76,7 +78,7 @@
 
 ## 3. 已完成优化(不重复实施)
 
-以下 4 项优化已实现并合入当前树,§4 不再将其列为新条目;后续条目如触及同一挂载点,应在既有实现基础上增量推进,并保持其安全语义。
+以下 8 项优化已实现并合入当前树,§4 不再将其列为新条目;后续条目如触及同一挂载点,应在既有实现基础上增量推进,并保持其安全语义。
 
 | 项 | 内容 | 代码注释口径 |
 |---|---|---|
@@ -84,6 +86,10 @@
 | lazy-lvalue-fat | 未取址左值裸取址 + 裸数组越界检查 | IR.CheckRawBounds,`builder.py` L975 |
 | bench-optimize-ptr | 5 基准 T*→T& / T[] 两套(shootout / shootout_raw)同步 | `.omo/evidence/bench-optimize-ptr/task-1.txt` |
 | array-index-inline-gep | T[N] 整数索引内联 GEP + 越界 trap | `compiler/analysis/lowering/op_builder.py` L446-457 |
+| del-view | 允许 del T[]/T& 整块释放 | commit ee41327 |
+| bench-ptr-to-view | T[]/T& 直绑消除不必要 T*(两套) | commit 859de29/791fb7c |
+| slice-index-builtin | T[] 整数索引内建路径 SliceAccess(Fix B) | commit 956d072 |
+| field-access-merge | 字段提取合并/往返消除 | commit 243cc49/d61e98f |
 
 ## 4. 优化方向(按优先级)
 
@@ -102,6 +108,8 @@
 对应成本②(胖表示)+ 成本④(元数据传递)。本方向含 3 个条目。
 
 #### 4.1.1 字段访问合并(提取合并/往返消除)
+
+> **已实现 (commit 243cc49/d61e98f)**: 本条目保留为历史蓝图,实施细节见 §3。
 
 - **原理**: 40B 胖指针聚合(data / lock_ptr / key / index / size 5×8B)在热路径被反复字段提取,LLVM IR 中表现为大量 `extractvalue`(每字段一条)。三层分析第 1 层 IR 差分显示,表示差分的绝对主体即 extractvalue: nfc−raw 增量 99–164,为全部单项差分最大(analysis §1.1 / §2②)。字段链被拆散为多次独立取值,阻碍 LLVM 将 5 字段聚合视为整体优化。
 - **挂载点**: `compiler/codegen/llvm/builder.py` — `__extract_fat_field`(定义 L91)全部调用点(当前树实测 43 处),代表性集合: L127 / L155,163 / L239-253 / L404 / L482-514 / L543-549 / L635-671 / L714-726 / L835-937 / L1135-1136(覆盖 data / lock_ptr / key / index / size 全部字段提取;其中 L239-253、L482-514、L543-549、L635-671 为 2–5 字段成组提取,即「提取合并/往返消除」的合并目标——探索结论: LLVM `extractvalue` 多索引仅作用于嵌套路径,扁平 5 字段结构不可一次多取,故「一次 load 全 5 字段」不可实现;落地形态为成组提取合并(bundle,如 element_ptr 单 insert_value / check_safe_access bundle)+ 重复提取消除(往返消除,如 check_delete 的 live 检查去重))。LLVM 类型侧: `compiler/codegen/llvm/types.py` L39-41(`__fat_pointer` 5 字段 / `__ref_pointer` 3 字段 / `__str_ll_type`)。
@@ -139,11 +147,11 @@
 
 #### 4.2.2 towers / fasta 挂载热点
 
-- **原理**: towers 检查成本 4028ms(占总成本 44.5%)、fasta 913ms(53.3%),检查占比显著(≥44%),属动态频率型;两基准无三层归因(仅三态时间),瓶颈形态为外推: 每步取字段 + 检查。(fasta 数值为 genelist 恢复 T* 修复后定向重测: ③−② = 5053.5−4140.7 = 912.8ms,占比 53.3%——修复消除聚合参数提取开销后,检查成本成为 fasta 主导项。)
+- **原理**: towers 检查成本 4028ms(占总成本 44.5%)、fasta 检查成本 684ms,检查占比显著(≥44%),属动态频率型;两基准无三层归因(仅三态时间),瓶颈形态为外推: 每步取字段 + 检查。(fasta 数值为 Fix B(T[] 整数索引内建)后 genelist T[] 化定向结论 -27.9%(快于 T*,bench-ptr-to-view task-4)+ 2026-08-21 bench-rerun c8 全量重测: ③−② = 3550.2−2866.1 = 684ms;②nocheck 2866.1 < ①raw 2919.5 呈 IQR 内噪声倒置,占比按绝对 ms 呈现,不套 (③−②)/(③−①) 公式。)
 - **挂载点**: 基准源码级热点: `bench/shootout/towers.an`、`bench/shootout/fasta.an`(每步取字段处;对应 raw 套件 `bench/shootout_raw/` 同步)。
-- **预期收益**: 估计 — 无 perf 归因,仅三态时间;现状检查成本(towers 4028ms / fasta 913ms,analysis §2①)为可消除上界。
+- **预期收益**: 估计 — 无 perf 归因,仅三态时间;现状检查成本(towers 4028ms,analysis §2① / fasta 684ms,bench-rerun c8)为可消除上界。
 - **风险与安全影响**: 同 4.2.1: 检查合并 / 字段复用须保持每访问语义等价,不得放宽 live / in_bounds 检查;fat 70 / fat_cve 80 不回归。
-- **验证方法**: 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`,对比 towers / fasta 的 ③−② 倍率(现状检查占比 44.5% / 53.3%)+ 回归 run_fat_tests / run_fat_cve。
+- **验证方法**: 三态紧邻重测 `python3 scripts/bench_fat.py --suite shootout --pin 4`,对比 towers / fasta 的 ③−② 倍率(现状检查占比 towers 44.5% / fasta 按绝对 ms 684ms 呈现)+ 回归 run_fat_tests / run_fat_cve。
 
 ### 4.3 方向③: 检查分级 / 静态消除【第三优先】
 
