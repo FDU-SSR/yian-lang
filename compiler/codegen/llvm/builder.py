@@ -421,6 +421,14 @@ class LLBuilder:
             self.__call_intrinsic(IntrinsicKind.Free, [block_base])
             return
         i8_ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+        if isinstance(self.__type_ctx[ptr.type_id], Type.SliceType):
+            # raw 模式(del-view)slice 为 {T*, u64} 聚合:整块释放须取 data
+            # 字段(0)——直接 bitcast 聚合为指针是非法 IR。T*/T& 在 raw 模式
+            # 为裸 8B 指针,不受影响。
+            data = self.__builder.extract_value(ptr.ir_val, 0)  # type: ignore
+            casted = self.__builder.bitcast(data, ir.PointerType(ir.IntType(8)))  # type: ignore
+            self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
+            return
         casted = self.__builder.bitcast(ptr.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
         self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
 

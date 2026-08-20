@@ -1,0 +1,21 @@
+// del-view 正例(b):堆单元素 T& 放行。`let r: i32& = &p[0]`(p 为 dyn[1] i32
+// 堆指针)产生 data = lock_ptr+8 的 T&:CheckDelete 四前提 is_heap(p)(键 MSB 1)
+// ∧ live(p) ∧ is_raw(p)(RefType 无 index 分量,仅查 data==lock_ptr+8)全部
+// 满足 → del r 整块交还。del 后重分配验证堆稳定。
+//
+// Expected output: 0
+
+fn main() {
+    let p: i32* = dyn[1] i32;
+    p[0] = 7;
+    let r: i32& = &p[0];
+    assert *r == 7: "reads through heap reference";
+    del r;
+
+    // del 后重分配:新块独立可用
+    let q: i32* = dyn[3] i32;
+    q[0] = 1;
+    q[2] = 3;
+    assert q[0] + q[2] == 4: "heap stable after del ref";
+    del q;
+}
