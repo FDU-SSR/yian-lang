@@ -1,7 +1,8 @@
 // bench/shootout_raw/nbody.an — N 体引力模拟 (shootout nbody)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
 // tiered-pointers t6 标注: 各函数 bodies 参数改 Planet[]; main 局部 bodies
-//   保持 Planet* (del 仅 T* 合法), 调用侧经 let 绑定 from_raw_parts 视图传递。
+//   保持 Planet* (raw 下 T*→T[] 隐式 coerce 被拒, expr_checker L349-353,
+//   非 del 约束), 调用侧经 from_raw_parts 显式视图传递。
 //
 // 语义权威源: bak/old_exp/performance/c/nbody.c (C 版)
 // 规模参数取自原 .an (bak/old_exp/performance/an/nbody.an):

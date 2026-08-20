@@ -15,8 +15,10 @@
 //
 // tiered-pointers t6 标注: 求解热路径 (is_safe/update_board_state/place_queen)
 //   的数组参数改为 bool[]/i32[] (块访问语义, 32B 表示, 免 index 字段)。
-//   solve_queens_once 局部保持 bool*/i32* (del 仅 T* 合法); 调用侧经
-//   let 绑定 T*→T[] 视图传递 (编译器不支持调用点自动降级)。
+//   solve_queens_once 局部保持 bool*/i32* (raw 下 T*→T[] 隐式 coerce 被拒,
+//   expr_checker L349-353, 非 del 约束); 调用侧经 let 绑定 from_raw_parts
+//   显式视图传递 (调用点隐式 coerce 可用, expr_checker L345-357; raw 下被拒,
+//   故 raw 套件用 from_raw_parts 显式视图)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/queen.an -o build/shootout_check/queen
 // 预期: exit 0 (断言全过)

@@ -1,7 +1,8 @@
 // bench/shootout_raw/spectralnorm.an — 谱范数 (shootout spectralnorm)
 // raw 适配套件: T*→T[] 用 from_raw_parts(裸模式下隐式 coerce 被拒, expr_checker.py L351-355)
 // tiered-pointers t6 标注: 热路径数组参数改 f64[]; main 局部 u/v/tmp 保持 f64*
-//   (del 仅 T* 合法), 调用侧经 let 绑定 from_raw_parts 视图传递。
+//   (raw 下 T*→T[] 隐式 coerce 被拒, expr_checker L349-353, 非 del 约束),
+//   调用侧经 from_raw_parts 显式视图传递。
 //
 // 语义权威源: bak/old_exp/performance/c/spectralnorm.c (C 版)
 // 规模参数取自原 .an (bak/old_exp/performance/an/spectralnorm.an):

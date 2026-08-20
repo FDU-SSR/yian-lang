@@ -501,6 +501,12 @@ def render_shootout(
         "因裸模式下隐式 coerce 被拒); 与 ②/③ 同基准、同 runs/pin 协议, 跨套件组合成三态。\n"
     )
     md.append(
+        "- 源码分叉声明 (c1/c3, bench-ptr-to-view): raw 态源码 (shootout_raw/) 数组局部"
+        "保持 T* 并显式 `from_raw_parts` 视图, fat 态源码 (shootout/) 直绑 `T[] = dyn[n] T`"
+        "整块视图; 二者逻辑等价 (同规模同断言), 差异来源已知并接受"
+        "(raw 下隐式 T*→T[] coerce 被拒, expr_checker L349-353), 不构成安全/语义差异。\n"
+    )
+    md.append(
         "- 指标: 端到端墙钟时间 (ms, `time.monotonic()` 包住 `/usr/bin/time -v` 执行) + "
         "峰值常驻内存 (Maximum resident set size, KB)。\n"
     )
