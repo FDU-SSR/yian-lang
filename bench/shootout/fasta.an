@@ -13,7 +13,13 @@
 // 签名升级 (2026-08): g_seed: i32& + checksum: i64& (T& 化, raw 下
 //   identity, 无劣化); genelist 初升 AminoAcid[] 后因重测超限 (+7.0%,
 //   热循环 {ptr,i64} 聚合参数放大 genelist[j] 提取开销) 恢复 AminoAcid*
-//   (count 参数单独传递, T[] 化无收益)。make_cumulative 冷路径保持
+//   (count 参数单独传递, T[] 化无收益)。
+// 签名升级 (2026-08-20, bench-ptr-to-view todo 4): genelist 再次 AminoAcid*
+//   → AminoAcid[](Fix B 编译器修复后): 旧劣化根因系 T[] 索引走
+//   index→ptr→as_struct 三层未内联方法调用链(emit_object 无优化), 非参数聚合;
+//   编译器新增 T[] 整数索引内建路径(HIR.SliceAccess, 镜像 T[N] ArrayAccess)
+//   后热循环零调用, 实测 check 3521~3750ms 快于 T* 基线 5160ms(-27%),
+//   三态关系 raw≤nocheck≤check 保持。make_cumulative 冷路径保持
 //   AminoAcid[]。函数体 deref (*g_seed = / *checksum +=) 原样保留
 //   (去 deref 会 codegen 崩溃/类型拒绝)。无 del, 无 T* 局部。
 //
@@ -48,7 +54,7 @@ fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
 }
 
 fn random_fasta_compute_only(
-    genelist: AminoAcid*,
+    genelist: AminoAcid[],
     count: u64,
     n: u64,
     g_seed: i32&,

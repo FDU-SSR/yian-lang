@@ -3,7 +3,13 @@
 // 签名升级 (2026-08): g_seed: i32&, checksum: i64& (T& 化, raw 下
 //   identity, 无劣化); genelist 初升 AminoAcid[] 后因重测超限 (+7.0%,
 //   热循环 {ptr,i64} 聚合参数放大 genelist[j] 提取开销) 恢复 AminoAcid* —
-//   raw 下 T* 直传裸指针, 去掉 from_raw_parts 视图。make_cumulative 冷路径
+//   raw 下 T* 直传裸指针, 去掉 from_raw_parts 视图。
+// 签名升级 (2026-08-20, bench-ptr-to-view todo 4): genelist 再次 AminoAcid*
+//   → AminoAcid[](Fix B 编译器修复后): 旧劣化根因系 T[] 索引走
+//   index→ptr→as_struct 三层未内联方法调用链(emit_object 无优化), 非参数聚合;
+//   编译器新增 T[] 整数索引内建路径后 raw 热循环为零检查 extract+gep,
+//   实测 raw 2854~2897ms 优于 T* 基线 3385ms, 三态关系保持。raw 下 T*→T[]
+//   隐式 coerce 被拒, 调用侧经 from_raw_parts 视图传递。make_cumulative 冷路径
 //   保持 AminoAcid[] (仍经 from_raw_parts)。函数体 deref (*g_seed = /
 //   *checksum +=) 原样保留。无 del, 无 T* 局部。
 //
@@ -49,7 +55,7 @@ fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
 }
 
 fn random_fasta_compute_only(
-    genelist: AminoAcid*,
+    genelist: AminoAcid[],
     count: u64,
     n: u64,
     g_seed: i32&,
@@ -109,8 +115,8 @@ fn main() {
 
     make_cumulative(from_raw_parts(&iub[0], 15), 15, &checksum);
     make_cumulative(from_raw_parts(&homosapiens[0], 4), 4, &checksum);
-    random_fasta_compute_only(&homosapiens[0], 4, n * 5, &g_seed, &checksum);
-    random_fasta_compute_only(&iub[0], 15, n * 3, &g_seed, &checksum);
+    random_fasta_compute_only(from_raw_parts(&homosapiens[0], 4), 4, n * 5, &g_seed, &checksum);
+    random_fasta_compute_only(from_raw_parts(&iub[0], 15), 15, n * 3, &g_seed, &checksum);
     repeat_fasta_compute_only(alu_bytes, n * 2, &checksum);
 
     let res: i32 = i32(checksum) % 256;
