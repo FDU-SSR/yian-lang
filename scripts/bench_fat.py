@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """bench_fat.py — 胖指针安全性能实测脚本 (fat-perf-eval / raw-pointers-eval task-3;
-shootout-perf-eval task-3 扩展).
+bench-rerun 扩展).
 
 按 docs/security-code.md §10.3–§10.5 协议, 在同一机器上实测基准 × 三态:
   ① raw         裸 8B 指针 (--raw-pointers, 无锁槽/帧锁/检查) — 零安全基线
@@ -481,7 +481,7 @@ def render_shootout(
     state_label = {"check": "③完整胖", "nocheck": "②胖无检查", "raw": "①裸指针"}
     md: list[str] = []
     md.append(
-        "# build/bench/shootout-results.md — shootout 基准三态性能实测 (shootout-perf-eval task-3)\n"
+        "# build/bench/shootout-results.md — shootout 基准三态性能实测 (bench-rerun)\n"
     )
     md.append("## 0) 环境与协议\n")
     md.append("".join(f"{l}\n" for l in machine_header()))
@@ -691,7 +691,7 @@ def render_raw(
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="胖指针安全检查性能实测 (fat-perf-eval / raw-pointers-eval task-3; shootout-perf-eval task-3)"
+        description="胖指针安全检查性能实测 (fat-perf-eval / raw-pointers-eval task-3; bench-rerun)"
     )
     ap.add_argument(
         "--suite",
