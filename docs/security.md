@@ -238,9 +238,9 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 - `is_heap(p)`：不得释放栈指针；
 - `live(p)`：时序有效；同时排除对已释放块的再次释放（双释放）与键失配；
-- `is_raw(p)`：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首且未带偏移。子对象指针（`&s.field`）与偏移指针（`p ± n`、`&arr[i≠0]`）均偏离原始锚点。`is_raw` 为纯字段检查，不读锁槽与块头。
+- `is_raw(p)`：$p.\text{data} = p.\text{lock\_ptr} + H \wedge p.\text{index} = 0$——`data` 指向负载首且未带偏移。子对象指针（`&s.field`）与偏移指针（`p ± n`、`&arr[i≠0]`）均偏离原始锚点。`is_raw` 为纯字段检查，不读锁槽与块头。`index = 0` 分量对 `T[]`（4 字段，无 `index`）与 `T&`（3 字段，无 `index`）退化恒真——定义 11 下两者不含 `index` 字段，`is_raw` 对二者实际只检查 `data` 分量（《编译器实现》§7.1 Delete 按类型分派）。
 
-`delete` 仅对 `T*` 合法（规则 3.6.2/《编译器实现》§8.1 规则 8.1.12）：`T[]`/`T&` 在类型层编译期拒绝（《编译器实现》§8.1 分级使用约束）。
+`delete` 对 `T*`/`T[]`/`T&` 均可（规则 3.6.2/《编译器实现》§8.1 规则 8.1.12）：三族在类型层放行，其余类型（含 `str`）编译期拒绝（《编译器实现》§8.1 分级使用约束）；偏移释放由运行时 `is_raw` 的 `data` 分量拦截——`T[]`/`T&` 无 `index` 字段，`index = 0` 分量退化恒真，仅 `data` 分量生效。
 
 动作：
 
@@ -283,8 +283,8 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 **操作按级归类**：
 
 - **`T*`（全检查）**：承载全部指针操作——算术 `p ± n`、指针差 `p₁ - p₂`、序/相等比较、解引用与索引、释放 `delete`。访问前提为 `safe_access`（live ∧ in_bounds，定义 14）。
-- **`T[]`（切片）**：不直接承载算术/比较/`delete`（无 `index` 字段、非首元素寻址）；访问经 `ptr()` 派生 `T*` 后按 `T*` 规则全检查（§8.1 规则 8.1.3/`__slice_get_ptr` 路径），界检查在派生 `T*` 的 `in_bounds` 处执行（定义 12）。`delete` 对 `T[]` 编译期拒绝（§8.1 规则 8.1.12 说明）。
-- **`T&`（引用，仅 live）**：支持解引用（`*r` 读写）与字段访问（`r.field`），**不**支持算术/比较/`delete`（`delete` 编译期拒绝）；访问前提为 `safe_access` 的 `T&` 实例化——`in_bounds` 恒真（定义 12 退化），故仅 `live`（《编译器实现》§7.1 CheckRefAccess）。
+- **`T[]`（切片）**：不直接承载算术/比较（无 `index` 字段、非首元素寻址）；访问经 `ptr()` 派生 `T*` 后按 `T*` 规则全检查（§8.1 规则 8.1.3/`__slice_get_ptr` 路径），界检查在派生 `T*` 的 `in_bounds` 处执行（定义 12）。`delete` 允许（§8.1 规则 8.1.12）：无 `index` 字段，`is_raw` 的 `index = 0` 分量退化恒真，偏移释放由 `data` 分量运行期拦截。
+- **`T&`（引用，仅 live）**：支持解引用（`*r` 读写）与字段访问（`r.field`），**不**支持算术/比较；`delete` 允许（类型层放行，无 `index` 字段、`is_raw` 仅查 `data` 分量，§7.1 Delete）。访问前提为 `safe_access` 的 `T&` 实例化——`in_bounds` 恒真（定义 12 退化），故仅 `live`（《编译器实现》§7.1 CheckRefAccess）。
 
 - **数组取址与退化**：对数组 $a : T[m]$ 取址 $\&a$ 得指向数组的指针（$T[m]^{*}$，元素个数 1），可 coerce 到指向首元素的指针 $T^{*}$（元素个数 $m$）——即数组退化（《编译器实现》§8.1 规则 8.1.3）；`let p: u64* = &arr;` 即此 coerce。
 - **指针算术 $p \pm n$（仅 `T*`）**：仅更新 `index`：$p \pm n = \langle \text{data}, \text{lock\_ptr}, \text{key}, \text{index} \pm n, \text{size} \rangle$。
@@ -488,7 +488,7 @@ $$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \math
 
 ### 5.1 主可靠性定理（R2）
 
-**定理 5.1（主可靠性定理）**：若程序 $P$ 满足以下前件——① 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out；含分级定型规则 8.1.1-8.1.15——coerce 链 `T*→T[]→T&` 按定型规则降级、`delete` 仅对 `T*` 定型、`T&` 仅 `live` 检查的定型约束）；② $P$ 的全部指针操作良构（定义 13）；③ 块布局成立（定义 7：锁头在负载之前、分配锚定 $p.\text{data} = b + H$，§2.5）；④ 经检查写不可达锁头区成立（L-UNREACH，§4.8）；⑤ 定向写排除成立（§5.5 论证边界）——则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge \mathrm{is\_raw}(p)$（后者的前提即规则 3.6.2 的释放前提；`is_raw` 定义见 §2.5），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。等价地，定理 5.1 即下述全称闭式：
+**定理 5.1（主可靠性定理）**：若程序 $P$ 满足以下前件——① 通过《编译器实现》第 8 章类型约束（用户代码不含受限操作，§1.3 类型行 out；含分级定型规则 8.1.1-8.1.15——coerce 链 `T*→T[]→T&` 按定型规则降级、`delete` 对 `T*`/`T[]`/`T&` 定型、`T&` 仅 `live` 检查的定型约束）；② $P$ 的全部指针操作良构（定义 13）；③ 块布局成立（定义 7：锁头在负载之前、分配锚定 $p.\text{data} = b + H$，§2.5）；④ 经检查写不可达锁头区成立（L-UNREACH，§4.8）；⑤ 定向写排除成立（§5.5 论证边界）——则对 $P$ 的任意轨迹 $\sigma \in \mathrm{Trace}(P)$（定义 21）上的任意事件 $e$（访问事件 $\mathrm{acc}_t(p, n)$ 或释放事件 $\mathrm{del}_t(p)$，定义 22），有 $\mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n)$ 与 $\mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge \mathrm{is\_raw}(p)$（后者的前提即规则 3.6.2 的释放前提；`is_raw` 定义见 §2.5），即每个内存事件要么在界内且时序有效并正常完成、要么在该事件处于访问发生前转移至 `trap`，从而任何越界访问、UAF、双释放与栈悬垂访问均不可能以正常完成方式出现。等价地，定理 5.1 即下述全称闭式：
 $$\forall \sigma \in \mathrm{Trace}(P).\ \forall t.\ \forall p, n.\ \big[ \mathrm{ok}(\mathrm{acc}_t(p, n)) \iff \mathrm{safe\_access}_t(p, n) \big] \;\wedge\; \big[ \mathrm{ok}(\mathrm{del}_t(p)) \iff \mathrm{live}_t(p) \wedge \mathrm{is\_heap}(p) \wedge \mathrm{is\_raw}(p) \big]$$
 
 「在访问发生前转移至 `trap`」由机器结构保证：`trap` 为吸收终止态（§2.1），检查失败后不执行任何后续内存访问，故 trap 落在访问动作发生之前，不产生部分写入。定理 5.1 与 §1.4 安全目标 G1-G4 的对应关系如下（G4 以可信基边界排除，见 §4.6）。
