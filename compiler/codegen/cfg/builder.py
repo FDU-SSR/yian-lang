@@ -529,6 +529,8 @@ class CfgBuilder:
                 return self.__resolve_tuple_access(expr)
             case HIR.ArrayAccess():
                 return self.__resolve_array_access(expr)
+            case HIR.SliceAccess():
+                return self.__resolve_slice_access(expr)
             case HIR.DynValue():
                 return self.__resolve_dyn_value(expr)
             case HIR.DynBuffer():
@@ -590,6 +592,8 @@ class CfgBuilder:
                 return self.__resolve_tuple_access_addr(expr)
             case HIR.ArrayAccess():
                 return self.__resolve_array_access_addr(expr)
+            case HIR.SliceAccess():
+                return self.__resolve_slice_access_addr(expr)
             case HIR.Var():
                 return self.__resolve_var_addr(expr)
             case HIR.Ty():
@@ -617,6 +621,8 @@ class CfgBuilder:
                 return self.__resolve_tuple_access_addr(expr, fat=True)
             case HIR.ArrayAccess():
                 return self.__resolve_array_access_addr(expr, fat=True)
+            case HIR.SliceAccess():
+                return self.__resolve_slice_access_addr(expr, fat=True)
             case HIR.Var():
                 return self.__resolve_var_addr(expr, fat=True)
             case HIR.Ty():
@@ -974,6 +980,27 @@ class CfgBuilder:
             self.__emit(IR.CheckRawBounds(index=index_val, length=expr.length))
             ch_cfg_block().debug(lambda: "check insert ArrayAccess(raw): index < length (lazy-lvalue-fat todo1, 裸数组越界)")
         return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
+
+    def __resolve_slice_access(self, expr: HIR.SliceAccess) -> IR.Value:
+        addr = self.__resolve_slice_access_addr(expr)
+        return self.__build_load(addr)
+
+    def __resolve_slice_access_addr(self, expr: HIR.SliceAccess, *, fat: bool = False) -> IR.Value:
+        """T[] 元素地址内建解析(Fix B, bench-ptr-to-view todo 4)。
+
+        镜像 slice.an as_struct+ptr+index 链的净效应,但内联在调用点,消除
+        emit_object 无优化时逐次全栈调用开销。实现:
+        1. 解析切片值(fat 4 字段 {data,lock,key,size} / raw 2 字段 {data,size});
+        2. 提取 data 字段(fat 下经 __slice_ptr_fat 合成 5 字段胖指针,携带切片
+           真锁,锁继承语义与 as_struct 一致;raw 下为裸指针);
+        3. __build_element_ptr → CheckElementArith + ElementPtr 得元素地址。
+        调用方后续 fieldptr/load/store 照常触发 CheckInBounds/CheckSafeAccess。
+        """
+        slice_val = self.__resolve_val(expr.slice)
+        index_val = self.__resolve_val(expr.index)
+        elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
+        data = self.__build_extract_value(slice_val, 0, elem_ptr_type)
+        return self.__build_element_ptr(data, index_val, elem_ptr_type)
 
     def __resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:
         if expr.symbol_id not in self.__func.local_vars:

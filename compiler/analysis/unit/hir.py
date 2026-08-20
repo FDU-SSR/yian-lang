@@ -260,6 +260,24 @@ class ArrayAccess:
 
 
 @dataclass
+class SliceAccess:
+    """T[] 切片元素访问(内建路径, 不走 Index trait;性能优化, 检查在 CFG 层)。
+
+    Fix B (bench-ptr-to-view todo 4):T[] 整数索引内建路径,镜像 T[N]
+    ArrayAccess——消除热循环里 index→ptr→as_struct 三层方法调用链
+    (emit_object 无优化时逐次全栈调用)。raw 下 T[] 为 {data,size} 2 字段,
+    CFG 层只发射 extract data + GEP,零检查(保持①raw 零安全基线)。
+    """
+
+    span: SrcSpan
+    slice: Expr           # T[] 切片表达式(place)
+    index: Expr           # 整数索引(已 coerce u64)
+    element_type: int     # T
+    type_id: int          # 访问结果的类型 id(= element_type)
+    is_place: bool = True # 切片元素是 place(可读可写)
+
+
+@dataclass
 class DynValue:
     span: SrcSpan
     value: Expr
@@ -470,6 +488,7 @@ Expr: TypeAlias = (
     Binary | Unary
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess | ArrayAccess
+    | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat

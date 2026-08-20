@@ -456,6 +456,15 @@ class OpBuilder:
                 )
             # 非字面量 length:fall through to trait overload
 
+        # T[] 整数索引 → 内建切片访问(不走 Index trait;性能优化, 检查在 CFG 层)
+        if isinstance(left_ty, Type.SliceType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            return HIR.SliceAccess(
+                span=span, slice=left_hir, index=index_value,
+                element_type=left_ty.element_type, type_id=left_ty.element_type,
+                is_place=left_hir.is_place,
+            )
+
         # 4) Index overload via trait
         overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
         if overloaded_expr is not None:

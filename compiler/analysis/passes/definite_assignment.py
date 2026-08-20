@@ -261,6 +261,10 @@ class DefiniteAssignment:
             self.__check_tuple_read(expr, state)
             return state
 
+        if isinstance(expr, HIR.SliceAccess):
+            state = self.__check_expr(expr.slice, state)
+            return self.__check_expr(expr.index, state)
+
         if isinstance(expr, HIR.DynValue):
             return self.__check_expr(expr.value, state)
 
@@ -574,6 +578,10 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.TupleAccess):
             return self.__walk_neutral(expr.receiver, state)
+
+        if isinstance(expr, HIR.SliceAccess):
+            state = self.__walk_neutral(expr.slice, state)
+            return self.__walk_neutral(expr.index, state)
 
         if isinstance(expr, HIR.DynValue):
             return self.__walk_neutral(expr.value, state)
