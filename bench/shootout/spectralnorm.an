@@ -15,8 +15,8 @@
 //
 // tiered-pointers t6 标注: 热路径 (dot/mult_Av/mult_Atv/mult_AtAv/normalize)
 //   数组参数改为 f64[] (块访问语义, 32B 表示, 免 index 字段)。
-//   main 局部 u/v/tmp 保持 f64* (del 仅 T* 合法); 调用侧隐式 coerce T*→T[]
-//   传递 (expr_checker.py L347-356, 胖模式允许)。
+//   main 局部 u/v/tmp 直绑 f64[] (let x: T[] = dyn[n] T, del-view 后
+//   del T[] 整块合法)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/spectralnorm.an -o build/shootout_check/spectralnorm
 // 预期: exit 0 (断言全过)
@@ -100,9 +100,9 @@ fn normalize(v: f64[], n: u64) {
 
 fn main() {
     let n: u64 = 8000;
-    let u: f64* = dyn[n] f64;
-    let v: f64* = dyn[n] f64;
-    let tmp: f64* = dyn[n] f64;
+    let u: f64[] = dyn[n] f64;
+    let v: f64[] = dyn[n] f64;
+    let tmp: f64[] = dyn[n] f64;
 
     let i: u64 = 0;
     while i < n {

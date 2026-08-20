@@ -11,8 +11,8 @@
 //        sieve() 从 i=2 起标记合数, 统计素数个数。
 //
 // tiered-pointers t6 标注: sieve 的 flags 参数改为 bool[] (块访问语义,
-//   免 index 字段)。main 局部 flags 保持 bool* (del 仅 T* 合法); 调用侧
-//   隐式 coerce T*→T[] 传递 (expr_checker.py L347-356, 胖模式允许)。
+//   免 index 字段)。main 局部 flags 直绑 bool[] (let x: T[] = dyn[n] T,
+//   del-view 后 del T[] 整块合法)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/sieve.an -o build/shootout_check/sieve
 // 预期: exit 0 (断言全过)
@@ -39,7 +39,7 @@ fn sieve(flags: bool[], size: u64) -> i32 {
 fn main() {
     let SIEVE_SIZE: u64 = 2000000;
     let ITER: u64 = 500;
-    let flags: bool* = dyn[SIEVE_SIZE] bool;
+    let flags: bool[] = dyn[SIEVE_SIZE] bool;
     let iter: u64 = 0;
     while iter < ITER {
         let i: u64 = 0;

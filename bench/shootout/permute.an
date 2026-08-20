@@ -15,8 +15,8 @@
 //
 // tiered-pointers t6 标注: 热路径 (swap_indices/permute_inner) 数组参数
 //   v 改为 i32[] (块访问语义, 免 index 字段), count 改为 i32& (引用)。
-//   benchmark_permute 局部 v 保持 i32* (del 仅 T* 合法); 调用侧隐式 coerce
-//   T*→T[] 传递 (expr_checker.py L347-356, 胖模式允许)。
+//   benchmark_permute 局部 v 直绑 i32[] (let x: T[] = dyn[n] T, del-view
+//   后 del T[] 整块合法)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/permute.an -o build/shootout_check/permute
 // 预期: exit 0 (断言全过)
@@ -46,7 +46,7 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
 
 fn benchmark_permute() -> i32 {
     let count: i32 = 0;
-    let v: i32* = dyn[11] i32;
+    let v: i32[] = dyn[11] i32;
     let i: u64 = 0;
     while i < 11 {
         v[i] = i32(i);

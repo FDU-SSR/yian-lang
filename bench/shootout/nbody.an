@@ -15,8 +15,8 @@
 //
 // tiered-pointers t6 标注: advance/energy/offset_momentum/init_bodies 的
 //   bodies 参数改为 Planet[] (块访问语义, 免 index 字段)。
-//   main 局部 bodies 保持 Planet* (del 仅 T* 合法); 调用侧隐式 coerce
-//   T*→T[] 传递 (expr_checker.py L347-356, 胖模式允许)。
+//   main 局部 bodies 直绑 Planet[] (let x: T[] = dyn[n] T, del-view 后
+//   del T[] 整块合法)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/nbody.an -o build/shootout_check/nbody
 // 预期: exit 0 (断言全过)
@@ -184,7 +184,7 @@ fn init_bodies(bodies: Planet[]) {
 
 fn main() {
     let n: u64 = 12000000;
-    let bodies: Planet* = dyn[5] Planet;
+    let bodies: Planet[] = dyn[5] Planet;
 
     init_bodies(bodies);
     offset_momentum(5, bodies);

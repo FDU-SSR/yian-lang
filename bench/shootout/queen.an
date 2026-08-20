@@ -14,14 +14,13 @@
 //
 // tiered-pointers t6 标注: 求解热路径 (is_safe/update_board_state/place_queen)
 //   的数组参数改为 bool[]/i32[] (块访问语义, 32B 表示, 免 index 字段)。
-//   solve_queens_once 局部保持 bool*/i32* (del 仅 T* 合法); 调用侧经
-//   let 绑定 T*→T[] 视图传递 (编译器不支持调用点自动降级)。
+//   solve_queens_once 局部直接绑 bool[]/i32[] (let x: T[] = dyn[n] T,
+//   del-view 后 del T[] 整块合法, 免原始指针显式视图)。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/queen.an -o build/shootout_check/queen
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
-from std.core.slice import from_raw_parts;
 
 fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
     if !free_rows[r] {
@@ -62,10 +61,10 @@ fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], 
 }
 
 fn solve_queens_once() -> bool {
-    let free_rows: bool* = dyn[8000] bool;
-    let free_maxs: bool* = dyn[16000] bool;
-    let free_mins: bool* = dyn[16000] bool;
-    let queen_rows: i32* = dyn[8000] i32;
+    let free_rows: bool[] = dyn[8000] bool;
+    let free_maxs: bool[] = dyn[16000] bool;
+    let free_mins: bool[] = dyn[16000] bool;
+    let queen_rows: i32[] = dyn[8000] i32;
 
     let i: u64 = 0;
     while i < 8000 {
@@ -79,11 +78,7 @@ fn solve_queens_once() -> bool {
         j += 1;
     }
 
-    let fr: bool[] = from_raw_parts(free_rows, 8000);
-    let fm: bool[] = from_raw_parts(free_maxs, 16000);
-    let fmi: bool[] = from_raw_parts(free_mins, 16000);
-    let qr: i32[] = from_raw_parts(queen_rows, 8000);
-    let ok: bool = place_queen(0, fr, fm, fmi, qr);
+    let ok: bool = place_queen(0, free_rows, free_maxs, free_mins, queen_rows);
 
     del free_rows;
     del free_maxs;
