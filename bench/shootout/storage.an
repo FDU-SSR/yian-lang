@@ -15,19 +15,18 @@
 //
 // Option 迁移 (2026-08): children 字段改为 Option 表达(叶子数组
 //       children=None);free_tree 经取址参数 + is_some 判定。
-// T& 迁移 (2026-08): children 字段由 Option 指针 payload 升级为
-//       Option<array_tree&>(40B→24B);T& 丢 size 字段,free_tree 遍历用
-//       bitcast + from_raw_parts(ap, count) 重建数组视图,
-//       释放路径 del ap(bitcast 后 T*)。节点本体保持 dyn 数组分配 (T*)。
+// T[] 迁移 (2026-08): children 字段升级为 Option<array_tree[]>(切片自带
+//       长度, niche 编码支持);build_tree_depth 直绑切片, free_tree 去
+//       count 参数, 遍历 view.len() 后 del view 整块归还——零
+//       bitcast/显式视图重建。节点本体保持 dyn 数组分配 (T[])。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/storage.an -o build/shootout_check/storage
 // 预期: exit 0 (断言全过)
 
 from std.core.io import print;
-from std.core.slice import from_raw_parts;
 
 struct array_tree {
-    children: Option<array_tree&>,
+    children: Option<array_tree[]>,
     child_count: i32,
 }
 
@@ -46,24 +45,24 @@ fn Random_next(r: Random&) -> u64 {
     return r.stage;
 }
 
-fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -> Option<array_tree&> {
+fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -> Option<array_tree[]> {
     *count += 1;
 
     if depth == 1 {
         let n: u64 = Random_next(random) % 10 + 1;
-        let arr: array_tree* = dyn[n] array_tree;
+        let arr: array_tree[] = dyn[n] array_tree;
         let i: u64 = 0;
         while i < n {
-            arr[i].children = Option<array_tree&>.None;
+            arr[i].children = Option<array_tree[]>.None;
             arr[i].child_count = 0;
             i += 1;
         };
         *out_count = i32(n);
-        return Option<array_tree&>.Some(arr);
+        return Option<array_tree[]>.Some(arr);
     }
 
     let n: u64 = 3;
-    let arr: array_tree* = dyn[n] array_tree;
+    let arr: array_tree[] = dyn[n] array_tree;
     let i: u64 = 0;
     while i < n {
         let child_count: i32 = 0;
@@ -72,24 +71,22 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
         i += 1;
     };
     *out_count = i32(n);
-    return Option<array_tree&>.Some(arr);
+    return Option<array_tree[]>.Some(arr);
 }
 
-fn free_tree(arr: Option<array_tree&>&, count: i32) {
+fn free_tree(arr: Option<array_tree[]>&) {
     if (*arr).is_none() {
         return;
     }
-    let aa: array_tree& = (*arr).unwrap()[0];
-    let ap: array_tree* = bitcast<array_tree*>(aa);
-    let view: array_tree[] = from_raw_parts(ap, u64(count));
+    let view: array_tree[] = (*arr).unwrap()[0];
     let i: u64 = 0;
-    while i < u64(count) {
+    while i < view.len() {
         if view[i].children.is_some() && view[i].child_count > 0 {
-            free_tree(&view[i].children, view[i].child_count);
+            free_tree(&view[i].children);
         }
         i += 1;
     };
-    del ap;
+    del view;
 }
 
 fn benchmark_storage(root_depth: i32) -> i64 {
@@ -98,9 +95,9 @@ fn benchmark_storage(root_depth: i32) -> i64 {
 
     let count: i64 = 0;
     let root_count: i32 = 0;
-    let result: Option<array_tree&> = build_tree_depth(root_depth, random, &count, &root_count);
+    let result: Option<array_tree[]> = build_tree_depth(root_depth, random, &count, &root_count);
 
-    free_tree(&result, root_count);
+    free_tree(&result);
     del random;
 
     return count;
