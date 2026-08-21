@@ -1,0 +1,18 @@
+// tests/fat/positive/match_assign_option.an
+// match 结果可赋给 Option<T&>(构造语义) — match-assign-source 计划
+// Metis G1: 模式必须裸(Some(d)/None),构造位置才可限定前缀——解析器只支持裸模式
+struct Node { val: i32, next: Option<Node&> }
+fn main() {
+    let n0: Node& = dyn Node(0, Option<Node&>.None);
+    let n1: Node& = dyn Node(1, Option<Node&>.Some(n0));  // Some 路径种子
+    let n2: Node& = dyn Node(-1, Option<Node&>.None);  // 小于 d.val → Some 路径实际执行(镜像 push_disk: 小盘压大盘上)
+    // 镜像 push_disk: match 读槽 → 赋给字段(裸模式)
+    n2.next = match n1.next {
+        Some(d) => { if n2.val >= d.val { Option<Node&>.None } else { Option<Node&>.Some(d) } },
+        None => Option<Node&>.None,
+    }
+    // Metis G6: Some 路径被实际执行——断言 n2.next 为 Some 且值流过
+    assert n2.next.is_some(): "match assign some flows through";
+    assert n2.next.unwrap()[0].val == 0: "some payload preserved";
+    del n0; del n1; del n2;
+}
