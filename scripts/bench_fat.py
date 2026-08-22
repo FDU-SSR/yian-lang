@@ -69,6 +69,20 @@ SHOOTOUT_RAW_DIR = BENCH_DIR / "shootout_raw"
 REF_ROOT = ROOT / "bak" / "old_exp" / "performance"
 REF_OUT_DIR = OUT_DIR / "ref"
 
+# 跟踪表: shootout 三态成本分解 (§3) 镜像, 每次 shootout 运行后由 _sync_performance_csv 合并同步
+PERFORMANCE_CSV = ROOT / "docs" / "performance.csv"
+# 列名中文镜像 §3, 倍率列数值 1.40 即 1.40× (无 × 后缀), ΔRSS 保留符号 (相对 ①raw 绝对 MB)
+PERFORMANCE_CSV_HEADER = (
+    "基准,表示成本倍率(②/①),检查成本倍率(③/②),总成本倍率(③/①),"
+    "表示成本ΔRSS(MB),总成本ΔRSS(MB)"
+)
+PERFORMANCE_CSV_COMMENTS = (
+    "# docs/performance.csv — shootout 三态成本分解跟踪表 (镜像 docs/shootout-results.md §3)",
+    "# 倍率 = 同基准内相对中位数: 表示 = ②/①, 检查 = ③/②, 总 = ③/①; ΔRSS = 相对 ①raw 绝对 MB",
+    "# 每次 `python3 scripts/bench_fat.py --suite shootout` 运行后自动同步 (合并更新, 部分重跑只刷新被测基准)",
+    "# 种子数据: 2026-08-22 c8 全量会话 (docs/shootout-results.md)",
+)
+
 TIME_BIN = "/usr/bin/time"
 DEFAULT_RUNS = 5
 DEFAULT_MAX_STATE_SEC = 120.0
@@ -471,6 +485,49 @@ def _attribution_table(
     return md
 
 
+def _sync_performance_csv(
+    specs: list[BenchSpec],
+    rows: list[MeasRow],
+) -> None:
+    """同步 docs/performance.csv (shootout 三态成本分解跟踪表)。
+
+    与 _attribution_table 同款计算: 对每个 spec 取 check/nocheck/raw 三态中位数,
+    算 表示 = ②/①、检查 = ③/②、总 = ③/① (2 位小数无 ×), ΔRSS = (该态 rss 中位 - raw
+    rss 中位) / 1024 (2 位小数保留符号)。raw 缺失 (维度①未测) 的基准跳过。
+    合并语义: 文件已存在则读现有行, 本次测量到的基准替换, 未测量的原样保留;
+    注释头与表头保持固定 (以本脚本常量为准), 文件不存在时写注释头 + 表头 + 本次全部行。
+    """
+    existing: dict[str, str] = {}
+    if PERFORMANCE_CSV.exists():
+        for line in PERFORMANCE_CSV.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith("#") or line.startswith("基准,"):
+                continue
+            existing[line.split(",", 1)[0]] = line + "\n"
+    for spec in specs:
+        on = next((r for r in rows if r.bench == spec.name and r.state == "check"), None)
+        off = next((r for r in rows if r.bench == spec.name and r.state == "nocheck"), None)
+        raw = next((r for r in rows if r.bench == spec.name and r.state == "raw"), None)
+        if on is None or off is None or raw is None:
+            continue
+        raw_med = raw.stats.time.med
+        off_med = off.stats.time.med
+        on_med = on.stats.time.med
+        if not raw_med or not off_med:
+            continue
+        rep_rss = (off.stats.rss.med - raw.stats.rss.med) / 1024.0
+        tot_rss = (on.stats.rss.med - raw.stats.rss.med) / 1024.0
+        existing[spec.name] = (
+            f"{spec.name},{off_med / raw_med:.2f},{on_med / off_med:.2f},{on_med / raw_med:.2f},"
+            f"{rep_rss:.2f},{tot_rss:.2f}\n"
+        )
+    out = [c + "\n" for c in PERFORMANCE_CSV_COMMENTS]
+    out.append(PERFORMANCE_CSV_HEADER + "\n")
+    for name in sorted(existing):
+        out.append(existing[name])
+    PERFORMANCE_CSV.write_text("".join(out), encoding="utf-8")
+    print(f"成本分解跟踪表同步 {PERFORMANCE_CSV} ({len(existing)} 基准)")
+
+
 def render_shootout(
     specs: list[BenchSpec],
     rows: list[MeasRow],
@@ -591,6 +648,8 @@ def render_shootout(
 
     RESULTS_SHOOTOUT.write_text("".join(md), encoding="utf-8")
     print(f"\n结果写入 {RESULTS_SHOOTOUT}\n")
+
+    _sync_performance_csv(specs, rows)
 
 
 def render_raw(
