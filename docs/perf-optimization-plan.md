@@ -291,13 +291,13 @@ fasta / revcomp 未入选: 总成本倍率 <1.4× 且瓶颈在检查成本(编�
 
 | 组件 | commit | 内容 | 效果(实数见各 task evidence) |
 |---|---|---|---|
-| C1 LLVM IR 级优化 | a4e68f2 | emit.py 接入 PassManagerBuilder pipeline(非 `-t ll` 目标);-O × (IR pass, backend opt, clang link) 矩阵;`create_target_machine(opt=N)`;DSE 删帧退出 SENTINEL 写 → volatile 护栏(§7.4) | check 态 14/14 基准绝对时间 -14.5%~-56.7%(todo 7 重测);`-t ll` 输出逐字节不变;gate 255/71/27/76 + pyright 0 全绿 |
+| C1 LLVM IR 级优化 | a4e68f2 | emit.py 接入 PassManagerBuilder pipeline(非 `-t ll` 目标);-O × (IR pass, backend opt, clang link) 矩阵;`create_target_machine(opt=N)`;DSE 删帧退出 SENTINEL 写 → volatile 护栏(§7.4) | check 态 14/14 基准绝对时间 -14.5%~-56.7%(todo 7 重测);`-t ll` 输出逐字节不变;gate 255/72/27/76 + pyright 0 全绿 |
 | C2 发射形状 | aa7a417 | 枚举 unit 构造去 alloca(纯 insertvalue);element_ptr 常量 0 偏移短路;数组字面量全常量 → 常量聚合;(d) gep 直插 / (e) 检查函数传参经残余分析跳过(task-5 §1) | fasta `-t ll` 1256→1187 行、insertvalue -61;list 1510 行不变(无命中项);行为逐字节不变 |
 | C3 CFG 检查去重/合并 | a0199aa | 同块同 SSA 相邻访问共享一次检查;新增 CheckElementAccess 合取节点;派生链挂起义务于失效点补发 | c3_demo.an 检查节点 28→26(EA+InBounds+SafeAccess → EA+CheckElementAccess);fat 负例 -4 全保持 |
 | C4 类型检查记忆化 | cd904bf | method_lookup/has_impl/deref_chain 顶层缓存(impl 冻结于 GlobalResolve 已验证);SymbolCtx.clone 增量 COW;DA 状态增量 | type_check 阶段 -33%(stress_tc.an)/-29%(string.an);错误消息逐字不变(.err.an 全过) |
 | C5 编译期低垂 | 3523f96 | 中间 dump 按需化(`--dump` 默认 off)+ 词法关键字 dict 查表 | 编译时间 -20.5%(exe)/-33.7%(`-t none`);dump 内容与改动前逐字节一致 |
 
-全量门禁(todo 2/3/4/5/6 各自独立验证,结果一致): `run_tests` 255 + `run_fat_tests` 71 + `run_raw_tests` 27 + `run_fat_cve` 76 + `pyright` 0 全绿;fat 负例(期望 `Exit code -4`)在 -O3(回归套件固定等级)路径下全部保持。
+全量门禁(todo 2/3/4/5/6 各自独立验证,结果一致): `run_tests` 255 + `run_fat_tests` 72 + `run_raw_tests` 27 + `run_fat_cve` 76 + `pyright` 0 全绿;fat 负例(期望 `Exit code -4`)在 -O3(回归套件固定等级)路径下全部保持。
 
 ### 8.2 零 IR pass 发现的出处确认
 
@@ -313,26 +313,30 @@ C3 的合并检查 `CheckElementAccess` 是原三条检查的**合取谓词**: �
 - **补发路径**: 义务补发后检查序列与原地检查等价, trap 时机不晚于原序列;
 - **与 C1 独立叠加**: C3 在 CFG/IR 层合并检查发射, C1 在 LLVM 层做代码生成优化, 二者组合下 fat 负例(期望 -4)全部保持(todo 3 门禁 + todo 7 重测验证)。
 
-### 8.4 新发现: C1 的 O3 消除 raw 态 free → binarytree 块复用失效
+### 8.4 新发现与修复: raw 态 free 从不发射 → binarytree 块复用失效(根因 ee41327 + a0199aa, 非 C1; 已修复 efb9c7c)
 
 todo 7 重测发现唯一绝对劣化项: binarytree **raw 态**时间 6038.7→8953.9 ms(+48.3%), 峰值 RSS 129.1→9366.4 MB(×73);5/5 样本 RSS 恒为 9591232 KB(确定性复现, 非测量错误)。check/nocheck 态 RSS 均正常(257.0 MB, 与基线一致)。影响面: 14×3 中仅 binarytree raw 绝对劣化;queen raw RSS 2.2→12.5 MB、sieve raw 2.8→3.1 MB 为同类轻度泄漏。
 
-**二分定位**: git worktree 于 a4e68f2(C1 仅, 无 C2/C3/C5)编译同一 raw 源, RSS = 9590784 KB ≈ HEAD → 元凶 = **C1(LLVM IR 优化 pass)**, 与 C2/C3/C5 无关。
+**初步二分(有误, 见下)**: task-7 在 git worktree 于 a4e68f2 编译同一 raw 源, RSS = 9590784 KB ≈ HEAD, 当时判定元凶 = **C1(LLVM IR 优化 pass)**。该标注「a4e68f2 = C1 仅, 无 C2/C3/C5」是**事实错误**——a4e68f2 的直接父提交正是 a0199aa(C3), 二分并未控制 a0199aa 这一变量;复现结果只能证明「a4e68f2 及其祖先」范围内存在引入者, 无法定位到 C1。
 
 **OS 层证据**(strace): HEAD 二进制 **72,655 次 brk** 调用、堆跨度 **9.15 GB**、brk 地址严格单调递增(无任何复用);基线二进制 **995 次 brk**、堆跨度 **125 MB**(正常复用)。堆随 3.08 亿次节点分配单调增长(308M × ~30B ≈ 9.2 GB, 与观测一致)。
 
-**根因机制**(假设, 有 OS 层证据支撑): raw 态 `dyn`/`del` 直接发射 libc malloc/free(`compiler/codegen/llvm/builder.py` L389/L421-433, intrinsics 表 "malloc"/"free");O3 下 free 的唯一可观察效果(归还内存)在「块内容于 free 前已死」的路径上可被 LLVM 消除 → **free 被删** → 分配器从不复用已释放块 → 泄漏式增长。fat 态 free 包裹锁槽 SENTINEL 写(builder.py L421)等不可消除副作用, 故 check/nocheck 态完全正常。
+**根因**(后经 commit 级排查确认, 与 LLVM 优化器无关): 两个编译器改动的叠加——「编译器从不发射 free」, 而非「优化器删除 free」:
 
-**正确性/安全影响**: 无。输出逐字节一致(binarytree/list/towers 三基准三态 diff 为空)、exit 0 全部通过;raw 态本无检查(零安全参照基线);计划 C1 护栏(锁槽/写锁槽函数属性)未违反, fat 态 CVE/fat 全量闸门全绿(task-2/task-3 evidence)。
+- **前提**: ee41327(08-20, `feat(del)`)引入 `__is_del_target` 的 raw 守卫(`if self.__raw_pointers: return False`, 本意是 raw 裸指针不写锁槽、不插检查, 对检查/锁槽写正确)。此时 `IR.Delete`(free)仍在 gate 外, raw 模式照常发射 free, 无缺陷;
+- **直接引入**: a0199aa(08-22, C3)为给 Delete 加失效点(`__invalidate_checks()`)把 `IR.Delete` 与其上注释一并移入 `if __is_del_target(ptr):` 块内 → raw 模式 `__is_del_target` 恒 False, **free 从此从不发射**。
 
-**处置**: 不回退 C1(回退将使全部 14 基准 ×3 态绝对时间回到 2–12 倍;异常仅影响 42 个态测量中的 1 个 raw 态, 且 raw 为「零安全」参照基线)。
+**根因机制**(有 OS 层证据 + 发射层证据): raw 态 `dyn`/`del` 直接发射 libc malloc/free(`compiler/codegen/llvm/builder.py` L366 `malloc()` / L415-433 `delete()`, intrinsics 表 "malloc"/"free";注意 L389 位于 `malloc()` 内, 是 Malloc 路径而非 free 路径)。free 被 gate 门掉 → 编译产物 **0 个 free 调用**(raw 模式 `-t ll` IR 实测 0 free, 基线/修复后 1) → 分配器从不复用已释放块 → 泄漏式增长。O3 从未参与, 缺陷在 -O0 同样存在;fat 态 free 无条件发射, 故 check/nocheck 态完全正常。
 
-**follow-up 建议**:
-1. 定位具体消除 pass(候选: DSE / Attributor 的 malloc/free 消除);
-2. 对 raw 态 free 加保守护栏(如 noinline 或 volatile 屏障), 阻止优化器删除 free;或
-3. 接受 raw 态该基准的内存特征并在文档中注明。
+**正确性/安全影响**: 无。输出逐字节一致(binarytree/list/towers 三基准三态 diff 为空)、exit 0 全部通过;raw 态本无检查(零安全参照基线);计划 C1 护栏(锁槽/写锁槽函数属性)未违反, fat 态 CVE/fat 全量闸门全绿(task-2/task-3 evidence)。缺陷期仅表现为 raw 态内存不回收(性能/资源问题, 非安全)。
 
-`docs/performance.csv` 中 binarytree ΔRSS -9109.41 为该异常的忠实记录(脚本自动同步, 未手改)。
+**处置与修复**: 不回退 C1(C1 完全无辜, 回退将使全部 14 基准 ×3 态绝对时间回到 2–12 倍;异常仅影响 42 个态测量中的 1 个 raw 态, 且 raw 为「零安全」参照基线)。修复为 **efb9c7c**(`fix(compiler)`): 把 `IR.Delete` 移回 `__is_del_target` gate 外(恢复 ee41327^ 形态), `__invalidate_checks()` 留在 gate 内, `__is_del_target` 的 raw 守卫结构未动。回归检查 `scripts/check_raw_free_ir.py` 以 TDD 方式随修复入库: buggy HEAD 上 FAIL(0 free 调用) → 修复后 PASS(3 free 调用, 来自 `tests/fat/positive/raw_compat_del.an` 的 3 处 del);binarytree raw `-t ll` IR free 数 0→1。
+
+**修复实测**(todo 3 重测, efb9c7c): binarytree raw 峰值 RSS 9366.4→**129.1 MB**(与缺陷前基线逐字节一致), queen 12.5→**2.2 MB**, sieve 3.1→**2.8 MB**;时间 8953.9→5569.5 ms。三基准 exit 0、断言输出不变。
+
+**后续**: 原 follow-up 1(定位具体消除 pass, 候选 DSE/Attributor 的 malloc/free 消除)与 2(raw 态 free 加 volatile/noinline 保守护栏)**作废**——不存在删除 free 的 pass, 也不存在需要护栏抵御的优化器行为;free 发射本就应无条件。
+
+`docs/performance.csv` 中 binarytree ΔRSS -9109.41 为**缺陷期记录**(todo 7 重测时脚本自动同步写入, 反映 free 不发射下的峰值 RSS 差异);修复后未重跑 `--suite shootout`, 该陈旧行待下次全量重测由脚本自动刷新(未手改)。
 
 ### 8.5 后续方向(deferred)
 
@@ -340,4 +344,4 @@ todo 7 重测发现唯一绝对劣化项: binarytree **raw 态**时间 6038.7→
 - llvm.assume 注入、niche/NPO 优化维持 deferred(与 security.md 论证关系未评估);
 - C2 残余子项(d) gep Ref/Slice 直插与 (e) 检查函数避免整结构传参, 经残余分析判定无收益或需表示级重构(见 task-5 §1), 不实施;
 - C3 跨块/循环检查提升留待后续;
-- raw 态 free 护栏见 §8.4 follow-up。
+- raw 态 free 发射缺陷已修复并加回归检查(`efb9c7c` + `scripts/check_raw_free_ir.py`), 见 §8.4。
