@@ -138,6 +138,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckElementArith(base=base, offset=offset):
             return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
 
+        case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
+            return (
+                f"check_element_access {__dump_value(base)}, {__dump_value(offset)}"
+                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, C3)"
+            )
+
         case IR.CheckRawBounds(index=index, length=length):
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 

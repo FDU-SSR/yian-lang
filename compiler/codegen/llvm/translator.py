@@ -191,6 +191,12 @@ class LLTranslator:
                 builder.check_ref_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckElementArith():
                 builder.check_element_arith(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
+            case IR.CheckElementAccess():
+                builder.check_element_access(
+                    self.__resolve(builder, stmt.base),
+                    self.__resolve(builder, stmt.offset),
+                    self.__resolve(builder, stmt.ptr),
+                )
             case IR.CheckRawBounds():
                 builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
             case IR.CheckPtrDiff():

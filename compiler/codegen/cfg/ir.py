@@ -254,6 +254,23 @@ class CheckElementArith:
 
 
 @dataclass
+class CheckElementAccess:
+    """合并检查(perf C3):ElementArith→InBounds→SafeAccess 合取谓词。
+
+    派生链 elem = base + offset(ElementPtr)→ f = elem.field(FieldPtr)→
+    访问 f(Load/Store),当派生链可对且访问相邻时,三重检查合并为单节点:
+    良构(elem)(定义 13,i128 无回绕)∧ in_bounds(elem,1)(规则 3.5.2,
+    one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,SafeAccess 的
+    live 项——重锚定字段指针 in_bounds(f,1) 恒真、live(f)=live(elem) 由
+    锁字段继承)。禁止丢 no-wrap/live 任一子项;非相邻访问不合并(访问点
+    的 SafeAccess 按原样发射)。t8 发射。
+    """
+    base: Value
+    offset: Value
+    ptr: Value  # elem:ElementPtr 结果,承载派生后 index/size/lock_ptr/key
+
+
+@dataclass
 class CheckRawBounds:
     """裸数组越界检查(lazy-lvalue-fat todo1):index < length(编译期长度)。
 
@@ -434,6 +451,7 @@ Stmt: TypeAlias = (
     | GenKey | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess
+    | CheckElementAccess
     | CheckRawBounds
 )
 
