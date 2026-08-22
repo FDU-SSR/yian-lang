@@ -1,0 +1,19 @@
+// Fat-pointer nested derived chain one-past-end negative test (C3 复核, 规则 3.5.2)
+//
+// (p + 2).inner.v: 先对 p 做 one-past-end 算术(elementptr p, 2,index == size,
+// 定义 13 允许),再沿嵌套 FieldPtr 链取字段。in_bounds(elem,1) 必须在该链
+// 的任何访问之前 trap(C3 挂起义务在嵌套派生链上提前补发)——OOB 读不得先于
+// trap 执行。期望 Exit code -4。
+
+struct Inner { v: i32 }
+struct Node { inner: Inner, tag: i32 }
+
+fn main() {
+    let arr: Node* = dyn[2] Node;
+    arr[0].inner.v = 1;
+    arr[1].inner.v = 2;
+
+    // 嵌套 FieldPtr 链 (ptr+k).a.b 直接读 one-past-end 元素的字段
+    let g: i32 = (arr + 2).inner.v;
+    assert g == 3: "unreachable if trap works"
+}

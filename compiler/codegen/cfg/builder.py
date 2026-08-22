@@ -1245,6 +1245,17 @@ class CfgBuilder:
                     self.__emit(IR.CheckRefAccess(ptr=base))
                     ch_cfg_block().debug(lambda: "check insert FieldPtr(T&): live(r) 仅 live,免 in_bounds (tiered-pointers t3)")
             elif self.__is_fat_pointer(base):
+                # C3 嵌套派生链(F2 复核):base 是挂起 FieldPtr 结果时先补发
+                # in_bounds(elem,1)(消费义务)再派发——OOB 读/写必须先于访问
+                # trap,不得推迟到终止符补发(每访问前提仍成立,规则 3.5.2)。
+                if isinstance(base, IR.Reg) and base.name in self.__field_derived:
+                    owed_name = self.__field_derived.pop(base.name)
+                    elem, _b, _o = self.__elem_derived[owed_name]
+                    if self.__dedup(self.__ptr_key(elem, "ib")):
+                        ch_cfg_block().debug(lambda: "check dedup FieldPtr flush: in_bounds(elem,1) 已检查(嵌套链, C3)")
+                    else:
+                        self.__emit(IR.CheckInBounds(ptr=elem))
+                        ch_cfg_block().debug(lambda: "check insert FieldPtr flush: 嵌套派生链补发 in_bounds(elem,1) (C3 义务消费)")
                 elem_entry = self.__elem_derived.get(base.name) if isinstance(base, IR.Reg) else None
                 if elem_entry is not None and isinstance(elem_entry[0], IR.Reg):
                     # C3 合并路径:in_bounds(elem,1) 挂起为义务,并入访问点的
@@ -1361,6 +1372,15 @@ class CfgBuilder:
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
         # t7 检查插入:算术 → 良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)
         if self.__is_fat_pointer(base) and not self.__no_fat_checks:
+            # C3 嵌套派生链(F2 复核):同 FieldPtr——base 有挂起义务先补发再继续
+            if isinstance(base, IR.Reg) and base.name in self.__field_derived:
+                owed_name = self.__field_derived.pop(base.name)
+                elem, _b, _o = self.__elem_derived[owed_name]
+                if self.__dedup(self.__ptr_key(elem, "ib")):
+                    ch_cfg_block().debug(lambda: "check dedup ElementPtr flush: in_bounds(elem,1) 已检查(嵌套链, C3)")
+                else:
+                    self.__emit(IR.CheckInBounds(ptr=elem))
+                    ch_cfg_block().debug(lambda: "check insert ElementPtr flush: 嵌套派生链补发 in_bounds(elem,1) (C3 义务消费)")
             if self.__dedup(self.__pair_key(base, offset, "elarith")):
                 ch_cfg_block().debug(lambda: "check dedup ElementPtr: well_formed(p') 共享(同 base/offset, C3)")
             else:
@@ -1428,6 +1448,11 @@ class CfgBuilder:
         cast = self.__emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
         if raw:
             self.__raw_ptrs.add(cast.name)
+        # C3 嵌套派生链(F2 复核):ptr→ptr cast = identity(5 字段重贴),
+        # 挂起义务沿 cast 传播——(ptr+k).a[j] 的 elementptr base 是 cast
+        # 结果时,义务仍可被访问点合并或提前补发(规则 3.5.2)。
+        if isinstance(value, IR.Reg) and value.name in self.__field_derived and self.__is_fat_pointer(cast):
+            self.__field_derived[cast.name] = self.__field_derived.pop(value.name)
         return cast
 
     def __build_size_of(self, type_id: int) -> IR.Value:
