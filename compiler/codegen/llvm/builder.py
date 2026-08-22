@@ -476,6 +476,15 @@ class LLBuilder:
         cond = self.__check_live(lock_ptr, key)
         self.__emit_check(cond, "ref")
 
+    def assume(self, cond: LLValue) -> None:
+        """llvm.assume(cond):优化器提示 cond 恒真(perf P1,CFG Assume 节点)。
+
+        只承载编译期可证纯数据谓词(如 range 循环契约 0 ≤ i < n,u64 同型);
+        llvm.assume 无运行期代码,仅供 ConstraintElimination 等优化器消除
+        可证冗余检查。绝不承载动态事实(assume 假 → UB → 删检查 → 安全失效)。
+        """
+        self.__builder.assume(cond.ir_val)  # type: ignore[reportUnknownMemberType]  # llvmlite assume 签名未标注
+
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
         """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
 

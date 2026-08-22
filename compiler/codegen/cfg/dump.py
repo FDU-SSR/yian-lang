@@ -147,6 +147,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckRawBounds(index=index, length=length):
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 
+        case IR.Assume(cond=cond):
+            return f"assume {__dump_value(cond)}  (优化器提示, P1)"
+
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
             return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.3.3)"
 

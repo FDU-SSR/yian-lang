@@ -199,6 +199,8 @@ class LLTranslator:
                 )
             case IR.CheckRawBounds():
                 builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
+            case IR.Assume():
+                builder.assume(self.__resolve(builder, stmt.cond))
             case IR.CheckPtrDiff():
                 builder.check_ptrdiff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
             case IR.CheckPtrCmp():
