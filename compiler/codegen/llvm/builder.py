@@ -710,6 +710,11 @@ class LLBuilder:
         assert isinstance(ptr_ty, Type.PointerType)
         if self.__ll_type_ctx.is_zst(ptr_ty.pointee_type):
             return self.undef(base.type_id)
+        # 常量 0 偏移短路:index' = index + 0 ≡ index(裸指针 gep [0] ≡ 自身)——免
+        # extract+add+insert / gep,结果与 base 逐位相同,直接复用。
+        if isinstance(offset.ir_val, ir.Constant) and offset.ir_val.constant == 0:  # type: ignore
+            self.__func.set_reg(result, base)
+            return base
         if self.__is_fat(base):
             # 规则 3.3.1-3.3.2:算术仅更新 index' = index + n(检查已保证良构)。
             # 单字段直插保留 data/lock/key/size 原值,无需 5 提取 + undef 重建。
@@ -1179,6 +1184,14 @@ class LLBuilder:
             lock = self.__extract_fat_field(field_values[0], IR.FAT_LOCK_PTR)
             key = self.__extract_fat_field(field_values[0], IR.FAT_KEY)
             return self.__build_fat(data, lock, key, self.i64(0), field_values[1], type_id)
+        # 全常量聚合 → 单一定值(ir.Constant),免 undef + N×insertvalue 链。
+        # 条件:① 无 ZST 字段(其 {} 槽位常量需逐槽构造,保持原路径);② 无
+        # {T*,u64} 形态合成(合成点是运行时位型重构,恒非常量)。
+        if (not any(self.__ll_type_ctx.is_zst(fv.type_id) for fv in field_values)
+                and not any(self.__is_fat_type(fv.type_id) and not self.__is_fat(fv) for fv in field_values)
+                and all(isinstance(fv.ir_val, ir.Constant) for fv in field_values)):  # type: ignore
+            ll_type = self.__ll_type_ctx.get_ll_type(type_id).ir_type
+            return LLValue(type_id, ir.Constant(ll_type, [fv.ir_val for fv in field_values]))  # type: ignore
         val = self.undef(type_id)
         for i, fv in enumerate(field_values):
             if self.__ll_type_ctx.is_zst(fv.type_id):
@@ -1228,13 +1241,24 @@ class LLBuilder:
             self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
             return
 
+        if payload_type is None or self.__type_ctx.is_zst(payload_type):
+            # unit 变体(无 payload / ZST payload):纯 insertvalue 构造——免
+            # alloca+gep+store+load;payload 槽位保持 undef(与 alloca 未初始化一致)。
+            ir_val = self.undef(enum_type_id).ir_val
+            ir_val = self.__builder.insert_value(ir_val, self.i32(discriminant).ir_val, 0)  # type: ignore
+            self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
+            return
+
+        # payload 变体:enum 布局 {i32, [pad x i8]} 的 payload 槽是字节数组——结构体
+        # 值无法 insert_value(型别不匹配),须经 alloca+bitcast+store+load(表示级
+        # 重构范围外,保持既有路径)。
         tmp_ptr = self.alloca(enum_type_id).ir_val
 
         # Store discriminant at field 0
         disc_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(0).ir_val], inbounds=True)  # type: ignore
         self.__builder.store(self.i32(discriminant).ir_val, disc_ptr)  # type: ignore
 
-        if payload_type is not None and not self.__type_ctx.is_zst(payload_type):
+        if not self.__type_ctx.is_zst(payload_type):
             assert payload_fields is not None
             payload_val = self.__build_aggregate(payload_type, payload_fields)
             # Bitcast the payload array pointer (field 1) to the payload struct pointer
