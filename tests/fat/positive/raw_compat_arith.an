@@ -1,8 +1,10 @@
 // raw_compat_arith.an — 裸指针兼容:指针算术 p+n / p-n + 序比较 + 断言
 //
-// 覆盖同对象指针算术语义:p+n 与 p-n 的取值、指针差 (p+n)-(p+n)=n、
-// 同对象序比较 < <= > >=,以及 n==0 恒等。全部为正确程序,
-// fat 与 raw 双模式都必须 exit 0。
+// 覆盖同对象指针算术语义:p+n 取值、指针差 (p+n)-(p+n)=n、同对象序比较
+// < <= > >=,以及 n==0 恒等。p-n(n≥1) 在 fat 模式为下溢偏移(offset ≥ 2^63,
+// u64 回绕)→ 良构检查(定义 13)收紧 trap(u64 索引语义,Metis H2),语义由
+// negative/fat_subslice_underflow.an 锁定,此处不覆盖(仅 raw/nocheck 态合法)。
+// 其余全部为正确程序,fat 与 raw 双模式都必须 exit 0。
 //
 // Expected output: 0
 
@@ -14,10 +16,12 @@ fn main() {
     assert *(p + 2) == 30: "*(p+2) == arr[2]";
     assert *(p + 5) == 60: "*(p+5) == arr[5]";
 
-    // p-n 取值
+    // 子切片(q = p+4)与 n == 0 恒等
     let q: i32* = p + 4;
-    assert *(q - 2) == 30: "*(q-2) == arr[2]";
-    assert *(q - 4) == 10: "*(q-4) == arr[0]";
+    let r: i32* = p + 0;
+    assert r == p: "p+0 == p";
+    let s: i32* = q - 0;
+    assert s == q: "q-0 == q";
 
     // 指针差 → i64 元素偏移
     let d1: i64 = q - p;
@@ -31,10 +35,4 @@ fn main() {
     assert p <= p: "p <= p";
     assert q >= p + 4: "q >= p+4";
     assert !(q < p): "!(q < p)";
-
-    // n == 0 恒等
-    let r: i32* = p + 0;
-    assert r == p: "p+0 == p";
-    let s: i32* = q - 0;
-    assert s == q: "q-0 == q";
 }

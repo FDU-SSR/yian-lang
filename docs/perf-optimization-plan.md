@@ -307,7 +307,7 @@ todo 7 重测进一步证实 §7.1 的现状事实: 改动前所有 YIAN 程序�
 
 §7.3 已给出 C1 的 trap 健全性论证(检查 = `br cond, ok, trap`;优化器对条件分支仅三类变换, trap 发生的 (程序, 输入) 集合逐位不变;llvm.trap 为 noreturn 副作用调用, DCE 不删;volatile SENTINEL 护栏)。此处补充 **C3(检查合并)的健全性论证**:
 
-C3 的合并检查 `CheckElementAccess` 是原三条检查的**合取谓词**: 派生良构 + i128 无回绕(ElementArith)∧ in_bounds(elem,1)(规则 3.5.2)∧ live(elem)(定义 8), 不丢 no-wrap/live 任一子项;去重仅限同块同 SSA 指针值、访问相邻(中间无 Delete/WriteLockSlot/调用/终止/块切换);挂起义务(被跳过的 one-past-end InBounds)在失效点(调用/Delete/终止符)补发, 保证 one-past-end 的 elem 取字段在任何逃逸前 trap。因此:
+C3 的合并检查 `CheckElementAccess` 是原三条检查的**合取谓词**: 派生良构 + u64 同型化(ElementArith, 2026-08: 定义 13 从 i128 宽算 `zext+sext` 改为 u64 回绕检测 `icmp uge sum, index` + 上界比较 `icmp ule sum, size`——正偏移无回绕时与 i128 等价, 回绕时 sum < index → trap 等价 i128 的 sum ≥ 2^64 > size 必 trap, 下溢偏移(offset ≥ 2^63)恒 trap 为对齐 u64 索引语义的收紧修正, Metis H2)∧ in_bounds(elem,1)(规则 3.5.2)∧ live(elem)(定义 8), 不丢 no-wrap/live 任一子项;去重仅限同块同 SSA 指针值、访问相邻(中间无 Delete/WriteLockSlot/调用/终止/块切换);挂起义务(被跳过的 one-past-end InBounds)在失效点(调用/Delete/终止符)补发, 保证 one-past-end 的 elem 取字段在任何逃逸前 trap。因此:
 
 - **去重路径**: 原三检查同时通过 ⇔ 合并检查通过;任一子项失败 → trap(合取谓词禁止弱化);
 - **补发路径**: 义务补发后检查序列与原地检查等价, trap 时机不晚于原序列;

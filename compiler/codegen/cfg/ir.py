@@ -246,8 +246,8 @@ class CheckRefAccess:
 class CheckElementArith:
     """ElementPtr 算术良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)。
 
-    越过 one-past-end 或负方向越界 trap;无回绕子义务(O-1)由宽整数或
-    溢出检测落地(t8)。t8 发射。
+    越过 one-past-end 或负方向越界 trap;无回绕子义务(O-1)由 u64 回绕检测
+    落地(同型化,perf todo 3:icmp uge sum,index,t8 发射)。
     """
     base: Value
     offset: Value
@@ -259,11 +259,11 @@ class CheckElementAccess:
 
     派生链 elem = base + offset(ElementPtr)→ f = elem.field(FieldPtr)→
     访问 f(Load/Store),当派生链可对且访问相邻时,三重检查合并为单节点:
-    良构(elem)(定义 13,i128 无回绕)∧ in_bounds(elem,1)(规则 3.5.2,
-    one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,SafeAccess 的
-    live 项——重锚定字段指针 in_bounds(f,1) 恒真、live(f)=live(elem) 由
-    锁字段继承)。禁止丢 no-wrap/live 任一子项;非相邻访问不合并(访问点
-    的 SafeAccess 按原样发射)。t8 发射。
+    良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
+    (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
+    SafeAccess 的 live 项——重锚定字段指针 in_bounds(f,1) 恒真、
+    live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项;
+    非相邻访问不合并(访问点的 SafeAccess 按原样发射)。t8 发射。
     """
     base: Value
     offset: Value

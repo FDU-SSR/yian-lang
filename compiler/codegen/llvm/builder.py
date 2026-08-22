@@ -477,45 +477,53 @@ class LLBuilder:
         self.__emit_check(cond, "ref")
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
-        """定义 13 良构检查:0 ≤ index+offset ≤ size;无回摆以 i128 计算(O-1)。"""
+        """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
+
+        对 u64 索引(非负恒真)把 0 ≤ index+offset ≤ size 分解为 u64 计算:
+        (a) 回绕检测 no_wrap = icmp uge sum, index(sum = index+offset,u64 回绕
+        ⟺ sum < index);(b) 上界比较 in_range = icmp ule sum, size;条件 =
+        and(no_wrap, in_range)。与 i128 语义论证:正偏移(offset < 2^63 且
+        index+offset < 2^64)无回绕时 sum ≥ index 恒真,只剩上界比较,与 i128
+        完全等价;回绕(index+offset ≥ 2^64)时 sum < index → no_wrap 失败 →
+        trap(等价 i128 的 sum ≥ 2^64 > size 必 trap);下溢偏移(offset ≥ 2^63,
+        语义 = 极大无符号下标)u64 形式 trap(收紧,对齐 u64 索引语义——sext
+        形式把其误解为负数,子切片 base.index ≥ |o| 时放行)。u64 同型使
+        ConstraintElimination 可关联循环/分支约束消除本检查(O-1 由回绕检测
+        落地,无需宽整数)。t8 发射。
+        """
         if not self.__is_fat(base):
             return
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(base, IR.FAT_SIZE).ir_val
-        i128: ir.IntType = ir.IntType(128)  # type: ignore
-        idx128 = self.__builder.zext(index, i128)  # type: ignore
         off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
-        off128 = self.__builder.sext(off64, i128)  # type: ignore
-        size128 = self.__builder.zext(size, i128)  # type: ignore
-        sum128 = self.__builder.add(idx128, off128)  # type: ignore
-        ge0 = self.__builder.icmp_signed(">=", sum128, ir.Constant(i128, 0))  # type: ignore
-        le_size = self.__builder.icmp_signed("<=", sum128, size128)  # type: ignore
-        cond: ir.Value = self.__builder.and_(ge0, le_size)  # type: ignore
+        sum = self.__builder.add(index, off64)  # type: ignore
+        no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
+        in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
+        cond: ir.Value = self.__builder.and_(no_wrap, in_range)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue) -> None:
         """C3 合并检查:ElementArith→InBounds→SafeAccess 合取谓词(perf-optimization todo 3)。
 
         派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
-        良构(elem)(定义 13,i128 无回绕)∧ in_bounds(elem,1)(规则 3.5.2,
-        one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,SafeAccess 的
-        live 项;in_bounds(f,1) 对重锚定字段指针恒真、live(f)=live(elem) 由
-        锁字段继承)。禁止丢 no-wrap/live 任一子项。t8 发射。
+        良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
+        (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
+        SafeAccess 的 live 项;in_bounds(f,1) 对重锚定字段指针恒真、
+        live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项。
+        t8 发射。
         """
         if not (self.__is_fat(base) and self.__is_fat(ptr)):
             return
-        # ElementArith 部分(定义 13,同 check_element_arith 的 i128 无回绕)
+        # ElementArith 部分(定义 13,同 check_element_arith 的 u64 同型化:
+        # 回绕检测 no_wrap = icmp uge sum, index + 上界比较 in_range =
+        # icmp ule sum, size;语义等价性论证见 check_element_arith 注释)
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(base, IR.FAT_SIZE).ir_val
-        i128: ir.IntType = ir.IntType(128)  # type: ignore
-        idx128 = self.__builder.zext(index, i128)  # type: ignore
         off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
-        off128 = self.__builder.sext(off64, i128)  # type: ignore
-        size128 = self.__builder.zext(size, i128)  # type: ignore
-        sum128 = self.__builder.add(idx128, off128)  # type: ignore
-        ge0 = self.__builder.icmp_signed(">=", sum128, ir.Constant(i128, 0))  # type: ignore
-        le_size = self.__builder.icmp_signed("<=", sum128, size128)  # type: ignore
-        elarith_cond: ir.Value = self.__builder.and_(ge0, le_size)  # type: ignore
+        sum = self.__builder.add(index, off64)  # type: ignore
+        no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
+        in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
+        elarith_cond: ir.Value = self.__builder.and_(no_wrap, in_range)  # type: ignore
         # InBounds 部分(规则 3.5.2):elem.index < elem.size
         e_index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
         e_size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
