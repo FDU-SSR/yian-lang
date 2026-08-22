@@ -67,7 +67,10 @@ class CfgBuilder:
         self.__checked: set[tuple[str, ...]] = set()
         self.__elem_derived: dict[str, tuple[IR.Value, IR.Value, IR.Value]] = {}
         self.__field_derived: dict[str, str] = {}
-        # P1 range 循环 assume 状态(perf todo 4):
+        # P1 range 循环 assume 状态(perf todo 4):[F2 安全修复 2026-08-23]
+        # 注入已禁用(见 __maybe_emit_range_assume 文档串)——循环变量可重赋值
+        # (YIAN 无 mut)致注入事实在重赋值后为假 → LLVM UB → 删检查 → OOB。
+        #   识别与激活保留(惰性管线),仅发射点置空;恢复条件见函数文档串。
         #   __range_bounds — %iter 变量 symbol_id → range 上界 n 的 SSA 值
         #                    (识别 0..n 构造链于 Let 处,循环外一次解析)。
         #   __loop_var_facts — 循环变量 symbol_id → 上界值(Some(i) 臂体翻译
@@ -620,13 +623,21 @@ class CfgBuilder:
     def __maybe_emit_range_assume(self, index_expr: HIR.Expr, index_val: IR.Value, base: IR.Value) -> None:
         """P1 注入:循环体索引检查处 Assume(0 ≤ i < n)(u64 同型)。
 
-        只注入 range 契约保证的事实(0..n 的 i 恒满足 0 ≤ i < n);绝不注入
-        0 ≤ i ≤ size——那需要额外证明 n ≤ size(Metis H1 安全红线,assume 假
-        → UB → 优化器删检查 → OOB)。检查关闭/非胖基址不注入(宁缺毋滥)。
-
-        现状(2026-08 实测):bound 是循环外 load、检查的 size 是循环内
-        re-load,非同一条 SSA——CE 尚不能消除检查;注入无收益但安全(负例
-        越界访问仍 trap)。宁缺毋滥,安全优先;后续可研究循环内 bound 解析。
+        [F2 安全修复 2026-08-23] **注入已禁用**——本函数无条件返回。
+        漏洞实证: YIAN 无 mut/不可变性机制,循环变量可在臂体内重赋值,
+        `for i in 0..n { i = 1000; s[i] = 42 }` 合法;注入点在访问处用
+        **当前 load 值**发射 assume(i < n),重赋值后为假事实
+        assume(1000 < 4) → SROA 折叠为 assume(false) → LLVM UB → 优化器
+        删除越界检查 → OOB 写(实测 exit 0,42 写入 p[1000];b40273a 对照
+        trap 132,HEAD -O0 trap 132)。凡注入事实可能为假,即构成 UB 类
+        漏洞,与 Metis H1 红线(i ≤ size)同性质。
+        恢复条件(两者齐备方可重新启用):
+          1. 臂体内零赋值证明(HIR 扫描:循环变量在 Some(i) 臂体中无赋值);
+          2. 上界绑定验证为 stdlib Range(现有 __record_range_iter 已校验
+             Range 结构,需补充 stdlib 来源验证)。
+        惰性管线保留(识别 __record_range_iter/__activate_range_fact、
+        Assume 节点、translator dispatch、dump case、LLVM assume 发射),
+        满足恢复条件后直接复用。检查关闭/非胖基址仍不注入(宁缺毋滥)。
         """
         if self.__no_fat_checks or not self.__is_fat_pointer(base):
             return
@@ -636,11 +647,9 @@ class CfgBuilder:
         bound = self.__loop_var_facts.get(var.symbol_id)
         if bound is None:
             return
-        cond = self.__build_binary(BinaryOperator.Lt, index_val, bound, TypeCtx.bool_id)
-        self.__emit(IR.Assume(cond=cond))
-        i_name = index_val.name if isinstance(index_val, IR.Reg) else "?"
-        n_name = bound.name if isinstance(bound, IR.Reg) else "?"
-        ch_cfg_block().debug(lambda: f"assume insert: 0 ≤ i < n (range 契约, P1, i={i_name}, n={n_name})")
+        # 注入已禁用:识别链保留(管线维持接线,恢复时仅需补发射),
+        # 不发射 IR.Assume——重赋值后的事实可能为假(见上文档串)。
+        return
 
     # ------------------------------------------------------------------
     # Match helpers

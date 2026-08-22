@@ -1,0 +1,21 @@
+// F2 安全回归负例(2026-08-23):循环变量重赋值不得使越界检查被删除。
+//
+// YIAN 无 mut/不可变性机制 → `i = 1000` 在 for 臂体内合法。P1 注入
+// (f3c4cb5)在访问处用当前 load 值发射 assume(i < 4)——重赋值后为假
+// 事实 assume(1000 < 4) → LLVM UB → 优化器删除越界检查 → OOB 写
+// (漏洞实证:HEAD -O3 exit 0,42 写入 p[1000];b40273a 对照 trap 132)。
+// 修复后注入禁用:检查原样保留,s[1000] 必须 trap(Exit code -4)。
+// 期望输出:Exit code -4。
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+    let s: i32[] = p[0u64..4];
+    let total: i32 = 0;
+    for i in 0..4u64 {
+        i = 1000;   // 重赋值: 若注入 assume(i<4) 则为假事实
+        s[i] = 42;  // 必须 trap(-4), 否则 OOB 写
+        total += 0;
+    }
+    assert total == 0: "unreachable";
+}
