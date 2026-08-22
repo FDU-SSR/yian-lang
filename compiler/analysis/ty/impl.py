@@ -35,6 +35,15 @@ class ImplRegistry:
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
 
+        # Top-level has_impl memoization. The impl registry is frozen after
+        # GlobalResolve, so results are stable; enabled by TypeCtx.finalize().
+        self.__memoize_enabled = False
+        self.__has_impl_cache: dict[tuple[int, int], bool] = {}
+
+    def enable_memoization(self) -> None:
+        """Enable memoization of has_impl results (after impls are frozen)."""
+        self.__memoize_enabled = True
+
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
         impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
         self.__impls.append(impl)
@@ -94,18 +103,39 @@ class ImplRegistry:
         """Return True if all trait conditions on *impl* are satisfied under *substs*."""
         if not impl.conditions:
             return True
-        if visited is None:
+        fresh = visited is None
+        if fresh:
             visited = set()
         for generic_id, required_traits in impl.conditions.items():
             concrete_type_id = substs.get(generic_id, generic_id)
             for trait_id in required_traits:
                 substed_trait = self.__ctx.instantiate(trait_id, substs)
-                if not self.has_impl(concrete_type_id, substed_trait, visited):
+                if not self.has_impl(concrete_type_id, substed_trait, visited, fresh):
                     return False
         return True
 
-    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
-        """Check whether *type_id* implements *trait_id*."""
+    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None, fresh: bool = False) -> bool:
+        """Check whether *type_id* implements *trait_id*.
+
+        *fresh* marks a top-level query backed by a freshly created (empty)
+        visited set, whose result is context-independent and cacheable.
+        Recursive calls pass a non-fresh shared set, so their results are
+        never cached — cycle detection makes them context-dependent.
+        """
+        if visited is None:
+            visited = set()
+            fresh = True
+        key = (type_id, trait_id)
+        if fresh and self.__memoize_enabled:
+            cached = self.__has_impl_cache.get(key)
+            if cached is not None:
+                return cached
+        result = self.__has_impl_inner(type_id, trait_id, visited)
+        if fresh and self.__memoize_enabled:
+            self.__has_impl_cache[key] = result
+        return result
+
+    def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
         if visited is None:
             visited = set()
         key = (type_id, trait_id)

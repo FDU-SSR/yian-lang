@@ -21,6 +21,15 @@ if TYPE_CHECKING:
     from compiler.analysis.symbol.context import SymbolCtx
 
 
+class _AmbiguousMethod:
+    """Cache marker: a method_lookup key resolves to multiple candidates."""
+
+    __slots__ = ()
+
+
+_AMBIGUOUS_METHOD = _AmbiguousMethod()
+
+
 class TypeCtx:
     # intrinsic basic type IDs
     never_id: int = 9
@@ -107,6 +116,12 @@ class TypeCtx:
         self.__default_literals_cache: dict[int, int] = {}
         self.__simple_type_cache: dict[int, bool] = {}
         self.__zst_cache: dict[int, bool] = {}
+
+        # Memoization for queries over the type space + impl registry, which
+        # are frozen after GlobalResolve; enabled by finalize() only.
+        self.__memoize_enabled = False
+        self.__method_lookup_cache: dict[tuple[object, ...], LookupResult | None | _AmbiguousMethod] = {}
+        self.__deref_chain_cache: dict[int, tuple[int, ...]] = {}
 
     @property
     def raw_pointers(self) -> bool:
@@ -516,6 +531,11 @@ class TypeCtx:
         """
         self.__check_self_referential_types()
 
+        # Impl registration is complete (GlobalResolve has run) — type-level
+        # queries are now stable, so memoization can be enabled.
+        self.__memoize_enabled = True
+        self.__impl_registry.enable_memoization()
+
     def __check_self_referential_types(self) -> None:
         """
         Check for self-referential types that would cause infinite recursion during code generation.
@@ -667,6 +687,10 @@ class TypeCtx:
         Repeatedly apply try_deref until no more dereferences are possible.
         Returns the list of types encountered: [original, deref1, deref2, ...].
         """
+        if self.__memoize_enabled:
+            cached = self.__deref_chain_cache.get(type_id)
+            if cached is not None:
+                return list(cached)
         chain = [type_id]
         current = type_id
         while True:
@@ -675,6 +699,8 @@ class TypeCtx:
                 break
             chain.append(next_ty)
             current = next_ty
+        if self.__memoize_enabled:
+            self.__deref_chain_cache[type_id] = tuple(chain)
         return chain
 
     def method_lookup(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> LookupResult | None:
@@ -685,8 +711,18 @@ class TypeCtx:
         matching method implementations at each level. Returns the first match
         with the fewest dereferences.
         """
+        cache_key = (receiver.type_id, method_name, tuple(generic_args or ()), tuple(arg.type_id for arg in args))
+        if self.__memoize_enabled:
+            cache = self.__method_lookup_cache
+            if cache_key in cache:
+                cached = cache[cache_key]
+                if isinstance(cached, _AmbiguousMethod):
+                    raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+                return cached
+
         chain = self.deref_chain(receiver.type_id)
 
+        result: LookupResult | None = None
         for deref_count, type_at_level in enumerate(chain):
             candidates: list[LookupResult] = []
 
@@ -736,11 +772,16 @@ class TypeCtx:
                 candidates.append(LookupResult(method_id=final_method_id, deref_count=deref_count, impl=impl))
 
             if len(candidates) == 1:
-                return candidates[0]
+                result = candidates[0]
+                break
             if len(candidates) > 1:
+                if self.__memoize_enabled:
+                    self.__method_lookup_cache[cache_key] = _AMBIGUOUS_METHOD
                 raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
 
-        return None
+        if self.__memoize_enabled:
+            self.__method_lookup_cache[cache_key] = result
+        return result
 
     def iter_item_type(self, iter_type_id: int) -> int:
         """
