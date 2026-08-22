@@ -12,8 +12,8 @@
 //       删 1<<(maxDepth-depth+minDepth) 棵临时树并累计 check。
 //
 // NULL 迁移 (2026-08): 子指针 left/right 改为 Option 指针;
-//       空子树由 None 表达。Option 值禁止简单复制 → 构造/解包读取,
-//       递归参数用构造表达式传递。
+//       空子树由 None 表达。Option 值禁止简单复制 → match 解包读取
+//       (裸模式 Some(e)/None), 递归参数用构造表达式传递。
 //
 // Option<T&> 迁移 (2026-08): left/right 改为 Option<treeNode&> (niche
 //       24B, 省 16B/字段); NewTreeNode/BottomUpTree 返回 Option<treeNode&>;
@@ -46,30 +46,33 @@ fn BottomUpTree(depth: u64) -> Option<treeNode&> {
 
 fn ItemCheck(tree: treeNode&) -> i64 {
     let res: i64 = 1;
-    if tree.left.is_some() {
-        let lc: treeNode& = tree.left.unwrap()[0];
-        res = res + ItemCheck(lc);
+    match tree.left {
+        Some(lc) => { res = res + ItemCheck(lc); },
+        None => { },
     }
-    if tree.right.is_some() {
-        let rc: treeNode& = tree.right.unwrap()[0];
-        res = res + ItemCheck(rc);
+    match tree.right {
+        Some(rc) => { res = res + ItemCheck(rc); },
+        None => { },
     }
     return res;
 }
 
 fn DeleteTree(tree: Option<treeNode&>) {
-    if tree.is_none() {
-        return;
+    match tree {
+        None => { return; },
+        Some(tt) => {
+            match tt.left {
+                Some(l) => { DeleteTree(Option<treeNode&>.Some(l)); },
+                None => { },
+            }
+            match tt.right {
+                Some(r) => { DeleteTree(Option<treeNode&>.Some(r)); },
+                None => { },
+            }
+            // 后序: 子树已删, 释放本节点 (tt 释放后不再读)
+            del tt;
+        }
     }
-    let tt: treeNode& = tree.unwrap()[0];
-    if tt.left.is_some() {
-        DeleteTree(Option<treeNode&>.Some(tt.left.unwrap()[0]));
-    }
-    if tt.right.is_some() {
-        DeleteTree(Option<treeNode&>.Some(tt.right.unwrap()[0]));
-    }
-    // 后序: 子树已删, 释放本节点 (tt 释放后不再读)
-    del tt;
 }
 
 fn main() {
@@ -94,7 +97,10 @@ fn main() {
         let i: i64 = 0;
         while i < iterations {
             let tempTree: Option<treeNode&> = BottomUpTree(depth);
-            check = check + ItemCheck(tempTree.unwrap()[0]);
+            match tempTree {
+                Some(tt) => { check = check + ItemCheck(tt); },
+                None => { },
+            }
             DeleteTree(tempTree.move());
             i += 1;
         };
