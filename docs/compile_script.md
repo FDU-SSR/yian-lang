@@ -61,7 +61,13 @@ python3 -m compiler.main -o my_prog lib tests/array/assign.an
 python3 -m compiler.main -O2 lib tests/array/assign.an
 ```
 
-可选值：`0`, `1`, `2`, `3`。传递给 clang 的优化等级，默认 0。
+可选值：`0`, `1`, `2`, `3`。默认 0。`-O` 同时作用于三个位置：
+
+1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc/obj/asm），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
+2. **后端 target machine**：`create_target_machine(opt=N)`，`-O0` → 0；
+3. **链接 clang**：`clang -O<N>`。
+
+`-t ll` 输出始终为**未优化**的 IR（零优化保留，供调试）。注意 `-t bc` 导出的 bitcode 是优化后的 IR（非源码级）。
 
 ### 2.5 `--profile` — 打印各阶段耗时
 

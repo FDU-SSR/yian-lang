@@ -77,7 +77,7 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="LEVEL",
         default=0,
         choices=[0, 1, 2, 3],
-        help="Optimization level passed to clang (default: 0).",
+        help="Optimization level: LLVM IR passes + backend + clang link (default: 0).",
     )
     parser.add_argument(
         "--profile",
@@ -445,10 +445,10 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = output_path.parent
         stem = output_path.stem if output_path.suffix else output_path.name
         if args.target in ("ll", "bc", "obj", "asm"):
-            emitter.emit_module(llvm_module, str(out_dir), args.target, stem)
+            emitter.emit_module(llvm_module, str(out_dir), args.target, stem, opt_level=args.O)
         elif args.target == "exe":
             obj_path = out_dir / (stem + ".o")
-            emitter.emit_module(llvm_module, str(out_dir), "obj", stem)
+            emitter.emit_module(llvm_module, str(out_dir), "obj", stem, opt_level=args.O)
             __link_exe(obj_path, output_path, args.O)
         if args.profile:
             timings["emit"] = time.perf_counter() - emit_start

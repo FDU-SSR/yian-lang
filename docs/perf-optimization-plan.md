@@ -230,3 +230,55 @@ fasta / revcomp 未入选: 总成本倍率 <1.4× 且瓶颈在检查成本(编�
 ### 6.5 结尾声明
 
 本次仅策略分析与建议,**不改写任何 benchmark 代码**;改写(实施时须 fat + raw 两套同步)留待后续实施计划。
+
+## 7. LLVM IR 级优化启用(C1)与 trap 健全性论证
+
+> 本章记录 `-O` 映射到 LLVM IR pass pipeline 的实施(C1)及其对 fat 指针 trap 语义的健全性论证。实施对应 `.omo/plans/compiler-perf-optimization.md` todo 1(spike)+ todo 2(落地)。
+
+### 7.1 零 IR pass 发现(现状事实修正)
+
+改动前,`compiler/codegen/llvm/emit.py` 的发射路径为: parse_assembly → verify → 直接 emit_object/emit_assembly,**从不运行任何 LLVM IR 级优化 pass**;`create_target_machine(reloc="pic")` 未传 `opt`,走后端默认 `opt=2`。即所有 YIAN 程序实际以「**零 IR pass + 后端 O2**」运行。`docs/performance-analysis.md` §6 L277-283 的「O2→O3 对 YIAN IR 不产生代码差异」论断即由此而来: 该结论是「O2 与 O3 的后端差异」的实测,并非「IR 优化已生效」;IR 级优化(mem2reg/SROA/GVN 等)此前从未运行,是本次 C1 关闭的最大缺口。spike(todo 1)实测: O3 pipeline 在真实 YIAN IR(fat 指针 40B 聚合 + llvm.trap)上 verify() 通过,extractvalue 计数 44→18 / 42→18。
+
+### 7.2 -O × (IR pass, backend opt) 映射矩阵
+
+| -O | IR pass pipeline(PassManagerBuilder) | backend(`create_target_machine`) | 链接 clang |
+|---|---|---|---|
+| 0 | 不运行(直接发射) | `opt=0` | `clang -O0` |
+| 1 | `opt_level=1` + `populate(pm)` + `pm.run(mod)` | `opt=1` | `clang -O1` |
+| 2 | `opt_level=2` + `populate(pm)` + `pm.run(mod)` | `opt=2` | `clang -O2` |
+| 3 | `opt_level=3` + `populate(pm)` + `pm.run(mod)` | `opt=3` | `clang -O3` |
+
+- 接线: `-O` 值经 `compiler/main.py` 传入 `Emitter.emit_module(..., opt_level=args.O)`;IR pass 仅对非 `-t ll` 目标(bc/obj/asm/exe)生效;`-t ll` 路径直接 emit_ll,输出与改动前逐字节一致(零优化保留,供调试)。注意 `-t bc` 导出的 bitcode 为优化后 IR(非源码级),见 `docs/compile_script.md` §2.4。
+- llvmlite 0.44 API 形态(spike 验证): `pm = binding.create_module_pass_manager(); pmb = binding.PassManagerBuilder(); pmb.opt_level = N; pmb.populate(pm); pm.run(mod); mod.verify()` —— `PassManagerBuilder(opt_level=N)` 构造器 kwargs 会 TypeError,`opt_level` 是 setter 属性。
+
+### 7.3 trap 健全性论证(Exit -4 语义不变)
+
+**检查的 IR 形态**(`compiler/codegen/llvm/builder.py` `__emit_check`,L193-211): 每项 fat 检查 = 条件分支 `br i1 <cond>, ok, trap`;trap 块 = `call void @llvm.trap()` + `unreachable`。`llvm.trap` 是声明为 noreturn 的副作用调用(intrinsic,无 readnone/readonly 属性),优化器视为具有不可观察副作用、不可自由移动或删除。
+
+**论证结构**: LLVM 优化器对条件分支只有三类变换,每一类都保持「源语义下条件为真 → ok,为假 → trap」:
+
+1. **条件可证恒真** → 分支折叠为无条件跳到 ok;trap 块成为不可达,可被 dead-block elimination 删除。这类检查在源语义下**从不 trap**(否则条件不可能恒真),消除后仍从不 trap。
+2. **条件可证恒假** → 分支折叠为无条件跳到 trap 块,继续 trap。源语义下必 trap 的检查在优化后仍然 trap。
+3. **条件不可证** → 分支原样保留,检查完整存在。
+
+因此优化器消除的检查 = 条件可证恒真的检查(永不 trap 的检查),被折叠进 trap 块的检查 = 条件可证恒假的检查(必 trap 的检查);**trap 发生的 (程序, 输入) 集合逐位不变**,退出码 -4 语义不变。
+
+**不存在「删除 trap 调用本身」的变换**: `llvm.trap` 是带副作用的 noreturn 调用,不是 dead code,不会被 DCE 删除;`unreachable` 被 trap 调用支配——若删除 trap 调用,后续 reachable 的 `unreachable` 成为 UB,而优化器不主动引入 UB(且无任何 pass 有此动机)。LLVM 官方亦保证: 对 noreturn 调用的调用点不删除、不可达代码分析以其为终止边界。
+
+**检查条件不受篡改的前提**: 检查条件由 icmp 等整数值运算构成,优化器对其变换保持整数值语义;YIAN 的检查全部在指针访问**之前**发射且访问被检查保护,不存在「优化器把检查视作 UB 前提而删除」的路径(fat 指针无 null 解引用、无越界解引用裸状态,锁槽/帧锁检查条件均为良定义整型比较)。指针算术/比较变换在 LLVM 内存模型内保持语义。
+
+**护栏(负向约束,与论证配套)**: 禁止给释放/写锁槽函数添加 readonly/readnone 属性、禁止将锁槽 load 标记为 invariant——否则 LICM 可把 live 检查跨调用提升或消除,漏报 UAF,破坏 -4 语义。当前实现未添加任何此类属性。
+
+### 7.4 实施中发现: DSE 删除帧退出 SENTINEL 写(volatile 护栏)
+
+全量门禁首跑在 `tests/fat_cve/cve/CVE-2023-26463/`(悬垂返回指针 + 帧退出哨兵机制,规则 3.7.2)上暴露真实破坏: 该用例在 -O3 下期望 `Exit code -4`,实测退出 0——trap 丢失。基线(stash 还原、无 IR pass)实测退出 132(SIGILL,即 -4),确认破坏由 C1 的优化 pipeline 引入。
+
+**根因**: 帧退出 SENTINEL 写 `store i64 18446744073709551615, i64* %e_f` 的**唯一读者**是调用方经悬垂指针(指向已退出帧的锁槽)的 live 检查读。LLVM 内存模型把"经悬垂指针读已退出帧的内存"视为 UB,即该读"永不执行"→ DSE 判定 SENTINEL 写为死存储并删除;锁槽残留入口键值,调用方 live 检查 `槽 == 键` 误通过 → 继续读取已失效帧 → 退出 0。trap 块与检查分支本身均未被删除(优化后 IR 中 live 检查完好,仅哨兵写消失)。
+
+**修复(emit.py,仅优化路径)**: 对非 `-t ll` 目标且 `opt_level > 0` 时,在 parse_assembly 前把 IR 文本中的 SENTINEL 写改写为 `store volatile`(正则匹配 `store i64 18446744073709551615`)。volatile store 不可被 DSE 删除、不可与 volatile 操作重排;调用方 live 检查跨不可见调用(函数边界)必读到 SENTINEL → `SENTINEL != k_f` → trap → Exit -4。`-t ll` 输出不受影响(零优化路径不做任何改写,输出逐字节不变)。语义等价: volatile 只禁止删除/重排,不改变存储的值;合法程序从不读 SENTINEL(其 live 检查恒通过),故正确路径行为零变化。
+
+**为何不采用替代方案**: (a) builder.py 层直接发射 volatile store 会改变 `-t ll` 输出,违反零优化保留约束;(b) 禁用 DSE 等 pass 配置回退会摧毁 C1 的主要收益(mem2reg/SROA/GVN 同样依赖该管道),且 DSE 在 O1+ 全等级存在,无等级可退;(c) 给释放/锁槽写函数加属性属被禁护栏。volatile 标记是唯一"保持 -t ll 不变 + 保持优化收益 + 语义逐位保持"的落点。
+
+**残余风险与覆盖**: 帧锁入口键写(非常量值)未被标记,实测在 CVE-2023-26463 形态(帧槽仅被悬垂读)下 DSE 保留(所有读者与其间的写可证别名关系不同);若未来 LLVM 的 AA 强化将其删除,表现为悬垂访问不再 trap——由 fat_cve 负例闸门持续监控。堆锁槽的 SENTINEL 写发生在 stdlib 受限函数内部(不透明调用),LLVM 无法透视,天然免疫。
+
+**验证闸门**: 全量回归中 fat 负例(期望 `Exit code -4`)在 -O3(回归套件固定编译等级)下全部保持 -4;`-O0` 冒烟(编译 + 运行 Exit 0)补齐零优化路径覆盖。spike 亦实测负例 `fat_uaf.an` 经 O3 pipeline 后运行仍 Exit -4。
