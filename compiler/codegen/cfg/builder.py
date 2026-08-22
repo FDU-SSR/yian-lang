@@ -404,8 +404,8 @@ class CfgBuilder:
             self.__emit(IR.WriteLockSlot(lock_ptr=lock_ptr, value=sentinel))
             # C3:Delete 写锁槽 → 去重/合并状态失效(先补发挂起 InBounds 义务)
             self.__invalidate_checks()
-            # 动作②:整块交还——t8 的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
-            self.__emit(IR.Delete(ptr))
+        # 动作②:整块交还——t8 的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
+        self.__emit(IR.Delete(ptr))
         return self.__void_reg()
 
     def __translate_match(self, stmt: HIR.Match) -> IR.Value:
