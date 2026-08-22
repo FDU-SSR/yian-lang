@@ -69,6 +69,14 @@ SHOOTOUT_RAW_DIR = BENCH_DIR / "shootout_raw"
 REF_ROOT = ROOT / "bak" / "old_exp" / "performance"
 REF_OUT_DIR = OUT_DIR / "ref"
 
+# 金标准基线: 性能回归门禁 (scripts/check_perf_regression.py) 的对照数据, 由 --sync-baseline 写入
+BASELINE_CSV = ROOT / "docs" / "perf-baseline.csv"
+BASELINE_CSV_COMMENTS = (
+    "# docs/perf-baseline.csv — 性能回归门禁金标准基线 (由 --sync-baseline 写入)",
+    "# 每基准每态 (check/nocheck/raw) 绝对时间中位数 (ms); 判据 = check 态单侧 ±20% (仅拦变慢)",
+    "# fingerprint 字段 (hostname/machine/cpu_count/clang) 与 HEAD commit 由 check_perf_regression.py 环境护栏校验",
+)
+
 # 跟踪表: shootout 三态成本分解 (§3) 镜像, 每次 shootout 运行后由 _sync_performance_csv 合并同步
 PERFORMANCE_CSV = ROOT / "docs" / "performance.csv"
 # 列名中文镜像 §3, 倍率列数值 1.40 即 1.40× (无 × 后缀), ΔRSS 保留符号 (相对 ①raw 绝对 MB)
@@ -300,6 +308,22 @@ def machine_header() -> list[str]:
     return lines
 
 
+def machine_fingerprint() -> dict[str, str]:
+    """稳定机器指纹字段 (性能回归门禁环境比对用): hostname/机器架构/逻辑核数/clang 版本首行。"""
+    fp: dict[str, str] = {}
+    fp["hostname"] = platform.node() or "unknown"
+    fp["machine"] = platform.machine()
+    fp["cpu_count"] = str(os.cpu_count() or 0)
+    fp["clang"] = "n/a"
+    try:
+        res = subprocess.run(["clang", "--version"], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout:
+            fp["clang"] = res.stdout.splitlines()[0].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return fp
+
+
 def fmt_ms(v: float) -> str:
     return f"{v:.1f}"
 
@@ -528,6 +552,37 @@ def _sync_performance_csv(
     print(f"成本分解跟踪表同步 {PERFORMANCE_CSV} ({len(existing)} 基准)")
 
 
+def _sync_baseline_csv(specs: list[BenchSpec], rows: list[MeasRow]) -> None:
+    """写 docs/perf-baseline.csv (金标准基线, 由 --sync-baseline 写入)。
+
+    每基准每态 (check/nocheck/raw) 绝对时间中位数 + 机器指纹字段 + HEAD commit;
+    整文件覆盖 (重跑金标准即重建)。供 scripts/check_perf_regression.py 作 check 态
+    单侧 ±20% 判据与环境护栏比对。
+    """
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT, timeout=10
+        )
+        commit = res.stdout.strip() if res.returncode == 0 else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        commit = "unknown"
+    fp = machine_fingerprint()
+    out = [c + "\n" for c in BASELINE_CSV_COMMENTS]
+    out.append("# fingerprint: " + ",".join(f"{k}={v}" for k, v in fp.items()) + "\n")
+    out.append(f"# commit: {commit}\n")
+    out.append("基准,态,时间中位数(ms)\n")
+    n = 0
+    for spec in specs:
+        for state in ("check", "nocheck", "raw"):
+            r = next((x for x in rows if x.bench == spec.name and x.state == state), None)
+            if r is None:
+                continue
+            out.append(f"{spec.name},{state},{r.stats.time.med:.3f}\n")
+            n += 1
+    BASELINE_CSV.write_text("".join(out), encoding="utf-8")
+    print(f"金标准基线写入 {BASELINE_CSV} ({n} 行, commit {commit[:12]})")
+
+
 def render_shootout(
     specs: list[BenchSpec],
     rows: list[MeasRow],
@@ -650,6 +705,9 @@ def render_shootout(
     print(f"\n结果写入 {RESULTS_SHOOTOUT}\n")
 
     _sync_performance_csv(specs, rows)
+
+    if args.sync_baseline:
+        _sync_baseline_csv(specs, rows)
 
 
 def render_raw(
@@ -789,6 +847,11 @@ def main() -> int:
         "--compile-only",
         action="store_true",
         help="只编译不测量: 编译所选基准三态后退出 (编译验证)",
+    )
+    ap.add_argument(
+        "--sync-baseline",
+        action="store_true",
+        help="同步写 docs/perf-baseline.csv (金标准基线: 每基准每态绝对中位数 + 机器指纹 + HEAD commit)",
     )
     args = ap.parse_args()
     if args.compile_only and args.no_compile:
