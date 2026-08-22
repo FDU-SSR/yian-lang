@@ -110,7 +110,12 @@ class ImplRegistry:
             concrete_type_id = substs.get(generic_id, generic_id)
             for trait_id in required_traits:
                 substed_trait = self.__ctx.instantiate(trait_id, substs)
-                if not self.has_impl(concrete_type_id, substed_trait, visited, fresh):
+                # Recursive has_impl calls are context-dependent (they share
+                # the visited cycle-detection set), so never cache them — only
+                # the top-level fresh=True query is cacheable. `fresh` here
+                # merely records whether *we* created the visited set; it must
+                # not leak onto the recursive call.
+                if not self.has_impl(concrete_type_id, substed_trait, visited, False):
                     return False
         return True
 
