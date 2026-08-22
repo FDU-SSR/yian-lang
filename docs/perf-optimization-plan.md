@@ -282,3 +282,62 @@ fasta / revcomp 未入选: 总成本倍率 <1.4× 且瓶颈在检查成本(编�
 **残余风险与覆盖**: 帧锁入口键写(非常量值)未被标记,实测在 CVE-2023-26463 形态(帧槽仅被悬垂读)下 DSE 保留(所有读者与其间的写可证别名关系不同);若未来 LLVM 的 AA 强化将其删除,表现为悬垂访问不再 trap——由 fat_cve 负例闸门持续监控。堆锁槽的 SENTINEL 写发生在 stdlib 受限函数内部(不透明调用),LLVM 无法透视,天然免疫。
 
 **验证闸门**: 全量回归中 fat 负例(期望 `Exit code -4`)在 -O3(回归套件固定编译等级)下全部保持 -4;`-O0` 冒烟(编译 + 运行 Exit 0)补齐零优化路径覆盖。spike 亦实测负例 `fat_uaf.an` 经 O3 pipeline 后运行仍 Exit -4。
+
+## 8. 实施结果与后续发现(2026-08-22)
+
+> 本章记录 `compiler-perf-optimization` 计划 todo 1–7 的最终实施结果(C1–C5)与实施后的新发现。实施对应 `.omo/plans/compiler-perf-optimization.md`(todo 1–7);测量数据见 `docs/shootout-results.md` 与 `docs/performance.csv`(todo 7 重测,commit 6a5dc16)。
+
+### 8.1 C1–C5 实施结果摘要
+
+| 组件 | commit | 内容 | 效果(实数见各 task evidence) |
+|---|---|---|---|
+| C1 LLVM IR 级优化 | a4e68f2 | emit.py 接入 PassManagerBuilder pipeline(非 `-t ll` 目标);-O × (IR pass, backend opt, clang link) 矩阵;`create_target_machine(opt=N)`;DSE 删帧退出 SENTINEL 写 → volatile 护栏(§7.4) | check 态 14/14 基准绝对时间 -14.5%~-56.7%(todo 7 重测);`-t ll` 输出逐字节不变;gate 255/71/27/76 + pyright 0 全绿 |
+| C2 发射形状 | aa7a417 | 枚举 unit 构造去 alloca(纯 insertvalue);element_ptr 常量 0 偏移短路;数组字面量全常量 → 常量聚合;(d) gep 直插 / (e) 检查函数传参经残余分析跳过(task-5 §1) | fasta `-t ll` 1256→1187 行、insertvalue -61;list 1510 行不变(无命中项);行为逐字节不变 |
+| C3 CFG 检查去重/合并 | a0199aa | 同块同 SSA 相邻访问共享一次检查;新增 CheckElementAccess 合取节点;派生链挂起义务于失效点补发 | c3_demo.an 检查节点 28→26(EA+InBounds+SafeAccess → EA+CheckElementAccess);fat 负例 -4 全保持 |
+| C4 类型检查记忆化 | cd904bf | method_lookup/has_impl/deref_chain 顶层缓存(impl 冻结于 GlobalResolve 已验证);SymbolCtx.clone 增量 COW;DA 状态增量 | type_check 阶段 -33%(stress_tc.an)/-29%(string.an);错误消息逐字不变(.err.an 全过) |
+| C5 编译期低垂 | 3523f96 | 中间 dump 按需化(`--dump` 默认 off)+ 词法关键字 dict 查表 | 编译时间 -20.5%(exe)/-33.7%(`-t none`);dump 内容与改动前逐字节一致 |
+
+全量门禁(todo 2/3/4/5/6 各自独立验证,结果一致): `run_tests` 255 + `run_fat_tests` 71 + `run_raw_tests` 27 + `run_fat_cve` 76 + `pyright` 0 全绿;fat 负例(期望 `Exit code -4`)在 -O3(回归套件固定等级)路径下全部保持。
+
+### 8.2 零 IR pass 发现的出处确认
+
+todo 7 重测进一步证实 §7.1 的现状事实: 改动前所有 YIAN 程序实际以「**零 IR pass + 后端 O2**」运行。该发现的证据出处为 `docs/performance-analysis.md` §6 L277-283: 「O2→O3 对 YIAN IR 不产生代码差异」(list_raw 二进制逐字节相同)。该论断本意是「O2 与 O3 的**后端**差异」的实测, 常被误读为「IR 级优化已生效」; 实际上 IR 级优化(mem2reg/SROA/GVN 等)在 C1 之前**从未运行**, 这是 C1 关闭的最大缺口。`docs/perf-optimization-plan.md` 本身未持有「O3 折叠」假设——本节为新增记录而非修正。spike(todo 1)实测: O3 pipeline 在真实 YIAN IR(fat 40B 聚合 + llvm.trap)上 verify() 通过, extractvalue 44→18 / 42→18。
+
+### 8.3 trap 健全性论证: §7.3 引用 + C3 合取谓词补充
+
+§7.3 已给出 C1 的 trap 健全性论证(检查 = `br cond, ok, trap`;优化器对条件分支仅三类变换, trap 发生的 (程序, 输入) 集合逐位不变;llvm.trap 为 noreturn 副作用调用, DCE 不删;volatile SENTINEL 护栏)。此处补充 **C3(检查合并)的健全性论证**:
+
+C3 的合并检查 `CheckElementAccess` 是原三条检查的**合取谓词**: 派生良构 + i128 无回绕(ElementArith)∧ in_bounds(elem,1)(规则 3.5.2)∧ live(elem)(定义 8), 不丢 no-wrap/live 任一子项;去重仅限同块同 SSA 指针值、访问相邻(中间无 Delete/WriteLockSlot/调用/终止/块切换);挂起义务(被跳过的 one-past-end InBounds)在失效点(调用/Delete/终止符)补发, 保证 one-past-end 的 elem 取字段在任何逃逸前 trap。因此:
+
+- **去重路径**: 原三检查同时通过 ⇔ 合并检查通过;任一子项失败 → trap(合取谓词禁止弱化);
+- **补发路径**: 义务补发后检查序列与原地检查等价, trap 时机不晚于原序列;
+- **与 C1 独立叠加**: C3 在 CFG/IR 层合并检查发射, C1 在 LLVM 层做代码生成优化, 二者组合下 fat 负例(期望 -4)全部保持(todo 3 门禁 + todo 7 重测验证)。
+
+### 8.4 新发现: C1 的 O3 消除 raw 态 free → binarytree 块复用失效
+
+todo 7 重测发现唯一绝对劣化项: binarytree **raw 态**时间 6038.7→8953.9 ms(+48.3%), 峰值 RSS 129.1→9366.4 MB(×73);5/5 样本 RSS 恒为 9591232 KB(确定性复现, 非测量错误)。check/nocheck 态 RSS 均正常(257.0 MB, 与基线一致)。影响面: 14×3 中仅 binarytree raw 绝对劣化;queen raw RSS 2.2→12.5 MB、sieve raw 2.8→3.1 MB 为同类轻度泄漏。
+
+**二分定位**: git worktree 于 a4e68f2(C1 仅, 无 C2/C3/C5)编译同一 raw 源, RSS = 9590784 KB ≈ HEAD → 元凶 = **C1(LLVM IR 优化 pass)**, 与 C2/C3/C5 无关。
+
+**OS 层证据**(strace): HEAD 二进制 **72,655 次 brk** 调用、堆跨度 **9.15 GB**、brk 地址严格单调递增(无任何复用);基线二进制 **995 次 brk**、堆跨度 **125 MB**(正常复用)。堆随 3.08 亿次节点分配单调增长(308M × ~30B ≈ 9.2 GB, 与观测一致)。
+
+**根因机制**(假设, 有 OS 层证据支撑): raw 态 `dyn`/`del` 直接发射 libc malloc/free(`compiler/codegen/llvm/builder.py` L389/L421-433, intrinsics 表 "malloc"/"free");O3 下 free 的唯一可观察效果(归还内存)在「块内容于 free 前已死」的路径上可被 LLVM 消除 → **free 被删** → 分配器从不复用已释放块 → 泄漏式增长。fat 态 free 包裹锁槽 SENTINEL 写(builder.py L421)等不可消除副作用, 故 check/nocheck 态完全正常。
+
+**正确性/安全影响**: 无。输出逐字节一致(binarytree/list/towers 三基准三态 diff 为空)、exit 0 全部通过;raw 态本无检查(零安全参照基线);计划 C1 护栏(锁槽/写锁槽函数属性)未违反, fat 态 CVE/fat 全量闸门全绿(task-2/task-3 evidence)。
+
+**处置**: 不回退 C1(回退将使全部 14 基准 ×3 态绝对时间回到 2–12 倍;异常仅影响 42 个态测量中的 1 个 raw 态, 且 raw 为「零安全」参照基线)。
+
+**follow-up 建议**:
+1. 定位具体消除 pass(候选: DSE / Attributor 的 malloc/free 消除);
+2. 对 raw 态 free 加保守护栏(如 noinline 或 volatile 屏障), 阻止优化器删除 free;或
+3. 接受 raw 态该基准的内存特征并在文档中注明。
+
+`docs/performance.csv` 中 binarytree ΔRSS -9109.41 为该异常的忠实记录(脚本自动同步, 未手改)。
+
+### 8.5 后续方向(deferred)
+
+- 表示级重构(胖指针压缩 / Low-fat / CHERI / SoftBound)维持 Scope OUT;
+- llvm.assume 注入、niche/NPO 优化维持 deferred(与 security.md 论证关系未评估);
+- C2 残余子项(d) gep Ref/Slice 直插与 (e) 检查函数避免整结构传参, 经残余分析判定无收益或需表示级重构(见 task-5 §1), 不实施;
+- C3 跨块/循环检查提升留待后续;
+- raw 态 free 护栏见 §8.4 follow-up。
