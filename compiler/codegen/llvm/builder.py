@@ -1,5 +1,10 @@
+# pyright: reportUnknownMemberType=false
 """
 LLBuilder — wraps llvmlite ``ir.IRBuilder`` to hide LLVM-level details.
+
+llvmlite 0.44 leaves the operand types of several dynamic IRBuilder methods
+unspecified; suppress that dependency-boundary noise while keeping every other
+strict Pyright diagnostic enabled for this module.
 """
 
 from __future__ import annotations

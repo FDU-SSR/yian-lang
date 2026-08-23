@@ -1,5 +1,10 @@
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 """
 LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
+
+llvmlite 0.44 does not fully type IRBuilder operands or mixed IR type lists.
+These two dependency-boundary diagnostics are disabled locally; the remainder
+of strict Pyright stays enabled.
 """
 
 from __future__ import annotations
