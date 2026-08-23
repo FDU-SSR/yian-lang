@@ -1,7 +1,6 @@
 // 同族回归:循环内枚举构造(construct_enum_variant 临时 alloca)
 // 修复前:临时 alloca 发到循环块 → llvmlite 动态栈分配 → 大迭代栈泄漏 SIGSEGV
 // 修复后:entry 块提升 → exit 0
-@BitCopy
 enum Mode {
     A,
     B { v: i64 },

@@ -29,7 +29,6 @@
 from std.core.io import print;
 from std.core.slice import from_raw_parts;
 
-@BitCopy
 struct AminoAcid {
     symbol: u8,
     prob: f64,

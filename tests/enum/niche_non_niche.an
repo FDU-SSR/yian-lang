@@ -59,7 +59,7 @@ fn main() {
 
     // 嵌套 Option 语义仍正常(外层走 tag,内层走 niche)
     let inner_some: Option<i32*> = Option<i32*>.Some(p);
-    let outer: Option<Option<i32*>> = Option<Option<i32*>>.Some(inner_some.move());
+    let outer: Option<Option<i32*>> = Option<Option<i32*>>.Some(inner_some);
     let inner_none: Option<i32*> = Option<i32*>.None;
     let outer_none: Option<Option<i32*>> = Option<Option<i32*>>.None;
     let v3: i32 = match outer {

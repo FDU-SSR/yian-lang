@@ -44,14 +44,14 @@ fn main() {
     // unwrap_err — returns E* on Err
     assert *res2.unwrap_err() == 1: "unwrap_err on Err should return the error";
 
-    // Clone res1 — verify clone equals original, original unchanged
-    let res3: Result<i32, ErrorCode> = res1.clone();
+    // Copy res1 — assignment copies the value, original unchanged
+    let res3: Result<i32, ErrorCode> = res1;
     assert res3.is_ok(): "res3 should be Ok";
     assert *res3.unwrap() == 42: "res3 should unwrap to 42";
-    assert res1.is_ok(): "original should be unchanged after clone";
+    assert res1.is_ok(): "original should be unchanged after copy";
 
-    // Clone res2
-    let res4: Result<i32, ErrorCode> = res2.clone();
+    // Copy res2
+    let res4: Result<i32, ErrorCode> = res2;
     assert res4.is_err(): "res4 should be Err";
     assert *res4.unwrap_err() == 1: "res4 should unwrap to error code 1";
 

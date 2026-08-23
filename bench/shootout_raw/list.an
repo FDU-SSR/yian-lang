@@ -21,6 +21,9 @@
 // del 直接作用于 match 所得 T& (del-view: del T& 合法, 零 bitcast;
 // raw 下同样成立; T&→T* 无隐式折算, 故释放形参保持 T&)。
 //
+// 赋值回归 (2026-08): 赋值/传参按位复制, Option<Element&> 直接传递,
+//       不再需要 clone/move 调用。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/list.an -o build/shootout_check/list
 // 预期: exit 0 (断言全过)
 
@@ -31,8 +34,8 @@ struct Element {
     next: Option<Element&>,
 }
 
-// 非破坏性复制 Option<Element&>(Option 值禁止简单复制,clone 不实现于
-// struct 指针 payload → 经取址 + match 解包重建)
+// 非破坏性复制 Option<Element&>(按位复制下 Option 值可直接传递,
+// 此辅助保留以最小化 diff; 经 match 解包重建与直接赋值等价)
 fn opt_copy(src: Option<Element&>*) -> Option<Element&> {
     return match (*src) {
         Some(e) => Option<Element&>.Some(e),
@@ -58,7 +61,7 @@ fn Element_make_list(length: i32) -> Option<Element&> {
         return Option<Element&>.None;
     }
     let rest_of_list: Option<Element&> = Element_make_list(length - 1);
-    return Option<Element&>.Some(dyn Element(length, rest_of_list.move()));
+    return Option<Element&>.Some(dyn Element(length, rest_of_list));
 }
 
 fn Element_length_method(self: Element&) -> i32 {
@@ -97,7 +100,7 @@ fn Element_free_method(self: Element&) {
                 };
                 // 先读 next 再释放 cn (无 UAF: next 已取, cn 释放后不再读)
                 del cn;
-                current = next.move();
+                current = next;
             }
         }
     };
@@ -147,7 +150,7 @@ fn tail(x: Option<Element&>, y: Option<Element&>, z: Option<Element&>) -> Option
             tail(opt_copy(&next_z), opt_copy(&x), opt_copy(&y))
         );
     }
-    return z.move();
+    return z;
 }
 
 fn free_list(e: Option<Element&>*) {

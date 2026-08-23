@@ -23,7 +23,6 @@
 
 from std.core.io import print;
 
-@BitCopy
 struct Planet {
     x: f64,
     y: f64,

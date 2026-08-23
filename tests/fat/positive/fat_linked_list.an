@@ -46,7 +46,7 @@ fn main() {
             next = Option<Node*>.None;
         };
         del pn;
-        p = next.move();
+        p = next;
         count += 1;
     };
     assert count == 3: "expected exactly 3 deleted nodes";

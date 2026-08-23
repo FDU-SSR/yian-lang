@@ -9,18 +9,11 @@ fn main() {
     for x in &vec {
         assert *x == vec[u64(*x)];
     }
-    assert vec.is_valid(); // Ensure original is still valid
 
-    // Test moving cloned iterator
-    for x in vec.clone() {
+    // Test by-value iterator (按位复制: 迭代不消费原值)
+    for x in vec {
         assert *x == vec[u64(*x)];
     }
-    assert vec.is_valid(); // Ensure original is still valid
-
-    // Test moving iterator
-    for x in vec.move() {
-        // nop
-    }
-    assert !vec.is_valid(); // Ensure original is invalidated
+    assert vec.len() == 5: "original vec remains valid after by-value iteration";
 
 }

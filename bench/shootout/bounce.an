@@ -24,12 +24,10 @@ fn abs_int(x: i32) -> i32 {
     return x;
 }
 
-@BitCopy
 struct Random {
     seed: i32,
 }
 
-@BitCopy
 struct Ball {
     x: i32,
     y: i32,
@@ -37,19 +35,16 @@ struct Ball {
     y_vel: i32,
 }
 
-@BitCopy
 struct RandomResult {
     random_state: Random,
     value: i32,
 }
 
-@BitCopy
 struct BallInitResult {
     ball: Ball,
     random_state: Random,
 }
 
-@BitCopy
 struct BounceResult {
     ball: Ball,
     bounced: bool,

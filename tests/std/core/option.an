@@ -30,22 +30,22 @@ fn main() {
     assert opt2.is_some(): "opt2 should now be Some";
     assert *opt2.unwrap_or(&0) == 99: "opt2 should unwrap to 99";
 
-    // Clone opt2 — verify both clone and original
-    let opt3: Option<i32> = opt2.clone();
+    // Copy — assignment copies the value (按位复制), original unchanged
+    let opt3: Option<i32> = opt2;
     assert opt3.is_some(): "opt3 should be Some";
     assert *opt3.unwrap_or(&0) == 99: "opt3 should unwrap to 99";
-    assert *opt2.unwrap_or(&0) == 99: "original should be unchanged after clone";
+    assert *opt2.unwrap_or(&0) == 99: "original should be unchanged after copy";
 
     // unwrap — returns T*; must dereference to compare value
     let opt4: Option<i32> = Option<i32>.Some(77);
     assert *opt4.unwrap() == 77: "unwrap should return the inner value";
 
-    // Move trait: is_valid / invalidate
+    // Bitcopy semantics: assigning copies the value, original stays valid
     let opt5: Option<i32> = Option<i32>.Some(55);
-    assert opt5.is_valid(): "opt5 should be valid (is Some)";
-    let opt6 = opt5.move();
-    assert opt6.is_valid(): "opt6 should be valid (is Some)";
-    assert !opt5.is_valid(): "opt5 should be invalid after invalidate";
-    assert opt5.is_none(): "opt5 should be None after invalidate";
+    let opt6 = opt5;
+    assert opt6.is_some(): "opt6 should be Some";
+    assert *opt6.unwrap() == 55: "opt6 should unwrap to 55";
+    assert opt5.is_some(): "opt5 should remain Some after bitcopy";
+    assert *opt5.unwrap() == 55: "opt5 should still unwrap to 55";
 
 }

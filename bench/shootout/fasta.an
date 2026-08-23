@@ -28,7 +28,6 @@
 
 from std.core.io import print;
 
-@BitCopy
 struct AminoAcid {
     symbol: u8,
     prob: f64,

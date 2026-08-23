@@ -31,14 +31,14 @@ fn main() {
     let n3: Option<u64> = iter.next();
     assert n3.is_none(): "fourth next should be None (past end)";
 
-    // Clone: clone is independent from original
+    // Copy: assignment copies the value (按位复制), independent from original
     let r4: Range<u64> = 10u64..15;
-    let cloned: Range<u64> = r4.clone();
-    assert cloned == r4: "clone should equal original";
-    // Advance original — clone should be unaffected
+    let cloned: Range<u64> = r4;
+    assert cloned == r4: "copy should equal original";
+    // Advance original — copy should be unaffected
     let _ = r4.next();
     assert r4.start == 11: "original start should advance after next";
-    assert cloned.start == 10: "cloned start should be unchanged";
+    assert cloned.start == 10: "copied start should be unchanged";
 
     // for-in loop (uses IntoIterator blanket impl)
     let sum: u64 = 0;

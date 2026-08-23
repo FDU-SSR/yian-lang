@@ -12,14 +12,14 @@ fn main() {
     tuple3[1].push(true);
     tuple3[2].push('a');
 
-    // Test cloning
-    let cloned_tuple2 = tuple2.clone();
+    // Test deep copy (按位复制下直接拷贝会共享缓冲, 显式 to_vec 深拷贝)
+    let cloned_tuple2 = (tuple2[0].as_slice().to_vec(), tuple2[1].as_slice().to_vec());
     assert cloned_tuple2[0][0] == 1;
     assert cloned_tuple2[1][0] == true;
     assert &cloned_tuple2[0][0] != &tuple2[0][0]; // Ensure deep copy
     assert &cloned_tuple2[1][0] != &tuple2[1][0]; // Ensure deep copy
 
-    let cloned_tuple3 = tuple3.clone();
+    let cloned_tuple3 = (tuple3[0].as_slice().to_vec(), tuple3[1].as_slice().to_vec(), tuple3[2].as_slice().to_vec());
     assert cloned_tuple3[0][0] == 1;
     assert cloned_tuple3[1][0] == true;
     assert cloned_tuple3[2][0] == 'a';
@@ -27,19 +27,19 @@ fn main() {
     assert &cloned_tuple3[1][0] != &tuple3[1][0]; // Ensure deep copy
     assert &cloned_tuple3[2][0] != &tuple3[2][0]; // Ensure deep copy
 
-    // Test moving
-    let moved_tuple2 = tuple2.move();
-    assert moved_tuple2[0][0] == 1;
-    assert moved_tuple2[1][0] == true;
-    assert !tuple2[0].is_valid(); // Ensure original is invalidated
-    assert !tuple2[1].is_valid(); // Ensure original is invalidated
+    // 按位复制: 显式深拷贝副本与原值独立, 原值保持有效
+    let copied_tuple2 = (tuple2[0].as_slice().to_vec(), tuple2[1].as_slice().to_vec());
+    assert copied_tuple2[0][0] == 1;
+    assert copied_tuple2[1][0] == true;
+    assert tuple2[0][0] == 1: "original tuple2[0] still valid";
+    assert tuple2[1][0] == true: "original tuple2[1] still valid";
 
-    let moved_tuple3 = tuple3.move();
-    assert moved_tuple3[0][0] == 1;
-    assert moved_tuple3[1][0] == true;
-    assert moved_tuple3[2][0] == 'a';
-    assert !tuple3[0].is_valid(); // Ensure original is invalidated
-    assert !tuple3[1].is_valid(); // Ensure original is invalidated
-    assert !tuple3[2].is_valid(); // Ensure original is invalidated
+    let copied_tuple3 = (tuple3[0].as_slice().to_vec(), tuple3[1].as_slice().to_vec(), tuple3[2].as_slice().to_vec());
+    assert copied_tuple3[0][0] == 1;
+    assert copied_tuple3[1][0] == true;
+    assert copied_tuple3[2][0] == 'a';
+    assert tuple3[0][0] == 1: "original tuple3[0] still valid";
+    assert tuple3[1][0] == true: "original tuple3[1] still valid";
+    assert tuple3[2][0] == 'a': "original tuple3[2] still valid";
 
 }

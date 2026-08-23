@@ -12,8 +12,6 @@
 //       其长度 == 30。free_list 释放整条链 (含头节点)。
 //
 // NULL 迁移 (2026-08): 链表尾哨兵改为 Option 指针 (next 字段)。
-// Option<T*> 受赋值约束 (不可简单复制, clone 对 struct 指针 payload
-// 不实现) → 辅助函数 opt_copy/opt_next 经取址参数非破坏性重建 Option;
 // 遍历位置一律用 match 解包读取 (match 风格, 2026-08; towers 同款)。
 // Element_length_method 的 self 为 Element& (入参非空, 单元素解引用;
 // 内部 current 保持 Option 需遍历)。
@@ -27,6 +25,9 @@
 // binarytree 同款直连先例)。del 直接作用于 match 所得 T& (del-view:
 // del T& 合法, 零 bitcast; T&→T* 无隐式折算, 故释放形参保持 T&)。
 //
+// 赋值回归 (2026-08): 赋值/传参按位复制, Option<Element&> 直接传递
+//       (tail(opt_copy(x), ...) / free_list(x)), 不再需要 clone/move 调用。
+//
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/list.an -o build/shootout_check/list
 // 预期: exit 0 (断言全过)
 
@@ -37,8 +38,8 @@ struct Element {
     next: Option<Element&>,
 }
 
-// 非破坏性复制 Option<Element&>(Option 值禁止简单复制,clone 不实现于
-// struct 指针 payload → 经取址 + match 解包重建)
+// 非破坏性复制 Option<Element&>(按位复制下 Option 值可直接传递,
+// 此辅助保留以最小化 diff; 经 match 解包重建与直接赋值等价)
 fn opt_copy(src: Option<Element&>) -> Option<Element&> {
     return match src {
         Some(e) => Option<Element&>.Some(e),
@@ -64,7 +65,7 @@ fn Element_make_list(length: i32) -> Option<Element&> {
         return Option<Element&>.None;
     }
     let rest_of_list: Option<Element&> = Element_make_list(length - 1);
-    return Option<Element&>.Some(dyn Element(length, rest_of_list.move()));
+    return Option<Element&>.Some(dyn Element(length, rest_of_list));
 }
 
 fn Element_length_method(self: Element&) -> i32 {
@@ -103,7 +104,7 @@ fn Element_free_method(self: Element&) {
                 };
                 // 先读 next 再释放 cn (无 UAF: next 已取, cn 释放后不再读)
                 del cn;
-                current = next.move();
+                current = next;
             }
         }
     };
@@ -143,17 +144,17 @@ fn is_shorter_than(x: Option<Element&>, y: Option<Element&>) -> bool {
 }
 
 fn tail(x: Option<Element&>, y: Option<Element&>, z: Option<Element&>) -> Option<Element&> {
-    if is_shorter_than(&y, &x) {
-        let next_x: Option<Element&> = opt_next(&x);
-        let next_y: Option<Element&> = opt_next(&y);
-        let next_z: Option<Element&> = opt_next(&z);
+    if is_shorter_than(y, x) {
+        let next_x: Option<Element&> = opt_next(x);
+        let next_y: Option<Element&> = opt_next(y);
+        let next_z: Option<Element&> = opt_next(z);
         return tail(
-            tail(opt_copy(&next_x), opt_copy(&y), opt_copy(&z)),
-            tail(opt_copy(&next_y), opt_copy(&z), opt_copy(&x)),
-            tail(opt_copy(&next_z), opt_copy(&x), opt_copy(&y))
+            tail(opt_copy(next_x), opt_copy(y), opt_copy(z)),
+            tail(opt_copy(next_y), opt_copy(z), opt_copy(x)),
+            tail(opt_copy(next_z), opt_copy(x), opt_copy(y))
         );
     }
-    return z.move();
+    return z;
 }
 
 fn free_list(e: Option<Element&>) {
@@ -172,12 +173,12 @@ fn benchmark_list() -> i32 {
     let y: Option<Element&> = Element_make_list(30);
     let z: Option<Element&> = Element_make_list(20);
 
-    let result: Option<Element&> = tail(opt_copy(x.clone()), opt_copy(y.clone()), opt_copy(z.clone()));
-    let l: i32 = Element_length(result.move());
+    let result: Option<Element&> = tail(opt_copy(x), opt_copy(y), opt_copy(z));
+    let l: i32 = Element_length(result);
 
-    free_list(x.clone());
-    free_list(y.clone());
-    free_list(z.clone());
+    free_list(x);
+    free_list(y);
+    free_list(z);
 
     return l;
 }

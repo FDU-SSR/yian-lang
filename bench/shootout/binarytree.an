@@ -12,14 +12,17 @@
 //       删 1<<(maxDepth-depth+minDepth) 棵临时树并累计 check。
 //
 // NULL 迁移 (2026-08): 子指针 left/right 改为 Option 指针;
-//       空子树由 None 表达。Option 值禁止简单复制 → match 解包读取
-//       (裸模式 Some(e)/None), 递归参数用构造表达式传递。
+//       空子树由 None 表达。
 //
 // Option<T&> 迁移 (2026-08): left/right 改为 Option<treeNode&> (niche
 //       24B, 省 16B/字段); NewTreeNode/BottomUpTree 返回 Option<treeNode&>;
 //       dyn treeNode(...) 保持 T* 分配。ItemCheck 读路径为 treeNode&
 //       零 bitcast; DeleteTree 释放路径直接 del T& (del-view: del T&
 //       合法, 零 bitcast)。
+//
+// 赋值回归 (2026-08): 赋值/传参按位复制, Option 值直接传递
+//       (dyn treeNode(left, right) / DeleteTree(stretchTree)), 不再需要
+//       move 调用。
 //
 // 编译: python3 -m compiler.main -O2 lib bench/shootout/binarytree.an -o build/shootout_check/binarytree
 // 预期: exit 0 (断言全过)
@@ -32,14 +35,14 @@ struct treeNode {
 }
 
 fn NewTreeNode(left: Option<treeNode&>, right: Option<treeNode&>) -> Option<treeNode&> {
-    return Option<treeNode&>.Some(dyn treeNode(left.move(), right.move()));
+    return Option<treeNode&>.Some(dyn treeNode(left, right));
 }
 
 fn BottomUpTree(depth: u64) -> Option<treeNode&> {
     if depth > 0 {
         let left_child: Option<treeNode&> = BottomUpTree(depth - 1);
         let right_child: Option<treeNode&> = BottomUpTree(depth - 1);
-        return NewTreeNode(left_child.move(), right_child.move());
+        return NewTreeNode(left_child, right_child);
     }
     return NewTreeNode(Option<treeNode&>.None, Option<treeNode&>.None);
 }
@@ -87,7 +90,7 @@ fn main() {
 
     let stretchDepth: u64 = maxDepth + 1;
     let stretchTree: Option<treeNode&> = BottomUpTree(stretchDepth);
-    DeleteTree(stretchTree.move());
+    DeleteTree(stretchTree);
 
     let longLivedTree: Option<treeNode&> = BottomUpTree(maxDepth);
 
@@ -101,13 +104,13 @@ fn main() {
                 Some(tt) => { check = check + ItemCheck(tt); },
                 None => { },
             }
-            DeleteTree(tempTree.move());
+            DeleteTree(tempTree);
             i += 1;
         };
         depth += 2;
     };
 
-    DeleteTree(longLivedTree.move());
+    DeleteTree(longLivedTree);
 
     assert check % 256 == 176: "binarytree: check % 256 mismatch";
     print("binarytree pass\n");

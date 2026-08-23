@@ -4,7 +4,6 @@
 
 from std.core.ops import Add, Sub, Mul, Div, Rem, Neg;
 
-@BitCopy
 struct Value<T> {
     pub value: T,
 }

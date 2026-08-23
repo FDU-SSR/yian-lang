@@ -279,7 +279,7 @@ pub fn print(s: str) {
 }
 
 pub fn readline() -> String {
-    Stdin.read_line().unwrap()
+    *Stdin.read_line().unwrap()
 }
 
 // =====================================================================
@@ -290,7 +290,7 @@ pub fn read_file(path: str) -> String {
     let f = File.open(path, OpenMode.Read).unwrap();
     let content = f.read_to_string().unwrap();
     f.drop();
-    return content;
+    return *content;
 }
 
 pub fn write_file(path: str, content: str) {

@@ -84,7 +84,7 @@ fn free_tree(arr: Option<array_tree[]>) {
     let i: u64 = 0;
     while i < view.len() {
         if view[i].children.is_some() && view[i].child_count > 0 {
-            free_tree(view[i].children.move());
+            free_tree(view[i].children);
         }
         i += 1;
     };
@@ -99,7 +99,7 @@ fn benchmark_storage(root_depth: i32) -> i64 {
     let root_count: i32 = 0;
     let result: Option<array_tree[]> = build_tree_depth(root_depth, random, &count, &root_count);
 
-    free_tree(result.move());
+    free_tree(result);
     del random;
 
     return count;

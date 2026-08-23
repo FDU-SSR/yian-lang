@@ -51,7 +51,7 @@ fn main() {
             nx = Option<Node*>.None;
         };
         del dn;
-        d = nx.move();
+        d = nx;
         count += 1;
     }
     assert count == 3: "deleted 3 nodes";
