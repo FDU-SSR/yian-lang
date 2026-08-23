@@ -2,7 +2,6 @@
 
 from cyctest.main import unwrap_value;
 
-@BitCopy
 pub struct Value<T> {
     pub value: T,
 }
