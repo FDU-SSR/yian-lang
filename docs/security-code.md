@@ -1,345 +1,188 @@
-# 胖指针内存安全机制——编译器实现
+# SecL 内存安全机制：编译器与运行时实现
 
-本文档是《胖指针内存安全机制》的编译器实现篇（第 7-11 章），覆盖 CFG 层引入设计、类型系统约束形式化、相关工作、评估方法论与局限及未来工作。理论篇《形式化论证》（docs/security.md）涵盖记号与术语及第 1-6 章。
+本文说明 [`security.md`](security.md) 的语义如何落实到当前代码。描述以仓库中的实际实现为准，
+不再使用早期原型的 tree-sitter、Lian、GIR、统一三字段指针或旧 `MemoryBlock` 模型。
 
-## 7. CFG 层引入设计
+## 1. 编译流水线
 
-本章把《形式化论证》第 3 章「操作 ↔ CFG 节点」映射（表 3）深化到节点层，回答核心问题：把胖指针引入 CFG 层，是否如预想那样只需修改几个内存相关原语。论证分六步：§7.1 逐一分析 11 个内存节点（nullptr 字面量节点已随关键字移除，2026-08；tiered-pointers t3 另增检查节点 CheckRefAccess）的现状、表示变化与检查插入规则；§7.2 论证胖指针作为分级字段值类型（40/32/24B）沿数据流传播的成本，检验「最小改动集」假设；§7.3 覆盖其余 24 类节点；§7.4 给出表示方案；§7.5 给出检查层级方案；§7.6 给出可行性结论与风险。符号与规则全部沿用《形式化论证》第 2-3 章（定义 1-18、规则 3.2.1-3.7.2），不重新定义。
+当前完整流水线为：
 
-### 7.1 十一个内存节点逐一分析
+```text
+.an source
+  -> Lexer -> Tokens
+  -> Parser -> AST
+  -> semantic passes and TypeCheck -> typed HIR
+  -> CfgTranslator -> CFG IR
+  -> LLTranslator -> LLVM IR
+  -> LLVM optimization/backend + clang link -> native executable
+```
 
-分析格式统一为四段：**现状**（当前工作方式，引用 `ir.py` 行号与 LL 降低）→ **胖指针表示下的变化** → **检查插入规则**（引《形式化论证》第 3 章）→ **可行性结论**。结论三档：**直接**（节点语义不变或仅编码选择）、**需改造**（翻译逻辑或表示须修改）、**不适用**（不涉及指针值）。
+`compiler/main.py` 显式组织这些阶段。类型信息由 `compiler/analysis/ty` 维护；类型检查和 HIR
+构造位于 `compiler/analysis`；安全检查在 `compiler/codegen/cfg` 变成一等 CFG 节点，再由
+`compiler/codegen/llvm` 降为支配实际访问的比较、条件分支和 trap。
 
-**VarPtr**（`ir.py` 节点类）。现状：取局部变量槽地址，LL 层 `var_ptr` 直接返回 alloca 指针（`llvm/builder.py:317`），结果类型 `T*`。变化：结果须为 5 字段 $\langle a_x, e_f, k_f, 0, 1 \rangle$（规则 3.5.1、定义 15；取址指向单个元素，数组取址元素类型为数组类型），$\text{data} = a_x$ 来自槽地址，`lock_ptr`/`key` 来自帧锁；帧锁 $\langle e_f, k_f \rangle$ 由帧进入协议（《形式化论证》§2.6、规则 3.7.1）维护，CFG 层须在函数入口实体化为寄存器值并传入每个取址点。**取址恒产 `T*`**（5 字段，tiered-pointers t1）；`T[]`/`T&` 由 coerce 降级派生（§8.1 规则 8.1.13-8.1.15），VarPtr 不直接合成。检查插入：取址无 trap 前提（规则 3.5.1）。结论：**需改造**（帧锁实体化 + 5 字段合成）。
-**Alloca**（`ir.py` 节点类）。现状：分配栈槽并存入初值（`alloca_store`）。变化：若局部变量为指针类型，槽位由 8B 按级扩大——`T*` 40B / `T[]`·`str` 32B / `T&` 24B（tiered-pointers t2），其余槽位不变；`PointerType`/`SliceType`/`RefType` 直接映射为分级字段结构（§7.4）后槽位随类型表自动扩大，节点翻译逻辑免改。检查插入：无（分配非访问）。结论：**需改造**（仅槽位布局，强度最低）。补充：分级槽位扩展与布局表 `__stable_layout` 联动，其余槽位不变。
-**FieldPtr**（`ir.py` 节点类）。现状：GEP 基址加 `[0, field_index]`。变化：子对象重锚定（规则 3.5.2），$\text{data}' = \text{addr}_T(p_s, 0) + \delta$，$\text{index}' = 0$，$\text{size}' = 1$，锁字段继承；字段字节偏移 δ 由布局表求得。检查插入：**分级**——`s` 为 `T*`/派生指针时插 `in_bounds(p_s, 1)`（`CheckInBounds`，规则 3.5.2 前提，对 one-past-end 的 `s` 取字段 trap）；`s` 为 `T&` 引用时 `in_bounds` 恒真（定义 12 退化），仅插 `CheckRefAccess`（`live`，t3）。结论：**需改造**（重锚定 + 分级界检查 + 布局偏移）。
-**ElementPtr**（`ir.py` 节点类）。现状：单节点承载指针算术 $p \pm n$（`&arr[i]` 系 `&(p+i)` 语法糖，等价于算术、不重新建立锚点，CFG 层由算术+取址复合，不独立成节点）。变化：算术仅更新 $\text{index}' = \text{index} + n$ 且要求 $0 \leq \text{index} + n \leq \text{size}$（规则 3.3.1-3.3.2）。检查插入：算术 → 良构检查（定义 13）。结论：**需改造**。补充（2026-08，perf 同型化）：定义 13 的运行时实现由 i128 宽算（`zext(index)+sext(offset)`，防回绕）改为 **u64 同型化**——`sum = index + offset`（u64 add）后做回绕检测 `icmp uge sum, index`（回绕 ⟺ sum < index）与上界比较 `icmp ule sum, size`，条件 = 二者合取（`llvm/builder.py` `check_element_arith`/`check_element_access`）。语义论证：正偏移（offset < 2^63 且 index+offset < 2^64）无回绕时 sum ≥ index 恒真，只剩上界比较，与 i128 等价；回绕（index+offset ≥ 2^64）时 sum < index → trap，等价 i128 的 sum ≥ 2^64 > size 必 trap；下溢偏移（offset ≥ 2^63，u64 下为极大无符号下标）恒 trap——**收紧修正**：i128 sext 形式把其误解为负偏移，子切片 base.index ≥ |o| 时放行（Metis H2，语义对齐 u64 索引；负例 `tests/fat/negative/fat_subslice_underflow.an` 锁定）。同型化使 ConstraintElimination 可关联循环/分支 u64 约束消除检查（`docs/perf-optimization-plan.md` §8.3）。
-**PtrDiff**（`ir.py` 节点类）。现状：`ptrtoint` 两端相减再除以 $|T|$。变化：改为字段运算：先比较 `data` 相等（异对象 trap），再求 $\text{index}_1 - \text{index}_2$（规则 3.3.3）；元素差直接可得，结果类型 `i64`（定型规则 8.1.9），免去 $|T|$ 除法。检查插入：`data` 相等 + 良构 + 无回绕。结论：**需改造**（但较现状更简单）。 **风险评估**：论证已覆盖（规则 3.3.3），结论=需改造（字段运算），非新增风险；胖指针化后免去 ptrtoint/除法
-**Load**（`ir.py` 节点类）。现状：LL 直接 `load`，pointee 为 ZST 时返回 undef。变化：先查 $\text{safe\_access}(p, 1) = \text{live}(p) \wedge \text{in\_bounds}(p, 1)$（规则 3.2.1），再以有效地址 $\text{addr}_T(p, 0) = p.\text{data} + p.\text{index} \cdot |T|$（定义 17）取数；pointee 为指针类型时读得 40B 聚合（`T&` 时读得 24B）。检查插入：**分级**——`p` 为 `T*`/`T[]` 派生指针时 `live`（块内/帧内锁槽寻址 $\mu\langle p.\text{lock\_ptr} \rangle$ 比较键，定义 8，含 null 短路）与 `in_bounds`（定义 12）前插于 Load（`CheckSafeAccess`）；`p` 为 `T&` 引用时 `in_bounds` 恒真（定义 12 退化），仅前插 `CheckRefAccess`（`live`，t3）。《形式化论证》第 3 章规则前提在此落地。结论：**需改造**（分级检查 + 地址折算，机制的收益点所在）。补充：地址折算把 $\text{data} + \text{index} \cdot |T|$ 在 LLVM 层化为一次 `getelementptr`，检查与取数共用同一折算结果，避免两次计算；**无回绕机制（O-1 子义务落地）**：以宽整数（如 i128）计算 $\text{data} + \text{index} \cdot |T|$（数学整数语义天然无回绕），或对 64 位 GEP 的地址折算做显式溢出检测（如 `llvm.uadd.with.overflow`）并在溢出时按 trap 处理——`nsw` 仅声明无回绕、溢出为 poison 而非 trap，不可单独作为落点；二选一落地 O-1。各内存节点（Load/Store/FieldPtr/ElementPtr/Delete）的地址折算共用该机制，不在每节点重复。
-**Store**（`ir.py` 节点类）。现状：LL `store`。变化：同 Load 的检查与地址折算（规则 3.2.2）；额外：value 为指针类型时写 40B 聚合（`T&` 时写 24B）。检查插入：**分级**——同 Load：`T*`/`T[]` 派生指针插 `CheckSafeAccess`（`safe_access(p, 1)`）；`T&` 插 `CheckRefAccess`（仅 `live`，t3）。结论：**需改造**。
-**CheckRefAccess**（`ir.py` 节点类，tiered-pointers t3 新增）。T& 引用访问前检：**仅 `live(r)`，免 `in_bounds`**。引用恒指向单个元素、无 `index`/`size` 字段（3 字段 ⟨data, lock_ptr, key⟩ 24B），越界无概念——《形式化论证》定义 12 对 `T&` 退化恒真。插入点：`T&` 的 Load/Store/FieldPtr（按 type_id 分派，`PointerType` 走既有 `CheckSafeAccess`/`CheckInBounds`）。LLVM 发射 `check_ref_access`（`llvm/builder.py:466`）复用既有 `__check_live`（定义 8 锁槽键比较 + `lock_ptr` 零值 guard——niche None 泄漏防御，None 全零编码泄漏到访问路径时短路为假 → trap），只提取 `lock_ptr`/`key` 字段，零新增发射逻辑；失败 → `llvm.trap`。结论：**新增节点**（分级检查的 `T&` 档）。
-**Malloc**（`ir.py` 节点类）。现状：元素数换算字节数 + `malloc` intrinsic + bitcast，pointee 为 ZST 时返回 undef。变化：按规则 3.6.1：块头锁槽写入键 $k \leftarrow \mathrm{Gen}()$（定义 10，堆键最高位 1）、$\mu\langle e \rangle := k$，返回 $\langle b + H, e, k, 0, n \rangle$，`lock_ptr` 指向块头锁槽；与块头布局（定义 7）交互。检查插入：无 trap 前提（分配恒可执行）；插入块头锁槽写键。结论：**需改造**（块头布局 + 写键）。补充：翻译后在块头写键 + 5 字段聚合构造（锁头仅锁槽，H=w；`is_raw` 为纯字段检查（`data` 分量 $p.\text{data} = p.\text{lock\_ptr} + H$、`index` 分量 $p.\text{index} = 0$），无需块头记录）；指针-to-ZST 保持 ZST 快路径（返回 `undef`、不构造 5 字段、不写锁槽；§7.6 风险 2 用户裁决）。 **风险评估**：论证已覆盖（规则 3.6.1 块头写键），结论=需改造，非新增风险；现状 bitcast 是翻译内部细节
-**Delete**（`ir.py` 节点类）。现状：bitcast 为 `i8*` 调 `free`，ZST 指针释放为 no-op。变化：前提 `is_heap(p) ∧ live(p) ∧ is_raw(p)`（规则 3.6.2；前提求值顺序 `is_heap` 为纯位判定（定义 9，不读锁槽）；`live` 先于或并列 `is_raw`，且对 $\text{lock\_ptr} = 0$ 短路为假；null 快路径已移除（2026-08）——空容器改 `dyn[0]` 分配后 stdlib 不再存在合法全零指针，`CheckDelete` 为纯四前提 `heap_ok ∧ live_ok ∧ raw_data_ok ∧ raw_index_ok`（`llvm/builder.py`），`write_lock_slot` 恒写锁槽；双释放 / 栈指针释放 / 偏移指针释放 / 零值编码指针释放对全部指针确定性 trap；`is_raw` 定义见《形式化论证》§2.5），动作先 $\mu\langle p.\text{lock\_ptr} \rangle := \text{SENTINEL}$，锁槽随后即由复用方支配（用户数据区逻辑上撤销、锁槽区留在 $\mathrm{dom}(\mu)$；内存保持可读为实现选择，论证按《形式化论证》§2.2 立即复用约定，不依赖隔离）。检查插入：四前提检查（最高位判定 `is_heap`，定义 9，纯位检查不读锁槽；键比较 `live`；`is_raw` 为纯字段检查：$p.\text{data} = p.\text{lock\_ptr} + H$ 与 $p.\text{index} = 0$ 两分量）。结论：**需改造**（四检查 + 锁槽写哨兵）。补充：`live` 单独读锁槽比较键，`is_heap` 为纯位判定（定义 9，不读锁槽）；`is_raw` 为纯字段检查（`data` 分量 $p.\text{data} = p.\text{lock\_ptr} + H$、`index` 分量 $p.\text{index} = 0$，不读锁槽与块头）；释放范围 = 整块（含锁头），交还分配器以 `lock_ptr`（块首）寻址、范围由分配器元数据决定，不按 $p.\text{size} \cdot |T|$ 计算；Malloc 写块头锁槽键、Delete 写哨兵——重锚定子对象指针（字段取址 `&s.field`）`delete` 视为错误操作（trap），即使 $\text{index} = 0$（重锚定后 `index` 归零，非首字段经 `is_raw` 拒绝）；`&arr[i]` 系算术结果，非 `&arr[0]` 者 $\text{index} \neq 0$（即 `is_raw` 的 `index` 分量）直接 trap；`&arr[0]`、首字段（$p.\text{data} = p.\text{lock\_ptr} + H$）通过 `is_raw`，`delete` 等价整块交还，语义无害。 **风险评估**：论证已覆盖（规则 3.6.2 四前提+写哨兵），结论=需改造，非新增风险；现状 bitcast 为 i8* 是翻译内部细节
-**Cast**（`ir.py` 节点类）。现状：pointer→pointer 为单条 `bitcast`。变化：标准库内部 `bitcast` 的元数据转化（`index`/`size` 重折算）**已由阶段 1 移除关闭（2026-08）**——结构转换 `bitcast` 站点全部移除（§8.3 实施状态、§11.2），留白缺口随移除闭合；理论论证不涉及（标准库为可信基黑盒，《形式化论证》§2.7）。检查插入：无运行时检查（编译期受限操作检查：`bitcast` 仅限标准库，第 8 章承担）。结论：**需改造**（表示重折算；编译期前提移交第 8 章）。 **风险评估**：原留白项已由阶段 1 移除关闭（2026-08，§8.3/§11.2 实施状态）；风险评估=**关闭（移除已实施）**，节点结论仍为既有「需改造」（不覆盖）
-**SizeOf**（`ir.py` 节点类）。现状：编译期常量折叠（`sizeof_const`），返回 $|T|$ 字节。变化：节点语义不变；但布局表对 `PointerType` 的映射从 8B 变 40B、`SliceType`/`StrType` 变 32B、`RefType` 变 24B（tiered-pointers t2，`types.py`），含指针的聚合类型尺寸随之变化。检查插入：无。结论：**直接**（节点免改，全局布局表受影响）。补充：`sizeof(T*)` 在胖指针表示下：非 ZST 指针 40、指针-to-ZST 仍 0（§7.6 风险 2 裁决），`sizeof(T[])`/`sizeof(str)` = 32、`sizeof(T&)` = 24，故 `dyn T*[n]` 等指针数组的分配字节数、$\text{data} + \text{index} \cdot |T|$ 折算中的 $|T|$ 均自动采用新布局；跨类型折算细节见 §8.3（标准库内部 bitcast 元数据转化已由阶段 1 移除关闭，2026-08），SizeOf 本身不引入任何检查点。
+## 2. 类型与表示
 
-小结：11 节点中 1 个直接（SizeOf）、10 个需改造（VarPtr/Alloca/FieldPtr/ElementPtr/PtrDiff/Load/Store/Malloc/Delete/Cast）、无「不适用」；nullptr 字面量节点随关键字移除（2026-08）；tiered-pointers t3 另新增检查节点 CheckRefAccess（`T&` 引用访问前检，仅 `live`，插入点为 `T&` 的 Load/Store/FieldPtr）。运行时检查插入点按级分级：`T*`/`T[]` 派生指针 6 个（FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete），`T&` 引用 3 个（Load/Store/FieldPtr，均经 CheckRefAccess 仅 `live`）；Malloc/Delete 另含锁槽交互（块头写键/写哨兵）；检查插入面确实收敛，这是「几个原语」预想的成立部分；预想的失败部分在 §7.2 论证。（2026-08 追加登记：检查下沉另含 CheckSafeAccess/CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/CheckDelete/CheckElementAccess/CheckRawBounds/PtrCmp 与帧锁槽节点 GenKey/WriteLockSlot——帧进入/退出经二者表达（《形式化论证》表 3、规则 3.7），Assume 为 P1 优化假设节点（§7.5）；计数与归类见 §7.3 覆盖闭合。）
+类型检查器区分三个只允许向下转换的层级：
 
-### 7.2 指针值流经节点的传播成本论证
+```text
+T*  ->  T[]  ->  T&
+ \--------------> /
+```
 
-核心事实：胖指针是**值类型变更**而非单点改造：`PtrVal` 从单一 LLVM 指针（8B）变为分级聚合（tiered-pointers t2）——`PointerType` 5 字段 40B、`SliceType`/`StrType` 4 字段 32B、`RefType` 3 字段 24B（§7.4），凡搬运、合并、比较、返回指针值的节点都受影响。
+- `T*`：40B LLVM 聚合 `{T*, i64*, i64, i64, i64}`，字段为
+  `{data,lock_ptr,key,index,size}`；
+- `T[]` 和 `str`：32B 聚合 `{T*, i64*, i64, i64}`，字段为
+  `{data,lock_ptr,key,size}`；
+- `T&`：24B 聚合 `{T*, i64*, i64}`，字段为 `{data,lock_ptr,key}`。
 
-**搬运（Call、Invoke、Ret）**。指针作为参数或返回值时，40B/32B/24B 聚合须跨越调用边界。函数签名表 `__build_function_type`（`types.py:253-271`）把**全部**含指针参数/返回的函数签名改写；调用处参数编组与返回处须传收聚合。现状已有聚合先例：旧 `SliceType` 的 `{ptr, i64}` 16B 结构（t2 已升级为 4 字段 32B），机制存在但 40B 量级不同（§7.6 风险 4）。翻译逻辑必改节点：3（Call、Invoke、Ret）。
-**合并（Phi、ExtractValue、AggregateConstruct）**。LLVM 一等聚合值使 `Phi` 可合并任意结构体值、`extractvalue`/`aggregate` 可拆装字段，三类节点对 40B 聚合**结构透明、翻译逻辑免改**。代价转移为机器成本：每次指针拷贝/合并搬运 40B 而非 8B，且合并后的聚合须在消费者处拆字段。翻译逻辑免改节点：3。
-**比较（Binary）**。指针相等比较按 `(data, index)` 二元组（规则 3.4.2），序比较先验 `data` 相等再按 `index`（规则 3.4.1）。LLVM 无聚合 `icmp`，现状单条比较须改为「提取字段 + 比较 + 前提检查」，Binary 须新增指针分支。翻译逻辑必改节点：1（Binary）。
-**类型层与非承载（Ret、VarRef、Reg、FuncPtr、Unary、CondBr）**。Ret 属搬运组（签名改写）；VarRef 与 Reg 是类型载体，指针型槽位与 SSA 寄存器全部承载分级聚合（40/32/24B），波及全部函数；FuncPtr 属函数指针（`FunctionPointerType`，`types.py:284-287` `__handle_function_pointer`），非数据指针、不含锁/键元数据，表示须显式排除之，且布局表（`types.py:230`）须拆分两类指针防误判（耦合风险）；Unary 不承载指针值（指针算术已路由至 ElementPtr，Unary 仅整数/浮点/布尔运算）；CondBr 条件恒为 bool，指针比较在先行 Binary 完成。翻译逻辑免改节点：3（FuncPtr/Unary/CondBr，FuncPtr 另有布局耦合风险）。
+字段下标和块头常量集中在 `compiler/codegen/cfg/lockmech.py`，LLVM 类型映射位于
+`compiler/codegen/llvm/types.py`。函数参数、返回值、Phi、聚合构造与提取都使用同一静态 LLVM
+结构，因此表示沿调用和控制流合并传播。
 
-**量化汇总**。CFG 节点共 48 类（设计时）：翻译逻辑必须修改的节点类 ≥14（§7.1 的 10 个内存节点 + Binary、Call、Invoke、Ret 共 4 个）；结构透明但搬运成本×5 的 3（Phi、ExtractValue、AggregateConstruct；`T*` 40B 为放大上限，`T[]`/`T&` 为 32/24B）；类型层传播的 2（VarRef、Reg，波及全部指针型槽位/寄存器）；非承载免改的 3（Unary、CondBr、FuncPtr）；两张全局表必须重写（布局表 `__stable_layout`，`types.py:295` 起，与函数签名表 `__build_function_type`，`types.py:253-271`，一处改动影响全部函数）。故「受影响节点类」≥19（14 + 3 + 2），另加 2 张全局表；以「翻译逻辑必改」为硬性标准则 ≥14 节点类 + 2 张全局表。
+## 3. 转换安全
 
-量化口径说明：上述三类（必改/结构透明/类型层传播）以「翻译逻辑是否须改写」区分。结构透明的 3 个节点翻译逻辑免改，但每个指针值的 Phi 合并、extractvalue 拆装、aggregate 构造都搬运 40B 聚合，成本随指针数据流量放大（§7.6 风险 4）；类型层传播的 2 个节点（VarRef、Reg）不写翻译逻辑，但全程序指针型槽位与寄存器的宽度按 40B 扩展，是「跨全程序」而非「跨节点」的成本。硬性标准（翻译逻辑必改）之下，§7.1 的 10 个内存节点 + Binary/Call/Invoke/Ret 共 14 个节点类 + 2 张全局表，即修正后结论的改动面。
+HIR 类型检查只允许合法的降级方向；CFG 构建器在丢弃空间元数据前发射必要检查：
 
-### 7.3 其余 24 类节点分组覆盖论证
+| 转换 | CFG 前提 | LLVM 结果 |
+| --- | --- | --- |
+| `T* -> T[]` | `CheckInBounds` 的 one-past 合法前提和无回绕地址计算 | `data'=data+index*|T|`, `size'=size-index` |
+| `T* -> T&` | `CheckInBounds(ptr,1)`，即 `index<size` | `{data+index*|T|,lock,key}` |
+| `T[] -> T&` | `CheckSliceNonEmpty`，即 `size>=1` | `{data,lock,key}` |
 
-表 6：其余 24 类节点的分组排除理由
+这三类转换都原样继承 `lock_ptr/key`。转换验证的是引用或切片的空间来源，不在转换点重复
+`live`；真实引用访问由 `CheckRefAccess` 检查锁。因此失效指针转换后仍然失效。
 
-| 分组 | 排除理由 |
-|---|---|
-| ArrayConstruct（`ir.py` 节点类） | 构造数组聚合值；元素中的指针仅内嵌搬运（与 AggregateConstruct 同构），无访问/检查/运算。数组元素指针仍是 `PtrVal` 值，其类型层宽度按 40B 参与聚合布局（§7.2 类型层传播），但不引入新的检查点 |
-| VariantConstruct（`ir.py` 节点类） | 枚举变体构造；payload 中的指针仅打包，无操作语义。变体 payload 含指针时该变体的布局同样按 40B 计入（布局表 `types.py:295` 起，`__stable_layout`），但构造本身不访问内存 |
-| SysWrite（`ir.py` 节点类）/ SysRead（`ir.py` 节点类） | I/O 系统调用；`buf` 为裸字节指针/字符串，无胖指针参与，仅副作用，属 FFI 边界（《形式化论证》§1.3 out 行） |
-| Open（`ir.py` 节点类）/ Close（`ir.py` 节点类） | 文件系统调用；`path` 为 C 字符串裸指针，属 FFI 边界（《形式化论证》§1.3 out 行） |
-| ~~YianArgc/YianArgvPtr/YianCstrlen/YianExit~~（已移除） | 运行时入口 FFI 节点（argc/argv/cstrlen/exit）随 `lib/core/env.an` 删除于 2026-08（t2）自 `ir.py` 移除，其受限名 `__yian_argc`/`__yian_argv_ptr`/`__yian_cstrlen`/`__yian_exit` 同步自受限名集合删除——运行时入口 FFI 边界不复存在，仅余系统调用边界（SysWrite/SysRead/Open/Close） |
-| Br（`ir.py` 节点类） | 无条件跳转，无值操作 |
-| Match（`ir.py` 节点类） | 匹配值限整型/字符/枚举（节点注释），不含指针；分支体内的指针操作在各节点处理 |
-| Panic（`ir.py` 节点类） | message 为 `str`，无内存访问 |
-| Block（`ir.py` 节点类） | 基本块容器，仅组织 Phis/Stmts，无操作语义 |
-| 五种字面量（`ir.py` 节点类：`IntLiteral`/`FloatLiteral`/`BoolLiteral`/`CharLiteral`/`StringLiteral`） | 非指针值；StringLiteral 为 `str` 的 4 字段 slice 表示（tiered-pointers t2：`{data, lock_ptr, key, size}` 32B，锁为全局字面量锁槽常量），不产生数据指针。整型/浮点/布尔/字符字面量不含指针值 |
-| MatchArm（`ir.py` 节点类） | 匹配分支容器，无操作语义 |
-| 三种模式（`ir.py` 节点类：`IntPattern`/`CharPattern`/`EnumPattern`） | 匹配模式仅绑定整型/字符/枚举判别值，不含指针绑定 |
-| Function（`ir.py` 节点类） | 函数容器无操作语义；函数签名经签名表受 §7.2 全局改造影响，属全局而非节点改造 |
+`T* -> T[]` 必须缩短为当前位置后的剩余切片。保留原 `size` 会让非零偏移转换后的末端访问
+越过原对象；对应正负回归位于 `tests/fat/`。one-past 指针可传递，但转引用会 trap；空切片也
+不能产生引用。
 
-分组的判定标准：24 类节点按「是否承载指针值 + 是否有内存访问」两问排除。不承载指针值（ArrayConstruct 若含指针仅内嵌搬运、字面量、模式、匹配、跳转、容器类）或不涉及内存访问（I/O、函数容器；运行时入口/字符串长度节点已随 t2 移除）者归入本表；凡承载指针值且参与访问语义者已在 §7.1（11 节点 + CheckRefAccess）或 §7.2（Call/Invoke/Ret/Binary/Phi/ExtractValue/AggregateConstruct/VarRef/Reg/FuncPtr/Unary/CondBr，12 节点）覆盖。两问判定避免按节点名逐一臆断，使覆盖闭合可复核。FFI 边界分组（SysWrite/SysRead/Open/Close）对应的源级操作全部列入受限名集合（§8.3）：系统调用由受限操作检查禁于标准库外，用户代码不能直接发起 I/O 系统调用——《形式化论证》§1.3 的 out 边界由此获得机械强制执行；运行时入口 FFI（`__yian_*` 族）已随 t2 移除，不在此列。
-覆盖闭合：设计时 §7.1（11）+ §7.2（12）+ §7.3（24）= 47 类节点与 `ir.py` 全部节点类一一对应（nullptr 字面量节点随关键字移除，2026-08）；演进核算（2026-08-23 grep 实测，当前 `ir.py` 共 **57** 个节点类，`grep -c "^class "` 一致）：47 − 4（t2 移除运行时入口 4 类 YianArgc/YianArgvPtr/YianCstrlen/YianExit）= 43，+ 14（检查/锁槽/比较节点扩展）——t3 新增 CheckRefAccess（§7.1）；检查下沉新增 GenKey/WriteLockSlot/CheckSafeAccess/CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/PtrCmp/CheckDelete/MemCopy；2026-08 新增 **CheckElementAccess**（`ir.py` 节点类，合并访问检查，llvm 发射 `llvm/builder.py:514` `check_element_access`，cfg 发射 `cfg/builder.py:1410`）、**CheckRawBounds**（`ir.py` 节点类，raw 模式界检查，cfg 发射 `cfg/builder.py:1181`）、**Assume**（`ir.py` 节点类，P1 优化假设，配合 ConstraintElimination 消除已证检查，cfg 注入 `cfg/builder.py:624` 区域）——43 + 14 = 57，与实测一致。新增节点归类：检查节点（Check* 族）归 §7.1 检查插入与 §7.5 分级检查分类；GenKey/WriteLockSlot 归帧进入/退出协议（《形式化论证》表 3、规则 3.7，联动登记）；Assume 归 §7.5 优化假设注；MemCopy 归 §7.3 其余节点分组。覆盖闭合结论不变，无遗漏。
+## 4. CFG 检查节点与形式规则
 
-### 7.4 表示方案对比
+主要节点定义在 `compiler/codegen/cfg/ir.py`：
 
-CFG 层采用内联分级表示（方案 A）：胖指针在 LLVM 类型层按静态类型映射为三档结构（tiered-pointers t2，`llvm/types.py`）——`PointerType` 5 字段 $\{\text{data}: \text{ptr},\ \text{lock\_ptr}: \text{ptr},\ \text{key}: \text{u64},\ \text{index}: \text{u64},\ \text{size}: \text{u64}\}$（40B）；`SliceType`/`StrType` 4 字段 $\{\text{data},\ \text{lock\_ptr},\ \text{key},\ \text{size}\}$（32B，删 `index`，`data` 即有效地址）；`RefType` 3 字段 $\{\text{data},\ \text{lock\_ptr},\ \text{key}\}$（24B，删 `index`+`size`，恒指向单个元素）。字段下标常量由 `cfg/lockmech.py` 定义并在 `cfg/ir.py` 导出：`FAT_*`（5 字段指针，`FAT_DATA=0`/`FAT_LOCK_PTR=1`/`FAT_KEY=2`/`FAT_INDEX=3`/`FAT_SIZE=4`）、`SLICE_*`（4 字段切片，`SLICE_DATA=0`/`SLICE_LOCK_PTR=1`/`SLICE_KEY=2`/`SLICE_SIZE=3`）、`REF_*`（3 字段引用，`REF_DATA=0`/`REF_LOCK_PTR=1`/`REF_KEY=2`）；data/lock_ptr/key 三族同下标通用，仅 size 分 4/3 下标。检查直接读取寄存器字段、无额外元数据取数；布局表 `__stable_layout` 与函数签名表 `__build_function_type` 相应变化。`SliceType` 由旧 `{ptr, i64}` 16B 映射升级为 4 字段 32B 聚合，证明「YIAN 类型 → 多字段 LLVM 结构」的机制已存在，方案 A 可复用其基建。带外 side-table 变体列为未来工作（§11.2）。**评测专用 raw_pointers 退化（2026-08，raw-slice-ref-modes）**：`--raw-pointers` 下三结构整体退化——`PointerType`/`RefType` 映射为裸有型指针 `T*`（8B，`types.py:148-149`、`155-156`），`SliceType`/`StrType` 映射为 2 字段 `{data, size}`（16B，`types.py:163-164`、`35-38`）；锁槽/帧锁与检查发射一并关闭（`cfg/builder.py` raw_pointers 分支）。`--no-fat-checks` 不改变表示（仍 40/32/24B 与锁槽/帧锁），仅省略检查发射（§10.7）。raw 模式为评测专用，不承载《形式化论证》安全论证（《形式化论证》§5.1 范围声明）。
+| CFG 节点 | 证明义务 | 典型消费者 |
+| --- | --- | --- |
+| `CheckSafeAccess` | `live && in_bounds` | 普通胖指针 load/store |
+| `CheckInBounds` | 单元素位置存在且算术无回绕 | 解引用、字段派生、`T*->T&` |
+| `CheckSliceNonEmpty` | `size>=1` | `T[]->T&` |
+| `CheckRefAccess` | `live`；空间由引用来源不变量保证 | `T&` load/store |
+| `CheckElementArith` | 候选索引可表示且位于 `[0,size]` | 指针加减 |
+| `CheckElementAccess` | 合并验证索引和实际访问跨度 | 索引访问 |
+| `CheckRawBounds` | 标准库裸片段构造的显式范围 | 受限构造路径 |
+| `CheckPtrDiff` | 同源、整除和结果可表示 | 指针差 |
+| `CheckPtrCmp` | 关系比较的同源约束 | `<,<=,>,>=` |
+| `CheckDelete` | `live && is_heap && is_raw` | `delete` |
 
-### 7.5 库层方案 vs CFG 层方案
+CFG 构建器把检查放在相关访问之前，并在可能使已有证明失效的控制流/写操作处清除局部去重
+状态。LLVM builder 把每个检查展开成成功块与 trap 块；成功块支配对应 load/store。引用的空间
+证明不是 `CheckRefAccess` 自己完成的，而是 §3 转换检查和取址规则共同建立的来源不变量。
 
-检查下沉到 IR 层：全部 `Load`/`Store`/`FieldPtr`/`ElementPtr`/`PtrDiff`/`Delete`/`Malloc` 节点统一插检（§7.1 的检查点 + Malloc/Delete 锁槽交互），检查插入点即《形式化论证》第 3 章规则前提落地。**检查按级分级（tiered-pointers t3）**：`T*`/`T[]` 派生指针走全检查（`CheckSafeAccess`/`CheckInBounds`/`CheckElementArith`/`CheckElementAccess`/`CheckRawBounds`/`CheckPtrDiff`/`CheckPtrCmp`/`CheckDelete`），`T&` 引用仅 `live`（新增 `CheckRefAccess`，直发 `__check_live`，免 `in_bounds`）。检查已下沉 CFG 层（2026-08 实施：上述节点插检 + 指针比较 `PtrCmp`/`CheckPtrCmp` + `CheckRefAccess`，t7-t10/t3），取代原「检查位于库层（`lib/` 与原型）」的现状。（2026-08 补登记：`CheckElementAccess` 为 (base, offset) 合并访问检查（`llvm/builder.py:514`），`CheckRawBounds` 为 raw 模式界检查（`cfg/builder.py:1181` 发射），`Assume` 为 P1 优化假设节点（`cfg/builder.py:624` 注入，配合 ConstraintElimination 消除已证检查，不改变检查语义，`docs/perf-optimization-plan.md` §8.3）。）
+## 5. 指针算术、比较和访问
 
-### 7.6 可行性结论与风险
+`ElementPtr` 保留锚点 `data`，只更新元素单位的 `index`。`CheckElementArith` 允许 one-past，但
+拒绝负结果、超过 `size` 的结果以及所有有限位宽回绕。最终地址计算使用 pointee 的 ABI 大小。
 
-**可行性结论**：CFG 层引入胖指针**可行**，但「只需修改几个内存相关原语」的预想**不成立**。检查插入面小，表示传播面大（≥19 节点类 + 布局表/函数签名表 2 张全局表，§7.2）。修正后的结论：可行性取决于两点：① 在 LLVM 类型层把 `PointerType` 映射为 5 字段结构（§7.4），使一等聚合节点自动适配；② 显式修改比较（Binary）、调用（Call/Invoke）、返回（Ret）与 6 个检查插入点的语义。两点成立时，《形式化论证》第 3 章规则的全部前提可在 CFG 层逐节点落地，S1/T1 的枚举义务（O-1/O-2a）获得编译器内可查的对应。
+相等/不等比较不访问内存。关系比较和 `PtrDiff` 在 CFG 层验证同源，LLVM 层提取字段后比较；
+异源关系比较或相减 trap。`FieldPtr` 使用类型布局派生子对象位置，仍继承根对象的锁。
 
-结论的验收形态：可行性结论以「可落地」为判定而非「已实现」。落地的验收标准为三条：① 编译含指针的程序至 LLVM IR，`PointerType` 按 5 字段结构展开且 Phi/Alloca/Store 等聚合节点无须特判；② 6 个检查插入点在对应节点产生 `in_bounds`/`live` 检查且与《形式化论证》第 3 章前提逐字对应；③ §10.5 负例集（越界/UAF/双释放/栈悬垂）逐一触发预期 trap 点。三条均达成即第 7 章设计闭环，进入第 11 章评测方向。
+load/store 的检查按表示分级：`T*` 和由切片派生的指针执行空间与时序检查，`T&` 执行时序
+检查。后者成立的前提是所有引用构造点已经通过 §3 的单元素存在性检查；新增引用来源时必须
+同时扩展该审计清单和回归测试。
 
-**本章与前后章的接口**：第 7 章是「设计可行性」章，向上承接《形式化论证》第 2-3 章形式化（规则前提即检查插入点）、向下供给第 10 章评估协议（实现成本的结构化清单）与第 11 章方向（CFG 层实现与评测）。本章不定义新符号、不改写规则，全部结论以「节点 × 前提」表格与风险清单形式交付，本章无新增原语建议。
+## 6. 单线程自管堆池
 
-**风险清单**：
-1. **FFI/ABI**：指针分级聚合 vs 裸 8B（`T*` 40B 体积×5；`T[]`/`T&` 为 32/24B）；含指针参数/返回的函数签名全部改写（`types.py:253-271`）；C 侧不识别元数据、检查不跨边界（《形式化论证》§1.3 out 行，第 11 章）。旧 `SliceType` 16B 先例已升级为 4 字段 32B（t2），量级仍不同：40B 超常见按值传递宽度，可能触发 byval/按内存传参。缓解方向：按字段拆分传参或 side-table 变体（第 11 章）可在 ABI 边界恢复 8B 裸指针，但代价是检查不跨越，需在成本与覆盖间显式取舍。
-2. **ZST**：现状「指针-to-ZST 是 ZST」（`type_ops.py:241` `is_zst`），多个快路径依赖该性质：布局 `(0,1)`（`types.py:302-303`）、malloc/load/store 短路（`llvm/builder.py:367-371`、`619-622`、`634`）、调用丢弃 ZST 参数与 void 返回。胖指针为分级字段后指针-to-ZST 不再是 ZST：放弃快路径则性能回归，保持 ZST 则破坏表示统一性，须显式决策。裁决（2026-08，用户）：指针-to-ZST 保持 ZST——快路径全保留（布局 `(0,1)`、malloc/load/store 短路、ZST 参数丢弃与 void 返回），不采用 40B 统一表示；`__is_fat_pointer`/`__is_fat` 均以「PointerType 且 pointee 非 ZST」判定胖指针，`T[]`/`T&` 对 ZST 元素同理（`__is_fat_type` 含 `SliceType`/`StrType`/`RefType`，t3），指针-to-ZST 走既有快路径（§7.1 Malloc/SizeOf 同步）。
-3. **指针比较**：`icmp` 直比改为字段比较（规则 3.4.1-3.4.2）；LLVM 无聚合 `icmp`，比较由 1 条变为「提取字段 + 2-3 条 + 前提检查」，Binary 须新增指针分支。序比较还需在比较前查 `data` 相等（规则 3.4.1 前提）；相等比较按 `(data, index)` 二元组（规则 3.4.2），与序比较分支结构不同，Binary 指针分支内须再分序/等两路。**实施状态（2026-08，t10）**：已落地——CFG 层新增 `PtrCmp`/`CheckPtrCmp` 节点（序比较插 `data` 相等检查、跨对象 trap；相等比较无前提），LLVM 层提取 `(data, index)` 字段比较；函数指针（`FunctionPointerType` 非 `PointerType`）排除。
-4. **聚合传参**：分级字段按 ABI 传参可能按内存传递或拆分寄存器，调用约定与性能全局变化，与既有 SliceType（旧 2 字段、现 4 字段 32B）量级不同。影响面是跨全程序的：任何含指针参数/返回的函数（§7.2 搬运组）签名与调用点均受影响。
-5. **函数指针耦合**：数据指针与函数指针共用布局分支（`types.py:230`）与签名构建（`types.py:284-287`）；胖指针化须显式排除 `FunctionPointerType`，防函数指针被误判为 40B。若漏排，函数指针按 40B 聚合取值将使间接调用退化为按内存读，既有调用约定全变；须在布局表与签名构建两处同时拆分两类指针。
-6. **全零编码（`Option` 空值）**：须与第 8 章「指针只由良构操作产生」闭合（§8.1 值域闭合已穷尽指针产生途径：`bitcast` 与无检查的 `from_raw_parts` 均被受限操作检查禁于标准库外，非规范元组无法由良构定型产生，故规范编码之外不出现可逃逸的编码）。nullptr 字面量已移除（2026-08），全零编码现为 `Option<指针族>` 的 `None` 表示——`T*` 为 $\langle 0,0,0,0,0 \rangle$、`T[]` 为 $\langle 0,0,0,0 \rangle$（`size=0`）、`T&` 为 $\langle 0,0,0 \rangle$；三档 `lock_ptr = 0` 均使 `live` 短路为假（定义 8），`is_heap` 纯位判定键 0 判非堆（定义 9），`None` 泄漏到访问路径时确定性 trap。
-7. **隔离池（实现选择）**：论证采用「释放后立即复用」约定（《形式化论证》§2.2），锁槽释放后随即由复用方支配，不依赖隔离；实现可选择隔离池管理已释放块（内存驻留成本与复用候选选取）作为工程取舍，亦可 `munmap` 归还物理页（读已释放锁槽由 trap 退化为段错误，属实现选择边界）。对应 §11.1 局限。
+`compiler/codegen/cfg/lockmech.py::BlockHeader` 固定声明 32B ABI 布局：
 
-## 8. 类型系统约束形式化
+```text
++0  lock      u64
++8  capacity  u64
++16 next      i8*
++24 reserved  u64
++32 payload
+```
 
-本章把「类型系统约束也是安全机制的一部分」落实为可陈述的形式化：§8.1 给出指针定型规则（判定式/规则式），§8.2 定义对象类型同一性与分配点类型标注，§8.3 给出受限操作检查（bitcast 仅限标准库），§8.4 给出根/来源追踪设计（规定式），§8.5 给出类型约束与运行时检查的分工表及完备性论证。类型混淆排除（可信基边界，《形式化论证》§4.6）的编译期侧在此承接；第 7 章 §7.6 风险 6（全零编码）要求的「指针只由良构操作产生」亦在本章定型规则中闭合。符号全部沿用《形式化论证》第 2-5 章（定义 1-23、规则 3.2.1-3.7.2），不重新定义；新定义自编号 24 起。论证范围同《形式化论证》§1.3 的 in 类；本章只对指针值定型，不引入借用/生命周期分析，亦不重构语言其余类型系统。
+`compiler/codegen/llvm/module.py` 为 fat/nocheck 模块生成：
 
-### 8.1 指针定型规则
+- 内部全局 `__secl_pool_head`；
+- `__secl_pool_alloc(payload_bytes)`：first-fit 查找容量足够的空闲块，不够时向 libc 请求
+  `BlockHeader.BYTES + payload_bytes`；
+- `__secl_pool_release(header)`：把块插入空闲链，绝不调用 libc `free`。
 
-**定义 24（定型环境与判定式）**：定型环境 $\Gamma$ 是符号到类型的部分映射 $\Gamma : \mathrm{Sym} \rightharpoonup \mathrm{Ty}$，记录当前作用域的变量与常量类型。泛型在 monomorphization 下按实例代换定型，故 $\Gamma$ 中不含类型变量。判定式 $\Gamma \vdash e : T$ 读作「在环境 $\Gamma$ 下表达式 $e$ 具有类型 $T$」；$T^{*}$ 记 pointee 为 $T$ 的指针类型。
+`LLBuilder.malloc` 从池取得块头，生成新键并写入头部，再返回从 `header+32` 开始的胖指针。
+`LLBuilder.delete` 在 `CheckDelete` 之后先写 `SENTINEL`，再交给 pool release。块复用必须写入新
+键；容量可以大于本次请求，但返回指针的逻辑 `size` 只反映请求对象，因此多余容量不可访问。
 
-**指针形成规则**（指针值产生的全部途径）：
+空闲链没有同步，当前仅适用于单线程。池不拆块、不合并块且进程期不返还 libc，这是驻留内存
+和内部碎片的明确代价。
 
-**规则 8.1.1（取址 $\&e$）**：
+## 7. 键生成与帧协议
 
-$$\frac{\Gamma \vdash e : T \quad \text{$e$ 为左值表达式}}{\Gamma \vdash \&e : T^{*}}$$
+`KeyGen` 的编译期模型及 LLVM 模块中的 `__gen_key_value` 都只实现单调计数器。最高位区分堆/栈；
+堆键体上界是 `2^63-2`，从而排除全 1 的 `SENTINEL`。生成器在增量前检查上界，耗尽时调用
+trap，不能自然回绕。
 
-**规则 8.1.2（堆分配）**：
+函数入口为当前帧创建独立锁槽并写入新栈键；该帧所有取址值共享锁。CFG/LLVM 返回收尾确保
+每条正常返回路径写 `SENTINEL`。优化产物中的哨兵写受 volatile 保护，避免 DSE 删除帧失效
+协议。新帧即使复用相同栈地址也会 re-key，因此旧胖指针不会恢复。
 
-$$\Gamma \vdash \texttt{dyn}\ T : T^{*} \qquad \Gamma \vdash \texttt{dyn}\ T[n] : T^{*}$$
+## 8. 受限操作与标准库 TCB
 
-**规则 8.1.3（数组退化）**：
+用户代码不能直接调用会绕开表示和来源规则的原语，例如任意 `bitcast`、`from_raw_parts`、裸
+系统调用封装及内部内存复制入口。编译器的受限操作检查按源码归属拒绝这些能力；标准库和明确
+的 benchmark harness 属于经过审计的例外。
 
-$$\frac{\Gamma \vdash a : T[m]}{\Gamma \vdash a : T^{*}}$$
+这不是运行时动态类型验证。论文中的类型安全结论依赖编译器拒绝用户伪造胖指针，以及标准库
+对每个受限操作保持长度、布局和生命周期前提。扩展标准库受限原语等价于扩展 TCB，必须同时
+补充审计说明和负面测试。
 
-（数组退化与取址衔接：对数组取址得 $\&a : T[m]^{*}$，可经 coerce 到 $T^{*}$，即指向首元素的指针；《形式化论证》§2.7、定义 15。）
+## 9. 三种编译模式
 
-**指针使用规则**（表 9）：
+| 模式 | 表示 | 堆分配 | 帧锁 | CFG 安全检查 | 安全定理 |
+| --- | --- | --- | --- | --- | --- |
+| `check` | 40/32/24B | SecL 堆池 | 有 | 有 | 适用 |
+| `nocheck` (`--no-fat-checks`) | 40/32/24B | 同一 SecL 堆池 | 有 | 省略 | 不适用 |
+| `raw` (`--raw-pointers`) | 裸指针；切片 `{data,size}` | libc malloc/free | 无 | 无 | 不适用 |
 
-表 9：指针使用定型规则
+因此实验中的比值应解释为：
 
-| 规则 | 判定式 | 说明 |
-|---|---|---|
-| 8.1.5 解引用 | $\Gamma \vdash p : T^{*} \Rightarrow \Gamma \vdash *p : T$ | 类型层解引用即 `try_deref`（`context.py:670`） |
-| 8.1.6 索引 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash i : \texttt{u64} \Rightarrow \Gamma \vdash p[i] : T$ | `p[i]` 是 `*(p + i)` 的语法糖（《形式化论证》§2.7、规则 3.3.1/3.2.1） |
-| 8.1.7 指针加 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash n : \texttt{u64} \Rightarrow \Gamma \vdash p + n : T^{*}$ | 元素级算术（规则 3.3.1） |
-| 8.1.8 指针减 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash n : \texttt{u64} \Rightarrow \Gamma \vdash p - n : T^{*}$ | 等价 $p + (-n)$（规则 3.3.2） |
-| 8.1.9 指针差 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p - q : \texttt{i64}$ | 同 pointee（现状 `op_builder.py:278-291` 要求 type_id 相等）；结果定型为 `i64` |
-| 8.1.10 相等比较 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p \mathrel{==} q : \texttt{bool}$ | 同 pointee；跨对象允许（规则 3.4.2） |
-| 8.1.11 序比较 | $\Gamma \vdash p : T^{*} \wedge \Gamma \vdash q : T^{*} \Rightarrow \Gamma \vdash p < q : \texttt{bool}$ | 同 pointee；运行时要求 `data` 相等（规则 3.4.1） |
-| 8.1.12 释放 | $\Gamma \vdash p : T^{*}\ \|\ T[\,]\ \|\ T\& \Rightarrow \Gamma \vdash \texttt{delete}\ p : \texttt{unit}$ | 前提同现状 `lower_delete`（`expr_checker.py:624-634`） |
+- `nocheck/raw`：胖表示、调用搬运、堆池和锁协议的组合成本；
+- `check/nocheck`：CFG 检查发射成本；
+- `check/raw`：完整机制相对裸基线的总成本。
 
-**规则逐条说明（表 9 的判定语义）**：规则 8.1.5 解引用与 8.1.6 索引把访问定型为类型层操作，运行时界/时序检查由《形式化论证》第 3 章规则承担，两层分工见 §8.5 表 10；8.1.7-8.1.8 指针加/减是元素级算术，pointee 不变、`index` 位移量在定型层限制为 `u64`（指针±整数时整数只能是 u64），杜绝整型指针算术；8.1.9 指针差要求同 pointee，结果定型为 `i64`，运行时再查 `data` 相等（规则 3.3.3）；8.1.10 相等比较允许跨对象（规则 3.4.2 按 `(data, index)`），8.1.11 序比较要求同 pointee 且运行时查 `data` 相等（规则 3.4.1）；8.1.12 释放对 `T*`/`T[]`/`T&` 定型——`lower_delete` 接受 Pointer/Slice/Ref 三族，其余类型（含 `str`）报错「delete target must be a pointer, slice, or reference expression」（`expr_checker.py:629-633`）——运行时前提 `is_heap ∧ live ∧ is_raw`（规则 3.6.2，`is_raw` 定义见《形式化论证》§2.5）在类型层之后叠加；`is_raw` 对 `T*` 含 `data` 与 `index = 0` 两分量，对无 `index` 字段的 `T[]`/`T&` 仅 `data` 分量生效（§7.1 Delete 按类型分派）。**分级使用约束（tiered-pointers t1）**：表 9 的算术/比较规则仅对 `T*` 定型；`delete` 例外放行（规则 8.1.12 对三族定型，偏移释放由 `is_raw` 的 `data` 分量运行期拦截），`T[]`/`T&` 的算术/比较在编译期拒绝。`T&` 支持解引用与字段访问（8.1.5 的 `T&` 实例化：`*r : T`，`r.field`），`T[]` 访问经 `ptr()` 派生 `T*` 后按 8.1.5-8.1.6 定型。每条使用规则与《形式化论证》第 3 章同名操作规则一一对应，定型层负责静态形态、运行时层负责动态前提，无交叉。
+`nocheck` 不是“除了检查外完全等同 C”的基线，`raw` 也不是安全配置。
 
-**coerce 链定型规则（降级，tiered-pointers t1；《形式化论证》§2.7）**：
+## 10. 回归与审计
 
-**规则 8.1.13（指针降级为切片 `T* → T[]`）**：
-$$\frac{\Gamma \vdash p : T^{*}}{\Gamma \vdash p : T[\,]}$$
-手动标注触发；`index` 折叠进 `data`（$\text{data}' = \text{data} + \text{index}\cdot|T|$）、删 `index` 字段、`size` 保留（容量不变），锁字段继承（`expr_checker.py:345-354`；LLVM 层 `llvm/builder.py:989-1005`，`cast` T*→T[] 分支）。
+核心命令（使用项目包含 llvmlite 的 Python 环境）：
 
-**规则 8.1.14（指针降级为引用 `T* → T&`）**：
-$$\frac{\Gamma \vdash p : T^{*}}{\Gamma \vdash p : T\&}$$
-手动标注触发；删 `index` 与 `size`、`data` 折叠当前元素（$\text{data}' = \text{data} + \text{index}\cdot|T|$），锁字段继承（`expr_checker.py:355-356`；`llvm/builder.py:941-961`，`cast` T*→T& 分支）。
+```bash
+python scripts/run_tests.py -q
+python scripts/run_fat_tests.py -q
+python scripts/run_raw_tests.py -q
+python scripts/run_fat_cve.py -q
+python -m unittest tests.unit.test_lockmech
+pyright --pythonpath <project-python>
+```
 
-**规则 8.1.15（切片降级为引用 `T[] → T&`）**：
-$$\frac{\Gamma \vdash p : T[\,]}{\Gamma \vdash p : T\&}$$
-手动标注触发；删 `size`、取首元素（`T[]` 的 `data` 已折叠），锁字段继承（`expr_checker.py:357-358`；`llvm/builder.py:1006-1020`，`cast` T[]→T& 分支）。
+安全回归至少覆盖：
 
-降级规则只重贴值（`HIR.BitCast`）不改安全语义：锁字段继承源指针，故 `live` 语义与母指针一致；`T&` 无 `index`/`size`，访问仅需 `live`（定义 12/14 退化，《形式化论证》§2.4、§7.1 CheckRefAccess）。
+- 非零偏移 `T*->T[]` 的剩余长度与末端拒绝；
+- one-past `T*->T&` 和空 `T[]->T&`；
+- 释放、复用后的 UAF 与双重释放；
+- 不同容量请求的 first-fit 复用及逻辑边界；
+- 堆/栈键边界、`SENTINEL` 保留值和确定性耗尽；
+- 38 个 CVE 的 vulnerable/fixed 成对用例，共 76 个执行实例。
 
-**raw_pointers 模式下的 coerce 约束（评测专用，2026-08）**：规则 8.1.13 的 `T*→T[]` 在 raw 模式**编译期拒绝**——裸 `T*`（8B）不携带长度，降级将凭空构造 `size`；守卫位于 `coerce()` 统一入口（`expr_checker.py:345-358`，raw 守卫 349-354），报错含「use from_raw_parts(ptr, len) instead」，提示以 `from_raw_parts(ptr, len)` 显式构造。守卫覆盖三路径：直赋（`expr_checker.py:513-516` let 初始化）、实参（`call_dispatcher.py:114`，经 `generic_inference.py:64-74` 分级降级容忍后落到 `coerce`）、`return`（`expr_checker.py:582` `lower_return`、`type_check.py:157/208/252`）。规则 8.1.14（`T*→T&`）与 8.1.15（`T[]→T&`）在 raw 下保留且无损（前者 identity、后者取字段 0，同编码为裸 `T*`）。raw 模式不承载安全论证（《形式化论证》§5.1），但该类型层约束在 raw 模式下照常生效。
-**现状对照**：解引用、索引、取址的 HIR 构建对应 `__build_index`/`__build_deref`/`__build_addr_of`（`op_builder.py:428/479/498`）；指针算术对应 `__build_add`/`__build_sub`；现状 `__build_add`/`__build_sub` 的指针±整数偏移已 coerce 至 `u64`（`op_builder.py:248,293`），与 8.1.7-8.1.8 一致；指针差结果已为 `i64`（`op_builder.py:289`，2026-08 与规则 8.1.9 对齐，原「u64 缺口」已关闭）；比较仅接受 pointee 相等（`op_builder.py:594-600`）；分支合并在异 pointee 时递归合并（`type_ops.py:321` `__merge_two`，§8.2 现状风险）。对照差异：现状 `__build_index` 经 `Index` trait 分派（`lib/core/pointer.an:5-9` 仅算术），8.1.6 的索引系 `*(p+i)` 语法糖，其定型与运行时检查由算术（ElementPtr）与解引用/存取节点承担；现状比较的 pointee 相等约束与 8.1.10 的跨对象相等并不冲突，跨对象仅允许相等/不等、不允许序比较（8.1.11）。
-**指针值域闭合性（含降级链）**：形成规则 8.1.1-8.1.3 穷尽用户代码指针值的**原始产生**途径，coerce 降级链 8.1.13-8.1.15 只对既有指针值重贴（`T[]`/`T&` 由 `T*` 派生，不引入新的内存构造）；指针类型数据的搬运（变量/字段读写、传参）保持类型不变。不存在从任意整数或字节数据构造指针的定型：`coerce` 无整型→指针分支（`expr_checker.py:318-427`，指针分支仅 8.1.3/8.1.13-8.1.15）；`bitcast`（重解释）与无检查的 `from_raw_parts` 构造器（`lib/core/slice.an:65`）由受限操作检查（§8.3）禁于标准库外，标准库内为审计可信基——封闭是语法级的，无须知道标准库内部转化细节。故 §7.6 风险 6 的全零编码（`Option<指针族>` 的 `None`，`T*` 5 字段 / `T[]` 4 字段 / `T&` 3 字段全零）不会被非规范数据伪造：非规范指针值无法由良构定型产生，其访问要么在 `live`（$\text{lock\_ptr} = 0$ 短路为假，定义 8）或 `is_heap`（纯位判定，定义 9）处 trap、要么在 §8.3 受限操作检查处被编译期拒绝。
-值域闭合的验证次序：逐个核对三条形成规则、coerce 降级链与 §8.3 的受限名集合，确认「规则输出 ≡ 用户代码指针值全集」。取址（8.1.1）输出 `T*`；分配（8.1.2）输出 `T*`；数组退化（8.1.3）输出 `T*`；降级链（8.1.13-8.1.15）输出 `T[]`/`T&`（源为既有 `T*`/`T[]` 值，非新构造）；`bitcast`/`from_raw_parts` 禁于标准库外，不产生用户代码指针。指针作为 `Val` 的 `PtrVal` 分量存放（定义 3），其搬运路径（变量、字段、参数、返回、聚合）均保持类型不变，无「把整数当指针」的定型入口。闭合性若成立，非规范元组（如 $\text{lock\_ptr} = 0$ 之外的伪造键组合）即不可达，`None` 全零编码是唯一特殊编码。
+测试总数和静态检查结果必须从当前提交现场生成，不能沿用历史文档中的计数。性能数据同样应在
+实现变化后重新冻结；协议与快照由 `scripts/bench_fat.py` 和 `yian/paper/data` 维护。
 
-### 8.2 对象类型同一性与分配点类型标注
+## 11. 实现局限
 
-**现状：PointerType 结构化、无名义身份**。`PointerType` 仅含 `(type_id, pointee_type)` 两字段（`ty.py:110-112`），不携带声明名或分配点信息；按 pointee 唯一化：`alloc_pointer` 以 `pointee_type` 为键查缓存（`space.py:99-106`），同一 pointee 只存在一个指针 type_id。推论：pointee 相同的指针静态不可区分（即使锚定不同对象），对象动态类型（定义 23）只能由对象的建立点决定。另一现状风险：分支合并对异 pointee 指针递归 `__merge_two` 合并 pointee（`type_ops.py:321`），可能把不相容 pointee 静默合并，削弱类型同一性保证；**收紧机制（落地）**：分支合并遇 **pointee 类型不同（`type_id` 不一致）** 的指针时拒绝合并（编译期类型错误），确保 `static_type` 恒等于产生点建立类型（《形式化论证》§4.6 前提）在实现中成立——这是完备性论证断言②「类型同一性：静态类型恒等于产生点类型」（§8.5）的实现侧保障。同 pointee 不同 `alloc_type`（定义 25）的合并允许（`static_type` 不变），但合并点的 `alloc_type` 不做承诺（诊断侧对合并值不区分分配点）。
-
-**定义 25（分配点类型标注 `annot` 与 `alloc_type`）**：给每个指针产生点（取址、分配、数组退化）标注其对象建立类型 $\mathrm{annot}(q)$；指针值 $p$ 的分配点类型 $\mathrm{alloc\_type}(p)$ 定义为产生 $p$ 的产生点的标注。在 monomorphization 下每个产生点实例化为确定函数中的确定类型，故 $\mathrm{alloc\_type}(p)$ 是编译器可静态确定的单一类型（无动态分派对象、无运行时类型标签）。
-
-**分配点标注工作示例**：同一结构体 `struct S { x: u64 }` 的两个分配点 `dyn S` 与 `dyn S[2]` 分别产生 `S*` 与 `S*`（pointee 相同、type_id 相同），但标注不同：`alloc_type` 分别为 `S` 与 `S[2]`。编译器据标注区分整数组分配与单元素分配，供对象类型同一性的静态核验（§8.4 用途①）与 `delete` 诊断按产生点而非仅按 pointee 区分对象；`delete` 的实际释放范围 = 整块交还分配器（由分配器元数据决定，与 $\text{size} \cdot |T|$ 无关；`is_raw` 为纯字段检查，§7.1 Delete）。
-
-**定义 26（对象类型同一性）**：指针 $p$ 与被访问对象的类型同一性定义为：
-
-$$\mathrm{dyn\_type}_t(p.\text{data}) = \mathrm{alloc\_type}(p)$$
-
-其中 $\mathrm{dyn\_type}_t$ 为《形式化论证》第 4 章定义 23。该式是对象类型同一性的编译器侧陈述（类型混淆排除以可信基边界承担：用户代码无 `bitcast`，标准库审计，《形式化论证》§1.3 类型行 out）：动态类型由锚定该地址的分配/取址点静态类型唯一决定，分配点标注使编译器在每个访问点静态知道 $\mathrm{alloc\_type}(p)$。用户代码无 `bitcast`（§8.3），`static_type` 恒等于产生点的建立类型（算术保持 pointee、重锚定重新建立），故「动态类型 = 分配点类型」直接蕴含「动态类型 = 静态类型」，无须内部转化细节合取项；标准库内部 `bitcast` 重解释的同一性由 §8.3 审计准则保证，不进入用户代码论证。地址复用情形由 T1 负向侧（O-2b）排除：旧指针键已作废，无法通过 `live` 访问新对象，故同一性在重新分配后仍成立。monomorphization 下该式精确成立：无 trait object 与动态类型，任何产生点的类型确定。
-
-### 8.3 受限操作检查：bitcast 与指针伪造封闭
-
-**现状：任意转任意（标准库内保持；LLVM 层 cast 现状 2026-08 更新）**。`__handle_bitcast` 仅要求源为 `PointerType`、目标为 `PointerType`（`expr_checker.py:132-157`），无 pointee 兼容约束；LLVM 层 `cast`（`llvm/builder.py:847`）对 pointer→pointer 非单条 `bitcast`（2026-08 表示层级化后按 fat 指针分级结构重贴：同形 5 字段 identity、数组退化 `T[m]*→T*` 重锚定 + `size = m`（`llvm/builder.py:883-920`）、`T*→T&` 折 `index·|T|` 取 `⟨data', lock, key⟩`（`llvm/builder.py:941-961`）、raw 模式退化位转换）。故 `bitcast<MemoryBlock*>(self.address)` 一类任意重解释在类型检查层合法，是类型混淆（类 3）的种子。该语义在标准库内保持（标准库为审计可信基）；标准库外由受限操作检查把 `bitcast` 整体禁止——类型混淆的种子从源头被编译期拒绝。
-
-**受限操作检查**：`compiler/analysis/passes/restricted_ops.py` 定义受限名集合 `RESTRICTED_BUILTIN_NAMES = {sys_read, sys_write, open, close, assume_init, __memcpy}` 与 `RESTRICTED_STDLIB_FUNCS = {from_raw_parts, __slice_from_parts, __slice_get_ptr, __slice_get_len, __str_from_parts, __str_get_ptr, __str_get_len}`。受限操作覆盖三类：`bitcast`（类 3 类型混淆的唯一重解释入口，AST `BitCast` 节点直接拦截）、系统调用（`sys_read`/`sys_write`/`open`/`close`，FFI 边界；运行时入口 `__yian_*` 族已随 t2 移除，不再列受限名）、绕过内部机制的构造器与搬移原语（无检查的切片构造 `from_raw_parts`、绕过 definite-assignment 的 `assume_init`、字节级拷贝 `__memcpy`）。检查在 `inject_prelude` 之后、`GlobalResolve` 之前运行（`main.py`），以「解析路径含 `lib` 组件」判定标准库（`__is_stdlib_file`），对标准库外出现的首个受限操作报 `AnalysisError`「restricted operation '…' is only allowed in the standard library」并终止编译。检查为语法级（AST 节点/调用名判定），不引入 analysis 侧布局查询；`from_raw_parts`（`lib/core/slice.an:65`）被禁意味着用户代码不能以任意 `(ptr, len)` 构造切片——指针伪造的另一条路径被封闭。**实现注意（理论优先）**：标准库判定现状为「解析路径含 `lib` 组件」路径分量启发式（`__is_stdlib_file`）——用户工程下任何名为 `lib` 的目录内文件会被误判为标准库而豁免受限操作检查，削弱「用户代码不含受限操作」的理论前提。按理论优先原则不弱化前提，标准库身份应以编译器显式传入的 lib 根路径的规范解析判定（并补 `check_restricted_ops` 覆盖测试），属第 11 章实现范围。**实现注意（`__is_test_harness_file` 豁免，2026-08 追加）**：为支持受限原语的功能测试，`tests/std/` 路径组件豁免受限操作检查（`restricted_ops.py:70-79`）——`tests/std/` 镜像标准库布局、直接练习受限原语（t2 验收门：受限测试文件须可编译通过）；`tests/error/` 保持非豁免，受限机制的负例覆盖（`tests/error/restricted_prim.err.an` 等）维持。该豁免与 `lib` 路径组件启发式同为路径判定，按理论优先原则应在第 11 章以显式 lib 根路径规范解析替代。**受限名集合（当前实现，`restricted_ops.py:30-60`）**：`RESTRICTED_BUILTIN_NAMES = {sys_read, sys_write, open, close, assume_init, __memcpy}`；`RESTRICTED_STDLIB_FUNCS = {from_raw_parts, __slice_from_parts, __slice_get_ptr, __slice_get_len, __str_from_parts, __str_get_ptr, __str_get_len}`（胖指针原语与 `from_raw_parts` 同档受限；字节级哈希收窄取「保留为受限名」路径，`__memcpy` 入受限内建名，见 §11.2）。**实现注意（`__is_bench_file` 豁免，2026-08，raw-slice-ref-modes）**：与 `tests/std/` 同理，`bench/` 路径组件豁免受限操作检查（`restricted_ops.py:82-84`；`check_restricted_ops` 跳过条件新增 `__is_bench_file`，`restricted_ops.py:210`）——raw 模式下 `T*→T[]` 被 coerce 拒绝（规则 8.1.13），评测负载须以 `from_raw_parts(ptr, len)` 显式构造切片。当前行使面（grep 核实）：`bench/shootout/queen.an` 4 处绑定（`free_rows`/`free_maxs`/`free_mins`/`queen_rows`，规模 8000/16000/16000/8000）。信任扩展的波及面 = 该路径判定豁免的评测文件；与 `lib` 路径、`tests/std/` 同为路径组件启发式，按理论优先原则应在第 11 章以显式根路径规范解析替代。（历史措辞：本段早期版本将 `bitcopy`（内部搬移原语）列为受限内建名；该操作已于 2026-08-23 随 clone/move 机制一并移除，不再受限名集合中。）
-
-**标准库审计准则**：标准库内部 `bitcast` 的元数据转化留白已关闭——结构转换 `bitcast` 于 2026-08 全库移除后，标准库不再存在该转化，§7.1 Cast 留白收窄为「字节级哈希」一类（由 `__memcpy` 受限名承担，见下方实施状态）；理论论证把标准库作为可信基黑盒，不涉及此处细节。留白期间的事实记录：`bitcast` 曾用于 10 个文件（`lib/core/hash.an`、`lib/core/slice.an`、`lib/core/array.an`、`lib/core/str.an`、`lib/num/*.an`）、`from_raw_parts` 曾用于 4 个文件（`lib/core/slice.an`、`lib/core/vec.an`、`lib/core/env.an`、`lib/core/array.an`）；2026-08 实施后 `bitcast` 全库清零，`from_raw_parts` 仅余 `lib/core/slice.an:65`（定义）；原 `lib/core/env.an`（FFI out 边界）已于 t2 移除，FFI out 边界随之消失。
-
-### 受限依赖风险评估
-
-> 既有清单数量已修订，以下为 grep 核实的完整计数：bitcast 14 文件 23 处、from_raw_parts 17 文件 34 处。
-
-本子段把标准库对受限操作（`bitcast`/`from_raw_parts`）的依赖逐点分类，按「可移除 / 需保留 / 需改造」三档裁决，并给出胖指针化后的替代路径。裁决只记录评估结论；可移除项移除与字节级哈希收窄的执行已于 2026-08 完成（实施状态见「实施状态（2026-08）」；遗留边界见 §11.2）。nullptr 依赖已随关键字移除（2026-08），见下。
-
-**bitcast 依赖（14 文件 23 处）按用途分两类**：
-
-① 结构表示转换（**可移除**——胖指针化后由数组退化/聚合构造承担）：`lib/core/array.an:9,17,26,35,44`（T[N]→T* 数组退化）、`lib/core/slice.an:17,67`（SliceStruct↔T[] 视图）、`lib/core/str.an:16,26,97`（u8[]↔str，含 as_slice 反向转换）。该类是「同一对象的不同类型视图」，胖指针 5 字段表示下由数组退化与聚合构造直接承担，无重解释语义。
-
-② 字节级哈希（**需改造/收窄**——依赖 memcpy 字节视图）：`lib/num/*.an` 中 10 个文件（bool/u16/u32/u64/i8/i16/i32/i64/f32/f64；`u8.an` 无 bitcast，L29 为普通取址 `&val`，仅 L30 用 `from_raw_parts`；`f64.an` bitcast 在 L8）——`bitcast<u8*>(&val)` 取标量字节视图喂 hasher；`lib/core/hash.an:62,98,112`——`memcpy(bitcast<u8*>(&k), …)` 哈希内部字节操作。该类机制 = memcpy 字节视图，裁决=需改造/收窄，memcpy 保留为受限名或编译期内建字节视图（intrinsic），不单列第三类。
-
-**from_raw_parts 依赖（17 文件 34 处）按用途分两类裁决**：
-
-- 切片视图站点（**可移除**——胖指针化后 5 字段聚合构造直接覆盖）：`lib/core/slice.an:65`（定义）、`lib/core/slice.an:168`（Range 索引）、`lib/core/array.an:9,37`、`lib/core/vec.an:39`、`lib/core/pointer.an:15`——从「已检查指针 + 长度」构造切片视图，聚合构造直接表达。
-- 哈希字节视图站点（**需改造/收窄**——与 ② bitcast 同机制，随 hashing 路径一并改造）：11 个 `lib/num/*.an` 文件（L8，除 f64 为 L9 / u8 为 L30 / u64 为 L65 喂 hasher）。**FFI 边界说明**：`lib/core/env.an`（argv FFI 站点）已于 t2 移除，原 `__yian_argv_ptr` C 裸字符串指针切片构造的 out 边界（§7.3 FFI out 行）不再存在；`lib/core/io.an:6` 为 import-only（未使用）。
-
-**nullptr 依赖（已移除，2026-08）**：原 `lib/core/raw_vec.an:13` `Self(nullptr, 0)` 空态已改 `dyn[0]` 分配（空容器持非空带堆键的胖指针），可空由 `Option<指针族>` 表达；`lib/core/option.an` 为 A 层保留。
-
-**实施状态（2026-08）**：结构转换 `bitcast` 与 `from_raw_parts` 切片视图站点已移除（`lib/` 全库 `bitcast` 清零；`from_raw_parts` 仅余 `lib/core/slice.an:65` 定义（`lib/core/env.an` FFI 站点已随 t2 移除））；字节级哈希已收窄为 `__memcpy` 受限名（实现取「保留为受限名」路径，未单列编译期内建字节视图 intrinsic）；`tests/std/` 测试套件豁免与受限名集合见 §8.3 实现注意。移除后 §7.1 Cast 留白（L22）的论证缺口收窄到「字节级哈希」一类，由 `__memcpy` 受限名承担，见 §11.2。指针比较字段化（§7.6 风险 3）已随 CFG 层插检实施（t10，Binary 指针分支 `PtrCmp`/`CheckPtrCmp`）：相等比较按 (data, index) 二元组、序比较先查 data 相等（跨对象 trap）；函数指针不参与。tiered-pointers 表示层（t2）与检查分级（t3）已落地（§7.4 三结构、§7.1 CheckRefAccess）；全量回归 255/255（主）+ 75/75（fat）+ 76/76（fat_cve）通过（2026-08-23 实测）。**优化路径守卫注（2026-08，volatile SENTINEL 写）**：帧退出/释放的 SENTINEL 写在优化路径（opt>0 且非 `-t ll`）以 `store volatile` 保护（`emit.py` `_SENTINEL_STORE` 文本替换，DSE 不可删除/重排，`docs/perf-optimization-plan.md` §7）；`-t ll` 零优化文本输出不含 volatile 标记，帧退出守卫的忠实表示以优化产物为准。已知过近似：替换基于文本正则匹配任意 `store i64 18446744073709551615`（含用户代码 u64::MAX 写与 delete 堆 SENTINEL 写），因该三种写文本形态逐字节相同（2026-08-23 实测）且 llvmlite 0.44 无法原生表达 volatile store，无法在正则层收窄——volatile 过宽仅损失优化机会、正确性无碍（见 `.omo/evidence/security-audit-paper-prep/task-3.txt` 偏差①评估）。
-
-### 8.4 根/来源追踪设计（规定式）
-
-**现状：&s.field 丢根**。HIR 层 `&s.field` 为 `Unary(AddrOf, FieldAccess(Var s, "field"))`，在 `__build_addr_of`（`op_builder.py:498`）产生；到 CFG 经 `__resolve_addr` 分解为 `FieldPtr`/`ElementPtr` 等地址节点，仅保留 `is_place` 与 `type_id`，生成该指针的根对象（变量 $s$ 或分配点）不再可追溯。后果：运行时诊断无法报出越界/悬垂源自哪次分配（`is_raw` 为纯字段检查，§7.1 Delete）。
-
-根追踪的编译期用途细化：① `delete` 的编译期诊断增强（可选，非安全必需）：静态识别对重锚定指针（字段取址 `&s.field`）的 `delete` 并给出告警（首字段等通过 `is_raw` 者可选豁免）；`&arr[0]` 系算术结果、`data` 为原始锚，经 `is_raw` 者豁免；释放范围 = 整块交还分配器（与 $\text{size} \cdot |T|$ 无关；`is_raw` 为纯字段检查）；② 越界诊断：trap 发生时据根键报出「对象 $s$ 的访问越界」而非仅报地址，错误报告形态与 ASan（§9.4）的工程化报告对齐；③ 元素取址：`&arr[i]` 的根为数组符号 `arr`，元素取址的编译期根信息可与运行时检查点关联。
-
-**设计（规定式，不写实现代码）**：
-
-1. **HIR 层根注解**：每个指针产生点（取址、分配、数组退化）记录其根对象键。根键仿 definite_assignment.py 的 `StateKey` 模式（`definite_assignment.py:52-60`：冻结数据类，`sym_id + path` 元组；`__walk_assign_target` 沿 `FieldAccess`/`TupleAccess` 累积路径、在 `Var` 处归约，`definite_assignment.py:462`）：根键 =（对象符号 id, 字段/元素路径），堆分配以分配点唯一 id 为根键。
-2. **复用方式**：`StateKey` 的「符号 + 路径」结构天然覆盖 `&s.field`（符号 $s$ + 路径 `("field")`）、`&arr[i]`（数组符号 + 元素路径）与整变量取址 `&x`（空路径）；`dyn T`/`dyn T[n]` 以分配点 id 为根键，数组退化以被退化数组符号为根键。
-3. **插入点**：指针产生点 `__build_addr_of`（`op_builder.py:498`，取址）与分配构建 `build_dyn_value`/`build_dyn_buffer`（`op_builder.py:206-213`），在产生 HIR 指针值时同步记录根键；退化点随数组符号绑定。
-4. **用途**：① 对象类型同一性的静态核验（类型混淆排除的编译期侧，《形式化论证》§4.6 可信基边界），同一根键的指针共享 `alloc_type`（定义 25）；② 重锚定/比较的根一致性预检（异根序比较对应规则 3.4.1 的 `data` 相等前提）。范围声明：追踪限于指针值本身，不引入借用检查或生命周期分析。
-
-### 8.5 类型约束与运行时检查分工表 + 完备性论证
-
-**分工表（表 10）**：按安全目标 G1-G4 组织类型系统（本章）与运行时检查（《形式化论证》第 2-3 章）的分工。
-
-表 10：类型系统约束与运行时检查分工
-
-| 安全目标 | 类型系统保证（本章） | 运行时检查保证（《形式化论证》第 2-3 章） |
-|---|---|---|
-| G1 空间 | 指针良构（定义 13）由定型规则 8.1.7-8.1.8 静态保证，无越界构造入口；`T&` 免 `in_bounds`（无 `index`/`size`，定义 12 退化恒真） | `in_bounds(p, n)` 全访问检查（定义 12），前提不满足即 trap（规则 3.2.1-3.2.2）；`T&` 仅 `live`（`CheckRefAccess`） |
-| G2 时序 | 不承诺（时序有效性本质动态，编译期不可判定） | `live(p)` 锁槽键检查（定义 8，块内/帧内锁槽，含 null 短路）与释放前提（规则 3.6.2），不满足即 trap；作废永久性由 L-NOKEY（O-2b） |
-| G3 算术 | 定型规则限定指针算术为元素级（$T^{*} \pm n$），无整型→指针，回绕按《形式化论证》§2.4 数学语义排除 | 良构前提（定义 13）+ 无回绕实现约定（《形式化论证》§2.4），回绕按 trap 处理 |
-| G4 类型 | 受限操作检查：`bitcast`/`from_raw_parts` 仅限标准库（§8.3）+ 分配点类型标注（定义 25-26），保证对象类型同一性 | 不承担（《形式化论证》§1.3：运行时无类型判定） |
-
-**完备性论证（梗概级，承接类型约束侧的完备性义务）**：定理 5.1（《形式化论证》§5.1）的五条前件中，本章承担 ①（类型约束）与 ②（良构性）两条（其余三条由《形式化论证》§4.8 义务 O-5 与 §1.2 攻击者模型承担，见《形式化论证》§5.5）。本章把承担的 ①② 分解为三条可静态验证的断言：① 值域闭合，全部用户代码指针值由形成规则 8.1.1-8.1.3 产生（`bitcast`/`from_raw_parts` 被受限操作检查禁于标准库外，标准库为审计可信基，§8.3），`T[]`/`T&` 降级视图由 coerce 链 8.1.13-8.1.15 对既有指针值重贴产生（锁继承，非新内存构造），指针类型数据的搬运保持类型（§8.1）；② 类型同一性，每个可访问指针满足定义 26（动态类型 = 分配点类型；用户代码无 `bitcast`，静态类型恒等于产生点类型）；③ 良构前提可得，定型规则 8.1.7-8.1.8 与定义 13 一致，算术按数学整数语义求值（《形式化论证》§2.4）。运行时部分（《形式化论证》第 3 章）保证访问与释放规则前提在事件处求值（`in_bounds`、`live`），不满足即 trap。二者拼合即定理 5.1 的 `ok(e) ⟺ safe_access(e)` 结构：类型约束在可信基边界内消除 G4 反例并保证对象类型在检查后不变（不进入定理 5.1），运行时检查消除 G1-G3 反例（`T&` 的 `safe_access` 按定义 14 分级实例化为仅 `live`，`in_bounds` 退化恒真，不引入新的反例面）；地址复用路径由 T1 负向侧（O-2b）排除（含锁槽物理位置被它用为任意值的情形——其值由值失配不等式闭合，继承 O-2b 的值失配论证），使同一性论证在重新分配后仍成立。本章完备性义务（类型混淆防护，《形式化论证》§4.6 以可信基边界承担）即：验证规则 8.1.1-8.1.15 与定义 25-26 的闭合性、受限操作检查（受限名集合）足以排除用户代码的指针伪造与类型混淆、标注在 monomorphization 下的精确性；本章为梗概级，完整证明留待实现侧验证。
-
-**完备性的缺口核查**：三条断言各有一个易漏口。值域闭合的漏口在受限操作检查的覆盖：受限名集合须穷尽全部指针伪造/重解释途径（`bitcast`、`from_raw_parts` 已列），新增受限操作未同步登记即重新开口，须以受限名集合与标准库依赖的审计盘点兜底；类型同一性的漏口在分配点标注精度：标注须在 monomorphization 后仍指唯一类型，若出现泛型实例间共享标注即失效（§8.2 分配点示例）；另一漏口在分支合并：pointee 类型不同的指针合并须被拒绝（§8.2 收紧机制），否则 `static_type` 偏离产生点类型；良构前提的漏口在《形式化论证》§2.4 无回绕约定由实现承担，若实现回绕未检测则 O-1 无回绕子义务落空。四处缺口均在本文档对应章节以「现状风险/审计准则」标注，构成类型约束侧的完备性义务实现时的核对清单。
-
-## 9. 相关工作
-
-本章按 fat-pointer 谱系定位本方案（5 字段胖指针 + 块头锁槽 + CFG 层分析）。谱系主线为：Austin 等人确立 fat-pointer 概念（PLDI 1994）→ SoftBound/HardBound 给出软件与硬件两支空间安全（PLDI 2009 / ASPLOS 2008）→ CETS 补全时序安全（ISMM 2010）→ CHERI 提出硬件能力模型（ISCA 2014）→ Low-Fat 探索零元数据堆界形态（CC 2016）；§9.1-§9.4 依此展开，§9.6 记录未核实引用说明。引用元数据来自已核实的 `.omo/notes/citations.md`（T2），未核实文献不以论据使用（§9.6）。
-
-### 9.1 空间安全：fat-pointer 谱系
-
-本方案的空间机制 `in_bounds`（定义 12）属 fat-pointer 谱系；谱系内按元数据存放位置（内联于指针值 vs 带外 side table）与检查层级（语言层插桩 vs 编译期 IR 层 vs 硬件）分叉。
-
-**Austin、Breach 与 Sohi（PLDI 1994，已核实）**：《Efficient Detection of All Pointer and Array Access Errors》。fat-pointer 的鼻祖：每个指针携带基址与上界，指针算术与解引用时检查，声称覆盖全部指针与数组访问错误。本方案继承「界随指针携带、按对象锚定」的空间模型，把检查前移至 CFG 层（第 7 章）并叠加时序维度。
-**CCured（Necula 等，POPL 2002，已核实）**：《CCured: Type-Safe Retrofitting of Legacy Code》。以类型推导把 C 指针划分为 SAFE/SEQ/WILD 三类，仅对 WILD 指针维持完整 fat-pointer 元数据，可静态证明安全的指针降为裸指针。本方案语言受静态类型约束（第 8 章）、指针产生途径封闭，无须按程序点分类降级。
-**Cyclone（Jim 等，USENIX ATC 2002，已核实）**：《Cyclone: A Safe Dialect of C》。C 的安全方言，指针区分不可空裸指针 `T *` 与带界 fat-pointer `T @`，编译期与运行期结合保证空间安全。本方案以 5 字段统一所有指针、无双轨表示。
-**SoftBound（Nagarakatte 等，PLDI 2009，已核实）**：《SoftBound: Highly Compatible and Complete Spatial Memory Safety for C》。编译期插桩的软件空间安全：元数据存于独立绑定表（side table），指针算术更新元数据、访问前查表。对应本方案未采用的 side-table 变体。
-**HardBound（Devietti 等，ASPLOS 2008，已核实）**：《Hardbound: Architectural Support for Spatial Safety of the C Programming Language》。把 SoftBound 的界检查下沉到硬件：处理器寄存器维护基址/上界，带界寻址模式在每次访存时强制检查。本方案是纯软件 CFG 层插桩（第 7 章），不绑定 ISA。
-**Baggy Bounds（Akritidis 等，USENIX Security 2009，已核实）**：《Baggy Bounds Checking: An Efficient and Backwards-Compatible Defense against Out-of-Bounds Errors》。对象大小按 2 的幂向上取整，配合二进制伙伴分配器使对象独占 2 幂区间，界检查退化为一次 `addr & mask` 位运算。本方案 `size` 精确到元素个数（定义 12），不做 2 幂粗粒度合并。
-**Low-Fat Pointers（Duck 与 Yap，CC 2016 与 NDSS 2017，已核实）**：《Heap Bounds Protection with Low Fat Pointers》及后续栈界工作《Stack Bounds Protection with Low Fat Pointers》。把 2 幂区间基址编码进指针值本身（低位置零位携带容量），堆界检查无需任何元数据存取。本方案以显式 `size` 字段承载界信息、且同时携带时序锁信息（`lock_ptr`/`key`），不约束地址对齐。
-
-### 9.2 时序安全：锁/键谱系
-
-本方案的时序机制 `live`（定义 8）属锁/键谱系：对象持有锁、指针携带键、访问时核对、释放即作废。该谱系由 CETS（ISMM 2010）确立编译期形态，Watchdog/WatchdogLite（ISCA 2012 / CGO 2014）给出硬件形态。本方案选择块内锁槽 + 帧级 re-key（定义 7、规则 3.7.1）。
-
-**CETS（Nagarakatte 等，ISMM 2010，已核实）**：《CETS: Compiler Enforced Temporal Safety for C》。编译期时序安全：每个对象分配一个锁，指针携带锁引用，释放时作废锁，每次访存前校验锁活性，与 SoftBound 组合覆盖全部空间与时序错误。
-**Watchdog（Nagarakatte 等，ISCA 2012，已核实）**：《Watchdog: Hardware for Safe and Secure Manual Memory Management and Full Memory Safety》。硬件锁表：处理器内置锁表与 `lock`/`unlock` 指令，指针携带锁标识，硬件在每次访存时校验锁活性。是文献中与本方案时序设计最近的形态；本方案锁槽随对象携带（定义 7）、经检查写不可达由布局推导（L-UNREACH，《形式化论证》§4.8），在通用处理器上即可部署。
-**WatchdogLite（Nagarakatte 等，CGO 2014，已核实）**：《WatchdogLite: Hardware-Accelerated Compiler-Based Pointer Checking》。Watchdog 的轻量变体：仅对堆指针做硬件锁检查，栈指针复用常规硬件机制。本方案栈侧以帧级锁 + re-key（《形式化论证》§2.6、规则 3.7.1）在纯软件层达成「帧退出即失效」，无须硬件栈锁。
-
-### 9.3 能力模型与硬件边界检查
-
-能力模型把「界信息不可伪造」提升为体系结构级保证，与本方案元数据防伪目标相通，但实现路径不同：硬件强制的不可伪造（CHERI）对照纯软件保证（本方案），以及硬件边界检查的工程失败案例（Intel MPX）。
-
-**CHERI（Woodruff 等，ISCA 2014，已核实）**：《The CHERI Capability Model: Revisiting RISC in an Age of Risk》。在 RISC 指令集引入能力：指针携带不可伪造的权限边界（基址、长度、权限位），硬件强制边界检查。本方案靠《形式化论证》§1.2 无任意写前置假设与第 8 章良构操作约束在纯软件层保证元数据不可伪造。
-**Intel MPX（Oleksenko 等，POMACS 2018，已核实）**：《Intel MPX Explained: A Cross-layer Analysis of the Intel MPX System Stack》。对 Intel MPX 硬件边界检查系统的跨层实测剖析：检查粒度受限于 2 幂区间、边界表（bound tables）元数据膨胀、典型负载上开销普遍高于软件方案，最终被 Intel 停用。其失败教训已体现在 §7.6 风险清单（FFI/ABI、聚合传参、指针体积）。
-
-### 9.4 基线检测工具
-
-**AddressSanitizer（Serebryany 等，USENIX ATC 2012，已核实）**：《AddressSanitizer: A Fast Address Sanity Checker》。基于 shadow memory 的编译期插桩：每次访存前检查影子字节标记，红区（redzone）检测越界、隔离区（quarantine）检测 UAF，被 GCC/Clang 广泛集成。是第 10 章评估基线之一（§10.4），其工程化错误报告形态供本方案运行时诊断参考；本方案检查精确到元素（定义 12）。
-
-### 9.6 未核实引用说明
-
-早期文献清单曾以「WatchTower: Fast, Secure Memory Safety」（ASPLOS 2018）与「Buddy: Memory Safety for the C Language」（IEEE S&P 2020）为题引用两篇文献，另有一篇「Extensible Metadata for Memory Safety」（声称 OOPSLA 2016）。经 T2 检索核实（`.omo/notes/citations.md`）：三篇均未能在 dblp/OpenAlex/ACM DL 查得确切出处，判定为**未核实**，很可能为已核实文献的误记：「WatchTower」疑为 Watchdog（ISCA 2012，§9.2）的误记，「Buddy」疑为 Baggy Bounds Checking（USENIX Security 2009，§9.1）的误记（其机制即二进制伙伴分配器），「Extensible Metadata」的后续确证工作为 Low-Fat 栈界（NDSS 2017，§9.1）。本章正文不以未核实文献为论据，仅在此记录排查结论；§9.1-§9.4 所引文献均已核实。
-
-## 10. 评估方法论
-
-### 10.1 评估目标与范围
-
-本章定义本方案实现完成后的评估协议：度量空间检查 `in_bounds`（定义 12）与时序检查 `live`（定义 8）的时间、内存与每检查开销，并与既有工具对照，回答「检查让程序慢多少、多占多少内存、是否值得换取《形式化论证》第 5 章定理 5.1 的保证」。范围限于单线程、纯 YIAN、不跨 FFI 的 in 类程序（《形式化论证》§1.3），与主定理结论范围一致。评估目标的三层含义：正确性目标（负例集逐条验证 trap 点，§10.5 步骤 4）、开销目标（时间/内存/每检查三个指标，§10.3）与对照目标（与无检查基线、ASan、SoftBound/CETS 三线对照，§10.4）。**状态（2026-08）**：归档实测已执行（2026-08-14，`bench/` 原 3 负载，历史数据见 §10.7）；`bench/shootout/` 14 基准的实测未执行，具体数字留待按本章协议执行并回填（§11.2）。
-
-### 10.2 基准
-
-基准分三层，覆盖从受控对照到全程序吞吐。
-
-1. **仓库内建基准（必测）**：仓库内建基准已改为 `bench/shootout/` 下的 14 基准（2026-08 调整；原 3 负载 ptr_traverse/alloc_dense/mixed 已移除，其历史实测数据见 §10.7 归档）。`bench/shootout/` 为 shootout 风格基准迁移自 `bak/old_exp/performance`（规模调整记录见各基准头部注释与 t1/t2 证据），`bench/` 路径经 `__is_bench_file` 豁免受限操作检查（§8.3）。（不参考已过时的 `bak/experimental_ptr/`——其 FullPtr/Slice/RawPtr 差异只在库层检查，不能代表 §7.4 的 CFG 层插桩成本。）
-2. **Olden 基准套件**：经典指针密集型应用（bh、health、mst、perimeter 等），以堆对象图遍历与递归为主，是空间与时序检查的压力负载；须移植为 YIAN 源码。
-3. **SPEC CPU2017**：通用整数负载，覆盖非指针密集代码，度量检查前插对全程序吞吐与内存画像的影响；须移植代表性整数程序。
-
-移植完成度决定后两层是否进入正式评估：仓库内建基准为必测项，Olden 与 SPEC 的移植属第 11 章未来工作。
-
-### 10.3 指标
-
-- **运行时间开销**：被检版本与无检查基线的端到端运行时间之比；分基准报告，预期随动态访问密度变化（形态见 §10.6，无预设数值）。运行时间按基准内部分段报告（分配段、遍历段、释放段），以便区分检查前插成本与表示体积成本。
-- **内存开销**：指针体积放大（8B→40B，§7.1）造成的堆/栈占用增量，与块头锁槽（每块 8B）及隔离池驻留（实现选择，《形式化论证》§2.2 立即复用约定）。锁槽驻留随块存在、隔离池驻留与分配历史峰值相关。内存按峰值常驻与稳态两份报告：峰值反映指针体积放大与隔离池累计驻留，稳态反映块复用（锁槽写新键）后的驻留下界。
-- **每检查开销**：单次 `in_bounds` 与 `live` 的指令级代价（整数比较次数、锁槽读取次数）。指令级代价以编译产物为对象统计检查路径的指令数形态，不预设具体数值，供 §10.6 形态对照。
-
-### 10.4 基线
-
-- **无检查基线**：`binarytree_single.an`（RawPtr）与关闭插桩的本编译器输出，作为时间与内存的绝对下界。
-- **AddressSanitizer**（USENIX ATC 2012，§9.4）：业界标准检测工具，作为工程可用性基线；其 shadow-memory 与红区机制的时间/内存形态与本方案不同，用于对照检查精度的取舍。
-- **SoftBound**（PLDI 2009，§9.1）与 **CETS**（ISMM 2010，§9.2）：学术谱系中与本方案最接近的软件方案（side-table 空间 + 持久锁时序），用于对照本方案「内联 5 字段 + 块头锁槽」表示选择的开销影响。
-
-无检查基线与 ASan 为必测；SoftBound/CETS 按工具链可得性降级为定性对照。
-
-### 10.5 协议
-
-1. **编译与运行**：被检程序经 `compiler.main`（含 CFG 层插桩）编译为 native exe，统一优化级别与输入集、同一机器。命令形态与 AGENTS.md 的 CLI 一致：`python3 -m compiler.main -O3 lib <bench>.an -o build/bench/<variant>`；基准文件取自 `bench/shootout/`（§10.2），被检变体与无检查基线的差异严格限定为插桩，编译参数逐项一致以保证对照有效。
-2. **重复与统计**：每个（基准 × 变体 × 基线）组合多次重复运行（预设不少于 5 次），取中位数与分布报告，排除冷启动与系统噪声。统计方法：先以少量试运行确认稳定窗口，再在窗口内重复采集；报告每次运行的端到端时间与常驻内存，汇总为中位数、四分位距与最小/最大值，不报告单次偶然值；同一机器、同一负载条件下进行，避免跨机折算。
-3. **正确性对照**：被检程序必须通过自身断言（如 Binary Trees 的 `check % 256 == 176`）；对注入的越界/UAF/双释放/栈悬垂样例，验证在相应检查点于访问发生前 trap（吸收态）。注入样例以最小改动嵌入基准源码或独立构造为负例文件，保证断言路径与非注入基线一致。
-4. **负例集**：构造越界读写、one-past-end 访问、UAF、双释放、栈悬垂访问样例，逐一验证 trap 点与定理 5.1 对应规则一致。每条负例记录触发的规则号（如规则 3.2.1、3.6.2）、触发前提（`in_bounds`/`live`/`is_heap`）与 trap 前的指令序号，与结论逐条展开表逐行核对。
-
-### 10.6 预期结果形态
-
-- 时间开销预期随访问密度上升：指针密集负载（Binary Trees、Olden）的检查占比预期高于通用整数负载（SPEC）；三变体相对开销排序预期为 RawPtr < Slice < FullPtr。
-- 内存开销预期与指针体积线性相关：40B 表示（§7.1）使含指针聚合类型的占用放大，块头锁槽（每块 8B）+ 隔离池驻留（实现选择）引入与对象规模近线性的小额开销，放大预期集中于指针密集数据结构。
-- 每检查开销：`in_bounds` 为常数次整数比较（定义 12）、`live` 为一次块内锁槽读取（定义 8），预期低于 SoftBound 的 side-table 查找。
-- 检查精度：元素级全访问检查（定义 12）预期报出比 ASan 红区更精确的越界边界（访问区间越过末尾即 trap，而非触及红区才报）。
-- 形态对照用途：以上形态供实现完成后按 §10.5 协议实测对照，不作为预设结论；若实测与形态不符（如时间开销与访问密度不相关），须复核检查插入位置与表示布局，而非调整形态描述。
-
-以上全部为预期形态与相对趋势，无任何实测数值支撑。
-
-### 10.7 实测结果（已运行 2026-08-14）
-
-**已运行(2026-08-14)**：按 §10.5 协议在 `bench/` 下 3 个负载（§10.2）上完成实测，完整数据（含原始样本附录）见 `build/bench/results.md`，测量脚本 `scripts/bench_fat.py`。**注：3 个负载源码已于 2026-08 移除，以下为历史归档数据。**开/关两态差异严格限定为检查发射（`--no-fat-checks` 保留 40B 表示/锁槽/帧锁）；每态 1 次 warmup + 5 次正式运行取中位数（IQR/min/max 见附录），同一机器、`taskset -c 4` 绑核降噪。
-
-| 负载 | 检查开 (ms) | 检查关 (ms) | 时间比 | Δ时间 (ms) | 每检查/每访问开销 | Δ峰值 RSS |
-|---|---|---|---|---|---|---|
-| ptr_traverse（遍历密集） | 381.9 | 263.1 | 1.45× | +118.8 | +0.59 ns/检查（2×10^8 检查承载访问） | +0.00 MB |
-| alloc_dense（分配密集） | 428.6 | 330.6 | 1.30× | +98.0 | +47.6 ns/分配事件（≈2.06×10^6 事件） | +0.00 MB |
-| mixed（混合负载） | 372.2 | 135.9 | 2.74× | +236.3 | +2.46 ns/元素（9.6×10^7 元素访问） | +0.00 MB |
-
-- **内存**：三负载峰值常驻增量均为 0——40B 表示、锁槽、帧锁在两态间不变，差异仅检查发射；含指针聚合的放大（§10.6 体积预期）在两态中同样存在，故差值为 0。
-- **每检查开销**（按基准头部注释的访问密度特征估算，task-2 记录）：ptr_traverse 的 `in_bounds`/`live` 检查常数为亚纳秒级（+0.59 ns/检查）；alloc_dense 每事件含 GenKey/锁槽写/free 校验多项操作、mixed 每元素 ≈3 个不同检查类型（`CheckPtrCmp`+`CheckElementArith`+`CheckSafeAccess`），故该两行为「每访问事件」开销而非单条检查指令。
-- **ASan 对照**（语义对齐 C 版，`clang -O2 -fsanitize=address`，`ASAN_OPTIONS=detect_leaks=0`）：ptr_traverse 134.0 ms、alloc_dense 156.1 ms、mixed 29.2 ms——分别为胖指针检查开态的 0.35×、0.36×、0.08×；ASan 峰值 RSS 5.0 / 131.5 / 5.9 MB（alloc_dense 红区+隔离区放大显著，胖指针侧 35.9 MB）。
-- **形态对照**：实测时间开销随访问密度上升（1.30× → 2.74×），与 §10.6 预期形态一致；§10.6 的形态描述保留为对照基准，实测数字以本节与 `build/bench/results.md` 为准。正确性对照与负例集（§10.5 步骤 3-4）由 `tests/fat/`（75 用例）与 `tests/fat_cve/`（76 用例）回归套件持续验证，本节只回答开销目标与对照目标。
-
-## 11. 局限与未来工作
-
-本章汇总《形式化论证》第 1-6 章与《编译器实现》第 7-10 章标出的边界，并列出未来工作的方向清单。局限是威胁模型（《形式化论证》§1.2）与论证范围（《形式化论证》§1.3 in/out 表）的诚实陈述，不构成机制缺陷；方向清单只列方向与动机，不排定路线图与优先级。
-
-### 11.1 局限
-
-**并发数据竞争（out）**：本机制与《形式化论证》第 4-5 章全部形式化基于单线程模型（《形式化论证》§1.3 in/out 行）。锁槽写/读与检查步骤（`live`、`in_bounds`）在单线程下原子；多线程下它们必须原子化，否则线程间对同一锁槽或同一块的竞争使检查本身不可靠。本设计不含锁槽原子化、锁槽互斥或数据竞争检测，多线程内存安全不在论证范围（《形式化论证》§5.5）。
-**FFI/ABI 指针体积（out）**：胖指针分级聚合相对裸指针 8B 放大——`T*` 40B ×5、`T[]`/`str` 32B ×4、`T&` 24B ×3（§7.1、§7.4、§7.6 风险 1）。跨 FFI 边界 C 侧不识别元数据，检查不跨越边界（《形式化论证》§1.3 out 行）；含指针参数的函数签名全部改写（`types.py:253-271`），聚合可能按内存传参、调用约定全局变化（§7.6 风险 4）。ABI 兼容方案（按字段拆分传参或 side-table）属方向清单而非本轮设计。
-**元数据防伪依赖《形式化论证》§1.2 假设（out）**：锁槽在块内（块头/帧）、防伪依哨兵 + 无任意写假设：释放后锁槽随即由复用方支配（实现选择隔离池时读得确定性哨兵），攻击者无任意写即无法伪造。但 `size`/`index` 仍作为 `T*`（`T[]` 的 `size`）胖指针字段存放于存储。「元数据不可伪造」仅在无任意写前置假设内成立：攻击者不能改写锁槽或指针元数据，除非通过了运行时检查。若攻击者获得一次任意写前置，即可改写 `size` 扩大访问或改写 `lock_ptr`/`key`，检查被废除；该失效属 out 行边界（《形式化论证》§1.3），不构成 in 类论证的反例（《形式化论证》§5.5）。side-table 变体（§11.2）是解除该假设依赖的方向。
-**隔离池/内存归还（实现选择，out）**：论证采用「释放后立即复用」约定（《形式化论证》§2.2），不要求释放内存保持映射可读；锁槽释放后随即由复用方支配，其安全性由《形式化论证》第 4 章值失配论证承担。实现若选择隔离池（内存不归还 OS）或 `munmap`（归还物理页），均为工程取舍：前者有驻留成本，后者使读已释放锁槽由 trap 退化为段错误——均属实现选择边界，不属论证范围。
-**栈内层作用域粒度（out）**：栈守卫粒度为帧级锁（《形式化论证》§2.6、规则 3.7.1）：每帧一个活动锁槽，帧内全部取址共享该锁与键。re-key 区分帧轮次（L-NOKEY 栈实例），但不区分同一帧内已退出的内层块；`{ let y; q = &y; }` 之后 `q` 对 `y` 地址的访问在帧仍活动时不设防。块级粒度需编译期作用域生命周期分析（帧内块级锁或活跃集合），超出本设计的最小集合，作为局限保留（粒度边界）。
-
-### 11.2 未来工作方向
-
-以下方向只列方向与动机，不排定路线图与优先级；具体取舍由实现阶段按第 10 章评估协议决定。
-
-- **side-table 变体**：把全部指针元数据（含 `size`）移入带外 side table、指针仅存表索引，使元数据在任意写前置下也不可被越界写触及。动机：解除元数据防伪对《形式化论证》§1.2 假设的依赖，并改善 ABI 兼容；代价是每访问多一次表寻址、指针体积变化与表条目生命周期管理（与锁槽生命周期同构）。
-- **硬件能力支持（CHERI 类）**：考察把界与时序信息交由硬件能力承载的可行性（CHERI，ISCA 2014，§9.3），用硬件 tag 保证元数据不可伪造。动机：为元数据防伪提供体系结构级保证，是《形式化论证》§1.2 假设边界外的升级路径。
-- **CFG 层实现与评测**：按第 7 章表示方案（内联分级字段 + 块头锁槽）实现 CFG 层插桩，随后按第 10 章评估协议执行实测并回填数字（§10.1 未测声明、§10.7 归档的后续）；Olden 与 SPEC CPU2017 的移植属此项（§10.2）。动机：把《形式化论证》第 4-5 章的证明义务（O-1/O-2a）落实为编译器内可查的检查插入点，并验证 §10.6 预期的开销形态。**实施状态（2026-08，t1-t10）**：CFG 层插桩已实施——内联 5 字段表示（40B 聚合 + 帧锁/块头锁槽）、6 个检查插入点 + Malloc/Delete 锁槽交互、指针比较字段化（Binary 指针分支 `PtrCmp`/`CheckPtrCmp`，规则 3.4.1-3.4.2：相等按 (data, index)、序比较先查 data 相等即跨对象 trap，函数指针排除）、指针-to-ZST 保持 ZST（§7.6 风险 2 裁决）；全量回归 255/255（主）+ 75/75（fat）+ 76/76（fat_cve）通过。**tiered-pointers 扩展（t1-t3）**：三级表示与分级检查已实施——`T*` 40B / `T[]`·`str` 32B / `T&` 24B（§7.4，`FAT_*`/`SLICE_*`/`REF_*` 常量）、coerce 链定型规则 8.1.13-8.1.15（§8.1）、`T&` 仅 `live` 检查（`CheckRefAccess`，§7.1）、`T[]` 访问经派生 `T*` 全检查、str 4 字段 32B 全链适配、`__slice_from_parts` 降级为 T* coerce 构造（裸指针模式专用）；运行时入口 FFI 移除（§7.3）。评测实测与数字回填（`bench/shootout/` 14 基准）仍属本项后续；归档实测见 §10.7（2026-08-14，3 负载已移除）。**raw-slice-ref-modes 扩展（t1-t6）**：raw 评测模式已实施——`--raw-pointers` 下 `T*`/`T&` 退化为裸 8B、`T[]`/`str` 退化为 2 字段 16B（§7.4），`T*→T[]` coerce 在 raw 下编译期拒绝（提示 `from_raw_parts`，§8.1），`bench/` 路径经 `__is_bench_file` 豁免受限检查（§8.3）；三态套件 `scripts/run_raw_tests.py`（fat/raw/nocheck）与 `tests/std/raw_slice_ref.an`、`tests/std/raw_coerce_neg.an` 交付。raw 模式不承载《形式化论证》安全论证（§5.1 范围声明），亦不预设性能结论——评测结果须按第 10 章协议实测后回填。
-- **检查优化**：对可静态证明安全的指针访问降级为裸指针或省略检查，仅在必要程序点维持完整元数据（CCured 式，POPL 2002，§9.1）；并考察廉价检查形态：Baggy 的掩码界检查（USENIX Security 2009，§9.1）与 Low-Fat 的零元数据编码及其在 YIAN 分配器上的对齐适配（CC 2016 / NDSS 2017，§9.1）。动机：缓解 40B 体积与检查开销；降级须与第 8 章值域闭合协调，保证不重新打开 §11.1 的边界。**tiered-pointers 先例（t1-t3）**：`T&` 仅 `live`（免 `in_bounds`）已是静态分级降级的第一例——按类型档位收缩检查面（§7.1 CheckRefAccess、§8.1 规则 8.1.13-8.1.15），后续可进一步考察程序点级降级（CCured 式）。
-- **标准库受限依赖移除（已实施，2026-08）**：按 §8.3 受限依赖风险评估的三档裁决，移除可移除项——结构转换 `bitcast`（`lib/core/array.an`/`slice.an`/`str.an` 的 T[N]↔T*、SliceStruct↔T[]、u8[]↔str 视图，胖指针化后由数组退化与聚合构造承担）与 `from_raw_parts` 切片视图站点（`slice.an`/`array.an`/`vec.an`/`pointer.an`，由 5 字段聚合构造直接覆盖）；字节级哈希一类（`lib/num/*.an` 与 `hash.an` 的 memcpy 字节视图）已收窄为 `__memcpy` 保留为受限名（实现取此路径；受限名集合见 §8.3 实现注意）。执行结果：`lib/` 全库 `bitcast` 清零、`from_raw_parts` 仅余 `slice.an`（定义；`env.an` FFI 站点已随 t2 移除）。动机：闭合 §7.1 Cast 留白（标准库内部 `bitcast` 元数据转化）的论证缺口；env.an FFI 裸指针站点属 out 边界，不在移除范围（该站点已随 t2 移除）。遗留：显式 lib 根路径规范解析（含 `tests/std/` 测试套件豁免的显式化）见 §8.3 实现注意。
+- 堆池驻留、first-fit 内部碎片和线性查找可能成为长运行程序的成本；
+- 当前没有并发分配或原子锁协议；
+- 栈失效是帧级而不是词法作用域级；
+- 胖指针不保持 C ABI，FFI 必须封送且不在证明范围内；
+- 标准库受限原语、LLVM 优化正确性和元数据不可伪造均是可信假设；
+- zero-sized type 和字符串字面量采用专门表示路径，新增操作时需单独审计；
+- 形式证明为纸面证明，尚未在 Coq、Lean 或 Isabelle 中机械化。
