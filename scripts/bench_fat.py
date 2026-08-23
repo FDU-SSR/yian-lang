@@ -93,7 +93,8 @@ PERFORMANCE_CSV_COMMENTS = (
     "# docs/performance.csv — shootout 三态成本分解跟踪表 (镜像 docs/shootout-results.md §3)",
     "# 倍率 = 同基准内相对中位数: 表示 = ②/①, 检查 = ③/②, 总 = ③/①; ΔRSS = 相对 ①raw 绝对 MB",
     "# 每次 `python3 scripts/bench_fat.py --suite shootout` 运行后自动同步 (合并更新, 部分重跑只刷新被测基准)",
-    "# 种子数据: 2026-08-22 c8 全量会话 (docs/shootout-results.md)",
+    # 种子数据日期为运行时生成 (@SEED_DATE@ 由 _sync_performance_csv 写入时替换为会话日期)
+    "# 种子数据: @SEED_DATE@ 全量会话 (docs/shootout-results.md)",
 )
 
 TIME_BIN = "/usr/bin/time"
@@ -578,7 +579,10 @@ def _sync_performance_csv(
             f"{spec.name},{off_med / raw_med:.2f},{on_med / off_med:.2f},{on_med / raw_med:.2f},"
             f"{rep_rss:.2f},{tot_rss:.2f}\n"
         )
-    out = [c + "\n" for c in PERFORMANCE_CSV_COMMENTS]
+    out = [
+        c.replace("@SEED_DATE@", datetime.date.today().isoformat()) + "\n"
+        for c in PERFORMANCE_CSV_COMMENTS
+    ]
     out.append(PERFORMANCE_CSV_HEADER + "\n")
     for name in sorted(existing):
         out.append(existing[name])
