@@ -1,6 +1,6 @@
 # 胖指针性能瓶颈分析
 
-本文档汇总 fat-perf-bottleneck 计划的三层瓶颈分析（三态 IR 差分、反汇编对比、perf 采样）与 bench-per-bench-3state 计划的跨会话测量假象修复，将 `.omo/evidence/fat-perf-bottleneck/report.md` 的分析结论整理为正式性能报告。文中数值以 `.omo/evidence/fat-perf-bottleneck/` 与 `.omo/evidence/bench-per-bench-3state/` 为准，基准运行数据引用 `docs/shootout-results.md`。本版（2026-08-21 bench-rerun）在 2026-08-18 三态紧邻重测重写的基础上，由 2026-08-21 bench-rerun 全量重测（c8）刷新当前态数值：修复了 O3 报告中"胖快于裸"的跨会话假象，纳入 CVE O3 通过性说明，并新增 Fix B / del-view / T[]/T& 直绑优化后的实测结论（证据: bench-ptr-to-view task-1..5）。
+本文档汇总 fat-perf-bottleneck 计划的三层瓶颈分析（三态 IR 差分、反汇编对比、perf 采样）与 bench-per-bench-3state 计划的跨会话测量假象修复，将 `.omo/evidence/fat-perf-bottleneck/report.md` 的分析结论整理为正式性能报告。文中数值以 `.omo/evidence/fat-perf-bottleneck/` 与 `.omo/evidence/bench-per-bench-3state/` 为准，基准运行数据引用 `docs/shootout-results.md`。本版（2026-08-21 bench-rerun）在 2026-08-18 三态紧邻重测重写的基础上，由 2026-08-21 bench-rerun 全量重测（c8）刷新当前态数值：修复了 O3 报告中"胖快于裸"的跨会话假象，纳入 CVE O3 通过性说明，并新增 Fix B / del-view / T[]/T& 直绑优化后的实测结论（证据: bench-ptr-to-view task-1..5）。**注（2026-08-24 retest）**：本文档 c8 会话性能数据已随 2026-08-24 retest 全量覆写——`docs/performance.csv` / `docs/shootout-results.md` 已同步为 retest 数据（commit 4f53313），冻结快照见 `paper/data/`；文中 c8 数值保留为历史记录，历史数据见 git 历史。
 
 ## 背景: 胖指针表示与三态
 
@@ -73,7 +73,7 @@ YIAN 的胖指针为 5 字段 40B 值，字段依次为 data（有效数据地�
 | **queen** | 2.05× | 1.01× | 2.08× | 表示成本占比冠军（7514.3ms，占总成本 97.5%） |
 | **list** | 1.85× | 1.15× | 2.13× | 总成本绝对冠军（465723.6ms）+ 绝对检查成本冠军（60866.6ms）+ 绝对表示成本冠军（185915.5ms）；表示占比 75.3%（检查占比 24.7%） |
 
-注: 表内倍率为 2026-08-21 bench-rerun 重测（c8）; §1–3 的 IR 差分 / asm / perf 采样基于迁移前树，分析方法与结论方向（表示成本为多数大成本基准主导开销）不变。
+注: 表内倍率为 2026-08-21 bench-rerun 重测（c8）; §1–3 的 IR 差分 / asm / perf 采样基于迁移前树，分析方法与结论方向（表示成本为多数大成本基准主导开销）不变。**（2026-08-24 retest 后: c8 数值已被 retest 覆写, 历史见 git 历史, 分析方法与结论方向不变。）**
 
 ### 1.1 第 1 层: 三态 IR 差分
 

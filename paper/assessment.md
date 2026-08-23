@@ -1,6 +1,6 @@
 # 论文可行性评估报告（C3）: YIAN 胖指针内存安全机制
 
-- 日期：2026-08-23（theory↔impl 一致性审计 03bf3a1 + MECHANISMS 回填 adb102a 之后）
+- 日期：2026-08-24（2026-08-23 theory↔impl 一致性审计 03bf3a1 + MECHANISMS 回填 adb102a 之后；2026-08-24 retest 数据覆写后复核更新）
 - 定位：本报告只做**可行性评估与材料盘点**，不含论文正文。论文所需的每份材料（数据、文档、引用、待办）均已确认存在且指向最终真实状态。
 - 前提（审计完成，本报告可信的根基）：`docs/security.md`（562 行）与 `docs/security-code.md`（345 行）的全部行号引用/数值声明/状态标记已系统性重验，27 条偏差全部处理（commit 03bf3a1，见 `.omo/evidence/security-audit-paper-prep/task-1..3.txt`）；`tests/fat_cve/docs/MECHANISMS.md` 机制↔CVE 归属表已回填，38/38 CVE 全覆盖（commit adb102a，task-4.txt）。文档现在与编译器实现一致，论文引用不会出现「文档声称的 vs 代码实际做的」失配。
 
@@ -26,7 +26,7 @@
 - **检查**：`in_bounds`（定义 12）、`live`（定义 8，含 null 短路）、`is_heap`（定义 9）、`is_raw`（§2.5）、指针算术良构（定义 13，u64 同型化 + 回绕检测）、比较字段化（规则 3.4.1-3.4.2）、PtrDiff（规则 3.3.3）。
 - **锁协议**：堆块头锁槽 + 帧锁（独立槽位，帧进入 GenKey re-key、帧退出 SENTINEL 写，规则 3.7.1-3.7.2）；单调键 + 堆/栈标志位（lockmech.py）。
 - **可信基**：`restricted_ops.py` 编译期拒绝 `bitcast`/`from_raw_parts`/系统调用等受限操作于标准库之外（§8.3）；标准库为审计可信基。
-- 门禁实数（审计 task-1，2026-08-23）：run_tests **255/255**、run_fat **75/75**、run_raw **27/27**、run_fat_cve **76/76**、pyright strict **0 errors**。
+- 门禁实数（审计 task-1，2026-08-23；run_tests 门禁 2026-08-24 remove-clone-move 后重定基线为 **241**）：run_tests **241/241**、run_fat **75/75**、run_raw **27/27**、run_fat_cve **76/76**、pyright strict **0 errors**。
 
 ### 1.2 形式化梗概（定理 5.1）
 
@@ -44,7 +44,7 @@
 
 ### 1.4 性能归因方法论（14×3 三态成本分解）
 
-跨会话方法论见 `docs/performance-analysis.md` §0（已修复「胖快于裸」的跨会话测量假象：同基准三态紧邻 check→nocheck→raw、同会话、倍率同基准相对）。14 个 shootout 基准 × 3 态差分把总开销拆成 **表示成本**（②nocheck/①raw：40B 相对 8B 的访存与占用）与 **检查成本**（③check/②nocheck：检查发射）。倍率口径稳定（同基准内相对，不受机器负载影响）。权威数字以 `docs/performance.csv` 为准（2026-08-22 起自动同步，脚本维护，未手改）。
+跨会话方法论见 `docs/performance-analysis.md` §0（已修复「胖快于裸」的跨会话测量假象：同基准三态紧邻 check→nocheck→raw、同会话、倍率同基准相对）。14 个 shootout 基准 × 3 态差分把总开销拆成 **表示成本**（②nocheck/①raw：40B 相对 8B 的访存与占用）与 **检查成本**（③check/②nocheck：检查发射）。倍率口径稳定（同基准内相对，不受机器负载影响）。权威数字以 `paper/data/performance.csv` 冻结快照为准（来源 `docs/performance.csv`，2026-08-24 retest 起自动同步，脚本维护，未手改）。
 
 ### 1.5 三轮优化收益（全部可追溯）
 
@@ -92,7 +92,7 @@
 
 ### 3.1 已证实（动笔时可直接引用）
 
-- **实现完整性**：全量门禁 255/75/27/76 + pyright 0（审计 task-1/task-3 两次实测）。
+- **实现完整性**：全量门禁 241/75/27/76 + pyright 0（审计 task-1/task-3 实测；run_tests 门禁 remove-clone-move 后重定基线为 241）。
 - **理论↔实现一致性**：27 条偏差全部处理（03bf3a1），机制核对 S-01..S-23 全部落地点齐备（O-1~O-5 每条可 grep 到实现位置）；`-t ll` 逐字节不变双保险证明文档修复未触碰代码语义。
 - **负例验证**：38 CVE（76 用例）全过，MECHANISMS 归属 100% 可追溯（task-4 抽 3 CVE 实跑 SIGILL/Exit -4 复核）。
 - **数据可复现性**：三态紧邻协议（performance-analysis.md §0 修复跨会话假象）+ 同会话前后对照（task-7）；性能回归门禁 `check_perf_regression.py` 已上线（commit 14a8755）。
@@ -124,8 +124,8 @@
 ### 4.3 评审风险预判（诚实清单）
 
 1. **「只是又一个胖指针方案」**：须用 2.2 的四点差异化（完整语言 + 审计可信基 + CVE 套件 + 归因方法论）正面回应；避免与 SoftBound/CETS 直接比「谁快」。
-2. **性能兜底**：约半数基准总开销 ≤1.2×，但 list 2.96×/towers 1.69×/queen 1.59× 等最差项必须给出机制解释（表示成本主导：40B 体积 + 锁槽写，task-7 §4 伪回归分析佐证）。审稿人必查最差项，不能只报中位数。
-3. **ASan 对照**：已完成当前套件 14 基准实测（§5.1，数据冻结 `data/asan-results.md`）；引用时须注明口径(ii) 0.67× 为跨编译器差异（C -O2 无胖指针 vs YIAN -O3 40B 表示），结论分解归因，不得表述为「安全机制更快/更慢 N×」。
+2. **性能兜底**：约半数基准总开销 ≤1.2×，但 list 3.46×/towers 1.71×/queen 1.55× 等最差项必须给出机制解释（表示成本主导：40B 体积 + 锁槽写，task-7 §4 伪回归分析佐证）。审稿人必查最差项，不能只报中位数。list 3.46× 为 clone/move 机制删除后按值传参的预期结果（list 基准参数传递由引用改按值复制，表示成本 2.56×→3.00×，2026-08-24 retest），非回归。
+3. **ASan 对照**：已完成当前套件 14 基准实测（§5.1，数据冻结 `data/asan-results.md`）；引用时须注明口径(ii) 0.69× 为跨编译器差异（C -O2 无胖指针 vs YIAN -O3 40B 表示），结论分解归因，不得表述为「安全机制更快/更慢 N×」。
 4. **单线程/FFI**：出 out 表直接声明的顺序（§3.1），先声明后展开，避免被审稿人当作遗漏。
 5. **梗概级证明**：论文中把 O-1~O-5 义务清单做成可执行表格（哪条已验证/哪条留白），把「未完成」转化为「明确的交付物边界」。
 
@@ -133,7 +133,7 @@
 
 ## 5. 待补项清单
 
-### 5.1 ASan 对比（已完成，2026-08-23，14 基准当前套件）
+### 5.1 ASan 对比（已完成，retest 2026-08-24，14 基准当前套件）
 
 - 状态：**已完成**。`bench/c/` 14 个 C 基准（9 个与 `.an` 规模对齐，commit
   01265bb）经 `scripts/bench_fat.py --asan` 全量实测：14 基准 × 4 腿[C plain /
@@ -144,13 +144,13 @@
   平均断言）。
 - **主要结果**（时间几何平均，14 基准）：
   - 口径(i) C ASan / C plain = **1.58×**：ASan 自身开销，与 ASan 论文典型
-    1.5–2× 量级一致（单基准 1.00×–7.41×；binarytree 7.41× 为红区+隔离区放大，
+    1.5–2× 量级一致（单基准 1.01×–7.27×；binarytree 7.27× 为红区+隔离区放大，
     与表示/检查机制无关）。
-  - 口径(ii) C ASan / .an check = **0.67×**：ASan 时间快于胖指针**属预期**——
+  - 口径(ii) C ASan / .an check = **0.69×**：ASan 时间快于胖指针**属预期**——
     这是跨编译器差异（C clang -O2 无检测裸指针 vs YIAN -O3 40B 胖指针表示 +
-    锁协议），**不可单纯归因于安全机制**；单基准跨度 0.06×（nbody：C 侧 376 ms
-    向量化 vs .an check 10450 ms）至 4.27×（binarytree），必须按基准分解归因。
-  - 口径(iii) .an check / C plain = **2.37×**：胖指针全栈（40B 表示 + 检查发射 +
+    锁协议），**不可单纯归因于安全机制**；单基准跨度 0.06×（nbody：C 侧 685 ms
+    向量化 vs .an check 11279 ms）至 6.53×（binarytree），必须按基准分解归因。
+  - 口径(iii) .an check / C plain = **2.28×**：胖指针全栈（40B 表示 + 检查发射 +
     锁协议）vs 无检测 C 的端到端差距，非「检查发射」单独贡献。
 - **storage 内存放大（用实测数字，计划假设已修正）**：C plain 1862.9 MB /
   C ASan 2576.2 MB / .an check 4270.9 MB（C ASan 为 .an check 的 **0.60×**）。
@@ -158,8 +158,8 @@
   14.3M 次叶子层分配、平均 ~88B/次）；.an 侧为 40B 子指针表示（storage.an 头
   注释：array_tree 48B = 40B 子指针 + i32）。放大 = 表示体积 + 分配模式差异，
   **与检查发射无直接关系**——计划原假设「纯表示 3×」已被实证修正，以实测为准。
-- **binarytree sensitivity**：quarantine_size_mb=0 时 RSS 647.7→166.7 MB
-  （−74.3%）、时间 −8.7%——quarantine 是该基准 RSS 放大的主因之一（唯一
+- **binarytree sensitivity**：quarantine_size_mb=0 时 RSS 648.8→166.6 MB
+  （−74.3%）、时间 −12.1%——quarantine 是该基准 RSS 放大的主因之一（唯一
   quarantine 活跃基准：DeleteTree 逐迭代交错建删）。
 - **结论句须分解归因**：禁止未经分解的「胖指针慢/费内存 N×」表述；所有结论须
   区分表示/代码生成（40B 体积、向量化差异、malloc 分配模式）与检查发射。
@@ -179,10 +179,10 @@
 ### 5.3 图表（数据已齐，需新画）
 
 - 三态成本分解堆叠图（每基准表示/检查/总三层，14 基准）。
-- 检查成本 vs 基准散点/柱状（标注 queen 1.34×/revcomp 1.95×/sieve 1.28×/towers 1.28× 等高点）。
+- 检查成本 vs 基准散点/柱状（标注 queen 1.35×/revcomp 1.98×/sieve 1.27×/towers 1.30× 等高点）。
 - CVE 拦截矩阵（12 机制 × 38 CVE 归属热图，数据源 MECHANISMS.md 明细表）。
 - 优化收益瀑布图（三轮优化前后 check 态绝对时间）。
-- 图脚本 + 数据冻结属 todo 6（paper/ 材料汇总）交付物；数据源与最终数值以 docs/performance.csv 为准。
+- 图脚本 + 数据冻结属 todo 6（paper/ 材料汇总）交付物；数据源与最终数值以 `paper/data/performance.csv` 冻结快照为准。
 
 ### 5.4 shootout C 移植
 
@@ -199,17 +199,17 @@
 
 | 声明 | 数据源（权威） | 备查 |
 |---|---|---|
-| 总开销 ≤1.2× 恰好 7/14（约半数）；最差 list 2.96× / towers 1.69×；≥1.4× 共 5 个（queen 1.59 / revcomp 1.57 / storage 1.48 / list 2.96 / towers 1.69） | **docs/performance.csv**（总成本倍率 ③/① 列） | `docs/shootout-results.md` §3（早期 c8 快照，绝对值跨会话不可直接比，见 performance-analysis.md §0） |
-| 检查成本（③/②）≤1.2× 为 10/14（独立于总成本的事实，勿与总成本混淆） | docs/performance.csv（检查成本倍率列） | 同上 |
-| ΔRSS：binarytree +127.97 MB、storage +1751.75 MB、queen +0.66 MB、其余 0 | docs/performance.csv（ΔRSS 列） | 无 |
+| 总开销 ≤1.2× 恰好 7/14（约半数）；最差 list 3.46× / towers 1.71×；≥1.4× 共 5 个（queen 1.55 / revcomp 1.61 / storage 1.52 / list 3.46 / towers 1.71） | **`data/performance.csv`**（冻结 2026-08-24，总成本倍率 ③/① 列） | `data/shootout-results.md` §3（2026-08-24 retest 同源快照，与 performance.csv 数据区逐行一致） |
+| 检查成本（③/②）≤1.2× 为 10/14（独立于总成本的事实，勿与总成本混淆） | `data/performance.csv`（冻结 2026-08-24，检查成本倍率列） | 同上 |
+| ΔRSS：binarytree +127.97 MB、storage +1751.75 MB、queen +0.66 MB、其余 0 | `data/performance.csv`（冻结 2026-08-24，ΔRSS 列） | 无 |
 | 检查节点密度 / IR 差分（spectralnorm 27 检查节点、extractvalue 差分 99-164 等） | `docs/performance-analysis.md` §1.1-1.3 | 三态 IR 差分 / objdump / perf 原始数据在 evidence/fat-perf-bottleneck |
 | 14/14 check 态 -14.5%~-56.7%；list -50.4%；towers -53.7% | `.omo/evidence/compiler-perf-optimization/task-7.txt` §3 | build/bench/shootout-results.md（重测样本） |
 | 编译时间 -20.5% (exe) / -33.7% (-t none) | `.omo/evidence/compiler-perf-optimization/task-4.txt` §4 | 无 |
 | revcomp check -12.3%（P0）；P1 零收益；P1 禁用 9b45f10 | `.omo/evidence/assume-inject-perf-regression/task-5.txt` §3；git log 9b45f10 | 无 |
 | 定理 5.1 陈述与五条前件、G1-G3、梗概级声明 | `docs/security.md` §5.1 (L491-492)、§5.2 表 4、§5.5 | 无 |
 | 38 CVE / 76 用例 / 机制归属分布（25+10+1+2） | `tests/fat_cve/docs/MECHANISMS.md`（adb102a 回填后） | tests/fat_cve/cve/（38 目录，实测计数）；task-4.txt |
-| 门禁 255/75/27/76 + pyright 0 | 审计 task-1.txt / task-3.txt（实测） | security-code.md §11.2（已回填 255/75/76） |
-| ASan 交叉对比（14 基准当前套件，2026-08-23；时间几何平均 (i) C ASan/C plain 1.58× / (ii) C ASan/.an check 0.67× / (iii) .an check/C plain 2.37×；storage RSS C plain 1862.9 / C ASan 2576.2 / .an check 4270.9 MB；binarytree quarantine=0 RSS −74.3%） | **`data/asan-results.md`**（冻结 2026-08-23） | `build/bench/asan-results.md`（实测原始报告，含原始样本附录） |
+| 门禁 241/75/27/76 + pyright 0（run_tests 门禁 remove-clone-move 后重定基线为 241，2026-08-24） | 审计 task-1.txt / task-3.txt（实测）+ `.omo/evidence/rebench-sync-paper/task-1.txt`（2026-08-24 基线快照） | security-code.md §11.2（2026-08-23 归档门禁记录） |
+| ASan 交叉对比（14 基准当前套件，2026-08-24；时间几何平均 (i) C ASan/C plain 1.58× / (ii) C ASan/.an check 0.69× / (iii) .an check/C plain 2.28×；storage RSS C plain 1862.9 / C ASan 2576.2 / .an check 4270.9 MB；binarytree quarantine=0 RSS 648.8→166.6 MB、时间 −12.1%） | **`data/asan-results.md`**（冻结 2026-08-24） | `build/bench/asan-results.md`（实测原始报告，含原始样本附录） |
 | ASan 旧对照 0.35×/0.36×/0.08×（superseded，仅先验量级参考，3 负载已移除） | `docs/security-code.md` §10.7（L322，2026-08-14） | build/bench/results.md（已归档） |
 | 引用（SoftBound/CETS/CHERI/CCured/Austin94/Low-Fat/MPX/ASan 等） | `.omo/notes/citations.md`（112 行，17 条中 14 条 verified + 4 条附录） | **排除 3 篇未核实文献**（8b Extensible Metadata / 11 WatchTower / 12 Buddy），论文引用清单不得含三者 |
 
