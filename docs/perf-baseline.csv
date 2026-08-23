@@ -1,0 +1,48 @@
+# docs/perf-baseline.csv — 性能回归门禁金标准基线 (由 --sync-baseline 写入)
+# 每基准每态 (check/nocheck/raw) 绝对时间中位数 (ms); 判据 = check 态单侧 ±20% (仅拦变慢)
+# fingerprint 字段 (hostname/machine/cpu_count/clang) 与 HEAD commit 由 check_perf_regression.py 环境护栏校验
+# fingerprint: hostname=zhx,machine=x86_64,cpu_count=28,clang=Ubuntu clang version 20.1.8 (++20250708082409+6fb913d3e2ec-1~exp1~20250708202428.132)
+# commit: f3c4cb5e4c57177f636b832dbbde98f252879b70
+基准,态,时间中位数(ms)
+binarytree,check,7779.808
+binarytree,nocheck,7682.089
+binarytree,raw,5687.000
+bounce,check,6076.670
+bounce,nocheck,5941.100
+bounce,raw,6058.330
+fann,check,1501.370
+fann,nocheck,1489.250
+fann,raw,1541.877
+fasta,check,2473.242
+fasta,nocheck,2316.114
+fasta,raw,2460.262
+list,check,38793.307
+list,nocheck,33855.718
+list,raw,13199.830
+mand,check,2798.485
+mand,nocheck,2851.409
+mand,raw,2794.604
+nbody,check,10992.978
+nbody,nocheck,10919.604
+nbody,raw,10878.315
+permute,check,3764.544
+permute,nocheck,3814.471
+permute,raw,3118.900
+queen,check,8380.300
+queen,nocheck,6335.652
+queen,raw,5424.854
+revcomp,check,1198.376
+revcomp,nocheck,629.583
+revcomp,raw,774.262
+sieve,check,3156.614
+sieve,nocheck,2482.680
+sieve,raw,3224.146
+spectralnorm,check,4634.864
+spectralnorm,nocheck,4565.797
+spectralnorm,raw,4613.523
+storage,check,2654.776
+storage,nocheck,2546.051
+storage,raw,1748.630
+towers,check,6567.283
+towers,nocheck,5005.162
+towers,raw,3798.998
