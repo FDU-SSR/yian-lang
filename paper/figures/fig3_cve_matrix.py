@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fig3_cve_matrix.py — CVE interception matrix (38 CVE x 12 mechanisms)
 
-Output: paper/figures/fig3_cve_matrix.png
+Output: paper/figures/fig3_cve_matrix.pdf (or argv[1]); appendix candidate.
 
 Data source: tests/fat_cve/docs/MECHANISMS.md (mechanism-CVE attribution table,
 「完整归属明细」, 38 rows) — parsed live at runtime, so the figure stays in sync
@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # locate MECHANISMS.md relative to repo root (script may run from any cwd)
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MECH_PATH = os.path.join(REPO_ROOT, "tests", "fat_cve", "docs", "MECHANISMS.md")
-OUT_PATH = os.path.join(HERE, "fig3_cve_matrix.png")
+OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "fig3_cve_matrix.pdf")
 
 MECH_NAMES = [
     "1 rep", "2 Gen/key", "3 lock", "4 in_bounds", "5 live",
@@ -139,7 +139,7 @@ def main() -> int:
              fontsize=7, color="gray")
 
     fig.tight_layout(rect=[0, 0.04, 1, 1])
-    fig.savefig(OUT_PATH, dpi=200)
+    fig.savefig(OUT_PATH, bbox_inches="tight")
     print(f"OK: {OUT_PATH} generated ({len(cves)} CVEs x {n_mech} mechanisms)")
     return 0
 

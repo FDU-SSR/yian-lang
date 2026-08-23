@@ -1,224 +1,98 @@
-# 论文可行性评估报告（C3）: YIAN 胖指针内存安全机制
+# SecL 论文材料评估（2026-08-24 重测版）
 
-- 日期：2026-08-24（2026-08-23 theory↔impl 一致性审计 03bf3a1 + MECHANISMS 回填 adb102a 之后；2026-08-24 retest 数据覆写后复核更新）
-- 定位：本报告只做**可行性评估与材料盘点**，不含论文正文。论文所需的每份材料（数据、文档、引用、待办）均已确认存在且指向最终真实状态。
-- 前提（审计完成，本报告可信的根基）：`docs/security.md`（562 行）与 `docs/security-code.md`（345 行）的全部行号引用/数值声明/状态标记已系统性重验，27 条偏差全部处理（commit 03bf3a1，见 `.omo/evidence/security-audit-paper-prep/task-1..3.txt`）；`tests/fat_cve/docs/MECHANISMS.md` 机制↔CVE 归属表已回填，38/38 CVE 全覆盖（commit adb102a，task-4.txt）。文档现在与编译器实现一致，论文引用不会出现「文档声称的 vs 代码实际做的」失配。
+## 结论
 
-## 结论摘要
+当前材料已足以支撑以完整语言实现为对象的安全会议论文：实现、威胁模型、三级胖指针语义、
+O-1--O-5 完整纸面证明、38 个真实 CVE 成对实验、14 个 benchmark 的三态成本分解和 ASan
+端到端对照均已闭合。论文不得继续使用早期“证明梗概”、8B 块头、立即 `free` 或旧性能数字。
 
-**可以动笔，目标为安全会议。** 推荐定位「**梗概级证明 + 实证**」投向 USENIX Security / CCS / S&P（与 `docs/security.md` §5.5 自声明的论证层级一致）。理由：
+## 实现事实
 
-1. 五件套齐全且相互印证：完整编译器实现、形式化论证梗概（定理 5.1）、38 个真实 CVE 复刻验证、14×3 三态性能归因、三轮优化收益。
-2. 理论↔实现一致性审计已完成（这是此前动笔的最大阻塞，已解除）。
-3. 性能表述诚实（约半数基准总开销 ≤1.2×），最差开销有明确机制解释，经得起审稿人复核。
+- 流水线：`.an -> Tokens -> AST -> HIR -> CFG IR -> LLVM IR -> native`。
+- 表示：`T*` 40B、`T[]/str` 32B、`T&` 24B。
+- 堆生命周期：固定 32B 块头的单线程 first-fit 池；释放写 `SENTINEL` 后留池；复用写新键。
+- 键：仅单调计数器；堆键排除全 1 哨兵；63 位空间耗尽时确定性 trap。
+- 引用：空间安全由构造点来源不变量建立，而非把 `in_bounds` 定义成恒真。
+- 模式：check 与 nocheck 使用相同表示、堆池和帧锁；raw 使用裸指针及 libc malloc/free。
 
-**不建议动笔的情形**：如果目标改为 PLDI 级（要求 O-1~O-5 完整证明或机械化验证），当前梗概级论证不足，需先完成待补项 §5.2。ASan 对比已完成（§5.1，当前套件 14 基准）。
+## 正确性验证
 
----
+2026-08-24 在提交 `afd67de` 后的现场结果：
 
-## 1. 核心成果盘点
+| 套件 | 结果 |
+| --- | ---: |
+| general | 241/241 |
+| fat | 83/83 |
+| raw 三态 | 27/27 |
+| CVE | 76/76（38 vulnerable + 38 fixed） |
+| 键边界脚本 | 通过 |
 
-### 1.1 完整编译器端到端实现
+新增回归覆盖非零偏移指针转剩余切片、one-past 转引用、空切片转引用、释放与复用后的 UAF/
+双重释放、容量不等块复用、逻辑边界以及键/哨兵边界。
 
-从零实现的静态类型语言及编译器（Python，pyright strict）：`.an → Tokens → AST → HIR → CFG IR → LLVM IR → native exe`（clang 链接）。胖指针内存安全机制作为编译器第一等语义内建：
+## 三态性能结果
 
-- **表示**：5 字段 40B 胖指针（`data/lock_ptr/key/index/size`），三级分级 40/32/24B（`T*`/`T[]`·`str`/`T&`，security-code.md §7.4）。
-- **检查**：`in_bounds`（定义 12）、`live`（定义 8，含 null 短路）、`is_heap`（定义 9）、`is_raw`（§2.5）、指针算术良构（定义 13，u64 同型化 + 回绕检测）、比较字段化（规则 3.4.1-3.4.2）、PtrDiff（规则 3.3.3）。
-- **锁协议**：堆块头锁槽 + 帧锁（独立槽位，帧进入 GenKey re-key、帧退出 SENTINEL 写，规则 3.7.1-3.7.2）；单调键 + 堆/栈标志位（lockmech.py）。
-- **可信基**：`restricted_ops.py` 编译期拒绝 `bitcast`/`from_raw_parts`/系统调用等受限操作于标准库之外（§8.3）；标准库为审计可信基。
-- 门禁实数（审计 task-1，2026-08-23；run_tests 门禁 2026-08-24 remove-clone-move 后重定基线为 **241**）：run_tests **241/241**、run_fat **75/75**、run_raw **27/27**、run_fat_cve **76/76**、pyright strict **0 errors**。
+权威数据为 `data/performance.csv`，完整样本为 `data/shootout-results.md`。协议为 CPU 4 绑核，
+每态 1 次 warmup + 5 次正式样本；每个 benchmark 内 check→nocheck→raw 紧邻执行。
 
-### 1.2 形式化梗概（定理 5.1）
+| 口径 | 14 项几何平均 | 范围 | ≤1.2× |
+| --- | ---: | ---: | ---: |
+| 表示/池/锁成本 `nocheck/raw` | 1.13× | 0.67--2.85× | 9/14 |
+| 检查发射成本 `check/nocheck` | 1.13× | 0.96--1.63× | 10/14 |
+| 完整机制 `check/raw` | 1.27× | 0.81--3.79× | 8/14 |
 
-`docs/security.md` 第 5 章（§5.1，L491-492）给出主可靠性定理：对满足五条前件（① 类型约束含分级定型规则、② 指针操作良构、③ 块布局、④ L-UNREACH 经检查写不可达锁头区、⑤ 定向写排除）的程序，任意轨迹上的任意访问/释放事件「正常完成 ⟺ 检查通过」，即越界访问、UAF、双释放、栈悬垂访问均不可能以正常完成方式出现。支撑链：S1（O-1）→ G1、T1（O-2a/O-2b）→ G2、L-KEY 家族（O-3/O-4）→ 作废永久性、L-UNREACH（O-5）→ 值失配前提一；G4（类型混淆）由可信基边界排除（§4.6）。论证层级为**梗概级**（S&P/CCS/USENIX 严谨度），证明义务 O-1~O-5 以清单形式列为可执行交付物（表 4）。
+最差总时间倍率为 `list` 3.79×，其中表示/池成本 2.85×、检查成本 1.33×；`queen`、
+`revcomp` 和 `towers` 分别为 1.79×、1.64× 和 1.58×。小于 1 的倍率只应解释为代码生成、
+源码适配和测量噪声的组合，不能声称安全机制带来加速。
 
-### 1.3 CVE 验证套件
+RSS 的主要异常是 `binarytree` +256.08MB 和 `storage` +2189.53MB。前者受树节点表示和不同
+分配路径影响；后者直接暴露 40B 子指针表示、块头以及池驻留成本。其他基准的 RSS 差异很小。
 
-`tests/fat_cve/`：**38 个真实 CVE**，每个含负例（复刻漏洞，期望 trap `Exit -4`）+ 修复版（成功用例），共 **76 个用例**（run_fat_cve 76/76 全过）。MECHANISMS.md（adb102a 回填后）把每个 CVE 归属到 12 机制 × security.md 规则号 × 负例 `.an` 路径 × 期望 trap：
+## ASan 对照
 
-- 4 in_bounds：**25 个**（含 2 个 CheckElementArith 算术前提，规则 3.3.1-3.3.2）
-- 5 live：**10 个**（另 2 个帧锁路径次级）
-- 6 is_heap：**1 个**（CVE-2026-45959 释放栈指针）
-- 8 帧锁 re-key：**2 个**（CVE-2023-26463 / CVE-2026-26399，CWE-562 栈悬垂）
-- 合计 38/38；无直接 CVE 的机制（1 表示/2 Gen/3 锁槽/7 is_raw/9 比较/10 PtrDiff/11 ZST/12 受限操作）如实标注「载体/无套件用例/编译期形态」并指认 `tests/fat/negative` 等直接触发用例，未臆造归属。
+`data/asan-results.md` 冻结 14 个 benchmark 的 43 条有效腿，每腿 5 个样本：
 
-### 1.4 性能归因方法论（14×3 三态成本分解）
+- C ASan / C plain 几何平均 1.59×；
+- C ASan / SecL check 几何平均 0.73×；
+- SecL check / C plain 几何平均 2.19×。
 
-跨会话方法论见 `docs/performance-analysis.md` §0（已修复「胖快于裸」的跨会话测量假象：同基准三态紧邻 check→nocheck→raw、同会话、倍率同基准相对）。14 个 shootout 基准 × 3 态差分把总开销拆成 **表示成本**（②nocheck/①raw：40B 相对 8B 的访存与占用）与 **检查成本**（③check/②nocheck：检查发射）。倍率口径稳定（同基准内相对，不受机器负载影响）。权威数字以 `paper/data/performance.csv` 冻结快照为准（来源 `docs/performance.csv`，2026-08-24 retest 起自动同步，脚本维护，未手改）。
+这些是端到端跨编译器结果：C plain/ASan 用 clang `-O2`，SecL 用自身前端和 LLVM/clang
+`-O3`，源代码表示也不同。因此只有第一项可近似解释为 ASan 在同一 C 程序上的插桩成本；
+后两项不得全部归因于检查机制。
 
-### 1.5 三轮优化收益（全部可追溯）
+`binarytree` 在默认 quarantine 下的 ASan RSS 为 650.0MB；关闭 quarantine 后为 168.9MB，
+下降 74.0%，时间下降 7.2%。SecL 稳定池和 ASan quarantine 解决的问题与释放策略不同，不应
+用单一 RSS 数字推导覆盖能力。
 
-| 轮次 | 内容 | 实测收益 | 证据 |
-|---|---|---|---|
-| 轮 1 | C1 表示/检查 IR 优化（C1/C2/C3/C4/C5 落地，commit aa7a417 vs 基线 7026882） | 14/14 基准 check 态绝对时间下降 **14.5%~56.7%**；热点 list **-50.4%**、towers **-53.7%**；同会话三态紧邻对照 | `.omo/evidence/compiler-perf-optimization/task-7.txt` |
-| 轮 2 | C4 编译期优化（--dump 默认关 + 类型检查记忆化） | 编译时间 **-20.5%**（exe）~ **-33.7%**（-t none） | `.omo/evidence/compiler-perf-optimization/task-4.txt` |
-| 轮 3 | P0 检查算术 u64 同型化（commit b40273a→f3c4cb5） | revcomp check 态 **-12.3%**（两次对两次独立测量稳定复现）；fasta/towers/permute 噪声内 | `.omo/evidence/assume-inject-perf-regression/task-5.txt` |
+## CVE 证据
 
-如实记录：P1（range 循环 assume 注入）先落地后因安全回归禁用（commit 9b45f10，循环变量重赋值致假事实），无独立收益；revcomp -12.3% 经归因 100% 为 P0 效果（revcomp 无 range 循环）。轮 1 另发现 raw 态 binarytree 的 O3 free 消除异常（RSS ×73，仅影响零安全参照态，无正确性与安全影响，task-7 §6；fat 态免疫）。
+`tests/fat_cve/` 包含 38 个 CVE，每个有 vulnerable 与 fixed 版本。主机制归属为：
 
-### 1.6 审计与回填交付物（本计划产出，非论文内容但支撑论文）
+- `in_bounds`：25；
+- `live`：10；
+- `is_heap`：1；
+- 帧 re-key：2。
 
-- 一致性对照表 D-01..D-27 + 补充覆盖 S-01..S-23（规则 3.2.1-3.7.2、定义 6/8/12/13/14、义务 O-1~O-5 全部落地点核对，判定全一致或已修复）：task-2.txt。
-- 27 条偏差修复（14 行号 + 3 数值 + 4 状态 + 5 理论 + 1 机制确认），commit 03bf3a1：`-t ll` 逐字节不变双保险、门禁全绿、安全机制语义零改动：task-3.txt。
-- MECHANISMS.md 回填（24 处「待回填」清零，38/38 CVE 可追溯）：task-4.txt。
+正文优先使用类别/机制汇总；38×12 完整矩阵放附录或复现材料，避免正文密集不可读。
 
----
+## 论文必须披露的边界
 
-## 2. 新颖性定位
+- 单线程模型与非并发堆池；
+- FFI/ABI 不透明且胖指针改变调用约定；
+- 标准库、编译器、LLVM 和堆池属于 TCB；
+- 元数据防伪依赖攻击者尚无任意元数据写能力；
+- 栈失效粒度为函数帧，不覆盖同帧词法内层作用域退出；
+- 堆池进程期驻留、first-fit 线性查找和内部碎片；
+- benchmark 中部分规模被下调，且 raw 源使用显式 `from_raw_parts` 适配；
+- 证明是完整纸面证明，但尚未机械化。
 
-### 2.1 与既有工作的分叉
+## 权威材料
 
-| 工作 | 机制 | YIAN 的分叉 |
-|---|---|---|
-| SoftBound（PLDI'09） | 空间安全；元数据放 **side-table**，指针算术检查 | YIAN 元数据**内联**进 5 字段胖指针（无查表寻址），且提供**时序**安全（SoftBound 不覆盖 UAF） |
-| CETS（ISMM'10） | 时序安全；**独立锁表**（每块锁指针 + key） | YIAN 锁槽**内嵌块头/帧**（堆）与独立帧锁槽（栈），单调键 + SENTINEL 写 + 立即复用约定，无 side-table 生命周期管理 |
-| CHERI（ISCA'14） | 硬件能力 + tag 位防伪 | YIAN 纯软件，防伪依赖受限操作检查（编译期语法排除）+ 无任意写假设（§1.2），**不要求硬件**；CHERI 是无审查性（YIAN 在 §11.2 列为未来方向） |
-| CCured（POPL'02） | 类型推导静态降级 | YIAN 的 `T&` 仅 `live` 检查（免 `in_bounds`）是**类型级静态分级降级**的第一例，CCured 式程序点级降级列为未来工作 |
-| Austin/Breach/Sohi fat pointers（PLDI'94） | 原始胖指针 | YIAN 在其上加完整时序安全（锁协议）与可审计可信基，并给出形式化论证 |
-| Duck & Yap Low-Fat（CC'16 / NDSS'17） | 从地址编码界，零元数据 | YIAN 保留显式元数据以支持任意分配粒度与时序检查；Low-Fat 列入检查优化方向 |
-| Intel MPX（POMACS'18） | 硬件 bound 寄存器 | 经验教训（配置/兼容问题）作为设计反面参考 |
-
-### 2.2 卖点（贡献陈述的骨架）
-
-1. **完整语言而非 C 改造**：胖指针表示、检查插入、锁协议全部作为编译器内建（CFG 层 + LLVM 层），类型系统参与约束（分级定型规则 8.1.1-8.1.15），无源码转换或二进制兼容包袱。
-2. **标准库审计可信基**：受限操作编译期拒绝（restricted_ops）+ 标准库审计，把 G4（类型混淆）显式排除出论证范围，把「审计」作为与 Rust `unsafe` 同构但更严格的可信基形态。
-3. **真实 CVE 复刻套件**：38 个真实漏洞逐一移植为负例 + 修复版，每个可追溯到机制 + 规则号 + 期望 trap（MECHANISMS.md），区别于合成负例的验证。
-4. **三态成本分解方法论**：raw/nocheck/check 三态差分把总开销拆成表示成本与检查成本，同基准内倍率口径 + 同会话紧邻协议，可复现、可归因。
-5. **梗概级证明 + 义务清单**：不假装完整证明；O-1~O-5 义务清单即为可执行交付物，论文的证明强度声明与交付物边界一致（审稿风险预判见 §4.3）。
-
----
-
-## 3. 完整性评估
-
-### 3.1 已证实（动笔时可直接引用）
-
-- **实现完整性**：全量门禁 241/75/27/76 + pyright 0（审计 task-1/task-3 实测；run_tests 门禁 remove-clone-move 后重定基线为 241）。
-- **理论↔实现一致性**：27 条偏差全部处理（03bf3a1），机制核对 S-01..S-23 全部落地点齐备（O-1~O-5 每条可 grep 到实现位置）；`-t ll` 逐字节不变双保险证明文档修复未触碰代码语义。
-- **负例验证**：38 CVE（76 用例）全过，MECHANISMS 归属 100% 可追溯（task-4 抽 3 CVE 实跑 SIGILL/Exit -4 复核）。
-- **数据可复现性**：三态紧邻协议（performance-analysis.md §0 修复跨会话假象）+ 同会话前后对照（task-7）；性能回归门禁 `check_perf_regression.py` 已上线（commit 14a8755）。
-- **论证边界**：in/out 表显式（§1.3）、定理 5.1 范围声明（§5.5）、评测模式范围声明（raw 不承载安全论证）、局限清单诚实（§11.1）。
-
-### 3.2 需补充（动笔到投出之间）
-
-- **ASan 对照实验**：已完成（§5.1）。14 基准当前套件全量实测并冻结于 `data/asan-results.md`，fig4 已重画；旧 §10.7 数据（3 个已移除微负载）标注 superseded 仅作先验。
-- **O-1~O-5 完整证明**：当前为梗概级。O-1/O-2a 是纯枚举义务（代码审查可勾销）；O-3a 是定义 10 组合逻辑；O-3b/O-3c/O-4/O-5 需细化或机械化（§5.2）。
-- **图表**：数据已齐但无图（§5.3）。
-- **shootout C 移植**：跨语言对照前置（§5.4）。
-- **MECHANISMS 回填**：本计划已完成（adb102a），论文可引用最终状态，无需再补。
-
----
-
-## 4. 目标场合建议
-
-### 4.1 首选：USENIX Security / CCS / S&P（安全系统 + 实证）
-
-- 匹配点：机制 = 内存安全（系统安全核心议题）；论证层级「梗概级」与 security.md §5.5 自声明一致（这三会是梗概级证明 + 实证的正常门槛）；CVE 复刻验证是安全会议偏好证据。
-- 建议正文结构：系统 + 机制设计 + 定理 5.1 梗概 + 义务清单 + 38 CVE 实证 + 三态性能归因 + 局限。
-- 单线程限制用 §11.1 局限章显式声明即可（这三会接受「单线程内存安全 + 诚实边界」的贡献，只要不夸大）。
-
-### 4.2 次选：工具/经验类会议（USENIX ATC、PLDI/OOPSLA 工具段、ISSTA 等）
-
-- 如果把「完整语言 + 编译器 + 可复现评测 + 审计可信基」作为主贡献、把证明弱化为支撑材料，工具类会议门槛更低、对基准规模下调与单线程限制更宽容。
-- PLDI/OOPSLA 正会需 PLDI 级证明或深度类型理论，当前梗概级不够，除非完成 §5.2。
-
-### 4.3 评审风险预判（诚实清单）
-
-1. **「只是又一个胖指针方案」**：须用 2.2 的四点差异化（完整语言 + 审计可信基 + CVE 套件 + 归因方法论）正面回应；避免与 SoftBound/CETS 直接比「谁快」。
-2. **性能兜底**：约半数基准总开销 ≤1.2×，但 list 3.46×/towers 1.71×/queen 1.55× 等最差项必须给出机制解释（表示成本主导：40B 体积 + 锁槽写，task-7 §4 伪回归分析佐证）。审稿人必查最差项，不能只报中位数。list 3.46× 为 clone/move 机制删除后按值传参的预期结果（list 基准参数传递由引用改按值复制，表示成本 2.56×→3.00×，2026-08-24 retest），非回归。
-3. **ASan 对照**：已完成当前套件 14 基准实测（§5.1，数据冻结 `data/asan-results.md`）；引用时须注明口径(ii) 0.69× 为跨编译器差异（C -O2 无胖指针 vs YIAN -O3 40B 表示），结论分解归因，不得表述为「安全机制更快/更慢 N×」。
-4. **单线程/FFI**：出 out 表直接声明的顺序（§3.1），先声明后展开，避免被审稿人当作遗漏。
-5. **梗概级证明**：论文中把 O-1~O-5 义务清单做成可执行表格（哪条已验证/哪条留白），把「未完成」转化为「明确的交付物边界」。
-
----
-
-## 5. 待补项清单
-
-### 5.1 ASan 对比（已完成，retest 2026-08-24，14 基准当前套件）
-
-- 状态：**已完成**。`bench/c/` 14 个 C 基准（9 个与 `.an` 规模对齐，commit
-  01265bb）经 `scripts/bench_fat.py --asan` 全量实测：14 基准 × 4 腿[C plain /
-  C ASan main / C ASan sensitivity（仅 binarytree）/ .an check] 同会话紧邻 × 5
-  次、`--pin 4` 绑核；漂移自检 14/14 PASS（retest 会话 + perf-baseline 双参考，
-  c8 因编译器代差不作参考）。数据冻结于 `data/asan-results.md`（来源
-  `build/bench/asan-results.md`），fig4 已重画为当前套件图（含 14 基准与几何
-  平均断言）。
-- **主要结果**（时间几何平均，14 基准）：
-  - 口径(i) C ASan / C plain = **1.58×**：ASan 自身开销，与 ASan 论文典型
-    1.5–2× 量级一致（单基准 1.01×–7.27×；binarytree 7.27× 为红区+隔离区放大，
-    与表示/检查机制无关）。
-  - 口径(ii) C ASan / .an check = **0.69×**：ASan 时间快于胖指针**属预期**——
-    这是跨编译器差异（C clang -O2 无检测裸指针 vs YIAN -O3 40B 胖指针表示 +
-    锁协议），**不可单纯归因于安全机制**；单基准跨度 0.06×（nbody：C 侧 685 ms
-    向量化 vs .an check 11279 ms）至 6.53×（binarytree），必须按基准分解归因。
-  - 口径(iii) .an check / C plain = **2.28×**：胖指针全栈（40B 表示 + 检查发射 +
-    锁协议）vs 无检测 C 的端到端差距，非「检查发射」单独贡献。
-- **storage 内存放大（用实测数字，计划假设已修正）**：C plain 1862.9 MB /
-  C ASan 2576.2 MB / .an check 4270.9 MB（C ASan 为 .an check 的 **0.60×**）。
-  解读：C 侧 RSS 由叶子层小 chunk malloc 开销主导（storage.c 递归建树，3^15 ≈
-  14.3M 次叶子层分配、平均 ~88B/次）；.an 侧为 40B 子指针表示（storage.an 头
-  注释：array_tree 48B = 40B 子指针 + i32）。放大 = 表示体积 + 分配模式差异，
-  **与检查发射无直接关系**——计划原假设「纯表示 3×」已被实证修正，以实测为准。
-- **binarytree sensitivity**：quarantine_size_mb=0 时 RSS 648.8→166.6 MB
-  （−74.3%）、时间 −12.1%——quarantine 是该基准 RSS 放大的主因之一（唯一
-  quarantine 活跃基准：DeleteTree 逐迭代交错建删）。
-- **结论句须分解归因**：禁止未经分解的「胖指针慢/费内存 N×」表述；所有结论须
-  区分表示/代码生成（40B 体积、向量化差异、malloc 分配模式）与检查发射。
-- **旧数据（superseded）**：§10.7 旧对照（3 个已移除微负载，0.35×/0.36×/0.08×，
-  2026-08-14）仅作先验量级参考，已标注 superseded，论文不得引用为当前数据。
-- 注意：ASan 仅空间安全（无时序/UAF 检测）；`-O` 不对称（C 腿 -O2 vs .an 腿
-  -O3），跨编译器差异不可单纯归因于安全机制。
-
-### 5.2 O-1~O-5 完整证明（梗概 → 可勾销）
-
-- O-1 / O-2a（纯枚举）：代码审查即可勾销，审计已给出每条落地点（S-01..S-23），工作量小。
-- O-3a（定义 10 组合逻辑）：需写清单调计数器或 CSPRNG 碰撞论证，工作量中。
-- O-3b / O-3c（写入规则枚举 + 归纳）：锁槽写点已枚举为 4 写点（Malloc/Delete/帧进入/帧退出，S-21），轻量归纳，工作量中。
-- O-4 / O-5：论证细化或机械化，工作量中-大。
-- 机械化（Lean/Coq）为可选加分项，工作量很大，不影响投出。
-
-### 5.3 图表（数据已齐，需新画）
-
-- 三态成本分解堆叠图（每基准表示/检查/总三层，14 基准）。
-- 检查成本 vs 基准散点/柱状（标注 queen 1.35×/revcomp 1.98×/sieve 1.27×/towers 1.30× 等高点）。
-- CVE 拦截矩阵（12 机制 × 38 CVE 归属热图，数据源 MECHANISMS.md 明细表）。
-- 优化收益瀑布图（三轮优化前后 check 态绝对时间）。
-- 图脚本 + 数据冻结属 todo 6（paper/ 材料汇总）交付物；数据源与最终数值以 `paper/data/performance.csv` 冻结快照为准。
-
-### 5.4 shootout C 移植
-
-- 当前 14 基准为 YIAN 源码（规模部分下调以适配可接受运行时长，见 shootout-results.md §1）。C 移植用于：(a) 跨语言公平基线；(b) ASan / SoftBound / CETS 对照的前置。
-- 规模下调须在论文中显式声明（方法学透明），不构成隐藏。
-
-### 5.5 MECHANISMS 回填状态（已完成，无需再补）
-
-- adb102a 后 MECHANISMS.md 无「待回填」残留、38/38 覆盖、每映射可追溯（机制号 + 规则号 + `.an` + 期望 trap）。论文引用该文件最终状态即可。
-
----
-
-## 6. 数据源与追溯表
-
-| 声明 | 数据源（权威） | 备查 |
-|---|---|---|
-| 总开销 ≤1.2× 恰好 7/14（约半数）；最差 list 3.46× / towers 1.71×；≥1.4× 共 5 个（queen 1.55 / revcomp 1.61 / storage 1.52 / list 3.46 / towers 1.71） | **`data/performance.csv`**（冻结 2026-08-24，总成本倍率 ③/① 列） | `data/shootout-results.md` §3（2026-08-24 retest 同源快照，与 performance.csv 数据区逐行一致） |
-| 检查成本（③/②）≤1.2× 为 10/14（独立于总成本的事实，勿与总成本混淆） | `data/performance.csv`（冻结 2026-08-24，检查成本倍率列） | 同上 |
-| ΔRSS：binarytree +127.97 MB、storage +1751.75 MB、queen +0.66 MB、其余 0 | `data/performance.csv`（冻结 2026-08-24，ΔRSS 列） | 无 |
-| 检查节点密度 / IR 差分（spectralnorm 27 检查节点、extractvalue 差分 99-164 等） | `docs/performance-analysis.md` §1.1-1.3 | 三态 IR 差分 / objdump / perf 原始数据在 evidence/fat-perf-bottleneck |
-| 14/14 check 态 -14.5%~-56.7%；list -50.4%；towers -53.7% | `.omo/evidence/compiler-perf-optimization/task-7.txt` §3 | build/bench/shootout-results.md（重测样本） |
-| 编译时间 -20.5% (exe) / -33.7% (-t none) | `.omo/evidence/compiler-perf-optimization/task-4.txt` §4 | 无 |
-| revcomp check -12.3%（P0）；P1 零收益；P1 禁用 9b45f10 | `.omo/evidence/assume-inject-perf-regression/task-5.txt` §3；git log 9b45f10 | 无 |
-| 定理 5.1 陈述与五条前件、G1-G3、梗概级声明 | `docs/security.md` §5.1 (L491-492)、§5.2 表 4、§5.5 | 无 |
-| 38 CVE / 76 用例 / 机制归属分布（25+10+1+2） | `tests/fat_cve/docs/MECHANISMS.md`（adb102a 回填后） | tests/fat_cve/cve/（38 目录，实测计数）；task-4.txt |
-| 门禁 241/75/27/76 + pyright 0（run_tests 门禁 remove-clone-move 后重定基线为 241，2026-08-24） | 审计 task-1.txt / task-3.txt（实测）+ `.omo/evidence/rebench-sync-paper/task-1.txt`（2026-08-24 基线快照） | security-code.md §11.2（2026-08-23 归档门禁记录） |
-| ASan 交叉对比（14 基准当前套件，2026-08-24；时间几何平均 (i) C ASan/C plain 1.58× / (ii) C ASan/.an check 0.69× / (iii) .an check/C plain 2.28×；storage RSS C plain 1862.9 / C ASan 2576.2 / .an check 4270.9 MB；binarytree quarantine=0 RSS 648.8→166.6 MB、时间 −12.1%） | **`data/asan-results.md`**（冻结 2026-08-24） | `build/bench/asan-results.md`（实测原始报告，含原始样本附录） |
-| ASan 旧对照 0.35×/0.36×/0.08×（superseded，仅先验量级参考，3 负载已移除） | `docs/security-code.md` §10.7（L322，2026-08-14） | build/bench/results.md（已归档） |
-| 引用（SoftBound/CETS/CHERI/CCured/Austin94/Low-Fat/MPX/ASan 等） | `.omo/notes/citations.md`（112 行，17 条中 14 条 verified + 4 条附录） | **排除 3 篇未核实文献**（8b Extensible Metadata / 11 WatchTower / 12 Buddy），论文引用清单不得含三者 |
-
-## 附：已知局限（写论文时必须显式声明，不构成机制缺陷）
-
-1. 单线程模型（并发数据竞争为 out，§11.1）。
-2. FFI/ABI 边界：胖指针分级聚合相对裸指针体积放大，检查不跨边界（out，§11.1）。
-3. 论证层级为梗概级，非 PLDI 级完整证明（§5.5）。
-4. 栈守卫粒度为帧级，内层作用域块不设防（§11.1）。
-5. 元数据防伪依赖 §1.2 无任意写假设（out，§11.1）。
-6. 基准规模部分下调（以适配可接受运行时长，shootout-results.md §1）。
-7. raw 参照态 binarytree 的 O3 free 消除异常（RSS ×73，task-7 §6 / AGENTS.md §8.4）：仅影响零安全参照态的该基准内存特征，fat 态免疫，无正确性与安全影响。
+| 声明 | 来源 |
+| --- | --- |
+| 形式语义与 O-1--O-5 | `docs/security.md` |
+| 编译器/运行时映射 | `docs/security-code.md` |
+| 三态数据 | `paper/data/performance.csv`, `paper/data/shootout-results.md` |
+| ASan 数据 | `paper/data/asan-results.md` |
+| CVE 归属 | `tests/fat_cve/docs/MECHANISMS.md` |
+| 已核实引用 | `paper/references/citations.md` |

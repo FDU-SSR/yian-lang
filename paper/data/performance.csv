@@ -1,36 +1,21 @@
-# =============================================================================
-# 论文数据冻结快照 — performance.csv
-# 来源路径: docs/performance.csv (仓库工作副本)
-# 冻结日期: 2026-08-24
-# 说明: 本文档由 scripts/bench_fat.py --suite shootout 自动同步 (合并更新, 部分
-#       重跑只刷新被测基准)。论文引用一律以本快照为准; 如需更新, 重新运行
-#       bench_fat 同步 docs/performance.csv 后再次冻结。
-# 冻结会话: 2026-08-24 retest (commit 4f53313, remove-clone-move 删除后全量重测;
-#       docs/shootout-results.md 同步见 .omo/evidence/rebench-sync-paper/task-1/3)。
-# 权威性: docs/performance.csv 为权威数据源 (assessment.md §6 数据源表);
-#       docs/shootout-results.md 为同源 retest 快照 (2026-08-24), 数据区逐行一致。
-# 数值速览 (与 assessment.md §6 一致): 总成本倍率 ≤1.2× 为 7/14; 最差 list 3.46×
-#       / towers 1.71×; 检查成本倍率 ≤1.2× 为 10/14; ΔRSS 非零项 binarytree
-#       +127.97 / storage +1751.75 / queen +0.66 (MB)。
-# 一致性校验: python3 scripts/bench_fat.py 同步后本快照须与 docs/performance.csv
-#       数据区逐行一致 (data/README.md 提供比对命令)。
-# =============================================================================
+# 论文数据冻结快照；来源 docs/performance.csv；冻结日期 2026-08-24
+# 当前实现提交: afd67de；协议: CPU 4, warmup 1, runs 5, check→nocheck→raw 紧邻
 # docs/performance.csv — shootout 三态成本分解跟踪表 (镜像 docs/shootout-results.md §3)
 # 倍率 = 同基准内相对中位数: 表示 = ②/①, 检查 = ③/②, 总 = ③/①; ΔRSS = 相对 ①raw 绝对 MB
 # 每次 `python3 scripts/bench_fat.py --suite shootout` 运行后自动同步 (合并更新, 部分重跑只刷新被测基准)
 # 种子数据: 2026-08-24 全量会话 (docs/shootout-results.md)
 基准,表示成本倍率(②/①),检查成本倍率(③/②),总成本倍率(③/①),表示成本ΔRSS(MB),总成本ΔRSS(MB)
-binarytree,1.37,1.00,1.37,127.97,127.97
-bounce,0.99,1.01,1.00,0.00,0.00
-fann,0.97,0.99,0.96,0.00,0.00
-fasta,0.95,1.12,1.07,0.00,0.00
-list,3.00,1.15,3.46,0.00,0.00
-mand,0.99,1.01,1.00,0.00,0.00
-nbody,0.99,1.00,0.99,0.00,0.00
-permute,1.27,0.99,1.25,0.00,0.00
-queen,1.15,1.35,1.55,0.66,0.66
-revcomp,0.81,1.98,1.61,0.00,0.00
-sieve,0.76,1.27,0.97,0.00,0.00
-spectralnorm,0.98,1.01,0.99,0.00,0.00
-storage,1.46,1.04,1.52,1751.75,1751.75
-towers,1.31,1.30,1.71,0.00,0.00
+binarytree,0.95,1.04,0.98,256.03,256.08
+bounce,0.99,1.04,1.03,0.37,0.43
+fann,1.04,0.96,1.00,0.05,0.04
+fasta,0.97,1.20,1.16,-0.08,-0.05
+list,2.85,1.33,3.79,-0.05,-0.01
+mand,1.01,1.00,1.01,0.04,0.07
+nbody,0.99,1.00,0.99,0.04,0.08
+permute,1.24,1.03,1.27,0.04,0.03
+queen,1.40,1.28,1.79,0.68,0.64
+revcomp,1.00,1.63,1.64,0.01,0.03
+sieve,0.67,1.21,0.81,0.22,0.26
+spectralnorm,1.00,1.01,1.00,0.02,0.02
+storage,1.29,1.06,1.37,2189.53,2189.53
+towers,1.37,1.15,1.58,-0.09,-0.09

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """fig2_check_cost.py — Check cost vs benchmark (column 03/02)
 
-Output: paper/figures/fig2_check_cost.png
+Output: paper/figures/fig2_check_cost.pdf (or argv[1])
 
 Data source: paper/data/performance.csv (frozen snapshot of docs/performance.csv)
 Shows the check cost ratio per benchmark (03 check / 02 nocheck), annotating
 10/14 <= 1.2x. Check cost and total cost are independent facts: check cost
-<= 1.2x in 10/14, total cost <= 1.2x in 7/14 (assessment.md sec 6).
+<= 1.2x in 10/14, total cost <= 1.2x in 8/14 (assessment.md).
 
 Run: python3 paper/figures/fig2_check_cost.py
 Dependency: matplotlib (optional; if missing, prints a data summary and exits)
@@ -20,7 +20,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(HERE, "..", "data", "performance.csv")
-OUT_PATH = os.path.join(HERE, "fig2_check_cost.png")
+OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "fig2_check_cost.pdf")
 THRESHOLD = 1.2
 
 
@@ -86,11 +86,11 @@ def main() -> int:
              "2026-08-24)\n"
              "Note: check cost (03/02) and total cost (03/01) are independent facts; "
              "check <= 1.2x in 10/14,\n"
-             "      total <= 1.2x in 7/14 (assessment.md sec 6); do not conflate",
+             "      total <= 1.2x in 8/14 (assessment.md); do not conflate",
              fontsize=7, color="gray")
 
     fig.tight_layout(rect=[0, 0.06, 1, 1])
-    fig.savefig(OUT_PATH, dpi=200)
+    fig.savefig(OUT_PATH, bbox_inches="tight")
     print(f"OK: {OUT_PATH} generated ({len(names)} benchmarks, "
           f"check cost <= {THRESHOLD}x: {n_ok}/14)")
     return 0

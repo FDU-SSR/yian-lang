@@ -1,40 +1,26 @@
-# figures/ — 图表导出脚本
+# 论文图表
 
-本目录存放论文图表的导出脚本（Python，标准库 csv + matplotlib）。每个脚本可独立运行
-并产出 PNG 到本目录；数据源路径在脚本头部与图注中注明。
+所有脚本从冻结数据或 CVE 归属表读取输入，先执行断言，再生成矢量 PDF。第一个可选参数可指定
+输出路径，便于直接生成到外层 LaTeX 仓库。
 
-## 脚本清单
+| 脚本 | 作用 | 默认输出 | 使用建议 |
+| --- | --- | --- | --- |
+| `design_overview.py` | 流水线、三级表示、堆/栈生命周期 | `design_overview.pdf` | 正文 |
+| `fig1_cost_decomposition.py` | 14 项表示/检查/总成本三态分解 | `fig1_cost_decomposition.pdf` | 正文 |
+| `fig3_cve_summary.py` | 38 CVE 主机制 25/10/1/2 汇总 | `fig3_cve_summary.pdf` | 正文 |
+| `fig2_check_cost.py` | 独立检查成本 | `fig2_check_cost.pdf` | 候选附录；与主性能图部分重复 |
+| `fig3_cve_matrix.py` | 38×12 完整归属矩阵 | `fig3_cve_matrix.pdf` | 候选附录；密度较高 |
+| `fig4_asan_compare.py` | C plain/ASan/SecL check 对照 | `fig4_asan_compare.pdf` | 候选附录 |
 
-| 脚本 | 图 | 数据源 | 产出 |
-|---|---|---|---|
-| `fig1_cost_decomposition.py` | 三态成本分解堆叠图（14 基准，表示/检查/总） | `../data/performance.csv` | `fig1_cost_decomposition.png` |
-| `fig2_check_cost.py` | 检查成本 vs 基准（③/② 列，标注 10/14 ≤1.2×） | `../data/performance.csv` | `fig2_check_cost.png` |
-| `fig3_cve_matrix.py` | CVE 拦截矩阵（38 CVE × 12 机制热图） | `tests/fat_cve/docs/MECHANISMS.md` | `fig3_cve_matrix.png` |
-| `fig4_asan_compare.py` | ASan 对照（当前套件 14 基准，三口径几何平均 1.58×/0.69×/2.28×，2026-08-24 retest） | `../data/asan-results.md` | `fig4_asan_compare.png` |
+当前断言：三态总成本 ≤1.2× 为 8/14，检查成本 ≤1.2× 为 10/14；CVE 为 38 个、76 个
+成对用例；ASan 三口径几何平均为 1.59×/0.73×/2.19×。
 
-## 运行
+运行示例：
 
 ```bash
-cd paper/figures
-python3 fig1_cost_decomposition.py
-python3 fig2_check_cost.py
-python3 fig3_cve_matrix.py
-python3 fig4_asan_compare.py
+python paper/figures/fig1_cost_decomposition.py
+python paper/figures/design_overview.py /path/to/outer/fig/design.pdf
 ```
 
-`fig3_cve_matrix.py` 从仓库根的 `tests/fat_cve/docs/MECHANISMS.md` 实时解析归属表
-（脚本自行定位仓库根），归属分布有断言校验（25/10/1/2 + 2 次级），归属表后续维护时
-重跑即可保持图与数据同步。
-
-## matplotlib 依赖（可选）
-
-matplotlib **不强制安装**：脚本运行时若未安装，自动降级为打印数据摘要（表格形式，
-数值不变）并提示安装命令，PNG 不产出。装好后重跑即出图。
-
-## 图表验证（待补项，见 ../checklist.md）
-
-- 图 1/2 的数值应逐一与 `../data/performance.csv` 核对（脚本在产出时已断言 14 基准）。
-- 图 3 的归属应与 `tests/fat_cve/docs/MECHANISMS.md`「完整归属明细」表人工抽查核对。
-- 图 4 的数值为当前套件（2026-08-24 retest，`../data/asan-results.md` 冻结），
-  重测后重跑脚本即可同步；旧 §10.7 历史基准（0.35×/0.36×/0.08×）仅在图注中标注
-  superseded，不再绘制。
+2026-08-24 已人工核对正文候选三张图与 ASan 候选图；最终仍需在 LaTeX 实际双栏/单栏版面
+检查字号和标签可读性。
