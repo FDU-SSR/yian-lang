@@ -1,41 +1,204 @@
 #!/usr/bin/env python3
-"""fig4_asan_compare.py — ASan comparison (sec 10.7 historical benchmarks)
+"""fig4_asan_compare.py — ASan cross-compare (current 14-benchmark suite)
 
 Output: paper/figures/fig4_asan_compare.png
 
-Data source: docs/security-code.md sec 10.7 (L322, measured 2026-08-14, archived
-in build/bench/results.md)
-NOTE: the 3 loads (ptr_traverse/alloc_dense/mixed) were removed from the tree in
-2026-08. This figure is a HISTORICAL benchmark comparison, not current shootout
-suite data. Must be flagged as such in the paper (assessment.md sec 5.1).
+Data source: paper/data/asan-results.md (frozen snapshot of
+build/bench/asan-results.md, measured 2026-08-23, 14 benchmarks x 4 legs
+[C plain / C ASan main / C ASan sensitivity (binarytree only) / .an check],
+5 runs each, taskset -c 4).
+
+Three calibers (per-benchmark, medians):
+  (i)   C ASan / C plain      - ASan's own overhead
+  (ii)  C ASan / .an check    - ASan vs fat-pointer (cross-compiler)
+  (iii) .an check / C plain   - fat-pointer full stack vs uninstrumented C
+
+Historical note: the previous fig4 used docs/security-code.md sec 10.7 data
+(3 loads ptr_traverse/alloc_dense/mixed, 0.35x/0.36x/0.08x, measured
+2026-08-14, loads since removed from the tree). That data is SUPERSEDED by
+the current-suite data frozen here (2026-08-23); it is kept in the footnote
+below for traceability only.
+
+Assertions (fail loudly if data is inconsistent or edited):
+  - exactly 14 benchmarks, each with legs {C plain, C ASan main, .an check}
+  - recomputed per-benchmark ratios == ratio table in the data file (+-0.01)
+  - recomputed geometric means == stated 1.58x / 0.67x / 2.37x (+-0.01)
+  - binarytree sensitivity row present (RSS main 647.7 / sens 166.7 MB)
 
 Run: python3 paper/figures/fig4_asan_compare.py
 Dependency: matplotlib (optional; if missing, prints data summary and exits)
 """
 from __future__ import annotations
 
+import math
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(HERE, "..", "data", "asan-results.md")
 OUT_PATH = os.path.join(HERE, "fig4_asan_compare.png")
 
-# sec 10.7 raw data (time ms, RSS MB): (load, fat-on, fat-off, asan, asan RSS)
-LOADS = [
-    ("ptr_traverse", 381.9, 263.1, 134.0, 5.0),
-    ("alloc_dense", 428.6, 330.6, 156.1, 131.5),
-    ("mixed", 372.2, 135.9, 29.2, 5.9),
-]
-FAT_PEAK_RSS = 35.9  # fat-pointer side peak RSS (shared across loads, sec 10.7)
+LEG_PLAIN = "C plain"
+LEG_ASAN = "C ASan main"
+LEG_SENS = "C ASan sens"
+LEG_AN = ".an check"
+LEGS = [LEG_PLAIN, LEG_ASAN, LEG_AN]
+
+GEO_MEAN_EXPECTED = {"i": 1.58, "ii": 0.67, "iii": 2.37}  # stated in data file
+
+
+def _strip_markup(s: str) -> str:
+    return s.strip().replace("**", "").replace("×", "")
+
+
+def parse_data(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    # section 1: per-leg table
+    # | 基准 | 腿 | 时间中位(ms) | IQR(ms) | min–max(ms) | CV | RSS中位(MB) | RSS IQR(MB) | 样本数 |
+    legs: dict[str, dict[str, dict]] = {}  # bench -> leg -> {time, iqr, rss, cv, n}
+    in_sec1 = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## 1)"):
+            in_sec1 = True
+            continue
+        if in_sec1:
+            if s.startswith("## 2)"):
+                in_sec1 = False
+                continue
+            if not s.startswith("|") or s.startswith("|---"):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if len(cells) != 9 or cells[0].startswith("基准"):
+                continue
+            bench, leg = cells[0], cells[1]
+            legs.setdefault(bench, {})[leg] = {
+                "time": float(cells[2]),
+                "iqr": float(cells[3]),
+                "rss": float(cells[6]),
+                "cv": float(cells[5]),
+                "n": int(cells[8]),
+            }
+
+    # section 2: per-benchmark ratio table + geometric means
+    # | 基准 | 口径(i) C ASan/C plain | 口径(ii) C ASan/.an check | 口径(iii) .an check/C plain |
+    ratios: dict[str, dict[str, float]] = {}  # bench -> caliber -> ratio
+    geo: dict[str, float] = {}
+    in_sec2 = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## 2)"):
+            in_sec2 = True
+            continue
+        if in_sec2:
+            if s.startswith("## 3)"):
+                in_sec2 = False
+                continue
+            if not s.startswith("|") or s.startswith("|---"):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if len(cells) != 4:
+                continue
+            name = cells[0]
+            try:
+                vals = {k: float(_strip_markup(v))
+                        for k, v in zip(("i", "ii", "iii"), cells[1:])}
+            except ValueError:  # header / non-numeric row
+                continue
+            if _strip_markup(name).startswith("几何平均"):
+                geo = vals
+            else:
+                ratios[name] = vals
+
+    # section 3: sensitivity rows (binarytree only)
+    # | 腿 | 时间中位(ms) | RSS中位(MB) | 样本数 |
+    sens: dict[str, tuple[float, float, int]] = {}
+    in_sec3 = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## 3)"):
+            in_sec3 = True
+            continue
+        if in_sec3:
+            if s.startswith("## 4)"):
+                in_sec3 = False
+                continue
+            if not s.startswith("|") or s.startswith("|---"):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if len(cells) != 4 or cells[0].startswith("腿"):
+                continue
+            sens[cells[0]] = (float(cells[1]), float(cells[2]), int(cells[3]))
+
+    return {"legs": legs, "ratios": ratios, "geo": geo, "sens": sens}
+
+
+def _assert(cond: bool, msg: str) -> None:
+    if not cond:
+        raise AssertionError(msg)
+
+
+def verify(data: dict) -> None:
+    legs, ratios, geo, sens = data["legs"], data["ratios"], data["geo"], data["sens"]
+
+    benches = sorted(legs.keys())
+    _assert(len(benches) == 14, f"expect 14 benchmarks, got {len(benches)}: {benches}")
+
+    geo_i = []
+    geo_ii = []
+    geo_iii = []
+    for b in benches:
+        for leg in LEGS:
+            _assert(leg in legs[b],
+                    f"{b}: missing leg '{leg}' (have {sorted(legs[b])})")
+        plain, asan, an = legs[b][LEG_PLAIN], legs[b][LEG_ASAN], legs[b][LEG_AN]
+        r_i = asan["time"] / plain["time"]
+        r_ii = asan["time"] / an["time"]
+        r_iii = an["time"] / plain["time"]
+        _assert(b in ratios, f"{b}: missing ratio row in section 2")
+        _assert(abs(r_i - ratios[b]["i"]) <= 0.01,
+                f"{b}: caliber(i) {r_i:.3f} != table {ratios[b]['i']}")
+        _assert(abs(r_ii - ratios[b]["ii"]) <= 0.01,
+                f"{b}: caliber(ii) {r_ii:.3f} != table {ratios[b]['ii']}")
+        _assert(abs(r_iii - ratios[b]["iii"]) <= 0.01,
+                f"{b}: caliber(iii) {r_iii:.3f} != table {ratios[b]['iii']}")
+        geo_i.append(r_i)
+        geo_ii.append(r_ii)
+        geo_iii.append(r_iii)
+
+    for key, xs in (("i", geo_i), ("ii", geo_ii), ("iii", geo_iii)):
+        gm = math.exp(sum(math.log(x) for x in xs) / len(xs))
+        _assert(abs(gm - geo[key]) <= 0.01,
+                f"geo mean caliber({key}): computed {gm:.3f} != stated {geo[key]}")
+        _assert(abs(gm - GEO_MEAN_EXPECTED[key]) <= 0.01,
+                f"geo mean caliber({key}): computed {gm:.3f} != expected {GEO_MEAN_EXPECTED[key]}")
+
+    _assert(LEG_SENS in legs["binarytree"],
+            "binarytree missing sensitivity leg 'C ASan sens'")
+    main_rss = legs["binarytree"][LEG_ASAN]["rss"]
+    sens_rss = legs["binarytree"][LEG_SENS]["rss"]
+    _assert(abs(main_rss - 647.7) <= 0.1, f"binarytree main RSS {main_rss} != 647.7")
+    _assert(abs(sens_rss - 166.7) <= 0.1, f"binarytree sens RSS {sens_rss} != 166.7")
+    _assert(any("main" in k for k in sens), "section 3 sensitivity table missing")
+    _assert(any("sens" in k for k in sens), "section 3 sensitivity table missing")
 
 
 def main() -> int:
-    names = [l[0] for l in LOADS]
-    fat_on = [l[1] for l in LOADS]
-    fat_off = [l[2] for l in LOADS]
-    asan_t = [l[3] for l in LOADS]
-    asan_rss = [l[4] for l in LOADS]
-    ratios = [asan / fat for asan, fat in zip(asan_t, fat_on)]
+    data = parse_data(os.path.join(HERE, "..", "data", "asan-results.md"))
+    verify(data)
+    benches = sorted(data["legs"].keys())
+
+    plain_t = [data["legs"][b][LEG_PLAIN]["time"] for b in benches]
+    asan_t = [data["legs"][b][LEG_ASAN]["time"] for b in benches]
+    an_t = [data["legs"][b][LEG_AN]["time"] for b in benches]
+    r_asan = [a / p for a, p in zip(asan_t, plain_t)]  # caliber (i)
+    r_an = [a / p for a, p in zip(an_t, plain_t)]  # caliber (iii)
+    plain_rss = [data["legs"][b][LEG_PLAIN]["rss"] for b in benches]
+    asan_rss = [data["legs"][b][LEG_ASAN]["rss"] for b in benches]
+    an_rss = [data["legs"][b][LEG_AN]["rss"] for b in benches]
 
     try:
         import matplotlib
@@ -45,63 +208,79 @@ def main() -> int:
     except ImportError:  # matplotlib optional
         print("matplotlib not installed; printing data summary (PNG not generated)")
         print("install: pip install matplotlib")
-        print(f"{'load':<14}{'fat-on(ms)':>12}{'fat-off(ms)':>12}{'asan(ms)':>10}"
-              f"{'asan/fat-on':>12}{'asan RSS(MB)':>13}")
-        for n, a, b, c, r, rss in zip(names, fat_on, fat_off, asan_t, ratios, asan_rss):
-            print(f"{n:<14}{a:>12.1f}{b:>12.1f}{c:>10.1f}{r:>12.2f}{rss:>13.1f}")
+        print(f"{'bench':<14}{'C plain(ms)':>12}{'C ASan(ms)':>12}"
+              f"{'.an check(ms)':>14}{'C ASan/C plain':>15}{'.an/C plain':>12}"
+              f"{'RSS .an(MB)':>12}")
+        for b, p, a, n, r1, r2, r in zip(benches, plain_t, asan_t, an_t,
+                                         r_asan, r_an, an_rss):
+            print(f"{b:<14}{p:>12.1f}{a:>12.1f}{n:>14.1f}{r1:>15.2f}{r2:>12.2f}"
+                  f"{r:>12.1f}")
+        print("assertions passed: 14 benchmarks, ratios and geo means consistent")
         return 1
 
-    x = [0, 1, 2]
-    width = 0.25
+    x = range(len(benches))
+    width = 0.26
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), gridspec_kw={"width_ratios": [2.2, 1]})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.5),
+                                   gridspec_kw={"width_ratios": [1.5, 1]})
 
-    # left: time comparison (log scale, asan far below fat side)
-    ax1.bar([p - width for p in x], fat_on, width, label="fat-pointer checks on",
-            color="#3182bd")
-    ax1.bar(x, fat_off, width, label="fat-pointer checks off", color="#9ecae1")
-    ax1.bar([p + width for p in x], asan_t, width, label="ASan", color="#de2d26")
+    # left: time ratio vs C plain (baseline 1.0), log scale
+    ax1.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax1.bar([p - width for p in x], [1.0] * len(benches), width,
+            label="C plain (baseline 1.0)", color="#9ecae1")
+    ax1.bar(x, r_asan, width, label="C ASan (clang -O2 -fsanitize=address)",
+            color="#de2d26")
+    ax1.bar([p + width for p in x], r_an, width,
+            label=".an check (YIAN -O3, fat pointers)", color="#3182bd")
     ax1.set_yscale("log")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(names)
-    ax1.set_ylabel("time (ms, log scale)")
-    ax1.set_title("Time comparison (sec 10.7 historical)")
-    for p, a, r in zip(x, asan_t, ratios):
-        ax1.text(p + width, a * 1.1, f"{r:.2f}x", ha="center", va="bottom", fontsize=8,
-                 color="#de2d26", fontweight="bold")
-    ax1.legend(fontsize=8)
+    ax1.set_ylim(0.03, max(r_an) * 1.6)  # headroom for top annotations (nbody 27.79x)
+    ax1.set_xticks(list(x))
+    ax1.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
+    ax1.set_ylabel("time ratio vs C plain (log scale)")
+    ax1.set_title("Time: 14-benchmark suite (frozen 2026-08-23)")
+    for p, r in zip(x, r_an):
+        ax1.text(p + width, r * 1.12, f"{r:.2f}", ha="center", va="bottom",
+                 fontsize=6.5, color="#3182bd", fontweight="bold")
+    for p, r in zip(x, r_asan):
+        ax1.text(p - width, r * 1.12, f"{r:.2f}", ha="center", va="bottom",
+                 fontsize=6.5, color="#de2d26")
+    ax1.legend(fontsize=8, loc="upper left")
 
-    # right: RSS comparison (asan vs fat side peak)
-    ax2.bar([p - width / 2 for p in x], asan_rss, width, label="ASan peak RSS",
-            color="#de2d26", alpha=0.7)
-    for p in x:
-        ax2.bar(p + width / 2, FAT_PEAK_RSS, width, label="fat side peak RSS" if p == 0 else None,
-                color="#3182bd", alpha=0.7)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(names)
-    ax2.set_ylabel("peak RSS (MB)")
-    ax2.set_title("RSS comparison (sec 10.7)")
-    ax2.legend(fontsize=8)
+    # right: peak RSS (MB), log scale
+    ax2.bar([p - width for p in x], plain_rss, width, label="C plain",
+            color="#9ecae1")
+    ax2.bar(x, asan_rss, width, label="C ASan", color="#de2d26")
+    ax2.bar([p + width for p in x], an_rss, width, label=".an check",
+            color="#3182bd")
+    ax2.set_yscale("log")
+    ax2.set_xticks(list(x))
+    ax2.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
+    ax2.set_ylabel("peak RSS (MB, log scale)")
+    ax2.set_title("Peak RSS: 14-benchmark suite")
+    ax2.legend(fontsize=8, loc="upper left")
 
-    fig.suptitle("ASan comparison (clang -O2 -fsanitize=address, "
-                 "ASAN_OPTIONS=detect_leaks=0)\n"
-                 "WARNING: historical benchmark, not current suite; loads removed 2026-08; "
-                 "ASan covers spatial safety only (no temporal/UAF)",
-                 fontsize=11, fontweight="bold")
+    fig.suptitle("ASan cross-compare: C plain vs C ASan vs .an check (fat pointers)\n"
+                 "geometric means (14 benchmarks): "
+                 "(i) C ASan/C plain 1.58x | (ii) C ASan/.an check 0.67x | "
+                 "(iii) .an check/C plain 2.37x",
+                 fontsize=12, fontweight="bold")
 
     fig.text(0.01, 0.01,
-             "Data: docs/security-code.md sec 10.7 (L322, measured 2026-08-14, "
-             "archived in build/bench/results.md)\n"
-             "Note: ASan time is 0.35x/0.36x/0.08x of fat-check-on; ASan peak RSS "
-             "5.0/131.5/5.9 MB vs\n"
-             "      fat side 35.9 MB. Not directly extrapolatable to the current shootout "
-             "suite (assessment.md sec 5.1)",
+             "Data: paper/data/asan-results.md (frozen 2026-08-23; source "
+             "build/bench/asan-results.md; 5 runs/leg, taskset -c 4)\n"
+             "Compile: C plain/ASan `clang -O2 [-fsanitize=address] -lm`; .an check "
+             "`python3 -m compiler.main -O3 lib`; -O asymmetry C -O2 vs YIAN -O3.\n"
+             "ASAN_OPTIONS main: detect_leaks=0 (quarantine default on); binarytree "
+             "sensitivity (quarantine_size_mb=0): RSS 647.7 -> 166.7 MB (-74.3%).\n"
+             "ASan covers spatial safety only (no temporal/UAF). SUPERSEDED: sec 10.7 "
+             "historical 3-load data (0.35x/0.36x/0.08x, loads removed 2026-08) is no "
+             "longer plotted; kept for traceability only.",
              fontsize=7, color="gray")
 
-    fig.tight_layout(rect=[0, 0.06, 1, 0.93])
+    fig.tight_layout(rect=[0, 0.10, 1, 0.90])
     fig.savefig(OUT_PATH, dpi=200)
-    print(f"OK: {OUT_PATH} generated (3 historical loads; ASan/fat-on: "
-          + " / ".join(f"{r:.2f}x" for r in ratios) + ")")
+    print(f"OK: {OUT_PATH} generated (14 benchmarks; assertions passed: "
+          f"14 legs x3, ratios & geo means 1.58x/0.67x/2.37x consistent)")
     return 0
 
 

@@ -4,16 +4,40 @@
 评估）已完成并冻结于本目录；以下均为论文写作期或后续实验期任务。按 assessment.md
 第 5 章待补项整理。
 
-## 1. ASan 对比 — 非阻塞推荐项（不阻塞动笔）
+## 1. ASan 对比 — 已完成（2026-08-23，14 基准当前套件）
 
-- **状态**：推荐项，非阻塞。当前 shootout 套件无 C 移植，无法跑 ASan 对照。
-- **已有**：`docs/security-code.md` §10.7 旧基准数据（3 个已移除微负载，
-  2026-08-14），已固化为 `figures/fig4_asan_compare.py`（图注显著标注"历史基准，
-  非当前套件"）。
-- **注意**：该对照在已移除的微负载上，且 ASan 仅空间安全（无时序/UAF 检测），数字
-  不可直接外推。论文中如引用须标注负载已移除、仅作量级参考；正文不承诺 ASan 数字。
-- **动笔建议**：正文以「未来工作」显式提及；待 §4（C 移植）完成后补跑并用当前套件
-  重画 fig4。
+- **状态**：**已完成**。`bench/c/` 14 个 C 基准已落地（9 个与 `.an` 规模对齐 +
+  断言值双清单，commit 01265bb，验证脚本 14/14 PASS），经
+  `scripts/bench_fat.py --asan` 全量实测（14 基准 × 4 腿[C plain / C ASan main /
+  C ASan sensitivity（仅 binarytree）/ .an check] 同会话紧邻 × 5 次，`--pin 4`
+  绑核；漂移自检 14/14 PASS，retest 会话 + perf-baseline 双参考）。
+- **数据**：`data/asan-results.md`（冻结 2026-08-23，来源
+  `build/bench/asan-results.md`；含 4 腿中位数/IQR/RSS/CV/样本数 + 敏感性行 +
+  三口径倍率 + 披露块）。
+- **fig4**：已重画为当前套件 14 基准图——`figures/fig4_asan_compare.py` 读取
+  `data/asan-results.md`，脚本含断言（14 基准 × 3 腿、逐基准倍率与几何平均
+  1.58×/0.67×/2.37× 与数据文件一致），产出 `fig4_asan_compare.png`；旧 §10.7
+  3 负载历史数据已从图中移除，仅在图注标注 superseded。
+- **主要数字**（时间几何平均，14 基准）：
+  - 口径(i) C ASan / C plain = **1.58×**：ASan 自身开销，与 ASan 论文典型 1.5–2×
+    量级一致。
+  - 口径(ii) C ASan / .an check = **0.67×**：ASan 快于胖指针——属预期，这是
+    跨编译器差异（C clang -O2 无胖指针 vs YIAN -O3 40B 胖指针表示），不可单纯
+    归因于安全机制。
+  - 口径(iii) .an check / C plain = **2.37×**：胖指针全栈（表示 + 检查发射 +
+    锁协议）vs 无检测 C 的端到端差距。
+- **storage 内存（实测）**：C plain 1862.9 MB / C ASan 2576.2 MB / .an check
+  4270.9 MB（C ASan 为 .an check 的 0.60×）；C 侧 RSS 由叶子层小 chunk malloc
+  开销主导（~14.3M 次平均 ~88B 分配），.an 侧为 40B 子指针表示（storage.an
+  头注释：array_tree 48B = 40B 子指针 + i32）——放大 = 表示体积 + 分配模式
+  差异，与检查发射无直接关系。
+- **binarytree sensitivity**：quarantine_size_mb=0 时 RSS 647.7→166.7 MB
+  （−74.3%）、时间 −8.7%（唯一 quarantine 活跃基准）。
+- **旧数据（superseded）**：`docs/security-code.md` §10.7（3 个已移除微负载，
+  0.35×/0.36×/0.08×，2026-08-14）为历史归档，仅可作先验量级参考，不得作为
+  论文当前数据引用。
+- **注意**：ASan 仅空间安全（无时序/UAF 检测）；`-O` 不对称（C 腿 -O2 vs
+  .an 腿 -O3）——跨编译器差异不可单纯归因于安全机制。
 
 ## 2. O-1~O-5 完整证明（梗概 → 可勾销）
 
@@ -36,14 +60,17 @@ S-01..S-23）：
 - [ ] 目视核对 `fig1_cost_decomposition.png` 堆叠图（log2 刻度、每基准总成本标注）。
 - [ ] 目视核对 `fig2_check_cost.png`（检查成本柱状 + 1.2× 阈值线 + 10/14 标注）。
 - [ ] 目视核对 `fig3_cve_matrix.png` 热图（38 CVE × 12 机制，主/次级归属颜色区分）。
-- [ ] 目视核对 `fig4_asan_compare.png`（时间/RSS 双面板 + 历史基准警告标注）。
+- [ ] 目视核对 `fig4_asan_compare.png`（14 基准时间倍率/RSS 双面板 + 当前套件
+      数据标注；旧 §10.7 历史数据已 superseded，仅在图注保留）。
 - [ ] 对照 `data/performance.csv` 抽查图 1/2 数值；对照 `MECHANISMS.md` 明细表
       抽查图 3 归属。
 
-## 4. shootout C 移植
+## 4. shootout C 移植 — 已完成
 
-- 当前 14 基准为 YIAN 源码（规模部分下调，见 `data/shootout-results.md` §1）。
-- C 移植用于：(a) 跨语言公平基线；(b) ASan / SoftBound / CETS 对照的前置。
+- **已完成**：`bench/c/` 14 个 C 基准（9 个与 `.an` 规模对齐 + 断言值双清单，
+  commit 01265bb），验证脚本 `scripts/verify_bench_c.py` 14/14 PASS。
+- 用途已兑现：(a) 跨语言公平基线；(b) ASan 对照前置（§1 已完成，数据见
+  `data/asan-results.md`）。
 - 规模下调须在论文中显式声明（方法学透明），不构成隐藏。
 
 ## 5. MECHANISMS 后续维护

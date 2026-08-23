@@ -17,9 +17,9 @@ S&P，梗概级证明 + 实证定位）。性能表述以 `data/performance.csv`
 |---|---|---|
 | `assessment.md` | 论文可行性评估（todo 5 产出） | 成果盘点、新颖性分叉、完整性评估、目标场合建议（安全会议）、待补项清单 |
 | `data/` | 性能数据冻结快照 | `performance.csv`（权威，14 基准三态成本分解倍率）+ `shootout-results.md`（备查，原始样本与测量协议），均注明来源与冻结日期 2026-08-23 |
-| `figures/` | 图表导出脚本 | 4 个 Python（csv+matplotlib）脚本：三态成本分解堆叠图、检查成本 vs 基准、CVE 拦截矩阵（38 CVE × 12 机制）、ASan 对照（历史基准标注）；各可独立运行产出 PNG |
+| `figures/` | 图表导出脚本 | 4 个 Python（csv+matplotlib）脚本：三态成本分解堆叠图、检查成本 vs 基准、CVE 拦截矩阵（38 CVE × 12 机制）、ASan 对照（当前套件 14 基准）；各可独立运行产出 PNG |
 | `references/` | 引用清单副本 | `citations.md`：14 条 verified 引用（排除 3 篇未核实文献：Extensible Metadata / WatchTower / Buddy），附排除说明 |
-| `checklist.md` | 待补项清单 | ASan 对比（非阻塞推荐）、O-1~O-5 完整证明、图表人工验证、shootout C 移植、MECHANISMS 后续维护、数据冻结更新流程 |
+| `checklist.md` | 待补项清单 | ASan 对比（已完成 2026-08-23）、O-1~O-5 完整证明、图表人工验证、shootout C 移植（已完成）、MECHANISMS 后续维护、数据冻结更新流程 |
 
 ## 数据与来源对应
 
@@ -28,7 +28,7 @@ S&P，梗概级证明 + 实证定位）。性能表述以 `data/performance.csv`
 | 性能数字（总/检查成本倍率、ΔRSS） | `data/performance.csv` | `data/shootout-results.md`（早期 c8 快照，跨会话不可直接比） |
 | CVE 拦截归属（25+10+1+2） | `tests/fat_cve/docs/MECHANISMS.md`（adb102a 回填后） | `tests/fat_cve/cve/` 38 目录 |
 | 门禁实数 255/75/27/76 + pyright 0 | `.omo/evidence/security-audit-paper-prep/task-1.txt` | `docs/security-code.md` §11.2 |
-| ASan 旧对照（0.35×/0.36×/0.08×） | `docs/security-code.md` §10.7（历史，负载已移除） | `build/bench/results.md`（归档） |
+| ASan 交叉对比（14 基准当前套件，1.58×/0.67×/2.37×） | `data/asan-results.md`（冻结 2026-08-23） | `build/bench/asan-results.md`（实测原始报告）；旧 §10.7 数据（0.35×/0.36×/0.08×，3 负载已移除）仅作先验、标 superseded |
 | 引用条目 | `references/citations.md`（排除 3 篇未核实） | `.omo/notes/citations.md`（完整 17 条） |
 | 三轮优化收益 | `.omo/evidence/compiler-perf-optimization/` task-4/7 + `assume-inject-perf-regression/task-5.txt` | — |
 
