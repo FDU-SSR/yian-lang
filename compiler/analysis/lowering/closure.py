@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from compiler.analysis.lowering.assign_check import check_simple_assign_source
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.ty import AccessMode, StructField
 from compiler.analysis.unit import hir as HIR
@@ -35,8 +34,6 @@ class ClosureHelper:
         capture_values: dict[str, HIR.Expr] = {}
         for capture in node.captures:
             cap_expr = self.__expr.value(capture.expr)
-            if not type_ctx.is_simple_type(cap_expr.type_id):
-                check_simple_assign_source(cap_expr, type_ctx, capture.span)
             capture_values[capture.name.name] = cap_expr
 
         # --- parameter types ---

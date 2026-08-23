@@ -170,13 +170,6 @@ class ImplRegistry:
             if self.check_conditions(impl, substs, visited):
                 return True
 
-        # Simple types implicitly implement Move and Clone.
-        if self.__ctx.is_simple_type(type_id):
-            trait_ty = self.__ctx[trait_id]
-            if isinstance(trait_ty, Type.TraitType):
-                if trait_ty.custom_def.name in ("Move", "Clone"):
-                    return True
-
         return False
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.lowering.assign_check import (
-    build_assign, check_simple_assign_source)
+from compiler.analysis.lowering.assign_check import build_assign
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
@@ -257,9 +256,6 @@ class ExprChecker:
 
     def __handle_tuple(self, node: AST.Tuple) -> HIR.Expr:
         elements = [self.value(element) for element in node.elements]
-        for element in elements:
-            if not self.__ctx.type_ctx.is_simple_type(element.type_id):
-                check_simple_assign_source(element, self.__ctx.type_ctx, node.span)
         type_id = self.__ctx.type_ctx.alloc_tuple([element.type_id for element in elements])
         return HIR.Tuple(span=node.span, field_values=elements, type_id=type_id, is_place=False)
 
@@ -271,9 +267,6 @@ class ExprChecker:
         element_type_id = self.__ctx.type_ctx.infer_common_type([element.type_id for element in elements], node.span, "array elements")
         if any(element.type_id != element_type_id for element in elements):
             elements = [self.coerce(element, element_type_id) for element in elements]
-        if not self.__ctx.type_ctx.is_simple_type(element_type_id):
-            for element in elements:
-                check_simple_assign_source(element, self.__ctx.type_ctx, node.span)
 
         length_id = self.__ctx.type_ctx.alloc_literal_value(len(elements), self.__ctx.type_ctx.u64_id)
         type_id = self.__ctx.type_ctx.alloc_array(element_type_id, length_id)
@@ -282,8 +275,6 @@ class ExprChecker:
     def __handle_array_repeat(self, node: AST.ArrayRepeat) -> HIR.Expr:
         element = self.value(node.element)
         element_type_id = self.__ctx.type_ctx.default_literals(element.type_id)
-        if not self.__ctx.type_ctx.is_simple_type(element_type_id):
-            check_simple_assign_source(element, self.__ctx.type_ctx, node.span)
 
         count_expr = self.value(node.count)
         count_type_id = self.__extract_count_type_id(count_expr, node.span)
@@ -595,8 +586,6 @@ class ExprChecker:
             raise AnalysisError("void function cannot return a value", stmt.expr.span)
 
         value_expr = self.coerce(self.value(stmt.expr), return_type_id)
-        if not self.__ctx.type_ctx.is_simple_type(return_type_id):
-            check_simple_assign_source(value_expr, self.__ctx.type_ctx, stmt.span)
         return HIR.Return(span=stmt.span, value=value_expr, type_id=TypeCtx.never_id, is_place=False)
 
     def lower_break(self, stmt: AST.Break) -> HIR.Break:
@@ -607,8 +596,6 @@ class ExprChecker:
         value: HIR.Expr | None = None
         if stmt.expr is not None:
             value = self.value(stmt.expr)
-            if not self.__ctx.type_ctx.is_simple_type(value.type_id):
-                check_simple_assign_source(value, self.__ctx.type_ctx, stmt.span)
             loop_frame.break_value_type_ids.append(value.type_id)
         else:
             loop_frame.break_value_type_ids.append(TypeCtx.void_id)

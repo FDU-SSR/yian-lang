@@ -34,7 +34,6 @@ RESTRICTED_BUILTIN_NAMES = frozenset(
         "open",
         "close",
         "assume_init",
-        "bitcopy",
         "__memcpy",
     }
 )

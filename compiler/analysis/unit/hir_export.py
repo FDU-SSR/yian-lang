@@ -168,10 +168,6 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             res += __export_expr_child("Src", expr.src, guides, is_last, False, type_ctx)
             res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
             return res
-        case HIR.BitCopy():
-            return __export_bit_copy(expr, guides, is_last, type_ctx)
-        case HIR.Nop():
-            return __line(guides, is_last, f"Nop: span={__format_span(expr.span)} type_id={expr.type_id}")
         case HIR.Closure():
             res = __line(guides, is_last, f"Closure: type={__format_type(type_ctx, expr.type_id)} captures={list(expr.captures.keys())} span={__format_span(expr.span)}")
             return res
@@ -384,12 +380,6 @@ def __export_open(expr: HIR.Open, guides: list[bool], is_last: bool, type_ctx: T
 def __export_close(expr: HIR.Close, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     res = __line(guides, is_last, f"Close: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
     res += __export_expr_child("Fd", expr.fd, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_bit_copy(expr: HIR.BitCopy, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"BitCopy: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Value", expr.value, guides, is_last, False, type_ctx)
     return res
 
 

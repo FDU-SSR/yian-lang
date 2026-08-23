@@ -71,22 +71,6 @@ class TokenStream:
         self.advance()
         return token
 
-    def consume_annots(self) -> list[AST.Annot]:
-        """Consumes annotations (e.g., @BitCopy) and returns them as a list."""
-        annots: list[AST.Annot] = []
-        while not self.at_end():
-            match self.peek():
-                case Tok.Punctuator(kind=Tok.PunctuatorKind.At, span=at_span):
-                    self.advance()
-                    ident = self.consume_identifier()
-                    kind = AST.AnnotKind.try_from_name(ident.name)
-                    if kind is None:
-                        raise ParseError(f"unknown annotation '@{ident.name}'", at_span + ident.span)
-                    annots.append(AST.Annot(span=at_span + ident.span, kind=kind))
-                case _:
-                    break
-        return annots
-
     def consume_attrs(self) -> list[AST.Attr]:
         """Consumes attributes (e.g., #[attr]) and returns them as a list."""
         attrs: list[AST.Attr] = []
