@@ -32,4 +32,4 @@
 - [x] 清除旧实现/实验残留。
 - [x] latexmk 完整构建并检查引用、图表、公式和版面。
 - [x] 逐字确认标题仍为 Toward Language-Level Memory Safety Using Unified Fat Pointers。
-- [ ] 分别提交 yian 与外层论文仓库，外层不包含嵌套 yian 仓库。
+- [x] 分别提交 yian 与外层论文仓库，外层不包含嵌套 yian 仓库。
