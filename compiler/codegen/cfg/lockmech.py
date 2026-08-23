@@ -4,8 +4,8 @@
 实现篇 docs/security-code.md §7.1:
 
 - 定义 6(编码约定):`LockEntry` 编码为单个机器字;`SENTINEL` = 全 1 字(~0)。
-- 定义 7(块布局与锁槽 `LockSlot`):块首 H 字节锁槽(锁头仅锁槽,H = w = 8B),
-  锁头区 [b, b+H) 在负载之前;分配锚定 data = b + H。栈帧锁头仅含锁槽。
+- 定义 7(块布局与锁槽 `LockSlot`):堆块使用固定 32B 池元数据头,
+  锁头区 [b, b+H) 在负载之前;分配锚定 data = b + H。栈帧仍仅含独立锁槽。
 - 定义 8(`live`):锁槽键比较(全字相等);p.lock_ptr = 0(null 编码)短路为假。
 - 定义 9(`is_heap`):键最高位纯位判定(0 = 栈、1 = 堆),不读锁槽。
 - 定义 10(`Gen`):单调计数器(预决;CSPRNG 不做),堆/栈各维护独立 63 位计数,
@@ -136,15 +136,20 @@ def is_raw(data: int, lock_ptr: int, index: int) -> bool:
 
 
 class BlockHeader:
-    """定义 7(块布局与锁槽):块首 H 字节锁槽(锁头仅锁槽,H = w)。
+    """SecL 单线程堆池的固定块头布局。
 
-    每个堆块布局 = 「锁头 + 负载」:锁头区 [b, b+H) 在负载之前,负载区
-    [b+H, b+H+bytes);锁槽 = 块首首字,地址即块首地址 lock_addr(b) = b。
-    分配锚定 data = b + H(§2.5、规则 3.6.1、表 2)。栈帧锁头仅含锁槽(§4.8)。
+    ``{lock:u64, capacity:u64, next:i8*, reserved:u64}`` occupies 32 bytes.
+    The fixed size preserves 16-byte payload alignment.  Freed blocks remain
+    mapped and only this header is reused as allocator metadata, so stale
+    pointers may safely read ``lock`` and can never reach a user-controlled
+    payload through ``lock_ptr``.
     """
 
-    BYTES: ClassVar[int] = 8  # H = w:64 位机器字宽,锁头仅锁槽一个字
+    BYTES: ClassVar[int] = 32
     LOCK_SLOT_OFFSET: ClassVar[int] = 0  # 锁槽 = 块首首字(偏移 0)
+    CAPACITY_OFFSET: ClassVar[int] = 8
+    NEXT_OFFSET: ClassVar[int] = 16
+    RESERVED_OFFSET: ClassVar[int] = 24
 
     @staticmethod
     def data_addr(block_base: int) -> int:

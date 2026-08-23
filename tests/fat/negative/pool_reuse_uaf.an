@@ -1,0 +1,12 @@
+// Reusing a block changes its key.  The old pointer still names the stable
+// header but cannot pass live after the new allocation becomes active.
+
+fn main() {
+    let old = dyn[1] i32;
+    old[0] = 1;
+    del old;
+
+    let current = dyn[1] i32;
+    current[0] = 2;
+    let invalid = old[0];
+}

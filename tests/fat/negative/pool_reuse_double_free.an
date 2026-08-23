@@ -1,0 +1,11 @@
+// An old root pointer must not be able to release a block after that block has
+// been re-keyed for a new allocation.
+
+fn main() {
+    let old = dyn[1] i32;
+    del old;
+
+    let current = dyn[1] i32;
+    current[0] = 7;
+    del old;
+}

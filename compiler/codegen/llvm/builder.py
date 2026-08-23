@@ -368,41 +368,49 @@ class LLBuilder:
             ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
             self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
             return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
-        # Convert element count to byte count for C's malloc.
-        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及 +8 锁头,一律在 i128
+        # Convert element count to byte count for allocation.
+        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及固定池块头,一律在 i128
         # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ trap。否则纯 64 位乘法
         # 回绕(如 n=2^62+1,|T|=8 → 2^65 → 小值)会令物理分配过小,而胖指针
         # size 字段 = n(元素数,无回绕),in_bounds 全部通过 → 越界访问逃过检查。
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
-        total128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
+        payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
+        total128 = payload128
         if not self.__raw_pointers:
-            # 规则 3.6.1:块 = 锁头(H=8)+ 负载;块头锁槽写键(锁槽 = 块首首字)。
+            # 规则 3.6.1:块 = 稳定池块头(H=32)+负载;块头首字为锁槽。
             # raw 模式无锁头(块 = 负载,data = 块基址)。
-            total128 = self.__builder.add(total128, ir.Constant(i128, 8))  # type: ignore
+            total128 = self.__builder.add(
+                total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
+            )
         # O-1 溢出检查(raw 模式保留:防御性,决策点已定)
         fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "mof")
-        total_ir = self.__builder.trunc(total128, ir.IntType(64))  # type: ignore
-        total = LLValue(self.__type_ctx.u64_id, total_ir)  # type: ignore
-        raw = self.__call_intrinsic(IntrinsicKind.Malloc, [total])
+        payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
+        payload = LLValue(self.__type_ctx.u64_id, payload_ir)  # type: ignore
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
         if self.__raw_pointers:
+            raw = self.__call_intrinsic(IntrinsicKind.Malloc, [payload])
             # raw 模式:data = 块基址,直接返回裸指针(无锁头偏移、无 5 字段聚合)。
             # malloc intrinsic 返回 i8*,须 bitcast 到有型 T*(raw 指针为 T*)。
             typed = self.__builder.bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
             result_val = LLValue(ptr_type_id, typed)  # type: ignore
             self.__func.set_reg(result, result_val)
             return result_val
-        block_base = LLValue(ptr_type_id, raw.ir_val)  # type: ignore
+        block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
+        block_base = LLValue(ptr_type_id, block_ir)  # type: ignore
         if key is not None:
             slot_ptr = self.__builder.bitcast(block_base.ir_val, ir.PointerType(ir.IntType(64)))  # type: ignore
             self.__builder.store(key.ir_val, slot_ptr)  # type: ignore
             key_ir = key.ir_val
         else:
             key_ir = ir.Constant(ir.IntType(64), 0)  # type: ignore
-        data_ir = self.__builder.gep(block_base.ir_val, [ir.Constant(ir.IntType(64), 8)], inbounds=False)  # type: ignore
+        data_ir = self.__builder.gep(
+            block_base.ir_val,
+            [ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)],  # type: ignore
+            inbounds=False,
+        )
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), data_ir)  # type: ignore
         block_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), block_base.ir_val)  # type: ignore
         key_val = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
@@ -415,10 +423,10 @@ class LLBuilder:
     def delete(self, ptr: LLValue) -> None:
         if self.__type_ctx.is_zst(ptr.type_id):
             return  # freeing a ZST pointer is a no-op
-        # 规则 3.6.2 动作②:整块交还 —— 释放范围以 lock_ptr(块首)寻址
+        # 规则 3.6.2 动作②:块进入稳定头空闲池,不向 libc 归还。
         if self.__is_fat(ptr):
             block_base = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
-            self.__call_intrinsic(IntrinsicKind.Free, [block_base])
+            self.__builder.call(self.__module.get_pool_release(), [block_base.ir_val])  # type: ignore
             return
         i8_ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         if isinstance(self.__type_ctx[ptr.type_id], Type.SliceType):
@@ -599,7 +607,7 @@ class LLBuilder:
         del-view(todo1):is_raw 的 index 分量按类型分派——PointerType 5 字段
         (FAT_INDEX=3 为 index)保留 index==0 检查;SliceType/StrType 4 字段
         (下标 3 为 size)、RefType 3 字段均无 index 字段,分量恒真跳过,仅查
-        data==lock_ptr+8。
+        data==lock_ptr+H。
         """
         if not self.__is_fat(ptr):
             return
@@ -610,7 +618,9 @@ class LLBuilder:
         lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
         lock_int = self.__builder.ptrtoint(lock, ir.IntType(64))  # type: ignore
         data_int = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
-        expected = self.__builder.add(lock_int, ir.Constant(ir.IntType(64), 8))  # type: ignore
+        expected = self.__builder.add(
+            lock_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)  # type: ignore
+        )
         raw_data_ok = self.__builder.icmp_signed("==", data_int, expected)  # type: ignore
         raw_cond: ir.Value = raw_data_ok
         if isinstance(self.__type_ctx[ptr.type_id], Type.PointerType):

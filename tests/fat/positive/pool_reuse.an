@@ -1,0 +1,19 @@
+// Fat-mode delete retains the block header in SecL's single-threaded pool.
+// A smaller allocation may reuse the payload while receiving a fresh key and
+// its own logical element count.
+//
+// Expected output: 0
+
+fn main() {
+    let first = dyn[4] i32;
+    let old = first;
+    first[0] = 11;
+    del first;
+
+    let second = dyn[2] i32;
+    assert old == second: "first-fit pool reuses a sufficiently large block";
+    second[0] = 21;
+    second[1] = 22;
+    assert second[0] + second[1] == 43: "reused payload remains writable";
+    del second;
+}

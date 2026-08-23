@@ -7,7 +7,7 @@ from __future__ import annotations
 from llvmlite import ir
 
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.llvm.intrinsics import IntrinsicManager
+from compiler.codegen.llvm.intrinsics import IntrinsicKind, IntrinsicManager
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 
@@ -83,6 +83,9 @@ class LLModule:
         self.__key_stack_global: ir.GlobalVariable | None = None
         self.__trap_intrinsic: ir.Function | None = None
         self.__lit_lock_global: ir.GlobalVariable | None = None
+        self.__pool_head_global: ir.GlobalVariable | None = None
+        self.__pool_alloc_func: ir.Function | None = None
+        self.__pool_release_func: ir.Function | None = None
 
     # -- properties --
 
@@ -186,6 +189,139 @@ class LLModule:
             self.__lit_lock_global.linkage = "internal"
             self.__lit_lock_global.initializer = ir.Constant(ir.IntType(64), 1)  # type: ignore
         return self.__lit_lock_global
+
+    # -- single-threaded stable-header heap pool --
+
+    def __pool_head(self) -> ir.GlobalVariable:
+        if self.__pool_head_global is None:
+            i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+            self.__pool_head_global = ir.GlobalVariable(
+                self.__module, i8_ptr, name="__secl_pool_head"
+            )
+            self.__pool_head_global.linkage = "internal"
+            self.__pool_head_global.initializer = ir.Constant(i8_ptr, None)  # type: ignore
+        return self.__pool_head_global
+
+    @staticmethod
+    def __pool_field_ptr(
+        builder: ir.IRBuilder, block: ir.Value, offset: int, field_type: ir.Type
+    ) -> ir.Value:
+        byte_ptr = builder.gep(
+            block, [ir.Constant(ir.IntType(64), offset)], inbounds=False  # type: ignore
+        )
+        return builder.bitcast(byte_ptr, ir.PointerType(field_type))  # type: ignore
+
+    def get_pool_alloc(self) -> ir.Function:
+        """Return the internal first-fit allocator for stable-header blocks."""
+        if self.__pool_alloc_func is not None:
+            return self.__pool_alloc_func
+
+        i8 = ir.IntType(8)  # type: ignore
+        i8_ptr = ir.PointerType(i8)  # type: ignore
+        i8_ptr_ptr = ir.PointerType(i8_ptr)  # type: ignore
+        i64 = ir.IntType(64)  # type: ignore
+        fn = ir.Function(
+            self.__module,
+            ir.FunctionType(i8_ptr, [i64]),
+            name="__secl_pool_alloc",
+        )
+        fn.linkage = "internal"
+        requested = fn.args[0]
+        requested.name = "requested"
+
+        entry = fn.append_basic_block("entry")
+        scan = fn.append_basic_block("scan")
+        inspect = fn.append_basic_block("inspect")
+        advance = fn.append_basic_block("advance")
+        reuse = fn.append_basic_block("reuse")
+        fresh = fn.append_basic_block("fresh")
+
+        entry_builder = ir.IRBuilder(entry)
+        entry_builder.branch(scan)
+
+        scan_builder = ir.IRBuilder(scan)
+        link = scan_builder.phi(i8_ptr_ptr, name="link")
+        link.add_incoming(self.__pool_head(), entry)
+        current = scan_builder.load(link, name="current")
+        is_null = scan_builder.icmp_unsigned("==", current, ir.Constant(i8_ptr, None))
+        scan_builder.cbranch(is_null, fresh, inspect)
+
+        inspect_builder = ir.IRBuilder(inspect)
+        capacity_ptr = self.__pool_field_ptr(
+            inspect_builder, current, IR.BlockHeader.CAPACITY_OFFSET, i64
+        )
+        capacity = inspect_builder.load(capacity_ptr, name="capacity")
+        fits = inspect_builder.icmp_unsigned(">=", capacity, requested)
+        inspect_builder.cbranch(fits, reuse, advance)
+
+        advance_builder = ir.IRBuilder(advance)
+        next_link = self.__pool_field_ptr(
+            advance_builder, current, IR.BlockHeader.NEXT_OFFSET, i8_ptr
+        )
+        advance_builder.branch(scan)
+        link.add_incoming(next_link, advance)
+
+        reuse_builder = ir.IRBuilder(reuse)
+        reuse_next_ptr = self.__pool_field_ptr(
+            reuse_builder, current, IR.BlockHeader.NEXT_OFFSET, i8_ptr
+        )
+        reuse_next = reuse_builder.load(reuse_next_ptr, name="next")
+        reuse_builder.store(reuse_next, link)
+        reuse_builder.store(ir.Constant(i8_ptr, None), reuse_next_ptr)
+        reuse_builder.ret(current)
+
+        fresh_builder = ir.IRBuilder(fresh)
+        total = fresh_builder.add(
+            requested, ir.Constant(i64, IR.BlockHeader.BYTES), name="total"
+        )
+        block = fresh_builder.call(
+            self.__intrinsics.get(IntrinsicKind.Malloc),
+            [total],
+            name="block",
+        )
+        fresh_capacity_ptr = self.__pool_field_ptr(
+            fresh_builder, block, IR.BlockHeader.CAPACITY_OFFSET, i64
+        )
+        fresh_next_ptr = self.__pool_field_ptr(
+            fresh_builder, block, IR.BlockHeader.NEXT_OFFSET, i8_ptr
+        )
+        reserved_ptr = self.__pool_field_ptr(
+            fresh_builder, block, IR.BlockHeader.RESERVED_OFFSET, i64
+        )
+        fresh_builder.store(requested, fresh_capacity_ptr)
+        fresh_builder.store(ir.Constant(i8_ptr, None), fresh_next_ptr)
+        fresh_builder.store(ir.Constant(i64, 0), reserved_ptr)
+        fresh_builder.ret(block)
+
+        self.__pool_alloc_func = fn
+        return fn
+
+    def get_pool_release(self) -> ir.Function:
+        """Return the internal release helper; blocks remain mapped in the pool."""
+        if self.__pool_release_func is not None:
+            return self.__pool_release_func
+
+        i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+        fn = ir.Function(
+            self.__module,
+            ir.FunctionType(ir.VoidType(), [i8_ptr]),
+            name="__secl_pool_release",
+        )
+        fn.linkage = "internal"
+        block = fn.args[0]
+        block.name = "block"
+        entry = fn.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+        head = builder.load(self.__pool_head(), name="head")
+        next_ptr = self.__pool_field_ptr(
+            builder, block, IR.BlockHeader.NEXT_OFFSET, i8_ptr
+        )
+        builder.store(head, next_ptr)
+        builder.store(block, self.__pool_head())
+        builder.ret_void()
+
+        self.__pool_release_func = fn
+        return fn
 
     def emit_wrapper_main(self) -> None:
         """Emit the C-compatible ``@main`` wrapper that calls ``__yian_main``."""
