@@ -21,7 +21,6 @@
 | [13](13.log.md) | 日志系统 | `compiler/utils/log.py` |
 | [14](14.cli_build.md) | CLI 与构建 | `compiler/main.py` |
 | [15](15.stdlib.md) | 标准库架构 | `lib/` |
-| [16](16.assign_semantics.md) | 赋值语义实现 | `assign_check.py`、`is_simple_type` |
 | [17](17.impl_registry.md) | Impl 注册与查找 | `compiler/analysis/ty/impl.py` |
 | [18](18.error_handling.md) | 错误处理 | `compiler/analysis/error.py` |
 | [19](19.coding_style.md) | 编码规范 | Python + Yian 代码风格 |
