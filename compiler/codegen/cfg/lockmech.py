@@ -40,6 +40,12 @@ FLAG_MASK = 1 << FLAG_BIT
 BODY_MASK = FLAG_MASK - 1
 """键体掩码(低 63 位),单调计数体。"""
 
+MAX_HEAP_BODY = BODY_MASK - 1
+"""最大堆键体；全 1 键体保留给 ``SENTINEL``。"""
+
+MAX_STACK_BODY = BODY_MASK
+"""最大栈键体；最高位为 0，故不会与 ``SENTINEL`` 重合。"""
+
 STACK_FLAG = 0
 """栈键最高位 0(定义 9)。"""
 
@@ -94,16 +100,16 @@ class KeyGen:
 
     def heap_key(self) -> int:
         """`k ← Gen()`,堆键最高位 1(规则 3.6.1 块头锁槽写键)。"""
+        if self.__heap_counter >= MAX_HEAP_BODY:
+            raise OverflowError("Gen heap counter exhausted (SENTINEL reserved)")
         self.__heap_counter += 1
-        if self.__heap_counter > BODY_MASK:
-            raise OverflowError("Gen heap counter exhausted (63-bit space)")
         return FLAG_MASK | self.__heap_counter
 
     def stack_key(self) -> int:
         """`k_f ← Gen()`,栈键最高位 0(规则 3.7.1 帧进入 re-key)。"""
-        self.__stack_counter += 1
-        if self.__stack_counter > BODY_MASK:
+        if self.__stack_counter >= MAX_STACK_BODY:
             raise OverflowError("Gen stack counter exhausted (63-bit space)")
+        self.__stack_counter += 1
         return self.__stack_counter
 
 

@@ -168,9 +168,19 @@ class LLBuilder:
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
 
     def __gen_key_value(self, is_heap: bool) -> LLValue:
-        """k ← Gen()(定义 10):全局计数递增,堆键 or 最高位标志(MSB 1)/栈键原样。"""
+        """Emit a non-wrapping monotonic key, trapping on exhaustion.
+
+        Heap body ``BODY_MASK`` is reserved because adding the heap flag would
+        produce the all-ones ``SENTINEL``.  Stack keys may use that body value
+        because their most-significant bit remains zero.
+        """
         counter = self.__module.get_key_counter(is_heap)
         loaded = self.__builder.load(counter)  # type: ignore
+        limit = IR.MAX_HEAP_BODY if is_heap else IR.MAX_STACK_BODY
+        available = self.__builder.icmp_unsigned(
+            "<", loaded, ir.Constant(ir.IntType(64), limit)  # type: ignore
+        )
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, available), "keyex")
         nxt = self.__builder.add(loaded, ir.Constant(ir.IntType(64), 1))  # type: ignore
         self.__builder.store(nxt, counter)  # type: ignore
         if is_heap:
