@@ -463,6 +463,16 @@ class LLBuilder:
         size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
         self.__emit_check(self.__check_in_bounds_cond(index, size), "ib")
 
+    def check_slice_nonempty(self, ptr: LLValue) -> None:
+        """Establish the one-element origin invariant for ``T[] -> T&``."""
+        if not self.__is_fat(ptr):
+            return
+        size = self.__extract_fat_field(ptr, IR.SLICE_SIZE).ir_val
+        nonempty = self.__builder.icmp_unsigned(
+            ">", size, ir.Constant(ir.IntType(64), 0)  # type: ignore
+        )
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonempty), "sref")
+
     def check_ref_access(self, ptr: LLValue) -> None:
         """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers t3)。
 
@@ -987,8 +997,8 @@ class LLBuilder:
             else:
                 ir_val = value.ir_val
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.SliceType):
-            # T* → T[]: 4 字段 {data_eff, lock, key, size};index 折叠进 data 有效地址,
-            # lock/key 继承(src 锁继承),size 保留。
+            # T* → T[]: 4 字段 {data_eff, lock, key, remaining};index 折叠进
+            # data 有效地址,切片长度缩为 size-index,锁字段继承。
             if self.__raw_pointers:
                 # raw 模式 slice 2 字段 {data, size}:size 无源,置 0。
                 data = self.__fat_addr(value, src.pointee_type)
@@ -1001,8 +1011,13 @@ class LLBuilder:
                 lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
                 key = self.__extract_fat_field(value, IR.FAT_KEY)
                 size = self.__extract_fat_field(value, IR.FAT_SIZE)
+                index = self.__extract_fat_field(value, IR.FAT_INDEX)
+                remaining = LLValue(
+                    self.__type_ctx.u64_id,
+                    self.__builder.sub(size.ir_val, index.ir_val),  # type: ignore
+                )
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+                ir_val = self.__build_fat(data, lock, key, zero, remaining, to_type).ir_val
         elif isinstance(src, Type.SliceType) and isinstance(dst, Type.RefType):
             # T[] → T&: 取 4 字段切片 data/lock_ptr/key 合成 3 字段引用(真锁,非 lit lock)。
             if self.__raw_pointers:

@@ -187,6 +187,8 @@ class LLTranslator:
                 builder.check_safe_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckInBounds():
                 builder.check_in_bounds(self.__resolve(builder, stmt.ptr))
+            case IR.CheckSliceNonEmpty():
+                builder.check_slice_nonempty(self.__resolve(builder, stmt.ptr))
             case IR.CheckRefAccess():
                 builder.check_ref_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckElementArith():

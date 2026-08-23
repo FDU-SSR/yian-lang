@@ -232,6 +232,17 @@ class CheckInBounds:
 
 
 @dataclass
+class CheckSliceNonEmpty:
+    """Require a fat ``T[]`` value to contain at least one element.
+
+    Inserted before ``T[] -> T&`` degradation.  A reference carries no
+    bounds metadata, so its source must establish the single-element spatial
+    invariant before the size field is dropped.
+    """
+    ptr: Value
+
+
+@dataclass
 class CheckRefAccess:
     """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers t3)。
 
@@ -461,7 +472,8 @@ Stmt: TypeAlias = (
     | SysWrite | SysRead | Open | Close
     | MemCopy
     | GenKey | WriteLockSlot
-    | CheckSafeAccess | CheckInBounds | CheckElementArith | CheckPtrDiff | CheckDelete
+    | CheckSafeAccess | CheckInBounds | CheckSliceNonEmpty
+    | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess
     | CheckElementAccess
     | CheckRawBounds

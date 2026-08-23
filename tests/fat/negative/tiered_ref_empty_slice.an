@@ -1,0 +1,7 @@
+// An empty slice has no element from which a T& can be formed.
+
+fn main() {
+    let empty = dyn[0] i32;
+    let slice: i32[] = empty;
+    let invalid: i32& = slice;
+}

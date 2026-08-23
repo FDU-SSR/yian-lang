@@ -1,0 +1,9 @@
+// A suffix slice must not retain the source pointer's full capacity.
+// Accessing index 2 of a two-element suffix traps before the load.
+
+fn main() {
+    let data = [10i32, 20, 30, 40];
+    let base: i32* = data;
+    let suffix: i32[] = base + 2;
+    let value = suffix[2];
+}

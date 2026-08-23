@@ -1,0 +1,9 @@
+// T& carries no bounds, so a legal one-past T* must be rejected before the
+// index and size fields are discarded.
+
+fn main() {
+    let data = [1i32, 2];
+    let base: i32* = data;
+    let end = base + 2;
+    let invalid: i32& = end;
+}

@@ -9,7 +9,8 @@ fn main() {
     let x: i32 = 42;
     let p: i32* = &x;
 
-    // T* → T[]: the index folds into the data address, size is preserved.
+    // T* → T[]: the index folds into the data address and the size becomes
+    // the number of elements remaining from that address.
     let s: i32[] = p;
     assert s.len() == 1: "T*→T[] preserves the element count"
     assert s[0] == 42: "T*→T[] reads through the view"

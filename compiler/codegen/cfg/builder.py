@@ -1077,6 +1077,17 @@ class CfgBuilder:
 
     def __resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:
         value = self.__resolve_val(expr.value)
+        source_type = self.__type_ctx[self.__type_ctx.resolve_aliases(value.type_id)]
+        target_type = self.__type_ctx[self.__type_ctx.resolve_aliases(expr.type_id)]
+        if not self.__raw_pointers and not self.__no_fat_checks:
+            if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
+                # T& drops index/size, so the source must denote a real element
+                # rather than the legal one-past pointer value.
+                self.__emit(IR.CheckInBounds(ptr=value))
+            elif isinstance(source_type, Type.SliceType) and isinstance(target_type, Type.RefType):
+                # An empty slice has no element from which a reference can be
+                # formed.  Establish this before dropping the size field.
+                self.__emit(IR.CheckSliceNonEmpty(ptr=value))
         return self.__build_cast(value, expr.type_id)
 
     def __resolve_sys_read(self, expr: HIR.SysRead) -> IR.Value:

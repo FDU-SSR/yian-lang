@@ -132,6 +132,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckInBounds(ptr=ptr):
             return f"check_in_bounds {__dump_value(ptr)}  (规则 3.5.2)"
 
+        case IR.CheckSliceNonEmpty(ptr=ptr):
+            return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
+
         case IR.CheckRefAccess(ptr=ptr):
             return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers t3)"
 
