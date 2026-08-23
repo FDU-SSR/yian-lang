@@ -38,15 +38,18 @@ bench-rerun 扩展).
   python3 scripts/bench_fat.py --raw-only               # 仅编译+测量 raw 态 (shootout 套件从 bench/shootout_raw 源)
   python3 scripts/bench_fat.py --max-state-sec 120      # 单态 warmup 超限则测量次数降到 3
   python3 scripts/bench_fat.py --compile-only           # 只编译不测量 (编译验证)
+  python3 scripts/bench_fat.py --asan --names binarytree --runs 3 --pin 4
+                                                        # ASan 交叉对比 (4 腿紧邻), 写 asan-results.md
 
 独立脚本: 不触碰 scripts/run_tests.py / run_fat*.py 等测试 runner; 不修改基准源码。
-输出: build/bench/shootout-results.md (shootout)。
+输出: build/bench/shootout-results.md (shootout); build/bench/asan-results.md (--asan)。
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import math
 import os
 import platform
 import re
@@ -64,10 +67,12 @@ BENCH_DIR = ROOT / "bench"
 OUT_DIR = ROOT / "build" / "bench"
 RESULTS_SHOOTOUT = OUT_DIR / "shootout-results.md"
 RESULTS_SHOOTOUT_RAW = OUT_DIR / "shootout-raw-results.md"
+RESULTS_ASAN = OUT_DIR / "asan-results.md"
 SHOOTOUT_DIR = BENCH_DIR / "shootout"
 SHOOTOUT_RAW_DIR = BENCH_DIR / "shootout_raw"
 REF_ROOT = ROOT / "bak" / "old_exp" / "performance"
 REF_OUT_DIR = OUT_DIR / "ref"
+BENCH_C_DIR = BENCH_DIR / "c"
 
 # 金标准基线: 性能回归门禁 (scripts/check_perf_regression.py) 的对照数据, 由 --sync-baseline 写入
 BASELINE_CSV = ROOT / "docs" / "perf-baseline.csv"
@@ -100,10 +105,12 @@ _RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
 # c/cpp/rust 参考基线编译命令: lang → (源码子目录, 扩展名, 编译命令前缀)
 # - C/C++ 需要 -lm (nbody/spectralnorm 用 sqrt)
 # - Rust 用 rustc -O (opt-level=2, 与 C/C++ 的 -O2 对齐)
+# - asan: subdir="" → 平铺源码目录 (bench/c/), clang ASan 插桩; 产物 <name>_asan
 REF_LANG_CMD: dict[str, tuple[str, str, list[str]]] = {
     "c": ("c", ".c", ["clang", "-O2", "-lm"]),
     "cpp": ("cpp", ".cpp", ["clang++", "-O2", "-lm"]),
     "rust": ("rust", ".rs", ["rustc", "-O"]),
+    "asan": ("", ".c", ["clang", "-O2", "-fsanitize=address", "-lm"]),
 }
 
 
@@ -141,6 +148,27 @@ class RefRow:
     bench: str
     lang: str  # "c" | "cpp" | "rust"
     stats: SampleSummary
+
+
+@dataclass
+class AsanRow:
+    bench: str
+    leg: str  # "c_plain" | "c_asan" | "c_asan_sens" | "an_check"
+    stats: SampleSummary
+    used_runs: int = 0
+
+
+LEG_LABEL: dict[str, str] = {
+    "c_plain": "C plain",
+    "c_asan": "C ASan main",
+    "c_asan_sens": "C ASan sens",
+    "an_check": ".an check",
+}
+
+# ASAN_OPTIONS: 主表关闭 leak 检测 (其余默认, quarantine 256MB 活跃); 敏感性行再加
+# quarantine_size_mb=0 (quarantine 失效) — 仅 binarytree 是 quarantine 活跃基准。
+ASAN_ENV_MAIN = "detect_leaks=0"
+ASAN_ENV_SENS = "detect_leaks=0:quarantine_size_mb=0"
 
 
 def spec_src(spec: BenchSpec) -> Path:
@@ -198,10 +226,14 @@ def compile_an(spec: BenchSpec, no_checks: bool, raw: bool = False) -> Path:
     return bin_path
 
 
-def compile_ref(name: str, lang: str) -> Path | None:
-    """编译 bak/old_exp/performance/<lang>/<name> 参考基线; 源不存在返回 None。"""
+def compile_ref(name: str, lang: str, source_dir: Path = REF_ROOT) -> Path | None:
+    """编译 <source_dir>/<subdir>/<name><ext> 参考基线; 源不存在返回 None。
+
+    source_dir 默认 REF_ROOT (bak/old_exp/performance) 保持 --ref 通道行为不变;
+    asan 表项 subdir="" → source_dir/<name>.c 平铺文件 (bench/c/)。
+    """
     subdir, ext, base = REF_LANG_CMD[lang]
-    src = REF_ROOT / subdir / f"{name}{ext}"
+    src = source_dir / subdir / f"{name}{ext}"
     if not src.exists():
         return None
     out = REF_OUT_DIR / f"{name}_{lang}"
@@ -221,14 +253,16 @@ def measure(
     pin: int | None,
     allow_nonzero: bool = False,
     max_state_sec: float = DEFAULT_MAX_STATE_SEC,
+    env: dict[str, str] | None = None,
 ) -> tuple[list[tuple[float, int]], int, float]:
     """运行 runs 次, 返回 (样本, 实际次数, warmup 秒数)。
 
     先 1 次 warmup (计时确认稳定窗口, §10.5 步骤 2; 不计入样本)。若 warmup 超过
     max_state_sec (默认 120s) 且 runs>3, 实际测量次数降到 3 (shootout-perf-eval 策略)。
     allow_nonzero=True 时容忍非零退出码 (参考基线 fann 等以退出码传结果)。
+    env 覆盖子进程环境 (默认 os.environ + LANG=C); ASan 会话注入 ASAN_OPTIONS。
     """
-    env = _env_plain()
+    env = env if env is not None else _env_plain()
     pre: list[str] = []
     if pin is not None:
         pre = ["taskset", "-c", str(pin)]
@@ -806,6 +840,393 @@ def render_raw(
     print(f"\n结果写入 {RESULTS_SHOOTOUT_RAW}\n")
 
 
+def _env_asan(options: str) -> dict[str, str]:
+    env = _env_plain()
+    env["ASAN_OPTIONS"] = options
+    return env
+
+
+def _ref_bin_path(name: str, lang: str) -> Path:
+    return REF_OUT_DIR / f"{name}_{lang}"
+
+
+def _compile_asan_ref(
+    name: str,
+    lang: str,
+    source_dir: Path,
+    args: argparse.Namespace,
+    notes: list[str],
+) -> Path | None:
+    """ASan 会话 C 腿编译 (source_dir 组合 REF_LANG_CMD subdir 得平铺源:
+    c 用 BENCH_DIR → bench/c/<name>.c; asan subdir="" 用 BENCH_C_DIR → 同文件);
+    --no-compile 复用已存在二进制。编译失败 → 标注并返回 None, 不中断会话。"""
+    if args.no_compile:
+        p = _ref_bin_path(name, lang)
+        if not p.exists():
+            notes.append(f"{name}/{lang}: --no-compile 但二进制缺失, 跳过")
+            return None
+        return p
+    try:
+        return compile_ref(name, lang, source_dir=source_dir)
+    except (OSError, SystemExit) as e:
+        notes.append(f"{name}/{lang}: 编译失败跳过 ({e})")
+        print(f"[warn] {name}/{lang}: 编译失败: {e}", file=sys.stderr)
+        return None
+
+
+def _compile_an_leg(
+    spec: BenchSpec,
+    args: argparse.Namespace,
+    notes: list[str],
+) -> Path | None:
+    """ASan 会话 .an check 腿编译 (现编, -O3); --no-compile 复用已存在二进制。"""
+    if args.no_compile:
+        p = spec_bin(spec)
+        if not p.exists():
+            notes.append(f"{spec.name}/an_check: --no-compile 但二进制缺失, 跳过")
+            return None
+        return p
+    try:
+        return compile_an(spec, no_checks=False)
+    except (OSError, SystemExit) as e:
+        notes.append(f"{spec.name}/an_check: 编译失败跳过 ({e})")
+        print(f"[warn] {spec.name}/an_check: 编译失败: {e}", file=sys.stderr)
+        return None
+
+
+def _measure_asan_leg(
+    bench: str,
+    leg: str,
+    binary: Path | None,
+    env: dict[str, str] | None,
+    args: argparse.Namespace,
+    allow_nonzero: bool,
+    notes: list[str],
+) -> AsanRow | None:
+    """单腿测量 (measure 现协议); 失败/崩溃 → 标注并返回 None, 不中断会话。"""
+    if binary is None:
+        return None
+    try:
+        samples, used, warm = measure(
+            binary,
+            args.runs,
+            args.pin,
+            allow_nonzero=allow_nonzero,
+            max_state_sec=args.max_state_sec,
+            env=env,
+        )
+    except (OSError, SystemExit, subprocess.TimeoutExpired) as e:
+        notes.append(f"{bench}/{leg}: 测量失败跳过 ({e})")
+        print(f"[warn] {bench}/{leg}: {e}", file=sys.stderr)
+        return None
+    if used < args.runs:
+        notes.append(
+            f"{bench}/{leg}: warmup {warm:.1f}s > {args.max_state_sec:.0f}s, "
+            f"测量次数降为 {used}"
+        )
+    return AsanRow(bench=bench, leg=leg, stats=summarize(samples), used_runs=used)
+
+
+def run_asan_suite(
+    specs: list[BenchSpec],
+    args: argparse.Namespace,
+) -> tuple[list[AsanRow], list[str]]:
+    """ASan 交叉对比测量: 每基准 4 腿紧邻 [C plain, C ASan main,
+    C ASan sensitivity(binarytree only), .an check]。
+
+    - C 腿源 bench/c/ (平铺, 规模与 bench/shootout/ 对齐): C plain `clang -O2 -lm`,
+      C ASan `clang -O2 -fsanitize=address -lm` (同一 ASan 二进制复用给敏感性腿);
+    - .an check 腿 compile_an 现编 (-O3, 完整胖指针检查), 无 ASAN_OPTIONS;
+    - allow_nonzero 仅 fann (C 版以 rc=51 传结果), 其余 False 防崩溃被静默容忍;
+    - per-leg 兜底: 失败跳过 + 标注, 绝不中断整个会话。
+    """
+    rows: list[AsanRow] = []
+    notes: list[str] = []
+    for spec in specs:
+        allow = spec.name == "fann"
+        an_spec = BenchSpec(name=spec.name, subdir="shootout")
+        print(f"[asan] {spec.name}: 4 腿紧邻开始 (allow_nonzero={allow})", file=sys.stderr)
+
+        bin_plain = _compile_asan_ref(spec.name, "c", BENCH_DIR, args, notes)
+        if bin_plain is None:
+            notes.append(f"{spec.name}/c_plain: 跳过 (C 源缺失或编译失败)")
+        row = _measure_asan_leg(spec.name, "c_plain", bin_plain, None, args, allow, notes)
+        if row is not None:
+            rows.append(row)
+
+        bin_asan = _compile_asan_ref(spec.name, "asan", BENCH_C_DIR, args, notes)
+        if bin_asan is None:
+            notes.append(f"{spec.name}/c_asan: 跳过 (C 源缺失或编译失败)")
+        row = _measure_asan_leg(
+            spec.name, "c_asan", bin_asan, _env_asan(ASAN_ENV_MAIN), args, allow, notes
+        )
+        if row is not None:
+            rows.append(row)
+
+        if spec.name == "binarytree":
+            row = _measure_asan_leg(
+                spec.name,
+                "c_asan_sens",
+                bin_asan,
+                _env_asan(ASAN_ENV_SENS),
+                args,
+                allow,
+                notes,
+            )
+            if row is not None:
+                rows.append(row)
+
+        bin_an = _compile_an_leg(an_spec, args, notes)
+        if bin_an is None:
+            notes.append(f"{spec.name}/an_check: 跳过 (编译失败或 --no-compile 无二进制)")
+        row = _measure_asan_leg(spec.name, "an_check", bin_an, None, args, allow, notes)
+        if row is not None:
+            rows.append(row)
+
+        print(f"[done] {spec.name}: 4 腿紧邻完成", file=sys.stderr)
+    return rows, notes
+
+
+def _geo_mean(values: list[float]) -> float | None:
+    """独立几何平均 (exp(mean(ln))); 空或含非正 → None。"""
+    if not values or any(v <= 0.0 for v in values):
+        return None
+    return math.exp(sum(math.log(v) for v in values) / len(values))
+
+
+def _ratio_str(num: float | None, den: float | None) -> str:
+    if num is None or den is None or den == 0.0:
+        return "—"
+    return f"{num / den:.2f}×"
+
+
+def _cv_str(vals: list[float]) -> str:
+    if len(vals) < 2:
+        return "—"
+    try:
+        mean = sum(vals) / len(vals)
+        return f"{statistics.stdev(vals) / mean:.3f}"
+    except statistics.StatisticsError:
+        return "—"
+
+
+_ASAN_SAMPLE_RE = re.compile(r"^- (\S+) / (\w+) \((\d+) runs\): (.+)$")
+_ASAN_SAMPLE_PART_RE = re.compile(r"^(-?\d+(?:\.\d+)?) \((-?\d+)\)$")
+
+
+def _parse_asan_legs(
+    path: Path,
+) -> dict[tuple[str, str], tuple[list[tuple[float, int]], int]]:
+    """解析已有 asan-results.md §5 原始样本 → {(bench, leg): (样本, used_runs)}。
+    供 --names 分批合并: 未测基准的腿原样保留。"""
+    out: dict[tuple[str, str], tuple[list[tuple[float, int]], int]] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = _ASAN_SAMPLE_RE.match(line.strip())
+        if m is None:
+            continue
+        bench = m.group(1)
+        leg = m.group(2)
+        runs_s = m.group(3)
+        rest = m.group(4)
+        if bench is None or leg is None or runs_s is None or rest is None:
+            continue
+        samples: list[tuple[float, int]] = []
+        for part in rest.split(","):
+            pm = _ASAN_SAMPLE_PART_RE.match(part.strip())
+            if pm is None:
+                continue
+            t_s = pm.group(1)
+            r_s = pm.group(2)
+            if t_s is None or r_s is None:
+                continue
+            samples.append((float(t_s), int(r_s)))
+        out[(bench, leg)] = (samples, int(runs_s))
+    return out
+
+
+def render_asan(
+    specs: list[BenchSpec],
+    rows: list[AsanRow],
+    notes: list[str],
+    args: argparse.Namespace,
+) -> None:
+    """渲染 build/bench/asan-results.md (ASan 交叉对比报告)。
+
+    合并语义: 读已有文件 §5 原始样本, 本次测到的 (基准, 腿) 替换, 未测的
+    原样保留 (类似 _sync_performance_csv 合并, 但不写 docs/performance.csv)。
+    """
+    merged: dict[tuple[str, str], tuple[list[tuple[float, int]], int]] = _parse_asan_legs(
+        RESULTS_ASAN
+    )
+    measured: set[str] = set()
+    for r in rows:
+        samples = [(t, int(rss)) for t, rss in zip(r.stats.time.raw, r.stats.rss.raw)]
+        merged[(r.bench, r.leg)] = (samples, r.used_runs)
+        measured.add(r.bench)
+
+    all_rows: list[AsanRow] = []
+    for (bench, leg), (samples, used) in sorted(merged.items()):
+        all_rows.append(
+            AsanRow(bench=bench, leg=leg, stats=summarize(samples), used_runs=used)
+        )
+
+    bench_names = sorted({s.name for s in specs} | {b for b, _ in merged})
+    preserved = sorted({b for b, _ in merged if b not in measured})
+    leg_med = {(r.bench, r.leg): r.stats.time.med for r in all_rows}
+    leg_rss = {(r.bench, r.leg): r.stats.rss.med for r in all_rows}
+    used_map = {(r.bench, r.leg): r.used_runs for r in all_rows}
+
+    md: list[str] = []
+    md.append(
+        "# build/bench/asan-results.md — ASan 交叉对比实测 (asan-cross-compare)\n"
+    )
+
+    md.append("## 0) 环境与协议\n")
+    md.append("".join(f"{l}\n" for l in machine_header()))
+    md.append(
+        "- 编译命令:\n"
+        "  - C plain: `clang -O2 -lm bench/c/<name>.c`\n"
+        "  - C ASan: `clang -O2 -fsanitize=address -lm bench/c/<name>.c`\n"
+        "  - .an check: `python3 -m compiler.main -O3 lib bench/shootout/<name>.an`\n"
+    )
+    md.append(
+        f"- ASAN_OPTIONS 主表 (C ASan main 腿) 全文: `{ASAN_ENV_MAIN}` "
+        "(其余为 ASan 运行时默认, 含 quarantine_size_mb=256)。\n"
+    )
+    md.append(
+        f"- ASAN_OPTIONS 敏感性行 (C ASan sens 腿, 仅 binarytree) 全文: `{ASAN_ENV_SENS}` "
+        "(quarantine 失效, 供 RSS 敏感性对照)。\n"
+    )
+    md.append(
+        "- **-O 不对称声明**: C 腿 `-O2`, .an check 腿 `-O3` (两编译器各自常规优化档; "
+        "跨编译器时间/内存差异不可单纯归因于安全机制)。\n"
+    )
+    if args.pin is not None:
+        md.append(f"- 绑核策略: `taskset -c {args.pin}` 绑定单核。\n")
+    else:
+        md.append("- 绑核策略: 未绑核 (默认)。\n")
+    md.append(
+        "- 规模对齐声明: `bench/c/` 14 个 C 基准与 `bench/shootout/` 同规模 "
+        "(9 个对齐: bounce/fann/mand/nbody/permute/queen/revcomp/sieve/storage; "
+        "5 个原一致: binarytree/fasta/list/spectralnorm/towers)。\n"
+    )
+    md.append(
+        "- 腿序声明: 每基准固定 [C plain → C ASan main → C ASan sensitivity "
+        "(仅 binarytree) → .an check] 紧邻执行; 同会话紧邻消除跨会话系统状态漂移, "
+        "使 4 腿可互相比较。\n"
+    )
+    md.append(
+        f"- 本次运行: 基准 `{', '.join(sorted(measured)) if measured else '—'}`; "
+        f"--runs {args.runs}; --pin {args.pin if args.pin is not None else '无'}。\n"
+    )
+
+    md.append(f"\n## 1) 基准 4 腿实测表 ({len(bench_names)} 基准)\n")
+    md.append(
+        "格式: 时间中位数/IQR/min–max (ms), CV = 时间样本 std/mean, RSS 中位数 (MB), 样本数。\n"
+    )
+    md.append(
+        "| 基准 | 腿 | 时间中位(ms) | IQR(ms) | min–max(ms) | CV "
+        "| RSS中位(MB) | RSS IQR(MB) | 样本数 |\n"
+    )
+    md.append("|---|---|---|---|---|---|---|---|---|\n")
+    for r in all_rows:
+        t = r.stats.time
+        rss = r.stats.rss
+        md.append(
+            f"| {r.bench} | {LEG_LABEL.get(r.leg, r.leg)} "
+            f"| {fmt_ms(t.med)} | {fmt_ms(t.iqr)} | {fmt_ms(t.min)}–{fmt_ms(t.max)} "
+            f"| {_cv_str(t.raw)} | {fmt_rss_mb(rss.med)} | {fmt_rss_mb(rss.iqr)} "
+            f"| {r.used_runs} |\n"
+        )
+
+    md.append("\n## 2) 三口径倍率\n")
+    md.append(
+        "- 口径(i) ASan 自身开销 = C ASan main 中位 / C plain 中位\n"
+        "- 口径(ii) ASan vs 胖指针 = C ASan main 中位 / .an check 中位\n"
+        "- 口径(iii) .an check vs C plain = .an check 中位 / C plain 中位\n"
+        "- 每口径独立几何平均 = exp(mean(ln(倍率))), 不跨口径混聚。\n"
+    )
+    md.append(
+        "| 基准 | 口径(i) C ASan/C plain | 口径(ii) C ASan/.an check "
+        "| 口径(iii) .an check/C plain |\n"
+    )
+    md.append("|---|---|---|---|\n")
+    ratios: dict[str, list[float]] = {"i": [], "ii": [], "iii": []}
+    for name in bench_names:
+        p = leg_med.get((name, "c_plain"))
+        a = leg_med.get((name, "c_asan"))
+        y = leg_med.get((name, "an_check"))
+        if a is not None and p is not None and p > 0.0:
+            ratios["i"].append(a / p)
+        if a is not None and y is not None and y > 0.0:
+            ratios["ii"].append(a / y)
+        if y is not None and p is not None and p > 0.0:
+            ratios["iii"].append(y / p)
+        md.append(
+            f"| {name} | {_ratio_str(a, p)} | {_ratio_str(a, y)} | {_ratio_str(y, p)} |\n"
+        )
+    geo_cells: list[str] = []
+    for k in ("i", "ii", "iii"):
+        g = _geo_mean(ratios[k])
+        geo_cells.append(f"{g:.2f}×" if g is not None else "—")
+    md.append(
+        f"| **几何平均** ({', '.join(str(len(v)) for v in ratios.values())} 基准) "
+        f"| {geo_cells[0]} | {geo_cells[1]} | {geo_cells[2]} |\n"
+    )
+
+    md.append("\n## 3) 敏感性行 (binarytree only)\n")
+    md.append(
+        f"- C ASan main: `ASAN_OPTIONS={ASAN_ENV_MAIN}` (quarantine 默认活跃)\n"
+        f"- C ASan sens: `ASAN_OPTIONS={ASAN_ENV_SENS}` (quarantine 失效)\n"
+        "- binarytree 是唯一 quarantine 活跃基准 (DeleteTree 逐迭代交错建删); "
+        "sieve 栈数组零 malloc、storage/list 峰值在释放前, quarantine 差异≈0 不可作证明。\n"
+    )
+    if ("binarytree", "c_asan") in leg_med and ("binarytree", "c_asan_sens") in leg_med:
+        mt = leg_med[("binarytree", "c_asan")]
+        st = leg_med[("binarytree", "c_asan_sens")]
+        mr = leg_rss[("binarytree", "c_asan")]
+        sr = leg_rss[("binarytree", "c_asan_sens")]
+        md.append("| 腿 | 时间中位(ms) | RSS中位(MB) | 样本数 |\n")
+        md.append("|---|---|---|---|\n")
+        md.append(
+            f"| C ASan main (detect_leaks=0) | {fmt_ms(mt)} | {fmt_rss_mb(mr)} "
+            f"| {used_map.get(('binarytree', 'c_asan'), 0)} |\n"
+        )
+        md.append(
+            f"| C ASan sens (quarantine=0) | {fmt_ms(st)} | {fmt_rss_mb(sr)} "
+            f"| {used_map.get(('binarytree', 'c_asan_sens'), 0)} |\n"
+        )
+        dt = (st - mt) / mt * 100.0 if mt else 0.0
+        dr = (sr - mr) / mr * 100.0 if mr else 0.0
+        md.append(f"- 差异: 时间 {dt:+.1f}%, RSS {dr:+.1f}% (sens − main)。\n")
+    else:
+        md.append("- binarytree 敏感性腿未测量 (跳过或尚未运行)。\n")
+
+    md.append("\n## 4) 触发记录\n")
+    if notes:
+        for n in notes:
+            md.append(f"- {n}\n")
+    else:
+        md.append("- 无。\n")
+    if preserved:
+        md.append(
+            f"- 合并说明: 本次未测、从先前运行保留的基准: {', '.join(preserved)}。\n"
+        )
+
+    md.append("\n## 5) 原始样本 (附录)\n")
+    md.append("格式: 每样本 `wall_ms (rss_kb)`; 行尾 `(N runs)` 为该腿实际测量次数。\n")
+    for r in all_rows:
+        samples = ", ".join(
+            f"{t:.1f} ({rss})" for t, rss in zip(r.stats.time.raw, r.stats.rss.raw)
+        )
+        md.append(f"- {r.bench} / {r.leg} ({r.used_runs} runs): {samples}\n")
+
+    RESULTS_ASAN.write_text("".join(md), encoding="utf-8")
+    print(f"\n结果写入 {RESULTS_ASAN} (合并 {len(all_rows)} 条腿数据, 本次 {len(rows)} 条)\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="胖指针安全检查性能实测 (fat-perf-eval / raw-pointers-eval task-3; bench-rerun)"
@@ -853,9 +1274,16 @@ def main() -> int:
         action="store_true",
         help="同步写 docs/perf-baseline.csv (金标准基线: 每基准每态绝对中位数 + 机器指纹 + HEAD commit)",
     )
+    ap.add_argument(
+        "--asan",
+        action="store_true",
+        help="ASan 交叉对比模式: 每基准 4 腿紧邻 [C plain, C ASan, C ASan sensitivity(binarytree only), .an check], 渲染 build/bench/asan-results.md",
+    )
     args = ap.parse_args()
     if args.compile_only and args.no_compile:
         raise SystemExit("--compile-only 与 --no-compile 互斥")
+    if args.asan and (args.suite == "raw" or args.raw_only):
+        raise SystemExit("--asan 与 --suite raw / --raw-only 互斥 (ASan 对比的 .an 侧为 bench/shootout)")
 
     if args.runs < 1:
         raise SystemExit("--runs 必须 ≥ 1 (协议建议 ≥5)")
@@ -882,6 +1310,19 @@ def main() -> int:
     is_raw_suite = args.suite == "raw"
 
     if args.compile_only:
+        if args.asan:
+            for spec in specs:
+                ok_c = compile_ref(spec.name, "c", source_dir=BENCH_DIR)
+                ok_a = compile_ref(spec.name, "asan", source_dir=BENCH_C_DIR)
+                compile_an(BenchSpec(name=spec.name, subdir="shootout"), no_checks=False)
+                legs: list[str] = []
+                if ok_c is not None:
+                    legs.append("C plain")
+                if ok_a is not None:
+                    legs.append("C ASan")
+                legs.append("an check")
+                print(f"[compile-only] {spec.name}: {'/'.join(legs)} OK", file=sys.stderr)
+            return 0
         if is_raw_suite or args.raw_only:
             # raw 态统一从 raw 套件源编译 (胖套件不编 raw)
             raw_specs = specs if is_raw_suite else _raw_specs_for(specs)
@@ -937,6 +1378,17 @@ def main() -> int:
             print(
                 f"{spec.name:<16} ①裸指针    {fmt_ms(r.stats.time.med):>10}   "
                 f"{fmt_rss_mb(r.stats.rss.med):>8}"
+            )
+        return 0
+
+    if args.asan:
+        asan_rows, asan_notes = run_asan_suite(specs, args)
+        render_asan(specs, asan_rows, asan_notes, args)
+        print("基准             腿              时间中位数(ms)  峰值RSS(MB)")
+        for r in asan_rows:
+            print(
+                f"{r.bench:<16} {LEG_LABEL.get(r.leg, r.leg):<16}  "
+                f"{fmt_ms(r.stats.time.med):>10}   {fmt_rss_mb(r.stats.rss.med):>8}"
             )
         return 0
 
