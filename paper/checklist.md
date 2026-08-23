@@ -21,15 +21,15 @@
 - [x] 生成 ASan 候选图并核对 1.59×/0.73×/2.19×。
 - [x] 重画设计流程图：三级指针、堆池、帧锁、CFG→LLVM 检查链。
 - [x] 人工目视检查候选图。
-- [ ] 在 LaTeX 实际版面核对字号和标签可读性。
+- [x] 在 LaTeX 实际版面核对字号和标签可读性。
 
 ## 论文
 
-- [ ] 重写摘要、引言、贡献和 Problem Statement。
-- [ ] 重写 Methodology、Design and Implementation 与完整证明。
-- [ ] 重写 Related Work，只使用已核实引用。
-- [ ] 重写 Experiments、Discussion、Conclusion 和 Appendix。
-- [ ] 清除旧实现/实验残留。
-- [ ] latexmk 完整构建并检查引用、图表、公式和版面。
-- [ ] 逐字确认标题仍为 Toward Language-Level Memory Safety Using Unified Fat Pointers。
+- [x] 重写摘要、引言、贡献和 Problem Statement。
+- [x] 重写 Methodology、Design and Implementation 与完整证明。
+- [x] 重写 Related Work，只使用已核实引用。
+- [x] 重写 Experiments、Discussion、Conclusion 和 Appendix。
+- [x] 清除旧实现/实验残留。
+- [x] latexmk 完整构建并检查引用、图表、公式和版面。
+- [x] 逐字确认标题仍为 Toward Language-Level Memory Safety Using Unified Fat Pointers。
 - [ ] 分别提交 yian 与外层论文仓库，外层不包含嵌套 yian 仓库。

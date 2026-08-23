@@ -13,12 +13,6 @@ Three calibers (per-benchmark, medians):
   (ii)  C ASan / .an check    - ASan vs fat-pointer (cross-compiler)
   (iii) .an check / C plain   - fat-pointer full stack vs uninstrumented C
 
-Historical note: the previous fig4 used docs/security-code.md sec 10.7 data
-(3 loads ptr_traverse/alloc_dense/mixed, 0.35x/0.36x/0.08x, measured
-2026-08-14, loads since removed from the tree). That data is SUPERSEDED by
-the current-suite data frozen here (2026-08-24); it is kept in the footnote
-below for traceability only.
-
 Assertions (fail loudly if data is inconsistent or edited):
   - exactly 14 benchmarks, each with legs {C plain, C ASan main, .an check}
   - recomputed per-benchmark ratios == ratio table in the data file (+-0.01)
@@ -272,9 +266,8 @@ def main() -> int:
              "`python3 -m compiler.main -O3 lib`; -O asymmetry C -O2 vs YIAN -O3.\n"
              "ASAN_OPTIONS main: detect_leaks=0 (quarantine default on); binarytree "
              "sensitivity (quarantine_size_mb=0): RSS 650.0 -> 168.9 MB (-74.0%).\n"
-             "ASan covers spatial safety only (no temporal/UAF). SUPERSEDED: sec 10.7 "
-             "historical 3-load data (0.35x/0.36x/0.08x, loads removed 2026-08) is no "
-             "longer plotted; kept for traceability only.",
+             "Coverage differs: ASan detection is execution- and quarantine-sensitive; "
+             "SecL check enforces the language rules described in the paper.",
              fontsize=7, color="gray")
 
     fig.tight_layout(rect=[0, 0.10, 1, 0.90])
