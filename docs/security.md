@@ -139,7 +139,7 @@ $$\mathrm{LockEntry} \triangleq \mathbb{Z}$$
 
 **定义 7（块布局与锁槽 `LockSlot`）**：每个堆块与每个栈帧的布局为「锁头 + 负载」：以块首地址 $b$ 为基，字节区间 $[b,\, b + H + \text{bytes})$，其中 $H$ 为锁头字节数（$H = w$，$w$ 为机器字宽，锁头仅锁槽一个字），锁头区 $[b, b+H)$ **在负载之前**，负载区 $[b+H, b+H+\text{bytes})$。锁头首字（偏移 0）为**锁槽**，其地址即块首地址：
 $$\text{lock\_addr}(b) \triangleq b$$
-**布局要点**：锁槽在负载之前，故一切受 `in_bounds` 约束的负载访问（足迹 ⊆ 负载区，定义 18）在结构上无法触及锁槽。**锁槽位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**。
+**布局要点**：锁槽在负载之前，故一切受 `in_bounds` 约束的负载访问（足迹 ⊆ 负载区，定义 18）在结构上无法触及锁槽。**锁槽位置在块释放/帧退出后可被分配器复用为它用（承载数据或其他锁）**。（实现注：堆块侧按本定义物理实现——锁头为块首单字；栈帧侧帧锁槽以帧内**独立 alloca 槽位**物理实现（非帧栈块首字，《编译器实现》§7.1 VarPtr、§2.6 帧进入协议），模型等价——独立槽位不承载对象数据、不被任何负载足迹覆盖，「经检查写不可达」结论不变（§4.8 L-UNREACH）。）
 
 **锁槽读记号**：$\mu\langle e \rangle$ 表示地址 $e$ 处一个机器字的值（位置 $\langle e, 0 \rangle \dots \langle e, w-1 \rangle$ 的 $w$ 字节编码）；锁槽的读写均为整字操作。时序检查即读 $\mu\langle p.\text{lock\_ptr} \rangle$ 并与指针键比较。
 
@@ -147,7 +147,7 @@ $$\text{lock\_addr}(b) \triangleq b$$
 $$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$$
 其中等号为**全字相等**：锁槽物理值 $v = \mu\langle p.\text{lock\_ptr} \rangle$ 与指针键 $p.\text{key}$ 相等；$v \ne p.\text{key}$（值失配，含哨兵与任意非键值）时恒判假。**分级无关**：`live` 只读 `lock_ptr`/`key` 两个字段，三级表示均有，故对 `T*`/`T[]`/`T&` 同一适用；锁字段在 coerce 降级中继承（§2.7），降级视图的 `live` 与母指针同真同假。
 
-**niche None 防御**：可空性由 `Option<指针族>` 表达（nullptr 字面量已移除，2026-08），`None` 的 niche 布局为全零编码（指针字段全 0，含 $p.\text{lock\_ptr} = 0$），仅经 `match`/`unwrap` 消费。若 `None` 值泄漏到访问路径，`__check_live` 的 `lock_ptr \ne 0` guard（定义 8 的求值实现，`llvm/builder.py:237`）使 $\text{live}(p)$ 恒为假——guard 不成立即短路为假，不读地址 0 物理槽位，访问在 `safe_access` 处 trap。enum 布局纯实现细节，安全论证不依赖 tag 字段存在性。
+**niche None 防御**：可空性由 `Option<指针族>` 表达（nullptr 字面量已移除，2026-08），`None` 的 niche 布局为全零编码（指针字段全 0，含 $p.\text{lock\_ptr} = 0$），仅经 `match`/`unwrap` 消费。若 `None` 值泄漏到访问路径，`__check_live` 的 `lock_ptr \ne 0` guard（定义 8 的求值实现，`llvm/builder.py:252` `__check_live`）使 $\text{live}(p)$ 恒为假——guard 不成立即短路为假，不读地址 0 物理槽位，访问在 `safe_access` 处 trap。enum 布局纯实现细节，安全论证不依赖 tag 字段存在性。
 
 **定义 9（堆/栈判定 `is_heap`）**：$\text{is\_heap}(p) \iff \text{msb}(p.\text{key}) = 1$，其中 $\text{msb}$ 取 64 位键的最高位（0 = 栈、1 = 堆）。
 
@@ -156,9 +156,11 @@ $$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$$
 - **单调计数器**：堆分配与栈帧进入各维护独立的 63 位计数，输出键 = 标志位（堆 1 / 栈 0）拼接计数。同类内任意两次调用返回不同键且严格更大；跨类由最高位区分，恒不同。
 - **CSPRNG**：输出从 $\{0,1\}^{63}$ 均匀采样，堆分配置最高位 1、栈帧进入置最高位 0。任意两次**同类**不同调用的输出碰撞概率不超过 $2^{-63}$（可忽略）；跨类因最高位不同恒不相等。
 
-两条要求的共同推论：任一时刻所有活动锁槽中的键两两不同；任何被写 `SENTINEL` 的锁槽重新建立时获得的新键永不等于其旧键。单调计数器给出严格保证；CSPRNG 以可忽略概率违反。
+两条要求的共同推论：任一时刻所有活动锁槽中的键两两不同（字面量锁槽为唯一静态例外，见下）；任何被写 `SENTINEL` 的锁槽重新建立时获得的新键永不等于其旧键。单调计数器给出严格保证；CSPRNG 以可忽略概率违反。
 
-**锁槽复用（lock slot reuse）**：锁槽是块头/帧首的物理内存，随对象分配/帧进入而生、随释放/帧退出而空出。本设计的时序安全中「锁槽可复用，但键不可复用」。锁槽位置在块释放/帧退出后脱离守卫职责，可被分配器复用。无论锁槽内容如何——重激活写新键 $k'$、被它用为普通数据或哨兵值，就与 key 碰撞的概率而言无区别，统一由『锁槽内容与旧键失配』（$v \ne k$）闭合。
+**字面量锁槽（永生锁槽）例外**：字符串字面量的锁槽为全局常量（`llvm/builder.py` `get_lit_lock`：内部链接全局 `__yian_lit_lock`，初值固定键 1），永不写 `SENTINEL`、永不 re-key——字面量不可释放，其派生指针（`str` 及切片视图）`live` 恒真（锁槽值恒等于指针键，定义 8 全字相等）。安全性与论证影响：该锁槽的键不来自 `Gen`、从不作废、从不被重新写入；其固定键（1）可能与某帧锁键重合，但 `live` 是逐锁槽核对（$\mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$），跨锁槽键重合不改变任何指针的时序判定；推论 (ii)(iii) 对全部**动态**锁槽（分配/帧进入产生）保持成立，字面量锁槽作为唯一静态例外显式声明，不构成反例。由字面量派生的 `str` 切片 `delete` 在编译期拒绝（类型层仅 `T*`/`T[]`/`T&` 放行，`str` 不在其列，《编译器实现》§8.1 规则 8.1.12）——字面量不可释放，类型层即排除其释放路径，时序上无作废可能。
+
+**锁槽复用（lock slot reuse）**：锁槽是块头/帧的物理内存（堆侧为块头首字；帧侧为帧内独立槽位，§2.6），随对象分配/帧进入而生、随释放/帧退出而空出。本设计的时序安全中「锁槽可复用，但键不可复用」。锁槽位置在块释放/帧退出后脱离守卫职责，可被分配器复用。无论锁槽内容如何——重激活写新键 $k'$、被它用为普通数据或哨兵值，就与 key 碰撞的概率而言无区别，统一由『锁槽内容与旧键失配』（$v \ne k$）闭合。
 
 值失配论证依赖两个前提：
 
@@ -182,7 +184,7 @@ $$\text{live}(p) \iff \mu\langle p.\text{lock\_ptr} \rangle = p.\text{key}$$
 | 档位 | 字段       | 类型             | 单位         | 含义                                                                  | 约束                                                             |
 | ---- | ---------- | ---------------- | ------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `T*` | `data`     | `Addr`（`T*`）   | 字节         | 所指向内存对象**负载区**的锚地址（基址 = 块首 + 锁头字节数 $H$）      | 由分配/取址/退化建立，指向 $\mathrm{dom}(\mu)$ 中的负载区        |
-| `T*` | `lock_ptr` | `Addr`（`u64*`） | 无（地址）   | 守护本对象的锁槽地址；指向块头/帧首锁槽（定义 7）                     | 锁槽地址 = 对象块首/帧首地址（$\text{lock\_addr}(b) = b$）       |
+| `T*` | `lock_ptr` | `Addr`（`u64*`） | 无（地址）   | 守护本对象的锁槽地址；指向块头/帧锁槽（定义 7）                     | 堆：锁槽地址 = 对象块首地址（$\text{lock\_addr}(b) = b$）；帧：帧锁槽为帧内独立槽位（§2.6）       |
 | `T*` | `key`      | `Key`（`u64`）   | 无（键值）   | 与 $\mu\langle \text{lock\_ptr} \rangle$ 中存储的键比较，判定时序有效性 | 由 `Gen` 生成                                                    |
 | `T*` | `index`    | `ℕ`（`u64`）     | **元素个数** | 当前元素相对 `data` 的偏移                                            | 创建时置 0，指针算术更新；见 `in_bounds`                         |
 | `T*` | `size`     | `ℕ`（`u64`）     | **元素个数** | 自 `data` 起可容纳的元素个数（容量）                                  | 创建时置定；访问约束见 `in_bounds`                               |
@@ -202,7 +204,7 @@ $$\text{in\_bounds}(p, n) \iff 0 \le p.\text{index} \;\wedge\; p.\text{index} + 
 
 **定义 13（良构性 `well_formed`）**：对 `T*`/`T[]` 指针 $p$：
 $$\text{well\_formed}(p) \iff 0 \le p.\text{index} \le p.\text{size}$$
-指针创建与算术保证良构。$\text{index} = \text{size}$ 的 one-past-end 指针允许存在与传递，但任何 $n \geq 1$ 的访问在 `in_bounds` 处失败——one-past-end 不可读写。**对 `T&` 退化**：`T&` 无 `index`/`size` 字段，恒良构（$\text{well\_formed}(r)$ 恒真）。
+指针创建与算术保证良构。$\text{index} = \text{size}$ 的 one-past-end 指针允许存在与传递，但任何 $n \geq 1$ 的访问在 `in_bounds` 处失败——one-past-end 不可读写。**对 `T&` 退化**：`T&` 无 `index`/`size` 字段，恒良构（$\text{well\_formed}(r)$ 恒真）。**u64 索引语义（实现）**：运行时按 u64 同型化执行（§2.4 注）——`index`/`offset` 以 u64 无符号解释（非负），`offset ≥ 2^63` 为极大无符号下标、良构检查恒 trap（收紧：数学整数语义下为极大正偏移、不可能在界内），负偏移路径（i128 `sext` 形式误放行者）被显式拒绝。
 
 **定义 14（安全访问谓词 `safe_access`）**：一次 $n$ 元素访问满足：
 $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
@@ -217,7 +219,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 锚定建立的对象恒为 `T*`（5 字段）；`T[]`/`T&` 不直接由锚定产生，而是由 `T*` 经 coerce 降级派生（§2.7、定义 15），锁字段继承、`data` 折叠 `index`。
 
-**单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行）。
+**单位与溢出约定**：形式化域为数学整数，无回绕；实现须保证 `index + n` 与 `data + index·|T|` 在 64 位域内不溢出（按无溢出语义执行）。**实现侧 u64 同型化（2026-08）**：`index + n` 的运行时实现采用 u64 同型化（《编译器实现》§7.1 ElementPtr 补充）——`sum = index + offset`（u64 add）后做回绕检测（`icmp uge sum, index`，回绕 ⟺ `sum < index`）与上界比较（`icmp ule sum, size`），条件 = 二者合取（`llvm/builder.py` `check_element_arith`）。与数学整数语义的等价性：无回绕时同型化只剩上界比较、与 i128 宽算完全等价；回绕（`index+offset ≥ 2^64`）时 `sum < index` → trap，等价 i128 的 `sum ≥ 2^64 > size` 必 trap。**收紧决策**：`offset ≥ 2^63`（u64 下为极大无符号下标）恒 trap——数学整数语义下该偏移为极大正偏移、不可能在界内，i128 `sext` 形式误将其当负偏移放行的下溢路径被显式拒绝（负例 `tests/fat/negative/fat_subslice_underflow.an` 锁定）。
 
 ### 2.5 堆分配生命周期协议
 
@@ -250,11 +252,11 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 
 ### 2.6 栈帧进入/退出协议
 
-栈采用**帧级锁**：每个栈帧一个活动锁槽（位于帧首），帧内全部取址产生的指针共享该锁槽与键。
+栈采用**帧级锁**：每个栈帧一个活动锁槽（帧内独立槽位——实现为独立 alloca，非帧栈块首字，不承载对象数据），帧内全部取址产生的指针共享该锁槽与键。
 
 **帧进入 `enter f`**：
 
-1. 帧首锁槽 $e_f$ 就位（每帧一个，位于帧首字），$k_f \leftarrow \mathrm{Gen}()$；
+1. 帧锁槽 $e_f$ 就位（每帧一个，帧内独立槽位——实现为独立 alloca，非帧栈块首字），$k_f \leftarrow \mathrm{Gen}()$；
 2. 帧锁槽写键：$\mu\langle e_f \rangle := k_f$（栈键最高位 0）；当前帧锁为 $\langle e_f, k_f \rangle$；
 3. 在帧栈块上为局部变量分配地址（并入 $\mathrm{dom}(\mu)$）。
 
@@ -327,7 +329,7 @@ $$\text{safe\_access}(p, n) \iff \text{live}(p) \wedge \text{in\_bounds}(p, n)$$
 | 字段取址 `&s.field`                | §3.5.2   | `FieldPtr`           |
 | 堆分配 `dyn T` / `dyn T[n]`        | §3.6.1   | `Malloc`             |
 | 释放 `delete p`                    | §3.6.2   | `Delete`             |
-| 帧进入 `enter f` / 帧退出 `exit f` | §3.7     | 帧级，CFG 无对应节点 |
+| 帧进入 `enter f` / 帧退出 `exit f` | §3.7     | 帧级；帧进入：`GenKey` + `WriteLockSlot`（函数入口块）；帧退出：LLVM 层每条 `ret` 前 `WriteLockSlot(SENTINEL)` |
 
 **定义 17（元素字节地址 `addr_T`）**：指针 `p` 指向类型 `T`，当前元素序号（相对 `p.index`）第 `i` 个元素的字节基址：
 
@@ -341,7 +343,7 @@ $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle 
 
 **one-past-end 处理**：`index = size` 的指针良构，可存在与传递；但任何 $n \geq 1$ 的访问在 `in_bounds(p, n)` 处失败，故 one-past-end 不可读写；从 one-past-end 继续算术得 `index = size + 1 > size`，不满足良构性，在算术规则处 trap。
 
-**整数溢出防护**：本章规则按数学整数语义书写（无回绕）；实现须保证 `index + n`、`index · |T|`、`data + index · |T|` 等在 64 位域内不回绕，实现侧检测到回绕时按 trap 处理。
+**整数溢出防护**：本章规则按数学整数语义书写（无回绕）；实现须保证 `index + n`、`index · |T|`、`data + index · |T|` 等在 64 位域内不回绕，实现侧检测到回绕时按 trap 处理（`index + n` 的运行时求值为 u64 同型化，见 §2.4 注：回绕检测 `icmp uge sum, index` + 上界比较 `icmp ule sum, size`；`offset ≥ 2^63` 恒 trap——收紧，数学整数语义下为极大正偏移、不可能在界内）。
 
 ### 3.2 解引用
 
@@ -351,7 +353,7 @@ $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle 
 
 ### 3.3 指针算术与指针差
 
-**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size` 且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。
+**规则 3.3.1（指针加 `p + n`）**（→ CFG `ElementPtr`）。前提：`0 ≤ p.index + n ≤ p.size` 且 `p.index + n` 无回绕。动作：仅更新 `index`：$p' = \langle p.\text{data}, p.\text{lock\_ptr}, p.\text{key}, p.\text{index} + n, p.\text{size} \rangle$。结果：$p'$。若前提不满足则 trap（越过 one-past-end 或负方向越界）。**u64 索引语义（实现）**：本规则按数学整数书写；运行时实现为 u64 同型化（§2.4、§3.1 注）——负方向越界（`index + n` 下溢）由回绕检测 `sum < index` 拦截，`offset ≥ 2^63` 的极大无符号偏移恒 trap。
 
 **规则 3.3.2（指针减 `p − n`）**（→ CFG `ElementPtr`）。$n \geq 0$ 时等价于 `p + (−n)`：前提同规则 3.3.1，要求 `0 ≤ p.index − n ≤ p.size`；结果 `index := p.index − n`。
 
@@ -377,11 +379,11 @@ $$\text{footprint}_T(p, n) \triangleq \{ \langle \text{addr}_T(p, i), o \rangle 
 
 ### 3.7 栈帧进入与退出（re-key 协议）
 
-本组为帧级操作，作用于帧锁槽与帧栈块，**CFG 层无对应节点**：帧进入/退出由函数调用协议整体承载（`Call`/`Invoke`/`Ret` 节点），不单独成节点；帧内取址引用当前帧锁生成指针，故帧锁槽的键/哨兵写入直接决定帧内指针的时序有效性。
+本组为帧级操作，作用于帧锁槽与帧栈块。**CFG 层实现**：帧进入在函数入口块发射 `GenKey` + `WriteLockSlot`（帧锁槽写键，re-key；`cfg/builder.py` `__emit_frame_lock`，仅含取址的函数发射）；帧退出无独立 CFG 节点，由 LLVM 层在每条 `ret` 前补发 `WriteLockSlot(SENTINEL)`（`llvm/builder.py` `__frame_exit_sentinel`，覆盖全部返回路径）。帧内取址引用当前帧锁生成指针，故帧锁槽的键/哨兵写入直接决定帧内指针的时序有效性。
 
-**规则 3.7.1（帧进入 `enter f`）**（帧级，CFG 无对应节点）。前提：无。动作：帧首锁槽 `e_f` 就位（帧首字），`k_f ← Gen()`；帧锁槽写键 `μ⟨e_f⟩ := k_f`；当前帧锁 := `⟨e_f, k_f⟩`；帧栈块区间并入 `dom(μ)`。结果：帧内 `&x` 等取址以 `⟨e_f, k_f⟩` 为帧锁。
+**规则 3.7.1（帧进入 `enter f`）**（帧级，CFG 节点 `GenKey` + `WriteLockSlot`，函数入口块）。前提：无。动作：帧锁槽 $e_f$ 就位（帧内独立槽位），$k_f \leftarrow \mathrm{Gen}()$；帧锁槽写键 $\mu\langle e_f \rangle := k_f$；当前帧锁 := $\langle e_f, k_f \rangle$；帧栈块区间并入 $\mathrm{dom}(\mu)$。结果：帧内 `&x` 等取址以 $\langle e_f, k_f \rangle$ 为帧锁。
 
-**规则 3.7.2（帧退出 `exit f`）**（帧级，CFG 无对应节点）。前提：无。动作：帧锁槽写哨兵 `μ⟨e_f⟩ := SENTINEL`；帧栈块区间自 `dom(μ)` 撤销。结果：帧内产生的全部指针此后 `live` 恒为假；对已退出帧地址的任何后续访问在访问规则处 trap（栈悬垂防护）。
+**规则 3.7.2（帧退出 `exit f`）**（帧级，无独立 CFG 节点，LLVM 层在每条 `ret` 前补发 `WriteLockSlot(SENTINEL)`）。前提：无。动作：帧锁槽写哨兵 $\mu\langle e_f \rangle := \text{SENTINEL}$；帧栈块区间自 $\mathrm{dom}(\mu)$ 撤销。结果：帧内产生的全部指针此后 `live` 恒为假；对已退出帧地址的任何后续访问在访问规则处 trap（栈悬垂防护）。**优化路径守卫（2026-08）**：帧退出 SENTINEL 写在优化路径以 volatile store 保护（`emit.py` `_SENTINEL_STORE`，DSE 不可删除，见《编译器实现》§7.2 实施状态注）；`-t ll` 零优化文本输出不含 volatile 标记，帧退出守卫的忠实表示以优化产物为准。
 
 ## 4. 不变量与引理
 
@@ -478,9 +480,9 @@ $$\forall s \ge t_2.\ \neg \mathrm{live}_s(p)$$
 $$\forall t.\ \forall p, n.\ \mathrm{ok}(\mathrm{acc}_t(p, n)) \Rightarrow \mathrm{ft}(p, n) \cap \mathrm{Hdr}_t = \emptyset$$
 其中访问足迹 $\mathrm{ft}(p, n) \triangleq [p.\text{data} + p.\text{index}\cdot|T|,\ p.\text{data} + (p.\text{index} + n)\cdot|T|)$（字节区间），$\mathrm{Hdr}_t \triangleq \bigcup_b [b, b + H)$ 为 $t$ 时刻所有活动堆块的锁头区与活动帧锁头区（定义 7；栈帧锁头仅含锁槽）。
 
-**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧首字（锁槽）位于帧栈块首，取址指针（定义 15）的负载访问足迹 ⊆ 变量区，在帧首字之后。锁槽位于锁头区，故活动锁槽对一切经检查的读/写不可达。「经检查写不可达锁槽」是**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
+**论证梗概**：$\mathrm{ok}(\mathrm{acc}_t(p, n))$ 蕴含 $\mathrm{in\_bounds}(p, n)$（S1，定义 12/14），即足迹 ⊆ $[p.\text{data},\ p.\text{data} + p.\text{size}\cdot|T|)$（负载区）。分配锚定 $p.\text{data} = b + H$（§2.5 协议、规则 3.6.1、表 2），负载区为 $[b + H, b + H + \text{bytes})$，锁头区 $[b, b + H)$ 在负载区之前，故二者不相交（定义 7 布局）；帧级同理：帧锁槽为帧内独立槽位（实现为独立 alloca，非帧栈块首字，不承载对象数据），取址指针（定义 15）的负载访问足迹 ⊆ 变量区，与独立锁槽不相交——独立槽不被任何对象足迹覆盖，「经检查写不可达」在帧侧同样成立。锁槽位于锁头区/独立槽位，故活动锁槽对一切经检查的读/写不可达。「经检查写不可达锁槽」是**布局推论**；值失配论证的前提一（§2.3「锁槽复用」、§5.5）以此为依托。
 
-**义务 O-5**：验证分配锚定 $p.\text{data} = b + H$（§2.5、规则 3.6.1、表 2）；验证 `in_bounds` 足迹 ⊆ 负载区（定义 12 与 S1）；验证锁头区与负载区不交（定义 7 布局：锁头在负载之前）。该义务是 L-NOKEY 值失配前提一的依据。
+**义务 O-5**：验证分配锚定 $p.\text{data} = b + H$（§2.5、规则 3.6.1、表 2）；验证 `in_bounds` 足迹 ⊆ 负载区（定义 12 与 S1）；验证锁头区与负载区不交（定义 7 布局：锁头在负载之前）。栈侧重论证：帧锁槽为帧内独立 alloca 槽位（`cfg/builder.py` `__emit_frame_lock`），`VarPtr` 仅取变量地址、无 bitcast 通道指向锁槽——独立锁槽不被任何对象足迹覆盖，对一切经检查写不可达（结论与堆侧同构，§4.8）。该义务是 L-NOKEY 值失配前提一的依据。
 
 ## 5. 可靠性论证
 
