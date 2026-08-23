@@ -83,7 +83,7 @@ def main() -> int:
 
     fig.text(0.01, 0.01,
              "Data: paper/data/performance.csv (frozen snapshot of docs/performance.csv, "
-             "2026-08-23)\n"
+             "2026-08-24)\n"
              "Note: check cost (03/02) and total cost (03/01) are independent facts; "
              "check <= 1.2x in 10/14,\n"
              "      total <= 1.2x in 7/14 (assessment.md sec 6); do not conflate",

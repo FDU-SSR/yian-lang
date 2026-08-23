@@ -8,9 +8,10 @@
 | 文件 | 来源 | 内容 | 权威性 |
 |---|---|---|---|
 | `performance.csv` | `docs/performance.csv` | 14 基准三态成本分解倍率（表示 ②/①、检查 ③/②、总 ③/①）+ ΔRSS | **权威**：assessment.md §6 指定 |
-| `shootout-results.md` | `docs/shootout-results.md` | 14×3 实测矩阵 + IQR + 原始样本附录 + 测量协议 | 备查：早期 c8 快照，绝对值跨会话不可比 |
+| `shootout-results.md` | `docs/shootout-results.md` | 14×3 实测矩阵 + IQR + 原始样本附录 + 测量协议 | 备查：2026-08-24 retest 快照（与 performance.csv 同源同会话，数据区逐行一致） |
+| `asan-results.md` | `build/bench/asan-results.md` | ASan 交叉对比（14 基准 × 4 腿 × 5 runs + 三口径几何平均 1.58×/0.69×/2.28×） | **权威**：fig4 数据源，assessment.md §6 指定 |
 
-两份文件均在头部加注了冻结说明（来源路径 + 冻结日期 2026-08-23 + 同步机制说明）。
+三份文件均在头部加注了冻结说明（来源路径 + 冻结日期 2026-08-24 + 同步机制说明）。
 
 ## 冻结策略
 
@@ -30,9 +31,10 @@
 diff <(grep -v '^#' docs/performance.csv) <(grep -v '^#' paper/data/performance.csv) \
   && echo "OK: data/performance.csv 数据区与 docs/performance.csv 一致"
 
-# shootout-results.md: 去掉冻结头注（首行到 '---' 分隔线后）逐行比对
-diff <(sed -n '/^---$/,$p' docs/shootout-results.md) \
-     <(sed -n '/^---$/,$p' paper/data/shootout-results.md) \
+# shootout-results.md: 去冻结头注（首行到 '---' 分隔线，含）后与源文件逐行比对
+# （docs/ 源文件无 '---' 分隔线——头注只存在于冻结副本，故以 docs 全文为基准）
+diff docs/shootout-results.md \
+     <(sed -n '/^---$/,$p' paper/data/shootout-results.md | tail -n +2) \
   && echo "OK: data/shootout-results.md 正文与 docs/shootout-results.md 一致"
 ```
 
@@ -51,10 +53,11 @@ print(f"OK: {len(a)-1} 数据行数值与 docs/performance.csv 完全一致")
 EOF
 ```
 
-## 数值速览（冻结时点，2026-08-23）
+## 数值速览（冻结时点，2026-08-24）
 
-- 总成本倍率（③/①）≤1.2× 恰好 **7/14**（约半数）；≥1.4× 共 5 个（queen 1.59 /
-  revcomp 1.57 / storage 1.48 / list 2.96 / towers 1.69）。
+- 总成本倍率（③/①）≤1.2× 恰好 **7/14**（约半数）；≥1.4× 共 5 个（queen 1.55 /
+  revcomp 1.61 / storage 1.52 / list 3.46 / towers 1.71）。
 - 检查成本倍率（③/②）≤1.2× 为 **10/14**（独立于总成本的事实，勿混淆）。
 - ΔRSS 非零项：binarytree +127.97 MB、storage +1751.75 MB、queen +0.66 MB。
+- ASan 三口径几何平均：1.58×（ASan 自身）/ 0.69×（ASan vs 胖指针）/ 2.28×（胖指针 vs C plain）。
 - 数据源追溯见 `../assessment.md` §6 数据源与追溯表。

@@ -4,7 +4,7 @@
 Output: paper/figures/fig4_asan_compare.png
 
 Data source: paper/data/asan-results.md (frozen snapshot of
-build/bench/asan-results.md, measured 2026-08-23, 14 benchmarks x 4 legs
+build/bench/asan-results.md, measured 2026-08-24, 14 benchmarks x 4 legs
 [C plain / C ASan main / C ASan sensitivity (binarytree only) / .an check],
 5 runs each, taskset -c 4).
 
@@ -16,14 +16,14 @@ Three calibers (per-benchmark, medians):
 Historical note: the previous fig4 used docs/security-code.md sec 10.7 data
 (3 loads ptr_traverse/alloc_dense/mixed, 0.35x/0.36x/0.08x, measured
 2026-08-14, loads since removed from the tree). That data is SUPERSEDED by
-the current-suite data frozen here (2026-08-23); it is kept in the footnote
+the current-suite data frozen here (2026-08-24); it is kept in the footnote
 below for traceability only.
 
 Assertions (fail loudly if data is inconsistent or edited):
   - exactly 14 benchmarks, each with legs {C plain, C ASan main, .an check}
   - recomputed per-benchmark ratios == ratio table in the data file (+-0.01)
-  - recomputed geometric means == stated 1.58x / 0.67x / 2.37x (+-0.01)
-  - binarytree sensitivity row present (RSS main 647.7 / sens 166.7 MB)
+  - recomputed geometric means == stated 1.58x / 0.69x / 2.28x (+-0.01)
+  - binarytree sensitivity row present (RSS main 648.8 / sens 166.6 MB)
 
 Run: python3 paper/figures/fig4_asan_compare.py
 Dependency: matplotlib (optional; if missing, prints data summary and exits)
@@ -45,7 +45,7 @@ LEG_SENS = "C ASan sens"
 LEG_AN = ".an check"
 LEGS = [LEG_PLAIN, LEG_ASAN, LEG_AN]
 
-GEO_MEAN_EXPECTED = {"i": 1.58, "ii": 0.67, "iii": 2.37}  # stated in data file
+GEO_MEAN_EXPECTED = {"i": 1.58, "ii": 0.69, "iii": 2.28}  # stated in data file
 
 
 def _strip_markup(s: str) -> str:
@@ -180,8 +180,8 @@ def verify(data: dict) -> None:
             "binarytree missing sensitivity leg 'C ASan sens'")
     main_rss = legs["binarytree"][LEG_ASAN]["rss"]
     sens_rss = legs["binarytree"][LEG_SENS]["rss"]
-    _assert(abs(main_rss - 647.7) <= 0.1, f"binarytree main RSS {main_rss} != 647.7")
-    _assert(abs(sens_rss - 166.7) <= 0.1, f"binarytree sens RSS {sens_rss} != 166.7")
+    _assert(abs(main_rss - 648.8) <= 0.1, f"binarytree main RSS {main_rss} != 648.8")
+    _assert(abs(sens_rss - 166.6) <= 0.1, f"binarytree sens RSS {sens_rss} != 166.6")
     _assert(any("main" in k for k in sens), "section 3 sensitivity table missing")
     _assert(any("sens" in k for k in sens), "section 3 sensitivity table missing")
 
@@ -237,7 +237,7 @@ def main() -> int:
     ax1.set_xticks(list(x))
     ax1.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
     ax1.set_ylabel("time ratio vs C plain (log scale)")
-    ax1.set_title("Time: 14-benchmark suite (frozen 2026-08-23)")
+    ax1.set_title("Time: 14-benchmark suite (frozen 2026-08-24)")
     for p, r in zip(x, r_an):
         ax1.text(p + width, r * 1.12, f"{r:.2f}", ha="center", va="bottom",
                  fontsize=6.5, color="#3182bd", fontweight="bold")
@@ -261,17 +261,17 @@ def main() -> int:
 
     fig.suptitle("ASan cross-compare: C plain vs C ASan vs .an check (fat pointers)\n"
                  "geometric means (14 benchmarks): "
-                 "(i) C ASan/C plain 1.58x | (ii) C ASan/.an check 0.67x | "
-                 "(iii) .an check/C plain 2.37x",
+                 "(i) C ASan/C plain 1.58x | (ii) C ASan/.an check 0.69x | "
+                 "(iii) .an check/C plain 2.28x",
                  fontsize=12, fontweight="bold")
 
     fig.text(0.01, 0.01,
-             "Data: paper/data/asan-results.md (frozen 2026-08-23; source "
+             "Data: paper/data/asan-results.md (frozen 2026-08-24; source "
              "build/bench/asan-results.md; 5 runs/leg, taskset -c 4)\n"
              "Compile: C plain/ASan `clang -O2 [-fsanitize=address] -lm`; .an check "
              "`python3 -m compiler.main -O3 lib`; -O asymmetry C -O2 vs YIAN -O3.\n"
              "ASAN_OPTIONS main: detect_leaks=0 (quarantine default on); binarytree "
-             "sensitivity (quarantine_size_mb=0): RSS 647.7 -> 166.7 MB (-74.3%).\n"
+             "sensitivity (quarantine_size_mb=0): RSS 648.8 -> 166.6 MB (-74.3%).\n"
              "ASan covers spatial safety only (no temporal/UAF). SUPERSEDED: sec 10.7 "
              "historical 3-load data (0.35x/0.36x/0.08x, loads removed 2026-08) is no "
              "longer plotted; kept for traceability only.",
@@ -280,7 +280,7 @@ def main() -> int:
     fig.tight_layout(rect=[0, 0.10, 1, 0.90])
     fig.savefig(OUT_PATH, dpi=200)
     print(f"OK: {OUT_PATH} generated (14 benchmarks; assertions passed: "
-          f"14 legs x3, ratios & geo means 1.58x/0.67x/2.37x consistent)")
+          f"14 legs x3, ratios & geo means 1.58x/0.69x/2.28x consistent)")
     return 0
 
 

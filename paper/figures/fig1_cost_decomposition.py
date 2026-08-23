@@ -112,7 +112,7 @@ def main() -> int:
 
     fig.text(0.01, 0.01,
              "Data: paper/data/performance.csv (frozen snapshot of docs/performance.csv, "
-             "2026-08-23)\n"
+             "2026-08-24)\n"
              "Method: three-state adjacent-session protocol (assessment.md sec 1.4); "
              "log2 stacking = multiplicative decomposition",
              fontsize=7, color="gray")

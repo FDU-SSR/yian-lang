@@ -10,7 +10,7 @@
 | `fig1_cost_decomposition.py` | 三态成本分解堆叠图（14 基准，表示/检查/总） | `../data/performance.csv` | `fig1_cost_decomposition.png` |
 | `fig2_check_cost.py` | 检查成本 vs 基准（③/② 列，标注 10/14 ≤1.2×） | `../data/performance.csv` | `fig2_check_cost.png` |
 | `fig3_cve_matrix.py` | CVE 拦截矩阵（38 CVE × 12 机制热图） | `tests/fat_cve/docs/MECHANISMS.md` | `fig3_cve_matrix.png` |
-| `fig4_asan_compare.py` | ASan 对照（§10.7 历史基准，标注"非当前套件"） | `docs/security-code.md` §10.7（脚本内嵌） | `fig4_asan_compare.png` |
+| `fig4_asan_compare.py` | ASan 对照（当前套件 14 基准，三口径几何平均 1.58×/0.69×/2.28×，2026-08-24 retest） | `../data/asan-results.md` | `fig4_asan_compare.png` |
 
 ## 运行
 
@@ -35,4 +35,6 @@ matplotlib **不强制安装**：脚本运行时若未安装，自动降级为�
 
 - 图 1/2 的数值应逐一与 `../data/performance.csv` 核对（脚本在产出时已断言 14 基准）。
 - 图 3 的归属应与 `tests/fat_cve/docs/MECHANISMS.md`「完整归属明细」表人工抽查核对。
-- 图 4 的数值为历史基准（§10.7），论文引用前须按 checklist 决定是否用当前套件重跑。
+- 图 4 的数值为当前套件（2026-08-24 retest，`../data/asan-results.md` 冻结），
+  重测后重跑脚本即可同步；旧 §10.7 历史基准（0.35×/0.36×/0.08×）仅在图注中标注
+  superseded，不再绘制。
