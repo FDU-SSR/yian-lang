@@ -1,14 +1,13 @@
 from std.core.range import Range;
-from std.core.move import Move;
 
 pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
     for i in 0..count {
-        dest[i] = src[i].clone();
+        dest[i] = src[i];
     }
 }
 
 pub fn memmove<T>(dest: T*, src: T*, count: u64) {
     for i in 0..count {
-        dest[i] = src[i].move();
+        dest[i] = src[i];
     }
 }

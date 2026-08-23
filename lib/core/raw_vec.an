@@ -1,5 +1,4 @@
 from std.core.range import Range;
-from std.core.move import Move;
 from std.core.drop import Drop;
 from std.core.mem import memmove;
 
@@ -105,22 +104,10 @@ impl<T> RawVec<T> {
     }
 }
 
-// Implement Move for RawVec<T> to allow moving the RawVec without dropping its contents
-impl<T> Move for RawVec<T> {
-    fn invalidate() {
-        self.cap = ~0;
-    }
-    fn is_valid() -> bool {
-        self.cap != ~0
-    }
-}
-
-// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources
+// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources.
+// double-free/double-drop 防护由胖指针锁槽承担: 第二次 del 触达 SENTINEL → trap。
 impl<T> Drop for RawVec<T> {
     fn drop() {
-        if self.is_valid() {
-            del self.data;
-            self.invalidate();
-        }
+        del self.data;
     }
 }

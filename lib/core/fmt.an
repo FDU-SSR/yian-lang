@@ -15,7 +15,7 @@ fn append_unsigned_digits(out: String*, value: u64) {
 fn unsigned_to_string(value: u64) -> String {
     let out = String.new();
     append_unsigned_digits(&out, value);
-    out.move()
+    out
 }
 
 fn signed_to_string(value: i64) -> String {
@@ -29,7 +29,7 @@ fn signed_to_string(value: i64) -> String {
     let mag: u64 = u64(value);
     mag = 0u64 - mag;
     append_unsigned_digits(&out, mag);
-    out.move()
+    out
 }
 
 fn float_to_string(value: f64) -> String {
@@ -52,7 +52,7 @@ fn float_to_string(value: f64) -> String {
 
     let frac: f64 = value - f64(int_part);
     if frac == 0.0 {
-        return out.move();
+        return out;
     }
 
     out.push('.');
@@ -68,7 +68,7 @@ fn float_to_string(value: f64) -> String {
         }
     }
 
-    out.move()
+    out
 }
 
 impl ToString for u8 {
@@ -141,7 +141,7 @@ impl ToString for char {
     fn to_string() -> String {
         let out = String.new();
         out.push(*self);
-        out.move()
+        out
     }
 }
 

@@ -1,6 +1,4 @@
 from std.core.option import Option;
-from std.core.clone import Clone;
-from std.core.move import Move;
 
 pub enum Result<T, E> {
     Ok { val: T },
@@ -53,7 +51,7 @@ impl<T, E> Result<T, E> {
     // Convert the Result into an Option, discarding the error message if it is Err
     pub fn ok() -> Option<T> {
         match self {
-            Ok(val) => Option<T>.Some(val.clone()),
+            Ok(val) => Option<T>.Some(*val),
             _ => Option<T>.None,
         }
     }
@@ -61,17 +59,8 @@ impl<T, E> Result<T, E> {
     // Convert the Result into an Option, discarding the value if it is Ok
     pub fn err() -> Option<E> {
         match self {
-            Err(err) => Option<E>.Some(err.clone()),
+            Err(err) => Option<E>.Some(*err),
             _ => Option<E>.None,
-        }
-    }
-}
-
-impl<T, E> Clone for Result<T, E> {
-    pub fn clone() -> Self {
-        match self {
-            Ok(val) => Result<T, E>.Ok(val.clone()),
-            Err(err) => Result<T, E>.Err(err.clone()),
         }
     }
 }

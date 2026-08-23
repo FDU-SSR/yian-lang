@@ -13,6 +13,6 @@ pub trait IntoIterator<T> {
 
 impl<T, U> IntoIterator<T> for T if T: Iterator<U> {
     fn into_iter() -> T {
-        self.clone()
+        *self
     }
 }

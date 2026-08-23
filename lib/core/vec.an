@@ -1,10 +1,8 @@
 from std.core.raw_vec import RawVec;
 
 from std.core.ops import Index, PartialEq, Deref, Add;
-from std.core.clone import Clone;
 from std.core.option import Option;
 from std.core.convert import From, Into;
-from std.core.move import Move;
 from std.core.drop import Drop;
 from std.core.mem import memmove;
 from std.core.range import Range;
@@ -33,13 +31,11 @@ impl<T> Vec<T> {
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
-        self.validity_assert();
         __slice_from_parts(self.raw_vec.ptr(), self.len)
     }
 
-    // Push an element to the end(value is moved into the Vec)
+    // Push an element to the end (the value is copied into the Vec)
     pub fn push(value: T) {
-        self.validity_assert();
         let len = self.len;
 
         if len == self.raw_vec.capacity() {
@@ -47,14 +43,12 @@ impl<T> Vec<T> {
         }
 
         let end = self.raw_vec.ptr() + len;
-        *end = value.move();
+        *end = value;
         self.len += 1
     }
 
-    // Extend another Vec to the end, consuming the other Vec
+    // Extend another Vec to the end (elements are copied; other stays valid)
     pub fn extend(other: Vec<T>) {
-        self.validity_assert();
-        other.validity_assert();
         // reserve enough capacity for the new elements
         self.reserve(other.len);
 
@@ -64,27 +58,22 @@ impl<T> Vec<T> {
         let src_ptr = other.raw_vec.ptr();
         memmove(dest_ptr, src_ptr, copy_len);
         self.len += copy_len;
-
-        // invalidate the other Vec to prevent double free
-        other.invalidate();
     }
 
     // Pop an element from the end, returning None if empty
     pub fn pop() -> Option<T> {
-        self.validity_assert();
         if self.len == 0 {
             Option<T>.None
         } else {
             self.len -= 1
             let end = self.raw_vec.ptr() + self.len;
-            Option<T>.Some(end.move())
+            Option<T>.Some(*end)
         }
     }
 
     // Insert an element at index, shifting elements to the right
     // Panics if index > len
     pub fn insert(index: u64, value: T) {
-        self.validity_assert();
         let len = self.len;
         if index > len {
             panic("index out of bounds");
@@ -99,18 +88,17 @@ impl<T> Vec<T> {
         // Shift elements to the right
         let i = len;
         while i > index {
-            buf[i] = buf[i - 1].move();
+            buf[i] = buf[i - 1];
             i -= 1;
         }
 
-        buf[index] = value.move();
+        buf[index] = value;
         self.len += 1;
     }
 
     // Remove an element at index, shifting elements to the left, returning the removed element
     // Panics if index >= len
     pub fn remove(index: u64) -> T {
-        self.validity_assert();
         let len = self.len;
         if index >= len {
             panic("index out of bounds");
@@ -118,12 +106,12 @@ impl<T> Vec<T> {
 
         let buf = self.raw_vec.ptr();
 
-        let ret = buf[index].move(); // The element to remove;
+        let ret = buf[index]; // The element to remove;
 
         // Shift elements to the left
         let i = index;
         while i < len - 1 {
-            buf[i] = buf[i + 1].move();
+            buf[i] = buf[i + 1];
             i += 1;
         }
 
@@ -134,40 +122,37 @@ impl<T> Vec<T> {
     // Remove the element at index, replacing it with the element at end, returning the removed element
     // Panics if index >= len
     pub fn swap_remove(index: u64) -> T {
-        self.validity_assert();
         let len = self.len;
         if index >= len {
             panic("index out of bounds");
         }
 
         let buf = self.raw_vec.ptr();
-        let ret = buf[index].move(); // The element to remove;
+        let ret = buf[index]; // The element to remove;
         self.len -= 1;
 
         if index != self.len {
              // Move the last element to the removed spot
-            buf[index] = buf[self.len].move();
+            buf[index] = buf[self.len];
         }
 
         ret
     }
 
     // Extend the Vec with a slice
-    // This will clone the elements from the slice into the Vec, since slices are semantically not owned
+    // This will copy the elements from the slice into the Vec
     pub fn extend_from_slice(slice: T[]) {
-        self.validity_assert();
         // reserve enough capacity for the new elements
         self.reserve(slice.len());
 
-        // clone the elements from the slice to the end of this Vec
+        // copy the elements from the slice to the end of this Vec
         for elem in slice {
-            self.push(elem.clone());
+            self.push(*elem);
         }
     }
 
     // Shorten the Vec, keeping the first `len` elements
     pub fn truncate(len: u64) {
-        self.validity_assert();
         if len > self.len {
             return;
         }
@@ -183,19 +168,16 @@ impl<T> Vec<T> {
 
     // Remove all elements
     pub fn clear() {
-        self.validity_assert();
         self.truncate(0);
     }
 
     // Reserve capacity for at least `additional` more elements
     pub fn reserve(additional: u64) {
-        self.validity_assert();
         self.raw_vec.reserve(self.len, additional);
     }
 
     // Shrinks the capacity as much as possible
     pub fn shrink_to_fit() {
-        self.validity_assert();
         if self.len < self.raw_vec.capacity() {
             self.raw_vec.shrink_to_fit(self.len);
         }
@@ -203,29 +185,17 @@ impl<T> Vec<T> {
 
     // Check if the Vec is empty
     pub fn is_empty() -> bool {
-        self.validity_assert();
         self.len == 0
     }
 
     // Get the capacity
     pub fn capacity() -> u64 {
-        self.validity_assert();
         self.raw_vec.capacity()
-    }
-}
-
-// Implement Clone for Vec<T>
-// This will clone the elements in the Vec, so it requires T to be Clone
-impl<T> Clone for Vec<T> {
-    pub fn clone() -> Self {
-        self.validity_assert();
-        self.as_slice().to_vec()
     }
 }
 
 impl<T> Index<u64, T*> for Vec<T> {
     pub fn index(index: u64*) -> T* {
-        self.validity_assert();
         if *index >= self.len {
             panic("index out of bounds");
         }
@@ -235,8 +205,6 @@ impl<T> Index<u64, T*> for Vec<T> {
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
     pub fn eq(rhs: Vec<T>*) -> bool {
-        self.validity_assert();
-        rhs.validity_assert();
         self.as_slice() == rhs.as_slice()
     }
 }
@@ -260,36 +228,33 @@ impl<T> Into<Vec<T>> for T[] {
 // Implement Deref for Vec<T> to allow dereferencing to a slice
 impl<T> Deref<T[]> for Vec<T> {
     pub fn deref() -> T[] {
-        self.validity_assert();
         self.as_slice()
     }
 }
 
-// Implement Add for Vec<T> to concatenate two Vecs
+// Implement Add for Vec<T> to concatenate two Vecs.
+// 深拷贝语义: 结果拥有独立新缓冲, 操作数保持有效(不消费、不失效)。
+// 机械搬移操作数会导致 double-drop, 故此处逐元素复制构造新结果。
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
-        self.validity_assert();
-        rhs.validity_assert();
-        let res = self.move();
-        res.extend(rhs.move());
+        let res = Vec<T>.with_capacity(self.len() + rhs.len());
+        for i in 0..self.len() {
+            res.push(self.raw_vec.ptr()[i]);
+        }
+        for i in 0..rhs.len() {
+            res.push(rhs.raw_vec.ptr()[i]);
+        }
         res
     }
 }
 
-// Implement Move for Vec<T> to allow moving a Vec, invalidating the original
-impl<T> Move for Vec<T> {
-    pub fn invalidate() { self.raw_vec.invalidate(); }
-    pub fn is_valid() -> bool { self.raw_vec.is_valid() }
-}
-
-// Implement Drop for Vec<T> to allow dropping a Vec, freeing its resources
+// Implement Drop for Vec<T> to allow dropping a Vec, freeing its resources.
+// double-drop 防护由胖指针锁槽承担(第二次 del/drop 触达 SENTINEL → trap)。
 impl<T> Drop for Vec<T> {
     pub fn drop() {
-        if self.is_valid() {
-            // drop all elements in the Vec
-            self.clear();
-            // drop the raw_vec to free its resources
-            self.raw_vec.drop();
-        }
+        // drop all elements in the Vec
+        self.clear();
+        // drop the raw_vec to free its resources
+        self.raw_vec.drop();
     }
 }
