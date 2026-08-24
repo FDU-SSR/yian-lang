@@ -1,6 +1,6 @@
 # 论文数据冻结快照
 
-冻结日期：2026-08-24。当前实现基准提交：afd67de。
+冻结日期：2026-08-25。当前实现基准提交：e8a8c11567249041b3338438d2e4e4861dffc9a2。
 
 | 文件 | 来源 | 内容 |
 | --- | --- | --- |
@@ -11,12 +11,12 @@
 ## 冻结结果
 
 - 三态协议：CPU 4；每态 1 次 warmup + 5 次正式样本；check→nocheck→raw 紧邻。
-- 表示/池/锁 nocheck/raw 几何平均 1.13×。
-- 检查 check/nocheck 几何平均 1.13×。
-- 完整机制 check/raw 几何平均 1.27×，≤1.2× 为 8/14，最大 list 3.79×。
-- 主要 RSS 增量：binarytree +256.08MB，storage +2189.53MB。
-- ASan 三口径：C ASan/C plain 1.59×，C ASan/SecL check 0.73×，SecL check/C plain 2.19×。
-- ASan binarytree quarantine 敏感性：RSS 650.0→168.9MB（−74.0%），时间 −7.2%。
+- 表示/池/锁 nocheck/raw 几何平均 1.16×。
+- 检查 check/nocheck 几何平均 1.10×。
+- 完整机制 check/raw 几何平均 1.27×，≤1.2× 为 7/14，范围 0.97--3.44×，最大为 list 3.44×。
+- 主要 RSS 增量：binarytree +255.94MB，storage +2189.47MB。
+- ASan 三口径：C ASan/C plain 1.56×，C ASan/SecL check 0.70×，SecL check/C plain 2.23×。
+- ASan binarytree quarantine 敏感性：RSS 647.9→166.7MB（−74.3%），时间 −9.5%。
 
 ## 解释边界
 

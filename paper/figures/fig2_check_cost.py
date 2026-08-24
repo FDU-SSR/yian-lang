@@ -5,8 +5,8 @@ Output: paper/figures/fig2_check_cost.pdf (or argv[1])
 
 Data source: paper/data/performance.csv (frozen snapshot of docs/performance.csv)
 Shows the check cost ratio per benchmark (03 check / 02 nocheck), annotating
-10/14 <= 1.2x. Check cost and total cost are independent facts: check cost
-<= 1.2x in 10/14, total cost <= 1.2x in 8/14 (assessment.md).
+11/14 <= 1.2x. Check cost and total cost are independent facts: check cost
+<= 1.2x in 11/14, total cost <= 1.2x in 7/14 (assessment.md).
 
 Run: python3 paper/figures/fig2_check_cost.py
 Dependency: matplotlib (optional; if missing, prints a data summary and exits)
@@ -83,10 +83,10 @@ def main() -> int:
 
     fig.text(0.01, 0.01,
              "Data: paper/data/performance.csv (frozen snapshot of docs/performance.csv, "
-             "2026-08-24)\n"
+             "2026-08-25)\n"
              "Note: check cost (03/02) and total cost (03/01) are independent facts; "
-             "check <= 1.2x in 10/14,\n"
-             "      total <= 1.2x in 8/14 (assessment.md); do not conflate",
+             "check <= 1.2x in 11/14,\n"
+             "      total <= 1.2x in 7/14 (assessment.md); do not conflate",
              fontsize=7, color="gray")
 
     fig.tight_layout(rect=[0, 0.06, 1, 1])

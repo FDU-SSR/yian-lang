@@ -23,5 +23,5 @@ python paper/figures/fig1_cost_decomposition.py
 python paper/figures/design_overview.py /path/to/outer/fig/design.pdf
 ```
 
-2026-08-24 已人工核对正文候选三张图与 ASan 候选图；最终仍需在 LaTeX 实际双栏/单栏版面
-检查字号和标签可读性。
+2026-08-25 已用最新冻结数据重新生成正文性能图与 ASan 候选图，并人工核对标签；最终仍需在
+LaTeX 实际双栏/单栏版面检查字号和标签可读性。

@@ -190,6 +190,10 @@ def main() -> int:
     an_t = [data["legs"][b][LEG_AN]["time"] for b in benches]
     r_asan = [a / p for a, p in zip(asan_t, plain_t)]  # caliber (i)
     r_an = [a / p for a, p in zip(an_t, plain_t)]  # caliber (iii)
+    # Use the report's rounded ratios for direct labels so the figure and the
+    # machine-readable ratio table agree after rounding.
+    table_r_asan = [data["ratios"][b]["i"] for b in benches]
+    table_r_an = [data["ratios"][b]["iii"] for b in benches]
     plain_rss = [data["legs"][b][LEG_PLAIN]["rss"] for b in benches]
     asan_rss = [data["legs"][b][LEG_ASAN]["rss"] for b in benches]
     an_rss = [data["legs"][b][LEG_AN]["rss"] for b in benches]
@@ -236,19 +240,19 @@ def main() -> int:
     ax1.set_ylim(0.03, max(r_an) * 2.2)
     ax1.set_ylabel("median time / C plain (log scale)", fontsize=8.5)
     ax1.tick_params(axis="y", labelsize=8)
-    for p, r in zip(x, r_an):
+    for p, r, table_r in zip(x, r_an, table_r_an):
         if r >= 2.0 or r <= 0.8:
-            ax1.annotate(f"{r:.2f}", xy=(p + time_width/2, r),
+            ax1.annotate(f"{table_r:.2f}", xy=(p + time_width/2, r),
                          xytext=(0, 5), textcoords="offset points",
                          ha="center", va="bottom", fontsize=7.2,
                          color="black", fontweight="bold")
-    for p, bench, r in zip(x, benches, r_asan):
+    for p, bench, r, table_r in zip(x, benches, r_asan, table_r_asan):
         # The list bars are too close for two adjacent value labels; retain the
         # SecL label and leave the C-ASan value to the bar/table data.
         if bench == "list":
             continue
         if r >= 2.0 or r <= 0.8:
-            ax1.annotate(f"{r:.2f}", xy=(p - time_width/2, r),
+            ax1.annotate(f"{table_r:.2f}", xy=(p - time_width/2, r),
                          xytext=(0, 4), textcoords="offset points",
                          ha="center", va="bottom", fontsize=7.2,
                          color="black")
