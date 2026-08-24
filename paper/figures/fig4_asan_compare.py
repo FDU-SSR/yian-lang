@@ -221,7 +221,7 @@ def main() -> int:
 
     # Use the paper's final two-column width and stack the panels.  The former
     # 17-inch side-by-side canvas was scaled to about 40%, making labels tiny.
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.25), sharex=True,
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.4), sharex=True,
                                    gridspec_kw={"height_ratios": [1.15, 1]})
 
     # left: time ratio vs C plain (baseline 1.0), log scale
@@ -234,20 +234,28 @@ def main() -> int:
             label="SecL check", color="#4d4d4d",
             edgecolor="black", linewidth=.6, hatch="xx")
     ax1.set_yscale("log")
-    ax1.set_ylim(0.03, max(r_an) * 1.6)  # headroom for top annotations (nbody 27.79x)
+    # Log-space headroom keeps the largest annotation away from the top frame.
+    ax1.set_ylim(0.03, max(r_an) * 2.2)
     ax1.set_ylabel("median time / C plain (log scale)", fontsize=8.5)
     ax1.tick_params(axis="y", labelsize=8)
     for p, r in zip(x, r_an):
         if r >= 2.0 or r <= 0.8:
-            ax1.text(p + time_width/2, r * 1.12, f"{r:.2f}",
-                     ha="center", va="bottom", fontsize=7.2,
-                     color="black", fontweight="bold")
-    for p, r in zip(x, r_asan):
+            ax1.annotate(f"{r:.2f}", xy=(p + time_width/2, r),
+                         xytext=(0, 5), textcoords="offset points",
+                         ha="center", va="bottom", fontsize=7.2,
+                         color="black", fontweight="bold")
+    for p, bench, r in zip(x, benches, r_asan):
+        # The list bars are too close for two adjacent value labels; retain the
+        # SecL label and leave the C-ASan value to the bar/table data.
+        if bench == "list":
+            continue
         if r >= 2.0 or r <= 0.8:
-            ax1.text(p - time_width/2, r * 1.12, f"{r:.2f}",
-                     ha="center", va="bottom", fontsize=7.2,
-                     color="black")
-    ax1.legend(fontsize=8, loc="upper left", frameon=False, ncol=3,
+            ax1.annotate(f"{r:.2f}", xy=(p - time_width/2, r),
+                         xytext=(0, 4), textcoords="offset points",
+                         ha="center", va="bottom", fontsize=7.2,
+                         color="black")
+    ax1.legend(fontsize=8, loc="lower left", bbox_to_anchor=(0, 1.01),
+               frameon=False, ncol=3,
                columnspacing=1.2, handletextpad=.45)
 
     # right: peak RSS (MB), log scale
@@ -265,7 +273,7 @@ def main() -> int:
     ax2.legend(fontsize=8, loc="upper left", frameon=False, ncol=3,
                columnspacing=1.2, handletextpad=.45)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=.7, h_pad=.8)
     fig.savefig(OUT_PATH, bbox_inches="tight")
     print(f"OK: {OUT_PATH} generated (14 benchmarks; assertions passed: "
           f"14 legs x3, ratios & geo means 1.59x/0.73x/2.19x consistent)")
