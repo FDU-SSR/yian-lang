@@ -30,19 +30,13 @@ ABI、标准库 TCB、元数据防伪、帧级失效、堆池驻留/碎片和 be
 
 ## 完整重测
 
-先在指定实验机器上检查机器记录和 SHA-256 指纹：
+在指定实验机器上直接执行：
 
 ```bash
-YIAN_PYTHON=/path/to/python ./scripts/rerun_paper_experiments.sh --print-fingerprint
+./scripts/rerun_paper_experiments.sh
 ```
 
-确认指纹后，在干净的实现提交上执行：
-
-```bash
-YIAN_PYTHON=/path/to/python ./scripts/rerun_paper_experiments.sh \
-  --expect-fingerprint <fingerprint_sha256> --pin 4
-```
-
-脚本先运行全部正确性与 IR 审计，再运行 14×3 和 ASan 实验。所有
-阶段成功后才更新 `docs/` 和 `paper/data/` 的冻结数据；失败或中断会恢复
-tracked 实验数据。
+脚本内置指定机器的硬件/clang 指纹和 CPU 4，环境不匹配时会在测量前退出；
+`--print-fingerprint` 仅用于诊断。脚本先运行全部正确性与 IR 审计，再运行
+14×3 和 ASan 实验。所有阶段成功后才更新 `docs/` 和 `paper/data/` 的冻结数据；
+失败或中断会恢复 tracked 实验数据。

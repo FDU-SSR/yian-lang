@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Reproduce and freeze all correctness, three-state, and ASan paper results.
 #
-# Two-step machine confirmation is mandatory:
-#   YIAN_PYTHON=/path/to/python ./scripts/rerun_paper_experiments.sh --print-fingerprint
-#   YIAN_PYTHON=/path/to/python ./scripts/rerun_paper_experiments.sh \
-#       --expect-fingerprint <printed-sha256> --pin 4
+# Run the complete protocol on the designated experiment machine:
+#   ./scripts/rerun_paper_experiments.sh
+#
+# The script fixes CPU 4 and validates the committed machine/toolchain profile
+# before running. Use --print-fingerprint only to diagnose a profile mismatch.
 
 set -Eeuo pipefail
 
@@ -12,8 +13,11 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
 PYTHON_BIN=${YIAN_PYTHON:-python3}
-PIN=4
-EXPECTED_FINGERPRINT=""
+readonly PIN=4
+readonly EXPECTED_FINGERPRINT_RECORD='architecture=x86_64
+logical_cpus=28
+cpu_model=Intel(R) Core(TM) i7-14700
+clang=Ubuntu clang version 20.1.8 (++20250708082409+6fb913d3e2ec-1~exp1~20250708202428.132)'
 PRINT_FINGERPRINT=0
 
 usage() {
@@ -25,16 +29,6 @@ while (($#)); do
         --print-fingerprint)
             PRINT_FINGERPRINT=1
             shift
-            ;;
-        --expect-fingerprint)
-            [[ $# -ge 2 ]] || { echo "missing value for --expect-fingerprint" >&2; exit 2; }
-            EXPECTED_FINGERPRINT=$2
-            shift 2
-            ;;
-        --pin)
-            [[ $# -ge 2 ]] || { echo "missing value for --pin" >&2; exit 2; }
-            PIN=$2
-            shift 2
             ;;
         -h|--help)
             usage
@@ -49,15 +43,18 @@ while (($#)); do
 done
 
 machine_record() {
-    printf 'hostname=%s\n' "$(hostname)"
     printf 'kernel=%s\n' "$(uname -sr)"
+    machine_fingerprint_record
+}
+
+machine_fingerprint_record() {
     printf 'architecture=%s\n' "$(uname -m)"
     printf 'logical_cpus=%s\n' "$(getconf _NPROCESSORS_ONLN)"
     printf 'cpu_model=%s\n' "$(lscpu | awk -F: '/Model name/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')"
     printf 'clang=%s\n' "$(clang --version | sed -n '1p')"
 }
 
-for command_name in hostname uname getconf lscpu awk sed clang sha256sum taskset git; do
+for command_name in uname getconf lscpu awk sed clang sha256sum taskset git; do
     command -v "$command_name" >/dev/null || {
         echo "required command not found: $command_name" >&2
         exit 2
@@ -65,7 +62,9 @@ for command_name in hostname uname getconf lscpu awk sed clang sha256sum taskset
 done
 
 MACHINE_RECORD=$(machine_record)
-MACHINE_FINGERPRINT=$(printf '%s\n' "$MACHINE_RECORD" | sha256sum | awk '{print $1}')
+FINGERPRINT_RECORD=$(machine_fingerprint_record)
+MACHINE_FINGERPRINT=$(printf '%s\n' "$FINGERPRINT_RECORD" | sha256sum | awk '{print $1}')
+EXPECTED_FINGERPRINT=$(printf '%s\n' "$EXPECTED_FINGERPRINT_RECORD" | sha256sum | awk '{print $1}')
 
 if ((PRINT_FINGERPRINT)); then
     printf '%s\n' "$MACHINE_RECORD"
@@ -73,24 +72,20 @@ if ((PRINT_FINGERPRINT)); then
     exit 0
 fi
 
-if [[ -z "$EXPECTED_FINGERPRINT" ]]; then
-    echo "refusing to run without --expect-fingerprint" >&2
-    echo "inspect this machine first with --print-fingerprint" >&2
-    exit 2
-fi
 if [[ "$EXPECTED_FINGERPRINT" != "$MACHINE_FINGERPRINT" ]]; then
-    echo "machine fingerprint mismatch" >&2
-    echo "expected: $EXPECTED_FINGERPRINT" >&2
-    echo "actual:   $MACHINE_FINGERPRINT" >&2
+    echo "designated experiment-machine profile mismatch" >&2
+    echo "expected fingerprint: $EXPECTED_FINGERPRINT" >&2
+    printf '%s\n' "$EXPECTED_FINGERPRINT_RECORD" >&2
+    echo "actual fingerprint:   $MACHINE_FINGERPRINT" >&2
     printf '%s\n' "$MACHINE_RECORD" >&2
-    exit 2
-fi
-if [[ ! "$PIN" =~ ^[0-9]+$ ]]; then
-    echo "--pin must be a non-negative logical CPU number" >&2
     exit 2
 fi
 taskset -c "$PIN" true >/dev/null
 
+PYTHON_BIN=$(command -v "$PYTHON_BIN") || {
+    echo "Python interpreter not found: ${YIAN_PYTHON:-python3}" >&2
+    exit 2
+}
 "$PYTHON_BIN" - <<'PY'
 import llvmlite
 import matplotlib
@@ -103,13 +98,18 @@ if [[ ! -x "$PYRIGHT_BIN" ]]; then
     PYRIGHT_BIN=$(command -v pyright || true)
 fi
 if [[ -z "$PYRIGHT_BIN" ]]; then
-    echo "pyright not found; set YIAN_PYRIGHT=/absolute/path/to/pyright" >&2
+    echo "pyright not found; install dependencies with:" >&2
+    echo "  $PYTHON_BIN -m pip install -r requirements.txt" >&2
     exit 2
 fi
 
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+DIRTY_TRACKED=$(git status --porcelain --untracked-files=no -- . \
+    ':(exclude)scripts/rerun_paper_experiments.sh' \
+    ':(exclude)paper/README.md' \
+    ':(exclude)requirements.txt')
+if [[ -n "$DIRTY_TRACKED" ]]; then
     echo "refusing to overwrite paper data from a dirty tracked worktree" >&2
-    git status --short >&2
+    printf '%s\n' "$DIRTY_TRACKED" >&2
     exit 2
 fi
 
