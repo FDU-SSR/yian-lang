@@ -219,34 +219,36 @@ def main() -> int:
     time_width = 0.32
     rss_width = 0.26
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.5),
-                                   gridspec_kw={"width_ratios": [1.5, 1]})
+    # Use the paper's final two-column width and stack the panels.  The former
+    # 17-inch side-by-side canvas was scaled to about 40%, making labels tiny.
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.25), sharex=True,
+                                   gridspec_kw={"height_ratios": [1.15, 1]})
 
     # left: time ratio vs C plain (baseline 1.0), log scale
     ax1.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.6,
-                label="C plain baseline (1.0)")
+                label="C plain (1.0)")
     ax1.bar([p - time_width/2 for p in x], r_asan, time_width,
-            label="C ASan (clang -O2 -fsanitize=address)",
+            label="C ASan",
             color="#bdbdbd", edgecolor="black", linewidth=.6, hatch="///")
     ax1.bar([p + time_width/2 for p in x], r_an, time_width,
-            label="SecL check (-O3, fat pointers)", color="#4d4d4d",
+            label="SecL check", color="#4d4d4d",
             edgecolor="black", linewidth=.6, hatch="xx")
     ax1.set_yscale("log")
     ax1.set_ylim(0.03, max(r_an) * 1.6)  # headroom for top annotations (nbody 27.79x)
-    ax1.set_xticks(list(x))
-    ax1.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
-    ax1.set_ylabel("time ratio vs C plain (log scale)")
+    ax1.set_ylabel("median time / C plain (log scale)", fontsize=8.5)
+    ax1.tick_params(axis="y", labelsize=8)
     for p, r in zip(x, r_an):
         if r >= 2.0 or r <= 0.8:
             ax1.text(p + time_width/2, r * 1.12, f"{r:.2f}",
-                     ha="center", va="bottom", fontsize=6.5,
+                     ha="center", va="bottom", fontsize=7.2,
                      color="black", fontweight="bold")
     for p, r in zip(x, r_asan):
         if r >= 2.0 or r <= 0.8:
             ax1.text(p - time_width/2, r * 1.12, f"{r:.2f}",
-                     ha="center", va="bottom", fontsize=6.5,
+                     ha="center", va="bottom", fontsize=7.2,
                      color="black")
-    ax1.legend(fontsize=8, loc="upper left", frameon=False)
+    ax1.legend(fontsize=8, loc="upper left", frameon=False, ncol=3,
+               columnspacing=1.2, handletextpad=.45)
 
     # right: peak RSS (MB), log scale
     ax2.bar([p - rss_width for p in x], plain_rss, rss_width, label="C plain",
@@ -257,9 +259,11 @@ def main() -> int:
             color="#4d4d4d", edgecolor="black", linewidth=.6, hatch="xx")
     ax2.set_yscale("log")
     ax2.set_xticks(list(x))
-    ax2.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
-    ax2.set_ylabel("peak RSS (MB, log scale)")
-    ax2.legend(fontsize=8, loc="upper left", frameon=False)
+    ax2.set_xticklabels(benches, rotation=38, ha="right", fontsize=7.5)
+    ax2.set_ylabel("median peak RSS (MB, log scale)", fontsize=8.5)
+    ax2.tick_params(axis="y", labelsize=8)
+    ax2.legend(fontsize=8, loc="upper left", frameon=False, ncol=3,
+               columnspacing=1.2, handletextpad=.45)
 
     fig.tight_layout()
     fig.savefig(OUT_PATH, bbox_inches="tight")

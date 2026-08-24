@@ -58,7 +58,8 @@ def main() -> int:
             print(f"{n:<14}{a:>10.2f}{b:>10.2f}{c:>11.2f}")
         return 1
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # Match the final two-column width so LaTeX does not shrink typography.
+    fig, ax = plt.subplots(figsize=(7.0, 3.45))
 
     x = list(range(len(names)))
 
@@ -78,20 +79,21 @@ def main() -> int:
            label="check/raw: end-to-end")
     for i in range(len(names)):
         ax.text(i+width, total[i] * 1.04, f"{total[i]:.2f}x",
-                ha="center", va="bottom", fontsize=8,
+                ha="center", va="bottom", fontsize=7.5,
                 color="black", fontweight="bold")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(names, rotation=45, ha="right")
-    ax.set_ylabel("median runtime ratio (log scale)")
+    ax.set_xticklabels(names, rotation=42, ha="right", fontsize=7.5)
+    ax.set_ylabel("median runtime ratio (log scale)", fontsize=8.5)
 
     ax.set_yscale("log")
     ax.set_ylim(.55, 4.7)
     ticks = [.6, .75, 1.0, 1.5, 2.0, 3.0, 4.0]
     ax.set_yticks(ticks)
-    ax.set_yticklabels([f"{t:g}x" for t in ticks])
+    ax.set_yticklabels([f"{t:g}x" for t in ticks], fontsize=8)
     ax.axhline(1, color="black", linewidth=0.8)
-    ax.legend(loc="upper left", fontsize=8, ncol=3, frameon=False)
+    ax.legend(loc="upper left", fontsize=7.6, ncol=3, frameon=False,
+              handlelength=1.5, columnspacing=1.1, handletextpad=.45)
 
     fig.tight_layout()
     fig.savefig(OUT_PATH, bbox_inches="tight")
