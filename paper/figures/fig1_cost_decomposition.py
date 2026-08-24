@@ -9,8 +9,7 @@ nocheck), total cost = ③/① (check / raw). Total is multiplicative:
 ③/① = ②/① × ③/②. The grouped layout keeps all three reported ratios explicit.
 
 Methodology: three-state adjacent-session protocol (assessment.md §1.4), per-benchmark
-ratios; authoritative numbers from data/performance.csv. The 1.2x threshold follows
-assessment.md (the current snapshot has total cost <= 1.2x in 8/14 benchmarks).
+ratios; authoritative numbers from data/performance.csv.
 
 Run: python3 paper/figures/fig1_cost_decomposition.py
 Dependency: matplotlib (optional; if missing, prints a data summary and exits)
@@ -23,10 +22,11 @@ import math
 import os
 import sys
 
+from plot_style import apply_paper_style
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(HERE, "..", "data", "performance.csv")
 OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "fig1_cost_decomposition.pdf")
-THRESHOLD = 1.2  # total-cost ratio threshold
 
 
 def load_rows(path: str) -> list[dict[str, str]]:
@@ -44,12 +44,11 @@ def main() -> int:
     rep = [float(r["表示成本倍率(②/①)"]) for r in rows]
     chk = [float(r["检查成本倍率(③/②)"]) for r in rows]
     total = [float(r["总成本倍率(③/①)"]) for r in rows]
-    n_ok = sum(1 for t in total if t <= THRESHOLD)
-
     try:
         import matplotlib
 
         matplotlib.use("Agg")
+        apply_paper_style(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError:  # matplotlib optional
         print("matplotlib not installed; printing data summary (figure not generated)")
@@ -70,13 +69,13 @@ def main() -> int:
     width = .24
     ax.bar([i-width for i in x], rep, width=width, color=colors_rep,
            edgecolor="black", linewidth=0.7,
-           label="R: nocheck/raw (representation)")
+           label="nocheck/raw: representation and lifetime")
     ax.bar(x, chk, width=width, color=colors_chk,
            edgecolor="black", linewidth=0.7, hatch="///",
-           label="C: check/nocheck (checks)")
+           label="check/nocheck: emitted checks")
     ax.bar([i+width for i in x], total, width=width, color=colors_total,
            edgecolor="black", linewidth=0.7, hatch="xx",
-           label="E: check/raw (end-to-end)")
+           label="check/raw: end-to-end")
     for i in range(len(names)):
         ax.text(i+width, total[i] * 1.04, f"{total[i]:.2f}x",
                 ha="center", va="bottom", fontsize=8,
@@ -86,14 +85,9 @@ def main() -> int:
     ax.set_xticklabels(names, rotation=45, ha="right")
     ax.set_ylabel("median runtime ratio (log scale)")
 
-    # threshold line: 1.2x
-    ax.axhline(THRESHOLD, color="black", linestyle="--", linewidth=1)
-    ax.text(len(names) - 0.5, THRESHOLD, f"  {THRESHOLD}x",
-            ha="right", va="bottom", color="black", fontsize=8)
-
     ax.set_yscale("log")
     ax.set_ylim(.55, 4.7)
-    ticks = [.6, .75, 1.0, 1.2, 1.5, 2.0, 3.0, 4.0]
+    ticks = [.6, .75, 1.0, 1.5, 2.0, 3.0, 4.0]
     ax.set_yticks(ticks)
     ax.set_yticklabels([f"{t:g}x" for t in ticks])
     ax.axhline(1, color="black", linewidth=0.8)
@@ -101,8 +95,7 @@ def main() -> int:
 
     fig.tight_layout()
     fig.savefig(OUT_PATH, bbox_inches="tight")
-    print(f"OK: {OUT_PATH} generated ({len(names)} benchmarks, "
-          f"total cost <= {THRESHOLD}x: {n_ok}/14)")
+    print(f"OK: {OUT_PATH} generated ({len(names)} benchmarks)")
     return 0
 
 

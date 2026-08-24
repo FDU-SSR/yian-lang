@@ -11,6 +11,8 @@ import os
 import re
 import sys
 
+from plot_style import apply_paper_style
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 SOURCE = os.path.join(ROOT, "tests", "fat_cve", "docs", "MECHANISMS.md")
@@ -44,6 +46,7 @@ def main() -> int:
 
     import matplotlib
     matplotlib.use("Agg")
+    apply_paper_style(matplotlib)
     import matplotlib.pyplot as plt
 
     labels = ["Spatial bounds\n(in_bounds)", "Temporal liveness\n(live)",

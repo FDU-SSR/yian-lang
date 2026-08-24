@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
+from plot_style import apply_paper_style
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "design_overview.pdf")
 
@@ -12,12 +14,13 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "design_overview.
 def main() -> int:
     import matplotlib
     matplotlib.use("Agg")
+    apply_paper_style(matplotlib)
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyArrowPatch, Rectangle
 
-    fig, ax = plt.subplots(figsize=(10.6, 5.15))
+    fig, ax = plt.subplots(figsize=(10.6, 4.25))
     ax.set_xlim(0, 10.6)
-    ax.set_ylim(0, 5.15)
+    ax.set_ylim(0, 4.25)
     ax.axis("off")
 
     ink = "#111111"
@@ -26,14 +29,16 @@ def main() -> int:
     mid = "#e3e3e3"
 
     def box(x: float, y: float, w: float, h: float, title: str, body: str,
-            face: str = pale, edge: str = ink) -> None:
+            face: str = pale, edge: str = ink, title_size: float = 13,
+            body_size: float = 11) -> None:
         patch = Rectangle((x, y), w, h, linewidth=1.1,
                           edgecolor=edge, facecolor=face)
         ax.add_patch(patch)
-        ax.text(x+w/2, y+h-.22, title, ha="center", va="top", fontsize=10.5,
+        ax.text(x+w/2, y+h*.74, title, ha="center", va="center",
+                fontsize=title_size,
                 fontweight="bold", color=ink)
-        ax.text(x+w/2, y+h/2-.12, body, ha="center", va="center", fontsize=8.5,
-                color=ink, linespacing=1.3)
+        ax.text(x+w/2, y+h*.34, body, ha="center", va="center",
+                fontsize=body_size, color=ink, linespacing=1.15)
 
     def arrow(x1: float, y1: float, x2: float, y2: float, color: str = ink) -> None:
         ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-|>",
@@ -42,37 +47,35 @@ def main() -> int:
     stages = [(".an", "source"), ("Tokens", "lexer"), ("AST", "parser"),
               ("HIR", "typed"), ("CFG IR", "checks"), ("LLVM IR", "branches"),
               ("native", "trap")]
-    sx, sy, sw, gap = .25, 4.18, 1.18, .25
+    sx, sy, sw, gap = .25, 3.43, 1.18, .25
     for i, (title, body) in enumerate(stages):
         x = sx + i*(sw+gap)
-        box(x, sy, sw, .72, title, body, face=white)
+        box(x, sy, sw, .62, title, body, face=white,
+            title_size=12.5, body_size=10.5)
         if i:
-            arrow(x-gap+.02, sy+.36, x-.04, sy+.36)
+            arrow(x-gap+.02, sy+.31, x-.04, sy+.31)
 
-    box(.35, 2.25, 2.85, 1.25, "Tiered values",
+    box(.35, 1.75, 2.85, 1.08, "Tiered values",
         "T*  40B  {data, lock, key, index, size}\n"
         "T[] 32B  {data, lock, key, size}\n"
         "T&  24B  {data, lock, key}")
-    ax.text(1.78, 2.07, "validated degradation  T* -> T[] -> T&",
-            ha="center", fontsize=8, color=ink)
-
-    box(3.88, 2.25, 2.85, 1.25, "CFG safety obligations",
+    box(3.88, 1.75, 2.85, 1.08, "CFG safety obligations",
         "live + full-span bounds\nnonempty/reference origin\n"
         "arithmetic, compare, ptrdiff, delete", face=mid)
-    box(7.28, 2.25, 2.85, 1.25, "LLVM enforcement",
+    box(7.28, 1.75, 2.85, 1.08, "LLVM enforcement",
         "check block dominates access\nfailed edge -> absorbing trap\n"
         "raw/nocheck/check modes", face=pale)
-    arrow(3.2, 2.88, 3.84, 2.88)
-    arrow(6.73, 2.88, 7.24, 2.88)
+    arrow(3.2, 2.29, 3.84, 2.29)
+    arrow(6.73, 2.29, 7.24, 2.29)
 
-    box(.85, .35, 3.85, 1.05, "Heap lifetime",
+    box(.85, .18, 3.85, .84, "Heap lifetime",
         "32B stable header: lock | capacity | next | reserved\n"
         "delete: SENTINEL -> free list; reuse: fresh key", face=mid)
-    box(5.9, .35, 3.85, 1.05, "Stack lifetime",
+    box(5.9, .18, 3.85, .84, "Stack lifetime",
         "one lock slot per frame; entry re-key\n"
         "every return writes SENTINEL", face=pale)
-    arrow(2.78, 2.22, 2.78, 1.44)
-    arrow(8.02, 2.22, 8.02, 1.44)
+    arrow(2.78, 1.70, 2.78, 1.07)
+    arrow(8.02, 1.70, 8.02, 1.07)
 
     fig.tight_layout(pad=.4)
     fig.savefig(OUT, bbox_inches="tight")

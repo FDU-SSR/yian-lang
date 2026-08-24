@@ -29,6 +29,8 @@ import os
 import re
 import sys
 
+from plot_style import apply_paper_style
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(HERE, "..", "data", "asan-results.md")
 OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "fig4_asan_compare.pdf")
@@ -198,6 +200,7 @@ def main() -> int:
         import matplotlib
 
         matplotlib.use("Agg")
+        apply_paper_style(matplotlib)
         import matplotlib.pyplot as plt
     except ImportError:  # matplotlib optional
         print("matplotlib not installed; printing data summary (PNG not generated)")
