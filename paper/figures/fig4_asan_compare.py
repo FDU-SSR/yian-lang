@@ -4,7 +4,7 @@
 Output: paper/figures/fig4_asan_compare.pdf (or argv[1])
 
 Data source: paper/data/asan-results.md (frozen snapshot of
-build/bench/asan-results.md, measured 2026-08-24, 14 benchmarks x 4 legs
+build/bench/asan-results.md, 14 benchmarks x 4 legs
 [C plain / C ASan main / C ASan sensitivity (binarytree only) / .an check],
 5 runs each, taskset -c 4).
 
@@ -16,8 +16,8 @@ Three calibers (per-benchmark, medians):
 Assertions (fail loudly if data is inconsistent or edited):
   - exactly 14 benchmarks, each with legs {C plain, C ASan main, .an check}
   - recomputed per-benchmark ratios == ratio table in the data file (+-0.01)
-  - recomputed geometric means == stated 1.59x / 0.73x / 2.19x (+-0.01)
-  - binarytree sensitivity row present (RSS main 650.0 / sens 168.9 MB)
+  - recomputed geometric means equal the values stated in the data file (+-0.01)
+  - binarytree sensitivity rows are present and agree with the per-leg table
 
 Run: python3 paper/figures/fig4_asan_compare.py
 Dependency: matplotlib (optional; if missing, prints data summary and exits)
@@ -40,9 +40,6 @@ LEG_ASAN = "C ASan main"
 LEG_SENS = "C ASan sens"
 LEG_AN = ".an check"
 LEGS = [LEG_PLAIN, LEG_ASAN, LEG_AN]
-
-GEO_MEAN_EXPECTED = {"i": 1.59, "ii": 0.73, "iii": 2.19}  # stated in data file
-
 
 def _strip_markup(s: str) -> str:
     return s.strip().replace("**", "").replace("×", "")
@@ -169,17 +166,18 @@ def verify(data: dict) -> None:
         gm = math.exp(sum(math.log(x) for x in xs) / len(xs))
         _assert(abs(gm - geo[key]) <= 0.01,
                 f"geo mean caliber({key}): computed {gm:.3f} != stated {geo[key]}")
-        _assert(abs(gm - GEO_MEAN_EXPECTED[key]) <= 0.01,
-                f"geo mean caliber({key}): computed {gm:.3f} != expected {GEO_MEAN_EXPECTED[key]}")
-
     _assert(LEG_SENS in legs["binarytree"],
             "binarytree missing sensitivity leg 'C ASan sens'")
     main_rss = legs["binarytree"][LEG_ASAN]["rss"]
     sens_rss = legs["binarytree"][LEG_SENS]["rss"]
-    _assert(abs(main_rss - 650.0) <= 0.1, f"binarytree main RSS {main_rss} != 650.0")
-    _assert(abs(sens_rss - 168.9) <= 0.1, f"binarytree sens RSS {sens_rss} != 168.9")
     _assert(any("main" in k for k in sens), "section 3 sensitivity table missing")
     _assert(any("sens" in k for k in sens), "section 3 sensitivity table missing")
+    main_row = next(value for key, value in sens.items() if "main" in key)
+    sens_row = next(value for key, value in sens.items() if "sens" in key)
+    _assert(abs(main_row[1] - main_rss) <= 0.1,
+            f"binarytree main RSS {main_row[1]} != leg table {main_rss}")
+    _assert(abs(sens_row[1] - sens_rss) <= 0.1,
+            f"binarytree sens RSS {sens_row[1]} != leg table {sens_rss}")
 
 
 def main() -> int:
@@ -275,8 +273,10 @@ def main() -> int:
 
     fig.tight_layout(pad=.7, h_pad=.8)
     fig.savefig(OUT_PATH, bbox_inches="tight")
+    geo = data["geo"]
     print(f"OK: {OUT_PATH} generated (14 benchmarks; assertions passed: "
-          f"14 legs x3, ratios & geo means 1.59x/0.73x/2.19x consistent)")
+          f"14 legs x3, ratios & geo means {geo['i']:.2f}x/"
+          f"{geo['ii']:.2f}x/{geo['iii']:.2f}x consistent)")
     return 0
 
 

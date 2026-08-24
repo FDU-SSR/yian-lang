@@ -11,6 +11,7 @@ from compiler.codegen.cfg.lockmech import (
     MAX_HEAP_BODY,
     MAX_STACK_BODY,
     SENTINEL,
+    FrameLockArena,
     KeyGen,
 )
 
@@ -24,6 +25,9 @@ def expect_overflow(action: object) -> None:
 
 
 def main() -> None:
+    assert FrameLockArena.SLOTS == 1 << 20
+    assert FrameLockArena.SLOT_BYTES == 8
+
     heap = KeyGen()
     heap._KeyGen__heap_counter = MAX_HEAP_BODY - 1  # type: ignore[attr-defined]
     final_heap = heap.heap_key()

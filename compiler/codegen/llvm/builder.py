@@ -42,7 +42,7 @@ class LLBuilder:
         self.__check_seq = 0
         self.__continuations: dict[str, str] = {}
         self.__current_cfg_block = ""
-        self.__frame_lock_slot_name: str | None = None  # 已实体化帧锁的 e_f 寄存器名(入口 alloca,规则 3.7.1)
+        self.__frame_lock_slot_name: str | None = None  # 已从稳定影子栈取得的 e_f 寄存器名(规则 3.7.1)
 
     # ------------------------------------------------------------------
     # constants
@@ -459,6 +459,40 @@ class LLBuilder:
 
     def gen_key(self, is_heap: bool, result: str) -> None:
         self.__func.set_reg(result, self.__gen_key_value(is_heap))
+
+    def acquire_frame_lock(self, key: LLValue, result: str) -> None:
+        """规则 3.7.1:在固定地址的独立影子栈上 push 一个帧锁槽。
+
+        热路径只执行一次深度检查、一次 GEP 和两次 store;无动态
+        分配或空闲链指针追踪。槽位先写新键,再发布新深度,且在任何
+        用户语句之前完成。
+        """
+        depth_ptr = self.__module.get_frame_lock_depth()
+        depth = self.__builder.load(depth_ptr, name="frame.depth")  # type: ignore
+        available = self.__builder.icmp_unsigned(
+            "<",
+            depth,
+            ir.Constant(ir.IntType(64), IR.FrameLockArena.SLOTS),  # type: ignore
+        )
+        self.__emit_check(
+            LLValue(self.__type_ctx.bool_id, available), "framecap"
+        )
+        arena = self.__module.get_frame_lock_arena()
+        slot = self.__builder.gep(  # type: ignore
+            arena,
+            [ir.Constant(ir.IntType(64), 0), depth],  # type: ignore
+            inbounds=True,
+            name="frame.lock",
+        )
+        self.__builder.store(key.ir_val, slot)  # type: ignore
+        next_depth = self.__builder.add(  # type: ignore
+            depth, ir.Constant(ir.IntType(64), 1), name="frame.depth.next"  # type: ignore
+        )
+        self.__builder.store(next_depth, depth_ptr)  # type: ignore
+        self.__func.set_reg(
+            result,
+            LLValue(self.__type_ctx.alloc_pointer(TypeCtx.u64_id), slot),
+        )
 
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
         """μ⟨lock_ptr⟩ := value(规则 3.6.2 动作① SENTINEL / 3.7.1 帧锁写键)。
@@ -1478,23 +1512,30 @@ class LLBuilder:
     # ------------------------------------------------------------------
 
     def set_frame_lock(self, e_f: IR.Value) -> None:
-        """标记函数已实体化帧锁(规则 3.7.1):全部返回路径 ret 前写 SENTINEL。"""
-        assert isinstance(e_f, IR.Reg), "帧锁槽地址 e_f 必须为寄存器(入口 alloca)"
+        """标记函数已取得帧锁:全部返回路径写 SENTINEL 并 pop。"""
+        assert isinstance(e_f, IR.Reg), "帧锁槽地址 e_f 必须为入口寄存器"
         self.__frame_lock_slot_name = e_f.name
 
-    def __frame_exit_sentinel(self) -> None:
-        """规则 3.7.2 动作①:帧退出把帧锁槽写成 SENTINEL(全部返回路径)。
+    def __release_frame_lock(self) -> None:
+        """规则 3.7.2:帧退出写 SENTINEL,再从稳定影子栈 pop。
 
-        e_f 是入口 alloca 的锁槽地址(entry 块先于一切 ret 翻译,寄存器已就绪);
-        SENTINEL = 全 1 字,栈悬垂访问经 live 键比较(match SENTINEL != k_f)trap。
+        槽位保持映射且永不成为用户数据;后续 push 复用该地址时会在
+        任何用户步之前写入新键。编译器生成的函数进退严格 LIFO,
+        因此退出仅需递减深度,无需空闲链或动态槽位检索。
         """
         if self.__frame_lock_slot_name is None:
             return
         slot = self.__func.reg(self.__frame_lock_slot_name)
         self.write_lock_slot(slot, self.i64(IR.SENTINEL))
+        depth_ptr = self.__module.get_frame_lock_depth()
+        depth = self.__builder.load(depth_ptr, name="frame.depth.exit")  # type: ignore
+        previous = self.__builder.sub(  # type: ignore
+            depth, ir.Constant(ir.IntType(64), 1), name="frame.depth.prev"  # type: ignore
+        )
+        self.__builder.store(previous, depth_ptr)  # type: ignore
 
     def ret(self, value: LLValue | None) -> None:
-        self.__frame_exit_sentinel()
+        self.__release_frame_lock()
         if value is None:
             self.__builder.ret_void()
         else:

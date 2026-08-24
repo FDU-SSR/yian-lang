@@ -72,8 +72,8 @@ def main() -> int:
         "32B stable header: lock | capacity | next | reserved\n"
         "delete: SENTINEL -> free list; reuse: fresh key", face=mid)
     box(5.9, .18, 3.85, .84, "Stack lifetime",
-        "one lock slot per frame; entry re-key\n"
-        "every return writes SENTINEL", face=pale)
+        "stable shadow stack: 2^20 lock slots\n"
+        "entry pushes/re-keys; return invalidates/pops", face=pale)
     arrow(2.78, 1.70, 2.78, 1.07)
     arrow(8.02, 1.70, 8.02, 1.07)
 

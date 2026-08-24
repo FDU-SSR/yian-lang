@@ -116,15 +116,20 @@ load/store 的检查按表示分级：`T*` 和由切片派生的指针执行空�
 空闲链没有同步，当前仅适用于单线程。池不拆块、不合并块且进程期不返还 libc，这是驻留内存
 和内部碎片的明确代价。
 
-## 7. 键生成与帧协议
+## 7. 键生成与稳定帧锁协议
 
 `KeyGen` 的编译期模型及 LLVM 模块中的 `__gen_key_value` 都只实现单调计数器。最高位区分堆/栈；
 堆键体上界是 `2^63-2`，从而排除全 1 的 `SENTINEL`。生成器在增量前检查上界，耗尽时调用
 trap，不能自然回绕。
 
-函数入口为当前帧创建独立锁槽并写入新栈键；该帧所有取址值共享锁。CFG/LLVM 返回收尾确保
-每条正常返回路径写 `SENTINEL`。优化产物中的哨兵写受 volatile 保护，避免 DSE 删除帧失效
-协议。新帧即使复用相同栈地址也会 re-key，因此旧胖指针不会恢复。
+模块保留 `2^20` 个 `u64` 槽位和一个活动深度游标。槽位数组位于 BSS，地址在进程期间
+保持稳定，保留 8 MiB 虚拟地址空间，按峰值活动取址深度触及页面。函数的首个胖取址使 CFG
+在入口放置 `GenKey` 和 `AcquireFrameLock`；LLVM 检查深度上界后直接索引槽位，写新键再
+递增深度。该帧所有取址值共享此锁。
+
+CFG/LLVM 返回收尾确保每条正常返回路径先写 `SENTINEL` 再递减深度。优化产物中的
+哨兵写受 volatile 保护。槽位永不作为用户对象；顺序或递归复用均在用户步之前 re-key，
+因此旧胖指针不会恢复。超过 `2^20` 个同时活动的取址帧时确定性 trap。
 
 ## 8. 受限操作与标准库 TCB
 
@@ -161,7 +166,9 @@ python scripts/run_tests.py -q
 python scripts/run_fat_tests.py -q
 python scripts/run_raw_tests.py -q
 python scripts/run_fat_cve.py -q
-python -m unittest tests.unit.test_lockmech
+python tests/unit/test_lockmech.py
+python scripts/check_raw_free_ir.py
+python scripts/check_frame_lock_ir.py
 pyright --pythonpath <project-python>
 ```
 
@@ -172,15 +179,18 @@ pyright --pythonpath <project-python>
 - 释放、复用后的 UAF 与双重释放；
 - 不同容量请求的 first-fit 复用及逻辑边界；
 - 堆/栈键边界、`SENTINEL` 保留值和确定性耗尽；
+- 稳定帧锁影子栈的递归 LIFO、顺序复用、容量检查、退出顺序和 raw 模式省略；
 - 38 个 CVE 的 vulnerable/fixed 成对用例，共 76 个执行实例。
 
 测试总数和静态检查结果必须从当前提交现场生成，不能沿用历史文档中的计数。性能数据同样应在
-实现变化后重新冻结；协议与快照由 `scripts/bench_fat.py` 和 `yian/paper/data` 维护。
+实现变化后重新冻结；`scripts/rerun_paper_experiments.sh` 在机器指纹确认后串联全部回归、
+性能、ASan、样本断言和冻结同步。
 
 ## 11. 实现局限
 
 - 堆池驻留、first-fit 内部碎片和线性查找可能成为长运行程序的成本；
 - 当前没有并发分配或原子锁协议；
+- 帧锁影子栈固定保留 8 MiB 虚拟地址空间，最多容纳 `2^20` 个同时活动的取址帧；
 - 栈失效是帧级而不是词法作用域级；
 - 胖指针不保持 C ABI，FFI 必须封送且不在证明范围内；
 - 标准库受限原语、LLVM 优化正确性和元数据不可伪造均是可信假设；

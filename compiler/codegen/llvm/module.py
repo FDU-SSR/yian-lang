@@ -91,6 +91,8 @@ class LLModule:
         self.__pool_head_global: ir.GlobalVariable | None = None
         self.__pool_alloc_func: ir.Function | None = None
         self.__pool_release_func: ir.Function | None = None
+        self.__frame_lock_arena_global: ir.GlobalVariable | None = None
+        self.__frame_lock_depth_global: ir.GlobalVariable | None = None
 
     # -- properties --
 
@@ -194,6 +196,41 @@ class LLModule:
             self.__lit_lock_global.linkage = "internal"
             self.__lit_lock_global.initializer = ir.Constant(ir.IntType(64), 1)  # type: ignore
         return self.__lit_lock_global
+
+    # -- single-threaded stable frame-lock shadow stack --
+
+    def get_frame_lock_arena(self) -> ir.GlobalVariable:
+        """Return the fixed-address frame-lock arena.
+
+        The zero-initialized array occupies BSS-backed virtual address space;
+        only pages reached by the peak active address-taking depth become
+        resident.  Its address never aliases ordinary stack or heap payloads.
+        """
+        if self.__frame_lock_arena_global is None:
+            arena_type = ir.ArrayType(
+                ir.IntType(64), IR.FrameLockArena.SLOTS  # type: ignore
+            )
+            global_var = ir.GlobalVariable(
+                self.__module, arena_type, name="__secl_frame_locks"
+            )
+            global_var.linkage = "internal"
+            global_var.initializer = ir.Constant(arena_type, None)  # type: ignore
+            global_var.align = IR.FrameLockArena.SLOT_BYTES  # type: ignore
+            self.__frame_lock_arena_global = global_var
+        return self.__frame_lock_arena_global
+
+    def get_frame_lock_depth(self) -> ir.GlobalVariable:
+        """Return the active-depth cursor for the frame-lock arena."""
+        if self.__frame_lock_depth_global is None:
+            i64 = ir.IntType(64)  # type: ignore
+            global_var = ir.GlobalVariable(
+                self.__module, i64, name="__secl_frame_lock_depth"
+            )
+            global_var.linkage = "internal"
+            global_var.initializer = ir.Constant(i64, 0)  # type: ignore
+            global_var.align = IR.FrameLockArena.SLOT_BYTES  # type: ignore
+            self.__frame_lock_depth_global = global_var
+        return self.__frame_lock_depth_global
 
     # -- single-threaded stable-header heap pool --
 

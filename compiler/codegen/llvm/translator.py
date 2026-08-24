@@ -100,7 +100,7 @@ class LLTranslator:
 
         builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx, self.__raw_pointers)
         if cfg.frame_lock is not None:
-            # 帧退出写 SENTINEL(规则 3.7.2 动作①):builder.ret() 前补发
+            # 帧退出写 SENTINEL 并弹出影子栈(规则 3.7.2)
             builder.set_frame_lock(cfg.frame_lock[0])
 
         # entry block + local var allocas
@@ -181,6 +181,10 @@ class LLTranslator:
                 builder.delete(self.__resolve(builder, stmt.ptr))
             case IR.GenKey():
                 builder.gen_key(stmt.is_heap, stmt.result.name)
+            case IR.AcquireFrameLock():
+                builder.acquire_frame_lock(
+                    self.__resolve(builder, stmt.key), stmt.result.name
+                )
             case IR.WriteLockSlot():
                 builder.write_lock_slot(self.__resolve(builder, stmt.lock_ptr), self.__resolve(builder, stmt.value))
             case IR.CheckSafeAccess():

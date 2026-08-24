@@ -32,6 +32,7 @@ from compiler.codegen.cfg.lockmech import (
     FAT_LOCK_PTR,
     FAT_SIZE,
     FrameLock,
+    FrameLockArena,
     KeyGen,
     MAX_HEAP_BODY,
     MAX_STACK_BODY,
@@ -56,6 +57,7 @@ __all__ = [
     "FAT_LOCK_PTR",
     "FAT_SIZE",
     "FrameLock",
+    "FrameLockArena",
     "KeyGen",
     "MAX_HEAP_BODY",
     "MAX_STACK_BODY",
@@ -88,7 +90,7 @@ class VarPtr:
     """
     result: Reg
     var_ref: VarRef
-    frame_lock_ptr: Value | None  # e_f:帧锁槽地址(函数入口 alloca 的 u64 栈槽);raw 模式为 None
+    frame_lock_ptr: Value | None  # e_f:独立稳定影子栈的 u64 槽位地址;raw 模式为 None
     frame_key: Value | None       # k_f:帧键(规则 3.7.1 帧进入 re-key);raw 模式为 None
     raw: bool = False             # lazy-lvalue-fat(todo1):裸取址(未取址左值)仅返回栈地址,不合成 5 字段
 
@@ -203,6 +205,17 @@ class GenKey:
     """
     result: Reg
     is_heap: bool
+
+
+@dataclass
+class AcquireFrameLock:
+    """从独立稳定影子栈取得当前帧锁槽并写入新键。
+
+    影子栈深度已达 ``FrameLockArena.SLOTS`` 时 trap。成功后
+    ``result`` 是进程生命期内持续可读的 ``u64*`` 槽位地址。
+    """
+    result: Reg
+    key: Value
 
 
 @dataclass
@@ -475,7 +488,7 @@ Stmt: TypeAlias = (
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close
     | MemCopy
-    | GenKey | WriteLockSlot
+    | GenKey | AcquireFrameLock | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess
@@ -642,4 +655,4 @@ class Function:
     entry: Block  # entry block of the function/method, also included in `blocks`
     local_vars: dict[int, VarRef] = field(default_factory=dict[int, VarRef])  # symbol id -> VarRef for all local variables (including parameters)
     params: list[int] = field(default_factory=list[int])  # symbol ids of parameters, in order
-    frame_lock: tuple[Value, Value] | None = None  # ⟨e_f, k_f⟩:函数已实体化帧锁(规则 3.7.1);LLVM 层据此在全部返回路径 ret 前写 SENTINEL(规则 3.7.2 动作①)
+    frame_lock: tuple[Value, Value] | None = None  # ⟨e_f, k_f⟩:函数已从稳定影子栈取得帧锁(规则 3.7.1);LLVM 层据此在全部返回路径写 SENTINEL 并弹出槽位(规则 3.7.2)

@@ -119,8 +119,8 @@ class CfgBuilder:
         self.__guard_termination(dp)
 
         # ── 帧锁实体化标记(规则 3.7.1)──
-        # 函数若实体化了帧锁(有帧锁 alloca),LLVM 层须在全部返回路径 ret 前
-        # 补发 WriteLockSlot(e_f, SENTINEL)(规则 3.7.2 动作①,帧退出写哨兵),
+        # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
+        # 写 SENTINEL 并从稳定影子栈弹出槽位(规则 3.7.2),
         # 使栈悬垂访问经 live 键比较确定性 trap。标记随函数传给 LLTranslator。
         self.__func.frame_lock = self.__frame_lock
 
@@ -1225,13 +1225,14 @@ class CfgBuilder:
     # ------------------------------------------------------------------
 
     def __emit_frame_lock(self) -> tuple[IR.Value | None, IR.Value | None]:
-        """帧锁实体化(§2.6、规则 3.7.1):k_f ← Gen()(栈键 MSB 0),alloca 一个
-        u64 栈槽(锁槽),槽写键 μ⟨e_f⟩ := k_f 以 WriteLockSlot 表达。仅在首次
+        """帧锁实体化(§2.6、规则 3.7.1):k_f ← Gen()(栈键 MSB 0),从独立
+        稳定影子栈 push 一个 u64 锁槽并写入 k_f。仅在首次
         取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
-        终止符;无取址的函数不含帧锁节点。注意:Alloca 的初值为占位 0,t8
-        下降时改为存 k_f(帧锁槽写键);VarPtr 的 frame_key 已是 GenKey 结果。
-        帧退出写 SENTINEL(全部返回路径,规则 3.7.2 动作①)的发射属 t8。
-        raw 模式(t2):无帧锁——直接返回 None 帧字段,不实体化 GenKey/WriteLockSlot。"""
+        终止符;无取址的函数不含帧锁节点。VarPtr 的 frame_key 已是
+        GenKey 结果。帧退出写 SENTINEL 并 pop(全部返回路径,规则 3.7.2)
+        的发射属 t8。
+        raw 模式(t2):无帧锁——直接返回 None 帧字段,不实体化
+        GenKey/AcquireFrameLock。"""
         if self.__raw_pointers:
             return (None, None)
         if self.__frame_lock is not None:
@@ -1239,12 +1240,15 @@ class CfgBuilder:
         saved_block = self.__current_block
         self.__current_block = self.__func.entry
         k_f = self.__build_gen_key(is_heap=False)
-        e_f = self.__build_alloca(k_f)
-        self.__emit(IR.WriteLockSlot(lock_ptr=e_f, value=k_f))
+        e_f_result = IR.Reg(
+            name=self.__new_name(),
+            type_id=self.__type_ctx.alloc_pointer(TypeCtx.u64_id),
+        )
+        e_f = self.__emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
         self.__current_block = saved_block
         entry = self.__func.entry
-        frame_stmts = entry.stmts[-3:]
-        del entry.stmts[-3:]
+        frame_stmts = entry.stmts[-2:]
+        del entry.stmts[-2:]
         entry.stmts[0:0] = frame_stmts
         self.__frame_lock = (e_f, k_f)
         return (e_f, k_f)

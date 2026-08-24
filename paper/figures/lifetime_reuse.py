@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Heap-block and stack-frame key/lock lifecycle as a vector PDF."""
+"""Heap-block and stable frame-lock key lifecycle as a vector PDF."""
 from __future__ import annotations
 
 import os
@@ -59,16 +59,16 @@ def main() -> int:
           "header.lock = k'  (k' != k)\nold pointer fails live; new pointer passes",
           renewed)
 
-    ax.text(.12, .64, "frame slot l", ha="left", va="center",
+    ax.text(.12, .64, "stable slot l", ha="left", va="center",
             fontsize=11.5, fontweight="bold", color=ink)
     state(1.28, .25, 2.35, "frame entry",
-          "slot[l] = f\nescaped pointer carries f", active)
+          "slot[l] = k\nescaped pointer carries k", active)
     arrow(3.67, .64, 4.30, "return")
     state(4.34, .25, 2.12, "inactive frame",
           "slot[l] = SENTINEL\nescaped pointer fails live", inactive)
-    arrow(6.50, .64, 7.15, "re-entry", "--")
+    arrow(6.50, .64, 7.15, "slot reuse", "--")
     state(7.19, .25, 3.25, "fresh frame lifetime",
-          "slot[l] = f'  (f' != f)\nold pointer remains invalid",
+          "slot[l] = k'  (k' != k)\nold pointer remains invalid",
           renewed)
 
     fig.tight_layout(pad=.25)

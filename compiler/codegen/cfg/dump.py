@@ -123,6 +123,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             kind = "heap" if is_heap else "stack"
             return f"%{result.name} = gen_key {kind}  [{__type_str(result.type_id)}]"
 
+        case IR.AcquireFrameLock(result=result, key=key):
+            return f"%{result.name} = acquire_frame_lock {__dump_value(key)}"
+
         case IR.WriteLockSlot(lock_ptr=lock_ptr, value=value):
             return f"write_lock_slot {__dump_value(lock_ptr)}, {__dump_value(value)}"
 
