@@ -213,64 +213,52 @@ def main() -> int:
         return 1
 
     x = range(len(benches))
-    width = 0.26
+    time_width = 0.32
+    rss_width = 0.26
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.5),
                                    gridspec_kw={"width_ratios": [1.5, 1]})
 
     # left: time ratio vs C plain (baseline 1.0), log scale
-    ax1.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax1.bar([p - width for p in x], [1.0] * len(benches), width,
-            label="C plain (baseline 1.0)", color="#9ecae1")
-    ax1.bar(x, r_asan, width, label="C ASan (clang -O2 -fsanitize=address)",
-            color="#de2d26")
-    ax1.bar([p + width for p in x], r_an, width,
-            label=".an check (YIAN -O3, fat pointers)", color="#3182bd")
+    ax1.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.6,
+                label="C plain baseline (1.0)")
+    ax1.bar([p - time_width/2 for p in x], r_asan, time_width,
+            label="C ASan (clang -O2 -fsanitize=address)",
+            color="#bdbdbd", edgecolor="black", linewidth=.6, hatch="///")
+    ax1.bar([p + time_width/2 for p in x], r_an, time_width,
+            label="SecL check (-O3, fat pointers)", color="#4d4d4d",
+            edgecolor="black", linewidth=.6, hatch="xx")
     ax1.set_yscale("log")
     ax1.set_ylim(0.03, max(r_an) * 1.6)  # headroom for top annotations (nbody 27.79x)
     ax1.set_xticks(list(x))
     ax1.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
     ax1.set_ylabel("time ratio vs C plain (log scale)")
-    ax1.set_title("Time: 14-benchmark suite (frozen 2026-08-24)")
     for p, r in zip(x, r_an):
-        ax1.text(p + width, r * 1.12, f"{r:.2f}", ha="center", va="bottom",
-                 fontsize=6.5, color="#3182bd", fontweight="bold")
+        if r >= 2.0 or r <= 0.8:
+            ax1.text(p + time_width/2, r * 1.12, f"{r:.2f}",
+                     ha="center", va="bottom", fontsize=6.5,
+                     color="black", fontweight="bold")
     for p, r in zip(x, r_asan):
-        ax1.text(p - width, r * 1.12, f"{r:.2f}", ha="center", va="bottom",
-                 fontsize=6.5, color="#de2d26")
-    ax1.legend(fontsize=8, loc="upper left")
+        if r >= 2.0 or r <= 0.8:
+            ax1.text(p - time_width/2, r * 1.12, f"{r:.2f}",
+                     ha="center", va="bottom", fontsize=6.5,
+                     color="black")
+    ax1.legend(fontsize=8, loc="upper left", frameon=False)
 
     # right: peak RSS (MB), log scale
-    ax2.bar([p - width for p in x], plain_rss, width, label="C plain",
-            color="#9ecae1")
-    ax2.bar(x, asan_rss, width, label="C ASan", color="#de2d26")
-    ax2.bar([p + width for p in x], an_rss, width, label=".an check",
-            color="#3182bd")
+    ax2.bar([p - rss_width for p in x], plain_rss, rss_width, label="C plain",
+            color="#ffffff", edgecolor="black", linewidth=.6)
+    ax2.bar(x, asan_rss, rss_width, label="C ASan", color="#bdbdbd",
+            edgecolor="black", linewidth=.6, hatch="///")
+    ax2.bar([p + rss_width for p in x], an_rss, rss_width, label="SecL check",
+            color="#4d4d4d", edgecolor="black", linewidth=.6, hatch="xx")
     ax2.set_yscale("log")
     ax2.set_xticks(list(x))
     ax2.set_xticklabels(benches, rotation=45, ha="right", fontsize=8)
     ax2.set_ylabel("peak RSS (MB, log scale)")
-    ax2.set_title("Peak RSS: 14-benchmark suite")
-    ax2.legend(fontsize=8, loc="upper left")
+    ax2.legend(fontsize=8, loc="upper left", frameon=False)
 
-    fig.suptitle("ASan cross-compare: C plain vs C ASan vs .an check (fat pointers)\n"
-                 "geometric means (14 benchmarks): "
-                 "(i) C ASan/C plain 1.59x | (ii) C ASan/.an check 0.73x | "
-                 "(iii) .an check/C plain 2.19x",
-                 fontsize=12, fontweight="bold")
-
-    fig.text(0.01, 0.01,
-             "Data: paper/data/asan-results.md (frozen 2026-08-24; source "
-             "build/bench/asan-results.md; 5 runs/leg, taskset -c 4)\n"
-             "Compile: C plain/ASan `clang -O2 [-fsanitize=address] -lm`; .an check "
-             "`python3 -m compiler.main -O3 lib`; -O asymmetry C -O2 vs YIAN -O3.\n"
-             "ASAN_OPTIONS main: detect_leaks=0 (quarantine default on); binarytree "
-             "sensitivity (quarantine_size_mb=0): RSS 650.0 -> 168.9 MB (-74.0%).\n"
-             "Coverage differs: ASan detection is execution- and quarantine-sensitive; "
-             "SecL check enforces the language rules described in the paper.",
-             fontsize=7, color="gray")
-
-    fig.tight_layout(rect=[0, 0.10, 1, 0.90])
+    fig.tight_layout()
     fig.savefig(OUT_PATH, bbox_inches="tight")
     print(f"OK: {OUT_PATH} generated (14 benchmarks; assertions passed: "
           f"14 legs x3, ratios & geo means 1.59x/0.73x/2.19x consistent)")

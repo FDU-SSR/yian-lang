@@ -49,22 +49,20 @@ def main() -> int:
     labels = ["Spatial bounds\n(in_bounds)", "Temporal liveness\n(live)",
               "Heap-only delete\n(is_heap)", "Frame re-key"]
     values = [25, 10, 1, 2]
-    colors = ["#3182bd", "#6baed6", "#fdae6b", "#31a354"]
+    hatches = ["", "///", "xx", "..."]
     fig, ax = plt.subplots(figsize=(8.3, 3.9))
-    bars = ax.bar(labels, values, color=colors, edgecolor="#333333", linewidth=.7)
+    bars = ax.bar(labels, values, color="#f2f2f2", edgecolor="black", linewidth=.8)
+    for bar, hatch in zip(bars, hatches):
+        bar.set_hatch(hatch)
     for bar, value in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width()/2, value + .5, str(value),
                 ha="center", va="bottom", fontsize=11, fontweight="bold")
     ax.set_ylim(0, 29)
     ax.set_ylabel("CVE pairs (vulnerable + fixed)")
-    ax.set_title("Primary mechanism for 38 real-world CVEs")
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", color="#dddddd", linewidth=.6, zorder=0)
     ax.set_axisbelow(True)
-    fig.text(.01, .01,
-             "Each CVE contributes one vulnerable program that must trap and one fixed program that must complete; 76/76 passed.",
-             fontsize=7.5, color="#555555")
-    fig.tight_layout(rect=[0, .05, 1, 1])
+    fig.tight_layout()
     fig.savefig(OUT, bbox_inches="tight")
     print(f"OK: {OUT} generated; distribution {values}; 38 CVEs / 76 cases")
     return 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fig1_cost_decomposition.py — Three-state cost decomposition stacked bar chart
+"""fig1_cost_decomposition.py — Three-state cost decomposition grouped bar chart
 
 Output: paper/figures/fig1_cost_decomposition.pdf (or argv[1])
 
@@ -63,39 +63,33 @@ def main() -> int:
 
     x = list(range(len(names)))
 
-    colors_rep = "#9ecae1"
-    colors_chk = "#3182bd"
-    colors_total = "#fdae6b"
-    ok_color = "#31a354"
-    bad_color = "#de2d26"
+    colors_rep = "#ffffff"
+    colors_chk = "#bdbdbd"
+    colors_total = "#4d4d4d"
 
     width = .24
     ax.bar([i-width for i in x], rep, width=width, color=colors_rep,
-           edgecolor="black", linewidth=0.4, label="representation 02/01")
+           edgecolor="black", linewidth=0.7,
+           label="R: nocheck/raw (representation)")
     ax.bar(x, chk, width=width, color=colors_chk,
-           edgecolor="black", linewidth=0.4, label="checks 03/02")
+           edgecolor="black", linewidth=0.7, hatch="///",
+           label="C: check/nocheck (checks)")
     ax.bar([i+width for i in x], total, width=width, color=colors_total,
-           edgecolor="black", linewidth=0.4, label="total 03/01")
+           edgecolor="black", linewidth=0.7, hatch="xx",
+           label="E: check/raw (end-to-end)")
     for i in range(len(names)):
-        ok = total[i] <= THRESHOLD
-        bar_color = ok_color if ok else bad_color
         ax.text(i+width, total[i] * 1.04, f"{total[i]:.2f}x",
                 ha="center", va="bottom", fontsize=8,
-                color=bar_color, fontweight="bold")
+                color="black", fontweight="bold")
 
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=45, ha="right")
     ax.set_ylabel("median runtime ratio (log scale)")
-    ax.set_title("Three-state cost decomposition: representation (02/01), checks "
-                 "(03/02), and total (03/01)\n"
-                 f"14 benchmarks, total cost <= {THRESHOLD}x in {n_ok}/14 (green), "
-                 f"rest red",
-                 fontsize=11)
 
     # threshold line: 1.2x
-    ax.axhline(THRESHOLD, color="gray", linestyle="--", linewidth=1)
+    ax.axhline(THRESHOLD, color="black", linestyle="--", linewidth=1)
     ax.text(len(names) - 0.5, THRESHOLD, f"  {THRESHOLD}x",
-            ha="right", va="bottom", color="gray", fontsize=8)
+            ha="right", va="bottom", color="black", fontsize=8)
 
     ax.set_yscale("log")
     ax.set_ylim(.55, 4.7)
@@ -103,16 +97,9 @@ def main() -> int:
     ax.set_yticks(ticks)
     ax.set_yticklabels([f"{t:g}x" for t in ticks])
     ax.axhline(1, color="black", linewidth=0.8)
-    ax.legend(loc="upper left", fontsize=8, ncol=3)
+    ax.legend(loc="upper left", fontsize=8, ncol=3, frameon=False)
 
-    fig.text(0.01, 0.01,
-             "Data: paper/data/performance.csv (frozen snapshot of docs/performance.csv, "
-             "2026-08-24)\n"
-             "Method: three-state adjacent-session protocol (assessment.md sec 1.4); "
-             "the identity total = representation x checks is verified per benchmark",
-             fontsize=7, color="gray")
-
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    fig.tight_layout()
     fig.savefig(OUT_PATH, bbox_inches="tight")
     print(f"OK: {OUT_PATH} generated ({len(names)} benchmarks, "
           f"total cost <= {THRESHOLD}x: {n_ok}/14)")
