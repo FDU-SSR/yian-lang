@@ -78,7 +78,10 @@ def main() -> int:
            edgecolor="black", linewidth=0.7, hatch="xx",
            label="check/raw: end-to-end")
     for i in range(len(names)):
-        ax.annotate(f"{total[i]:.2f}x", xy=(i + width, total[i]),
+        # For sieve, the total bar is shorter than its adjacent check bar.
+        # Lift its label above the group while retaining the total-bar x center.
+        label_y = max(rep[i], chk[i], total[i]) if names[i] == "sieve" else total[i]
+        ax.annotate(f"{total[i]:.2f}x", xy=(i + width, label_y),
                     xytext=(0, 4), textcoords="offset points",
                     ha="center", va="bottom", fontsize=7.5,
                     color="black", fontweight="bold")
