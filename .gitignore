@@ -352,6 +352,8 @@ target
 #.idea/
 
 CLAUDE.md
+AGENTS.md
 .claude/*
+.omo/*
 a.out
 opencode.json
