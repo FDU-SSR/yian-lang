@@ -3,6 +3,7 @@ from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.drop import Drop;
+from std.core.clone import Clone;
 
 pub struct HashSet<T> {
     map: HashMap<T, void>,
@@ -23,7 +24,9 @@ impl<T> HashSet<T> {
 
     pub fn insert(value: T) -> bool {
         if self.map.contains(&value) {
-            value.drop();
+            // Duplicate: discard the incoming copy WITHOUT drop — it may be a
+            // caller-side shallow copy aliasing the stored element's storage
+            // (re-inserting the same variable is use-after-free otherwise).
             return false;
         }
         self.map.insert(value, void.new());
@@ -54,6 +57,12 @@ impl<T> HashSet<T> {
 impl<T> Drop for HashSet<T> {
     pub fn drop() {
         self.map.drop();
+    }
+}
+
+impl<T> Clone for HashSet<T> {
+    pub fn clone() -> Self {
+        Self(map = self.map.clone())
     }
 }
 

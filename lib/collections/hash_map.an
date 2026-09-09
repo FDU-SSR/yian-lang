@@ -4,6 +4,7 @@ from std.core.ops import Index;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.range import Range;
 from std.core.drop import Drop;
+from std.core.clone import Clone;
 
 pub struct HashMap<K, V> {
     buckets: Bucket<K, V>*,
@@ -71,9 +72,12 @@ impl<K, V> HashMap<K, V> {
                 self.growth_left -= 1
                 return;
             } elif ctrl_byte == h2 && self.buckets[index].key == key {
-                // The existing key remains in the map. Clean the unused incoming
-                // key and the value being replaced before storing the new value.
-                key.drop()
+                // Duplicate key: keep the stored key and replace only the value.
+                // The incoming key is discarded WITHOUT drop — it may be a
+                // caller-side shallow copy aliasing the stored key's storage,
+                // and dropping it would leave the stored key dangling
+                // (re-inserting the same variable is use-after-free). The value
+                // being replaced belongs to this map and is dropped.
                 self.buckets[index].value.drop()
                 self.buckets[index].value = value
                 return;
@@ -243,6 +247,20 @@ impl<K, V> Drop for HashMap<K, V> {
         self.size = 0;
         self.capacity = 0;
         self.growth_left = 0;
+    }
+}
+
+impl<K, V> Clone for HashMap<K, V> {
+    // Deep copy: rebuild a same-capacity table and clone every stored pair.
+    // Constraints (K: Hash + Clone, V: Clone) are resolved at the call site.
+    pub fn clone() -> Self {
+        let result = Self.with_capacity_and_hasher(self.capacity, self.hasher_builder);
+        for i in 0..self.capacity {
+            if self.ctrls[i] != 0b1111_1111 && self.ctrls[i] != 0b1000_0000 {
+                result.insert(self.buckets[i].key.clone(), self.buckets[i].value.clone());
+            }
+        }
+        result
     }
 }
 
