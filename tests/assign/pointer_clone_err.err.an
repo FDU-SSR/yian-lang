@@ -1,6 +1,0 @@
-// Raw pointers have no default Clone implementation.
-fn main() {
-    let value = 1;
-    let ptr: i32* = &value;
-    let copied = ptr.clone();
-}

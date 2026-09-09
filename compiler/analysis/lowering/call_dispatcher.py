@@ -40,15 +40,6 @@ class CallDispatcher:
         if lookup is None:
             raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
 
-        # Clone is resolved and dispatched as a normal trait method, but a raw
-        # pointer is not itself Clone merely because its pointee is. Requiring
-        # (*ptr).clone() keeps cloning a value distinct from copying a pointer.
-        receiver_ty = self.__ctx.type_ctx[receiver.type_id]
-        trait_ty = self.__ctx.type_ctx[lookup.impl.trait] if lookup.impl.trait is not None else None
-        is_std_clone = isinstance(trait_ty, Type.TraitType) and trait_ty.custom_def.name == "Clone" and trait_ty.custom_def.span.path.name == "clone.an" and "lib" in trait_ty.custom_def.span.path.parts
-        if isinstance(receiver_ty, Type.PointerType) and lookup.deref_count > 0 and is_std_clone:
-            raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
-
         # Static call site (Self.foo() / Type.foo()) requires a static method
         # and has no auto-deref (there is no instance to deref).
         if isinstance(receiver, HIR.Ty):
