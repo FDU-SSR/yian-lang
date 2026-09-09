@@ -13,5 +13,4 @@ fn main() {
     let m: Meters = 5
     assert sizeof(Meters) == sizeof(i64): "imported simple alias"
     assert sizeof(Ptr<i32>) == sizeof(WP): "imported generic alias"
-    return 0
 }
