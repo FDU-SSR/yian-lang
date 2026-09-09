@@ -273,7 +273,7 @@ class CallDispatcher:
                 f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
                 node.span,
             )
-        # t2 三结构:slice 4 字段 {data, lock_ptr, key, size}——长度字段下标 3。
+        # 分级指针表示:slice 4 字段 {data, lock_ptr, key, size}——长度字段下标 3。
         return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_str_from_parts(self, node: AST.Call) -> HIR.Expr:
@@ -329,7 +329,7 @@ class CallDispatcher:
                 f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
                 node.span,
             )
-        # t2 三结构:str 与 slice 同 4 字段——长度字段下标 3。
+        # 分级指针表示:str 与 slice 同 4 字段——长度字段下标 3。
         return HIR.TupleAccess(span=node.span, receiver=s, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:

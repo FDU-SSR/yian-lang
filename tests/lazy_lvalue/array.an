@@ -1,4 +1,4 @@
-// lazy-lvalue-fat:裸数组 arr[i] 读写(含复合赋值与多维)+ 越界检查。
+// 裸数组 arr[i] 读写(含复合赋值与多维)+ 越界检查。
 //
 // Expected output: 0
 

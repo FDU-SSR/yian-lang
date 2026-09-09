@@ -1,4 +1,4 @@
-// lazy-lvalue-fat:裸数组越界访问运行时陷阱(Exit code -4)。
+// 裸数组越界访问运行时陷阱(Exit code -4)。
 //
 // Expected runtime error: Index out of bounds
 

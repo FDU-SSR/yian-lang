@@ -1,7 +1,7 @@
-// Fat-pointer double-free negative test (t9 建立的负例)
+// Fat-pointer double-free negative test (时序机制 建立的负例)
 //
 // 第二次 delete p 的四前提检查失败:首次 delete 已写锁槽 SENTINEL,live 键比较
-// 失败 → llvm.trap → SIGILL → Exit code -4(t8 运行期 trap 语义)。
+// 失败 → llvm.trap → SIGILL → Exit code -4(LLVM 层 运行期 trap 语义)。
 
 fn main() {
     let p: i32* = dyn[2] i32;

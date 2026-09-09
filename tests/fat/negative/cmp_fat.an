@@ -1,4 +1,4 @@
-// Fat-pointer comparison field-based semantics (t10, 规则 3.4.1-3.4.2, §7.6 风险 3)
+// Fat-pointer comparison field-based semantics (指针比较, 规则 3.4.1-3.4.2, §7.6 风险 3)
 //
 // 1. Cross-object == is ALLOWED — equality compares the (data, index) pair
 // 2. Same-object ordered comparison — compares by index after data-equal check

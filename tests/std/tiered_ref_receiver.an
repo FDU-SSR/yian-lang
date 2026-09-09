@@ -1,7 +1,6 @@
-// T& receiver method-body coverage — match self payload + scalar forms
-// (method-self-ref t7).
+// T& receiver method-body coverage — match self payload + scalar forms.
 //
-// After self became `T&` (t2), a method body whose receiver is a live
+// A method body whose receiver is a live `T&`
 // reference must still support:
 //   - `match self` with payload binding that asserts the bound *value*
 //     (guards against payload-offset misreads silently picking the wrong
@@ -12,10 +11,8 @@
 //   - chained method calls through the T& receiver (auto-deref).
 //
 // Array access through T& receivers (Index trait / ptr() / as_slice()) lives
-// in the sibling tiered_ref_array_receiver.an — the raw-mode compile state
-// has a pre-existing t1-t6 cast regression for array-typed refs (documented
-// in .omo/evidence/method-self-ref/task-7.txt), so the array forms are kept
-// in their own file that targets the fat/nocheck states.
+// in the sibling tiered_ref_array_receiver.an. The array forms remain in a
+// separate file because they target the fat/nocheck states.
 //
 // Pure asserts, no stdout (success test, no .ans).
 //

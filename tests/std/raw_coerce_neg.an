@@ -4,7 +4,7 @@
 //   fat 模式(默认):tiered coerce 合法,编译运行 exit 0、无输出(success 用例,
 //     被 run_tests.py 全量回归覆盖)。
 //   raw 模式(--raw-pointers):两形态均被类型检查拒绝,报错含 "from_raw_parts"
-//     (t2 守卫;scripts/run_raw_tests.py RAW_NEG_TESTS 硬断言该子串)。
+//     （scripts/run_raw_tests.py 的 RAW_NEG_TESTS 会硬断言该子串）。
 // 编译在首个违规行处报错即停(直赋在前)。
 //
 // Expected output: 0

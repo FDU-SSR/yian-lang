@@ -123,7 +123,7 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "Skip emission of CFG-level fat-pointer access checks (CheckSafeAccess/"
             "CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/CheckDelete) while "
             "keeping the 40-byte fat-pointer representation, lock slots and frame locks. "
-            "评测专用:关闭检查仅为构造无检查基线;生产环境不应禁用检查."
+            "Diagnostic mode only; disabling checks removes the memory-safety guarantee."
         ),
     )
     parser.add_argument(
@@ -132,8 +132,7 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help=(
             "Use bare 8-byte pointers (no checks, no lock slots, no frame locks) across "
-            "CFG and LLVM layers. 评测专用:裸指针仅为性能评测基准,不提供任何内存安全保证;"
-            "生产环境不应使用."
+            "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
         ),
     )
     return parser.parse_args(argv)

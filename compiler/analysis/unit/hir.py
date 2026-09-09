@@ -263,7 +263,7 @@ class ArrayAccess:
 class SliceAccess:
     """T[] 切片元素访问(内建路径, 不走 Index trait;性能优化, 检查在 CFG 层)。
 
-    Fix B (bench-ptr-to-view todo 4):T[] 整数索引内建路径,镜像 T[N]
+    T[] 整数索引采用内建路径，镜像 T[N]
     ArrayAccess——消除热循环里 index→ptr→as_struct 三层方法调用链
     (emit_object 无优化时逐次全栈调用)。raw 下 T[] 为 {data,size} 2 字段,
     CFG 层只发射 extract data + GEP,零检查(保持①raw 零安全基线)。

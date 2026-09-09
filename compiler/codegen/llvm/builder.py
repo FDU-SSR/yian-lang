@@ -61,13 +61,13 @@ class LLBuilder:
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(type_id))))  # type: ignore
 
     # ------------------------------------------------------------------
-    # fat pointer helpers (5 字段胖指针值层下降,t8)
+    # fat pointer helpers (5 字段胖指针值层下降,LLVM 层)
     # ------------------------------------------------------------------
 
     def __is_fat(self, ll_val: LLValue) -> bool:
         """判定 LLVM 值是否已是胖结构聚合(PointerType 40B / SliceType 32B / RefType 24B)。
 
-        t2 三结构统一:三个指针族类型的 LLVM 值形态为 LiteralStructType 即视为胖值;
+        分级指针表示统一:三个指针族类型的 LLVM 值形态为 LiteralStructType 即视为胖值;
         raw 模式无元数据(裸 T* / {T*, u64} / 裸 T*),恒 False。从 slice/str 提取的
         裸 8B 指针(type_id 为 PointerType)按 LLVM 值形态(指针而非结构)不误判。
         """
@@ -76,14 +76,14 @@ class LLBuilder:
         ty = self.__type_ctx[ll_val.type_id]
         if isinstance(ty, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
             # 胖值须为多字段结构(40B/32B/24B);空结构 `{}`(ZST 擦除,ref/ptr-to-ZST
-            # 零运行时信息)按非胖处理——对它的任意字段操作均无意义(t6 修)。
+            # 零运行时信息)按非胖处理——对它的任意字段操作均无意义(ZST 特例)。
             return isinstance(ll_val.ir_val.type, ir.LiteralStructType) and len(ll_val.ir_val.type.elements) > 0  # type: ignore
         return False
 
     def __is_fat_type(self, type_id: int) -> bool:
-        """类型层胖指针判定(t3 按 type_id 分派):PointerType(pointee 非 ZST)
+        """类型层胖指针判定(分级指针 按 type_id 分派):PointerType(pointee 非 ZST)
         5 字段 / SliceType·StrType 4 字段 / RefType 3 字段,均为胖结构值;
-        raw 模式(t1)恒 False,指针一律按裸 8B 处理。与 CFG 层 __is_fat_pointer
+        raw 模式恒 False,指针一律按裸 8B 处理。与 CFG 层 __is_fat_pointer
         对应(后者专指 PointerType 的全检查路径)。
         """
         if self.__raw_pointers:
@@ -103,7 +103,7 @@ class LLBuilder:
         return LLValue(field_type, ir_val)  # type: ignore
 
     def __build_fat(self, data: LLValue, lock_ptr: LLValue, key: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
-        """按结构构造胖值(t2 三结构):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
+        """按结构构造胖值(分级指针表示):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
         SliceType 4 字段 ⟨data,lock,key,size⟩(删 index)/ RefType 3 字段 ⟨data,lock,key⟩。
         """
         ty = self.__type_ctx[type_id]
@@ -153,7 +153,7 @@ class LLBuilder:
         """定义 17 地址折算:有效地址 = data + index·|T|,一次 GEP(检查与取数共用)。
 
         对 fat 值提取 data/index 字段,bitcast 到 T* 后按元素索引 GEP;对裸 8B
-        指针直接使用(索引恒 0 语义)。T&(t3)无 index 字段,恒指单个元素——
+        指针直接使用(索引恒 0 语义)。T&无 index 字段,恒指单个元素——
         有效地址即 data。O-1 无回摆由检查(well-formed)保障。
         """
         if self.__is_fat(ll_val):
@@ -332,7 +332,7 @@ class LLBuilder:
     def var_ptr(self, symbol_id: int, result: str, frame_lock_ptr: LLValue | None = None, frame_key: LLValue | None = None, raw: bool = False) -> LLValue:
         alloca_ptr = self.__func.get_var_ptr(symbol_id)
         if raw or not self.__is_fat_type(alloca_ptr.type_id):
-            # lazy-lvalue-fat(todo1):裸取址(未取址左值)仅返回栈地址;raw 模式下
+            # 惰性左值路径:裸取址(未取址左值)仅返回栈地址;raw 模式下
             # __is_fat_type 恒 False(既有行为),此处同样裸返回。
             result_val = alloca_ptr
         else:
@@ -455,7 +455,7 @@ class LLBuilder:
         casted = self.__builder.bitcast(ptr.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
         self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
 
-    # -- fat-pointer mechanism nodes (t8) --
+    # -- fat-pointer mechanism nodes (LLVM 层) --
 
     def gen_key(self, is_heap: bool, result: str) -> None:
         self.__func.set_reg(result, self.__gen_key_value(is_heap))
@@ -531,7 +531,7 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, nonempty), "sref")
 
     def check_ref_access(self, ptr: LLValue) -> None:
-        """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers t3)。
+        """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers)。
 
         引用无 index/size(3 字段 ⟨data,lock_ptr,key⟩),无越界概念;
         live = 锁槽键比较(定义 8,含 null 短路)。live 失败 → llvm.trap。
@@ -544,7 +544,7 @@ class LLBuilder:
         self.__emit_check(cond, "ref")
 
     def assume(self, cond: LLValue) -> None:
-        """llvm.assume(cond):优化器提示 cond 恒真(perf P1,CFG Assume 节点)。
+        """llvm.assume(cond):优化器提示 cond 恒真(range 循环约束,CFG Assume 节点)。
 
         只承载编译期可证纯数据谓词(如 range 循环契约 0 ≤ i < n,u64 同型);
         llvm.assume 无运行期代码,仅供 ConstraintElimination 等优化器消除
@@ -565,7 +565,7 @@ class LLBuilder:
         语义 = 极大无符号下标)u64 形式 trap(收紧,对齐 u64 索引语义——sext
         形式把其误解为负数,子切片 base.index ≥ |o| 时放行)。u64 同型使
         ConstraintElimination 可关联循环/分支约束消除本检查(O-1 由回绕检测
-        落地,无需宽整数)。t8 发射。
+        落地,无需宽整数)。LLVM 层 发射。
         """
         if not self.__is_fat(base):
             return
@@ -579,14 +579,14 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue) -> None:
-        """C3 合并检查:ElementArith→InBounds→SafeAccess 合取谓词(perf-optimization todo 3)。
+        """合并检查:ElementArith→InBounds→SafeAccess 合取谓词(检查合并优化)。
 
         派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
         良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
         (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
         SafeAccess 的 live 项;in_bounds(f,1) 对重锚定字段指针恒真、
         live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项。
-        t8 发射。
+        LLVM 层 发射。
         """
         if not (self.__is_fat(base) and self.__is_fat(ptr)):
             return
@@ -612,7 +612,7 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "eacc")
 
     def check_raw_bounds(self, index: LLValue, length: int) -> None:
-        """lazy-lvalue-fat(todo1)裸数组越界检查:0 ≤ index < length(编译期长度)。
+        """惰性左值路径裸数组越界检查:0 ≤ index < length(编译期长度)。
 
         未取址裸数组元素访问无胖元数据,单 unsigned 比较即达 fat 路径
         CheckElementArith + CheckSafeAccess 的组合越界语义(索引已 coerce u64)。
@@ -653,7 +653,7 @@ class LLBuilder:
     def check_delete(self, ptr: LLValue) -> None:
         """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
 
-        del-view(todo1):is_raw 的 index 分量按类型分派——PointerType 5 字段
+        视图释放路径:is_raw 的 index 分量按类型分派——PointerType 5 字段
         (FAT_INDEX=3 为 index)保留 index==0 检查;SliceType/StrType 4 字段
         (下标 3 为 size)、RefType 3 字段均无 index 字段,分量恒真跳过,仅查
         data==lock_ptr+H。
@@ -954,7 +954,7 @@ class LLBuilder:
                 # both src and dst are ptr-to-ZST — no real cast, just undef
                 ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
             elif raw:
-                # lazy-lvalue-fat(todo1)裸强转:位转换到裸目标指针。normal 模式下
+                # 惰性左值路径裸强转:位转换到裸目标指针。normal 模式下
                 # *T 的 LLVM 型是 5 字段聚合,须手动取 pointee 的裸指针型
                 # (裸数组退化 T[N]*→T* 的纯地址重贴)。
                 pointee_ll = self.__ll_type_ctx.get_ll_type(dst.pointee_type).ir_type
@@ -986,7 +986,7 @@ class LLBuilder:
             ):
                 # 裸指针源(如 rvalue 数组临时量的 Alloca 结果):T[m]* → T* 退化同样
                 # 合成胖值(裸指针 data 即基址 = 首元素地址,锁用字面量锁槽,同 __promote_fat)。
-                # lazy-lvalue-fat(todo1):raw 强转(未取址裸数组退化)位转换,不合成胖值。
+                # 惰性左值路径:raw 强转(未取址裸数组退化)位转换,不合成胖值。
                 arr_ty = self.__type_ctx[src.pointee_type]
                 assert isinstance(arr_ty, Type.ArrayType)
                 if arr_ty.element_type == dst.pointee_type:
@@ -1005,7 +1005,7 @@ class LLBuilder:
             else:
                 ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, Type.RefType) and isinstance(dst, Type.RefType):
-            # T& → T&: 同为 3 字段布局(t2),identity 重贴。
+            # T& → T&: 同为 3 字段布局(表示层),identity 重贴。
             ir_val = value.ir_val
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.RefType):
             # T* → T&: 有效地址折入 index·|T|(ref 无 index 字段),取 ⟨data', lock, key⟩。
@@ -1167,7 +1167,7 @@ class LLBuilder:
     def __slice_ptr_fat(self, base: LLValue, ptr_type_id: int) -> LLValue:
         """把 4 字段 slice/str 的 data 合成为 5 字段胖指针 ⟨data, lock_ptr, key, 0, size⟩。
 
-        t2 三结构:slice/str 自身携带真实 lock_ptr/key(size 下标 3),直接继承
+        分级指针表示:slice/str 自身携带真实 lock_ptr/key(size 下标 3),直接继承
         (锁继承)——这是 T[]→T* 派生的锁继承来源。
         """
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
@@ -1237,7 +1237,7 @@ class LLBuilder:
     # -- aggregate construct --
 
     def __synthesize_fat_value(self, value: LLValue, size: LLValue) -> LLValue:
-        """把裸 8B 指针值合成 5 字段胖指针 ⟨data, e_f, k_f, 0, size⟩(t9 §1.6)。
+        """把裸 8B 指针值合成 5 字段胖指针 ⟨data, e_f, k_f, 0, size⟩(时序机制 §1.6)。
 
         用于 slice/str 边界:从 16B slice 取出的 ptr 字段是裸 8B 指针,落入
         {T*, u64} 形态聚合(SliceStruct 等)时补全元数据。锁用全局字面量锁槽
@@ -1259,7 +1259,7 @@ class LLBuilder:
             return self.undef(type_id)
         type_def = self.__type_ctx[type_id]
         if isinstance(type_def, (Type.SliceType, Type.StrType)):
-            # t2 三结构:slice/str 4 字段 {data, lock_ptr, key, size}(raw 2 字段)。
+            # 分级指针表示:slice/str 4 字段 {data, lock_ptr, key, size}(raw 2 字段)。
             # HIR 供给 {ptr, len}:正常模式 data = ptr 有效地址,lock/key 继承自
             # ptr 的胖元数据(T* coerce 构造,锁继承),size = 显式 len。
             elem_type = type_def.element_type if isinstance(type_def, Type.SliceType) else self.__type_ctx.u8_id
@@ -1462,7 +1462,7 @@ class LLBuilder:
 
         The YIAN ``__memcpy`` accepts any pointer pointee types — bitcast
         both to ``i8*`` for the C ``memcpy`` intrinsic.  Fat pointers are
-        unwrapped to their ``data`` field first (t8).
+        unwrapped to their ``data`` field first (LLVM 层).
         """
         i8_ptr_type = ir.PointerType(ir.IntType(8))
         dest_raw = LLValue(
@@ -1482,7 +1482,7 @@ class LLBuilder:
             fd, buf_ptr, buf_len,
         ])
         # construct str:4 字段 {data, lock_ptr, key, size}(raw 2 字段 {data, size});
-        # 正常模式 lock/key 继承自输入缓冲区 buf(t2 锁继承)。
+        # 正常模式 lock/key 继承自输入缓冲区 buf(继承锁元数据)。
         str_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.str_id).ir_type
         undef = ir.Constant(str_ll_type, ir.Undefined)  # type: ignore
         ir_val = self.__builder.insert_value(undef, buf_ptr.ir_val, 0)  # type: ignore
@@ -1685,7 +1685,7 @@ class LLBuilder:
         return self.__builder.fcmp_ordered(predicate, lhs, rhs)  # type: ignore
 
     def __fat_value_pair(self, v: ir.Value) -> tuple[ir.Value, ir.Value]:
-        """ir.Value 级别的 (data, second) 字段对(t2 三结构分派)。
+        """ir.Value 级别的 (data, second) 字段对(分级指针表示分派)。
 
         第二字段按结构:5 字段指针取 index、4 字段 slice 取 size、3 字段 ref 取 key、
         raw 2 字段 slice 取 size;裸指针按 (自身, 0)。

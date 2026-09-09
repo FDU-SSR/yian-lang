@@ -1,4 +1,4 @@
-// lazy-lvalue-fat:方法 self receiver 保持胖指针传参(隐式取址正常开销)。
+// 方法 self receiver 保持胖指针传参(隐式取址正常开销)。
 //
 // Expected output: 0
 

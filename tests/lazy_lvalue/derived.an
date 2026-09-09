@@ -1,4 +1,4 @@
-// lazy-lvalue-fat:胖派生左值(p.a、*p、胖基址 arr[i])保持胖指针 + 检查。
+// 胖派生左值(p.a、*p、胖基址 arr[i])保持胖指针 + 检查。
 //
 // Expected output: 0
 

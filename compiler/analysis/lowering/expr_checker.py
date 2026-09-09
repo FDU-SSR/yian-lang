@@ -329,9 +329,9 @@ class ExprChecker:
                 # `T[N]*` → `T*`: re-anchor the pointee from `T[N]` to `T`.
                 return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
 
-        # Tiered-pointer degradation (t1, docs/security.md §tiered-pointers):
+        # Tiered-pointer degradation (docs/security.md §tiered-pointers):
         # explicit annotation downgrades along T* → T[] → T&. The value-level
-        # representation (dropping index/size fields) is t2's job — here we
+        # representation (dropping index/size fields) is codegen's job — here we
         # relabel via BitCast and let codegen re-shape the value.
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
             # Raw pointer mode: a bare `T*` carries no length, so downgrading it

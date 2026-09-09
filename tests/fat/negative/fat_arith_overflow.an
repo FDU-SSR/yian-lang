@@ -1,4 +1,4 @@
-// Fat-pointer arithmetic overflow negative test (t6, 规则 3.3.1-3.3.2)
+// Fat-pointer arithmetic overflow negative test (胖指针表示, 规则 3.3.1-3.3.2)
 //
 // CheckElementArith(定义 13):0 ≤ index + offset ≤ size。
 // p + 5:index 0 + 5 > size 4 → 良构失败 → llvm.trap → Exit code -4。

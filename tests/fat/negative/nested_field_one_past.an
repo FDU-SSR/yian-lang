@@ -1,8 +1,8 @@
-// Fat-pointer nested derived chain one-past-end negative test (C3 复核, 规则 3.5.2)
+// Fat-pointer nested derived chain one-past-end negative test (检查合并 复核, 规则 3.5.2)
 //
 // (p + 2).inner.v: 先对 p 做 one-past-end 算术(elementptr p, 2,index == size,
 // 定义 13 允许),再沿嵌套 FieldPtr 链取字段。in_bounds(elem,1) 必须在该链
-// 的任何访问之前 trap(C3 挂起义务在嵌套派生链上提前补发)——OOB 读不得先于
+// 的任何访问之前 trap(检查合并 挂起义务在嵌套派生链上提前补发)——OOB 读不得先于
 // trap 执行。期望 Exit code -4。
 
 struct Inner { v: i32 }

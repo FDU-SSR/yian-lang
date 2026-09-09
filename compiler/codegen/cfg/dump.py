@@ -139,7 +139,7 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
 
         case IR.CheckRefAccess(ptr=ptr):
-            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers t3)"
+            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
 
         case IR.CheckElementArith(base=base, offset=offset):
             return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
@@ -147,14 +147,14 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
             return (
                 f"check_element_access {__dump_value(base)}, {__dump_value(offset)}"
-                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, C3)"
+                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, 检查合并)"
             )
 
         case IR.CheckRawBounds(index=index, length=length):
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 
         case IR.Assume(cond=cond):
-            return f"assume {__dump_value(cond)}  (优化器提示, P1)"
+            return f"assume {__dump_value(cond)}  (优化器提示, 范围约束优化)"
 
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
             return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.3.3)"

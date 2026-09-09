@@ -1,4 +1,4 @@
-// Tiered-pointer t3 (T& live-only check): a dangling T& traps at runtime.
+// Tiered-pointer 分级指针 (T& live-only check): a dangling T& traps at runtime.
 //
 // The T& is derived from a slice element (s[0], i.e. T[]→T*→T&). The slice
 // view inherits the real heap lock of the `dyn` backing block; after `del p`

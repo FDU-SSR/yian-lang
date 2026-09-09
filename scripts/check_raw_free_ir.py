@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """Regression check: raw-pointer mode must emit ``free`` calls on ``del``.
 
-C2 of plan ``raw-del-free-fix``. Verifies *emission*, not O3 survival:
+This check verifies *emission*, not O3 survival:
 
   1. Compile ``tests/fat/positive/raw_compat_del.an`` with
      ``-t ll --raw-pointers`` (zero-optimized LLVM IR).
   2. Count ``call.*free`` occurrences.
   3. Require >= 1: otherwise print ``RAW free emission check FAILED: 0 free calls``
      and exit non-zero.
-
-TDD usage: must FAIL (0 free) on the buggy HEAD (where the compiler never
-emits free for raw-mode ``del``), then PASS after the fix.
 
 Usage:
     python3 scripts/check_raw_free_ir.py

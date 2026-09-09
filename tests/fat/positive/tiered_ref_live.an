@@ -1,4 +1,4 @@
-// Tiered-pointer t3 (T& live-only checks): a live T& reference can be
+// Tiered-pointer 分级指针 (T& live-only checks): a live T& reference can be
 // deref-read and deref-written. Covers: T& function parameter deref
 // (read/write), field access through a T& (auto-deref), field write-back,
 // and a T& derived from a slice element (real lock inherited).

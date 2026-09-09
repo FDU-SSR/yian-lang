@@ -1,6 +1,6 @@
-// Tiered-pointer type system (t1): the T& reference type, the coerce chain
+// Tiered-pointer type system (基础路径): the T& reference type, the coerce chain
 // T*→T[]→T& (triggered by explicit annotations). `&x` still produces T*;
-// the downgrades are type-layer operations (value shaping lands in t2).
+// the downgrades are type-layer operations (value shaping lands in 表示层).
 // (NULL 三档兼容节已删除:NULL 字面量与 NullPtrType 已随迁移移除)
 //
 // Expected output: 0

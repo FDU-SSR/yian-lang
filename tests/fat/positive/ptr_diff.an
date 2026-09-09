@@ -1,5 +1,5 @@
 // Test pointer subtraction: ptr - ptr → i64 element offset
-// (定型规则 8.1.9;t8 值层 PtrDiff 结果 i64,sdiv 计算)
+// (定型规则 8.1.9;LLVM 层 值层 PtrDiff 结果 i64,sdiv 计算)
 //
 // Expected output: 0
 

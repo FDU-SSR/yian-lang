@@ -154,7 +154,7 @@ class LLModule:
         assert self.__yian_main_type_id is not None
         return self.__yian_main_type_id
 
-    # -- fat-pointer mechanism globals (t8) --
+    # -- fat-pointer mechanism globals (LLVM 层) --
 
     def get_key_counter(self, is_heap: bool) -> ir.GlobalVariable:
         """Gen 单调计数器全局(定义 10):堆/栈各一个 63 位计数,键 = 最高位标志拼接计数。

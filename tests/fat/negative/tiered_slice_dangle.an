@@ -1,6 +1,6 @@
-// Tiered-pointer t3 (T[] 真锁): a slice view whose backing is freed traps
+// Tiered-pointer 分级指针 (T[] 真锁): a slice view whose backing is freed traps
 // on access. The slice carries the real heap lock of the `dyn` backing
-// (t2 真锁, not lit-lock); after `del p` the block-header lock slot is
+// (表示层 真锁, not lit-lock); after `del p` the block-header lock slot is
 // SENTINEL (规则 3.6.2 动作①). `s[0]` derives a T* (lock-inherited) and the
 // deref live check fails → llvm.trap → SIGILL → Exit code -4.
 //

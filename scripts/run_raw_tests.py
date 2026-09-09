@@ -13,7 +13,7 @@ which cases apply:
 
   RAW_TESTS       must pass (exit 0) in every state.
   RAW_NEG_TESTS   must FAIL to compile in the raw state; the error output must
-                  contain "from_raw_parts" (the t2 coerce guard) — enforced as
+                  contain "from_raw_parts" (the raw-mode coerce guard) — enforced as
                   a hard assert via TestCase.expected_substring, not just a
                   non-zero exit.  In the fat state these are success tests
                   (compile + run, exit 0).

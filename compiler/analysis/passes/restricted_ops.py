@@ -78,11 +78,6 @@ def __is_test_harness_file(path: Path) -> bool:
     return any(part == "tests" and parts[i + 1] == "std" for i, part in enumerate(parts[:-1]))
 
 
-def __is_bench_file(path: Path) -> bool:
-    """A file is part of the benchmark suite iff its resolved path contains a ``bench`` component."""
-    return "bench" in path.resolve().parts
-
-
 class RestrictedOpsChecker:
     """Scan one program for restricted constructs, reporting the first hit."""
 
@@ -206,7 +201,7 @@ def check_restricted_ops(programs: list[AST.Program], src_files: list[Path]) -> 
     any non-stdlib program.  Standard-library programs are skipped.
     """
     for src_file, program in zip(src_files, programs):
-        if __is_stdlib_file(src_file) or __is_test_harness_file(src_file) or __is_bench_file(src_file):
+        if __is_stdlib_file(src_file) or __is_test_harness_file(src_file):
             continue
         checker = RestrictedOpsChecker()
         checker.check(program)

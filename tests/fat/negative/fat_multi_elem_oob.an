@@ -1,4 +1,4 @@
-// Fat-pointer multi-element out-of-bounds access negative test (t6, 规则 3.2.1)
+// Fat-pointer multi-element out-of-bounds access negative test (胖指针表示, 规则 3.2.1)
 //
 // Pair 为 2 元素 struct;dyn[2] Pair 合法索引 0、1。
 // p[1].y 界内访问先填值;p[2].y 越过分配(2 个元素)访问,

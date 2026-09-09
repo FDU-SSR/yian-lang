@@ -1,4 +1,4 @@
-// Fat-pointer cross-object difference negative test (t6, 规则 3.3.3)
+// Fat-pointer cross-object difference negative test (胖指针表示, 规则 3.3.3)
 //
 // CheckPtrDiff 前提:data 相等 + 良构 + 无回绕。
 // a、b 是两个独立 dyn 分配 → data 不等 → 前提失败 → llvm.trap → Exit code -4。

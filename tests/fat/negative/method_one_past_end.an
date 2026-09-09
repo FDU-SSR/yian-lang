@@ -1,4 +1,4 @@
-// Fat-pointer one-past-end METHOD CALL negative test (F2 安全语义固化)
+// Fat-pointer one-past-end METHOD CALL negative test (安全修复 安全语义固化)
 //
 // p + 4 是良构的 one-past-end 指针(index == size,定义 13 允许);对其调用方法
 // (impl i32 的 get_val 内 *self)等价于解引用 one-past-end 指针 → 触发
@@ -6,8 +6,8 @@
 // → 失败 → trap(期望 Exit code -4)。
 //
 // 背景:方法签名 receiver 折算为 T&(24B)后,方法体内 self 访问仅剩 CheckRefAccess
-// (live),in_bounds 语义随 index/size 字段折算删除而丢失(t4→F2 修复前此处
-// 不 trap,可越界读);F2 修复在调用侧折算前对 T* receiver 恢复 CheckInBounds。
+// (live),in_bounds 语义随 index/size 字段折算删除而丢失(调用折算→安全修复 修复前此处
+// 不 trap,可越界读);安全修复 修复在调用侧折算前对 T* receiver 恢复 CheckInBounds。
 
 impl i32 {
     pub fn get_val() -> i32 {

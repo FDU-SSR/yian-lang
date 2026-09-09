@@ -1,4 +1,4 @@
-// Fat-pointer one-past-end WRITE negative test (t6, 规则 3.2.2)
+// Fat-pointer one-past-end WRITE negative test (胖指针表示, 规则 3.2.2)
 //
 // 与 fat_oob_read_one_past.an 同构造,方向为写:*end = 99 触发
 // safe_access(p,1) = live(p) ∧ in_bounds(p,1),one-past-end 的

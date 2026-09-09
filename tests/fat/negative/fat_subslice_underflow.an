@@ -1,4 +1,4 @@
-// Fat-pointer arithmetic underflow on a sub-slice (negative test, perf todo 3, Metis H2)
+// Fat-pointer arithmetic underflow on a sub-slice (negative test, 指针算术检查优化, Metis H2)
 //
 // CheckElementArith(定义 13):0 ≤ index + offset ≤ size,u64 同型化(回绕检测
 // + 上界比较)。子切片 q = p + 2(base.index = 2)再 q - 1:offset = u64(-1) =

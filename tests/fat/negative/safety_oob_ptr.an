@@ -3,7 +3,7 @@
 // Covers the PtrDiff and Delete check insertion points (gate 2): pointer
 // difference (q - p) and delete (del p) both fire their CFG checks here.
 // The final out-of-bounds write r[4] traps at runtime (in_bounds fails:
-// index 4 + 1 > size 4). Runtime trap assertion (Exit code -4) is the t8 gate.
+// index 4 + 1 > size 4). Runtime trap assertion (Exit code -4) is the LLVM 层 gate.
 
 fn main() {
     let p: i32* = dyn[4] i32

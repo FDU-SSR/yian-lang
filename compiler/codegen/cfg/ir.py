@@ -12,7 +12,7 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 # SENTINEL(全 1 字,定义 6 编码约定)与 Gen 单调计数器 KeyGen(定义 10)等机制
 # 常量、块头布局 BlockHeader(定义 7)、帧锁 FrameLock(§2.6、规则 3.7.1-3.7.2)
 # 与谓词 is_heap / live / is_raw(定义 9 / 8 / §2.5)定义于 lockmech.py,
-# 此处重导出供 CFG 层机制节点(t7 检查插入、t8 值层下降)引用。
+# 此处重导出供 CFG 层机制节点(CFG 层插入检查、LLVM 层 值层下降)引用。
 #
 #   - SENTINEL:释放 `delete p` 写块头锁槽、帧退出写帧锁槽的哨兵值
 #     (规则 3.6.2 / 3.7.2),全部返回路径。
@@ -21,8 +21,7 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 #   - FrameLock:每帧一个活动锁槽,帧进入 re-key k_f ← Gen(),帧退出写 SENTINEL。
 #   - 谓词:is_heap 纯位判定 / live 锁槽键比较含 null 短路 / is_raw 纯字段检查。
 #
-# 本 todo(t9)只交付机制代码存在性;CFG 检查插入属 t7,LLVM 值层下降与
-# 运行期 trap 属 t8,本文件不承载检查节点。
+# 本节定义机制常量；CFG 层负责插入检查，LLVM 层负责值下降与运行期 trap。
 # ---------------------------------------------------------------------------
 from compiler.codegen.cfg.lockmech import (
     BlockHeader,
@@ -86,13 +85,13 @@ class VarPtr:
     data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(§2.6、规则 3.7.1,
     函数入口实体化的寄存器值);index = 0;size = 1(取址总是指向单个元素
     ——标量元素类型 T、数组元素类型 T[m])。
-    raw 模式(t2):无帧锁,frame_lock_ptr/frame_key 均为 None(裸 8B 指针)。
+    raw 模式:无帧锁,frame_lock_ptr/frame_key 均为 None(裸 8B 指针)。
     """
     result: Reg
     var_ref: VarRef
     frame_lock_ptr: Value | None  # e_f:独立稳定影子栈的 u64 槽位地址;raw 模式为 None
     frame_key: Value | None       # k_f:帧键(规则 3.7.1 帧进入 re-key);raw 模式为 None
-    raw: bool = False             # lazy-lvalue-fat(todo1):裸取址(未取址左值)仅返回栈地址,不合成 5 字段
+    raw: bool = False             # 惰性左值路径:裸取址(未取址左值)仅返回栈地址,不合成 5 字段
 
 
 @dataclass
@@ -144,9 +143,9 @@ class Store:
 class Malloc:
     """Allocate memory on the heap.
 
-    胖指针语义(t7,规则 3.6.1):分配「锁头 + 负载」块,块头锁槽写键
+    胖指针语义(CFG 层,规则 3.6.1):分配「锁头 + 负载」块,块头锁槽写键
     μ⟨e⟩ := k(k ← Gen(),堆键 MSB 1;锁槽 = 块首首字,定义 7,BlockHeader);
-    返回 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(t8 构造)。
+    返回 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(由 LLVM 层构造)。
     pointee 为 ZST 时保持快路径(undef,不写锁槽;key=None,§7.6 风险 2)。
     """
     result: Reg
@@ -187,11 +186,11 @@ class Delete:
 
 
 # ---------------------------------------------------------------------------
-# 检查插入与锁槽机制节点(t7 检查点;LLVM 发射与运行期 trap 属 t8)
+# 检查插入与锁槽机制节点(CFG 层 检查点;LLVM 发射与运行期 trap 由 LLVM 层完成)
 #
 # §7.1 运行时检查插入点共 6 个:FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete。
-# 每个检查节点在 t8 落地为「前提不满足 → llvm.trap(SIGILL → Exit code -4)」;
-# 本文件承载节点存在性与语义,LLTranslator 的 case 由 t8 补充。
+# 每个检查节点在 LLVM 层 落地为「前提不满足 → llvm.trap(SIGILL → Exit code -4)」;
+# 本文件承载节点存在性与语义,LLTranslator 的 case 由 LLVM 层 补充。
 # 锁槽交互:Malloc 块头写键(规则 3.6.1)、Delete 写 SENTINEL(规则 3.6.2)。
 # ---------------------------------------------------------------------------
 
@@ -201,7 +200,7 @@ class GenKey:
     """k ← Gen()(定义 10):堆/栈独立 63 位单调计数器。
 
     Malloc 块头写键(规则 3.6.1,堆键 MSB 1)与帧进入 re-key(规则 3.7.1,
-    栈键 MSB 0)各生成一枚。LLVM 发射(全局计数器递增 + 标志位拼接)属 t8。
+    栈键 MSB 0)各生成一枚。LLVM 发射(全局计数器递增 + 标志位拼接)由 LLVM 层完成。
     """
     result: Reg
     is_heap: bool
@@ -222,7 +221,7 @@ class AcquireFrameLock:
 class WriteLockSlot:
     """锁槽写值 μ⟨lock_ptr⟩ := value。
 
-    Delete 动作①写 SENTINEL(规则 3.6.2);Malloc 块头写键由 t8 的 malloc
+    Delete 动作①写 SENTINEL(规则 3.6.2);Malloc 块头写键由 LLVM 层的 malloc
     下降内部完成(块首地址仅运行期可得),本节点用于已知锁槽地址的写。
     """
     lock_ptr: Value
@@ -234,7 +233,7 @@ class CheckSafeAccess:
     """safe_access(p,1) = live(p) ∧ in_bounds(p,1) 前检(规则 3.2.1-3.2.2)。
 
     Load/Store 插入点。live = 锁槽键比较(定义 8,含 lock_ptr=0 短路为假);
-    in_bounds = 0 ≤ index ∧ index+1 ≤ size(定义 12)。t8 发射。
+    in_bounds = 0 ≤ index ∧ index+1 ≤ size(定义 12)。LLVM 层 发射。
     """
     ptr: Value
 
@@ -243,7 +242,7 @@ class CheckSafeAccess:
 class CheckInBounds:
     """in_bounds(p_s,1)(规则 3.5.2,FieldPtr 重锚定前提)。
 
-    对 one-past-end 的 s 取字段 trap。t8 发射。
+    对 one-past-end 的 s 取字段 trap。LLVM 层 发射。
     """
     ptr: Value
 
@@ -261,7 +260,7 @@ class CheckSliceNonEmpty:
 
 @dataclass
 class CheckRefAccess:
-    """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers t3)。
+    """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers)。
 
     引用恒指向单个元素、无算术/比较/delete(3 字段 ⟨data,lock_ptr,key⟩,
     无 index/size),越界无概念——访问只需 live = 锁槽键比较(定义 8,
@@ -275,7 +274,7 @@ class CheckElementArith:
     """ElementPtr 算术良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)。
 
     越过 one-past-end 或负方向越界 trap;无回绕子义务(O-1)由 u64 回绕检测
-    落地(同型化,perf todo 3:icmp uge sum,index,t8 发射)。
+    落地(同型化,指针算术检查优化:icmp uge sum,index,LLVM 层 发射)。
     """
     base: Value
     offset: Value
@@ -283,7 +282,7 @@ class CheckElementArith:
 
 @dataclass
 class CheckElementAccess:
-    """合并检查(perf C3):ElementArith→InBounds→SafeAccess 合取谓词。
+    """合并检查(访问检查合并):ElementArith→InBounds→SafeAccess 合取谓词。
 
     派生链 elem = base + offset(ElementPtr)→ f = elem.field(FieldPtr)→
     访问 f(Load/Store),当派生链可对且访问相邻时,三重检查合并为单节点:
@@ -291,7 +290,7 @@ class CheckElementAccess:
     (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
     SafeAccess 的 live 项——重锚定字段指针 in_bounds(f,1) 恒真、
     live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项;
-    非相邻访问不合并(访问点的 SafeAccess 按原样发射)。t8 发射。
+    非相邻访问不合并(访问点的 SafeAccess 按原样发射)。LLVM 层 发射。
     """
     base: Value
     offset: Value
@@ -300,13 +299,13 @@ class CheckElementAccess:
 
 @dataclass
 class CheckRawBounds:
-    """裸数组越界检查(lazy-lvalue-fat todo1):index < length(编译期长度)。
+    """裸数组越界检查：index < length（编译期长度）。
 
     未取址数组元素访问不合成胖指针(无 index/size 元数据),无法承载
     CheckElementArith / CheckSafeAccess;对编译期长度 N 做单个 unsigned
     比较 index < N——等价 fat 路径 CheckElementArith(0 ≤ index ≤ N)与
     Load/Store CheckSafeAccess(index+1 ≤ N)的组合语义(索引已 coerce u64,
-    无负方向)。t8 发射。
+    无负方向)。LLVM 层 发射。
     """
     index: Value
     length: int
@@ -314,12 +313,12 @@ class CheckRawBounds:
 
 @dataclass
 class Assume:
-    """优化器提示(perf P1):声明 *cond* 恒真(编译期可证谓词)。
+    """优化器提示(range 循环约束):声明 *cond* 恒真(编译期可证谓词)。
 
     llvm.assume 不生成运行期代码,仅供优化器(ConstraintElimination 等)消除
     可证冗余检查。只承载纯数据谓词(如 range 循环契约 0 ≤ i < n,u64 同型);
     绝不承载动态事实(live/μ 读、delete 前提、ptrdiff/cmp 相等)——assume
-    假 → LLVM UB → 优化器删检查 → 安全失效(安全红线)。t8 发射。
+    假 → LLVM UB → 优化器删检查 → 安全失效(安全红线)。LLVM 层 发射。
     """
     cond: Value
 
@@ -328,7 +327,7 @@ class Assume:
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
 
-    异对象指针差 trap。t8 发射。
+    异对象指针差 trap。LLVM 层 发射。
     """
     lhs: Value
     rhs: Value
@@ -338,7 +337,7 @@ class CheckPtrDiff:
 class CheckPtrCmp:
     """序比较前提:data 相等(规则 3.4.1)。
 
-    跨对象序比较 trap(t10 发射)。相等比较(规则 3.4.2)按 (data, index)
+    跨对象序比较 trap（由 LLVM 层发射）。相等比较(规则 3.4.2)按 (data, index)
     二元组、无此前提,不插入本节点。
     """
     lhs: Value
@@ -350,7 +349,7 @@ class PtrCmp:
     """指针比较(规则 3.4.1-3.4.2,§7.6 风险 3)。
 
     相等比较按 (data, index) 二元组;序比较在 CheckPtrCmp 前提(规则 3.4.1)
-    下按 index 比较。LLVM 无聚合 icmp,字段提取 + 前提检查属 t10。
+    下按 index 比较。LLVM 无聚合 icmp,字段提取 + 前提检查由指针比较下降处理。
     """
     result: Reg
     op: BinaryOperator
@@ -364,7 +363,7 @@ class CheckDelete:
 
     四项 = is_heap 纯位判定(定义 9,不读锁槽)+ live 锁槽键比较(定义 8,
     含 null 短路)+ is_raw 两分量:data = lock_ptr + H 与 index = 0(§2.5,
-    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均 trap。t8 发射。
+    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均 trap。LLVM 层 发射。
     """
     ptr: Value
 
@@ -396,7 +395,7 @@ class Cast:
     result: Reg
     value: Value
     to_type: int
-    raw: bool = False  # lazy-lvalue-fat(todo1):裸指针强转(数组退化 T[N]*→T* 位转换,不合成胖值)
+    raw: bool = False  # 惰性左值路径:裸指针强转(数组退化 T[N]*→T* 位转换,不合成胖值)
 
 
 @dataclass

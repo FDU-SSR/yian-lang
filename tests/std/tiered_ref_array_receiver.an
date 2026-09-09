@@ -1,7 +1,7 @@
-// T& receiver method-body array access (method-self-ref t7).
+// T& receiver method-body array access.
 //
 // Full-array access through a T& receiver, exercising the T&→T* array
-// re-anchor (size=N) that todo 6 fixed in llvm builder cast():
+// re-anchor (size=N) in the LLVM builder cast path:
 //   - `self.arr[i]` with i≥1 via the Index trait (T[N] impl → bitcast<T*>(self))
 //   - `self.arr.ptr()[i]` full-array traversal
 //   - `self.arr.as_slice()` full-array slice
@@ -9,12 +9,9 @@
 //     `self.as_slice()` (self is i32[4]& inside these methods)
 //   - chained self.method() through the T& receiver
 //
-// Locking the cast() array re-anchor: before t6, T[N]&→T* produced size=1 and
-// every arr[i] with i≥1 trapped in fat mode (CheckInBounds/CheckElementArith).
-// After t6, full-array access must succeed. These forms run green in the fat
-// and nocheck compile states. The raw state (`--raw-pointers`) has a
-// pre-existing t1-t6 cast regression for array-typed refs (identity instead of
-// a type bitcast) — see .omo/evidence/method-self-ref/task-7.txt.
+// The cast must re-anchor T[N]&→T* with size=N; using size=1 would make every
+// arr[i] with i≥1 trap in fat mode. These forms run in the fat and nocheck
+// compile states; raw mode does not participate in this test.
 //
 // Pure asserts, no stdout (success test, no .ans).
 //
