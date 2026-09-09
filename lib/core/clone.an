@@ -1,0 +1,53 @@
+// A trait for types that can explicitly create an equivalent value.
+//
+// Clone is an ordinary trait. It is never inserted implicitly into
+// assignment, argument passing, return, or aggregate construction.
+pub trait Clone {
+    fn clone() -> Self;
+}
+
+impl Clone for i8  { fn clone() -> Self { *self } }
+impl Clone for i16 { fn clone() -> Self { *self } }
+impl Clone for i32 { fn clone() -> Self { *self } }
+impl Clone for i64 { fn clone() -> Self { *self } }
+impl Clone for u8  { fn clone() -> Self { *self } }
+impl Clone for u16 { fn clone() -> Self { *self } }
+impl Clone for u32 { fn clone() -> Self { *self } }
+impl Clone for u64 { fn clone() -> Self { *self } }
+impl Clone for f16 { fn clone() -> Self { *self } }
+impl Clone for f32 { fn clone() -> Self { *self } }
+impl Clone for f64 { fn clone() -> Self { *self } }
+impl Clone for bool { fn clone() -> Self { *self } }
+impl Clone for char { fn clone() -> Self { *self } }
+impl Clone for void { fn clone() -> Self { return; } }
+
+impl<T, const N: u64> Clone for T[N] if T: Clone {
+    fn clone() -> Self {
+        let result: Self;
+        assume_init(result);
+        let i: u64 = 0;
+        while i < N {
+            result[i] = (*self)[i].clone();
+            i += 1;
+        }
+        result
+    }
+}
+
+impl<T1, T2> Clone for (T1, T2) if T1: Clone, T2: Clone {
+    fn clone() -> Self {
+        ((*self)[0].clone(), (*self)[1].clone())
+    }
+}
+
+impl<T1, T2, T3> Clone for (T1, T2, T3) if T1: Clone, T2: Clone, T3: Clone {
+    fn clone() -> Self {
+        ((*self)[0].clone(), (*self)[1].clone(), (*self)[2].clone())
+    }
+}
+
+impl<T1, T2, T3, T4> Clone for (T1, T2, T3, T4) if T1: Clone, T2: Clone, T3: Clone, T4: Clone {
+    fn clone() -> Self {
+        ((*self)[0].clone(), (*self)[1].clone(), (*self)[2].clone(), (*self)[3].clone())
+    }
+}

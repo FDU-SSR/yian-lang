@@ -1,6 +1,5 @@
 from std.core.range import Range;
 from std.core.drop import Drop;
-from std.core.mem import memmove;
 
 pub struct RawVec<T> {
     data: T*,
@@ -11,7 +10,11 @@ impl<T> RawVec<T> {
     static pub fn new() -> Self {
         // 空容器持真实堆块(dyn[0] 分配 8B 锁头,带堆键的合法胖指针):
         // data/ptr 非零,heap_ok/live 全通过,与后续 niche None 的全零编码不碰撞。
-        Self(dyn[0] T, 0)
+        let data: T* = dyn[0] T;
+        Self(
+            data = data,
+            cap = 0x8000_0000_0000_0000u64
+        )
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
@@ -22,7 +25,7 @@ impl<T> RawVec<T> {
         let data: T* = dyn[capacity] T;
         Self(
             data = data,
-            cap = capacity
+            cap = capacity | 0x8000_0000_0000_0000u64
         )
     }
 
@@ -31,34 +34,43 @@ impl<T> RawVec<T> {
     }
 
     pub fn capacity() -> u64 {
-        self.cap
+        self.cap & 0x7FFF_FFFF_FFFF_FFFFu64
     }
 
     pub fn grow() {
-        let old_cap = self.cap;
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        let was_live = (self.cap & live_bit) != 0;
+        let old_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
 
         let new_data: T* = dyn[new_cap] T;
 
-        if old_cap > 0 {
+        if was_live && old_cap > 0 {
             // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
-            memmove(new_data, self.data, old_cap);
+            for i in 0..old_cap {
+                new_data[i] = self.data[i];
+            }
         }
         // data 恒为真实堆块(new() 即 dyn[0] 分配),旧块一律释放
-        del self.data;
+        if was_live {
+            del self.data;
+        }
 
         self.data = new_data;
-        self.cap = new_cap;
+        self.cap = new_cap | live_bit;
     }
 
     pub fn reserve(len: u64, additional: u64) {
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        let was_live = (self.cap & live_bit) != 0;
+        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         let required_cap = len + additional;
-        if self.cap >= required_cap {
+        if was_live && current_cap >= required_cap {
             return;
         }
 
-        let new_cap = self.cap * 2;
+        let new_cap = current_cap * 2;
         if new_cap < required_cap {
             new_cap = required_cap;
         }
@@ -71,18 +83,25 @@ impl<T> RawVec<T> {
 
         // Copy valid elements
         if len > 0 {
-            memmove(new_data, self.data, len);
+            for i in 0..len {
+                new_data[i] = self.data[i];
+            }
         }
 
         // data 恒为真实堆块,旧块一律释放
-        del self.data;
+        if was_live {
+            del self.data;
+        }
 
         self.data = new_data;
-        self.cap = new_cap;
+        self.cap = new_cap | live_bit;
     }
 
     pub fn shrink_to_fit(len: u64) {
-        if self.cap <= len {
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        let was_live = (self.cap & live_bit) != 0;
+        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
+        if current_cap <= len {
             return;
         }
 
@@ -93,21 +112,28 @@ impl<T> RawVec<T> {
 
         // Copy valid elements
         if len > 0 {
-            memmove(new_data, self.data, len);
+            for i in 0..len {
+                new_data[i] = self.data[i];
+            }
         }
 
         // data 恒为真实堆块,旧块一律释放
-        del self.data;
+        if was_live {
+            del self.data;
+        }
 
         self.data = new_data;
-        self.cap = len;
+        self.cap = len | live_bit;
     }
 }
 
 // Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources.
-// double-free/double-drop 防护由胖指针锁槽承担: 第二次 del 触达 SENTINEL → trap。
 impl<T> Drop for RawVec<T> {
     fn drop() {
-        del self.data;
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        if (self.cap & live_bit) != 0 {
+            del self.data;
+        }
+        self.cap = 0;
     }
 }

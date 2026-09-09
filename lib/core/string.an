@@ -1,4 +1,5 @@
 from std.core.vec import Vec;
+from std.core.clone import Clone;
 from std.core.ops import PartialEq, Add, AddAssign, Deref, Index;
 from std.core.convert import From;
 from std.core.option import Option;
@@ -151,15 +152,13 @@ impl String {
 }
 
 // =============================================================================
-// Private helper — deep copy of a String
+// Clone
 // =============================================================================
 
-// 深拷贝: 分配独立新缓冲并逐字节复制, 结果与源字符串互不共享。
-// 替代已删除的 Clone trait(按位复制语义下 String 直接拷贝会共享缓冲, 双 drop 会 trap)。
-fn __deep_copy_string(s: String) -> String {
-    let result = String.with_capacity(s.len());
-    result.push_str(s.as_str());
-    result
+impl Clone for String {
+    pub fn clone() -> Self {
+        String(data = self.data.clone())
+    }
 }
 
 // =============================================================================
@@ -204,7 +203,7 @@ impl Add<str, String> for String {
 
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
-        let result = String.new();
+        let result = String.with_capacity(self.len() + 4);
         result.push_str(self.as_str());
         result.push(other);
         result
@@ -272,7 +271,7 @@ impl Index<Range<u64>, str> for String {
 
 impl ToString for String {
     pub fn to_string() -> String {
-        __deep_copy_string(*self)
+        (*self).clone()
     }
 }
 

@@ -115,7 +115,13 @@ class ImplRegistry:
                 # the top-level fresh=True query is cacheable. `fresh` here
                 # merely records whether *we* created the visited set; it must
                 # not leak onto the recursive call.
-                if not self.has_impl(concrete_type_id, substed_trait, visited, False):
+                # A sibling bound must not inherit the visited marker created
+                # by an earlier sibling bound. For example, T1: Clone and
+                # T2: Clone are both valid when T1 and T2 happen to be the
+                # same concrete type. Keep the current ancestor chain for
+                # cycle detection, but isolate each condition branch.
+                condition_visited = None if visited is None else set(visited)
+                if not self.has_impl(concrete_type_id, substed_trait, condition_visited, False):
                     return False
         return True
 

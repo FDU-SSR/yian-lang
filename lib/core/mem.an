@@ -2,12 +2,20 @@ from std.core.range import Range;
 
 pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
     for i in 0..count {
-        dest[i] = src[i];
+        dest[i] = src[i].clone();
     }
 }
 
 pub fn memmove<T>(dest: T*, src: T*, count: u64) {
+    // Do not order fat pointers from different allocations: SECL correctly
+    // rejects cross-allocation ordering comparisons. A temporary buffer also
+    // gives memmove its overlap-safe behavior without changing element values.
+    let temporary: T* = dyn[count] T;
     for i in 0..count {
-        dest[i] = src[i];
+        temporary[i] = src[i];
     }
+    for i in 0..count {
+        dest[i] = temporary[i];
+    }
+    del temporary;
 }

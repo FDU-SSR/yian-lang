@@ -1,10 +1,10 @@
 from std.core.raw_vec import RawVec;
 
 from std.core.ops import Index, PartialEq, Deref, Add;
+from std.core.clone import Clone;
 from std.core.option import Option;
 from std.core.convert import From, Into;
 from std.core.drop import Drop;
-from std.core.mem import memmove;
 from std.core.range import Range;
 
 pub struct Vec<T> {
@@ -47,17 +47,17 @@ impl<T> Vec<T> {
         self.len += 1
     }
 
-    // Extend another Vec to the end (elements are copied; other stays valid)
+    // Extend another Vec to the end by cloning its elements.
     pub fn extend(other: Vec<T>) {
-        // reserve enough capacity for the new elements
-        self.reserve(other.len);
-
-        // copy the elements from the other Vec to the end of this Vec
-        let copy_len = other.len;
-        let dest_ptr = self.raw_vec.ptr() + self.len;
-        let src_ptr = other.raw_vec.ptr();
-        memmove(dest_ptr, src_ptr, copy_len);
-        self.len += copy_len;
+        // Clone before reserving so self-extension and aliased descriptors are safe.
+        let copied = other.clone();
+        self.reserve(copied.len);
+        for i in 0..copied.len {
+            self.push(copied.raw_vec.ptr()[i]);
+        }
+        // The copied elements now belong to self; release only the temporary buffer.
+        copied.len = 0;
+        copied.drop();
     }
 
     // Pop an element from the end, returning None if empty
@@ -132,7 +132,7 @@ impl<T> Vec<T> {
         self.len -= 1;
 
         if index != self.len {
-             // Move the last element to the removed spot
+             // Copy the last element to the removed spot
             buf[index] = buf[self.len];
         }
 
@@ -140,15 +140,16 @@ impl<T> Vec<T> {
     }
 
     // Extend the Vec with a slice
-    // This will copy the elements from the slice into the Vec
+    // This will clone the elements from the slice into the Vec
     pub fn extend_from_slice(slice: T[]) {
-        // reserve enough capacity for the new elements
-        self.reserve(slice.len());
-
-        // copy the elements from the slice to the end of this Vec
-        for elem in slice {
-            self.push(*elem);
+        // Clone first because reserve may invalidate a slice into this Vec.
+        let copied = slice.to_vec();
+        self.reserve(copied.len);
+        for i in 0..copied.len {
+            self.push(copied.raw_vec.ptr()[i]);
         }
+        copied.len = 0;
+        copied.drop();
     }
 
     // Shorten the Vec, keeping the first `len` elements
@@ -232,18 +233,18 @@ impl<T> Deref<T[]> for Vec<T> {
     }
 }
 
-// Implement Add for Vec<T> to concatenate two Vecs.
-// 深拷贝语义: 结果拥有独立新缓冲, 操作数保持有效(不消费、不失效)。
-// 机械搬移操作数会导致 double-drop, 故此处逐元素复制构造新结果。
+impl<T> Clone for Vec<T> {
+    pub fn clone() -> Self {
+        self.as_slice().to_vec()
+    }
+}
+
+// Concatenation creates an independent Vec by cloning both inputs.
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
         let res = Vec<T>.with_capacity(self.len() + rhs.len());
-        for i in 0..self.len() {
-            res.push(self.raw_vec.ptr()[i]);
-        }
-        for i in 0..rhs.len() {
-            res.push(rhs.raw_vec.ptr()[i]);
-        }
+        res.extend(*self);
+        res.extend(rhs);
         res
     }
 }
@@ -256,5 +257,6 @@ impl<T> Drop for Vec<T> {
         self.clear();
         // drop the raw_vec to free its resources
         self.raw_vec.drop();
+        self.len = 0;
     }
 }

@@ -17,6 +17,7 @@ impl Drop for u8  { pub fn drop() {} }
 impl Drop for u16 { pub fn drop() {} }
 impl Drop for u32 { pub fn drop() {} }
 impl Drop for u64 { pub fn drop() {} }
+impl Drop for f16 { pub fn drop() {} }
 impl Drop for f32 { pub fn drop() {} }
 impl Drop for f64 { pub fn drop() {} }
 impl Drop for bool { pub fn drop() {} }
