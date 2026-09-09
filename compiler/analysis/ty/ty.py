@@ -138,7 +138,6 @@ class StructDef:
     generics: list[int] = field(default_factory=list[int])
     fields: list[StructField] = field(default_factory=list[StructField])
     unit_id: int = -1
-    is_bitcopy: bool = False
 
 
 @dataclass
@@ -190,7 +189,6 @@ class EnumDef:
     generics: list[int] = field(default_factory=list[int])
     variants: list[EnumVariant] = field(default_factory=list[EnumVariant])
     unit_id: int = -1
-    is_bitcopy: bool = False
 
 
 @dataclass

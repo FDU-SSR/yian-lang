@@ -104,7 +104,6 @@ class TypeCtx:
         self.__receiver_type_cache: dict[int, int] = {}
         self.__methods_cache: dict[int, dict[str, int]] = {}
         self.__default_literals_cache: dict[int, int] = {}
-        self.__simple_type_cache: dict[int, bool] = {}
         self.__zst_cache: dict[int, bool] = {}
 
     def __getitem__(self, type_id: int) -> Type.Ty:
@@ -298,91 +297,6 @@ class TypeCtx:
         result = type_ops.is_zst(self, type_id)
         self.__zst_cache[type_id] = result
         return result
-
-    def is_simple_type(self, type_id: int) -> bool:
-        """Return True for types that support direct bitwise-copy assignment.
-
-        Simple types (§2.1) are always simple. Composite types are simple
-        when all their elements / fields are simple (§5.1). User-defined
-        structs/enums with @BitCopy annotation are validated at assignment time.
-
-        Results are cached in __simple_type_cache keyed by (resolved) type_id.
-        """
-        type_id = self.resolve_aliases(type_id)
-
-        cached = self.__simple_type_cache.get(type_id)
-        if cached is not None:
-            return cached
-
-        # Zero-sized types carry no runtime data, so a bitwise copy of zero
-        # bytes is always valid — they are trivially simple-assignable.
-        if self.is_zst(type_id):
-            self.__simple_type_cache[type_id] = True
-            return True
-
-        ty = self[type_id]
-        if isinstance(ty, (Type.IntType, Type.FloatType, Type.BoolType,
-                           Type.CharType, Type.StrType, Type.PointerType,
-                           Type.FunctionPointerType, Type.SliceType)):
-            self.__simple_type_cache[type_id] = True
-            return True
-        if isinstance(ty, Type.ArrayType):
-            result = self.is_simple_type(ty.element_type)
-            self.__simple_type_cache[type_id] = result
-            return result
-        if isinstance(ty, Type.TupleType):
-            result = all(self.is_simple_type(et) for et in ty.element_types)
-            self.__simple_type_cache[type_id] = result
-            return result
-        if isinstance(ty, Type.ClosureType):
-            result = all(self.is_simple_type(cv.type_id) for cv in ty.captured_vars)
-            self.__simple_type_cache[type_id] = result
-            return result
-        if isinstance(ty, Type.StructType) and ty.custom_def.is_bitcopy:
-            self.__validate_bitcopy_struct(type_id)
-            self.__simple_type_cache[type_id] = True
-            return True
-        if isinstance(ty, Type.EnumType) and ty.custom_def.is_bitcopy:
-            self.__validate_bitcopy_enum(type_id)
-            self.__simple_type_cache[type_id] = True
-            return True
-
-        self.__simple_type_cache[type_id] = False
-        return False
-
-    def __validate_bitcopy_struct(self, type_id: int) -> None:
-        """Validate that all fields of a @BitCopy struct are BitCopy types.
-
-        Raises AnalysisError on failure. The caller is responsible for
-        checking/updating __simple_type_cache.
-        """
-        fields = self.get_struct_fields(type_id)
-        for field in fields:
-            if not self.is_simple_type(field.type_id):
-                raise AnalysisError(
-                    f"type '{self.get_name(field.type_id)}' is not BitCopy\n"
-                    f"note: all fields of a @BitCopy struct must be BitCopy types",
-                    self.get_span(type_id)
-                )
-
-    def __validate_bitcopy_enum(self, type_id: int) -> None:
-        """Validate that all variant payloads of a @BitCopy enum are BitCopy types.
-
-        Raises AnalysisError on failure. The caller is responsible for
-        checking/updating __simple_type_cache.
-        """
-        variants = self.get_enum_variants(type_id)
-        for variant in variants:
-            if variant.payload_type is None:
-                continue
-            payload_fields = self.get_struct_fields(variant.payload_type)
-            for field in payload_fields:
-                if not self.is_simple_type(field.type_id):
-                    raise AnalysisError(
-                        f"type '{self.get_name(field.type_id)}' in variant '{variant.name}' is not BitCopy\n"
-                        f"note: all variant payloads of a @BitCopy enum must be BitCopy types",
-                        self.get_span(type_id)
-                    )
 
     def default_literals(self, type_id: int) -> int:
         cached = self.__default_literals_cache.get(type_id)

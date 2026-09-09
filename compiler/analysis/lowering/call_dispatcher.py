@@ -3,11 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.lowering.assign_check import check_simple_assign_source
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import LookupResult, TypeCtx
+from compiler.analysis.ty.context import LookupResult
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.unit import hir as HIR
 from compiler.error import CompilerError
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "bitcopy", "open", "close", "assume_init", "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit"})
+BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "open", "close", "assume_init", "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit"})
 
 
 class CallDispatcher:
@@ -39,6 +38,15 @@ class CallDispatcher:
         lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
 
         if lookup is None:
+            raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
+
+        # Clone is resolved and dispatched as a normal trait method, but a raw
+        # pointer is not itself Clone merely because its pointee is. Requiring
+        # (*ptr).clone() keeps cloning a value distinct from copying a pointer.
+        receiver_ty = self.__ctx.type_ctx[receiver.type_id]
+        trait_ty = self.__ctx.type_ctx[lookup.impl.trait] if lookup.impl.trait is not None else None
+        is_std_clone = isinstance(trait_ty, Type.TraitType) and trait_ty.custom_def.name == "Clone" and trait_ty.custom_def.span.path.name == "clone.an" and "lib" in trait_ty.custom_def.span.path.parts
+        if isinstance(receiver_ty, Type.PointerType) and lookup.deref_count > 0 and is_std_clone:
             raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
 
         # Static call site (Self.foo() / Type.foo()) requires a static method
@@ -115,57 +123,13 @@ class CallDispatcher:
         if isinstance(receiver, HIR.Ty):
             return self.__handle_static_or_variant_method_call(node, receiver)
 
-        # For simple types, Move/Clone trait methods are trivial.
-        if node.method_name.name in ("move", "clone", "invalidate", "is_valid"):
-            simple_result = self.__try_simple_move_trait(node.span, receiver, node.method_name.name)
-            if simple_result is not None:
-                return simple_result
-
         return self.__handle_instance_method_call(node, receiver)
-
-    def __try_simple_move_trait(self, span: SrcSpan, receiver: HIR.Expr, method_name: str) -> HIR.Expr | None:
-        """If *receiver*'s value type (after stripping pointer indirections)
-        is simple, return the trivial result.  Otherwise return None.
-
-        - move / clone: auto-deref to the value (bitcopy(*self) ≡ *self).
-        - invalidate:    no-op.
-        - is_valid:      always true.
-        """
-        # Resolve the value type by stripping pointer indirections.
-        type_id = receiver.type_id
-        deref_count = 0
-        while True:
-            ty = self.__ctx.type_ctx[type_id]
-            if isinstance(ty, Type.PointerType):
-                type_id = ty.pointee_type
-                deref_count += 1
-            else:
-                break
-
-        if not self.__ctx.type_ctx.is_simple_type(type_id):
-            return None
-
-        if method_name == "is_valid":
-            return HIR.BoolLiteral(span=span, value=True, type_id=TypeCtx.bool_id, is_place=False)
-
-        if method_name == "invalidate":
-            return HIR.Nop(span=span, type_id=TypeCtx.void_id, is_place=False)
-
-        # move / clone: auto-deref to the value.
-        result = receiver
-        for _ in range(deref_count):
-            ty = self.__ctx.type_ctx[result.type_id]
-            assert isinstance(ty, Type.PointerType)
-            result = HIR.Unary(span, UnaryOperator.Deref, result, ty.pointee_type, is_place=False)
-        return result
 
     def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
         """Lower a call to a built-in name into the appropriate HIR node."""
         match callee.name:
             case "panic":
                 return self.__handle_panic(node)
-            case "bitcopy":
-                return self.__handle_bitcopy(node)
             case "sys_write":
                 return self.__handle_sys_write(node)
             case "sys_read":
@@ -196,14 +160,6 @@ class CallDispatcher:
         message = self.__expr.value(stmt.args[0].value)
         message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
         return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
-
-    def __handle_bitcopy(self, node: AST.Call) -> HIR.Expr:
-        if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for 'bitcopy'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'bitcopy' expects exactly 1 argument, got {len(node.args)}", node.span)
-        value = self.__expr.value(node.args[0].value)
-        return HIR.BitCopy(span=node.span, value=value, type_id=value.type_id, is_place=False)
 
     def __handle_assume_init(self, node: AST.Call) -> HIR.Expr:
         """Lower `assume_init(expr)` into HIR.AssumeInit."""
@@ -341,9 +297,6 @@ class CallDispatcher:
         parameters = func_ty.parameters(self.__ctx.type_ctx)
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
-        for arg in coerced_args:
-            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
-                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
 
         instantiated_func_id = inference.instantiate(func_type_id)
         # report reachable instantiated function to the semantic context
@@ -379,9 +332,6 @@ class CallDispatcher:
 
         fields = self.__ctx.type_ctx.get_struct_fields(struct_type_id)
         coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
-        for field_value in coerced_fields.values():
-            if not self.__ctx.type_ctx.is_simple_type(field_value.type_id):
-                check_simple_assign_source(field_value, self.__ctx.type_ctx, span)
 
         instantiated_struct_id = inference.instantiate(struct_type_id)
         return HIR.StructConstruct(span=span, struct_id=instantiated_struct_id, field_values=coerced_fields, type_id=instantiated_struct_id, is_place=False)
@@ -440,9 +390,6 @@ class CallDispatcher:
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 
         coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
-        for arg in coerced_args:
-            if not self.__ctx.type_ctx.is_simple_type(arg.type_id):
-                check_simple_assign_source(arg, self.__ctx.type_ctx, span)
         # report reachable instantiated method to the semantic context
         self.__ctx.report_def(lookup.method_id)
 
@@ -463,9 +410,6 @@ class CallDispatcher:
 
         if self.__has_named_arg(args):
             coerced_args = self.__resolve_named_variant_args(span, variant, args)
-            for val in coerced_args.values():
-                if not self.__ctx.type_ctx.is_simple_type(val.type_id):
-                    check_simple_assign_source(val, self.__ctx.type_ctx, span)
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
 
         if variant.payload_type is None:
@@ -486,9 +430,6 @@ class CallDispatcher:
             inference.constrain(field_type_id, arg_value.type_id)
 
         coerced_values = [self.__expr.coerce(val, inference.instantiate(field_type_id)) for field_type_id, val in zip(field_type_ids, arg_values)]
-        for val in coerced_values:
-            if not self.__ctx.type_ctx.is_simple_type(val.type_id):
-                check_simple_assign_source(val, self.__ctx.type_ctx, span)
         args_dict = {field.name: val for field, val in zip(fields, coerced_values)}
         return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=args_dict, type_id=enum_type_id, is_place=False)
 

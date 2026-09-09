@@ -7,8 +7,6 @@ are available without explicit imports.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from compiler.frontend.parse import ast as AST
@@ -25,7 +23,6 @@ PRELUDE_IMPORTS: list[tuple[list[str], str]] = [
     (["std", "core", "range"], "Range"),
     (["std", "core", "ops"], "Ordering"),
     (["std", "core", "clone"], "Clone"),
-    (["std", "core", "move"], "Move"),
     (["std", "core", "builtin_types"], "Ptr"),
     (["std", "core", "builtin_types"], "Slice"),
     (["std", "core", "builtin_types"], "Array"),

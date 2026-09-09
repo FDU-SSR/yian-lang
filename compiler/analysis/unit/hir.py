@@ -426,25 +426,9 @@ class NullptrLiteral:
 
 
 @dataclass
-class BitCopy:
-    span: SrcSpan
-    value: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
 class AssumeInit:
     span: SrcSpan
     value: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class Nop:
-    """No-operation — semantically empty (e.g. invalidate on simple types)."""
-    span: SrcSpan
     type_id: int
     is_place: bool
 
@@ -491,7 +475,5 @@ Expr: TypeAlias = (
     | Match
     | Semi
     | Let
-    | BitCopy
     | AssumeInit
-    | Nop
 )
