@@ -10,4 +10,3 @@ PyYAML==6.0.1
 llvmlite==0.44.0
 toml==0.10.2
 pympler==1.1
-pyright==1.1.411

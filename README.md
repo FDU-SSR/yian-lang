@@ -65,7 +65,7 @@ python3 scripts/run_tests.py -f call    # 只运行名字匹配 "call" 的测试
 ## 文档
 
 - [语言语法参考](docs/grammar/index.md) —— 15 章 Yian 语言手册
-- [编译器开发手册](docs/manual/index.md) —— 18 章编译器内部实现
+- [编译器开发手册](docs/manual/index.md) —— 19 章编译器内部实现
 - [快速上手](docs/grammar/00.quick_start.md) —— 可编译示例
 
 ## For GitHub users
