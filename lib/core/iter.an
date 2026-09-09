@@ -6,13 +6,13 @@ pub trait Iterator<T> {
 }
 
 // The IntoIterator trait allows a type to be converted into an iterator of type Iter
-// This will consume the value of the type
+// The iterator value is copied; implementations may keep independent cursor state.
 pub trait IntoIterator<T> {
     fn into_iter() -> T;
 }
 
 impl<T, U> IntoIterator<T> for T if T: Iterator<U> {
     fn into_iter() -> T {
-        self.clone()
+        *self
     }
 }

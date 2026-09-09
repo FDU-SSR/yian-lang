@@ -7,10 +7,23 @@ pub trait Clone {
     fn clone() -> Self;
 }
 
-// Simple types (int, float, bool, char, void, pointer, slice, etc.)
-// automatically implement Clone — clone() is equivalent to *self.
-// The compiler handles this in has_impl and lowers .clone() on simple
-// types to the identity operation.
+// Clone is an ordinary trait. Scalar implementations are explicit; pointers,
+// slices and str intentionally have no default Clone implementation.
+
+impl Clone for i8  { fn clone() -> Self { *self } }
+impl Clone for i16 { fn clone() -> Self { *self } }
+impl Clone for i32 { fn clone() -> Self { *self } }
+impl Clone for i64 { fn clone() -> Self { *self } }
+impl Clone for u8  { fn clone() -> Self { *self } }
+impl Clone for u16 { fn clone() -> Self { *self } }
+impl Clone for u32 { fn clone() -> Self { *self } }
+impl Clone for u64 { fn clone() -> Self { *self } }
+impl Clone for f16 { fn clone() -> Self { *self } }
+impl Clone for f32 { fn clone() -> Self { *self } }
+impl Clone for f64 { fn clone() -> Self { *self } }
+impl Clone for bool { fn clone() -> Self { *self } }
+impl Clone for char { fn clone() -> Self { *self } }
+impl Clone for void { fn clone() -> Self { return; } }
 
 impl<T, const N: u64> Clone for T[N] if T: Clone {
     fn clone() -> Self {

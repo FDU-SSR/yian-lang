@@ -5,7 +5,6 @@ from std.core.convert import From;
 from std.core.option import Option;
 from std.core.range import Range;
 from std.core.fmt import ToString;
-from std.core.move import Move;
 from std.core.drop import Drop;
 
 // A growable UTF-8 string stored as a Vec<u8>.
@@ -37,31 +36,26 @@ impl String {
 impl String {
     // Return the string contents as a str slice.
     pub fn as_str() -> str {
-        self.validity_assert();
         str.from(&self.data.as_slice())
     }
 
     // Return the underlying byte slice.
     pub fn as_slice() -> u8[] {
-        self.validity_assert();
         self.data.as_slice()
     }
 
     // Return the allocated byte capacity.
     pub fn capacity() -> u64 {
-        self.validity_assert();
         self.data.capacity()
     }
 
     // Return the byte length.
     pub fn len() -> u64 {
-        self.validity_assert();
         self.data.len()
     }
 
     // Return true if the string is empty.
     pub fn is_empty() -> bool {
-        self.validity_assert();
         self.len() == 0
     }
 }
@@ -73,13 +67,11 @@ impl String {
 impl String {
     // Append a str slice (copied).
     pub fn push_str(s: str) {
-        self.validity_assert();
         self.data.extend_from_slice(s.as_slice());
     }
 
     // Append a single char, encoding it as UTF-8.
     pub fn push(c: char) {
-        self.validity_assert();
         let code: u32 = u32(c);
 
         if code <= 0x7F {
@@ -105,7 +97,6 @@ impl String {
 
     // Pop the last char from the string, returning None if empty.
     pub fn pop() -> Option<char> {
-        self.validity_assert();
         if self.is_empty() {
             return Option<char>.None;
         }
@@ -141,25 +132,21 @@ impl String {
 
     // Return a whitespace-trimmed copy of the string.
     pub fn trimmed() -> String {
-        self.validity_assert();
         String.from(&self.trim())
     }
 
     // Clear the contents, leaving an empty string.
     pub fn clear() {
-        self.validity_assert();
         self.data.clear();
     }
 
     // Reserve at least `additional` bytes of capacity.
     pub fn reserve(additional: u64) {
-        self.validity_assert();
         self.data.reserve(additional);
     }
 
     // Shrink capacity to fit the current length.
     pub fn shrink_to_fit() {
-        self.validity_assert();
         self.data.shrink_to_fit();
     }
 }
@@ -170,7 +157,6 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
-        self.validity_assert();
         String(data=self.data.clone())
     }
 }
@@ -181,38 +167,33 @@ impl Clone for String {
 
 impl PartialEq<String> for String {
     pub fn eq(other: String*) -> bool {
-        self.validity_assert();
-        other.validity_assert();
         self.as_str() == other.as_str()
     }
 }
 
 impl PartialEq<str> for String {
     pub fn eq(other: str*) -> bool {
-        self.validity_assert();
         self.as_str() == *other
     }
 }
 
 // =============================================================================
-// Add — concatenate with String / str / char (consumes both operands)
+// Add — concatenate into a newly allocated, independent String.
 // =============================================================================
 
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {
-        self.validity_assert();
-        other.validity_assert();
-        let result = self.move();
+        let result = String.with_capacity(self.len() + other.len());
+        result.push_str(self.as_str());
         result.push_str(other.as_str());
-        other.drop();
         result
     }
 }
 
 impl Add<str, String> for String {
     pub fn add(other: str) -> String {
-        self.validity_assert();
-        let result = self.move();
+        let result = String.with_capacity(self.len() + other.as_slice().len());
+        result.push_str(self.as_str());
         result.push_str(other);
         result
     }
@@ -220,8 +201,8 @@ impl Add<str, String> for String {
 
 impl Add<char, String> for String {
     pub fn add(other: char) -> String {
-        self.validity_assert();
-        let result = self.move();
+        let result = String.with_capacity(self.len() + 4);
+        result.push_str(self.as_str());
         result.push(other);
         result
     }
@@ -233,17 +214,13 @@ impl Add<char, String> for String {
 
 impl AddAssign<String, String> for String {
     fn add_assign(other: String) -> String {
-        self.validity_assert();
-        other.validity_assert();
         self.push_str(other.as_str());
-        other.drop();
         *self
     }
 }
 
 impl AddAssign<str, String> for String {
     fn add_assign(other: str) -> String {
-        self.validity_assert();
         self.push_str(other);
         *self
     }
@@ -251,7 +228,6 @@ impl AddAssign<str, String> for String {
 
 impl AddAssign<char, String> for String {
     fn add_assign(other: char) -> String {
-        self.validity_assert();
         self.push(other);
         *self
     }
@@ -263,7 +239,6 @@ impl AddAssign<char, String> for String {
 
 impl Deref<str> for String {
     pub fn deref() -> str {
-        self.validity_assert();
         self.as_str()
     }
 }
@@ -284,7 +259,6 @@ impl From<str> for String {
 
 impl Index<Range<u64>, str> for String {
     pub fn index(range: Range<u64>*) -> str {
-        self.validity_assert();
         self.as_str()[*range]
     }
 }
@@ -295,18 +269,8 @@ impl Index<Range<u64>, str> for String {
 
 impl ToString for String {
     pub fn to_string() -> String {
-        self.validity_assert();
-        self.clone()
+        (*self).clone()
     }
-}
-
-// =============================================================================
-// Move — ownership transfer
-// =============================================================================
-
-impl Move for String {
-    pub fn invalidate() { self.data.invalidate(); }
-    pub fn is_valid() -> bool { self.data.is_valid() }
 }
 
 // =============================================================================

@@ -3,6 +3,7 @@ from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.ops import Index;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.range import Range;
+from std.core.drop import Drop;
 
 pub struct HashMap<K, V> {
     buckets: Bucket<K, V>*,
@@ -64,14 +65,17 @@ impl<K, V> HashMap<K, V> {
 
             if ctrl_byte == 0b1111_1111 || ctrl_byte == 0b1000_0000 {
                 self.ctrls[index] = h2
-                self.buckets[index].key = key.move()
-                self.buckets[index].value = value.move()
+                self.buckets[index].key = key
+                self.buckets[index].value = value
                 self.size += 1
                 self.growth_left -= 1
                 return;
             } elif ctrl_byte == h2 && self.buckets[index].key == key {
+                // The existing key remains in the map. Clean the unused incoming
+                // key and the value being replaced before storing the new value.
                 key.drop()
-                self.buckets[index].value = value.move()
+                self.buckets[index].value.drop()
+                self.buckets[index].value = value
                 return;
             }
             index = (index + 1) & (self.capacity - 1);
@@ -215,7 +219,8 @@ impl<K, V> HashMap<K, V> {
         self.ctrls = new_ctrls;
         self.buckets = new_buckets;
         del old_ctrls;
-        // Warning: del old_buckets会将内部的bucket.value一起删除，需要修改成move（暂时无法实现）
+        // Entries were copied into the new table. del releases only this raw
+        // allocation and does not recursively drop Bucket fields.
         del old_buckets;
     }
 
@@ -223,6 +228,21 @@ impl<K, V> HashMap<K, V> {
         let hasher = self.hasher_builder.build_hasher();
         key.hash(hasher);
         hasher.finish()
+    }
+}
+
+impl<K, V> Drop for HashMap<K, V> {
+    pub fn drop() {
+        self.clear();
+        if self.capacity > 0 {
+            del self.ctrls;
+            del self.buckets;
+        }
+        self.ctrls = nullptr;
+        self.buckets = nullptr;
+        self.size = 0;
+        self.capacity = 0;
+        self.growth_left = 0;
     }
 }
 

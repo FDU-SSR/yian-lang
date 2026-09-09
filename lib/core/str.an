@@ -171,7 +171,6 @@ impl str {
     }
 }
 
-@BitCopy
 pub struct CharIter {
     pub byte_iter: SliceIter<u8>,
 }
@@ -239,7 +238,6 @@ impl IntoIterator<CharIter> for CharIter {
     }
 }
 
-@BitCopy
 pub struct RevCharIter {
     pub byte_iter: RevSliceIter<u8>
 }
@@ -316,7 +314,6 @@ impl IntoIterator<RevCharIter> for RevCharIter {
     }
 }
 
-@BitCopy
 pub struct CharIndicesIter {
     pub front_offset: u64,
     pub iter: CharIter,

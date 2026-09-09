@@ -5,7 +5,6 @@ from std.core.ops import PartialEq, Index;
 from std.core.range import Range;
 
 // A struct representation of a slice
-@BitCopy
 struct SliceStruct<T> {
     pub ptr: T*,
     pub len: u64,
@@ -67,7 +66,6 @@ pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
     *bitcast<T[]*>(&slice_struct)
 }
 
-@BitCopy
 pub struct SliceIter<T> {
     pub ptr: T*,
     pub n: u64,   // remaining count (ZST-safe, also used for len())
@@ -87,7 +85,6 @@ impl<T> SliceIter<T> {
     }
 }
 
-@BitCopy
 pub struct RevSliceIter<T> {
     pub ptr: T*,    // forward start, stays fixed; next() returns ptr+n
     pub n: u64,

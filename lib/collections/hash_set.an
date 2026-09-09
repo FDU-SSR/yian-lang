@@ -2,6 +2,7 @@ from std.collections.hash_map import HashMap, HashMapKeyIter;
 from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
+from std.core.drop import Drop;
 
 pub struct HashSet<T> {
     map: HashMap<T, void>,
@@ -22,6 +23,7 @@ impl<T> HashSet<T> {
 
     pub fn insert(value: T) -> bool {
         if self.map.contains(&value) {
+            value.drop();
             return false;
         }
         self.map.insert(value, void.new());
@@ -46,6 +48,12 @@ impl<T> HashSet<T> {
 
     pub fn clear() {
         self.map.clear()
+    }
+}
+
+impl<T> Drop for HashSet<T> {
+    pub fn drop() {
+        self.map.drop();
     }
 }
 

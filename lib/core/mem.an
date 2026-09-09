@@ -1,5 +1,4 @@
 from std.core.range import Range;
-from std.core.move import Move;
 
 pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
     for i in 0..count {
@@ -8,7 +7,16 @@ pub fn memcpy<T>(dest: T*, src: T*, count: u64) {
 }
 
 pub fn memmove<T>(dest: T*, src: T*, count: u64) {
-    for i in 0..count {
-        dest[i] = src[i].move();
+    if dest <= src {
+        for i in 0..count {
+            dest[i] = src[i];
+        }
+        return;
+    }
+
+    let i = count;
+    while i > 0 {
+        i -= 1;
+        dest[i] = src[i];
     }
 }

@@ -28,7 +28,7 @@ impl<T> Iterator<T> for Range<T> {
         if self.start < self.end {
             let value = self.start.clone();
             self.start += 1;
-            Option<T>.Some(value.move())
+            Option<T>.Some(value)
         } else {
             Option<T>.None
         }

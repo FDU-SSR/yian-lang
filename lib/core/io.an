@@ -1,7 +1,6 @@
 from std.core.vec import Vec;
 from std.core.string import String;
 from std.core.result import Result;
-from std.core.move import Move;
 from std.core.drop import Drop;
 from std.core.slice import from_raw_parts;
 from std.core.range import Range;
@@ -23,7 +22,6 @@ from std.core.range import Range;
 // IoError — structured I/O error
 // =====================================================================
 
-@BitCopy
 pub enum IoErrorKind {
     NotFound,
     PermissionDenied,
@@ -50,7 +48,7 @@ impl IoError {
 
     pub static fn new(kind: IoErrorKind, msg: str) -> Self {
         let s = String.from(&msg);
-        Self(kind = kind, msg = s.move())
+        Self(kind = kind, msg = s)
     }
 
     pub static fn not_found(msg: str) -> Self {
@@ -63,7 +61,7 @@ impl IoError {
 
     pub static fn unexpected_eof() -> Self {
         let s = String.from(&"unexpected EOF");
-        Self(kind = IoErrorKind.UnexpectedEof, msg = s.move())
+        Self(kind = IoErrorKind.UnexpectedEof, msg = s)
     }
 
     pub static fn other(msg: str) -> Self {
@@ -91,6 +89,12 @@ pub struct File {
 }
 
 impl File {
+    fn assert_open() {
+        if self.fd == -2 {
+            panic("file is closed");
+        }
+    }
+
     // Open a file at `path` with the given `mode`.
     pub static fn open(path: str, mode: OpenMode) -> Result<File, IoError> {
         let flags: i32 = match mode {
@@ -108,21 +112,21 @@ impl File {
 
     // Return the raw file descriptor.
     pub fn fd() -> i32 {
-        self.validity_assert();
+        self.assert_open();
         self.fd
     }
 
     // Read up to buf.len() bytes into the provided buffer.
     // Returns the number of bytes read. 0 means EOF.
     pub fn read(buf: u8[]) -> Result<u64, IoError> {
-        self.validity_assert();
+        self.assert_open();
         let s: str = sys_read(self.fd, buf);
         Result<u64, IoError>.Ok(val = s.as_slice().len())
     }
 
     // Read the entire remaining content into a String.
     pub fn read_to_string() -> Result<String, IoError> {
-        self.validity_assert();
+        self.assert_open();
         let result = String.new();
         let buf: u8[4096];
         assume_init(buf);
@@ -135,46 +139,33 @@ impl File {
             }
             result.push_str(s);
         }
-        Result<String, IoError>.Ok(val = result.move())
+        Result<String, IoError>.Ok(val = result)
     }
 
     // Write a str to the file. Returns the number of bytes written.
     pub fn write(data: str) -> Result<u64, IoError> {
-        self.validity_assert();
+        self.assert_open();
         sys_write(self.fd, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     // Write the entire str to the file.
     pub fn write_all(data: str) -> Result<u64, IoError> {
-        self.validity_assert();
+        self.assert_open();
         sys_write(self.fd, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     // Close the file descriptor explicitly.
-    // After close(), the File is invalidated and should not be used.
+    // After close(), the File records the closed state with fd = -2.
     pub fn close() -> Result<i32, IoError> {
-        self.validity_assert();
+        self.assert_open();
         let ret: i32 = close(self.fd);
-        self.invalidate();
+        self.fd = -2;
         if ret < 0 {
             return Result<i32, IoError>.Err(msg = IoError.other("close failed"));
         }
         Result<i32, IoError>.Ok(val = ret)
-    }
-}
-
-// ------------------------------------------------------------------
-// Move — moved-from files have fd = -2 (sentinel)
-// ------------------------------------------------------------------
-
-impl Move for File {
-    fn invalidate() {
-        self.fd = -2;
-    }
-    fn is_valid() -> bool {
-        self.fd != -2
     }
 }
 
@@ -184,9 +175,9 @@ impl Move for File {
 
 impl Drop for File {
     pub fn drop() {
-        if self.is_valid() {
+        if self.fd != -2 {
             close(self.fd);
-            self.invalidate();
+            self.fd = -2;
         }
     }
 }
@@ -229,7 +220,7 @@ impl Stdin {
             }
             result.push_str(s);
         }
-        Result<String, IoError>.Ok(val = result.move())
+        Result<String, IoError>.Ok(val = result)
     }
 
     // Read up to buf.len() bytes from stdin.
@@ -253,7 +244,7 @@ impl Stdin {
             result.push_str(s);
         }
         del buf;
-        Result<String, IoError>.Ok(val = result.move())
+        Result<String, IoError>.Ok(val = result)
     }
 }
 
@@ -310,7 +301,7 @@ pub fn read_file(path: str) -> String {
     let f = File.open(path, OpenMode.Read).unwrap();
     let content = f.read_to_string().unwrap();
     f.drop();
-    return content.move();
+    return *content;
 }
 
 pub fn write_file(path: str, content: str) {
