@@ -1,0 +1,10 @@
+from std.core.hash import Murmur3Hasher, Hash;
+
+impl Hash<Murmur3Hasher> for f64 {
+    fn hash(hasher: Murmur3Hasher) {
+        let value: f64 = *self;
+        let bytes: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+        __memcpy(&bytes, &value, 8);
+        hasher.write(bytes.as_slice());
+    }
+}
