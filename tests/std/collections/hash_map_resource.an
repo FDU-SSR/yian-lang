@@ -1,0 +1,73 @@
+// HashMap replacement, resize, removal, clear and final drop form a cleanup loop.
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct Guard {
+    value: i32,
+    drops: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() { *self.drops += 1; }
+}
+
+struct KGuard {
+    id: i32,
+    drops: i32*,
+}
+
+impl Drop for KGuard {
+    fn drop() { *self.drops += 1; }
+}
+
+impl Hash<Murmur3Hasher> for KGuard {
+    fn hash(hasher: Murmur3Hasher) { self.id.hash(hasher); }
+}
+
+impl PartialEq<KGuard> for KGuard {
+    fn eq(other: KGuard*) -> bool { self.id == other.id }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let map = HashMap<i32, Guard>.with_capacity(4);
+
+    map.insert(1, Guard(10, &drops));
+    map.insert(1, Guard(11, &drops));
+    assert drops == 1;
+    assert (**map.get(&1).unwrap()).value == 11;
+
+    for i in 2i32..20 {
+        map.insert(i, Guard(i, &drops));
+    }
+    assert drops == 1;
+    assert map.len() == 19;
+
+    assert map.remove(&5);
+    assert drops == 2;
+    map.clear();
+    assert drops == 20;
+
+    map.insert(100, Guard(100, &drops));
+    map.drop();
+    assert drops == 21;
+    map.drop();
+    assert drops == 21;
+
+    let key_drops: i32 = 0;
+    let kmap = HashMap<KGuard, i32>.with_capacity(4);
+    let key = KGuard(1, &key_drops);
+    kmap.insert(key, 100);
+    kmap.insert(key, 200);
+    kmap.insert(key, 300);
+    assert key_drops == 0;
+    assert kmap.len() == 1;
+    assert **kmap.get(&key).unwrap() == 300;
+
+    assert kmap.remove(&key);
+    assert key_drops == 1;
+    kmap.drop();
+    assert key_drops == 1;
+}

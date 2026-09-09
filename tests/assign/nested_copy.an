@@ -1,0 +1,11 @@
+// Nested structs support ordinary assignment.
+struct Inner { a: i32, b: bool }
+struct Outer { inner: Inner, extra: f64 }
+
+fn main() {
+    let o1 = Outer(Inner(1, true), 3.14);
+    let o2 = o1;
+    assert o2.inner.a == 1;
+    assert o2.inner.b;
+    assert o1.inner.a == 1;
+}

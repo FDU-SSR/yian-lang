@@ -1,0 +1,33 @@
+// String keys use the existing Deref<str> path for hashing.
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.string import String;
+
+fn main() {
+    let map = HashMap<String, i32>.new();
+    let alpha = String.from(&"alpha");
+    map.insert(alpha, 10);
+    map.insert(alpha, 20);
+    assert map.len() == 1;
+    assert **map.get(&alpha).unwrap() == 20;
+
+    let other = String.from(&"alpha");
+    assert map.contains(&other);
+    assert **map.get(&other).unwrap() == 20;
+    assert map.remove(&other);
+    assert map.len() == 0 && !map.contains(&other);
+    map.drop();
+    other.drop();
+
+    let set = HashSet<String>.new();
+    let beta = String.from(&"beta");
+    assert set.insert(beta);
+    assert !set.insert(beta);
+    assert set.len() == 1;
+    let beta2 = String.from(&"beta");
+    assert set.contains(&beta2);
+    assert set.remove(&beta2);
+    assert set.is_empty();
+    set.drop();
+    beta2.drop();
+}

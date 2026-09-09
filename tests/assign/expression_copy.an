@@ -1,0 +1,36 @@
+// Aggregate values can flow through expression-oriented copy paths.
+struct Box { value: i32 }
+
+fn tail(value: Box) -> Box { value }
+
+fn main() {
+    let source = Box(7);
+    let from_if = if true { source } else { Box(0) };
+    let from_block = {
+        let local = source;
+        local
+    };
+    let from_match = match Option<Box>.Some(source) {
+        Some(value) => value,
+        None => Box(0),
+    };
+    let from_loop = loop { break source; };
+    let repeated: Box[3] = [source; 3];
+    let returned = tail(source);
+
+    assert source.value == 7;
+    assert from_if.value == 7 && from_block.value == 7;
+    assert from_match.value == 7 && from_loop.value == 7;
+    assert repeated[2].value == 7 && returned.value == 7;
+
+    let target = Box(1);
+    target = source;
+    target = target;
+    assert target.value == 7;
+
+    let array = [Box(1), Box(2)];
+    array[0] = source;
+    let ptr: Box* = &array[1];
+    *ptr = source;
+    assert array[0].value == 7 && array[1].value == 7;
+}

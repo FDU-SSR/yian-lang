@@ -1,0 +1,12 @@
+// A user-defined method named clone has no compiler-provided semantics.
+struct Value { number: i32 }
+
+impl Value {
+    fn clone() -> i32 { self.number + 1 }
+}
+
+fn main() {
+    let value = Value(41);
+    let ptr: Value* = &value;
+    assert ptr.clone() == 42;
+}

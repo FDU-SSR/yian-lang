@@ -1,0 +1,68 @@
+// HashSet.clone() deep-copies stored elements.
+from std.collections.hash_set import HashSet;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+from std.core.string import String;
+
+struct SKey {
+    tag: String,
+    drops: i32*,
+}
+
+impl Drop for SKey {
+    fn drop() {
+        *self.drops += 1;
+        self.tag.drop();
+    }
+}
+
+impl Hash<Murmur3Hasher> for SKey {
+    fn hash(hasher: Murmur3Hasher) {
+        hasher.write(self.tag.as_slice());
+    }
+}
+
+impl PartialEq<SKey> for SKey {
+    fn eq(other: SKey*) -> bool {
+        self.tag.as_str() == other.tag.as_str()
+    }
+}
+
+impl Clone for SKey {
+    fn clone() -> Self {
+        SKey(tag = self.tag.clone(), drops = self.drops)
+    }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let set = HashSet<SKey>.with_capacity(4);
+    set.insert(SKey(tag = String.from(&"alpha"), drops = &drops));
+    set.insert(SKey(tag = String.from(&"beta"), drops = &drops));
+
+    let cloned = set.clone();
+    assert drops == 0;
+    assert cloned.len() == 2;
+
+    let probe_alpha = SKey(tag = String.from(&"alpha"), drops = &drops);
+    assert cloned.remove(&probe_alpha);
+    assert drops == 1;
+    assert set.contains(&probe_alpha);
+
+    for key in cloned {
+        key.tag.push('!');
+    }
+    let probe_beta = SKey(tag = String.from(&"beta"), drops = &drops);
+    let probe_beta_bang = SKey(tag = String.from(&"beta!"), drops = &drops);
+    assert cloned.contains(&probe_beta_bang) && !cloned.contains(&probe_beta);
+    assert set.contains(&probe_beta);
+
+    assert set.remove(&probe_alpha);
+    assert drops == 2;
+    set.drop();
+    assert drops == 3;
+    cloned.drop();
+    assert drops == 4;
+}

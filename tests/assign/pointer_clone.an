@@ -1,0 +1,9 @@
+// A pointer has no Clone implementation of its own. Method lookup
+// auto-dereferences it and invokes Clone on the pointed-to value.
+fn main() {
+    let value: i32 = 42;
+    let ptr: i32* = &value;
+    let copied: i32 = ptr.clone();
+    assert copied == 42;
+    assert ptr == &value;
+}

@@ -1,0 +1,14 @@
+// Aggregate construction copies non-scalar values.
+struct BigInt { value: i64 }
+
+impl Clone for BigInt {
+    pub fn clone() -> Self { BigInt(self.value) }
+}
+
+fn main() {
+    let a: BigInt = BigInt(1);
+    let b: BigInt = BigInt(2);
+    let pair = (a, b);
+    assert pair[0].value == 1 && pair[1].value == 2;
+    assert a.value == 1 && b.value == 2;
+}

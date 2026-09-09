@@ -1,0 +1,92 @@
+// HashMap.clone() rebuilds an independent table and deep-clones every entry.
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+struct SKey {
+    tag: String,
+    drops: i32*,
+}
+
+impl Drop for SKey {
+    fn drop() {
+        *self.drops += 1;
+        self.tag.drop();
+    }
+}
+
+impl Hash<Murmur3Hasher> for SKey {
+    fn hash(hasher: Murmur3Hasher) {
+        hasher.write(self.tag.as_slice());
+    }
+}
+
+impl PartialEq<SKey> for SKey {
+    fn eq(other: SKey*) -> bool {
+        self.tag.as_str() == other.tag.as_str()
+    }
+}
+
+impl Clone for SKey {
+    fn clone() -> Self {
+        SKey(tag = self.tag.clone(), drops = self.drops)
+    }
+}
+
+fn main() {
+    let map = HashMap<i64, i64>.new();
+    for i in 0i64..5 {
+        map.insert(i, i * 10);
+    }
+    let cloned = map.clone();
+    assert map.len() == 5 && cloned.len() == 5;
+    for i in 0i64..5 {
+        assert **map.get(&i).unwrap() == i * 10;
+        assert **cloned.get(&i).unwrap() == i * 10;
+    }
+    cloned.insert(99, 999);
+    assert map.get(&99).is_none();
+    assert cloned.remove(&2) && map.contains(&2);
+    cloned[1] = 777
+    assert cloned[1] == 777 && map[1] == 10;
+    map.drop();
+    cloned.drop();
+
+    let map2 = HashMap<i64, Vec<String>>.new();
+    let values = Vec<String>.new();
+    values.push(String.from(&"one"));
+    map2.insert(1, values);
+    let cloned2 = map2.clone();
+    cloned2[1].push(String.from(&"extra"));
+    assert map2[1].len() == 1 && cloned2[1].len() == 2;
+    map2[1][0].push('!');
+    assert map2[1][0] == "one!" && cloned2[1][0] == "one";
+    map2.drop();
+    cloned2.drop();
+
+    let key_drops: i32 = 0;
+    let map3 = HashMap<SKey, i32>.with_capacity(4);
+    map3.insert(SKey(tag = String.from(&"k1"), drops = &key_drops), 10);
+    map3.insert(SKey(tag = String.from(&"k2"), drops = &key_drops), 20);
+    let cloned3 = map3.clone();
+    assert key_drops == 0;
+
+    for key in cloned3 {
+        key.tag.push('!');
+    }
+    let probe1 = SKey(tag = String.from(&"k1"), drops = &key_drops);
+    let probe1b = SKey(tag = String.from(&"k1!"), drops = &key_drops);
+    assert map3.contains(&probe1) && !map3.contains(&probe1b);
+    assert cloned3.contains(&probe1b) && !cloned3.contains(&probe1);
+
+    assert map3.remove(&probe1);
+    assert key_drops == 1;
+    cloned3.drop();
+    assert key_drops == 3;
+    map3.drop();
+    assert key_drops == 4;
+}

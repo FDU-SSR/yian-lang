@@ -1,0 +1,58 @@
+// HashMap regression test: construction, lookup, update, removal and resize.
+
+from std.core.hash import Murmur3BuildHasher;
+from std.collections.hash_map import HashMap;
+
+fn main() {
+    let map1: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert map1.len() == 0;
+    assert map1.is_empty();
+
+    let map2: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        8,
+        Murmur3BuildHasher.with_seed(42)
+    )
+    map2.insert(1, 100);
+    map2.insert(2, 200);
+    map2.insert(3, 300);
+    assert map2.len() == 3;
+    assert **map2.get(&1).unwrap() == 100;
+    assert **map2.get(&2).unwrap() == 200;
+    assert map2.contains(&3);
+
+    map2.insert(1, 999);
+    assert map2.len() == 3;
+    assert **map2.get(&1).unwrap() == 999;
+    assert map2.get(&99).is_none();
+
+    assert map2.remove(&2);
+    assert map2.len() == 2;
+    assert map2.get(&2).is_none();
+    assert !map2.remove(&99);
+
+    map2.clear();
+    assert map2.len() == 0;
+    assert map2.is_empty();
+
+    let map3: HashMap<i64, i64> = HashMap<i64, i64>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(7)
+    )
+    for i in 0i64..20 {
+        map3.insert(i, i * 10);
+    }
+    assert map3.len() == 20;
+    for i in 0i64..20 {
+        assert **map3.get(&i).unwrap() == i * 10;
+    }
+    assert map3.get(&20).is_none();
+
+    let map4: HashMap<i64, i64> = HashMap<i64, i64>.new()
+    map4.insert(1, 100);
+    assert map4[1] == 100;
+    map4[1] = 999
+    assert map4[1] == 999;
+}
