@@ -1,6 +1,8 @@
 // HashMap replacement, resize, removal, clear and final drop form a cleanup loop.
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
 
 struct Guard {
     value: i32,
@@ -9,6 +11,23 @@ struct Guard {
 
 impl Drop for Guard {
     fn drop() { *self.drops += 1; }
+}
+
+struct KGuard {
+    id: i32,
+    drops: i32*,
+}
+
+impl Drop for KGuard {
+    fn drop() { *self.drops += 1; }
+}
+
+impl Hash<Murmur3Hasher> for KGuard {
+    fn hash(hasher: Murmur3Hasher) { self.id.hash(hasher); }
+}
+
+impl PartialEq<KGuard> for KGuard {
+    fn eq(other: KGuard*) -> bool { self.id == other.id }
 }
 
 fn main() {
@@ -36,4 +55,21 @@ fn main() {
     assert drops == 21: "map drop clears entries and releases buffers";
     map.drop();
     assert drops == 21;
+
+    // Duplicate incoming keys are discarded without drop (the same variable may
+    // be re-inserted safely); remove and final drop clean stored keys exactly once.
+    let key_drops: i32 = 0;
+    let kmap = HashMap<KGuard, i32>.with_capacity(4);
+    let k = KGuard(1, &key_drops);
+    kmap.insert(k, 100);
+    kmap.insert(k, 200);
+    kmap.insert(k, 300);
+    assert key_drops == 0: "duplicate incoming key is discarded, never dropped";
+    assert kmap.len() == 1;
+    assert **kmap.get(&k).unwrap() == 300;
+
+    assert kmap.remove(&k);
+    assert key_drops == 1: "remove drops the stored key exactly once";
+    kmap.drop();
+    assert key_drops == 1;
 }

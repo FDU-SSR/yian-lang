@@ -1,0 +1,19 @@
+// Test: read all of stdin via Stdin.read_to_string().
+//
+// stdin from tests/input/env/stdin_all.an.stdin: 5000 bytes (> one 4096-byte
+// read chunk, forcing multiple sys_read + push_str iterations). Regression for
+// the removed `del buf` on a stack array inside read_to_string (freeing a
+// stack pointer crashed before the fix).
+from std.core.io import Stdin;
+from std.core.string import String;
+
+fn main() {
+    let content: String = *Stdin.read_to_string().unwrap();
+    assert content.len() == 5000u64: "read_to_string must capture all stdin";
+    let head: str = content[0u64..4];
+    let tail: str = content[4996u64..5000];
+    let seam: str = content[4095u64..4097];
+    assert head == "aaaa": "content must start with the first chunk";
+    assert tail == "bbbb": "content must end with the last chunk";
+    assert seam == "aa": "chunk boundary must not be lost";
+}

@@ -1,0 +1,104 @@
+// HashMap.clone() rebuilds an independent table and deep-clones every key and
+// value; later insert/remove/index-writes in one map never affect the other.
+// Drop counting proves stored keys are cleaned exactly once (no double free).
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+struct SKey {
+    tag: String,
+    drops: i32*,
+}
+
+impl Drop for SKey {
+    fn drop() {
+        *self.drops += 1;
+        self.tag.drop();
+    }
+}
+
+impl Hash<Murmur3Hasher> for SKey {
+    fn hash(hasher: Murmur3Hasher) {
+        hasher.write(self.tag.as_slice());
+    }
+}
+
+impl PartialEq<SKey> for SKey {
+    fn eq(other: SKey*) -> bool {
+        self.tag.as_str() == other.tag.as_str()
+    }
+}
+
+impl Clone for SKey {
+    fn clone() -> Self {
+        SKey(tag = self.tag.clone(), drops = self.drops)
+    }
+}
+
+fn main() {
+    // === 1: plain i64 map: clone starts equal and diverges independently ===
+    let m = HashMap<i64, i64>.new();
+    for i in 0i64..5 {
+        m.insert(i, i * 10);
+    }
+    let c = m.clone();
+    assert m.len() == 5 && c.len() == 5;
+    for i in 0i64..5 {
+        assert **m.get(&i).unwrap() == i * 10;
+        assert **c.get(&i).unwrap() == i * 10: "clone holds a copy of every entry";
+    }
+    c.insert(99, 999);
+    assert m.get(&99).is_none(): "inserting into the clone must not reach the original";
+    assert c.remove(&2) && m.contains(&2): "removing from the clone must not reach the original";
+    c[1] = 777;
+    assert c[1] == 777 && m[1] == 10: "index writes on the clone stay local";
+    m.drop();
+    c.drop();
+
+    // === 2: nested containers: Vec<String> values are deep-cloned ===
+    let m2 = HashMap<i64, Vec<String>>.new();
+    let v1 = Vec<String>.new();
+    v1.push(String.from(&"one"));
+    m2.insert(1, v1);
+    m2.insert(2, Vec<String>.new());
+    let c2 = m2.clone();
+    c2[1].push(String.from(&"extra"));
+    assert m2[1].len() == 1 && c2[1].len() == 2: "cloned vec values are independent";
+    assert c2[1][0] == "one";
+    m2[1][0].push('!');
+    assert m2[1][0] == "one!" && c2[1][0] == "one": "element mutation stays local";
+    m2.drop();
+    c2.drop();
+
+    // === 3: heap-backed keys: deep-copied, cleaned exactly once per map ===
+    let key_drops: i32 = 0;
+    let m3 = HashMap<SKey, i32>.with_capacity(4);
+    m3.insert(SKey(tag = String.from(&"k1"), drops = &key_drops), 10);
+    m3.insert(SKey(tag = String.from(&"k2"), drops = &key_drops), 20);
+    assert key_drops == 0 && m3.len() == 2;
+
+    let c3 = m3.clone();
+    assert key_drops == 0: "cloning must not drop the original keys";
+    assert c3.len() == 2;
+
+    // Stored keys were deep-cloned: mutate the clone's keys in place.
+    for k in c3 {
+        k.tag.push('!');
+    }
+    let probe1 = SKey(tag = String.from(&"k1"), drops = &key_drops);
+    let probe1b = SKey(tag = String.from(&"k1!"), drops = &key_drops);
+    let probe2 = SKey(tag = String.from(&"k2"), drops = &key_drops);
+    assert m3.contains(&probe1) && !m3.contains(&probe1b): "original keys stay untouched";
+    assert c3.contains(&probe1b) && !c3.contains(&probe1): "clone keys were deep-copied";
+
+    assert m3.remove(&probe1);
+    assert key_drops == 1: "remove cleans only the original's stored key";
+    c3.drop();
+    assert key_drops == 3: "clone drop cleans its deep-copied keys (k1!, k2)";
+    m3.drop();
+    assert key_drops == 4: "original drop cleans its remaining stored key (k2)";
+}
