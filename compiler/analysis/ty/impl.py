@@ -103,8 +103,7 @@ class ImplRegistry:
         """Return True if all trait conditions on *impl* are satisfied under *substs*."""
         if not impl.conditions:
             return True
-        fresh = visited is None
-        if fresh:
+        if visited is None:
             visited = set()
         for generic_id, required_traits in impl.conditions.items():
             concrete_type_id = substs.get(generic_id, generic_id)
@@ -112,15 +111,13 @@ class ImplRegistry:
                 substed_trait = self.__ctx.instantiate(trait_id, substs)
                 # Recursive has_impl calls are context-dependent (they share
                 # the visited cycle-detection set), so never cache them — only
-                # the top-level fresh=True query is cacheable. `fresh` here
-                # merely records whether *we* created the visited set; it must
-                # not leak onto the recursive call.
+                # the top-level fresh=True query is cacheable.
                 # A sibling bound must not inherit the visited marker created
                 # by an earlier sibling bound. For example, T1: Clone and
                 # T2: Clone are both valid when T1 and T2 happen to be the
                 # same concrete type. Keep the current ancestor chain for
                 # cycle detection, but isolate each condition branch.
-                condition_visited = None if visited is None else set(visited)
+                condition_visited = set(visited)
                 if not self.has_impl(concrete_type_id, substed_trait, condition_visited, False):
                     return False
         return True
