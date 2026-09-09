@@ -351,10 +351,7 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-CLAUDE.md
-AGENTS.md
-
 .claude/*
+.omo/*
 a.out
 opencode.json
-.omo/
