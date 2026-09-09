@@ -47,11 +47,12 @@ fn main() {
     assert cloned_vec_arr[2][0] == 3;
     assert &cloned_vec_arr[0][0] != &vec_arr[0][0]; // Ensure deep copy
 
-    // Test moving
-    let moved_vec_arr = vec_arr.move();
-    assert moved_vec_arr[0][0] == 1;
-    assert moved_vec_arr[1][0] == 2;
-    assert moved_vec_arr[2][0] == 3;
-    assert !vec_arr[0].is_valid(); // Ensure original is invalidated
+    // Ordinary array assignment is shallow and keeps both descriptors readable.
+    let copied_vec_arr = vec_arr;
+    assert copied_vec_arr[0][0] == 1;
+    assert copied_vec_arr[1][0] == 2;
+    assert copied_vec_arr[2][0] == 3;
+    assert vec_arr[0][0] == 1;
+    assert &copied_vec_arr[0][0] == &vec_arr[0][0];
 
 }

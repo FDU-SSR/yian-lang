@@ -1,4 +1,4 @@
-// Test: construction — elements must obey assignment rules
+// Test: aggregate construction accepts ordinary copied values
 //
 // Expected output: 0
 
@@ -10,16 +10,12 @@ impl Clone for BigInt {
     pub fn clone() -> Self { BigInt(self.value) }
 }
 
-impl Move for BigInt {
-    fn invalidate() {}
-    fn is_valid() -> bool { true }
-}
-
 fn main() {
     let a: BigInt = BigInt(1);
     let b: BigInt = BigInt(2);
 
-    let pair = (a.move(), b.move());
+    let pair = (a, b);
+    assert pair[0].value == 1 && a.value == 1: "construction keeps source readable";
 
     let c: BigInt = BigInt(3);
     let d: BigInt = BigInt(4);

@@ -1,6 +1,6 @@
 fn my_strcpy(char* dest, char* src) -> char* {
-    assert dest.is_valid(): "dest is null"
-    assert src.is_valid(): "src is null"
+    assert dest != nullptr: "dest is null"
+    assert src != nullptr: "src is null"
     let d: char* = dest
     while *src != '\0' {
         *d = *src
@@ -15,7 +15,7 @@ fn tinydir_file_open(char* path) -> i32 {
     let dir_name: char*;
     let base_name: char*;
     let path_len: i32 = 360
-    if ! path.is_valid() || path_len == 0 || path_len >= 4096{
+    if path == nullptr || path_len == 0 || path_len >= 4096{
         return -1
     } 
     // 缺少strcpy

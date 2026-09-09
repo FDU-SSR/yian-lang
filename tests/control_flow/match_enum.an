@@ -8,7 +8,6 @@
 
 from std.core.io import print;
 
-@BitCopy
 enum Color {
     BLUE, RED, YELLOW, GREEN, BLACK,
     LOOK {

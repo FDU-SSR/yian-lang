@@ -27,19 +27,17 @@ fn main() {
     assert &cloned_tuple3[1][0] != &tuple3[1][0]; // Ensure deep copy
     assert &cloned_tuple3[2][0] != &tuple3[2][0]; // Ensure deep copy
 
-    // Test moving
-    let moved_tuple2 = tuple2.move();
-    assert moved_tuple2[0][0] == 1;
-    assert moved_tuple2[1][0] == true;
-    assert !tuple2[0].is_valid(); // Ensure original is invalidated
-    assert !tuple2[1].is_valid(); // Ensure original is invalidated
+    // Ordinary tuple assignment is shallow and does not invalidate the source.
+    let copied_tuple2 = tuple2;
+    assert copied_tuple2[0][0] == 1;
+    assert copied_tuple2[1][0] == true;
+    assert tuple2[0][0] == 1;
+    assert &copied_tuple2[0][0] == &tuple2[0][0];
 
-    let moved_tuple3 = tuple3.move();
-    assert moved_tuple3[0][0] == 1;
-    assert moved_tuple3[1][0] == true;
-    assert moved_tuple3[2][0] == 'a';
-    assert !tuple3[0].is_valid(); // Ensure original is invalidated
-    assert !tuple3[1].is_valid(); // Ensure original is invalidated
-    assert !tuple3[2].is_valid(); // Ensure original is invalidated
+    let copied_tuple3 = tuple3;
+    assert copied_tuple3[0][0] == 1;
+    assert copied_tuple3[1][0] == true;
+    assert copied_tuple3[2][0] == 'a';
+    assert tuple3[2][0] == 'a';
 
 }

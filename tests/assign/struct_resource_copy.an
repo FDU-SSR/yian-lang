@@ -1,6 +1,4 @@
-// Test: @BitCopy struct with non-BitCopy field is rejected
-//
-// Expected: compilation error
+// Test: structs with user-defined fields can be copied
 
 struct Data {
     value: i64,
@@ -10,7 +8,6 @@ impl Clone for Data {
     pub fn clone() -> Self { Data(self.value) }
 }
 
-@BitCopy
 struct Bad {
     x: i32,
     d: Data,
@@ -19,4 +16,5 @@ struct Bad {
 fn main() {
     let b1 = Bad(1, Data(42));
     let b2 = b1;
+    assert b1.d.value == 42 && b2.d.value == 42;
 }

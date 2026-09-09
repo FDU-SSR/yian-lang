@@ -1,5 +1,5 @@
 fn my_memcpy(char* dest, char* src, u32 len) -> char* {
-    if ! dest.is_valid() && ! src.is_valid(){
+    if dest == nullptr && src == nullptr {
         return dest
     }
     if len == 0 {
@@ -44,7 +44,7 @@ fn ParseString(char** jsonPtr) -> i32 {
     let strStart: char*;
     let length: i32 = SkipString(jsonPtr, &strStart)
     let str: char* = dyn char[length + 1]
-    if ! str.is_valid() {
+    if str == nullptr {
         // exit(1);
         return 2
     }

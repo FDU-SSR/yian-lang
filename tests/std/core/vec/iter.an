@@ -9,18 +9,18 @@ fn main() {
     for x in &vec {
         assert *x == vec[u64(*x)];
     }
-    assert vec.is_valid(); // Ensure original is still valid
+    assert vec.len() == 5; // Original remains usable
 
     // Test moving cloned iterator
     for x in vec.clone() {
         assert *x == vec[u64(*x)];
     }
-    assert vec.is_valid(); // Ensure original is still valid
+    assert vec.len() == 5;
 
-    // Test moving iterator
-    for x in vec.move() {
+    // Iteration receives a copied Vec descriptor and does not invalidate vec.
+    for x in vec {
         // nop
     }
-    assert !vec.is_valid(); // Ensure original is invalidated
+    assert vec.len() == 5;
 
 }

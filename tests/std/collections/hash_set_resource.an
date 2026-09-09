@@ -1,0 +1,38 @@
+// HashSet cleans rejected duplicates, removed keys and remaining live entries.
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct Key {
+    id: i32,
+    drops: i32*,
+}
+
+impl Drop for Key {
+    fn drop() { *self.drops += 1; }
+}
+
+impl Hash<Murmur3Hasher> for Key {
+    fn hash(hasher: Murmur3Hasher) { self.id.hash(hasher); }
+}
+
+impl PartialEq<Key> for Key {
+    fn eq(other: Key*) -> bool { self.id == other.id }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let set = HashSet<Key>.new();
+    assert set.insert(Key(1, &drops));
+    assert !set.insert(Key(1, &drops));
+    assert drops == 1: "rejected duplicate must be cleaned";
+
+    let lookup = Key(1, &drops);
+    assert set.remove(&lookup);
+    assert drops == 2: "remove must clean the stored key";
+
+    set.insert(Key(2, &drops));
+    set.drop();
+    assert drops == 3: "drop must clean remaining keys";
+}

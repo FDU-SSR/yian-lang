@@ -1,6 +1,4 @@
-// Test: non-simple types cannot be directly assigned
-//
-// Expected: compilation error
+// Test: user-defined values can be assigned directly
 
 struct BigInt {
     value: i64,
@@ -12,5 +10,6 @@ impl Clone for BigInt {
 
 fn main() {
     let a: BigInt = BigInt(1);
-    let c = a;  // ERROR: BigInt does not support simple assignment
+    let c = a;
+    assert a.value == 1 && c.value == 1;
 }

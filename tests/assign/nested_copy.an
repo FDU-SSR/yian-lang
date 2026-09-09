@@ -1,14 +1,12 @@
-// Test: nested @BitCopy structs support direct assignment
+// Test: nested structs support ordinary assignment
 //
 // Expected output: 0
 
-@BitCopy
 struct Inner {
     a: i32,
     b: bool,
 }
 
-@BitCopy
 struct Outer {
     inner: Inner,
     extra: f64,
@@ -16,7 +14,8 @@ struct Outer {
 
 fn main() {
     let o1 = Outer(Inner(1, true), 3.14);
-    let o2 = o1;  // ok: Outer is @BitCopy, Inner is @BitCopy
+    let o2 = o1;
     assert o2.inner.a == 1: "inner.a should be 1";
     assert o2.inner.b: "inner.b should be true";
+    assert o1.inner.a == 1: "source remains readable";
 }

@@ -1,0 +1,39 @@
+// HashMap replacement, resize, removal, clear and final drop form a cleanup loop.
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+
+struct Guard {
+    value: i32,
+    drops: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() { *self.drops += 1; }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let map = HashMap<i32, Guard>.with_capacity(4);
+
+    map.insert(1, Guard(10, &drops));
+    map.insert(1, Guard(11, &drops));
+    assert drops == 1: "replacement must drop the old value";
+    assert (**map.get(&1).unwrap()).value == 11;
+
+    for i in 2i32..20 {
+        map.insert(i, Guard(i, &drops));
+    }
+    assert drops == 1: "resize must not drop transferred entries";
+    assert map.len() == 19;
+
+    assert map.remove(&5);
+    assert drops == 2: "remove drops one live value";
+    map.clear();
+    assert drops == 20: "clear drops every remaining live value";
+
+    map.insert(100, Guard(100, &drops));
+    map.drop();
+    assert drops == 21: "map drop clears entries and releases buffers";
+    map.drop();
+    assert drops == 21;
+}

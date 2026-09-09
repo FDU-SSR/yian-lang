@@ -5,7 +5,6 @@
 from std.core.ops import AddAssign, SubAssign, MulAssign, DivAssign, RemAssign;
 from std.core.ops import BitAndAssign, BitOrAssign, BitXorAssign, ShlAssign, ShrAssign;
 
-@BitCopy
 struct Value<T> {
     pub value: T,
 }

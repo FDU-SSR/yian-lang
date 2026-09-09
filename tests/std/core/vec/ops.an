@@ -5,7 +5,7 @@
 from std.core.vec import Vec;
 
 fn main() {
-    // ---- extend (consume another Vec) ----
+    // ---- extend (clone elements and preserve source) ----
 
     let v1: Vec<i32> = Vec<i32>.new();
     v1.push(10);
@@ -15,9 +15,14 @@ fn main() {
     v2.push(30);
     v2.push(40);
 
-    v1.extend(v2.move());
+    v1.extend(v2);
     assert v1.len() == 4: "extend should append all elements";
     assert v1[2] == 30: "extend should append correctly";
+    assert v2.len() == 2 && v2[0] == 30: "extend should preserve source";
+
+    v1.extend(v1);
+    assert v1.len() == 8: "self-extension should be safe";
+    assert v1[4] == 10 && v1[7] == 40;
 
     // ---- Add trait ----
 
@@ -29,7 +34,7 @@ fn main() {
     v4.push(3);
     v4.push(4);
 
-    let v5: Vec<i32> = v3.move() + v4.move();
+    let v5: Vec<i32> = v3 + v4;
     assert v5.len() == 4: "add should concatenate vectors";
     assert v5[0] == 1 && v5[3] == 4: "add should preserve element order";
 

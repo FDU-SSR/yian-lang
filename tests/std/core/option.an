@@ -40,12 +40,11 @@ fn main() {
     let opt4: Option<i32> = Option<i32>.Some(77);
     assert *opt4.unwrap() == 77: "unwrap should return the inner value";
 
-    // Move trait: is_valid / invalidate
+    // Ordinary enum assignment copies the active payload and preserves the source.
     let opt5: Option<i32> = Option<i32>.Some(55);
-    assert opt5.is_valid(): "opt5 should be valid (is Some)";
-    let opt6 = opt5.move();
-    assert opt6.is_valid(): "opt6 should be valid (is Some)";
-    assert !opt5.is_valid(): "opt5 should be invalid after invalidate";
-    assert opt5.is_none(): "opt5 should be None after invalidate";
+    let opt6 = opt5;
+    assert opt6.is_some(): "copy should contain the value";
+    assert opt5.is_some(): "source should remain Some after copy";
+    assert *opt5.unwrap() == 55 && *opt6.unwrap() == 55;
 
 }

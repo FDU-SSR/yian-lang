@@ -1,4 +1,4 @@
-// Test: function calls — parameter passing obeys assignment rules
+// Test: function calls copy arguments and leave sources readable
 //
 // Expected output: 0
 
@@ -10,18 +10,14 @@ impl Clone for BigInt {
     pub fn clone() -> Self { BigInt(self.value) }
 }
 
-impl Move for BigInt {
-    fn invalidate() {}
-    fn is_valid() -> bool { true }
-}
-
 fn consume(v: BigInt) -> i64 { v.value }
 
 fn read(p: BigInt*) -> i64 { (*p).value }
 
 fn main() {
     let x: BigInt = BigInt(42);
-    assert consume(x.move()) == 42: "move then consume";
+    assert consume(x) == 42: "copy then consume";
+    assert x.value == 42: "source remains readable after call";
 
     let y: BigInt = BigInt(99);
     assert consume(y.clone()) == 99: "clone then consume";

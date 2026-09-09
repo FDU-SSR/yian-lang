@@ -1,6 +1,4 @@
-// Test: @BitCopy enum with non-BitCopy variant payload is rejected
-//
-// Expected: compilation error
+// Test: enums with aggregate payloads can be copied
 
 struct Data {
     value: i64,
@@ -10,7 +8,6 @@ impl Clone for Data {
     pub fn clone() -> Self { Data(self.value) }
 }
 
-@BitCopy
 enum BadEnum {
     A { val: i32 },
     B { val: Data },
@@ -19,4 +16,6 @@ enum BadEnum {
 fn main() {
     let e1 = BadEnum.A(val = 1);
     let e2 = e1;
+    match e1 { A(val) => assert val == 1, _ => panic("source changed") }
+    match e2 { A(val) => assert val == 1, _ => panic("copy changed") }
 }

@@ -84,10 +84,11 @@ fn main() {
     // 测试 Add trait
     let s_add1: String = String.from(&"ABC");
     let s_add2: String = String.from(&"DEF");
-    let s_add3: String = s_add1.clone() + s_add2.clone();
-    let s_add4: String = s_add1.clone() + "XYZ";
+    let s_add3: String = s_add1 + s_add2;
+    let s_add4: String = s_add1 + "XYZ";
     assert s_add3 == "ABCDEF": "add should concatenate two strings";
     assert s_add4 == "ABCXYZ": "add should concatenate string && str";
+    assert s_add1 == "ABC" && s_add2 == "DEF": "add should preserve operands";
     
     // 测试 Clone trait
     let s_clone1: String = String.from(&"CloneMe");
@@ -135,12 +136,11 @@ fn main() {
     s_aaeq += '\n';
     assert s_aaeq == "Hello World!\n": "add_assign char should append in-place";
 
-    // 测试 Move trait
-    let s_move: String = String.from(&"MoveTest");
-    assert s_move.is_valid(): "should be valid before move";
-    let s_moved: String = s_move.move();
-    assert s_moved.is_valid(): "moved string should be valid";
-    assert !s_move.is_valid(): "original should be invalid after move";
+    // 普通赋值为浅复制：描述字段独立，底层存储共享。
+    let s_copy_source: String = String.from(&"CopyTest");
+    let s_copy: String = s_copy_source;
+    assert s_copy == "CopyTest" && s_copy_source == "CopyTest";
+    assert &s_copy.as_slice()[0] == &s_copy_source.as_slice()[0];
 
     // 测试大量拼接 (merged from edge.an)
     let s_large: String = String.new();
@@ -152,4 +152,3 @@ fn main() {
     assert s_large.len() == 100: "large string len should be 100 after 100 pushes";
 
 }
-

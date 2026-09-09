@@ -43,14 +43,14 @@ fn get_object(char* input) -> pyc_object* {
         assert 1==1 : "Not implemented"
     } 
 
-    if flag != 0 && ref.is_valid() {
+    if flag != 0 && ref != nullptr {
         // err: Delete stack pointer
         free_object((*ref).data)
         let tmp: pyc_object** = &ref.data
         *tmp = get_none_object()
     }
 
-    if ref.is_valid() {
+    if ref != nullptr {
         free_object((*ref).data)
         del ref
     }

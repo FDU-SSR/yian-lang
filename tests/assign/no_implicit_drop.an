@@ -1,0 +1,32 @@
+// Assignment, calls, returns and scope exit never invoke Drop implicitly.
+from std.core.drop import Drop;
+
+struct Guard {
+    value: i32,
+    drop_count: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() {
+        *self.drop_count += 1;
+    }
+}
+
+fn pass(value: Guard) -> Guard {
+    value
+}
+
+fn main() {
+    let drop_count: i32 = 0;
+    let source = Guard(1, &drop_count);
+    let copy = source;
+    copy = source;
+    let returned = pass(copy);
+    {
+        let scoped = returned;
+        assert scoped.value == 1;
+    }
+    assert drop_count == 0: "ordinary value operations must not call drop";
+    returned.drop();
+    assert drop_count == 1: "explicit drop must call the implementation";
+}

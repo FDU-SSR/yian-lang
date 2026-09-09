@@ -1,0 +1,4 @@
+// The removed bitcopy builtin is no longer available.
+fn main() {
+    let value = bitcopy(1);
+}

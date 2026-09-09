@@ -1,4 +1,4 @@
-// Test: @BitCopy is not allowed on function declarations
+// The removed @BitCopy annotation is rejected everywhere.
 //
 // Expected: compilation error
 

@@ -1,0 +1,10 @@
+// Test: zero-field structs support ordinary assignment
+//
+// Expected output: 0
+
+struct UnitLike {}
+
+fn main() {
+    let u1 = UnitLike();
+    let u2 = u1;
+}

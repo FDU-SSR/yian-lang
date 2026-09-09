@@ -1,0 +1,5 @@
+// str views have no default Clone implementation; use String.from for owned data.
+fn main() {
+    let view: str = "hello";
+    let copied = view.clone();
+}

@@ -1,0 +1,51 @@
+// Resource-bearing elements survive growth and are cleaned only by explicit operations.
+from std.core.drop import Drop;
+
+struct Guard {
+    value: i32,
+    drops: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() { *self.drops += 1; }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let values = Vec<Guard>.new();
+    for i in 0i32..10 {
+        values.push(Guard(i, &drops));
+    }
+    assert values.len() == 10 && values[9].value == 9;
+    assert drops == 0: "growth must not drop copied elements";
+
+    let popped = *values.pop().unwrap();
+    assert popped.value == 9 && drops == 0;
+    popped.drop();
+    assert drops == 1;
+
+    let removed = values.remove(2);
+    assert removed.value == 2 && drops == 1;
+    removed.drop();
+    values.truncate(3);
+    assert drops == 7: "truncate drops only removed live elements";
+    values.drop();
+    assert drops == 10: "drop cleans remaining elements exactly once";
+    values.drop();
+    assert drops == 10: "reset state makes repeated drop on one descriptor harmless";
+
+    let strings = Vec<String>.new();
+    strings.push(String.from(&"one"));
+    strings.push(String.from(&"two"));
+    strings.push(String.from(&"three"));
+    strings.push(String.from(&"four"));
+    strings.push(String.from(&"five"));
+    assert strings[0] == "one" && strings[4] == "five";
+
+    let cloned = strings.clone();
+    cloned[0].push('!');
+    assert strings[0] == "one";
+    assert cloned[0] == "one!";
+    strings.drop();
+    cloned.drop();
+}
