@@ -1,0 +1,44 @@
+// String keys work in hash containers without any wrapper: method lookup
+// auto-derefs String to str via Deref<str>, so hashing resolves to the
+// str Hash impl (same bytes String's PartialEq compares). Re-inserting
+// the same variable exercises the duplicate branch, which discards the
+// incoming shallow copy without drop so the stored key never dangles.
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.string import String;
+
+fn main() {
+    let m = HashMap<String, i32>.new();
+
+    // Same-variable duplicate insert: the incoming copy shares the stored
+    // key's buffer and is discarded without drop, so len stays 1.
+    let alpha = String.from(&"alpha");
+    m.insert(alpha, 10);
+    m.insert(alpha, 20);
+    assert m.len() == 1: "duplicate insert replaces the value only";
+    assert **m.get(&alpha).unwrap() == 20: "replaced value is visible";
+
+    // Lookup matches by content, not by descriptor identity.
+    let other = String.from(&"alpha");
+    assert m.contains(&other): "hash via Deref<str> and String equality agree";
+    assert **m.get(&other).unwrap() == 20;
+
+    assert m.remove(&other): "remove finds the deref-hashed key";
+    assert m.len() == 0 && !m.contains(&other);
+    m.drop();
+    other.drop();
+    // alpha's buffer was owned by the stored key and is freed by remove;
+    // the local descriptor is stale and must not be used or dropped again.
+
+    let s = HashSet<String>.new();
+    let beta = String.from(&"beta");
+    assert s.insert(beta);
+    assert !s.insert(beta): "same-variable duplicate insert returns false";
+    assert s.len() == 1;
+    let beta2 = String.from(&"beta");
+    assert s.contains(&beta2): "content-equivalent String found in the set";
+    assert s.remove(&beta2): "remove drops the stored element and returns true";
+    assert !s.contains(&beta2) && s.is_empty();
+    s.drop();
+    beta2.drop();
+}
