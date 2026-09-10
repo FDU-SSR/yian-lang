@@ -209,6 +209,9 @@ class LLBuilder:
         assert isinstance(ptr_ty, Type.PointerType)
         if self.__ll_type_ctx.is_zst(ptr_ty.pointee_type):
             return self.undef(base.type_id)
+        if isinstance(offset.ir_val, ir.Constant) and offset.ir_val.constant == 0:  # type: ignore
+            self.__func.set_reg(result, base)
+            return base
         ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
         result_val = LLValue(base.type_id, ir_val)
         self.__func.set_reg(result, result_val)
@@ -371,6 +374,10 @@ class LLBuilder:
         # build, and inserting into `{}` would be an out-of-range index.
         if self.__ll_type_ctx.is_zst(type_id):
             return self.undef(type_id)
+        if (not any(self.__ll_type_ctx.is_zst(fv.type_id) for fv in field_values)
+                and all(isinstance(fv.ir_val, ir.Constant) for fv in field_values)):  # type: ignore
+            ll_type = self.__ll_type_ctx.get_ll_type(type_id).ir_type
+            return LLValue(type_id, ir.Constant(ll_type, [fv.ir_val for fv in field_values]))  # type: ignore
         val = self.undef(type_id)
         for i, fv in enumerate(field_values):
             if self.__ll_type_ctx.is_zst(fv.type_id):
@@ -393,19 +400,24 @@ class LLBuilder:
         3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
         4. load the complete enum value
         """
+        if payload_type is None or self.__type_ctx.is_zst(payload_type):
+            ir_val = self.undef(enum_type_id).ir_val
+            ir_val = self.__builder.insert_value(ir_val, self.i32(discriminant).ir_val, 0)  # type: ignore
+            self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
+            return
+
         tmp_ptr = self.alloca(enum_type_id).ir_val
 
         # Store discriminant at field 0
         disc_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(0).ir_val], inbounds=True)  # type: ignore
         self.__builder.store(self.i32(discriminant).ir_val, disc_ptr)  # type: ignore
 
-        if payload_type is not None and not self.__type_ctx.is_zst(payload_type):
-            assert payload_fields is not None
-            payload_val = self.__build_aggregate(payload_type, payload_fields)
-            # Bitcast the payload array pointer (field 1) to the payload struct pointer
-            payload_arr_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-            payload_typed_ptr = self.__builder.bitcast(payload_arr_ptr, self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type)).ir_type)  # type: ignore
-            self.__builder.store(payload_val.ir_val, payload_typed_ptr)  # type: ignore
+        assert payload_fields is not None
+        payload_val = self.__build_aggregate(payload_type, payload_fields)
+        # Bitcast the payload array pointer (field 1) to the payload struct pointer
+        payload_arr_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
+        payload_typed_ptr = self.__builder.bitcast(payload_arr_ptr, self.__ll_type_ctx.get_ll_type(self.__type_ctx.alloc_pointer(payload_type)).ir_type)  # type: ignore
+        self.__builder.store(payload_val.ir_val, payload_typed_ptr)  # type: ignore
 
         ir_val = self.__builder.load(tmp_ptr)  # type: ignore
         self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
