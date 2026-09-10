@@ -1,0 +1,24 @@
+// Indexing a dynamically allocated block in a loop creates compiler
+// temporaries for literal indices. Those temporaries must use entry allocas.
+//
+// Expected output: (empty, exit 0)
+
+fn main() {
+    let checksum: i64 = 0;
+    let rounds: u64 = 300000;
+    let index: u64 = 0;
+
+    while index < rounds {
+        let block: i32* = dyn[32] i32;
+        let element: u64 = 0;
+        while element < 32 {
+            block[element] = i32(element);
+            element += 1;
+        }
+        checksum += i64(block[0]) + i64(block[31]);
+        del block;
+        index += 1;
+    }
+
+    assert checksum == i64(31) * i64(rounds): "index result mismatch";
+}

@@ -86,7 +86,19 @@ class LLBuilder:
 
     def alloca(self, type_id: int) -> LLValue:
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
-        return LLValue(ptr_type_id, self.__builder.alloca(self.__ll_type_ctx.get_ll_type(type_id).ir_type))  # type: ignore
+        ll_type = self.__ll_type_ctx.get_ll_type(type_id).ir_type
+        entry_block = self.__func.entry_block
+        if self.__builder.block is not entry_block:  # type: ignore
+            # Compiler-generated temporaries must be allocated once per
+            # function. An alloca emitted in a loop body becomes a dynamic
+            # stack allocation and grows the stack on every iteration.
+            entry_builder = ir.IRBuilder(entry_block)
+            if entry_block.is_terminated:
+                entry_builder.position_before(entry_block.instructions[-1])  # type: ignore
+            else:
+                entry_builder.position_at_end(entry_block)  # type: ignore
+            return LLValue(ptr_type_id, entry_builder.alloca(ll_type))  # type: ignore
+        return LLValue(ptr_type_id, self.__builder.alloca(ll_type))  # type: ignore
 
     def alloca_store(self, value: LLValue, result: str) -> None:
         alloca_val = self.alloca(value.type_id)
@@ -371,7 +383,7 @@ class LLBuilder:
         3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
         4. load the complete enum value
         """
-        tmp_ptr = self.__builder.alloca(self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type)  # type: ignore
+        tmp_ptr = self.alloca(enum_type_id).ir_val
 
         # Store discriminant at field 0
         disc_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(0).ir_val], inbounds=True)  # type: ignore
