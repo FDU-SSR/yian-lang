@@ -1,0 +1,6 @@
+// Test that the `sys_write` syscall is rejected outside the standard
+// library.
+
+fn main() {
+    sys_write(1, "x");
+}
