@@ -802,6 +802,12 @@ class CfgBuilder:
         5 字段胖指针(首次取址惰性实体化帧锁),派生地址(field/array/deref)
         沿胖基址传播,后续 Load/Store/FieldPtr/ElementPtr 检查全保留。
         """
+        # SliceAccess is value-shaped in HIR because ordinary indexing loads an
+        # element.  When it is the operand of AddrOf, however, preserve the
+        # element address instead of materializing a temporary and taking that
+        # temporary's address.
+        if isinstance(expr, HIR.SliceAccess):
+            return self.__resolve_slice_access_addr(expr, fat=True)
         if not expr.is_place:
             val = self.__resolve_val(expr)
             return self.__build_alloca(val)
