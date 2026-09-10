@@ -436,7 +436,7 @@ class CallDispatcher:
         inference = GenericInference(self.__ctx.type_ctx, span)
         values = [self.__expr.value(arg.value) for arg in args]
         for expected_type_id, value in zip(expected_type_ids, values):
-            inference.constrain(expected_type_id, value.type_id)
+            inference.constrain(expected_type_id, self.__decayed_type_for_inference(expected_type_id, value.type_id))
 
         coerced_args = [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids, values)]
         return coerced_args, inference
@@ -448,11 +448,32 @@ class CallDispatcher:
         inference = GenericInference(self.__ctx.type_ctx, span)
         inference.constrain(expected_type_ids[0], receiver.type_id)
         for expected_type_id, value in zip(expected_type_ids[1:], args):
-            inference.constrain(expected_type_id, value.type_id)
+            inference.constrain(expected_type_id, self.__decayed_type_for_inference(expected_type_id, value.type_id))
 
         coerced_receiver = self.__expr.coerce(receiver, inference.instantiate(expected_type_ids[0]))
         coerced_args = [self.__expr.coerce(value, inference.instantiate(expected_type_id)) for expected_type_id, value in zip(expected_type_ids[1:], args)]
         return coerced_receiver, coerced_args, inference
+
+    def __decayed_type_for_inference(self, expected_type_id: int, actual_type_id: int) -> int:
+        """Expose array decay to generic argument inference.
+
+        The actual coercion is still emitted by ExprChecker.coerce().  This
+        helper only supplies the post-decay shape while solving generic type
+        parameters; keeping it here avoids changing method overload lookup.
+        """
+        expected_ty = self.__ctx.type_ctx[expected_type_id]
+        if not isinstance(expected_ty, Type.PointerType):
+            return actual_type_id
+
+        expected_pointee_ty = self.__ctx.type_ctx[expected_ty.pointee_type]
+        actual_ty = self.__ctx.type_ctx[actual_type_id]
+        if isinstance(actual_ty, Type.ArrayType) and not isinstance(expected_pointee_ty, Type.ArrayType):
+            return self.__ctx.type_ctx.alloc_pointer(actual_ty.element_type)
+        if isinstance(actual_ty, Type.PointerType):
+            actual_pointee_ty = self.__ctx.type_ctx[actual_ty.pointee_type]
+            if isinstance(actual_pointee_ty, Type.ArrayType) and not isinstance(expected_pointee_ty, Type.ArrayType):
+                return self.__ctx.type_ctx.alloc_pointer(actual_pointee_ty.element_type)
+        return actual_type_id
 
     def __resolve_named_or_positional_struct_args(self, span: SrcSpan, struct_type_id: int, fields: list[Type.StructField], args: list[AST.Arg]) -> tuple[dict[str, HIR.Expr], GenericInference]:
         if not args:

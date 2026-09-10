@@ -318,6 +318,40 @@ class ExprChecker:
         expected_ty = self.__ctx.type_ctx[expected]
         expr_ty = self.__ctx.type_ctx[expr.type_id]
 
+        # Array decay: T[N] -> T*.  Take the address of an array value and
+        # re-anchor the resulting T[N]* at its first element.
+        if (
+            isinstance(expected_ty, Type.PointerType)
+            and isinstance(expr_ty, Type.ArrayType)
+            and expected == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type)
+        ):
+            addr = HIR.Unary(
+                span=expr.span,
+                op=UnaryOperator.AddrOf,
+                operand=expr,
+                type_id=self.__ctx.type_ctx.alloc_pointer(expr.type_id),
+                is_place=False,
+            )
+            return HIR.BitCast(
+                span=expr.span,
+                value=addr,
+                target_type=expected,
+                type_id=expected,
+                is_place=False,
+            )
+
+        # Re-anchor T[N]* -> T* without copying the array.
+        if isinstance(expected_ty, Type.PointerType) and isinstance(expr_ty, Type.PointerType):
+            pointee_ty = self.__ctx.type_ctx[expr_ty.pointee_type]
+            if isinstance(pointee_ty, Type.ArrayType) and expected == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
+                return HIR.BitCast(
+                    span=expr.span,
+                    value=expr,
+                    target_type=expected,
+                    type_id=expected,
+                    is_place=False,
+                )
+
         match expr:
             case HIR.IntLiteral():
                 if not isinstance(expected_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):

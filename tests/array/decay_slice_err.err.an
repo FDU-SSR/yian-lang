@@ -1,0 +1,6 @@
+// Array decay is not an implicit array-to-slice conversion.
+
+fn main() {
+    let values: u64[2] = [1, 2];
+    let bad: u64[] = values;
+}

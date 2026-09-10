@@ -1,0 +1,6 @@
+// Array decay must preserve the element type and must not become a slice.
+
+fn main() {
+    let values: u64[2] = [1, 2];
+    let bad: i32* = values;
+}
