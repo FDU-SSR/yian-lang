@@ -85,6 +85,15 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         help="Print per-phase timing information.",
     )
     parser.add_argument(
+        "--dump",
+        action="store_true",
+        default=False,
+        help=(
+            "Write intermediate dumps (tokens.txt/ast.txt/hir.txt/cfg.txt, plus "
+            "ir.ll when codegen runs) into build/. Default: off."
+        ),
+    )
+    parser.add_argument(
         "--log-spec",
         type=str,
         metavar="SPEC",
@@ -298,7 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     token_lists: list[list[Token]] = __lex(src_files)
     ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
     Path("build").mkdir(parents=True, exist_ok=True)
-    (Path("build") / "tokens.txt").write_text(format_token_output(src_files, token_lists), encoding="utf-8")
+    if args.dump:
+        (Path("build") / "tokens.txt").write_text(format_token_output(src_files, token_lists), encoding="utf-8")
     if args.profile:
         timings["lex"] = time.perf_counter() - lex_start
 
@@ -316,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile:
         timings["desugar"] = time.perf_counter() - desugar_start
 
-    (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
+    if args.dump:
+        (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
 
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
@@ -380,8 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg_start = time.perf_counter() if args.profile else 0.0
     cfg_functions = __cfg(def_points, type_ctx)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
-    (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
-    (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
+    if args.dump:
+        (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
+        (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start
 
@@ -402,7 +414,8 @@ def main(argv: list[str] | None = None) -> int:
         emit_start = time.perf_counter() if args.profile else 0.0
         emitter = Emitter()
 
-        (Path("build") / "ir.ll").write_text(str(llvm_module), encoding="utf-8")
+        if args.dump:
+            (Path("build") / "ir.ll").write_text(str(llvm_module), encoding="utf-8")
 
         # Emit target output — all under build/ by default
         out_dir = output_path.parent
