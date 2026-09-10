@@ -32,6 +32,9 @@ class LLBuilder:
         self.__ll_type_ctx = ll_type_ctx
         self.__type_ctx = type_ctx
         self.__builder: ir.IRBuilder
+        self.__check_seq = 0
+        self.__continuations: dict[str, str] = {}
+        self.__current_cfg_block = ""
 
     # ------------------------------------------------------------------
     # constants
@@ -63,6 +66,7 @@ class LLBuilder:
 
     def position_at(self, label: str, where: BuilderPosition = BuilderPosition.End) -> None:
         block = self.__func.block(label)
+        self.__current_cfg_block = label
         self.__builder = ir.IRBuilder(block)
         if where == BuilderPosition.Phi:
             self.__builder.position_at_start(block)  # type: ignore
@@ -115,7 +119,12 @@ class LLBuilder:
         if elem_size == 1:
             byte_size = size
         else:
-            byte_size_ir = self.__builder.mul(size.ir_val, ir.Constant(ir.IntType(64), elem_size))  # type: ignore
+            i128 = ir.IntType(128)
+            size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
+            byte_size128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
+            fits = self.__builder.icmp_unsigned("<", byte_size128, ir.Constant(i128, 1 << 64))  # type: ignore
+            self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "malloc-overflow")
+            byte_size_ir = self.__builder.trunc(byte_size128, ir.IntType(64))  # type: ignore
             byte_size = LLValue(self.__type_ctx.u64_id, byte_size_ir)  # type: ignore
         raw = self.__call_intrinsic(IntrinsicKind.Malloc, [byte_size])
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
@@ -351,7 +360,8 @@ class LLBuilder:
         phi_node = self.__builder.phi(self.__ll_type_ctx.get_ll_type(type_id).ir_type)  # type: ignore
         self.__func.set_reg(result, LLValue(type_id, phi_node))
         for src_label, val in incoming:
-            phi_node.add_incoming(val.ir_val, self.__func.block(src_label))  # type: ignore
+            pred_label = self.__continuations.get(src_label, src_label)
+            phi_node.add_incoming(val.ir_val, self.__func.block(pred_label))  # type: ignore
 
     # -- aggregate construct --
 
@@ -562,6 +572,33 @@ class LLBuilder:
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+
+    def __split_block_name(self, suffix: str, kind: str, seq: int) -> str:
+        """Create a stable name for a block inserted into a CFG block."""
+        name = f"{self.__current_cfg_block}.{suffix}.{kind}.{seq}"
+        if len(name) > 1000:
+            return f"b{seq}.{kind}"
+        return name
+
+    def __emit_check(self, cond: LLValue, suffix: str) -> None:
+        """Terminate on a failed runtime check and continue in a new block."""
+        seq = self.__check_seq
+        self.__check_seq += 1
+        ok_block = self.__func.new_block(self.__split_block_name(suffix, "ok", seq))
+        fail_block = self.__func.new_block(self.__split_block_name(suffix, "fail", seq))
+        self.__func.add_block(ok_block.name, ok_block)
+        self.__func.add_block(fail_block.name, fail_block)
+
+        self.__builder.cbranch(cond.ir_val, ok_block, fail_block)  # type: ignore
+        fail_builder = ir.IRBuilder(fail_block)
+        exit_func = self.__module.intrinsics.get(IntrinsicKind.Exit)
+        fail_builder.call(exit_func, [ir.Constant(ir.IntType(32), 1)])
+        fail_builder.unreachable()
+
+        # The CFG terminator is emitted after all statements. Once a check
+        # splits a block, its successor is the newly created continuation.
+        self.__continuations[self.__current_cfg_block] = ok_block.name
+        self.__builder = ir.IRBuilder(ok_block)
 
     def __extract_value_raw(self, base: LLValue, index: int) -> LLValue:
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
