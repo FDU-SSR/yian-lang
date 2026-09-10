@@ -65,10 +65,10 @@ class KeywordKind(Enum):
 
     @classmethod
     def try_from_str(cls, value: str) -> KeywordKind | None:
-        try:
-            return cls(value)
-        except ValueError:
-            return None
+        return _KEYWORD_KIND_BY_VALUE.get(value)
+
+
+_KEYWORD_KIND_BY_VALUE: dict[str, KeywordKind] = {member.value: member for member in KeywordKind}
 
 
 @dataclass
@@ -156,17 +156,17 @@ class PunctuatorKind(Enum):
 
     @classmethod
     def try_from_str(cls, value: str) -> PunctuatorKind | None:
-        try:
-            return cls(value)
-        except ValueError:
-            return None
+        return _PUNCTUATOR_KIND_BY_VALUE.get(value)
 
     @classmethod
     def from_str(cls, value: str) -> PunctuatorKind:
-        try:
-            return cls(value)
-        except ValueError as exc:
-            raise ValueError(f"{value} is not a valid punctuator") from exc
+        kind = _PUNCTUATOR_KIND_BY_VALUE.get(value)
+        if kind is None:
+            raise ValueError(f"{value} is not a valid punctuator") from None
+        return kind
+
+
+_PUNCTUATOR_KIND_BY_VALUE: dict[str, PunctuatorKind] = {member.value: member for member in PunctuatorKind}
 
 
 @dataclass
