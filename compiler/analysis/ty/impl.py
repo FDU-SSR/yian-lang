@@ -100,7 +100,11 @@ class ImplRegistry:
             concrete_type_id = substs.get(generic_id, generic_id)
             for trait_id in required_traits:
                 substed_trait = self.__ctx.instantiate(trait_id, substs)
-                if not self.has_impl(concrete_type_id, substed_trait, visited):
+                # Keep the ancestor path for cycle detection, but isolate
+                # sibling conditions so one successful query cannot mark the
+                # same (type, trait) pair as visited for the next condition.
+                condition_visited = set(visited)
+                if not self.has_impl(concrete_type_id, substed_trait, condition_visited):
                     return False
         return True
 
