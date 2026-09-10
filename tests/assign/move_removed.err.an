@@ -1,0 +1,8 @@
+// The removed Move trait cannot be implemented.
+struct Value { n: i32 }
+
+impl Move for Value {
+    fn move() -> Self { *self }
+}
+
+fn main() {}

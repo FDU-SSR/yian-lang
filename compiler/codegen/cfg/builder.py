@@ -821,8 +821,6 @@ class CfgBuilder:
                 return self.__resolve_tuple_access_addr(expr, fat=True)
             case HIR.ArrayAccess():
                 return self.__resolve_array_access_addr(expr, fat=True)
-            case HIR.SliceAccess():
-                return self.__resolve_slice_access_addr(expr, fat=True)
             case HIR.Var():
                 return self.__resolve_var_addr(expr, fat=True)
             case HIR.Ty():

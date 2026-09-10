@@ -1,0 +1,12 @@
+// The removed @BitCopy annotation is rejected everywhere.
+//
+// Expected: compilation error
+
+@BitCopy
+fn foo() -> i32 {
+    return 42;
+}
+
+fn main() {
+    return foo();
+}

@@ -1,10 +1,13 @@
-// Aggregate values can flow through expression-oriented copy paths.
+// Aggregate values can flow through every expression-oriented copy path.
 struct Box { value: i32 }
 
-fn tail(value: Box) -> Box { value }
+fn tail(value: Box) -> Box {
+    value
+}
 
 fn main() {
     let source = Box(7);
+
     let from_if = if true { source } else { Box(0) };
     let from_block = {
         let local = source;

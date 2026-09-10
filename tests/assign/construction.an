@@ -1,4 +1,4 @@
-// Test: construction — elements must obey assignment rules
+// Test: aggregate construction accepts ordinary copied values
 //
 // Expected output: 0
 
@@ -6,16 +6,21 @@ struct BigInt {
     value: i64,
 }
 
+impl Clone for BigInt {
+    pub fn clone() -> Self { BigInt(self.value) }
+}
+
 fn main() {
     let a: BigInt = BigInt(1);
     let b: BigInt = BigInt(2);
 
     let pair = (a, b);
+    assert pair[0].value == 1 && a.value == 1: "construction keeps source readable";
 
     let c: BigInt = BigInt(3);
     let d: BigInt = BigInt(4);
-    let pair2 = (c, d);
-    assert c.value == 3: "c still valid after by-value copy in tuple";
+    let pair2 = (c.clone(), d.clone());
+    assert c.value == 3: "c still valid after clone in tuple";
 
     let arr: i32[3] = [1, 2, 3];
     assert arr[0] == 1: "arr[0] should be 1";

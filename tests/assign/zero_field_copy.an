@@ -1,4 +1,7 @@
-// Zero-field structs support ordinary assignment.
+// Test: zero-field structs support ordinary assignment
+//
+// Expected output: 0
+
 struct UnitLike {}
 
 fn main() {

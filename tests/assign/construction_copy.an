@@ -1,5 +1,8 @@
-// Aggregate construction copies non-scalar values.
-struct BigInt { value: i64 }
+// Test: aggregate construction copies non-scalar values
+
+struct BigInt {
+    value: i64,
+}
 
 impl Clone for BigInt {
     pub fn clone() -> Self { BigInt(self.value) }

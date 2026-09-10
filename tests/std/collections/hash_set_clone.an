@@ -1,4 +1,6 @@
-// HashSet.clone() deep-copies stored elements.
+// HashSet.clone() deep-copies stored elements; removing or mutating elements
+// in the clone never affects the original. Drop counting proves each set owns
+// its stored keys and cleans them exactly once.
 from std.collections.hash_set import HashSet;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -38,31 +40,34 @@ impl Clone for SKey {
 
 fn main() {
     let drops: i32 = 0;
-    let set = HashSet<SKey>.with_capacity(4);
-    set.insert(SKey(tag = String.from(&"alpha"), drops = &drops));
-    set.insert(SKey(tag = String.from(&"beta"), drops = &drops));
+    let s = HashSet<SKey>.with_capacity(4);
+    s.insert(SKey(tag = String.from(&"alpha"), drops = &drops));
+    s.insert(SKey(tag = String.from(&"beta"), drops = &drops));
+    assert drops == 0 && s.len() == 2;
 
-    let cloned = set.clone();
-    assert drops == 0;
-    assert cloned.len() == 2;
+    let c = s.clone();
+    assert drops == 0: "cloning must not drop the original elements";
+    assert c.len() == 2;
 
+    // The clone owns independent key copies: removing from it keeps s intact.
     let probe_alpha = SKey(tag = String.from(&"alpha"), drops = &drops);
-    assert cloned.remove(&probe_alpha);
-    assert drops == 1;
-    assert set.contains(&probe_alpha);
+    assert c.remove(&probe_alpha);
+    assert drops == 1: "clone remove cleans only the clone's stored element";
+    assert s.contains(&probe_alpha): "original set unaffected by clone removal";
 
-    for key in cloned {
-        key.tag.push('!');
+    // Mutating the clone's remaining element must not reach the original.
+    for t in c {
+        t.tag.push('!');
     }
     let probe_beta = SKey(tag = String.from(&"beta"), drops = &drops);
     let probe_beta_bang = SKey(tag = String.from(&"beta!"), drops = &drops);
-    assert cloned.contains(&probe_beta_bang) && !cloned.contains(&probe_beta);
-    assert set.contains(&probe_beta);
+    assert c.contains(&probe_beta_bang) && !c.contains(&probe_beta);
+    assert s.contains(&probe_beta): "original elements were deep-copied, untouched";
 
-    assert set.remove(&probe_alpha);
-    assert drops == 2;
-    set.drop();
-    assert drops == 3;
-    cloned.drop();
-    assert drops == 4;
+    assert s.remove(&probe_alpha);
+    assert drops == 2: "original remove cleans its own stored element";
+    s.drop();
+    assert drops == 3: "original drop cleans its remaining stored element (beta)";
+    c.drop();
+    assert drops == 4: "clone drop cleans its remaining stored element (beta!)";
 }

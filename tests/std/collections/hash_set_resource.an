@@ -1,4 +1,4 @@
-// HashSet discards duplicates without dropping the incoming shallow copy.
+// HashSet discards duplicates without drop; remove and final drop clean stored keys.
 from std.collections.hash_set import HashSet;
 from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
@@ -26,20 +26,21 @@ fn main() {
     let set = HashSet<Key>.new();
     assert set.insert(Key(1, &drops));
     assert !set.insert(Key(1, &drops));
-    assert drops == 0;
+    assert drops == 0: "duplicate is discarded without drop (it may alias the stored key)";
 
     let lookup = Key(1, &drops);
     assert set.remove(&lookup);
-    assert drops == 1;
+    assert drops == 1: "remove must clean the stored key";
 
-    let key = Key(7, &drops);
-    assert set.insert(key);
+    // Same-variable re-insert must never drop the shared incoming copy.
+    let k = Key(7, &drops);
+    assert set.insert(k);
     for i in 0..4 {
-        assert !set.insert(key);
+        assert !set.insert(k);
     }
-    assert drops == 1;
+    assert drops == 1: "loop duplicates must not drop the incoming copy";
 
     set.insert(Key(2, &drops));
     set.drop();
-    assert drops == 3;
+    assert drops == 3: "drop must clean stored keys exactly once";
 }

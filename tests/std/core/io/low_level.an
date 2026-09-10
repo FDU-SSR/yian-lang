@@ -1,0 +1,27 @@
+// Test low-level open/close/sys_write/sys_read builtins
+//
+// Expected output: 0
+
+from std.core.slice import from_raw_parts;
+
+fn main() {
+    // O_WRONLY | O_CREAT | O_TRUNC = 577
+    let wfd: i32 = open("/tmp/yian_test_low.txt", 577);
+    // sys_write returns void; a successful write means the builtins are wired correctly
+    sys_write(wfd, "low-level builtin test");
+    let c: i32 = close(wfd);
+    // close should return 0 on success
+    assert c == 0: "close failed";
+
+    // Read back (O_RDONLY = 0) using heap buffer
+    let rfd: i32 = open("/tmp/yian_test_low.txt", 0);
+    assert rfd >= 0: "open for read failed";
+    let buf = dyn[64] u8;
+    let result: str = sys_read(rfd, str.from(&from_raw_parts(buf, 64u64)));
+    close(rfd);
+    let n = result.as_slice().len();
+    del buf;
+
+    // "low-level builtin test" is 22 bytes
+    assert n == 22u64: "read length mismatch";
+}

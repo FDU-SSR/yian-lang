@@ -8,6 +8,10 @@ struct BigInt {
     value: i64,
 }
 
+impl Clone for BigInt {
+    pub fn clone() -> Self { BigInt(self.value) }
+}
+
 impl PartialEq<BigInt> for BigInt {
     fn eq(rhs: BigInt*) -> bool {
         self.value == (*rhs).value

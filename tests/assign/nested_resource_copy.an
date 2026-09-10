@@ -1,11 +1,17 @@
-// Nested user-defined values can be copied.
-struct Inner { data: i64 }
+// Test: nested user-defined values can be copied
+
+struct Inner {
+    data: i64,
+}
 
 impl Clone for Inner {
     pub fn clone() -> Self { Inner(self.data) }
 }
 
-struct Outer { a: i32, b: Inner }
+struct Outer {
+    a: i32,
+    b: Inner,
+}
 
 fn main() {
     let o1 = Outer(1, Inner(42));

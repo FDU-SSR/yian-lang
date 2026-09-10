@@ -40,20 +40,19 @@ fn main() {
     }
     assert sum == 10;
 
-    // Test deep copy (按位复制下直接拷贝会共享缓冲, 显式 to_vec 深拷贝)
-    let cloned_vec_arr = [vec_arr[0].as_slice().to_vec(), vec_arr[1].as_slice().to_vec(), vec_arr[2].as_slice().to_vec()];
+    // Test cloning
+    let cloned_vec_arr = vec_arr.clone();
     assert cloned_vec_arr[0][0] == 1;
     assert cloned_vec_arr[1][0] == 2;
     assert cloned_vec_arr[2][0] == 3;
     assert &cloned_vec_arr[0][0] != &vec_arr[0][0]; // Ensure deep copy
 
-    // 按位复制: 显式深拷贝副本与原值独立, 原值保持有效
-    let copied_vec_arr = [vec_arr[0].as_slice().to_vec(), vec_arr[1].as_slice().to_vec(), vec_arr[2].as_slice().to_vec()];
+    // Ordinary array assignment is shallow and keeps both descriptors readable.
+    let copied_vec_arr = vec_arr;
     assert copied_vec_arr[0][0] == 1;
     assert copied_vec_arr[1][0] == 2;
     assert copied_vec_arr[2][0] == 3;
-    assert vec_arr[0][0] == 1: "original vec_arr[0] still valid";
-    assert vec_arr[1][0] == 2: "original vec_arr[1] still valid";
-    assert vec_arr[2][0] == 3: "original vec_arr[2] still valid";
+    assert vec_arr[0][0] == 1;
+    assert &copied_vec_arr[0][0] == &vec_arr[0][0];
 
 }

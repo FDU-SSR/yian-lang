@@ -1,5 +1,8 @@
-// User-defined values can be assigned directly.
-struct BigInt { value: i64 }
+// Test: user-defined values can be assigned directly
+
+struct BigInt {
+    value: i64,
+}
 
 impl Clone for BigInt {
     pub fn clone() -> Self { BigInt(self.value) }

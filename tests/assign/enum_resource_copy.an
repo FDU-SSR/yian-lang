@@ -1,5 +1,8 @@
-// Enums with aggregate payloads can be copied.
-struct Data { value: i64 }
+// Test: enums with aggregate payloads can be copied
+
+struct Data {
+    value: i64,
+}
 
 impl Clone for Data {
     pub fn clone() -> Self { Data(self.value) }

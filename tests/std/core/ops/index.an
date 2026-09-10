@@ -13,7 +13,7 @@ impl<T> Container<T> {
     static pub fn new(size: u64, default_value: T) -> Self {
         let items: T* = dyn[size] T;
         for i in 0..size {
-            items[i] = default_value;
+            items[i] = default_value.clone();
         }
         Self(items, size)
     }

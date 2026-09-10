@@ -1,11 +1,17 @@
-// Structs with user-defined fields can be copied.
-struct Data { value: i64 }
+// Test: structs with user-defined fields can be copied
+
+struct Data {
+    value: i64,
+}
 
 impl Clone for Data {
     pub fn clone() -> Self { Data(self.value) }
 }
 
-struct Bad { x: i32, d: Data }
+struct Bad {
+    x: i32,
+    d: Data,
+}
 
 fn main() {
     let b1 = Bad(1, Data(42));

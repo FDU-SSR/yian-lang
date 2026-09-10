@@ -1,14 +1,17 @@
-// Function parameters receive ordinary copies.
-struct BigInt { value: i64 }
+// Test: function parameters receive ordinary copies
+
+struct BigInt {
+    value: i64,
+}
 
 impl Clone for BigInt {
     pub fn clone() -> Self { BigInt(self.value) }
 }
 
-fn consume(value: BigInt) -> i64 { value.value }
+fn consume(v: BigInt) -> i64 { v.value }
 
 fn main() {
-    let value: BigInt = BigInt(42);
-    assert consume(value) == 42;
-    assert value.value == 42;
+    let x: BigInt = BigInt(42);
+    assert consume(x) == 42;
+    assert x.value == 42;
 }

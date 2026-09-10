@@ -36,38 +36,40 @@ fn main() {
 
     map.insert(1, Guard(10, &drops));
     map.insert(1, Guard(11, &drops));
-    assert drops == 1;
+    assert drops == 1: "replacement must drop the old value";
     assert (**map.get(&1).unwrap()).value == 11;
 
     for i in 2i32..20 {
         map.insert(i, Guard(i, &drops));
     }
-    assert drops == 1;
+    assert drops == 1: "resize must not drop transferred entries";
     assert map.len() == 19;
 
     assert map.remove(&5);
-    assert drops == 2;
+    assert drops == 2: "remove drops one live value";
     map.clear();
-    assert drops == 20;
+    assert drops == 20: "clear drops every remaining live value";
 
     map.insert(100, Guard(100, &drops));
     map.drop();
-    assert drops == 21;
+    assert drops == 21: "map drop clears entries and releases buffers";
     map.drop();
     assert drops == 21;
 
+    // Duplicate incoming keys are discarded without drop (the same variable may
+    // be re-inserted safely); remove and final drop clean stored keys exactly once.
     let key_drops: i32 = 0;
     let kmap = HashMap<KGuard, i32>.with_capacity(4);
-    let key = KGuard(1, &key_drops);
-    kmap.insert(key, 100);
-    kmap.insert(key, 200);
-    kmap.insert(key, 300);
-    assert key_drops == 0;
+    let k = KGuard(1, &key_drops);
+    kmap.insert(k, 100);
+    kmap.insert(k, 200);
+    kmap.insert(k, 300);
+    assert key_drops == 0: "duplicate incoming key is discarded, never dropped";
     assert kmap.len() == 1;
-    assert **kmap.get(&key).unwrap() == 300;
+    assert **kmap.get(&k).unwrap() == 300;
 
-    assert kmap.remove(&key);
-    assert key_drops == 1;
+    assert kmap.remove(&k);
+    assert key_drops == 1: "remove drops the stored key exactly once";
     kmap.drop();
     assert key_drops == 1;
 }

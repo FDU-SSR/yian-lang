@@ -1,30 +1,36 @@
-// Plain assignment shallow-copies descriptors. The size fields are separate,
-// while the underlying table is shared until one descriptor releases it.
+// Plain assignment shallow-copies map/set descriptors: the copies share one
+// bucket table (inserts through either descriptor are visible to both) while
+// size fields stay independent. Drop one descriptor only — the other aliases
+// the same freed buffers and must not be cleaned separately.
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
 from std.core.drop import Drop;
 
 fn main() {
-    let map1 = HashMap<i64, i64>.with_capacity(16);
-    let map2 = map1;
-    map2.insert(7, 70);
-    assert map2.len() == 1 && map1.len() == 0;
-    assert **map1.get(&7).unwrap() == 70;
-    assert map1.contains(&7) && map2.contains(&7);
+    // HashMap: with_capacity(16) leaves growth_left 12, so the inserts below
+    // never resize — the shared table stays valid for both descriptors.
+    let m1 = HashMap<i64, i64>.with_capacity(16);
+    let m2 = m1;
+    m2.insert(7, 70);
+    assert m2.len() == 1 && m1.len() == 0: "size fields are independent copies";
+    assert **m1.get(&7).unwrap() == 70: "copies share the bucket table";
+    assert m1.contains(&7) && m2.contains(&7);
 
-    let map3 = HashMap<i64, i64>.with_capacity(16);
-    map3.insert(1, 10);
-    let map4 = map3;
-    map4.insert(2, 20);
-    map4.insert(3, 30);
-    assert map3.len() == 1 && map4.len() == 3;
-    assert **map3.get(&3).unwrap() == 30;
-    map4.drop();
+    let m3 = HashMap<i64, i64>.with_capacity(16);
+    m3.insert(1, 10);
+    let m4 = m3;
+    m4.insert(2, 20);
+    m4.insert(3, 30);
+    assert m3.len() == 1 && m4.len() == 3;
+    assert **m3.get(&3).unwrap() == 30: "inserts through one copy are visible to the other";
+    m4.drop();
+    // m3 aliases the freed table: do not touch it again.
 
-    let set1 = HashSet<i64>.with_capacity(16);
-    let set2 = set1;
-    set2.insert(7);
-    assert set2.len() == 1 && set1.len() == 0;
-    assert set1.contains(&7);
-    set2.drop();
+    // HashSet behaves the same through its backing map.
+    let s1 = HashSet<i64>.with_capacity(16);
+    let s2 = s1;
+    s2.insert(7);
+    assert s2.len() == 1 && s1.len() == 0;
+    assert s1.contains(&7): "set copies share the backing table";
+    s2.drop();
 }

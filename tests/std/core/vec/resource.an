@@ -1,4 +1,4 @@
-// Resource-bearing elements survive growth and are cleaned by explicit actions.
+// Resource-bearing elements survive growth and are cleaned only by explicit operations.
 from std.core.drop import Drop;
 
 struct Guard {
@@ -17,7 +17,7 @@ fn main() {
         values.push(Guard(i, &drops));
     }
     assert values.len() == 10 && values[9].value == 9;
-    assert drops == 0;
+    assert drops == 0: "growth must not drop copied elements";
 
     let popped = *values.pop().unwrap();
     assert popped.value == 9 && drops == 0;
@@ -28,11 +28,11 @@ fn main() {
     assert removed.value == 2 && drops == 1;
     removed.drop();
     values.truncate(3);
-    assert drops == 7;
+    assert drops == 7: "truncate drops only removed live elements";
     values.drop();
-    assert drops == 10;
+    assert drops == 10: "drop cleans remaining elements exactly once";
     values.drop();
-    assert drops == 10;
+    assert drops == 10: "reset state makes repeated drop on one descriptor harmless";
 
     let strings = Vec<String>.new();
     strings.push(String.from(&"one"));
@@ -40,6 +40,8 @@ fn main() {
     strings.push(String.from(&"three"));
     strings.push(String.from(&"four"));
     strings.push(String.from(&"five"));
+    assert strings[0] == "one" && strings[4] == "five";
+
     let cloned = strings.clone();
     cloned[0].push('!');
     assert strings[0] == "one";

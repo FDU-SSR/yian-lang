@@ -1,0 +1,6 @@
+// Capturing an aggregate performs an ordinary copy.
+fn main() {
+    let v: Vec<i32> = Vec<i32>.new();
+    let c = |v_in = v| () { };
+    assert v.len() == 0;
+}

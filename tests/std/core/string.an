@@ -10,10 +10,10 @@ fn main() {
     let s_new: String = String.new();
     assert s_new.len() == 0: "new() should create empty string";
     assert s_new.is_empty(): "new() should create empty string";
-    
+
     let s_cap: String = String.with_capacity(100);
     assert s_cap.capacity() == 100: "with_capacity should set capacity";
-    
+
     let s_from: String = String.from(&"Hello, World!");
     assert s_from.len() == 13: "from should set correct length";
     assert s_from == "Hello, World!": "from should set correct content";
@@ -88,17 +88,17 @@ fn main() {
     let s_add4: String = s_add1 + "XYZ";
     assert s_add3 == "ABCDEF": "add should concatenate two strings";
     assert s_add4 == "ABCXYZ": "add should concatenate string && str";
-    assert s_add1 == "ABC": "add should keep operands valid";
+    assert s_add1 == "ABC" && s_add2 == "DEF": "add should preserve operands";
 
-    // 测试深拷贝 (按位复制下直接拷贝会共享缓冲, 显式 to_string 深拷贝)
+    // 测试 Clone trait
     let s_clone1: String = String.from(&"CloneMe");
-    let s_clone2: String = s_clone1.to_string();
-    assert s_clone1 == s_clone2: "to_string should create identical copy";
+    let s_clone2: String = s_clone1.clone();
+    assert s_clone1 == s_clone2: "clone should create identical copy";
 
     s_clone2.push('!');
-    assert s_clone1 != s_clone2: "modifying deep copy should ! affect original";
-    assert s_clone1 == "CloneMe": "original string should remain unchanged after deep copy modification";
-    assert s_clone2 == "CloneMe!": "copied string should reflect modifications";
+    assert s_clone1 != s_clone2: "modifying clone should ! affect original";
+    assert s_clone1 == "CloneMe": "original string should remain unchanged after clone modification";
+    assert s_clone2 == "CloneMe!": "cloned string should reflect modifications";
 
     // 测试 Deref trait
     let s_deref: String = String.from(&"DerefTest");
@@ -136,11 +136,11 @@ fn main() {
     s_aaeq += '\n';
     assert s_aaeq == "Hello World!\n": "add_assign char should append in-place";
 
-    // 测试按位复制 + 深拷贝 (Move trait 已删除)
-    let s_move: String = String.from(&"MoveTest");
-    let s_moved: String = s_move.to_string();  // 显式深拷贝, 原值保持有效
-    assert s_move == "MoveTest": "original should remain valid after deep copy";
-    assert s_moved == "MoveTest": "deep copy should have the same content";
+    // 普通赋值为浅复制：描述字段独立，底层存储共享。
+    let s_copy_source: String = String.from(&"CopyTest");
+    let s_copy: String = s_copy_source;
+    assert s_copy == "CopyTest" && s_copy_source == "CopyTest";
+    assert &s_copy.as_slice()[0] == &s_copy_source.as_slice()[0];
 
     // 测试大量拼接 (merged from edge.an)
     let s_large: String = String.new();
@@ -152,4 +152,3 @@ fn main() {
     assert s_large.len() == 100: "large string len should be 100 after 100 pushes";
 
 }
-

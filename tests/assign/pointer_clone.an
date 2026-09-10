@@ -4,6 +4,7 @@ fn main() {
     let value: i32 = 42;
     let ptr: i32* = &value;
     let copied: i32 = ptr.clone();
+
     assert copied == 42;
     assert ptr == &value;
 }

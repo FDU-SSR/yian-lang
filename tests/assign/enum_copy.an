@@ -1,5 +1,12 @@
-// Enums support ordinary assignment.
-enum Color { Red, Green, Blue }
+// Test: enums support ordinary assignment
+//
+// Expected output: 0
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
 
 fn main() {
     let c1 = Color.Red;

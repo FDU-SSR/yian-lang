@@ -7,10 +7,14 @@ struct Guard {
 }
 
 impl Drop for Guard {
-    fn drop() { *self.drop_count += 1; }
+    fn drop() {
+        *self.drop_count += 1;
+    }
 }
 
-fn pass(value: Guard) -> Guard { value }
+fn pass(value: Guard) -> Guard {
+    value
+}
 
 fn main() {
     let drop_count: i32 = 0;
@@ -22,7 +26,7 @@ fn main() {
         let scoped = returned;
         assert scoped.value == 1;
     }
-    assert drop_count == 0;
+    assert drop_count == 0: "ordinary value operations must not call drop";
     returned.drop();
-    assert drop_count == 1;
+    assert drop_count == 1: "explicit drop must call the implementation";
 }

@@ -30,22 +30,21 @@ fn main() {
     assert opt2.is_some(): "opt2 should now be Some";
     assert *opt2.unwrap_or(&0) == 99: "opt2 should unwrap to 99";
 
-    // Copy — assignment copies the value (按位复制), original unchanged
-    let opt3: Option<i32> = opt2;
+    // Clone opt2 — verify both clone and original
+    let opt3: Option<i32> = opt2.clone();
     assert opt3.is_some(): "opt3 should be Some";
     assert *opt3.unwrap_or(&0) == 99: "opt3 should unwrap to 99";
-    assert *opt2.unwrap_or(&0) == 99: "original should be unchanged after copy";
+    assert *opt2.unwrap_or(&0) == 99: "original should be unchanged after clone";
 
     // unwrap — returns T*; must dereference to compare value
     let opt4: Option<i32> = Option<i32>.Some(77);
     assert *opt4.unwrap() == 77: "unwrap should return the inner value";
 
-    // Bitcopy semantics: assigning copies the value, original stays valid
+    // Ordinary enum assignment copies the active payload and preserves the source.
     let opt5: Option<i32> = Option<i32>.Some(55);
     let opt6 = opt5;
-    assert opt6.is_some(): "opt6 should be Some";
-    assert *opt6.unwrap() == 55: "opt6 should unwrap to 55";
-    assert opt5.is_some(): "opt5 should remain Some after bitcopy";
-    assert *opt5.unwrap() == 55: "opt5 should still unwrap to 55";
+    assert opt6.is_some(): "copy should contain the value";
+    assert opt5.is_some(): "source should remain Some after copy";
+    assert *opt5.unwrap() == 55 && *opt6.unwrap() == 55;
 
 }
