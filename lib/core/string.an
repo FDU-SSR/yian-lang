@@ -157,7 +157,7 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
-        String(data = self.data.clone())
+        String(data=self.data.clone())
     }
 }
 
@@ -178,10 +178,8 @@ impl PartialEq<str> for String {
 }
 
 // =============================================================================
-// Add — concatenate with String / str / char (deep-copy semantics)
+// Add — concatenate into a newly allocated, independent String.
 // =============================================================================
-// 深拷贝加法: 结果拥有独立新缓冲, 操作数保持有效(不消费、不失效)。
-// 机械地搬移操作数会导致 double-drop, 故此处构造全新结果。
 
 impl Add<String, String> for String {
     pub fn add(other: String) -> String {

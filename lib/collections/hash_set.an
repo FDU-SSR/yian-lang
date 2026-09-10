@@ -1,6 +1,7 @@
 from std.collections.hash_map import HashMap, HashMapKeyIter;
-from std.core.hash import Murmur3BuildHasher;
-from std.core.iter import IntoIterator;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
 
@@ -23,8 +24,9 @@ impl<T> HashSet<T> {
 
     pub fn insert(value: T) -> bool {
         if self.map.contains(&value) {
-            // Do not drop a duplicate input: it may be a shallow alias of the
-            // element already held by the set.
+            // Duplicate: discard the incoming copy WITHOUT drop — it may be a
+            // caller-side shallow copy aliasing the stored element's storage
+            // (re-inserting the same variable is use-after-free otherwise).
             return false;
         }
         self.map.insert(value, void.new());

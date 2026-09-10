@@ -1,13 +1,12 @@
 from std.core.ops import Index;
 from std.core.range import Range;
 from std.core.vec import Vec;
-from std.core.slice import SliceIter;
+from std.core.slice import from_raw_parts, SliceIter;
 from std.core.iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
-        let p: T* = bitcast<T*>(self);
-        __slice_from_parts(p, N)
+        from_raw_parts(bitcast<T*>(self), N)
     }
 
     fn to_vec() -> Vec<T> {
@@ -15,8 +14,7 @@ impl<T, const N: u64> T[N] {
     }
 
     fn ptr() -> T* {
-        let p: T* = bitcast<T*>(self);
-        p
+        bitcast<T*>(self)
     }
 }
 
@@ -25,8 +23,7 @@ impl<T, const N: u64> Index<u64, T*> for T[N] {
         if *index >= N {
             panic("Index out of bounds\n");
         }
-        let p: T* = bitcast<T*>(self);
-        p + *index
+        bitcast<T*>(self) + *index
     }
 }
 
@@ -35,18 +32,16 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
         if (*range).end > N {
             panic("Index out of bounds\n");
         }
-        let p: T* = bitcast<T*>(self);
-        let start: T* = p + (*range).start;
+        let start: T* = bitcast<T*>(self) + (*range).start;
         let len: u64 = (*range).end - (*range).start;
-        __slice_from_parts(start, len)
+        from_raw_parts(start, len)
     }
 }
 
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
-        let p: T* = bitcast<T*>(self);
         SliceIter<T>(
-            ptr = p,
+            ptr = bitcast<T*>(self),
             n = N,
         )
     }

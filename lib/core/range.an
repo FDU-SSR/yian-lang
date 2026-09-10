@@ -11,8 +11,8 @@ pub struct Range<T> {
 impl<T> Clone for Range<T> {
     fn clone() -> Self {
         Self(
-            start = self.start.clone(),
-            end = self.end.clone()
+            start=self.start.clone(),
+            end=self.end.clone()
         )
     }
 }

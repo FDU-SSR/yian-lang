@@ -7,6 +7,8 @@ from std.core.convert import From, Into;
 from std.core.drop import Drop;
 from std.core.range import Range;
 
+from std.core.slice import from_raw_parts;
+
 pub struct Vec<T> {
     raw_vec: RawVec<T>,
     len: u64,
@@ -31,10 +33,10 @@ impl<T> Vec<T> {
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
-        __slice_from_parts(self.raw_vec.ptr(), self.len)
+        from_raw_parts(self.raw_vec.ptr(), self.len)
     }
 
-    // Push an element to the end (the value is copied into the Vec)
+    // Push an element to the end. The argument is copied by value.
     pub fn push(value: T) {
         let len = self.len;
 
@@ -47,7 +49,7 @@ impl<T> Vec<T> {
         self.len += 1
     }
 
-    // Extend another Vec to the end by cloning its elements.
+    // Clone another Vec's elements to the end; the source remains unchanged.
     pub fn extend(other: Vec<T>) {
         // Clone before reserving so self-extension and aliased descriptors are safe.
         let copied = other.clone();
@@ -140,7 +142,7 @@ impl<T> Vec<T> {
     }
 
     // Extend the Vec with a slice
-    // This will clone the elements from the slice into the Vec
+    // This will clone the elements from the slice into the Vec, since slices are semantically not owned
     pub fn extend_from_slice(slice: T[]) {
         // Clone first because reserve may invalidate a slice into this Vec.
         let copied = slice.to_vec();
@@ -195,6 +197,14 @@ impl<T> Vec<T> {
     }
 }
 
+// Implement Clone for Vec<T>
+// This will clone the elements in the Vec, so it requires T to be Clone
+impl<T> Clone for Vec<T> {
+    pub fn clone() -> Self {
+        self.as_slice().to_vec()
+    }
+}
+
 impl<T> Index<u64, T*> for Vec<T> {
     pub fn index(index: u64*) -> T* {
         if *index >= self.len {
@@ -233,12 +243,6 @@ impl<T> Deref<T[]> for Vec<T> {
     }
 }
 
-impl<T> Clone for Vec<T> {
-    pub fn clone() -> Self {
-        self.as_slice().to_vec()
-    }
-}
-
 // Concatenation creates an independent Vec by cloning both inputs.
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
@@ -249,13 +253,11 @@ impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     }
 }
 
-// Implement Drop for Vec<T> to allow dropping a Vec, freeing its resources.
-// double-drop 防护由胖指针锁槽承担(第二次 del/drop 触达 SENTINEL → trap)。
+// Implement Drop for Vec<T> to allow dropping a Vec, freeing its resources
 impl<T> Drop for Vec<T> {
     pub fn drop() {
-        // drop all elements in the Vec
+        // Drop only the currently valid elements, then release the buffer.
         self.clear();
-        // drop the raw_vec to free its resources
         self.raw_vec.drop();
         self.len = 0;
     }
