@@ -35,7 +35,7 @@ impl<K, V> HashMap<K, V> {
         let growth_left = Self.calculate_growth_left(actual_capacity);
         let ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
-            ctrls[i] = 0b1111_1111
+            ctrls[i] =  0b1111_1111
         }
         let buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
 
@@ -72,8 +72,12 @@ impl<K, V> HashMap<K, V> {
                 self.growth_left -= 1
                 return;
             } elif ctrl_byte == h2 && self.buckets[index].key == key {
-                // The incoming key is intentionally not dropped. It may be a
-                // shallow alias of the key already stored in this table.
+                // Duplicate key: keep the stored key and replace only the value.
+                // The incoming key is discarded WITHOUT drop — it may be a
+                // caller-side shallow copy aliasing the stored key's storage,
+                // and dropping it would leave the stored key dangling
+                // (re-inserting the same variable is use-after-free). The value
+                // being replaced belongs to this map and is dropped.
                 self.buckets[index].value.drop()
                 self.buckets[index].value = value
                 return;
@@ -187,7 +191,7 @@ impl<K, V> HashMap<K, V> {
 
         let new_ctrls: u8* = dyn[actual_capacity] u8;
         for i in 0..actual_capacity {
-            new_ctrls[i] = 0b1111_1111
+            new_ctrls[i] =  0b1111_1111
         }
         let new_buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
 
@@ -247,6 +251,8 @@ impl<K, V> Drop for HashMap<K, V> {
 }
 
 impl<K, V> Clone for HashMap<K, V> {
+    // Deep copy: rebuild a same-capacity table and clone every stored pair.
+    // Constraints (K: Hash + Clone, V: Clone) are resolved at the call site.
     pub fn clone() -> Self {
         let result = Self.with_capacity_and_hasher(self.capacity, self.hasher_builder);
         for i in 0..self.capacity {
@@ -300,10 +306,10 @@ impl<K, V> Iterator<K*> for HashMapKeyIter<K, V> {
             let ctrl_byte = self.ctrls[self.index];
             if ctrl_byte != 0b1111_1111 && ctrl_byte != 0b1000_0000 {
                 let key: K* = &self.buckets[self.index].key;
-                self.index += 1;
+                self.index += 1
                 return Option<K*>.Some(key);
             }
-            self.index += 1;
+            self.index += 1
         }
         Option<K*>.None
     }
@@ -312,10 +318,10 @@ impl<K, V> Iterator<K*> for HashMapKeyIter<K, V> {
 impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
     pub fn into_iter() -> HashMapKeyIter<K, V> {
         HashMapKeyIter<K, V>(
-            buckets = self.buckets,
-            ctrls = self.ctrls,
-            capacity = self.capacity,
-            index = 0
+            buckets=self.buckets,
+            ctrls=self.ctrls,
+            capacity=self.capacity,
+            index=0
         )
     }
 }

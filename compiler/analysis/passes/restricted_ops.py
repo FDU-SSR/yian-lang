@@ -26,7 +26,7 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 
 # Restricted builtin call names: the syscall/ABI trust boundary, the
-# definite-assignment escape hatch, and the internal move/clone machinery.
+# definite-assignment escape hatch, and trusted raw-byte copying.
 RESTRICTED_BUILTIN_NAMES = frozenset(
     {
         "sys_read",
