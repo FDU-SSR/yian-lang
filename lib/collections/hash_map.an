@@ -255,6 +255,9 @@ impl<K, V> Clone for HashMap<K, V> {
     // Deep copy: rebuild a same-capacity table and clone every stored pair.
     // Constraints (K: Hash + Clone, V: Clone) are resolved at the call site.
     pub fn clone() -> Self {
+        if self.capacity == 0 {
+            panic("cloning a released map");
+        }
         let result = Self.with_capacity_and_hasher(self.capacity, self.hasher_builder);
         for i in 0..self.capacity {
             if self.ctrls[i] != 0b1111_1111 && self.ctrls[i] != 0b1000_0000 {

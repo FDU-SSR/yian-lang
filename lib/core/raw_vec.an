@@ -48,7 +48,7 @@ impl<T> RawVec<T> {
             panic("RawVec is released\n");
         }
         let old_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
-        if old_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
+        if old_cap >= 0x4000_0000_0000_0000u64 {
             panic("RawVec capacity overflow\n");
         }
         let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }

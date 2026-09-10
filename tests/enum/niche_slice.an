@@ -1,0 +1,49 @@
+// Empty slices and strings must remain Some: their data address is non-zero.
+
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn main() {
+    let empty_vec = Vec<i32>.new();
+    let empty_slice = empty_vec.as_slice();
+    let slice_some: Option<i32[]> = Option<i32[]>.Some(empty_slice);
+    let slice_none: Option<i32[]> = Option<i32[]>.None;
+
+    let empty_array: i32[0];
+    let empty_array_slice: i32[] = empty_array.as_slice();
+    let array_some: Option<i32[]> = Option<i32[]>.Some(empty_array_slice);
+    assert sizeof(Option<i32[]>) == 16: "slice niche layout";
+    assert slice_some.is_some(): "empty slice is Some";
+    assert slice_none.is_none(): "empty slice None";
+    assert array_some.is_some(): "zero-length array slice is Some";
+
+    let empty: str = "";
+    let str_some: Option<str> = Option<str>.Some(empty);
+    let str_none: Option<str> = Option<str>.None;
+    assert sizeof(Option<str>) == 16: "str niche layout";
+    assert str_some.is_some(): "empty str is Some";
+    assert str_none.is_none(): "empty str None";
+
+    let slice_value: u64 = match slice_some {
+        Some(value) => value.len(),
+        None => 99,
+    };
+    assert slice_value == 0: "empty slice match";
+    let str_value: u64 = match str_some {
+        Some(value) => value.as_slice().len(),
+        None => 99,
+    };
+    assert str_value == 0: "empty str match";
+
+    let bytes = [65u8, 66, 67];
+    let valid: Option<str> = str.from_slice(bytes[0u64..3]);
+    let invalid_bytes = [0xF5u8, 0x80, 0x80];
+    let invalid: Option<str> = str.from_slice(invalid_bytes[0u64..3]);
+    assert valid.is_some(): "valid str is Some";
+    assert invalid.is_none(): "invalid str is None";
+    let valid_len: u64 = match valid {
+        Some(value) => value.as_slice().len(),
+        None => 99,
+    };
+    assert valid_len == 3: "str payload match";
+}

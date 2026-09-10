@@ -205,6 +205,10 @@ class LLTypeCtx:
         return identified  # type: ignore
 
     def __handle_enum(self, type_id: int, _type_def: Type.EnumType) -> ir.Type:
+        if self.is_niche_enum(type_id):
+            result = self.__get_raw_type(self.__niche_payload_type_id(type_id))
+            self.__storage[type_id] = result
+            return result
         identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
         self.__storage[type_id] = identified
         max_size, max_align = 0, 1
@@ -282,14 +286,17 @@ class LLTypeCtx:
             assert isinstance(length_ty, Type.LiteralValueType)
             result = (element_size * length_ty.value, element_align)
         elif isinstance(type_def, Type.EnumType):
-            max_size, max_align = 0, 1
-            for variant in type_def.get_variants(self.__type_ctx):
-                if variant.payload_type is None:
-                    continue
-                variant_size, variant_align = self.__stable_layout(variant.payload_type)
-                max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
-            payload_size = self.__align_up(max_size, max_align) if max_size > 0 else 0
-            result = (self.__align_up(4 + payload_size, 4), 4)
+            if self.is_niche_enum(type_id):
+                result = self.__stable_layout(self.__niche_payload_type_id(type_id))
+            else:
+                max_size, max_align = 0, 1
+                for variant in type_def.get_variants(self.__type_ctx):
+                    if variant.payload_type is None:
+                        continue
+                    variant_size, variant_align = self.__stable_layout(variant.payload_type)
+                    max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
+                payload_size = self.__align_up(max_size, max_align) if max_size > 0 else 0
+                result = (self.__align_up(4 + payload_size, 4), 4)
         else:
             ll_type = self.__get_raw_type(type_id)
             result = (ll_type.get_abi_size(self.__target_data), ll_type.get_abi_alignment(self.__target_data))  # type: ignore

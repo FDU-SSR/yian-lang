@@ -57,4 +57,9 @@ fn main() {
     assert final_ptr[0] == 100: "shrink data copy fail 1";
     assert final_ptr[1] == 200: "shrink data copy fail 2";
 
+    // Explicit release is idempotent and exposes the zero-capacity state.
+    v2.drop();
+    assert v2.capacity() == 0: "drop should clear capacity";
+    v2.drop();
+
 }

@@ -1,0 +1,49 @@
+// Option-like enums use the all-zero payload as their unit variant.
+
+fn add_one(value: i32) -> i32 {
+    value + 1
+}
+
+fn main() {
+    let values = [42i32, 43];
+    let p = values.ptr();
+    let some: Option<i32*> = Option<i32*>.Some(p);
+    let none: Option<i32*> = Option<i32*>.None;
+
+    assert sizeof(Option<i32*>) == 8: "pointer niche layout";
+    assert some.is_some(): "Some pointer";
+    assert none.is_none(): "None pointer";
+    assert some.unwrap()[0][0] == 42: "pointer payload";
+
+    let value_match: i32 = match some {
+        Some(value) => value[1],
+        None => -1,
+    };
+    assert value_match == 43: "value match";
+
+    let ref_match: i32 = match &some {
+        Some(value) => (*value)[0],
+        None => -1,
+    };
+    assert ref_match == 42: "reference match";
+
+    let f: fn(i32) -> i32 = &add_one;
+    let function_some: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.Some(f);
+    let function_none: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.None;
+    assert sizeof(Option<fn(i32) -> i32>) == 8: "function pointer niche layout";
+    assert function_some.is_some(): "Some function pointer";
+    assert function_none.is_none(): "None function pointer";
+
+    assert !some.is_none(): "Some is not None";
+    let scalar_value: i32 = 42;
+    let scalar_fallback: i32 = 7;
+    let scalar_some: Option<i32> = Option<i32>.Some(scalar_value);
+    let scalar_none: Option<i32> = Option<i32>.None;
+    assert scalar_some.unwrap_or(&scalar_fallback)[0] == 42: "Some unwrap_or";
+    assert scalar_none.unwrap_or(&scalar_fallback)[0] == 7: "None unwrap_or";
+
+    let empty_dyn: i32* = dyn[0] i32;
+    let empty_dyn_some: Option<i32*> = Option<i32*>.Some(empty_dyn);
+    assert empty_dyn_some.is_some(): "zero-length allocation is Some";
+    del empty_dyn;
+}

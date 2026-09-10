@@ -1,0 +1,65 @@
+// Any two-variant enum with one unit variant and one anonymous pointer-family
+// payload may use the same niche representation as Option.
+
+enum Link {
+    Nil,
+    Node { p: i32* },
+}
+
+enum Marker {
+    Mark { p: i32* },
+    Empty,
+}
+
+enum Bytes {
+    Missing,
+    Present { s: u8[] },
+}
+
+fn main() {
+    assert sizeof(Link) == 8: "pointer niche layout";
+    assert sizeof(Marker) == 8: "reversed pointer niche layout";
+    assert sizeof(Bytes) == 16: "slice niche layout";
+
+    let values = [3i32, 4];
+    let p = values.ptr();
+    let node: Link = Link.Node(p);
+    let nil: Link = Link.Nil;
+    let node_value: i32 = match node {
+        Node(value) => value[0],
+        Nil => -1,
+    };
+    let nil_value: i32 = match nil {
+        Node(value) => value[0],
+        Nil => -2,
+    };
+    assert node_value == 3: "custom payload match";
+    assert nil_value == -2: "custom unit match";
+
+    let default_value: i32 = match nil {
+        Node(value) => value[0],
+        _ => -3,
+    };
+    assert default_value == -3: "custom default arm";
+
+    let marker: Marker = Marker.Mark(p);
+    let marker_value: i32 = match marker {
+        Mark(value) => value[1],
+        Empty => -1,
+    };
+    assert marker_value == 4: "reversed custom payload match";
+
+    let bytes = [1u8, 2, 3];
+    let present: Bytes = Bytes.Present(bytes[0u64..3]);
+    let missing: Bytes = Bytes.Missing;
+    let present_len: u64 = match present {
+        Present(value) => value.len(),
+        Missing => 99,
+    };
+    let missing_len: u64 = match missing {
+        Present(value) => value.len(),
+        Missing => 0,
+    };
+    assert present_len == 3: "custom slice payload match";
+    assert missing_len == 0: "custom slice unit match";
+}

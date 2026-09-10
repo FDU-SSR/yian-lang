@@ -1,0 +1,42 @@
+// Enum shapes without a provably non-zero payload retain their tag.
+
+struct Wrapper {
+    ptr: i32*,
+}
+
+enum Three {
+    Empty,
+    First { ptr: i32* },
+    Other,
+}
+
+enum TwoPayloads {
+    First { ptr: i32* },
+    Second { ptr: i32* },
+}
+
+enum NamedWrapper {
+    Empty,
+    Value { wrapper: Wrapper },
+}
+
+enum ZstPointer {
+    Empty,
+    Value { ptr: void* },
+}
+
+enum ZstSlice {
+    Empty,
+    Value { slice: void[] },
+}
+
+fn main() {
+    assert sizeof(Three) == 12: "three variants retain tag";
+    assert sizeof(TwoPayloads) == 12: "two payload variants retain tag";
+    assert sizeof(NamedWrapper) == 12: "named wrapper retains tag";
+    assert sizeof(ZstPointer) == 4: "ZST pointer payload retains tag";
+    assert sizeof(ZstSlice) == 20: "ZST slice payload retains tag";
+    assert sizeof(Option<void*>) == 4: "Option<void*> retains tag";
+    assert sizeof(Option<Option<i32*>>) == 12: "nested option retains outer tag";
+    assert sizeof(Result<i32*, str>) == 20: "result retains tag";
+}

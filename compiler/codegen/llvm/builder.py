@@ -422,6 +422,15 @@ class LLBuilder:
         3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
         4. load the complete enum value
         """
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            if payload_type is None:
+                ir_val = self.__zero_const(self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type)
+            else:
+                assert payload_fields is not None and len(payload_fields) == 1
+                ir_val = payload_fields[0].ir_val
+            self.__func.set_reg(result, LLValue(enum_type_id, ir_val))  # type: ignore
+            return
+
         if payload_type is None or self.__type_ctx.is_zst(payload_type):
             ir_val = self.undef(enum_type_id).ir_val
             ir_val = self.__builder.insert_value(ir_val, self.i32(discriminant).ir_val, 0)  # type: ignore
@@ -456,6 +465,18 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
+        matched_type = self.__type_ctx[matched.type_id]
+        enum_type_id = matched.type_id
+        if isinstance(matched_type, Type.PointerType):
+            enum_type_id = matched_type.pointee_type
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            payload_value = self.__builder.load(matched.ir_val)  # type: ignore
+            for field_index, symbol_id in fields:
+                if field_index != 0:
+                    continue
+                alloca_ptr = self.__func.get_var_ptr(symbol_id)
+                self.__builder.store(payload_value, alloca_ptr.ir_val)  # type: ignore
+            return
         if self.__type_ctx.is_zst(payload_type_id):
             return  # ZST payload: nothing to unpack
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
@@ -488,6 +509,17 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
+        enum_type_id = matched.type_id
+        matched_type = self.__type_ctx[matched.type_id]
+        if isinstance(matched_type, Type.PointerType):
+            enum_type_id = matched_type.pointee_type
+        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
+            for field_index, symbol_id in fields:
+                if field_index != 0:
+                    continue
+                alloca_ptr = self.__func.get_var_ptr(symbol_id)
+                self.__builder.store(matched.ir_val, alloca_ptr.ir_val)  # type: ignore
+            return
         if self.__type_ctx.is_zst(payload_type_id):
             return  # ZST payload: no fields to unpack
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
@@ -600,6 +632,18 @@ class LLBuilder:
         for case_value, target_label in cases:
             switch_instr.add_case(case_value.ir_val, self.__func.block(target_label))  # type: ignore
 
+    def niche_branch(self, value: LLValue, zero_label: str, nonzero_label: str) -> None:
+        zero_cond = self.__is_all_zero(value)
+        zero_block = self.__func.block(zero_label) if zero_label else None
+        nonzero_block = self.__func.block(nonzero_label) if nonzero_label else None
+        if zero_block is None:
+            zero_block = self.__func.new_block("match.niche.zero")
+            ir.IRBuilder(zero_block).unreachable()
+        if nonzero_block is None:
+            nonzero_block = self.__func.new_block("match.niche.nonzero")
+            ir.IRBuilder(nonzero_block).unreachable()
+        self.__builder.cbranch(zero_cond.ir_val, zero_block, nonzero_block)  # type: ignore
+
     def unreachable(self) -> None:
         self.__builder.unreachable()
 
@@ -665,6 +709,38 @@ class LLBuilder:
                 return self.__type_ctx.u32_id
             case IntrinsicKind.StrLen:
                 return self.__type_ctx.u64_id
+
+    def __zero_const(self, ll_type: ir.Type) -> ir.Constant:
+        if isinstance(ll_type, ir.LiteralStructType):
+            return ir.Constant.literal_struct([self.__zero_const(field) for field in ll_type.elements])  # type: ignore
+        if isinstance(ll_type, ir.PointerType):
+            return ir.Constant(ll_type, None)  # type: ignore
+        if isinstance(ll_type, ir.IntType):
+            return ir.Constant(ll_type, 0)  # type: ignore
+        if isinstance(ll_type, ir.types._BaseFloatType):  # type: ignore
+            return ir.Constant(ll_type, 0.0)  # type: ignore
+        raise ValueError(f"cannot build zero constant for {ll_type}")
+
+    def __is_all_zero(self, value: LLValue) -> LLValue:
+        ll_type = value.ir_val.type  # type: ignore
+        if isinstance(ll_type, ir.LiteralStructType):  # type: ignore
+            result: ir.Value | None = None
+            for index in range(len(ll_type.elements)):  # type: ignore
+                field = self.__builder.extract_value(value.ir_val, index)  # type: ignore
+                field_zero = self.__is_field_zero(field)
+                result = field_zero if result is None else self.__builder.and_(result, field_zero)  # type: ignore
+            assert result is not None
+            return LLValue(self.__type_ctx.bool_id, result)
+        return LLValue(self.__type_ctx.bool_id, self.__is_field_zero(value.ir_val))
+
+    def __is_field_zero(self, value: ir.Value) -> ir.Value:
+        if isinstance(value.type, ir.PointerType):  # type: ignore
+            return self.__builder.icmp_signed("==", value, ir.Constant(value.type, None))  # type: ignore
+        if isinstance(value.type, ir.IntType):  # type: ignore
+            return self.__builder.icmp_signed("==", value, ir.Constant(value.type, 0))  # type: ignore
+        if isinstance(value.type, ir.types._BaseFloatType):  # type: ignore
+            return self.__builder.fcmp_ordered("==", value, ir.Constant(value.type, 0.0))  # type: ignore
+        raise ValueError(f"unsupported niche zero-check field type: {value.type}")  # type: ignore
 
     def __cmp_impl(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value, type_id: int) -> ir.Value:
         if self.__type_ctx.is_zst(type_id):
