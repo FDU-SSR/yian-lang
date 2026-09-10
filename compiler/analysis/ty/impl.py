@@ -35,6 +35,15 @@ class ImplRegistry:
         self.__generic_impl_cache: list[Impl] = []  # list of generic impls
         self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
 
+        # Only top-level has_impl queries are safe to memoize. Recursive
+        # queries share a cycle-detection set and are context-dependent.
+        self.__memoize_enabled = False
+        self.__has_impl_cache: dict[tuple[int, int], bool] = {}
+
+    def enable_memoization(self) -> None:
+        """Enable has_impl memoization after impl registration is complete."""
+        self.__memoize_enabled = True
+
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
         impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
         self.__impls.append(impl)
@@ -104,14 +113,36 @@ class ImplRegistry:
                 # sibling conditions so one successful query cannot mark the
                 # same (type, trait) pair as visited for the next condition.
                 condition_visited = set(visited)
-                if not self.has_impl(concrete_type_id, substed_trait, condition_visited):
+                # This is a recursive query, even when this method itself
+                # was entered from a top-level has_impl call. Its result is
+                # dependent on the shared cycle-detection path and must not
+                # enter the top-level cache.
+                if not self.has_impl(concrete_type_id, substed_trait, condition_visited, False):
                     return False
         return True
 
-    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
-        """Check whether *type_id* implements *trait_id*."""
+    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None, fresh: bool = False) -> bool:
+        """Check whether *type_id* implements *trait_id*.
+
+        A query with a newly created visited set is context-independent and
+        may be cached. Recursive calls pass ``fresh=False`` so cycle
+        detection cannot leak a context-dependent result into the cache.
+        """
         if visited is None:
             visited = set()
+            fresh = True
+        key = (type_id, trait_id)
+        if fresh and self.__memoize_enabled:
+            cached = self.__has_impl_cache.get(key)
+            if cached is not None:
+                return cached
+        result = self.__has_impl_inner(type_id, trait_id, visited)
+        if fresh and self.__memoize_enabled:
+            self.__has_impl_cache[key] = result
+        return result
+
+    def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]]) -> bool:
+        """Evaluate a has_impl query without consulting or updating its cache."""
         key = (type_id, trait_id)
         if key in visited:
             return False
