@@ -62,6 +62,55 @@ class LLTypeCtx:
         size, _ = self.__stable_layout(type_id)
         return size
 
+    def get_type_alignment(self, type_id: int) -> int:
+        _, alignment = self.__stable_layout(type_id)
+        return alignment
+
+    def is_niche_enum(self, type_id: int) -> bool:
+        variants = self.__type_ctx.get_enum_variants(type_id)
+        if len(variants) != 2:
+            return False
+
+        has_unit = False
+        payload_type_id: int | None = None
+        for variant in variants:
+            if variant.payload_type is None:
+                has_unit = True
+            else:
+                if payload_type_id is not None:
+                    return False
+                payload_type_id = variant.payload_type
+        if not has_unit or payload_type_id is None:
+            return False
+
+        effective = self.__niche_payload_field_type(payload_type_id)
+        if effective is None or self.__type_ctx.is_zst(effective):
+            return False
+        effective_type = self.__type_ctx[effective]
+        if isinstance(effective_type, Type.SliceType):
+            return not self.__type_ctx.is_zst(effective_type.element_type)
+        return isinstance(
+            effective_type,
+            (Type.PointerType, Type.FunctionPointerType, Type.StrType),
+        )
+
+    def __niche_payload_field_type(self, payload_type_id: int) -> int | None:
+        payload_type = self.__type_ctx[payload_type_id]
+        if not isinstance(payload_type, Type.StructType):
+            return None
+        fields = self.__type_ctx.get_struct_fields(payload_type_id)
+        if len(fields) != 1:
+            return None
+        return fields[0].type_id
+
+    def __niche_payload_type_id(self, type_id: int) -> int:
+        for variant in self.__type_ctx.get_enum_variants(type_id):
+            if variant.payload_type is not None:
+                effective = self.__niche_payload_field_type(variant.payload_type)
+                assert effective is not None
+                return effective
+        raise AssertionError(f"niche enum {type_id} has no payload variant")
+
     def is_zst(self, type_id: int) -> bool:
         """Return whether a type is a Zero-Sized Type (carries no runtime info).
 
@@ -111,7 +160,6 @@ class LLTypeCtx:
             case Type.IntType():     result = self.__handle_int(ty_def)
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
-            case Type.NullPtrType(): result = self.__ptr
             case Type.SliceType():   result = self.__handle_slice(ty_def)
             case Type.ArrayType():   result = self.__handle_array(ty_def)
             case Type.TupleType():   result = self.__handle_tuple(ty_def)

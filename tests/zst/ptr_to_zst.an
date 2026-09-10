@@ -11,13 +11,13 @@ fn main() {
     assert sizeof(void*) == 0: "sizeof(*void) == 0";
     assert sizeof(Empty*) == 0: "sizeof(*Empty) == 0";
 
-    // nullptr works for any pointer including ZST pointer
-    let p: void* = nullptr;
-    let q: Empty* = nullptr;
+    // ZST pointers are created by dyn and carry no runtime representation.
+    let p: void* = dyn[1] void;
+    let q: Empty* = dyn[1] Empty;
 
     // ZST pointer equality always true (all indistinguishable)
-    let r1: void* = nullptr;
-    let r2: void* = nullptr;
+    let r1: void* = dyn[1] void;
+    let r2: void* = dyn[1] void;
     assert r1 == r2: "ZST ptr equality always true";
 
 }

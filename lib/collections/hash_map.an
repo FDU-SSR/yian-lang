@@ -54,6 +54,9 @@ impl<K, V> HashMap<K, V> {
     }
 
     pub fn insert(key: K, value: V) {
+        if self.capacity == 0 {
+            panic("inserting into a released map");
+        }
         if self.growth_left == 0 {
             self.resize(self.capacity * 2);
         }
@@ -242,8 +245,6 @@ impl<K, V> Drop for HashMap<K, V> {
             del self.ctrls;
             del self.buckets;
         }
-        self.ctrls = nullptr;
-        self.buckets = nullptr;
         self.size = 0;
         self.capacity = 0;
         self.growth_left = 0;

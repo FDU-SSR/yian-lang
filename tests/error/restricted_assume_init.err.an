@@ -1,0 +1,6 @@
+// The definite-assignment escape hatch is restricted to trusted code.
+
+fn main() {
+    let p: i32*;
+    assume_init(p);
+}

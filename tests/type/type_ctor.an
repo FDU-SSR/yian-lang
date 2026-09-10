@@ -18,7 +18,8 @@ fn main() {
     assert sizeof(Never)         == 0: "Never";
     assert sizeof(Ptr<Ptr<i32>>) == sizeof(WP): "nested Ptr";
 
-    let p: Ptr<i32> = nullptr;
+    let value: i32 = 0;
+    let p: Ptr<i32> = &value;
 
     // static method receiver
     assert Ptr<i32>.width() == 8: "static call on Ptr<i32>";

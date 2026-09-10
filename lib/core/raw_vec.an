@@ -9,31 +9,48 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        Self(nullptr, 0)
+        let data: T* = dyn[0] T;
+        Self(
+            data = data,
+            cap = 0x8000_0000_0000_0000u64
+        )
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
         if capacity == 0 {
             return Self.new();
         }
+        if capacity > 0x7FFF_FFFF_FFFF_FFFFu64 {
+            panic("RawVec capacity overflow\n");
+        }
         // Allocate memory for capacity elements
         let data: T* = dyn[capacity] T;
         Self(
             data = data,
-            cap = capacity
+            cap = capacity | 0x8000_0000_0000_0000u64
         )
     }
 
     pub fn ptr() -> T* {
+        if (self.cap & 0x8000_0000_0000_0000u64) == 0 {
+            panic("RawVec is released\n");
+        }
         self.data
     }
 
     pub fn capacity() -> u64 {
-        self.cap
+        self.cap & 0x7FFF_FFFF_FFFF_FFFFu64
     }
 
     pub fn grow() {
-        let old_cap = self.cap;
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        if (self.cap & live_bit) == 0 {
+            panic("RawVec is released\n");
+        }
+        let old_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
+        if old_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
+            panic("RawVec capacity overflow\n");
+        }
         let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
 
         let new_data: T* = dyn[new_cap] T;
@@ -46,16 +63,28 @@ impl<T> RawVec<T> {
         }
 
         self.data = new_data;
-        self.cap = new_cap;
+        self.cap = new_cap | live_bit;
     }
 
     pub fn reserve(len: u64, additional: u64) {
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        if (self.cap & live_bit) == 0 {
+            panic("RawVec is released\n");
+        }
+        if additional > 0x7FFF_FFFF_FFFF_FFFFu64 || len > 0x7FFF_FFFF_FFFF_FFFFu64 - additional {
+            panic("RawVec capacity overflow\n");
+        }
         let required_cap = len + additional;
-        if self.cap >= required_cap {
+        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
+        if current_cap >= required_cap {
             return;
         }
 
-        let new_cap = self.cap * 2;
+        let new_cap = if current_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
+            required_cap
+        } else {
+            current_cap * 2
+        };
         if new_cap < required_cap {
             new_cap = required_cap;
         }
@@ -76,20 +105,24 @@ impl<T> RawVec<T> {
         }
 
         self.data = new_data;
-        self.cap = new_cap;
+        self.cap = new_cap | live_bit;
     }
 
     pub fn shrink_to_fit(len: u64) {
-        if self.cap <= len {
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        if (self.cap & live_bit) == 0 {
+            panic("RawVec is released\n");
+        }
+        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
+        if current_cap <= len {
             return;
         }
 
         if len == 0 {
-            if self.cap > 0 {
-                del self.data;
-            }
-            self.data = nullptr;
-            self.cap = 0;
+            let new_data: T* = dyn[0] T;
+            del self.data;
+            self.data = new_data;
+            self.cap = live_bit;
             return;
         }
 
@@ -98,22 +131,20 @@ impl<T> RawVec<T> {
         // Copy valid elements
         memmove(new_data, self.data, len);
 
-        if self.cap > 0 {
-            del self.data;
-        }
+        del self.data;
 
         self.data = new_data;
-        self.cap = len;
+        self.cap = len | live_bit;
     }
 }
 
 // Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources
 impl<T> Drop for RawVec<T> {
     fn drop() {
-        if self.cap > 0 {
+        let live_bit: u64 = 0x8000_0000_0000_0000u64;
+        if (self.cap & live_bit) != 0 {
             del self.data;
         }
-        self.data = nullptr;
         self.cap = 0;
     }
 }

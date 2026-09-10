@@ -42,7 +42,6 @@ class KeywordKind(Enum):
     Del = "del"
     True_ = "true"
     False_ = "false"
-    Nullptr = "nullptr"
     Underscore = "_"
     Void = "void"
     Bool = "bool"
@@ -233,15 +232,6 @@ class BoolLiteral:
     raw: str
     span: SrcSpan
     value: bool
-
-    def __repr__(self) -> str:
-        return self.raw
-
-
-@dataclass
-class NullptrLiteral:
-    raw: str
-    span: SrcSpan
 
     def __repr__(self) -> str:
         return self.raw
@@ -471,6 +461,6 @@ def parse_float_value(raw: str) -> tuple[float, str | None]:
     return value, suffix
 
 
-Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral | NullptrLiteral
+Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
 
 Token: TypeAlias = Keyword | Identifier | Punctuator | Literal | FStrStart | FStrLiteral | FStrExprBegin | FStrExprEnd | FStrEnd

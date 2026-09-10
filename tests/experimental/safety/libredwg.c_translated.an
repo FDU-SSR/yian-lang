@@ -1,7 +1,4 @@
 fn my_memcpy(char* dest, char* src, u32 len) -> char* {
-    if dest == nullptr && src == nullptr {
-        return dest
-    }
     if len == 0 {
         return dest
     }

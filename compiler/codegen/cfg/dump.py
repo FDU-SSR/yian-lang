@@ -280,9 +280,6 @@ def __dump_value(val: IR.Value) -> str:
         case IR.BoolLiteral(value=v):
             return "true" if v else "false"
 
-        case IR.NullptrLiteral():
-            return "nullptr"
-
         case IR.CharLiteral(value=v):
             return repr(v)
 

@@ -105,13 +105,14 @@ class LLModule:
         """Return a global constant for the given string bytes."""
         if value in self.__strings:
             return self.__strings[value]
-        string_type = ir.ArrayType(ir.IntType(8), len(value))  # type: ignore
+        storage = value if value else b"\0"
+        string_type = ir.ArrayType(ir.IntType(8), len(storage))  # type: ignore
         global_var = ir.GlobalVariable(self.__module, string_type, name=f"str.{self.__string_counter}")
         self.__string_counter += 1
         global_var.linkage = "private"
         global_var.global_constant = True
         global_var.unnamed_addr = True
-        global_var.initializer = ir.Constant(string_type, bytearray(value))  # type: ignore[arg-type]
+        global_var.initializer = ir.Constant(string_type, bytearray(storage))  # type: ignore[arg-type]
         self.__strings[value] = global_var
         return global_var
 

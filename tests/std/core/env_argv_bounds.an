@@ -1,0 +1,6 @@
+// An out-of-bounds argv access must terminate through the runtime check.
+
+fn main() {
+    let argc = __yian_argc();
+    let ignored = __yian_argv_ptr(argc);
+}

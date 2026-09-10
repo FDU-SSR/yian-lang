@@ -201,8 +201,6 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __line(guides, is_last, f"StrLiteral: {expr.value!r} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
         case HIR.BoolLiteral():
             return __line(guides, is_last, f"BoolLiteral: {expr.value} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-        case HIR.NullptrLiteral():
-            return __line(guides, is_last, f"NullptrLiteral: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
         case HIR.Ty():
             return __line(guides, is_last, f"Ty: {__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
 

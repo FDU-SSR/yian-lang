@@ -126,7 +126,14 @@ class LLBuilder:
             self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "malloc-overflow")
             byte_size_ir = self.__builder.trunc(byte_size128, ir.IntType(64))  # type: ignore
             byte_size = LLValue(self.__type_ctx.u64_id, byte_size_ir)  # type: ignore
+        zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        one = ir.Constant(ir.IntType(64), 1)  # type: ignore
+        has_size = self.__builder.icmp_unsigned("!=", byte_size.ir_val, zero)  # type: ignore
+        normalized_size = self.__builder.select(has_size, byte_size.ir_val, one)  # type: ignore
+        byte_size = LLValue(self.__type_ctx.u64_id, normalized_size)  # type: ignore
         raw = self.__call_intrinsic(IntrinsicKind.Malloc, [byte_size])
+        nonnull = self.__builder.icmp_signed("!=", raw.ir_val, ir.Constant(raw.ir_val.type, None))  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), "malloc-null")
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
         ptr_ll_type = self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type
         ir_val = self.__builder.bitcast(raw.ir_val, ptr_ll_type)  # type: ignore
@@ -284,10 +291,18 @@ class LLBuilder:
                 ir_val = self.__builder.select(pos, raw, zero_i)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
-        elif isinstance(src, (Type.PointerType, Type.NullPtrType)) and isinstance(dst, Type.PointerType):
+        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
             if self.__ll_type_ctx.is_zst(dst.pointee_type):
                 # both src and dst are ptr-to-ZST — no real cast, just undef
                 ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
+            elif self.__ll_type_ctx.is_zst(src.pointee_type):
+                # A zero-length/ZST source has no address-bearing LLVM value.
+                # Use a non-zero, suitably aligned dangling address when it is
+                # re-anchored as a pointer to a real element type.  Such a
+                # pointer is only valid for empty views and must not be loaded.
+                alignment = self.__ll_type_ctx.get_type_alignment(dst.pointee_type)
+                sentinel = ir.Constant(ir.IntType(64), max(1, alignment))  # type: ignore
+                ir_val = self.__builder.inttoptr(sentinel, dest_ll_type)  # type: ignore
             else:
                 ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
         else:
@@ -531,10 +546,17 @@ class LLBuilder:
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, extended))  # type: ignore
 
     def yian_argv_ptr(self, index: LLValue, result: str) -> None:
+        argc_global = self.__module.argc_global
+        argc = self.__builder.load(argc_global)  # type: ignore
+        argc64 = self.__builder.zext(argc, ir.IntType(64))  # type: ignore
+        in_bounds = self.__builder.icmp_unsigned("<", index.ir_val, argc64)  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, in_bounds), "argv-index")
         argv_global = self.__module.argv_global
         argv_val = self.__builder.load(argv_global)  # type: ignore
         gep = self.__builder.gep(argv_val, [index.ir_val], inbounds=True)  # type: ignore
         loaded = self.__builder.load(gep)  # type: ignore
+        nonnull = self.__builder.icmp_signed("!=", loaded, ir.Constant(loaded.type, None))  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), "argv-null")
         ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         self.__func.set_reg(result, LLValue(ptr_type_id, loaded))
 

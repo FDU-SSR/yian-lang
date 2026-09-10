@@ -444,13 +444,6 @@ class BoolLiteral:
 
 
 @dataclass
-class NullptrLiteral:
-    span: SrcSpan
-    type_id: int
-    is_place: bool
-
-
-@dataclass
 class AssumeInit:
     span: SrcSpan
     value: Expr
@@ -480,7 +473,7 @@ class Closure:
     is_place: bool
 
 
-Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral | NullptrLiteral
+Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
 
 
 Expr: TypeAlias = (
