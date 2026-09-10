@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
@@ -58,6 +58,16 @@ class StateKey:
 
     sym_id: int
     path: tuple[int | str, ...] = ()
+
+
+class DAState(dict[StateKey, VarState]):
+    """Definite-assignment state with copy-on-write branch sharing."""
+
+    __slots__ = ("shared",)
+
+    def __init__(self, source: dict[StateKey, VarState] | None = None) -> None:
+        super().__init__() if source is None else super().__init__(source)
+        self.shared = False
 
 
 # ------------------------------------------------------------------
@@ -96,7 +106,38 @@ class DefiniteAssignment:
         # Per-definition transient state (reset for each DefPoint)
         self.__symbol_ctx = None
         self.__uncertain_vars: set[int] = set()
-        self.__exit_state: dict[StateKey, VarState] | None = None
+        self.__exit_state: DAState | None = None
+
+    # ------------------------------------------------------------------
+    # state helpers (copy-on-write)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def __share(state: DAState) -> DAState:
+        """Return a shared snapshot of *state* for another analysis path."""
+        new_state = DAState(state)
+        new_state.shared = True
+        return new_state
+
+    @staticmethod
+    def __set(state: DAState, key: StateKey, value: VarState) -> DAState:
+        """Set one state entry, copying only when the state is shared."""
+        if state.shared:
+            state = DAState(state)
+        state[key] = value
+        return state
+
+    @staticmethod
+    def __drop_keys(state: DAState, drop: Callable[[StateKey], bool]) -> DAState:
+        """Remove matching state entries, copying only when necessary."""
+        keys = [key for key in state if drop(key)]
+        if not keys:
+            return state
+        if state.shared:
+            state = DAState(state)
+        for key in keys:
+            del state[key]
+        return state
 
     # ------------------------------------------------------------------
     # public API
@@ -129,9 +170,9 @@ class DefiniteAssignment:
         self.__exit_state = None
 
         # Initial state: params are VALID (whole), other locals INVALID.
-        state: dict[StateKey, VarState] = {}
+        state = DAState()
         for loc in dp.locals:
-            state[self.__whole(loc)] = (VarState.VALID if loc in dp.params else VarState.INVALID)
+            state = self.__set(state, self.__whole(loc), (VarState.VALID if loc in dp.params else VarState.INVALID))
 
         final_state = self.__check_expr(dp.body, state)
 
@@ -148,7 +189,7 @@ class DefiniteAssignment:
     # core walker
     # ==================================================================
 
-    def __check_expr(self, expr: HIR.Expr, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __check_expr(self, expr: HIR.Expr, state: DAState) -> DAState:
         """Walk *expr* and return the variable state after it."""
 
         # -- control flow -------------------------------------------------
@@ -293,8 +334,8 @@ class DefiniteAssignment:
             # inside assume_init itself does not trigger a DA error.
             if isinstance(expr.value, HIR.Var):
                 sym_id = expr.value.symbol_id
-                state = {**state, self.__whole(sym_id): VarState.VALID}
-                state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
+                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
+                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
             state = self.__check_expr(expr.value, state)
             return state
 
@@ -305,13 +346,13 @@ class DefiniteAssignment:
     # control-flow helpers
     # ==================================================================
 
-    def __check_if(self, expr: HIR.If, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __check_if(self, expr: HIR.If, state: DAState) -> DAState:
         state = self.__check_expr(expr.cond, state)
-        then_state = self.__check_expr(expr.then_branch, dict(state))
+        then_state = self.__check_expr(expr.then_branch, self.__share(state))
         then_diverges = expr.then_branch.type_id == TypeCtx.never_id
 
         if expr.else_branch is not None:
-            else_state = self.__check_expr(expr.else_branch, dict(state))
+            else_state = self.__check_expr(expr.else_branch, self.__share(state))
             else_diverges = expr.else_branch.type_id == TypeCtx.never_id
             if then_diverges and else_diverges:
                 return then_state
@@ -323,12 +364,12 @@ class DefiniteAssignment:
 
         if then_diverges:
             return then_state
-        return self.__merge_states(then_state, dict(state))
+        return self.__merge_states(then_state, self.__share(state))
 
-    def __check_loop(self, expr: HIR.Loop, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
-        pre_state = dict(state)
-        body_state = self.__check_expr(expr.body, dict(pre_state))
-        merged: dict[StateKey, VarState] = {}
+    def __check_loop(self, expr: HIR.Loop, state: DAState) -> DAState:
+        pre_state = self.__share(state)
+        body_state = self.__check_expr(expr.body, self.__share(pre_state))
+        merged = DAState()
         all_keys = set(pre_state.keys()) | set(body_state.keys())
         for k in all_keys:
             pre_val = pre_state.get(k, VarState.INVALID)
@@ -341,17 +382,17 @@ class DefiniteAssignment:
                 merged[k] = VarState.UNCERTAIN
         return merged
 
-    def __check_match(self, expr: HIR.Match, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __check_match(self, expr: HIR.Match, state: DAState) -> DAState:
         state = self.__check_expr(expr.value, state)
 
-        arm_states: list[dict[StateKey, VarState]] = []
+        arm_states: list[DAState] = []
         for arm in expr.arms:
-            arm_state = dict(state)
+            arm_state = self.__share(state)
             if (arm.pattern is not None
                     and isinstance(arm.pattern, HIR.EnumPattern)
                     and arm.pattern.unpack_fields is not None):
                 for sym_id in arm.pattern.unpack_fields:
-                    arm_state[self.__whole(sym_id)] = VarState.VALID
+                    arm_state = self.__set(arm_state, self.__whole(sym_id), VarState.VALID)
             arm_state = self.__check_expr(arm.body, arm_state)
             if arm.body.type_id != TypeCtx.never_id:
                 arm_states.append(arm_state)
@@ -368,17 +409,17 @@ class DefiniteAssignment:
     # expression-specific handlers
     # ==================================================================
 
-    def __check_let(self, expr: HIR.Let, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __check_let(self, expr: HIR.Let, state: DAState) -> DAState:
         sym_id = expr.symbol_id
         if expr.init is not None:
             state = self.__check_expr(expr.init, state)
             if sym_id is not None:
-                state = {**state, self.__whole(sym_id): VarState.VALID}
+                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
         elif sym_id is not None:
-            state = {**state, self.__whole(sym_id): VarState.INVALID}
+            state = self.__set(state, self.__whole(sym_id), VarState.INVALID)
         return state
 
-    def __check_binary(self, expr: HIR.Binary, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __check_binary(self, expr: HIR.Binary, state: DAState) -> DAState:
         op = expr.op
 
         if op == BinaryOperator.Assign:
@@ -398,7 +439,7 @@ class DefiniteAssignment:
     # assignment target walking
     # ==================================================================
 
-    def __walk_assign_target(self, target: HIR.Expr, state: dict[StateKey, VarState], path: tuple[int | str, ...] = ()) -> dict[StateKey, VarState]:
+    def __walk_assign_target(self, target: HIR.Expr, state: DAState, path: tuple[int | str, ...] = ()) -> DAState:
         """Walk *target* as the left-hand side of an assignment.
 
         *path* accumulates field/element names as we recurse through
@@ -410,13 +451,13 @@ class DefiniteAssignment:
             if not path:
                 # Whole-variable assignment  s = …
                 key = self.__whole(sym_id)
-                state = {**state, key: VarState.VALID}
+                state = self.__set(state, key, VarState.VALID)
                 # Remove stale per-field entries — whole VALID subsumes them.
-                state = {k: v for k, v in state.items() if not (k.sym_id == sym_id and k.path)}
+                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
             else:
                 # Field / element assignment  s.field = …  or  s.0 = …
                 key = StateKey(sym_id, path)
-                state = {**state, key: VarState.VALID}
+                state = self.__set(state, key, VarState.VALID)
             return state
 
         if isinstance(target, HIR.FieldAccess):
@@ -437,7 +478,7 @@ class DefiniteAssignment:
     # neutral walker (no Var checks, no Var marks)
     # ==================================================================
 
-    def __walk_neutral(self, expr: HIR.Expr, state: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __walk_neutral(self, expr: HIR.Expr, state: DAState) -> DAState:
         """Walk *expr* tracking nested state changes but treating
         ``Var`` nodes as transparent."""
 
@@ -472,10 +513,10 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.If):
             state = self.__walk_neutral(expr.cond, state)
-            then_state = self.__walk_neutral(expr.then_branch, dict(state))
+            then_state = self.__walk_neutral(expr.then_branch, self.__share(state))
             then_diverges = expr.then_branch.type_id == TypeCtx.never_id
             if expr.else_branch is not None:
-                else_state = self.__walk_neutral(expr.else_branch, dict(state))
+                else_state = self.__walk_neutral(expr.else_branch, self.__share(state))
                 else_diverges = expr.else_branch.type_id == TypeCtx.never_id
                 if then_diverges and else_diverges:
                     return state
@@ -486,7 +527,7 @@ class DefiniteAssignment:
                 return self.__merge_states(then_state, else_state)
             if then_diverges:
                 return state
-            return self.__merge_states(then_state, dict(state))
+            return self.__merge_states(then_state, self.__share(state))
 
         if isinstance(expr, HIR.Loop):
             return self.__check_loop(expr, state)
@@ -598,8 +639,8 @@ class DefiniteAssignment:
             # Mark the variable VALID before walking, matching __check_expr.
             if isinstance(expr.value, HIR.Var):
                 sym_id = expr.value.symbol_id
-                state = {**state, self.__whole(sym_id): VarState.VALID}
-                state = {k: v for k, v in state.items() if k.sym_id != sym_id or not k.path}
+                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
+                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
             state = self.__walk_neutral(expr.value, state)
             return state
 
@@ -609,7 +650,7 @@ class DefiniteAssignment:
     # field-level read checks
     # ==================================================================
 
-    def __check_field_read(self, expr: HIR.FieldAccess, state: dict[StateKey, VarState]) -> None:
+    def __check_field_read(self, expr: HIR.FieldAccess, state: DAState) -> None:
         """Check that reading *expr* (a struct field) is valid."""
         path: list[int | str] = [expr.field.name]
         receiver = expr.receiver
@@ -626,7 +667,7 @@ class DefiniteAssignment:
             key = StateKey(sym_id, tuple(path))
             self.__check_key_valid(key, sym_id, state, expr.span, receiver.type_id)
 
-    def __check_tuple_read(self, expr: HIR.TupleAccess, state: dict[StateKey, VarState]) -> None:
+    def __check_tuple_read(self, expr: HIR.TupleAccess, state: DAState) -> None:
         """Check that reading *expr* (a tuple element) is valid."""
         path: list[int | str] = [expr.index]
         receiver = expr.receiver
@@ -644,7 +685,7 @@ class DefiniteAssignment:
             self.__check_key_valid(key, sym_id, state, expr.span,
                                    receiver.type_id)
 
-    def __check_key_valid(self, key: StateKey, sym_id: int, state: dict[StateKey, VarState], span: SrcSpan, type_id: int) -> None:
+    def __check_key_valid(self, key: StateKey, sym_id: int, state: DAState, span: SrcSpan, type_id: int) -> None:
         """Report an error unless *key* (or its whole-variable ancestor)
         is definitely VALID."""
         # 1. Whole variable VALID → all fields implicitly VALID.
@@ -678,7 +719,7 @@ class DefiniteAssignment:
     # recursive all-fields-valid inference
     # ==================================================================
 
-    def __all_fields_valid(self, sym_id: int, type_id: int, prefix: tuple[int | str, ...], state: dict[StateKey, VarState]) -> bool:
+    def __all_fields_valid(self, sym_id: int, type_id: int, prefix: tuple[int | str, ...], state: DAState) -> bool:
         """Return True when every field / element of the type at *type_id*
         is provably VALID under the given *prefix*."""
         ty = self.__type_ctx[type_id]
@@ -695,7 +736,7 @@ class DefiniteAssignment:
             )
         return False
 
-    def __is_field_or_whole_valid(self, sym_id: int, key_suffix: tuple[int | str, ...], type_id: int, state: dict[StateKey, VarState]) -> bool:
+    def __is_field_or_whole_valid(self, sym_id: int, key_suffix: tuple[int | str, ...], type_id: int, state: DAState) -> bool:
         key = StateKey(sym_id, key_suffix)
         if state.get(key) is VarState.VALID:
             return True
@@ -708,7 +749,7 @@ class DefiniteAssignment:
     # state helpers
     # ==================================================================
 
-    def __check_var_use(self, sym_id: int, state: dict[StateKey, VarState], span: SrcSpan) -> None:
+    def __check_var_use(self, sym_id: int, state: DAState, span: SrcSpan) -> None:
         """Report an error if the whole variable *sym_id* is not
         definitely VALID at a use site."""
         whole = self.__whole(sym_id)
@@ -752,10 +793,10 @@ class DefiniteAssignment:
             return sym.name
         return f"<{sym_id}>"
 
-    def __merge_states(self, s1: dict[StateKey, VarState], s2: dict[StateKey, VarState]) -> dict[StateKey, VarState]:
+    def __merge_states(self, s1: DAState, s2: DAState) -> DAState:
         """Merge two states at a control-flow join point."""
         all_keys = set(s1.keys()) | set(s2.keys())
-        merged: dict[StateKey, VarState] = {}
+        merged = DAState()
         for k in all_keys:
             v1 = s1.get(k, VarState.INVALID)
             v2 = s2.get(k, VarState.INVALID)
@@ -767,8 +808,8 @@ class DefiniteAssignment:
                 merged[k] = VarState.UNCERTAIN
         return merged
 
-    def __record_exit_state(self, state: dict[StateKey, VarState]) -> None:
+    def __record_exit_state(self, state: DAState) -> None:
         if self.__exit_state is None:
-            self.__exit_state = dict(state)
+            self.__exit_state = self.__share(state)
         else:
             self.__exit_state = self.__merge_states(self.__exit_state, state)
