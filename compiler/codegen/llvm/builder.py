@@ -119,7 +119,7 @@ class LLBuilder:
         if elem_size == 1:
             byte_size = size
         else:
-            i128 = ir.IntType(128)
+            i128: ir.IntType = ir.IntType(128)  # type: ignore
             size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
             byte_size128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
             fits = self.__builder.icmp_unsigned("<", byte_size128, ir.Constant(i128, 1 << 64))  # type: ignore
@@ -592,7 +592,7 @@ class LLBuilder:
         self.__builder.cbranch(cond.ir_val, ok_block, fail_block)  # type: ignore
         fail_builder = ir.IRBuilder(fail_block)
         exit_func = self.__module.intrinsics.get(IntrinsicKind.Exit)
-        fail_builder.call(exit_func, [ir.Constant(ir.IntType(32), 1)])
+        fail_builder.call(exit_func, [ir.Constant(ir.IntType(32), 1)])  # type: ignore
         fail_builder.unreachable()
 
         # The CFG terminator is emitted after all statements. Once a check
