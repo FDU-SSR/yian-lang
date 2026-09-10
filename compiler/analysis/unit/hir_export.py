@@ -144,6 +144,10 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_field_access(expr, guides, is_last, type_ctx)
         case HIR.TupleAccess():
             return __export_tuple_access(expr, guides, is_last, type_ctx)
+        case HIR.ArrayAccess():
+            return __export_array_access(expr, guides, is_last, type_ctx)
+        case HIR.SliceAccess():
+            return __export_slice_access(expr, guides, is_last, type_ctx)
         case HIR.DynValue():
             return __export_dyn_value(expr, guides, is_last, type_ctx)
         case HIR.DynBuffer():
@@ -330,6 +334,20 @@ def __export_field_access(expr: HIR.FieldAccess, guides: list[bool], is_last: bo
 def __export_tuple_access(expr: HIR.TupleAccess, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     res = __line(guides, is_last, f"TupleAccess: index={expr.index} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
     res += __export_expr_child("Receiver", expr.receiver, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_array_access(expr: HIR.ArrayAccess, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"ArrayAccess: length={expr.length} element_type={__format_type(type_ctx, expr.element_type)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Array", expr.array, guides, is_last, False, type_ctx)
+    res += __export_expr_child("Index", expr.index, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_slice_access(expr: HIR.SliceAccess, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"SliceAccess: element_type={__format_type(type_ctx, expr.element_type)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Slice", expr.slice, guides, is_last, False, type_ctx)
+    res += __export_expr_child("Index", expr.index, guides, is_last, True, type_ctx)
     return res
 
 

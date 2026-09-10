@@ -247,6 +247,31 @@ class TupleAccess:
 
 
 @dataclass
+class ArrayAccess:
+    """Access an element of a fixed-size array through an inline GEP."""
+
+    span: SrcSpan
+    array: Expr
+    index: Expr
+    element_type: int
+    type_id: int
+    length: int
+    is_place: bool = True
+
+
+@dataclass
+class SliceAccess:
+    """Access an element of a slice through its data pointer."""
+
+    span: SrcSpan
+    slice: Expr
+    index: Expr
+    element_type: int
+    type_id: int
+    is_place: bool = True
+
+
+@dataclass
 class DynValue:
     span: SrcSpan
     value: Expr
@@ -462,6 +487,7 @@ Expr: TypeAlias = (
     Binary | Unary
     | Call | StructConstruct | Invoke | Cast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
+    | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | YianArgc | YianArgvPtr | YianCstrlen | YianExit

@@ -497,6 +497,10 @@ class CfgBuilder:
                 return self.__resolve_field_access(expr)
             case HIR.TupleAccess():
                 return self.__resolve_tuple_access(expr)
+            case HIR.ArrayAccess():
+                return self.__resolve_array_access(expr)
+            case HIR.SliceAccess():
+                return self.__resolve_slice_access(expr)
             case HIR.DynValue():
                 return self.__resolve_dyn_value(expr)
             case HIR.DynBuffer():
@@ -546,6 +550,11 @@ class CfgBuilder:
         - for lvalue expressions, this is the address of the lvalue
         - for rvalue expressions, allocates a temporary and copies the value to it
         """
+        if isinstance(expr, HIR.ArrayAccess):
+            return self.__resolve_array_access_addr(expr)
+        if isinstance(expr, HIR.SliceAccess):
+            return self.__resolve_slice_access_addr(expr)
+
         if not expr.is_place:
             val = self.__resolve_val(expr)
             return self.__build_alloca(val)
@@ -759,6 +768,29 @@ class CfgBuilder:
         value = self.__resolve_val(expr.receiver)
         return self.__build_extract_value(value, expr.index, expr.type_id)
 
+    def __resolve_array_access(self, expr: HIR.ArrayAccess) -> IR.Value:
+        addr = self.__resolve_array_access_addr(expr)
+        return self.__build_load(addr)
+
+    def __resolve_array_access_addr(self, expr: HIR.ArrayAccess) -> IR.Value:
+        base_addr = self.__resolve_addr(expr.array)
+        elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
+        elem_base = self.__build_cast(base_addr, elem_ptr_type)
+        index_val = self.__resolve_val(expr.index)
+        self.__guard_array_index(index_val, expr.length)
+        return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
+
+    def __resolve_slice_access(self, expr: HIR.SliceAccess) -> IR.Value:
+        addr = self.__resolve_slice_access_addr(expr)
+        return self.__build_load(addr)
+
+    def __resolve_slice_access_addr(self, expr: HIR.SliceAccess) -> IR.Value:
+        slice_val = self.__resolve_val(expr.slice)
+        index_val = self.__resolve_val(expr.index)
+        elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
+        data = self.__build_extract_value(slice_val, 0, elem_ptr_type)
+        return self.__build_element_ptr(data, index_val, elem_ptr_type)
+
     def __resolve_dyn_value(self, expr: HIR.DynValue) -> IR.Value:
         """
         1. malloc a buffer on the heap
@@ -942,6 +974,18 @@ class CfgBuilder:
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
         return self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+
+    def __guard_array_index(self, index: IR.Value, length: int) -> None:
+        limit = IR.IntLiteral(value=length, type_id=TypeCtx.u64_id)
+        condition = self.__build_binary(BinaryOperator.Lt, index, limit, TypeCtx.bool_id)
+        ok_block = self.__new_block("array.index.ok")
+        fail_block = self.__new_block("array.index.fail")
+        self.__set_terminator(IR.CondBr(condition, ok_block, fail_block))
+
+        self.__switch_to(fail_block)
+        message = IR.StringLiteral(value="Index out of bounds\n", type_id=TypeCtx.str_id)
+        self.__set_terminator(IR.Panic(message))
+        self.__switch_to(ok_block)
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)

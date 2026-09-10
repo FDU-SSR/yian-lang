@@ -309,6 +309,13 @@ class LLBuilder:
             # Enum layout: { i32 discriminant, [pad x i8] payload }
             # Field 0 is always the i32 discriminant.
             field_type = self.__type_ctx.u32_id
+        elif isinstance(base_type, Type.SliceType):
+            if index == 0:
+                field_type = self.__type_ctx.alloc_pointer(base_type.element_type)
+            elif index == 1:
+                field_type = self.__type_ctx.u64_id
+            else:
+                raise ValueError(f"slice has no field {index}")
         else:
             field_type = base.type_id
         if self.__ll_type_ctx.is_zst(field_type):

@@ -442,6 +442,33 @@ class OpBuilder:
             elem_type = left_ty.element_types[index_val]
             return HIR.TupleAccess(span, left_hir, index_val, elem_type, is_place=left_hir.is_place)
 
+        # A concrete fixed-size array uses an inline pointer calculation.  A
+        # const-generic length remains on the trait path until instantiation.
+        if isinstance(left_ty, Type.ArrayType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            length_ty = self.__type_ctx[left_ty.length]
+            if isinstance(length_ty, Type.LiteralValueType):
+                index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+                return HIR.ArrayAccess(
+                    span=span,
+                    array=left_hir,
+                    index=index_value,
+                    element_type=left_ty.element_type,
+                    type_id=left_ty.element_type,
+                    length=length_ty.value,
+                    is_place=left_hir.is_place,
+                )
+
+        if isinstance(left_ty, Type.SliceType) and self.__type_ctx.is_integer_type(right_hir.type_id):
+            index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            return HIR.SliceAccess(
+                span=span,
+                slice=left_hir,
+                index=index_value,
+                element_type=left_ty.element_type,
+                type_id=left_ty.element_type,
+                is_place=left_hir.is_place,
+            )
+
         # 4) Index overload via trait
         overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
         if overloaded_expr is not None:
