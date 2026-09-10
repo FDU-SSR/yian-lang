@@ -31,7 +31,14 @@ class Emitter:
             f.write(str(llvm_module))
 
     def emit_module(self, llvm_module: LLModule, output_dir: str, kind: str,
-                    stem: str, intermediate_dir: str | None = None) -> str:
+                    stem: str, intermediate_dir: str | None = None,
+                    opt_level: int = 0) -> str:
+        """Emit a module, applying the requested optimization level.
+
+        ``-t ll`` intentionally remains the raw compiler-generated IR. Other
+        targets run the LLVM module pipeline and use the same level for the
+        target machine.
+        """
         normalized_kind = self._normalize_kind(kind)
         paths = {"ll": f"{stem}.ll", "bc": f"{stem}.bc", "obj": f"{stem}.o", "asm": f"{stem}.s"}
 
@@ -50,6 +57,13 @@ class Emitter:
             binding = self.__ensure_binding()
             llvm_mod = binding.parse_assembly(str(llvm_module))
             llvm_mod.verify()
+            if opt_level > 0:
+                pass_manager = binding.create_module_pass_manager()
+                pass_builder = binding.PassManagerBuilder()
+                pass_builder.opt_level = opt_level
+                pass_builder.populate(pass_manager)
+                pass_manager.run(llvm_mod)
+                llvm_mod.verify()
         finally:
             if os.path.exists(ll_path):
                 os.remove(ll_path)
@@ -60,7 +74,7 @@ class Emitter:
             with open(output_path, "wb") as f:
                 f.write(llvm_mod.as_bitcode())
         elif normalized_kind in ("obj", "asm"):
-            target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic")  # type: ignore[union-attr]
+            target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", opt=opt_level)  # type: ignore[union-attr]
             if normalized_kind == "obj":
                 with open(output_path, "wb") as f:
                     f.write(target_machine.emit_object(llvm_mod))
