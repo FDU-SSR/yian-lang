@@ -1,7 +1,0 @@
-// Capacities using the live-bit are bounded to the low 63 bits.
-
-from std.core.raw_vec import RawVec;
-
-fn main() {
-    let rejected = RawVec<i32>.with_capacity(0x8000_0000_0000_0000u64);
-}

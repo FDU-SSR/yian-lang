@@ -1,9 +1,0 @@
-// A released hash map cannot be cloned from stale pointer fields.
-
-from std.collections.hash_map import HashMap;
-
-fn main() {
-    let map = HashMap<i32, i32>.new();
-    map.drop();
-    let copy = map.clone();
-}

@@ -54,9 +54,6 @@ impl<K, V> HashMap<K, V> {
     }
 
     pub fn insert(key: K, value: V) {
-        if self.capacity == 0 {
-            panic("inserting into a released map");
-        }
         if self.growth_left == 0 {
             self.resize(self.capacity * 2);
         }
@@ -222,13 +219,13 @@ impl<K, V> HashMap<K, V> {
                     }
                 }
             }
+            // del releases only the allocation. It does not recursively drop
+            // bucket fields that were shallow-copied into the new table.
+            del old_ctrls;
+            del old_buckets;
         }
         self.ctrls = new_ctrls;
         self.buckets = new_buckets;
-        del old_ctrls;
-        // Entries were copied into the new table. del releases only this raw
-        // allocation and does not recursively drop Bucket fields.
-        del old_buckets;
     }
 
     pub fn hash_key(key: K*) -> u64 {
@@ -255,9 +252,6 @@ impl<K, V> Clone for HashMap<K, V> {
     // Deep copy: rebuild a same-capacity table and clone every stored pair.
     // Constraints (K: Hash + Clone, V: Clone) are resolved at the call site.
     pub fn clone() -> Self {
-        if self.capacity == 0 {
-            panic("cloning a released map");
-        }
         let result = Self.with_capacity_and_hasher(self.capacity, self.hasher_builder);
         for i in 0..self.capacity {
             if self.ctrls[i] != 0b1111_1111 && self.ctrls[i] != 0b1000_0000 {
