@@ -251,6 +251,7 @@ def is_zst(ctx: TypeCtx, type_id: int) -> bool:
       payload is ZST or absent;
     - a pointer is ZST when its pointee is ZST (per the language spec: a
       pointer to a ZST carries no observable address);
+    - a reference is ZST when its pointee is ZST (same rule as pointers);
     - a function *item* (the unique per-definition type of a named function)
       is always ZST: its identity lives in the type, not in any runtime value;
     - everything else (numbers, ``bool``, ``char``, ``str``, slices, function

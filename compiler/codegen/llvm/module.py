@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 """
 LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
 """

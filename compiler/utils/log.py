@@ -15,10 +15,10 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generator
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
     from compiler.analysis.ty.context import TypeCtx
     from compiler.analysis.unit.def_point import DefPoint
@@ -268,7 +268,7 @@ class LogChannel:
         self.__depth = max(0, self.__depth - 1)
 
     @contextmanager
-    def indent(self) -> Iterator[None]:
+    def indent(self) -> Generator[None, None, None]:
         """Context manager that increases indent for the duration of the block."""
         self.push_indent()
         try:
@@ -279,7 +279,7 @@ class LogChannel:
     # ── scope ─────────────────────────────────────────────────────────────
 
     @contextmanager
-    def scope(self, label: str, level: LogLevel = LogLevel.DEBUG) -> Iterator[None]:
+    def scope(self, label: str, level: LogLevel = LogLevel.DEBUG) -> Generator[None, None, None]:
         """Context manager that logs entry / exit and elapsed time.
 
         Usage::
@@ -366,7 +366,7 @@ class NoopChannel:
 
     @staticmethod
     @contextmanager
-    def __noop_ctx() -> Iterator[None]:
+    def __noop_ctx() -> Generator[None, None, None]:
         """Reusable no-op context manager."""
         yield
 

@@ -186,6 +186,15 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.Open(result=result, path=path, flags=flags):
+            return (
+                f"%{result.name} = open {__dump_value(path)}, {__dump_value(flags)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Close(result=result, fd=fd):
+            return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
+
 
 def __dump_phi(phi: IR.Phi) -> str:
     inc_str = ", ".join(
