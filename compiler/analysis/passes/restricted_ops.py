@@ -121,6 +121,10 @@ class RestrictedOpsChecker:
                     self.__scan_block(branch)
                 if expr.else_branch is not None:
                     self.__scan_block(expr.else_branch)
+            case AST.ComptimeIf():
+                self.__scan_expr(expr.condition)
+                self.__scan_block(expr.then_branch)
+                self.__scan_block(expr.else_branch)
             case AST.For():
                 self.__scan_expr(expr.iterable)
                 self.__scan_block(expr.body)

@@ -90,6 +90,11 @@ class ExprParser:
                 return self.__parse_return()
             case Tok.Keyword(kind=Tok.KeywordKind.If):
                 return self.__parse_if()
+            case Tok.Keyword(kind=Tok.KeywordKind.Comptime):
+                return self.__parse_comptime_if()
+            case Tok.Keyword(kind=Tok.KeywordKind.IsRawMode):
+                self.__stream.consume_keyword(Tok.KeywordKind.IsRawMode)
+                return AST.CompileConfig(span=token.span, name=Tok.KeywordKind.IsRawMode.value)
             case Tok.Keyword(kind=Tok.KeywordKind.For):
                 return self.__parse_for()
             case Tok.Keyword(kind=Tok.KeywordKind.While):
@@ -486,6 +491,20 @@ class ExprParser:
             else_branch = self.parse_block()
 
         return AST.If(span=span, condition=condition, then_branch=then_branch, elif_branches=elif_branches, else_branch=else_branch)
+
+    def __parse_comptime_if(self) -> AST.ComptimeIf:
+        span = self.__stream.consume_keyword(Tok.KeywordKind.Comptime).span
+        self.__stream.consume_keyword(Tok.KeywordKind.If)
+        condition = self.parse_expr()
+        then_branch = self.parse_block()
+        self.__stream.consume_keyword(Tok.KeywordKind.Else)
+        else_branch = self.parse_block()
+        return AST.ComptimeIf(
+            span=span,
+            condition=condition,
+            then_branch=then_branch,
+            else_branch=else_branch,
+        )
 
     def __parse_for(self) -> AST.For:
         span = self.__stream.consume_keyword(Tok.KeywordKind.For).span

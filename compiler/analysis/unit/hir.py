@@ -38,6 +38,24 @@ class If:
 
 
 @dataclass
+class ComptimeIf:
+    span: SrcSpan
+    cond: Expr
+    then_branch: Block
+    else_branch: Block
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class CompileConfig:
+    span: SrcSpan
+    name: str
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Loop:
     span: SrcSpan
     body: Block
@@ -485,10 +503,10 @@ Expr: TypeAlias = (
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | YianArgc | YianArgvPtr | YianCstrlen | YianExit
     | Tuple | Array | ArrayRepeat
-    | Var | Literal | Ty | Closure
+    | Var | Literal | Ty | CompileConfig | Closure
     | Block
     | Return | Break | Continue
-    | If | Loop
+    | If | ComptimeIf | Loop
     | Panic
     | Delete
     | Match

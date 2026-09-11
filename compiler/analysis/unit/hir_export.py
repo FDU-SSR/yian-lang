@@ -95,6 +95,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_return(expr, guides, is_last, type_ctx)
         case HIR.If():
             return __export_if(expr, guides, is_last, type_ctx)
+        case HIR.ComptimeIf():
+            return __export_comptime_if(expr, guides, is_last, type_ctx)
         case HIR.Loop():
             return __export_loop(expr, guides, is_last, type_ctx)
         case HIR.Break():
@@ -123,6 +125,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             if expr.init is not None:
                 res += __export_expr_child("Init", expr.init, guides, is_last, True, type_ctx)
             return res
+        case HIR.CompileConfig():
+            return __line(guides, is_last, f"CompileConfig: {expr.name} type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}")
         # --- pure expressions ---
         case HIR.Binary():
             return __export_binary(expr, guides, is_last, type_ctx)
@@ -395,6 +399,14 @@ def __export_sys_write(expr: HIR.SysWrite, guides: list[bool], is_last: bool, ty
     res = __line(guides, is_last, f"SysWrite: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
     res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
     res += __export_expr_child("Buf", expr.buf, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_comptime_if(expr: HIR.ComptimeIf, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"ComptimeIf: type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}")
+    res += __export_expr_child("Condition", expr.cond, guides, is_last, False, type_ctx)
+    res += __export_block_child("Then", expr.then_branch, guides, is_last, False, type_ctx)
+    res += __export_block_child("Else", expr.else_branch, guides, is_last, True, type_ctx)
     return res
 
 

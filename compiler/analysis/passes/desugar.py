@@ -71,6 +71,9 @@ class Desugar:
                     processor(elif_branch)
                 if stmt.else_branch is not None:
                     processor(stmt.else_branch)
+            case AST.ComptimeIf():
+                processor(stmt.then_branch)
+                processor(stmt.else_branch)
             case AST.For():
                 processor(stmt.body)
             case AST.While():
@@ -322,6 +325,8 @@ class Desugar:
                 for i in range(len(stmt.elif_branches)):
                     cond, body = stmt.elif_branches[i]
                     stmt.elif_branches[i] = (expr_visitor(cond), body)
+            case AST.ComptimeIf():
+                stmt.condition = expr_visitor(stmt.condition)
             case AST.While():
                 stmt.condition = expr_visitor(stmt.condition)
             case AST.Match():

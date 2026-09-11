@@ -9,11 +9,15 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
+from llvmlite import ir
+
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
+from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.utils.log import CompilerLog
 from compiler.utils.log import (
     format_ast_output, format_cfg_output,
@@ -33,6 +37,7 @@ from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
 from compiler.codegen.llvm.module import LLModule
 from compiler.codegen.llvm.translator import LLTranslator
+from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.position import SrcSpan
@@ -197,6 +202,13 @@ def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
             stem = stem.replace(".an", "")
         names[unit_id] = stem
     return names
+
+
+def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str]) -> Callable[[int], int]:
+    module = ir.Module(name="yian.comptime.layout")
+    module.triple = "x86_64-unknown-linux-gnu"
+    ll_type_ctx = LLTypeCtx(type_ctx, module, unit_names)
+    return ll_type_ctx.get_type_size
 
 
 def __llvm_codegen(
@@ -377,6 +389,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     def_points = type_checker.export()
 
+    # --- Compile-time conditional specialization ---
+    unit_names = __build_unit_names(unit_datas)
+    type_size = __type_size_provider(type_ctx, unit_names)
+    try:
+        ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=True, type_size=type_size).run()
+    except AnalysisError as error:
+        __print_source_error(error.span, error)
+
     # --- Closure lowering pass ---
     from compiler.analysis.passes.closure_lowering import ClosureLowering
     ClosureLowering(def_points, type_ctx).run()
@@ -410,9 +430,6 @@ def main(argv: list[str] | None = None) -> int:
     # Derive output path and run codegen (skip only when --target none)
     if args.target != "none":
         output_path = __derive_output(args, src_files)
-
-        # Build unit_names mapping
-        unit_names = __build_unit_names(unit_datas)
 
         # CFG → LLVM IR pass
         llvm_start = time.perf_counter() if args.profile else 0.0

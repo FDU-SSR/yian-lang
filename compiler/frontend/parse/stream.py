@@ -115,6 +115,8 @@ class TokenStream:
         """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
         token = self.next()
         match token:
+            case Tok.Keyword(kind=Tok.KeywordKind.IsRawMode, span=span):
+                raise ParseError("'IS_RAW_MODE' is a reserved compile-time configuration", span)
             case Tok.Keyword(kind, span):
                 return AST.Identifier(name=kind.value, span=span)
             case Tok.Identifier(name, span):
