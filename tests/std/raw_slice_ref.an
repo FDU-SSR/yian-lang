@@ -1,0 +1,16 @@
+// T* -> T& and T[] -> T& reference paths.
+// Reused from SECL's tests/std/raw_slice_ref.an after removing mode-specific
+// raw slice/string builtin checks.
+
+from std.core.slice import from_raw_parts;
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+    let r: i32& = p;
+    assert *r == 42: "T*->T& reads through the reference";
+
+    let s: i32[] = from_raw_parts(p, 1);
+    let r2: i32& = s;
+    assert *r2 == 42: "T[]->T& reads through the reference";
+}

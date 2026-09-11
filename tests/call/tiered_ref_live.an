@@ -1,0 +1,39 @@
+// T& reference dereference and field access.
+//
+// This test is migrated from the SECL raw-compatible portion of
+// tests/fat/positive/tiered_ref_live.an.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn bump(r: i32&) -> i32 {
+    *r = *r + 1;
+    *r
+}
+
+fn read_y(r: Point&) -> i32 {
+    r.y
+}
+
+fn main() {
+    let x: i32 = 41;
+    let r: i32& = &x;
+    let v = bump(r);
+    assert v == 42: "T& param deref read/write";
+    assert x == 42: "write through T& reaches backing";
+
+    let pt = Point(1, 2);
+    let pr: Point& = &pt;
+    assert read_y(pr) == 2: "field read through T&";
+    pr.y = 7;
+    assert pt.y == 7: "field write through T&";
+
+    let arr = [10i32, 20, 30];
+    let s: i32[] = arr.ptr()[0u64..3];
+    let sr: i32& = s.ptr();
+    assert *sr == 10: "slice-element-derived T& read";
+    *sr = 11;
+    assert arr[0] == 11: "slice-element-derived T& write";
+}

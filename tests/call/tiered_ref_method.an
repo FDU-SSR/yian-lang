@@ -1,0 +1,36 @@
+// T& receiver method calls.
+// Reused from SECL's tests/fat/positive/tiered_ref_method.an; the test body
+// only exercises the raw reference semantics.
+
+impl i32 {
+    pub fn double() -> i32 {
+        return *self * 2;
+    }
+}
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+impl Pair {
+    pub fn sum() -> i32 {
+        return self.a + self.b;
+    }
+
+    pub fn swap() -> Pair {
+        return Pair(self.b, self.a);
+    }
+}
+
+fn main() {
+    let x: i32 = 21;
+    let r: i32& = &x;
+    let v: i32 = r.double();
+    assert v == 42: "T& direct method call";
+
+    let p = Pair(1, 2);
+    let pr: Pair& = &p;
+    let s: i32 = pr.swap().sum();
+    assert s == 3: "chained T& method calls";
+}

@@ -1,0 +1,64 @@
+// T& receiver method-body coverage.
+// Reused from SECL's tests/std/tiered_ref_receiver.an.
+
+from std.core.option import Option;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    pub fn read_x() -> i32 {
+        return self.x;
+    }
+
+    pub fn set_y(v: i32) {
+        self.y = v;
+    }
+
+    pub fn deref_sum() -> i32 {
+        return (*self).x + (*self).y;
+    }
+
+    pub fn x_addr() -> i32* {
+        return &self.x;
+    }
+
+    pub fn chain() -> i32 {
+        return self.read_x() + self.read_x();
+    }
+}
+
+impl Option<i32> {
+    pub fn payload_is_42() -> bool {
+        match self {
+            Some(x) => *x == 42,
+            None => false,
+        }
+    }
+
+    pub fn payload_val() -> i32 {
+        match self {
+            Some(x) => *x,
+            None => -1,
+        }
+    }
+}
+
+fn main() {
+    let o: Option<i32> = Option<i32>.Some(42);
+    let or: Option<i32>& = &o;
+    assert or.payload_is_42(): "match self Some(x) => *x == 42";
+    assert or.payload_val() == 42: "match self returns the bound payload value";
+
+    let pt = Point(1, 2);
+    let pr: Point& = &pt;
+    assert pr.read_x() == 1: "self.field read through T&";
+    pr.set_y(7);
+    assert pt.y == 7: "self.field write reaches backing";
+    assert pr.deref_sum() == 8: "*self deref through T&";
+    let xp: i32* = pr.x_addr();
+    assert *xp == 1: "&self.field derived pointer";
+    assert pr.chain() == 2: "chained self.method() through T&";
+}
