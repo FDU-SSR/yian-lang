@@ -159,6 +159,9 @@ impl<T> Vec<T> {
         if len > self.len {
             return;
         }
+        if len == self.len {
+            return;
+        }
 
         // drop the elements that are being truncated
         let buf = self.raw_vec.ptr();
@@ -257,7 +260,9 @@ impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
 impl<T> Drop for Vec<T> {
     pub fn drop() {
         // Drop only the currently valid elements, then release the buffer.
-        self.clear();
+        if self.len > 0 {
+            self.clear();
+        }
         self.raw_vec.drop();
         self.len = 0;
     }

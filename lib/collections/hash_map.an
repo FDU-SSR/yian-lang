@@ -242,8 +242,6 @@ impl<K, V> Drop for HashMap<K, V> {
             del self.ctrls;
             del self.buckets;
         }
-        // capacity is the validity marker. Pointer fields are deliberately not
-        // rewritten after release; all operations guard on this marker first.
         self.size = 0;
         self.capacity = 0;
         self.growth_left = 0;

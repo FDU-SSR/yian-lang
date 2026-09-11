@@ -1,4 +1,3 @@
-from std.core.clone import Clone;
 from std.core.option import Option;
 from std.core.vec import Vec;
 from std.core.iter import Iterator, IntoIterator;
@@ -52,7 +51,7 @@ impl<T> T[] {
         self.get(self.len() - 1)
     }
 
-    // Clone the slice elements into a new Vec
+    // Clone the slice into a Vec
     pub fn to_vec() -> Vec<T> {
         let vec = Vec<T>.with_capacity(self.len());
         for i in 0..self.len() {

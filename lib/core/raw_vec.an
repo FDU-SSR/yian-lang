@@ -1,5 +1,6 @@
 from std.core.range import Range;
 from std.core.drop import Drop;
+from std.core.mem import memmove;
 
 pub struct RawVec<T> {
     data: T*,
@@ -8,8 +9,6 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        // 空容器持真实堆块(dyn[0] 分配 8B 锁头,带堆键的合法胖指针):
-        // data/ptr 非零,heap_ok/live 全通过,与后续 niche None 的全零编码不碰撞。
         let data: T* = dyn[0] T;
         Self(
             data = data,
@@ -48,11 +47,8 @@ impl<T> RawVec<T> {
         if was_live && old_cap > 0 {
             // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
-            for i in 0..old_cap {
-                new_data[i] = self.data[i];
-            }
+            memmove(new_data, self.data, old_cap);
         }
-        // data 恒为真实堆块(new() 即 dyn[0] 分配),旧块一律释放
         if was_live {
             del self.data;
         }
@@ -64,8 +60,8 @@ impl<T> RawVec<T> {
     pub fn reserve(len: u64, additional: u64) {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
         let was_live = (self.cap & live_bit) != 0;
-        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         let required_cap = len + additional;
+        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         if was_live && current_cap >= required_cap {
             return;
         }
@@ -83,12 +79,9 @@ impl<T> RawVec<T> {
 
         // Copy valid elements
         if len > 0 {
-            for i in 0..len {
-                new_data[i] = self.data[i];
-            }
+            memmove(new_data, self.data, len);
         }
 
-        // data 恒为真实堆块,旧块一律释放
         if was_live {
             del self.data;
         }
@@ -105,19 +98,21 @@ impl<T> RawVec<T> {
             return;
         }
 
-        // 统一走重新分配:len==0 时 new_data 为 dyn[0] 块(真实堆块,非悬垂)。
-        // 旧实现 shrink 到空后 del 旧块却不重置 data,随后 Drop 对已释放块
-        // 再 del → live 检查 trap;新实现 data 恒指向存活块,空容器 del 不 trap。
+        if len == 0 {
+            let new_data: T* = dyn[0] T;
+            if was_live {
+                del self.data;
+            }
+            self.data = new_data;
+            self.cap = live_bit;
+            return;
+        }
+
         let new_data: T* = dyn[len] T;
 
         // Copy valid elements
-        if len > 0 {
-            for i in 0..len {
-                new_data[i] = self.data[i];
-            }
-        }
+        memmove(new_data, self.data, len);
 
-        // data 恒为真实堆块,旧块一律释放
         if was_live {
             del self.data;
         }
@@ -127,7 +122,7 @@ impl<T> RawVec<T> {
     }
 }
 
-// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources.
+// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources
 impl<T> Drop for RawVec<T> {
     fn drop() {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
