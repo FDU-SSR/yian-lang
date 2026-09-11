@@ -150,7 +150,7 @@ class LLBuilder:
 
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[ptr.type_id]
-        assert isinstance(ptr_type, Type.PointerType)
+        assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
             # Loading a zero-sized value yields nothing: emit no `load` and
             # bind no register (the result is never consumed).
@@ -167,7 +167,7 @@ class LLBuilder:
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
         base_type = self.__type_ctx[base.type_id]
-        if isinstance(base_type, Type.PointerType):
+        if isinstance(base_type, (Type.PointerType, Type.RefType)):
             pointee_type_id = base_type.pointee_type
         else:
             pointee_type_id = base.type_id
@@ -291,20 +291,24 @@ class LLBuilder:
                 ir_val = self.__builder.select(pos, raw, zero_i)  # type: ignore
         elif isinstance(src, Type.FloatType) and isinstance(dst, Type.FloatType):
             ir_val = self.__builder.fpext(value.ir_val, dest_ll_type) if src.size < dst.size else self.__builder.fptrunc(value.ir_val, dest_ll_type)  # type: ignore
-        elif isinstance(src, Type.PointerType) and isinstance(dst, Type.PointerType):
-            if self.__ll_type_ctx.is_zst(dst.pointee_type):
+        elif isinstance(src, (Type.PointerType, Type.RefType)) and isinstance(dst, (Type.PointerType, Type.RefType)):
+            src_pointee_type = src.pointee_type
+            dst_pointee_type = dst.pointee_type
+            if self.__ll_type_ctx.is_zst(dst_pointee_type):
                 # both src and dst are ptr-to-ZST — no real cast, just undef
                 ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
-            elif self.__ll_type_ctx.is_zst(src.pointee_type):
+            elif self.__ll_type_ctx.is_zst(src_pointee_type):
                 # A zero-length/ZST source has no address-bearing LLVM value.
                 # Use a non-zero, suitably aligned dangling address when it is
                 # re-anchored as a pointer to a real element type.  Such a
                 # pointer is only valid for empty views and must not be loaded.
-                alignment = self.__ll_type_ctx.get_type_alignment(dst.pointee_type)
+                alignment = self.__ll_type_ctx.get_type_alignment(dst_pointee_type)
                 sentinel = ir.Constant(ir.IntType(64), max(1, alignment))  # type: ignore
                 ir_val = self.__builder.inttoptr(sentinel, dest_ll_type)  # type: ignore
             else:
                 ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+        elif isinstance(src, Type.SliceType) and isinstance(dst, Type.RefType):
+            ir_val = self.__builder.extract_value(value.ir_val, 0)  # type: ignore
         else:
             raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
         result_val = LLValue(to_type, ir_val)  # type: ignore
@@ -467,7 +471,7 @@ class LLBuilder:
         assert isinstance(payload_type_def, Type.StructType)
         matched_type = self.__type_ctx[matched.type_id]
         enum_type_id = matched.type_id
-        if isinstance(matched_type, Type.PointerType):
+        if isinstance(matched_type, (Type.PointerType, Type.RefType)):
             enum_type_id = matched_type.pointee_type
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
             payload_value = self.__builder.load(matched.ir_val)  # type: ignore
@@ -511,7 +515,7 @@ class LLBuilder:
         assert isinstance(payload_type_def, Type.StructType)
         enum_type_id = matched.type_id
         matched_type = self.__type_ctx[matched.type_id]
-        if isinstance(matched_type, Type.PointerType):
+        if isinstance(matched_type, (Type.PointerType, Type.RefType)):
             enum_type_id = matched_type.pointee_type
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
             for field_index, symbol_id in fields:

@@ -160,6 +160,7 @@ class LLTypeCtx:
             case Type.IntType():     result = self.__handle_int(ty_def)
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
+            case Type.RefType():     result = self.__handle_ref(ty_def)
             case Type.SliceType():   result = self.__handle_slice(ty_def)
             case Type.ArrayType():   result = self.__handle_array(ty_def)
             case Type.TupleType():   result = self.__handle_tuple(ty_def)
@@ -185,6 +186,9 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
+        return ir.PointerType(self.__get_raw_type(type_def.pointee_type))
+
+    def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
         return ir.PointerType(self.__get_raw_type(type_def.pointee_type))
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
@@ -278,7 +282,7 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
-        elif isinstance(type_def, (Type.PointerType, Type.FunctionPointerType)):
+        elif isinstance(type_def, (Type.PointerType, Type.RefType, Type.FunctionPointerType)):
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.ArrayType):
             element_size, element_align = self.__stable_layout(type_def.element_type)

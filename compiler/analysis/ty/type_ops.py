@@ -29,6 +29,9 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
         case Type.PointerType(pointee_type=pointee_type):
             instantiated_pointee = instantiate(ctx, pointee_type, substs)
             return ctx.alloc_pointer(instantiated_pointee)
+        case Type.RefType(pointee_type=pointee_type):
+            instantiated_pointee = instantiate(ctx, pointee_type, substs)
+            return ctx.alloc_ref(instantiated_pointee)
         case Type.SliceType(element_type=element_type):
             instantiated_element = instantiate(ctx, element_type, substs)
             return ctx.alloc_slice(instantiated_element)
@@ -146,6 +149,8 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
             return ctx.f64_id
         case Type.PointerType(pointee_type=pointee_type):
             return ctx.alloc_pointer(default_literals(ctx, pointee_type))
+        case Type.RefType(pointee_type=pointee_type):
+            return ctx.alloc_ref(default_literals(ctx, pointee_type))
         case Type.SliceType(element_type=element_type):
             return ctx.alloc_slice(default_literals(ctx, element_type))
         case Type.ArrayType(element_type=element_type, length=length):
@@ -202,6 +207,8 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
             case Type.LiteralValueType():
                 return False
             case Type.PointerType(pointee_type=pointee_type):
+                return _contains(pointee_type)
+            case Type.RefType(pointee_type=pointee_type):
                 return _contains(pointee_type)
             case Type.SliceType(element_type=element_type):
                 return _contains(element_type)
@@ -273,6 +280,8 @@ def is_zst(ctx: TypeCtx, type_id: int) -> bool:
                     return all(work(element_type) for element_type in element_types)
                 case Type.PointerType(pointee_type=pointee_type):
                     return work(pointee_type)
+                case Type.RefType(pointee_type=pointee_type):
+                    return work(pointee_type)
                 case Type.StructType():
                     return all(work(f.type_id) for f in ctx.get_struct_fields(tid))
                 case Type.EnumType():
@@ -336,6 +345,9 @@ def __merge_two(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
 
     if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
         return ctx.alloc_pointer(__merge_two(ctx, left_ty.pointee_type, right_ty.pointee_type, span))
+
+    if isinstance(left_ty, Type.RefType) and isinstance(right_ty, Type.RefType):
+        return ctx.alloc_ref(__merge_two(ctx, left_ty.pointee_type, right_ty.pointee_type, span))
 
     if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
         return ctx.alloc_slice(__merge_two(ctx, left_ty.element_type, right_ty.element_type, span))

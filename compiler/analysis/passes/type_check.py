@@ -188,8 +188,8 @@ class TypeCheck:
         self.__sem_ctx.symbol_ctx.add_symbol("Self", SymbolKind.Type, self_type_id)
 
         if not method_ty.custom_def.is_static:
-            pointer_type_id = self.__type_ctx.alloc_pointer(self_type_id)
-            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol("self", SymbolKind.Variable, pointer_type_id)
+            ref_type_id = self.__type_ctx.alloc_ref(self_type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol("self", SymbolKind.Variable, ref_type_id)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
 

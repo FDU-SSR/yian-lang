@@ -220,6 +220,9 @@ class TypeCtx:
     def alloc_pointer(self, pointee_type: int) -> int:
         return self.__space.alloc_pointer(pointee_type)
 
+    def alloc_ref(self, pointee_type: int) -> int:
+        return self.__space.alloc_ref(pointee_type)
+
     def alloc_slice(self, element_type: int) -> int:
         return self.__space.alloc_slice(element_type)
 
@@ -574,13 +577,13 @@ class TypeCtx:
         Perform one dereference step at the type level (no HIR nodes generated).
 
         Handles two cases:
-        - Pointer types: return the pointee type directly
+        - Pointer / reference types: return the pointee type directly
         - Types implementing the Deref trait: return deref()'s return type
 
         Returns None if the type cannot be dereferenced.
         """
         ty = self[type_id]
-        if isinstance(ty, Type.PointerType):
+        if isinstance(ty, (Type.PointerType, Type.RefType)):
             return ty.pointee_type
         return self.__impl_registry.find_deref_target(type_id)
 

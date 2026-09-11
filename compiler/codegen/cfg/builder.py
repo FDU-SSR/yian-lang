@@ -930,7 +930,7 @@ class CfgBuilder:
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__type_ctx[ptr.type_id]
-        assert isinstance(ptr_type, Type.PointerType)
+        assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
         return self.__emit(IR.Load(result=result, ptr=ptr)).result
 

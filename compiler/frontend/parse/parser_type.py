@@ -32,6 +32,9 @@ class TypeParser:
                 case Punctuator(kind=PunctuatorKind.Star):
                     # pointer type, e.g., `int*`
                     base = self.__parse_pointer(base)
+                case Punctuator(kind=PunctuatorKind.Ampersand):
+                    # reference type, e.g., `int&`
+                    base = self.__parse_ref(base)
                 case Punctuator(kind=PunctuatorKind.LBracket):
                     # array type, e.g., `int[10]`
                     base = self.__parse_array(base)
@@ -138,6 +141,11 @@ class TypeParser:
         """Parses a pointer type from the token stream."""
         self.__stream.consume_punctuator(PunctuatorKind.Star)
         return Ty.PointerType(span=base.span, pointee_type=base)
+
+    def __parse_ref(self, base: ASTType) -> ASTType:
+        """Parses a reference type from the token stream."""
+        self.__stream.consume_punctuator(PunctuatorKind.Ampersand)
+        return Ty.RefType(span=base.span, pointee_type=base)
 
     def __parse_array(self, base: ASTType) -> ASTType:
         """Parses an array or slice type from the token stream.

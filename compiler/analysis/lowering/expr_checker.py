@@ -134,7 +134,7 @@ class ExprChecker:
 
         value_ty = self.__ctx.type_ctx[value.type_id]
         target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, Type.PointerType):
+        if not isinstance(value_ty, (Type.PointerType, Type.RefType)):
             raise AnalysisError(
                 f"'bitcast' expects a pointer expression, "
                 f"got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
@@ -350,6 +350,26 @@ class ExprChecker:
                     is_place=False,
                 )
 
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
+                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
+            return HIR.BitCast(
+                span=expr.span,
+                value=expr,
+                target_type=expected,
+                type_id=expected,
+                is_place=False,
+            )
+
+        if isinstance(expr_ty, Type.SliceType) and isinstance(expected_ty, Type.RefType) \
+                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
+            return HIR.BitCast(
+                span=expr.span,
+                value=expr,
+                target_type=expected,
+                type_id=expected,
+                is_place=False,
+            )
+
         match expr:
             case HIR.IntLiteral():
                 if not isinstance(expected_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
@@ -562,7 +582,7 @@ class ExprChecker:
 
         is_ref = False
         inner_type = value_type
-        if isinstance(value_type, Type.PointerType):
+        if isinstance(value_type, (Type.PointerType, Type.RefType)):
             pointee_type = self.__ctx.type_ctx[value_type.pointee_type]
             if isinstance(pointee_type, (Type.IntType, Type.CharType, Type.EnumType)):
                 is_ref = True
@@ -615,8 +635,8 @@ class ExprChecker:
 
         target_expr = self.value(stmt.target)
         target_type = self.__ctx.type_ctx[target_expr.type_id]
-        if not isinstance(target_type, Type.PointerType):
-            raise AnalysisError("delete target must be a pointer expression", stmt.target.span)
+        if not isinstance(target_type, (Type.PointerType, Type.RefType)):
+            raise AnalysisError("delete target must be a pointer or reference expression", stmt.target.span)
         return HIR.Delete(span=stmt.span, target=target_expr, type_id=TypeCtx.void_id, is_place=False)
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int) -> int:
@@ -634,7 +654,7 @@ class ExprChecker:
         enum_type_id = value_expr.type_id
         if is_ref:
             value_type = self.__ctx.type_ctx[value_expr.type_id]
-            assert isinstance(value_type, Type.PointerType)
+            assert isinstance(value_type, (Type.PointerType, Type.RefType))
             enum_type_id = value_type.pointee_type
 
         arms: list[HIR.MatchArm] = []

@@ -191,7 +191,7 @@ class OpBuilder:
         receiver_ty = self.__type_ctx[receiver_hir.type_id]
 
         # auto-deref: only handle PointerType, NOT the Deref trait
-        while isinstance(receiver_ty, Type.PointerType):
+        while isinstance(receiver_ty, (Type.PointerType, Type.RefType)):
             receiver_hir = HIR.Unary(span, UnaryOperator.Deref, receiver_hir, receiver_ty.pointee_type, is_place=True)
             receiver_ty = self.__type_ctx[receiver_ty.pointee_type]
 
@@ -484,7 +484,7 @@ class OpBuilder:
         operand_hir = self.__evaluator.value(operand)
 
         operand_ty = self.__type_ctx[operand_hir.type_id]
-        if isinstance(operand_ty, Type.PointerType):
+        if isinstance(operand_ty, (Type.PointerType, Type.RefType)):
             return HIR.Unary(span, UnaryOperator.Deref, operand_hir, operand_ty.pointee_type, is_place=True)
 
         # deref overload via trait
