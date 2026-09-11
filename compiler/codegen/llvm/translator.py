@@ -205,8 +205,6 @@ class LLTranslator:
                 )
             case IR.CheckRawBounds():
                 builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
-            case IR.Assume():
-                builder.assume(self.__resolve(builder, stmt.cond))
             case IR.CheckPtrDiff():
                 builder.check_ptrdiff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
             case IR.CheckPtrCmp():
@@ -341,19 +339,15 @@ class LLTranslator:
             # Restore builder to original block so __build can continue correctly.
             builder.position_at(saved_label)
 
-    def __emit_niche_match(self, builder: LLBuilder, t: IR.Match, matched: LLValue, is_enum_ref: bool, default_label: str) -> None:
-        """niche enum match:全零检测替代 disc extract + switch。
-
-        unit 变体 arm → 全零分支;payload 变体 arm → 非全零分支;两者都缺失
-        时该侧落到 default(或 unreachable)。payload 变体 arm 在进入 arm 块后
-        直取 payload(unpack 层处理)。
-        """
+    def __emit_niche_match(
+        self, builder: LLBuilder, t: IR.Match, matched: LLValue,
+        is_enum_ref: bool, default_label: str,
+    ) -> None:
         if is_enum_ref:
-            enum_val = builder.load(matched, "enum_val_ref")
+            enum_value = builder.load(matched, "enum_niche_value")
             matched_ptr = matched
         else:
-            enum_val = matched
-            # Alloca 匹配值供 unpack 层 GEP 直取 payload;须在分支终止本块前完成。
+            enum_value = matched
             matched_ptr = builder.alloca(matched.type_id)
             builder.store(matched, matched_ptr)
 
@@ -366,8 +360,7 @@ class LLTranslator:
             else:
                 nonzero_label = arm.body.label
 
-        builder.niche_branch(enum_val, zero_label, nonzero_label)
-
+        builder.niche_branch(enum_value, zero_label, nonzero_label)
         saved_label = builder.current_block_label
 
         for arm in t.arms:
@@ -384,5 +377,4 @@ class LLTranslator:
                         matched_ptr, arm.body.label,
                         arm.pattern.variant.payload_type, field_pairs)
 
-        # Restore builder to original block so __build can continue correctly.
         builder.position_at(saved_label)

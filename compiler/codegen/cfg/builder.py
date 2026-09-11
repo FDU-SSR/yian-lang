@@ -4,8 +4,6 @@ CFG IR builder — lowers a single HIR function/method body into a CFG Function.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypeGuard
-
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.ty.type_ops import default_literals
@@ -67,17 +65,6 @@ class CfgBuilder:
         self.__checked: set[tuple[str, ...]] = set()
         self.__elem_derived: dict[str, tuple[IR.Value, IR.Value, IR.Value]] = {}
         self.__field_derived: dict[str, str] = {}
-        # range 循环 assume 状态(range 循环约束):[安全约束]
-        # 注入已禁用(见 __maybe_emit_range_assume 文档串)——循环变量可重赋值
-        # (YIAN 无 mut)致注入事实在重赋值后为假 → LLVM UB → 删检查 → OOB。
-        #   识别与激活保留(惰性管线),仅发射点置空;恢复条件见函数文档串。
-        #   __range_bounds — %iter 变量 symbol_id → range 上界 n 的 SSA 值
-        #                    (识别 0..n 构造链于 Let 处,循环外一次解析)。
-        #   __loop_var_facts — 循环变量 symbol_id → 上界值(Some(i) 臂体翻译
-        #                    期间激活,0 ≤ i < n 事实;臂体结束恢复)。
-        # 宁缺毋滥:识别不到/模式不符不注入;绝不注入 0 ≤ i ≤ size(Metis H1)。
-        self.__range_bounds: dict[int, IR.Value] = {}
-        self.__loop_var_facts: dict[int, IR.Value] = {}
         self.__func: IR.Function = IR.Function(name="", type_id=0, blocks=[], entry=IR.Block(""))  # placeholder; replaced in build()
 
     # ------------------------------------------------------------------
@@ -451,10 +438,7 @@ class CfgBuilder:
                 index += 1
 
             self.__switch_to(current_block)
-            activated = self.__activate_range_fact(stmt, arm)
             arm_val = self.__translate_block(arm.body)
-            if activated is not None:
-                self.__loop_var_facts.pop(activated, None)
             if self.__current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
                 arm_values.append((self.__current_block, arm_val))
@@ -487,169 +471,7 @@ class CfgBuilder:
     def __translate_let(self, stmt: HIR.Let) -> IR.Value:
         if stmt.init is not None:
             self.__resolve_val(stmt.init)
-            self.__record_range_iter(stmt)
         return self.__void_reg()
-
-    # ------------------------------------------------------------------
-    # range 循环识别与 assume 注入(range 循环约束)
-    # ------------------------------------------------------------------
-
-    def __method_name(self, method_id: int) -> str | None:
-        """范围约束优化 辅助:method_id → 方法名(非方法类型返回 None)。"""
-        ty = self.__type_ctx[method_id]
-        if isinstance(ty, Type.MethodType):
-            return ty.custom_def.name
-        return None
-
-    def __is_pure_len_call(self, expr: HIR.Expr) -> TypeGuard[HIR.MethodCall]:
-        """范围约束优化 len() 白名单:SliceType/StrType 上的 len 是纯 size 字段提取。
-
-        TypeGuard:调用点为真时把 expr narrow 到 MethodCall(pyright 无法跨
-        方法调用保留窄化,裸 bool 会在调用方残留联合类型)。
-        """
-        if not isinstance(expr, HIR.MethodCall) or self.__method_name(expr.method_id) != "len":
-            return False
-        resolved = self.__type_ctx.resolve_aliases(expr.receiver.type_id)
-        return isinstance(self.__type_ctx[resolved], (Type.SliceType, Type.StrType))
-
-    def __is_pure_expr(self, expr: HIR.Expr) -> bool:
-        """范围约束优化 上界表达式纯性判定:只对无副作用表达式二次求值(宁缺毋滥)。
-
-        其余方法调用一律视为有副作用,拒绝识别。
-        """
-        match expr:
-            case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral():
-                return True
-            case HIR.Var():
-                return True
-            case HIR.Unary():
-                return self.__is_pure_expr(expr.operand)
-            case HIR.Binary():
-                return self.__is_pure_expr(expr.left) and self.__is_pure_expr(expr.right)
-            case HIR.Cast() | HIR.BitCast():
-                return self.__is_pure_expr(expr.value)
-            case HIR.FieldAccess():
-                return self.__is_pure_expr(expr.receiver)
-            case HIR.TupleAccess():
-                return self.__is_pure_expr(expr.receiver)
-            case HIR.MethodCall():
-                return self.__is_pure_len_call(expr) and self.__is_pure_expr(expr.receiver)
-            case _:
-                return False
-
-    def __resolve_range_bound(self, end: HIR.Expr) -> IR.Value:
-        """范围约束优化 上界解析:len()(slice/str)特例直接提取 size 字段——与 len 实现
-        同值,且免调用开销;其余纯表达式正常求值(纯性已由 __is_pure_expr 把关)。
-
-        现状(2026-08 实测):此处提取的 size 是循环外 load,而检查处的 size
-        是循环内 re-load,非同一条 SSA 值——CE(ConstraintElimination)尚无法
-        关联两者,注入暂不产生检查消除收益。宁缺毋滥:不为此改注入语义。
-        """
-        if self.__is_pure_len_call(end):
-            recv_val = self.__resolve_val(end.receiver)
-            return self.__build_extract_value(recv_val, IR.SLICE_SIZE, TypeCtx.u64_id)
-        return self.__resolve_val(end)
-
-    def __record_range_iter(self, stmt: HIR.Let) -> None:
-        """范围约束优化 识别(Let 层):%iter = (0..n).into_iter() 构造链。
-
-        模式匹配 desugar 后 for 循环的迭代器初始化:init 为 Range 构造
-        (start=0 字面量)上的 into_iter 调用。识别到 → 解析上界 n 的 SSA
-        值(一次,循环外)记录 iter_sym → bound;识别不到不注入。
-        """
-        if stmt.symbol_id is None or stmt.init is None:
-            return
-        init = stmt.init
-        # let %iter = ... 在 HIR 中降级为赋值 Binary(op=Assign, Var, right)
-        if isinstance(init, HIR.Binary) and init.op == BinaryOperator.Assign:
-            init = init.right
-        if not isinstance(init, HIR.MethodCall) or self.__method_name(init.method_id) != "into_iter":
-            return
-        receiver = init.receiver
-        if not isinstance(receiver, HIR.StructConstruct):
-            return
-        struct_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver.struct_id)]
-        if not (isinstance(struct_ty, Type.StructType) and struct_ty.custom_def.name == "Range"):
-            return
-        start = receiver.field_values.get("start")
-        end = receiver.field_values.get("end")
-        if start is None or end is None:
-            return
-        if not (isinstance(start, HIR.IntLiteral) and start.value == 0):
-            return
-        if not self.__is_pure_expr(end):
-            return
-        bound = self.__resolve_range_bound(end)
-        if bound.type_id != TypeCtx.u64_id:
-            bound = self.__build_cast(bound, TypeCtx.u64_id)
-        self.__range_bounds[stmt.symbol_id] = bound
-        ch_cfg_block().debug(lambda: "assume recognize: range 循环 0..n (range 循环约束)")
-
-    def __activate_range_fact(self, stmt: HIR.Match, arm: HIR.MatchArm) -> int | None:
-        """范围约束优化 事实激活:match %iter.next() 的 Some(i) 臂体激活 0 ≤ i < n。
-
-        识别到循环变量 i 与上界 n → 激活 i_sym → bound;返回循环变量
-        symbol_id(调用方于臂体翻译后恢复);识别不到返回 None。
-        """
-        value = stmt.value
-        if not isinstance(value, HIR.MethodCall) or self.__method_name(value.method_id) != "next":
-            return None
-        receiver = value.receiver
-        if not isinstance(receiver, HIR.Var):
-            return None
-        bound = self.__range_bounds.get(receiver.symbol_id)
-        if bound is None:
-            return None
-        pattern = arm.pattern
-        if not isinstance(pattern, HIR.EnumPattern):
-            return None
-        if pattern.variant.name != "Some":
-            return None
-        if pattern.unpack_fields is None or len(pattern.unpack_fields) != 1:
-            return None
-        loop_var = pattern.unpack_fields[0]
-        self.__loop_var_facts[loop_var] = bound
-        ch_cfg_block().debug(lambda: f"assume activate: 循环变量 {loop_var} ∈ [0, n) (range 循环约束)")
-        return loop_var
-
-    def __unwrap_range_loop_var(self, expr: HIR.Expr) -> HIR.Var | None:
-        """范围约束优化 索引识别:u64 索引直接是 HIR.Var;非 u64 循环变量(coerce u64)为 Cast 包装。"""
-        if isinstance(expr, HIR.Var):
-            return expr
-        if isinstance(expr, HIR.Cast) and expr.target_type == TypeCtx.u64_id and isinstance(expr.value, HIR.Var):
-            return expr.value
-        return None
-
-    def __maybe_emit_range_assume(self, index_expr: HIR.Expr, index_val: IR.Value, base: IR.Value) -> None:
-        """范围约束优化 注入:循环体索引检查处 Assume(0 ≤ i < n)(u64 同型)。
-
-        [安全约束] **注入已禁用**——本函数无条件返回。
-        漏洞实证: YIAN 无 mut/不可变性机制,循环变量可在臂体内重赋值,
-        `for i in 0..n { i = 1000; s[i] = 42 }` 合法;注入点在访问处用
-        **当前 load 值**发射 assume(i < n),重赋值后为假事实
-        assume(1000 < 4) → SROA 折叠为 assume(false) → LLVM UB → 优化器
-        删除越界检查 → OOB 写(实测 exit 0,42 写入 p[1000];b40273a 对照
-        trap 132,HEAD -O0 trap 132)。凡注入事实可能为假,即构成 UB 类
-        漏洞,与 Metis H1 红线(i ≤ size)同性质。
-        恢复条件(两者齐备方可重新启用):
-          1. 臂体内零赋值证明(HIR 扫描:循环变量在 Some(i) 臂体中无赋值);
-          2. 上界绑定验证为 stdlib Range(现有 __record_range_iter 已校验
-             Range 结构,需补充 stdlib 来源验证)。
-        惰性管线保留(识别 __record_range_iter/__activate_range_fact、
-        Assume 节点、translator dispatch、dump case、LLVM assume 发射),
-        满足恢复条件后直接复用。检查关闭/非胖基址仍不注入(宁缺毋滥)。
-        """
-        if self.__no_fat_checks or not self.__is_fat_pointer(base):
-            return
-        var = self.__unwrap_range_loop_var(index_expr)
-        if var is None:
-            return
-        bound = self.__loop_var_facts.get(var.symbol_id)
-        if bound is None:
-            return
-        # 注入已禁用:识别链保留(管线维持接线,恢复时仅需补发射),
-        # 不发射 IR.Assume——重赋值后的事实可能为假(见上文档串)。
-        return
 
     # ------------------------------------------------------------------
     # Match helpers
@@ -774,6 +596,11 @@ class CfgBuilder:
         - for lvalue expressions, this is the address of the lvalue
         - for rvalue expressions, allocates a temporary and copies the value to it
         """
+        if isinstance(expr, HIR.ArrayAccess):
+            return self.__resolve_array_access_addr(expr)
+        if isinstance(expr, HIR.SliceAccess):
+            return self.__resolve_slice_access_addr(expr)
+
         if not expr.is_place:
             val = self.__resolve_val(expr)
             return self.__build_alloca(val)
@@ -786,10 +613,6 @@ class CfgBuilder:
                 return self.__resolve_field_access_addr(expr)
             case HIR.TupleAccess():
                 return self.__resolve_tuple_access_addr(expr)
-            case HIR.ArrayAccess():
-                return self.__resolve_array_access_addr(expr)
-            case HIR.SliceAccess():
-                return self.__resolve_slice_access_addr(expr)
             case HIR.Var():
                 return self.__resolve_var_addr(expr)
             case HIR.Ty():
@@ -1193,7 +1016,6 @@ class CfgBuilder:
         if not fat and self.__is_raw_pointer(base_addr):
             self.__emit(IR.CheckRawBounds(index=index_val, length=expr.length))
             ch_cfg_block().debug(lambda: "check insert ArrayAccess(raw): index < length (裸数组越界)")
-        self.__maybe_emit_range_assume(expr.index, index_val, elem_base)
         return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
 
     def __resolve_slice_access(self, expr: HIR.SliceAccess) -> IR.Value:
@@ -1215,7 +1037,6 @@ class CfgBuilder:
         index_val = self.__resolve_val(expr.index)
         elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
         data = self.__build_extract_value(slice_val, 0, elem_ptr_type)
-        self.__maybe_emit_range_assume(expr.index, index_val, data)
         return self.__build_element_ptr(data, index_val, elem_ptr_type)
 
     def __resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:

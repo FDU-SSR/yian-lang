@@ -543,15 +543,6 @@ class LLBuilder:
         cond = self.__check_live(lock_ptr, key)
         self.__emit_check(cond, "ref")
 
-    def assume(self, cond: LLValue) -> None:
-        """llvm.assume(cond):优化器提示 cond 恒真(range 循环约束,CFG Assume 节点)。
-
-        只承载编译期可证纯数据谓词(如 range 循环契约 0 ≤ i < n,u64 同型);
-        llvm.assume 无运行期代码,仅供 ConstraintElimination 等优化器消除
-        可证冗余检查。绝不承载动态事实(assume 假 → UB → 删检查 → 安全失效)。
-        """
-        self.__builder.assume(cond.ir_val)  # type: ignore[reportUnknownMemberType]  # llvmlite assume 签名未标注
-
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
         """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
 
@@ -1373,23 +1364,22 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
-        if self.__type_ctx.is_zst(payload_type_id):
-            return  # ZST payload: nothing to unpack
-        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
-
         matched_ty = self.__type_ctx[matched.type_id]
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, Type.PointerType) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
 
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
-            # niche enum:payload 即整个值(匿名单字段 struct 字段 0 = 值本身)
             for field_index, symbol_id in fields:
-                if field_index >= len(payload_fields):
-                    break
+                if field_index != 0:
+                    continue
                 field_value = self.__builder.load(base_ptr.ir_val)  # type: ignore
                 alloca_ptr = self.__func.get_var_ptr(symbol_id)
                 self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
             return
+
+        if self.__type_ctx.is_zst(payload_type_id):
+            return  # ZST payload: nothing to unpack
+        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore
@@ -1419,23 +1409,22 @@ class LLBuilder:
         """
         payload_type_def = self.__type_ctx[payload_type_id]
         assert isinstance(payload_type_def, Type.StructType)
-        if self.__type_ctx.is_zst(payload_type_id):
-            return  # ZST payload: no fields to unpack
-        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
-
         matched_ty = self.__type_ctx[matched.type_id]
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, (Type.PointerType, Type.RefType)) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
+        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
-            # niche enum:字段地址 = 值地址(base_ptr 即 payload 起始)
             for field_index, symbol_id in fields:
-                if field_index >= len(payload_fields):
-                    break
+                if field_index != 0:
+                    continue
                 alloca_ptr = self.__func.get_var_ptr(symbol_id)
                 field_ll = LLValue(self.__type_ctx.alloc_pointer(payload_fields[field_index].type_id), base_ptr.ir_val)  # type: ignore
                 self.__builder.store(self.__promote_fat(field_ll).ir_val, alloca_ptr.ir_val)  # type: ignore
             return
+
+        if self.__type_ctx.is_zst(payload_type_id):
+            return  # ZST payload: no fields to unpack
 
         gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
         payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore

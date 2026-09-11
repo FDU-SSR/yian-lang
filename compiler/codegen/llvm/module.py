@@ -1,10 +1,6 @@
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 """
 LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
-
-llvmlite 0.44 does not fully type IRBuilder operands or mixed IR type lists.
-These two dependency-boundary diagnostics are disabled locally; the remainder
-of strict Pyright stays enabled.
 """
 
 from __future__ import annotations
@@ -117,13 +113,14 @@ class LLModule:
         """Return a global constant for the given string bytes."""
         if value in self.__strings:
             return self.__strings[value]
-        string_type = ir.ArrayType(ir.IntType(8), len(value))  # type: ignore
+        storage = value if value else b"\0"
+        string_type = ir.ArrayType(ir.IntType(8), len(storage))  # type: ignore
         global_var = ir.GlobalVariable(self.__module, string_type, name=f"str.{self.__string_counter}")
         self.__string_counter += 1
         global_var.linkage = "private"
         global_var.global_constant = True
         global_var.unnamed_addr = True
-        global_var.initializer = ir.Constant(string_type, bytearray(value))  # type: ignore[arg-type]
+        global_var.initializer = ir.Constant(string_type, bytearray(storage))  # type: ignore[arg-type]
         self.__strings[value] = global_var
         return global_var
 
@@ -369,11 +366,11 @@ class LLModule:
         """Emit the C-compatible ``@main`` wrapper that calls ``__yian_main``."""
         assert self.__yian_main_type_id is not None
 
-        wrapper_type = ir.FunctionType(ir.IntType(32), [ir.IntType(32), ir.PointerType(ir.PointerType(ir.IntType(8)))])  # type: ignore
-        wrapper = ir.Function(self.__module, wrapper_type, name="main")  # type: ignore
+        wrapper_type = ir.FunctionType(ir.IntType(32), [ir.IntType(32), ir.PointerType(ir.PointerType(ir.IntType(8)))])
+        wrapper = ir.Function(self.__module, wrapper_type, name="main")
         entry = wrapper.append_basic_block("entry")
         builder = ir.IRBuilder(entry)
 
         yian_main_func = self.__functions[self.__yian_main_type_id]
-        builder.call(yian_main_func.ir_func, [])  # type: ignore
-        builder.ret(ir.Constant(ir.IntType(32), 0))  # type: ignore
+        builder.call(yian_main_func.ir_func, [])
+        builder.ret(ir.Constant(ir.IntType(32), 0))

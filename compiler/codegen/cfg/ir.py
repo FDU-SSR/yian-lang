@@ -312,18 +312,6 @@ class CheckRawBounds:
 
 
 @dataclass
-class Assume:
-    """优化器提示(range 循环约束):声明 *cond* 恒真(编译期可证谓词)。
-
-    llvm.assume 不生成运行期代码,仅供优化器(ConstraintElimination 等)消除
-    可证冗余检查。只承载纯数据谓词(如 range 循环契约 0 ≤ i < n,u64 同型);
-    绝不承载动态事实(live/μ 读、delete 前提、ptrdiff/cmp 相等)——assume
-    假 → LLVM UB → 优化器删检查 → 安全失效(安全红线)。LLVM 层 发射。
-    """
-    cond: Value
-
-
-@dataclass
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
 
@@ -493,7 +481,6 @@ Stmt: TypeAlias = (
     | CheckPtrCmp | PtrCmp | CheckRefAccess
     | CheckElementAccess
     | CheckRawBounds
-    | Assume
 )
 
 # ---------------------------------------------------------------------------

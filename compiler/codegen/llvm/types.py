@@ -72,6 +72,55 @@ class LLTypeCtx:
         size, _ = self.__stable_layout(type_id)
         return size
 
+    def get_type_alignment(self, type_id: int) -> int:
+        _, alignment = self.__stable_layout(type_id)
+        return alignment
+
+    def is_niche_enum(self, type_id: int) -> bool:
+        variants = self.__type_ctx.get_enum_variants(type_id)
+        if len(variants) != 2:
+            return False
+
+        has_unit = False
+        payload_type_id: int | None = None
+        for variant in variants:
+            if variant.payload_type is None:
+                has_unit = True
+            else:
+                if payload_type_id is not None:
+                    return False
+                payload_type_id = variant.payload_type
+        if not has_unit or payload_type_id is None:
+            return False
+
+        effective = self.__niche_payload_field_type(payload_type_id)
+        if effective is None or self.__type_ctx.is_zst(effective):
+            return False
+        effective_type = self.__type_ctx[effective]
+        if isinstance(effective_type, Type.SliceType):
+            return not self.__type_ctx.is_zst(effective_type.element_type)
+        return isinstance(
+            effective_type,
+            (Type.PointerType, Type.FunctionPointerType, Type.StrType),
+        )
+
+    def __niche_payload_field_type(self, payload_type_id: int) -> int | None:
+        payload_type = self.__type_ctx[payload_type_id]
+        if not isinstance(payload_type, Type.StructType):
+            return None
+        fields = self.__type_ctx.get_struct_fields(payload_type_id)
+        if len(fields) != 1:
+            return None
+        return fields[0].type_id
+
+    def __niche_payload_type_id(self, type_id: int) -> int:
+        for variant in self.__type_ctx.get_enum_variants(type_id):
+            if variant.payload_type is not None:
+                effective = self.__niche_payload_field_type(variant.payload_type)
+                assert effective is not None
+                return effective
+        raise AssertionError(f"niche enum {type_id} has no payload variant")
+
     def is_zst(self, type_id: int) -> bool:
         """Return whether a type is a Zero-Sized Type (carries no runtime info).
 
@@ -178,8 +227,7 @@ class LLTypeCtx:
         return identified  # type: ignore
 
     def __handle_enum(self, type_id: int, _type_def: Type.EnumType) -> ir.Type:
-        if self.__is_niche_enum(type_id):
-            # 通用 niche 优化:布局 = payload 类型(省略 i32 tag),全零编码 = unit 变体。
+        if self.is_niche_enum(type_id):
             result = self.__get_raw_type(self.__niche_payload_type_id(type_id))
             self.__storage[type_id] = result
             return result
@@ -194,61 +242,6 @@ class LLTypeCtx:
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
         identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))  # type: ignore
         return identified  # type: ignore
-
-    # ------------------------------------------------------------------
-    # niche enum detection(通用 niche:unit + 指针族 payload 省略 tag)
-    # ------------------------------------------------------------------
-
-    def is_niche_enum(self, type_id: int) -> bool:
-        """Public entry(供 translator/builder 分派):转发内部判定。"""
-        return self.__is_niche_enum(type_id)
-
-    def __is_niche_enum(self, type_id: int) -> bool:
-        """恰好 2 变体:「1 个无 payload + 1 个 payload」,payload 穿透匿名单字段
-        struct 后为指针族(Pointer/Slice/Ref/FnPtr/Str)且非 ZST → 可 niche。
-
-        ZST 判定先于 niche:Option<[0]T>/Option<()> 等 payload 为 ZST 的 enum
-        先擦除(保持 {i32,pad} 布局)。3+ 变体 / 2+ payload / 多字段 struct
-        payload 一律不触发。"""
-        variants = self.__type_ctx.get_enum_variants(type_id)
-        if len(variants) != 2:
-            return False
-        has_unit = False
-        payload_type_id: int | None = None
-        for variant in variants:
-            if variant.payload_type is None:
-                has_unit = True
-            else:
-                payload_type_id = variant.payload_type
-        if not has_unit or payload_type_id is None:
-            return False
-        effective = self.__niche_payload_field_type(payload_type_id)
-        if effective is None or self.__type_ctx.is_zst(effective):
-            return False
-        return isinstance(
-            self.__type_ctx[effective],
-            (Type.PointerType, Type.SliceType, Type.RefType, Type.FunctionPointerType, Type.StrType),
-        )
-
-    def __niche_payload_field_type(self, payload_type_id: int) -> int | None:
-        """穿透匿名单字段 struct(Some { val: T } 形态,alloc_unnamed_struct 生成)
-        取字段类型;非 struct / 多字段 struct 按原样返回。"""
-        ty = self.__type_ctx[payload_type_id]
-        if isinstance(ty, Type.StructType):
-            fields = self.__type_ctx.get_struct_fields(payload_type_id)
-            if len(fields) != 1:
-                return None
-            return fields[0].type_id
-        return payload_type_id
-
-    def __niche_payload_type_id(self, type_id: int) -> int:
-        """niche enum 的有效 payload 类型(布局/编码/解码都以它为基准)。"""
-        for variant in self.__type_ctx.get_enum_variants(type_id):
-            if variant.payload_type is not None:
-                effective = self.__niche_payload_field_type(variant.payload_type)
-                assert effective is not None
-                return effective
-        raise AssertionError(f"niche enum {type_id} has no payload variant")
 
     def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
         # A zero-sized return type lowers to `void` (nothing is returned);
@@ -321,6 +314,8 @@ class LLTypeCtx:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
             else:
                 result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+        elif isinstance(type_def, Type.RefType):
+            result = (self.__ref_pointer.get_abi_size(self.__target_data), self.__ref_pointer.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.FunctionPointerType):
             # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
@@ -330,8 +325,7 @@ class LLTypeCtx:
             assert isinstance(length_ty, Type.LiteralValueType)
             result = (element_size * length_ty.value, element_align)
         elif isinstance(type_def, Type.EnumType):
-            if self.__is_niche_enum(type_id):
-                # niche enum:size/align 取 payload(不再 align_up(4+payload,4))
+            if self.is_niche_enum(type_id):
                 result = self.__stable_layout(self.__niche_payload_type_id(type_id))
             else:
                 max_size, max_align = 0, 1
