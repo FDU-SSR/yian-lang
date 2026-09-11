@@ -65,7 +65,7 @@ class CallDispatcher:
         for _ in range(lookup.deref_count):
             current_ty = self.__ctx.type_ctx[receiver.type_id]
             if isinstance(current_ty, (Type.PointerType, Type.RefType)):
-                # pointer / reference deref (T& receivers take the direct path)
+                # pointer / reference deref
                 receiver = HIR.Unary(span, UnaryOperator.Deref, receiver, current_ty.pointee_type, is_place=True)
             else:
                 # Deref trait deref: call deref() method

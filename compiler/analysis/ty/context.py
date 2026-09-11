@@ -445,7 +445,6 @@ class TypeCtx:
         1. Check self-referential types.
         """
         self.__check_self_referential_types()
-
         self.__memoize_enabled = True
         self.__impl_registry.enable_memoization()
 

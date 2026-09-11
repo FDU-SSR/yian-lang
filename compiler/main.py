@@ -371,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     # inject prelude imports into non-stdlib files
     inject_prelude(src_files, programs)
 
-    # reject restricted operations (bitcast, raw syscalls, ...) in non-stdlib code
+    # Keep pointer-forging and raw ABI primitives inside the trusted stdlib.
     restricted_start = time.perf_counter() if args.profile else 0.0
     try:
         check_restricted_ops(programs, src_files)

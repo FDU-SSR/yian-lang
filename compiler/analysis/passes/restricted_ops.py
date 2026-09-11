@@ -5,6 +5,7 @@ bypass definite-assignment analysis, or cross the raw system-call boundary.
 This pass runs on the source AST before type checking, so the restriction is
 independent of overload resolution and generic lowering.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 from compiler.analysis.error import AnalysisError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
+
 
 RESTRICTED_BUILTIN_NAMES = frozenset(
     {

@@ -128,7 +128,7 @@ class LLModule:
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
         func_ir_type = self.__type_ctx.get_ll_func_type(cfg_func.type_id)
-        # Rename Yian "main" → "__yian_main"; the real "main" is emitted later as a wrapper.
+        # Rename Yian "main" → "__yian_main"; the C-compatible wrapper is emitted later.
         llvm_name = cfg_func.name if cfg_func.name != "main" else "__yian_main"
         if cfg_func.name != "main":
             llvm_name = f"{llvm_name}.{cfg_func.type_id}"
