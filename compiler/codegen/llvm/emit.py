@@ -33,11 +33,12 @@ class Emitter:
     def emit_module(self, llvm_module: LLModule, output_dir: str, kind: str,
                     stem: str, intermediate_dir: str | None = None,
                     opt_level: int = 0) -> str:
-        """Emit a module, applying the requested optimization level.
+        """Emit ``llvm_module`` to ``kind`` under ``output_dir``.
 
-        ``-t ll`` intentionally remains the raw compiler-generated IR. Other
-        targets run the LLVM module pipeline and use the same level for the
-        target machine.
+        *opt_level* (the ``-O`` value, 0-3) drives the -O mapping matrix:
+        non-``ll`` targets run the LLVM IR pass pipeline at that level before
+        emission (-O0 = no IR passes) and the backend target machine gets
+        ``opt=opt_level``; ``-t ll`` always emits the unoptimized IR as-is.
         """
         normalized_kind = self._normalize_kind(kind)
         paths = {"ll": f"{stem}.ll", "bc": f"{stem}.bc", "obj": f"{stem}.o", "asm": f"{stem}.s"}
@@ -53,16 +54,20 @@ class Emitter:
         fd, ll_path = tempfile.mkstemp(suffix=".ll", prefix="yian_")
         os.close(fd)
         try:
-            self.emit_ll(llvm_module, ll_path)
+            ir_text = str(llvm_module)
             binding = self.__ensure_binding()
-            llvm_mod = binding.parse_assembly(str(llvm_module))
+            self.emit_ll(llvm_module, ll_path)
+            llvm_mod = binding.parse_assembly(ir_text)
             llvm_mod.verify()
             if opt_level > 0:
-                pass_manager = binding.create_module_pass_manager()
-                pass_builder = binding.PassManagerBuilder()
-                pass_builder.opt_level = opt_level
-                pass_builder.populate(pass_manager)
-                pass_manager.run(llvm_mod)
+                # C1: IR-level optimization pipeline.  llvmlite 0.44 shape
+                # (verified by the C1 spike): PassManagerBuilder's opt_level
+                # is a SETTER property, NOT a constructor kwarg.
+                pm = binding.create_module_pass_manager()
+                pmb = binding.PassManagerBuilder()
+                pmb.opt_level = opt_level
+                pmb.populate(pm)
+                pm.run(llvm_mod)
                 llvm_mod.verify()
         finally:
             if os.path.exists(ll_path):
