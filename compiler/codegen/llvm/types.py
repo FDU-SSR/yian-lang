@@ -101,7 +101,7 @@ class LLTypeCtx:
             return not self.__type_ctx.is_zst(effective_type.element_type)
         return isinstance(
             effective_type,
-            (Type.PointerType, Type.FunctionPointerType, Type.StrType),
+            (Type.PointerType, Type.RefType, Type.FunctionPointerType, Type.StrType),
         )
 
     def __niche_payload_field_type(self, payload_type_id: int) -> int | None:

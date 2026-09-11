@@ -403,10 +403,16 @@ class LLBuilder:
         fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "mof")
         payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
-        payload = LLValue(self.__type_ctx.u64_id, payload_ir)  # type: ignore
+        zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        one = ir.Constant(ir.IntType(64), 1)  # type: ignore
+        has_size = self.__builder.icmp_unsigned("!=", payload_ir, zero)  # type: ignore
+        normalized_size = self.__builder.select(has_size, payload_ir, one)  # type: ignore
+        payload = LLValue(self.__type_ctx.u64_id, normalized_size)  # type: ignore
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
         if self.__raw_pointers:
             raw = self.__call_intrinsic(IntrinsicKind.Malloc, [payload])
+            nonnull = self.__builder.icmp_signed("!=", raw.ir_val, ir.Constant(raw.ir_val.type, None))  # type: ignore
+            self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), "malloc-null")
             # raw 模式:data = 块基址,直接返回裸指针(无锁头偏移、无 5 字段聚合)。
             # malloc intrinsic 返回 i8*,须 bitcast 到有型 T*(raw 指针为 T*)。
             typed = self.__builder.bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
@@ -806,7 +812,7 @@ class LLBuilder:
         return result_val
 
     def ptr_diff(self, lhs: LLValue, rhs: LLValue, result: str) -> LLValue:
-        """Pointer difference: ptr - ptr → i64 offset in elements(定型规则 8.1.9)。
+        """Pointer difference: ptr - ptr → u64 offset in elements。
 
         fat:有效地址 = data + index·|T| 以 i128 宽整数计算(O-1 无回摆),截断后
         sdiv |T| 得元素差(同对象内整除,检查已保证 data 相等 + 良构)。
@@ -823,16 +829,16 @@ class LLBuilder:
                 diff64,
                 ir.Constant(ir.IntType(64), elem_size)  # type: ignore
             )
-            result_val = LLValue(self.__type_ctx.i64_id, elem_size_val)  # type: ignore
+            result_val = LLValue(self.__type_ctx.u64_id, elem_size_val)  # type: ignore
         else:
             lhs_int = self.__builder.ptrtoint(lhs.ir_val, ir.IntType(64))  # type: ignore
             rhs_int = self.__builder.ptrtoint(rhs.ir_val, ir.IntType(64))  # type: ignore
             byte_diff = self.__builder.sub(lhs_int, rhs_int)  # type: ignore
-            elem_size_val = self.__builder.sdiv(  # type: ignore
+            elem_size_val = self.__builder.udiv(  # type: ignore
                 byte_diff,
                 ir.Constant(ir.IntType(64), elem_size)  # type: ignore
             )
-            result_val = LLValue(self.__type_ctx.i64_id, elem_size_val)  # type: ignore
+            result_val = LLValue(self.__type_ctx.u64_id, elem_size_val)  # type: ignore
         self.__func.set_reg(result, result_val)
         return result_val
 

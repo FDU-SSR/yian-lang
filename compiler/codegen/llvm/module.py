@@ -274,6 +274,8 @@ class LLModule:
         advance = fn.append_basic_block("advance")
         reuse = fn.append_basic_block("reuse")
         fresh = fn.append_basic_block("fresh")
+        fresh_init = fn.append_basic_block("fresh.init")
+        fresh_fail = fn.append_basic_block("fresh.fail")
 
         entry_builder = ir.IRBuilder(entry)
         entry_builder.branch(scan)
@@ -318,6 +320,14 @@ class LLModule:
             [total],
             name="block",
         )
+        nonnull = fresh_builder.icmp_unsigned("!=", block, ir.Constant(i8_ptr, None))
+        fresh_builder.cbranch(nonnull, fresh_init, fresh_fail)
+
+        fail_builder = ir.IRBuilder(fresh_fail)
+        fail_builder.call(self.get_trap_intrinsic(), [])
+        fail_builder.unreachable()
+
+        fresh_builder = ir.IRBuilder(fresh_init)
         fresh_capacity_ptr = self.__pool_field_ptr(
             fresh_builder, block, IR.BlockHeader.CAPACITY_OFFSET, i64
         )
