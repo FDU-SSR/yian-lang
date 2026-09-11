@@ -293,6 +293,26 @@ class If:
 
 
 @dataclass
+class ComptimeIf:
+    span: SrcSpan
+    condition: Expr
+    then_branch: Block
+    else_branch: Block
+
+    def __repr__(self) -> str:
+        return f"comptime if {self.condition} {{ ... }} else {{ ... }}"
+
+
+@dataclass
+class CompileConfig:
+    span: SrcSpan
+    name: str
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+@dataclass
 class For:
     span: SrcSpan
     var_name: Identifier
@@ -656,11 +676,11 @@ Expr: TypeAlias = (
     | Tuple | Array | ArrayRepeat
     | Block
     | VarDecl
-    | If | For | While | Loop | Match
+    | If | ComptimeIf | For | While | Loop | Match
     | Return | Break | Continue | Assert
     | Delete
     | Semi
-    | ClosureExpr
+    | ClosureExpr | CompileConfig
 )
 
 Pattern: TypeAlias = (

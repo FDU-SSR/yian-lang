@@ -215,6 +215,18 @@ def __export_if(stmt: AST.If, guides: list[bool], is_last: bool) -> str:
     return res
 
 
+def __export_comptime_if(stmt: AST.ComptimeIf, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, "ComptimeIf")
+    res += __export_expr_child("Condition", stmt.condition, guides, is_last, False)
+    res += __export_block_child("Then", stmt.then_branch, guides, is_last, False)
+    res += __export_block_child("Else", stmt.else_branch, guides, is_last, True)
+    return res
+
+
+def __export_compile_config(expr: AST.CompileConfig, guides: list[bool], is_last: bool) -> str:
+    return __line(guides, is_last, f"CompileConfig: {expr.name}")
+
+
 def __export_stmt_if_elif(condition: AST.Expr, body: AST.Block, guides: list[bool], is_last: bool) -> str:
     res = __line(guides, is_last, "Elif:")
     res += __export_expr_child("Condition", condition, guides, is_last, False)
@@ -334,6 +346,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_stmt_block(expr, guides, is_last)
         case AST.If():
             return __export_if(expr, guides, is_last)
+        case AST.ComptimeIf():
+            return __export_comptime_if(expr, guides, is_last)
         case AST.Loop():
             return __export_loop(expr, guides, is_last)
         case AST.Match():
@@ -360,6 +374,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_delete(expr, guides, is_last)
         case AST.ClosureExpr():
             return __export_closure_expr(expr, guides, is_last)
+        case AST.CompileConfig():
+            return __export_compile_config(expr, guides, is_last)
 
 
 def __export_closure_expr(expr: AST.ClosureExpr, guides: list[bool], is_last: bool) -> str:

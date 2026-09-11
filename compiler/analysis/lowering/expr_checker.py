@@ -51,6 +51,8 @@ class ExprChecker:
                 return self.check_block(expr)
             case AST.If():
                 return self.lower_if(expr)
+            case AST.ComptimeIf():
+                return self.lower_comptime_if(expr)
             case AST.Loop():
                 return self.lower_loop(expr)
             case AST.Match():
@@ -92,6 +94,13 @@ class ExprChecker:
                 return self.__handle_type_item(expr)
             case AST.Identifier():
                 return self.__handle_identifier(expr)
+            case AST.CompileConfig():
+                return HIR.CompileConfig(
+                    span=expr.span,
+                    name=expr.name,
+                    type_id=TypeCtx.bool_id,
+                    is_place=False,
+                )
             case AST.Literal():
                 return self.__handle_literal(expr)
             case AST.Tuple():
@@ -417,7 +426,7 @@ class ExprChecker:
                 expr.value = self.coerce(expr.value, expected_ty.pointee_type)
                 expr.type_id = expected
                 return expr
-            case HIR.Block() | HIR.If() | HIR.Loop() | HIR.Match():
+            case HIR.Block() | HIR.If() | HIR.ComptimeIf() | HIR.Loop() | HIR.Match():
                 # Expression-typed control flow: coerce by updating type_id
                 # (literal types → concrete types, etc.)
                 if isinstance(expr_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
@@ -535,6 +544,22 @@ class ExprChecker:
         if_type_id = self.__ctx.type_ctx.default_literals(if_type_id)
 
         return HIR.If(span=stmt.span, cond=cond_expr, then_branch=then_block, else_branch=else_block, type_id=if_type_id, is_place=False)
+
+    def lower_comptime_if(self, stmt: AST.ComptimeIf) -> HIR.ComptimeIf:
+        cond_expr = self.coerce(self.value(stmt.condition), TypeCtx.bool_id)
+        then_block = self.check_block(stmt.then_branch)
+        else_block = self.check_block(stmt.else_branch)
+        if_type_id = self.__ctx.type_ctx.merge_types([then_block.type_id, else_block.type_id], stmt.span)
+        if_type_id = self.__ctx.type_ctx.default_literals(if_type_id)
+
+        return HIR.ComptimeIf(
+            span=stmt.span,
+            cond=cond_expr,
+            then_branch=then_block,
+            else_branch=else_block,
+            type_id=if_type_id,
+            is_place=False,
+        )
 
     def lower_loop(self, stmt: AST.Loop) -> HIR.Loop:
         loop_frame = LoopFrame(span=stmt.span)
