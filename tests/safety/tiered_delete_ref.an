@@ -1,0 +1,13 @@
+// delete on a T& reference: migrated from compile_err (was a compile-time
+// rejection) to a runtime trap. `del r` on a T& whose receiver is a stack
+// variable: delete 前提 is_heap(p)(定义 9:键最高位 msb 0 = 栈)拒绝栈指针,
+// 规则 3.6.2 前提不满足 → llvm.trap → SIGILL → Exit code -4。
+//
+// 注: 本测试 `r` 指向栈对象,is_heap 检查失败触发 trap;若 r 指向堆对象,
+// 释放语义另行覆盖。
+
+fn main() {
+    let x: i32 = 1;
+    let r: i32& = &x;
+    del r;
+}

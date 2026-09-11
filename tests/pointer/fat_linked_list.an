@@ -1,0 +1,53 @@
+// Fat-pointer semantic composite: singly linked list
+// Builds a 3-node chain (1 -> 2 -> 3), walks it via next pointers,
+// then deletes every node.
+// (NULL 迁移:链尾 next 以 Option<Node*>.None 表达;遍历用 is_some/unwrap)
+//
+// Coverage: dyn allocation + struct field access through pointer +
+//           Option 空态判定(is_some)+ del (single-free path).
+//
+// Expected output: 0
+
+struct Node {
+    value: i32,
+    next: Option<Node*>,
+}
+
+fn main() {
+    // Build chain 1 -> 2 -> 3 (tail next = None)
+    let n3: Node* = dyn Node(3, Option<Node*>.None);
+    let n2: Node* = dyn Node(2, Option<Node*>.Some(n3));
+    let n1: Node* = dyn Node(1, Option<Node*>.Some(n2));
+
+    // Walk the chain and assert the value sequence (1, 2, 3)
+    let cur: Option<Node*> = Option<Node*>.Some(n1);
+    let expected: i32 = 1;
+    while cur.is_some() {
+        let cn: Node* = cur.unwrap()[0];
+        assert cn.value == expected: "linked list value mismatch";
+        expected += 1;
+        if cn.next.is_some() {
+            cur = Option<Node*>.Some(cn.next.unwrap()[0]);
+        } else {
+            cur = Option<Node*>.None;
+        };
+    };
+    assert expected == 4: "expected exactly 3 visited nodes";
+
+    // Delete every node; save next before freeing current
+    let p: Option<Node*> = Option<Node*>.Some(n1);
+    let count: i32 = 0;
+    while p.is_some() {
+        let pn: Node* = p.unwrap()[0];
+        let next: Option<Node*>;
+        if pn.next.is_some() {
+            next = Option<Node*>.Some(pn.next.unwrap()[0]);
+        } else {
+            next = Option<Node*>.None;
+        };
+        del pn;
+        p = next;
+        count += 1;
+    };
+    assert count == 3: "expected exactly 3 deleted nodes";
+}

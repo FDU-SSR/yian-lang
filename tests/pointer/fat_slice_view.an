@@ -1,0 +1,34 @@
+// Fat-pointer semantic composite: slice views via stdlib public APIs
+// (a) Vec::as_slice() returns a fat slice view; (b) plain range syntax
+// p[lo..hi] on a pointer yields a bounded slice view. Assert length and
+// element values through the views (no restricted __slice_* primitives).
+//
+// Expected output: 0
+
+from std.core.vec import Vec;
+
+fn main() {
+    // (a) slice view from Vec::as_slice() — stdlib public API
+    let v: Vec<i32> = Vec<i32>.new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+    v.push(40);
+    let s: i32[] = v.as_slice();
+    assert s.len() == 4: "as_slice length";
+    assert s[0] == 10: "as_slice s[0]";
+    assert s[2] == 30: "as_slice s[2]";
+    assert s[3] == 40: "as_slice s[3]";
+
+    // (b) slice view from pointer range syntax (plain syntax path)
+    let arr = [1i32, 2, 3, 4, 5];
+    let p = arr.ptr();
+    let sub: i32[] = p[1u64..4];
+    assert sub.len() == 3: "range slice length";
+    assert sub[0] == 2: "range slice sub[0]";
+    assert sub[2] == 4: "range slice sub[2]";
+
+    // (c) write through the slice view reaches the backing array
+    sub[0] = 99;
+    assert arr[1] == 99: "write through slice view";
+}

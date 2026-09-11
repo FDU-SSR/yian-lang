@@ -1,0 +1,24 @@
+// `del self` inside a method body: migrated from compile_err (was a
+// compile-time rejection) to a runtime trap. 本测试 receiver 是栈变量,
+// del self 作用于栈 receiver: delete 前提 is_heap(p)(定义 9:键最高位
+// msb 0 = 栈)拒绝栈指针,规则 3.6.2 前提不满足 → llvm.trap → SIGILL →
+// Exit code -4。
+//
+// 语义声明: 本计划定义 del self 在堆 receiver 上释放 receiver 自身为
+// **预期语义**(is_raw 兜底);本次迁移只覆盖栈 receiver trap 场景。
+
+struct S {
+    v: i32,
+}
+
+impl S {
+    pub fn bad() {
+        del self;
+    }
+}
+
+fn main() {
+    let s = S(1);
+    let r: S& = &s;
+    r.bad();
+}

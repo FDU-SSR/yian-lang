@@ -1,0 +1,32 @@
+// Fat pointer: pointer-to-ZST stays a ZST (sizeof 0, comparable, arithmetic
+// is a no-op and must not trap).
+// (NULL 迁移:ZST 指针由 dyn 分配创建;不再有「ZST 指针 == NULL」比较)
+//
+// Expected output: 0
+
+struct Empty {}
+
+fn main() {
+    // The pointer itself is a ZST regardless of the fat-pointer representation.
+    assert sizeof(void*) == 0: "sizeof(void*) == 0"
+    assert sizeof(Empty*) == 0: "sizeof(Empty*) == 0"
+
+    // ZST pointers compare equal (all indistinguishable).
+    let p: void* = dyn[1] void
+    let q: void* = dyn[1] void
+    assert p == q: "void* == void*"
+
+    let e: Empty* = dyn[1] Empty
+    assert e == e: "Empty* == Empty*"
+
+    // Pointer arithmetic on a ZST pointer must not trap (stride 0).
+    let r: void* = p + 0
+    assert r == q: "p + 0 == q"
+    let s: void* = p + 1
+    assert s == q: "p + 1 == q (ZST stride no-op)"
+
+    // dyn allocation of a ZST is also a ZST pointer; independent allocations
+    // are indistinguishable.
+    let w: void* = dyn[1] void
+    assert w == p: "dyn ZST pointers compare equal (indistinguishable)"
+}

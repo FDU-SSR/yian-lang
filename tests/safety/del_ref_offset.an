@@ -1,0 +1,12 @@
+// del-view 负例(a):堆偏移 T& → trap。`let r: i32& = &p[1]` 产生
+// data = lock_ptr+8+4 ≠ lock_ptr+8:CheckDelete 的 is_raw data 分量
+// (data==lock_ptr+8)失败(RefType 无 index 分量,偏移直接体现在 data)
+// → llvm.trap → SIGILL → Exit code -4。
+//
+// Expected exit code: -4
+
+fn main() {
+    let p: i32* = dyn[3] i32;
+    let r: i32& = &p[1];
+    del r;
+}

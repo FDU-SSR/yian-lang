@@ -22,10 +22,26 @@ RESTRICTED_BUILTIN_NAMES = frozenset(
         "open",
         "close",
         "assume_init",
+        "__memcpy",
     }
 )
 
-RESTRICTED_STDLIB_FUNCS = frozenset({"from_raw_parts"})
+# Restricted stdlib function names: unchecked size-field construction.
+# The fat-pointer primitives forge slice/str values from raw {ptr, len}
+# parts and are therefore confined to the standard library, exactly like
+# `from_raw_parts`.
+RESTRICTED_STDLIB_FUNCS = frozenset(
+    {
+        "from_raw_parts",
+        "__slice_from_parts",
+        "__slice_get_ptr",
+        "__slice_get_len",
+        "__str_from_parts",
+        "__str_get_ptr",
+        "__str_get_len",
+    }
+)
+
 RESTRICTED_CALL_NAMES = RESTRICTED_BUILTIN_NAMES | RESTRICTED_STDLIB_FUNCS
 
 

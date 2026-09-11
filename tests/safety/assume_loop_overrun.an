@@ -1,0 +1,24 @@
+// 范围约束优化 负例(Metis H1 安全红线):range 循环 assume 不得删除越界检查。
+//
+// for i in 0..(s.len() + 5) { s[i] = 0; } — 上界 n = s.len() + 5 > size = 4。
+// 注入的 assume 只声明 range 契约事实 0 ≤ i < n;CE 无法由 i < 9 证明
+// i ≤ 4 → 越界检查原样保留,i ≥ 4 时仍 trap(Exit code -4)。
+// 期望输出:Exit code -4。
+
+from std.core.io import print;
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+
+    let s: i32[] = p[0u64..4];
+
+    let total: i32 = 0;
+    for i in 0..(s.len() + 5) {
+        s[i] = 0;
+    }
+    print("unreachable\n");
+}

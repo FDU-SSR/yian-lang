@@ -1,0 +1,50 @@
+// Fat-pointer semantic composite: mixed pointer-dense operations
+// Array decay + pointer arithmetic + pointer comparison + PtrDiff +
+// struct field address, in one realistic pointer-heavy sequence.
+//
+// Expected output: 0
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let arr: i32[4] = [10, 20, 30, 40];
+
+    // array decay: i32[4] -> i32*
+    let p: i32* = arr;
+    assert p[0] == 10: "decayed pointer index 0";
+    assert *p == 10: "decayed pointer deref";
+
+    // pointer arithmetic
+    let q: i32* = p + 2;
+    assert *q == 30: "p + 2 deref";
+
+    // pointer comparison
+    assert p < q: "p < q";
+    assert q > p: "q > p";
+    assert q == p + 2: "q equals p + 2";
+
+    // PtrDiff: q - p == 2 elements
+    let diff: i64 = q - p;
+    assert diff == 2: "PtrDiff of 2 elements";
+    assert (p + 4) - p == 4: "full range size";
+
+    // struct field address: take address of a field through a pointer
+    let pt: Point* = dyn Point(5, 6);
+    let fx: i32* = &pt.x;
+    assert *fx == 5: "field address deref";
+    *fx = 50;
+    assert pt.x == 50: "field address write";
+    assert pt.y == 6: "sibling field untouched";
+
+    // mixed: walk the whole array through pointers and sum
+    let total: i32 = 0;
+    let r: i32* = p;
+    while r < p + 4 {
+        total += *r;
+        r += 1;
+    }
+    assert total == 100: "pointer-walk sum";
+}

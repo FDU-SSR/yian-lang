@@ -1,0 +1,11 @@
+// Fat-pointer double-free negative test — 不同指针同一对象(对照 fat_double_free 的同一指针两次 del)
+//
+// q 是 p 的拷贝(同 lock_ptr 同 key);首次 del p 写锁槽 SENTINEL(规则 3.6.2 动作①),
+// 第二次 del q 的 live 键比较失败(锁槽 = SENTINEL ≠ key)→ llvm.trap → SIGILL → Exit code -4。
+
+fn main() {
+    let p: i32* = dyn[2] i32;
+    let q: i32* = p;
+    del p;
+    del q  // q 为 p 拷贝, 锁槽已 SENTINEL → live 失败 → trap
+}

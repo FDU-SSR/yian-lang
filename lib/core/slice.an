@@ -13,7 +13,10 @@ struct SliceStruct<T> {
 impl<T> T[] {
     // Convert a slice to a SliceStruct
     fn as_struct() -> SliceStruct<T> {
-        *bitcast<SliceStruct<T>*>(self)
+        SliceStruct<T>(
+            ptr = __slice_get_ptr(*self),
+            len = __slice_get_len(*self),
+        )
     }
 
     // Get the raw pointer to the slice data
@@ -59,11 +62,7 @@ impl<T> T[] {
 }
 
 pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
-    let slice_struct: SliceStruct<T> = SliceStruct<T>(
-        ptr = ptr,
-        len = len,
-    );
-    *bitcast<T[]*>(&slice_struct)
+    __slice_from_parts(ptr, len)
 }
 
 pub struct SliceIter<T> {
@@ -162,6 +161,6 @@ impl<T> Index<Range<u64>, T[]> for T[] {
         }
         let start_ptr = self.ptr() + range.start;
         let len = range.end - range.start;
-        from_raw_parts(start_ptr, len)
+        __slice_from_parts(start_ptr, len)
     }
 }

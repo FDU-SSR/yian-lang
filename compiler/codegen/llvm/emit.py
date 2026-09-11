@@ -6,9 +6,15 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import tempfile
 
 from compiler.codegen.llvm.module import LLModule
+
+# 帧退出 SENTINEL 写(规则 3.7.2,all-ones u64)在优化路径上须为 volatile:
+# LLVM 内存模型把"经悬垂指针读已退出帧"视为 UB,DSE 可证明该写为死存储而
+# 删除,锁槽残留入口键 → 调用方 live 检查误通过,丢失 Exit -4 语义。
+_SENTINEL_STORE = re.compile(r"\bstore i64 18446744073709551615\b")
 
 
 class Emitter:
@@ -56,6 +62,10 @@ class Emitter:
         try:
             ir_text = str(llvm_module)
             binding = self.__ensure_binding()
+            if opt_level > 0:
+                # 见 _SENTINEL_STORE 注释:仅优化路径把帧退出 SENTINEL 写标
+                # volatile(DSE 不可删除/重排),`-t ll` 输出保持逐字节不变。
+                ir_text = _SENTINEL_STORE.sub("store volatile i64 18446744073709551615", ir_text)
             self.emit_ll(llvm_module, ll_path)
             llvm_mod = binding.parse_assembly(ir_text)
             llvm_mod.verify()

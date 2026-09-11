@@ -1,5 +1,4 @@
 from std.core.hash import Murmur3Hasher, Hash;
-from std.core.slice import from_raw_parts;
 from std.core.convert import From, Into;
 from std.core.string import String;
 
@@ -61,8 +60,9 @@ impl u64 {
 impl Hash<Murmur3Hasher> for u64 {
     fn hash(hasher: Murmur3Hasher) {
         let val: u64 = *self;
-        let ptr: u8* = bitcast<u8*>(&val);
-        hasher.write(from_raw_parts(ptr, 8));
+        let buf: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+        __memcpy(&buf, &val, 8);
+        hasher.write(buf.as_slice());
     }
 }
 

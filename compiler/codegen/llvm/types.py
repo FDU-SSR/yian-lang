@@ -15,10 +15,12 @@ from compiler.codegen.llvm.value import LLType
 class LLTypeCtx:
     """Maps Yian ``TypeCtx`` type IDs to ``ir.Type`` objects."""
 
-    def __init__(self, type_ctx: TypeCtx, module: ir.Module, unit_names: dict[int, str]) -> None:
+    def __init__(self, type_ctx: TypeCtx, module: ir.Module, unit_names: dict[int, str], raw_pointers: bool = False) -> None:
         self.__type_ctx = type_ctx
         self.__module = module
         self.__unit_names = unit_names
+        # 诊断模式：raw_pointers 开启时指针按裸 8B 处理，不携带 5 字段元数据。
+        self.__raw_pointers = raw_pointers
 
         self.__storage: dict[int, ir.Type] = {}
         self.__void = ir.VoidType()
@@ -28,7 +30,15 @@ class LLTypeCtx:
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
         self.__ptr: ir.PointerType = ir.PointerType(self.__i8)  # type: ignore
-        self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        # str = slice(分级指针表示):4 字段 {data, lock_ptr, key, size} 32B;
+        # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
+        if self.__raw_pointers:
+            self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        else:
+            self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64])  # type: ignore
+        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64, self.__i64])  # type: ignore
+        # 3 字段引用 {data, lock_ptr, key} 24B(已替换早期的 5 字段临时布局)。
+        self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
@@ -91,7 +101,7 @@ class LLTypeCtx:
             return not self.__type_ctx.is_zst(effective_type.element_type)
         return isinstance(
             effective_type,
-            (Type.PointerType, Type.FunctionPointerType, Type.StrType),
+            (Type.PointerType, Type.RefType, Type.FunctionPointerType, Type.StrType),
         )
 
     def __niche_payload_field_type(self, payload_type_id: int) -> int | None:
@@ -144,13 +154,6 @@ class LLTypeCtx:
             self.__storage[type_id] = self.__empty_struct
             return self.__empty_struct
 
-        # Pointer-to-ZST is itself ZST (§M5): erase to empty struct before
-        # the per-type match so it never reaches __handle_pointer.
-        if self.__type_ctx.is_zst(type_id):
-            result = self.__empty_struct
-            self.__storage[type_id] = result
-            return result
-
         match ty_def:
             case Type.VoidType():    result = self.__void
             case Type.NeverType():   result = self.__void
@@ -186,13 +189,28 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
-        return ir.PointerType(self.__get_raw_type(type_def.pointee_type))
+        # §7.4 方案 A: 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
+        # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
+        # 诊断模式:raw_pointers 下指针退化为裸 8B **有型**指针 T*(load/store/gep
+        # 需 pointee 布局;早期使用无型 i8* 致 store/gep 类型错配,当前改为有型)。
+        if self.__raw_pointers:
+            return self.__get_raw_type(type_def.pointee_type).as_pointer()
+        return self.__fat_pointer
 
     def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
-        return ir.PointerType(self.__get_raw_type(type_def.pointee_type))
+        # 3 字段引用 ⟨data, lock_ptr, key⟩ 24B(不含 index 和 size)。
+        # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸 T*。
+        if self.__raw_pointers:
+            return self.__get_raw_type(type_def.pointee_type).as_pointer()
+        return self.__ref_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
-        return ir.LiteralStructType([self.__get_raw_type(type_def.element_type).as_pointer(), self.__i64])
+        # 4 字段切片 {data: T*, lock_ptr: i8*, key: u64, size: u64} 32B(不含 index)。
+        # 诊断模式(raw_pointers)下退化为 2 字段 {T*, u64}。
+        data_type = self.__get_raw_type(type_def.element_type).as_pointer()
+        if self.__raw_pointers:
+            return ir.LiteralStructType([data_type, self.__i64])
+        return ir.LiteralStructType([data_type, self.__ptr, self.__i64, self.__i64])
 
     def __handle_array(self, type_def: Type.ArrayType) -> ir.Type:
         length_ty = self.__type_ctx[type_def.length]
@@ -230,9 +248,16 @@ class LLTypeCtx:
         # `void` is the only LLVM type legal in return position for a ZST.
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         # Zero-sized parameters carry no data and are dropped from the signature.
+        # Pointer params/returns lower to the 5-field fat pointer aggregate
+        # (§7.4 方案 A); pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
-            params.insert(0, self.__get_raw_type(receiver_type_id).as_pointer())
+            # 接收者以 `T&` 值类型引用传递:receiver_type_id 是值类型,
+            # alloc_ref 包出 T& 后经 __handle_ref 自动得 24B 3 字段
+            # {data, lock_ptr, key}。调用侧负责完成 40B→24B 的表示折算。
+            ref_type_id = self.__type_ctx.alloc_ref(receiver_type_id)
+            if not self.is_zst(ref_type_id):
+                params.insert(0, self.__get_raw_type(ref_type_id))
         return ir.FunctionType(ret, params)
 
     def __handle_function(self, type_def: Type.FunctionType) -> ir.Type:
@@ -282,7 +307,17 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
-        elif isinstance(type_def, (Type.PointerType, Type.RefType, Type.FunctionPointerType)):
+        elif isinstance(type_def, Type.PointerType):
+            # §7.4 方案 A: fat pointer — 5 × 8B fields = 40B, align 8.
+            # 诊断模式:raw_pointers 下指针为裸 8B,align 8。
+            if self.__raw_pointers:
+                result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
+            else:
+                result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+        elif isinstance(type_def, Type.RefType):
+            result = (self.__ref_pointer.get_abi_size(self.__target_data), self.__ref_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+        elif isinstance(type_def, Type.FunctionPointerType):
+            # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.ArrayType):
             element_size, element_align = self.__stable_layout(type_def.element_type)

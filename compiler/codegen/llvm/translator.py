@@ -23,13 +23,14 @@ def ch_llvm():
 class LLTranslator:
     """CFG Functions → LLVM Module."""
 
-    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str]) -> None:
+    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool = False) -> None:
         self.__type_ctx = type_ctx
+        self.__raw_pointers = raw_pointers
 
         ll_module = ir.Module(name="yian.module")
         ll_module.triple = "x86_64-unknown-linux-gnu"
 
-        self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names)
+        self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names, raw_pointers)
         self.__module = LLModule(ll_module, self.__ll_type_ctx)
         self.__func: LLFunction | None = None
 
@@ -97,7 +98,10 @@ class LLTranslator:
             else:
                 func.add_block(block.label, func.new_block(block.label))
 
-        builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx)
+        builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx, self.__raw_pointers)
+        if cfg.frame_lock is not None:
+            # 帧退出写 SENTINEL 并弹出影子栈(规则 3.7.2)
+            builder.set_frame_lock(cfg.frame_lock[0])
 
         # entry block + local var allocas
         builder.position_at(cfg.entry.label, where=BuilderPosition.First)
@@ -144,7 +148,12 @@ class LLTranslator:
         ch_llvm().trace(lambda: type(stmt).__name__)
         match stmt:
             case IR.VarPtr():
-                builder.var_ptr(stmt.var_ref.symbol_id, stmt.result.name)
+                builder.var_ptr(
+                    stmt.var_ref.symbol_id, stmt.result.name,
+                    self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
+                    self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
+                    stmt.raw,
+                )
             case IR.Alloca():
                 builder.alloca_store(self.__resolve(builder, stmt.value), stmt.result.name)
             case IR.FieldPtr():
@@ -153,12 +162,15 @@ class LLTranslator:
                 builder.element_ptr(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset), stmt.result.name)
             case IR.PtrDiff():
                 builder.ptr_diff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
+            case IR.PtrCmp():
+                builder.ptr_cmp(stmt.op, self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
             case IR.Load():
                 builder.load(self.__resolve(builder, stmt.ptr), stmt.result.name)
             case IR.Store():
                 builder.store(self.__resolve(builder, stmt.value), self.__resolve(builder, stmt.ptr))
             case IR.Malloc():
-                builder.malloc(stmt.type_id, self.__resolve(builder, stmt.size), stmt.result.name)
+                key = self.__resolve(builder, stmt.key) if stmt.key is not None else None
+                builder.malloc(stmt.type_id, self.__resolve(builder, stmt.size), key, stmt.result.name)
             case IR.Binary():
                 builder.binary(stmt.op, self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
             case IR.Unary():
@@ -167,6 +179,38 @@ class LLTranslator:
                 builder.extract_value(self.__resolve(builder, stmt.base), stmt.field_index, stmt.result.name)
             case IR.Delete():
                 builder.delete(self.__resolve(builder, stmt.ptr))
+            case IR.GenKey():
+                builder.gen_key(stmt.is_heap, stmt.result.name)
+            case IR.AcquireFrameLock():
+                builder.acquire_frame_lock(
+                    self.__resolve(builder, stmt.key), stmt.result.name
+                )
+            case IR.WriteLockSlot():
+                builder.write_lock_slot(self.__resolve(builder, stmt.lock_ptr), self.__resolve(builder, stmt.value))
+            case IR.CheckSafeAccess():
+                builder.check_safe_access(self.__resolve(builder, stmt.ptr))
+            case IR.CheckInBounds():
+                builder.check_in_bounds(self.__resolve(builder, stmt.ptr))
+            case IR.CheckSliceNonEmpty():
+                builder.check_slice_nonempty(self.__resolve(builder, stmt.ptr))
+            case IR.CheckRefAccess():
+                builder.check_ref_access(self.__resolve(builder, stmt.ptr))
+            case IR.CheckElementArith():
+                builder.check_element_arith(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
+            case IR.CheckElementAccess():
+                builder.check_element_access(
+                    self.__resolve(builder, stmt.base),
+                    self.__resolve(builder, stmt.offset),
+                    self.__resolve(builder, stmt.ptr),
+                )
+            case IR.CheckRawBounds():
+                builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
+            case IR.CheckPtrDiff():
+                builder.check_ptrdiff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
+            case IR.CheckPtrCmp():
+                builder.check_ptr_cmp(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
+            case IR.CheckDelete():
+                builder.check_delete(self.__resolve(builder, stmt.ptr))
             case IR.Call():
                 builder.call_func(
                     stmt.callee_type,
@@ -182,7 +226,7 @@ class LLTranslator:
                     stmt.result.type_id
                 )
             case IR.Cast():
-                builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name)
+                builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name, stmt.raw)
             case IR.SizeOf():
                 builder.sizeof_const(stmt.type_id, stmt.result.name)
             case IR.FuncPtr():
@@ -198,6 +242,8 @@ class LLTranslator:
                 builder.construct_enum_variant(stmt.result.type_id, stmt.variant.discriminant, stmt.variant.payload_type, fields, stmt.result.name)
             case IR.SysWrite():
                 builder.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
+            case IR.MemCopy():
+                builder.mem_copy(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.src), self.__resolve(builder, stmt.count))
             case IR.SysRead():
                 builder.sys_read(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf), stmt.result.name)
             case IR.Open():

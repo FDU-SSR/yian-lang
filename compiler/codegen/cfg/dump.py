@@ -37,9 +37,16 @@ def dump(func: IR.Function) -> str:
 # pylint: disable=too-many-return-statements
 def __dump_stmt(stmt: IR.Stmt) -> str:
     match stmt:
-        case IR.VarPtr(result=result, var_ref=var_ref):
+        case IR.VarPtr(result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f, raw=raw):
+            if e_f is None:
+                frame = "⟨-, -⟩"
+            else:
+                assert k_f is not None
+                frame = f"⟨{__dump_value(e_f)}, {__dump_value(k_f)}⟩"
+            raw_tag = " [raw]" if raw else ""
             return (
                 f"%{result.name} = varptr {var_ref.name}"
+                f" {frame}{raw_tag}"
                 f"  [{__type_str(var_ref.type_id)}]"
             )
 
@@ -66,10 +73,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f" {__dump_value(value)}"
             )
 
-        case IR.Malloc(result=result, type_id=type_id, size=size):
+        case IR.Malloc(result=result, type_id=type_id, size=size, key=key):
+            key_str = f" key={__dump_value(key)}" if key is not None else " key=undef"
             return (
                 f"%{result.name} = malloc"
-                f" {__type_str(type_id)}, {__dump_value(size)}"
+                f" {__type_str(type_id)}, {__dump_value(size)}{key_str}"
             )
 
         case IR.FuncPtr(result=result, func_type_id=func_type_id):
@@ -111,6 +119,56 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Delete(ptr=ptr):
             return f"delete {__dump_value(ptr)}"
 
+        case IR.GenKey(result=result, is_heap=is_heap):
+            kind = "heap" if is_heap else "stack"
+            return f"%{result.name} = gen_key {kind}  [{__type_str(result.type_id)}]"
+
+        case IR.AcquireFrameLock(result=result, key=key):
+            return f"%{result.name} = acquire_frame_lock {__dump_value(key)}"
+
+        case IR.WriteLockSlot(lock_ptr=lock_ptr, value=value):
+            return f"write_lock_slot {__dump_value(lock_ptr)}, {__dump_value(value)}"
+
+        case IR.CheckSafeAccess(ptr=ptr):
+            return f"check_safe_access {__dump_value(ptr)}  (live ∧ in_bounds, 规则 3.2.1-3.2.2)"
+
+        case IR.CheckInBounds(ptr=ptr):
+            return f"check_in_bounds {__dump_value(ptr)}  (规则 3.5.2)"
+
+        case IR.CheckSliceNonEmpty(ptr=ptr):
+            return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
+
+        case IR.CheckRefAccess(ptr=ptr):
+            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
+
+        case IR.CheckElementArith(base=base, offset=offset):
+            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
+
+        case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
+            return (
+                f"check_element_access {__dump_value(base)}, {__dump_value(offset)}"
+                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, 检查合并)"
+            )
+
+        case IR.CheckRawBounds(index=index, length=length):
+            return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
+
+        case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
+            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.3.3)"
+
+        case IR.CheckPtrCmp(lhs=lhs, rhs=rhs):
+            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.4.1)"
+
+        case IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = ptrcmp {__op_str(op)}"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.CheckDelete(ptr=ptr):
+            return f"check_delete {__dump_value(ptr)}  (is_heap ∧ live ∧ is_raw, 规则 3.6.2)"
+
         case IR.Call(result=result, callee_type=callee_type, args=args):
             arg_str = ", ".join(__dump_value(a) for a in args)
             return (
@@ -126,10 +184,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.Cast(result=result, value=value, to_type=to_type):
+        case IR.Cast(result=result, value=value, to_type=to_type, raw=raw):
+            raw_tag = " [raw]" if raw else ""
             return (
                 f"%{result.name} = cast {__dump_value(value)}"
-                f" to {__type_str(to_type)}"
+                f" to {__type_str(to_type)}{raw_tag}"
                 f"  [{__type_str(result.type_id)}]"
             )
 
@@ -174,6 +233,13 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             buf=buf,
         ):
             return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
+
+        case IR.MemCopy(
+            dest=dest,
+            src=src,
+            count=count,
+        ):
+            return f"mem_copy {__dump_value(dest)}, {__dump_value(src)}, {__dump_value(count)}"
 
         case IR.SysRead(
             result=result,
@@ -234,7 +300,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.Panic(message=message):
             return f"panic {__dump_value(message)}"
-
 
 
 def __dump_match_arm(arm: IR.MatchArm) -> str:

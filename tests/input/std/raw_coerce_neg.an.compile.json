@@ -1,0 +1,7 @@
+[
+  {
+    "name": "raw",
+    "compiler_args": ["--raw-pointers"],
+    "expect_error_substring": "from_raw_parts"
+  }
+]

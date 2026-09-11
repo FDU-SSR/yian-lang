@@ -1,0 +1,17 @@
+// Fat-pointer cross-object difference negative test (胖指针表示, 规则 3.3.3)
+//
+// CheckPtrDiff 前提:data 相等 + 良构 + 无回绕。
+// a、b 是两个独立 dyn 分配 → data 不等 → 前提失败 → llvm.trap → Exit code -4。
+
+fn main() {
+    let a: i32* = dyn[2] i32;
+    a[0] = 1;
+    a[1] = 2;
+
+    let b: i32* = dyn[2] i32;
+    b[0] = 3;
+    b[1] = 4;
+
+    let d: i64 = b - a;  // 异对象指针差 → data 不等 → CheckPtrDiff 失败 → trap
+    assert d == 0: "unreachable"
+}

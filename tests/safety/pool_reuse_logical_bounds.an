@@ -1,0 +1,10 @@
+// Physical capacity may exceed a reused allocation's requested size, but the
+// new pointer's logical size remains the request and still governs access.
+
+fn main() {
+    let large = dyn[4] i32;
+    del large;
+
+    let small = dyn[2] i32;
+    small[2] = 99;
+}

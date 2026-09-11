@@ -1,0 +1,12 @@
+// del-view 负例(b):栈 T& → trap。`let r: i32& = &x`(x 为栈变量)产生栈键
+// (定义 9:键最高位 msb 0 = 栈):CheckDelete 的 is_heap(p) 分量失败
+// → llvm.trap → SIGILL → Exit code -4。data 分量虽为 lock_ptr+8(栈帧锁
+// 也满足 data==lock_ptr+8),但堆前提先行否决——栈对象不可 del。
+//
+// Expected exit code: -4
+
+fn main() {
+    let x: i32 = 5;
+    let r: i32& = &x;
+    del r;
+}

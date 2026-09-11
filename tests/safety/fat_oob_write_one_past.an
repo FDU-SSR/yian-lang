@@ -1,0 +1,16 @@
+// Fat-pointer one-past-end WRITE negative test (胖指针表示, 规则 3.2.2)
+//
+// 与 fat_oob_read_one_past.an 同构造,方向为写:*end = 99 触发
+// safe_access(p,1) = live(p) ∧ in_bounds(p,1),one-past-end 的
+// index + 1 > size → 失败 → trap。期望 Exit code -4。
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let end: i32* = p + 4;   // one-past-end: index == size,算术良构
+    *end = 99;               // one-past-end 写 → in_bounds(p,1) 失败 → trap
+}

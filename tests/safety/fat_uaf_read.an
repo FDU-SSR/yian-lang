@@ -1,0 +1,11 @@
+// Fat-pointer UAF negative test — read direction (对照 fat_uaf.an 的写方向)
+//
+// del p 写块头锁槽 SENTINEL(规则 3.6.2 动作①);随后读 *p 经 live 锁槽键比较
+// 失败 → llvm.trap → SIGILL → Exit code -4(LLVM 层 运行期 trap 语义)。
+
+fn main() {
+    let p: i32* = dyn[2] i32;
+    p[0] = 1;
+    del p;
+    let v: i32 = p[0]  // UAF read: lock slot = SENTINEL → live 失败 → trap
+}

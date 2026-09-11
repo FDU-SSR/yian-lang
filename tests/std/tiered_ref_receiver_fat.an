@@ -1,0 +1,85 @@
+// T& receiver method-body coverage — match self payload + scalar forms.
+//
+// A method body whose receiver is a live `T&`
+// reference must still support:
+//   - `match self` with payload binding that asserts the bound *value*
+//     (guards against payload-offset misreads silently picking the wrong
+//     field — must assert == 42, not just exit 0),
+//   - `self.field` reads/writes reaching the backing value,
+//   - `*self` deref,
+//   - a `&self.field` derived pointer,
+//   - chained method calls through the T& receiver (auto-deref).
+//
+// Array access through T& receivers (Index trait / ptr() / as_slice()) lives
+// in the sibling tiered_ref_array_receiver.an. The array forms remain in a
+// separate file because they target the fat/nocheck states.
+//
+// Pure asserts, no stdout (success test, no .ans).
+//
+// Expected output: 0
+
+from std.core.option import Option;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    pub fn read_x() -> i32 {
+        return self.x;
+    }
+
+    pub fn set_y(v: i32) {
+        self.y = v;
+    }
+
+    pub fn deref_sum() -> i32 {
+        return (*self).x + (*self).y;
+    }
+
+    pub fn x_addr() -> i32* {
+        return &self.x;
+    }
+
+    pub fn chain() -> i32 {
+        return self.read_x() + self.read_x();
+    }
+}
+
+impl Option<i32> {
+    // match self + payload binding asserted by *value*.
+    pub fn payload_is_42() -> bool {
+        match self {
+            Some(x) => *x == 42,
+            None => false,
+        }
+    }
+
+    // match self returning the payload value (asserted by the caller).
+    pub fn payload_val() -> i32 {
+        match self {
+            Some(x) => *x,
+            None => -1,
+        }
+    }
+}
+
+fn main() {
+    // --- match self payload binding asserts the value ---
+    let o: Option<i32> = Option<i32>.Some(42);
+    let or: Option<i32>& = &o;
+    assert or.payload_is_42(): "match self Some(x) => *x == 42";
+    assert or.payload_val() == 42: "match self returns the bound payload value";
+
+    // --- self.field read/write, *self deref, &self.field, chained calls ---
+    let pt = Point(1, 2);
+    let pr: Point& = &pt;
+    assert pr.read_x() == 1: "self.field read through T&";
+    pr.set_y(7);
+    assert pt.y == 7: "self.field write reaches backing";
+    assert pr.deref_sum() == 8: "*self deref through T&";
+    let xp: i32* = pr.x_addr();
+    assert *xp == 1: "&self.field derived pointer";
+    assert pr.chain() == 2: "chained self.method() through T&";
+}

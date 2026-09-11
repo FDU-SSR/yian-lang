@@ -1,0 +1,35 @@
+// Fat pointer: array of fat pointers (each element is a 40-byte fat pointer).
+//
+// Expected output: 0
+
+fn main() {
+    // Static checks: fat pointer is 5 × 8 = 40 bytes.
+    assert sizeof(i32*) == 40: "sizeof(i32*) == 40"
+    assert sizeof(i32*[3]) == sizeof(i32*) * 3: "ptr-array size"
+
+    // Stack array of Option pointers; each element points to a heap-allocated
+    // scalar (None 表示空槽,NULL 已移除)。
+    let arr: Option<i32*>[4] = [
+        Option<i32*>.None, Option<i32*>.None, Option<i32*>.None, Option<i32*>.None]
+    arr[0] = Option<i32*>.Some(dyn i32(1))
+    arr[1] = Option<i32*>.Some(dyn i32(2))
+    arr[2] = Option<i32*>.Some(dyn i32(3))
+    arr[3] = Option<i32*>.Some(dyn i32(4))
+
+    let e0: i32* = arr[0].unwrap()[0]
+    assert e0[0] == 1: "arr[0][0] == 1"
+    let e3: i32* = arr[3].unwrap()[0]
+    assert e3[0] == 4: "arr[3][0] == 4"
+
+    // Write through an element pointer, visible via the array.
+    let e1: i32* = arr[1].unwrap()[0]
+    e1[0] = 22
+    assert arr[1].unwrap()[0][0] == 22: "arr[1][0] == 22 after write"
+
+    // Heap array of pointers (i32**).
+    let h: i32** = dyn[2] i32*
+    h[0] = dyn i32(7)
+    h[1] = dyn i32(8)
+    assert h[0][0] == 7: "h[0][0] == 7"
+    assert h[1][0] == 8: "h[1][0] == 8"
+}

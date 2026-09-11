@@ -1,0 +1,27 @@
+// del-view 正例(c,std):from_raw_parts 整块视图 del 放行。`from_raw_parts(p, n)`
+// (p 为 dyn 堆指针)构造 data = lock_ptr+8 的 T[] 整块视图:CheckDelete 四前提
+// is_heap(p) ∧ live(p) ∧ is_raw(p)(SliceType 无 index 分量,仅查
+// data==lock_ptr+8)全部满足 → del s 整块交还。三态(fat/raw/nocheck,
+// scripts/run_raw_tests.py RAW_TESTS)均须 exit 0;raw 态 del 无检查直接 free。
+// del 后重分配验证堆稳定。
+//
+// Expected output: 0
+
+from std.core.slice import from_raw_parts;
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    p[0] = 1;
+    p[3] = 4;
+    let s: i32[] = from_raw_parts(p, 4);
+    assert s.len() == 4: "from_raw_parts preserves the element count";
+    assert s[0] + s[3] == 5: "reads through the parts view";
+    del s;
+
+    // del 后重分配:新块独立可用
+    let q: i32* = dyn[2] i32;
+    q[0] = 9;
+    q[1] = 8;
+    assert q[0] + q[1] == 17: "heap stable after del parts slice";
+    del q;
+}

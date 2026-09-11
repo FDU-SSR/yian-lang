@@ -1,0 +1,4 @@
+[
+  {"name": "raw", "compiler_args": ["--raw-pointers"]},
+  {"name": "nocheck", "compiler_args": ["--no-fat-checks"]}
+]

@@ -166,6 +166,12 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_open(expr, guides, is_last, type_ctx)
         case HIR.Close():
             return __export_close(expr, guides, is_last, type_ctx)
+        case HIR.MemCopy():
+            res = __line(guides, is_last, f"MemCopy: span={__format_span(expr.span)}")
+            res += __export_expr_child("Dest", expr.dest, guides, is_last, False, type_ctx)
+            res += __export_expr_child("Src", expr.src, guides, is_last, False, type_ctx)
+            res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
+            return res
         case HIR.Closure():
             res = __line(guides, is_last, f"Closure: type={__format_type(type_ctx, expr.type_id)} captures={list(expr.captures.keys())} span={__format_span(expr.span)}")
             return res

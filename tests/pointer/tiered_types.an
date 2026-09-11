@@ -1,0 +1,21 @@
+// Tiered-pointer type system (基础路径): the T& reference type, the coerce chain
+// T*→T[]→T& (triggered by explicit annotations). `&x` still produces T*;
+// the downgrades are type-layer operations (value shaping lands in 表示层).
+// (NULL 三档兼容节已删除:NULL 字面量与 NullPtrType 已随迁移移除)
+//
+// Expected output: 0
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+
+    // T* → T[]: the index folds into the data address and the size becomes
+    // the number of elements remaining from that address.
+    let s: i32[] = p;
+    assert s.len() == 1: "T*→T[] preserves the element count"
+    assert s[0] == 42: "T*→T[] reads through the view"
+
+    // T* → T& and T[] → T&: single-element references.
+    let r: i32& = p;
+    let r2: i32& = s;
+}

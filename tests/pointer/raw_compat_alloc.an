@@ -1,0 +1,28 @@
+// raw_compat_alloc.an — 裸指针兼容:堆分配 + 数组遍历 + 求和断言
+//
+// 语义正确的裸指针程序:dyn 堆分配 i32 数组,循环写入、遍历求和,
+// 断言和 == sum(1..16) = 136,最后 del 释放。
+// 在 fat 模式(检查开)与 raw 模式(--raw-pointers,无检查)下都必须 exit 0:
+// 该用例不依赖任何 trap,胖表示不应误伤其正确性。
+//
+// Expected output: 0
+
+fn main() {
+    let n: u64 = 16;
+    let arr: i32* = dyn[n] i32;
+    let i: u64 = 0;
+    while i < n {
+        arr[i] = i32(i) + 1;
+        i += 1;
+    }
+
+    let s: i32 = 0;
+    let j: u64 = 0;
+    while j < n {
+        s += arr[j];
+        j += 1;
+    }
+    assert s == 136: "sum(1..16) == 136";
+
+    del arr;
+}

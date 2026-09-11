@@ -1,0 +1,14 @@
+// A T* -> T[] degradation forms the suffix beginning at the pointer's
+// current element.  The folded index must be subtracted from the capacity.
+//
+// Expected output: 0
+
+fn main() {
+    let data = [10i32, 20, 30, 40];
+    let base: i32* = data;
+    let suffix: i32[] = base + 2;
+
+    assert suffix.len() == 2: "slice length is the remaining capacity";
+    assert suffix[0] == 30: "slice starts at the effective pointer address";
+    assert suffix[1] == 40: "slice ends at the original allocation boundary";
+}

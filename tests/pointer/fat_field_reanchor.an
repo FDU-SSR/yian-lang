@@ -1,0 +1,33 @@
+// Fat pointer: field address-taking re-anchors to a single-element pointer.
+//
+// Expected output: 0
+
+struct S {
+    field: i32,
+    tag: bool,
+}
+
+fn main() {
+    let s: S = S(7, true);
+
+    // Take the address of a field: re-anchored pointer to a single element.
+    let pf: i32* = &s.field;
+    assert *pf == 7: "Expected *pf to be 7";
+
+    // Write through the field pointer is visible on the struct.
+    // Dereference write-back: `*(pf) = 8;` stores through the re-anchored
+    // field pointer (equivalent to `pf[0] = 8;`).
+    *(pf) = 8;
+    assert s.field == 8: "Expected s.field to be 8 after write via pf";
+
+    // Field pointer participates in pointer arithmetic; +0 round-trips.
+    let pf2: i32* = pf + 0;
+    assert *pf2 == 8: "Expected *pf2 to be 8 after pf + 0";
+
+    pf2 += 0;
+    assert *pf2 == 8: "Expected *pf2 to be 8 after pf2 += 0";
+
+    // Second field's address also works.
+    let pb: bool* = &s.tag;
+    assert *pb == true: "Expected *pb to be true";
+}

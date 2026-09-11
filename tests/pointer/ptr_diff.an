@@ -1,0 +1,19 @@
+// Test pointer subtraction: ptr - ptr → i64 element offset
+// (定型规则 8.1.9;LLVM 层 值层 PtrDiff 结果 i64,sdiv 计算)
+//
+// Expected output: 0
+
+fn main() {
+    let arr: i32* = dyn[5] i32;
+    arr[0] = 1;
+    arr[1] = 2;
+
+    let p: i32* = arr;
+    let q: i32* = p + 2;
+
+    let diff: i64 = q - p;
+    assert diff == 2: "Expected diff to be 2";
+
+    let back: i64 = p - q;
+    assert back == -2: "Expected back to be -2";
+}

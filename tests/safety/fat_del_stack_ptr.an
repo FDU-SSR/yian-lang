@@ -1,0 +1,10 @@
+// Fat-pointer delete of a stack pointer — negative test
+//
+// delete 前提 is_heap(p)(定义 9:键最高位 msb 0 = 栈)拒绝栈指针,
+// 规则 3.6.2 前提不满足 → llvm.trap → SIGILL → Exit code -4。
+
+fn main() {
+    let x: i32 = 5;
+    let p: i32* = &x;
+    del p  // is_heap 拒: 栈键最高位 0 → trap
+}

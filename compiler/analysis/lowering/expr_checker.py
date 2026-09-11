@@ -359,6 +359,20 @@ class ExprChecker:
                     is_place=False,
                 )
 
+        # Tiered-pointer degradation (docs/security.md §tiered-pointers):
+        # explicit annotation downgrades along T* → T[] → T&. The value-level
+        # representation (dropping index/size fields) is codegen's job — here we
+        # relabel via BitCast and let codegen re-shape the value.
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
+            # Raw pointer mode: a bare `T*` carries no length, so downgrading it
+            # to `T[]` would fabricate a size out of thin air. Reject it and ask
+            # the user to materialize the slice explicitly.
+            if self.__ctx.type_ctx.raw_pointers:
+                raise AnalysisError(
+                    f"cannot coerce '{self.__ctx.type_ctx.get_name(expr.type_id)}' to '{self.__ctx.type_ctx.get_name(expected)}' in raw pointer mode; use from_raw_parts(ptr, len) instead",
+                    expr.span,
+                )
+            return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
                 and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
             return HIR.BitCast(
@@ -660,8 +674,11 @@ class ExprChecker:
 
         target_expr = self.value(stmt.target)
         target_type = self.__ctx.type_ctx[target_expr.type_id]
-        if not isinstance(target_type, (Type.PointerType, Type.RefType)):
-            raise AnalysisError("delete target must be a pointer or reference expression", stmt.target.span)
+        if not isinstance(target_type, (Type.PointerType, Type.SliceType, Type.RefType)):
+            # del-view: T*/T[]/T& 均可作 del 目标(释放动作三族通用,is_raw
+            # data 分量运行期拦截偏移释放);其余类型仍拒绝——含 StrType(不可达
+            # 防御:str 始终为值类型,不会以指针形态出现)
+            raise AnalysisError("delete target must be a pointer, slice, or reference expression", stmt.target.span)
         return HIR.Delete(span=stmt.span, target=target_expr, type_id=TypeCtx.void_id, is_place=False)
 
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int) -> int:

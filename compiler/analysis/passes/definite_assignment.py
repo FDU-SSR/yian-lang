@@ -334,6 +334,12 @@ class DefiniteAssignment:
             state = self.__check_expr(expr.buf, state)
             return state
 
+        if isinstance(expr, HIR.MemCopy):
+            state = self.__check_expr(expr.dest, state)
+            state = self.__check_expr(expr.src, state)
+            state = self.__check_expr(expr.count, state)
+            return state
+
         if isinstance(expr, HIR.Delete):
             return self.__check_expr(expr.target, state)
 
@@ -654,6 +660,12 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.SysWrite):
             state = self.__walk_neutral(expr.fd, state)
             state = self.__walk_neutral(expr.buf, state)
+            return state
+
+        if isinstance(expr, HIR.MemCopy):
+            state = self.__walk_neutral(expr.dest, state)
+            state = self.__walk_neutral(expr.src, state)
+            state = self.__walk_neutral(expr.count, state)
             return state
 
         if isinstance(expr, HIR.Delete):

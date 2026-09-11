@@ -1,0 +1,19 @@
+// Frame re-key positive side: each frame entry generates a fresh key for the
+// frame lock slot (re-key 协议). A pointer to a local taken INSIDE the frame
+// carries the current frame's key, so using it within the same frame is valid.
+// Repeated invocations of the frame must not corrupt the live-frame pointer.
+//
+// Expected output: 0
+
+fn inner() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+    assert *p == 42: "frame-local pointer deref OK";
+    assert p == &x: "p == &x";
+}
+
+fn main() {
+    inner();
+    inner();
+    inner();
+}

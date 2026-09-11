@@ -120,6 +120,26 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Package map JSON file (enables package-mode import resolution).",
     )
+    parser.add_argument(
+        "--no-fat-checks",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip emission of CFG-level fat-pointer access checks (CheckSafeAccess/"
+            "CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/CheckDelete) while "
+            "keeping the 40-byte fat-pointer representation, lock slots and frame locks. "
+            "Diagnostic mode only; disabling checks removes the memory-safety guarantee."
+        ),
+    )
+    parser.add_argument(
+        "--raw-pointers",
+        action="store_true",
+        default=False,
+        help=(
+            "Use bare 8-byte pointers (no checks, no lock slots, no frame locks) across "
+            "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -180,9 +200,14 @@ def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
     sys.exit(-1)
 
 
-def __cfg(def_points: dict[int, DefPoint], type_ctx: TypeCtx) -> dict[int, CFG_IR.Function]:
+def __cfg(
+    def_points: dict[int, DefPoint],
+    type_ctx: TypeCtx,
+    no_fat_checks: bool = False,
+    raw_pointers: bool = False,
+) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
-    translator = CfgTranslator(type_ctx)
+    translator = CfgTranslator(type_ctx, no_fat_checks=no_fat_checks, raw_pointers=raw_pointers)
     try:
         translator.run(def_points)
     except CodegenError as error:
@@ -204,10 +229,10 @@ def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
     return names
 
 
-def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str]) -> Callable[[int], int]:
+def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool) -> Callable[[int], int]:
     module = ir.Module(name="yian.comptime.layout")
     module.triple = "x86_64-unknown-linux-gnu"
-    ll_type_ctx = LLTypeCtx(type_ctx, module, unit_names)
+    ll_type_ctx = LLTypeCtx(type_ctx, module, unit_names, raw_pointers)
     return ll_type_ctx.get_type_size
 
 
@@ -215,9 +240,10 @@ def __llvm_codegen(
     cfg_functions: dict[int, CFG_IR.Function],
     type_ctx: TypeCtx,
     unit_names: dict[int, str],
+    raw_pointers: bool = False,
 ) -> LLModule:
     """CFG IR → LLVM IR pass. Lowers CFG Functions into an LLVM Module."""
-    translator = LLTranslator(type_ctx, unit_names)
+    translator = LLTranslator(type_ctx, unit_names, raw_pointers=raw_pointers)
     try:
         translator.run(cfg_functions)
     except CodegenError as error:
@@ -355,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         timings["restricted_ops"] = time.perf_counter() - restricted_start
 
     unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
-    type_ctx = TypeCtx()
+    type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
 
     pkg_roots: dict[str, Path] = {}
     if args.packages:
@@ -391,9 +417,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- Compile-time conditional specialization ---
     unit_names = __build_unit_names(unit_datas)
-    type_size = __type_size_provider(type_ctx, unit_names)
+    type_size = __type_size_provider(type_ctx, unit_names, args.raw_pointers)
     try:
-        ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=True, type_size=type_size).run()
+        ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=args.raw_pointers, type_size=type_size).run()
     except AnalysisError as error:
         __print_source_error(error.span, error)
 
@@ -419,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(def_points, type_ctx)
+    cfg_functions = __cfg(def_points, type_ctx, no_fat_checks=args.no_fat_checks, raw_pointers=args.raw_pointers)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.dump:
         (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
@@ -433,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # CFG → LLVM IR pass
         llvm_start = time.perf_counter() if args.profile else 0.0
-        llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names)
+        llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names, raw_pointers=args.raw_pointers)
         if args.profile:
             timings["llvm_codegen"] = time.perf_counter() - llvm_start
 

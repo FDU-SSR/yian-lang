@@ -94,7 +94,9 @@ class TypeCtx:
     Option_id: int = 101
     Result_id: int = 102
 
-    def __init__(self):
+    def __init__(self, raw_pointers: bool = False):
+        self.__raw_pointers = raw_pointers
+
         self.__space = TypeSpace(self)
         self.__formatter = TypeFormatter(self)
 
@@ -120,6 +122,11 @@ class TypeCtx:
         self.__memoize_enabled = False
         self.__method_lookup_cache: dict[tuple[object, ...], LookupResult | None | _AmbiguousMethod] = {}
         self.__deref_chain_cache: dict[int, tuple[int, ...]] = {}
+
+    @property
+    def raw_pointers(self) -> bool:
+        """True when --raw-pointers mode is active (bare 8B pointers, no fat-pointer checks)."""
+        return self.__raw_pointers
 
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]

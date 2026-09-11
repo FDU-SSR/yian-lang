@@ -58,7 +58,7 @@ impl Hasher for Murmur3Hasher {
 
         if self.tail_len > 0 {
             let k: u64 = 0;
-            memcpy(bitcast<u8*>(&k), &self.tail[0], self.tail_len);
+            __memcpy(&k, &self.tail[0], self.tail_len);
             state ^= k * C1;
         }
 
@@ -94,7 +94,7 @@ impl Hasher for Murmur3Hasher {
             if self.tail_len == 8 {
                 let k: u64;
                 assume_init(k);
-                memcpy(bitcast<u8*>(&k), &self.tail[0], 8);
+                __memcpy(&k, &self.tail[0], 8);
                 self.mix(k);
                 self.tail_len = 0;
             }
@@ -108,7 +108,7 @@ impl Hasher for Murmur3Hasher {
             for i in 0..full_blocks {
                 let k: u64;
                 assume_init(k);
-                memcpy(bitcast<u8*>(&k), block_ptr, 8);
+                __memcpy(&k, block_ptr, 8);
                 self.mix(k);
                 block_ptr += 8;
             }

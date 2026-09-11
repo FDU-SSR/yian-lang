@@ -1,0 +1,17 @@
+// Tiered-pointer 分级指针 (T& live-only check): a dangling T& traps at runtime.
+//
+// The T& is derived from a slice element (s[0], i.e. T[]→T*→T&). The slice
+// view inherits the real heap lock of the `dyn` backing block; after `del p`
+// the block-header lock slot is SENTINEL (规则 3.6.2 动作①). Deref of the
+// stale reference fails live (slot ≠ key) → llvm.trap → SIGILL → Exit code -4.
+//
+// Expected exit code: -4
+
+fn main() {
+    let p: i32* = dyn[3] i32;
+    p[0] = 1;
+    let s: i32[] = p[0u64..3];  // slice view, 真锁继承
+    let r: i32& = s.ptr();      // slice element → T* → T&
+    del p;                      // backing freed → lock slot SENTINEL
+    *r = 99                     // dangling ref → live 失败 → trap
+}
