@@ -175,6 +175,9 @@ class ClosureLowering:
                 expr.args = [self.__rewrite_type_ids(a) for a in expr.args]
             case HIR.FieldAccess():
                 expr.receiver = self.__rewrite_type_ids(expr.receiver)
+            case HIR.ArrayAccess():
+                expr.array = self.__rewrite_type_ids(expr.array)
+                expr.index = self.__rewrite_type_ids(expr.index)
             case HIR.SliceAccess():
                 expr.slice = self.__rewrite_type_ids(expr.slice)
                 expr.index = self.__rewrite_type_ids(expr.index)
@@ -347,6 +350,12 @@ class ClosureLowering:
                 expr.args = [self.__rewrite_one_capture(a) for a in expr.args]
             case HIR.FieldAccess():
                 expr.receiver = self.__rewrite_one_capture(expr.receiver)
+            case HIR.ArrayAccess():
+                expr.array = self.__rewrite_one_capture(expr.array)
+                expr.index = self.__rewrite_one_capture(expr.index)
+            case HIR.SliceAccess():
+                expr.slice = self.__rewrite_one_capture(expr.slice)
+                expr.index = self.__rewrite_one_capture(expr.index)
             case HIR.Tuple():
                 expr.field_values = [self.__rewrite_one_capture(f) for f in expr.field_values]
             case HIR.Array():

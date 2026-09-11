@@ -17,6 +17,12 @@ class Scope:
         """Clones the scope, creating a new instance with the same symbols and parent."""
         return Scope(symbols=self.symbols.copy(), parent=self.parent.clone() if self.parent else None)
 
+    def clone_shared(self) -> Scope:
+        """Clone the scope chain while sharing each symbols dictionary."""
+        self.shared = True
+        parent = self.parent.clone_shared() if self.parent else None
+        return Scope(symbols=self.symbols, parent=parent, shared=True)
+
 
 class SymbolCtx:
     def __init__(self):
@@ -26,8 +32,7 @@ class SymbolCtx:
 
         self.__exportable_symbols: dict[str, int] = {}  # name -> symbol_id
 
-        # Copy-on-write sharing: a clone shares the symbol dictionaries and
-        # scope chain with its source; the first mutation detaches it.
+        # Clones share these dictionaries until the first write.
         self.__all_shared = False
         self.__exportable_shared = False
 
@@ -61,19 +66,19 @@ class SymbolCtx:
         return symbol_id
 
     def __ensure_all_owned(self) -> None:
-        """Detach from a shared symbol table before mutating it."""
+        """Detach the shared symbol table before mutating it."""
         if self.__all_shared:
             self.__all_symbols = self.__all_symbols.copy()
             self.__all_shared = False
 
     def __ensure_exportable_owned(self) -> None:
-        """Detach from a shared exportable-symbol table before mutating it."""
+        """Detach the shared export table before mutating it."""
         if self.__exportable_shared:
             self.__exportable_symbols = self.__exportable_symbols.copy()
             self.__exportable_shared = False
 
     def __ensure_scope_owned(self) -> None:
-        """Detach the current scope's symbol dict before mutating it."""
+        """Detach the current scope's symbol dictionary before mutating it."""
         if self.__current_scope.shared:
             self.__current_scope.symbols = self.__current_scope.symbols.copy()
             self.__current_scope.shared = False
@@ -99,7 +104,6 @@ class SymbolCtx:
 
         self.__ensure_all_owned()
         self.__ensure_scope_owned()
-
         symbol_id = self.__next_symbol_id()
         self.__current_scope.symbols[name] = symbol_id
         symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=attributes)
@@ -151,20 +155,14 @@ class SymbolCtx:
         return None
 
     def clone(self) -> SymbolCtx:
-        """Clones the symbol context, creating a new instance with the same symbols and scope structure.
-
-        Copy-on-write: the clone shares the symbol tables and the current
-        scope's symbol dict with the source; both sides detach on first
-        mutation, preserving full isolation between the two contexts.
-        """
+        """Clone the context using copy-on-write symbol dictionaries."""
         new_ctx = SymbolCtx()
         new_ctx.__all_symbols = self.__all_symbols
         new_ctx.__next_id_holder = self.__next_id_holder
-        new_ctx.__current_scope = Scope(symbols=self.__current_scope.symbols, parent=self.__current_scope.parent, shared=True)
+        new_ctx.__current_scope = self.__current_scope.clone_shared()
         new_ctx.__exportable_symbols = self.__exportable_symbols
         new_ctx.__all_shared = True
         new_ctx.__exportable_shared = True
         self.__all_shared = True
         self.__exportable_shared = True
-        self.__current_scope.shared = True
         return new_ctx
