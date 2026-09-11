@@ -15,10 +15,8 @@ fn decode_variable_length(char* buf, i32* bytes_consumed) -> i32 {
         }
     }
     
-    if bytes_consumed.is_valid() {
-        _vv8 = offset + 1;
-        *(bytes_consumed) = _vv8;
-    }
+    _vv8 = offset + 1;
+    *(bytes_consumed) = _vv8;
     return value;
 }
 fn main() {

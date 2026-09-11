@@ -23,6 +23,8 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from dataclasses import field
+import json
 from pathlib import Path
 from typing import TextIO
 
@@ -47,6 +49,16 @@ MULTI_FILE_DIRS: set[str] = set()
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
+
+@dataclass
+class CompileVariant:
+    """A compiler-mode variant attached to an existing YIAN test."""
+
+    name: str
+    compiler_args: list[str]
+    expected_substring: str | None = None
+    expected_exit_code: int | None = None
+
 
 @dataclass
 class TestCase:
@@ -75,6 +87,12 @@ class TestCase:
 
     stdin: str = ""
     """Content to pipe to the executable's stdin."""
+
+    compiler_args: list[str] = field(default_factory=list)
+    """Additional compiler arguments for this test or one of its variants."""
+
+    compile_variants: list[CompileVariant] = field(default_factory=list)
+    """Existing compiler-mode variants for this test."""
 
 
 @dataclass
@@ -207,6 +225,91 @@ def _find_input(test_rel: str) -> tuple[list[str] | None, str]:
     return cli_args, stdin
 
 
+def _find_compile_config(test_rel: str) -> Path | None:
+    """Find the optional compiler-variant metadata for a test."""
+    path = INPUT_DIR / (test_rel + ".compile.json")
+    return path if path.exists() else None
+
+
+def _parse_compile_variants(file_path: Path) -> list[CompileVariant]:
+    """Parse strict compiler-variant metadata from *file_path*."""
+    raw = json.loads(file_path.read_text())
+    if not isinstance(raw, list):
+        raise ValueError(f"{file_path}: top level must be an array")
+
+    variants: list[CompileVariant] = []
+    names: set[str] = set()
+    allowed = {
+        "name",
+        "compiler_args",
+        "expect_error_substring",
+        "expected_exit_code",
+    }
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"{file_path}: variant {index} must be an object")
+        unknown = set(item) - allowed
+        if unknown:
+            names_text = ", ".join(sorted(str(name) for name in unknown))
+            raise ValueError(f"{file_path}: variant {index} has unknown fields: {names_text}")
+
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{file_path}: variant {index} name must be a non-empty string")
+        if name in names:
+            raise ValueError(f"{file_path}: duplicate variant name: {name}")
+        names.add(name)
+
+        compiler_args = item.get("compiler_args")
+        if not isinstance(compiler_args, list) or not all(
+            isinstance(arg, str) for arg in compiler_args
+        ):
+            raise ValueError(
+                f"{file_path}: variant {name} compiler_args must be a string array"
+            )
+
+        expected_substring = item.get("expect_error_substring")
+        if expected_substring is not None and (
+            not isinstance(expected_substring, str) or not expected_substring
+        ):
+            raise ValueError(
+                f"{file_path}: variant {name} expect_error_substring must be a non-empty string"
+            )
+
+        expected_exit_code = item.get("expected_exit_code")
+        if expected_exit_code is not None and (
+            isinstance(expected_exit_code, bool) or not isinstance(expected_exit_code, int)
+        ):
+            raise ValueError(
+                f"{file_path}: variant {name} expected_exit_code must be an integer"
+            )
+        if expected_substring is not None and expected_exit_code is not None:
+            raise ValueError(
+                f"{file_path}: variant {name} cannot set both compile-error and runtime expectations"
+            )
+
+        variants.append(
+            CompileVariant(
+                name=name,
+                compiler_args=list(compiler_args),
+                expected_substring=expected_substring,
+                expected_exit_code=expected_exit_code,
+            )
+        )
+    return variants
+
+
+def _find_orphaned_compile_configs() -> list[str]:
+    """Return compiler metadata files without a corresponding YIAN source."""
+    orphaned: list[str] = []
+    for config in sorted(INPUT_DIR.rglob("*.compile.json")):
+        rel = config.relative_to(INPUT_DIR)
+        source_rel = str(rel)[: -len(".compile.json")]
+        if not (TESTS_DIR / source_rel).exists():
+            orphaned.append(str(config))
+    return orphaned
+
+
 def discover_tests() -> list[TestCase]:
     """Walk tests/ for .an files and build a TestCase for each.
 
@@ -224,14 +327,6 @@ def discover_tests() -> list[TestCase]:
 
         # Exclude tests/output/ and tests/input/.
         if rel.parts[0] in ("output", "input"):
-            continue
-
-        # Fat-pointer tests have their own runner (scripts/run_fat_tests.py).
-        if rel.parts[0] == "fat":
-            continue
-
-        # Fat-pointer CVE regressions have their own runner (scripts/run_fat_cve.py).
-        if rel.parts[0] == "fat_cve":
             continue
 
         src_rel = str(rel)
@@ -270,6 +365,10 @@ def discover_tests() -> list[TestCase]:
             expected_substr = ""
 
         cli_args, stdin = _find_input(name)
+        config_path = _find_compile_config(name)
+        compile_variants = (
+            _parse_compile_variants(config_path) if config_path is not None else []
+        )
 
         tests.append(TestCase(
             name=name,
@@ -280,6 +379,7 @@ def discover_tests() -> list[TestCase]:
             expected_output=expected_output,
             cli_args=cli_args,
             stdin=stdin,
+            compile_variants=compile_variants,
         ))
 
     # Report orphaned .ans files (no matching source).
@@ -304,6 +404,13 @@ def discover_tests() -> list[TestCase]:
             print(f"   {m}")
         print()
 
+    orphaned_configs = _find_orphaned_compile_configs()
+    if orphaned_configs:
+        print("⚠  Orphaned compiler variant files (no matching source):")
+        for config in orphaned_configs:
+            print(f"   {config}")
+        print()
+
     return tests
 
 
@@ -311,21 +418,18 @@ def discover_tests() -> list[TestCase]:
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test(test: TestCase, dump: bool = False, run: bool = False, extra_args: list[str] = []) -> TestResult:
+def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResult:
     """Compile *test* and return the result.
 
     If *run* is True and the test is not an error test: compile to executable,
     run it (with CLI args and stdin from tests/input/ if present),
     and capture stdout + exit code.
-
-    *extra_args* are appended to the compiler invocation after ``-O3`` (e.g.
-    ``--raw-pointers`` / ``--no-fat-checks`` for the dual-mode runners).
     """
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
     cmd += ["-O3"]
-    cmd += list(extra_args)
+    cmd += test.compiler_args
     exe_path: Path | None = None
     if test.expect_error:
         cmd += ["-t", "none"]
@@ -397,6 +501,72 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False, extra_args: 
         exit_code=proc.returncode,
         elapsed_ms=compile_elapsed,
         output=compiler_output,
+    )
+
+
+def _variant_test(test: TestCase, variant: CompileVariant) -> TestCase:
+    """Create an executable test case for one existing compiler variant."""
+    expect_error = test.expect_error
+    expected_substring = test.expected_substring
+    expected_exit_code = test.expected_exit_code
+    if variant.expected_substring is not None:
+        expect_error = True
+        expected_substring = variant.expected_substring
+        expected_exit_code = None
+    elif variant.expected_exit_code is not None:
+        if expect_error:
+            raise ValueError(
+                f"{test.name}: runtime exit override is invalid for a compile-error test"
+            )
+        expected_exit_code = variant.expected_exit_code
+
+    return TestCase(
+        name=f"{test.name}@{variant.name}",
+        source_files=test.source_files,
+        expect_error=expect_error,
+        expected_substring=expected_substring,
+        expected_exit_code=expected_exit_code,
+        expected_output=test.expected_output,
+        cli_args=test.cli_args,
+        stdin=test.stdin,
+        compiler_args=variant.compiler_args,
+    )
+
+
+def discover_python_tests() -> list[TestCase]:
+    """Discover existing Python unit and IR checks under tests/unit."""
+    tests: list[TestCase] = []
+    for source in sorted((TESTS_DIR / "unit").rglob("test_*.py")):
+        tests.append(
+            TestCase(
+                name=str(source.relative_to(TESTS_DIR)),
+                source_files=[],
+                expect_error=False,
+                expected_substring="",
+                expected_exit_code=0,
+            )
+        )
+    return tests
+
+
+def run_python_test(test: TestCase) -> TestResult:
+    """Run one existing Python unit or IR check as a subprocess."""
+    source = TESTS_DIR / test.name
+    start = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, str(source)],
+        cwd=ROOT_DIR,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    elapsed = (time.monotonic() - start) * 1000.0
+    return TestResult(
+        test=test,
+        exit_code=proc.returncode,
+        elapsed_ms=elapsed,
+        output=proc.stdout + proc.stderr,
     )
 
 
@@ -529,6 +699,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.include_experimental:
         all_tests = [t for t in all_tests if not t.name.startswith("experimental/")]
 
+    expanded_tests: list[TestCase] = []
+    for test in all_tests:
+        expanded_tests.append(test)
+        for variant in test.compile_variants:
+            expanded_tests.append(_variant_test(test, variant))
+    all_tests = expanded_tests
+
+    python_tests = [] if args.no_run else discover_python_tests()
+    all_tests += python_tests
+
     if args.filter_str:
         all_tests = [t for t in all_tests if args.filter_str in t.name]
         if not all_tests:
@@ -542,7 +722,10 @@ def main(argv: list[str] | None = None) -> int:
     total_start = time.monotonic()
 
     for i, test in enumerate(all_tests, 1):
-        result = run_test(test, dump=args.dump, run=not args.no_run)
+        if test.name.startswith("unit/"):
+            result = run_python_test(test)
+        else:
+            result = run_test(test, dump=args.dump, run=not args.no_run)
         results.append(result)
 
         if not args.quiet:

@@ -1,0 +1,23 @@
+// M5: Pointer-to-ZST — a pointer whose pointee is zero-sized (void, empty
+// struct, all-zst tuple, etc.) is itself a ZST. Operations on such pointers
+// are erased at codegen.
+//
+// Expected output: 0
+
+struct Empty {}
+
+fn main() {
+    // sizeof(ptr-to-ZST) == 0  (pointer itself is ZST)
+    assert sizeof(void*) == 0: "sizeof(*void) == 0";
+    assert sizeof(Empty*) == 0: "sizeof(*Empty) == 0";
+
+    // ZST pointers are created by dyn and carry no runtime representation.
+    let p: void* = dyn[1] void;
+    let q: Empty* = dyn[1] Empty;
+
+    // ZST pointer equality always true (all indistinguishable)
+    let r1: void* = dyn[1] void;
+    let r2: void* = dyn[1] void;
+    assert r1 == r2: "ZST ptr equality always true";
+
+}

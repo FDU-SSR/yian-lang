@@ -1,0 +1,92 @@
+from ptr import Slice;
+from option import Option;
+
+struct treeNode{
+    left: Option<Slice<treeNode>>,
+    right: Option<Slice<treeNode>>,
+}
+
+fn NewTreeNode(Option<Slice<treeNode>> left, Option<Slice<treeNode>> right) -> Slice<treeNode> {
+    let node: Slice<treeNode> = Slice<treeNode>.new_object()
+    (*node).left = left
+    (*node).right = right
+    return node
+}
+
+fn ItemCheck(Slice<treeNode> tree) -> i64
+{
+    let res: i64 = 1
+    let tree_item: treeNode = *tree
+    if ! tree_item.left.is_none() {
+        res += ItemCheck(tree_item.left.unwrap())
+    }
+    if ! tree_item.right.is_none() {
+        res += ItemCheck(tree_item.right.unwrap())
+    }
+    return res
+}
+
+fn BottomUpTree(u32 depth) -> Slice<treeNode>
+{
+    if depth > 0
+    {
+        let left_child: Slice<treeNode> = BottomUpTree(depth - 1)
+        let right_child: Slice<treeNode> = BottomUpTree(depth - 1)
+        return NewTreeNode(Option<Slice<treeNode>>.Some(left_child), Option<Slice<treeNode>>.Some(right_child))
+    }
+    else
+    {
+        return NewTreeNode(Option<Slice<treeNode>>.None, Option<Slice<treeNode>>.None)
+    }
+}
+fn DeleteTree(tree: Slice<treeNode>)
+{
+    let tree_item: treeNode = *tree
+    if ! tree_item.left.is_none() {
+        DeleteTree(tree_item.left.unwrap())
+    }
+    if ! tree_item.right.is_none() {
+        DeleteTree(tree_item.right.unwrap())
+    }
+    tree.delete()
+}
+
+
+fn main()
+{
+    let N: u32 = 20
+    let minDepth: u32 = 4
+    let maxDepth: u32 = N
+    let check: i64 = 0
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2
+    }
+
+    let stretchDepth: u32 = maxDepth + 1
+
+    let stretchTree: Slice<treeNode> = BottomUpTree(stretchDepth)
+    fn DeleteTree(stretchTree)
+
+    let longLivedTree: Slice<treeNode> = BottomUpTree(maxDepth)
+
+    for u32 depth = minDepth; depth <= maxDepth; depth += 2
+    {
+        let totalDepth: u32 = maxDepth - depth + minDepth
+        let iterations: i64 = 1
+        for u32 i = 0; i < totalDepth; i+=1 {
+            iterations *= 2
+        }
+        for i64 i = 0; i < iterations; i += 1
+        {
+            let tempTree: Slice<treeNode> = BottomUpTree(depth)
+            check += ItemCheck(tempTree)
+            DeleteTree(tempTree)
+        }
+    }
+    fn DeleteTree(longLivedTree)
+
+    assert i32(check % 256) == 176: "fail"
+    fn print("pass")
+    return 0
+}

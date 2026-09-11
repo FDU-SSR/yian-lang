@@ -1,5 +1,4 @@
 fn my_strlen(char* string) -> u32 {
-    assert string.is_valid(): "string is null"
     let len: u32 = 0
     while string[len] != '\0' {
         len += 1
@@ -7,8 +6,6 @@ fn my_strlen(char* string) -> u32 {
     return len
 }
 fn my_strcpy(char* dest, char* src) -> char* {
-    assert dest.is_valid(): "dest is null"
-    assert src.is_valid(): "src is null"
     let len: u32 = 0
     while src[len] != '\0' {
         dest[len] = src[len]
@@ -36,13 +33,7 @@ fn main(i32 argc, char** argv) -> i32 {
     for i32 i = 1; i < 2; i+=1 {
         let input: char* = "0"
         let NumberOfNumbers: i32 = getNumberOfNumbersInAString(input)
-        if ! out.is_valid() {
-            out = dyn char
-            if ! out.is_valid() {
-                return 1
-            }
-        }
-        else {
+        if NumberOfNumbers == 0 {
             // NumberOfNumbers is 0
             out.realloc(NumberOfNumbers)
             // delete a zero-sized block is not a bug in YIAN

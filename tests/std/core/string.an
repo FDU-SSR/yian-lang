@@ -42,7 +42,7 @@ fn main() {
     // 测试 push_str
     s_push.push_str("World");
     assert s_push == "HelloWorld": "string content should match after push_str";
-    
+
     // 测试 pop
     let s_pop: String = String.from(&"Test");
     let c1: Option<char> = s_pop.pop();
@@ -58,7 +58,7 @@ fn main() {
     let s_clear: String = String.from(&"NotEmpty");
     s_clear.clear();
     assert s_clear.is_empty(): "clear should empty the string";
-    
+
     // 测试 as_str
     let s_asstr: String = String.from(&"TestAsStr");
     let raw_str: str = s_asstr.as_str();
@@ -80,7 +80,7 @@ fn main() {
     let s_eq3: String = String.from(&"Bye");
     assert s_eq1 == s_eq2: "eq should return true for equal strings";
     assert s_eq1 != s_eq3: "eq should return false for different strings";
-    
+
     // 测试 Add trait
     let s_add1: String = String.from(&"ABC");
     let s_add2: String = String.from(&"DEF");

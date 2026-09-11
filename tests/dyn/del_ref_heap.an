@@ -1,0 +1,16 @@
+// T& deletion on a heap allocation, migrated from the SECL raw-compatible
+// portion of tests/fat/positive/del_ref_heap.an.
+
+fn main() {
+    let p: i32* = dyn[1] i32;
+    p[0] = 7;
+    let r: i32& = &p[0];
+    assert *r == 7: "reads through heap reference";
+    del r;
+
+    let q: i32* = dyn[3] i32;
+    q[0] = 1;
+    q[2] = 3;
+    assert q[0] + q[2] == 4: "heap stable after del ref";
+    del q;
+}

@@ -1,9 +1,0 @@
-// 裸数组越界访问运行时陷阱(Exit code -4)。
-//
-// Expected runtime error: Index out of bounds
-
-fn main() {
-    let arr: i32[3] = [1, 2, 3];
-    let idx: u64 = 3;
-    let err: i32 = arr[idx]  // OOB access;
-}

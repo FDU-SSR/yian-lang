@@ -1,28 +1,13 @@
 // T& receiver method-body array access.
 //
-// Full-array access through a T& receiver, exercising the T&→T* array
-// re-anchor (size=N) in the LLVM builder cast path:
-//   - `self.arr[i]` with i≥1 via the Index trait (T[N] impl → bitcast<T*>(self))
-//   - `self.arr.ptr()[i]` full-array traversal
-//   - `self.arr.as_slice()` full-array slice
-//   - direct `impl i32[4]` receiver forms: `(*self)[i]`, `self.ptr()[i]`,
-//     `self.as_slice()` (self is i32[4]& inside these methods)
-//   - chained self.method() through the T& receiver
-//
-// The cast must re-anchor T[N]&→T* with size=N; using size=1 would make every
-// arr[i] with i≥1 trap in fat mode. These forms run in the fat and nocheck
-// compile states; raw mode does not participate in this test.
-//
-// Pure asserts, no stdout (success test, no .ans).
-//
-// Expected output: 0
+// This test is migrated from the existing SECL T& receiver coverage.  The
+// assertions exercise only ordinary array methods and raw reference behavior.
 
 struct Holder {
     arr: i32[4],
 }
 
 impl Holder {
-    // Index trait through the T& receiver (self.arr[i], i≥1).
     pub fn get1() -> i32 {
         return self.arr[1];
     }
@@ -31,7 +16,6 @@ impl Holder {
         return self.arr[3];
     }
 
-    // ptr() through the T& receiver: T&→T* array re-anchor size=N.
     pub fn ptr_sum() -> i32 {
         let s: i32 = 0;
         for i in 0..4u64 {
@@ -40,18 +24,15 @@ impl Holder {
         return s;
     }
 
-    // as_slice() through the T& receiver: full-array slice.
     pub fn slice_len() -> u64 {
         return self.arr.as_slice().len();
     }
 
-    // Chained self.method(): field access auto-derefs through the T&.
     pub fn chain_sum() -> i32 {
         return self.get1() + self.get3();
     }
 }
 
-// Direct array-type receiver: self is i32[4]& inside these methods.
 impl i32[4] {
     pub fn d1() -> i32 {
         return (*self)[1];
@@ -71,7 +52,6 @@ impl i32[4] {
 }
 
 fn main() {
-    // --- array access through T& receiver methods (size=N re-anchor) ---
     let h = Holder([10, 20, 30, 40]);
     let hr: Holder& = &h;
     assert hr.get1() == 20: "Index trait self.arr[1] through T&";
@@ -80,7 +60,6 @@ fn main() {
     assert hr.slice_len() == 4: "self.arr.as_slice() full-array len";
     assert hr.chain_sum() == 60: "chained self.method() through T&";
 
-    // Direct array-type receiver (self: i32[4]&).
     let arr: i32[4] = [10, 20, 30, 40];
     let ar: i32[4]& = &arr;
     assert ar.d1() == 20: "(*self)[1] on i32[4]& receiver";

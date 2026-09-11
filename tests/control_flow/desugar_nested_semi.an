@@ -1,0 +1,14 @@
+// Nested control flow wrapped in trailing semicolons must be desugared.
+//
+// Expected output: (empty, exit 0)
+
+fn main() {
+    let value: u64 = 3;
+    while value > 0 {
+        while value > 1 {
+            value = value - 1;
+        };
+        value = value - 1;
+    };
+    assert value == 0: "nested semicolon control flow failed";
+}

@@ -15,4 +15,7 @@ fn main() {
     let c: f16 = a + b;
     assert c > 3.9 && c < 4.1: "f16 arithmetic";
 
+    let d: f16 = c.clone();
+    assert d > 3.9 && d < 4.1: "f16 clone";
+
 }

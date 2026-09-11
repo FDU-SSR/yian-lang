@@ -1,0 +1,18 @@
+// Optional pointers are represented explicitly by Option<T*>.
+
+from std.core.option import Option;
+
+struct Node {
+    value: i32,
+    next: Option<Node*>,
+}
+
+fn main() {
+    let node = Node(value = 42, next = Option<Node*>.None);
+    assert node.next.is_none(): "empty optional pointer";
+
+    let next = Node(value = 7, next = Option<Node*>.None);
+    let linked = Node(value = 42, next = Option<Node*>.Some(&next));
+    assert linked.next.is_some(): "present optional pointer";
+    assert (*linked.next.unwrap()).value == 7: "optional pointer payload";
+}

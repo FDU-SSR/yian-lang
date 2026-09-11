@@ -1,0 +1,23 @@
+// Extended pointer-to-ZST operations: allocation, deref no-op,
+// alloca, and through-struct access.
+//
+// Expected output: 0
+
+struct Empty {}
+struct WrapZ { e: Empty*, v: void* }
+
+fn main() {
+    let p: void* = dyn[1] void;
+    let q: Empty* = dyn[1] Empty;
+    assert sizeof(void*) == 0: "sizeof ptr to void";
+    assert sizeof(Empty*) == 0: "sizeof ptr to empty struct";
+
+    // ZST pointer comparison always true (all indistinguishable)
+    assert p == p: "same ZST ptr == itself";
+    let r: void* = dyn[1] void;
+    assert p == r: "all void* values are indistinguishable";
+
+    // struct containing ZST pointer fields (the pointers are ZST)
+    assert sizeof(WrapZ) == 0: "struct of ZST ptr fields";
+
+}

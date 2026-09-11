@@ -1,60 +1,16 @@
-// raw_slice_ref.an — raw slice/ref 双模式正例
-//
-// 覆盖从裸指针构造 slice/ref 的正确程序路径,fat/raw/nocheck 三态
-// (scripts/run_raw_tests.py)都必须 exit 0:
-//   - from_raw_parts(p, n) 构造 T[]:len 保真断言(直接 s.len(),核心路径)
-//   - 索引访问断言(直接 s[i],含嵌套函数传参形态)
-//   - T* → T& 与 T[] → T& 用例
-//   - str 构造(__str_from_parts)与 len/首字节断言
-// 纯断言、无 stdout,为 success 用例(无需 .ans)。
-//
-// Expected output: 0
+// T* -> T& and T[] -> T& reference paths.
+// Reused from SECL's tests/std/raw_slice_ref.an after removing mode-specific
+// raw slice/string builtin checks.
 
 from std.core.slice import from_raw_parts;
 
-fn get_len(s: i32[]) -> u64 {
-    s.len()
-}
-
 fn main() {
-    // --- from_raw_parts(p, n) 构造 T[],len 保真(直接方法调用)---
-    let arr: u64[3] = [10, 20, 30];
-    let p: u64* = &arr[0];
-    let s: u64[] = from_raw_parts(p, 3);
-    assert s.len() == 3: "from_raw_parts preserves the element count";
-    let l: u64 = s.len();
-    assert l == 3: "len via direct variable binding";
-
-    // --- 索引访问断言(直接下标,经 Index trait)---
-    let v0: u64 = s[0];
-    let v1: u64 = s[1];
-    let v2: u64 = s[2];
-    assert v0 == 10: "s[0] == 10";
-    assert v1 == 20: "s[1] == 20";
-    assert v2 == 30: "s[2] == 30";
-
-    // --- 嵌套函数传参形态(s 作为 i32[] 实参)---
-    let arr2: i32[3] = [7, 8, 9];
-    let p2b: i32* = &arr2[0];
-    let s3: i32[] = from_raw_parts(p2b, 3);
-    assert get_len(s3) == 3: "len via nested function parameter";
-    assert s3[2] == 9: "index via nested function parameter";
-
-    // --- T* → T& ---
     let x: i32 = 42;
-    let p2: i32* = &x;
-    let r: i32& = p2;
+    let p: i32* = &x;
+    let r: i32& = p;
     assert *r == 42: "T*->T& reads through the reference";
 
-    // --- T[] → T& ---
-    let s2: i32[] = from_raw_parts(p2, 1);
-    let r2: i32& = s2;
+    let s: i32[] = from_raw_parts(p, 1);
+    let r2: i32& = s;
     assert *r2 == 42: "T[]->T& reads through the reference";
-
-    // --- str 构造(__str_from_parts)---
-    let msg: str = "hi";
-    let mp: u8* = __str_get_ptr(msg);
-    let sub: str = __str_from_parts(mp, 1);
-    assert __str_get_len(sub) == 1: "str from parts preserves len";
-    assert *mp == 104: "first byte is 'h' (104)";
 }

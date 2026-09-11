@@ -64,7 +64,7 @@ fn main() {
     assert sizeof(EMany) > 0: "multi-variant enum has discriminant";
 
     // ---- ptr-to-ZST ----
-    let p: Empty* = dyn[1] Empty;   // (NULL 已移除:ZST 指针由 dyn 分配创建)
+    let p: Empty* = dyn[1] Empty;
     assert sizeof(Empty*) == 0: "ptr to zst struct is zst";
     assert p == p: "zst ptr equality";
 

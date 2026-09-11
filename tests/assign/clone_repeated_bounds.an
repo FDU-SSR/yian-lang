@@ -1,0 +1,20 @@
+// Trait conditions for different generic parameters must be checked in
+// independent branches, even when both parameters resolve to the same type.
+//
+// Expected output: (empty, exit 0)
+
+fn main() {
+    let pair: (String, String) = (
+        String.from(&"left"),
+        String.from(&"right"),
+    );
+    let pair_copy: (String, String) = pair.clone();
+
+    pair_copy[0].push('!');
+    pair_copy[1].push('!');
+
+    assert pair[0] == "left": "source first element changed";
+    assert pair[1] == "right": "source second element changed";
+    assert pair_copy[0] == "left!": "first element was not cloned";
+    assert pair_copy[1] == "right!": "second element was not cloned";
+}

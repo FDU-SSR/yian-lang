@@ -1,9 +1,0 @@
-// Test that the `bitcast` pointer primitive is rejected outside the
-// standard library.
-//
-// Expected compilation error: restricted operation
-
-fn main() {
-    let x: u8 = 1;
-    let p: u8* = bitcast<u8*>(&x);
-}

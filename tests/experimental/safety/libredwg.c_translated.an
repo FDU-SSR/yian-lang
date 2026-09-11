@@ -1,7 +1,4 @@
 fn my_memcpy(char* dest, char* src, u32 len) -> char* {
-    if ! dest.is_valid() && ! src.is_valid(){
-        return dest
-    }
     if len == 0 {
         return dest
     }
