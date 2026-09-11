@@ -22,10 +22,6 @@ RESTRICTED_BUILTIN_NAMES = frozenset(
         "open",
         "close",
         "assume_init",
-        "__yian_argc",
-        "__yian_argv_ptr",
-        "__yian_cstrlen",
-        "__yian_exit",
     }
 )
 

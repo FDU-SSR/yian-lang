@@ -572,38 +572,6 @@ class LLBuilder:
         raw = self.__call_intrinsic(IntrinsicKind.Close, [fd])
         self.__func.set_reg(result, raw)
 
-    # -- yian CLI / env --
-
-    def yian_argc(self, result: str) -> None:
-        argc_global = self.__module.argc_global
-        loaded = self.__builder.load(argc_global)  # type: ignore
-        # zext i32 → u64
-        extended = self.__builder.zext(loaded, ir.IntType(64))  # type: ignore
-        self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, extended))  # type: ignore
-
-    def yian_argv_ptr(self, index: LLValue, result: str) -> None:
-        argc_global = self.__module.argc_global
-        argc = self.__builder.load(argc_global)  # type: ignore
-        argc64 = self.__builder.zext(argc, ir.IntType(64))  # type: ignore
-        in_bounds = self.__builder.icmp_unsigned("<", index.ir_val, argc64)  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, in_bounds), "argv-index")
-        argv_global = self.__module.argv_global
-        argv_val = self.__builder.load(argv_global)  # type: ignore
-        gep = self.__builder.gep(argv_val, [index.ir_val], inbounds=True)  # type: ignore
-        loaded = self.__builder.load(gep)  # type: ignore
-        nonnull = self.__builder.icmp_signed("!=", loaded, ir.Constant(loaded.type, None))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), "argv-null")
-        ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-        self.__func.set_reg(result, LLValue(ptr_type_id, loaded))
-
-    def yian_cstrlen(self, ptr: LLValue, result: str) -> None:
-        raw = self.__call_intrinsic(IntrinsicKind.StrLen, [ptr])
-        self.__func.set_reg(result, raw)
-
-    def yian_exit(self, code: LLValue) -> None:
-        self.__call_intrinsic(IntrinsicKind.Exit, [code])
-        self.__builder.unreachable()
-
     # ------------------------------------------------------------------
     # terminators
     # ------------------------------------------------------------------
@@ -711,8 +679,6 @@ class LLBuilder:
                 return self.__type_ctx.i32_id
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
-            case IntrinsicKind.StrLen:
-                return self.__type_ctx.u64_id
 
     def __zero_const(self, ll_type: ir.Type) -> ir.Constant:
         if isinstance(ll_type, ir.LiteralStructType):

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 # Built-in instruction names — all are expressions with different return types:
 #   sizeof → u64,  sys_read/sys_write → void,  panic → never
-BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "open", "close", "assume_init", "__yian_argc", "__yian_argv_ptr", "__yian_cstrlen", "__yian_exit"})
+BUILTIN_NAMES = frozenset({"sys_read", "sys_write", "panic", "open", "close", "assume_init"})
 
 
 class CallDispatcher:
@@ -131,14 +131,6 @@ class CallDispatcher:
                 return self.__handle_close(node)
             case "assume_init":
                 return self.__handle_assume_init(node)
-            case "__yian_argc":
-                return self.__handle_yian_argc(node)
-            case "__yian_argv_ptr":
-                return self.__handle_yian_argv_ptr(node)
-            case "__yian_cstrlen":
-                return self.__handle_yian_cstrlen(node)
-            case "__yian_exit":
-                return self.__handle_yian_exit(node)
             case _:
                 raise CompilerError("Unreachable Code")
 
@@ -160,56 +152,6 @@ class CallDispatcher:
             raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
-
-    def __handle_yian_argc(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_argc'", node.span)
-        if len(node.args) != 0:
-            raise AnalysisError(f"'__yian_argc' expects 0 arguments, got {len(node.args)}", node.span)
-        return HIR.YianArgc(
-            span=node.span,
-            type_id=self.__ctx.type_ctx.u64_id,
-            is_place=False,
-        )
-
-    def __handle_yian_argv_ptr(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_argv_ptr'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'__yian_argv_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
-        index = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.u64_id)
-        return HIR.YianArgvPtr(
-            span=node.span,
-            index=index,
-            type_id=self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id),
-            is_place=False,
-        )
-
-    def __handle_yian_cstrlen(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_cstrlen'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'__yian_cstrlen' expects exactly 1 argument, got {len(node.args)}", node.span)
-        ptr = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id))
-        return HIR.YianCstrlen(
-            span=node.span,
-            ptr=ptr,
-            type_id=self.__ctx.type_ctx.u64_id,
-            is_place=False,
-        )
-
-    def __handle_yian_exit(self, node: AST.Call) -> HIR.Expr:
-        if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'exit'", node.span)
-        if len(node.args) != 1:
-            raise AnalysisError(f"'exit' expects exactly 1 argument, got {len(node.args)}", node.span)
-        code = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
-        return HIR.YianExit(
-            span=node.span,
-            code=code,
-            type_id=self.__ctx.type_ctx.never_id,
-            is_place=False,
-        )
 
     def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
         """Lower `sys_write(fd, buf)` into HIR.SysWrite."""

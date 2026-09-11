@@ -122,7 +122,7 @@ class CfgBuilder:
                         worklist.append(arm.body)
                     if term.default is not None:
                         worklist.append(term.default)
-                case IR.Ret() | IR.Panic() | IR.YianExit():
+                case IR.Ret() | IR.Panic():
                     pass
 
         # ── filter blocks ──
@@ -169,7 +169,7 @@ class CfgBuilder:
                             succs.append(arm.body)
                         if default is not None:
                             succs.append(default)
-                    case IR.Ret() | IR.Panic() | IR.YianExit():
+                    case IR.Ret() | IR.Panic():
                         pass
             successors[id(block)] = succs
 
@@ -521,14 +521,6 @@ class CfgBuilder:
                 return self.__resolve_open(expr)
             case HIR.Close():
                 return self.__resolve_close(expr)
-            case HIR.YianArgc():
-                return self.__resolve_yian_argc(expr)
-            case HIR.YianArgvPtr():
-                return self.__resolve_yian_argv_ptr(expr)
-            case HIR.YianCstrlen():
-                return self.__resolve_yian_cstrlen(expr)
-            case HIR.YianExit():
-                return self.__resolve_yian_exit(expr)
             case HIR.Tuple():
                 return self.__resolve_tuple(expr)
             case HIR.Array():
@@ -834,25 +826,6 @@ class CfgBuilder:
     def __resolve_close(self, expr: HIR.Close) -> IR.Value:
         fd = self.__resolve_val(expr.fd)
         return self.__build_close(fd)
-
-    def __resolve_yian_argc(self, expr: HIR.YianArgc) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.YianArgc(result=result)).result
-
-    def __resolve_yian_argv_ptr(self, expr: HIR.YianArgvPtr) -> IR.Value:
-        index = self.__resolve_val(expr.index)
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id))
-        return self.__emit(IR.YianArgvPtr(result=result, index=index)).result
-
-    def __resolve_yian_cstrlen(self, expr: HIR.YianCstrlen) -> IR.Value:
-        ptr = self.__resolve_val(expr.ptr)
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.YianCstrlen(result=result, ptr=ptr)).result
-
-    def __resolve_yian_exit(self, expr: HIR.YianExit) -> IR.Value:
-        code = self.__resolve_val(expr.code)
-        self.__set_terminator(IR.YianExit(code=code))
-        return self.__never_reg()
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]

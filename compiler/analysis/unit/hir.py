@@ -350,37 +350,6 @@ class Close:
 
 
 @dataclass
-class YianArgc:
-    span: SrcSpan
-    type_id: int  # u64
-    is_place: bool
-
-
-@dataclass
-class YianArgvPtr:
-    span: SrcSpan
-    index: Expr  # u64
-    type_id: int  # *u8
-    is_place: bool
-
-
-@dataclass
-class YianCstrlen:
-    span: SrcSpan
-    ptr: Expr    # *u8
-    type_id: int  # u64
-    is_place: bool
-
-
-@dataclass
-class YianExit:
-    span: SrcSpan
-    code: Expr   # i32
-    type_id: int  # never
-    is_place: bool
-
-
-@dataclass
 class Tuple:
     span: SrcSpan
     field_values: list[Expr]
@@ -501,7 +470,6 @@ Expr: TypeAlias = (
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
-    | YianArgc | YianArgvPtr | YianCstrlen | YianExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block
