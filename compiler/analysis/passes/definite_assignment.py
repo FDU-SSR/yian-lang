@@ -61,22 +61,12 @@ class StateKey:
 
 
 class DAState(dict[StateKey, VarState]):
-    """Validity state with copy-on-write sharing.
-
-    ``shared`` marks a state whose contents may be shared with other
-    contexts (branch copies, recorded exit states); the first write must
-    detach it (shallow copy) before mutating, so sibling states stay
-    isolated. Unshared states are mutated in place, avoiding full
-    ``{**state, ...}`` copies on every assignment.
-    """
+    """Definite-assignment state with copy-on-write branch sharing."""
 
     __slots__ = ("shared",)
 
     def __init__(self, source: dict[StateKey, VarState] | None = None) -> None:
-        if source is None:
-            super().__init__()
-        else:
-            super().__init__(source)
+        super().__init__() if source is None else super().__init__(source)
         self.shared = False
 
 
@@ -124,14 +114,14 @@ class DefiniteAssignment:
 
     @staticmethod
     def __share(state: DAState) -> DAState:
-        """Return a detached copy of *state* marked as shared."""
+        """Return a shared snapshot of *state* for another analysis path."""
         new_state = DAState(state)
         new_state.shared = True
         return new_state
 
     @staticmethod
     def __set(state: DAState, key: StateKey, value: VarState) -> DAState:
-        """Return *state* with *key* set to *value* (copy on write)."""
+        """Set one state entry, copying only when the state is shared."""
         if state.shared:
             state = DAState(state)
         state[key] = value
@@ -139,14 +129,14 @@ class DefiniteAssignment:
 
     @staticmethod
     def __drop_keys(state: DAState, drop: Callable[[StateKey], bool]) -> DAState:
-        """Return *state* without the keys matching *drop* (copy on write)."""
-        keys = [k for k in state if drop(k)]
+        """Remove matching state entries, copying only when necessary."""
+        keys = [key for key in state if drop(key)]
         if not keys:
             return state
         if state.shared:
             state = DAState(state)
-        for k in keys:
-            del state[k]
+        for key in keys:
+            del state[key]
         return state
 
     # ------------------------------------------------------------------
@@ -180,7 +170,7 @@ class DefiniteAssignment:
         self.__exit_state = None
 
         # Initial state: params are VALID (whole), other locals INVALID.
-        state: DAState = DAState()
+        state = DAState()
         for loc in dp.locals:
             state = self.__set(state, self.__whole(loc), (VarState.VALID if loc in dp.params else VarState.INVALID))
 
@@ -312,6 +302,10 @@ class DefiniteAssignment:
             self.__check_tuple_read(expr, state)
             return state
 
+        if isinstance(expr, HIR.ArrayAccess):
+            state = self.__check_expr(expr.array, state)
+            return self.__check_expr(expr.index, state)
+
         if isinstance(expr, HIR.SliceAccess):
             state = self.__check_expr(expr.slice, state)
             return self.__check_expr(expr.index, state)
@@ -389,7 +383,7 @@ class DefiniteAssignment:
     def __check_loop(self, expr: HIR.Loop, state: DAState) -> DAState:
         pre_state = self.__share(state)
         body_state = self.__check_expr(expr.body, self.__share(pre_state))
-        merged: DAState = DAState()
+        merged = DAState()
         all_keys = set(pre_state.keys()) | set(body_state.keys())
         for k in all_keys:
             pre_val = pre_state.get(k, VarState.INVALID)
@@ -486,6 +480,14 @@ class DefiniteAssignment:
 
         if isinstance(target, HIR.TupleAccess):
             return self.__walk_assign_target(target.receiver, state, (*path, target.index))
+
+        if isinstance(target, HIR.ArrayAccess):
+            state = self.__check_expr(target.array, state)
+            return self.__check_expr(target.index, state)
+
+        if isinstance(target, HIR.SliceAccess):
+            state = self.__check_expr(target.slice, state)
+            return self.__check_expr(target.index, state)
 
         if isinstance(target, HIR.Unary) and target.op == UnaryOperator.Deref:
             if isinstance(target.operand, HIR.Var):
@@ -629,6 +631,10 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.TupleAccess):
             return self.__walk_neutral(expr.receiver, state)
+
+        if isinstance(expr, HIR.ArrayAccess):
+            state = self.__walk_neutral(expr.array, state)
+            return self.__walk_neutral(expr.index, state)
 
         if isinstance(expr, HIR.SliceAccess):
             state = self.__walk_neutral(expr.slice, state)
@@ -826,7 +832,7 @@ class DefiniteAssignment:
     def __merge_states(self, s1: DAState, s2: DAState) -> DAState:
         """Merge two states at a control-flow join point."""
         all_keys = set(s1.keys()) | set(s2.keys())
-        merged: DAState = DAState()
+        merged = DAState()
         for k in all_keys:
             v1 = s1.get(k, VarState.INVALID)
             v2 = s2.get(k, VarState.INVALID)

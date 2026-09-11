@@ -1,21 +1,9 @@
-"""
-Restricted-operations pass.
+"""Reject compiler primitives that are reserved for the trusted stdlib.
 
-Non-stdlib source files are forbidden from using a hardcoded set of
-dangerous operations.  These operations can forge pointer metadata
-(``bitcast``, ``from_raw_parts``), bypass the definite-assignment
-analysis (``assume_init``), or cross the syscall/ABI trust boundary
-(``sys_read``/``sys_write``/``open``/``close``/``__yian_*``).  They are
-confined to the standard library, which is the language's audited
-trusted base.
-
-The restriction is enforced syntactically on the AST: any non-stdlib
-unit containing a restricted construct fails compilation with an
-``AnalysisError`` pointing at the offending source span.
-
-Restricted names are reserved: user code may not call them (and should
-not define same-named functions).  Standard-library files — identified
-by a ``lib`` path component, same as ``GlobalResolve`` — are exempt.
+The regular language surface must not be able to forge pointer metadata,
+bypass definite-assignment analysis, or cross the raw system-call boundary.
+This pass runs on the source AST before type checking, so the restriction is
+independent of overload resolution and generic lowering.
 """
 from __future__ import annotations
 
@@ -25,8 +13,6 @@ from compiler.analysis.error import AnalysisError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 
-# Restricted builtin call names: the syscall/ABI trust boundary, the
-# definite-assignment escape hatch, and trusted raw-byte copying.
 RESTRICTED_BUILTIN_NAMES = frozenset(
     {
         "sys_read",
@@ -58,29 +44,15 @@ RESTRICTED_CALL_NAMES = RESTRICTED_BUILTIN_NAMES | RESTRICTED_STDLIB_FUNCS
 
 
 def __is_stdlib_file(path: Path) -> bool:
-    """A file is stdlib iff its resolved path contains a ``lib`` component.
-
-    Mirrors ``GlobalResolve.__build_std_lookup`` and
-    ``prelude.__is_stdlib_file``.
-    """
     return "lib" in path.resolve().parts
 
 
 def __is_test_harness_file(path: Path) -> bool:
-    """A file is part of the compiler's functional regression suite iff its
-    resolved path contains a ``tests/std`` component pair.
-
-    ``tests/std/`` mirrors the standard library layout and directly
-    exercises the restricted primitives; ``tests/error/`` is intentionally
-    *not* exempt so the restriction itself stays under negative test.
-    """
     parts = path.resolve().parts
     return any(part == "tests" and parts[i + 1] == "std" for i, part in enumerate(parts[:-1]))
 
 
 class RestrictedOpsChecker:
-    """Scan one program for restricted constructs, reporting the first hit."""
-
     def __init__(self) -> None:
         self.__error: AnalysisError | None = None
 
@@ -199,11 +171,7 @@ class RestrictedOpsChecker:
 
 
 def check_restricted_ops(programs: list[AST.Program], src_files: list[Path]) -> None:
-    """Reject restricted operations in non-stdlib source files.
-
-    Raises ``AnalysisError`` on the first offending construct found in
-    any non-stdlib program.  Standard-library programs are skipped.
-    """
+    """Reject restricted constructs outside the stdlib and test harness."""
     for src_file, program in zip(src_files, programs):
         if __is_stdlib_file(src_file) or __is_test_harness_file(src_file):
             continue

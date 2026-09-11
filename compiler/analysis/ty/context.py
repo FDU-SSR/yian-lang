@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class _AmbiguousMethod:
-    """Cache marker: a method_lookup key resolves to multiple candidates."""
+    """Cache marker: a method lookup resolved to multiple candidates."""
 
     __slots__ = ()
 
@@ -116,8 +116,9 @@ class TypeCtx:
         self.__default_literals_cache: dict[int, int] = {}
         self.__zst_cache: dict[int, bool] = {}
 
-        # Memoization for queries over the type space + impl registry, which
-        # are frozen after GlobalResolve; enabled by finalize() only.
+        # Type and impl registration is complete after GlobalResolve. These
+        # caches stay disabled until finalize() so a partially built type
+        # space can never produce a stale negative result.
         self.__memoize_enabled = False
         self.__method_lookup_cache: dict[tuple[object, ...], LookupResult | None | _AmbiguousMethod] = {}
         self.__deref_chain_cache: dict[int, tuple[int, ...]] = {}
@@ -445,8 +446,6 @@ class TypeCtx:
         """
         self.__check_self_referential_types()
 
-        # Impl registration is complete (GlobalResolve has run) — type-level
-        # queries are now stable, so memoization can be enabled.
         self.__memoize_enabled = True
         self.__impl_registry.enable_memoization()
 
@@ -631,7 +630,10 @@ class TypeCtx:
             if cache_key in cache:
                 cached = cache[cache_key]
                 if isinstance(cached, _AmbiguousMethod):
-                    raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+                    raise AnalysisError(
+                        f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'",
+                        receiver.span,
+                    )
                 return cached
 
         chain = self.deref_chain(receiver.type_id)

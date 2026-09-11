@@ -266,33 +266,27 @@ class TupleAccess:
 
 @dataclass
 class ArrayAccess:
-    """T[N] 定长数组元素访问(内联 GEP 路径, 不走 Index trait)。"""
+    """Access an element of a fixed-size array through an inline GEP."""
 
     span: SrcSpan
-    array: Expr            # T[N] 数组表达式(place)
-    index: Expr            # 整数索引表达式(已 coerce u64)
-    element_type: int      # T
-    type_id: int           # 访问结果的类型 id(= element_type,同其它 HIR 节点)
-    length: int            # N 编译期常量值(供越界检查)
-    is_place: bool = True  # 数组元素是 place(可读可写)
+    array: Expr
+    index: Expr
+    element_type: int
+    type_id: int
+    length: int
+    is_place: bool = True
 
 
 @dataclass
 class SliceAccess:
-    """T[] 切片元素访问(内建路径, 不走 Index trait;性能优化, 检查在 CFG 层)。
-
-    T[] 整数索引采用内建路径，镜像 T[N]
-    ArrayAccess——消除热循环里 index→ptr→as_struct 三层方法调用链
-    (emit_object 无优化时逐次全栈调用)。raw 下 T[] 为 {data,size} 2 字段,
-    CFG 层只发射 extract data + GEP,零检查(保持①raw 零安全基线)。
-    """
+    """Access an element of a slice through its data pointer."""
 
     span: SrcSpan
-    slice: Expr           # T[] 切片表达式(place)
-    index: Expr           # 整数索引(已 coerce u64)
-    element_type: int     # T
-    type_id: int          # 访问结果的类型 id(= element_type)
-    is_place: bool = True # 切片元素是 place(可读可写)
+    slice: Expr
+    index: Expr
+    element_type: int
+    type_id: int
+    is_place: bool = True
 
 
 @dataclass
@@ -489,8 +483,8 @@ Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | Bool
 Expr: TypeAlias = (
     Binary | Unary
     | Call | StructConstruct | Invoke | Cast
-    | MethodCall | VariantConstruct | FieldAccess | TupleAccess | ArrayAccess
-    | SliceAccess
+    | MethodCall | VariantConstruct | FieldAccess | TupleAccess
+    | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
     | Tuple | Array | ArrayRepeat

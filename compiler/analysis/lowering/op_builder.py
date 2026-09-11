@@ -190,8 +190,7 @@ class OpBuilder:
         receiver_hir = self.__evaluator.value(receiver)
         receiver_ty = self.__type_ctx[receiver_hir.type_id]
 
-        # auto-deref: only handle PointerType/RefType, NOT the Deref trait
-        # (T& 引用同 T* 支持自动解引用取字段)
+        # auto-deref: only handle PointerType, NOT the Deref trait
         while isinstance(receiver_ty, (Type.PointerType, Type.RefType)):
             receiver_hir = HIR.Unary(span, UnaryOperator.Deref, receiver_hir, receiver_ty.pointee_type, is_place=True)
             receiver_ty = self.__type_ctx[receiver_ty.pointee_type]
@@ -286,7 +285,7 @@ class OpBuilder:
                 op=BinaryOperator.Sub,
                 left=left_hir,
                 right=right_hir,
-                type_id=TypeCtx.i64_id,
+                type_id=TypeCtx.u64_id,
                 is_place=False,
             )
 
@@ -443,25 +442,30 @@ class OpBuilder:
             elem_type = left_ty.element_types[index_val]
             return HIR.TupleAccess(span, left_hir, index_val, elem_type, is_place=left_hir.is_place)
 
-        # T[N] 整数索引 → 内联数组访问(不走 Index trait;性能优化, 越界检查在 CFG 层)
+        # A concrete fixed-size array uses an inline pointer calculation.  A
+        # const-generic length remains on the trait path until instantiation.
         if isinstance(left_ty, Type.ArrayType) and self.__type_ctx.is_integer_type(right_hir.type_id):
-            # 仅 length 为编译期字面量时内联;泛型 N(ConstGenericType)保守回落 trait
             length_ty = self.__type_ctx[left_ty.length]
             if isinstance(length_ty, Type.LiteralValueType):
                 index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
                 return HIR.ArrayAccess(
-                    span=span, array=left_hir, index=index_value,
-                    element_type=left_ty.element_type, type_id=left_ty.element_type,
-                    length=length_ty.value, is_place=left_hir.is_place,
+                    span=span,
+                    array=left_hir,
+                    index=index_value,
+                    element_type=left_ty.element_type,
+                    type_id=left_ty.element_type,
+                    length=length_ty.value,
+                    is_place=left_hir.is_place,
                 )
-            # 非字面量 length:fall through to trait overload
 
-        # T[] 整数索引 → 内建切片访问(不走 Index trait;性能优化, 检查在 CFG 层)
         if isinstance(left_ty, Type.SliceType) and self.__type_ctx.is_integer_type(right_hir.type_id):
             index_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
             return HIR.SliceAccess(
-                span=span, slice=left_hir, index=index_value,
-                element_type=left_ty.element_type, type_id=left_ty.element_type,
+                span=span,
+                slice=left_hir,
+                index=index_value,
+                element_type=left_ty.element_type,
+                type_id=left_ty.element_type,
                 is_place=left_hir.is_place,
             )
 
@@ -480,7 +484,6 @@ class OpBuilder:
         operand_hir = self.__evaluator.value(operand)
 
         operand_ty = self.__type_ctx[operand_hir.type_id]
-        # T& 引用支持解引用(仅 live 检查,免 in_bounds)
         if isinstance(operand_ty, (Type.PointerType, Type.RefType)):
             return HIR.Unary(span, UnaryOperator.Deref, operand_hir, operand_ty.pointee_type, is_place=True)
 
