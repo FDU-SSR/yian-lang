@@ -13,7 +13,7 @@ fn NewTreeNode(Option<Slice<treeNode>> left, Option<Slice<treeNode>> right) -> S
     return node
 }
 
-fn ItemCheck(Slice<treeNode> tree) -> i64 
+fn ItemCheck(Slice<treeNode> tree) -> i64
 {
     let res: i64 = 1
     let tree_item: treeNode = *tree
@@ -26,7 +26,7 @@ fn ItemCheck(Slice<treeNode> tree) -> i64
     return res
 }
 
-fn BottomUpTree(u32 depth) -> Slice<treeNode> 
+fn BottomUpTree(u32 depth) -> Slice<treeNode>
 {
     if depth > 0
     {
@@ -52,7 +52,7 @@ fn DeleteTree(tree: Slice<treeNode>)
 }
 
 
-fn main() 
+fn main()
 {
     let N: u32 = 20
     let minDepth: u32 = 4
@@ -62,7 +62,7 @@ fn main()
     if (minDepth + 2) > N {
         maxDepth = minDepth + 2
     }
-    
+
     let stretchDepth: u32 = maxDepth + 1
 
     let stretchTree: Slice<treeNode> = BottomUpTree(stretchDepth)
@@ -85,7 +85,7 @@ fn main()
         }
     }
     fn DeleteTree(longLivedTree)
-    
+
     assert i32(check % 256) == 176: "fail"
     fn print("pass")
     return 0

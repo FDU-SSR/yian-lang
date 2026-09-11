@@ -689,7 +689,7 @@ impl<T> RawPtr<T> {
         let mb: MemoryBlock* = bitcast<MemoryBlock*>(self.address);
         return self.key_or_len == mb.lock;
     }
-    
+
     fn copy_to(other: RawPtr<T>) {
         let raw_ptr: T*;
         let other_raw_ptr: T*;
