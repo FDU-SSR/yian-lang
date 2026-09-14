@@ -12,7 +12,7 @@ fn main() {
     let empty_array: i32[0];
     let empty_array_slice: i32[] = empty_array.as_slice();
     let array_some: Option<i32[]> = Option<i32[]>.Some(empty_array_slice);
-    assert sizeof(Option<i32[]>) == 16: "slice niche layout";
+    assert sizeof(Option<i32[]>) == sizeof(i32[]): "slice niche layout";
     assert slice_some.is_some(): "empty slice is Some";
     assert slice_none.is_none(): "empty slice None";
     assert array_some.is_some(): "zero-length array slice is Some";
@@ -20,7 +20,7 @@ fn main() {
     let empty: str = "";
     let str_some: Option<str> = Option<str>.Some(empty);
     let str_none: Option<str> = Option<str>.None;
-    assert sizeof(Option<str>) == 16: "str niche layout";
+    assert sizeof(Option<str>) == sizeof(str): "str niche layout";
     assert str_some.is_some(): "empty str is Some";
     assert str_none.is_none(): "empty str None";
 

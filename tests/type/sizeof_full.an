@@ -23,6 +23,12 @@ struct S { a: i32, b: u8 }
 enum E { A, B, C }
 
 fn main() {
+    let expected_str_size: u64 = comptime if IS_RAW_MODE {
+        16u64
+    } else {
+        32u64
+    };
+
     // ===== primitives =====
     assert sizeof(i8)  == 1: "i8";
     assert sizeof(i16) == 2: "i16";
@@ -36,7 +42,7 @@ fn main() {
     assert sizeof(f64) == 8: "f64";
     assert sizeof(bool) == 1: "bool";
     assert sizeof(char) == 4: "char";
-    assert sizeof(str) == 16: "str";
+    assert sizeof(str) == expected_str_size: "str";
     assert sizeof(void) == 0: "void zst";
 
     // ===== pointer / slice / fn / never =====

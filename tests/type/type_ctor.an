@@ -11,6 +11,12 @@ impl<T> Ptr<T> {
 }
 
 fn main() {
+    let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        40u64
+    };
+
     // sizeof / type position
     assert sizeof(Ptr<i32>)      == sizeof(WP): "Ptr<i32>";
     assert sizeof(Slice<i32>)    == sizeof(WS): "Slice<i32>";
@@ -22,5 +28,5 @@ fn main() {
     let p: Ptr<i32> = &value;
 
     // static method receiver
-    assert Ptr<i32>.width() == 8: "static call on Ptr<i32>";
+    assert Ptr<i32>.width() == expected_ptr_size: "static call on Ptr<i32>";
 }
