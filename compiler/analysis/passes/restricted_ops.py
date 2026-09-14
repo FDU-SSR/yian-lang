@@ -52,7 +52,13 @@ def __is_stdlib_file(path: Path) -> bool:
 
 def __is_test_harness_file(path: Path) -> bool:
     parts = path.resolve().parts
-    return any(part == "tests" and parts[i + 1] == "std" for i, part in enumerate(parts[:-1]))
+    return any(
+        part == "tests"
+        and i + 2 < len(parts)
+        and parts[i + 1] in {"basic", "safety"}
+        and parts[i + 2] == "std"
+        for i, part in enumerate(parts)
+    )
 
 
 class RestrictedOpsChecker:

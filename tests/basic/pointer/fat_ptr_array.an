@@ -1,10 +1,14 @@
-// Fat pointer: array of fat pointers (each element is a 40-byte fat pointer).
+// Pointer array: its element width follows the active pointer representation.
 //
 // Expected output: 0
 
 fn main() {
-    // Static checks: fat pointer is 5 × 8 = 40 bytes.
-    assert sizeof(i32*) == 40: "sizeof(i32*) == 40"
+    let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        40u64
+    };
+    assert sizeof(i32*) == expected_ptr_size: "pointer ABI size"
     assert sizeof(i32*[3]) == sizeof(i32*) * 3: "ptr-array size"
 
     // Stack array of Option pointers; each element points to a heap-allocated

@@ -1,6 +1,0 @@
-[
-  {
-    "name": "raw",
-    "compiler_args": ["--raw-pointers"]
-  }
-]

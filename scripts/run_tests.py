@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Batch test runner for the YIAN compiler.
+"""Run the basic YIAN test suite in fat- and raw-pointer modes.
 
-Discovers .an source files under tests/ and compiles each one with the
-standard library. Tests without a corresponding .ans file in tests/output/
-are treated as success tests (expected exit code 0, no output comparison).
+This is the basic-suite entry point. It discovers .an source files under
+``tests/basic`` and compiles each one with the standard library twice: once
+with the default fat-pointer representation and once with
+``--raw-pointers``. Tests without a corresponding .ans file in
+``tests/output/basic`` are treated as success tests (expected exit code 0,
+no output comparison).
 
-Test inputs are discovered from tests/input/:
+Test inputs are discovered from ``tests/input/basic``:
   - <name>.args  → CLI arguments passed to the executable (whitespace-separated)
   - <name>.stdin → content piped to the executable's stdin
 
@@ -13,7 +16,7 @@ Usage:
     python scripts/run_tests.py                  # run all tests
     python scripts/run_tests.py -v               # verbose: show failure details
     python scripts/run_tests.py -q               # quiet: only the summary line
-    python scripts/run_tests.py -x               # include experimental/ tests
+    python scripts/run_tests.py -x               # include basic/experimental/
     python scripts/run_tests.py -f call          # only run tests matching "call"
 """
 
@@ -30,19 +33,21 @@ from typing import TextIO
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
-OUTPUT_DIR = TESTS_DIR / "output"
-INPUT_DIR = TESTS_DIR / "input"
+SUITE_NAME = "basic"
+SOURCE_DIR = TESTS_DIR / SUITE_NAME
+OUTPUT_DIR = TESTS_DIR / "output" / SUITE_NAME
+INPUT_DIR = TESTS_DIR / "input" / SUITE_NAME
 LIB_DIR = ROOT_DIR / "lib"
 BUILD_DIR = ROOT_DIR / "build"
 
 # ---------------------------------------------------------------------------
 # Multi-file test configuration
 # ---------------------------------------------------------------------------
-# Test source file (relative to TESTS_DIR) → extra .an files to compile alongside.
+# Test source file (relative to SOURCE_DIR) → extra .an files to compile alongside.
 EXTRA_SOURCES: dict[str, list[str]] = {
 }
 
-# Directories (relative to TESTS_DIR) whose .an files are compiled together.
+# Directories (relative to SOURCE_DIR) whose .an files are compiled together.
 MULTI_FILE_DIRS: set[str] = set()
 
 
@@ -111,6 +116,9 @@ class TestResult:
     check_stdout: bool = False
     """Whether to compare expected_output with captured stdout."""
 
+    compile_only: bool = False
+    """Whether this result came from ``--no-run`` analysis-only execution."""
+
     def passed(self) -> bool:
         if self.test.expect_error:
             if self.exit_code == 0:
@@ -118,6 +126,8 @@ class TestResult:
             if self.test.expected_substring:
                 return self.test.expected_substring in self.output
             return True
+        if self.compile_only:
+            return self.exit_code == 0
         if self.test.expected_exit_code is not None:
             if self.exit_code != self.test.expected_exit_code:
                 return False
@@ -178,7 +188,7 @@ def _parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int 
 def _find_ans(test_rel: str) -> Path | None:
     """Look for a .ans file corresponding to *test_rel*.
 
-    *test_rel* is relative to TESTS_DIR:
+    *test_rel* is relative to SOURCE_DIR:
       - "call/variant_construct.an"         → …/call/variant_construct.an.ans
       - "error/circular_dep1.err.an"        → …/error/circular_dep1.an.ans
       - "import/func"  (multi-file dir)     → …/import/func.ans
@@ -197,7 +207,7 @@ def _find_ans(test_rel: str) -> Path | None:
 
 
 def _find_input(test_rel: str) -> tuple[list[str] | None, str]:
-    """Look for input files corresponding to *test_rel* in tests/input/.
+    """Look for input files corresponding to *test_rel* in the suite input directory.
 
     Returns ``(cli_args, stdin)`` where:
       - *cli_args* is a list of whitespace-split args (None if no .args file).
@@ -305,13 +315,13 @@ def _find_orphaned_compile_configs() -> list[str]:
     for config in sorted(INPUT_DIR.rglob("*.compile.json")):
         rel = config.relative_to(INPUT_DIR)
         source_rel = str(rel)[: -len(".compile.json")]
-        if not (TESTS_DIR / source_rel).exists():
+        if not (SOURCE_DIR / source_rel).exists():
             orphaned.append(str(config))
     return orphaned
 
 
 def discover_tests() -> list[TestCase]:
-    """Walk tests/ for .an files and build a TestCase for each.
+    """Walk the active suite for .an files and build a TestCase for each.
 
     Tests without a corresponding .ans file are treated as success tests
     (expected exit code 0, no output comparison).
@@ -322,12 +332,8 @@ def discover_tests() -> list[TestCase]:
     tests: list[TestCase] = []
     orphaned: list[str] = []
 
-    for an_file in sorted(TESTS_DIR.rglob("*.an")):
-        rel = an_file.relative_to(TESTS_DIR)
-
-        # Exclude tests/output/ and tests/input/.
-        if rel.parts[0] in ("output", "input"):
-            continue
+    for an_file in sorted(SOURCE_DIR.rglob("*.an")):
+        rel = an_file.relative_to(SOURCE_DIR)
 
         src_rel = str(rel)
 
@@ -348,7 +354,7 @@ def discover_tests() -> list[TestCase]:
         # --- Standalone test ---
         else:
             extra = EXTRA_SOURCES.get(src_rel, [])
-            source_files = [an_file] + [TESTS_DIR / e for e in extra]
+            source_files = [an_file] + [SOURCE_DIR / e for e in extra]
             name = src_rel
 
         # .err.an files (including those in multi-file dirs) are error tests.
@@ -387,14 +393,14 @@ def discover_tests() -> list[TestCase]:
         ans_rel = ans_file.relative_to(OUTPUT_DIR)
         if ans_rel.name.endswith(".an.ans"):
             source_name = str(ans_rel.parent / ans_rel.name[:-4])
-            if (TESTS_DIR / source_name).exists():
+            if (SOURCE_DIR / source_name).exists():
                 continue
             err_name = source_name[:-3] + ".err.an"
-            if (TESTS_DIR / err_name).exists():
+            if (SOURCE_DIR / err_name).exists():
                 continue
         else:
             dir_name = str(ans_rel.parent / ans_rel.stem)
-            if (TESTS_DIR / dir_name).is_dir():
+            if (SOURCE_DIR / dir_name).is_dir():
                 continue
         orphaned.append(str(ans_file))
 
@@ -418,7 +424,12 @@ def discover_tests() -> list[TestCase]:
 # Test execution
 # ---------------------------------------------------------------------------
 
-def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResult:
+def run_test(
+    test: TestCase,
+    dump: bool = False,
+    run: bool = False,
+    compile_only: bool = False,
+) -> TestResult:
     """Compile *test* and return the result.
 
     If *run* is True and the test is not an error test: compile to executable,
@@ -434,18 +445,13 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
     if test.expect_error:
         cmd += ["-t", "none"]
     elif run:
-        exe_path = BUILD_DIR / "test_exe" / test.name
+        exe_path = BUILD_DIR / "test_exe" / SUITE_NAME / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)
         cmd += ["-t", "exe", "-o", str(exe_path)]
     else:
         cmd += ["-t", "none"]
     if dump:
-        cmd += [
-            "--token", str(BUILD_DIR / "token.txt"),
-            "--ast", str(BUILD_DIR / "ast.txt"),
-            "--hir", str(BUILD_DIR / "hir.txt"),
-            "--cfg", str(BUILD_DIR / "cfg.txt"),
-        ]
+        cmd.append("--dump")
 
     start = time.monotonic()
     proc = subprocess.run(
@@ -467,6 +473,7 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
             exit_code=proc.returncode,
             elapsed_ms=compile_elapsed,
             output=compiler_output,
+            compile_only=compile_only,
         )
 
     # --run mode: execute the compiled binary
@@ -501,27 +508,53 @@ def run_test(test: TestCase, dump: bool = False, run: bool = False) -> TestResul
         exit_code=proc.returncode,
         elapsed_ms=compile_elapsed,
         output=compiler_output,
+        compile_only=compile_only,
     )
 
 
-def _variant_test(test: TestCase, variant: CompileVariant) -> TestCase:
-    """Create an executable test case for one existing compiler variant."""
+def _mode_test(test: TestCase, mode: str) -> TestCase:
+    """Create the fat or raw execution of a basic-suite test.
+
+    The ordinary suite has one source and one expected result for both pointer
+    representations. The retained ``raw_coerce_neg`` metadata is the one
+    intentional exception: its raw variant expects a compile-time diagnostic.
+    Other legacy variants are ignored by the two-mode runner and are removed
+    from the repository as part of the suite migration.
+    """
+    if mode not in {"fat", "raw"}:
+        raise ValueError(f"unsupported pointer mode: {mode}")
+
+    variant: CompileVariant | None = None
+    if mode == "raw":
+        variant = next(
+            (candidate for candidate in test.compile_variants if candidate.name == "raw"),
+            None,
+        )
+
     expect_error = test.expect_error
     expected_substring = test.expected_substring
     expected_exit_code = test.expected_exit_code
-    if variant.expected_substring is not None:
-        expect_error = True
-        expected_substring = variant.expected_substring
-        expected_exit_code = None
-    elif variant.expected_exit_code is not None:
-        if expect_error:
-            raise ValueError(
-                f"{test.name}: runtime exit override is invalid for a compile-error test"
-            )
-        expected_exit_code = variant.expected_exit_code
+    if variant is not None:
+        if variant.expected_substring is not None:
+            expect_error = True
+            expected_substring = variant.expected_substring
+            expected_exit_code = None
+        elif variant.expected_exit_code is not None:
+            if expect_error:
+                raise ValueError(
+                    f"{test.name}: runtime exit override is invalid for a compile-error test"
+                )
+            expected_exit_code = variant.expected_exit_code
+
+    compiler_args = list(test.compiler_args)
+    if mode == "raw":
+        if variant is not None:
+            compiler_args.extend(variant.compiler_args)
+        elif "--raw-pointers" not in compiler_args:
+            compiler_args.append("--raw-pointers")
 
     return TestCase(
-        name=f"{test.name}@{variant.name}",
+        name=f"{test.name}@{mode}",
         source_files=test.source_files,
         expect_error=expect_error,
         expected_substring=expected_substring,
@@ -529,17 +562,17 @@ def _variant_test(test: TestCase, variant: CompileVariant) -> TestCase:
         expected_output=test.expected_output,
         cli_args=test.cli_args,
         stdin=test.stdin,
-        compiler_args=variant.compiler_args,
+        compiler_args=compiler_args,
     )
 
 
 def discover_python_tests() -> list[TestCase]:
-    """Discover existing Python unit and IR checks under tests/unit."""
+    """Discover existing Python unit and IR checks in the active suite."""
     tests: list[TestCase] = []
-    for source in sorted((TESTS_DIR / "unit").rglob("test_*.py")):
+    for source in sorted((SOURCE_DIR / "unit").rglob("test_*.py")):
         tests.append(
             TestCase(
-                name=str(source.relative_to(TESTS_DIR)),
+                name=str(source.relative_to(SOURCE_DIR)),
                 source_files=[],
                 expect_error=False,
                 expected_substring="",
@@ -551,7 +584,7 @@ def discover_python_tests() -> list[TestCase]:
 
 def run_python_test(test: TestCase) -> TestResult:
     """Run one existing Python unit or IR check as a subprocess."""
-    source = TESTS_DIR / test.name
+    source = SOURCE_DIR / test.name
     start = time.monotonic()
     proc = subprocess.run(
         [sys.executable, str(source)],
@@ -651,8 +684,17 @@ def _indent(text: str, prefix: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     import argparse
+
+    if suite not in {"basic", "safety"}:
+        raise ValueError(f"unsupported test suite: {suite}")
+
+    global SUITE_NAME, SOURCE_DIR, OUTPUT_DIR, INPUT_DIR
+    SUITE_NAME = suite
+    SOURCE_DIR = TESTS_DIR / suite
+    OUTPUT_DIR = TESTS_DIR / "output" / suite
+    INPUT_DIR = TESTS_DIR / "input" / suite
 
     parser = argparse.ArgumentParser(
         description="Batch test runner for the YIAN compiler.",
@@ -671,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         "-x", "--experimental",
         action="store_true",
         dest="include_experimental",
-        help="Include tests under tests/experimental/.",
+        help=f"Include tests under tests/{suite}/experimental/.",
     )
     parser.add_argument(
         "-f", "--filter",
@@ -699,12 +741,15 @@ def main(argv: list[str] | None = None) -> int:
     if not args.include_experimental:
         all_tests = [t for t in all_tests if not t.name.startswith("experimental/")]
 
-    expanded_tests: list[TestCase] = []
-    for test in all_tests:
-        expanded_tests.append(test)
-        for variant in test.compile_variants:
-            expanded_tests.append(_variant_test(test, variant))
-    all_tests = expanded_tests
+    if args.filter_str:
+        all_tests = [t for t in all_tests if args.filter_str in t.name]
+
+    if suite == "basic":
+        expanded_tests: list[TestCase] = []
+        for test in all_tests:
+            expanded_tests.append(_mode_test(test, "fat"))
+            expanded_tests.append(_mode_test(test, "raw"))
+        all_tests = expanded_tests
 
     python_tests = [] if args.no_run else discover_python_tests()
     all_tests += python_tests
@@ -725,7 +770,12 @@ def main(argv: list[str] | None = None) -> int:
         if test.name.startswith("unit/"):
             result = run_python_test(test)
         else:
-            result = run_test(test, dump=args.dump, run=not args.no_run)
+            result = run_test(
+                test,
+                dump=args.dump,
+                run=not args.no_run,
+                compile_only=args.no_run,
+            )
         results.append(result)
 
         if not args.quiet:
@@ -741,7 +791,7 @@ def main(argv: list[str] | None = None) -> int:
     # Write detailed failure log.
     failed = [r for r in results if not r.passed()]
     if failed:
-        log_path = ROOT_DIR / "build" / "test_failures.log"
+        log_path = ROOT_DIR / "build" / f"test_failures_{SUITE_NAME}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as log:
             log.write(f"Test run at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")

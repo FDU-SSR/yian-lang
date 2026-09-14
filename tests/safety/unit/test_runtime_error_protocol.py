@@ -9,11 +9,11 @@ import tempfile
 from pathlib import Path
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 LIB_DIR = ROOT_DIR / "lib"
 
 SAFETY_CASES: tuple[tuple[str, str], ...] = (
-    ("tests/array/safety_oob.an", "yian: safety error [S001]: out-of-bounds memory access\n"),
+    ("tests/safety/array/safety_oob.an", "yian: safety error [S001]: out-of-bounds memory access\n"),
     ("tests/safety/fat_uaf.an", "yian: safety error [S002]: invalid memory access\n"),
     ("tests/safety/tiered_ref_dangle.an", "yian: safety error [S003]: dangling reference access\n"),
     ("tests/safety/fat_arith_overflow.an", "yian: safety error [S004]: invalid pointer arithmetic\n"),
@@ -151,7 +151,7 @@ def _assert_restricted_and_invalid_forms() -> None:
 def main() -> int:
     for source_name, expected in SAFETY_CASES:
         opts = (0, 3) if source_name in {
-            "tests/array/safety_oob.an",
+            "tests/safety/array/safety_oob.an",
             "tests/safety/fat_uaf.an",
             "tests/safety/fat_double_free.an",
             "tests/safety/malloc_overflow.an",

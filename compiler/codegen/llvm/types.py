@@ -201,7 +201,16 @@ class LLTypeCtx:
         # 3 字段引用 ⟨data, lock_ptr, key⟩ 24B(不含 index 和 size)。
         # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸 T*。
         if self.__raw_pointers:
-            return self.__get_raw_type(type_def.pointee_type).as_pointer()
+            pointee_type_id = type_def.pointee_type
+            pointee_type = self.__type_ctx[pointee_type_id]
+            # ClosureLowering erases ordinary ClosureType values before LLVM,
+            # but a reference produced from a closure field can retain the
+            # closure type as its pointee.  The closure already has an
+            # anonymous capture-struct representation; use that existing
+            # representation for the raw data pointer as well.
+            if isinstance(pointee_type, Type.ClosureType):
+                pointee_type_id = pointee_type.struct_type_id
+            return self.__get_raw_type(pointee_type_id).as_pointer()
         return self.__ref_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:

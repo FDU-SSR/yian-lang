@@ -813,7 +813,7 @@ class LLBuilder:
         return result_val
 
     def ptr_diff(self, lhs: LLValue, rhs: LLValue, result: str) -> LLValue:
-        """Pointer difference: ptr - ptr → u64 offset in elements。
+        """Pointer difference: ptr - ptr → i64 offset in elements。
 
         fat:有效地址 = data + index·|T| 以 i128 宽整数计算(O-1 无回摆),截断后
         sdiv |T| 得元素差(同对象内整除,检查已保证 data 相等 + 良构)。
@@ -830,16 +830,16 @@ class LLBuilder:
                 diff64,
                 ir.Constant(ir.IntType(64), elem_size)  # type: ignore
             )
-            result_val = LLValue(self.__type_ctx.u64_id, elem_size_val)  # type: ignore
+            result_val = LLValue(self.__type_ctx.i64_id, elem_size_val)  # type: ignore
         else:
             lhs_int = self.__builder.ptrtoint(lhs.ir_val, ir.IntType(64))  # type: ignore
             rhs_int = self.__builder.ptrtoint(rhs.ir_val, ir.IntType(64))  # type: ignore
             byte_diff = self.__builder.sub(lhs_int, rhs_int)  # type: ignore
-            elem_size_val = self.__builder.udiv(  # type: ignore
+            elem_size_val = self.__builder.sdiv(  # type: ignore
                 byte_diff,
                 ir.Constant(ir.IntType(64), elem_size)  # type: ignore
             )
-            result_val = LLValue(self.__type_ctx.u64_id, elem_size_val)  # type: ignore
+            result_val = LLValue(self.__type_ctx.i64_id, elem_size_val)  # type: ignore
         self.__func.set_reg(result, result_val)
         return result_val
 

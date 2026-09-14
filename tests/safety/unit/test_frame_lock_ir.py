@@ -18,7 +18,7 @@ from pathlib import Path
 from llvmlite import binding
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 SOURCE = ROOT_DIR / "tests" / "safety" / "fat_dangle_after_rekey.an"
 LIB = ROOT_DIR / "lib"
 SLOTS = 1 << 20

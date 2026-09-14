@@ -1424,7 +1424,7 @@ class CfgBuilder:
         if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs) and not self.__no_fat_checks:
             self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕 (规则 3.3.3)")
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
+        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i64_id)
         return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:

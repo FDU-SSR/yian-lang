@@ -3,7 +3,7 @@
 
 This check verifies *emission*, not O3 survival:
 
-  1. Compile ``tests/pointer/raw_compat_del.an`` with
+  1. Compile ``tests/basic/pointer/raw_compat_del.an`` with
      ``-t ll --raw-pointers`` (zero-optimized LLVM IR).
   2. Count ``call.*free`` occurrences.
   3. Require >= 1: otherwise print ``RAW free emission check FAILED: 0 free calls``
@@ -21,8 +21,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-SOURCE = ROOT_DIR / "tests" / "pointer" / "raw_compat_del.an"
+ROOT_DIR = Path(__file__).resolve().parents[3]
+SOURCE = ROOT_DIR / "tests" / "basic" / "pointer" / "raw_compat_del.an"
 LIB = ROOT_DIR / "lib"
 
 MIN_FREE_CALLS = 1
