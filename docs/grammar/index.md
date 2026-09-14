@@ -22,6 +22,7 @@
 | [13](13.modules.md)          | 模块系统      | `import`、`from...import`、可见性、Package/Standalone 模式、包名解析 |
 | [14](14.standard_library.md) | 标准库        | `Option`、`Result`、`Vec`、`String`、`Iterator` 等                  |
 | [15](15.assign_semantics.md) | 赋值与显式内存管理 | 按位复制、显式 `Clone`、`del` 与 `Drop`、容器别名                 |
+| [16](16.runtime_errors.md)   | 运行时错误与安全终止 | fail-stop、安全错误编号、诊断格式与进程退出约定                 |
 
 ## 约定
 
