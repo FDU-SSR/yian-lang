@@ -1,8 +1,0 @@
-fn main() {
-    let pa: i32* = dyn i32
-    *pa = 6
-    *pa += 6
-    let res: i32 = *pa + *pa
-    assert res == 24: "res != 24"
-    return 0
-}

@@ -1,31 +1,26 @@
-// A simple calculator for testing the fs module
+// A simple calculator for testing stdin and string conversion.
 
 from std.core.string import String;
-from std.core.io import readline, print;
+from std.core.io import Stdin, print;
 from std.core.option import Option;
-from std.core.str import CharIndicesIter;
 
 fn main() {
     loop {
-        let line: String = readline().trimmed()
+        let line: String = *Stdin.read_line().unwrap()
         if line == "exit" {
             break
         }
+        // Stdin.read_line() returns an empty String at EOF.  Stop here so the
+        // non-interactive test runner does not spin forever on an empty stdin.
         if line.is_empty() {
-            continue
+            break
         }
 
         let op_idx: Option<u64> = Option<u64>.None
         let op: Option<char> = Option<char>.None
-        let chars: CharIndicesIter = line.char_indices()
-
-        if line.starts_with_char('-') {
-            chars.next()
-        }
-
-        for elem in chars {
-            let idx: u64 = elem[0]
-            let ch: char = elem[1]
+        let bytes: u8[] = line.as_slice()
+        for idx in 0u64..bytes.len() {
+            let ch: char = char(bytes[idx])
             if "+-*/".contains_char(ch) {
                 op_idx = Option<u64>.Some(idx)
                 op = Option<char>.Some(ch)
@@ -37,29 +32,17 @@ fn main() {
             print("Invalid expression: no operator found")
             continue
         }
-        let idx: u64 = op_idx.unwrap()
-        let operator: char = op.unwrap()
+        let idx: u64 = *op_idx.unwrap()
+        let operator: char = *op.unwrap()
         let left_str: str = line[0u64..idx].trim()
-        let right_str: str = line[idx + 1..line.len()].trim()
+        let right_str: str = line[(idx + 1u64)..line.len()].trim()
 
-        let left_num: i64;
-        let right_num: i64;
-        match left_str.parse<i64>() {
-            let left_num: Ok as ok { = ok.val }
-            Err as err {
-                print("Invalid expression: unable to parse left operand")
-                continue
-            }
-        }
-        match right_str.parse<i64>() {
-            let right_num: Ok as ok { = ok.val }
-            Err as err {
-                print("Invalid expression: unable to parse right operand")
-                continue
-            }
-        }
+        // The current numeric conversion API is the concrete u64.from()
+        // method.  The old Result-based parse match is no longer available.
+        let left_num: u64 = u64.from(&left_str);
+        let right_num: u64 = u64.from(&right_str);
 
-        let result: i64;
+        let result: u64;
         match operator {
             '+' => { result = left_num + right_num }
             '-' => { result = left_num - right_num }
@@ -72,9 +55,9 @@ fn main() {
         }
 
         print("Result: ")
-        print(result.to_string())
+        let result_text: String = result.to_string()
+        print(result_text.as_str())
         print("\n")
     }
 
-    return 0
 }
