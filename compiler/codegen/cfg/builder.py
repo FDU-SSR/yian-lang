@@ -108,7 +108,7 @@ class CfgBuilder:
         # ── 帧锁实体化标记(规则 3.7.1)──
         # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
         # 写 SENTINEL 并从稳定影子栈弹出槽位(规则 3.7.2),
-        # 使栈悬垂访问经 live 键比较确定性 trap。标记随函数传给 LLTranslator。
+        # 使栈悬垂访问经 live 键比较确定性失败。标记随函数传给 LLTranslator。
         self.__func.frame_lock = self.__frame_lock
 
         return self.__func
@@ -151,7 +151,7 @@ class CfgBuilder:
                         worklist.append(arm.body)
                     if term.default is not None:
                         worklist.append(term.default)
-                case IR.Ret() | IR.Panic():
+                case IR.Ret() | IR.Panic() | IR.RuntimeFail():
                     pass
 
         # ── filter blocks ──
@@ -198,7 +198,7 @@ class CfgBuilder:
                             succs.append(arm.body)
                         if default is not None:
                             succs.append(default)
-                    case IR.Ret() | IR.Panic():
+                    case IR.Ret() | IR.Panic() | IR.RuntimeFail():
                         pass
             successors[id(block)] = succs
 
@@ -387,6 +387,10 @@ class CfgBuilder:
         self.__set_terminator(IR.Panic(msg_val))
         return self.__never_reg()
 
+    def __translate_runtime_fail(self, stmt: HIR.RuntimeFail) -> IR.Value:
+        self.__set_terminator(IR.RuntimeFail(stmt.code))
+        return self.__never_reg()
+
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
         if self.__is_del_target(ptr):
@@ -524,6 +528,8 @@ class CfgBuilder:
                 return self.__translate_delete(expr)
             case HIR.Panic():
                 return self.__translate_panic(expr)
+            case HIR.RuntimeFail():
+                return self.__translate_runtime_fail(expr)
             case HIR.Semi():
                 return self.__translate_semi(expr)
             case HIR.Let():
@@ -1212,7 +1218,7 @@ class CfgBuilder:
         (释放、锁槽写、任意函数副作用)时,已检查状态不再可靠,逐访问前提
         (规则 3.2.1/3.2.2)必须重新建立。挂起义务(派生链可对的 FieldPtr
         跳过的 in_bounds(elem,1))在此补发,保证 one-past-end 的 elem 取
-        字段在任何逃逸(传参 / 返回 / 跨块)前 trap(规则 3.5.2 前提不丢)。
+        字段在任何逃逸(传参 / 返回 / 跨块)前报告安全错误(规则 3.5.2 前提不丢)。
         """
         if self.__field_derived:
             for elem_name in dict.fromkeys(self.__field_derived.values()):
@@ -1250,7 +1256,7 @@ class CfgBuilder:
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         # 按指针层级插入检查(按 type_id 分派):
-        #   PointerType → in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段 trap)
+        #   PointerType → in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段时失败)
         #   RefType     → 仅 live(r)(T& 免 in_bounds;引用无 index/size,恒指单个元素)
         merged_elem_name: str | None = None
         if not self.__no_fat_checks:
@@ -1264,7 +1270,7 @@ class CfgBuilder:
             elif self.__is_fat_pointer(base):
                 # 嵌套派生链(安全修复 复核):base 是挂起 FieldPtr 结果时先补发
                 # in_bounds(elem,1)(消费义务)再派发——OOB 读/写必须先于访问
-                # trap,不得推迟到终止符补发(每访问前提仍成立,规则 3.5.2)。
+                # 报告安全错误,不得推迟到终止符补发(每访问前提仍成立,规则 3.5.2)。
                 if isinstance(base, IR.Reg) and base.name in self.__field_derived:
                     owed_name = self.__field_derived.pop(base.name)
                     elem, _b, _o = self.__elem_derived[owed_name]
@@ -1378,7 +1384,7 @@ class CfgBuilder:
 
         # ── 指针比较字段化(规则 3.4.1-3.4.2,§7.6 风险 3,指针比较)──
         # 胖指针(双方 PointerType 且 pointee 非 ZST)的比较路由至 PtrCmp:
-        # 序比较先插 CheckPtrCmp(data 相等前提,跨对象 trap);相等比较按
+        # 序比较先插 CheckPtrCmp(data 相等前提,跨对象失败);相等比较按
         # (data, index) 二元组。FunctionPointerType 非 PointerType,不参与。
         if op.is_comparison() and self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
             return self.__build_ptr_cmp(op, lhs, rhs, type_id)
@@ -1414,7 +1420,7 @@ class CfgBuilder:
         return elem_ptr
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
-        # CFG 层插入检查:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差 trap)
+        # CFG 层插入检查:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差失败)
         if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs) and not self.__no_fat_checks:
             self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕 (规则 3.3.3)")
@@ -1422,7 +1428,7 @@ class CfgBuilder:
         return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
-        # 指针序比较检查:序比较先查 data 相等(规则 3.4.1 前提,跨对象序比较 trap);
+        # 指针序比较检查:序比较先查 data 相等(规则 3.4.1 前提,跨对象序比较失败);
         # 相等比较(规则 3.4.2)按 (data, index) 二元组、无前提检查。
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq) and not self.__no_fat_checks:
             self.__emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
@@ -1440,7 +1446,7 @@ class CfgBuilder:
         return self.__emit(IR.ExtractValue(result=result, base=base, field_index=field_index)).result
 
     def __build_call(self, callee_type: int, args: list[IR.Value], result_type: int) -> IR.Value:
-        # 检查合并:调用可能释放/写锁槽 → 失效(先补发挂起 InBounds 义务,保证逃逸前 trap)
+        # 检查合并:调用可能释放/写锁槽 → 失效(先补发挂起 InBounds 义务,保证逃逸前失败)
         self.__invalidate_checks()
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
         return self.__emit(IR.Call(result=result, callee_type=callee_type, args=args)).result

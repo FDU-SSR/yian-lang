@@ -4,7 +4,7 @@
 // 2. Same-object ordered comparison — compares by index after data-equal check
 // 3. Cross-object < TRAPS — data unequal fails the 规则 3.4.1 prerequisite
 //
-// Expected runtime trap: Exit code -4
+// Expected runtime safety error: Exit code 1
 
 fn main() {
     // -- assertion 1: cross-object == / != are allowed, compared by (data, index) --
@@ -29,10 +29,10 @@ fn main() {
     assert p2 >= p1: "p2 >= p1";
     assert !(p2 < p1): "p2 < p1 should be false";
 
-    // -- assertion 3: cross-object < traps (data unequal → 规则 3.4.1 前提失败) --
+    // -- assertion 3: cross-object < safety errors (data unequal → 规则 3.4.1 前提失败) --
     let c1: i32 = 5;
     let c2: i32 = 6;
     let pc1: i32* = &c1;
     let pc2: i32* = &c2;
-    assert pc1 < pc2: "cross-object < traps (data unequal)";
+    assert pc1 < pc2: "cross-object < safety errors (data unequal)";
 }

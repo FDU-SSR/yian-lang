@@ -13,6 +13,8 @@ from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.operator import UnaryOperator
+from compiler.frontend.lex import token as Tok
+from compiler.runtime_error import parse_runtime_error_code
 from compiler.utils.log import CompilerLog
 
 
@@ -24,10 +26,10 @@ if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
 # Built-in instruction names — all are expressions with different return types:
-#   sizeof → u64,  sys_read/sys_write → void,  panic → never
+#   sizeof → u64,  sys_read/sys_write → void,  panic/runtime_fail → never
 # Fat-pointer primitives (restricted to the standard library via restricted_ops).
 BUILTIN_NAMES = frozenset({
-    "sys_read", "sys_write", "panic", "open", "close", "assume_init",
+    "sys_read", "sys_write", "panic", "__yian_runtime_fail", "open", "close", "assume_init",
     "__memcpy",
     "__slice_from_parts", "__slice_get_ptr", "__slice_get_len",
     "__str_from_parts", "__str_get_ptr", "__str_get_len",
@@ -127,6 +129,8 @@ class CallDispatcher:
         match callee.name:
             case "panic":
                 return self.__handle_panic(node)
+            case "__yian_runtime_fail":
+                return self.__handle_runtime_fail(node)
             case "sys_write":
                 return self.__handle_sys_write(node)
             case "sys_read":
@@ -163,6 +167,33 @@ class CallDispatcher:
         message = self.__expr.value(stmt.args[0].value)
         message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
         return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
+
+    def __handle_runtime_fail(self, node: AST.Call) -> HIR.RuntimeFail:
+        if any(arg.name is not None for arg in node.args):
+            raise AnalysisError("named arguments are not supported for '__yian_runtime_fail'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(
+                f"'__yian_runtime_fail' expects exactly 1 argument, got {len(node.args)}",
+                node.span,
+            )
+        arg = node.args[0].value
+        if not isinstance(arg, AST.Literal) or not isinstance(arg.literal, Tok.StrLiteral):
+            raise AnalysisError(
+                "'__yian_runtime_fail' expects a runtime error code string literal",
+                node.span,
+            )
+        code = parse_runtime_error_code(arg.literal.value)
+        if code is None:
+            raise AnalysisError(
+                f"unknown runtime error code '{arg.literal.value}'",
+                node.span,
+            )
+        return HIR.RuntimeFail(
+            span=node.span,
+            code=code,
+            type_id=self.__ctx.type_ctx.never_id,
+            is_place=False,
+        )
 
     def __handle_assume_init(self, node: AST.Call) -> HIR.Expr:
         """Lower `assume_init(expr)` into HIR.AssumeInit."""

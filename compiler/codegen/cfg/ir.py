@@ -5,6 +5,7 @@ from typing import TypeAlias
 
 from compiler.analysis.ty.ty import EnumVariant
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.runtime_error import RuntimeErrorCode
 
 # ---------------------------------------------------------------------------
 # 胖指针时序机制(块头锁槽 / 键 / 帧锁)——机制层常量与定义
@@ -21,7 +22,7 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 #   - FrameLock:每帧一个活动锁槽,帧进入 re-key k_f ← Gen(),帧退出写 SENTINEL。
 #   - 谓词:is_heap 纯位判定 / live 锁槽键比较含 null 短路 / is_raw 纯字段检查。
 #
-# 本节定义机制常量；CFG 层负责插入检查，LLVM 层负责值下降与运行期 trap。
+# 本节定义机制常量；CFG 层负责插入检查，LLVM 层负责值下降与运行期失败协议。
 # ---------------------------------------------------------------------------
 from compiler.codegen.cfg.lockmech import (
     BlockHeader,
@@ -186,10 +187,10 @@ class Delete:
 
 
 # ---------------------------------------------------------------------------
-# 检查插入与锁槽机制节点(CFG 层 检查点;LLVM 发射与运行期 trap 由 LLVM 层完成)
+# 检查插入与锁槽机制节点(CFG 层 检查点;LLVM 发射与运行期失败协议由 LLVM 层完成)
 #
 # §7.1 运行时检查插入点共 6 个:FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete。
-# 每个检查节点在 LLVM 层 落地为「前提不满足 → llvm.trap(SIGILL → Exit code -4)」;
+# 每个检查节点在 LLVM 层 落地为「前提不满足 → 诊断并以退出码 1 终止」;
 # 本文件承载节点存在性与语义,LLTranslator 的 case 由 LLVM 层 补充。
 # 锁槽交互:Malloc 块头写键(规则 3.6.1)、Delete 写 SENTINEL(规则 3.6.2)。
 # ---------------------------------------------------------------------------
@@ -210,7 +211,7 @@ class GenKey:
 class AcquireFrameLock:
     """从独立稳定影子栈取得当前帧锁槽并写入新键。
 
-    影子栈深度已达 ``FrameLockArena.SLOTS`` 时 trap。成功后
+    影子栈深度已达 ``FrameLockArena.SLOTS`` 时报告资源错误并终止。成功后
     ``result`` 是进程生命期内持续可读的 ``u64*`` 槽位地址。
     """
     result: Reg
@@ -242,7 +243,7 @@ class CheckSafeAccess:
 class CheckInBounds:
     """in_bounds(p_s,1)(规则 3.5.2,FieldPtr 重锚定前提)。
 
-    对 one-past-end 的 s 取字段 trap。LLVM 层 发射。
+    对 one-past-end 的 s 取字段时报告安全错误。LLVM 层发射。
     """
     ptr: Value
 
@@ -273,7 +274,7 @@ class CheckRefAccess:
 class CheckElementArith:
     """ElementPtr 算术良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)。
 
-    越过 one-past-end 或负方向越界 trap;无回绕子义务(O-1)由 u64 回绕检测
+    越过 one-past-end 或负方向越界时报告安全错误;无回绕子义务(O-1)由 u64 回绕检测
     落地(同型化,指针算术检查优化:icmp uge sum,index,LLVM 层 发射)。
     """
     base: Value
@@ -287,7 +288,7 @@ class CheckElementAccess:
     派生链 elem = base + offset(ElementPtr)→ f = elem.field(FieldPtr)→
     访问 f(Load/Store),当派生链可对且访问相邻时,三重检查合并为单节点:
     良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
-    (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
+    (规则 3.5.2,one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(定义 8,
     SafeAccess 的 live 项——重锚定字段指针 in_bounds(f,1) 恒真、
     live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项;
     非相邻访问不合并(访问点的 SafeAccess 按原样发射)。LLVM 层 发射。
@@ -315,7 +316,7 @@ class CheckRawBounds:
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
 
-    异对象指针差 trap。LLVM 层 发射。
+    异对象指针差报告安全错误。LLVM 层发射。
     """
     lhs: Value
     rhs: Value
@@ -325,7 +326,7 @@ class CheckPtrDiff:
 class CheckPtrCmp:
     """序比较前提:data 相等(规则 3.4.1)。
 
-    跨对象序比较 trap（由 LLVM 层发射）。相等比较(规则 3.4.2)按 (data, index)
+    跨对象序比较报告安全错误（由 LLVM 层发射）。相等比较(规则 3.4.2)按 (data, index)
     二元组、无此前提,不插入本节点。
     """
     lhs: Value
@@ -351,7 +352,7 @@ class CheckDelete:
 
     四项 = is_heap 纯位判定(定义 9,不读锁槽)+ live 锁槽键比较(定义 8,
     含 null 短路)+ is_raw 两分量:data = lock_ptr + H 与 index = 0(§2.5,
-    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均 trap。LLVM 层 发射。
+    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均报告安全错误。LLVM 层发射。
     """
     ptr: Value
 
@@ -523,7 +524,13 @@ class Panic:
     message: Value  # must be `str` type
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic
+@dataclass
+class RuntimeFail:
+    """Terminate with a canonical runtime error diagnostic."""
+    code: RuntimeErrorCode
+
+
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

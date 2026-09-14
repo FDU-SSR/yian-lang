@@ -157,7 +157,7 @@ impl<T> Index<u64, T*> for T[] {
 impl<T> Index<Range<u64>, T[]> for T[] {
     fn index(range: Range<u64>*) -> T[] {
         if range.end > self.len() {
-            panic("Range out of bounds");
+            __yian_runtime_fail("S001");
         }
         let start_ptr = self.ptr() + range.start;
         let len = range.end - range.start;

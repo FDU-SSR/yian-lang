@@ -78,7 +78,7 @@ impl<T> Vec<T> {
     pub fn insert(index: u64, value: T) {
         let len = self.len;
         if index > len {
-            panic("index out of bounds");
+            __yian_runtime_fail("S001");
         }
 
         if len == self.raw_vec.capacity() {
@@ -103,7 +103,7 @@ impl<T> Vec<T> {
     pub fn remove(index: u64) -> T {
         let len = self.len;
         if index >= len {
-            panic("index out of bounds");
+            __yian_runtime_fail("S001");
         }
 
         let buf = self.raw_vec.ptr();
@@ -126,7 +126,7 @@ impl<T> Vec<T> {
     pub fn swap_remove(index: u64) -> T {
         let len = self.len;
         if index >= len {
-            panic("index out of bounds");
+            __yian_runtime_fail("S001");
         }
 
         let buf = self.raw_vec.ptr();
@@ -211,7 +211,7 @@ impl<T> Clone for Vec<T> {
 impl<T> Index<u64, T*> for Vec<T> {
     pub fn index(index: u64*) -> T* {
         if *index >= self.len {
-            panic("index out of bounds");
+            __yian_runtime_fail("S001");
         }
         self.raw_vec.ptr() + *index
     }

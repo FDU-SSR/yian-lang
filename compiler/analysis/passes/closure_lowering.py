@@ -193,6 +193,8 @@ class ClosureLowering:
                 expr.args = {k: self.__rewrite_type_ids(v) for k, v in expr.args.items()}
             case HIR.Panic():
                 expr.message = self.__rewrite_type_ids(expr.message)
+            case HIR.RuntimeFail():
+                pass
             case HIR.Delete():
                 expr.target = self.__rewrite_type_ids(expr.target)
             case HIR.DynValue():
@@ -368,6 +370,8 @@ class ClosureLowering:
                 expr.args = {k: self.__rewrite_one_capture(v) for k, v in expr.args.items()}
             case HIR.Panic():
                 expr.message = self.__rewrite_one_capture(expr.message)
+            case HIR.RuntimeFail():
+                pass
             case HIR.Delete():
                 expr.target = self.__rewrite_one_capture(expr.target)
             case HIR.DynValue():

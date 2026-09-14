@@ -21,6 +21,7 @@ from compiler.codegen.llvm.module import LLFunction, LLModule
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.runtime_error import RuntimeErrorCode
 
 
 class BuilderPosition(Enum):
@@ -173,7 +174,7 @@ class LLBuilder:
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
 
     def __gen_key_value(self, is_heap: bool) -> LLValue:
-        """Emit a non-wrapping monotonic key, trapping on exhaustion.
+        """Emit a non-wrapping monotonic key, failing on exhaustion.
 
         Heap body ``BODY_MASK`` is reserved because adding the heap flag would
         produce the all-ones ``SENTINEL``.  Stack keys may use that body value
@@ -185,7 +186,7 @@ class LLBuilder:
         available = self.__builder.icmp_unsigned(
             "<", loaded, ir.Constant(ir.IntType(64), limit)  # type: ignore
         )
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, available), "keyex")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "keyex")
         nxt = self.__builder.add(loaded, ir.Constant(ir.IntType(64), 1))  # type: ignore
         self.__builder.store(nxt, counter)  # type: ignore
         if is_heap:
@@ -205,22 +206,22 @@ class LLBuilder:
             name = f"b{seq}.{kind}"
         return name
 
-    def __emit_check(self, cond: LLValue, suffix: str) -> None:
-        """检查失败 → llvm.trap(SIGILL → Exit code -4);通过 → 继续于新 ok 块。
+    def __emit_check(self, cond: LLValue, error_code: RuntimeErrorCode, suffix: str) -> None:
+        """检查失败 → 报告规范错误并退出;通过 → 继续于新 ok 块。
 
         检查是 CFG 块中间的语句,必须分裂基本块:原块以条件分支结束,ok 块
-        承载后续语句与终止符,trap 块 call llvm.trap + unreachable。
+        承载后续语句与终止符,失败块调用不可返回的运行时错误入口。
         """
         seq = self.__check_seq
         self.__check_seq += 1
         ok_block = self.__func.new_block(self.__split_block_name(suffix, "ok", seq))
-        trap_block = self.__func.new_block(self.__split_block_name(suffix, "trap", seq))
+        fail_block = self.__func.new_block(self.__split_block_name(suffix, "fail", seq))
         self.__func.add_block(ok_block.name, ok_block)  # type: ignore
-        self.__func.add_block(trap_block.name, trap_block)  # type: ignore
-        self.__builder.cbranch(cond.ir_val, ok_block, trap_block)  # type: ignore
-        trap_builder = ir.IRBuilder(trap_block)
-        trap_builder.call(self.__module.get_trap_intrinsic(), [])  # type: ignore
-        trap_builder.unreachable()  # type: ignore
+        self.__func.add_block(fail_block.name, fail_block)  # type: ignore
+        self.__builder.cbranch(cond.ir_val, ok_block, fail_block)  # type: ignore
+        fail_builder = ir.IRBuilder(fail_block)
+        self.__module.emit_runtime_fail(fail_builder, error_code)
+        fail_builder.unreachable()  # type: ignore
         # 该 CFG 块的终止符改落在 ok 块——phi 的入边块标签须随之映射
         self.__continuations[self.__current_cfg_block] = ok_block.name
         self.__builder = ir.IRBuilder(ok_block)
@@ -385,7 +386,7 @@ class LLBuilder:
             return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
         # Convert element count to byte count for allocation.
         # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及固定池块头,一律在 i128
-        # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ trap。否则纯 64 位乘法
+        # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ 报告 R001。否则纯 64 位乘法
         # 回绕(如 n=2^62+1,|T|=8 → 2^65 → 小值)会令物理分配过小,而胖指针
         # size 字段 = n(元素数,无回绕),in_bounds 全部通过 → 越界访问逃过检查。
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
@@ -401,7 +402,7 @@ class LLBuilder:
             )
         # O-1 溢出检查(raw 模式保留:防御性,决策点已定)
         fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), "mof")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), RuntimeErrorCode.R001, "mof")
         payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
         zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
         one = ir.Constant(ir.IntType(64), 1)  # type: ignore
@@ -412,7 +413,7 @@ class LLBuilder:
         if self.__raw_pointers:
             raw = self.__call_intrinsic(IntrinsicKind.Malloc, [payload])
             nonnull = self.__builder.icmp_signed("!=", raw.ir_val, ir.Constant(raw.ir_val.type, None))  # type: ignore
-            self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), "malloc-null")
+            self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), RuntimeErrorCode.R002, "malloc-null")
             # raw 模式:data = 块基址,直接返回裸指针(无锁头偏移、无 5 字段聚合)。
             # malloc intrinsic 返回 i8*,须 bitcast 到有型 T*(raw 指针为 T*)。
             typed = self.__builder.bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
@@ -481,7 +482,7 @@ class LLBuilder:
             ir.Constant(ir.IntType(64), IR.FrameLockArena.SLOTS),  # type: ignore
         )
         self.__emit_check(
-            LLValue(self.__type_ctx.bool_id, available), "framecap"
+            LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "framecap"
         )
         arena = self.__module.get_frame_lock_arena()
         slot = self.__builder.gep(  # type: ignore
@@ -516,7 +517,7 @@ class LLBuilder:
         lock, key, index, size = self.__extract_check_fields(ptr)
         in_bounds = self.__check_in_bounds_cond(index, size)
         cond = self.__check_live_and(lock, key, in_bounds.ir_val)
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "safe")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "safe")
 
     def check_in_bounds(self, ptr: LLValue) -> None:
         """in_bounds(p_s,1)(规则 3.5.2 重锚定前提)。"""
@@ -524,7 +525,7 @@ class LLBuilder:
             return
         index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
-        self.__emit_check(self.__check_in_bounds_cond(index, size), "ib")
+        self.__emit_check(self.__check_in_bounds_cond(index, size), RuntimeErrorCode.S001, "ib")
 
     def check_slice_nonempty(self, ptr: LLValue) -> None:
         """Establish the one-element origin invariant for ``T[] -> T&``."""
@@ -534,20 +535,20 @@ class LLBuilder:
         nonempty = self.__builder.icmp_unsigned(
             ">", size, ir.Constant(ir.IntType(64), 0)  # type: ignore
         )
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonempty), "sref")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, nonempty), RuntimeErrorCode.S007, "sref")
 
     def check_ref_access(self, ptr: LLValue) -> None:
         """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers)。
 
         引用无 index/size(3 字段 ⟨data,lock_ptr,key⟩),无越界概念;
-        live = 锁槽键比较(定义 8,含 null 短路)。live 失败 → llvm.trap。
+        live = 锁槽键比较(定义 8,含 null 短路)。live 失败 → 报告 S003。
         """
         if not self.__is_fat(ptr):
             return
         lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
         key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
         cond = self.__check_live(lock_ptr, key)
-        self.__emit_check(cond, "ref")
+        self.__emit_check(cond, RuntimeErrorCode.S003, "ref")
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
         """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
@@ -558,8 +559,8 @@ class LLBuilder:
         and(no_wrap, in_range)。与 i128 语义论证:正偏移(offset < 2^63 且
         index+offset < 2^64)无回绕时 sum ≥ index 恒真,只剩上界比较,与 i128
         完全等价;回绕(index+offset ≥ 2^64)时 sum < index → no_wrap 失败 →
-        trap(等价 i128 的 sum ≥ 2^64 > size 必 trap);下溢偏移(offset ≥ 2^63,
-        语义 = 极大无符号下标)u64 形式 trap(收紧,对齐 u64 索引语义——sext
+        失败(等价 i128 的 sum ≥ 2^64 > size);下溢偏移(offset ≥ 2^63,
+        语义 = 极大无符号下标)u64 形式报告安全错误(收紧,对齐 u64 索引语义——sext
         形式把其误解为负数,子切片 base.index ≥ |o| 时放行)。u64 同型使
         ConstraintElimination 可关联循环/分支约束消除本检查(O-1 由回绕检测
         落地,无需宽整数)。LLVM 层 发射。
@@ -573,14 +574,14 @@ class LLBuilder:
         no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
         cond: ir.Value = self.__builder.and_(no_wrap, in_range)  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "elarith")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S004, "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue) -> None:
         """合并检查:ElementArith→InBounds→SafeAccess 合取谓词(检查合并优化)。
 
         派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
         良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
-        (规则 3.5.2,one-past-end 的 elem 取字段 trap)∧ live(elem)(定义 8,
+        (规则 3.5.2,one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(定义 8,
         SafeAccess 的 live 项;in_bounds(f,1) 对重锚定字段指针恒真、
         live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项。
         LLVM 层 发射。
@@ -606,7 +607,7 @@ class LLBuilder:
         key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
         live_ok = self.__check_live(lock, key)
         cond: ir.Value = self.__builder.and_(self.__builder.and_(elarith_cond, ib_cond), live_ok.ir_val)  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "eacc")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "eacc")
 
     def check_raw_bounds(self, index: LLValue, length: int) -> None:
         """惰性左值路径裸数组越界检查:0 ≤ index < length(编译期长度)。
@@ -615,7 +616,7 @@ class LLBuilder:
         CheckElementArith + CheckSafeAccess 的组合越界语义(索引已 coerce u64)。
         """
         cond = self.__builder.icmp_unsigned("<", index.ir_val, ir.Constant(ir.IntType(64), length))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "rb")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
         """规则 3.3.3 前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。"""
@@ -636,16 +637,16 @@ class LLBuilder:
         no_wrap = self.__builder.icmp_signed("==", self.__builder.sext(diff64, i128), diff128)  # type: ignore
         wf_cond = self.__builder.and_(wf_l, wf_r)  # type: ignore
         cond: ir.Value = self.__builder.and_(data_eq, self.__builder.and_(wf_cond, no_wrap))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "ptrdiff")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """规则 3.4.1 序比较前提:data 相等(跨对象序比较 trap,§7.6 风险 3)。"""
+        """规则 3.4.1 序比较前提:data 相等(跨对象序比较报告 S005,§7.6 风险 3)。"""
         if not (self.__is_fat(lhs) and self.__is_fat(rhs)):
             return
         data_l, _ = self.__cmp_fat_operands(lhs)
         data_r, _ = self.__cmp_fat_operands(rhs)
         cond = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "ptrcmp")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
         """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
@@ -675,7 +676,7 @@ class LLBuilder:
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         live_ok = self.__check_live(lock, key)
         cond: ir.Value = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), "del")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S006, "del")
 
     # -- memory --
 
@@ -1579,11 +1580,16 @@ class LLBuilder:
     def unreachable(self) -> None:
         self.__builder.unreachable()
 
+    def runtime_fail(self, code: RuntimeErrorCode) -> None:
+        """Emit a canonical runtime diagnostic and terminate the block."""
+        self.__module.emit_runtime_fail(self.__builder, code)
+        self.__builder.unreachable()
+
     def panic(self, msg: LLValue) -> None:
-        self.__call_intrinsic(IntrinsicKind.Write, [
-            self.i32(2), self.__extract_value_raw(msg, 0), self.__slice_len_field(msg),
-        ])
-        self.__call_intrinsic(IntrinsicKind.Exit, [self.i32(1)])
+        self.__builder.call(
+            self.__module.get_panic(),
+            [self.__extract_value_raw(msg, 0).ir_val, self.__slice_len_field(msg).ir_val],
+        )
         self.__builder.unreachable()
 
     # ------------------------------------------------------------------
@@ -1621,7 +1627,7 @@ class LLBuilder:
         match kind:
             case IntrinsicKind.Malloc:
                 return self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-            case IntrinsicKind.Free | IntrinsicKind.Exit | IntrinsicKind.MemCopy:
+            case IntrinsicKind.Free | IntrinsicKind.ImmediateExit | IntrinsicKind.MemCopy:
                 return self.__type_ctx.void_id
             case IntrinsicKind.Write | IntrinsicKind.Read:
                 return self.__type_ctx.u64_id
@@ -1702,7 +1708,7 @@ class LLBuilder:
         """对 ir.Value 级胖指针聚合操作数做字段比较(规则 3.4.1-3.4.2)。
 
         相等按 (data, index) 二元组;序比较先插 data 相等前提检查(规则 3.4.1,
-        跨对象 trap)——未由 CFG 路由至此分支,须现场插检。
+        跨对象失败)——未由 CFG 路由至此分支,须现场插检。
         """
         data_l, idx_l = self.__fat_value_pair(lhs)
         data_r, idx_r = self.__fat_value_pair(rhs)
@@ -1712,7 +1718,7 @@ class LLBuilder:
             both = self.__builder.and_(data_eq, idx_eq)  # type: ignore
             return self.__builder.not_(both) if op == BinaryOperator.Neq else both  # type: ignore
         data_ok = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, data_ok), "ptrcmp")
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, data_ok), RuntimeErrorCode.S005, "ptrcmp")
         predicate = {
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",
             BinaryOperator.Leq: "<=", BinaryOperator.Geq: ">=",

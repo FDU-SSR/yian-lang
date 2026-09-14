@@ -268,6 +268,8 @@ class LLTranslator:
                 builder.condbr(self.__resolve(builder, cond), then_block.label, else_block.label)
             case IR.Panic(message=message):
                 builder.panic(self.__resolve(builder, message))
+            case IR.RuntimeFail(code=code):
+                builder.runtime_fail(code)
             case IR.Match():
                 self.__emit_match(builder, terminator)
 

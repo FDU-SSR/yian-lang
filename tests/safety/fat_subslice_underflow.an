@@ -3,7 +3,7 @@
 // CheckElementArith(定义 13):0 ≤ index + offset ≤ size,u64 同型化(回绕检测
 // + 上界比较)。子切片 q = p + 2(base.index = 2)再 q - 1:offset = u64(-1) =
 // 2^64-1 ≥ 2^63(下溢偏移 = 极大无符号下标)→ u64 回绕检测 sum = 2 + (2^64-1)
-// = 1 < index 2 → no_wrap 失败 → llvm.trap → Exit code -4。
+// = 1 < index 2 → no_wrap 失败 → fail-stop → Exit code 1。
 // (旧 i128 sext 形式把 offset 误解为 -1,index 2 + (-1) = 1 ≥ 0 且 ≤ size 会
 // 放行——本用例锁定 u64 索引语义的收紧修正。)
 
@@ -15,6 +15,6 @@ fn main() {
     p[3] = 4;
 
     let q: i32* = p + 2;   // 子切片:base.index = 2
-    let r: i32* = q - 1;   // 下溢偏移:offset = u64(-1) ≥ 2^63 → 回绕 → trap
+    let r: i32* = q - 1;   // 下溢偏移:offset = u64(-1) ≥ 2^63 → 回绕 → safety error
     assert false: "unreachable"
 }

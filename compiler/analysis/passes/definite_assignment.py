@@ -232,6 +232,10 @@ class DefiniteAssignment:
             self.__record_exit_state(state)
             return state
 
+        if isinstance(expr, HIR.RuntimeFail):
+            self.__record_exit_state(state)
+            return state
+
         # -- declarations -------------------------------------------------
         if isinstance(expr, HIR.Let):
             return self.__check_let(expr, state)
@@ -576,6 +580,10 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.Panic):
             state = self.__walk_neutral(expr.message, state)
+            self.__record_exit_state(state)
+            return state
+
+        if isinstance(expr, HIR.RuntimeFail):
             self.__record_exit_state(state)
             return state
 

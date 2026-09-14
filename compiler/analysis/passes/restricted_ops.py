@@ -23,6 +23,7 @@ RESTRICTED_BUILTIN_NAMES = frozenset(
         "close",
         "assume_init",
         "__memcpy",
+        "__yian_runtime_fail",
     }
 )
 

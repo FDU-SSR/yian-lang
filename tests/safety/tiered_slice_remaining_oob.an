@@ -1,5 +1,5 @@
 // A suffix slice must not retain the source pointer's full capacity.
-// Accessing index 2 of a two-element suffix traps before the load.
+// Accessing index 2 of a two-element suffix safety errors before the load.
 
 fn main() {
     let data = [10i32, 20, 30, 40];

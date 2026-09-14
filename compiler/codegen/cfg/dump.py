@@ -301,6 +301,9 @@ def __dump_terminator(term: IR.Terminator) -> str:
         case IR.Panic(message=message):
             return f"panic {__dump_value(message)}"
 
+        case IR.RuntimeFail(code=code):
+            return f"runtime_fail {code.name}"
+
 
 def __dump_match_arm(arm: IR.MatchArm) -> str:
     pattern_str = __dump_pattern(arm.pattern)

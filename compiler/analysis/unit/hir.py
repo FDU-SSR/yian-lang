@@ -9,6 +9,7 @@ from typing import TypeAlias
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.runtime_error import RuntimeErrorCode
 
 
 @dataclass
@@ -82,6 +83,15 @@ class Continue:
 class Panic:
     span: SrcSpan
     message: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class RuntimeFail:
+    """Unrecoverable compiler/stdlib runtime failure with a fixed code."""
+    span: SrcSpan
+    code: RuntimeErrorCode
     type_id: int
     is_place: bool
 
@@ -492,7 +502,7 @@ Expr: TypeAlias = (
     | Block
     | Return | Break | Continue
     | If | ComptimeIf | Loop
-    | Panic
+    | Panic | RuntimeFail
     | Delete
     | Match
     | Semi

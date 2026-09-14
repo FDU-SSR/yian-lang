@@ -365,7 +365,7 @@ impl Index<Range<u64>, str> for str {
         let len = bytes.len();
 
         if range.start > range.end || range.end > len {
-            panic("index out of bounds");
+            __yian_runtime_fail("S001");
         }
         if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
             panic("str slice index is ! on a char boundary");

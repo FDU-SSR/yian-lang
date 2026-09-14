@@ -108,6 +108,12 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             res = __line(guides, is_last, f"Panic: span={__format_span(expr.span)} type_id={expr.type_id}")
             res += __export_expr_child("Message", expr.message, guides, is_last, True, type_ctx)
             return res
+        case HIR.RuntimeFail():
+            return __line(
+                guides,
+                is_last,
+                f"RuntimeFail: span={__format_span(expr.span)} code={expr.code.name} type_id={expr.type_id}",
+            )
         case HIR.Delete():
             res = __line(guides, is_last, f"Delete: span={__format_span(expr.span)}")
             res += __export_expr_child("Target", expr.target, guides, is_last, True, type_ctx)

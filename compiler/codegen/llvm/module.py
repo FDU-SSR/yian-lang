@@ -11,6 +11,7 @@ from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.intrinsics import IntrinsicKind, IntrinsicManager
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
+from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 
 
 class LLFunction:
@@ -82,7 +83,8 @@ class LLModule:
         self.__yian_main_type_id: int | None = None
         self.__key_heap_global: ir.GlobalVariable | None = None
         self.__key_stack_global: ir.GlobalVariable | None = None
-        self.__trap_intrinsic: ir.Function | None = None
+        self.__runtime_fail_func: ir.Function | None = None
+        self.__panic_func: ir.Function | None = None
         self.__lit_lock_global: ir.GlobalVariable | None = None
         self.__pool_head_global: ir.GlobalVariable | None = None
         self.__pool_alloc_func: ir.Function | None = None
@@ -173,13 +175,99 @@ class LLModule:
         global_var.initializer = ir.Constant(ir.IntType(64), 0)  # type: ignore
         return global_var
 
-    def get_trap_intrinsic(self) -> ir.Function:
-        """``declare void @llvm.trap()`` — 运行期检查失败 → SIGILL → Exit code -4。"""
-        if self.__trap_intrinsic is None:
-            self.__trap_intrinsic = ir.Function(
-                self.__module, ir.FunctionType(ir.VoidType(), []), name="llvm.trap"
+    def get_runtime_fail(self) -> ir.Function:
+        """Return the internal fail-stop helper used by safety checks."""
+        if self.__runtime_fail_func is not None:
+            return self.__runtime_fail_func
+
+        i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+        i64 = ir.IntType(64)  # type: ignore
+        fn = ir.Function(
+            self.__module,
+            ir.FunctionType(ir.VoidType(), [i8_ptr, i64]),
+            name="__yian_runtime_fail",
+        )
+        fn.linkage = "internal"
+        fn.attributes.add("cold")
+        fn.attributes.add("noreturn")
+        fn.attributes.add("nounwind")
+        message, length = fn.args
+        message.name = "message"
+        length.name = "length"
+        entry = fn.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+        builder.call(
+            self.__intrinsics.get(IntrinsicKind.Write),
+            [ir.Constant(ir.IntType(32), 2), message, length],
+        )
+        builder.call(
+            self.__intrinsics.get(IntrinsicKind.ImmediateExit),
+            [ir.Constant(ir.IntType(32), 1)],
+        )
+        builder.unreachable()
+        self.__runtime_fail_func = fn
+        return fn
+
+    def get_panic(self) -> ir.Function:
+        """Return the internal helper that formats and terminates a panic."""
+        if self.__panic_func is not None:
+            return self.__panic_func
+
+        i8 = ir.IntType(8)  # type: ignore
+        i8_ptr = ir.PointerType(i8)  # type: ignore
+        i64 = ir.IntType(64)  # type: ignore
+        fn = ir.Function(
+            self.__module,
+            ir.FunctionType(ir.VoidType(), [i8_ptr, i64]),
+            name="__yian_panic",
+        )
+        fn.linkage = "internal"
+        fn.attributes.add("cold")
+        fn.attributes.add("noreturn")
+        fn.attributes.add("nounwind")
+        message, length = fn.args
+        message.name = "message"
+        length.name = "length"
+        entry = fn.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+
+        def write_global(value: bytes) -> None:
+            global_var = self.get_string_global(value)
+            ptr = builder.gep(
+                global_var,
+                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
             )
-        return self.__trap_intrinsic
+            builder.call(
+                self.__intrinsics.get(IntrinsicKind.Write),
+                [ir.Constant(ir.IntType(32), 2), ptr, ir.Constant(i64, len(value))],
+            )
+
+        write_global(b"yian: panic: ")
+        builder.call(
+            self.__intrinsics.get(IntrinsicKind.Write),
+            [ir.Constant(ir.IntType(32), 2), message, length],
+        )
+        write_global(b"\n")
+        builder.call(
+            self.__intrinsics.get(IntrinsicKind.ImmediateExit),
+            [ir.Constant(ir.IntType(32), 1)],
+        )
+        builder.unreachable()
+        self.__panic_func = fn
+        return fn
+
+    def emit_runtime_fail(self, builder: ir.IRBuilder, code: RuntimeErrorCode) -> None:
+        """Emit a call with a private, canonical diagnostic string."""
+        message = runtime_error_message(code)
+        global_var = self.get_string_global(message)
+        ptr = builder.gep(
+            global_var,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+        )
+        builder.call(
+            self.get_runtime_fail(),
+            [ptr, ir.Constant(ir.IntType(64), len(message))],
+        )
 
     def get_lit_lock(self) -> ir.GlobalVariable:
         """字符串字面量锁槽:全局 i64,初值 = LITERAL_KEY(1),永不写。
@@ -324,7 +412,7 @@ class LLModule:
         fresh_builder.cbranch(nonnull, fresh_init, fresh_fail)
 
         fail_builder = ir.IRBuilder(fresh_fail)
-        fail_builder.call(self.get_trap_intrinsic(), [])
+        self.emit_runtime_fail(fail_builder, RuntimeErrorCode.R002)
         fail_builder.unreachable()
 
         fresh_builder = ir.IRBuilder(fresh_init)

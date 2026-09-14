@@ -84,6 +84,8 @@ class ComptimeIfSpecializer:
                     arm.body = self.__rewrite_block(arm.body)
             case HIR.Panic():
                 expr.message = self.__rewrite_expr(expr.message)
+            case HIR.RuntimeFail():
+                pass
             case HIR.Delete():
                 expr.target = self.__rewrite_expr(expr.target)
             case HIR.Semi():
