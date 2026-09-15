@@ -1,0 +1,7 @@
+// A compile-time condition may not depend on a runtime local.
+
+fn main() {
+    let flag: bool = true;
+    let value: i32 = comptime if flag { 1 } else { 2 };
+    assert value == 1;
+}

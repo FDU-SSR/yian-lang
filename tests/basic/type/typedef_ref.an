@@ -1,0 +1,22 @@
+// Reference aliases must work in local bindings, generic instantiation, and
+// function parameter/return signatures.
+
+typedef Ref<T> = T&;
+typedef IntRef = i32&;
+
+fn alias_identity(value: IntRef) -> IntRef {
+    return value;
+}
+
+fn generic_alias_identity<T>(value: Ref<T>) -> Ref<T> {
+    return value;
+}
+
+fn main() {
+    let value: i32 = 17;
+    let direct: IntRef = &value;
+    let named: IntRef = alias_identity(direct);
+    let generic: Ref<i32> = generic_alias_identity(direct);
+    assert *named == 17: "named T& alias parameter/return";
+    assert *generic == 17: "generic T& alias parameter/return";
+}

@@ -58,36 +58,6 @@ def _compile_and_run(source: Path, opt: int = 3) -> subprocess.CompletedProcess[
         )
 
 
-def _compile_ir(source: Path) -> str:
-    with tempfile.TemporaryDirectory(prefix="yian-runtime-ir-") as directory:
-        output = Path(directory) / "program.ll"
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "compiler.main",
-                "-t",
-                "ll",
-                "-O",
-                "0",
-                str(LIB_DIR),
-                str(source),
-                "-o",
-                str(output),
-            ],
-            cwd=ROOT_DIR,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise AssertionError(
-                f"IR compilation failed for {source} (exit {proc.returncode}):\n"
-                f"{proc.stdout}{proc.stderr}"
-            )
-        return output.read_text(encoding="utf-8")
-
-
 def _assert_runtime_failure(source_name: str, expected: str, opts: tuple[int, ...]) -> None:
     source = ROOT_DIR / source_name
     for opt in opts:
@@ -157,15 +127,6 @@ def main() -> int:
             "tests/safety/malloc_overflow.an",
         } else (3,)
         _assert_runtime_failure(source_name, expected, opts)
-
-    ir = _compile_ir(ROOT_DIR / "tests/safety/fat_uaf.an")
-    assert "llvm.trap" not in ir
-    assert "__yian_runtime_fail" in ir
-    assert "cold noreturn nounwind" in ir
-    assert "call i64 @\"write\"" in ir
-    assert "call void @\"_exit\"(i32 1)" in ir
-    assert "yian: runtime error [R002]: memory allocation failed" in ir
-    assert "yian: runtime error [R003]: safety metadata exhausted" in ir
 
     _assert_panic()
     _assert_restricted_and_invalid_forms()

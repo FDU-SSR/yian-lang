@@ -324,7 +324,12 @@ class LLTypeCtx:
             else:
                 result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.RefType):
-            result = (self.__ref_pointer.get_abi_size(self.__target_data), self.__ref_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+            # References use the same bare-pointer ABI in raw mode.  Keep the
+            # three-field metadata representation only for checked/fat mode.
+            if self.__raw_pointers:
+                result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
+            else:
+                result = (self.__ref_pointer.get_abi_size(self.__target_data), self.__ref_pointer.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.FunctionPointerType):
             # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore

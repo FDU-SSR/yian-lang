@@ -1112,7 +1112,7 @@ class CfgBuilder:
         return not self.__type_ctx.is_zst(ty.pointee_type)
 
     def __is_del_target(self, ptr: IR.Value) -> bool:
-        """del 专属目标判定:PointerType / SliceType / RefType(fat 且非 raw 时 True)。
+        """del 专属目标判定:非 ZST 的 PointerType / SliceType / RefType。
 
         视图释放路径:T[]/T& 与 T* 同样支持整块释放——释放动作(WriteLockSlot
         与 delete())只提取 FAT_LOCK_PTR=1,三族布局 data/lock_ptr/key 前缀相同。
@@ -1125,10 +1125,12 @@ class CfgBuilder:
             return False
         if self.__is_raw_pointer(ptr):
             return False
+        # ZST pointers/references are erased to `{}` in LLVM.  Keep the IR
+        # Delete for the backend's no-op path, but do not inspect fat fields.
+        if self.__type_ctx.is_zst(ptr.type_id):
+            return False
         ty = self.__type_ctx[ptr.type_id]
-        if isinstance(ty, Type.PointerType):
-            return not self.__type_ctx.is_zst(ty.pointee_type)
-        return isinstance(ty, (Type.SliceType, Type.RefType))
+        return isinstance(ty, (Type.PointerType, Type.SliceType, Type.RefType))
 
     def __build_gen_key(self, is_heap: bool) -> IR.Value:
         """k ← Gen()(定义 10):堆键 MSB 1 / 栈键 MSB 0。"""

@@ -1,0 +1,51 @@
+// Compile-time evaluation covers arithmetic, comparison, bit operations,
+// casts, sizeof, const generics, and short-circuiting.
+
+fn choose<const N: u64>() -> i32 {
+    comptime if N == 4u64 {
+        40
+    } else {
+        -1
+    }
+}
+
+fn main() {
+    let arithmetic: i32 = comptime if (2i32 + 3i32 * 4i32) == 14i32 {
+        14
+    } else {
+        0
+    };
+    let bits: i32 = comptime if (((1i32 << 4i32) | 3i32) ^ 1i32) == 18i32 {
+        18
+    } else {
+        0
+    };
+    let unary: i32 = comptime if (~0i32 == -1i32) && (8i32 >> 2i32 == 2i32) {
+        1
+    } else {
+        0
+    };
+    let casted: u8 = comptime if u8(257u64) == 1u8 {
+        1u8
+    } else {
+        0u8
+    };
+    let sized: u64 = comptime if sizeof(i32[2]) == 8u64 {
+        8u64
+    } else {
+        0u64
+    };
+    let short_circuit: i32 = comptime if (false && ((1i32 / 0i32) == 0i32)) || true {
+        7
+    } else {
+        0
+    };
+
+    assert arithmetic == 14: "constant arithmetic";
+    assert bits == 18: "constant bit operations";
+    assert unary == 1: "constant unary and shift operations";
+    assert casted == 1u8: "constant integer cast";
+    assert sized == 8u64: "constant sizeof";
+    assert short_circuit == 7: "constant short-circuit";
+    assert choose<4>() == 40: "constant generic value";
+}

@@ -1,0 +1,12 @@
+// Generic functions must infer and preserve a T& parameter and return type.
+
+fn identity_ref<T>(value: T&) -> T& {
+    return value;
+}
+
+fn main() {
+    let value: i32 = 41;
+    let reference: i32& = &value;
+    let returned: i32& = identity_ref(reference);
+    assert *returned == 41: "generic T& parameter and return dereference correctly";
+}

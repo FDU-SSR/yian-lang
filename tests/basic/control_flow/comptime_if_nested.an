@@ -1,0 +1,33 @@
+// Nested compile-time conditions must specialize against the active pointer
+// representation, leaving only the selected helper reachable.
+
+fn fat_branch() -> i32 {
+    return 11;
+}
+
+fn raw_branch() -> i32 {
+    return 22;
+}
+
+fn never_branch() -> i32 {
+    return 99;
+}
+
+fn main() {
+    let selected: i32 = comptime if IS_RAW_MODE {
+        comptime if sizeof(i32*) == 8u64 {
+            raw_branch()
+        } else {
+            never_branch()
+        }
+    } else {
+        comptime if sizeof(i32*) == 40u64 {
+            fat_branch()
+        } else {
+            never_branch()
+        }
+    };
+
+    let expected: i32 = comptime if IS_RAW_MODE { 22 } else { 11 };
+    assert selected == expected: "nested comptime branch selection";
+}

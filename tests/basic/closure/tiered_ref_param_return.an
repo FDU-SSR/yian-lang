@@ -1,0 +1,16 @@
+// A closure may explicitly receive and return a T& value.
+
+fn main() {
+    let bias: i32 = 1;
+    let value: i32 = 23;
+    let reference: i32& = &value;
+    let identity = |bias_in = bias| (input: i32&) -> i32& {
+        if bias_in == 1 {
+            input
+        } else {
+            input
+        }
+    };
+    let returned: i32& = identity(reference);
+    assert *returned == 23: "closure T& parameter/return";
+}

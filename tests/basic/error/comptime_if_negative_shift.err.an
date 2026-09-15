@@ -1,0 +1,6 @@
+// Negative compile-time shifts must be rejected instead of reaching LLVM.
+
+fn main() {
+    let value: i32 = comptime if (1i32 << -1i32) == 0i32 { 1 } else { 2 };
+    assert value == 1;
+}

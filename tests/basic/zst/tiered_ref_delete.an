@@ -1,0 +1,14 @@
+// Deleting references to ZST values must cover both stack and dynamic
+// sources.  The common semantics make both operations no-ops.
+
+struct Empty {}
+
+fn main() {
+    let stack_value: Empty;
+    let stack_ref: Empty& = &stack_value;
+    del stack_ref;
+
+    let heap_value: Empty* = dyn[1] Empty;
+    let heap_ref: Empty& = heap_value;
+    del heap_ref;
+}
