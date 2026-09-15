@@ -1,0 +1,5 @@
+// The trusted boundary rejects index == argc with the stable S001 failure.
+fn main() {
+    let count = __yian_argc();
+    let bytes = __yian_arg_bytes(count);
+}

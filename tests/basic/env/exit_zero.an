@@ -1,0 +1,6 @@
+// Explicit zero exit is silent and returns status 0.
+from std.core.env import exit;
+
+fn main() {
+    exit(0);
+}

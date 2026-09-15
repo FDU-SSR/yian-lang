@@ -454,6 +454,19 @@ class Close:
 
 
 @dataclass
+class YianArgc:
+    """Load the process argument count."""
+    result: Reg
+
+
+@dataclass
+class YianArgBytes:
+    """Load one process argument as a borrowed byte slice."""
+    result: Reg
+    index: Value
+
+
+@dataclass
 class FuncPtr:
     """Create a function pointer from a function type."""
     result: Reg
@@ -474,7 +487,7 @@ Stmt: TypeAlias = (
     | Call | Invoke
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead | Open | Close
+    | SysWrite | SysRead | Open | Close | YianArgc | YianArgBytes
     | MemCopy
     | GenKey | AcquireFrameLock | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckSliceNonEmpty
@@ -530,7 +543,13 @@ class RuntimeFail:
     code: RuntimeErrorCode
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail
+@dataclass
+class YianExit:
+    """Terminate the process with an explicit status code."""
+    code: Value
+
+
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail | YianExit
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

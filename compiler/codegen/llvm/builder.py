@@ -1503,6 +1503,68 @@ class LLBuilder:
         raw = self.__call_intrinsic(IntrinsicKind.Close, [fd])
         self.__func.set_reg(result, raw)
 
+    # -- process arguments / exit --
+
+    def yian_argc(self, result: str) -> None:
+        """Load the validated C ``argc`` and expose it as ``u64``."""
+        loaded = self.__builder.load(self.__module.argc_global)  # type: ignore
+        extended = self.__builder.zext(loaded, ir.IntType(64))  # type: ignore
+        self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, extended))  # type: ignore
+
+    def yian_arg_bytes(self, index: LLValue, result: str) -> None:
+        """Return one NUL-terminated C argument as a borrowed byte slice.
+
+        The bounds and null checks are deliberately emitted here, independently
+        of the normal fat-pointer checking switch: the wrapper's process ABI is
+        trusted only after these two conditions have been established.
+        """
+        argc = self.__builder.load(self.__module.argc_global)  # type: ignore
+        argc_u64 = self.__builder.zext(argc, ir.IntType(64))  # type: ignore
+        in_range = self.__builder.icmp_unsigned("<", index.ir_val, argc_u64)  # type: ignore
+        self.__emit_check(
+            LLValue(self.__type_ctx.bool_id, in_range),
+            RuntimeErrorCode.S001,
+            "argv-index",
+        )
+
+        argv = self.__builder.load(self.__module.argv_global)  # type: ignore
+        slot = self.__builder.gep(argv, [index.ir_val], inbounds=False)  # type: ignore
+        ptr_ir = self.__builder.load(slot)  # type: ignore
+        ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+        ptr = LLValue(ptr_type_id, ptr_ir)
+        nonnull = self.__builder.icmp_unsigned(
+            "!=", ptr_ir, ir.Constant(ptr_ir.type, None)  # type: ignore
+        )
+        self.__emit_check(
+            LLValue(self.__type_ctx.bool_id, nonnull),
+            RuntimeErrorCode.S002,
+            "argv-null",
+        )
+
+        length = self.__call_intrinsic(IntrinsicKind.StrLen, [ptr])
+        slice_type_id = self.__type_ctx.alloc_slice(self.__type_ctx.u8_id)
+        if self.__raw_pointers:
+            value = self.undef(slice_type_id)
+            value = self.insert_value(value, ptr, 0)
+            value = self.insert_value(value, length, 1)
+        else:
+            lock_ir = self.__module.get_env_lock().bitcast(ir.PointerType(ir.IntType(8)))  # type: ignore
+            lock = LLValue(ptr_type_id, lock_ir)  # type: ignore[arg-type]
+            value = self.__build_fat(
+                ptr,
+                lock,
+                self.i64(1),
+                self.i64(0),
+                length,
+                slice_type_id,
+            )
+        self.__func.set_reg(result, value)
+
+    def yian_exit(self, code: LLValue) -> None:
+        """Terminate immediately with the caller-selected process status."""
+        self.__call_intrinsic(IntrinsicKind.ImmediateExit, [code])
+        self.__builder.unreachable()
+
     # ------------------------------------------------------------------
     # terminators
     # ------------------------------------------------------------------
@@ -1633,6 +1695,8 @@ class LLBuilder:
                 return self.__type_ctx.u64_id
             case IntrinsicKind.Open | IntrinsicKind.Close:
                 return self.__type_ctx.i32_id
+            case IntrinsicKind.StrLen:
+                return self.__type_ctx.u64_id
             case IntrinsicKind.SysRandom:
                 return self.__type_ctx.u32_id
 

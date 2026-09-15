@@ -195,6 +195,12 @@ class ClosureLowering:
                 expr.message = self.__rewrite_type_ids(expr.message)
             case HIR.RuntimeFail():
                 pass
+            case HIR.YianArgc():
+                pass
+            case HIR.YianArgBytes():
+                expr.index = self.__rewrite_type_ids(expr.index)
+            case HIR.YianExit():
+                expr.code = self.__rewrite_type_ids(expr.code)
             case HIR.Delete():
                 expr.target = self.__rewrite_type_ids(expr.target)
             case HIR.DynValue():
@@ -372,6 +378,12 @@ class ClosureLowering:
                 expr.message = self.__rewrite_one_capture(expr.message)
             case HIR.RuntimeFail():
                 pass
+            case HIR.YianArgc():
+                pass
+            case HIR.YianArgBytes():
+                expr.index = self.__rewrite_one_capture(expr.index)
+            case HIR.YianExit():
+                expr.code = self.__rewrite_one_capture(expr.code)
             case HIR.Delete():
                 expr.target = self.__rewrite_one_capture(expr.target)
             case HIR.DynValue():

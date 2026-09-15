@@ -172,6 +172,24 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_open(expr, guides, is_last, type_ctx)
         case HIR.Close():
             return __export_close(expr, guides, is_last, type_ctx)
+        case HIR.YianArgc():
+            return __line(
+                guides,
+                is_last,
+                f"YianArgc: type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}",
+            )
+        case HIR.YianArgBytes():
+            res = __line(
+                guides,
+                is_last,
+                f"YianArgBytes: type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}",
+            )
+            res += __export_expr_child("Index", expr.index, guides, is_last, True, type_ctx)
+            return res
+        case HIR.YianExit():
+            res = __line(guides, is_last, f"YianExit: span={__format_span(expr.span)}")
+            res += __export_expr_child("Code", expr.code, guides, is_last, True, type_ctx)
+            return res
         case HIR.MemCopy():
             res = __line(guides, is_last, f"MemCopy: span={__format_span(expr.span)}")
             res += __export_expr_child("Dest", expr.dest, guides, is_last, False, type_ctx)

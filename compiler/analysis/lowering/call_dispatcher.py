@@ -33,6 +33,7 @@ BUILTIN_NAMES = frozenset({
     "__memcpy",
     "__slice_from_parts", "__slice_get_ptr", "__slice_get_len",
     "__str_from_parts", "__str_get_ptr", "__str_get_len",
+    "__yian_argc", "__yian_arg_bytes", "__yian_exit",
 })
 
 
@@ -131,6 +132,12 @@ class CallDispatcher:
                 return self.__handle_panic(node)
             case "__yian_runtime_fail":
                 return self.__handle_runtime_fail(node)
+            case "__yian_argc":
+                return self.__handle_yian_argc(node)
+            case "__yian_arg_bytes":
+                return self.__handle_yian_arg_bytes(node)
+            case "__yian_exit":
+                return self.__handle_yian_exit(node)
             case "sys_write":
                 return self.__handle_sys_write(node)
             case "sys_read":
@@ -189,6 +196,53 @@ class CallDispatcher:
                 node.span,
             )
         return HIR.RuntimeFail(
+            span=node.span,
+            code=code,
+            type_id=self.__ctx.type_ctx.never_id,
+            is_place=False,
+        )
+
+    def __handle_yian_argc(self, node: AST.Call) -> HIR.YianArgc:
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__yian_argc'", node.span)
+        if node.args:
+            raise AnalysisError(f"'__yian_argc' expects 0 arguments, got {len(node.args)}", node.span)
+        return HIR.YianArgc(
+            span=node.span,
+            type_id=self.__ctx.type_ctx.u64_id,
+            is_place=False,
+        )
+
+    def __handle_yian_arg_bytes(self, node: AST.Call) -> HIR.YianArgBytes:
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__yian_arg_bytes'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(
+                f"'__yian_arg_bytes' expects exactly 1 argument, got {len(node.args)}",
+                node.span,
+            )
+        index = self.__expr.coerce(
+            self.__expr.value(node.args[0].value), self.__ctx.type_ctx.u64_id
+        )
+        return HIR.YianArgBytes(
+            span=node.span,
+            index=index,
+            type_id=self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id),
+            is_place=False,
+        )
+
+    def __handle_yian_exit(self, node: AST.Call) -> HIR.YianExit:
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '__yian_exit'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(
+                f"'__yian_exit' expects exactly 1 argument, got {len(node.args)}",
+                node.span,
+            )
+        code = self.__expr.coerce(
+            self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id
+        )
+        return HIR.YianExit(
             span=node.span,
             code=code,
             type_id=self.__ctx.type_ctx.never_id,

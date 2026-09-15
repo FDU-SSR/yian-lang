@@ -1,0 +1,10 @@
+// Validate the contents of process arguments.
+from std.core.env import args;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 4: "expected program name + 3 args";
+    assert argv[1] == "alice": "first argument";
+    assert argv[2] == "bob": "second argument";
+    assert argv[3] == "42": "third argument";
+}

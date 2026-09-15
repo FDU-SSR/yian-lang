@@ -81,6 +81,9 @@ class LLModule:
         self.__string_counter = 0
         self.__strings: dict[bytes, ir.GlobalVariable] = {}
         self.__yian_main_type_id: int | None = None
+        self.__argc_global: ir.GlobalVariable | None = None
+        self.__argv_global: ir.GlobalVariable | None = None
+        self.__env_lock_global: ir.GlobalVariable | None = None
         self.__key_heap_global: ir.GlobalVariable | None = None
         self.__key_stack_global: ir.GlobalVariable | None = None
         self.__runtime_fail_func: ir.Function | None = None
@@ -152,6 +155,37 @@ class LLModule:
     def yian_main_type_id(self) -> int:
         assert self.__yian_main_type_id is not None
         return self.__yian_main_type_id
+
+    @property
+    def argc_global(self) -> ir.GlobalVariable:
+        if self.__argc_global is None:
+            self.__argc_global = ir.GlobalVariable(
+                self.__module, ir.IntType(32), name="__yian_argc"
+            )
+            self.__argc_global.linkage = "internal"
+            self.__argc_global.initializer = ir.Constant(ir.IntType(32), 0)  # type: ignore[assignment]
+        return self.__argc_global
+
+    @property
+    def argv_global(self) -> ir.GlobalVariable:
+        if self.__argv_global is None:
+            argv_type = ir.PointerType(ir.PointerType(ir.IntType(8)))
+            self.__argv_global = ir.GlobalVariable(
+                self.__module, argv_type, name="__yian_argv"
+            )
+            self.__argv_global.linkage = "internal"
+            self.__argv_global.initializer = ir.Constant(argv_type, None)  # type: ignore[assignment]
+        return self.__argv_global
+
+    def get_env_lock(self) -> ir.GlobalVariable:
+        """Return the process-lifetime lock slot used by argv byte slices."""
+        if self.__env_lock_global is None:
+            self.__env_lock_global = ir.GlobalVariable(
+                self.__module, ir.IntType(64), name="__yian_env_lock"
+            )
+            self.__env_lock_global.linkage = "internal"
+            self.__env_lock_global.initializer = ir.Constant(ir.IntType(64), 1)  # type: ignore[assignment]
+        return self.__env_lock_global
 
     # -- fat-pointer mechanism globals (LLVM 层) --
 
@@ -461,14 +495,36 @@ class LLModule:
         return fn
 
     def emit_wrapper_main(self) -> None:
-        """Emit the C-compatible ``@main`` wrapper that calls ``__yian_main``."""
+        """Emit the C-compatible wrapper and validate its ``argc/argv`` ABI."""
         assert self.__yian_main_type_id is not None
 
-        wrapper_type = ir.FunctionType(ir.IntType(32), [ir.IntType(32), ir.PointerType(ir.PointerType(ir.IntType(8)))])
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
+        argv_type = ir.PointerType(ir.PointerType(ir.IntType(8)))
+        wrapper_type = ir.FunctionType(ir.IntType(32), [i32, argv_type])
         wrapper = ir.Function(self.__module, wrapper_type, name="main")
         entry = wrapper.append_basic_block("entry")
+        argc_ok = wrapper.append_basic_block("argc.ok")
+        argv_ok = wrapper.append_basic_block("argv.ok")
+        fail = wrapper.append_basic_block("abi.fail")
+
         builder = ir.IRBuilder(entry)
+        argc = wrapper.args[0]
+        argv = wrapper.args[1]
+        nonnegative = builder.icmp_signed(">=", argc, ir.Constant(i32, 0))
+        builder.cbranch(nonnegative, argc_ok, fail)
+
+        ok_builder = ir.IRBuilder(argc_ok)
+        has_argv = ok_builder.icmp_unsigned("!=", argv, ir.Constant(argv_type, None))
+        ok_builder.cbranch(has_argv, argv_ok, fail)
+
+        fail_builder = ir.IRBuilder(fail)
+        self.emit_runtime_fail(fail_builder, RuntimeErrorCode.S002)
+        fail_builder.unreachable()
+
+        ok_builder = ir.IRBuilder(argv_ok)
+        ok_builder.store(argc, self.argc_global)
+        ok_builder.store(argv, self.argv_global)
 
         yian_main_func = self.__functions[self.__yian_main_type_id]
-        builder.call(yian_main_func.ir_func, [])
-        builder.ret(ir.Constant(ir.IntType(32), 0))
+        ok_builder.call(yian_main_func.ir_func, [])
+        ok_builder.ret(ir.Constant(i32, 0))

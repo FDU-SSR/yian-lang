@@ -261,6 +261,15 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Close(result=result, fd=fd):
             return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
 
+        case IR.YianArgc(result=result):
+            return f"%{result.name} = yian_argc  [{__type_str(result.type_id)}]"
+
+        case IR.YianArgBytes(result=result, index=index):
+            return (
+                f"%{result.name} = yian_arg_bytes {__dump_value(index)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
 
 def __dump_phi(phi: IR.Phi) -> str:
     inc_str = ", ".join(
@@ -303,6 +312,9 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.RuntimeFail(code=code):
             return f"runtime_fail {code.name}"
+
+        case IR.YianExit(code=code):
+            return f"yian_exit {__dump_value(code)}"
 
 
 def __dump_match_arm(arm: IR.MatchArm) -> str:

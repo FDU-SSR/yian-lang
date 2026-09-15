@@ -1,0 +1,4 @@
+// Process argument builtins are reserved for std.core.env.
+fn main() {
+    let count = __yian_argc();
+}

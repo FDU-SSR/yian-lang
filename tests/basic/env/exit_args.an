@@ -1,0 +1,8 @@
+// Explicit exit can use a process argument while preserving the argument ABI.
+from std.core.env import args, exit;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 2: "expected program name + one argument";
+    exit(7);
+}
