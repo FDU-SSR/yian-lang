@@ -26,9 +26,10 @@ fn main() {
     assert m.remove(&other): "remove finds the deref-hashed key";
     assert m.len() == 0 && !m.contains(&other);
     m.drop();
+    alpha.drop();
     other.drop();
-    // alpha's buffer was owned by the stored key and is freed by remove;
-    // the local descriptor is stale and must not be used or dropped again.
+    // The map removed its bucket without dropping the stored key.  Both the
+    // original alias and the independent lookup value remain caller-owned.
 
     let s = HashSet<String>.new();
     let beta = String.from(&"beta");
@@ -37,8 +38,9 @@ fn main() {
     assert s.len() == 1;
     let beta2 = String.from(&"beta");
     assert s.contains(&beta2): "content-equivalent String found in the set";
-    assert s.remove(&beta2): "remove drops the stored element and returns true";
+    assert s.remove(&beta2): "remove discards the stored element and returns true";
     assert !s.contains(&beta2) && s.is_empty();
     s.drop();
+    beta.drop();
     beta2.drop();
 }

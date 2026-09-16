@@ -73,12 +73,8 @@ impl<K, V> HashMap<K, V> {
                 return;
             } elif ctrl_byte == h2 && self.buckets[index].key == key {
                 // Duplicate key: keep the stored key and replace only the value.
-                // The incoming key is discarded WITHOUT drop — it may be a
-                // caller-side shallow copy aliasing the stored key's storage,
-                // and dropping it would leave the stored key dangling
-                // (re-inserting the same variable is use-after-free). The value
-                // being replaced belongs to this map and is dropped.
-                self.buckets[index].value.drop()
+                // Both the incoming key and the replaced value are discarded
+                // without Drop; shallow copies may alias caller-owned storage.
                 self.buckets[index].value = value
                 return;
             }
@@ -133,8 +129,8 @@ impl<K, V> HashMap<K, V> {
                 if bucket.key == *key {
                     self.ctrls[index] = 0b1000_0000
                     self.size -= 1
-                    bucket.key.drop()
-                    bucket.value.drop()
+                    // The removed bucket is discarded without dropping either
+                    // element. Element cleanup is the caller's responsibility.
                     return true;
                 }
             }
@@ -160,11 +156,6 @@ impl<K, V> HashMap<K, V> {
             return;
         }
         for i in 0..self.capacity {
-            let ctrl = self.ctrls[i];
-            if ctrl != 0b1111_1111 && ctrl != 0b1000_0000 {
-                self.buckets[i].key.drop();
-                self.buckets[i].value.drop();
-            }
             self.ctrls[i] = 0b1111_1111
         }
         self.size = 0;
@@ -237,7 +228,6 @@ impl<K, V> HashMap<K, V> {
 
 impl<K, V> Drop for HashMap<K, V> {
     pub fn drop() {
-        self.clear();
         if self.capacity > 0 {
             del self.ctrls;
             del self.buckets;

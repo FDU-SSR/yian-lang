@@ -1,4 +1,5 @@
-// Resource-bearing elements survive growth and are cleaned only by explicit operations.
+// Resource-bearing elements survive growth; container operations never drop
+// elements, while callers can explicitly clean elements that remain reachable.
 from std.core.drop import Drop;
 
 struct Guard {
@@ -27,12 +28,18 @@ fn main() {
     let removed = values.remove(2);
     assert removed.value == 2 && drops == 1;
     removed.drop();
+    assert drops == 2: "explicitly dropping a returned element takes effect";
+
     values.truncate(3);
-    assert drops == 7: "truncate drops only removed live elements";
+    assert drops == 2: "truncate must not drop forgotten elements";
+    for i in 0u64..3u64 {
+        values[i].drop();
+    }
+    assert drops == 5: "callers can explicitly drop reachable elements";
     values.drop();
-    assert drops == 10: "drop cleans remaining elements exactly once";
+    assert drops == 5: "vec drop releases storage without dropping elements";
     values.drop();
-    assert drops == 10: "reset state makes repeated drop on one descriptor harmless";
+    assert drops == 5: "reset state makes repeated drop on one descriptor harmless";
 
     let strings = Vec<String>.new();
     strings.push(String.from(&"one"));
@@ -46,6 +53,15 @@ fn main() {
     cloned[0].push('!');
     assert strings[0] == "one";
     assert cloned[0] == "one!";
+
+    // Vec.drop() only releases its backing allocation.  Clean the reachable
+    // String values explicitly before releasing each container's storage.
+    for i in 0..strings.len() {
+        strings[i].drop();
+    }
+    for i in 0..cloned.len() {
+        cloned[i].drop();
+    }
     strings.drop();
     cloned.drop();
 }

@@ -213,7 +213,6 @@ class TypeSpace:
             "Contains": self.__ctx.contains_id,
             "Deref": self.__ctx.deref_id,
             "Delete": self.__ctx.delete_id,
-            "Drop": self.__ctx.drop_id,
             # Compound assignment
             "AddAssign": self.__ctx.add_assign_id,
             "SubAssign": self.__ctx.sub_assign_id,

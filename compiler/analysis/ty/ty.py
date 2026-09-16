@@ -501,7 +501,6 @@ class IntrinsicCustomType(Enum):
     Contains = "Contains"
     Deref = "Deref"
     Delete = "Delete"
-    Drop = "Drop"
 
     Range = "Range"
     Option = "Option"

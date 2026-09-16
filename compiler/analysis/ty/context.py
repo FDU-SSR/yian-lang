@@ -76,7 +76,6 @@ class TypeCtx:
     contains_id: int = 81
     deref_id: int = 82
     delete_id: int = 83
-    drop_id: int = 84
 
     add_assign_id: int = 90
     sub_assign_id: int = 91
@@ -200,7 +199,6 @@ class TypeCtx:
         Type.IntrinsicCustomType.Contains: contains_id,
         Type.IntrinsicCustomType.Deref: deref_id,
         Type.IntrinsicCustomType.Delete: delete_id,
-        Type.IntrinsicCustomType.Drop: drop_id,
     }
 
     @classmethod

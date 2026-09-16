@@ -1,6 +1,6 @@
 // HashMap.clone() rebuilds an independent table and deep-clones every key and
 // value; later insert/remove/index-writes in one map never affect the other.
-// Drop counting proves stored keys are cleaned exactly once (no double free).
+// Drop counting proves container operations leave element cleanup to callers.
 from std.collections.hash_map import HashMap;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -71,10 +71,20 @@ fn main() {
     assert c2[1][0] == "one";
     m2[1][0].push('!');
     assert m2[1][0] == "one!" && c2[1][0] == "one": "element mutation stays local";
+
+    // HashMap and nested Vec release only their own storage.  Clean reachable
+    // String elements and Vec buffers before releasing the outer tables.
+    m2[1][0].drop();
+    m2[1].drop();
+    c2[1][0].drop();
+    c2[1][1].drop();
+    c2[1].drop();
+    m2[2].drop();
+    c2[2].drop();
     m2.drop();
     c2.drop();
 
-    // === 3: heap-backed keys: deep-copied, cleaned exactly once per map ===
+    // === 3: heap-backed keys: deep-copied, explicitly cleaned while reachable ===
     let key_drops: i32 = 0;
     let m3 = HashMap<SKey, i32>.with_capacity(4);
     m3.insert(SKey(tag = String.from(&"k1"), drops = &key_drops), 10);
@@ -96,9 +106,23 @@ fn main() {
     assert c3.contains(&probe1b) && !c3.contains(&probe1): "clone keys were deep-copied";
 
     assert m3.remove(&probe1);
-    assert key_drops == 1: "remove cleans only the original's stored key";
+    assert key_drops == 0: "remove must not clean the original's stored key";
+
+    // Removed keys are no longer reachable through the map and are therefore
+    // not cleaned by the container.  Explicitly clean all remaining keys and
+    // lookup values before releasing the table storage.
+    probe1.drop();
+    probe1b.drop();
+    probe2.drop();
+    for key in c3 {
+        key.drop();
+    }
+    for key in m3 {
+        key.drop();
+    }
+    assert key_drops == 6: "reachable keys are cleaned only by explicit drop";
     c3.drop();
-    assert key_drops == 3: "clone drop cleans its deep-copied keys (k1!, k2)";
+    assert key_drops == 6: "clone drop releases storage without dropping keys";
     m3.drop();
-    assert key_drops == 4: "original drop cleans its remaining stored key (k2)";
+    assert key_drops == 6: "map drop releases storage without dropping keys";
 }

@@ -163,12 +163,8 @@ impl<T> Vec<T> {
             return;
         }
 
-        // drop the elements that are being truncated
-        let buf = self.raw_vec.ptr();
-        for i in len..self.len {
-            buf[i].drop();
-        }
-
+        // Element cleanup is the caller's responsibility. The container only
+        // forgets the truncated range and retains the backing allocation.
         self.len = len;
     }
 
@@ -256,13 +252,10 @@ impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     }
 }
 
-// Implement Drop for Vec<T> to allow dropping a Vec, freeing its resources
+// Implement Drop for Vec<T> to release the backing allocation. Elements are
+// not dropped by the container.
 impl<T> Drop for Vec<T> {
     pub fn drop() {
-        // Drop only the currently valid elements, then release the buffer.
-        if self.len > 0 {
-            self.clear();
-        }
         self.raw_vec.drop();
         self.len = 0;
     }
