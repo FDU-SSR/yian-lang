@@ -1,0 +1,7 @@
+// RawVec reserve rejects a len + additional sum outside the low 63 bits.
+from std.core.raw_vec import RawVec;
+
+fn main() {
+    let values = RawVec<i32>.new();
+    values.reserve(0, 0x8000_0000_0000_0000u64);
+}

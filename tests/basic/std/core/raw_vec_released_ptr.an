@@ -1,0 +1,8 @@
+// A released RawVec must not expose its stale data pointer.
+from std.core.raw_vec import RawVec;
+
+fn main() {
+    let values = RawVec<i32>.with_capacity(4);
+    values.drop();
+    let ptr: i32* = values.ptr();
+}

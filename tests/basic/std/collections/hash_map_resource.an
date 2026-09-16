@@ -56,6 +56,13 @@ fn main() {
     assert drops == 0: "map drop releases storage without dropping entries";
     map.drop();
     assert drops == 0;
+    assert map.len() == 0: "released map has empty logical state";
+    assert map.is_empty();
+    assert map.get(&100).is_none();
+    assert !map.contains(&100);
+    assert !map.remove(&100);
+    map.clear();
+    assert map.len() == 0;
 
     // Duplicate incoming keys are discarded without drop (the same variable may
     // be re-inserted safely); remove and final drop leave stored keys untouched.

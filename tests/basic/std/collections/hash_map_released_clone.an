@@ -1,0 +1,8 @@
+// A released HashMap cannot be cloned from stale table pointers.
+from std.collections.hash_map import HashMap;
+
+fn main() {
+    let map = HashMap<i32, i32>.new();
+    map.drop();
+    let copy = map.clone();
+}
