@@ -8,11 +8,12 @@ independent of overload resolution and generic lowering.
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections.abc import Iterable
 
 from compiler.analysis.error import AnalysisError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
+from compiler.analysis.unit.unit_data import UnitData
 
 
 RESTRICTED_BUILTINS = frozenset(
@@ -35,33 +36,6 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.Exit,
     }
 )
-
-# Restricted ordinary stdlib function names.  The builtin slice/str
-# constructors and accessors are represented by ``BuiltinKind`` above;
-# ``from_raw_parts`` remains an ordinary stdlib function.
-RESTRICTED_STDLIB_FUNCS = frozenset(
-    {
-        "from_raw_parts",
-    }
-)
-
-RESTRICTED_CALL_NAMES = RESTRICTED_STDLIB_FUNCS
-
-
-def __is_stdlib_file(path: Path) -> bool:
-    return "lib" in path.resolve().parts
-
-
-def __is_test_harness_file(path: Path) -> bool:
-    parts = path.resolve().parts
-    return any(
-        part == "tests"
-        and i + 2 < len(parts)
-        and parts[i + 1] in {"basic", "safety"}
-        and parts[i + 2] == "std"
-        for i, part in enumerate(parts)
-    )
-
 
 class RestrictedOpsChecker:
     def __init__(self) -> None:
@@ -105,8 +79,6 @@ class RestrictedOpsChecker:
                 for arg in expr.args:
                     self.__scan_expr(arg.value)
             case AST.Call():
-                if isinstance(expr.callee, AST.Identifier) and expr.callee.name in RESTRICTED_CALL_NAMES:
-                    self.__report(expr.span, expr.callee.name)
                 self.__scan_expr(expr.callee)
                 for arg in expr.args:
                     self.__scan_expr(arg.value)
@@ -188,11 +160,12 @@ class RestrictedOpsChecker:
         return self.__error
 
 
-def check_restricted_ops(programs: list[AST.Program], src_files: list[Path]) -> None:
-    """Reject restricted constructs outside the stdlib and test harness."""
-    for src_file, program in zip(src_files, programs):
-        if __is_stdlib_file(src_file) or __is_test_harness_file(src_file):
+def check_restricted_ops(units: Iterable[UnitData]) -> None:
+    """Reject restricted builtins outside trusted source roots."""
+    for unit in units:
+        if unit.allows_restricted_ops:
             continue
+        program = unit.program
         checker = RestrictedOpsChecker()
         checker.check(program)
         error = checker.take_error()

@@ -155,7 +155,13 @@ class LLTranslator:
                     stmt.raw,
                 )
             case IR.Alloca():
-                builder.alloca_store(self.__resolve(builder, stmt.value), stmt.result.name)
+                builder.alloca_store(
+                    self.__resolve(builder, stmt.value),
+                    stmt.result.name,
+                    self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
+                    self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
+                    stmt.raw,
+                )
             case IR.FieldPtr():
                 builder.gep(self.__resolve(builder, stmt.base), [0, stmt.field_index], stmt.result.name)
             case IR.ElementPtr():
@@ -189,6 +195,8 @@ class LLTranslator:
                 builder.write_lock_slot(self.__resolve(builder, stmt.lock_ptr), self.__resolve(builder, stmt.value))
             case IR.CheckSafeAccess():
                 builder.check_safe_access(self.__resolve(builder, stmt.ptr))
+            case IR.CheckViewAccess():
+                builder.check_view_access(self.__resolve(builder, stmt.view))
             case IR.CheckInBounds():
                 builder.check_in_bounds(self.__resolve(builder, stmt.ptr))
             case IR.CheckSliceNonEmpty():

@@ -2,6 +2,6 @@
   {
     "name": "raw",
     "compiler_args": ["--raw-pointers"],
-    "expect_error_substring": "from_raw_parts"
+    "expect_error_substring": "implicit pointer-to-slice conversion is not supported"
   }
 ]

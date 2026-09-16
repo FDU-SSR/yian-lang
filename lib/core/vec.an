@@ -7,7 +7,6 @@ from std.core.convert import From, Into;
 from std.core.drop import Drop;
 from std.core.range import Range;
 
-from std.core.slice import from_raw_parts;
 
 pub struct Vec<T> {
     raw_vec: RawVec<T>,
@@ -33,7 +32,7 @@ impl<T> Vec<T> {
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
-        from_raw_parts(self.raw_vec.ptr(), self.len)
+        @slice_from_parts(self.raw_vec.ptr(), self.len)
     }
 
     // Push an element to the end. The argument is copied by value.

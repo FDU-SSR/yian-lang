@@ -1,7 +1,9 @@
-// Test that `from_raw_parts` is rejected outside the standard library.
+// Test that the removed `from_raw_parts` wrapper cannot be imported by user code.
+
+from std.core.slice import from_raw_parts as forge;
 
 fn main() {
     let x: i32 = 1;
     let p: i32* = &x;
-    let s: i32[] = from_raw_parts(p, 1);
+    let s: i32[] = forge(p, 1);
 }

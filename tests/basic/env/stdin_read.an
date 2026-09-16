@@ -1,0 +1,12 @@
+// Test the bounded Stdin.read wrapper with a live mutable view.
+
+from std.core.io import Stdin;
+
+fn main() {
+    let buffer: u8* = dyn[16] u8;
+    let count: u64 = *Stdin.read(buffer[0u64..16]).unwrap();
+    assert count == 9u64: "Stdin.read byte count";
+    assert buffer[0] == 114u8: "Stdin.read first byte";
+    assert buffer[8] == 10u8: "Stdin.read newline";
+    del buffer;
+}

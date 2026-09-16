@@ -1,0 +1,101 @@
+// Result-level coverage for nested fat metadata and callable values.
+// The same aggregate is copied through tuples, arrays, and an enum, while a
+// closure is stored in a generic struct, passed through a generic function,
+// returned through identity, and invoked through a receiver method.
+
+from std.core.io import Stdout;
+
+struct Payload {
+    ptr: i32*,
+    reference: i32&,
+    view: i32[],
+    text: str,
+    callback: fn(i32) -> i32,
+}
+
+enum Envelope {
+    Empty,
+    Full { payload: Payload },
+}
+
+struct ClosureBox<F> {
+    payload: Payload,
+    call: F,
+}
+
+impl<F> ClosureBox<F> {
+    fn run(value: i32) -> i32 {
+        (self.call)(value)
+    }
+}
+
+fn add_bias(value: i32) -> i32 {
+    value + 7
+}
+
+fn choose_callback() -> fn(i32) -> i32 {
+    &add_bias
+}
+
+fn apply<F>(callable: F, value: i32) -> i32 {
+    callable(value)
+}
+
+fn identity<F>(callable: F) -> F {
+    callable
+}
+
+fn pass_payload(value: Payload) -> Payload {
+    value
+}
+
+fn main() {
+    let values: i32[3] = [10, 20, 30];
+    let storage: i32* = dyn[3] i32;
+    storage[0] = 10;
+    storage[1] = 20;
+    storage[2] = 30;
+    let anchor: i32 = 4;
+    let payload = Payload(storage, &anchor, storage[0u64..3], "payload", choose_callback());
+
+    // Repeated projections preserve the source pointer/slice metadata.
+    assert values[1] == 20: "fixed array element projection";
+    assert payload.ptr[2] == 30: "pointer field projection";
+    assert *payload.reference == 4: "reference field projection";
+    assert payload.view[1] == 20: "slice field projection";
+    assert payload.text.as_slice()[0] == 112u8: "str field projection";
+    assert (payload.callback)(5) == 12: "function pointer field call";
+    let roundtrip: Payload = pass_payload(payload);
+    assert roundtrip.view[2] == 30: "aggregate return projection";
+
+    let tuple: (Payload, Envelope, fn(i32) -> i32) =
+        (payload, Envelope.Full(payload), choose_callback());
+    let copies: Payload[2] = [payload, tuple[0]];
+    assert tuple[0].view[2] == 30: "tuple nested projection";
+    assert copies[1].ptr[0] == 10: "array nested projection";
+
+    let from_enum: i32 = match tuple[1] {
+        Full(value) => value.view[1],
+        Empty => -1,
+    };
+    assert from_enum == 20: "enum nested projection";
+    assert (tuple[2])(3) == 10: "function pointer tuple call";
+
+    let closure = |base = &anchor| (delta: i32) -> i32 {
+        *base + delta
+    };
+    let boxed = ClosureBox(payload = payload, call = closure);
+    assert boxed.payload.view[0] == 10: "closure box aggregate field";
+    assert boxed.run(2) == 6: "closure receiver call";
+    assert apply(closure, 3) == 7: "closure parameter call";
+    let returned = identity(closure);
+    assert returned(5) == 9: "closure returned through identity";
+
+    let next: i32* = payload.ptr + 1;
+    assert next - payload.ptr == 1: "nested pointer difference";
+    assert next > payload.ptr: "nested pointer comparison";
+    next[0] = 21;
+    assert payload.view[1] == 21: "nested pointer/slice write";
+    Stdout.write_all(payload.text).unwrap();
+    del payload.ptr;
+}

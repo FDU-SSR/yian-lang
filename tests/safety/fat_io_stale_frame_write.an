@@ -1,0 +1,14 @@
+// A str returned from a stack frame must be rejected at the public print
+// boundary before the write syscall.
+
+from std.core.io import print;
+
+fn make_text() -> str {
+    let bytes: u8[4] = [65u8, 66, 67, 10];
+    str.from(&bytes[0u64..4])
+}
+
+fn main() {
+    let text: str = make_text();
+    print(text);
+}

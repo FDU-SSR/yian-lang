@@ -270,6 +270,21 @@ class TypeSpace:
         if key in self.__instance_cache:
             return self.__instance_cache[key]
 
+        # Closure lowering (and other late type rewrites) may update the
+        # generic arguments of an already allocated instance in place.  The
+        # old cache key then still names the pre-rewrite arguments, so a
+        # subsequent lookup with the canonical arguments would otherwise
+        # allocate a duplicate identified type.  Reuse an existing matching
+        # instance before creating a new one and repair the cache entry.
+        for existing_id, existing in self.__space.items():
+            if (
+                isinstance(existing, Type.CustomType)
+                and existing.custom_def is ty.custom_def
+                and existing.generic_args == generic_args
+            ):
+                self.__instance_cache[key] = existing_id
+                return existing_id
+
         match ty:
             case Type.StructType(custom_def=struct_def):
                 instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generic_args)

@@ -374,7 +374,8 @@ class ExprChecker:
             # the user to materialize the slice explicitly.
             if self.__ctx.type_ctx.raw_pointers:
                 raise AnalysisError(
-                    f"cannot coerce '{self.__ctx.type_ctx.get_name(expr.type_id)}' to '{self.__ctx.type_ctx.get_name(expected)}' in raw pointer mode; use from_raw_parts(ptr, len) instead",
+                    f"cannot coerce '{self.__ctx.type_ctx.get_name(expr.type_id)}' to '{self.__ctx.type_ctx.get_name(expected)}' in raw pointer mode; "
+                    "implicit pointer-to-slice conversion is not supported",
                     expr.span,
                 )
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)

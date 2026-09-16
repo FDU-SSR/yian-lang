@@ -61,10 +61,6 @@ impl<T> T[] {
     }
 }
 
-pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
-    @slice_from_parts(ptr, len)
-}
-
 pub struct SliceIter<T> {
     pub ptr: T*,
     pub n: u64,   // remaining count (ZST-safe, also used for len())
@@ -156,7 +152,7 @@ impl<T> Index<u64, T*> for T[] {
 
 impl<T> Index<Range<u64>, T[]> for T[] {
     fn index(range: Range<u64>*) -> T[] {
-        if range.end > self.len() {
+        if range.start > range.end || range.end > self.len() {
             @runtime_fail("S001");
         }
         let start_ptr = self.ptr() + range.start;

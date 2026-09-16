@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.position import SrcSpan
@@ -21,12 +22,14 @@ if TYPE_CHECKING:
 
 class GlobalResolve:
     def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx,
-                 pkg_roots: dict[str, Path] | None = None) -> None:
+                 pkg_roots: dict[str, Path] | None = None,
+                 stdlib_root: Path | None = None) -> None:
         self.__units = units
         self.__type_ctx = type_ctx
 
         self.__path_lookup: dict[Path, UnitData] = {unit.path.resolve(): unit for unit in units.values()}
         self.__std_lookup: dict[tuple[str, ...], UnitData] = {}
+        self.__stdlib_root = (stdlib_root or default_stdlib_root()).resolve()
 
         self.__pkg_roots = pkg_roots or {}
         self.__strict_pkg = len(self.__pkg_roots) > 0
@@ -47,13 +50,17 @@ class GlobalResolve:
 
     def __build_std_lookup(self) -> None:
         for unit in self.__units.values():
-            parts = unit.path.parts
-            for i in range(len(parts) - 1, -1, -1):
-                if parts[i] == "lib":
-                    rel_parts = parts[i + 1:]
-                    key = ("std",) + rel_parts[:-1] + (unit.path.stem,)
-                    self.__std_lookup[key] = unit
-                    break
+            if not unit.is_stdlib:
+                continue
+            try:
+                relative = unit.path.resolve().relative_to(self.__stdlib_root)
+            except ValueError:
+                continue
+            rel_parts = relative.parts
+            if not rel_parts:
+                continue
+            key = ("std",) + rel_parts[:-1] + (unit.path.stem,)
+            self.__std_lookup[key] = unit
 
     def __convert_attrs(self, attrs: list[AST.Attr]) -> set[SymbolAttribute]:
         res: set[SymbolAttribute] = set()

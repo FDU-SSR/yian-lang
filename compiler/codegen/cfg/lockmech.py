@@ -1,7 +1,7 @@
 """胖指针时序机制层——块头锁槽 / 键 / 帧锁(机制定义;LLVM 值层下降由 LLVM 层完成)。
 
 本模块承载胖指针内存安全机制的运行时概念,对应理论篇 docs/security.md 与
-实现篇 docs/security-code.md §7.1:
+本模块的 CFG/LLVM 实现:
 
 - 定义 6(编码约定):`LockEntry` 编码为单个机器字;`SENTINEL` = 全 1 字(~0)。
 - 定义 7(块布局与锁槽 `LockSlot`):堆块使用固定 32B 池元数据头,
@@ -145,7 +145,9 @@ def is_raw(data: int, lock_ptr: int, index: int) -> bool:
 class BlockHeader:
     """SecL 单线程堆池的固定块头布局。
 
-    ``{lock:u64, capacity:u64, next:i8*, reserved:u64}`` occupies 32 bytes.
+    ``{lock:u64, capacity:u64, next:i8*, active_size_bytes:u64}`` occupies
+    32 bytes.  ``capacity`` is the reusable physical payload capacity, while
+    ``active_size_bytes`` is the logical payload size of the current owner.
     The fixed size preserves 16-byte payload alignment.  Freed blocks remain
     mapped and only this header is reused as allocator metadata, so stale
     pointers may safely read ``lock`` and can never reach a user-controlled
@@ -156,7 +158,7 @@ class BlockHeader:
     LOCK_SLOT_OFFSET: ClassVar[int] = 0  # 锁槽 = 块首首字(偏移 0)
     CAPACITY_OFFSET: ClassVar[int] = 8
     NEXT_OFFSET: ClassVar[int] = 16
-    RESERVED_OFFSET: ClassVar[int] = 24
+    ACTIVE_SIZE_OFFSET: ClassVar[int] = 24
 
     @staticmethod
     def data_addr(block_base: int) -> int:
@@ -217,14 +219,17 @@ class FrameLock:
 # ---------------------------------------------------------------------------
 # stdlib 边界 fat 合成(机制定义,执行依赖 CFG 层/LLVM 层)
 #
-# lib/core/slice.an / str.an 的 SliceStruct {ptr: T*, len: u64} 在 T* 变 40B
-# 后成为 48B;SliceType/StrType 的 LLVM 映射保持 {ptr, i64} 16B(胖指针表示),其 ptr
-# 字段为裸 8B 指针。切片 / 字符串构造创建点的 5 字段合成方式为:
+# lib/core/slice.an 的 SliceStruct<T> 是源代码层包装结构:默认 fat 模式下
+# T* 字段为 40B,加 len 字段后为 48B;raw 模式下为 8B + 8B = 16B。
+# SliceType/StrType 是独立的内置视图类型:fat 映射为
+# {data, lock_ptr, key, size} 32B,raw 映射为 {T*, u64} 16B。
+# fat 切片/字符串构造创建点的 4 字段合成方式为:
 #
-#     ⟨data, e_f, k_f, 0, len⟩
+#     ⟨data, lock_ptr, key, len⟩
 #
-# 其中 data = 被退化/取址的负载锚地址;e_f/k_f 来自当前帧锁(FrameLock.current,
-# §2.6、规则 3.7.1);index = 0;size = len(切片长度)。字段下标见 FAT_* 常量。
+# 其中 data = 被退化/取址的负载地址,lock_ptr/key 从源胖指针继承
+# (取址点的帧锁或堆块锁);size = len(切片或字符串长度)。字段下标见
+# SLICE_* 常量。仅在无法继承元数据的低层回退路径才使用专用合成逻辑。
 #
 # 元数据在创建点注入(VarPtr / Malloc 的 CFG/LLVM 下降)随数据流自然流入,
 # 本模块不提供独立 fat 构造原语(stdlib YIAN 代码不能调用编译器内部合成)。

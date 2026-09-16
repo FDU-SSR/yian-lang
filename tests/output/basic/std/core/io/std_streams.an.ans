@@ -1,2 +1,2 @@
-stdout line 1
-stdout line 2
+stdout write
+stdout write_all

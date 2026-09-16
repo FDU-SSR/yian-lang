@@ -1,0 +1,21 @@
+// Pointer arithmetic and comparison do not access memory, so they retain
+// their structural/object-identity checks even after the allocation is freed.
+// A later dereference would still fail its live check.
+//
+// Expected output: 0
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    let q: i32* = p + 2;
+    del p;
+
+    // ElementPtr checks range and wraparound, but not allocation liveness.
+    let after: i32* = q + 1;
+    assert after - q == 1: "stale pointer arithmetic remains structural";
+
+    // PtrDiff checks object identity, shape, and representability, but not live.
+    assert q - p == 2: "stale pointer difference remains structural";
+
+    // Ordered PtrCmp checks object identity, but not live.
+    assert q < after: "stale pointer comparison remains structural";
+}

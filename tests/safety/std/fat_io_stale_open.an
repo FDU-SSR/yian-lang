@@ -1,0 +1,12 @@
+// A stale string passed to the trusted open boundary must fail closed.
+
+fn main() {
+    let p: u8* = dyn[4] u8;
+    p[0] = 47u8;
+    p[1] = 116u8;
+    p[2] = 109u8;
+    p[3] = 112u8;
+    let path: str = str.from(&p[0u64..4]);
+    del p;
+    @open(path, 0);
+}

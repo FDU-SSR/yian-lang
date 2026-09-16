@@ -456,12 +456,12 @@ class LLModule:
         fresh_next_ptr = self.__pool_field_ptr(
             fresh_builder, block, IR.BlockHeader.NEXT_OFFSET, i8_ptr
         )
-        reserved_ptr = self.__pool_field_ptr(
-            fresh_builder, block, IR.BlockHeader.RESERVED_OFFSET, i64
+        active_size_ptr = self.__pool_field_ptr(
+            fresh_builder, block, IR.BlockHeader.ACTIVE_SIZE_OFFSET, i64
         )
         fresh_builder.store(requested, fresh_capacity_ptr)
         fresh_builder.store(ir.Constant(i8_ptr, None), fresh_next_ptr)
-        fresh_builder.store(ir.Constant(i64, 0), reserved_ptr)
+        fresh_builder.store(ir.Constant(i64, 0), active_size_ptr)
         fresh_builder.ret(block)
 
         self.__pool_alloc_func = fn

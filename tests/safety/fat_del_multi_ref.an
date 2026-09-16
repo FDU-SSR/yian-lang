@@ -1,0 +1,8 @@
+// A reference to the first element of a multi-element allocation is not a
+// complete allocation and cannot be used as a delete target.
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    let r: i32& = &p[0];
+    del r;
+}

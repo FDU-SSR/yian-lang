@@ -1,0 +1,7 @@
+// A trusted string constructor must reject a length beyond the source extent.
+
+fn main() {
+    let p: u8* = dyn[4] u8;
+    let s: str = @str_from_parts(p, 5);
+    @sys_write(1, s);
+}

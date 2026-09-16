@@ -3,7 +3,6 @@ Yian type → LLVM IR type mapping.
 """
 
 from __future__ import annotations
-
 from llvmlite import ir
 from llvmlite.binding import create_target_data  # type: ignore
 

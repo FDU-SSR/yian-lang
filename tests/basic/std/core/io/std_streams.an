@@ -1,18 +1,18 @@
 // Test Stdout / Stderr static methods
 //
 // Expected output:
-// stdout line 1
-// stdout line 2
+// stdout write
+// stdout write_all
 // stderr line 1
 // stderr line 2
 
 from std.core.io import Stdout, Stderr;
 
 fn main() {
-    Stdout.write_all("stdout line 1\n").unwrap();
-    Stdout.write_all("stdout line 2\n").unwrap();
+    Stdout.write("stdout write\n").unwrap();
+    Stdout.write_all("stdout write_all\n").unwrap();
 
-    Stderr.write_all("stderr line 1\n").unwrap();
+    Stderr.write("stderr line 1\n").unwrap();
     Stderr.write_all("stderr line 2\n").unwrap();
 
 }

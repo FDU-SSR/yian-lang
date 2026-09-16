@@ -97,9 +97,16 @@ class VarPtr:
 
 @dataclass
 class Alloca:
-    """Store a local variable in the stack"""
+    """Store a temporary value in the stack.
+
+    Fat address-taking temporaries carry the current frame lock; ordinary
+    internal address materialization remains explicitly raw.
+    """
     result: Reg
     value: Value
+    frame_lock_ptr: Value | None = None
+    frame_key: Value | None = None
+    raw: bool = False
 
 
 @dataclass
@@ -189,7 +196,8 @@ class Delete:
 # ---------------------------------------------------------------------------
 # 检查插入与锁槽机制节点(CFG 层 检查点;LLVM 发射与运行期失败协议由 LLVM 层完成)
 #
-# §7.1 运行时检查插入点共 6 个:FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete。
+# §7.1 运行时检查插入点包括 FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete
+# 与外部 I/O 的 CheckViewAccess。
 # 每个检查节点在 LLVM 层 落地为「前提不满足 → 诊断并以退出码 1 终止」;
 # 本文件承载节点存在性与语义,LLTranslator 的 case 由 LLVM 层 补充。
 # 锁槽交互:Malloc 块头写键(规则 3.6.1)、Delete 写 SENTINEL(规则 3.6.2)。
@@ -237,6 +245,18 @@ class CheckSafeAccess:
     in_bounds = 0 ≤ index ∧ index+1 ≤ size(定义 12)。LLVM 层 发射。
     """
     ptr: Value
+
+
+@dataclass
+class CheckViewAccess:
+    """Validate a slice/str before a trusted external memory operation.
+
+    The view carries its operation span in the size field.  LLVM additionally
+    checks heap views against the active allocation extent recorded in the
+    block header; stack/global views rely on their live lock and constructor
+    range invariant.
+    """
+    view: Value
 
 
 @dataclass
@@ -316,7 +336,8 @@ class CheckRawBounds:
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕(规则 3.3.3)。
 
-    异对象指针差报告安全错误。LLVM 层发射。
+    异对象指针差报告安全错误。该运算本身不访问内存，因此不检查
+    allocation live 状态；结果被解引用时再由访问检查负责。LLVM 层发射。
     """
     lhs: Value
     rhs: Value
@@ -327,7 +348,8 @@ class CheckPtrCmp:
     """序比较前提:data 相等(规则 3.4.1)。
 
     跨对象序比较报告安全错误（由 LLVM 层发射）。相等比较(规则 3.4.2)按 (data, index)
-    二元组、无此前提,不插入本节点。
+    二元组、无此前提,不插入本节点。指针比较本身不访问内存，因此不检查
+    allocation live 状态。
     """
     lhs: Value
     rhs: Value
@@ -490,7 +512,7 @@ Stmt: TypeAlias = (
     | SysWrite | SysRead | Open | Close | ArgCount | ArgBytes
     | MemCopy
     | GenKey | AcquireFrameLock | WriteLockSlot
-    | CheckSafeAccess | CheckInBounds | CheckSliceNonEmpty
+    | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess
     | CheckElementAccess

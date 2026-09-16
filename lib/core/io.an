@@ -2,7 +2,6 @@ from std.core.vec import Vec;
 from std.core.string import String;
 from std.core.result import Result;
 from std.core.drop import Drop;
-from std.core.slice import from_raw_parts;
 from std.core.range import Range;
 
 // =====================================================================

@@ -7,12 +7,14 @@ are available without explicit imports.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
-from compiler.frontend.parse import ast as AST
+from compiler.analysis.unit.unit_data import UnitData
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
+from compiler.frontend.parse import ast as AST
 
-# Prelude imports injected into every non-lib source file.
+# Prelude imports injected into every non-stdlib source file.
 # Each entry is (path_segments, target_name) representing:
 #     from <path_segments joined by .> import <target_name>
 PRELUDE_IMPORTS: list[tuple[list[str], str]] = [
@@ -46,16 +48,6 @@ def __make_span(path: Path) -> SrcSpan:
     return SrcSpan(pos, pos)
 
 
-def __is_stdlib_file(path: Path) -> bool:
-    """Check whether a source file is part of the standard library.
-
-    Uses the same logic as GlobalResolve.__build_std_lookup:
-    a file is a stdlib file iff its resolved path contains 'lib'
-    as a path component.
-    """
-    return "lib" in path.resolve().parts
-
-
 def __build_existing_imports(program: AST.Program) -> set[tuple[tuple[str, ...], str]]:
     """Collect the set of (path_tuple, target_name) already imported in the program."""
     existing: set[tuple[tuple[str, ...], str]] = set()
@@ -66,7 +58,7 @@ def __build_existing_imports(program: AST.Program) -> set[tuple[tuple[str, ...],
     return existing
 
 
-def inject_prelude(src_files: list[Path], programs: list[AST.Program]) -> None:
+def inject_prelude(units: Iterable[UnitData]) -> None:
     """Inject prelude imports into non-stdlib programs.
 
     Modifies programs in-place by prepending AST.Import nodes for
@@ -78,17 +70,20 @@ def inject_prelude(src_files: list[Path], programs: list[AST.Program]) -> None:
     have nothing to resolve against.
 
     Args:
-        src_files: Source file paths corresponding to each program.
-        programs: Parsed AST programs (modified in-place).
+        units: Compilation units whose programs are modified in-place.
     """
+    units_list = list(units)
+
     # Only inject prelude if stdlib files are available to resolve against
-    if not any(__is_stdlib_file(f) for f in src_files):
+    if not any(unit.is_stdlib for unit in units_list):
         return
 
-    for src_file, program in zip(src_files, programs):
-        if __is_stdlib_file(src_file):
+    for unit in units_list:
+        if unit.is_stdlib:
             continue
 
+        src_file = unit.path
+        program = unit.program
         existing = __build_existing_imports(program)
 
         prelude_imports: list[AST.Import] = []

@@ -10,6 +10,7 @@ strict Pyright diagnostic enabled for this module.
 from __future__ import annotations
 
 from enum import Enum, auto
+from typing import cast
 
 from llvmlite import ir
 
@@ -226,7 +227,12 @@ class LLBuilder:
         self.__continuations[self.__current_cfg_block] = ok_block.name
         self.__builder = ir.IRBuilder(ok_block)
 
-    def __emit_guarded(self, guard: ir.Value, compute: object) -> ir.Value:
+    def __emit_guarded(
+        self,
+        guard: ir.Value,
+        compute: object,
+        result_type: ir.Type | None = None,
+    ) -> ir.Value:
         """短路守卫:guard 真 → compute(由调用方提供闭包,在新块中),假 → false。
 
         用于 live 的 null 短路(定义 8:lock_ptr = 0 时短路为假,不读地址 0
@@ -244,9 +250,10 @@ class LLBuilder:
         else_builder = ir.IRBuilder(else_block)
         else_builder.branch(merge_block)  # type: ignore
         merge_builder = ir.IRBuilder(merge_block)
-        phi = merge_builder.phi(ir.IntType(1))  # type: ignore
+        phi_type: ir.Type = result_type if result_type is not None else ir.IntType(1)  # type: ignore
+        phi = merge_builder.phi(phi_type)  # type: ignore
         phi.add_incoming(then_val, then_block)  # type: ignore
-        phi.add_incoming(ir.Constant(ir.IntType(1), 0), else_block)  # type: ignore
+        phi.add_incoming(ir.Constant(phi_type, 0), else_block)  # type: ignore
         self.__builder = merge_builder
         return phi
 
@@ -374,10 +381,40 @@ class LLBuilder:
             return LLValue(ptr_type_id, entry_builder.alloca(ll_type))  # type: ignore
         return LLValue(ptr_type_id, self.__builder.alloca(ll_type))  # type: ignore
 
-    def alloca_store(self, value: LLValue, result: str) -> None:
+    def alloca_store(
+        self,
+        value: LLValue,
+        result: str,
+        frame_lock_ptr: LLValue | None = None,
+        frame_key: LLValue | None = None,
+        raw: bool = False,
+    ) -> None:
         alloca_val = self.alloca(value.type_id)
         self.store(value, alloca_val)
-        self.__func.set_reg(result, alloca_val)
+        if raw or not self.__is_fat_type(alloca_val.type_id):
+            result_val = alloca_val
+        else:
+            data = LLValue(
+                self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                self.__builder.bitcast(alloca_val.ir_val, ir.PointerType(ir.IntType(8))),  # type: ignore
+            )
+            if frame_lock_ptr is None or frame_key is None:
+                raise ValueError("fat temporary alloca missing current frame lock")
+            lock_ir, key_ir = frame_lock_ptr.ir_val, frame_key.ir_val
+            lock = LLValue(
+                self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
+                self.__builder.bitcast(lock_ir, ir.PointerType(ir.IntType(8))),  # type: ignore
+            )
+            key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+            result_val = self.__build_fat(
+                data,
+                lock,
+                key,
+                self.i64(0),
+                self.i64(1),
+                alloca_val.type_id,
+            )
+        self.__func.set_reg(result, result_val)
 
     def malloc(self, type_id: int, size: LLValue, key: LLValue | None, result: str) -> LLValue:
         if self.__type_ctx.is_zst(type_id):
@@ -422,6 +459,16 @@ class LLBuilder:
             return result_val
         block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
         block_base = LLValue(ptr_type_id, block_ir)  # type: ignore
+        # Keep the logical payload extent separate from the pool's reusable
+        # physical capacity.  Delete and external view checks must validate
+        # the current allocation, not stale bytes left by a larger prior use.
+        active_size_ptr = self.__builder.gep(
+            block_base.ir_val,
+            [ir.Constant(ir.IntType(64), IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
+            inbounds=False,
+        )
+        active_size_ptr = self.__builder.bitcast(active_size_ptr, ir.PointerType(ir.IntType(64)))  # type: ignore
+        self.__builder.store(payload_ir, active_size_ptr)  # type: ignore
         if key is not None:
             slot_ptr = self.__builder.bitcast(block_base.ir_val, ir.PointerType(ir.IntType(64)))  # type: ignore
             self.__builder.store(key.ir_val, slot_ptr)  # type: ignore
@@ -519,6 +566,79 @@ class LLBuilder:
         cond = self.__check_live_and(lock, key, in_bounds.ir_val)
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "safe")
 
+    def check_view_access(self, view: LLValue) -> None:
+        """Validate a slice/str before passing its span to a syscall."""
+        if not self.__is_fat(view):
+            return
+        view_type = self.__type_ctx[view.type_id]
+        if not isinstance(view_type, (Type.SliceType, Type.StrType)):
+            return
+
+        data = self.__extract_fat_field(view, IR.SLICE_DATA).ir_val
+        lock = self.__extract_fat_field(view, IR.SLICE_LOCK_PTR).ir_val
+        key = self.__extract_fat_field(view, IR.SLICE_KEY).ir_val
+        size = self.__extract_fat_field(view, IR.SLICE_SIZE).ir_val
+        live_ok = self.__check_live(lock, key)
+
+        zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        nonempty = self.__builder.icmp_unsigned("!=", size, zero)  # type: ignore
+        nonnull = self.__builder.icmp_unsigned(
+            "!=", data, ir.Constant(data.type, None)  # type: ignore
+        )  # type: ignore
+        data_ok = self.__builder.or_(  # type: ignore
+            self.__builder.not_(nonempty), nonnull  # type: ignore
+        )
+
+        # Heap views can be checked against the allocation header. Stack and
+        # literal views have no allocation header; their constructors establish
+        # the source range and the live lock protects their lifetime.
+        heap_flag = self.__builder.and_(  # type: ignore
+            key, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000)  # type: ignore
+        )
+        heap = self.__builder.icmp_unsigned("!=", heap_flag, zero)  # type: ignore
+        header_guard: ir.Value = self.__builder.and_(heap, live_ok.ir_val)  # type: ignore
+        active_size = self.__load_active_size(lock, header_guard)
+
+        element_type = view_type.element_type if isinstance(view_type, Type.SliceType) else self.__type_ctx.u8_id
+        element_size = self.__ll_type_ctx.get_type_size(element_type)
+        i128: ir.IntType = ir.IntType(128)  # type: ignore
+        span_bytes, span_no_wrap = self.__mul_u64_i128(size, element_size)
+        data_addr = cast(
+            ir.Value,
+            self.__builder.zext(  # type: ignore
+                self.__builder.ptrtoint(data, ir.IntType(64)), i128  # type: ignore
+            ),
+        )
+        base_addr, base_no_wrap = self.__add_i128_no_wrap(
+            cast(
+                ir.Value,
+                self.__builder.zext(self.__builder.ptrtoint(lock, ir.IntType(64)), i128),  # type: ignore
+            ),
+            ir.Constant(i128, IR.BlockHeader.BYTES),  # type: ignore
+        )
+        end_addr, end_no_wrap = self.__add_i128_no_wrap(data_addr, span_bytes)
+        allocation_end, allocation_end_no_wrap = self.__add_i128_no_wrap(
+            base_addr,
+            cast(ir.Value, self.__builder.zext(active_size, i128)),  # type: ignore
+        )
+        heap_span_ok = self.__builder.and_(  # type: ignore
+            self.__builder.and_(  # type: ignore
+                self.__builder.icmp_unsigned(">=", data_addr, base_addr),  # type: ignore
+                self.__builder.icmp_unsigned("<=", end_addr, allocation_end),  # type: ignore
+            ),
+            self.__builder.and_(  # type: ignore
+                span_no_wrap,
+                self.__builder.and_(base_no_wrap, self.__builder.and_(end_no_wrap, allocation_end_no_wrap)),  # type: ignore
+            ),
+        )
+        span_ok = self.__builder.or_(  # type: ignore
+            self.__builder.not_(heap), heap_span_ok  # type: ignore
+        )
+        cond: ir.Value = self.__builder.and_(  # type: ignore
+            live_ok.ir_val, self.__builder.and_(data_ok, span_ok)  # type: ignore
+        )  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "view")
+
     def check_in_bounds(self, ptr: LLValue) -> None:
         """in_bounds(p_s,1)(规则 3.5.2 重锚定前提)。"""
         if not self.__is_fat(ptr):
@@ -552,6 +672,9 @@ class LLBuilder:
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
         """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
+
+        指针算术本身不访问内存，因此这里与 PtrDiff/PtrCmp 一样不检查
+        allocation live 状态；后续解引用或外部 I/O 在各自访问边界检查 live。
 
         对 u64 索引(非负恒真)把 0 ≤ index+offset ≤ size 分解为 u64 计算:
         (a) 回绕检测 no_wrap = icmp uge sum, index(sum = index+offset,u64 回绕
@@ -619,7 +742,10 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
-        """规则 3.3.3 前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。"""
+        """规则 3.3.3 前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。
+
+        PtrDiff 不访问内存，故沿用指针算术策略，不检查 allocation live。
+        """
         if not (self.__is_fat(lhs) and self.__is_fat(rhs)):
             return
         data_l = self.__extract_fat_field(lhs, IR.FAT_DATA).ir_val
@@ -640,7 +766,10 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """规则 3.4.1 序比较前提:data 相等(跨对象序比较报告 S005,§7.6 风险 3)。"""
+        """规则 3.4.1 序比较前提:data 相等(跨对象序比较报告 S005,§7.6 风险 3)。
+
+        PtrCmp 不访问内存，故沿用指针算术策略，不检查 allocation live。
+        """
         if not (self.__is_fat(lhs) and self.__is_fat(rhs)):
             return
         data_l, _ = self.__cmp_fat_operands(lhs)
@@ -649,14 +778,17 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
-        """规则 3.6.2 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
+        """Validate and release a complete, live heap view.
 
-        视图释放路径:is_raw 的 index 分量按类型分派——PointerType 5 字段
-        (FAT_INDEX=3 为 index)保留 index==0 检查;SliceType/StrType 4 字段
-        (下标 3 为 size)、RefType 3 字段均无 index 字段,分量恒真跳过,仅查
-        data==lock_ptr+H。
+        In addition to the original heap/live/base checks, compare the view's
+        logical byte extent with the active allocation extent recorded in the
+        block header.  A pool block may have a larger reusable capacity, so
+        capacity alone cannot establish that a slice is the complete view.
         """
         if not self.__is_fat(ptr):
+            return
+        ptr_type = self.__type_ctx[ptr.type_id]
+        if not isinstance(ptr_type, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
             return
         data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
         key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
@@ -665,18 +797,95 @@ class LLBuilder:
         lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
         lock_int = self.__builder.ptrtoint(lock, ir.IntType(64))  # type: ignore
         data_int = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
-        expected = self.__builder.add(
-            lock_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)  # type: ignore
+        i128: ir.IntType = ir.IntType(128)  # type: ignore
+        lock_addr = self.__builder.zext(lock_int, i128)  # type: ignore
+        data_addr = self.__builder.zext(data_int, i128)  # type: ignore
+        expected_addr, header_no_wrap = self.__add_i128_no_wrap(
+            lock_addr, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
         )
-        raw_data_ok = self.__builder.icmp_signed("==", data_int, expected)  # type: ignore
-        raw_cond: ir.Value = raw_data_ok
-        if isinstance(self.__type_ctx[ptr.type_id], Type.PointerType):
+        raw_data_ok = self.__builder.and_(  # type: ignore
+            header_no_wrap,
+            self.__builder.icmp_unsigned("==", data_addr, expected_addr),  # type: ignore
+        )
+        raw_cond: ir.Value = cast(ir.Value, raw_data_ok)
+        if isinstance(ptr_type, Type.PointerType):
             index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
             raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         live_ok = self.__check_live(lock, key)
-        cond: ir.Value = self.__builder.and_(heap_ok, self.__builder.and_(live_ok.ir_val, raw_cond))  # type: ignore
+        header_guard: ir.Value = self.__builder.and_(heap_ok, live_ok.ir_val)  # type: ignore
+        active_size = self.__load_active_size(lock, header_guard)
+        extent_ok = self.__delete_extent_ok(ptr, ptr_type, active_size)
+        cond: ir.Value = self.__builder.and_(
+            header_guard,
+            self.__builder.and_(raw_cond, extent_ok),  # type: ignore
+        )  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S006, "del")
+
+    def __load_active_size(self, lock: ir.Value, guard: ir.Value) -> ir.Value:
+        """Load the current logical payload size from a guarded heap header."""
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
+
+        def load_header(builder: ir.IRBuilder) -> ir.Value:
+            field = builder.gep(  # type: ignore
+                lock,
+                [ir.Constant(i64, IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
+                inbounds=False,
+            )
+            field = builder.bitcast(field, ir.PointerType(i64))  # type: ignore
+            return builder.load(field)  # type: ignore
+
+        return self.__emit_guarded(guard, load_header, ir.IntType(64))  # type: ignore
+
+    def __delete_extent_ok(
+        self,
+        ptr: LLValue,
+        ptr_type: Type.PointerType | Type.SliceType | Type.StrType | Type.RefType,
+        active_size: ir.Value,
+    ) -> ir.Value:
+        """Check that *ptr* denotes exactly the active heap payload."""
+        i128: ir.IntType = ir.IntType(128)  # type: ignore
+        if isinstance(ptr_type, Type.PointerType):
+            count = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+            element_type = ptr_type.pointee_type
+        elif isinstance(ptr_type, (Type.SliceType, Type.StrType)):
+            count = self.__extract_fat_field(ptr, IR.SLICE_SIZE).ir_val
+            element_type = ptr_type.element_type if isinstance(ptr_type, Type.SliceType) else self.__type_ctx.u8_id
+        else:
+            count = ir.Constant(ir.IntType(64), 1)  # type: ignore
+            element_type = ptr_type.pointee_type
+
+        element_size = self.__ll_type_ctx.get_type_size(element_type)
+        logical_bytes, logical_no_wrap = self.__mul_u64_i128(count, element_size)
+        active_bytes = self.__builder.zext(active_size, i128)  # type: ignore
+        return cast(
+            ir.Value,
+            self.__builder.and_(  # type: ignore
+                logical_no_wrap,
+                self.__builder.icmp_unsigned("==", logical_bytes, active_bytes),  # type: ignore
+            ),
+        )
+
+    def __mul_u64_i128(self, value: ir.Value, factor: int) -> tuple[ir.Value, ir.Value]:
+        """Multiply a u64 value in i128 and return (product, no_wrap)."""
+        i128: ir.IntType = ir.IntType(128)  # type: ignore
+        wide = cast(ir.Value, self.__builder.zext(value, i128))  # type: ignore
+        product = cast(ir.Value, self.__builder.mul(wide, ir.Constant(i128, factor)))  # type: ignore
+        max_i128 = (1 << 128) - 1
+        limit = max_i128 // factor if factor > 0 else max_i128
+        no_wrap = cast(
+            ir.Value,
+            self.__builder.icmp_unsigned(  # type: ignore
+                "<=", wide, ir.Constant(i128, limit)  # type: ignore
+            ),
+        )
+        return product, no_wrap
+
+    def __add_i128_no_wrap(self, left: ir.Value, right: ir.Value) -> tuple[ir.Value, ir.Value]:
+        """Add i128 values and return (sum, unsigned no-wrap predicate)."""
+        total = cast(ir.Value, self.__builder.add(left, right))  # type: ignore
+        no_wrap = cast(ir.Value, self.__builder.icmp_unsigned(">=", total, left))  # type: ignore
+        return total, no_wrap
 
     # -- memory --
 
@@ -917,8 +1126,44 @@ class LLBuilder:
         dest_ll_type = self.__ll_type_ctx.get_ll_type(to_type).ir_type
 
         if self.__ll_type_ctx.is_zst(value.type_id) or self.__ll_type_ctx.is_zst(to_type):
-            # ZST 值已被擦除({} / undef),涉及 ZST 的转换一律 undef(指针-to-ZST 例外)
-            ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
+            # A zero-length array still has a meaningful empty-slice view.  Its
+            # value is erased to `{}`, so the ordinary bitcast would manufacture
+            # an undef pointer; at O0 that can fail arithmetic checks, while raw
+            # niche matching can mistake it for `None`.  Use the immortal literal
+            # lock address as a non-dereferenceable data sentinel and carry a
+            # zero-sized fat range.  Any attempted access is rejected by the
+            # resulting size=0 bounds check; raw mode remains unchecked by contract.
+            # A zero-length array receiver is commonly materialized as a
+            # ``T&`` (or ``T*``) to the array before ``as_slice`` casts it to
+            # ``T*``.  The type-level ZST erasure means the LLVM operand is
+            # only ``undef {}``, so inspect the pointer-family pointee here as
+            # well as a direct array value.
+            empty_array_type: Type.ArrayType | None = None
+            if isinstance(src, Type.ArrayType):
+                empty_array_type = src
+            elif isinstance(src, (Type.PointerType, Type.RefType)):
+                pointee = self.__type_ctx[src.pointee_type]
+                if isinstance(pointee, Type.ArrayType):
+                    empty_array_type = pointee
+            empty_length = False
+            if empty_array_type is not None:
+                length_ty = self.__type_ctx[empty_array_type.length]
+                empty_length = isinstance(length_ty, Type.LiteralValueType) and length_ty.value == 0
+            if empty_array_type is not None and empty_length and isinstance(dst, Type.PointerType) \
+                    and not self.__type_ctx.is_zst(dst.pointee_type):
+                lock_ir, key_ir = self.__lit_lock_pair()
+                if self.__raw_pointers or raw:
+                    ir_val = self.__builder.bitcast(lock_ir, dest_ll_type)  # type: ignore
+                else:
+                    data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
+                    lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
+                    key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+                    zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+                    ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
+            else:
+                # Other ZST conversions remain erased; there is no addressable
+                # object or metadata to preserve for them.
+                ir_val = ir.Constant(dest_ll_type, ir.Undefined)  # type: ignore
         elif isinstance(src, (Type.IntType, Type.CharType, Type.BoolType)) and isinstance(
             dst, (Type.IntType, Type.CharType, Type.BoolType)
         ):

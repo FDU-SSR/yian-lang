@@ -1,0 +1,14 @@
+// File.open must validate a stale path before entering the open syscall.
+
+from std.core.io import File, OpenMode;
+
+fn main() {
+    let bytes: u8* = dyn[4] u8;
+    bytes[0] = 47u8;
+    bytes[1] = 116u8;
+    bytes[2] = 109u8;
+    bytes[3] = 112u8;
+    let path: str = str.from(&bytes[0u64..4]);
+    del bytes;
+    File.open(path, OpenMode.Read);
+}

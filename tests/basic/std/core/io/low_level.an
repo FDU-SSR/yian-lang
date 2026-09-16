@@ -2,13 +2,14 @@
 //
 // Expected output: 0
 
-from std.core.slice import from_raw_parts;
 
 fn main() {
     // O_WRONLY | O_CREAT | O_TRUNC = 577
     let wfd: i32 = @open("/tmp/yian_test_low.txt", 577);
     // sys_write returns void; a successful write means the builtins are wired correctly
     @sys_write(wfd, "low-level builtin test");
+    // Empty views remain valid external-operation arguments.
+    @sys_write(wfd, "");
     let c: i32 = @close(wfd);
     // close should return 0 on success
     assert c == 0: "close failed";
@@ -17,7 +18,10 @@ fn main() {
     let rfd: i32 = @open("/tmp/yian_test_low.txt", 0);
     assert rfd >= 0: "open for read failed";
     let buf = dyn[64] u8;
-    let result: str = @sys_read(rfd, str.from(&from_raw_parts(buf, 64u64)));
+    // @sys_read returns a str whose length is the number of bytes actually read;
+    // do not validate the whole uninitialized capacity as UTF-8.
+    let view: u8[] = @slice_from_parts(buf, 64u64);
+    let result: str = @sys_read(rfd, view);
     @close(rfd);
     let n = result.as_slice().len();
     del buf;

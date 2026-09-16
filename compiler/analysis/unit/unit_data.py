@@ -15,6 +15,8 @@ class UnitData:
     program: Program
     path: Path
     symbol_ctx: SymbolCtx = field(default_factory=SymbolCtx, hash=False, repr=False, compare=False)
+    is_stdlib: bool = False
+    allows_restricted_ops: bool = False
 
     def items(self) -> Iterator[AST.ProgramItem]:
         return iter(self.program.items)

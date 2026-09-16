@@ -1,4 +1,4 @@
-// Test File API: open, write_all, read_to_string, drop
+// Test File API: open, read/write, read_to_string, drop
 //
 // Expected output: 0
 
@@ -9,7 +9,7 @@ fn main() {
 
     // Write with File API
     let f = File.open(path, OpenMode.Write).unwrap();
-    f.write_all("Hello, File API!\n").unwrap();
+    f.write("Hello, File API!\n").unwrap();
     f.drop();
 
     // Read back
@@ -21,19 +21,28 @@ fn main() {
 
     // Append mode
     let f3 = File.open(path, OpenMode.Append).unwrap();
-    f3.write_all("second line\n").unwrap();
+    f3.write("second line\n").unwrap();
+    f3.write_all("third line\n").unwrap();
     f3.drop();
 
     let f4 = File.open(path, OpenMode.Read).unwrap();
     let content2 = f4.read_to_string().unwrap();
     f4.drop();
 
-    assert content2.as_str() == "Hello, File API!\nsecond line\n": "append should add";
+    assert content2.as_str() == "Hello, File API!\nsecond line\nthird line\n": "append should add";
+
+    // Bounded read API
+    let f5 = File.open(path, OpenMode.Read).unwrap();
+    let read_buf: u8* = dyn[128] u8;
+    let read_count: u64 = *f5.read(read_buf[0u64..128]).unwrap();
+    assert read_count == content2.as_slice().len(): "read should report bytes read";
+    f5.drop();
+    del read_buf;
 
     // fd() accessor
-    let f5 = File.open(path, OpenMode.Read).unwrap();
-    let raw_fd: i32 = f5.fd();
+    let f6 = File.open(path, OpenMode.Read).unwrap();
+    let raw_fd: i32 = f6.fd();
     assert raw_fd >= 0: "fd should be valid";
-    f5.drop();
+    f6.drop();
 
 }

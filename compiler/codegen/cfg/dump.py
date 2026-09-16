@@ -67,10 +67,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
-        case IR.Alloca(result=result, value=value):
+        case IR.Alloca(result=result, value=value, raw=raw):
             return (
                 f"%{result.name} = alloca"
                 f" {__dump_value(value)}"
+                f"{' [raw]' if raw else ' [frame]'}"
             )
 
         case IR.Malloc(result=result, type_id=type_id, size=size, key=key):
@@ -131,6 +132,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
 
         case IR.CheckSafeAccess(ptr=ptr):
             return f"check_safe_access {__dump_value(ptr)}  (live ∧ in_bounds, 规则 3.2.1-3.2.2)"
+
+        case IR.CheckViewAccess(view=view):
+            return f"check_view_access {__dump_value(view)}  (live ∧ span)"
 
         case IR.CheckInBounds(ptr=ptr):
             return f"check_in_bounds {__dump_value(ptr)}  (规则 3.5.2)"

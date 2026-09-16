@@ -149,14 +149,7 @@ class TypeCheck:
 
         body = self.__expr_helper.check_block(def_point.ast_body)
         return_type_id = func_ty.return_type(self.__type_ctx)
-        # Coerce unresolved literal types in expression-bodied functions
-        # (e.g. fn f() -> u64 { 2 }) to the declared return type.
-        if body.stmts:
-            last = body.stmts[-1]
-            last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
-                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
-                body.type_id = return_type_id
+        self.__coerce_expression_body_tail(body, return_type_id)
         return body
 
     def __check_method(self, def_point: DefPoint) -> HIR.Block:
@@ -202,12 +195,7 @@ class TypeCheck:
 
         body = self.__expr_helper.check_block(def_point.ast_body)
         return_type_id = method_ty.return_type(self.__type_ctx)
-        if body.stmts:
-            last = body.stmts[-1]
-            last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
-                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
-                body.type_id = return_type_id
+        self.__coerce_expression_body_tail(body, return_type_id)
         return body
 
     def __check_closure(self, def_point: DefPoint) -> HIR.Block:
@@ -246,10 +234,23 @@ class TypeCheck:
 
         body = self.__expr_helper.check_block(def_point.ast_body)
         return_type_id = closure_ty.return_type
-        if body.stmts:
-            last = body.stmts[-1]
-            last_ty = self.__type_ctx[last.type_id]
-            if isinstance(last_ty, (Type.IntLiteralType, Type.FloatLiteralType)):
-                body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
-                body.type_id = return_type_id
+        self.__coerce_expression_body_tail(body, return_type_id)
         return body
+
+    def __coerce_expression_body_tail(self, body: HIR.Block, return_type_id: int) -> None:
+        """Align an implicit expression return with the declared return type.
+
+        Explicit ``return`` expressions already go through
+        :meth:`ExprChecker.lower_return`.  A block's final expression is
+        otherwise emitted directly as the function result, so it needs the
+        same pointer/reference (and literal) coercion before CFG lowering.
+        Diverging and statement-valued tails do not produce a return value.
+        """
+        if not body.stmts or return_type_id == TypeCtx.void_id:
+            return
+        last = body.stmts[-1]
+        if last.type_id in (TypeCtx.void_id, TypeCtx.never_id):
+            return
+        if last.type_id != return_type_id:
+            body.stmts[-1] = self.__expr_helper.coerce(last, return_type_id)
+        body.type_id = return_type_id

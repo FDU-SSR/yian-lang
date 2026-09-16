@@ -1,0 +1,8 @@
+// A stale slice passed to the trusted read boundary must fail closed.
+
+fn main() {
+    let p: u8* = dyn[4] u8;
+    let view: u8[] = p[0u64..4];
+    del p;
+    @sys_read(-1, view);
+}

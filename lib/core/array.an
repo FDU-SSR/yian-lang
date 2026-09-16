@@ -1,12 +1,12 @@
 from std.core.ops import Index;
 from std.core.range import Range;
 from std.core.vec import Vec;
-from std.core.slice import from_raw_parts, SliceIter;
+from std.core.slice import SliceIter;
 from std.core.iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
-        from_raw_parts(@bitcast<T*>(self), N)
+        @slice_from_parts(@bitcast<T*>(self), N)
     }
 
     fn to_vec() -> Vec<T> {
@@ -29,12 +29,12 @@ impl<T, const N: u64> Index<u64, T*> for T[N] {
 
 impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
     fn index(range: Range<u64>*) -> T[] {
-        if (*range).end > N {
+        if (*range).start > (*range).end || (*range).end > N {
             @runtime_fail("S001");
         }
         let start: T* = @bitcast<T*>(self) + (*range).start;
         let len: u64 = (*range).end - (*range).start;
-        from_raw_parts(start, len)
+        @slice_from_parts(start, len)
     }
 }
 

@@ -1,1 +1,1 @@
-restricted operation 'from_raw_parts' is only allowed in the standard library
+Symbol 'from_raw_parts' is not found in the imported unit

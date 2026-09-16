@@ -27,6 +27,7 @@ from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.restricted_ops import check_restricted_ops
+from compiler.analysis.source_provenance import build_source_trust
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -121,17 +122,6 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         help="Package map JSON file (enables package-mode import resolution).",
     )
     parser.add_argument(
-        "--no-fat-checks",
-        action="store_true",
-        default=False,
-        help=(
-            "Skip emission of CFG-level fat-pointer access checks (CheckSafeAccess/"
-            "CheckInBounds/CheckElementArith/CheckPtrDiff/CheckPtrCmp/CheckDelete) while "
-            "keeping the 40-byte fat-pointer representation, lock slots and frame locks. "
-            "Diagnostic mode only; disabling checks removes the memory-safety guarantee."
-        ),
-    )
-    parser.add_argument(
         "--raw-pointers",
         action="store_true",
         default=False,
@@ -203,11 +193,10 @@ def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
 def __cfg(
     def_points: dict[int, DefPoint],
     type_ctx: TypeCtx,
-    no_fat_checks: bool = False,
     raw_pointers: bool = False,
 ) -> dict[int, CFG_IR.Function]:
     """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
-    translator = CfgTranslator(type_ctx, no_fat_checks=no_fat_checks, raw_pointers=raw_pointers)
+    translator = CfgTranslator(type_ctx, raw_pointers=raw_pointers)
     try:
         translator.run(def_points)
     except CodegenError as error:
@@ -368,27 +357,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.dump:
         (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
 
+    unit_datas = {
+        i: UnitData(program=program, path=src_file, unit_id=i)
+        for i, (program, src_file) in enumerate(zip(programs, src_files))
+    }
+
+    pkg_roots: dict[str, Path] = {}
+    if args.packages:
+        pkg_roots = {k: Path(v) for k, v in json.loads(args.packages.read_text()).items()}
+    source_trust = build_source_trust(pkg_roots.get("std"))
+    for unit in unit_datas.values():
+        unit.is_stdlib = source_trust.is_stdlib(unit.path)
+        unit.allows_restricted_ops = source_trust.allows_restricted_ops(unit.path)
+
     # inject prelude imports into non-stdlib files
-    inject_prelude(src_files, programs)
+    inject_prelude(unit_datas.values())
 
     # Keep pointer-forging and raw ABI primitives inside the trusted stdlib.
     restricted_start = time.perf_counter() if args.profile else 0.0
     try:
-        check_restricted_ops(programs, src_files)
+        check_restricted_ops(unit_datas.values())
     except AnalysisError as error:
         __print_source_error(error.span, error)
     if args.profile:
         timings["restricted_ops"] = time.perf_counter() - restricted_start
 
-    unit_datas = {i: UnitData(program=program, path=src_file, unit_id=i) for i, (program, src_file) in enumerate(zip(programs, src_files))}
     type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
 
-    pkg_roots: dict[str, Path] = {}
-    if args.packages:
-        pkg_roots = {k: Path(v) for k, v in json.loads(args.packages.read_text()).items()}
-
     resolve_start = time.perf_counter() if args.profile else 0.0
-    global_resolver = GlobalResolve(unit_datas, type_ctx, pkg_roots)
+    global_resolver = GlobalResolve(unit_datas, type_ctx, pkg_roots, source_trust.stdlib_root)
     try:
         global_resolver.run()
     except AnalysisError as error:
@@ -445,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(def_points, type_ctx, no_fat_checks=args.no_fat_checks, raw_pointers=args.raw_pointers)
+    cfg_functions = __cfg(def_points, type_ctx, raw_pointers=args.raw_pointers)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.dump:
         (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
