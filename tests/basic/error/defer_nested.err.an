@@ -1,0 +1,7 @@
+from std.core.io import print;
+
+fn main() {
+    defer {
+        defer print("nested");
+    };
+}

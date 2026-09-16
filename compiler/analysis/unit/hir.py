@@ -80,6 +80,15 @@ class Continue:
 
 
 @dataclass
+class Defer:
+    """Deferred action registered in the current lexical block."""
+    span: SrcSpan
+    action: Expr
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class Panic:
     span: SrcSpan
     message: Expr
@@ -527,7 +536,7 @@ Expr: TypeAlias = (
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block
-    | Return | Break | Continue
+    | Return | Break | Continue | Defer
     | If | ComptimeIf | Loop
     | Panic | RuntimeFail
     | Delete

@@ -117,6 +117,8 @@ class TokenStream:
         match token:
             case Tok.Keyword(kind=Tok.KeywordKind.IsRawMode, span=span):
                 raise ParseError("'IS_RAW_MODE' is a reserved compile-time configuration", span)
+            case Tok.Keyword(kind=Tok.KeywordKind.Defer, span=span):
+                raise ParseError("'defer' is a reserved keyword", span)
             case Tok.Keyword(kind, span):
                 return AST.Identifier(name=kind.value, span=span)
             case Tok.Identifier(name, span):

@@ -286,6 +286,12 @@ def __export_continue(_: AST.Continue, guides: list[bool], is_last: bool) -> str
     return __line(guides, is_last, "Continue")
 
 
+def __export_defer(stmt: AST.Defer, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, "Defer")
+    res += __export_expr_child("Action", stmt.action, guides, is_last, True)
+    return res
+
+
 def __export_assert(stmt: AST.Assert, guides: list[bool], is_last: bool) -> str:
     res = __line(guides, is_last, "Assert")
     res += __export_expr_child("Condition", stmt.condition, guides, is_last, stmt.message is None)
@@ -360,6 +366,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_break(expr, guides, is_last)
         case AST.Continue():
             return __export_continue(expr, guides, is_last)
+        case AST.Defer():
+            return __export_defer(expr, guides, is_last)
         case AST.Semi():
             return __export_stmt_expr(expr.expr, guides, is_last)
         case AST.ArrayRepeat():

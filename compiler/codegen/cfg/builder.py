@@ -28,6 +28,10 @@ def ch_cfg_block():
 class LoopCtx:
     header: IR.Block
     exit: IR.Block
+    # Number of active defer scopes outside this loop.  Break/continue clean
+    # up scopes introduced by the current iteration, but leave outer scopes
+    # for the enclosing control-flow construct to handle.
+    defer_depth: int
     break_values: list[tuple[IR.Block, IR.Value]] = field(default_factory=list[tuple[IR.Block, IR.Value]])
 
 
@@ -47,6 +51,7 @@ class CfgBuilder:
         self.__raw_pointers = raw_pointers
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
+        self.__defer_scopes: list[list[HIR.Expr]] = []
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(CFG 层,规则 3.7.1)
         # 惰性左值路径:裸指针寄存器名集合。未取址左值(VarPtr raw / Alloca)
         # 及裸派生(Cast/FieldPtr/ElementPtr 沿裸基址)记入;胖指针判定与检查插入据此
@@ -303,12 +308,41 @@ class CfgBuilder:
     def __translate_block(self, block: HIR.Block) -> IR.Value:
         """Translate a block, returning the value of the last expression."""
         last_val: IR.Value = self.__void_reg()
-        for stmt in block.stmts:
-            last_val = self.__resolve_val(stmt)
-            if self.__current_block.terminator is not None:
-                # Mid-block terminator (return/break/continue/panic) → divergent.
-                return last_val
-        return last_val
+        self.__defer_scopes.append([])
+        try:
+            for stmt in block.stmts:
+                last_val = self.__resolve_val(stmt)
+                if self.__current_block.terminator is not None:
+                    # Mid-block terminator (return/break/continue/panic) → divergent.
+                    return last_val
+
+            # Preserve the block's tail value while expanding its deferred
+            # actions in reverse registration order.
+            self.__emit_defers_to(len(self.__defer_scopes) - 1)
+            return last_val
+        finally:
+            self.__defer_scopes.pop()
+
+    def __translate_defer(self, stmt: HIR.Defer) -> IR.Value:
+        """Register a deferred action; the action is lowered at scope exit."""
+        if not self.__defer_scopes:
+            raise CodegenError("defer action is outside a lexical block", stmt.span)
+        self.__defer_scopes[-1].append(stmt.action)
+        return self.__void_reg()
+
+    def __emit_defers_to(self, depth: int) -> bool:
+        """Emit active deferred actions down to *depth* (exclusive).
+
+        The HIR is static and may be reached by multiple CFG paths, so scopes
+        are not popped here; each path emits its own reverse-order sequence.
+        Returns ``False`` when an action terminated the current block.
+        """
+        for scope_index in range(len(self.__defer_scopes) - 1, depth - 1, -1):
+            for action in reversed(self.__defer_scopes[scope_index]):
+                self.__resolve_val(action)
+                if self.__current_block.terminator is not None:
+                    return False
+        return True
 
     # ------------------------------------------------------------------
     # expression handlers
@@ -316,7 +350,11 @@ class CfgBuilder:
 
     def __translate_return(self, stmt: HIR.Return) -> IR.Value:
         val = self.__resolve_val(stmt.value) if stmt.value is not None else self.__void_reg()
-        self.__set_terminator(IR.Ret(val))
+        if self.__current_block.terminator is not None:
+            return self.__never_reg()
+        self.__emit_defers_to(0)
+        if self.__current_block.terminator is None:
+            self.__set_terminator(IR.Ret(val))
         return self.__never_reg()
 
     def __translate_if(self, stmt: HIR.If) -> IR.Value:
@@ -363,7 +401,11 @@ class CfgBuilder:
         exit_block = self.__new_block("loop.exit")
 
         self.__set_terminator(IR.Br(body_block))
-        self.__loops.append(LoopCtx(header=body_block, exit=exit_block))
+        self.__loops.append(LoopCtx(
+            header=body_block,
+            exit=exit_block,
+            defer_depth=len(self.__defer_scopes),
+        ))
 
         self.__switch_to(body_block)
         self.__translate_block(stmt.body)
@@ -465,10 +507,24 @@ class CfgBuilder:
         return phi
 
     def __translate_break(self, stmt: HIR.Break) -> IR.Value:
+        loop = self.__loops[-1]
+        val: IR.Value | None = None
         if stmt.value is not None:
             val = self.__resolve_val(stmt.value)
-            self.__loops[-1].break_values.append((self.__current_block, val))
-        self.__set_terminator(IR.Br(self.__loops[-1].exit))
+            if self.__current_block.terminator is not None:
+                return self.__never_reg()
+        if not self.__emit_defers_to(loop.defer_depth):
+            return self.__never_reg()
+        if val is not None:
+            loop.break_values.append((self.__current_block, val))
+        self.__set_terminator(IR.Br(loop.exit))
+        return self.__never_reg()
+
+    def __translate_continue(self, _stmt: HIR.Continue) -> IR.Value:
+        loop = self.__loops[-1]
+        if not self.__emit_defers_to(loop.defer_depth):
+            return self.__never_reg()
+        self.__set_terminator(IR.Br(loop.header))
         return self.__never_reg()
 
     def __translate_semi(self, stmt: HIR.Semi) -> IR.Value:
@@ -527,8 +583,9 @@ class CfgBuilder:
             case HIR.Break():
                 return self.__translate_break(expr)
             case HIR.Continue():
-                self.__set_terminator(IR.Br(self.__loops[-1].header))
-                return self.__void_reg()
+                return self.__translate_continue(expr)
+            case HIR.Defer():
+                return self.__translate_defer(expr)
             case HIR.Delete():
                 return self.__translate_delete(expr)
             case HIR.Panic():

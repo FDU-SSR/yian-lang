@@ -1,0 +1,62 @@
+from std.core.io import print;
+
+fn main() {
+    let i: i32 = 0;
+    loop {
+        i += 1;
+        defer print("loop\n");
+        if i == 2 {
+            continue;
+        }
+        if i == 3 {
+            break;
+        }
+    }
+
+    let j: i32 = 0;
+    while j < 2 {
+        j += 1;
+        defer print("while\n");
+    }
+
+    let k: i32 = 0;
+    while k < 3 {
+        k += 1;
+        defer print("while-control\n");
+        if k == 2 {
+            continue;
+        }
+        if k == 3 {
+            break;
+        }
+    }
+
+    for item in 0..2 {
+        defer print("for\n");
+    }
+
+    for item in 0..3 {
+        defer print("for-control\n");
+        if item == 1 {
+            continue;
+        }
+        if item == 2 {
+            break;
+        }
+    }
+
+    {
+        defer print("outer-loop-scope\n");
+        loop {
+            defer print("inner-loop-scope\n");
+            break;
+        }
+        print("outer-after\n");
+    }
+
+    let break_value: i32 = loop {
+        defer print("break-value\n");
+        break 7;
+    };
+    assert break_value == 7: "break value must survive cleanup";
+}

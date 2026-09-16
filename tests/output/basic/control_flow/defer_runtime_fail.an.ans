@@ -1,0 +1,3 @@
+Exit code 1
+before
+yian: safety error [S001]: out-of-bounds memory access

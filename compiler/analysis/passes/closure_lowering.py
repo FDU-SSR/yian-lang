@@ -164,6 +164,8 @@ class ClosureLowering:
                     arm.body = cast(HIR.Block, self.__rewrite_type_ids(arm.body))
             case HIR.Return() if expr.value is not None:
                 expr.value = self.__rewrite_type_ids(expr.value)
+            case HIR.Defer():
+                expr.action = self.__rewrite_type_ids(expr.action)
             case HIR.Semi():
                 expr.expr = self.__rewrite_type_ids(expr.expr)
             case HIR.Let() if expr.init is not None:
@@ -347,6 +349,8 @@ class ClosureLowering:
                     arm.body = self.__rewrite_capture_refs(arm.body)
             case HIR.Return() if expr.value is not None:
                 expr.value = self.__rewrite_one_capture(expr.value)
+            case HIR.Defer():
+                expr.action = self.__rewrite_one_capture(expr.action)
             case HIR.Semi():
                 expr.expr = self.__rewrite_one_capture(expr.expr)
             case HIR.Let() if expr.init is not None:

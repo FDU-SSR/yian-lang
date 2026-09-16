@@ -1,0 +1,55 @@
+from std.core.io import print;
+
+fn inner() {
+    defer print("inner defer\n");
+    print("inner body\n");
+}
+
+fn return_before_cleanup() -> i32 {
+    let value: i32 = 1;
+    defer value = 2;
+    return value;
+}
+
+fn main() {
+    let value: i32 = 1;
+    defer print("first\n");
+    defer print("second\n");
+    value = 2;
+    defer {
+        print("block\n");
+    };
+    print("body\n");
+    inner();
+
+    {
+        defer print("nested\n");
+        print("nested body\n");
+    }
+
+    defer {
+        if value == 2 {
+            print("latest\n");
+        } else {
+            print("stale\n");
+        }
+        comptime if IS_RAW_MODE {
+            print("mode\n");
+        } else {
+            print("mode\n");
+        }
+    };
+
+    defer if value == 2 {
+        print("conditional\n");
+    } else {
+        print("wrong\n");
+    };
+
+    let callback = || () {
+        print("closure\n");
+    };
+    defer callback();
+
+    assert return_before_cleanup() == 1: "return value must be evaluated before cleanup";
+}

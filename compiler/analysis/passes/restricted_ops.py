@@ -165,6 +165,8 @@ class RestrictedOpsChecker:
             case AST.Break():
                 if expr.expr is not None:
                     self.__scan_expr(expr.expr)
+            case AST.Defer():
+                self.__scan_expr(expr.action)
             case AST.Assert():
                 self.__scan_expr(expr.condition)
                 if expr.message is not None:

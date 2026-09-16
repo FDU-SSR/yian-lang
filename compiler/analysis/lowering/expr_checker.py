@@ -41,6 +41,7 @@ class ExprChecker:
         self.__call_dispatcher = CallDispatcher(ctx, self)
         self.__closure_helper = ClosureHelper(ctx, self)
         self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
+        self.__defer_depth = 0
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
@@ -63,6 +64,8 @@ class ExprChecker:
                 return self.lower_break(expr)
             case AST.Continue():
                 return self.lower_continue(expr)
+            case AST.Defer():
+                return self.lower_defer(expr)
             case AST.Delete():
                 return self.lower_delete(expr)
             case AST.VarDecl():
@@ -634,6 +637,9 @@ class ExprChecker:
     def lower_return(self, stmt: AST.Return) -> HIR.Return:
         assert self.__ctx.symbol_ctx is not None
 
+        if self.__defer_depth > 0:
+            raise AnalysisError("'return' is not allowed inside a deferred action", stmt.span)
+
         return_type_id = self.__ctx.current_return_type()
         if return_type_id is None:
             raise AnalysisError("return is not allowed outside of a function or method", stmt.span)
@@ -650,6 +656,9 @@ class ExprChecker:
         return HIR.Return(span=stmt.span, value=value_expr, type_id=TypeCtx.never_id, is_place=False)
 
     def lower_break(self, stmt: AST.Break) -> HIR.Break:
+        if self.__defer_depth > 0:
+            raise AnalysisError("'break' is not allowed inside a deferred action", stmt.span)
+
         if not self.__ctx.loop_stack:
             raise AnalysisError("'break' is only allowed inside a loop", stmt.span)
 
@@ -664,10 +673,30 @@ class ExprChecker:
         return HIR.Break(span=stmt.span, type_id=TypeCtx.never_id, is_place=False, value=value)
 
     def lower_continue(self, stmt: AST.Continue) -> HIR.Continue:
+        if self.__defer_depth > 0:
+            raise AnalysisError("'continue' is not allowed inside a deferred action", stmt.span)
+
         if not self.__ctx.loop_stack:
             raise AnalysisError("'continue' is only allowed inside a loop", stmt.span)
 
         return HIR.Continue(span=stmt.span, type_id=TypeCtx.never_id, is_place=False)
+
+    def lower_defer(self, stmt: AST.Defer) -> HIR.Defer:
+        if self.__defer_depth > 0:
+            raise AnalysisError("nested defer is not allowed inside a deferred action", stmt.span)
+
+        self.__defer_depth += 1
+        try:
+            action = self.value(stmt.action)
+        finally:
+            self.__defer_depth -= 1
+
+        return HIR.Defer(
+            span=stmt.span,
+            action=action,
+            type_id=TypeCtx.void_id,
+            is_place=False,
+        )
 
     def lower_delete(self, stmt: AST.Delete) -> HIR.Delete:
         assert self.__ctx.symbol_ctx is not None

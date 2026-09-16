@@ -1,0 +1,11 @@
+fn make_dangling() -> i32* {
+    let ptr: i32* = dyn[1] i32;
+    *ptr = 42;
+    defer del ptr;
+    return ptr;
+}
+
+fn main() {
+    let dangling: i32* = make_dangling();
+    let value: i32 = *dangling;
+}

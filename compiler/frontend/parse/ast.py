@@ -372,6 +372,15 @@ class Continue:
 
 
 @dataclass
+class Defer:
+    span: SrcSpan
+    action: Expr
+
+    def __repr__(self) -> str:
+        return f"defer {self.action};"
+
+
+@dataclass
 class Assert:
     span: SrcSpan
     condition: Expr
@@ -677,7 +686,7 @@ Expr: TypeAlias = (
     | Block
     | VarDecl
     | If | ComptimeIf | For | While | Loop | Match
-    | Return | Break | Continue | Assert
+    | Return | Break | Continue | Defer | Assert
     | Delete
     | Semi
     | ClosureExpr | CompileConfig

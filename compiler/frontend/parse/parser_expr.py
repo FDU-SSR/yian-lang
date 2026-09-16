@@ -107,6 +107,8 @@ class ExprParser:
                 return self.__parse_break()
             case Tok.Keyword(kind=Tok.KeywordKind.Continue):
                 return self.__parse_continue()
+            case Tok.Keyword(kind=Tok.KeywordKind.Defer):
+                raise ParseError("'defer' is only allowed as a statement", token.span)
             case Tok.Keyword(kind=Tok.KeywordKind.Assert):
                 return self.__parse_assert()
             case Tok.Keyword(kind=Tok.KeywordKind.Del):
@@ -440,12 +442,23 @@ class ExprParser:
         This is the fundamental building block for contexts where ``expr``
         and ``expr;`` are both valid (e.g. inside a block).
         """
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.Defer:
+            return self.__parse_defer()
+
         item = self.parse_expr()
         next_tok = self.__stream.peek()
         if isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.Semicolon:
             self.__stream.consume_semicolon()
             return AST.Semi(span=item.span, expr=item)
         return item
+
+    def __parse_defer(self) -> AST.Defer:
+        """Parse a lexical-scope defer statement with its required terminator."""
+        span = self.__stream.consume_keyword(Tok.KeywordKind.Defer).span
+        action = self.parse_expr()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.Semicolon)
+        return AST.Defer(span=span, action=action)
 
     def parse_block(self) -> AST.Block:
         """Parses a block expression ``{ ... }``.

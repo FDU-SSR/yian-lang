@@ -201,6 +201,15 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Semi):
             return self.__check_expr(expr.expr, state)
 
+        if isinstance(expr, HIR.Defer):
+            # A deferred action observes the registration-point state, but
+            # assignments performed by the action must not affect subsequent
+            # definite-assignment facts (nor function exit states).
+            saved_exit = self.__exit_state
+            self.__check_expr(expr.action, self.__share(state))
+            self.__exit_state = saved_exit
+            return state
+
         if isinstance(expr, HIR.If):
             return self.__check_if(expr, state)
 
@@ -304,6 +313,11 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.ArrayRepeat):
             return self.__check_expr(expr.element, state)
+
+        if isinstance(expr, HIR.Closure):
+            for capture in expr.captures.values():
+                state = self.__check_expr(capture, state)
+            return state
 
         # -- access -------------------------------------------------------
         if isinstance(expr, HIR.FieldAccess):
@@ -553,6 +567,12 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Semi):
             return self.__walk_neutral(expr.expr, state)
 
+        if isinstance(expr, HIR.Defer):
+            saved_exit = self.__exit_state
+            self.__walk_neutral(expr.action, self.__share(state))
+            self.__exit_state = saved_exit
+            return state
+
         if isinstance(expr, HIR.If):
             state = self.__walk_neutral(expr.cond, state)
             then_state = self.__walk_neutral(expr.then_branch, self.__share(state))
@@ -649,6 +669,11 @@ class DefiniteAssignment:
 
         if isinstance(expr, HIR.ArrayRepeat):
             return self.__walk_neutral(expr.element, state)
+
+        if isinstance(expr, HIR.Closure):
+            for capture in expr.captures.values():
+                state = self.__walk_neutral(capture, state)
+            return state
 
         if isinstance(expr, HIR.FieldAccess):
             return self.__walk_neutral(expr.receiver, state)

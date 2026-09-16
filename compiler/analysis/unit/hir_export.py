@@ -104,6 +104,10 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __line(guides, is_last, f"Break: span={__format_span(expr.span)} type_id={expr.type_id}{val_str}")
         case HIR.Continue():
             return __line(guides, is_last, f"Continue: span={__format_span(expr.span)} type_id={expr.type_id}")
+        case HIR.Defer():
+            res = __line(guides, is_last, f"Defer: span={__format_span(expr.span)} type_id={expr.type_id}")
+            res += __export_expr_child("Action", expr.action, guides, is_last, True, type_ctx)
+            return res
         case HIR.Panic():
             res = __line(guides, is_last, f"Panic: span={__format_span(expr.span)} type_id={expr.type_id}")
             res += __export_expr_child("Message", expr.message, guides, is_last, True, type_ctx)

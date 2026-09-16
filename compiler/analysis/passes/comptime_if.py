@@ -71,6 +71,8 @@ class ComptimeIfSpecializer:
                 expr.value = self.__rewrite_expr(value)
             case HIR.Break(value=value) if value is not None:
                 expr.value = self.__rewrite_expr(value)
+            case HIR.Defer():
+                expr.action = self.__rewrite_expr(expr.action)
             case HIR.If():
                 expr.cond = self.__rewrite_expr(expr.cond)
                 expr.then_branch = self.__rewrite_block(expr.then_branch)

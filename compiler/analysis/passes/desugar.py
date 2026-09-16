@@ -87,6 +87,8 @@ class Desugar:
                 # A trailing semicolon wraps the statement; recurse through it
                 # so nested control flow is still desugared.
                 self.__recurse_blocks(stmt.expr, processor)
+            case AST.Defer():
+                self.__recurse_blocks(stmt.action, processor)
             case _:
                 return
 
@@ -104,6 +106,7 @@ class Desugar:
             # Unwrap Semi to check for desugar-able constructs inside
             inner = stmt.expr if isinstance(stmt, AST.Semi) else stmt
             semi = isinstance(stmt, AST.Semi)
+            desugared: AST.Expr | None = None
 
             if isinstance(inner, AST.For):
                 desugared = self.__desugar_for(inner)
@@ -113,8 +116,16 @@ class Desugar:
                 desugared = self.__desugar_assert(inner)
             elif isinstance(inner, AST.If) and inner.elif_branches:
                 desugared = self.__desugar_if_chain(inner)
-            else:
-                desugared = None
+            elif isinstance(inner, AST.Defer):
+                action = inner.action
+                if isinstance(action, AST.For):
+                    inner.action = self.__desugar_for(action)
+                elif isinstance(action, AST.While):
+                    inner.action = self.__desugar_while(action)
+                elif isinstance(action, AST.Assert):
+                    inner.action = self.__desugar_assert(action)
+                elif isinstance(action, AST.If) and action.elif_branches:
+                    inner.action = self.__desugar_if_chain(action)
 
             if desugared is not None:
                 ch_desugar().trace(lambda: f"desugar {type(inner).__name__}")
@@ -284,6 +295,52 @@ class Desugar:
     def __walk_expr_children(self, expr: AST.Expr, visitor: Callable[[AST.Expr], AST.Expr]) -> None:
         """Walk the immediate sub-expressions of an expression and apply the visitor to each."""
         match expr:
+            case AST.Block():
+                expr.stmts = [visitor(stmt) for stmt in expr.stmts]
+            case AST.Semi():
+                expr.expr = visitor(expr.expr)
+            case AST.VarDecl() if expr.init_expr is not None:
+                expr.init_expr = visitor(expr.init_expr)
+            case AST.Return() if expr.expr is not None:
+                expr.expr = visitor(expr.expr)
+            case AST.Break() if expr.expr is not None:
+                expr.expr = visitor(expr.expr)
+            case AST.If():
+                expr.condition = visitor(expr.condition)
+                expr.elif_branches = [(visitor(cond), branch) for cond, branch in expr.elif_branches]
+                expr.then_branch.stmts = [visitor(stmt) for stmt in expr.then_branch.stmts]
+                for _, branch in expr.elif_branches:
+                    branch.stmts = [visitor(stmt) for stmt in branch.stmts]
+                if expr.else_branch is not None:
+                    expr.else_branch.stmts = [visitor(stmt) for stmt in expr.else_branch.stmts]
+            case AST.ComptimeIf():
+                expr.condition = visitor(expr.condition)
+                expr.then_branch.stmts = [visitor(stmt) for stmt in expr.then_branch.stmts]
+                expr.else_branch.stmts = [visitor(stmt) for stmt in expr.else_branch.stmts]
+            case AST.For():
+                expr.iterable = visitor(expr.iterable)
+                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
+            case AST.While():
+                expr.condition = visitor(expr.condition)
+                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
+            case AST.Loop():
+                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
+            case AST.Match():
+                expr.expr = visitor(expr.expr)
+                for _, branch in expr.arms:
+                    branch.stmts = [visitor(stmt) for stmt in branch.stmts]
+            case AST.Assert():
+                expr.condition = visitor(expr.condition)
+                if expr.message is not None:
+                    expr.message = visitor(expr.message)
+            case AST.Delete():
+                expr.target = visitor(expr.target)
+            case AST.Defer():
+                expr.action = visitor(expr.action)
+            case AST.ClosureExpr():
+                for capture in expr.captures:
+                    capture.expr = visitor(capture.expr)
+                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
             case AST.Binary():
                 expr.left = visitor(expr.left)
                 expr.right = visitor(expr.right)
@@ -365,5 +422,7 @@ class Desugar:
                 stmt.value = expr_visitor(stmt.value)
             case AST.DynBuffer():
                 stmt.size = expr_visitor(stmt.size)
+            case AST.Defer():
+                stmt.action = expr_visitor(stmt.action)
             case _:
                 pass

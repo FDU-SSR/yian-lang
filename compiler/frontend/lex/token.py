@@ -35,6 +35,7 @@ class KeywordKind(Enum):
     Break = "break"
     Continue = "continue"
     Return = "return"
+    Defer = "defer"
     Assert = "assert"
     In = "in"
     Typeof = "typeof"
