@@ -22,7 +22,7 @@ impl<T> RawVec<T> {
         }
         let max_capacity: u64 = 0x7FFF_FFFF_FFFF_FFFFu64;
         if capacity > max_capacity {
-            __yian_runtime_fail("R001");
+            @runtime_fail("R001");
         }
         // Allocate memory for capacity elements
         let data: T* = dyn[capacity] T;
@@ -35,7 +35,7 @@ impl<T> RawVec<T> {
     pub fn ptr() -> T* {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
         if (self.cap & live_bit) == 0 {
-            __yian_runtime_fail("S002");
+            @runtime_fail("S002");
         }
         self.data
     }
@@ -47,11 +47,11 @@ impl<T> RawVec<T> {
     pub fn grow() {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
         if (self.cap & live_bit) == 0 {
-            __yian_runtime_fail("S002");
+            @runtime_fail("S002");
         }
         let old_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         if old_cap >= 0x4000_0000_0000_0000u64 {
-            __yian_runtime_fail("R001");
+            @runtime_fail("R001");
         }
         let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
 
@@ -71,11 +71,11 @@ impl<T> RawVec<T> {
     pub fn reserve(len: u64, additional: u64) {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
         if (self.cap & live_bit) == 0 {
-            __yian_runtime_fail("S002");
+            @runtime_fail("S002");
         }
         let max_capacity: u64 = 0x7FFF_FFFF_FFFF_FFFFu64;
         if additional > max_capacity || len > max_capacity - additional {
-            __yian_runtime_fail("R001");
+            @runtime_fail("R001");
         }
         let required_cap = len + additional;
         let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
@@ -112,7 +112,7 @@ impl<T> RawVec<T> {
     pub fn shrink_to_fit(len: u64) {
         let live_bit: u64 = 0x8000_0000_0000_0000u64;
         if (self.cap & live_bit) == 0 {
-            __yian_runtime_fail("S002");
+            @runtime_fail("S002");
         }
         let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
         if current_cap <= len {

@@ -30,7 +30,7 @@ impl<T, E> Result<T, E> {
     pub fn unwrap() -> T* {
         match self {
             Ok(val) => val,
-            Err(err) => panic("Called unwrap on an Err value"),
+            Err(err) => @panic("Called unwrap on an Err value"),
         }
     }
 
@@ -45,7 +45,7 @@ impl<T, E> Result<T, E> {
     pub fn unwrap_err() -> E* {
         match self {
             Err(err) => err,
-            Ok(val) => panic("Called unwrap_err on an Ok value"),
+            Ok(val) => @panic("Called unwrap_err on an Ok value"),
         }
     }
 

@@ -10,5 +10,5 @@ fn main() {
     let p: Point = Point(3, 4)
     assert p.x == 3: "alias-to-struct: construct + field access"
     let n: Int = 5
-    assert sizeof(Int) == sizeof(i64): "alias-to-named: sizeof"
+    assert @sizeof(Int) == @sizeof(i64): "alias-to-named: sizeof"
 }

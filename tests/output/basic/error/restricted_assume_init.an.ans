@@ -1,1 +1,1 @@
-restricted operation 'assume_init' is only allowed in the standard library
+restricted operation '@assume_init' is only allowed in the standard library

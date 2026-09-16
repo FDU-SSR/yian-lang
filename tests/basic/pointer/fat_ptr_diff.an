@@ -19,7 +19,7 @@ fn main() {
     // (p+5) - (p+1) → 4, typed i64
     let diff: i64 = (p + 5) - (p + 1);
     assert diff == 4: "diff == 4";
-    assert sizeof(i64) == 8: "ptr diff result is 8-byte i64";
+    assert @sizeof(i64) == 8: "ptr diff result is 8-byte i64";
 
     // reverse: negative difference
     let back: i64 = (p + 1) - (p + 5);

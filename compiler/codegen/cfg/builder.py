@@ -156,7 +156,7 @@ class CfgBuilder:
                         worklist.append(arm.body)
                     if term.default is not None:
                         worklist.append(term.default)
-                case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.YianExit():
+                case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
                     pass
 
         # ── filter blocks ──
@@ -203,7 +203,7 @@ class CfgBuilder:
                             succs.append(arm.body)
                         if default is not None:
                             succs.append(default)
-                    case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.YianExit():
+                    case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
                         pass
             successors[id(block)] = succs
 
@@ -433,9 +433,9 @@ class CfgBuilder:
         self.__set_terminator(IR.RuntimeFail(stmt.code))
         return self.__never_reg()
 
-    def __translate_yian_exit(self, stmt: HIR.YianExit) -> IR.Value:
+    def __translate_process_exit(self, stmt: HIR.ProcessExit) -> IR.Value:
         code = self.__resolve_val(stmt.code)
-        self.__set_terminator(IR.YianExit(code=code))
+        self.__set_terminator(IR.ProcessExit(code=code))
         return self.__never_reg()
 
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
@@ -592,8 +592,8 @@ class CfgBuilder:
                 return self.__translate_panic(expr)
             case HIR.RuntimeFail():
                 return self.__translate_runtime_fail(expr)
-            case HIR.YianExit():
-                return self.__translate_yian_exit(expr)
+            case HIR.ProcessExit():
+                return self.__translate_process_exit(expr)
             case HIR.Semi():
                 return self.__translate_semi(expr)
             case HIR.Let():
@@ -643,10 +643,10 @@ class CfgBuilder:
                 return self.__resolve_open(expr)
             case HIR.Close():
                 return self.__resolve_close(expr)
-            case HIR.YianArgc():
-                return self.__resolve_yian_argc(expr)
-            case HIR.YianArgBytes():
-                return self.__resolve_yian_arg_bytes(expr)
+            case HIR.ArgCount():
+                return self.__resolve_arg_count(expr)
+            case HIR.ArgBytes():
+                return self.__resolve_arg_bytes(expr)
             case HIR.Tuple():
                 return self.__resolve_tuple(expr)
             case HIR.Array():
@@ -1019,14 +1019,14 @@ class CfgBuilder:
         fd = self.__resolve_val(expr.fd)
         return self.__build_close(fd)
 
-    def __resolve_yian_argc(self, _expr: HIR.YianArgc) -> IR.Value:
+    def __resolve_arg_count(self, _expr: HIR.ArgCount) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.YianArgc(result=result)).result
+        return self.__emit(IR.ArgCount(result=result)).result
 
-    def __resolve_yian_arg_bytes(self, expr: HIR.YianArgBytes) -> IR.Value:
+    def __resolve_arg_bytes(self, expr: HIR.ArgBytes) -> IR.Value:
         index = self.__resolve_val(expr.index)
         result = IR.Reg(name=self.__new_name(), type_id=expr.type_id)
-        return self.__emit(IR.YianArgBytes(result=result, index=index)).result
+        return self.__emit(IR.ArgBytes(result=result, index=index)).result
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]

@@ -369,7 +369,7 @@ class Close:
 
 
 @dataclass
-class YianArgc:
+class ArgCount:
     """Return the process argument count supplied by the C entry point."""
     span: SrcSpan
     type_id: int  # u64
@@ -377,7 +377,7 @@ class YianArgc:
 
 
 @dataclass
-class YianArgBytes:
+class ArgBytes:
     """Return one process argument as a borrowed byte slice."""
     span: SrcSpan
     index: Expr  # u64
@@ -386,7 +386,7 @@ class YianArgBytes:
 
 
 @dataclass
-class YianExit:
+class ProcessExit:
     """Terminate the process with an explicit status code."""
     span: SrcSpan
     code: Expr   # i32
@@ -485,7 +485,7 @@ class AssumeInit:
 
 @dataclass
 class MemCopy:
-    """Byte-level memory copy builtin — ``__memcpy(dest, src, count)``.
+    """Byte-level memory copy builtin — ``@memcpy(dest, src, count)``.
 
     ``dest`` and ``src`` are pointer-typed expressions (``T*`` / ``U*``,
     possibly different pointee types); ``count`` is a ``u64`` byte length.
@@ -532,7 +532,7 @@ Expr: TypeAlias = (
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
-    | YianArgc | YianArgBytes | YianExit
+    | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block

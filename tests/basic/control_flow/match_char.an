@@ -20,10 +20,10 @@ fn main() {
     // Test single char match
     let a: char = 'b';
     match a {
-        'a' => { panic("Matched a"); },
+        'a' => { @panic("Matched a"); },
         'b' => { print("b matched\n"); },
-        'c', 'd' => { panic("Matched c || d"); },
-        _ => { panic("Matched default case"); },
+        'c', 'd' => { @panic("Matched c || d"); },
+        _ => { @panic("Matched default case"); },
     }
 
     // Test multi-char patterns

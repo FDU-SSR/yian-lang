@@ -245,12 +245,12 @@ class DefiniteAssignment:
             self.__record_exit_state(state)
             return state
 
-        if isinstance(expr, HIR.YianExit):
+        if isinstance(expr, HIR.ProcessExit):
             state = self.__walk_neutral(expr.code, state)
             self.__record_exit_state(state)
             return state
 
-        if isinstance(expr, HIR.YianExit):
+        if isinstance(expr, HIR.ProcessExit):
             state = self.__check_expr(expr.code, state)
             self.__record_exit_state(state)
             return state
@@ -362,10 +362,10 @@ class DefiniteAssignment:
             state = self.__check_expr(expr.buf, state)
             return state
 
-        if isinstance(expr, HIR.YianArgc):
+        if isinstance(expr, HIR.ArgCount):
             return state
 
-        if isinstance(expr, HIR.YianArgBytes):
+        if isinstance(expr, HIR.ArgBytes):
             return self.__check_expr(expr.index, state)
 
         if isinstance(expr, HIR.MemCopy):
@@ -711,10 +711,10 @@ class DefiniteAssignment:
             state = self.__walk_neutral(expr.buf, state)
             return state
 
-        if isinstance(expr, HIR.YianArgc):
+        if isinstance(expr, HIR.ArgCount):
             return state
 
-        if isinstance(expr, HIR.YianArgBytes):
+        if isinstance(expr, HIR.ArgBytes):
             return self.__walk_neutral(expr.index, state)
 
         if isinstance(expr, HIR.MemCopy):

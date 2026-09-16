@@ -1,4 +1,4 @@
-// Test that the `__memcpy` builtin is rejected outside the standard
+// Test that the `@memcpy` builtin is rejected outside the standard
 // library.
 //
 // Expected compilation error: restricted operation
@@ -6,5 +6,5 @@
 fn main() {
     let a: i32 = 1;
     let b: i32 = 2;
-    __memcpy(&b, &a, 4);
+    @memcpy(&b, &a, 4);
 }

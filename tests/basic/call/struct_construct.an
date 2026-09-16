@@ -12,6 +12,6 @@ fn main() {
     let age: i32 = p.age;
     assert age == 20: "Person struct construction failed";
     if p.weight > 61.0 {
-        panic("Person weight field access failed");
+        @panic("Person weight field access failed");
     }
 }

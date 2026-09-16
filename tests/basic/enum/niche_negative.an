@@ -47,12 +47,12 @@ fn main() {
         44u64
     };
 
-    assert sizeof(Three) == tagged_pointer_size: "three variants retain tag";
-    assert sizeof(TwoPayloads) == tagged_pointer_size: "two payload variants retain tag";
-    assert sizeof(NamedWrapper) == tagged_pointer_size: "named wrapper retains tag";
-    assert sizeof(ZstPointer) == 4: "ZST pointer payload retains tag";
-    assert sizeof(ZstSlice) == tagged_view_size: "ZST slice payload retains tag";
-    assert sizeof(Option<void*>) == 4: "Option<void*> retains tag";
-    assert sizeof(Option<Option<i32*>>) == tagged_pointer_size: "nested option retains outer tag";
-    assert sizeof(Result<i32*, str>) == tagged_pointer_or_view_size: "result retains tag";
+    assert @sizeof(Three) == tagged_pointer_size: "three variants retain tag";
+    assert @sizeof(TwoPayloads) == tagged_pointer_size: "two payload variants retain tag";
+    assert @sizeof(NamedWrapper) == tagged_pointer_size: "named wrapper retains tag";
+    assert @sizeof(ZstPointer) == 4: "ZST pointer payload retains tag";
+    assert @sizeof(ZstSlice) == tagged_view_size: "ZST slice payload retains tag";
+    assert @sizeof(Option<void*>) == 4: "Option<void*> retains tag";
+    assert @sizeof(Option<Option<i32*>>) == tagged_pointer_size: "nested option retains outer tag";
+    assert @sizeof(Result<i32*, str>) == tagged_pointer_or_view_size: "result retains tag";
 }

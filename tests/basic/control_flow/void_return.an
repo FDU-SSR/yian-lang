@@ -10,7 +10,7 @@ fn do_work(flag: bool) {
         print("done");
         return;
     }
-    panic("should not reach here");
+    @panic("should not reach here");
 }
 
 fn call_void() {

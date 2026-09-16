@@ -25,6 +25,41 @@ class Identifier:
         return self.name
 
 
+class BuiltinKind(Enum):
+    """Compiler-provided instructions in the reserved ``@`` namespace."""
+
+    SizeOf = "sizeof"
+    BitCast = "bitcast"
+    Panic = "panic"
+    RuntimeFail = "runtime_fail"
+    AssumeInit = "assume_init"
+    MemCopy = "memcpy"
+    SliceFromParts = "slice_from_parts"
+    SliceGetPtr = "slice_get_ptr"
+    SliceGetLen = "slice_get_len"
+    StrFromParts = "str_from_parts"
+    StrGetPtr = "str_get_ptr"
+    StrGetLen = "str_get_len"
+    SysRead = "sys_read"
+    SysWrite = "sys_write"
+    Open = "open"
+    Close = "close"
+    Argc = "argc"
+    ArgBytes = "arg_bytes"
+    Exit = "exit"
+
+    @property
+    def spelling(self) -> str:
+        return f"@{self.value}"
+
+    @classmethod
+    def try_from_name(cls, name: str) -> BuiltinKind | None:
+        return _BUILTIN_KIND_BY_NAME.get(name)
+
+
+_BUILTIN_KIND_BY_NAME: dict[str, BuiltinKind] = {kind.value: kind for kind in BuiltinKind}
+
+
 @dataclass
 class TypeGenericParam:
     """类型泛型参数，如 <T>"""
@@ -501,11 +536,10 @@ class Call:
     """
     Could be:
 
-    1. intrinsic instructions like `panic("error message")`
-    2. free functions like `foo(1, 2)`
-    3. constructors like `Point(x=1, y=2)`
-    4. function pointers like `let f: fn(i32) -> i32 = ...; f(42)`
-    5. basic types like `i32(42)`, `u32('a')`, etc.
+    1. free functions like `foo(1, 2)`
+    2. constructors like `Point(x=1, y=2)`
+    3. function pointers like `let f: fn(i32) -> i32 = ...; f(42)`
+    4. basic types like `i32(42)`, `u32('a')`, etc.
     """
 
     span: SrcSpan
@@ -515,6 +549,19 @@ class Call:
     def __repr__(self) -> str:
         args_str = ", ".join(str(arg) for arg in self.args)
         return f"{self.callee}({args_str})"
+
+
+@dataclass
+class BuiltinCall:
+    """A call in the reserved compiler-instruction namespace."""
+
+    span: SrcSpan
+    kind: BuiltinKind
+    args: list[Arg]
+
+    def __repr__(self) -> str:
+        args_str = ", ".join(str(arg) for arg in self.args)
+        return f"{self.kind.spelling}({args_str})"
 
 
 @dataclass
@@ -566,7 +613,7 @@ class SizeOf:
     ty: ASTType
 
     def __repr__(self) -> str:
-        return f"sizeof({self.ty})"
+        return f"@sizeof({self.ty})"
 
 
 @dataclass
@@ -576,7 +623,7 @@ class BitCast:
     value: Expr
 
     def __repr__(self) -> str:
-        return f"bitcast<{self.target_type}>({self.value})"
+        return f"@bitcast<{self.target_type}>({self.value})"
 
 
 @dataclass
@@ -678,7 +725,7 @@ class ClosureExpr:
 
 Expr: TypeAlias = (
     Binary | Unary | FieldAccess
-    | Call | MethodCall
+    | Call | BuiltinCall | MethodCall
     | DynValue | DynBuffer
     | SizeOf | BitCast
     | TypeItem | Identifier | Literal

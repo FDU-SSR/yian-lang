@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from compiler.frontend.lex import token as Tok
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.error import ParseError
@@ -125,10 +126,8 @@ class ExprParser:
             case Tok.Keyword(kind=Tok.KeywordKind.False_):
                 self.__stream.consume_keyword(Tok.KeywordKind.False_)
                 return AST.Literal(span=token.span, literal=Tok.BoolLiteral(raw="false", span=token.span, value=False))
-            case Tok.Keyword(kind=Tok.KeywordKind.Sizeof):
-                return self.__parse_sizeof()
-            case Tok.Keyword(kind=Tok.KeywordKind.Bitcast):
-                return self.__parse_bitcast()
+            case Tok.Punctuator(kind=Tok.PunctuatorKind.At):
+                return self.__parse_builtin()
             case Tok.Identifier() | Tok.Keyword():
                 ident = self.__stream.consume_identifier()
 
@@ -395,24 +394,40 @@ class ExprParser:
                 case _:
                     return expr
 
-    def __parse_sizeof(self) -> AST.SizeOf:
-        """Parse ``sizeof(type)`` — argument is unconditionally a type."""
-        kw = self.__stream.consume_keyword(Tok.KeywordKind.Sizeof)
+    def __parse_builtin(self) -> AST.Expr:
+        """Parse a compiler instruction from the reserved ``@name`` namespace."""
+        at = self.__stream.consume_punctuator(Tok.PunctuatorKind.At)
+        name = self.__stream.consume_identifier()
+        kind = AST.BuiltinKind.try_from_name(name.name)
+        if kind is None:
+            raise ParseError(f"unknown builtin '{name.name}' (expected '@name')", name.span)
+
+        if kind == AST.BuiltinKind.SizeOf:
+            return self.__parse_sizeof(at.span)
+        if kind == AST.BuiltinKind.BitCast:
+            return self.__parse_bitcast(at.span)
+
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.BuiltinCall(span=at.span + end.span, kind=kind, args=args)
+
+    def __parse_sizeof(self, at_span: SrcSpan) -> AST.SizeOf:
+        """Parse ``@sizeof(type)`` — argument is unconditionally a type."""
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
         ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.SizeOf(span=kw.span, ty=ty)
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.SizeOf(span=at_span + end.span, ty=ty)
 
-    def __parse_bitcast(self) -> AST.BitCast:
-        """Parse ``bitcast<type>(expr)`` — reinterpret a pointer as a different pointer type."""
-        kw = self.__stream.consume_keyword(Tok.KeywordKind.Bitcast)
+    def __parse_bitcast(self, at_span: SrcSpan) -> AST.BitCast:
+        """Parse ``@bitcast<type>(expr)`` — reinterpret a pointer as another pointer type."""
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
         ty = self.__type_parser.parse_type()
         self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
         value = self.parse_expr()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.BitCast(span=kw.span, target_type=ty, value=value)
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.BitCast(span=at_span + end.span, target_type=ty, value=value)
 
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""

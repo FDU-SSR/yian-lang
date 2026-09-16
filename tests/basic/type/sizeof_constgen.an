@@ -4,10 +4,10 @@
 // Expected output: (exit 0)
 
 impl<T, const N: u64> T[N] {
-    fn total_bytes() -> u64 { sizeof(T[N]) }
+    fn total_bytes() -> u64 { @sizeof(T[N]) }
 }
 
 fn main() {
     let arr = [1u32, 2, 3, 4];
-    assert arr.total_bytes() == sizeof(u32) * 4: "const-generic length in sizeof";
+    assert arr.total_bytes() == @sizeof(u32) * 4: "const-generic length in sizeof";
 }

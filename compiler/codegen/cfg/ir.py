@@ -427,7 +427,7 @@ class SysWrite:
 
 @dataclass
 class MemCopy:
-    """Byte-level memory copy — ``__memcpy(dest, src, count)``."""
+    """Byte-level memory copy — ``@memcpy(dest, src, count)``."""
     dest: Value
     src: Value
     count: Value
@@ -454,13 +454,13 @@ class Close:
 
 
 @dataclass
-class YianArgc:
+class ArgCount:
     """Load the process argument count."""
     result: Reg
 
 
 @dataclass
-class YianArgBytes:
+class ArgBytes:
     """Load one process argument as a borrowed byte slice."""
     result: Reg
     index: Value
@@ -487,7 +487,7 @@ Stmt: TypeAlias = (
     | Call | Invoke
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead | Open | Close | YianArgc | YianArgBytes
+    | SysWrite | SysRead | Open | Close | ArgCount | ArgBytes
     | MemCopy
     | GenKey | AcquireFrameLock | WriteLockSlot
     | CheckSafeAccess | CheckInBounds | CheckSliceNonEmpty
@@ -544,12 +544,12 @@ class RuntimeFail:
 
 
 @dataclass
-class YianExit:
+class ProcessExit:
     """Terminate the process with an explicit status code."""
     code: Value
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail | YianExit
+Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail | ProcessExit
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

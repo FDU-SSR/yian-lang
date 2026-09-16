@@ -17,7 +17,7 @@ fn main() {
     let z: (void, void) = (unit(), unit());
     let z2: (void, void) = z;
 
-    assert sizeof(WrapMixed) == sizeof(i32): "(i32, void) contributes only i32";
-    assert sizeof(WrapAll) == 0: "(void, void) is zero-sized";
+    assert @sizeof(WrapMixed) == @sizeof(i32): "(i32, void) contributes only i32";
+    assert @sizeof(WrapAll) == 0: "(void, void) is zero-sized";
 
 }

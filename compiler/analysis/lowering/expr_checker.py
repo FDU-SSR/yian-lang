@@ -83,6 +83,8 @@ class ExprChecker:
                 return self.__handle_field_access(expr)
             case AST.Call():
                 return self.__handle_call(expr)
+            case AST.BuiltinCall():
+                return self.__call_dispatcher.handle_builtin(expr)
             case AST.MethodCall():
                 return self.__handle_method_call(expr)
             case AST.DynValue():

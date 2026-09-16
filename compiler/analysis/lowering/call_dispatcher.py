@@ -25,16 +25,10 @@ def ch_call():
 if TYPE_CHECKING:
     from compiler.analysis.lowering.sem_ctx import SemCtx
 
-# Built-in instruction names — all are expressions with different return types:
-#   sizeof → u64,  sys_read/sys_write → void,  panic/runtime_fail → never
-# Fat-pointer primitives (restricted to the standard library via restricted_ops).
-BUILTIN_NAMES = frozenset({
-    "sys_read", "sys_write", "panic", "__yian_runtime_fail", "open", "close", "assume_init",
-    "__memcpy",
-    "__slice_from_parts", "__slice_get_ptr", "__slice_get_len",
-    "__str_from_parts", "__str_get_ptr", "__str_get_len",
-    "__yian_argc", "__yian_arg_bytes", "__yian_exit",
-})
+# Built-in instruction names live exclusively in the ``@`` namespace.  The
+# AST parser resolves the spelling to ``AST.BuiltinKind`` before lowering, so
+# ordinary user-defined functions with the same bare names are never
+# intercepted here.
 
 
 class CallDispatcher:
@@ -86,8 +80,6 @@ class CallDispatcher:
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:
         if isinstance(node.callee, AST.Identifier):
-            if node.callee.name in BUILTIN_NAMES:
-                return self.__handle_builtin(node, node.callee)
             assert self.__ctx.symbol_ctx is not None
             symbol = self.__ctx.symbol_ctx.lookup(node.callee.name)
             if symbol is not None and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
@@ -125,68 +117,68 @@ class CallDispatcher:
 
         return self.__handle_instance_method_call(node, receiver)
 
-    def __handle_builtin(self, node: AST.Call, callee: AST.Identifier) -> HIR.Expr:
-        """Lower a call to a built-in name into the appropriate HIR node."""
-        match callee.name:
-            case "panic":
+    def handle_builtin(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower a parsed ``@name(...)`` instruction into its HIR node."""
+        match node.kind:
+            case AST.BuiltinKind.Panic:
                 return self.__handle_panic(node)
-            case "__yian_runtime_fail":
+            case AST.BuiltinKind.RuntimeFail:
                 return self.__handle_runtime_fail(node)
-            case "__yian_argc":
-                return self.__handle_yian_argc(node)
-            case "__yian_arg_bytes":
-                return self.__handle_yian_arg_bytes(node)
-            case "__yian_exit":
-                return self.__handle_yian_exit(node)
-            case "sys_write":
+            case AST.BuiltinKind.Argc:
+                return self.__handle_arg_count(node)
+            case AST.BuiltinKind.ArgBytes:
+                return self.__handle_arg_bytes(node)
+            case AST.BuiltinKind.Exit:
+                return self.__handle_process_exit(node)
+            case AST.BuiltinKind.SysWrite:
                 return self.__handle_sys_write(node)
-            case "sys_read":
+            case AST.BuiltinKind.SysRead:
                 return self.__handle_sys_read(node)
-            case "open":
+            case AST.BuiltinKind.Open:
                 return self.__handle_open(node)
-            case "close":
+            case AST.BuiltinKind.Close:
                 return self.__handle_close(node)
-            case "assume_init":
+            case AST.BuiltinKind.AssumeInit:
                 return self.__handle_assume_init(node)
-            case "__memcpy":
+            case AST.BuiltinKind.MemCopy:
                 return self.__handle_mem_copy(node)
-            case "__slice_from_parts":
+            case AST.BuiltinKind.SliceFromParts:
                 return self.__handle_slice_from_parts(node)
-            case "__slice_get_ptr":
+            case AST.BuiltinKind.SliceGetPtr:
                 return self.__handle_slice_get_ptr(node)
-            case "__slice_get_len":
+            case AST.BuiltinKind.SliceGetLen:
                 return self.__handle_slice_get_len(node)
-            case "__str_from_parts":
+            case AST.BuiltinKind.StrFromParts:
                 return self.__handle_str_from_parts(node)
-            case "__str_get_ptr":
+            case AST.BuiltinKind.StrGetPtr:
                 return self.__handle_str_get_ptr(node)
-            case "__str_get_len":
+            case AST.BuiltinKind.StrGetLen:
                 return self.__handle_str_get_len(node)
             case _:
                 raise CompilerError("Unreachable Code")
 
-    def __handle_panic(self, stmt: AST.Call) -> HIR.Panic:
+    def __handle_panic(self, stmt: AST.BuiltinCall) -> HIR.Panic:
         if any(arg.name is not None for arg in stmt.args):
-            raise AnalysisError("named arguments are not supported for 'panic'", stmt.span)
+            raise AnalysisError("named arguments are not supported for '@panic'", stmt.span)
         if len(stmt.args) != 1:
-            raise AnalysisError(f"'panic' expects exactly 1 argument, got {len(stmt.args)}", stmt.span)
+            raise AnalysisError(f"'@panic' expects exactly 1 argument, got {len(stmt.args)}", stmt.span)
 
         message = self.__expr.value(stmt.args[0].value)
         message = self.__expr.coerce(message, self.__ctx.type_ctx.str_id)
         return HIR.Panic(span=stmt.span, message=message, type_id=self.__ctx.type_ctx.never_id, is_place=False)
 
-    def __handle_runtime_fail(self, node: AST.Call) -> HIR.RuntimeFail:
+    def __handle_runtime_fail(self, node: AST.BuiltinCall) -> HIR.RuntimeFail:
         if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_runtime_fail'", node.span)
+            raise AnalysisError("named arguments are not supported for '@runtime_fail'", node.span)
         if len(node.args) != 1:
             raise AnalysisError(
-                f"'__yian_runtime_fail' expects exactly 1 argument, got {len(node.args)}",
+                f"'@runtime_fail' expects exactly 1 argument, got {len(node.args)}",
                 node.span,
             )
         arg = node.args[0].value
         if not isinstance(arg, AST.Literal) or not isinstance(arg.literal, Tok.StrLiteral):
             raise AnalysisError(
-                "'__yian_runtime_fail' expects a runtime error code string literal",
+                "'@runtime_fail' expects a runtime error code string literal",
                 node.span,
             )
         code = parse_runtime_error_code(arg.literal.value)
@@ -202,64 +194,64 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_yian_argc(self, node: AST.Call) -> HIR.YianArgc:
+    def __handle_arg_count(self, node: AST.BuiltinCall) -> HIR.ArgCount:
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_argc'", node.span)
+            raise AnalysisError("named arguments are not supported for '@argc'", node.span)
         if node.args:
-            raise AnalysisError(f"'__yian_argc' expects 0 arguments, got {len(node.args)}", node.span)
-        return HIR.YianArgc(
+            raise AnalysisError(f"'@argc' expects 0 arguments, got {len(node.args)}", node.span)
+        return HIR.ArgCount(
             span=node.span,
             type_id=self.__ctx.type_ctx.u64_id,
             is_place=False,
         )
 
-    def __handle_yian_arg_bytes(self, node: AST.Call) -> HIR.YianArgBytes:
+    def __handle_arg_bytes(self, node: AST.BuiltinCall) -> HIR.ArgBytes:
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_arg_bytes'", node.span)
+            raise AnalysisError("named arguments are not supported for '@arg_bytes'", node.span)
         if len(node.args) != 1:
             raise AnalysisError(
-                f"'__yian_arg_bytes' expects exactly 1 argument, got {len(node.args)}",
+                f"'@arg_bytes' expects exactly 1 argument, got {len(node.args)}",
                 node.span,
             )
         index = self.__expr.coerce(
             self.__expr.value(node.args[0].value), self.__ctx.type_ctx.u64_id
         )
-        return HIR.YianArgBytes(
+        return HIR.ArgBytes(
             span=node.span,
             index=index,
             type_id=self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id),
             is_place=False,
         )
 
-    def __handle_yian_exit(self, node: AST.Call) -> HIR.YianExit:
+    def __handle_process_exit(self, node: AST.BuiltinCall) -> HIR.ProcessExit:
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__yian_exit'", node.span)
+            raise AnalysisError("named arguments are not supported for '@exit'", node.span)
         if len(node.args) != 1:
             raise AnalysisError(
-                f"'__yian_exit' expects exactly 1 argument, got {len(node.args)}",
+                f"'@exit' expects exactly 1 argument, got {len(node.args)}",
                 node.span,
             )
         code = self.__expr.coerce(
             self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id
         )
-        return HIR.YianExit(
+        return HIR.ProcessExit(
             span=node.span,
             code=code,
             type_id=self.__ctx.type_ctx.never_id,
             is_place=False,
         )
 
-    def __handle_assume_init(self, node: AST.Call) -> HIR.Expr:
-        """Lower `assume_init(expr)` into HIR.AssumeInit."""
+    def __handle_assume_init(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@assume_init(expr)` into HIR.AssumeInit."""
         if any(arg.name is not None for arg in node.args):
-            raise AnalysisError("named arguments are not supported for 'assume_init'", node.span)
+            raise AnalysisError("named arguments are not supported for '@assume_init'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@assume_init' expects exactly 1 argument, got {len(node.args)}", node.span)
         value = self.__expr.value(node.args[0].value)
         return HIR.AssumeInit(span=node.span, value=value, type_id=value.type_id, is_place=False)
 
-    def __handle_mem_copy(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__memcpy(dest, src, count)` into HIR.MemCopy.
+    def __handle_mem_copy(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@memcpy(dest, src, count)` into HIR.MemCopy.
 
         Signature pre-decided as ``(T*, T*, u64)``: the two pointers may
         have *different* pointee types (e.g. ``&k`` is ``u64*`` while the
@@ -267,9 +259,9 @@ class CallDispatcher:
         are only checked to be pointers.  ``count`` is coerced to ``u64``.
         """
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__memcpy'", node.span)
+            raise AnalysisError("named arguments are not supported for '@memcpy'", node.span)
         if len(node.args) != 3:
-            raise AnalysisError(f"'__memcpy' expects exactly 3 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@memcpy' expects exactly 3 arguments, got {len(node.args)}", node.span)
 
         dest = self.__expr.value(node.args[0].value)
         src = self.__expr.value(node.args[1].value)
@@ -279,12 +271,12 @@ class CallDispatcher:
         src_ty = self.__ctx.type_ctx[src.type_id]
         if not isinstance(dest_ty, Type.PointerType):
             raise AnalysisError(
-                f"'__memcpy' dest must be a pointer, got '{self.__ctx.type_ctx.get_name(dest.type_id)}'",
+                f"'@memcpy' dest must be a pointer, got '{self.__ctx.type_ctx.get_name(dest.type_id)}'",
                 node.span,
             )
         if not isinstance(src_ty, Type.PointerType):
             raise AnalysisError(
-                f"'__memcpy' src must be a pointer, got '{self.__ctx.type_ctx.get_name(src.type_id)}'",
+                f"'@memcpy' src must be a pointer, got '{self.__ctx.type_ctx.get_name(src.type_id)}'",
                 node.span,
             )
 
@@ -297,22 +289,22 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_slice_from_parts(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__slice_from_parts(ptr, len)` into a slice value {ptr, len}.
+    def __handle_slice_from_parts(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@slice_from_parts(ptr, len)` into a slice value {ptr, len}.
 
         The element type is inferred from the pointer's pointee: passing a
         ``T*`` yields a ``T[]`` fat pointer.
         """
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__slice_from_parts'", node.span)
+            raise AnalysisError("named arguments are not supported for '@slice_from_parts'", node.span)
         if len(node.args) != 2:
-            raise AnalysisError(f"'__slice_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@slice_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
 
         ptr = self.__expr.value(node.args[0].value)
         ptr_ty = self.__ctx.type_ctx[ptr.type_id]
         if not isinstance(ptr_ty, Type.PointerType):
             raise AnalysisError(
-                f"'__slice_from_parts' expects a pointer as its first argument, "
+                f"'@slice_from_parts' expects a pointer as its first argument, "
                 f"got '{self.__ctx.type_ctx.get_name(ptr.type_id)}'",
                 node.span,
             )
@@ -325,52 +317,52 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_slice_get_ptr(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__slice_get_ptr(slice)` into the slice's data pointer."""
+    def __handle_slice_get_ptr(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@slice_get_ptr(slice)` into the slice's data pointer."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__slice_get_ptr'", node.span)
+            raise AnalysisError("named arguments are not supported for '@slice_get_ptr'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'__slice_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@slice_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
 
         slice_expr = self.__expr.value(node.args[0].value)
         slice_ty = self.__ctx.type_ctx[slice_expr.type_id]
         if not isinstance(slice_ty, Type.SliceType):
             raise AnalysisError(
-                f"'__slice_get_ptr' expects a slice argument, "
+                f"'@slice_get_ptr' expects a slice argument, "
                 f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
                 node.span,
             )
         ptr_type = self.__ctx.type_ctx.alloc_pointer(slice_ty.element_type)
         return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=0, type_id=ptr_type, is_place=False)
 
-    def __handle_slice_get_len(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__slice_get_len(slice)` into the slice's length."""
+    def __handle_slice_get_len(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@slice_get_len(slice)` into the slice's length."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__slice_get_len'", node.span)
+            raise AnalysisError("named arguments are not supported for '@slice_get_len'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'__slice_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@slice_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
 
         slice_expr = self.__expr.value(node.args[0].value)
         slice_ty = self.__ctx.type_ctx[slice_expr.type_id]
         if not isinstance(slice_ty, Type.SliceType):
             raise AnalysisError(
-                f"'__slice_get_len' expects a slice argument, "
+                f"'@slice_get_len' expects a slice argument, "
                 f"got '{self.__ctx.type_ctx.get_name(slice_expr.type_id)}'",
                 node.span,
             )
         # 分级指针表示:slice 4 字段 {data, lock_ptr, key, size}——长度字段下标 3。
         return HIR.TupleAccess(span=node.span, receiver=slice_expr, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
-    def __handle_str_from_parts(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__str_from_parts(ptr, len)` into a str value {ptr, len}.
+    def __handle_str_from_parts(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@str_from_parts(ptr, len)` into a str value {ptr, len}.
 
         str shares the {ptr, i64} layout with slices; the pointer must be
         ``u8*`` so the inserted value matches the LLVM struct field.
         """
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__str_from_parts'", node.span)
+            raise AnalysisError("named arguments are not supported for '@str_from_parts'", node.span)
         if len(node.args) != 2:
-            raise AnalysisError(f"'__str_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@str_from_parts' expects exactly 2 arguments, got {len(node.args)}", node.span)
 
         ptr = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id))
         len_expr = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.u64_id)
@@ -381,48 +373,48 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_str_get_ptr(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__str_get_ptr(s)` into the string's data pointer."""
+    def __handle_str_get_ptr(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@str_get_ptr(s)` into the string's data pointer."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__str_get_ptr'", node.span)
+            raise AnalysisError("named arguments are not supported for '@str_get_ptr'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'__str_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@str_get_ptr' expects exactly 1 argument, got {len(node.args)}", node.span)
 
         s = self.__expr.value(node.args[0].value)
         s_ty = self.__ctx.type_ctx[s.type_id]
         if not isinstance(s_ty, Type.StrType):
             raise AnalysisError(
-                f"'__str_get_ptr' expects a 'str' argument, "
+                f"'@str_get_ptr' expects a 'str' argument, "
                 f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
                 node.span,
             )
         ptr_type = self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id)
         return HIR.TupleAccess(span=node.span, receiver=s, index=0, type_id=ptr_type, is_place=False)
 
-    def __handle_str_get_len(self, node: AST.Call) -> HIR.Expr:
-        """Lower `__str_get_len(s)` into the string's length."""
+    def __handle_str_get_len(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@str_get_len(s)` into the string's length."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for '__str_get_len'", node.span)
+            raise AnalysisError("named arguments are not supported for '@str_get_len'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'__str_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@str_get_len' expects exactly 1 argument, got {len(node.args)}", node.span)
 
         s = self.__expr.value(node.args[0].value)
         s_ty = self.__ctx.type_ctx[s.type_id]
         if not isinstance(s_ty, Type.StrType):
             raise AnalysisError(
-                f"'__str_get_len' expects a 'str' argument, "
+                f"'@str_get_len' expects a 'str' argument, "
                 f"got '{self.__ctx.type_ctx.get_name(s.type_id)}'",
                 node.span,
             )
         # 分级指针表示:str 与 slice 同 4 字段——长度字段下标 3。
         return HIR.TupleAccess(span=node.span, receiver=s, index=3, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
 
-    def __handle_sys_write(self, node: AST.Call) -> HIR.Expr:
-        """Lower `sys_write(fd, buf)` into HIR.SysWrite."""
+    def __handle_sys_write(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@sys_write(fd, buf)` into HIR.SysWrite."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'sys_write'", node.span)
+            raise AnalysisError("named arguments are not supported for '@sys_write'", node.span)
         if len(node.args) != 2:
-            raise AnalysisError(f"'sys_write' expects exactly 2 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@sys_write' expects exactly 2 arguments, got {len(node.args)}", node.span)
 
         fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
         buf = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.str_id)
@@ -434,12 +426,12 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_sys_read(self, node: AST.Call) -> HIR.Expr:
-        """Lower `sys_read(fd, buf)` into HIR.SysRead."""
+    def __handle_sys_read(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@sys_read(fd, buf)` into HIR.SysRead."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'sys_read'", node.span)
+            raise AnalysisError("named arguments are not supported for '@sys_read'", node.span)
         if len(node.args) != 2:
-            raise AnalysisError(f"'sys_read' expects exactly 2 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@sys_read' expects exactly 2 arguments, got {len(node.args)}", node.span)
 
         fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
         buf = self.__expr.value(node.args[1].value)
@@ -451,12 +443,12 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_open(self, node: AST.Call) -> HIR.Expr:
-        """Lower `open(path, flags)` into HIR.Open."""
+    def __handle_open(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@open(path, flags)` into HIR.Open."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'open'", node.span)
+            raise AnalysisError("named arguments are not supported for '@open'", node.span)
         if len(node.args) != 2:
-            raise AnalysisError(f"'open' expects exactly 2 arguments, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@open' expects exactly 2 arguments, got {len(node.args)}", node.span)
 
         path = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.str_id)
         flags = self.__expr.coerce(self.__expr.value(node.args[1].value), self.__ctx.type_ctx.i32_id)
@@ -468,12 +460,12 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_close(self, node: AST.Call) -> HIR.Expr:
-        """Lower `close(fd)` into HIR.Close."""
+    def __handle_close(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower `@close(fd)` into HIR.Close."""
         if self.__has_named_arg(node.args):
-            raise AnalysisError("named arguments are not supported for 'close'", node.span)
+            raise AnalysisError("named arguments are not supported for '@close'", node.span)
         if len(node.args) != 1:
-            raise AnalysisError(f"'close' expects exactly 1 argument, got {len(node.args)}", node.span)
+            raise AnalysisError(f"'@close' expects exactly 1 argument, got {len(node.args)}", node.span)
 
         fd = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.i32_id)
         return HIR.Close(

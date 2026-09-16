@@ -21,8 +21,8 @@ fn main() {
     let empty: Empty;
     let empty_ref: Empty& = &empty;
     let empty_returned: Empty& = pass_empty(empty_ref);
-    assert sizeof(Empty&) == 0: "ZST T& layout";
+    assert @sizeof(Empty&) == 0: "ZST T& layout";
 
     let expected_ref_size: u64 = comptime if IS_RAW_MODE { 8u64 } else { 24u64 };
-    assert sizeof(Value&) == expected_ref_size: "T& ABI layout";
+    assert @sizeof(Value&) == expected_ref_size: "T& ABI layout";
 }

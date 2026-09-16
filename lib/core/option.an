@@ -21,10 +21,10 @@ impl<T> Option<T> {
         !self.is_some()
     }
 
-    // Unwrap the value if it is Some, otherwise panic (|| return an error)
+    // Unwrap the value if it is Some, otherwise @panic(|| return an error)
     pub fn unwrap() -> T* {
         match self {
-            None => panic("Called unwrap on a None value"),
+            None => @panic("Called unwrap on a None value"),
             Some(val) => val,
         }
     }

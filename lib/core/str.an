@@ -13,7 +13,7 @@ impl str {
     // Create a str from a byte slice without validation.
     // Caller must guarantee the byte slice is valid UTF-8.
     static fn from_slice_unchecked(s: u8[]) -> Self {
-        __str_from_parts(__slice_get_ptr(s), __slice_get_len(s))
+        @str_from_parts(@slice_get_ptr(s), @slice_get_len(s))
     }
 
     // Create a str from a byte slice with UTF-8 validation.
@@ -22,7 +22,7 @@ impl str {
         if !Self.is_valid_utf8(s) {
             return Option<str>.None;
         }
-        Option<str>.Some(__str_from_parts(__slice_get_ptr(s), __slice_get_len(s)))
+        Option<str>.Some(@str_from_parts(@slice_get_ptr(s), @slice_get_len(s)))
     }
 
     // Validate that a byte slice is a well-formed UTF-8 sequence.
@@ -92,7 +92,7 @@ impl str {
 
     // Get the byte slice of the str
     pub fn as_slice() -> u8[] {
-        __slice_from_parts(__str_get_ptr(*self), __str_get_len(*self))
+        @slice_from_parts(@str_get_ptr(*self), @str_get_len(*self))
     }
 
     // Get an iterator over the characters of the str
@@ -342,7 +342,7 @@ impl From<u8[]> for str {
     pub static fn from(value: u8[]*) -> Self {
         match Self.from_slice(*value) {
             Some(s) => s,
-            None => panic("invalid UTF-8 sequence"),
+            None => @panic("invalid UTF-8 sequence"),
         }
     }
 }
@@ -365,10 +365,10 @@ impl Index<Range<u64>, str> for str {
         let len = bytes.len();
 
         if range.start > range.end || range.end > len {
-            __yian_runtime_fail("S001");
+            @runtime_fail("S001");
         }
         if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
-            panic("str slice index is ! on a char boundary");
+            @panic("str slice index is ! on a char boundary");
         }
 
         Self.from_slice_unchecked(bytes[range.start..range.end])
@@ -384,6 +384,6 @@ impl Hash<Murmur3Hasher> for str {
 
 impl ToString for str {
     fn to_string() -> String {
-        String.from(bitcast<str*>(self))
+        String.from(@bitcast<str*>(self))
     }
 }

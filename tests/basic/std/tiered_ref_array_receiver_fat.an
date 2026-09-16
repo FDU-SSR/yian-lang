@@ -2,7 +2,7 @@
 //
 // Full-array access through a T& receiver, exercising the T&→T* array
 // re-anchor (size=N) in the LLVM builder cast path:
-//   - `self.arr[i]` with i≥1 via the Index trait (T[N] impl → bitcast<T*>(self))
+//   - `self.arr[i]` with i≥1 via the Index trait (T[N] impl → @bitcast<T*>(self))
 //   - `self.arr.ptr()[i]` full-array traversal
 //   - `self.arr.as_slice()` full-array slice
 //   - direct `impl i32[4]` receiver forms: `(*self)[i]`, `self.ptr()[i]`,

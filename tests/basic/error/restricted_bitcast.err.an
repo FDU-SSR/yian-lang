@@ -3,5 +3,5 @@
 
 fn main() {
     let x: u8 = 1;
-    let p: u8* = bitcast<u8*>(&x);
+    let p: u8* = @bitcast<u8*>(&x);
 }

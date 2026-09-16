@@ -8,8 +8,8 @@ struct Empty {}
 
 fn main() {
     // The pointer itself is a ZST regardless of the fat-pointer representation.
-    assert sizeof(void*) == 0: "sizeof(void*) == 0"
-    assert sizeof(Empty*) == 0: "sizeof(Empty*) == 0"
+    assert @sizeof(void*) == 0: "@sizeof(void*) == 0"
+    assert @sizeof(Empty*) == 0: "@sizeof(Empty*) == 0"
 
     // ZST pointers compare equal (all indistinguishable).
     let p: void* = dyn[1] void

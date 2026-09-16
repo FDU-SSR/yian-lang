@@ -326,6 +326,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_unary(expr, guides, is_last)
         case AST.Call():
             return __export_call(expr, guides, is_last)
+        case AST.BuiltinCall():
+            return __export_builtin_call(expr, guides, is_last)
         case AST.MethodCall():
             return __export_method_call(expr, guides, is_last)
         case AST.FieldAccess():
@@ -413,6 +415,18 @@ def __export_unary(expr: AST.Unary, guides: list[bool], is_last: bool) -> str:
 def __export_call(expr: AST.Call, guides: list[bool], is_last: bool) -> str:
     res = __line(guides, is_last, "Call")
     res += __export_expr_child("Callee", expr.callee, guides, is_last, False)
+    if expr.args:
+        child_guides = guides + [not is_last]
+        res += __line(child_guides, True, "Args:")
+        res += __export_items_with_handler(expr.args, child_guides + [False], __export_arg)
+    else:
+        child_guides = guides + [not is_last]
+        res += __line(child_guides, True, "Args: []")
+    return res
+
+
+def __export_builtin_call(expr: AST.BuiltinCall, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, f"BuiltinCall: {expr.kind.spelling}")
     if expr.args:
         child_guides = guides + [not is_last]
         res += __line(child_guides, True, "Args:")

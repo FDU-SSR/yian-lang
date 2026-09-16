@@ -5,7 +5,7 @@
 //   - from_raw_parts(p, n) 构造 T[]:len 保真断言(直接 s.len(),核心路径)
 //   - 索引访问断言(直接 s[i],含嵌套函数传参形态)
 //   - T* → T& 与 T[] → T& 用例
-//   - str 构造(__str_from_parts)与 len/首字节断言
+//   - str 构造(@str_from_parts)与 len/首字节断言
 // 纯断言、无 stdout,为 success 用例(无需 .ans)。
 //
 // Expected output: 0
@@ -51,10 +51,10 @@ fn main() {
     let r2: i32& = s2;
     assert *r2 == 42: "T[]->T& reads through the reference";
 
-    // --- str 构造(__str_from_parts)---
+    // --- str 构造(@str_from_parts)---
     let msg: str = "hi";
-    let mp: u8* = __str_get_ptr(msg);
-    let sub: str = __str_from_parts(mp, 1);
-    assert __str_get_len(sub) == 1: "str from parts preserves len";
+    let mp: u8* = @str_get_ptr(msg);
+    let sub: str = @str_from_parts(mp, 1);
+    assert @str_get_len(sub) == 1: "str from parts preserves len";
     assert *mp == 104: "first byte is 'h' (104)";
 }

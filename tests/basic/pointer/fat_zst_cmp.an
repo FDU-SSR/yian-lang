@@ -12,7 +12,7 @@ fn main() {
     // -- == / != on ZST pointers: all indistinguishable --
     let p: Empty* = dyn[1] Empty;
     let q: Empty* = dyn[1] Empty;
-    assert sizeof(Empty*) == 0: "Empty* is a ZST";
+    assert @sizeof(Empty*) == 0: "Empty* is a ZST";
     assert p == p: "ZST ptr == itself";
     assert p == q: "two ZST ptrs equal (indistinguishable)";
     assert !(p != q): "ZST ptr != is false (indistinguishable)";

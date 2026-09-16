@@ -15,38 +15,37 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 
 
-RESTRICTED_BUILTIN_NAMES = frozenset(
+RESTRICTED_BUILTINS = frozenset(
     {
-        "sys_read",
-        "sys_write",
-        "open",
-        "close",
-        "assume_init",
-        "__memcpy",
-        "__yian_runtime_fail",
-        "__yian_argc",
-        "__yian_arg_bytes",
-        "__yian_exit",
+        AST.BuiltinKind.SysRead,
+        AST.BuiltinKind.SysWrite,
+        AST.BuiltinKind.Open,
+        AST.BuiltinKind.Close,
+        AST.BuiltinKind.AssumeInit,
+        AST.BuiltinKind.MemCopy,
+        AST.BuiltinKind.SliceFromParts,
+        AST.BuiltinKind.SliceGetPtr,
+        AST.BuiltinKind.SliceGetLen,
+        AST.BuiltinKind.StrFromParts,
+        AST.BuiltinKind.StrGetPtr,
+        AST.BuiltinKind.StrGetLen,
+        AST.BuiltinKind.RuntimeFail,
+        AST.BuiltinKind.Argc,
+        AST.BuiltinKind.ArgBytes,
+        AST.BuiltinKind.Exit,
     }
 )
 
-# Restricted stdlib function names: unchecked size-field construction.
-# The fat-pointer primitives forge slice/str values from raw {ptr, len}
-# parts and are therefore confined to the standard library, exactly like
-# `from_raw_parts`.
+# Restricted ordinary stdlib function names.  The builtin slice/str
+# constructors and accessors are represented by ``BuiltinKind`` above;
+# ``from_raw_parts`` remains an ordinary stdlib function.
 RESTRICTED_STDLIB_FUNCS = frozenset(
     {
         "from_raw_parts",
-        "__slice_from_parts",
-        "__slice_get_ptr",
-        "__slice_get_len",
-        "__str_from_parts",
-        "__str_get_ptr",
-        "__str_get_len",
     }
 )
 
-RESTRICTED_CALL_NAMES = RESTRICTED_BUILTIN_NAMES | RESTRICTED_STDLIB_FUNCS
+RESTRICTED_CALL_NAMES = RESTRICTED_STDLIB_FUNCS
 
 
 def __is_stdlib_file(path: Path) -> bool:
@@ -99,7 +98,12 @@ class RestrictedOpsChecker:
             return
         match expr:
             case AST.BitCast():
-                self.__report(expr.span, "bitcast")
+                self.__report(expr.span, AST.BuiltinKind.BitCast.spelling)
+            case AST.BuiltinCall():
+                if expr.kind in RESTRICTED_BUILTINS:
+                    self.__report(expr.span, expr.kind.spelling)
+                for arg in expr.args:
+                    self.__scan_expr(arg.value)
             case AST.Call():
                 if isinstance(expr.callee, AST.Identifier) and expr.callee.name in RESTRICTED_CALL_NAMES:
                     self.__report(expr.span, expr.callee.name)

@@ -28,7 +28,7 @@ impl Clone for void { fn clone() -> Self { return; } }
 impl<T, const N: u64> Clone for T[N] if T: Clone {
     fn clone() -> Self {
         let res: Self;
-        assume_init(res);
+        @assume_init(res);
         for i in 0..N {
             res[i] = (*self)[i].clone();
         }

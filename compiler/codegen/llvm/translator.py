@@ -250,10 +250,10 @@ class LLTranslator:
                 builder.open(self.__resolve(builder, stmt.path), self.__resolve(builder, stmt.flags), stmt.result.name)
             case IR.Close():
                 builder.close(self.__resolve(builder, stmt.fd), stmt.result.name)
-            case IR.YianArgc():
-                builder.yian_argc(stmt.result.name)
-            case IR.YianArgBytes():
-                builder.yian_arg_bytes(self.__resolve(builder, stmt.index), stmt.result.name)
+            case IR.ArgCount():
+                builder.arg_count(stmt.result.name)
+            case IR.ArgBytes():
+                builder.arg_bytes(self.__resolve(builder, stmt.index), stmt.result.name)
 
     # ------------------------------------------------------------------
     # terminators
@@ -274,8 +274,8 @@ class LLTranslator:
                 builder.panic(self.__resolve(builder, message))
             case IR.RuntimeFail(code=code):
                 builder.runtime_fail(code)
-            case IR.YianExit(code=code):
-                builder.yian_exit(self.__resolve(builder, code))
+            case IR.ProcessExit(code=code):
+                builder.process_exit(self.__resolve(builder, code))
             case IR.Match():
                 self.__emit_match(builder, terminator)
 

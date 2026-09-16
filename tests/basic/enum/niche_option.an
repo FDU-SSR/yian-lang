@@ -10,7 +10,7 @@ fn main() {
     let some: Option<i32*> = Option<i32*>.Some(p);
     let none: Option<i32*> = Option<i32*>.None;
 
-    assert sizeof(Option<i32*>) == sizeof(i32*): "pointer niche layout";
+    assert @sizeof(Option<i32*>) == @sizeof(i32*): "pointer niche layout";
     assert some.is_some(): "Some pointer";
     assert none.is_none(): "None pointer";
     assert some.unwrap()[0][0] == 42: "pointer payload";
@@ -30,7 +30,7 @@ fn main() {
     let f: fn(i32) -> i32 = &add_one;
     let function_some: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.Some(f);
     let function_none: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.None;
-    assert sizeof(Option<fn(i32) -> i32>) == sizeof(fn(i32) -> i32): "function pointer niche layout";
+    assert @sizeof(Option<fn(i32) -> i32>) == @sizeof(fn(i32) -> i32): "function pointer niche layout";
     assert function_some.is_some(): "Some function pointer";
     assert function_none.is_none(): "None function pointer";
 

@@ -2,7 +2,7 @@
 // never is subtype of everything
 
 fn exit_fn() -> ! {
-    panic("exiting");
+    @panic("exiting");
 }
 
 fn main() {

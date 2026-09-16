@@ -27,7 +27,7 @@ impl Hash<Murmur3Hasher> for u8 {
         let val: u8 = *self;
         let ptr: u8* = &val;
         let buf: u8[1] = [0];
-        __memcpy(&buf, ptr, 1);
+        @memcpy(&buf, ptr, 1);
         hasher.write(buf.as_slice());
     }
 }

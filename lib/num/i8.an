@@ -4,7 +4,7 @@ impl Hash<Murmur3Hasher> for i8 {
     fn hash(hasher: Murmur3Hasher) {
         let value: i8 = *self;
         let bytes: u8[1] = [0];
-        __memcpy(&bytes, &value, 1);
+        @memcpy(&bytes, &value, 1);
         hasher.write(bytes.as_slice());
     }
 }

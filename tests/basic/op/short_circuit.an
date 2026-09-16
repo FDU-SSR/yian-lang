@@ -11,12 +11,12 @@ fn false_func() -> bool {
 }
 
 fn true_func() -> bool {
-    panic("true_func should ! be called\n");
+    @panic("true_func should ! be called\n");
 }
 
 fn main() {
     if false && false_func() {
-        panic("This should ! be printed\n");
+        @panic("This should ! be printed\n");
     }
 
     if true || true_func() {

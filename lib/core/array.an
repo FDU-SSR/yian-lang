@@ -6,7 +6,7 @@ from std.core.iter import IntoIterator;
 
 impl<T, const N: u64> T[N] {
     fn as_slice() -> T[] {
-        from_raw_parts(bitcast<T*>(self), N)
+        from_raw_parts(@bitcast<T*>(self), N)
     }
 
     fn to_vec() -> Vec<T> {
@@ -14,25 +14,25 @@ impl<T, const N: u64> T[N] {
     }
 
     fn ptr() -> T* {
-        bitcast<T*>(self)
+        @bitcast<T*>(self)
     }
 }
 
 impl<T, const N: u64> Index<u64, T*> for T[N] {
     fn index(index: u64*) -> T* {
         if *index >= N {
-            __yian_runtime_fail("S001");
+            @runtime_fail("S001");
         }
-        bitcast<T*>(self) + *index
+        @bitcast<T*>(self) + *index
     }
 }
 
 impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
     fn index(range: Range<u64>*) -> T[] {
         if (*range).end > N {
-            __yian_runtime_fail("S001");
+            @runtime_fail("S001");
         }
-        let start: T* = bitcast<T*>(self) + (*range).start;
+        let start: T* = @bitcast<T*>(self) + (*range).start;
         let len: u64 = (*range).end - (*range).start;
         from_raw_parts(start, len)
     }
@@ -41,7 +41,7 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
         SliceIter<T>(
-            ptr = bitcast<T*>(self),
+            ptr = @bitcast<T*>(self),
             n = N,
         )
     }

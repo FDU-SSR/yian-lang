@@ -12,5 +12,5 @@ fn main() {
     let d: void[4];
     d = c;
 
-    assert sizeof(void) == 0: "sizeof(void) should be 0";
+    assert @sizeof(void) == 0: "@sizeof(void) should be 0";
 }

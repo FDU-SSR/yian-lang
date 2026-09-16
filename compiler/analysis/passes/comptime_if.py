@@ -143,11 +143,11 @@ class ComptimeIfSpecializer:
                 expr.flags = self.__rewrite_expr(expr.flags)
             case HIR.Close():
                 expr.fd = self.__rewrite_expr(expr.fd)
-            case HIR.YianArgc():
+            case HIR.ArgCount():
                 pass
-            case HIR.YianArgBytes():
+            case HIR.ArgBytes():
                 expr.index = self.__rewrite_expr(expr.index)
-            case HIR.YianExit():
+            case HIR.ProcessExit():
                 expr.code = self.__rewrite_expr(expr.code)
             case HIR.Tuple():
                 expr.field_values = [self.__rewrite_expr(value) for value in expr.field_values]

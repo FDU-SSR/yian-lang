@@ -14,8 +14,8 @@ impl<T> T[] {
     // Convert a slice to a SliceStruct
     fn as_struct() -> SliceStruct<T> {
         SliceStruct<T>(
-            ptr = __slice_get_ptr(*self),
-            len = __slice_get_len(*self),
+            ptr = @slice_get_ptr(*self),
+            len = @slice_get_len(*self),
         )
     }
 
@@ -62,7 +62,7 @@ impl<T> T[] {
 }
 
 pub fn from_raw_parts<T>(ptr: T*, len: u64) -> T[] {
-    __slice_from_parts(ptr, len)
+    @slice_from_parts(ptr, len)
 }
 
 pub struct SliceIter<T> {
@@ -157,10 +157,10 @@ impl<T> Index<u64, T*> for T[] {
 impl<T> Index<Range<u64>, T[]> for T[] {
     fn index(range: Range<u64>*) -> T[] {
         if range.end > self.len() {
-            __yian_runtime_fail("S001");
+            @runtime_fail("S001");
         }
         let start_ptr = self.ptr() + range.start;
         let len = range.end - range.start;
-        __slice_from_parts(start_ptr, len)
+        @slice_from_parts(start_ptr, len)
     }
 }

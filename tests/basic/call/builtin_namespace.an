@@ -1,0 +1,13 @@
+// Builtins use an explicit namespace, so their bare spellings remain
+// available for ordinary user-defined functions.
+
+fn panic(value: i32) -> i32 { value + 1 }
+fn sizeof(value: i32) -> i32 { value + 2 }
+fn bitcast(value: i32) -> i32 { value + 4 }
+
+fn main() {
+    assert panic(1) == 2: "bare panic resolves normally";
+    assert sizeof(1) == 3: "bare sizeof resolves normally";
+    assert bitcast(1) == 5: "bare bitcast resolves normally";
+    assert @sizeof(i32) == 4: "namespaced sizeof remains builtin";
+}

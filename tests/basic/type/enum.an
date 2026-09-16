@@ -25,13 +25,13 @@ fn main() {
             val1 = data;
         }
         DivByZero => {
-            panic("Division by zero in res1")
+            @panic("Division by zero in res1")
         }
     }
 
     match res2 {
         Ok => {
-            panic("Expected division by zero in res2")
+            @panic("Expected division by zero in res2")
         }
         _ => {}
     }

@@ -161,9 +161,9 @@ class Desugar:
                 literal=Tok.StrLiteral(raw=f"\"{message_value}\"", span=stmt.span, value=message_value),
             )
 
-        panic_call = AST.Call(
+        panic_call = AST.BuiltinCall(
             span=stmt.span,
-            callee=AST.Identifier(span=stmt.span, name="panic"),
+            kind=AST.BuiltinKind.Panic,
             args=[AST.Arg(span=message.span, name=None, value=message)],
         )
 
@@ -350,6 +350,11 @@ class Desugar:
                 expr.callee = visitor(expr.callee)
                 for arg in expr.args:
                     arg.value = visitor(arg.value)
+            case AST.BuiltinCall():
+                for arg in expr.args:
+                    arg.value = visitor(arg.value)
+            case AST.BitCast():
+                expr.value = visitor(expr.value)
             case AST.MethodCall():
                 expr.receiver = visitor(expr.receiver)
                 for arg in expr.args:
@@ -405,6 +410,11 @@ class Desugar:
                 stmt.callee = expr_visitor(stmt.callee)
                 for arg in stmt.args:
                     arg.value = expr_visitor(arg.value)
+            case AST.BuiltinCall():
+                for arg in stmt.args:
+                    arg.value = expr_visitor(arg.value)
+            case AST.BitCast():
+                stmt.value = expr_visitor(stmt.value)
             case AST.MethodCall():
                 stmt.receiver = expr_visitor(stmt.receiver)
                 for arg in stmt.args:

@@ -17,12 +17,12 @@ fn main() {
 
     let s = v.as_slice();
     assert s.len() == 0: "empty vec slice len should be 0";
-    let p: u8* = __slice_get_ptr(s);
+    let p: u8* = @slice_get_ptr(s);
 
     // 两个独立空容器持有不同的存活堆块 → 指针非零且互异;
     // 若空容器退化为全零编码,两者将相等,断言失败。
     let v2: Vec<u8> = Vec<u8>.new();
-    let p2: u8* = __slice_get_ptr(v2.as_slice());
+    let p2: u8* = @slice_get_ptr(v2.as_slice());
     assert p != p2: "empty vecs must hold distinct live heap blocks (non-zero ptr)";
 
     // ---- shrink_to_fit(0) 后 Drop 不 trap ----
@@ -58,7 +58,7 @@ fn main() {
     assert st.is_empty(): "empty string should be empty";
     assert st.len() == 0: "empty string len should be 0";
     assert st.capacity() == 0: "empty string capacity should be 0";
-    let sp: u8* = __slice_get_ptr(st.as_slice());
+    let sp: u8* = @slice_get_ptr(st.as_slice());
     assert sp != p: "empty String data block should differ from empty Vec block";
     // 显式 drop 空容器:data 为存活 dyn[0] 块 → 正常释放,不 trap
     vs.drop();

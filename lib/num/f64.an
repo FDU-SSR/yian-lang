@@ -5,7 +5,7 @@ impl Hash<Murmur3Hasher> for f64 {
     fn hash(hasher: Murmur3Hasher) {
         let value: f64 = *self;
         let bytes: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
-        __memcpy(&bytes, &value, 8);
+        @memcpy(&bytes, &value, 8);
         hasher.write(bytes.as_slice());
     }
 }
@@ -15,7 +15,7 @@ impl From<str> for f64 {
         let bytes = value.as_slice();
         let len = bytes.len();
         if len == 0 {
-            panic("invalid f64: empty string");
+            @panic("invalid f64: empty string");
         }
 
         let seen_dot: bool = false;
@@ -31,7 +31,7 @@ impl From<str> for f64 {
             let b = bytes[i];
             if b == b'.' {
                 if seen_dot {
-                    panic("invalid f64: multiple dots");
+                    @panic("invalid f64: multiple dots");
                 }
                 seen_dot = true;
             } elif b >= b'0' && b <= b'9' {
@@ -45,16 +45,16 @@ impl From<str> for f64 {
                     frac_part += f64(digit) / divisor;
                 }
             } else {
-                panic("invalid f64: contains illegal character");
+                @panic("invalid f64: contains illegal character");
             }
             i += 1;
         }
 
         if !seen_dot {
-            panic("invalid f64: missing dot");
+            @panic("invalid f64: missing dot");
         }
         if !has_int_digit || !has_frac_digit {
-            panic("invalid f64: malformed decimal");
+            @panic("invalid f64: malformed decimal");
         }
 
         f64(int_part) + frac_part

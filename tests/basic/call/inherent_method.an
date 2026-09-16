@@ -29,7 +29,7 @@ fn main() {
     assert age == 20: "get_age method failed";
 
     if p.weight_gt(70.0) {
-        panic("Weight comparison failed");
+        @panic("Weight comparison failed");
     }
 
 }

@@ -91,7 +91,7 @@ pub struct File {
 impl File {
     fn assert_open() {
         if self.fd == -2 {
-            panic("file is closed");
+            @panic("file is closed");
         }
     }
 
@@ -103,7 +103,7 @@ impl File {
             Append    => 1089,
             ReadWrite => 66,
         };
-        let fd: i32 = open(path, flags);
+        let fd: i32 = @open(path, flags);
         if fd < 0 {
             return Result<File, IoError>.Err(msg = IoError.not_found("cannot open file"));
         }
@@ -120,7 +120,7 @@ impl File {
     // Returns the number of bytes read. 0 means EOF.
     pub fn read(buf: u8[]) -> Result<u64, IoError> {
         self.assert_open();
-        let s: str = sys_read(self.fd, buf);
+        let s: str = @sys_read(self.fd, buf);
         Result<u64, IoError>.Ok(val = s.as_slice().len())
     }
 
@@ -129,9 +129,9 @@ impl File {
         self.assert_open();
         let result = String.new();
         let buf: u8[4096];
-        assume_init(buf);
+        @assume_init(buf);
         loop {
-            let s: str = sys_read(self.fd, buf.as_slice());
+            let s: str = @sys_read(self.fd, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -145,22 +145,22 @@ impl File {
     // Write a str to the file. Returns the number of bytes written.
     pub fn write(data: str) -> Result<u64, IoError> {
         self.assert_open();
-        sys_write(self.fd, data);
+        @sys_write(self.fd, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     // Write the entire str to the file.
     pub fn write_all(data: str) -> Result<u64, IoError> {
         self.assert_open();
-        sys_write(self.fd, data);
+        @sys_write(self.fd, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     // Close the file descriptor explicitly.
-    // After close(), the File records the closed state with fd = -2.
+    // After @close(), the File records the closed state with fd = -2.
     pub fn close() -> Result<i32, IoError> {
         self.assert_open();
-        let ret: i32 = close(self.fd);
+        let ret: i32 = @close(self.fd);
         self.fd = -2;
         if ret < 0 {
             return Result<i32, IoError>.Err(msg = IoError.other("close failed"));
@@ -176,7 +176,7 @@ impl File {
 impl Drop for File {
     pub fn drop() {
         if self.fd != -2 {
-            close(self.fd);
+            @close(self.fd);
             self.fd = -2;
         }
     }
@@ -193,9 +193,9 @@ impl Stdin {
     pub static fn read_line() -> Result<String, IoError> {
         let result = String.new();
         let buf: u8[256];
-        assume_init(buf);
+        @assume_init(buf);
         loop {
-            let s: str = sys_read(0, buf.as_slice());
+            let s: str = @sys_read(0, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -225,7 +225,7 @@ impl Stdin {
 
     // Read up to buf.len() bytes from stdin.
     pub static fn read(buf: u8[]) -> Result<u64, IoError> {
-        let s: str = sys_read(0, buf);
+        let s: str = @sys_read(0, buf);
         Result<u64, IoError>.Ok(val = s.as_slice().len())
     }
 
@@ -233,9 +233,9 @@ impl Stdin {
     pub static fn read_to_string() -> Result<String, IoError> {
         let result = String.new();
         let buf: u8[4096];
-        assume_init(buf);
+        @assume_init(buf);
         loop {
-            let s: str = sys_read(0, buf.as_slice());
+            let s: str = @sys_read(0, buf.as_slice());
             let data = s.as_slice();
             let n = data.len();
             if n == 0 {
@@ -252,12 +252,12 @@ pub struct Stdout {}
 
 impl Stdout {
     pub static fn write(data: str) -> Result<u64, IoError> {
-        sys_write(1, data);
+        @sys_write(1, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     pub static fn write_all(data: str) -> Result<u64, IoError> {
-        sys_write(1, data);
+        @sys_write(1, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
@@ -269,12 +269,12 @@ pub struct Stderr {}
 
 impl Stderr {
     pub static fn write(data: str) -> Result<u64, IoError> {
-        sys_write(2, data);
+        @sys_write(2, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
     pub static fn write_all(data: str) -> Result<u64, IoError> {
-        sys_write(2, data);
+        @sys_write(2, data);
         Result<u64, IoError>.Ok(val = data.as_slice().len())
     }
 
@@ -286,7 +286,7 @@ impl Stderr {
 // =====================================================================
 
 pub fn print(s: str) {
-    sys_write(1, s);
+    @sys_write(1, s);
 }
 
 pub fn readline() -> String {

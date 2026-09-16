@@ -6,5 +6,5 @@
 fn main() {
     let x: u64 = 42;
     let p: u64* = &x;
-    let s: u64[] = __slice_from_parts(p, 1);
+    let s: u64[] = @slice_from_parts(p, 1);
 }

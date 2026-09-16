@@ -1456,7 +1456,7 @@ class LLBuilder:
     def mem_copy(self, dest: LLValue, src: LLValue, count: LLValue) -> None:
         """Byte-level copy: ``memcpy(dest, src, count)``.
 
-        The YIAN ``__memcpy`` accepts any pointer pointee types — bitcast
+        The YIAN ``@memcpy`` accepts any pointer pointee types — bitcast
         both to ``i8*`` for the C ``memcpy`` intrinsic.  Fat pointers are
         unwrapped to their ``data`` field first (LLVM 层).
         """
@@ -1505,13 +1505,13 @@ class LLBuilder:
 
     # -- process arguments / exit --
 
-    def yian_argc(self, result: str) -> None:
+    def arg_count(self, result: str) -> None:
         """Load the validated C ``argc`` and expose it as ``u64``."""
         loaded = self.__builder.load(self.__module.argc_global)  # type: ignore
         extended = self.__builder.zext(loaded, ir.IntType(64))  # type: ignore
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, extended))  # type: ignore
 
-    def yian_arg_bytes(self, index: LLValue, result: str) -> None:
+    def arg_bytes(self, index: LLValue, result: str) -> None:
         """Return one NUL-terminated C argument as a borrowed byte slice.
 
         The bounds and null checks are deliberately emitted here, independently
@@ -1560,7 +1560,7 @@ class LLBuilder:
             )
         self.__func.set_reg(result, value)
 
-    def yian_exit(self, code: LLValue) -> None:
+    def process_exit(self, code: LLValue) -> None:
         """Terminate immediately with the caller-selected process status."""
         self.__call_intrinsic(IntrinsicKind.ImmediateExit, [code])
         self.__builder.unreachable()

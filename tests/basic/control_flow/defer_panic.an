@@ -3,5 +3,5 @@ from std.core.io import Stderr;
 fn main() {
     Stderr.write_all("before\n").unwrap();
     defer Stderr.write_all("deferred\n").unwrap();
-    panic("panic from body");
+    @panic("panic from body");
 }

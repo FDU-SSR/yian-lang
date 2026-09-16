@@ -31,7 +31,7 @@ impl u64 {
 
     pub fn align_up(alignment: u64) {
         if alignment == 0 {
-            panic("alignment must be greater than 0");
+            @panic("alignment must be greater than 0");
         }
         let mask = alignment - 1;
         *self = (*self + mask) & ~mask;
@@ -39,7 +39,7 @@ impl u64 {
 
     pub fn to_string_radix(radix: u64) -> String {
         if radix < 2 || radix > 36 {
-            panic("radix must be between 2 and 36");
+            @panic("radix must be between 2 and 36");
         }
         if *self == 0 {
             return String.from(&"0");
@@ -61,7 +61,7 @@ impl Hash<Murmur3Hasher> for u64 {
     fn hash(hasher: Murmur3Hasher) {
         let val: u64 = *self;
         let buf: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
-        __memcpy(&buf, &val, 8);
+        @memcpy(&buf, &val, 8);
         hasher.write(buf.as_slice());
     }
 }
@@ -71,7 +71,7 @@ impl From<str> for u64 {
         let bytes = value.as_slice();
         let len = bytes.len();
         if len == 0 {
-            panic("invalid u64: empty string");
+            @panic("invalid u64: empty string");
         }
 
         let out: u64 = 0;
@@ -80,12 +80,12 @@ impl From<str> for u64 {
         while i < len {
             let b = bytes[i];
             if b < b'0' || b > b'9' {
-                panic("invalid u64: contains non-digit");
+                @panic("invalid u64: contains non-digit");
             }
 
             let digit = u64(b - b'0');
             if out > (max_u64 - digit) / 10 {
-                panic("invalid u64: overflow");
+                @panic("invalid u64: overflow");
             }
             out = out * 10 + digit;
             i += 1

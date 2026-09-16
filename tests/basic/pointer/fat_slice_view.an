@@ -1,7 +1,7 @@
 // Fat-pointer semantic composite: slice views via stdlib public APIs
 // (a) Vec::as_slice() returns a fat slice view; (b) plain range syntax
 // p[lo..hi] on a pointer yields a bounded slice view. Assert length and
-// element values through the views (no restricted __slice_* primitives).
+// element values through the views (no restricted @slice_* primitives).
 //
 // Expected output: 0
 

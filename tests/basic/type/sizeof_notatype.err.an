@@ -1,8 +1,8 @@
-// sizeof(f) where f is a function name — the type parser resolves the name
+// @sizeof(f) where f is a function name — the type parser resolves the name
 // and finds it is not a type (SymbolKind.Function, not Type).
 
 fn f() -> i32 { return 0; }
 
 fn main() {
-    let s: u64 = sizeof(f);
+    let s: u64 = @sizeof(f);
 }
