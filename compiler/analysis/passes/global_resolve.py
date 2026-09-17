@@ -214,7 +214,7 @@ class GlobalResolve:
 
         - Package mode (``--packages``): the first segment must name a package
           visible to the importer, and the remaining segments must resolve to an
-          existing ``.an`` file that is not a package entry (docs §5.1).
+          existing ``.an`` file that is not a package entry.
         - Standalone mode: stdlib lookup plus relative resolution against the
           importing file's directory.
         """

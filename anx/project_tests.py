@@ -1,4 +1,4 @@
-"""Run a project's own tests: ``anx test`` (docs/plan/anx-design.md §8.5).
+"""Run a project's own tests: ``anx test``.
 
 Layout, mirroring the repository runner's conventions:
 
@@ -14,7 +14,7 @@ synthetic package rooted at ``<project>/tests`` whose entry is that file and
 whose dependencies are the root package plus the root package's direct
 dependencies.  A test therefore imports project code exactly the way project
 code imports it (``from <package>.<module> import ...``), while the visibility
-rule (§4.3) still holds: a transitive dependency is *not* visible to a test
+rule still holds: a transitive dependency is *not* visible to a test
 unless the root package declares it.
 """
 

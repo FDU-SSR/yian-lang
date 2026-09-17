@@ -1,8 +1,7 @@
 """Diagnostic shape and the error-code catalogue shared by the project loader.
 
-The catalogue mirrors ``docs/plan/anx-design.md`` §7.2.  Codes are declared
-here once so that the loader, the command line and the language server agree on
-the strings they print and assert on.
+Codes are declared here once so that the loader, the command line and the
+language server agree on the strings they print and assert on.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-# --- Error codes (docs/plan/anx-design.md §7.2) ----------------------------
+# --- Error codes -----------------------------------------------------------
 AX_NO_PROJECT_ROOT = "AX001"
 AX_BAD_MANIFEST = "AX002"
 AX_DEPENDENCY_PATH_MISSING = "AX003"
@@ -34,7 +33,7 @@ RESERVED_PACKAGE_NAMES = frozenset({"std"})
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """A structured project diagnostic (docs/plan/anx-design.md §7.1)."""
+    """A structured project diagnostic."""
 
     code: str
     message: str

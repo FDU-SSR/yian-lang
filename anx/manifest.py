@@ -2,8 +2,7 @@
 
 A manifest never raises on user error: :func:`read_manifest` returns the parsed
 manifest together with every diagnostic it can report on its own, so that
-``load()`` can collect diagnostics from a whole dependency graph in one pass
-(docs/plan/anx-design.md §3.2, §4.1, §7.2).
+``load()`` can collect diagnostics from a whole dependency graph in one pass.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ class DependencySpec:
 
     ``key`` is the name used in the manifest; ``path`` is already resolved
     against the manifest's directory.  Whether the key matches the dependency's
-    own package name is checked against the dependency's manifest (§3.5).
+    own package name is checked against the dependency's manifest.
     """
 
     key: str

@@ -24,7 +24,7 @@ from compiler.analysis.source_provenance import resolve_stdlib_root
 
 __CHECKOUT = Path(__file__).resolve().parent.parent
 # The standard library an anx run compiles against. In a non-editable install
-# this comes from YIAN_LIB / YIAN_ROOT (docs §8.4).
+# this comes from YIAN_LIB / YIAN_ROOT.
 __STD_SRC = resolve_stdlib_root()
 
 
@@ -55,7 +55,7 @@ def cmd_new(args: argparse.Namespace) -> int:
 
 
 def __require_stdlib() -> None:
-    """Fail early when the standard library cannot be located (docs §8.4)."""
+    """Fail early when the standard library cannot be located."""
     if __STD_SRC.is_dir():
         return
     print(
@@ -132,7 +132,7 @@ def __do_build(
     target: str,
     flags: list[str],
 ) -> Path | None:
-    """Compile the project; exits with 1 on any user error (docs §8.3).
+    """Compile the project; exits with 1 on any user error.
 
     Returns the produced executable for ``-t exe`` runs, otherwise ``None``.
     """
@@ -191,7 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if exe is None or not exe.exists():
         print(f"error: no executable was produced at {exe}", file=sys.stderr)
         return 1
-    # After the program starts, its exit code is propagated verbatim (§8.3);
+    # After the program starts, its exit code is propagated verbatim;
     # stdio is inherited so arguments and standard input pass straight through.
     try:
         return subprocess.run([str(exe), *args.program_args]).returncode
@@ -205,7 +205,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
-    """Print the dependency graph, file index and diagnostics (docs §8.1).
+    """Print the dependency graph, file index and diagnostics.
 
     The payload is always printed, so a script can consume it even when the
     exit code reports a problem: 1 means the project was unusable or carried
@@ -319,7 +319,7 @@ def __as_table(value: object) -> dict[str, object] | None:
 
 
 def cmd_test(args: argparse.Namespace) -> int:
-    """Run the project's own tests under ``<project>/tests`` (D6, §8.5)."""
+    """Run the project's own tests under ``<project>/tests``."""
     project, _root_dir = __load_project(args.project)
     return project_tests.run(
         project,

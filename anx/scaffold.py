@@ -20,7 +20,7 @@ fn main() {{
 """
 
 #: A project's own test: `anx test` compiles each file under tests/ as its own
-#: program and compares the result with tests/output/<name>.an.ans (docs §8.5).
+#: program and compares the result with tests/output/<name>.an.ans.
 TEMPLATE_TEST = """\
 // `anx test` runs every .an file under tests/ as its own program.
 // Expected output lives in tests/output/<name>.an.ans.

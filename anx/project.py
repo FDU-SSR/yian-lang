@@ -6,8 +6,7 @@ command line and the language server can share it.
 
 The model is immutable: every mapping handed to a caller is a read-only view.
 Loading reports problems as :class:`Diagnostic` values instead of raising, so a
-single pass yields every independently discoverable error
-(docs/plan/anx-design.md §3, §4, §7).
+single pass yields every independently discoverable error.
 """
 
 from __future__ import annotations
@@ -142,7 +141,7 @@ class Project:
         return self.packages.get(found.package)
 
     def resolve_import(self, importer: Path, paths: Sequence[str]) -> ImportResolution:
-        """Resolve an import the way the compiler's package mode does (docs §5.1).
+        """Resolve an import the way the compiler's package mode does.
 
         A pure function: no I/O, no source parsing.  The editor passes the path
         segments it already read and maps the returned failure onto the matching
@@ -233,7 +232,7 @@ class Project:
         return packages
 
     def compiler_package_map(self) -> dict[str, object]:
-        """Render the ``--packages`` v2 payload for this project (docs §6.1)."""
+        """Render the ``--packages`` v2 payload for this project."""
         return {"format": 2, "root": self.root_package, "packages": self.package_specs()}
 
     def describe(self, diagnostics: Sequence[Diagnostic] = ()) -> dict[str, object]:
@@ -315,7 +314,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
 
     ``CycleError`` is still raised for a dependency cycle: a cycle has no
     meaningful partial graph to return, and it is detected after every manifest
-    has been read but before any source file is collected (§4.2).
+    has been read but before any source file is collected.
     """
     root = root.resolve()
     std_src = (std_root or default_stdlib_root()).resolve()
@@ -575,7 +574,7 @@ def __build_package(
 
 
 def __nested_source_root_diagnostics(packages: Mapping[str, Package]) -> tuple[Diagnostic, ...]:
-    """Report every pair of mutually nested source roots (``AX013``, §3.6).
+    """Report every pair of mutually nested source roots (``AX013``).
 
     The standard library is excluded: it lives in the compiler checkout and is
     never a user-visible sibling of the project's packages.

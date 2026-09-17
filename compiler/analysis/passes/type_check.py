@@ -137,7 +137,7 @@ class TypeCheck:
         """Locate the program entry and register it as the first definition.
 
         With a ``--packages`` root package the entry is exactly
-        ``packages[root].entry`` (docs §6.1): a dependency may define its own
+        ``packages[root].entry``: a dependency may define its own
         ``main`` without colliding with the program (G22). Without one, the
         entry is the single ``main`` of the non-stdlib units.
         """
