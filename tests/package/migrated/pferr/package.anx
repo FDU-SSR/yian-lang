@@ -1,3 +1,4 @@
 [package]
 name = "pferr"
+entry = "src/field.an"
 version = "0.1.0"

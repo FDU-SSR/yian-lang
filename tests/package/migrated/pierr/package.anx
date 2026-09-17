@@ -1,3 +1,4 @@
 [package]
 name = "pierr"
+entry = "src/import.an"
 version = "0.1.0"

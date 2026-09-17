@@ -46,6 +46,7 @@ from typing import TextIO
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
+SCRIPTS_DIR = ROOT_DIR / "scripts"
 SUITES = ("basic", "safety", "package")
 SUITE_NAME = "basic"
 SOURCE_DIR = TESTS_DIR / SUITE_NAME
@@ -53,6 +54,12 @@ OUTPUT_DIR = TESTS_DIR / "output" / SUITE_NAME
 INPUT_DIR = TESTS_DIR / "input" / SUITE_NAME
 LIB_DIR = ROOT_DIR / "lib" / "src"
 BUILD_DIR = ROOT_DIR / "build"
+
+# Standalone Python checks that belong to a suite, by suite name. They live
+# under scripts/ because tests/ holds data only.
+SUITE_CHECKS: dict[str, tuple[str, ...]] = {
+    "package": ("test_project_model.py",),
+}
 
 # ---------------------------------------------------------------------------
 # Multi-file test configuration
@@ -115,6 +122,9 @@ class TestCase:
 
     package_root: Path | None = None
     """For package-suite fixtures: the project directory driven through anx."""
+
+    script_path: Path | None = None
+    """For standalone Python checks under scripts/: the script to execute."""
 
 
 @dataclass
@@ -731,27 +741,32 @@ def _mode_test(test: TestCase, mode: str) -> TestCase:
 
 
 def discover_python_tests() -> list[TestCase]:
-    """Discover existing Python unit and IR checks in the active suite."""
+    """Discover the active suite's standalone Python checks.
+
+    ``tests/`` holds data only, so checks written in Python live under
+    ``scripts/`` and are listed per suite here.
+    """
     tests: list[TestCase] = []
-    for source in sorted((SOURCE_DIR / "unit").rglob("test_*.py")):
+    for name in SUITE_CHECKS.get(SUITE_NAME, ()):
         tests.append(
             TestCase(
-                name=str(source.relative_to(SOURCE_DIR)),
+                name=f"scripts/{name}",
                 source_files=[],
                 expect_error=False,
                 expected_substring="",
                 expected_exit_code=0,
+                script_path=SCRIPTS_DIR / name,
             )
         )
     return tests
 
 
 def run_python_test(test: TestCase) -> TestResult:
-    """Run one existing Python unit or IR check as a subprocess."""
-    source = SOURCE_DIR / test.name
+    """Run one standalone Python check as a subprocess."""
+    assert test.script_path is not None
     start = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, str(source)],
+        [sys.executable, str(test.script_path)],
         cwd=ROOT_DIR,
         capture_output=True,
         encoding="utf-8",
@@ -889,7 +904,7 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
     total_start = time.monotonic()
 
     for i, test in enumerate(all_tests, 1):
-        if test.name.startswith("unit/"):
+        if test.script_path is not None:
             result = run_python_test(test)
         else:
             result = run_test(

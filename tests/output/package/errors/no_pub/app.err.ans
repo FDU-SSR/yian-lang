@@ -1,1 +1,1 @@
-is not found
+Symbol 'secret' exists in the imported unit but is not declared 'pub'

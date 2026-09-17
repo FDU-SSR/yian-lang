@@ -5,6 +5,7 @@ from pathlib import Path
 TEMPLATE_MANIFEST = """\
 [package]
 name = "{name}"
+kind = "{kind}"
 version = "0.1.0"
 
 [dependencies]
@@ -18,8 +19,13 @@ fn main() {{
 }}
 """
 
+#: Accepted ``kind`` values for ``anx new --kind``.
+KINDS = ("bin", "lib", "hybrid")
 
-def scaffold(name: str, root: Path | None = None, *, is_lib: bool = False) -> Path:
+
+def scaffold(name: str, root: Path | None = None, *, kind: str = "bin") -> Path:
+    if kind not in KINDS:
+        raise ValueError(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
     if root is None:
         root = Path.cwd()
     pkg_name = Path(name).name
@@ -30,8 +36,10 @@ def scaffold(name: str, root: Path | None = None, *, is_lib: bool = False) -> Pa
     src_dir = pkg_dir / "src"
     src_dir.mkdir(parents=True)
 
-    (pkg_dir / "package.anx").write_text(TEMPLATE_MANIFEST.format(name=pkg_name))
-    if not is_lib:
+    (pkg_dir / "package.anx").write_text(
+        TEMPLATE_MANIFEST.format(name=pkg_name, kind=kind)
+    )
+    if kind != "lib":
         (src_dir / "main.an").write_text(TEMPLATE_MAIN.format(name=pkg_name))
 
     return pkg_dir

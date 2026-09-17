@@ -349,8 +349,8 @@ class LoadResult:
 ```
 
 - **`project is None` 当且仅当根包本身不可用**：找不到根清单（`AX001`）、根清单无法解析或
-  `name`/`kind` 非法（`AX002`）、根包目录结构与 `kind` 不符（`AX008`）。此时没有可用的
-  `Project` 可返回，诊断照常给出。
+  `name`/`kind` 非法（`AX002`）、根包名是保留名（`AX011`，此时 `packages["std"]` 会与它冲突）、
+  根包目录结构与 `kind` 不符（`AX008`）。此时没有可用的 `Project` 可返回，诊断照常给出。
 - **`project` 可用时 `diagnostics` 仍可非空**：单个依赖路径缺失（`AX003`）、依赖目录没有清单
   （`AX004`）、依赖键不匹配（`AX005`）、同名包冲突（`AX007`）、保留名（`AX011`）、源码根嵌套
   （`AX013`）都只影响对应子树，其余部分继续加载。
@@ -438,6 +438,10 @@ name = "mathlib"                # 这是清单 name
 
 - 沿用 DFS + 递归栈，报错信息包含完整环路径（`a → b → a`）。
 - 环检测在**读取完所有清单之后、收集源码之前**完成，避免部分加载的中间状态。
+
+> 已知盲区：`kind = "bin"` 的依赖被 `AX015` 拒绝后**不入图**（§4.1 的「入图并递归」只对通过校验
+> 的依赖成立），因此穿过 `bin` 依赖的环不会被发现。这类项目本来就不合法（`AX015` 已经报错），
+> 所以不额外处理；`tests/package/errors/cycle` 的根包因此必须是 `hybrid` 才能验证环检测。
 
 ### 4.3 传递依赖的可见性
 
@@ -1023,6 +1027,8 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 ### A1 清单与依赖诊断
 
+**状态：已完成**（commit 见下）。
+
 - 实现 `AX002/AX003/AX004/AX005/AX007/AX008/AX011/AX013/AX015`，一次性返回全部诊断。
 - 落实 `kind` 与 `entry`：清单解析与入口校验（`AX002`/`AX008`）；`bin` / `hybrid` 必须能解析
   出入口，`lib` 不得有入口；`bin` 作依赖报 `AX015`（在 §4.1 的依赖校验里）。
@@ -1044,6 +1050,43 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
   `lib_with_entry`、`bad_entry`（入口不存在或不在源码根内）、`bin_as_dependency`（`AX015`）、
   `nested_source_roots` 场景；`errors/cycle` 仍验证环检测；根清单损坏时 `load()` 返回
   `project is None` 且诊断非空；同一输入的诊断顺序稳定。
+
+**实现结果**：
+
+- 新增 `anx/diagnostics.py`：`Diagnostic`、`AX001`–`AX015` 常量、稳定排序
+  （`path`（`None` 最前）→ `span` 起点 → `code` → `message`）与 `error[AXnnn]: ...` 渲染。
+- `anx/manifest.py` 重写为 `read_manifest()`，不再抛出用户错误：`name`/`kind` 不可用时返回
+  `None`（整棵子树跳过），`entry`/`version` 类型错误或单个依赖条目不合法时只丢弃对应部分。
+- `anx/project.py` 的 `load()` 一次遍历收集全部**可独立发现**的诊断。根包不可用
+  （`AX001`/`AX002`/`AX008`，以及根名 `AX011`）时 `project is None`；依赖子树出错只跳过该子树
+  （`AX003`/`AX004`/`AX005`/`AX007`/`AX008`/`AX011`/`AX015`）。文件归属改为「最长源码根前缀」，
+  任意嵌套源码根报 `AX013` 但不阻止加载。
+- `AX005` 只报「键 ≠ 名字」，依赖仍按**规范名**入图（否则依赖自身的自导入会断）；
+  `AX015` 与 `AX008` 的依赖子树整体跳过。
+- `resolver.py` 的 `resolve()` 保留为兼容包装，诊断非空时抛 `ProjectError`；`main.py` 改走 `load()`。
+- CLI：`build`/`run`/`check` 先加载，诊断非空时按 `error[AXnnn]` 打印并退出 1；
+  `kind = "lib"` 的 `build`/`run` 报「本阶段无库产物」并退出 1；
+  `anx new --kind bin|lib|hybrid`（`--lib` 保留为 `--kind lib` 的简写）。
+- 编译器：`SymbolCtx.lookup_global()` 只查顶层作用域，使导入能区分「未公开」与「不存在」；
+  `errors/no_pub/app`、`migrated/iterr`、`migrated/pierr` 的预期改为
+  `Symbol '<x>' exists in the imported unit but is not declared 'pub'`。
+
+**迁移清单（除计划内的 9 个之外，实测新增 2 处）**：
+
+| 位置 | 现象 | 处理 |
+| --- | --- | --- |
+| `errors/cycle/app` | 根包 `appa` 是 `bin`，被 `libb` 依赖时报 `AX015`，依赖不入图，环也就检测不到 | 根包改 `kind = "hybrid"`：程序入口与「可被依赖」只有 `hybrid` 能同时表达，环检测因此恢复 |
+| `errors/missing_dep` | 预期匹配 Python 的 `No such file or directory` | 改为 `error[AX003]` |
+
+**新增 fixture（12 个目录 + 1 个单元测试）**：`name_mismatch`、`reserved_name`、`duplicate_name`、
+`lib_with_entry`、`bad_entry`、`bin_as_dependency`、`nested_source_roots`，
+以及同一代码路径上计划未列但必须覆盖的 `lib_with_main`（`lib` 含 `src/main.an`）、
+`entry_outside_src`（入口在源码根之外）、`broken_manifest`（`AX002` 解析失败）、
+`dep_without_manifest`（`AX004`）、`bad_kind`（`AX002` kind 取值非法）。
+`scripts/test_project_model.py` 覆盖 fixture 观察不到的 `load()` 语义：根包不可用 → `project is None`、
+依赖出错 → `project` 仍可用、嵌套源码根不阻止加载且文件归属唯一、映射只读、诊断顺序稳定。
+它由 `scripts/run_tests.py --suite package` 作为一条 `package` 用例执行（测试**代码**在 `scripts/`，
+`tests/` 只放数据，见 A0.5），`--no-run` 时跳过。
 
 ### A2 导入范围、文件索引与 `--packages` v2
 

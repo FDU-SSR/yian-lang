@@ -5,17 +5,55 @@ It never compiles anything, spawns a process or writes to the project, so the
 command line and the language server can share it.
 
 The model is immutable: every mapping handed to a caller is a read-only view.
+Loading reports problems as :class:`Diagnostic` values instead of raising, so a
+single pass yields every independently discoverable error
+(docs/plan/anx-design.md §3, §4, §7).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
 
+from anx.diagnostics import (
+    AX_BIN_AS_DEPENDENCY,
+    AX_DEPENDENCY_MANIFEST_MISSING,
+    AX_DEPENDENCY_NAME_MISMATCH,
+    AX_DEPENDENCY_PATH_MISSING,
+    AX_DUPLICATE_PACKAGE,
+    AX_ENTRY_MISMATCH,
+    AX_NESTED_SOURCE_ROOTS,
+    AX_NO_PROJECT_ROOT,
+    Diagnostic,
+    RESERVED_PACKAGE_NAMES,
+    sort_diagnostics,
+)
+from anx.manifest import DEFAULT_ENTRY
+from anx.manifest import MANIFEST_NAME
 from anx.manifest import Manifest
+from anx.manifest import read_manifest
+
+STD_PACKAGE = "std"
+
+__all__ = [
+    "CycleError",
+    "Dependency",
+    "Diagnostic",
+    "ImportFailure",
+    "ImportResolution",
+    "LoadResult",
+    "Package",
+    "PackageKind",
+    "Project",
+    "SourceFile",
+    "STD_PACKAGE",
+    "default_stdlib_root",
+    "load",
+]
 
 
 class CycleError(Exception):
@@ -26,21 +64,6 @@ class CycleError(Exception):
         super().__init__(f"Circular dependency: {' → '.join(cycle)}")
 
 
-@dataclass(frozen=True)
-class Diagnostic:
-    """A structured project diagnostic.
-
-    The shape is fixed here so loaders and callers agree on it; A1 starts
-    producing them, A0 never does.
-    """
-
-    code: str
-    message: str
-    path: Path | None = None
-    span: tuple[int, int] | None = None
-    hint: str | None = None
-
-
 class PackageKind(Enum):
     BIN = "bin"  # has an entry, produces an executable, cannot be a dependency
     LIB = "lib"  # no entry, analysis only, can be a dependency
@@ -49,10 +72,10 @@ class PackageKind(Enum):
 
 @dataclass(frozen=True)
 class Dependency:
-    """One entry of the depending package's ``[dependencies]`` table."""
+    """One resolved dependency edge, named by the dependency's canonical name."""
 
-    name: str  # the canonical name of the dependency
-    path: Path  # its package root, resolved
+    name: str
+    path: Path  # the dependency's package root
 
 
 @dataclass(frozen=True)
@@ -113,8 +136,11 @@ class Project:
 class LoadResult:
     """A loaded project plus the diagnostics that are safe to report.
 
-    ``project`` is ``None`` only when the root package itself is unusable (A1);
-    A0 raises instead, so it always returns a project.
+    ``project`` is ``None`` only when the root package itself is unusable: no
+    manifest (``AX001``), an unusable manifest (``AX002``), a reserved root name
+    (``AX011``) or a source layout that contradicts its ``kind`` (``AX008``).
+    Otherwise the usable part of the graph is returned even when diagnostics
+    remain; a broken dependency subtree is skipped.
     """
 
     project: Project | None
@@ -132,95 +158,314 @@ def default_stdlib_root() -> Path:
 def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
     """Load the project rooted at *root*.
 
-    Raises the same errors as the resolver it replaces (``FileNotFoundError``
-    for a missing manifest or ``src/``, ``CycleError`` for dependency cycles);
-    the standard library is injected under the ``std`` name and is never walked
-    from a manifest.
+    ``CycleError`` is still raised for a dependency cycle: a cycle has no
+    meaningful partial graph to return, and it is detected after every manifest
+    has been read but before any source file is collected (§4.2).
     """
     root = root.resolve()
     std_src = (std_root or default_stdlib_root()).resolve()
 
-    manifests: dict[str, Manifest] = {}
-    package_roots: dict[str, Path] = {}
+    root_manifest_path = root / MANIFEST_NAME
+    if not root_manifest_path.is_file():
+        return LoadResult(
+            None,
+            (Diagnostic(AX_NO_PROJECT_ROOT, f"No {MANIFEST_NAME} found in {root}", root),),
+        )
+
+    root_manifest, root_diagnostics = read_manifest(root_manifest_path)
+    diagnostics: list[Diagnostic] = list(root_diagnostics)
+    if root_manifest is None or root_manifest.name in RESERVED_PACKAGE_NAMES:
+        return LoadResult(None, sort_diagnostics(diagnostics))
+
+    manifests: dict[str, Manifest] = {root_manifest.name: root_manifest}
+    roots: dict[str, Path] = {root_manifest.name: root}
+    order: list[str] = []
     adjacency: dict[str, tuple[str, ...]] = {}
 
-    def walk(name: str, path: Path) -> None:
-        if name in adjacency:
-            return
-        manifest = Manifest.from_file(path / "package.anx")
-        manifests[name] = manifest
-        package_roots[name] = path
-        adjacency[name] = tuple(manifest.dependencies.keys())
-        for dep_name, dep in manifest.dependencies.items():
-            walk(dep_name, dep.path)
+    def walk(name: str, path: Path, manifest: Manifest) -> None:
+        order.append(name)
+        declared: list[str] = []
+        for spec in manifest.dependencies:
+            dep_root = spec.path
+            dep_manifest_path = dep_root / MANIFEST_NAME
+            if not dep_root.is_dir():
+                diagnostics.append(
+                    Diagnostic(
+                        AX_DEPENDENCY_PATH_MISSING,
+                        f"Dependency '{spec.key}': path {dep_root} does not exist",
+                        path / MANIFEST_NAME,
+                    )
+                )
+                continue
+            if not dep_manifest_path.is_file():
+                diagnostics.append(
+                    Diagnostic(
+                        AX_DEPENDENCY_MANIFEST_MISSING,
+                        f"Dependency '{spec.key}': no {MANIFEST_NAME} in {dep_root}",
+                        dep_root,
+                    )
+                )
+                continue
 
-    root_manifest = Manifest.from_file(root / "package.anx")
-    walk(root_manifest.name, root)
+            dep_manifest, dep_diagnostics = read_manifest(dep_manifest_path)
+            diagnostics.extend(dep_diagnostics)
+            if dep_manifest is None or dep_manifest.name in RESERVED_PACKAGE_NAMES:
+                continue
+
+            canonical = dep_manifest.name
+            if spec.key != canonical:
+                diagnostics.append(
+                    Diagnostic(
+                        AX_DEPENDENCY_NAME_MISMATCH,
+                        f"Dependency key '{spec.key}' does not match the package name '{canonical}'",
+                        dep_manifest_path,
+                        hint=f'Rename the key to "{canonical}", or rename the package to "{spec.key}".',
+                    )
+                )
+
+            known = roots.get(canonical)
+            if known is not None:
+                if known != dep_root:
+                    diagnostics.append(
+                        Diagnostic(
+                            AX_DUPLICATE_PACKAGE,
+                            f"Package '{canonical}' is already resolved to {known}, "
+                            f"but '{spec.key}' points at {dep_root}",
+                            dep_manifest_path,
+                        )
+                    )
+                    continue
+                declared.append(canonical)
+                continue
+
+            if dep_manifest.kind == PackageKind.BIN.value:
+                diagnostics.append(
+                    Diagnostic(
+                        AX_BIN_AS_DEPENDENCY,
+                        f"Dependency '{canonical}' has kind 'bin' and cannot be used as a dependency",
+                        dep_manifest_path,
+                        hint='Declare the package as kind "lib" or "hybrid" to expose a library interface.',
+                    )
+                )
+                continue
+
+            manifests[canonical] = dep_manifest
+            roots[canonical] = dep_root
+            declared.append(canonical)
+            walk(canonical, dep_root, dep_manifest)
+        adjacency[name] = tuple(sorted(set(declared)))
+
+    walk(root_manifest.name, root, root_manifest)
     _check_cycles(adjacency)
 
-    packages: dict[str, Package] = {}
-    files: dict[Path, SourceFile] = {}
-    dependencies: dict[str, tuple[str, ...]] = {}
+    built: dict[str, Package] = {}
+    for name in order:
+        package, package_diagnostics = _build_package(name, roots[name], manifests[name])
+        diagnostics.extend(package_diagnostics)
+        if package is not None:
+            built[name] = package
 
-    for name, path in package_roots.items():
-        src = path / "src"
-        if not src.is_dir():
-            raise FileNotFoundError(f"Package '{name}': src/ directory not found at {src}")
-        manifest = manifests[name]
-        packages[name] = Package(
-            name=name,
-            kind=PackageKind.BIN,
-            version=manifest.version,
-            root=path,
-            manifest_path=path / "package.anx",
-            source_root=src.resolve(),
-            entry=_default_entry(src),
-            dependencies=tuple(
-                sorted(
-                    (Dependency(name=dep_name, path=dep.path) for dep_name, dep in manifest.dependencies.items()),
-                    key=lambda dep: dep.name,
-                )
-            ),
-        )
-        dependencies[name] = adjacency[name]
-        _index_files(files, src, name)
+    if root_manifest.name not in built:
+        return LoadResult(None, sort_diagnostics(diagnostics))
 
-    packages["std"] = Package(
-        name="std",
+    built[STD_PACKAGE] = Package(
+        name=STD_PACKAGE,
         kind=PackageKind.LIB,
         version="",
         root=std_src.parent,
-        manifest_path=std_src.parent / "package.anx",
+        manifest_path=std_src.parent / MANIFEST_NAME,
         source_root=std_src,
         entry=None,
         dependencies=(),
     )
-    dependencies["std"] = ()
-    _index_files(files, std_src, "std")
 
+    diagnostics.extend(_nested_source_root_diagnostics(built))
+
+    dependencies: dict[str, tuple[str, ...]] = {}
+    for name in [*order, STD_PACKAGE]:
+        if name not in built:
+            continue
+        dependencies[name] = tuple(dep for dep in adjacency.get(name, ()) if dep in built)
+
+    packages: dict[str, Package] = {}
+    for name, package in built.items():
+        edges = dependencies[name]
+        packages[name] = replace(
+            package,
+            dependencies=tuple(Dependency(name=dep, path=roots[dep]) for dep in edges),
+        )
+
+    files = _index_files(packages, [*order, STD_PACKAGE])
     project = Project(
         root_package=root_manifest.name,
         packages=MappingProxyType(packages),
         files=MappingProxyType(files),
         dependencies=MappingProxyType(dependencies),
-        std_package="std",
+        std_package=STD_PACKAGE,
     )
-    return LoadResult(project=project, diagnostics=())
+    return LoadResult(project=project, diagnostics=sort_diagnostics(diagnostics))
 
 
-def _default_entry(src: Path) -> Path | None:
-    entry = src / "main.an"
-    return entry if entry.is_file() else None
+def _build_package(
+    name: str, root: Path, manifest: Manifest
+) -> tuple[Package | None, tuple[Diagnostic, ...]]:
+    """Validate one package's source layout and, if it holds, build the package.
 
-
-def _index_files(files: dict[Path, SourceFile], scan_root: Path, package: str) -> None:
-    """Index every ``.an`` file under *scan_root* in the existing sort order."""
-    for path in sorted(scan_root.rglob("*.an")):
-        files[path] = SourceFile(
-            path=path,
-            package=package,
-            module=path.relative_to(scan_root).with_suffix("").parts,
+    Returns ``(None, diagnostics)`` when the layout contradicts ``kind``; the
+    caller then skips this subtree (or, for the root package, the project).
+    """
+    manifest_path = root / MANIFEST_NAME
+    source_root = root / "src"
+    if not source_root.is_dir():
+        return None, (
+            Diagnostic(
+                AX_ENTRY_MISMATCH,
+                f"Package '{name}' has no source root at {source_root}",
+                manifest_path,
+                hint='Create it and move the package sources into "src/".',
+            ),
         )
+    source_root = source_root.resolve()
+
+    kind = PackageKind(manifest.kind)
+    diagnostics: list[Diagnostic] = []
+    entry: Path | None = None
+
+    if kind is PackageKind.LIB:
+        if manifest.entry is not None:
+            diagnostics.append(
+                Diagnostic(
+                    AX_ENTRY_MISMATCH,
+                    f"Package '{name}' has kind 'lib' and must not declare 'entry'",
+                    manifest_path,
+                    hint='Remove "entry", or switch to kind "hybrid" if it also needs an executable.',
+                )
+            )
+        default_entry = source_root / Path(DEFAULT_ENTRY).name
+        if default_entry.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    AX_ENTRY_MISMATCH,
+                    f"Package '{name}' has kind 'lib' but contains {default_entry}",
+                    default_entry,
+                    hint='Move or remove src/main.an, or switch to kind "hybrid".',
+                )
+            )
+    else:
+        raw_entry = manifest.entry if manifest.entry is not None else DEFAULT_ENTRY
+        candidate = (root / raw_entry).resolve()
+        if not candidate.is_file():
+            diagnostics.append(
+                Diagnostic(
+                    AX_ENTRY_MISMATCH,
+                    f"Package '{name}': entry file {candidate} does not exist",
+                    manifest_path,
+                    hint=f'Create it, or point "entry" at an existing .an file under {source_root}.',
+                )
+            )
+        elif candidate.suffix != ".an":
+            diagnostics.append(
+                Diagnostic(
+                    AX_ENTRY_MISMATCH,
+                    f"Package '{name}': entry {candidate} is not a .an file",
+                    manifest_path,
+                )
+            )
+        elif source_root not in candidate.parents:
+            diagnostics.append(
+                Diagnostic(
+                    AX_ENTRY_MISMATCH,
+                    f"Package '{name}': entry {candidate} is outside the source root {source_root}",
+                    manifest_path,
+                )
+            )
+        else:
+            entry = candidate
+
+    if diagnostics:
+        return None, tuple(diagnostics)
+
+    return (
+        Package(
+            name=name,
+            kind=kind,
+            version=manifest.version,
+            root=root,
+            manifest_path=manifest_path,
+            source_root=source_root,
+            entry=entry,
+            dependencies=(),
+        ),
+        (),
+    )
+
+
+def _nested_source_root_diagnostics(packages: Mapping[str, Package]) -> tuple[Diagnostic, ...]:
+    """Report every pair of mutually nested source roots (``AX013``, §3.6).
+
+    The standard library is excluded: it lives in the compiler checkout and is
+    never a user-visible sibling of the project's packages.
+    """
+    roots = {
+        name: package.source_root
+        for name, package in packages.items()
+        if name != STD_PACKAGE
+    }
+    diagnostics: list[Diagnostic] = []
+    for outer_name, outer_root in sorted(roots.items()):
+        for inner_name, inner_root in sorted(roots.items()):
+            if inner_name == outer_name:
+                continue
+            if outer_root in inner_root.parents:
+                diagnostics.append(
+                    Diagnostic(
+                        AX_NESTED_SOURCE_ROOTS,
+                        f"Package '{inner_name}' source root {inner_root} is nested inside "
+                        f"package '{outer_name}' source root {outer_root}",
+                        inner_root,
+                        hint="Dependencies must live outside the depending package's src/ directory.",
+                    )
+                )
+    return tuple(diagnostics)
+
+
+def _index_files(packages: Mapping[str, Package], order: list[str]) -> dict[Path, SourceFile]:
+    """Index ``*.an`` files, attributing each to its deepest source root.
+
+    The insertion order follows the dependency walk with the standard library
+    last, which is the order the compiler relies on for unit numbering.
+    """
+    source_roots = {name: package.source_root for name, package in packages.items()}
+    files: dict[Path, SourceFile] = {}
+    for name in order:
+        package = packages.get(name)
+        if package is None:
+            continue
+        for path in sorted(package.source_root.rglob("*.an")):
+            owner = _owner_of(path, source_roots)
+            if owner != name:
+                continue
+            files[path] = SourceFile(
+                path=path,
+                package=owner,
+                module=path.relative_to(package.source_root).with_suffix("").parts,
+            )
+    return files
+
+
+def _owner_of(path: Path, source_roots: Mapping[str, Path]) -> str:
+    """Return the package whose source root is the longest prefix of *path*."""
+    best = ""
+    best_depth = -1
+    for name, root in source_roots.items():
+        if root not in path.parents:
+            continue
+        depth = len(root.parts)
+        if depth > best_depth:
+            best = name
+            best_depth = depth
+    assert best != "", f"{path} is not under any source root"
+    return best
 
 
 def _check_cycles(adjacency: Mapping[str, tuple[str, ...]]) -> None:

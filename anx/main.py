@@ -9,8 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from anx.resolver import CycleError, resolve
-from anx.scaffold import scaffold
+from anx.diagnostics import format_diagnostic
+from anx.project import CycleError, PackageKind, Project, load
+from anx.scaffold import KINDS, scaffold
 
 _YIAN_ROOT = Path(__file__).resolve().parent.parent
 _STD_SRC = _YIAN_ROOT / "lib" / "src"
@@ -34,27 +35,65 @@ def compiler_command() -> list[str]:
 
 
 def cmd_new(args: argparse.Namespace) -> None:
-    pkg_dir = scaffold(args.name, is_lib=args.lib)
+    kind = args.kind
+    if args.lib:
+        kind = "lib"
+    pkg_dir = scaffold(args.name, kind=kind)
     print(f"Created package '{args.name}' at {pkg_dir}")
 
 
-def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
-    project = Path(project_dir).resolve()
+def _load_project(project_dir: str) -> Project:
+    """Load *project_dir* and report every diagnostic before giving up."""
     try:
-        all_files, pkg_roots = resolve(project, _STD_SRC)
-    except CycleError as e:
-        print(f"error: {e}", file=sys.stderr)
+        result = load(Path(project_dir), std_root=_STD_SRC)
+    except CycleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    pkg_json = project / "build" / "pkg.json"
+    for diagnostic in result.diagnostics:
+        print(format_diagnostic(diagnostic), file=sys.stderr)
+    if result.diagnostics:
+        sys.exit(1)
+    project = result.project
+    if project is None:
+        # load() always pairs a missing project with at least one diagnostic.
+        print(f"error: could not load a project from {project_dir}", file=sys.stderr)
+        sys.exit(1)
+    return project
+
+
+def _do_build(
+    project_dir: str,
+    extra_flags: list[str] | None = None,
+    *,
+    command: str = "build",
+) -> None:
+    project = _load_project(project_dir)
+    root = project.packages[project.root_package]
+
+    if root.kind is PackageKind.LIB and command in ("build", "run"):
+        print(
+            f"error: 'anx {command}' is not supported for kind 'lib' packages: "
+            "this stage produces no library artifact",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    build_dir = root.root / "build"
+    pkg_json = build_dir / "pkg.json"
     pkg_json.parent.mkdir(parents=True, exist_ok=True)
-    pkg_json.write_text(json.dumps({k: str(v) for k, v in pkg_roots.items()}, indent=2))
+    pkg_json.write_text(
+        json.dumps(
+            {name: str(package.source_root) for name, package in project.packages.items()},
+            indent=2,
+        )
+    )
 
     cmd = [
         *compiler_command(),
         "--packages", str(pkg_json),
         *(extra_flags or []),
-        *(str(f) for f in all_files),
+        *(str(f) for f in project.files),
     ]
     result = subprocess.run(cmd, cwd=str(_YIAN_ROOT), capture_output=True, text=True, check=False)
 
@@ -65,26 +104,28 @@ def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
 
 
 def cmd_build(args: argparse.Namespace) -> None:
-    project = Path(args.project).resolve()
-    _do_build(args.project, [
-        "-t", "exe",
-        "-o", str(project / "build" / "app"),
-    ])
+    project_dir = Path(args.project).resolve()
+    _do_build(
+        args.project,
+        ["-t", "exe", "-o", str(project_dir / "build" / "app")],
+        command="build",
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    project = Path(args.project).resolve()
-    _do_build(args.project, [
-        "-t", "exe",
-        "-o", str(project / "build" / "app"),
-    ])
-    exe = project / "build" / "app"
+    project_dir = Path(args.project).resolve()
+    _do_build(
+        args.project,
+        ["-t", "exe", "-o", str(project_dir / "build" / "app")],
+        command="run",
+    )
+    exe = project_dir / "build" / "app"
     if exe.exists():
         subprocess.run([str(exe)], check=True)
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    _do_build(args.project, ["-t", "none"])
+    _do_build(args.project, ["-t", "none"], command="check")
 
 
 def cmd_test(args: argparse.Namespace) -> None:
@@ -107,7 +148,13 @@ def main() -> None:
 
     p = sub.add_parser("new")
     p.add_argument("name")
-    p.add_argument("--lib", action="store_true", help="Create a library package (no main.an)")
+    p.add_argument(
+        "--kind",
+        choices=KINDS,
+        default="bin",
+        help="Package kind (default: bin)",
+    )
+    p.add_argument("--lib", action="store_true", help="Shorthand for --kind lib")
 
     p = sub.add_parser("build")
     _add_project_arg(p)

@@ -1,6 +1,6 @@
 // Test for importing private items from another module
 //
-// Expected compilation error: No exported symbol 'NonExportableStruct' found in unit: private.an
+// Expected compilation error: Symbol 'NonExportableStruct' exists in the imported unit but is not declared 'pub'
 
 from pierr.private import NonExportableStruct;
 

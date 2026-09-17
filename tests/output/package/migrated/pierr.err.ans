@@ -1,1 +1,1 @@
-Symbol 'NonExportableStruct' is not found in the imported unit
+Symbol 'NonExportableStruct' exists in the imported unit but is not declared 'pub'

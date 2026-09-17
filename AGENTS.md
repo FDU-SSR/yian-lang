@@ -83,11 +83,11 @@ Sources are under `tests/<suite>/`; expected results are under `tests/output/<su
 
 An existing `tests/input/<suite>/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The runner expands these variants without duplicating the source test.
 
-`tests/<suite>/unit/test_*.py` checks, when present, are executed by the same runner. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
+Standalone Python checks for a suite live under `scripts/` and are listed in the runner's `SUITE_CHECKS` (for example `scripts/test_project_model.py`, run by `--suite package`); `tests/` holds data only and `--no-run` skips them. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
 
 ## anx package manager
 
-`anx/` implements `new`, `new --lib`, `run`, `check`, `build`, and `test`. Projects declare metadata and path dependencies in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated `build/pkg.json` package map. Integration fixtures are under `tests/package/`, run by `scripts/run_tests.py --suite package`.
+`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `run`, `check`, `build`, and `test`. Projects declare metadata and path dependencies in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated `build/pkg.json` package map. Integration fixtures are under `tests/package/`, run by `scripts/run_tests.py --suite package`.
 
 ## Architecture
 

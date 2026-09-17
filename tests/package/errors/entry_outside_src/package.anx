@@ -1,0 +1,4 @@
+[package]
+name = "app"
+entry = "outside.an"
+version = "0.1.0"

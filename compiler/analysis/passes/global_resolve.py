@@ -198,6 +198,11 @@ class GlobalResolve:
 
             target_symbol = target_unit.symbol_ctx.lookup_exportable(item.target.name)
             if target_symbol is None:
+                if target_unit.symbol_ctx.lookup_global(item.target.name) is not None:
+                    raise AnalysisError(
+                        f"Symbol '{item.target.name}' exists in the imported unit but is not declared 'pub'",
+                        item.target.span,
+                    )
                 raise AnalysisError(f"Symbol '{item.target.name}' is not found in the imported unit", item.target.span)
             if target_symbol.kind == SymbolKind.Variable:
                 raise AnalysisError(f"Cannot import variable '{item.target.name}'", item.target.span)

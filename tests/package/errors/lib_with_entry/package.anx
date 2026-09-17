@@ -1,0 +1,5 @@
+[package]
+name = "mylib"
+kind = "lib"
+entry = "src/lib.an"
+version = "0.1.0"

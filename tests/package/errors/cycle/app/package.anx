@@ -1,5 +1,6 @@
 [package]
 name = "appa"
+kind = "hybrid"
 version = "0.1.0"
 [dependencies]
-lib = { path = "../lib" }
+libb = { path = "../lib" }

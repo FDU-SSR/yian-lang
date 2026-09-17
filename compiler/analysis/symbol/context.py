@@ -154,6 +154,21 @@ class SymbolCtx:
             return self.__all_symbols[symbol_id]
         return None
 
+    def lookup_global(self, name: str) -> Symbol | None:
+        """Looks up a name in the unit's top-level scope only.
+
+        Unlike :meth:`lookup_exportable`, this also finds symbols that were
+        declared without ``pub``; import resolution uses it to tell "not found"
+        apart from "not public".
+        """
+        scope = self.__current_scope
+        while scope.parent is not None:
+            scope = scope.parent
+        symbol_id = scope.symbols.get(name)
+        if symbol_id is None:
+            return None
+        return self.__all_symbols[symbol_id]
+
     def clone(self) -> SymbolCtx:
         """Clone the context using copy-on-write symbol dictionaries."""
         new_ctx = SymbolCtx()

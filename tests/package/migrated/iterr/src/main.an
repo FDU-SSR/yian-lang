@@ -1,5 +1,5 @@
 // Importing a non-pub typedef must fail.
-// Expected compilation error: Symbol 'Secret' is not found in the imported unit
+// Expected compilation error: Symbol 'Secret' exists in the imported unit but is not declared 'pub'
 
 from tderrtest.secret import Secret
 
