@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, UnfilledAliasError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
@@ -535,6 +535,13 @@ class TypeCtx:
             ty = self[type_id]
             if isinstance(ty, Type.AliasType):
                 body = ty.custom_def.aliased_type
+                # -1 means the alias body has not been filled in yet.  That only
+                # happens while GlobalResolve is resolving aliases; it retries the
+                # alias once the ones it depends on are done.
+                if body == -1:
+                    raise UnfilledAliasError(
+                        f"Type alias '{self.get_name(type_id)}' has no resolved body"
+                    )
                 if ty.custom_def.generics:
                     substs = dict(zip(ty.custom_def.generics, ty.generic_args))
                     body = self.instantiate(body, substs)
