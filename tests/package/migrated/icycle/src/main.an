@@ -1,12 +1,11 @@
 // Test circular import cycle handling
 //
+// ``a`` and ``b`` import from each other; the entry only imports ``a``,
+// because an entry module can never be imported (AX014).
+//
 // Expected output: 0
 
 from cyctest.a import Value, lib_unwrap_value;
-
-pub fn unwrap_value<T>(v: Value<T>) -> T {
-    return v.value;
-}
 
 fn main() {
     let v: Value<i32> = Value(42);

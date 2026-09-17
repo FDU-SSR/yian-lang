@@ -5,10 +5,12 @@ This is the first pass of the analysis phase.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.package_map import PackageMap
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -22,7 +24,7 @@ if TYPE_CHECKING:
 
 class GlobalResolve:
     def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx,
-                 pkg_roots: dict[str, Path] | None = None,
+                 packages: PackageMap | None = None,
                  stdlib_root: Path | None = None) -> None:
         self.__units = units
         self.__type_ctx = type_ctx
@@ -31,8 +33,8 @@ class GlobalResolve:
         self.__std_lookup: dict[tuple[str, ...], UnitData] = {}
         self.__stdlib_root = (stdlib_root or default_stdlib_root()).resolve()
 
-        self.__pkg_roots = pkg_roots or {}
-        self.__strict_pkg = len(self.__pkg_roots) > 0
+        self.__packages = packages
+        self.__strict_pkg = packages is not None
 
         self.__build_std_lookup()
 
@@ -193,9 +195,6 @@ class GlobalResolve:
             paths = [part.name for part in item.paths]
             target_unit = self.__resolve_import_path(unit, paths, item.span)
 
-            if target_unit is None:
-                raise AnalysisError(f"Cannot resolve import path: {'.'.join(paths)}", item.span)
-
             target_symbol = target_unit.symbol_ctx.lookup_exportable(item.target.name)
             if target_symbol is None:
                 if target_unit.symbol_ctx.lookup_global(item.target.name) is not None:
@@ -210,31 +209,103 @@ class GlobalResolve:
             imported_name = item.alias.name if item.alias is not None else item.target.name
             unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id)
 
-    def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData | None:
-        """Resolve an import path to a UnitData.
+    def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
+        """Resolve an import path to a UnitData, or raise with a diagnostic.
 
-        - Package mode (--packages): first segment must be a known package name.
-        - Standalone mode: uses stdlib lookup + relative path fallback.
+        - Package mode (``--packages``): the first segment must name a package
+          visible to the importer, and the remaining segments must resolve to an
+          existing ``.an`` file that is not a package entry (docs §5.1).
+        - Standalone mode: stdlib lookup plus relative resolution against the
+          importing file's directory.
         """
         if len(paths) == 0:
-            return None
+            raise AnalysisError("Cannot resolve import path: <empty>", span)
 
-        root = self.__pkg_roots.get(paths[0])
-        if root is not None:
-            target_path = root.joinpath(*paths[1:]).with_suffix(".an")
-            return self.__path_lookup.get(target_path.resolve())
+        if self.__packages is not None:
+            return self.__resolve_package_import(unit, paths, span)
 
-        if self.__strict_pkg:
+        if paths[0] == "std":
+            target = self.__std_lookup.get(tuple(paths))
+            if target is None:
+                raise AnalysisError(f"Cannot resolve import path: {'.'.join(paths)}", span)
+            return target
+
+        target_path = unit.path.parent.joinpath(*paths).with_suffix(".an")
+        target = self.__path_lookup.get(target_path.resolve())
+        if target is None:
+            raise AnalysisError(f"Cannot resolve import path: {'.'.join(paths)}", span)
+        return target
+
+    def __resolve_package_import(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
+        """Package-mode import resolution and its AX009/AX010/AX012/AX014 diagnostics."""
+        packages = self.__packages
+        assert packages is not None
+
+        first = paths[0]
+        spec = packages.packages.get(first)
+        if spec is None:
             raise AnalysisError(
-                f"Unknown package '{paths[0]}' in import 'from {'.'.join(paths)} import ...'",
+                f"error[AX012]: unknown package '{first}' in import 'from {'.'.join(paths)} import ...'",
                 span,
             )
 
-        if paths[0] == "std":
-            return self.__std_lookup.get(tuple(paths))
+        importer = packages.package_of(unit.path)
+        if first not in packages.visible_from(importer):
+            where = importer if importer is not None else "a file outside every package"
+            raise AnalysisError(
+                f"error[AX009]: package '{first}' is not a dependency of {where}; "
+                f"declare it in that package's [dependencies]",
+                span,
+            )
 
-        target_path = unit.path.parent.joinpath(*paths).with_suffix(".an")
-        return self.__path_lookup.get(target_path.resolve())
+        # A directory is not a module: the path must end in a .an file.
+        if len(paths) == 1:
+            raise AnalysisError(
+                f"error[AX010]: 'from {first} import ...' names a package, not a module; "
+                f"write 'from {first}.<module> import ...'",
+                span,
+            )
+
+        target_path = spec.source_root.joinpath(*paths[1:]).with_suffix(".an")
+        target = self.__path_lookup.get(target_path.resolve())
+        if target is None:
+            raise AnalysisError(
+                f"error[AX010]: import 'from {'.'.join(paths)} import ...' does not "
+                f"resolve to a .an file under {spec.source_root}",
+                span,
+            )
+
+        if target.path.resolve() in packages.entry_paths():
+            raise AnalysisError(
+                f"error[AX014]: '{'.'.join(paths)}' is the entry module of package "
+                f"'{first}' and cannot be imported",
+                span,
+            )
+        self.__warn_if_shadowed_directory(importer, first, span)
+        return target
+
+    def __warn_if_shadowed_directory(self, importer: str | None, first: str, span: SrcSpan) -> None:
+        """G13: the package-name segment always wins over a same-named directory.
+
+        ``from dup.foo import x`` resolves to package ``dup``, so a local
+        ``src/dup/foo.an`` can never be imported. That is a consequence of the
+        rule rather than a defect, so it is reported as a warning, not an error.
+        """
+        packages = self.__packages
+        if packages is None or importer is None or importer == first:
+            return
+        spec = packages.packages.get(importer)
+        if spec is None:
+            return
+        shadowed = spec.source_root / first
+        if not shadowed.is_dir():
+            return
+        print(
+            f"warning: '{first}' resolves to package '{first}', so {shadowed} of "
+            f"package '{importer}' is not importable; rename the directory or the "
+            f"dependency ({span.path}:{span.start.row + 1})",
+            file=sys.stderr,
+        )
 
     def __resolve_definitions(self, unit: UnitData) -> None:
         """Resolves all definitions in the unit and updates the symbol context and type context with the resolved types."""

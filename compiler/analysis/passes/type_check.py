@@ -5,6 +5,7 @@ from __future__ import annotations
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
+from compiler.analysis.package_map import PackageMap
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -21,10 +22,11 @@ def ch_tc():
 
 
 class TypeCheck:
-    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, check_all: bool = False,
-                 check_all_stdlib: bool = False):
+    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, packages: PackageMap | None = None,
+                 check_all: bool = False, check_all_stdlib: bool = False):
         self.__units = units
         self.__type_ctx = type_ctx
+        self.__packages = packages
 
         self.__worklist: list[DefPoint] = []
         self.__def_points: dict[int, DefPoint] = {}  # type_id -> DefPoint
@@ -116,32 +118,79 @@ class TypeCheck:
         return {type_id: dp for type_id, dp in self.__def_points.items() if type_id in self.__generated}
 
     def __find_main(self) -> None:
+        """Locate the program entry and register it as the first definition.
+
+        With a ``--packages`` root package the entry is exactly
+        ``packages[root].entry`` (docs §6.1): a dependency may define its own
+        ``main`` without colliding with the program (G22). Without one, the
+        entry is the single ``main`` of the non-stdlib units.
+        """
+        if self.__packages is not None and self.__packages.root is not None:
+            self.__find_package_main()
+            return
+
+        candidates: list[tuple[UnitData, AST.FuncDef]] = []
         for unit in self.__units.values():
-            for item in unit.items():
-                if isinstance(item, AST.FuncDef) and item.name.name == "main":
-                    if item.generics:
-                        raise AnalysisError("The 'main' function cannot have generics", item.span)
-                    if self.__worklist:
-                        raise AnalysisError("Multiple 'main' functions found", item.span)
-                    symbol = unit.symbol_ctx.lookup("main")
-                    assert symbol is not None
-
-                    main_ty = self.__type_ctx[symbol.type_id]
-                    assert isinstance(main_ty, Type.FunctionType)
-                    ret_ty = main_ty.return_type(self.__type_ctx)
-                    if ret_ty != self.__type_ctx.void_id:
-                        raise AnalysisError(
-                            f"main must return void, not {self.__type_ctx.get_name(ret_ty)}; "
-                            "use std.core.env.exit(code) for non-zero exit",
-                            item.span,
-                        )
-
-                    main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx)
-                    self.__worklist.append(main_def_point)
-                    self.__def_points[symbol.type_id] = main_def_point
-                    self.__generated.add(symbol.type_id)
-        if not self.__worklist:
+            if unit.is_stdlib:
+                continue
+            item = self.__main_def(unit)
+            if item is not None:
+                candidates.append((unit, item))
+        for _unit, item in candidates:
+            if item.generics:
+                raise AnalysisError("The 'main' function cannot have generics", item.span)
+        if not candidates:
             raise CompilerError("No 'main' function found")
+        if len(candidates) > 1:
+            raise AnalysisError("Multiple 'main' functions found", candidates[1][1].span)
+        self.__register_main(candidates[0][0], candidates[0][1])
+
+    def __find_package_main(self) -> None:
+        assert self.__packages is not None
+        root = self.__packages.root
+        assert root is not None
+        spec = self.__packages.packages.get(root)
+        if spec is None:
+            raise CompilerError(f"the --packages file has no entry for root package '{root}'")
+        if spec.entry is None:
+            raise CompilerError(f"Package '{root}' has no program entry (kind '{spec.kind}')")
+
+        entry = spec.entry.resolve()
+        unit = next((u for u in self.__units.values() if u.path.resolve() == entry), None)
+        if unit is None:
+            raise CompilerError(f"Program entry {entry} was not passed to the compiler")
+        item = self.__main_def(unit)
+        if item is None:
+            raise CompilerError(f"No 'main' function found in the program entry {entry}")
+        self.__register_main(unit, item)
+
+    @staticmethod
+    def __main_def(unit: UnitData) -> AST.FuncDef | None:
+        for item in unit.items():
+            if isinstance(item, AST.FuncDef) and item.name.name == "main":
+                return item
+        return None
+
+    def __register_main(self, unit: UnitData, item: AST.FuncDef) -> None:
+        if item.generics:
+            raise AnalysisError("The 'main' function cannot have generics", item.span)
+        symbol = unit.symbol_ctx.lookup("main")
+        assert symbol is not None
+
+        main_ty = self.__type_ctx[symbol.type_id]
+        assert isinstance(main_ty, Type.FunctionType)
+        ret_ty = main_ty.return_type(self.__type_ctx)
+        if ret_ty != self.__type_ctx.void_id:
+            raise AnalysisError(
+                f"main must return void, not {self.__type_ctx.get_name(ret_ty)}; "
+                "use std.core.env.exit(code) for non-zero exit",
+                item.span,
+            )
+
+        main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx)
+        self.__worklist.append(main_def_point)
+        self.__def_points[symbol.type_id] = main_def_point
+        self.__generated.add(symbol.type_id)
 
     def __type_check_def(self, def_point: DefPoint) -> None:
         self.__current_type_id = def_point.type_id

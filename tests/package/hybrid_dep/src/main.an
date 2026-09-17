@@ -1,0 +1,5 @@
+from tool.helper import double;
+
+fn main() {
+    assert double(21) == 42: "the dependency's helper must be used";
+}

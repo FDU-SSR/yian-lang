@@ -40,12 +40,15 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 
 | 文件 | 职责 | 规模 |
 | --- | --- | --- |
-| `anx/main.py` | CLI 分发、`new/build/run/check/test`、生成 `build/pkg.json`、调用编译器入口 | 138 行 |
-| `anx/manifest.py` | 读取 `package.anx`，产出 `Manifest` / `Dependency` | 34 行 |
-| `anx/resolver.py` | 递归遍历路径依赖、环检测、产出 `(all_files, pkg_roots)` | 67 行 |
-| `anx/scaffold.py` | `new` / `new --lib` 模板 | 37 行 |
-| （测试体系） | package 模式的 19 个 fixture 在 `tests/package/`，由 `scripts/run_tests.py --suite package` 驱动（A0.5 已完成） | — |
+| `anx/main.py` | CLI 分发、`new/build/run/check/test`、生成 v2 `build/pkg.json`、调用编译器入口 | 183 行 |
+| `anx/project.py` | 项目模型：`load()`、包/文件索引、`resolve_import()`、v2 契约生成（A0 起） | 560 行 |
+| `anx/manifest.py` | 校验并读取 `package.anx`，产出 `Manifest` / `DependencySpec`（A1 重写） | 176 行 |
+| `anx/diagnostics.py` | `Diagnostic` 与 `AX001`–`AX015` 目录、稳定排序与渲染（A1 新增） | 68 行 |
+| `anx/scaffold.py` | `new --kind bin|lib|hybrid` 模板 | 41 行 |
+| （测试体系） | package 模式的 fixture 在 `tests/package/`，由 `scripts/run_tests.py --suite package` 驱动（A0.5 已完成） | — |
 | `pyproject.toml` | 打包元数据与 `yianc` / `anx` 两个 console scripts | — |
+
+> `anx/resolver.py` 在 A0 曾作为 `resolve()` 的兼容包装保留，A2 完成 v2 契约后已删除（`Project` 直接提供 `files` / `packages` / `compiler_package_map()`）。
 
 ### 2.2 已有能力
 
@@ -60,29 +63,29 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 
 | 编号 | 缺口 | 证据 |
 | --- | --- | --- |
-| G1 | `resolve()` 只返回扁平文件列表和根映射，没有包归属、导入图和依赖边，编辑器无法增量失效 | `resolver.py:34` 返回 `tuple[list[Path], dict[str, Path]]` |
-| G2 | 缺少清单校验：依赖路径不存在时泄漏 Python 异常文本 | `errors/missing_dep/expected.stderr` 为 `No such file or directory` |
-| G3 | **依赖键**与依赖包清单 `name` 可以不一致；实现以依赖键作为导入名和图节点名 | `errors/cycle`：依赖键 `lib` → `../lib`，而该包清单 `name = "libb"`；该 fixture 源码无 `import`，此行为无覆盖。§3.5 规定依赖键必须等于被依赖包的规范名 |
-| G4 | 单段包导入解析错误：`from pkg import x` 会去找 `src.an` | `Path('src').joinpath().with_suffix('.an') == 'src.an'`。§5.1 规定导入必须解析到 `.an` 源文件 |
-| G5 | 同名包冲突静默保留先到者 | `resolver.py:40` `if name in adj: return` |
-| G6 | 传递依赖全局可见：未声明的包也能按名字导入 | `deps/deep`：`app` 只声明 `libb`，`libb` 声明 `libc`，二者根都进 `pkg_roots`。§4.3 收紧为仅直接声明的依赖 |
-| G7 | 可见性错误与「符号不存在」混为一谈 | 编译器 `global_resolve.py:201` 对非 `pub` 符号报 `is not found` |
+| G1 | `resolve()` 只返回扁平文件列表和根映射，没有包归属、导入图和依赖边，编辑器无法增量失效 | `resolver.py:34` 返回 `tuple[list[Path], dict[str, Path]]`。**A0 已完成**：`anx/project.py` 的 `Project` 提供包归属、依赖边与只读映射 |
+| G2 | 缺少清单校验：依赖路径不存在时泄漏 Python 异常文本 | `errors/missing_dep/expected.stderr` 为 `No such file or directory`。**A1 已完成**：报 `error[AX003]` |
+| G3 | **依赖键**与依赖包清单 `name` 可以不一致；实现以依赖键作为导入名和图节点名 | `errors/cycle`：依赖键 `lib` → `../lib`，而该包清单 `name = "libb"`；该 fixture 源码无 `import`，此行为无覆盖。§3.5 规定依赖键必须等于被依赖包的规范名。**A1 已完成**：不匹配报 `AX005`，实现只按规范名建图 |
+| G4 | 单段包导入解析错误：`from pkg import x` 会去找 `src.an` | `Path('src').joinpath().with_suffix('.an') == 'src.an'`。§5.1 规定导入必须解析到 `.an` 源文件。**A2 已完成**：Package 模式报 `AX010` |
+| G5 | 同名包冲突静默保留先到者 | `resolver.py:40` `if name in adj: return`。**A1 已完成**：路径不同报 `AX007` |
+| G6 | 传递依赖全局可见：未声明的包也能按名字导入 | `deps/deep`：`app` 只声明 `libb`，`libb` 声明 `libc`，二者根都进 `pkg_roots`。§4.3 收紧为仅直接声明的依赖。**A2 已完成**：编译器按 v2 依赖边校验，未声明报 `AX009`（`errors/undeclared_dep`） |
+| G7 | 可见性错误与「符号不存在」混为一谈 | 编译器 `global_resolve.py:201` 对非 `pub` 符号报 `is not found`。**A1 已完成**：区分「未公开」与「不存在」 |
 | G8 | `build/run/check` 无法传递编译选项（`-O`、`--raw-pointers`）、程序参数和标准输入；程序退出码不传播 | `main.py:50-75` 硬编码参数，`run` 使用 `check=True` |
 | G9 | `anx test` 运行的是 anx 自身的集成套件，而不是用户项目的测试 | `main.py:73-75` |
 | G10 | anx 只能在仓库检出内工作：`_YIAN_ROOT` 由文件位置推导，无安装入口和编译器定位配置 | `main.py:14-15` |
 | G11 | `build/pkg.json` 每次构建无条件重写，无版本标记 | `main.py:32-34` |
 | G12 | 诊断只有 `stderr` 文本，没有结构化结果，编辑器无法直接消费 | `main.py:29` |
-| G13 | Package 模式第一段只查包名、无相对回退；本包内目录与某个依赖包同名时，**依赖包无条件遮蔽本包模块**且无任何诊断 | 实测：本包 `src/dup/foo.an` 与依赖 `dup` 各有 `which()`，`from dup.foo` 取到依赖的值；断言本包值时运行期失败。§5.1 需固定该情形 |
-| G14 | 依赖键与根包名相同时，该依赖被丢弃并报**误导性**的循环诊断 | `app` 的依赖键写作 `app` → `error: Circular dependency: app → app`（`resolver.py:40` 的 `if name in adj: return`） |
-| G15 | 编译器不计算「导入方属于哪个包」 | `__resolve_import_path` 的 Package 分支不使用 `unit`，只用 `paths[0]` 查表；§4.3 的可见性校验缺少这一前置 |
-| G16 | Standalone 模式按**导入方文件目录**解析、无 `..`；且编译器从不按 `import` 加载文件，只在本次命令行传入的 unit 里查 | `src/main.an` 的 `from utils.strings` → `src/utils/strings.an`；同一行写在 `src/sub/deep.an` 则去找 `src/sub/utils/strings.an`；目标文件存在但未传入仍报 `Cannot resolve import path` |
+| G13 | Package 模式第一段只查包名、无相对回退；本包内目录与某个依赖包同名时，**依赖包无条件遮蔽本包模块**且无任何诊断 | 实测：本包 `src/dup/foo.an` 与依赖 `dup` 各有 `which()`，`from dup.foo` 取到依赖的值；断言本包值时运行期失败。§5.1 需固定该情形。**A2 已完成**：语义由 `self_shadow_dir` 固定，编译器额外给出 `warning:` 提示 |
+| G14 | 依赖键与根包名相同时，该依赖被丢弃并报**误导性**的循环诊断 | `app` 的依赖键写作 `app` → `error: Circular dependency: app → app`（`resolver.py:40` 的 `if name in adj: return`）。**A1 已完成**：报 `AX007`（`errors/duplicate_name`） |
+| G15 | 编译器不计算「导入方属于哪个包」 | `__resolve_import_path` 的 Package 分支不使用 `unit`，只用 `paths[0]` 查表；§4.3 的可见性校验缺少这一前置。**A2 已完成**：按 `sourceRoot` 最长前缀归属 |
+| G16 | Standalone 模式按**导入方文件目录**解析、无 `..`；且编译器从不按 `import` 加载文件，只在本次命令行传入的 unit 里查 | `src/main.an` 的 `from utils.strings` → `src/utils/strings.an`；同一行写在 `src/sub/deep.an` 则去找 `src/sub/utils/strings.an`；目标文件存在但未传入仍报 `Cannot resolve import path`。**A2 已完成**：差异写进 §5.2，且未改变 Standalone 行为 |
 | G17 | `yianc` 的位置参数是 `nargs='+'`，选项夹在路径之间即解析失败 | `yianc lib a.an -t none` → `unrecognized arguments: a.an`；必须「选项在前、路径连续放在最后」 |
 | G18 | **库包无法被分析**：编译器无条件要求 `main`，`anx check` 一个 `new --lib` 出来的包直接失败；清单里也没有任何字段表明包类型 | 实测 `anx new --lib mylib && anx check mylib` → `error: No 'main' function found`（`type_check.py:__find_main`）；`anx build` 也总是产出可执行文件 |
-| G19 | 路径依赖可以位于另一个包的 `src/` 之下，父包的 `rglob("*.an")` 会重复收集子包源码，破坏「文件唯一归属」 | §3.6 的断言只在源码根互不嵌套时成立；`resolver.py` 递归扫描时没有排除已知的嵌套包根 |
+| G19 | 路径依赖可以位于另一个包的 `src/` 之下，父包的 `rglob("*.an")` 会重复收集子包源码，破坏「文件唯一归属」 | §3.6 的断言只在源码根互不嵌套时成立；`resolver.py` 递归扫描时没有排除已知的嵌套包根。**A1 已完成**：按最长源码根归属并报 `AX013` |
 | G20 | **测试体系三套并存**：`tests/` 只覆盖 standalone 模式（`scripts/run_tests.py` + `run_safety_tests.py`），package 模式的 19 个用例在 `anx/tests/`，由另一套 runner 和另一套期望文件约定驱动 | `anx/tests/*/{package.anx,expected.stdout,expected.stderr}` 与 `tests/output/**/*.ans` 是两套约定；`tests/` 下没有任何 package 模式覆盖。**A0.5 已完成**：并入 `tests/package/`，统一由 `scripts/run_tests.py` 驱动 |
 | G21 | **不可达定义完全不被检查**：类型检查的唯一根是 `main`，因此从未被调用的函数/方法（bin 里也一样）不会报错；库包更是直接失败 | 实测：`fn bad() { let x: i32 = "hello"; }` 且 `main` 不调用它 → `yianc -t none` 通过，被调用才报错；未实例化的泛型体同样不检查，用 `bool` 实例化 `add<T>(a,b){a+b}` 才在 `+` 处报错（§2.5、A3） |
-| G22 | **程序入口被当成「全局唯一」**：`__find_main` 扫描所有 unit 找唯一 `main`，所以依赖包里只要也有 `main` 就冲突 | 实测：`app`(bin) 依赖 `tool`(bin，自带 `main`) → `error: Multiple 'main' functions found`。修法：程序入口取 `packages[root].entry`，并以 `kind` 拒绝 bin 作依赖（§3.2、§6.1、A3） |
-| G23 | **放宽检查根所需的机制缺失**：① `TypeCtx` 只有 `add_procedure` / `get_procedure`，没有枚举接口；② `DefPoint` 没有「已生成」标记，而 `def_points` 现在**隐式**等于 main 可达集；③ LLVM 层按**函数名** `main` → `__yian_main` 识别程序入口 | `context.py:104/556/567`；`main.py:413` `def_points = type_checker.export()` → `__cfg(def_points)` → LLVM 全量消费；`llvm/module.py:137`。这三处不补，A3 无法安全落地（S1、A2、A3） |
+| G22 | **程序入口被当成「全局唯一」**：`__find_main` 扫描所有 unit 找唯一 `main`，所以依赖包里只要也有 `main` 就冲突 | 实测：`app`(bin) 依赖 `tool`(bin，自带 `main`) → `error: Multiple 'main' functions found`。修法：程序入口取 `packages[root].entry`，并以 `kind` 拒绝 bin 作依赖（§3.2、§6.1）。**A1/A2 已完成**：`AX015` + `packages[root].entry`（`hybrid_dep`） |
+| G23 | **放宽检查根所需的机制缺失**：① `TypeCtx` 只有 `add_procedure` / `get_procedure`，没有枚举接口；② `DefPoint` 没有「已生成」标记，而 `def_points` 现在**隐式**等于 main 可达集；③ LLVM 层按**函数名** `main` → `__yian_main` 识别程序入口 | `context.py:104/556/567`；`main.py:413` `def_points = type_checker.export()` → `__cfg(def_points)` → LLVM 全量消费；`llvm/module.py:137`。这三处不补，A3 无法安全落地（S1、A2、A3）。**S1 已完成** ① ②（`iter_procedures`、`__generated` 集合）；③ 的入口识别留给 A3 |
 
 ### 2.4 与编译器的现有契约
 
@@ -191,7 +194,8 @@ package fixture 的 `build/`），
   模块 `std.core.io` → `lib/src/core/io.an`。此前 `pkg_roots["std"]` 曾直接指向 `lib`（源码根 = 包根），
   编译器为此在 `compiler/main.py:__build_unit_names` 里用「路径中出现 `lib` 段」生成 LLVM 单元名；
   该 hack 对任何含 `lib` 段的用户路径同样生效，且不同路径可能算出同名（实测
-  `/a/lib/foo/x.an` 与 `/b/lib/foo/x.an` 都得到 `foo_x`）。源码根统一后它成为遗留清理项（§10-A2）。
+  `/a/lib/foo/x.an` 与 `/b/lib/foo/x.an` 都得到 `foo_x`）。**A2 已清理**：`__build_unit_names`
+  改为按「文件 → 包归属」生成 `<包名>_<模块路径>`，包外的文件退回文件 stem。
 - 模块路径由文件相对 `src/` 的路径决定：`src/utils/math.an` → 模块 `utils.math`。
 - **入口默认是 `src/main.an`，但可以在清单里覆盖**（`entry`，§3.2）。`kind = "bin"` 与
   `"hybrid"` 的包必须有入口、且入口中定义唯一的 `main` 函数；`kind = "lib"` 的包不得有入口。
@@ -528,6 +532,23 @@ name = "mathlib"                # 这是清单 name
 - Standalone 与 Package 的语义差异必须写进对照 fixture 的前提：Standalone 按导入方目录
   解析且**不会自动加载文件**（§2.4），Package 只认包名（G16）。
 - 二者的差异必须由一处共享规则或一组对照 fixture 固定，不能靠分别维护。
+
+**A2 落地后的对照表**（同一份源码在两种模式下的差别）：
+
+| | Standalone（无 `--packages`） | Package（有 `--packages`） |
+| --- | --- | --- |
+| 第一段 | 先查 `std` 查找表，否则相对导入方目录 | 必须是 `packages` 中的包名 |
+| 可见性 | 无（能查到就能用） | `{自身} ∪ 直接依赖 ∪ {std}`，否则 `AX009` |
+| 目标 | `source_root / 各段 .an`，**必须已出现在命令行里** | `packages[p0].sourceRoot / 其余段 .an`，必须存在于索引中 |
+| 单段导入 | 报 `Cannot resolve import path: <path>` | 报 `error[AX010]`（目录不是模块） |
+| 未解析到文件 | 报 `Cannot resolve import path: <path>` | 报 `error[AX010]` |
+| 未知包名 | 不适用（没有包名概念） | `error[AX012]` |
+| 未声明依赖 | 不适用 | `error[AX009]` |
+| 入口模块 | 不适用（没有 `entry` 概念） | `error[AX014]` |
+
+Standalone 的报错文本保持原样：它是没有项目上下文的低层模式，`AXnnn` 目录只覆盖 Package 模式。
+两者共享的是**匹配规则**（第一段是包名、其余段必须解析到 `.an` 文件），由 `Project.resolve_import`
+与 `GlobalResolve.__resolve_package_import` 各实现一份并互相固定。
 
 ### 5.3 导入图与 `resolve_import`
 
@@ -1090,6 +1111,8 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 ### A2 导入范围、文件索引与 `--packages` v2
 
+**状态：已完成**。
+
 - 编译器按 `roots` 最长前缀计算**导入方所属的包**，并实现可见性规则
   （只允许自身、直接声明的依赖、`std`）与「入口不可导入」；`AX009/AX010/AX012/AX014`
   由编译器产出（G15、§7.4）。
@@ -1112,6 +1135,43 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
   嵌套源码根不产生重复的文件归属；「本包目录与依赖同名」（G13）给出明确提示；
   「依赖键 == 根包名」（G14）报 `AX007` 而非循环依赖；`docs/compile_script.md`
   的示例与实际输出一致。
+
+**实现结果**：
+
+- 新增 `compiler/analysis/package_map.py`：解析并校验 v2（`format` / `root` / `packages`），
+  提供 `package_of()`（最长 `sourceRoot` 前缀）、`visible_from()`（自身 ∪ 直接依赖 ∪ `std`）、
+  `entry_paths()`；`format` 不是 `2`、缺 `std`、`root` 不在表中等情况直接报错，不回退猜测。
+- `GlobalResolve.__resolve_package_import()`：按 §5.1 的顺序产出 `AX012` → `AX009` →
+  `AX010`（含 `n == 0` 的目录导入）→ `AX014`；Standalone 分支一字未改（报错文本仍是
+  `Cannot resolve import path`），对照表见 §5.2。
+- `TypeCheck.__find_main()`：Package 模式下入口恰为 `packages[root].entry`，依赖包的 `main`
+  不再参与（G22）；`root` 缺省时退回「非标准库 unit 中唯一的 `main`」，并保留原有的
+  「泛型 `main`」「多个 `main`」「返回值必须为 void」检查。根包 `kind = "lib"` 时明确报
+  「没有程序入口」（库根分析在 A3）。
+- `Project.resolve_import()` 以纯函数形式实现同一套规则，返回 `ImportResolution` 的四种失败。
+- `Project.compiler_package_map()` 生成 v2，`anx/main.py` 直接落盘；A0 的兼容包装
+  `anx/resolver.py` 随之删除。
+- `__build_unit_names()` 不再按路径段 `lib` 猜名字：单元名 = `<包名>_<模块路径>`，包外的
+  文件退回文件 stem（G23 ③ 的入口识别仍留给 A3）。
+- G13 提示由编译器在 `stderr` 输出 `warning:`；同时把 `anx` 的成功路径也改为转发编译器
+  两个流，否则提示会被吞掉（§8.3 记录的同一问题）。
+- §5.2 补上两种模式的对照表。
+
+**迁移清单（2 处）**：
+
+| 位置 | 现象 | 处理 |
+| --- | --- | --- |
+| `migrated/icycle` | 该 fixture 让入口 `main.an` 参与循环导入（`a.an` 反过来导入 `cyctest.main`），A2 后入口不可导入 → `AX014` | 把环移到两个库模块之间（`a.an` ↔ `b.an`），入口只导入 `a`；用例意图（循环导入 + 泛型结构体）不变 |
+| `errors/unknown_pkg` | 预期文本是 v1 的 `Unknown package '...'` | 改为 `error[AX012]` |
+
+**新增 fixture（6 个）**：`errors/undeclared_dep`（`AX009`）、`errors/import_not_module`
+（`AX010`，`n == 0`）、`errors/import_missing_module`（`AX010`）、`errors/import_entry_module`
+（`AX014`）、`hybrid_dep`（hybrid 作依赖 + 依赖自带 `main`，G22）、`self_shadow_dir`（G13 语义，
+运行期断言依赖包胜出）。
+
+**验收**：`basic` 722 + `safety` 156 + `package` 37 全绿；`docs/compile_script.md` 2.6 与
+实际输出一致；`hybrid_dep` 证明依赖包的 `main` 不再冲突；`self_shadow_dir` 证明包名段胜出
+并打印提示。
 
 ### A3 构建/运行/检查流程
 

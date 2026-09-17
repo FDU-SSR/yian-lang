@@ -13,6 +13,7 @@ single pass yields every independently discoverable error
 from __future__ import annotations
 
 from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import replace
 from enum import Enum
@@ -130,6 +131,63 @@ class Project:
         if found is None:
             return None
         return self.packages.get(found.package)
+
+    def resolve_import(self, importer: Path, paths: Sequence[str]) -> ImportResolution:
+        """Resolve an import the way the compiler's package mode does (docs §5.1).
+
+        A pure function: no I/O, no source parsing.  The editor passes the path
+        segments it already read and maps the returned failure onto the matching
+        diagnostic; the compiler implements the same rules over ``--packages``.
+        """
+        if not paths:
+            return ImportResolution(None, ImportFailure.NOT_A_MODULE)
+
+        first = paths[0]
+        target_package = self.packages.get(first)
+        if target_package is None:
+            return ImportResolution(None, ImportFailure.UNKNOWN_PACKAGE)
+
+        importer_file = self.files.get(importer)
+        if importer_file is not None:
+            visible = {
+                importer_file.package,
+                *self.dependencies.get(importer_file.package, ()),
+                self.std_package,
+            }
+            if first not in visible:
+                return ImportResolution(None, ImportFailure.NOT_VISIBLE)
+
+        # A directory is not a module: the path must end in an existing .an file.
+        if len(paths) == 1:
+            return ImportResolution(None, ImportFailure.NOT_A_MODULE)
+
+        candidate = target_package.source_root.joinpath(*paths[1:]).with_suffix(".an")
+        found = self.files.get(candidate)
+        if found is None:
+            return ImportResolution(None, ImportFailure.NOT_A_MODULE)
+
+        if found.path in self._entry_paths():
+            return ImportResolution(None, ImportFailure.ENTRY_MODULE)
+        return ImportResolution(found, None)
+
+    def _entry_paths(self) -> frozenset[Path]:
+        return frozenset(
+            package.entry for package in self.packages.values() if package.entry is not None
+        )
+
+    def compiler_package_map(self) -> dict[str, object]:
+        """Render the ``--packages`` v2 payload for this project (docs §6.1)."""
+        packages: dict[str, object] = {}
+        for name, package in self.packages.items():
+            spec: dict[str, object] = {
+                "sourceRoot": str(package.source_root),
+                "kind": package.kind.value,
+                "dependencies": [dependency.name for dependency in package.dependencies],
+            }
+            if package.entry is not None:
+                spec["entry"] = str(package.entry)
+            packages[name] = spec
+        return {"format": 2, "root": self.root_package, "packages": packages}
 
 
 @dataclass(frozen=True)

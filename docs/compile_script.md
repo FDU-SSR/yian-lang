@@ -81,18 +81,43 @@ python3 -m compiler.main --profile lib tests/array/assign.an
 python3 -m compiler.main --packages pkg.json files...
 ```
 
-接受一个 JSON 文件，包含包名→源文件根目录的映射：
+接受一个 **v2** 契约的 JSON 文件（由 `anx build` 生成）：
 
 ```json
 {
-  "myapp": "/path/to/myapp/src",
-  "stdlib": "/path/to/lib"
+  "format": 2,
+  "root": "app",
+  "packages": {
+    "app": {
+      "sourceRoot": "/path/to/app/src",
+      "kind": "bin",
+      "entry": "/path/to/app/src/main.an",
+      "dependencies": ["mathlib"]
+    },
+    "mathlib": {
+      "sourceRoot": "/path/to/lib/src",
+      "kind": "lib",
+      "dependencies": []
+    },
+    "std": {
+      "sourceRoot": "/path/to/yian/lib/src",
+      "kind": "lib",
+      "dependencies": []
+    }
+  }
 }
 ```
 
-启用 Package 模式：import 的第一段被作为包名解析。不传 `--packages` 时为 Standalone 模式，使用相对路径导入。
+- `format`：契约版本，当前只接受 `2`；其它取值直接报错，不回退猜测。旧的扁平映射（v1）不再被接受。
+- `root`：本次构建的根包规范名，程序入口取 `packages[root].entry`；省略时退回 Standalone 的入口查找（非标准库文件中唯一的 `main`）。
+- `packages`：包规范名 → 该包的全部信息。`sourceRoot` 是源码根；`kind` 取 `"bin"`/`"lib"`/`"hybrid"`；`entry` 只有 `"bin"`/`"hybrid"` 才有；`dependencies` 是**直接**依赖的规范名列表。`std` 必须存在。
+- 包 `P` 的可见集合 = `{P} ∪ packages[P].dependencies ∪ {"std"}`；导入第一段不在集合内报「未声明依赖」，完全不在 `packages` 中报「未知包」。
+- 导入方所属的包由「文件落在哪个 `sourceRoot` 之下」确定，命中多个时取最长前缀。
+- 导入路径必须解析到一个存在的 `.an` 文件（`from pkg import x` 中的 `pkg` 是目录，会报错），且任何包的 `entry` 都不可被导入。
 
-通常不直接使用，由 `anx build` 自动生成并传入。
+不传 `--packages` 时为 Standalone 模式：`std` 查标准库查找表，其余各段按导入方文件目录相对解析，导入的文件必须已经出现在本次命令行里。安全边界（prelude、受限操作）也由 v2 的 `std.sourceRoot` 判定，因此不会因为路径里出现 `lib` 就获得标准库权限。
+
+通常不直接使用，由 `anx build` / `anx check` 自动生成并传入。
 
 ## 3. 日志与调试输出
 

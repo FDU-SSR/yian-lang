@@ -82,12 +82,7 @@ def _do_build(
     build_dir = root.root / "build"
     pkg_json = build_dir / "pkg.json"
     pkg_json.parent.mkdir(parents=True, exist_ok=True)
-    pkg_json.write_text(
-        json.dumps(
-            {name: str(package.source_root) for name, package in project.packages.items()},
-            indent=2,
-        )
-    )
+    pkg_json.write_text(json.dumps(project.compiler_package_map(), indent=2))
 
     cmd = [
         *compiler_command(),
@@ -97,9 +92,11 @@ def _do_build(
     ]
     result = subprocess.run(cmd, cwd=str(_YIAN_ROOT), capture_output=True, text=True, check=False)
 
+    # Forward both streams whether or not the compiler succeeded, so warnings
+    # (for example the shadowed-directory hint) are not swallowed.
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
     if result.returncode != 0:
-        sys.stdout.write(result.stdout)
-        sys.stderr.write(result.stderr)
         sys.exit(result.returncode)
 
 

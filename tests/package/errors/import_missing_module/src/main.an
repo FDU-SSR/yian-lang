@@ -1,0 +1,3 @@
+from mylib.nope import helper;
+
+fn main() { return 0; }

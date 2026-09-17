@@ -3,7 +3,6 @@ from __future__ import annotations
 #! /usr/bin/env python3
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -17,6 +16,7 @@ from typing import NoReturn
 from llvmlite import ir
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.utils.log import CompilerLog
@@ -205,18 +205,31 @@ def __cfg(
     return translator.export()
 
 
-def __build_unit_names(unit_datas: dict[int, UnitData]) -> dict[int, str]:
-    """Build a mapping from unit_id to a unique name string for LLVM type mangling."""
+def __build_unit_names(unit_datas: dict[int, UnitData], packages: PackageMap | None) -> dict[int, str]:
+    """Build a mapping from unit_id to a unique name string for LLVM type mangling.
+
+    A unit inside a package is named ``<package>_<module path>``, which is
+    deterministic and collision-free across packages; files outside every
+    source root keep their file stem.
+    """
     names: dict[int, str] = {}
     for unit_id, unit_data in unit_datas.items():
-        stem = unit_data.path.stem
-        parts = unit_data.path.parts
-        if "lib" in parts:
-            idx = parts.index("lib")
-            stem = "_".join(parts[idx + 1:]) if idx + 1 < len(parts) else stem
-            stem = stem.replace(".an", "")
-        names[unit_id] = stem
+        names[unit_id] = __unit_name(unit_data, packages)
     return names
+
+
+def __unit_name(unit_data: UnitData, packages: PackageMap | None) -> str:
+    if packages is None:
+        return unit_data.path.stem
+    package = packages.package_of(unit_data.path)
+    if package is None:
+        return unit_data.path.stem
+    source_root = packages.packages[package].source_root
+    try:
+        relative = unit_data.path.resolve().relative_to(source_root)
+    except ValueError:
+        return unit_data.path.stem
+    return "_".join((package, *relative.parts[:-1], relative.stem))
 
 
 def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool) -> Callable[[int], int]:
@@ -364,8 +377,14 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     pkg_roots: dict[str, Path] = {}
+    packages: PackageMap | None = None
     if args.packages:
-        pkg_roots = {k: Path(v) for k, v in json.loads(args.packages.read_text()).items()}
+        try:
+            packages = PackageMap.parse(args.packages)
+        except CompilerError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        pkg_roots = packages.source_roots()
     source_trust = build_source_trust(pkg_roots.get("std"))
     for unit in unit_datas.values():
         unit.is_stdlib = source_trust.is_stdlib(unit.path)
@@ -386,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
 
     resolve_start = time.perf_counter() if args.profile else 0.0
-    global_resolver = GlobalResolve(unit_datas, type_ctx, pkg_roots, source_trust.stdlib_root)
+    global_resolver = GlobalResolve(unit_datas, type_ctx, packages, source_trust.stdlib_root)
     try:
         global_resolver.run()
     except AnalysisError as error:
@@ -408,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     # from `main` (`export_generated`).
     check_all = os.environ.get("YIAN_CHECK_ALL", "") not in ("", "0")
     check_all_stdlib = os.environ.get("YIAN_CHECK_ALL_STDLIB", "") not in ("", "0")
-    type_checker = TypeCheck(unit_datas, type_ctx, check_all=check_all, check_all_stdlib=check_all_stdlib)
+    type_checker = TypeCheck(unit_datas, type_ctx, packages, check_all=check_all, check_all_stdlib=check_all_stdlib)
     try:
         type_checker.run()
     except AnalysisError as error:
@@ -419,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
     def_points = type_checker.export_generated()
 
     # --- Compile-time conditional specialization ---
-    unit_names = __build_unit_names(unit_datas)
+    unit_names = __build_unit_names(unit_datas, packages)
     type_size = __type_size_provider(type_ctx, unit_names, args.raw_pointers)
     try:
         ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=args.raw_pointers, type_size=type_size).run()

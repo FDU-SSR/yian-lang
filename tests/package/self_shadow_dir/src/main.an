@@ -1,0 +1,5 @@
+from dup.foo import origin;
+
+fn main() {
+    assert origin() == 2: "the dependency wins over src/dup/foo.an";
+}
