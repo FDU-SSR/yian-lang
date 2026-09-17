@@ -570,21 +570,26 @@ context`，输出 Python traceback 并退出（直接 `yianc` 退出码 255；�
 - 根因：`GlobalResolve` 原先对每个 unit 依次执行"导入 → 定义"，而签名解析发生在这个单遍内并通过
   `resolve_type` 立即折叠别名链；此时后定义别名的 `AliasDef.aliased_type` 仍是哨兵值 `-1`。
   局部变量注解不受影响，因为它在更晚的 `TypeCheck` 阶段解析。
-- 修复（**惰性填充，不改解析顺序**）：`GlobalResolve` 在收集符号时把「别名 type id → AST 声明」
-  登记下来，并通过 `TypeCtx.set_alias_resolver` 把"按需填充一个别名体"的回调交给类型上下文；
-  `resolve_aliases` 第一次遇到仍未填充的别名（`aliased_type == -1`）时**当场要求填充**，而不是
-  报告失败。这样写 `typedef` 的位置（同一 unit 的前后、跨 unit）都不再影响结果，`run()` 的
-  "收集符号 → 绑定导入 → 解析定义" 三遍结构保持原样。`__resolve_definitions` 里仍然解析别名，
-  作为"没人引用的别名"的兜底；填充不了（循环、或名字没有定义）时由 `UnfilledAliasError` 报错，
-  而不是静默返回别名 id。
-- 明确不采用的做法：把别名留在已存类型里**不折叠**（即让每个类型消费者自己折叠）。实测过一次
-  折中版本——未填充时静默返回别名 id——结果是把未折叠的别名烘进泛型实参，`PointPair = Pair<Meters>`
-  这类签名会报出误导性的 `cannot infer generic arguments from 'f64' for 'Meters'`；而彻底不折叠
-  则要求布局、`@sizeof`、codegen、泛型推断比较等所有消费点都记得折叠，风险远大于收益。
+- 为什么 struct 没有这个问题（对照）：`alloc_struct` 当场铸造的是一个**可用的类型身份**，签名只需要
+  这个 id，字段是**内容**、在类型检查与布局阶段才被读取，而那时所有 unit 的定义都处理完了。别名
+  不一样：别名 id 的含义是"它别名到的那个类型"，所以任何需要类型身份的地方都需要它的**体**，而
+  `resolve_type` 恰好是签名解析时的第一个这样的消费者。
+- 修复（**让别名自己产出体，不改解析顺序**）：`AliasDef` 多一个 `resolve: Callable[[], int] | None`
+  字段，`GlobalResolve` 在收集符号时把它装成"解析这条别名声明"。`TypeCtx.resolve_aliases` 第一次
+  遇到 `aliased_type == -1` 时**当场调用它**，而不是报错。于是 `typedef` 写在同一 unit 的前面还是
+  后面、写在哪个 unit，都不再影响结果；`run()` 的"收集符号 → 绑定导入 → 解析定义"三遍结构保持原样，
+  `TypeCtx` 不新增任何公开 API。循环由 `GlobalResolve` 的一个 in-progress 集合打断，并报
+  `Circular type alias: <name>`——**带位置与插入符的正常源码诊断**（顺带把下面那条"遗留"消掉了）。
+- 明确不采用的做法：把别名留在已存类型里**不折叠**。实测过一次折中版本——未填充时静默返回别名 id
+  ——结果是把未折叠的别名烘进泛型实参，`PointPair = Pair<Meters>` 这类签名会报出误导性的
+  `cannot infer generic arguments from 'f64' for 'Meters'`。原因是泛型实参在被写入类型空间时会立即
+  折叠（`resolve_type` → `resolve_aliases`），而 `resolve_aliases` 只沿**顶层**别名链走、不会深入
+  实参内部；要彻底不折叠，就得让布局、`@sizeof`、codegen、类型比较等**所有**消费点都做一次深度
+  折叠，风险远大于收益。所以别名必须在**被存下来之前**变成具体类型，可自由选择的只是"什么时候拿到
+  它的体"。
 - 验证：14 个最小复现全部通过；`basic` / `safety` / `package` 三套件全绿。
-- 遗留：真正的**循环别名**（`typedef A = B; typedef B = A;`）目前以未捕获的 `UnfilledAliasError`
-  结束——不再挂起，但仍没有位置和 `E407` 码。P2 的"捕获并结构化"（§5.11 第一层）应当把它变成
-  一条正常诊断。
+- 循环别名现在报 `Circular type alias: <name>`，带声明位置（上表 `E407`）；未使用的循环别名不再
+  影响构建。
 
 **缺陷 2（已记录，未修，非别名相关）：泛型结构体的静态方法必须写显式类型实参。**
 `Pair.of(1, 2)` 报 `Unknown static method call 'of' on Pair<T>`；`Pair<i32>.of(1, 2)` 正常。

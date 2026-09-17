@@ -6,10 +6,11 @@ This is the first pass of the analysis phase.
 from __future__ import annotations
 
 import sys
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from compiler.analysis.error import AnalysisError, UnfilledAliasError
+from compiler.analysis.error import AnalysisError
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
@@ -36,15 +37,11 @@ class GlobalResolve:
         self.__packages = packages
         self.__strict_pkg = packages is not None
 
-        # Alias bodies are filled on demand: a signature may name an alias that
-        # is declared later, in the same unit or in another one, so resolving
-        # bodies in unit order is not enough.  The type context asks back here
-        # through this hook the first time it needs a body (see
-        # TypeCtx.set_alias_resolver); the registry below says which AST item
-        # belongs to which alias type id.
-        self.__alias_items: dict[int, tuple[UnitData, AST.Alias]] = {}
+        # Alias bodies are produced on demand: the alias carries a resolver (see
+        # AliasDef.resolve), so a declaration that is used before it is reached —
+        # later in the same unit, or in a unit that has not been walked yet — is
+        # simply resolved at that moment.  This set breaks cycles.
         self.__filling_aliases: set[int] = set()
-        type_ctx.set_alias_resolver(self.__fill_alias)
 
         self.__build_std_lookup()
 
@@ -91,8 +88,10 @@ class GlobalResolve:
                 case AST.Alias(name=name, attrs=attrs, span=span):
                     # alloc in type space
                     type_id = self.__type_ctx.alloc_alias(name.name, span)
-                    # Remember the AST item so the body can be filled on demand.
-                    self.__alias_items[type_id] = (unit, item)
+                    # Let the alias produce its own body when it is first needed.
+                    alias_ty = self.__type_ctx[type_id]
+                    assert isinstance(alias_ty, Type.AliasType)
+                    alias_ty.custom_def.resolve = partial(self.__resolve_alias, unit, item)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -324,12 +323,12 @@ class GlobalResolve:
         for item in unit.items():
             match item:
                 case AST.Alias():
-                    # Already filled if a signature needed it earlier; filling it
-                    # here covers aliases nothing refers to.  An alias that cannot
-                    # be filled (a cycle) stays empty and is reported where used.
+                    # Already produced if something needed it earlier; producing it
+                    # here covers aliases nothing refers to.  A cycle is reported
+                    # where the alias is used, not here.
                     try:
                         self.__resolve_alias(unit, item)
-                    except UnfilledAliasError:
+                    except AnalysisError:
                         pass
                 case AST.FuncDef():
                     self.__resolve_func_decl(unit, item)
@@ -345,42 +344,36 @@ class GlobalResolve:
                     # other items are ignored in this pass
                     pass
 
-    def __fill_alias(self, type_id: int) -> bool:
-        """Fill one alias body, called by the type context when it needs it.
+    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> int:
+        """Produce one alias body and return its type id.
 
-        Returns ``False`` when the alias cannot be filled — its body is already
-        being filled further up the call chain (a cycle), or it names something
-        that has no definition.
+        Called directly for the declarations of one unit, and through
+        ``AliasDef.resolve`` when something needs the alias earlier.  A body that
+        reaches its own alias again is a cycle: the alias is not a usable type, so
+        report it where the declaration sits.
         """
-        item = self.__alias_items.get(type_id)
-        if item is None or type_id in self.__filling_aliases:
-            return False
-        unit, alias = item
-        self.__filling_aliases.add(type_id)
-        try:
-            self.__resolve_alias(unit, alias)
-        except UnfilledAliasError:
-            return False
-        finally:
-            self.__filling_aliases.discard(type_id)
-        return True
-
-    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
         symbol = unit.symbol_ctx.lookup(alias.name.name)
         assert symbol is not None
         ty = self.__type_ctx[symbol.type_id]
         assert isinstance(ty, Type.AliasType)
 
-        # resolve generics and aliased type
-        self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
-
+        if ty.type_id in self.__filling_aliases:
+            raise AnalysisError(f"Circular type alias: {alias.name.name}", alias.span)
+        self.__filling_aliases.add(ty.type_id)
         try:
-            aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
-        finally:
-            unit.symbol_ctx.exit_scope()
+            # resolve generics and aliased type
+            self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
 
-        # update the alias symbol with the resolved type
-        ty.custom_def.aliased_type = aliased_type_id
+            try:
+                aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
+            finally:
+                unit.symbol_ctx.exit_scope()
+
+            # update the alias symbol with the resolved type
+            ty.custom_def.aliased_type = aliased_type_id
+        finally:
+            self.__filling_aliases.discard(ty.type_id)
+        return aliased_type_id
 
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup(func_def.name.name)

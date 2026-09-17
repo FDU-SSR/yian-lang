@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from compiler.analysis.error import AnalysisError, UnfilledAliasError
+from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
@@ -122,24 +121,6 @@ class TypeCtx:
         self.__memoize_enabled = False
         self.__method_lookup_cache: dict[tuple[object, ...], LookupResult | None | _AmbiguousMethod] = {}
         self.__deref_chain_cache: dict[int, tuple[int, ...]] = {}
-
-        # Installed by GlobalResolve: fills an alias body on demand, see
-        # set_alias_resolver.
-        self.__alias_resolver: Callable[[int], bool] | None = None
-
-    def set_alias_resolver(self, resolver: Callable[[int], bool]) -> None:
-        """Install the hook that fills an alias body the first time it is needed.
-
-        Only ``GlobalResolve`` can fill a body: it holds the AST target and the
-        symbol context of the unit that declares the alias.  Registering the hook
-        lets :meth:`resolve_aliases` fill a body on demand, so a signature that
-        names an alias declared later — in the same unit or another one — no
-        longer depends on declaration order.
-
-        The resolver returns ``False`` when the alias cannot be filled (its body
-        forms a cycle, or names something undefined); the caller then reports it.
-        """
-        self.__alias_resolver = resolver
 
     @property
     def raw_pointers(self) -> bool:
@@ -554,17 +535,18 @@ class TypeCtx:
             ty = self[type_id]
             if isinstance(ty, Type.AliasType):
                 body = ty.custom_def.aliased_type
-                # A body of -1 means the alias has not been filled in yet, which
+                # A body of -1 means the alias has not been produced yet, which
                 # happens while GlobalResolve is still walking the units: an alias
-                # may be named by a signature that comes earlier.  Ask for the
-                # body on demand instead of reporting it, so declaration order
-                # never matters.
+                # may be named by a declaration that comes earlier.  Ask the alias
+                # for its body instead of reporting it, so where the declaration
+                # sits — earlier or later, same unit or another one — is irrelevant.
                 if body == -1:
-                    if self.__alias_resolver is None or not self.__alias_resolver(type_id):
-                        raise UnfilledAliasError(
+                    resolve = ty.custom_def.resolve
+                    if resolve is None:
+                        raise CompilerError(
                             f"Type alias '{self.get_name(type_id)}' has no resolved body"
                         )
-                    body = ty.custom_def.aliased_type
+                    body = resolve()
                 if ty.custom_def.generics:
                     substs = dict(zip(ty.custom_def.generics, ty.generic_args))
                     body = self.instantiate(body, substs)
