@@ -1,0 +1,7 @@
+# Repo-side files that are not part of the packaged extension.
+.gitignore
+.vscodeignore
+src/
+tsconfig.json
+*.vsix
+**/*.map

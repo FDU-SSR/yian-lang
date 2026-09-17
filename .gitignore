@@ -355,3 +355,7 @@ target
 .omo/*
 a.out
 opencode.json
+
+# VS Code extension (ide-support/vscode)
+ide-support/vscode/node_modules/
+*.vsix

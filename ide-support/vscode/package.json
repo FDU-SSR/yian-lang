@@ -1,0 +1,57 @@
+{
+    "name": "yian-language-support",
+    "displayName": "YIAN Language Support",
+    "description": "YIAN language support: syntax highlighting, comment/bracket behaviour and language configuration",
+    "version": "0.1.0",
+    "publisher": "yian",
+    "license": "MIT OR Apache-2.0",
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:yian"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "yian",
+                "aliases": [
+                    "YIAN",
+                    "yian"
+                ],
+                "extensions": [
+                    ".an"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "yian",
+                "scopeName": "source.yian",
+                "path": "./syntaxes/yian.tmLanguage.json"
+            }
+        ],
+        "configurationDefaults": {
+            "[yian]": {
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true,
+                "editor.detectIndentation": false
+            }
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.3",
+        "@types/vscode": "^1.90.0",
+        "typescript": "^5.8.3"
+    }
+}
