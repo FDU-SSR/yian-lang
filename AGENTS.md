@@ -64,26 +64,30 @@ lex
 
 ## Tests and checks
 
-The main runner discovers YIAN tests, existing compiler-variant metadata, and Python/IR checks under `tests/unit`:
+Three suites live under `tests/` and share one runner:
 
 ```bash
-python3 scripts/run_tests.py
-python3 scripts/run_tests.py -q
-python3 scripts/run_tests.py -f call
-python3 scripts/run_tests.py -v
-python3 scripts/run_tests.py -x
-python3 scripts/run_tests.py --no-run
+python3 scripts/run_tests.py                  # basic suite (default)
+python3 scripts/run_tests.py --suite safety   # run a single suite
+python3 scripts/run_tests.py --all            # basic + safety + package
+python3 scripts/run_tests.py -q               # quiet: only the summary line
+python3 scripts/run_tests.py -f call          # only tests matching "call"
+python3 scripts/run_tests.py -v               # verbose: failure details
+python3 scripts/run_tests.py -x               # include <suite>/experimental/
+python3 scripts/run_tests.py --no-run         # analysis only
 ```
 
-Sources are under `tests/<category>/`; expected results are under `tests/output/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. `tests/input/<name>.args` and `tests/input/<name>.stdin` provide process arguments and standard input.
+`basic` compiles standalone sources twice, in fat- and raw-pointer modes; `safety` holds the fat-pointer regressions; `package` drives `package.anx` project fixtures through `anx build`. `scripts/run_safety_tests.py` is a thin wrapper for the safety suite.
 
-An existing `tests/input/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The runner expands these variants without duplicating the source test.
+Sources are under `tests/<suite>/`; expected results are under `tests/output/<suite>/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. A directory test — a multi-file standalone test or a package fixture — uses `<dir>.ans`, or `<dir>.err.ans` for an expected failure. `tests/input/<suite>/<name>.args` and `.stdin` provide process arguments and standard input.
 
-`tests/unit/test_*.py` files are executed by the same runner. Use `python3 -m compileall -q compiler anx scripts tests/unit` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
+An existing `tests/input/<suite>/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The runner expands these variants without duplicating the source test.
+
+`tests/<suite>/unit/test_*.py` checks, when present, are executed by the same runner. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
 
 ## anx package manager
 
-`anx/` implements `new`, `new --lib`, `run`, `check`, `build`, and `test`. Projects declare metadata and path dependencies in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated `build/pkg.json` package map. Integration fixtures are under `anx/tests/`.
+`anx/` implements `new`, `new --lib`, `run`, `check`, `build`, and `test`. Projects declare metadata and path dependencies in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated `build/pkg.json` package map. Integration fixtures are under `tests/package/`, run by `scripts/run_tests.py --suite package`.
 
 ## Architecture
 

@@ -44,7 +44,7 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 | `anx/manifest.py` | 读取 `package.anx`，产出 `Manifest` / `Dependency` | 34 行 |
 | `anx/resolver.py` | 递归遍历路径依赖、环检测、产出 `(all_files, pkg_roots)` | 67 行 |
 | `anx/scaffold.py` | `new` / `new --lib` 模板 | 37 行 |
-| `anx/tests/run.py` | anx 自身集成测试运行器（19 个用例，package 模式）；计划并入 `tests/`（§10-A0.5） | 105 行 |
+| （测试体系） | package 模式的 19 个 fixture 在 `tests/package/`，由 `scripts/run_tests.py --suite package` 驱动（A0.5 已完成） | — |
 | `pyproject.toml` | 打包元数据与 `yianc` / `anx` 两个 console scripts | — |
 
 ### 2.2 已有能力
@@ -79,7 +79,7 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 | G17 | `yianc` 的位置参数是 `nargs='+'`，选项夹在路径之间即解析失败 | `yianc lib a.an -t none` → `unrecognized arguments: a.an`；必须「选项在前、路径连续放在最后」 |
 | G18 | **库包无法被分析**：编译器无条件要求 `main`，`anx check` 一个 `new --lib` 出来的包直接失败；清单里也没有任何字段表明包类型 | 实测 `anx new --lib mylib && anx check mylib` → `error: No 'main' function found`（`type_check.py:__find_main`）；`anx build` 也总是产出可执行文件 |
 | G19 | 路径依赖可以位于另一个包的 `src/` 之下，父包的 `rglob("*.an")` 会重复收集子包源码，破坏「文件唯一归属」 | §3.6 的断言只在源码根互不嵌套时成立；`resolver.py` 递归扫描时没有排除已知的嵌套包根 |
-| G20 | **测试体系三套并存**：`tests/` 只覆盖 standalone 模式（`scripts/run_tests.py` + `run_safety_tests.py`），package 模式的 19 个用例在 `anx/tests/`，由另一套 runner 和另一套期望文件约定驱动 | `anx/tests/*/{package.anx,expected.stdout,expected.stderr}` 与 `tests/output/**/*.ans` 是两套约定；`tests/` 下没有任何 package 模式覆盖 |
+| G20 | **测试体系三套并存**：`tests/` 只覆盖 standalone 模式（`scripts/run_tests.py` + `run_safety_tests.py`），package 模式的 19 个用例在 `anx/tests/`，由另一套 runner 和另一套期望文件约定驱动 | `anx/tests/*/{package.anx,expected.stdout,expected.stderr}` 与 `tests/output/**/*.ans` 是两套约定；`tests/` 下没有任何 package 模式覆盖。**A0.5 已完成**：并入 `tests/package/`，统一由 `scripts/run_tests.py` 驱动 |
 | G21 | **不可达定义完全不被检查**：类型检查的唯一根是 `main`，因此从未被调用的函数/方法（bin 里也一样）不会报错；库包更是直接失败 | 实测：`fn bad() { let x: i32 = "hello"; }` 且 `main` 不调用它 → `yianc -t none` 通过，被调用才报错；未实例化的泛型体同样不检查，用 `bool` 实例化 `add<T>(a,b){a+b}` 才在 `+` 处报错（§2.5、A3） |
 | G22 | **程序入口被当成「全局唯一」**：`__find_main` 扫描所有 unit 找唯一 `main`，所以依赖包里只要也有 `main` 就冲突 | 实测：`app`(bin) 依赖 `tool`(bin，自带 `main`) → `error: Multiple 'main' functions found`。修法：程序入口取 `packages[root].entry`，并以 `kind` 拒绝 bin 作依赖（§3.2、§6.1、A3） |
 | G23 | **放宽检查根所需的机制缺失**：① `TypeCtx` 只有 `add_procedure` / `get_procedure`，没有枚举接口；② `DefPoint` 没有「已生成」标记，而 `def_points` 现在**隐式**等于 main 可达集；③ LLVM 层按**函数名** `main` → `__yian_main` 识别程序入口 | `context.py:104/556/567`；`main.py:413` `def_points = type_checker.export()` → `__cfg(def_points)` → LLVM 全量消费；`llvm/module.py:137`。这三处不补，A3 无法安全落地（S1、A2、A3） |
@@ -124,7 +124,8 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 该契约由 anx 生成、编译器消费，两侧都在本仓库内，因此可以按设计需要升级。
 本设计将其升级为 **v2**（§6.1）：把扁平的「包名 → 源码根」扩展为带格式版本、根映射和
 **依赖边**的结构，使编译器也能执行 §4.3 的依赖可见性规则。
-仓库中没有任何被跟踪的 `pkg.json`（`build/` 已被忽略，`anx/tests/.gitignore` 覆盖测试产物），
+仓库中没有任何被跟踪的 `pkg.json`（根 `.gitignore` 的 `build/` 覆盖了编译器产物与
+package fixture 的 `build/`），
 因此升级不涉及产物迁移，只改生成端、消费端和文档。
 
 ### 2.5 编译单元是整个程序
@@ -182,8 +183,8 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
   `from pkg.a.b import x` 解析为 `源码根/a/b.an`。源码根固定为 `src/`，标准库也不例外，
   清单不暴露可配置源码根。注意与**包根**（含 `package.anx` 的目录，`Package.root`）和
   **项目根**（根包的包根，由 `discover` 找到）区分。
-- `src/` 硬编码在三处：`anx/resolver.py`（扫描）、`anx/scaffold.py`（创建）、
-  `anx/tests/run.py`（测试发现；A0.5 后并入 `scripts/run_tests.py`）。固定为 `src/` 之后这是有意的，
+- `src/` 硬编码在三处：`anx/project.py`（扫描与索引）、`anx/scaffold.py`（创建）、
+  `scripts/run_tests.py`（测试发现，仅用于定位 fixture 的包根）。固定为 `src/` 之后这是有意的，
   三处必须保持一致。
 - 标准库同样遵循该规则：包根 `lib/`，源码根 `lib/src/`，`lib/package.anx` 声明
   `name = "std"` 与 `kind = "lib"`；
@@ -609,7 +610,7 @@ name = "mathlib"                # 这是清单 name
 - `docs/compile_script.md` 2.6 节：同步契约示例与语义说明。
 
 不保留 v1 兼容读取：`--packages` 只由 anx 生成，仓库内没有被跟踪的 `pkg.json`
-（`build/` 已忽略，`anx/tests/.gitignore` 覆盖测试产物）。
+（根 `.gitignore` 的 `build/` 覆盖了编译器产物与 package fixture 的 `build/`）。
 
 ### 6.2 失效与增量
 
@@ -883,6 +884,8 @@ anx build
 
 ### S1 前置 spike：检查根放开的红灯普查
 
+**状态：已完成**（结论见下；双集合与过程枚举接口保留在 A3 的实现里）。
+
 **目标**：把「全量检查根包顶层定义」的影响面从**未知**变成**数字**。这是整个计划里唯一可能
 改变可行性判断的未知量（§10 口径允许红灯，但需要知道规模）。
 
@@ -933,6 +936,8 @@ stdlib 的 3 个既有错误（都因「从未被调用」而长期隐藏，正�
 
 ### A0 抽出纯项目模型（不改行为）
 
+**状态：已完成**（commit `cf4a74e`）。
+
 - 新增 `anx/project.py`：`PackageKind`、`Dependency/Package/SourceFile/Project`、
   `LoadResult`、`Diagnostic`、`ImportResolution/ImportFailure` 与 `load`。
 - 映射字段一律以只读视图暴露（`MappingProxyType` 或排序后的 tuple），不把可变 `dict`
@@ -941,7 +946,15 @@ stdlib 的 3 个既有错误（都因「从未被调用」而长期隐藏，正�
 - **验收**：`anx.main test` 19/19 不变；`import anx.project` 不产生 I/O；`pkg.json` 仍是 v1
   且内容与改动前逐字一致（v2 升级在 A2 一次完成）；构造出的 `Project` 无法被调用方修改。
 
+**实现结果**：`anx test` 19/19；`basic`、`deps/app`、`deps/deep/app`、`deps/multi/app`、`same_pkg`、
+`std_usage` 六个 fixture 的 `build/pkg.json` **与** `build/app` 二进制均与改动前逐字节相同；
+`import anx.project` 只创建 `.pyc`、不打开任何项目文件；映射赋值抛 `TypeError`；pyright 0 错误。
+唯一的接口偏差：`resolve()` 由 `resolve(root)` 变为 `resolve(root, std_lib)`（`main.py` 传入
+`lib/src`，与 §5 的「源码根一律 `<包根>/src`」一致）。
+
 ### A0.5 测试体系合并：package 模式并入 `tests/`
+
+**状态：已完成**（commit `d8e0045`）。
 
 **现状（G20）**：三套互不相通的入口——`scripts/run_tests.py`（`tests/basic`，standalone，
 fat/raw 双模式展开）、`scripts/run_safety_tests.py`（`tests/safety`）、`anx/tests/run.py`
@@ -994,6 +1007,13 @@ fat/raw 矩阵与 D6 的 `anx test` 语义留到 A3。
 - `anx test` 仍能跑通，行为与改动前一致（只是换了实现位置）；
 - package suite 覆盖：单包构建/运行、路径依赖、传递依赖、包自导入、`std` 使用，
   以及现有依赖与清单诊断（环、缺依赖、未知包、可见性）。
+
+**实现结果**：19 个 fixture 迁入 `tests/package/`（含 7 个被依赖的包），期望文件落在
+`tests/output/package/`（11 个：`basic.ans`、`same_pkg.ans`、`std_usage.ans`、`migrated/itype.ans`，
+以及 `errors/{cycle,app,missing_dep,no_pub/app,unknown_pkg}` 与 `migrated/{iterr,pferr,pierr}`
+的 `.err.ans`）；`anx/tests/` 整体删除（含 `run.py` 与 14 个 `expected.*`）。
+`--suite package` 19/19（4.6s），`--all` = 722 + 156 + 19 = **897 全绿**，`--no-run` 19/19，
+`-f "deps/"` 命中 3 个，`anx test` 19/19，`run_safety_tests.py` 156/156，pyright 0 错误。
 
 **顺序**：留在 A0 之后、A1 之前，**不能整体挪到 A3 之后**——A1/A2 新增的诊断 fixture
 （`name_mismatch`、`reserved_name`、`duplicate_name`、`lib_with_entry`、`bad_entry`、
