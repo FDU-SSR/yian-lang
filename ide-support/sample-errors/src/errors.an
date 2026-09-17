@@ -1,0 +1,32 @@
+// 故意写错的模块，供 IDE 诊断验收。
+//
+// 每个错误都放在**独立的顶层定义**里，这样"按顶层定义恢复"的多诊断策略
+// 能一次报出多条（见计划 §5.11 第三层）。当前编译器在第一个错误处中止，
+// 所以 P4 之前这里只会出现一条诊断，这是预期行为。
+from sample_errors.helper import Origin, add, double;
+from sample_errors.types import Meters;
+
+// 1) 类型不匹配：返回 str，函数声明是 i32。
+pub fn wrong_return_type() -> i32 {
+    return "not an integer";
+}
+
+// 2) 未定义的名字。
+pub fn undefined_name() -> i32 {
+    return not_defined_anywhere;
+}
+
+// 3) 访问不存在的字段。
+pub fn unknown_field(origin: Origin) -> Meters {
+    return origin.z;
+}
+
+// 4) 参数个数不对。
+pub fn wrong_arity() -> i32 {
+    return add(1);
+}
+
+// 5) 同一个函数用错参数类型。
+pub fn wrong_argument_type() -> i32 {
+    return double("twenty one");
+}

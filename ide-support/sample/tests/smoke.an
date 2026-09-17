@@ -1,0 +1,7 @@
+// `anx test` runs every .an file under tests/ as its own program.
+// Expected output lives in tests/output/<name>.an.ans.
+from std.core.io import print;
+
+fn main() {
+    print("smoke ok\n");
+}

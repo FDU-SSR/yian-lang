@@ -1,0 +1,15 @@
+// 正确模块：给 errors.an 提供被错误使用的函数与类型，保证错误是"用错"而不是"找不到"。
+from sample_errors.types import Meters;
+
+pub struct Origin {
+    pub x: Meters,
+    pub y: Meters,
+}
+
+pub fn double(value: i32) -> i32 {
+    return value * 2;
+}
+
+pub fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}

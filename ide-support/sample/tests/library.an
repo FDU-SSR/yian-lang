@@ -1,0 +1,14 @@
+// 测试可以 import 根包（hybrid 根的库接口）。
+from std.core.io import print;
+from sample.geometry import Point, Pair, abs;
+from sample.shapes import Shape, area, max;
+
+fn main() {
+    let p: Point = Point.new(-3.0, 4.0);
+    assert p.manhattan() == 7.0: "method call on a struct";
+    assert abs(-2.5) == 2.5: "free function in a sibling module";
+    assert Pair<i32>.of(1, 2).swapped().first == 2: "generic struct method";
+    assert area(Shape.Rect(width=2.0, height=5.0)) == 10.0: "enum match";
+    assert max(3, 9) == 9: "generic function";
+    print("library ok\n");
+}

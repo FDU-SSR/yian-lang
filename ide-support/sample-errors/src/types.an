@@ -1,0 +1,2 @@
+// 正确模块：类型别名。
+pub typedef Meters = f64;

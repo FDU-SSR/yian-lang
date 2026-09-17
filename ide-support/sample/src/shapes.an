@@ -1,0 +1,23 @@
+// 枚举、泛型函数、match：面积与最大值。
+from sample.types import Meters;
+
+pub enum Shape {
+    Circle { radius: Meters },
+    Rect { width: Meters, height: Meters },
+    Point,
+}
+
+pub fn area(shape: Shape) -> Meters {
+    return match shape {
+        Circle(radius) => 3.0 * radius * radius,
+        Rect(width, height) => width * height,
+        Point => 0.0,
+    };
+}
+
+pub fn max<T>(a: T, b: T) -> T {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}

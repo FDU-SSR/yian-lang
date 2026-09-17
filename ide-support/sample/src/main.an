@@ -1,0 +1,34 @@
+// 入口：把各模块串起来，作为编辑器的默认打开文件。
+from std.core.io import print;
+from sample.geometry import Point, Pair, span;
+from sample.shapes import Shape, area, max;
+from sample.types import Meters, Millis;
+
+fn describe(shape: Shape) -> Meters {
+    return area(shape);
+}
+
+fn main() {
+    let origin: Point = Point.new(0.0, 0.0);
+    let corner: Point = Point.new(3.0, 4.0);
+    let moved: Point = corner.scaled(2.0);
+
+    let pair: Pair<Meters> = Pair<Meters>.of(origin.manhattan(), moved.manhattan());
+    let flipped: Pair<Meters> = pair.swapped();
+
+    let circle: Shape = Shape.Circle(radius=2.0);
+    let rect: Shape = Shape.Rect(width=3.0, height=4.0);
+    let dot: Shape = Shape.Point;
+
+    let total: Meters = describe(circle) + describe(rect) + describe(dot);
+    let biggest: Millis = 7;
+
+    assert corner.manhattan() == 7.0: "manhattan of (3,4) is 7";
+    assert span(Pair<Meters>.of(1.0, 4.0)) == 3.0: "span is 3";
+    assert flipped.first == 14.0: "swapped pair puts the larger value first";
+    assert max(2.0, 5.0) == 5.0: "max picks the larger operand";
+    assert total == 24.0: "circle 3*2*2 = 12 plus rect 3*4 = 12";
+    assert biggest == 7: "type alias Millis is an integer type";
+
+    print("sample ok\n");
+}

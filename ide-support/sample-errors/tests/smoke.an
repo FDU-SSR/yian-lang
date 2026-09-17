@@ -1,0 +1,6 @@
+// 测试文件保持正确，避免它引入额外噪声。
+from std.core.io import print;
+
+fn main() {
+    print("sample-errors smoke\n");
+}

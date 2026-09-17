@@ -1,0 +1,49 @@
+// 结构体、泛型结构体、方法：供 main 与 tests 复用。
+from sample.types import Meters;
+
+pub struct Point {
+    pub x: Meters,
+    pub y: Meters,
+}
+
+pub struct Pair<T> {
+    pub first: T,
+    pub second: T,
+}
+
+pub typedef PointPair = Pair<Meters>;
+
+impl Point {
+    static pub fn new(x: Meters, y: Meters) -> Self {
+        return Self(x=x, y=y);
+    }
+
+    pub fn manhattan() -> Meters {
+        return abs(self.x) + abs(self.y);
+    }
+
+    pub fn scaled(factor: Meters) -> Point {
+        return Point(x=self.x * factor, y=self.y * factor);
+    }
+}
+
+impl<T> Pair<T> {
+    static pub fn of(first: T, second: T) -> Self {
+        return Self(first=first, second=second);
+    }
+
+    pub fn swapped() -> Pair<T> {
+        return Pair<T>.of(self.second, self.first);
+    }
+}
+
+pub fn abs(value: f64) -> f64 {
+    if (value < 0) {
+        return -value;
+    }
+    return value;
+}
+
+pub fn span(pair: PointPair) -> Meters {
+    return abs(pair.first - pair.second);
+}

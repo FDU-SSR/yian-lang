@@ -1,0 +1,12 @@
+// 入口文件本身是正确的；诊断集中在 errors.an 与 shapes.an。
+//
+// 这个工程只用于 IDE 诊断的人工验收：`anx build` 预期失败，
+// 具体错误见 src/errors.an 与 src/shapes.an 的注释。
+from std.core.io import print;
+from sample_errors.helper import double;
+
+fn main() {
+    print("this project is meant to fail compiling\n");
+    let value: i32 = double(21);
+    assert value == 42;
+}

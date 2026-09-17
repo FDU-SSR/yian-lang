@@ -1,0 +1,3 @@
+// 类型别名：本工程其余模块复用的基础类型。
+pub typedef Meters = f64;
+pub typedef Millis = i64;
