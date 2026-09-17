@@ -83,7 +83,7 @@ Sources are under `tests/<suite>/`; expected results are under `tests/output/<su
 
 An existing `tests/input/<suite>/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The runner expands these variants without duplicating the source test.
 
-Standalone Python checks for a suite live under `scripts/` and are listed in the runner's `SUITE_CHECKS` (for example `scripts/test_project_model.py`, run by `--suite package`); `tests/` holds data only and `--no-run` skips them. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
+Test data lives under `tests/`; the runner and the other Python tooling live under `scripts/`. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
 
 ## anx package manager
 

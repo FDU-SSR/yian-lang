@@ -1078,15 +1078,15 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 | `errors/cycle/app` | 根包 `appa` 是 `bin`，被 `libb` 依赖时报 `AX015`，依赖不入图，环也就检测不到 | 根包改 `kind = "hybrid"`：程序入口与「可被依赖」只有 `hybrid` 能同时表达，环检测因此恢复 |
 | `errors/missing_dep` | 预期匹配 Python 的 `No such file or directory` | 改为 `error[AX003]` |
 
-**新增 fixture（12 个目录 + 1 个单元测试）**：`name_mismatch`、`reserved_name`、`duplicate_name`、
+**新增 fixture（12 个目录）**：`name_mismatch`、`reserved_name`、`duplicate_name`、
 `lib_with_entry`、`bad_entry`、`bin_as_dependency`、`nested_source_roots`，
 以及同一代码路径上计划未列但必须覆盖的 `lib_with_main`（`lib` 含 `src/main.an`）、
 `entry_outside_src`（入口在源码根之外）、`broken_manifest`（`AX002` 解析失败）、
 `dep_without_manifest`（`AX004`）、`bad_kind`（`AX002` kind 取值非法）。
-`scripts/test_project_model.py` 覆盖 fixture 观察不到的 `load()` 语义：根包不可用 → `project is None`、
-依赖出错 → `project` 仍可用、嵌套源码根不阻止加载且文件归属唯一、映射只读、诊断顺序稳定。
-它由 `scripts/run_tests.py --suite package` 作为一条 `package` 用例执行（测试**代码**在 `scripts/`，
-`tests/` 只放数据，见 A0.5），`--no-run` 时跳过。
+
+`load()` 级性质（根包不可用 → `project is None`、依赖出错 → `project` 仍可用、
+嵌套源码根不阻止加载且文件归属唯一、映射只读、诊断顺序稳定）在开发中用一次性脚本核验，
+按仓库「不新增测试脚本」的口径未留在仓库里；仓库套件只保留端到端 fixture。
 
 ### A2 导入范围、文件索引与 `--packages` v2
 
