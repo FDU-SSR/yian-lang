@@ -29,8 +29,13 @@ class LexError(ValueError):
 
 
 class CharStream:
-    def __init__(self, path: Path):
-        self.__source = path.read_text()
+    def __init__(self, path: Path, text: str | None = None):
+        """Stream over *text*, or over the file at *path* when text is omitted.
+
+        Passing text lets the lexer read an unsaved editor buffer while still
+        reporting positions against *path*.
+        """
+        self.__source = path.read_text() if text is None else text
         self.__src_len = len(self.__source)
         self.__index = 0
         self.pos = SrcPosition(0, 1, path)
@@ -155,8 +160,8 @@ class CharStream:
 
 
 class Lexer:
-    def __init__(self, path: Path):
-        self.__stream = CharStream(path)
+    def __init__(self, path: Path, text: str | None = None):
+        self.__stream = CharStream(path, text)
         self.__tokens: list[Token] = []
         self.__fstring_buffer: list[Token] = []
         self.__in_fstring_expr = False
@@ -321,7 +326,9 @@ class Lexer:
             c = self.__stream.peek()
 
         # after loop, make sure we ended with a closing quote
-        tok_str += self.__stream.consume("\"")
+        if self.__stream.at_end():
+            raise LexError("Unterminated string literal", SrcSpan(start_pos, self.__stream.pos.clone()))
+        tok_str += self.__stream.next()
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
@@ -350,7 +357,9 @@ class Lexer:
             c = self.__stream.peek()
 
         # after loop, make sure we ended with a closing quote
-        tok_str += self.__stream.consume("'")
+        if self.__stream.at_end():
+            raise LexError("Unterminated character literal", SrcSpan(start_pos, self.__stream.pos.clone()))
+        tok_str += self.__stream.next()
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:
@@ -378,7 +387,9 @@ class Lexer:
             c = self.__stream.peek()
 
         # after loop, make sure we ended with a closing quote
-        tok_str += self.__stream.consume("'")
+        if self.__stream.at_end():
+            raise LexError("Unterminated byte literal", SrcSpan(start_pos, self.__stream.pos.clone()))
+        tok_str += self.__stream.next()
 
         span = SrcSpan(start_pos, self.__stream.pos.clone())
         try:

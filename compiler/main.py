@@ -3,19 +3,28 @@ from __future__ import annotations
 #! /usr/bin/env python3
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
 import time
-import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
 from llvmlite import ir
 
+from compiler.analysis.diagnostics import (
+    Severity,
+    Stage,
+    diagnostic_from_error,
+    format_source_error,
+)
+from compiler.analysis.documents import Document, DocumentStore
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.package_map import PackageMap
+from compiler.analysis.positions import path_to_uri, to_lsp_range
+from compiler.analysis.session import AnalysisSession, collect_an_files
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.utils.log import CompilerLog
@@ -41,7 +50,6 @@ from compiler.codegen.llvm.translator import LLTranslator
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
-from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.parser import ParseError, Parser
@@ -132,6 +140,24 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--analyze",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the analysis prefix only (lex → parse → resolve → type check) and "
+            "report diagnostics; no code generation, no build/ output."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help=(
+            "With --analyze, print one JSON object with the diagnostics on stdout. "
+            "stdout then carries only that object; everything else goes to stderr."
+        ),
+    )
+    parser.add_argument(
         "--raw-pointers",
         action="store_true",
         default=False,
@@ -145,61 +171,100 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_intermixed_args(argv)
 
 
-def collect_an_files(paths: list[Path]) -> list[Path]:
-    """Collect all .an files from input file and directory paths."""
-    an_files: list[Path] = []
-    for path in paths:
-        if path.is_file():
-            if path.suffix == ".an":
-                an_files.append(path)
-            continue
-
-        if path.is_dir():
-            an_files.extend(file_path for file_path in path.rglob("*.an") if file_path.is_file())
-            continue
-
-        # Path does not exist — fail early instead of silently skipping
-        print(f"error: path does not exist: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    return an_files
+class _CompilationFailed(Exception):
+    """Internal: a diagnostic has been reported; unwind to main() and exit 1."""
 
 
-def __print_traceback(error: Exception) -> None:
-    print("Traceback (most recent call last):")
-    for line in traceback.format_tb(error.__traceback__):
-        print(line, end="")
-    print()
+#: Overlay used when the compiler runs in-process (the analysis session sets it
+#: through :func:`analyze_documents`); empty for a plain CLI run.
+_DOCUMENTS = DocumentStore()
 
 
-def __print_source_error(span: SrcSpan, error: Exception) -> NoReturn:
-    path = span.path
-    source = path.read_text()
+def __report_error(error: Exception, *, stage: object = None) -> NoReturn:
+    """Render one compiler error to stderr and unwind to ``main``.
 
-    print("-" * 20)
-    __print_traceback(error)
+    Replaces the old traceback-to-stdout + ``sys.exit(-1)`` path: diagnostics go
+    to stderr and the process exit code is the CLI's usual success/failure, which
+    is what ``docs/grammar/16.runtime_errors.md`` asks for.
+    """
+    diagnostic = diagnostic_from_error(error, stage=None)
+    path = diagnostic.span.path
+    try:
+        text = _DOCUMENTS.text(path)
+    except OSError:
+        text = ""
+    print(format_source_error(diagnostic, text), file=sys.stderr)
+    raise _CompilationFailed
 
-    start_row = span.start.row
-    start_col = span.start.col
-    end_row = span.end.row
-    end_col = span.end.col
 
-    print(error)
-    print(f"--> {path}:{start_row + 1}:{start_col}")
+def __analyze(args: argparse.Namespace) -> int:
+    """Run the analysis prefix and report diagnostics; no codegen, no build/ output.
 
-    lines = source.splitlines()
-    if 0 <= start_row < len(lines):
-        start_line = lines[start_row]
-        print(f"    {start_line}")
-        if start_row == end_row:
-            marker_width = max(1, end_col - start_col)
-        else:
-            marker_width = max(1, len(start_line) - start_col + 1)
-        marker = " " * (start_col - 1) + "^" * marker_width
-        print(f"    {marker}")
-    print()
+    With ``--json`` the diagnostics are printed as one JSON object on stdout and
+    nothing else is written there, so the output can be consumed by a tool.  The
+    exit code only distinguishes success from failure (docs/grammar/16).
+    """
+    CompilerLog.init(spec=args.log_spec, file="", noop=not args.log_spec)
 
-    sys.exit(-1)
+    packages: PackageMap | None = None
+    if args.packages:
+        try:
+            packages = PackageMap.parse(args.packages)
+        except CompilerError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    session = AnalysisSession(
+        compiler_root=args.compiler_root,
+        packages=packages,
+        raw_pointers=args.raw_pointers,
+    )
+    result = session.analyze(args.paths, require_entry=False)
+
+    if args.json:
+        print(json.dumps(__analyze_payload(result), ensure_ascii=False, indent=2))
+    elif result.diagnostics:
+        print(result.formatted(), file=sys.stderr)
+
+    return 0 if result.ok() else 1
+
+
+def __analyze_payload(result: object) -> dict[str, object]:
+    """Build the ``--analyze --json`` payload.
+
+    Positions are LSP-shaped (0-based lines, UTF-16 characters, ``file://`` URIs)
+    because they are produced by the single conversion module, so the same payload
+    also serves the language server later on.
+    """
+    from compiler.analysis.session import AnalysisResult
+
+    assert isinstance(result, AnalysisResult)
+    diagnostics: list[dict[str, object]] = []
+    errors = 0
+    warnings = 0
+    for diagnostic in result.diagnostics:
+        text = result.sources.get(diagnostic.span.path, "")
+        if diagnostic.severity is Severity.ERROR:
+            errors += 1
+        elif diagnostic.severity is Severity.WARNING:
+            warnings += 1
+        diagnostics.append(
+            {
+                "code": diagnostic.code,
+                "severity": diagnostic.severity.value,
+                "message": diagnostic.message,
+                "uri": path_to_uri(diagnostic.span.path),
+                "range": to_lsp_range(diagnostic.span, text),
+                "recovered": diagnostic.recovered,
+            }
+        )
+    return {
+        "format": 1,
+        "ok": result.ok(),
+        "stage": result.failed_stage.value if result.failed_stage is not None else None,
+        "summary": {"errors": errors, "warnings": warnings},
+        "diagnostics": diagnostics,
+    }
 
 
 def __cfg(
@@ -212,7 +277,7 @@ def __cfg(
     try:
         translator.run(def_points)
     except CodegenError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.CODEGEN)
     return translator.export()
 
 
@@ -262,7 +327,7 @@ def __llvm_codegen(
     try:
         translator.run(cfg_functions)
     except CodegenError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.CODEGEN)
     return translator.export()
 
 
@@ -309,12 +374,12 @@ def __link_exe(obj_path: Path, output_path: Path, opt_level: int) -> None:
 def __lex(src_files: list[Path]) -> list[list[Token]]:
     token_lists: list[list[Token]] = []
     for src_file in src_files:
-        lexer = Lexer(src_file)
+        lexer = Lexer(src_file, text=_DOCUMENTS.text(src_file))
 
         try:
             lexer.lex()
         except LexError as error:
-            __print_source_error(error.span, error)
+            __report_error(error, stage=Stage.LEX)
 
         token_lists.append(lexer.export())
     return token_lists
@@ -328,7 +393,7 @@ def __parse(token_lists: list[list[Token]]) -> list[AST.Program]:
         try:
             program = parser.parse()
         except ParseError as error:
-            __print_source_error(error.span, error)
+            __report_error(error, stage=Stage.PARSE)
 
         programs.append(program)
     return programs
@@ -342,7 +407,27 @@ def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: report diagnostics on stderr and never exit mid-pass."""
+
+    try:
+        return __run(argv)
+    except _CompilationFailed:
+        # A diagnostic has already been rendered; failure is the exit code.
+        return 1
+    except FileNotFoundError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def __run(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
+
+    if args.json and not args.analyze:
+        print("error: --json requires --analyze", file=sys.stderr)
+        return 1
+
+    if args.analyze:
+        return __analyze(args)
 
     # ── initialise compiler log ──────────────────────────────────────────
     log_file = str(args.log_file) if args.log_file else "build/compile.log"
@@ -353,8 +438,11 @@ def main(argv: list[str] | None = None) -> int:
     timings: dict[str, float] = {}
     t0 = time.perf_counter() if args.profile else 0.0
 
-    # extract .an files from input paths
+    # extract .an files from input paths; keep the text so diagnostics do not
+    # have to read the files again
     src_files = collect_an_files(args.paths)
+    for src_file in src_files:
+        _DOCUMENTS.add(Document(path=src_file, text=src_file.read_text()))
 
     # lex all source files
     lex_start = time.perf_counter() if args.profile else 0.0
@@ -424,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         check_restricted_ops(unit_datas.values())
     except AnalysisError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.RESTRICTED_OPS)
     if args.profile:
         timings["restricted_ops"] = time.perf_counter() - restricted_start
 
@@ -435,7 +523,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         global_resolver.run()
     except AnalysisError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.RESOLVE)
     ch_main.debug(f"global resolve complete — {len(unit_datas)} units")
     if args.profile:
         timings["global_resolve"] = time.perf_counter() - resolve_start
@@ -455,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         type_checker.run()
     except AnalysisError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.TYPE_CHECK)
     except CompilerError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -467,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=args.raw_pointers, type_size=type_size).run()
     except AnalysisError as error:
-        __print_source_error(error.span, error)
+        __report_error(error, stage=Stage.COMPTIME)
 
     # --- Closure lowering pass ---
     from compiler.analysis.passes.closure_lowering import ClosureLowering
@@ -483,7 +571,7 @@ def main(argv: list[str] | None = None) -> int:
     da_pass.run()
     da_errors = da_pass.export_errors()
     if da_errors:
-        __print_source_error(da_errors[0].span, da_errors[0])
+        __report_error(da_errors[0], stage=Stage.DEFINITE_ASSIGNMENT)
     for type_id, dp in def_points.items():
         dp.validity = da_pass.export_analysis(type_id)
     if args.profile:
