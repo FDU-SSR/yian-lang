@@ -1,6 +1,7 @@
 # YIAN IDE / VS Code 支持开发计划
 
 > 本计划在 `anx` 的项目模型与依赖解析落地后做过一次修订（§2 已标注哪些前提已经具备）。
+> **仓库里的 `yian-language-support-0.0.10.vsix` 已弃用、不作为起点，P1 重建扩展源码树（§2.1）。**
 > **测试策略见 §5.6：不为 IDE / LSP 建立自动化测试，功能由实际使用验收；编译器现有的三套件
 > 是不回归底线。**
 
@@ -40,17 +41,20 @@
 
 ### 2.1 已有基础
 
-**VS Code 扩展**：仓库里的 `ide-support/yian-language-support-0.0.10.vsix` 是当前唯一形态，
-解包后包含 `extension/package.json`（语言 id `yian`、`.an` 关联、`onLanguage:yian` 激活）、
-`language-configuration.json`（注释、括号、自动闭合）、`syntaxes/yian.tmLanguage.json`
-（词法级高亮）与 `src/extension.ts`。**`extension.ts` 是一个空的 `activate()`**：没有语言
-服务器，也没有补全、跳转、悬停或诊断逻辑。
+**VS Code 扩展**：仓库里的 `ide-support/yian-language-support-0.0.10.vsix` 是**早已弃用的历史产物**，
+版本停留在很久以前的一次探索性开发，与当前的语言和项目模型严重脱节。它**不作为任何阶段的起点
+或事实来源**，只在需要考古时当作参考。解包后能看到的形态是：`extension/package.json`
+（语言 id `yian`、`.an` 关联、`onLanguage:yian` 激活）、`language-configuration.json`（注释、
+括号、自动闭合）、`syntaxes/yian.tmLanguage.json`（词法级高亮）与 `src/extension.ts`。
+**`extension.ts` 是一个空的 `activate()`**：没有语言服务器，也没有补全、跳转、悬停或诊断逻辑。
 
-两点需要注意：
+三点需要注意：
 
 - **扩展源码不在仓库里**，只存在于这个 VSIX 内；`ide-support/` 下没有任何源码树或构建脚本。
 - VSIX 内的 `extension/readme.md` 让人 `cd vscode-yian`，而仓库里没有这个目录——源码树当年
   没有提交进来。
+- 因此 P1 不是"把旧扩展捡回来维护"，而是**重建一个干净的扩展源码树**（§7 P1）。语言 id `yian`
+  与 `.an` 关联这两个对外契约要沿用，其余配置与 grammar 都按当前语言重新写。
 
 **编译器中可复用的能力**：
 
@@ -135,7 +139,7 @@ cd ide-support/extension && npm install vscode-languageclient
 | 阶段 | 名称 | 主要交付物 | 阶段门槛 |
 | --- | --- | --- | --- |
 | P0 | 范围、决策与示例工程 | 功能矩阵、示例工程、位置模型与诊断结构定案、性能指标口径 | "支持什么""怎么算做完"不再有歧义 |
-| P1 | 扩展工程整理 | 可构建、可安装的扩展源码树；语言注册、基础高亮和编辑行为 | 新环境能构建 VSIX，安装后 `.an` 文件识别与编辑正常 |
+| P1 | 扩展工程重建 | 干净的扩展源码树（替代已弃用的旧 VSIX）；语言注册、基础高亮和编辑行为 | 新环境能构建 VSIX，安装后 `.an` 文件识别与编辑正常 |
 | P2 | 编译器分析接口 | 面向内存文本的分析会话、位置与 URI 转换、结构化诊断 | 不生成 LLVM/可执行文件也能对未保存文本得到稳定分析结果 |
 | P3 | 工作区与符号索引 | 项目发现、依赖解析、跨文件索引和失效规则 | 多文件项目中能定位符号并跟上依赖变化 |
 | P4 | 实时诊断 | 词法、语法、导入、名称、类型诊断 | 修改未保存文本后诊断及时更新且不残留旧结果 |
@@ -249,22 +253,28 @@ P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3
 - 功能矩阵里每一项都能指出在示例工程中的对应文件与位置；
 - 位置模型、诊断结构、错误码方案三份决定都有书面记录（写进本文件）。
 
-### P1：扩展工程整理
+### P1：扩展工程重建
 
-**目标**：把只存在于 VSIX 里的基础能力变成可维护、可构建、可调试的源码树。
+**目标**：从零建立一个干净、可构建、可调试、可打包的扩展源码树，替代那个已弃用的旧 VSIX。
 
 **P1a 源码树与构建（后续所有前端工作的前提）**：
 
-- 从 `ide-support/yian-language-support-0.0.10.vsix` 解出 `ide-support/extension/`
-  （`package.json`、`tsconfig.json`、`src/extension.ts`、`language-configuration.json`、
-  `syntaxes/yian.tmLanguage.json`；`out/` 是编译产物，不需要解出）；
-- 修正 `readme.md` 里不存在的 `vscode-yian/` 路径，补构建、调试（F5）与打包说明；
-- **补 `.gitignore`**：需要新增 `ide-support/extension/node_modules/`。当前 `.gitignore` 末尾那条
-  `yian-language-support-0.0.10.vsix` 只对未跟踪文件生效，而该文件**已经被提交**，所以它不会
-  阻止新版本 VSIX 出现在 `git status` 里；应改为按模式忽略 `*.vsix` 并决定旧 VSIX 是否随源码树
-  一起提交（建议提交源码树、不提交产物）。`out/` 已在忽略列表中；
-- 保留语言 id `yian`、`.an` 关联与现有 TextMate grammar；
-- 构建并生成新版本 VSIX，安装到本地 VS Code。
+- **不继承旧 VSIX**：`yian-language-support-0.0.10.vsix` 已弃用（§2.1），不作为代码基线。
+  新建 `ide-support/extension/`，包含 `package.json`、`tsconfig.json`、`src/extension.ts`、
+  `language-configuration.json`、`syntaxes/yian.tmLanguage.json`、`readme.md`、`.gitignore`；
+- **只沿用两个对外契约**：语言 id 保持 `yian`、文件关联保持 `.an`（含 `onLanguage:yian` 激活），
+  这样用户已有的设置和安装不需要改；
+- **其余内容按当前语言重写**：`language-configuration.json` 的注释/括号/自动闭合规则、
+  TextMate grammar 的 scope 与关键字表，都要对着当前 `compiler/frontend/lex/` 的实际词法和
+  `docs/grammar/` 的关键字清单重新核对，不照抄旧文件（旧 grammar 的关键字集合已过时）；
+- **删除仓库里的旧 VSIX**：`ide-support/yian-language-support-0.0.10.vsix` 从 git 中移除，
+  避免"下载旧版本装上"这种错误用法；历史仍留在 git 里，需要时能取回；
+- readme 写清构建、调试（F5）、打包与安装步骤，不再出现 `vscode-yian/` 这类不存在的路径；
+- **补 `.gitignore`**：仓库根需要新增 `ide-support/extension/node_modules/`，扩展目录内再放一份
+  局部 `.gitignore`（`node_modules/`、`out/`、`*.vsix`）。仓库根 `.gitignore` 末尾那条针对
+  `yian-language-support-0.0.10.vsix` 的单文件规则随旧 VSIX 一起删掉，改成按模式忽略 `*.vsix`，
+  保证以后打包产物不会被误提交；
+- 构建并生成新版本 VSIX（版本号从 `0.1.0` 起，与旧 `0.0.10` 明确区分），安装到本地 VS Code。
 
 **P1b 编辑行为完善**：
 
@@ -274,8 +284,11 @@ P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3
 **实际使用清单**：
 
 - 干净环境按 readme 能构建出 VSIX，安装后打开 `.an` 文件语言模式自动为 YIAN；
+- 安装的版本号 **≥ 0.1.0**，确认装上的不是已弃用的 `0.0.10`（`code --list-extensions --show-versions` 里核对）；
 - 注释切换、括号匹配、自动闭合、基础高亮、折叠可用；
+- 高亮覆盖当前语言的关键字集合（对照 `docs/grammar/` 人工抽查），不沿用旧 grammar 的过时关键字；
 - 修改 grammar 后可重复构建，不依赖开发者机器上的隐藏文件；
+- 仓库里不再有旧 VSIX 文件，`git status` 不出现打包产物；
 - 编译器三套件结果不变。
 
 ### P2：编译器分析接口
