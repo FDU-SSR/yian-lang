@@ -1,10 +1,8 @@
 # YIAN IDE / VS Code 支持开发计划
 
-> 本计划在 `anx` 的项目模型与依赖解析落地后做过一次修订（§2 已标注哪些前提已经具备）。
-> **仓库里的 `yian-language-support-0.0.10.vsix` 已弃用、不作为起点，P1 重建扩展源码树（§2.1）。**
-> **VS Code 扩展与语言服务器是两个东西，分层放在 `ide-support/vscode/` 与顶层 `lsp/`（§5.7）。**
-> **测试策略见 §5.6：不为 IDE / LSP 建立自动化测试，功能由实际使用验收；编译器现有的三套件
-> 是不回归底线。**
+> 跨阶段政策（详见 §5）：**不为 IDE / LSP 建立自动化测试**，功能由实际使用验收，编译器
+> `basic` / `safety` / `package` 三套件是不回归底线；**VS Code 扩展与语言服务器分层存放**
+> （`ide-support/vscode/` 与顶层 `lsp/`）。
 
 ## 1. 目标、范围与基本原则
 
@@ -38,49 +36,32 @@
 4. 所有功能都必须考虑未保存文本、半成品代码、错误恢复和跨文件依赖。
 5. **不重复造项目模型**：项目根、标准库、包依赖和导入解析一律复用 `anx` 现成的接口（§2.2）。
 
-## 2. 当前基础与主要问题（2026-09 修订）
+## 2. 现有基础与需要先解决的问题
 
-### 2.1 已有基础
+### 2.1 编辑器侧的现状
 
-**VS Code 扩展**：仓库里的 `ide-support/yian-language-support-0.0.10.vsix` 是**早已弃用的历史产物**，
-版本停留在很久以前的一次探索性开发，与当前的语言和项目模型严重脱节。它**不作为任何阶段的起点
-或事实来源**，只在需要考古时当作参考。解包后能看到的形态是：VSIX 内部的 `extension/package.json`
-（语言 id `yian`、`.an` 关联、`onLanguage:yian` 激活）、`language-configuration.json`（注释、
-括号、自动闭合）、`syntaxes/yian.tmLanguage.json`（词法级高亮）与 `src/extension.ts`。
-**`extension.ts` 是一个空的 `activate()`**：没有语言服务器，也没有补全、跳转、悬停或诊断逻辑。
-（这里的 `extension/` 是 VSIX 内部的目录结构，不要与重建后的 `ide-support/vscode/` 混淆，见 §5.7。）
+`ide-support/` 下只有一个打包产物 `yian-language-support-0.0.10.vsix`，**没有扩展源码树，也没有
+构建脚本**。该产物内容陈旧：`activate()` 是空的，没有语言服务器，也没有补全、跳转、悬停或诊断
+逻辑，grammar 的关键字集合与当前语言不一致。它**不作为开发基线**，P1 直接重建源码树（§7 P1）。
 
-三点需要注意：
+仅作为参考，VSIX 内部的 `extension/` 包含：`package.json`（语言 id `yian`、`.an` 关联、
+`onLanguage:yian` 激活）、`language-configuration.json`（注释、括号、自动闭合）、
+`syntaxes/yian.tmLanguage.json`（词法级高亮）与 `src/extension.ts`。注意这里的 `extension/` 是
+VSIX 内部目录，与重建后的 `ide-support/vscode/` 无关（§5.7）。
 
-- **扩展源码不在仓库里**，只存在于这个 VSIX 内；`ide-support/` 下没有任何源码树或构建脚本。
-- VSIX 内的 `extension/readme.md` 让人 `cd vscode-yian`，而仓库里没有这个目录——源码树当年
-  没有提交进来。
-- 因此 P1 不是"把旧扩展捡回来维护"，而是**重建一个干净的扩展源码树**（§7 P1）。语言 id `yian`
-  与 `.an` 关联这两个对外契约要沿用，其余配置与 grammar 都按当前语言重新写。
+### 2.2 已经具备、可直接复用的能力
 
-**编译器中可复用的能力**：
-
-- `compiler/frontend/lex/`：词法分析与 token 的源码范围；
-- `compiler/frontend/parse/`：AST 以及 AST 节点的源码范围；
-- `compiler/analysis/passes/global_resolve.py`：跨文件导入、符号和类型的解析；
-- `compiler/analysis/symbol/`：作用域和符号表；
-- `compiler/analysis/ty/`：类型表示、类型解析和方法查找；
-- `compiler/analysis/unit/hir.py`：语义节点带 `symbol_id`、`type_id` 和 `span`；
-- `compiler/analysis/error.py`、词法错误和语法错误：可转换为编辑器诊断的异常类型。
-
-### 2.2 已经就绪、原计划以为要从零做的三件事
-
-这三项在 `anx` 那一轮工作里已经完成，本计划直接消费：
+以下能力已在仓库中实现，本计划直接复用，不重复建设：
 
 | 能力 | 现成接口 | 说明 |
 | --- | --- | --- |
-| 分析未被 `main` 调用的定义 | `compiler/analysis/passes/type_check.py::__check_root_definitions` | 检查根 = 根包全部顶层定义（未实例化的泛型体除外）；编辑器不再需要另建"库文件分析"路径 |
+| 分析未被 `main` 调用的定义 | `compiler/analysis/passes/type_check.py::__check_root_definitions` | 检查根 = 根包全部顶层定义（未实例化的泛型体除外）；编辑器无需另建"库文件分析"路径 |
 | 项目 / 依赖 / 导入规则 | `anx/project.py` 的 `Project`：`discover`、`load`、`files`、`dependencies`、`dev_dependencies`、`resolve_import`、`describe` | 纯数据模型，只依赖标准库、不 import 编译器、不做副作用，编辑器进程可直接加载 |
 | 项目形状的结构化输出 | `Project.describe()` / `anx graph --json` | 根包、每个包的 `kind`/`sourceRoot`/`entry`/`dependencies`/`devDependencies`、文件索引、结构化诊断 |
 
 命令行与编辑器共用同一份「包名 → 源码根 → 依赖边 → 可视集合」规则，这是 §1.3 第 5 条的依据。
 
-### 2.3 仍需优先解决的问题
+### 2.3 需要先解决的关键问题
 
 1. **Lexer 以文件路径为输入**：`CharStream.__init__(path)` 直接 `path.read_text()`，
    语言工具需要直接接收编辑器内存中的文本。
@@ -88,7 +69,7 @@
    编辑器需要尽量继续产生可用的部分结果。
 3. **位置与文档标识模型不匹配**：`SrcPosition(row, col, path)` 是 **row 0 基、col 1 基**，
    并且携带 `Path` 而不是 uri + 版本号；LSP 使用 0 基行列、字符按 UTF-16 计数。
-   处理方式已在 §5.1 定案。
+   处理方式见 §5.1。
 4. **符号无法追溯到声明位置**：`Symbol` 只有 `symbol_id`、`name`、`kind`、`type_id`、
    `attributes`，**没有 span**；`TypeCtx.get_span` 只覆盖类型定义。变量、参数、字段、
    方法、枚举成员都还没有来源位置，导入别名也没有记录。
@@ -99,19 +80,18 @@
 
 ## 3. 环境准备
 
-### 3.1 已具备（实测）
+### 3.1 已有工具
 
 | 工具 | 版本 | 用途 |
 | --- | --- | --- |
 | `node` / `npm` | v24.16.0 / 11.13.0 | 扩展构建与打包 |
 | `code`（VS Code CLI） | 1.137.0 | 安装 VSIX、做实际使用验收 |
-| Python + llvmlite | 仓库安装所在解释器（`/home/zhx/miniconda3/bin/python3`，`yianc` / `anx` 已 editable 安装） | 分析接口与（将来的）语言服务器 |
+| Python + llvmlite | `/home/zhx/miniconda3/bin/python3`，`yianc` / `anx` 已 editable 安装 | 分析接口与语言服务器 |
 | clang | 已装 | 编译器链接可执行文件 |
 
-### 3.2 需要安装（联网执行）
+### 3.2 需要安装的依赖（联网执行）
 
-分三段，按"什么时候能跑"排序。**注意其中的 `ide-support/vscode/` 目前还不存在**
-（`ide-support/` 下只有那个已弃用的旧 VSIX），要等 P1a 建出源码树后才能真正执行。
+`ide-support/vscode/` 要等 P1a 建出源码树后才会存在，所以第二段目前还不能执行。
 
 ```bash
 # ── 现在就可以装：打包工具，装成全局命令，避免 npx 每次联网拉包
@@ -122,23 +102,23 @@ cd /home/zhx/workspace/yian/ide-support/vscode
 npm install
 npm run compile
 
-# 打包（第 1 段已装全局）
+# 打包（第一段已装全局）
 vsce package
 # 或临时使用（不装全局）：npx @vscode/vsce package
 
-# 装进 VS Code，版本号按实际产物替换（新版本从 0.1.0 起，别装回 0.0.10）
+# 装进 VS Code，版本号按实际产物替换
 code --install-extension /home/zhx/workspace/yian/ide-support/yian-language-support-0.1.0.vsix
 code --list-extensions --show-versions | grep -i yian
 
 # ── P3 之后，且 §6.1 选择 LSP 路线时才需要
-# lsp/ 是 Python 包，若语言服务器用 Python 实现并依赖 pygls：
+# lsp/ 是 Python 包，语言服务器若依赖 pygls：
 /home/zhx/miniconda3/bin/python3 -m pip install pygls
 # 扩展侧需要 LSP 客户端库：
 cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languageclient
 ```
 
-注意：`npm install` 与 `@vscode/vsce` 都需要联网——实测 `npx --no-install @vscode/vsce` 会因
-缺少 `@vscode/vsce@4.0.0` 而失败。离线环境需要预先准备这两个包（内网镜像或离线安装包）。
+这些安装都需要联网：`npx --no-install @vscode/vsce` 在本地没有 `@vscode/vsce` 时会失败，
+离线环境需要预先准备 `@vscode/vsce` 与扩展的 `node_modules`（内网镜像或离线安装包）。
 
 ## 4. 功能分层与阶段总览
 
@@ -148,7 +128,7 @@ cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languagecli
 | 阶段 | 名称 | 主要交付物 | 阶段门槛 |
 | --- | --- | --- | --- |
 | P0 | 范围、决策与示例工程 | 功能矩阵、示例工程、位置模型与诊断结构定案、性能指标口径 | "支持什么""怎么算做完"不再有歧义 |
-| P1 | 扩展工程重建 | 干净的扩展源码树（替代已弃用的旧 VSIX）；语言注册、基础高亮和编辑行为 | 新环境能构建 VSIX，安装后 `.an` 文件识别与编辑正常 |
+| P1 | 扩展工程 | 扩展源码树；语言注册、基础高亮和编辑行为 | 新环境能构建 VSIX，安装后 `.an` 文件识别与编辑正常 |
 | P2 | 编译器分析接口 | 面向内存文本的分析会话、位置与 URI 转换、结构化诊断 | 不生成 LLVM/可执行文件也能对未保存文本得到稳定分析结果 |
 | P3 | 工作区与符号索引 | 项目发现、依赖解析、跨文件索引和失效规则 | 多文件项目中能定位符号并跟上依赖变化 |
 | P4 | 实时诊断 | 词法、语法、导入、名称、类型诊断 | 修改未保存文本后诊断及时更新且不残留旧结果 |
@@ -173,8 +153,8 @@ cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languagecli
 
 ### 5.2 分析接口与通信协议解耦，并按层落位
 
-分析会话（`DocumentStore`、`AnalysisSession`、`AnalysisSnapshot`、结构化诊断）先做成与协议
-无关的库；VS Code 直连 API、LSP 或命令行都只是它的消费者。P2 只交付这个库与最小驱动。
+分析会话（`DocumentStore`、`AnalysisSession`、`AnalysisSnapshot`、结构化诊断）做成与协议无关的
+库；VS Code 直连 API、LSP 或命令行都只是它的消费者。P2 只交付这个库与最小驱动。
 
 **该库住在 `compiler/` 内部**（如 `compiler/analysis/session.py` 与配套的诊断/位置转换模块），
 不另起顶层包：它需要直接使用 lexer、parser、类型检查的内部结构，搬到 `compiler/` 外面要么形成
@@ -188,10 +168,10 @@ cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languagecli
 
 ### 5.4 高亮：TextMate 作为回退，语义 token 叠加
 
-P1 重建的 TextMate grammar 作为基础高亮；真实类型、函数、变量和字段的区分由语义
-token 提供。语义分析失败时不得影响基础高亮（不引入 tree-sitter 等新的解析前端）。
+P1 建立的 TextMate grammar 作为基础高亮；真实类型、函数、变量和字段的区分由语义 token 提供。
+语义分析失败时不得影响基础高亮（不引入 tree-sitter 等新的解析前端）。
 
-### 5.5 项目配置：直接复用 `anx`，不再引入第二套配置
+### 5.5 项目配置：复用 `anx`，不引入第二套配置
 
 项目发现、依赖解析和标准库定位一律用 `Project.discover` / `load` / `resolve_import`，标准库
 定位复用 `compiler.analysis.source_provenance.resolve_stdlib_root`（`--compiler-root` /
@@ -207,10 +187,9 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
   必须与编译器的既有行为一致，而不是另写一套解析逻辑。
 - 因此本计划**不新增** fixture 目录、不新增 runner 套件、不定义 IDE 期望文件格式。
 
-### 5.7 目录分层：按依赖方向切，不按"都属于 IDE"堆在一起
+### 5.7 目录分层：按依赖方向切
 
-扩展与语言服务器是两个不同的东西，**不放在同一个目录下**。切分依据不是"技术栈不同"，而是
-**谁复用谁、谁是某个编辑器的专属产物**：
+扩展与语言服务器**不放在同一个目录下**。切分依据是**谁复用谁、谁是某个编辑器的专属产物**：
 
 | 层 | 位置 | 内容 | 谁依赖它 |
 | --- | --- | --- | --- |
@@ -223,13 +202,13 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
 
 - **依赖方向单向**：`ide-support/vscode/ → lsp/ → compiler/ + anx/`，任何一层都不得反向 import，
   客户端里不得出现 YIAN 语言规则。
-- **`ide-support/` 的含义收窄为"某个具体编辑器的专属产物"**。客户端目录用 `vscode/` 而不是
-  `extension/`，将来若有第二个客户端就是并列子目录（`ide-support/neovim/` 等），不必返工。
-  项目级的 `sample/`（P0）属于编辑器支持资产，可以留在 `ide-support/sample/`。
-- **`lsp/` 是按需创建的**：如果 §6.1 最终选择"扩展直接调用 `yianc --analyze --json`"这条路线，
-  就不创建 `lsp/`，此时上面分层照旧成立（客户端依然是薄的，语言逻辑依然在 Python 侧）。
+- **`ide-support/` 只放某个具体编辑器的专属产物**：客户端目录用 `vscode/`，第二个客户端作为
+  并列子目录（`ide-support/neovim/` 等）。P0 的示例工程属于编辑器支持资产，放
+  `ide-support/sample/`。
+- **`lsp/` 按需创建**：如果 §6.1 最终选择"扩展直接调用 `yianc --analyze --json`"这条路线，就
+  不创建 `lsp/`，此时上面的分层照旧成立（客户端依然薄，语言逻辑依然在 Python 侧）。
 - **`lsp/` 与 `compiler/`、`anx/` 同等待遇**：遵守 Python 双下划线私有命名约定，纳入 pyright
-  strict 覆盖，并在 `pyproject.toml` 里登记。落地时需要同时改三处配置：
+  strict 覆盖，并在 `pyproject.toml` 里登记。创建时需要同时改三处配置：
 
   ```toml
   [project.scripts]
@@ -243,7 +222,7 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
   ```
 
 - **两套工具链互不污染**：`node_modules/`、`out/`、`*.vsix` 只出现在 `ide-support/vscode/`；
-  pyright、`compileall` 与打包清单只覆盖 Python 侧。这是分层最直接的收益。
+  pyright、`compileall` 与打包清单只覆盖 Python 侧。
 
 ## 6. 暂不锁定的技术路线与决策节点
 
@@ -292,10 +271,9 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
 - 建立最小示例工程（`ide-support/sample/`）：主文件 + 辅助模块 + `std` 导入 + 结构体 + 枚举 +
   类型别名 + 泛型 + 方法 + 一个错误文件，且能直接 `anx build` / `anx test` 跑通；
 - 定案位置模型（§5.1）与文档标识（uri + 版本号）；
-- 定案诊断结构：严重级别、消息、范围、**错误码方案**。现状是三层各有一套：
-  项目级 `AX001`–`AX015`（`anx/diagnostics.py`）、运行时 `S001…`/`R00x`
-  （`docs/grammar/16`）、源码级（词法/语法/分析）**没有码**——需要在 P0 给出源码级码段与
-  归属，并写进本节；
+- 定案诊断结构：严重级别、消息、范围、**错误码方案**。目前的码段有三套：项目级
+  `AX001`–`AX015`（`anx/diagnostics.py`）、运行时 `S001…`/`R00x`（`docs/grammar/16`）、
+  源码级（词法/语法/分析）**没有码**——需要在 P0 给出源码级码段与归属，并写进本节；
 - 定义性能指标口径：示例工程上首次分析、修改后重分析、补全与跳转的耗时上限
   （P2 完成后按实测冻结）；
 - 建立问题分类：编译器前端问题、分析模型问题、协议适配问题、扩展打包问题、性能问题。
@@ -306,29 +284,23 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
 - 功能矩阵里每一项都能指出在示例工程中的对应文件与位置；
 - 位置模型、诊断结构、错误码方案三份决定都有书面记录（写进本文件）。
 
-### P1：扩展工程重建
+### P1：扩展工程
 
-**目标**：从零建立一个干净、可构建、可调试、可打包的扩展源码树，替代那个已弃用的旧 VSIX。
+**目标**：建立一个干净、可构建、可调试、可打包的扩展源码树。
 
 **P1a 源码树与构建（后续所有前端工作的前提）**：
 
-- **不继承旧 VSIX**：`yian-language-support-0.0.10.vsix` 已弃用（§2.1），不作为代码基线。
-  新建 **`ide-support/vscode/`**（命名理由见 §5.7），包含 `package.json`、`tsconfig.json`、
+- 新建 **`ide-support/vscode/`**（命名理由见 §5.7），包含 `package.json`、`tsconfig.json`、
   `src/extension.ts`、`language-configuration.json`、`syntaxes/yian.tmLanguage.json`、
   `readme.md`、`.gitignore`；
-- **只沿用两个对外契约**：语言 id 保持 `yian`、文件关联保持 `.an`（含 `onLanguage:yian` 激活），
-  这样用户已有的设置和安装不需要改；
-- **其余内容按当前语言重写**：`language-configuration.json` 的注释/括号/自动闭合规则、
-  TextMate grammar 的 scope 与关键字表，都要对着当前 `compiler/frontend/lex/` 的实际词法和
-  `docs/grammar/` 的关键字清单重新核对，不照抄旧文件（旧 grammar 的关键字集合已过时）；
-- **删除仓库里的旧 VSIX**：`ide-support/yian-language-support-0.0.10.vsix` 从 git 中移除，
-  避免"下载旧版本装上"这种错误用法；历史仍留在 git 里，需要时能取回；
-- readme 写清构建、调试（F5）、打包与安装步骤，不再出现 `vscode-yian/` 这类不存在的路径；
-- **补 `.gitignore`**：仓库根需要新增 `ide-support/vscode/node_modules/`，扩展目录内再放一份
-  局部 `.gitignore`（`node_modules/`、`out/`、`*.vsix`）。仓库根 `.gitignore` 末尾那条针对
-  `yian-language-support-0.0.10.vsix` 的单文件规则随旧 VSIX 一起删掉，改成按模式忽略 `*.vsix`，
-  保证以后打包产物不会被误提交；
-- 构建并生成新版本 VSIX（版本号从 `0.1.0` 起，与旧 `0.0.10` 明确区分），安装到本地 VS Code。
+- **对外契约**：语言 id 用 `yian`，`.an` 文件关联 `yian`，激活事件 `onLanguage:yian`；
+- **grammar 与 language-configuration 按当前语言编写**：关键字、scope 与注释/括号规则以
+  `compiler/frontend/lex/` 的实际词法和 `docs/grammar/` 的关键字清单为准；
+- **删除 `ide-support/yian-language-support-0.0.10.vsix`**；git 历史里仍可追溯到它；
+- readme 写清构建、调试（F5）、打包与安装步骤；
+- **`.gitignore`**：仓库根增加 `ide-support/vscode/node_modules/`，并把 `*.vsix` 改为按模式忽略；
+  扩展目录内再放一份局部 `.gitignore`（`node_modules/`、`out/`、`*.vsix`）；
+- 构建并生成 VSIX（版本号从 `0.1.0` 起），安装到本地 VS Code。
 
 **P1b 编辑行为完善**：
 
@@ -338,11 +310,11 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
 **实际使用清单**：
 
 - 干净环境按 readme 能构建出 VSIX，安装后打开 `.an` 文件语言模式自动为 YIAN；
-- 安装的版本号 **≥ 0.1.0**，确认装上的不是已弃用的 `0.0.10`（`code --list-extensions --show-versions` 里核对）；
+- `code --list-extensions --show-versions` 显示版本 ≥ 0.1.0；
 - 注释切换、括号匹配、自动闭合、基础高亮、折叠可用；
-- 高亮覆盖当前语言的关键字集合（对照 `docs/grammar/` 人工抽查），不沿用旧 grammar 的过时关键字；
+- 高亮覆盖当前语言的关键字集合（对照 `docs/grammar/` 人工抽查）；
 - 修改 grammar 后可重复构建，不依赖开发者机器上的隐藏文件；
-- 仓库里不再有旧 VSIX 文件，`git status` 不出现打包产物；
+- `git status` 不出现 `node_modules/`、`out/` 或 `*.vsix`；
 - 编译器三套件结果不变。
 
 ### P2：编译器分析接口
@@ -363,7 +335,7 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 - 结构化诊断：严重级别、消息、范围、错误码；错误返回结构化结果，不再依赖终端输出；
 - 给命令行加一个结构化出口（如 `yianc --analyze --json`），使 §6.1 选"扩展直连 CLI"路线时
   不依赖 `lsp/` 也能工作，同时作为分析会话的第一个消费者与手工验证手段；
-- **替换 `__print_source_error` 的 traceback + stdout + `sys.exit(-1)` 路径**，让 CLI 与分析
+- **去掉 `__print_source_error` 的 traceback + stdout + `sys.exit(-1)` 路径**，让 CLI 与分析
   接口共用同一套诊断渲染，并对齐 `docs/grammar/16` 的约定（stderr、退出码只区分成功/失败）；
 - 错误恢复策略研究：局部恢复、占位 AST、保留上一次有效 AST 或组合（选型记入 §6.3）。
 
@@ -373,7 +345,7 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 - 输入缺少括号、缺少分号、正在输入标识符等半成品代码时不会退出或崩溃；
 - 同一个错误稳定映射到编辑器正确的行和列；含非 ASCII 注释或字符串时后续位置不偏移；
 - 分析失败时得到结构化结果，而不是终端文本；
-- 编译器三套件继续全绿；`yianc` 直接报错时不再出现 Python traceback。
+- 编译器三套件全绿；`yianc` 直接报错时不输出 Python traceback。
 
 ### P3：工作区、项目模型与符号索引
 
@@ -388,7 +360,7 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 - 记录导入别名，使"引用 → 符号 → 声明位置"在别名场景下也成立；
 - 失效规则：至少区分当前文件、直接依赖者（用 `Project.dependencies` 反查）两类粒度的重分析；
 - 请求取消与旧结果丢弃机制；
-- 索引本身同样落在 Python 侧（`compiler/`，复用 §5.2 的会话），**不在扩展里建索引**；
+- 索引同样落在 Python 侧（`compiler/`，复用 §5.2 的会话），**不在扩展里建索引**；
 - 若此时已确定 §6.1 走 LSP：创建顶层 `lsp/` 包并同步 `pyproject.toml` 的三处配置（§5.7），
   `lsp/` 只做协议适配与进程管理，索引与项目模型仍从 `compiler/` / `anx/` 复用。
 
