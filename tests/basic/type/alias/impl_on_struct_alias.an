@@ -1,0 +1,14 @@
+// typedef: a trait impl written on a struct alias is found through the struct.
+// Regression: the impl registry cached impls by the raw target type id, so an
+// impl registered under the alias id was invisible to the aliased type.
+// Expected output: (exit 0)
+
+typedef P = Vec2;
+
+struct Vec2 { pub x: i32 }
+
+trait Describe { fn describe() -> i32; }
+
+impl Describe for P { fn describe() -> i32 { return 7; } }
+
+fn main() { let v: Vec2 = Vec2(x=1); assert v.describe() == 7; }

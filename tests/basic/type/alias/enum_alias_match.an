@@ -1,0 +1,13 @@
+// typedef: `match` on an alias of an enum dispatches on the enum's variants.
+// Regression: the match strategy and the LLVM dispatch both classified the raw
+// scrutinee type, so an alias of an enum fell through to PartialEq lowering and
+// then emitted a block with no terminator (invalid IR).
+// Expected output: (exit 0)
+
+enum Shape { Dot, Sq { s: i32 } }
+
+typedef S = Shape;
+
+fn area(v: S) -> i32 { return match v { Dot => 0, Sq(s) => s * s, }; }
+
+fn main() { let a: Shape = Shape.Sq(s=3); assert area(a) == 9; }

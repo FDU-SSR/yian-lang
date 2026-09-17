@@ -1,0 +1,14 @@
+// typedef: an alias chain inside a generic argument is one type written twice.
+// Expected output: (exit 0)
+
+typedef A = u64;
+typedef B = A;
+
+struct Box<T> { pub v: T }
+
+fn main() {
+    let x: Box<B> = Box<B>(v=4u64);
+    let y: Box<u64> = Box<u64>(v=5u64);
+    assert x.v == 4u64;
+    assert y.v == 5u64;
+}

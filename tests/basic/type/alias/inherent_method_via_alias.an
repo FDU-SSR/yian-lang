@@ -1,0 +1,10 @@
+// typedef: methods are reachable through an alias of the receiver's type.
+// Expected output: (exit 0)
+
+struct Vec2 { pub x: i32 }
+
+impl Vec2 { pub fn get() -> i32 { return self.x; } }
+
+typedef P = Vec2;
+
+fn main() { let v: P = P(x=5); assert v.get() == 5; }

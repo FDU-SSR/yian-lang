@@ -1,0 +1,12 @@
+// typedef: generic trait impl + alias as the generic argument.
+// Expected output: (exit 0)
+
+typedef Code = u64;
+
+struct Box<T> { pub v: T }
+
+trait Get { fn get() -> u64; }
+
+impl<T> Get for Box<T> { fn get() -> u64 { return 1u64; } }
+
+fn main() { let a: Box<Code> = Box<Code>(v=2u64); assert a.get() == 1; }

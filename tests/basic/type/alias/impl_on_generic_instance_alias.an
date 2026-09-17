@@ -1,0 +1,14 @@
+// typedef: impl written on an alias of a generic instance.
+// Regression: the impl registry keyed such an impl by the alias's instance id,
+// so a call through the target spelling missed it.
+// Expected output: (exit 0)
+
+struct Box<T> { pub v: T }
+
+typedef IntBox = Box<i32>;
+
+trait Describe { fn describe() -> i32; }
+
+impl Describe for IntBox { fn describe() -> i32 { return 3; } }
+
+fn main() { let b: Box<i32> = Box<i32>(v=1); assert b.describe() == 3; }

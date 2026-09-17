@@ -1,0 +1,2 @@
+// A type alias declared in a module that sorts after its user.
+pub typedef Code = u64;

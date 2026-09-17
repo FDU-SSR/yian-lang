@@ -1,0 +1,15 @@
+// typedef: an alias imported from another unit, used in a trait impl and a call.
+// Regression: the speller (main) is walked before the definer (kinds), and the
+// impl registry cached by raw type id, so `describe` was not found.
+// Expected output: (exit 0)
+
+from aliasdemo.kinds import Code;
+
+trait Describe { fn describe() -> u64; }
+
+impl Describe for Code { fn describe() -> u64 { return 9u64; } }
+
+fn main() {
+    let c: u64 = 1u64;
+    assert c.describe() == 9u64;
+}

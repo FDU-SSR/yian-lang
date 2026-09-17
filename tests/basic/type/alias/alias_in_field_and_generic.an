@@ -1,0 +1,15 @@
+// typedef: alias inside a field type and inside a generic argument.
+// Expected output: (exit 0)
+
+typedef Code = u64;
+
+struct Box<T> { pub v: T }
+
+struct Holder { pub b: Box<Code> }
+
+fn main() {
+    let h: Holder = Holder(b=Box<Code>(v=9u64));
+    assert h.b.v == 9u64;
+    let g: Box<u64> = Box<u64>(v=8u64);
+    assert g.v == 8u64;
+}

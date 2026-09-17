@@ -1,0 +1,14 @@
+// typedef: explicit type arguments spelled with an alias share one instance.
+// Regression: `ident<Code>` and `ident<u64>` produced two function instances,
+// so the same function was monomorphized (and emitted) twice.
+// Expected output: (exit 0)
+
+typedef Code = u64;
+
+fn ident<T>(v: T) -> T { return v; }
+
+fn main() {
+    let a: Code = ident<Code>(1u64);
+    let b: u64 = ident<u64>(2u64);
+    assert a + b == 3u64;
+}

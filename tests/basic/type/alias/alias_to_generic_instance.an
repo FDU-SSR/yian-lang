@@ -1,0 +1,8 @@
+// typedef: alias to a generic instance keeps working as a value type.
+// Expected output: (exit 0)
+
+struct Box<T> { pub v: T }
+
+typedef IntBox = Box<i32>;
+
+fn main() { let b: IntBox = Box<i32>(v=3); assert b.v == 3; }

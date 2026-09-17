@@ -1,0 +1,14 @@
+// typedef: array elements spelled as an alias and as its target stay compatible.
+// Regression: infer_common_type compared element type ids directly, so
+// `[a, b]` with `a: Code` and `b: u64` was rejected as incompatible.
+// Expected output: (exit 0)
+
+typedef Code = u64;
+
+fn pair(a: Code, b: u64) -> u64[2] { return [a, b]; }
+
+fn main() {
+    let v: u64[2] = pair(1u64, 2u64);
+    assert v[0] == 1u64;
+    assert v[1] == 2u64;
+}

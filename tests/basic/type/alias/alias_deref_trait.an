@@ -1,0 +1,13 @@
+// typedef: an alias of a struct keeps its inherent methods and deref paths.
+// Expected output: (exit 0)
+
+struct Holder { pub v: i32 }
+
+impl Holder { pub fn get() -> i32 { return self.v; } }
+
+typedef H = Holder;
+
+fn main() {
+    let h: H = H(v=8);
+    assert h.get() == 8;
+}

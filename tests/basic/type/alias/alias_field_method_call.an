@@ -1,0 +1,12 @@
+// typedef: field access and method calls on an aliased struct value.
+// Expected output: (exit 0)
+
+struct Inner { pub v: i32 }
+
+impl Inner { pub fn twice() -> i32 { return self.v * 2; } }
+
+struct Outer { pub i: Inner }
+
+typedef Wrap = Outer;
+
+fn main() { let w: Wrap = Wrap(i=Inner(v=6)); assert w.i.twice() == 12; }

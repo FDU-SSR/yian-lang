@@ -1,0 +1,21 @@
+// typedef: inferred type arguments spelled with an alias share one instance.
+// Expected output: (exit 0)
+
+typedef Code = u64;
+
+struct Box<T> { pub v: T }
+
+impl<T> Box<T> {
+    pub fn get() -> T { return self.v; }
+}
+
+fn unwrap<T>(b: Box<T>) -> T { return b.v; }
+
+fn main() {
+    let a: Box<Code> = Box<Code>(v=1u64);
+    let b: Box<u64> = Box<u64>(v=2u64);
+    assert a.get() == 1u64;
+    assert b.get() == 2u64;
+    assert unwrap(a) == 1u64;
+    assert unwrap(b) == 2u64;
+}
