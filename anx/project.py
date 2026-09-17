@@ -31,6 +31,7 @@ from anx.diagnostics import (
     AX_NO_PROJECT_ROOT,
     Diagnostic,
     RESERVED_PACKAGE_NAMES,
+    diagnostic_payload,
     sort_diagnostics,
 )
 from anx.manifest import DEFAULT_ENTRY
@@ -189,6 +190,35 @@ class Project:
                 spec["entry"] = str(package.entry)
             packages[name] = spec
         return {"format": 2, "root": self.root_package, "packages": packages}
+
+    def describe(self, diagnostics: Sequence[Diagnostic] = ()) -> dict[str, object]:
+        """Render the dependency graph, file index and diagnostics as JSON.
+
+        This is the payload of ``anx graph --json``: the same data the CLI and
+        the language server see, in a shape a script can consume without
+        parsing diagnostics out of stderr.
+        """
+        packages: dict[str, object] = {}
+        for name, package in self.packages.items():
+            packages[name] = {
+                "kind": package.kind.value,
+                "root": str(package.root),
+                "manifest": str(package.manifest_path),
+                "sourceRoot": str(package.source_root),
+                "entry": None if package.entry is None else str(package.entry),
+                "dependencies": [dependency.name for dependency in package.dependencies],
+            }
+        return {
+            "root": self.root_package,
+            "std": self.std_package,
+            "packages": packages,
+            "files": [
+                {"path": str(source.path), "package": source.package, "module": list(source.module)}
+                for source in self.files.values()
+            ],
+            "dependencies": {name: list(deps) for name, deps in self.dependencies.items()},
+            "diagnostics": [diagnostic_payload(diagnostic) for diagnostic in diagnostics],
+        }
 
 
 @dataclass(frozen=True)

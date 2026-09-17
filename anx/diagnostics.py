@@ -63,3 +63,14 @@ def format_diagnostic(diagnostic: Diagnostic) -> str:
     if diagnostic.hint is not None:
         text += f"\n  hint: {diagnostic.hint}"
     return text
+
+
+def diagnostic_payload(diagnostic: Diagnostic) -> dict[str, object]:
+    """The JSON shape of one diagnostic, for structured output (``anx graph``)."""
+    return {
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "path": None if diagnostic.path is None else str(diagnostic.path),
+        "span": None if diagnostic.span is None else list(diagnostic.span),
+        "hint": diagnostic.hint,
+    }

@@ -8,14 +8,23 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 from anx import project_tests
-from anx.diagnostics import format_diagnostic
+from anx.diagnostics import (
+    AX_NO_PROJECT_ROOT,
+    Diagnostic,
+    diagnostic_payload,
+    format_diagnostic,
+)
 from anx.project import CycleError, PackageKind, Project, discover, load
 from anx.scaffold import KINDS, scaffold
+from compiler.analysis.source_provenance import resolve_stdlib_root
 
-_YIAN_ROOT = Path(__file__).resolve().parent.parent
-_STD_SRC = _YIAN_ROOT / "lib" / "src"
+_CHECKOUT = Path(__file__).resolve().parent.parent
+# The standard library an anx run compiles against. In a non-editable install
+# this comes from YIAN_LIB / YIAN_ROOT (docs §8.4).
+_STD_SRC = resolve_stdlib_root()
 
 
 def compiler_command() -> list[str]:
@@ -44,12 +53,26 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _require_stdlib() -> None:
+    """Fail early when the standard library cannot be located (docs §8.4)."""
+    if _STD_SRC.is_dir():
+        return
+    print(
+        f"error: standard library source root {_STD_SRC} does not exist.\n"
+        "       Set YIAN_LIB to the stdlib src directory, or YIAN_ROOT to a\n"
+        "       checkout root; a non-editable install does not carry lib/.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _load_project(project_dir: str) -> tuple[Project, Path]:
     """Discover, load and validate the project at or above *project_dir*.
 
     Returns the project and its root directory; exits with 1 after reporting
     every diagnostic.
     """
+    _require_stdlib()
     start = Path(project_dir)
     root_dir = discover(start)
     if root_dir is None:
@@ -137,7 +160,14 @@ def _do_build(
         *flags,
         *(str(f) for f in project.files),
     ]
-    result = subprocess.run(cmd, cwd=str(_YIAN_ROOT), capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        cmd,
+        cwd=str(root_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_compiler_env(),
+    )
 
     # Forward both streams whether or not the compiler succeeded, so warnings
     # (for example the shadowed-directory hint) are not swallowed.
@@ -173,6 +203,103 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_graph(args: argparse.Namespace) -> int:
+    """Print the dependency graph, file index and diagnostics (docs §8.1).
+
+    The payload is always printed, so a script can consume it even when the
+    exit code reports a problem: 1 means the project was unusable or carried
+    diagnostics, 0 means it loaded cleanly.
+    """
+    _require_stdlib()
+    start = Path(args.project)
+    root_dir = discover(start)
+    if root_dir is None:
+        payload: dict[str, object] = {
+            "root": None,
+            "std": None,
+            "packages": {},
+            "files": [],
+            "dependencies": {},
+            "diagnostics": [
+                diagnostic_payload(
+                    Diagnostic(
+                        AX_NO_PROJECT_ROOT,
+                        f"No package.anx found in {start.resolve()} or any parent directory",
+                        start.resolve(),
+                    )
+                )
+            ],
+        }
+        result_ok = False
+    else:
+        result = load(root_dir, std_root=_STD_SRC)
+        project = result.project
+        payload = (
+            project.describe(result.diagnostics)
+            if project is not None
+            else {
+                "root": None,
+                "std": None,
+                "packages": {},
+                "files": [],
+                "dependencies": {},
+                "diagnostics": [diagnostic_payload(d) for d in result.diagnostics],
+            }
+        )
+        result_ok = project is not None and not result.diagnostics
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        _print_graph(payload)
+    return 0 if result_ok else 1
+
+
+def _print_graph(payload: dict[str, object]) -> None:
+    """Human-readable rendering of the ``anx graph`` payload."""
+    print(f"project: {payload.get('root')}")
+    packages = _as_table(payload.get("packages"))
+    if packages is not None:
+        for name, value in packages.items():
+            spec = _as_table(value)
+            if spec is None:
+                continue
+            entry = spec.get("entry")
+            suffix = f"  entry={entry}" if entry is not None else ""
+            print(
+                f"  {name:<16} {spec.get('kind')!s:<7} {spec.get('sourceRoot')}"
+                f"{suffix}  deps={spec.get('dependencies')}"
+            )
+    files_value = payload.get("files")
+    files: list[object] = (
+        cast("list[object]", files_value) if isinstance(files_value, list) else []
+    )
+    print(f"files: {len(files)}")
+    diagnostics_value = payload.get("diagnostics")
+    diagnostics: list[object] = (
+        cast("list[object]", diagnostics_value) if isinstance(diagnostics_value, list) else []
+    )
+    if diagnostics:
+        print("diagnostics:")
+        for value in diagnostics:
+            item = _as_table(value)
+            if item is None:
+                continue
+            print(f"  error[{item.get('code')}]: {item.get('path')}: {item.get('message')}")
+
+
+def _as_table(value: object) -> dict[str, object] | None:
+    """Narrow an untyped JSON value to a string-keyed table."""
+    if not isinstance(value, dict):
+        return None
+    table: dict[str, object] = {}
+    for key, item in cast("dict[object, object]", value).items():
+        if not isinstance(key, str):
+            return None
+        table[key] = item
+    return table
+
+
 def cmd_test(args: argparse.Namespace) -> int:
     """Run the project's own tests under ``<project>/tests`` (D6, §8.5)."""
     _project, root_dir = _load_project(args.project)
@@ -186,14 +313,18 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def _compiler_env() -> dict[str, str]:
-    """Environment for compiler subprocesses started outside the checkout.
+    """Environment for compiler subprocesses.
 
-    The fallback entry point is ``python3 -m compiler.main``, which needs the
-    checkout on ``sys.path`` regardless of the working directory.
+    Only a source checkout needs help: its fallback entry point is
+    ``python3 -m compiler.main``, which requires the checkout on ``sys.path``
+    regardless of the working directory. An installed compiler is already
+    importable.
     """
     env = os.environ.copy()
+    if not (_CHECKOUT / "compiler" / "main.py").is_file():
+        return env
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(_YIAN_ROOT) if not existing else f"{_YIAN_ROOT}{os.pathsep}{existing}"
+    env["PYTHONPATH"] = str(_CHECKOUT) if not existing else f"{_CHECKOUT}{os.pathsep}{existing}"
     return env
 
 
@@ -253,6 +384,10 @@ def main(argv: list[str] | None = None) -> int:
     _add_project_arg(p)
     _add_build_args(p)
 
+    p = sub.add_parser("graph")
+    _add_project_arg(p)
+    p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
     args = parser.parse_args(raw_argv)
     args.program_args = program_args
 
@@ -267,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_check(args)
         case "test":
             return cmd_test(args)
+        case "graph":
+            return cmd_graph(args)
         case _:
             parser.print_help()
             return 1

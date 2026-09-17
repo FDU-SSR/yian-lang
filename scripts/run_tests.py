@@ -466,19 +466,20 @@ def _find_package_ans(fixture: str) -> tuple[Path | None, bool]:
     return None, False
 
 
-def _find_package_command(fixture: str) -> str | None:
+def _find_package_command(fixture: str) -> list[str] | None:
     """Optional ``tests/input/package/<fixture>.command`` override.
 
-    The file holds the anx subcommand to drive the fixture with (``build``,
-    ``check`` or ``test``). Fixtures without it build and run, as before.
+    The file holds the anx command line to drive the fixture with, for example
+    ``build``, ``check``, ``test`` or ``graph --json``. Fixtures without it
+    build and run, as before.
     """
     path = INPUT_DIR / (fixture + ".command")
     if not path.is_file():
         return None
-    command = path.read_text().strip()
-    if command not in {"build", "check", "test"}:
-        raise ValueError(f"{path}: unsupported anx command {command!r}")
-    return command
+    tokens = path.read_text().split()
+    if not tokens or tokens[0] not in {"build", "check", "test", "graph"}:
+        raise ValueError(f"{path}: unsupported anx command {' '.join(tokens)!r}")
+    return tokens
 
 
 def discover_package_tests() -> list[TestCase]:
@@ -499,7 +500,8 @@ def discover_package_tests() -> list[TestCase]:
 
         name = str(base.relative_to(SOURCE_DIR))
         ans_path, ans_is_error = _find_package_ans(name)
-        anx_command = _find_package_command(name)
+        command_tokens = _find_package_command(name)
+        anx_command = command_tokens[0] if command_tokens is not None else None
         # A dependency package has no entry, no expectation and no command of
         # its own, so it is not a case; anything else is.
         if (
@@ -529,6 +531,7 @@ def discover_package_tests() -> list[TestCase]:
             stdin=stdin,
             package_root=base,
             anx_command=anx_command,
+            anx_args=command_tokens[1:] if command_tokens is not None else [],
         ))
 
     orphans: list[str] = []
@@ -892,9 +895,13 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
         all_tests = expanded_tests
     elif suite == "package":
         # Package fixtures also run under both pointer representations; the
-        # flag travels through the anx command line (A3).
+        # flag travels through the anx command line (A3). `graph` never
+        # compiles, so it keeps a single run.
         package_tests: list[TestCase] = []
         for test in all_tests:
+            if test.anx_command == "graph":
+                package_tests.append(test)
+                continue
             package_tests.append(_package_mode_test(test, "fat"))
             package_tests.append(_package_mode_test(test, "raw"))
         all_tests = package_tests

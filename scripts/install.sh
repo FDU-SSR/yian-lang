@@ -3,16 +3,19 @@
 # Install the YIAN compiler (`yianc`) and package manager (`anx`) into the
 # active Python environment.
 #
-# The install is editable: both commands point at this checkout, so edits under
-# compiler/ and anx/ take effect without reinstalling.
+# The default install is editable: both commands point at this checkout, so
+# edits under compiler/ and anx/ take effect without reinstalling. A regular
+# (non-editable) install is also supported; it does not carry the standard
+# library, so it needs YIAN_LIB (or YIAN_ROOT) at run time.
 #
-# Usage: scripts/install.sh [--with-deps] [--user] [--python PATH]
+# Usage: scripts/install.sh [--regular] [--with-deps] [--user] [--python PATH]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="${PYTHON:-}"
 WITH_DEPS=0
 USER_INSTALL=0
+REGULAR=0
 
 usage() {
     cat <<'EOF'
@@ -21,6 +24,9 @@ Install yianc and anx into the active Python environment.
 Usage: scripts/install.sh [options]
 
 Options:
+  --regular      Copy the packages instead of linking them (pip install .).
+                 The installed commands then need YIAN_LIB or YIAN_ROOT to find
+                 the standard library; the script prints the exact export line.
   --with-deps    Let pip resolve dependencies. Without it the environment is left
                  untouched and llvmlite must already be importable.
   --user         Install into the user site-packages instead of the environment.
@@ -30,11 +36,16 @@ Options:
 Environment:
   PYTHON         Same as --python.
 
-The install is always editable: both commands point at this checkout, so edits
+The default install is editable: both commands point at this checkout, so edits
 to compiler/ and anx/ take effect immediately, including newly added modules.
 Only changes to [project.scripts], dependencies, or a new top-level package
-require reinstalling. A non-editable install is not supported yet, because the
-compiler still locates the standard library relative to the checkout.
+require reinstalling.
+
+A --regular install copies compiler/ and anx/ into site-packages without lib/,
+so point the tools at a checkout first:
+
+  export YIAN_LIB="/path/to/yian/lib/src"     # the source root itself
+  export YIAN_ROOT="/path/to/yian"            # or a checkout root
 EOF
 }
 
@@ -42,6 +53,7 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --regular)   REGULAR=1; shift ;;
         --with-deps) WITH_DEPS=1; shift ;;
         --user)      USER_INSTALL=1; shift ;;
         --python)
@@ -73,7 +85,11 @@ if [[ "$WITH_DEPS" -eq 0 ]] && ! "$PYTHON" -c 'import llvmlite' >/dev/null 2>&1;
 fi
 
 # ---- assemble pip arguments -------------------------------------------------
-PIP_ARGS=(--editable "$ROOT_DIR")
+if [[ "$REGULAR" -eq 1 ]]; then
+    PIP_ARGS=("$ROOT_DIR")
+else
+    PIP_ARGS=(--editable "$ROOT_DIR")
+fi
 
 # Build against the installed setuptools when it is new enough, so installing
 # also works without network access.
@@ -93,8 +109,10 @@ fi
 [[ "$USER_INSTALL" -eq 1 ]] && PIP_ARGS+=(--user)
 
 # ---- install ----------------------------------------------------------------
-printf 'Installing (editable) from %s with %s\n' \
-    "$ROOT_DIR" "$("$PYTHON" -c 'import sys; print(sys.executable)')"
+MODE="editable"
+[[ "$REGULAR" -eq 1 ]] && MODE="regular"
+printf 'Installing (%s) from %s with %s\n' \
+    "$MODE" "$ROOT_DIR" "$("$PYTHON" -c 'import sys; print(sys.executable)')"
 "$PYTHON" -m pip install "${PIP_ARGS[@]}"
 
 # ---- verify entry points ----------------------------------------------------
@@ -121,3 +139,14 @@ Try it:
   yianc lib path/to/main.an -o build/app
   anx new myapp && cd myapp && anx run
 EOF
+
+if [[ "$REGULAR" -eq 1 ]]; then
+    cat <<EOF
+
+This was a regular (non-editable) install, which does not include lib/.
+Point the tools at a checkout before using them:
+
+  export YIAN_LIB="$ROOT_DIR/lib/src"
+  # or: export YIAN_ROOT="$ROOT_DIR"
+EOF
+fi

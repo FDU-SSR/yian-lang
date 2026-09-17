@@ -27,7 +27,7 @@ from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.restricted_ops import check_restricted_ops
-from compiler.analysis.source_provenance import build_source_trust
+from compiler.analysis.source_provenance import build_source_trust, resolve_stdlib_root
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -120,6 +120,16 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         default=None,
         help="Package map JSON file (enables package-mode import resolution).",
+    )
+    parser.add_argument(
+        "--compiler-root",
+        type=Path,
+        metavar="PATH",
+        default=None,
+        help=(
+            "YIAN checkout root used to locate the standard library "
+            "(default: $YIAN_LIB, then $YIAN_ROOT, then this checkout)."
+        ),
     )
     parser.add_argument(
         "--raw-pointers",
@@ -378,7 +388,6 @@ def main(argv: list[str] | None = None) -> int:
         for i, (program, src_file) in enumerate(zip(programs, src_files))
     }
 
-    pkg_roots: dict[str, Path] = {}
     packages: PackageMap | None = None
     if args.packages:
         try:
@@ -386,8 +395,23 @@ def main(argv: list[str] | None = None) -> int:
         except CompilerError as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
-        pkg_roots = packages.source_roots()
-    source_trust = build_source_trust(pkg_roots.get("std"))
+    # Package mode names the standard library itself; otherwise the root is
+    # configured explicitly (--compiler-root / YIAN_LIB / YIAN_ROOT).
+    trust_root = (
+        packages.packages["std"].source_root
+        if packages is not None
+        else resolve_stdlib_root(args.compiler_root)
+    )
+    if not trust_root.is_dir():
+        print(
+            f"error: standard library source root {trust_root} does not exist.\n"
+            "       Point the compiler at a checkout with YIAN_LIB (the stdlib src\n"
+            "       directory) or YIAN_ROOT / --compiler-root (a checkout root);\n"
+            "       a non-editable install does not carry lib/.",
+            file=sys.stderr,
+        )
+        return 1
+    source_trust = build_source_trust(trust_root)
     for unit in unit_datas.values():
         unit.is_stdlib = source_trust.is_stdlib(unit.path)
         unit.allows_restricted_ops = source_trust.allows_restricted_ops(unit.path)

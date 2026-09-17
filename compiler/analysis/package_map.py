@@ -97,9 +97,6 @@ class PackageMap:
 
         return cls(root=root, packages=MappingProxyType(packages))
 
-    def source_roots(self) -> dict[str, Path]:
-        return {name: spec.source_root for name, spec in self.packages.items()}
-
     def package_of(self, file: Path) -> str | None:
         """Return the package owning *file*, by longest source-root prefix."""
         resolved = file.resolve()

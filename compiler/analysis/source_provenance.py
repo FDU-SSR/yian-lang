@@ -8,8 +8,14 @@ global resolver, and restricted-operation checks.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+#: Environment variables that point at the standard library, for installs that
+#: do not sit next to the checkout.
+ENV_ROOT = "YIAN_ROOT"
+ENV_LIB = "YIAN_LIB"
 
 
 @dataclass(frozen=True)
@@ -32,6 +38,38 @@ class SourceTrust:
 def default_stdlib_root() -> Path:
     """Return the standard library source root shipped with this checkout."""
     return Path(__file__).resolve().parents[2] / "lib" / "src"
+
+
+def stdlib_root_of(compiler_root: Path) -> Path:
+    """The standard library source root inside *compiler_root*."""
+    return (compiler_root / "lib" / "src").resolve()
+
+
+def resolve_stdlib_root(compiler_root: Path | None = None) -> Path:
+    """Locate the standard library source root.
+
+    Precedence: an explicit ``--compiler-root``, then ``YIAN_LIB`` (the source
+    root itself), then ``YIAN_ROOT`` (a checkout root), then the checkout this
+    module was imported from.  The last case is what an editable install uses;
+    a non-editable install has no ``lib/`` next to it and must be told where to
+    look.
+
+    The root is *configured*, never inferred from input paths: a directory named
+    ``lib``, or a ``package.anx`` claiming ``name = "std"``, must not grant a
+    source file the standard library's privileges.
+    """
+    if compiler_root is not None:
+        return stdlib_root_of(compiler_root)
+
+    lib = os.environ.get(ENV_LIB)
+    if lib:
+        return Path(lib).resolve()
+
+    root = os.environ.get(ENV_ROOT)
+    if root:
+        return stdlib_root_of(Path(root))
+
+    return default_stdlib_root()
 
 
 def build_source_trust(stdlib_root: Path | None = None) -> SourceTrust:

@@ -72,7 +72,7 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 | G7 | 可见性错误与「符号不存在」混为一谈 | 编译器 `global_resolve.py:201` 对非 `pub` 符号报 `is not found`。**A1 已完成**：区分「未公开」与「不存在」 |
 | G8 | `build/run/check` 无法传递编译选项（`-O`、`--raw-pointers`）、程序参数和标准输入；程序退出码不传播 | `main.py:50-75` 硬编码参数，`run` 使用 `check=True`。**A3 已完成**：选项白名单透传、`run` 转发参数与 stdin、退出码分两段 |
 | G9 | `anx test` 运行的是 anx 自身的集成套件，而不是用户项目的测试 | `main.py:73-75`。**A3 已完成**：`anx test` 跑项目自己的 `tests/`（§8.5），anx 自身套件改由 `scripts/run_tests.py --suite package` 调用 |
-| G10 | anx 只能在仓库检出内工作：`_YIAN_ROOT` 由文件位置推导，无安装入口和编译器定位配置 | `main.py:14-15` |
+| G10 | anx 只能在仓库检出内工作：`_YIAN_ROOT` 由文件位置推导，无安装入口和编译器定位配置 | `main.py:14-15`。**A4 已完成**：`resolve_stdlib_root()`（`--compiler-root` / `YIAN_LIB` / `YIAN_ROOT`）+ `install.sh --regular`；根目录从不从输入路径推断 |
 | G11 | `build/pkg.json` 每次构建无条件重写，无版本标记 | `main.py:32-34`。**A3 已完成**：内容不变则不重写 `build/pkg.json`（§6.2） |
 | G12 | 诊断只有 `stderr` 文本，没有结构化结果，编辑器无法直接消费 | `main.py:29` |
 | G13 | Package 模式第一段只查包名、无相对回退；本包内目录与某个依赖包同名时，**依赖包无条件遮蔽本包模块**且无任何诊断 | 实测：本包 `src/dup/foo.an` 与依赖 `dup` 各有 `which()`，`from dup.foo` 取到依赖的值；断言本包值时运行期失败。§5.1 需固定该情形。**A2 已完成**：语义由 `self_shadow_dir` 固定，编译器额外给出 `warning:` 提示 |
@@ -772,7 +772,7 @@ anx 的职责是「不丢失地转发」：
 | `anx run [project] [-O n] [--raw-pointers] [--release] [-- args...]` | 构建并运行，转发参数与标准输入，传播退出码（仅 `bin`/`hybrid`） | 已实现 |
 | `anx check [project] [-O n] [--raw-pointers]` | 只做分析（`-t none`），`lib` 根也可用 | 已实现 |
 | `anx test [project]` | 运行**项目**测试（`tests/`，D6、§8.5） | 已实现 |
-| `anx graph [project] --json` | 输出依赖图与诊断（编辑器/调试用） | 尚未实现，可选 |
+| `anx graph [project] [--json]` | 输出依赖图、文件索引与诊断（编辑器/调试用）；有诊断时打印载荷并退出 1 | 已实现 |
 
 行为随根包的 `kind` 变化（§3.2）：
 
@@ -834,10 +834,11 @@ yianc = "compiler.main:main"
 anx = "anx.main:main"
 ```
 
-本地开发用 **editable 安装**，仓库提供一键脚本：
+本地开发用 **editable 安装**（默认），只想要一份拷贝时用 `--regular`：
 
 ```bash
 scripts/install.sh             # 等价于 python3 -m pip install -e . --no-deps
+scripts/install.sh --regular   # 非 editable：pip install . --no-deps
 scripts/install.sh --with-deps # 让 pip 解析依赖，而不是依赖已有环境
 scripts/uninstall.sh           # 卸载 yian 发行包
 ```
@@ -854,12 +855,20 @@ anx build
   只有改动 `[project.scripts]`、依赖列表或新增顶层包时才需要重装。
 - `compiler/` 是 PEP 420 命名空间包（顶层与部分子目录没有 `__init__.py`），
   `pyproject.toml` 用 `[tool.setuptools.packages.find] namespaces = true` 适配。
-- `yianc` 需要定位标准库 `lib/`。editable 模式下由
-  `compiler/analysis/source_provenance.py` 的 `default_stdlib_root()`（检出根）解析；
-  **非 editable 安装下尚不可用**，需要 A4 的根目录配置。
+- 标准库根由 `compiler/analysis/source_provenance.py` 的 `resolve_stdlib_root()`
+  解析，优先级为 **`--compiler-root`** → **`YIAN_LIB`**（直接给 `lib/src`）→
+  **`YIAN_ROOT`**（给检出根）→ `default_stdlib_root()`（本模块所在检出，editable 用）。
+  `anx` 用同一个函数，两边永远看到同一个根。
+- `lib/` 不在 wheel 里（`packages.find` 只收 `compiler*` / `anx*`）：把整个 `lib`
+  装成顶层命名空间包会污染 site-packages，所以采用**配置**而不是打包。非 editable
+  安装因此必须设置 `YIAN_LIB` 或 `YIAN_ROOT`，否则两个命令都会在启动时给出明确错误
+  （含它实际查找的路径）。根目录**从不**从输入路径推断——一个叫 `lib` 的目录或一份
+  自称 `name = "std"` 的清单都不该换来标准库权限（`source_provenance` 的设计前提）。
 - anx 通过 `anx.main.compiler_command()` 解析编译器入口，优先级为
   `YIANC` 环境变量 → `PATH` 上的 `yianc` → `python3 -m compiler.main` 回退；
-  这样用户脚本、CI 与 anx 共用同一个入口。
+  这样用户脚本、CI 与 anx 共用同一个入口。回退只在源码检出下才补 `PYTHONPATH`。
+- `anx` 的编译子进程以**项目根**为工作目录，编译器的 `build/` 产物落在项目里，
+  而不是安装目录里。
 
 ### 8.5 项目测试（`anx test`）
 
@@ -909,11 +918,14 @@ anx build
 | 导入解析 | `Project.resolve_import(importer, paths) -> ImportResolution`（带失败原因，不返回 `None`） |
 | 依赖关系 | `Project.dependencies`（只读映射） |
 | 诊断 | `LoadResult.diagnostics`（结构化、排序稳定）；`Project` 本身不携带诊断 |
+| 结构化输出 | `Project.describe(diagnostics) -> dict`（`anx graph --json` 的载荷，LSP 可直接复用） |
 
 约束：
 
 - 模型模块 `anx/project.py` 只依赖标准库，不 import `compiler`、不 import `subprocess`，
-  可在编辑器进程内直接加载。
+  可在编辑器进程内直接加载。`anx/main.py`（CLI）额外 import
+  `compiler.analysis.source_provenance.resolve_stdlib_root`——那是纯路径解析，
+  只依赖 `os`/`pathlib`，不会把编译器拖进编辑器进程。
 - 加载**不执行**编译器、不写 `build/`；写产物只发生在 CLI 的 `build/run/check` 里。
 - 与 `ide-support-plan.md` P0 的「坐标约定」无关：anx 只给文件与路径，位置换算由分析会话负责。
 
@@ -1298,6 +1310,8 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 ### A4 交付形态
 
+**状态：已完成**。
+
 已完成：
 
 - `pyproject.toml` 声明 console scripts `yianc = compiler.main:main`、
@@ -1305,14 +1319,25 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
   （改源码即时生效，含新增模块）。仓库提供 `scripts/install.sh` 与
   `scripts/uninstall.sh` 一键装卸（§8.4）。
 - `anx` 经 `anx.main.compiler_command()` 优先调用 `yianc`（§8.4）。
+- **标准库根可配置（G10）**：`resolve_stdlib_root()` 支持 `--compiler-root` /
+  `YIAN_LIB` / `YIAN_ROOT` / 检出默认四级；`install.sh --regular` 支持非 editable 安装，
+  并在安装后打印该检出对应的 `export YIAN_LIB=...`。两个命令在根目录不存在时于启动阶段
+  给出含实际路径的错误，而不是让 stdlib 因为「不被信任」而在 `@runtime_fail` 处炸开。
+- **`anx graph [--json]`**：输出根包、每个包的 `kind`/`root`/`manifest`/`sourceRoot`/
+  `entry`/`dependencies`、文件索引（路径 → 包 + 模块路径）、依赖映射与结构化诊断
+  （`code`/`message`/`path`/`span`/`hint`）。载荷**总是**打印，退出码 1 表示项目不可用
+  或带诊断，0 表示干净，因此脚本可以既读载荷又按退出码分支。
 
-待办：
+**验收结果**（在 `python -m venv --system-site-packages` 的干净 venv 里实测）：
 
-- 编译器与标准库根可配置（`YIAN_ROOT` / `YIAN_LIB` 环境变量，或 `--compiler-root`），
-  使**非 editable 安装**也能定位 `lib/`，摆脱对检出位置的硬依赖（G10）。
-- 提供 `anx graph --json` 或等价的结构化输出。
-
-**验收**：非 editable 安装下 `yianc lib ...` 可用；`graph --json` 可被脚本消费。
+| 场景 | 结果 |
+| --- | --- |
+| `pip install .`（非 editable，无 `--deps`） | `compiler/` 与 `anx/` 进入 site-packages，`lib/` 不在其中 |
+| 未配置根时 `yianc <lib/src> main.an -t none` | 明确报「standard library source root … 不存在」并提示 `YIAN_LIB` / `YIAN_ROOT` / `--compiler-root`，退出 1 |
+| `--compiler-root <checkout>` / `YIAN_ROOT=<checkout>` / `YIAN_LIB=<checkout>/lib/src` | 三种方式下 `yianc ... -t none` 通过 |
+| 非 editable 安装 + `YIAN_LIB` 下的 `anx build` / `anx run` / `anx check` / `anx test` / `anx graph --json` | 全部可用（`anx run` 输出程序结果） |
+| `anx new`（不需要标准库） | 未配置根时仍可用 |
+| `graph --json` 可被脚本消费 | `python3 -c "json.load(...)"` 解析成功；带诊断的项目退出 1 且 `AX003` 出现在载荷里（fixture `errors/graph_diagnostics`） |
 
 ### A5 远程依赖与版本（只出结论）
 
