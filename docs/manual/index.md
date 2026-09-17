@@ -41,5 +41,4 @@
 | [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/main.py`、`compiler/analysis/source_provenance.py` |
 | [25](25.anx_tests.md) | anx 自身的测试 | `anx/project_tests.py`、`scripts/run_tests.py` |
 
-> 用户视角的用法见 [anx 用户指南](../anx/index.md)；远程依赖与版本的结论见
-> [远程依赖与版本](../plan/anx-remote-deps.md)。
+> 用户视角的用法见 [anx 用户指南](../anx/index.md)。

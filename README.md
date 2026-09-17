@@ -83,8 +83,8 @@ mathlib = { path = "vendor/mathlib" }
 testkit = { path = "vendor/testkit" }   # 只有 `anx test` 看得见
 ```
 
-完整用法见 [anx 用户指南](docs/anx/index.md)；远程依赖与版本为什么不做，见
-[远程依赖结论](docs/plan/anx-remote-deps.md)。
+完整用法见 [anx 用户指南](docs/anx/index.md)。依赖目前只支持本地路径：远程依赖、
+版本约束与锁文件都未纳入开发范围。
 
 ## 运行测试
 
