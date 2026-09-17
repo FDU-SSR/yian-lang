@@ -41,19 +41,22 @@ class TypeResolver:
         Resolve an ASTType to a type ID in the type context.
 
         This is used during type checking to convert the types written in the
-        source code (AST) to the internal type representation. Always returns the
-        alias-resolved concrete type.
+        source code (AST) to the internal type representation. A name that refers
+        to an alias resolves to the alias's own type id: an alias is a type in its
+        own right, so a declaration does not have to wait for the alias body (and
+        therefore does not depend on where the alias is declared). Consumers that
+        need the aliased type look through it with :meth:`TypeCtx.resolve_aliases`.
         """
-        return self.__ctx.resolve_aliases(self.__resolve(ty, symbol_ctx))
+        return self.__resolve(ty, symbol_ctx)
 
     def __resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
-        """Resolve *ty* WITHOUT collapsing its top-level alias.
+        """Resolve *ty* without collapsing its top-level alias.
 
-        Sub-components are resolved through the public :meth:`resolve` (so each is
-        alias-collapsed), but a NamedType/InstanceType that names an alias is
-        returned uncollapsed — so a generic alias (``typedef Ptr<T> = T*``) can be
-        instantiated with its arguments before its body is substituted. The public
-        :meth:`resolve` collapses the final result.
+        Sub-components are resolved through the public :meth:`resolve`. A
+        NamedType/InstanceType that names an alias is returned uncollapsed, both
+        so a generic alias (``typedef Ptr<T> = T*``) can be instantiated with its
+        arguments before its body is substituted, and so the alias keeps its own
+        identity where it is used.
         """
         match ty:
             case ASTTy.IntType(signed=signed, width=width):

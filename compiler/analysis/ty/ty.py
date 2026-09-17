@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypeAlias
@@ -356,12 +355,6 @@ class AliasDef:
     span: SrcSpan
     generics: list[int] = field(default_factory=list[int])
     aliased_type: int = -1
-    #: Produces :attr:`aliased_type` from the declaration.  An alias's single
-    #: "field" *is* a type, so unlike a struct's fields it cannot be read before
-    #: it is known: whoever needs the alias's identity needs its body.
-    #: GlobalResolve installs this so the body is produced the first time it is
-    #: asked for, which makes the declaration's position irrelevant.
-    resolve: Callable[[], int] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass

@@ -6,7 +6,6 @@ This is the first pass of the analysis phase.
 from __future__ import annotations
 
 import sys
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,10 +36,8 @@ class GlobalResolve:
         self.__packages = packages
         self.__strict_pkg = packages is not None
 
-        # Alias bodies are produced on demand: the alias carries a resolver (see
-        # AliasDef.resolve), so a declaration that is used before it is reached —
-        # later in the same unit, or in a unit that has not been walked yet — is
-        # simply resolved at that moment.  This set breaks cycles.
+        # Guards alias bodies that are being produced right now, see
+        # __resolve_alias: a body that reaches its own alias is a cycle.
         self.__filling_aliases: set[int] = set()
 
         self.__build_std_lookup()
@@ -88,10 +85,6 @@ class GlobalResolve:
                 case AST.Alias(name=name, attrs=attrs, span=span):
                     # alloc in type space
                     type_id = self.__type_ctx.alloc_alias(name.name, span)
-                    # Let the alias produce its own body when it is first needed.
-                    alias_ty = self.__type_ctx[type_id]
-                    assert isinstance(alias_ty, Type.AliasType)
-                    alias_ty.custom_def.resolve = partial(self.__resolve_alias, unit, item)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -344,13 +337,12 @@ class GlobalResolve:
                     # other items are ignored in this pass
                     pass
 
-    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> int:
-        """Produce one alias body and return its type id.
+    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
+        """Produce one alias body.
 
-        Called directly for the declarations of one unit, and through
-        ``AliasDef.resolve`` when something needs the alias earlier.  A body that
-        reaches its own alias again is a cycle: the alias is not a usable type, so
-        report it where the declaration sits.
+        The body is stored on the declaration, not substituted into the users: a
+        declaration keeps the alias's own type id, so it does not matter whether
+        the alias is declared before or after the code that names it.
         """
         symbol = unit.symbol_ctx.lookup(alias.name.name)
         assert symbol is not None
@@ -373,7 +365,6 @@ class GlobalResolve:
             ty.custom_def.aliased_type = aliased_type_id
         finally:
             self.__filling_aliases.discard(ty.type_id)
-        return aliased_type_id
 
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup(func_def.name.name)

@@ -188,17 +188,19 @@ class OpBuilder:
 
     def build_field_access(self, span: SrcSpan, receiver: AST.Expr, field_name: str) -> HIR.Expr:
         receiver_hir = self.__evaluator.value(receiver)
-        receiver_ty = self.__type_ctx[receiver_hir.type_id]
+        # An alias is a type of its own: `typedef Point = Vec2` must still allow
+        # `point.x`, so look through aliases before reading the receiver's shape.
+        receiver_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver_hir.type_id)]
 
         # auto-deref: only handle PointerType, NOT the Deref trait
         while isinstance(receiver_ty, (Type.PointerType, Type.RefType)):
             receiver_hir = HIR.Unary(span, UnaryOperator.Deref, receiver_hir, receiver_ty.pointee_type, is_place=True)
-            receiver_ty = self.__type_ctx[receiver_ty.pointee_type]
+            receiver_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver_ty.pointee_type)]
 
         if isinstance(receiver_ty, Type.StructType):
             return self.__build_field_access(span, receiver_hir, field_name)
         if isinstance(receiver_hir, HIR.Ty) and isinstance(receiver_ty, Type.EnumType):
-            return self.__build_variant_construct(span, receiver_hir.type_id, field_name)
+            return self.__build_variant_construct(span, self.__type_ctx.resolve_aliases(receiver_hir.type_id), field_name)
 
         raise AnalysisError("field access is only supported on struct instances and enum types", span)
 
@@ -483,7 +485,7 @@ class OpBuilder:
     def __build_deref(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
-        operand_ty = self.__type_ctx[operand_hir.type_id]
+        operand_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(operand_hir.type_id)]
         if isinstance(operand_ty, (Type.PointerType, Type.RefType)):
             return HIR.Unary(span, UnaryOperator.Deref, operand_hir, operand_ty.pointee_type, is_place=True)
 
@@ -515,7 +517,7 @@ class OpBuilder:
         return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
 
     def __build_field_access(self, span: SrcSpan, receiver: HIR.Expr, field_name: str) -> HIR.Expr:
-        struct_ty = self.__type_ctx[receiver.type_id]
+        struct_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver.type_id)]
         assert isinstance(struct_ty, Type.StructType)
 
         struct_field = struct_ty.get_field_by_name(field_name, self.__type_ctx)
@@ -683,7 +685,9 @@ class OpBuilder:
         return overloaded_expr
 
     def __get_operand_type(self, type_id: int, allowed_operand_types: set[OperandType]) -> OperandType:
-        ty = self.__type_ctx[type_id]
+        # `typedef Meter = u64` must still add like a u64: classify the type the
+        # alias stands for, not the alias itself.
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
         if isinstance(ty, (Type.IntType, Type.IntLiteralType)) and OperandType.Integer in allowed_operand_types:
             return OperandType.Integer
         if isinstance(ty, (Type.FloatType, Type.FloatLiteralType)) and OperandType.Float in allowed_operand_types:

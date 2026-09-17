@@ -487,7 +487,12 @@ class CallDispatcher:
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
 
-        instantiated_func_id = inference.instantiate(func_type_id)
+        # Canonicalize the instance id so one function monomorphizes once, even
+        # when the arguments were spelled with a transparent alias
+        # (`f(Box<Code>)` and `f(Box<u64>)` are the same instantiation).
+        instantiated_func_id = self.__ctx.type_ctx.canonical(
+            inference.instantiate(func_type_id)
+        )
         # report reachable instantiated function to the semantic context
         self.__ctx.report_def(instantiated_func_id)
 

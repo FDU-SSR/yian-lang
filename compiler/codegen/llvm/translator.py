@@ -294,14 +294,20 @@ class LLTranslator:
 
     def __emit_match(self, builder: LLBuilder, t: IR.Match) -> None:
         matched = self.__resolve(builder, t.value)
-        matched_type = self.__type_ctx[t.value.type_id]
+        # Dispatch on the type the scrutinee stands for: an alias of an enum has
+        # to switch on the same discriminant as the enum itself.
+        matched_type = self.__type_ctx[
+            self.__type_ctx.resolve_aliases(t.value.type_id)
+        ]
         default_label = t.default.label if t.default else ""
 
         is_enum_ref = t.is_ref
         inner_type = matched_type
         if is_enum_ref:
             assert isinstance(matched_type, (Type.PointerType, Type.RefType))
-            inner_type = self.__type_ctx[matched_type.pointee_type]
+            inner_type = self.__type_ctx[
+                self.__type_ctx.resolve_aliases(matched_type.pointee_type)
+            ]
 
         if isinstance(inner_type, (Type.IntType, Type.CharType, Type.BoolType)):
             cases = [(self.__resolve(builder, arm.pattern.value), arm.body.label)

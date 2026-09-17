@@ -79,7 +79,7 @@ class ImplRegistry:
             )
 
         # 1) Non-generic trait impls that match the exact target type
-        for impl in self.__trait_impl_cache[type_id]:
+        for impl in self.__trait_impl_cache[self.__ctx.canonical(type_id)]:
             if is_deref_impl(impl):
                 return self.__resolve_deref_target(impl, {})
 
@@ -131,7 +131,7 @@ class ImplRegistry:
         if visited is None:
             visited = set()
             fresh = True
-        key = (type_id, trait_id)
+        key = (self.__ctx.canonical(type_id), trait_id)
         if fresh and self.__memoize_enabled:
             cached = self.__has_impl_cache.get(key)
             if cached is not None:
@@ -143,13 +143,14 @@ class ImplRegistry:
 
     def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]]) -> bool:
         """Evaluate a has_impl query without consulting or updating its cache."""
+        type_id = self.__ctx.canonical(type_id)
         key = (type_id, trait_id)
         if key in visited:
             return False
         visited.add(key)
 
         # Check exact match
-        for impl in self.__trait_impl_cache.get(type_id, []):
+        for impl in self.__trait_impl_cache.get(self.__ctx.canonical(type_id), []):
             if impl.trait == trait_id:
                 return self.check_conditions(impl, {}, visited)
 
@@ -316,10 +317,16 @@ class ImplRegistry:
         Cache the implementations for faster lookup.
         """
         for impl in self.__impls:
+            # `typedef` is transparent, so `impl Trait for Alias` and
+            # `impl Trait for Target` are the same impl.  The caches below are
+            # keyed by type id, and the two spellings have different ids, so key
+            # them by the canonical id — otherwise a lookup with the other
+            # spelling would miss the impl.  (`impl.target` itself stays as
+            # written, so diagnostics keep the spelling the program used.)
             if impl.trait is None and len(impl.generics) == 0:
-                self.__impl_cache[impl.target].append(impl)
+                self.__impl_cache[self.__ctx.canonical(impl.target)].append(impl)
             elif impl.trait is not None and len(impl.generics) == 0:
-                self.__trait_impl_cache[impl.target].append(impl)
+                self.__trait_impl_cache[self.__ctx.canonical(impl.target)].append(impl)
             elif impl.trait is None and len(impl.generics) > 0:
                 self.__generic_impl_cache.append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
@@ -332,6 +339,7 @@ class ImplRegistry:
         GenericInference.constrain in method_lookup performs the actual
         matching/filtering.
         """
+        type_id = self.__ctx.canonical(type_id)
         exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
         generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
         return exact + generic

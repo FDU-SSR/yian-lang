@@ -319,7 +319,13 @@ class ExprChecker:
             "array repeat count must be a compile-time constant", span)
 
     def coerce(self, expr: HIR.Expr, expected: int) -> HIR.Expr:
-        if expr.type_id == expected:
+        # A declaration keeps the alias's own type id, so an alias and the type it
+        # stands for are two ids for one type: compare (and reshape) in resolved
+        # space.  The node keeps the annotated id, i.e. `expected`.
+        expected_resolved = self.__ctx.type_ctx.resolve_aliases(expected)
+        expr_resolved = self.__ctx.type_ctx.resolve_aliases(expr.type_id)
+
+        if self.__ctx.type_ctx.is_same_type(expr.type_id, expected):
             return expr
         ch_coerce().trace(lambda: f"coerce {self.__ctx.type_ctx.get_name(expr.type_id)} -> {self.__ctx.type_ctx.get_name(expected)}")
 
@@ -327,15 +333,15 @@ class ExprChecker:
         if expr.type_id == TypeCtx.never_id:
             return expr
 
-        expected_ty = self.__ctx.type_ctx[expected]
-        expr_ty = self.__ctx.type_ctx[expr.type_id]
+        expected_ty = self.__ctx.type_ctx[expected_resolved]
+        expr_ty = self.__ctx.type_ctx[expr_resolved]
 
         # Array decay: T[N] -> T*.  Take the address of an array value and
         # re-anchor the resulting T[N]* at its first element.
         if (
             isinstance(expected_ty, Type.PointerType)
             and isinstance(expr_ty, Type.ArrayType)
-            and expected == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type)
+            and expected_resolved == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type)
         ):
             addr = HIR.Unary(
                 span=expr.span,
@@ -355,7 +361,7 @@ class ExprChecker:
         # Re-anchor T[N]* -> T* without copying the array.
         if isinstance(expected_ty, Type.PointerType) and isinstance(expr_ty, Type.PointerType):
             pointee_ty = self.__ctx.type_ctx[expr_ty.pointee_type]
-            if isinstance(pointee_ty, Type.ArrayType) and expected == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
+            if isinstance(pointee_ty, Type.ArrayType) and expected_resolved == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
                 return HIR.BitCast(
                     span=expr.span,
                     value=expr,
@@ -368,7 +374,7 @@ class ExprChecker:
         # explicit annotation downgrades along T* → T[] → T&. The value-level
         # representation (dropping index/size fields) is codegen's job — here we
         # relabel via BitCast and let codegen re-shape the value.
-        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected_resolved == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
             # Raw pointer mode: a bare `T*` carries no length, so downgrading it
             # to `T[]` would fabricate a size out of thin air. Reject it and ask
             # the user to materialize the slice explicitly.
@@ -380,7 +386,7 @@ class ExprChecker:
                 )
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
-                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
+                and expected_resolved == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
             return HIR.BitCast(
                 span=expr.span,
                 value=expr,
@@ -390,7 +396,7 @@ class ExprChecker:
             )
 
         if isinstance(expr_ty, Type.SliceType) and isinstance(expected_ty, Type.RefType) \
-                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
+                and expected_resolved == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
             return HIR.BitCast(
                 span=expr.span,
                 value=expr,
@@ -411,7 +417,7 @@ class ExprChecker:
                 expr.type_id = expected
                 return expr
             case HIR.CharLiteral() | HIR.StrLiteral() | HIR.BoolLiteral() | HIR.Var() | HIR.Ty() | HIR.Closure():
-                if expr.type_id != expected:
+                if not self.__ctx.type_ctx.is_same_type(expr.type_id, expected):
                     raise AnalysisError(
                         f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
                         expr.span,
@@ -623,12 +629,18 @@ class ExprChecker:
 
         value_expr = self.value(stmt.expr)
         value_expr.type_id = self.__ctx.type_ctx.default_literals(value_expr.type_id)
-        value_type = self.__ctx.type_ctx[value_expr.type_id]
+        # Pick the strategy from the type the scrutinee stands for, so an alias
+        # of an enum matches like the enum itself.
+        value_type = self.__ctx.type_ctx[
+            self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
+        ]
 
         is_ref = False
         inner_type = value_type
         if isinstance(value_type, (Type.PointerType, Type.RefType)):
-            pointee_type = self.__ctx.type_ctx[value_type.pointee_type]
+            pointee_type = self.__ctx.type_ctx[
+                self.__ctx.type_ctx.resolve_aliases(value_type.pointee_type)
+            ]
             if isinstance(pointee_type, (Type.IntType, Type.CharType, Type.EnumType)):
                 is_ref = True
                 inner_type = pointee_type
@@ -725,11 +737,14 @@ class ExprChecker:
     def __lower_match(self, stmt: AST.Match, value_expr: HIR.Expr, is_ref: bool = False) -> HIR.Match:
         assert self.__ctx.symbol_ctx is not None
 
-        enum_type_id = value_expr.type_id
+        # Variant matching is a nominal construct: the match is about the enum's
+        # variants, so record the enum the scrutinee stands for even when the
+        # source spelled an alias (`typedef S = Shape`).
+        enum_type_id = self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
         if is_ref:
-            value_type = self.__ctx.type_ctx[value_expr.type_id]
+            value_type = self.__ctx.type_ctx[enum_type_id]
             assert isinstance(value_type, (Type.PointerType, Type.RefType))
-            enum_type_id = value_type.pointee_type
+            enum_type_id = self.__ctx.type_ctx.resolve_aliases(value_type.pointee_type)
 
         arms: list[HIR.MatchArm] = []
         arm_body_types: list[int] = []
@@ -792,7 +807,7 @@ class ExprChecker:
         return HIR.Match(span=stmt.span, value=value_expr, arms=arms, type_id=match_type_id, is_place=False, is_ref=is_ref)
 
     def __resolve_enum_variant(self, ident: AST.Identifier, enum_type_id: int) -> Type.EnumVariant:
-        enum_ty = self.__ctx.type_ctx[enum_type_id]
+        enum_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(enum_type_id)]
         assert isinstance(enum_ty, Type.EnumType)
         variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)
         if variant is None:
@@ -840,7 +855,9 @@ class ExprChecker:
                     rhs = HIR.StrLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
                     conds.append(self.call_eq(value_expr, rhs))
             case AST.EnumPattern():
-                enum_ty = self.__ctx.type_ctx[value_expr.type_id]
+                enum_ty = self.__ctx.type_ctx[
+                    self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
+                ]
                 assert isinstance(enum_ty, Type.EnumType)
                 for ident in pat.variants:
                     variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)

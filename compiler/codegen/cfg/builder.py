@@ -1402,7 +1402,7 @@ class CfgBuilder:
         return field_ptr
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
-        ptr_type = self.__type_ctx[ptr.type_id]
+        ptr_type = self.__type_ctx[self.__type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         # 按指针层级插入检查(按 type_id 分派):
         #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)

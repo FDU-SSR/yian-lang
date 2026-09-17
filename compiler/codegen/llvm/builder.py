@@ -75,7 +75,7 @@ class LLBuilder:
         """
         if self.__raw_pointers:
             return False
-        ty = self.__type_ctx[ll_val.type_id]
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(ll_val.type_id)]
         if isinstance(ty, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
             # 胖值须为多字段结构(40B/32B/24B);空结构 `{}`(ZST 擦除,ref/ptr-to-ZST
             # 零运行时信息)按非胖处理——对它的任意字段操作均无意义(ZST 特例)。
@@ -90,7 +90,7 @@ class LLBuilder:
         """
         if self.__raw_pointers:
             return False
-        ty = self.__type_ctx[type_id]
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
         if isinstance(ty, Type.PointerType):
             return not self.__type_ctx.is_zst(ty.pointee_type)
         return isinstance(ty, (Type.SliceType, Type.StrType, Type.RefType))
@@ -108,7 +108,7 @@ class LLBuilder:
         """按结构构造胖值(分级指针表示):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
         SliceType 4 字段 ⟨data,lock,key,size⟩(删 index)/ RefType 3 字段 ⟨data,lock,key⟩。
         """
-        ty = self.__type_ctx[type_id]
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
         val = self.undef(type_id)
         val = self.insert_value(val, data, IR.FAT_DATA)
         val = self.insert_value(val, lock_ptr, IR.FAT_LOCK_PTR)
@@ -161,7 +161,7 @@ class LLBuilder:
         if self.__is_fat(ll_val):
             data = self.__extract_fat_field(ll_val, IR.FAT_DATA).ir_val
             pointee_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
-            ty = self.__type_ctx[ll_val.type_id]
+            ty = self.__type_ctx[self.__type_ctx.resolve_aliases(ll_val.type_id)]
             if isinstance(ty, Type.RefType):
                 # T& 3 字段 {data, lock_ptr, key}:无 index,恒指单个元素——
                 # 有效地址 = data(bitcast 到 T* 供调用方按字段 GEP)
@@ -890,7 +890,7 @@ class LLBuilder:
     # -- memory --
 
     def load(self, ptr: LLValue, result: str) -> LLValue:
-        ptr_type = self.__type_ctx[ptr.type_id]
+        ptr_type = self.__type_ctx[self.__type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
             # Loading a zero-sized value yields nothing: emit no `load` and
@@ -1121,11 +1121,15 @@ class LLBuilder:
     # -- cast --
 
     def cast(self, value: LLValue, to_type: int, result: str, raw: bool = False) -> LLValue:
-        src = self.__type_ctx[value.type_id]
+        # Casts work on the types themselves, so an alias is read as what it
+        # stands for: a `typedef Meter = u64` value casts like a `u64`.
+        value_type_id = self.__type_ctx.resolve_aliases(value.type_id)
+        to_type = self.__type_ctx.resolve_aliases(to_type)
+        src = self.__type_ctx[value_type_id]
         dst = self.__type_ctx[to_type]
         dest_ll_type = self.__ll_type_ctx.get_ll_type(to_type).ir_type
 
-        if self.__ll_type_ctx.is_zst(value.type_id) or self.__ll_type_ctx.is_zst(to_type):
+        if self.__ll_type_ctx.is_zst(value_type_id) or self.__ll_type_ctx.is_zst(to_type):
             # A zero-length array still has a meaningful empty-slice view.  Its
             # value is erased to `{}`, so the ordinary bitcast would manufacture
             # an undef pointer; at O0 that can fail arithmetic checks, while raw

@@ -215,7 +215,7 @@ class TypeCtx:
         return self.__space.alloc_literal_value(value, value_type)
 
     def try_extract_array_length(self, array_type_id: int) -> int | None:
-        arr_ty = self[array_type_id]
+        arr_ty = self[self.resolve_aliases(array_type_id)]
         assert isinstance(arr_ty, Type.ArrayType)
         length_ty = self[arr_ty.length]
         if isinstance(length_ty, Type.LiteralValueType):
@@ -307,6 +307,14 @@ class TypeCtx:
     def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
         return type_ops.is_integer_type(self, type_id, include_literals)
 
+    def canonical(self, type_id: int) -> int:
+        """Id of the type after resolving aliases at every level (see type_ops.canonical)."""
+        return type_ops.canonical(self, type_id)
+
+    def is_same_type(self, left: int, right: int) -> bool:
+        """Whether two type ids name the same type, seeing through aliases."""
+        return type_ops.same(self, left, right)
+
     def is_zst(self, type_id: int) -> bool:
         """Return whether a type is a Zero-Sized Type (carries no runtime info).
 
@@ -347,7 +355,12 @@ class TypeCtx:
         return span
 
     def get_struct_fields(self, type_id: int) -> list[Type.StructField]:
-        """Return the fields of a struct type, with caching."""
+        """Return the fields of a struct type, with caching.
+
+        Reads the fields of the type the id stands for, so an alias of a struct
+        answers like the struct (and shares its cache entry).
+        """
+        type_id = self.resolve_aliases(type_id)
         if type_id in self.__fields_cache:
             return self.__fields_cache[type_id]
         ty = self[type_id]
@@ -367,7 +380,12 @@ class TypeCtx:
         return None
 
     def get_enum_variants(self, type_id: int) -> list[Type.EnumVariant]:
-        """Return the variants of an enum type, with caching."""
+        """Return the variants of an enum type, with caching.
+
+        Reads the variants of the type the id stands for, so an alias of an enum
+        answers like the enum (and shares its cache entry).
+        """
+        type_id = self.resolve_aliases(type_id)
         if type_id in self.__variants_cache:
             return self.__variants_cache[type_id]
         ty = self[type_id]
@@ -384,7 +402,12 @@ class TypeCtx:
         return None
 
     def get_params(self, type_id: int) -> list[Type.Parameter]:
-        """Return the parameters of a function or method type, with caching."""
+        """Return the parameters of a function or method type, with caching.
+
+        Reads the parameters of the type the id stands for, so an alias of a
+        function type answers like the function type.
+        """
+        type_id = self.resolve_aliases(type_id)
         if type_id in self.__params_cache:
             return self.__params_cache[type_id]
         ty = self[type_id]
@@ -535,18 +558,12 @@ class TypeCtx:
             ty = self[type_id]
             if isinstance(ty, Type.AliasType):
                 body = ty.custom_def.aliased_type
-                # A body of -1 means the alias has not been produced yet, which
-                # happens while GlobalResolve is still walking the units: an alias
-                # may be named by a declaration that comes earlier.  Ask the alias
-                # for its body instead of reporting it, so where the declaration
-                # sits — earlier or later, same unit or another one — is irrelevant.
+                # A body of -1 means this alias was never reached by GlobalResolve:
+                # a cyclic declaration, or a use before the pass that fills bodies.
                 if body == -1:
-                    resolve = ty.custom_def.resolve
-                    if resolve is None:
-                        raise CompilerError(
-                            f"Type alias '{self.get_name(type_id)}' has no resolved body"
-                        )
-                    body = resolve()
+                    raise CompilerError(
+                        f"Type alias '{self.get_name(type_id)}' has no resolved body"
+                    )
                 if ty.custom_def.generics:
                     substs = dict(zip(ty.custom_def.generics, ty.generic_args))
                     body = self.instantiate(body, substs)
@@ -641,7 +658,8 @@ class TypeCtx:
         matching method implementations at each level. Returns the first match
         with the fewest dereferences.
         """
-        cache_key = (receiver.type_id, method_name, tuple(generic_args or ()), tuple(arg.type_id for arg in args))
+        receiver_type = self.resolve_aliases(receiver.type_id)
+        cache_key = (receiver_type, method_name, tuple(generic_args or ()), tuple(arg.type_id for arg in args))
         if self.__memoize_enabled:
             cache = self.__method_lookup_cache
             if cache_key in cache:
@@ -653,7 +671,7 @@ class TypeCtx:
                     )
                 return cached
 
-        chain = self.deref_chain(receiver.type_id)
+        chain = self.deref_chain(receiver_type)
 
         result: LookupResult | None = None
         for deref_count, type_at_level in enumerate(chain):
@@ -701,7 +719,13 @@ class TypeCtx:
                     continue
 
                 final_substs = impl_substs | arg_substs
-                final_method_id = self.instantiate(instantiated_method_id, final_substs)
+                # Canonicalize the instance id: `Box<Code>` and `Box<u64>` are one
+                # type written two ways, and a method instance is monomorphized by
+                # its type id, so without this the same method would be checked
+                # and emitted twice.
+                final_method_id = self.canonical(
+                    self.instantiate(instantiated_method_id, final_substs)
+                )
                 candidates.append(LookupResult(method_id=final_method_id, deref_count=deref_count, impl=impl))
 
             if len(candidates) == 1:

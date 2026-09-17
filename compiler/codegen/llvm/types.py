@@ -76,6 +76,7 @@ class LLTypeCtx:
         return alignment
 
     def is_niche_enum(self, type_id: int) -> bool:
+        type_id = self.__type_ctx.resolve_aliases(type_id)
         variants = self.__type_ctx.get_enum_variants(type_id)
         if len(variants) != 2:
             return False
@@ -140,6 +141,10 @@ class LLTypeCtx:
         return f"{unit_name}.{type_def.custom_def.name}.{type_id}"
 
     def __get_raw_type(self, type_id: int) -> ir.Type:
+        # An alias is a type of its own; codegen needs the type it stands for.
+        # `canonical` also folds alias arguments, so two spellings of one type
+        # (`Option<i32, ErrorCode>` / `Option<i32, u64>`) share one LLVM type.
+        type_id = self.__type_ctx.canonical(type_id)
         if type_id in self.__storage:
             return self.__storage[type_id]
 
