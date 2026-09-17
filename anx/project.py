@@ -177,8 +177,13 @@ class Project:
             package.entry for package in self.packages.values() if package.entry is not None
         )
 
-    def compiler_package_map(self) -> dict[str, object]:
-        """Render the ``--packages`` v2 payload for this project (docs §6.1)."""
+    def package_specs(self) -> dict[str, object]:
+        """Per-package v2 entries: ``sourceRoot`` / ``kind`` / ``entry`` / ``dependencies``.
+
+        Exposed separately from :meth:`compiler_package_map` so a caller that
+        needs an extra synthetic package (``anx test``) can build its own map
+        without reaching into the returned document.
+        """
         packages: dict[str, object] = {}
         for name, package in self.packages.items():
             spec: dict[str, object] = {
@@ -189,7 +194,11 @@ class Project:
             if package.entry is not None:
                 spec["entry"] = str(package.entry)
             packages[name] = spec
-        return {"format": 2, "root": self.root_package, "packages": packages}
+        return packages
+
+    def compiler_package_map(self) -> dict[str, object]:
+        """Render the ``--packages`` v2 payload for this project (docs §6.1)."""
+        return {"format": 2, "root": self.root_package, "packages": self.package_specs()}
 
     def describe(self, diagnostics: Sequence[Diagnostic] = ()) -> dict[str, object]:
         """Render the dependency graph, file index and diagnostics as JSON.

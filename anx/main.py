@@ -302,11 +302,10 @@ def __as_table(value: object) -> dict[str, object] | None:
 
 def cmd_test(args: argparse.Namespace) -> int:
     """Run the project's own tests under ``<project>/tests`` (D6, §8.5)."""
-    _project, root_dir = __load_project(args.project)
+    project, _root_dir = __load_project(args.project)
     return project_tests.run(
-        root_dir,
+        project,
         compiler_command(),
-        __STD_SRC,
         flags=__compiler_flags(args),
         env=__compiler_env(),
     )

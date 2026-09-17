@@ -1,0 +1,9 @@
+// Package mode: a test may import the root package and its declared dependencies.
+from demo.helper import banner, double;
+from mathlib.ops import add;
+
+fn main() {
+    banner();
+    assert double(21) == 42: "the project's helper must be used";
+    assert add(2, 3) == 5: "a declared dependency must be visible";
+}

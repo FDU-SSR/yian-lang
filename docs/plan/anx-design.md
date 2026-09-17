@@ -896,9 +896,15 @@ anx build
 
 - 期望文件放在 `tests/output/`（而非与源并排），是因为要照搬仓库「源在 `tests/<suite>/`、
   期望在 `tests/output/<suite>/`」的形状。
-- **测试以 Standalone 模式编译**，命令行上带上标准库，因此 `from std.* import ...` 可用；
-  但 `from <项目包名>.模块 import ...` 不可用——那需要为测试构造一个 package 模式的测试根，
-  本阶段不做。这与仓库的 `tests/basic` 用例处境相同，登记为后续工作。
+- **测试以 package 模式编译**：每个用例额外注册一个**合成测试包**
+  （`packages["__anx_test"]`），它的 `sourceRoot` 是 `<项目根>/tests`、`entry` 是当前用例文件、
+  `dependencies` 是**根包 + 根包的直接依赖**。于是：
+  - 用例可以像项目代码一样导入项目（`from <包名>.<模块> import ...`），根包自己的 `main`
+    只是一个普通函数（入口是当前用例），不会撞 `Multiple 'main' functions found`（G22）；
+  - 可见性规则（§4.3）对测试同样成立——**传递依赖不可见**：`mathlib` 的依赖 `inner`
+    在用例里导入报 `AX009`，入口模块报 `AX014`；这两条已由 `project_tests` fixture 固定；
+  - 检查根落在测试包上，因此只有当前用例会被全量检查，项目代码按需检查（§10-A3 的口径）。
+  合成包名与项目里已有的包冲突时直接报错，不静默遮蔽。
 - 与 `scripts/run_tests.py` 的关系：仓库 runner 的 `.ans` / `.err.an` / `Exit code N`
   **约定**一致，但实现没有合并——`scripts/` 是开发期工具，`anx` 是交付物，
   让安装后的 CLI 依赖 `scripts/`（或反过来）都会引入错误的耦合。仓库 runner 另外还有
@@ -1286,7 +1292,10 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
   任意子目录下可用；找不到项目报 `AX001`。
 - **`anx test`（G9/D6/§8.5）**：新增 `anx/project_tests.py`，按 §8.5 的布局发现并运行
   `<项目根>/tests/**.an`，支持期望 stdout、`Exit code <N>`、`err.an` 诊断子串、
-  `input/*.args|.stdin`；anx 自身套件不再由 `anx test` 调用。
+  `input/*.args|.stdin`；anx 自身套件不再由 `anx test` 调用。A3 首版按 Standalone 模式编译，
+  随后改为 **package 模式**（合成 `__anx_test` 包，见 §8.5）：用例因此能导入项目的包，
+  同时可见性规则仍由编译器强制。`compiler_package_map()` 拆出 `package_specs()`
+  以便调用方追加这个合成包；`Project` 模型本身不变。
 - **package suite 纳入 fat/raw 双模式**：`anx` 侧用 `anx_args` 携带 `--raw-pointers`，
   每个 package fixture 展开成两条用例（A0.5 刻意没做）。
 - 新增 `anx` fixture 驱动方式：`tests/input/package/<fixture>.command` 可把某个 fixture

@@ -9,13 +9,18 @@ Layout, mirroring the repository runner's conventions:
     <project>/tests/output/error/bar.an.ans   required diagnostic substring
     <project>/tests/input/foo.args|.stdin     program arguments / standard input
 
-Tests are compiled in Standalone mode with the standard library on the command
-line, so ``from std.core.io import print`` works but importing the project's own
-packages does not: a package-mode test root is still an open gap.
+Each test is compiled in **package mode**: the test file is registered as a
+synthetic package rooted at ``<project>/tests`` whose entry is that file and
+whose dependencies are the root package plus the root package's direct
+dependencies.  A test therefore imports project code exactly the way project
+code imports it (``from <package>.<module> import ...``), while the visibility
+rule (§4.3) still holds: a transitive dependency is *not* visible to a test
+unless the root package declares it.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -23,7 +28,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from anx.project import Project
+
 TESTS_DIR_NAME = "tests"
+
+#: Package name under which the test file is compiled.  A project that declares
+#: this name itself is rejected rather than silently shadowed.
+TEST_PACKAGE = "__anx_test"
 
 
 @dataclass(frozen=True)
@@ -73,18 +84,26 @@ def discover(project_root: Path) -> tuple[ProjectTest, ...]:
 
 
 def run(
-    project_root: Path,
+    project: Project,
     compiler: list[str],
-    std_root: Path,
     out: TextIO | None = None,
     flags: Sequence[str] = (),
     env: Mapping[str, str] | None = None,
 ) -> int:
-    """Compile and run every test of *project_root*; return a process exit code."""
+    """Compile and run every test of *project*; return a process exit code."""
     stream = out if out is not None else sys.stdout
+    project_root = project.packages[project.root_package].root
     tests = discover(project_root)
     if not tests:
         print(f"No tests found under {project_root / TESTS_DIR_NAME}", file=stream)
+        return 1
+
+    if TEST_PACKAGE in project.package_specs():
+        print(
+            f"error: the project already declares a package named '{TEST_PACKAGE}', "
+            "which `anx test` needs for its own test root",
+            file=stream,
+        )
         return 1
 
     build_dir = project_root / "build" / "test"
@@ -92,7 +111,7 @@ def run(
 
     failures: list[tuple[str, str]] = []
     for test in tests:
-        detail = __run_one(test, compiler, std_root, build_dir, flags, env)
+        detail = __run_one(test, project, compiler, build_dir, flags, env)
         tag = "ok" if detail is None else "FAIL"
         print(f"  [{tag}] {test.name}", file=stream)
         if detail is not None:
@@ -104,17 +123,43 @@ def run(
     return 1 if failures else 0
 
 
+def __test_package_map(project: Project, test: ProjectTest) -> dict[str, object]:
+    """The v2 package map for one test: the project plus a synthetic test package.
+
+    The test package is rooted at ``<project>/tests`` so the test file is its
+    only module, and it depends on the root package plus the root package's
+    direct dependencies — the same set the root package itself can see.
+    """
+    root = project.root_package
+    tests_dir = project.packages[root].root / TESTS_DIR_NAME
+    packages = project.package_specs()
+    packages[TEST_PACKAGE] = {
+        "sourceRoot": str(tests_dir.resolve()),
+        "kind": "bin",
+        "entry": str(test.source.resolve()),
+        "dependencies": [
+            root,
+            *(dependency.name for dependency in project.packages[root].dependencies),
+        ],
+    }
+    return {"format": 2, "root": TEST_PACKAGE, "packages": packages}
+
+
 def __run_one(
     test: ProjectTest,
+    project: Project,
     compiler: list[str],
-    std_root: Path,
     build_dir: Path,
     flags: Sequence[str],
     env: Mapping[str, str] | None,
 ) -> str | None:
     """Run one test. Returns ``None`` on success, otherwise failure details."""
+    pkg_json = build_dir / "pkg.json"
+    pkg_json.write_text(json.dumps(__test_package_map(project, test), indent=2), encoding="utf-8")
+
+    files = [str(test.source.resolve()), *(str(path) for path in project.files)]
     exe = build_dir / (test.name.replace("/", "_").removesuffix(".an") + ".out")
-    command = [*compiler, *flags, str(std_root), str(test.source)]
+    command = [*compiler, "--packages", str(pkg_json), *flags, *files]
     if test.expect_error:
         command += ["-t", "none"]
     else:
@@ -122,7 +167,7 @@ def __run_one(
 
     compiled = subprocess.run(
         command,
-        cwd=str(test.source.parent),
+        cwd=str(project.packages[project.root_package].root),
         capture_output=True,
         text=True,
         check=False,

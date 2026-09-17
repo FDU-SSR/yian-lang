@@ -1,0 +1,6 @@
+// `inner` is a dependency of mathlib, not of demo, so a test may not import it.
+from inner.secret import hidden;
+
+fn main() {
+    assert hidden() == 1: "unreachable";
+}

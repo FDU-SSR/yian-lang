@@ -1,0 +1,4 @@
+// The root package's entry module is a program root, not a library module.
+from demo.main import main;
+
+fn main() {}
