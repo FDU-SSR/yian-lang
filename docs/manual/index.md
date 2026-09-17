@@ -25,4 +25,4 @@
 | [17](17.impl_registry.md) | Impl 注册与查找 | `compiler/analysis/ty/impl.py` |
 | [18](18.error_handling.md) | 错误处理 | `compiler/analysis/error.py` |
 | [19](19.coding_style.md) | 编码规范 | Python + Yian 代码风格 |
-| [20](../plan/anx-remote-deps.md) | anx 远程依赖与版本 | 结论文档（只出结论，不写实现） |
+| [20](../anx/index.md) | anx 包管理器 | `anx/`（用户指南；远程依赖结论见 [`plan/anx-remote-deps.md`](../plan/anx-remote-deps.md)） |

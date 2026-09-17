@@ -34,24 +34,32 @@ python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
 
 ### 使用 anx 包管理器
 
-anx 提供基于包名的项目管理和导入解析：
+`anx` 负责项目创建、包名导入解析，以及构建 / 运行 / 检查 / 测试。装好后直接用 `anx`，
+不装也可以走 `python3 -m anx.main`：
 
 ```bash
-# 创建项目
-python3 -m anx.main new myapp
+scripts/install.sh          # 把 yianc 与 anx 装进 PATH（默认 editable 安装）
 
-# 创建库（无 main.an）
-python3 -m anx.main new --lib mylib
-
-# 构建并运行
+anx new myapp               # 可执行项目；--kind lib / hybrid 建库 / 库+CLI
 cd myapp
-python3 -m anx.main run
-
-# 仅类型检查
-python3 -m anx.main check
+anx run                     # 构建到 build/app 并执行
+anx check                   # 只做类型检查
+anx test                    # 跑 tests/ 下的项目测试
+anx graph --json            # 依赖图、文件归属与诊断（结构化输出）
 ```
 
-项目内使用包名导入（`from myapp.utils.math import add`），依赖在 `package.anx` 中声明。远程依赖与版本的评估结论见 [远程依赖结论](docs/plan/anx-remote-deps.md)。
+项目内使用包名导入（`from myapp.utils.math import add`）；依赖与 dev 依赖都在
+`package.anx` 中声明：
+
+```toml
+[dependencies]
+mathlib = { path = "vendor/mathlib" }
+
+[dev-dependencies]
+testkit = { path = "vendor/testkit" }   # 只有 `anx test` 看得见
+```
+
+完整用法见 [anx 用户指南](docs/anx/index.md)；远程依赖与版本为什么不做，见 [远程依赖结论](docs/plan/anx-remote-deps.md)。
 
 编译器的完整命令行用法见[编译脚本文档](docs/compile_script.md)。
 
@@ -64,8 +72,9 @@ python3 scripts/run_tests.py -f call    # 只运行名字匹配 "call" 的测试
 
 ## 文档
 
-- [语言语法参考](docs/grammar/index.md) —— 15 章 Yian 语言手册
-- [编译器开发手册](docs/manual/index.md) —— 19 章编译器内部实现
+- [语言语法参考](docs/grammar/index.md) —— Yian 语言手册（语法、语义、标准库）
+- [anx 用户指南](docs/anx/index.md) —— 项目、清单、依赖、命令行、项目测试、诊断
+- [编译器开发手册](docs/manual/index.md) —— 编译器各阶段与内部实现
 - [快速上手](docs/grammar/00.quick_start.md) —— 可编译示例
 
 ## For GitHub users
@@ -94,6 +103,6 @@ directory when the program uses the standard library:
 python3 -m compiler.main lib tests/array/access.an
 ```
 
-See [the compiler CLI guide](docs/compile_script.md) for full usage, and
-[the language reference](docs/grammar/index.md) / [developer manual](docs/manual/index.md)
-for documentation.
+See [the compiler CLI guide](docs/compile_script.md) for full usage, and the
+[language reference](docs/grammar/index.md) / [anx guide](docs/anx/index.md) /
+[developer manual](docs/manual/index.md) for documentation.

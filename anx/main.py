@@ -49,7 +49,11 @@ def cmd_new(args: argparse.Namespace) -> int:
     kind = args.kind
     if args.lib:
         kind = "lib"
-    pkg_dir = scaffold(args.name, kind=kind)
+    try:
+        pkg_dir = scaffold(args.name, kind=kind)
+    except FileExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(f"Created package '{args.name}' at {pkg_dir}")
     return 0
 
@@ -389,7 +393,10 @@ def main(argv: list[str] | None = None) -> int:
     __add_project_arg(p)
     __add_build_args(p)
 
-    p = sub.add_parser("run")
+    p = sub.add_parser(
+        "run",
+        epilog="Program arguments go after '--': anx run [project] -- arg1 arg2",
+    )
     __add_project_arg(p)
     __add_build_args(p)
 
