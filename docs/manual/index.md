@@ -1,8 +1,12 @@
-# Yian 编译器开发文档
+# Yian 开发文档
 
-本文档描述 Yian 编译器的内部架构、数据流和关键算法。按源文件模块组织，每章对应编译管线的一个阶段。
+本文档描述 Yian 工具链的内部实现，分两部分：
 
-## 目录
+- **编译器**（01–19）：内部架构、数据流与关键算法，按源文件模块组织，每章对应编译管线的一个阶段。
+- **anx 包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
+  以及 anx 自身的测试。
+
+## 目录 · 编译器
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
@@ -25,4 +29,17 @@
 | [17](17.impl_registry.md) | Impl 注册与查找 | `compiler/analysis/ty/impl.py` |
 | [18](18.error_handling.md) | 错误处理 | `compiler/analysis/error.py` |
 | [19](19.coding_style.md) | 编码规范 | Python + Yian 代码风格 |
-| [20](../anx/index.md) | anx 包管理器 | `anx/`（用户指南；远程依赖结论见 [`plan/anx-remote-deps.md`](../plan/anx-remote-deps.md)） |
+
+## 目录 · anx 包管理器
+
+| 章 | 标题 | 对应源文件 |
+|----|------|-----------|
+| [20](20.anx_overview.md) | anx 概览 | `anx/`：模块地图、一次 build 的数据流、与编译器的契约边界 |
+| [21](21.anx_manifest.md) | 清单解析与诊断 | `anx/manifest.py`、`anx/diagnostics.py` |
+| [22](22.anx_project.md) | 项目模型与文件归属 | `anx/project.py` |
+| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `anx/project.py`、`compiler/analysis/package_map.py` |
+| [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/main.py`、`compiler/analysis/source_provenance.py` |
+| [25](25.anx_tests.md) | anx 自身的测试 | `anx/project_tests.py`、`scripts/run_tests.py` |
+
+> 用户视角的用法见 [anx 用户指南](../anx/index.md)；远程依赖与版本的结论见
+> [远程依赖与版本](../plan/anx-remote-deps.md)。

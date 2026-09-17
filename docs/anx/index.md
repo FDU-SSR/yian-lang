@@ -4,7 +4,9 @@
 输出依赖图。
 
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）
-- 编译器内部实现见[编译器开发手册](../manual/index.md)
+- 编译器内部实现见[开发手册](../manual/index.md)（编译器 01–19 章）
+- anx 自己的内部实现见[开发手册 · anx 部分](../manual/index.md)（20–25 章：
+  项目模型、清单与诊断、依赖图与包图契约、CLI、测试运行器）
 - 编译器的命令行与 `--packages` 契约见[编译脚本文档](../compile_script.md) 2.6 节
 - 远程依赖、版本约束、锁文件为什么不做：见[远程依赖与版本：结论文档](../plan/anx-remote-deps.md)
 

@@ -74,7 +74,7 @@ python3 scripts/run_tests.py -f call    # 只运行名字匹配 "call" 的测试
 
 - [语言语法参考](docs/grammar/index.md) —— Yian 语言手册（语法、语义、标准库）
 - [anx 用户指南](docs/anx/index.md) —— 项目、清单、依赖、命令行、项目测试、诊断
-- [编译器开发手册](docs/manual/index.md) —— 编译器各阶段与内部实现
+- [开发手册](docs/manual/index.md) —— 编译器各阶段（01–19）与 anx 内部实现（20–25）
 - [快速上手](docs/grammar/00.quick_start.md) —— 可编译示例
 
 ## For GitHub users
