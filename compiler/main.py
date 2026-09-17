@@ -3,7 +3,6 @@ from __future__ import annotations
 #! /usr/bin/env python3
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -131,7 +130,9 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
         ),
     )
-    return parser.parse_args(argv)
+    # Intermixed parsing keeps "paths … options … paths" valid; a plain
+    # parse_args() would reject a positional that follows an option.
+    return parser.parse_intermixed_args(argv)
 
 
 def collect_an_files(paths: list[Path]) -> list[Path]:
@@ -244,9 +245,10 @@ def __llvm_codegen(
     type_ctx: TypeCtx,
     unit_names: dict[int, str],
     raw_pointers: bool = False,
+    entry_type_id: int | None = None,
 ) -> LLModule:
     """CFG IR → LLVM IR pass. Lowers CFG Functions into an LLVM Module."""
-    translator = LLTranslator(type_ctx, unit_names, raw_pointers=raw_pointers)
+    translator = LLTranslator(type_ctx, unit_names, raw_pointers=raw_pointers, entry_type_id=entry_type_id)
     try:
         translator.run(cfg_functions)
     except CodegenError as error:
@@ -422,12 +424,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     type_check_start = time.perf_counter() if args.profile else 0.0
-    # S1 spike: `YIAN_CHECK_ALL=1` type-checks every non-generic definition of the
-    # non-stdlib units; code generation still uses only the definitions reachable
-    # from `main` (`export_generated`).
-    check_all = os.environ.get("YIAN_CHECK_ALL", "") not in ("", "0")
-    check_all_stdlib = os.environ.get("YIAN_CHECK_ALL_STDLIB", "") not in ("", "0")
-    type_checker = TypeCheck(unit_datas, type_ctx, packages, check_all=check_all, check_all_stdlib=check_all_stdlib)
+    # The program entry comes from the package map; a `lib` root has none, which
+    # is only acceptable for analysis-only runs. Code generation always consumes
+    # the entry-reachable subset (G23).
+    type_checker = TypeCheck(unit_datas, type_ctx, packages, require_entry=args.target != "none")
     try:
         type_checker.run()
     except AnalysisError as error:
@@ -481,7 +481,13 @@ def main(argv: list[str] | None = None) -> int:
 
         # CFG → LLVM IR pass
         llvm_start = time.perf_counter() if args.profile else 0.0
-        llvm_module = __llvm_codegen(cfg_functions, type_ctx, unit_names, raw_pointers=args.raw_pointers)
+        llvm_module = __llvm_codegen(
+            cfg_functions,
+            type_ctx,
+            unit_names,
+            raw_pointers=args.raw_pointers,
+            entry_type_id=type_checker.entry_type_id,
+        )
         if args.profile:
             timings["llvm_codegen"] = time.perf_counter() - llvm_start
 

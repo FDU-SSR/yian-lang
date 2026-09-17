@@ -73,9 +73,10 @@ class LLFunction:
 class LLModule:
     """Manages a single LLVM module."""
 
-    def __init__(self, module: ir.Module, type_ctx: LLTypeCtx) -> None:
+    def __init__(self, module: ir.Module, type_ctx: LLTypeCtx, entry_type_id: int | None = None) -> None:
         self.__module = module
         self.__type_ctx = type_ctx
+        self.__entry_type_id = entry_type_id
         self.__intrinsics = IntrinsicManager(module)
         self.__functions: dict[int, LLFunction] = {}  # type_id → LLFunction
         self.__string_counter = 0
@@ -133,12 +134,14 @@ class LLModule:
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
         func_ir_type = self.__type_ctx.get_ll_func_type(cfg_func.type_id)
-        # Rename Yian "main" → "__yian_main"; the C-compatible wrapper is emitted later.
-        llvm_name = cfg_func.name if cfg_func.name != "main" else "__yian_main"
-        if cfg_func.name != "main":
-            llvm_name = f"{llvm_name}.{cfg_func.type_id}"
-        else:
+        # The program entry is identified by its type id, not by its name: a
+        # dependency may define its own `main`, which is an ordinary function
+        # here (renamed to `main.<type_id>`).
+        if cfg_func.type_id == self.__entry_type_id:
+            llvm_name = "__yian_main"
             self.__yian_main_type_id = cfg_func.type_id
+        else:
+            llvm_name = f"{cfg_func.name}.{cfg_func.type_id}"
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func

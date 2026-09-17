@@ -1,0 +1,6 @@
+from std.core.io import Stdin;
+
+fn main() {
+    let line = Stdin.read_line().unwrap();
+    assert *line == "piped input";
+}

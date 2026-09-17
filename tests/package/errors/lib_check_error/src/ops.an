@@ -1,0 +1,4 @@
+pub fn helper() -> i32 {
+    let x: i32 = "hello"
+    return x
+}

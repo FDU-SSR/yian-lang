@@ -41,6 +41,7 @@ import sys
 import time
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
@@ -115,6 +116,12 @@ class TestCase:
 
     package_root: Path | None = None
     """For package-suite fixtures: the project directory driven through anx."""
+
+    anx_command: str | None = None
+    """For package fixtures: the anx subcommand to drive (default build/check)."""
+
+    anx_args: list[str] = field(default_factory=list)
+    """For package fixtures: extra anx flags, e.g. --raw-pointers."""
 
 
 @dataclass
@@ -459,6 +466,21 @@ def _find_package_ans(fixture: str) -> tuple[Path | None, bool]:
     return None, False
 
 
+def _find_package_command(fixture: str) -> str | None:
+    """Optional ``tests/input/package/<fixture>.command`` override.
+
+    The file holds the anx subcommand to drive the fixture with (``build``,
+    ``check`` or ``test``). Fixtures without it build and run, as before.
+    """
+    path = INPUT_DIR / (fixture + ".command")
+    if not path.is_file():
+        return None
+    command = path.read_text().strip()
+    if command not in {"build", "check", "test"}:
+        raise ValueError(f"{path}: unsupported anx command {command!r}")
+    return command
+
+
 def discover_package_tests() -> list[TestCase]:
     """Discover package-mode fixtures: directories holding a ``package.anx``.
 
@@ -477,7 +499,14 @@ def discover_package_tests() -> list[TestCase]:
 
         name = str(base.relative_to(SOURCE_DIR))
         ans_path, ans_is_error = _find_package_ans(name)
-        if not (base / "src" / "main.an").exists() and ans_path is None:
+        anx_command = _find_package_command(name)
+        # A dependency package has no entry, no expectation and no command of
+        # its own, so it is not a case; anything else is.
+        if (
+            not (base / "src" / "main.an").exists()
+            and ans_path is None
+            and anx_command is None
+        ):
             continue
         cases.append(base)
 
@@ -499,6 +528,7 @@ def discover_package_tests() -> list[TestCase]:
             cli_args=cli_args,
             stdin=stdin,
             package_root=base,
+            anx_command=anx_command,
         ))
 
     orphans: list[str] = []
@@ -615,11 +645,21 @@ def run_test(
 def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResult:
     """Drive a package fixture through anx, then run its executable.
 
-    ``compile_only`` uses ``anx check`` so no executable is produced.
+    The subcommand defaults to ``build`` (or ``check`` under ``--no-run``); a
+    fixture may override it — for example a ``lib`` root can only be checked,
+    and a fixture with project tests is driven through ``anx test``. Only a
+    ``build`` fixture produces an executable to run.
     """
     assert test.package_root is not None
-    subcommand = "check" if compile_only else "build"
-    cmd = [sys.executable, "-m", "anx.main", subcommand, str(test.package_root)]
+    subcommand = test.anx_command or ("check" if compile_only else "build")
+    cmd = [
+        sys.executable,
+        "-m",
+        "anx.main",
+        subcommand,
+        str(test.package_root),
+        *test.anx_args,
+    ]
 
     start = time.monotonic()
     proc = subprocess.run(
@@ -632,6 +672,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
     )
     compile_elapsed = (time.monotonic() - start) * 1000.0
     output = proc.stdout + proc.stderr
+    produces_exe = subcommand == "build"
 
     if proc.returncode != 0 or test.expect_error:
         return TestResult(
@@ -639,10 +680,10 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
             exit_code=proc.returncode,
             elapsed_ms=compile_elapsed,
             output=output,
-            compile_only=compile_only,
+            compile_only=compile_only or not produces_exe,
         )
 
-    if not run:
+    if not run or not produces_exe:
         return TestResult(
             test=test,
             exit_code=proc.returncode,
@@ -728,6 +769,20 @@ def _mode_test(test: TestCase, mode: str) -> TestCase:
         stdin=test.stdin,
         compiler_args=compiler_args,
     )
+
+
+def _package_mode_test(test: TestCase, mode: str) -> TestCase:
+    """Create the fat or raw execution of a package fixture.
+
+    Package fixtures go through ``anx``, so the pointer representation is a flag
+    on the anx command rather than a compiler argument.
+    """
+    if mode not in {"fat", "raw"}:
+        raise ValueError(f"unsupported pointer mode: {mode}")
+    anx_args = list(test.anx_args)
+    if mode == "raw" and "--raw-pointers" not in anx_args:
+        anx_args.append("--raw-pointers")
+    return replace(test, name=f"{test.name}@{mode}", anx_args=anx_args)
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +890,14 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
             expanded_tests.append(_mode_test(test, "fat"))
             expanded_tests.append(_mode_test(test, "raw"))
         all_tests = expanded_tests
+    elif suite == "package":
+        # Package fixtures also run under both pointer representations; the
+        # flag travels through the anx command line (A3).
+        package_tests: list[TestCase] = []
+        for test in all_tests:
+            package_tests.append(_package_mode_test(test, "fat"))
+            package_tests.append(_package_mode_test(test, "raw"))
+        all_tests = package_tests
 
     if args.filter_str:
         all_tests = [t for t in all_tests if args.filter_str in t.name]

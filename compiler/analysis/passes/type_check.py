@@ -23,20 +23,21 @@ def ch_tc():
 
 class TypeCheck:
     def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, packages: PackageMap | None = None,
-                 check_all: bool = False, check_all_stdlib: bool = False):
+                 require_entry: bool = True):
         self.__units = units
         self.__type_ctx = type_ctx
         self.__packages = packages
+        # A library root has no program entry; `-t none` still checks its
+        # definitions, but a codegen run without an entry is a user error.
+        self.__require_entry = require_entry
 
         self.__worklist: list[DefPoint] = []
         self.__def_points: dict[int, DefPoint] = {}  # type_id -> DefPoint
-        # S1 spike: `__check_all` additionally type-checks every non-generic
-        # procedure of the non-stdlib units, but only the definitions reachable
-        # from `main` (the "generated" set) are exported for code generation.
-        self.__check_all = check_all
-        self.__check_all_stdlib = check_all_stdlib
+        # Two sets (G23): everything that gets type-checked, and the subset that
+        # is reachable from the program entry and therefore code-generated.
         self.__generating = True
         self.__generated: set[int] = set()
+        self.__entry_type_id: int | None = None
 
         self.__current_type_id: int = -1
         self.__current_locals: list[int] = []
@@ -71,9 +72,8 @@ class TypeCheck:
         self.__find_main()
         self.__drain()
 
-        if self.__check_all:
-            self.__check_all_definitions()
-            self.__drain()
+        self.__check_root_definitions()
+        self.__drain()
 
     def __drain(self) -> None:
         processed_def: set[int] = set()
@@ -85,11 +85,15 @@ class TypeCheck:
             ch_tc().trace(lambda: f"checking {self.__type_ctx.get_name(def_point.type_id)}")
             self.__type_check_def(def_point)
 
-    def __check_all_definitions(self) -> None:
-        """S1 spike: check every top-level definition of the non-stdlib units.
+    def __check_root_definitions(self) -> None:
+        """Seed every top-level definition of the root package (G18/G21).
 
-        Definitions seeded here are checked but never marked as generated, so
-        they do not reach CFG/LLVM lowering.
+        Dependencies (including the standard library) stay on demand: each
+        package is checked by its own ``anx check``.  Definitions seeded here are
+        checked but never marked as generated, so they never reach CFG/LLVM
+        lowering.  Uninstantiated generics are skipped — the language has no
+        parameter constraints, so checking their bodies would produce false
+        positives (for example ``a + b``).
         """
         self.__generating = False
         seeded = 0
@@ -97,14 +101,21 @@ class TypeCheck:
         for type_id, _body, unit_id in self.__type_ctx.iter_procedures():
             if type_id in self.__def_points:
                 continue
-            if self.__units[unit_id].is_stdlib and not self.__check_all_stdlib:
+            if not self.__is_root_unit(unit_id):
                 continue
             if self.__type_ctx.contains_generic(type_id):
                 skipped_generic += 1
                 continue
             self.__report_def_point(type_id)
             seeded += 1
-        ch_tc().debug(f"check-all: seeded {seeded} extra definition(s), skipped {skipped_generic} generic")
+        ch_tc().debug(f"check-roots: seeded {seeded} extra definition(s), skipped {skipped_generic} generic")
+
+    def __is_root_unit(self, unit_id: int) -> bool:
+        """True when *unit_id* belongs to the package being checked."""
+        unit = self.__units[unit_id]
+        if self.__packages is not None and self.__packages.root is not None:
+            return self.__packages.package_of(unit.path) == self.__packages.root
+        return not unit.is_stdlib
 
     def export(self) -> dict[int, DefPoint]:
         return self.__def_points
@@ -112,10 +123,15 @@ class TypeCheck:
     def export_generated(self) -> dict[int, DefPoint]:
         """Return only the definitions reachable from the program entry.
 
-        Without `--check-all` this equals `export()`; with it, the extra
-        check-only definitions are filtered out so code generation is unchanged.
+        These are the ones handed to CFG/LLVM lowering; the extra check-only
+        definitions stay out of the generated artifact.
         """
         return {type_id: dp for type_id, dp in self.__def_points.items() if type_id in self.__generated}
+
+    @property
+    def entry_type_id(self) -> int | None:
+        """The type id of the program entry, or ``None`` for an entry-less root."""
+        return self.__entry_type_id
 
     def __find_main(self) -> None:
         """Locate the program entry and register it as the first definition.
@@ -153,7 +169,9 @@ class TypeCheck:
         if spec is None:
             raise CompilerError(f"the --packages file has no entry for root package '{root}'")
         if spec.entry is None:
-            raise CompilerError(f"Package '{root}' has no program entry (kind '{spec.kind}')")
+            if self.__require_entry:
+                raise CompilerError(f"Package '{root}' has no program entry (kind '{spec.kind}')")
+            return
 
         entry = spec.entry.resolve()
         unit = next((u for u in self.__units.values() if u.path.resolve() == entry), None)
@@ -191,6 +209,7 @@ class TypeCheck:
         self.__worklist.append(main_def_point)
         self.__def_points[symbol.type_id] = main_def_point
         self.__generated.add(symbol.type_id)
+        self.__entry_type_id = symbol.type_id
 
     def __type_check_def(self, def_point: DefPoint) -> None:
         self.__current_type_id = def_point.type_id

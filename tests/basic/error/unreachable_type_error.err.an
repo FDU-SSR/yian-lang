@@ -1,0 +1,10 @@
+// A definition that `main` never calls must still be type-checked (G21).
+//
+// Expected compilation error: Expected type 'i32' but got 'str'
+
+fn never_called() -> i32 {
+    let x: i32 = "hello"
+    return x
+}
+
+fn main() {}

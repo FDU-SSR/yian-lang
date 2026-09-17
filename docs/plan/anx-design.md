@@ -70,22 +70,22 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 | G5 | 同名包冲突静默保留先到者 | `resolver.py:40` `if name in adj: return`。**A1 已完成**：路径不同报 `AX007` |
 | G6 | 传递依赖全局可见：未声明的包也能按名字导入 | `deps/deep`：`app` 只声明 `libb`，`libb` 声明 `libc`，二者根都进 `pkg_roots`。§4.3 收紧为仅直接声明的依赖。**A2 已完成**：编译器按 v2 依赖边校验，未声明报 `AX009`（`errors/undeclared_dep`） |
 | G7 | 可见性错误与「符号不存在」混为一谈 | 编译器 `global_resolve.py:201` 对非 `pub` 符号报 `is not found`。**A1 已完成**：区分「未公开」与「不存在」 |
-| G8 | `build/run/check` 无法传递编译选项（`-O`、`--raw-pointers`）、程序参数和标准输入；程序退出码不传播 | `main.py:50-75` 硬编码参数，`run` 使用 `check=True` |
-| G9 | `anx test` 运行的是 anx 自身的集成套件，而不是用户项目的测试 | `main.py:73-75` |
+| G8 | `build/run/check` 无法传递编译选项（`-O`、`--raw-pointers`）、程序参数和标准输入；程序退出码不传播 | `main.py:50-75` 硬编码参数，`run` 使用 `check=True`。**A3 已完成**：选项白名单透传、`run` 转发参数与 stdin、退出码分两段 |
+| G9 | `anx test` 运行的是 anx 自身的集成套件，而不是用户项目的测试 | `main.py:73-75`。**A3 已完成**：`anx test` 跑项目自己的 `tests/`（§8.5），anx 自身套件改由 `scripts/run_tests.py --suite package` 调用 |
 | G10 | anx 只能在仓库检出内工作：`_YIAN_ROOT` 由文件位置推导，无安装入口和编译器定位配置 | `main.py:14-15` |
-| G11 | `build/pkg.json` 每次构建无条件重写，无版本标记 | `main.py:32-34` |
+| G11 | `build/pkg.json` 每次构建无条件重写，无版本标记 | `main.py:32-34`。**A3 已完成**：内容不变则不重写 `build/pkg.json`（§6.2） |
 | G12 | 诊断只有 `stderr` 文本，没有结构化结果，编辑器无法直接消费 | `main.py:29` |
 | G13 | Package 模式第一段只查包名、无相对回退；本包内目录与某个依赖包同名时，**依赖包无条件遮蔽本包模块**且无任何诊断 | 实测：本包 `src/dup/foo.an` 与依赖 `dup` 各有 `which()`，`from dup.foo` 取到依赖的值；断言本包值时运行期失败。§5.1 需固定该情形。**A2 已完成**：语义由 `self_shadow_dir` 固定，编译器额外给出 `warning:` 提示 |
 | G14 | 依赖键与根包名相同时，该依赖被丢弃并报**误导性**的循环诊断 | `app` 的依赖键写作 `app` → `error: Circular dependency: app → app`（`resolver.py:40` 的 `if name in adj: return`）。**A1 已完成**：报 `AX007`（`errors/duplicate_name`） |
 | G15 | 编译器不计算「导入方属于哪个包」 | `__resolve_import_path` 的 Package 分支不使用 `unit`，只用 `paths[0]` 查表；§4.3 的可见性校验缺少这一前置。**A2 已完成**：按 `sourceRoot` 最长前缀归属 |
 | G16 | Standalone 模式按**导入方文件目录**解析、无 `..`；且编译器从不按 `import` 加载文件，只在本次命令行传入的 unit 里查 | `src/main.an` 的 `from utils.strings` → `src/utils/strings.an`；同一行写在 `src/sub/deep.an` 则去找 `src/sub/utils/strings.an`；目标文件存在但未传入仍报 `Cannot resolve import path`。**A2 已完成**：差异写进 §5.2，且未改变 Standalone 行为 |
-| G17 | `yianc` 的位置参数是 `nargs='+'`，选项夹在路径之间即解析失败 | `yianc lib a.an -t none` → `unrecognized arguments: a.an`；必须「选项在前、路径连续放在最后」 |
-| G18 | **库包无法被分析**：编译器无条件要求 `main`，`anx check` 一个 `new --lib` 出来的包直接失败；清单里也没有任何字段表明包类型 | 实测 `anx new --lib mylib && anx check mylib` → `error: No 'main' function found`（`type_check.py:__find_main`）；`anx build` 也总是产出可执行文件 |
+| G17 | `yianc` 的位置参数是 `nargs='+'`，选项夹在路径之间即解析失败 | `yianc lib a.an -t none` → `unrecognized arguments: a.an`；必须「选项在前、路径连续放在最后」。**A3 已完成**：改用 `parse_intermixed_args`，任意顺序可混写 |
+| G18 | **库包无法被分析**：编译器无条件要求 `main`，`anx check` 一个 `new --lib` 出来的包直接失败；清单里也没有任何字段表明包类型 | 实测 `anx new --lib mylib && anx check mylib` → `error: No 'main' function found`（`type_check.py:__find_main`）；`anx build` 也总是产出可执行文件。**A3 已完成**：`lib` 根的 `check` 通过（`lib_pkg`），`build`/`run` 明确报不支持 |
 | G19 | 路径依赖可以位于另一个包的 `src/` 之下，父包的 `rglob("*.an")` 会重复收集子包源码，破坏「文件唯一归属」 | §3.6 的断言只在源码根互不嵌套时成立；`resolver.py` 递归扫描时没有排除已知的嵌套包根。**A1 已完成**：按最长源码根归属并报 `AX013` |
 | G20 | **测试体系三套并存**：`tests/` 只覆盖 standalone 模式（`scripts/run_tests.py` + `run_safety_tests.py`），package 模式的 19 个用例在 `anx/tests/`，由另一套 runner 和另一套期望文件约定驱动 | `anx/tests/*/{package.anx,expected.stdout,expected.stderr}` 与 `tests/output/**/*.ans` 是两套约定；`tests/` 下没有任何 package 模式覆盖。**A0.5 已完成**：并入 `tests/package/`，统一由 `scripts/run_tests.py` 驱动 |
-| G21 | **不可达定义完全不被检查**：类型检查的唯一根是 `main`，因此从未被调用的函数/方法（bin 里也一样）不会报错；库包更是直接失败 | 实测：`fn bad() { let x: i32 = "hello"; }` 且 `main` 不调用它 → `yianc -t none` 通过，被调用才报错；未实例化的泛型体同样不检查，用 `bool` 实例化 `add<T>(a,b){a+b}` 才在 `+` 处报错（§2.5、A3） |
+| G21 | **不可达定义完全不被检查**：类型检查的唯一根是 `main`，因此从未被调用的函数/方法（bin 里也一样）不会报错；库包更是直接失败 | 实测：`fn bad() { let x: i32 = "hello"; }` 且 `main` 不调用它 → `yianc -t none` 通过，被调用才报错；未实例化的泛型体同样不检查，用 `bool` 实例化 `add<T>(a,b){a+b}` 才在 `+` 处报错（§2.5、A3）。**A3 已完成**：检查集合 = 根包全部顶层定义（排除泛型），生成集合仍是 `main` 可达；依赖包（含 `std`）按需检查 |
 | G22 | **程序入口被当成「全局唯一」**：`__find_main` 扫描所有 unit 找唯一 `main`，所以依赖包里只要也有 `main` 就冲突 | 实测：`app`(bin) 依赖 `tool`(bin，自带 `main`) → `error: Multiple 'main' functions found`。修法：程序入口取 `packages[root].entry`，并以 `kind` 拒绝 bin 作依赖（§3.2、§6.1）。**A1/A2 已完成**：`AX015` + `packages[root].entry`（`hybrid_dep`） |
-| G23 | **放宽检查根所需的机制缺失**：① `TypeCtx` 只有 `add_procedure` / `get_procedure`，没有枚举接口；② `DefPoint` 没有「已生成」标记，而 `def_points` 现在**隐式**等于 main 可达集；③ LLVM 层按**函数名** `main` → `__yian_main` 识别程序入口 | `context.py:104/556/567`；`main.py:413` `def_points = type_checker.export()` → `__cfg(def_points)` → LLVM 全量消费；`llvm/module.py:137`。这三处不补，A3 无法安全落地（S1、A2、A3）。**S1 已完成** ① ②（`iter_procedures`、`__generated` 集合）；③ 的入口识别留给 A3 |
+| G23 | **放宽检查根所需的机制缺失**：① `TypeCtx` 只有 `add_procedure` / `get_procedure`，没有枚举接口；② `DefPoint` 没有「已生成」标记，而 `def_points` 现在**隐式**等于 main 可达集；③ LLVM 层按**函数名** `main` → `__yian_main` 识别程序入口 | `context.py:104/556/567`；`main.py:413` `def_points = type_checker.export()` → `__cfg(def_points)` → LLVM 全量消费；`llvm/module.py:137`。这三处不补，A3 无法安全落地（S1、A2、A3）。**S1 已完成** ① ②（`iter_procedures`、`__generated` 集合）；③ 的入口识别留给 A3，**A3 已完成**：入口 `type_id` 由 `TypeCheck` 显式传给 LLVM 层，不再按函数名判断 |
 
 ### 2.4 与编译器的现有契约
 
@@ -342,7 +342,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult
 
 - `discover`：从 `start`（文件则取其父目录）逐级向上查找 `package.anx`，返回最近的项目根；
   不越过文件系统根，找不到返回 `None`。编辑器用它把「当前编辑的文件」映射到项目；
-  CLI 用它把 `anx build` 的默认目录补全。
+  CLI 用它把 `anx build` 的默认目录补全。**A3 已实现**（`anx/project.py::discover`）。
 - `load` 返回 `LoadResult` 而不是 `Project`：
 
 ```python
@@ -644,6 +644,7 @@ Standalone 的报错文本保持原样：它是没有项目上下文的低层模
 - 编辑器按 `SourceFile.package` 分组，包内文件变化只影响该包及其导入方；
 - `dependencies` 提供包级反向遍历的依据；
 - `build/pkg.json` 的内容由 `Project` 纯函数式生成，可比较新旧内容决定是否重写。
+  **A3 已实现**：内容不变时不重写（`anx.main._write_package_map`）。
 
 ### 6.3 未来的按包产物（研究结论）
 
@@ -764,14 +765,14 @@ anx 的职责是「不丢失地转发」：
 
 ### 8.1 命令面
 
-| 命令 | 说明 | 现状 |
+| 命令 | 说明 | 现状（A3 后） |
 | --- | --- | --- |
-| `anx new <name> [--lib]` | 创建项目/库 | 已有 |
-| `anx build [project] [-O n] [--raw-pointers] [--release]` | 构建可执行文件到 `build/app`（仅 `bin`） | 已有，选项受限 |
-| `anx run [project] [-- args...]` | 构建并运行，转发参数与标准输入，传播退出码（仅 `bin`） | 已有，不转发 |
-| `anx check [project]` | 只做分析（`-t none`） | 已有 |
-| `anx test [project]` | 运行**项目**测试（`tests/`） | 语义变更，见 §8.5 |
-| `anx graph [project] --json` | 输出依赖图与诊断（编辑器/调试用） | 新增，可选 |
+| `anx new <name> [--kind bin\|lib\|hybrid] [--lib]` | 创建项目/库 | 已实现 |
+| `anx build [project] [-O n] [--raw-pointers] [--release]` | 构建可执行文件到 `build/app`（仅 `bin`/`hybrid`） | 已实现 |
+| `anx run [project] [-O n] [--raw-pointers] [--release] [-- args...]` | 构建并运行，转发参数与标准输入，传播退出码（仅 `bin`/`hybrid`） | 已实现 |
+| `anx check [project] [-O n] [--raw-pointers]` | 只做分析（`-t none`），`lib` 根也可用 | 已实现 |
+| `anx test [project]` | 运行**项目**测试（`tests/`，D6、§8.5） | 已实现 |
+| `anx graph [project] --json` | 输出依赖图与诊断（编辑器/调试用） | 尚未实现，可选 |
 
 行为随根包的 `kind` 变化（§3.2）：
 
@@ -786,18 +787,20 @@ anx 的职责是「不丢失地转发」：
 ### 8.2 构建流程
 
 ```
-discover → load() -> LoadResult
+discover（从 [project] 向上找 package.anx，缺省目录是 cwd）
+        → load() -> LoadResult
         → diagnostics 非空 → 报告并退出 1
         → 根包为 lib 且命令是 build/run → 报「不支持」并退出 1
-        → 生成 pkg.json（必要时才写）
-        → 调用 compiler.main --packages <pkg.json> <所有源文件> [用户选项]
-        → 转发编译器输出与退出码
+        → 生成 pkg.json（内容不变则不重写，§6.2）
+        → 调用 compiler.main --packages <pkg.json> -t <target> [用户选项] <所有源文件>
+        → 转发编译器输出；失败时按 §8.3 退出 1
 ```
 
-- 源文件列表来自 `Project.files`，排序保证确定性（现有 `sorted` 行为保持）。
-- 用户选项按白名单透传，避免 anx 与编译器选项长期不同步。
-- 编译器的诊断与退出码**原样转发**；`AX009/AX010/AX012` 属于编译器产出（§7.4），
-  anx 不重新解释。
+- `discover()` 让 `anx build` 在项目的任意子目录下都能工作（A3 实现）。
+- 用户选项按白名单透传（`-O` / `--raw-pointers`），避免 anx 与编译器选项长期不同步。
+- 编译器的诊断**原样转发**；`AX009/AX010/AX012/AX014` 属于编译器产出（§7.4），
+  anx 不重新解释。退出码则按 §8.3 归一为 anx 自己的码——编译器的 255（诊断）不直接透出。
+- 成功路径也会转发编译器的两个流，否则 `warning:`（例如 G13 的遮蔽提示）会被吞掉。
 
 ### 8.3 退出码
 
@@ -872,7 +875,27 @@ anx build
 - anx 自身的集成套件不再有独立目录与独立 runner：并入 `tests/`，由
   `python3 scripts/run_tests.py --suite package` 调用（§10-A0.5）。
 
-实施归属：A3。
+**A3 落地后的实际布局**（`anx/project_tests.py`）：
+
+| 用途 | 路径 |
+| --- | --- |
+| 测试源 | `<项目根>/tests/**.an` |
+| 期望 stdout（首行可为 `Exit code <N>`） | `<项目根>/tests/output/<name>.an.ans` |
+| 期望编译失败 | `<项目根>/tests/**/<name>.err.an` + `tests/output/**/<name>.an.ans`（诊断子串） |
+| 进程参数 / 标准输入 | `<项目根>/tests/input/<name>.args` / `.stdin` |
+
+- 期望文件放在 `tests/output/`（而非与源并排），是因为要照搬仓库「源在 `tests/<suite>/`、
+  期望在 `tests/output/<suite>/`」的形状。
+- **测试以 Standalone 模式编译**，命令行上带上标准库，因此 `from std.* import ...` 可用；
+  但 `from <项目包名>.模块 import ...` 不可用——那需要为测试构造一个 package 模式的测试根，
+  本阶段不做。这与仓库的 `tests/basic` 用例处境相同，登记为后续工作。
+- 与 `scripts/run_tests.py` 的关系：仓库 runner 的 `.ans` / `.err.an` / `Exit code N`
+  **约定**一致，但实现没有合并——`scripts/` 是开发期工具，`anx` 是交付物，
+  让安装后的 CLI 依赖 `scripts/`（或反过来）都会引入错误的耦合。仓库 runner 另外还有
+  fat/raw 双模式与编译变体等专有机制。这是对「只保留一份实现」的**有意偏离**，
+  双方由同一套约定与同一批 fixture 固定。
+
+实施归属：A3（已完成）。
 
 ## 9. 与语言服务器的共享接口
 
@@ -909,7 +932,8 @@ anx build
 
 ### S1 前置 spike：检查根放开的红灯普查
 
-**状态：已完成**（结论见下；双集合与过程枚举接口保留在 A3 的实现里）。
+**状态：已完成**（结论见下；双集合与过程枚举接口保留在 A3 的实现里，测量用的
+`YIAN_CHECK_ALL` / `YIAN_CHECK_ALL_STDLIB` 开关在 A3 删除——全量检查根包已是默认行为）。
 
 **目标**：把「全量检查根包顶层定义」的影响面从**未知**变成**数字**。这是整个计划里唯一可能
 改变可行性判断的未知量（§10 口径允许红灯，但需要知道规模）。
@@ -1175,6 +1199,8 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 ### A3 构建/运行/检查流程
 
+**状态：已完成**。
+
 - 选项透传、`run` 转发参数与 stdin、退出码按 §8.3 分两段处理、成功时保留编译器告警。
 - 按 `kind` 分流：`lib` 的 `build`/`run` 报「不支持」；`bin` / `hybrid` 的入口缺失、不在
   源码根内，或 `lib` 声明了 `entry` / 含默认入口，均报 `AX008`。
@@ -1230,6 +1256,45 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
   `lib` 的 `build`/`run` 给出明确的不支持；`yianc` 的选项与位置参数可任意顺序混写；
   含 `tests/` 的项目可被发现并正确报告失败；`python3 scripts/run_tests.py --suite package`
   的用例要么通过、要么进入迁移清单（不强求此刻全绿，§10 口径）。
+
+**实现结果**：
+
+- **检查根（G18/G21）**：`TypeCheck` 保留两个集合——生成集合仍是 `main` 可达闭包，
+  代码生成路径未改；检查集合在 `main` 之后按「根包的全部顶层定义、排除泛型」播种。
+  根包范围：package 模式取 v2 的 `root`，standalone 取非 stdlib 的传入文件。S1 的环境变量
+  `YIAN_CHECK_ALL` / `YIAN_CHECK_ALL_STDLIB` 删除，双集合成为默认行为。
+- **入口（G22/G23③）**：程序入口取 `packages[root].entry`；入口的 `type_id` 由 `TypeCheck`
+  显式传给 `LLTranslator` / `LLModule`，LLVM 层不再按函数名 `main` 判断，依赖包里同名的
+  `main` 只是普通函数（`main.<type_id>`）。`lib` 根 + `-t exe` 明确报「没有程序入口」。
+- **`parse_cli`（G17）**：改用 `parse_intermixed_args`，「路径 … 选项 … 路径」可混写。
+- **anx CLI（G8/G11）**：`build`/`run`/`check`/`test` 接受 `-O` / `--release` /
+  `--raw-pointers` 并按白名单透传；`run` 继承 stdio 并原样传播程序退出码；编译失败统一退出 1
+  （不再透出编译器的 255）；`build/pkg.json` 内容不变则不重写；`discover()` 让命令在项目
+  任意子目录下可用；找不到项目报 `AX001`。
+- **`anx test`（G9/D6/§8.5）**：新增 `anx/project_tests.py`，按 §8.5 的布局发现并运行
+  `<项目根>/tests/**.an`，支持期望 stdout、`Exit code <N>`、`err.an` 诊断子串、
+  `input/*.args|.stdin`；anx 自身套件不再由 `anx test` 调用。
+- **package suite 纳入 fat/raw 双模式**：`anx` 侧用 `anx_args` 携带 `--raw-pointers`，
+  每个 package fixture 展开成两条用例（A0.5 刻意没做）。
+- 新增 `anx` fixture 驱动方式：`tests/input/package/<fixture>.command` 可把某个 fixture
+  改为 `check` 或 `test` 驱动（`lib` 根只能 `check`，项目测试 fixture 走 `test`）。
+
+**验收结果**：
+
+| 验收点 | 证据 |
+| --- | --- |
+| 不可达函数体内的错误被报出 | `tests/basic/error/unreachable_type_error.err.an`、`errors/unreachable_error`（package） |
+| 未实例化泛型体不报错 | `tests/basic/generics/uninstantiated_body.an` |
+| 依赖包的不可达错误不出现在根项目 | `dep_unreachable`（根 `build` 通过），`anx check dep` 单独报出 |
+| `lib` 根可 `check` | `lib_pkg`（clean，exit 0）、`errors/lib_check_error`（报错） |
+| 依赖自带 `main` 的 `hybrid` 包可构建 | `hybrid_dep` |
+| `run` 转发参数 / stdin / 退出码 | `project_tests` fixture 的 args/stdin/exit-code 用例；手工核对 `anx run -- x` 得到程序自身的 2 |
+| `anx test` 发现项目测试并报告失败 | `project_tests`（exit 0）、`errors/project_test_failure`（`1 failed`） |
+| `yianc` 选项与位置参数任意顺序 | 手工核对 `lib -t none <file>` 与 `lib <file> -t none -O3` |
+| standalone 仍按函数名找 `main` | `tests/basic` 726 条全绿 |
+
+**迁移清单（空）**：S1 已普查过检查根放开的红灯，本次实现后 `basic` 726 + `safety` 156 +
+`package` 86 全绿，无需迁移项。
 
 ### A4 交付形态
 

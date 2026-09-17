@@ -1,0 +1,10 @@
+// An uninstantiated generic body is not type-checked: the language has no
+// parameter constraints, so `a + b` cannot be judged before instantiation (G21).
+
+fn add<T>(a: T, b: T) -> T {
+    return a + b
+}
+
+fn main() {
+    assert add<i32>(1, 2) == 3: "the instantiated body is checked and runs";
+}

@@ -23,7 +23,8 @@ def ch_llvm():
 class LLTranslator:
     """CFG Functions → LLVM Module."""
 
-    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool = False) -> None:
+    def __init__(self, type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool = False,
+                 entry_type_id: int | None = None) -> None:
         self.__type_ctx = type_ctx
         self.__raw_pointers = raw_pointers
 
@@ -31,7 +32,7 @@ class LLTranslator:
         ll_module.triple = "x86_64-unknown-linux-gnu"
 
         self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names, raw_pointers)
-        self.__module = LLModule(ll_module, self.__ll_type_ctx)
+        self.__module = LLModule(ll_module, self.__ll_type_ctx, entry_type_id)
         self.__func: LLFunction | None = None
 
     # ------------------------------------------------------------------

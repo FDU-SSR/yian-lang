@@ -53,6 +53,7 @@ __all__ = [
     "SourceFile",
     "STD_PACKAGE",
     "default_stdlib_root",
+    "discover",
     "load",
 ]
 
@@ -211,6 +212,21 @@ def default_stdlib_root() -> Path:
     Resolved lazily so that importing this module performs no I/O.
     """
     return Path(__file__).resolve().parent.parent / "lib" / "src"
+
+
+def discover(start: Path) -> Path | None:
+    """Return the nearest project root at or above *start*.
+
+    A file argument starts from its directory; the search stops at the
+    filesystem root and returns ``None`` when no ``package.anx`` is found.
+    """
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        if (candidate / MANIFEST_NAME).is_file():
+            return candidate
+    return None
 
 
 def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
