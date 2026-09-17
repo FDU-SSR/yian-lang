@@ -2,6 +2,7 @@
 
 > 本计划在 `anx` 的项目模型与依赖解析落地后做过一次修订（§2 已标注哪些前提已经具备）。
 > **仓库里的 `yian-language-support-0.0.10.vsix` 已弃用、不作为起点，P1 重建扩展源码树（§2.1）。**
+> **VS Code 扩展与语言服务器是两个东西，分层放在 `ide-support/vscode/` 与顶层 `lsp/`（§5.7）。**
 > **测试策略见 §5.6：不为 IDE / LSP 建立自动化测试，功能由实际使用验收；编译器现有的三套件
 > 是不回归底线。**
 
@@ -43,10 +44,11 @@
 
 **VS Code 扩展**：仓库里的 `ide-support/yian-language-support-0.0.10.vsix` 是**早已弃用的历史产物**，
 版本停留在很久以前的一次探索性开发，与当前的语言和项目模型严重脱节。它**不作为任何阶段的起点
-或事实来源**，只在需要考古时当作参考。解包后能看到的形态是：`extension/package.json`
+或事实来源**，只在需要考古时当作参考。解包后能看到的形态是：VSIX 内部的 `extension/package.json`
 （语言 id `yian`、`.an` 关联、`onLanguage:yian` 激活）、`language-configuration.json`（注释、
 括号、自动闭合）、`syntaxes/yian.tmLanguage.json`（词法级高亮）与 `src/extension.ts`。
 **`extension.ts` 是一个空的 `activate()`**：没有语言服务器，也没有补全、跳转、悬停或诊断逻辑。
+（这里的 `extension/` 是 VSIX 内部的目录结构，不要与重建后的 `ide-support/vscode/` 混淆，见 §5.7。）
 
 三点需要注意：
 
@@ -108,24 +110,31 @@
 
 ### 3.2 需要安装（联网执行）
 
+分三段，按"什么时候能跑"排序。**注意其中的 `ide-support/vscode/` 目前还不存在**
+（`ide-support/` 下只有那个已弃用的旧 VSIX），要等 P1a 建出源码树后才能真正执行。
+
 ```bash
-# P1：扩展依赖 + 编译（会拉 typescript、@types/node、@types/vscode）
-cd ide-support/extension
+# ── 现在就可以装：打包工具，装成全局命令，避免 npx 每次联网拉包
+npm install -g @vscode/vsce
+
+# ── P1a 建好源码树之后：扩展依赖 + 编译（拉 typescript、@types/node、@types/vscode）
+cd /home/zhx/workspace/yian/ide-support/vscode
 npm install
 npm run compile
 
-# P1：打包 VSIX（二选一）
-npm install -g @vscode/vsce      # 装成全局命令，之后用 `vsce package`
+# 打包（第 1 段已装全局）
+vsce package
 # 或临时使用（不装全局）：npx @vscode/vsce package
 
-# P1 之后：装进本地 VS Code 做实际使用
-code --install-extension ide-support/yian-language-support-<新版本>.vsix
+# 装进 VS Code，版本号按实际产物替换（新版本从 0.1.0 起，别装回 0.0.10）
+code --install-extension /home/zhx/workspace/yian/ide-support/yian-language-support-0.1.0.vsix
+code --list-extensions --show-versions | grep -i yian
 
-# P3 之后（若 §6.1/§6.2 选择 Python 语言服务器）
+# ── P3 之后，且 §6.1 选择 LSP 路线时才需要
+# lsp/ 是 Python 包，若语言服务器用 Python 实现并依赖 pygls：
 /home/zhx/miniconda3/bin/python3 -m pip install pygls
-
-# P3 之后（若走 LSP，扩展侧需要客户端库）
-cd ide-support/extension && npm install vscode-languageclient
+# 扩展侧需要 LSP 客户端库：
+cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languageclient
 ```
 
 注意：`npm install` 与 `@vscode/vsce` 都需要联网——实测 `npx --no-install @vscode/vsce` 会因
@@ -162,10 +171,15 @@ cd ide-support/extension && npm install vscode-languageclient
 
 转换模块是唯一允许出现"两套坐标"的地方，其余模块只使用其中一套。
 
-### 5.2 分析接口与通信协议解耦
+### 5.2 分析接口与通信协议解耦，并按层落位
 
 分析会话（`DocumentStore`、`AnalysisSession`、`AnalysisSnapshot`、结构化诊断）先做成与协议
 无关的库；VS Code 直连 API、LSP 或命令行都只是它的消费者。P2 只交付这个库与最小驱动。
+
+**该库住在 `compiler/` 内部**（如 `compiler/analysis/session.py` 与配套的诊断/位置转换模块），
+不另起顶层包：它需要直接使用 lexer、parser、类型检查的内部结构，搬到 `compiler/` 外面要么形成
+"新包 → 编译器内部符号"的脆弱依赖，要么迫使编译器先导出一整套 API。放在 `compiler/` 内，命令行
+暴露它（`yianc --analyze --json` 一类）几乎不需要额外工作，而语言服务器只是它的薄适配层。
 
 ### 5.3 第一版采用全量重分析
 
@@ -174,7 +188,7 @@ cd ide-support/extension && npm install vscode-languageclient
 
 ### 5.4 高亮：TextMate 作为回退，语义 token 叠加
 
-现有 TextMate grammar 继续作为基础高亮并在 P1 保留；真实类型、函数、变量和字段的区分由语义
+P1 重建的 TextMate grammar 作为基础高亮；真实类型、函数、变量和字段的区分由语义
 token 提供。语义分析失败时不得影响基础高亮（不引入 tree-sitter 等新的解析前端）。
 
 ### 5.5 项目配置：直接复用 `anx`，不再引入第二套配置
@@ -193,6 +207,44 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
   必须与编译器的既有行为一致，而不是另写一套解析逻辑。
 - 因此本计划**不新增** fixture 目录、不新增 runner 套件、不定义 IDE 期望文件格式。
 
+### 5.7 目录分层：按依赖方向切，不按"都属于 IDE"堆在一起
+
+扩展与语言服务器是两个不同的东西，**不放在同一个目录下**。切分依据不是"技术栈不同"，而是
+**谁复用谁、谁是某个编辑器的专属产物**：
+
+| 层 | 位置 | 内容 | 谁依赖它 |
+| --- | --- | --- | --- |
+| 语言引擎 | `compiler/`（已有） | 词法/语法/类型分析，以及 §5.2 的分析会话、诊断、位置转换 | `yianc` CLI、`lsp/` |
+| 项目模型 | `anx/`（已有） | 项目发现、依赖与导入规则 | `anx` CLI、`lsp/` |
+| 协议服务 | **`lsp/`（新顶层包）** | 协议适配、服务进程、文档版本与取消语义 | 所有 LSP 客户端 |
+| 编辑器客户端 | **`ide-support/vscode/`** | TS 扩展、grammar、language-configuration、VSIX | 无（终端产物） |
+
+约定：
+
+- **依赖方向单向**：`ide-support/vscode/ → lsp/ → compiler/ + anx/`，任何一层都不得反向 import，
+  客户端里不得出现 YIAN 语言规则。
+- **`ide-support/` 的含义收窄为"某个具体编辑器的专属产物"**。客户端目录用 `vscode/` 而不是
+  `extension/`，将来若有第二个客户端就是并列子目录（`ide-support/neovim/` 等），不必返工。
+  项目级的 `sample/`（P0）属于编辑器支持资产，可以留在 `ide-support/sample/`。
+- **`lsp/` 是按需创建的**：如果 §6.1 最终选择"扩展直接调用 `yianc --analyze --json`"这条路线，
+  就不创建 `lsp/`，此时上面分层照旧成立（客户端依然是薄的，语言逻辑依然在 Python 侧）。
+- **`lsp/` 与 `compiler/`、`anx/` 同等待遇**：遵守 Python 双下划线私有命名约定，纳入 pyright
+  strict 覆盖，并在 `pyproject.toml` 里登记。落地时需要同时改三处配置：
+
+  ```toml
+  [project.scripts]
+  yian-lsp = "lsp.main:main"
+
+  [tool.setuptools.packages.find]
+  include = ["compiler*", "anx*", "lsp*"]
+
+  [tool.pyright]
+  include = ["compiler", "anx", "lsp"]
+  ```
+
+- **两套工具链互不污染**：`node_modules/`、`out/`、`*.vsix` 只出现在 `ide-support/vscode/`；
+  pyright、`compileall` 与打包清单只覆盖 Python 侧。这是分层最直接的收益。
+
 ## 6. 暂不锁定的技术路线与决策节点
 
 以下决策在拿到原型和实测数据后再确定。
@@ -202,17 +254,18 @@ token 提供。语义分析失败时不得影响基础高亮（不引入 tree-si
 - 直接使用 VS Code 的 `languages.*` API：只支持 VS Code、功能规模小、调试简单；
 - 使用 Language Server：复用 Python 编译器、为其他编辑器保留可能性，但需要进程与协议层。
 
-P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3 之后根据复用成本、调试难度和
-实测性能决定最终接入方式。
+**目录分层不依赖这个选择**（§5.7）：客户端固定在 `ide-support/vscode/`，`lsp/` 是否创建取决于
+本节的结论。P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3 之后根据复用成本、
+调试难度和实测性能决定最终接入方式。
 
 ### 6.2 语言服务器的实现方式与分发
 
-候选：① 在现有 Python 编译器进程内增加服务入口；② 分析逻辑与协议适配分成两个模块/进程；
-③ 编辑器侧索引用其他语言重写但仍复用 YIAN 的语法与类型规则；④ 先用外部命令验证功能，
-再改为结构化库调用。
+位置已经定在顶层 `lsp/`（§5.7），这里要定的是**进程形态与分发**：
 
-同时要决定分发方式：随 VSIX 打包 Python 运行时、依赖本机 Python 环境、或提供独立可执行文件。
-这一条会反向影响 P2 的接口形态（进程内 vs 子进程），建议在 P2 开始前先给倾向。
+- 进程形态候选：① `lsp/` 作为独立进程，扩展通过 stdio 启动它；② 先用外部命令
+  （`yianc` / `anx`）验证功能，再切换为结构化库调用；③ 分析逻辑与协议适配拆成两个模块。
+- 分发方式：随 VSIX 打包 Python 运行时、依赖本机 Python 环境（复用已有的 editable 安装）、或提供
+  独立可执行文件。这一条会反向影响 P2 的接口形态（进程内 vs 子进程），建议在 P2 开始前先给倾向。
 
 ### 6.3 错误恢复与多诊断的时机
 
@@ -260,8 +313,9 @@ P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3
 **P1a 源码树与构建（后续所有前端工作的前提）**：
 
 - **不继承旧 VSIX**：`yian-language-support-0.0.10.vsix` 已弃用（§2.1），不作为代码基线。
-  新建 `ide-support/extension/`，包含 `package.json`、`tsconfig.json`、`src/extension.ts`、
-  `language-configuration.json`、`syntaxes/yian.tmLanguage.json`、`readme.md`、`.gitignore`；
+  新建 **`ide-support/vscode/`**（命名理由见 §5.7），包含 `package.json`、`tsconfig.json`、
+  `src/extension.ts`、`language-configuration.json`、`syntaxes/yian.tmLanguage.json`、
+  `readme.md`、`.gitignore`；
 - **只沿用两个对外契约**：语言 id 保持 `yian`、文件关联保持 `.an`（含 `onLanguage:yian` 激活），
   这样用户已有的设置和安装不需要改；
 - **其余内容按当前语言重写**：`language-configuration.json` 的注释/括号/自动闭合规则、
@@ -270,7 +324,7 @@ P1 只要求扩展可维护；P2 先定义与 VS Code 无关的分析接口；P3
 - **删除仓库里的旧 VSIX**：`ide-support/yian-language-support-0.0.10.vsix` 从 git 中移除，
   避免"下载旧版本装上"这种错误用法；历史仍留在 git 里，需要时能取回；
 - readme 写清构建、调试（F5）、打包与安装步骤，不再出现 `vscode-yian/` 这类不存在的路径；
-- **补 `.gitignore`**：仓库根需要新增 `ide-support/extension/node_modules/`，扩展目录内再放一份
+- **补 `.gitignore`**：仓库根需要新增 `ide-support/vscode/node_modules/`，扩展目录内再放一份
   局部 `.gitignore`（`node_modules/`、`out/`、`*.vsix`）。仓库根 `.gitignore` 末尾那条针对
   `yian-language-support-0.0.10.vsix` 的单文件规则随旧 VSIX 一起删掉，改成按模式忽略 `*.vsix`，
   保证以后打包产物不会被误提交；
@@ -302,10 +356,13 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 **工作内容**：
 
 - 设计与协议无关的分析会话：`DocumentStore`、`AnalysisSession`、`AnalysisSnapshot`、诊断；
+  **落在 `compiler/` 内**（§5.2），不新建顶层包，命令行与将来的 `lsp/` 都调它；
 - 输入为「文档标识 + 文本 + 版本号」，不要求先保存到磁盘；
 - 只运行 Lexer、Parser、去糖、导入解析、名称解析与类型分析，**不启动 LLVM / clang**；
 - 位置与 URI 转换层（§5.1）；
 - 结构化诊断：严重级别、消息、范围、错误码；错误返回结构化结果，不再依赖终端输出；
+- 给命令行加一个结构化出口（如 `yianc --analyze --json`），使 §6.1 选"扩展直连 CLI"路线时
+  不依赖 `lsp/` 也能工作，同时作为分析会话的第一个消费者与手工验证手段；
 - **替换 `__print_source_error` 的 traceback + stdout + `sys.exit(-1)` 路径**，让 CLI 与分析
   接口共用同一套诊断渲染，并对齐 `docs/grammar/16` 的约定（stderr、退出码只区分成功/失败）；
 - 错误恢复策略研究：局部恢复、占位 AST、保留上一次有效 AST 或组合（选型记入 §6.3）。
@@ -330,7 +387,10 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
   类型别名、变量、字段、方法、枚举成员记录**声明位置**（`Symbol` 补 span 是这里的核心改动）；
 - 记录导入别名，使"引用 → 符号 → 声明位置"在别名场景下也成立；
 - 失效规则：至少区分当前文件、直接依赖者（用 `Project.dependencies` 反查）两类粒度的重分析；
-- 请求取消与旧结果丢弃机制。
+- 请求取消与旧结果丢弃机制；
+- 索引本身同样落在 Python 侧（`compiler/`，复用 §5.2 的会话），**不在扩展里建索引**；
+- 若此时已确定 §6.1 走 LSP：创建顶层 `lsp/` 包并同步 `pyproject.toml` 的三处配置（§5.7），
+  `lsp/` 只做协议适配与进程管理，索引与项目模型仍从 `compiler/` / `anx/` 复用。
 
 **实际使用清单**：
 
@@ -435,8 +495,8 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 
 - 为不同规模项目记录初始化、修改后重分析、补全与跳转的耗时和内存；
 - 增加日志级别、日志文件与故障排查说明，但不把调试信息显示为普通诊断；
-- 确定语言服务器的分发方式（随 VSIX 打包、依赖本机 Python、或独立可执行文件），
-  并据此补齐安装步骤；
+- 若已创建 `lsp/`：确定其分发方式（随 VSIX 打包、依赖本机 Python、或独立可执行文件），
+  并据此补齐安装步骤；若未创建，则说明扩展依赖的 `yianc` / `anx` 版本要求；
 - 增加版本号、变更日志、安装说明、兼容性说明、卸载与回滚说明；
 - 发布前运行编译器三套件与 VSIX 安装冒烟检查（人工）。
 
@@ -457,8 +517,8 @@ uri 转换、解析器错误处理），产出一份结论再定 P2 的完整范
 - §7 中该阶段的"实际使用清单"已由维护者逐条手工确认；
 - 没有已知的高优先级数据错误，例如跳转到错误定义、旧诊断残留或重命名误改文本；
 - 编译器 `basic` / `safety` / `package` 三套件保持全绿；
-- 相关文档、日志与故障排查方式已经补齐（分析接口写进 `docs/manual/`，扩展用法写进
-  `ide-support/` 的 readme）；
+- 相关文档、日志与故障排查方式已经补齐（分析接口与 `lsp/` 写进 `docs/manual/`，扩展用法写进
+  `ide-support/vscode/readme.md`）；
 - 下一阶段所依赖的接口和限制已经记录；
 - Git diff 只包含本阶段范围内的修改；`node_modules/`、VSIX 产物、日志与缓存文件不进入提交。
 
