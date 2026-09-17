@@ -2,7 +2,7 @@
     "name": "yian-language-support",
     "displayName": "YIAN Language Support",
     "description": "YIAN language support: syntax highlighting, comment/bracket behaviour and language configuration",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "publisher": "yian",
     "license": "MIT OR Apache-2.0",
     "engines": {
@@ -42,7 +42,13 @@
                 "editor.insertSpaces": true,
                 "editor.detectIndentation": false
             }
-        }
+        },
+        "snippets": [
+            {
+                "language": "yian",
+                "path": "./snippets/yian.json"
+            }
+        ]
     },
     "scripts": {
         "compile": "tsc -p ./",

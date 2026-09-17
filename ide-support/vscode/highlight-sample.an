@@ -1,0 +1,107 @@
+// 高亮与 scope 检查样例：每个 grammar 规则至少出现一次。
+// 这个文件不参与构建（它不在任何 anx 工程里），只为肉眼与 scope 检查服务。
+/* 块注释
+   跨行 */
+from std.core.io import print;
+from sample.geometry import Point, Pair;
+
+// 关键字与声明
+typedef Meters = f64;
+
+struct Shape<T> {
+    pub value: T,
+    pub label: str,
+}
+
+enum Kind {
+    Dot,
+    Circle { radius: Meters },
+}
+
+trait Describe {
+    fn describe() -> str;
+    static fn kind() -> Kind;
+}
+
+impl Shape<Meters> {
+    static pub fn of(value: Meters, label: str) -> Self {
+        return Self(value=value, label=label);
+    }
+
+    pub fn describe() -> str {
+        return self.label;
+    }
+}
+
+impl Describe for Shape<Meters> {
+    fn describe() -> str {
+        return self.label;
+    }
+
+    static fn kind() -> Kind {
+        return Kind.Dot;
+    }
+}
+
+// 字面量、数字后缀、字符、字节、字符串与 f-string 内插
+fn literals() -> u64 {
+    let decimal: u64 = 1_000_000;
+    let hex: u64 = 0xFF_EC;
+    let binary: u32 = 0b1010_0101;
+    let octal: u32 = 0o755;
+    let small: i8 = 12i8;
+    let ratio: f64 = 3.5f64;
+    let exponent: f32 = 1e3f32;
+    let letter: char = 'A';
+    let byte: u8 = b'x';
+    let name: str = "escaped \"quote\" and \\ backslash";
+    let interpolated: str = f"shape {name} has {1 + 2} sides";
+    let nested: str = f"nested {if (true) { 1 } else { 2 }}";
+    return decimal + hex + binary as u64 + octal as u64 + small as u64
+        + ratio as u64 + exponent as u64 + letter as u64 + byte as u64
+        + @str_get_len(interpolated) as u64 + @str_get_len(nested) as u64;
+}
+
+// 属性（PascalCase）与内建（小写）
+@BitCopy
+struct Copyable {
+    pub flag: bool,
+}
+
+// 控制流、match、运算符、self、_、true/false、typeof、IS_RAW_MODE、comptime
+fn control(value: i32, items: i32[]) -> i32 {
+    let total: i32 = 0;
+    let ignored: i32 = _;
+    if (value > 0 && value != 0) {
+        total = total + value;
+    } else if (value < 0 || value == -1) {
+        total = total - value;
+    } else {
+        total = total * 1 % 2 ^ 3 & 4 | 5;
+    }
+    for item in items {
+        total += item;
+    }
+    while (total <= 100) {
+        total <<= 1;
+        total >>= 1;
+    }
+    loop {
+        break;
+    }
+    total = match kind {
+        Kind.Dot => 0,
+        Circle(r) => r as i32,
+        _ => total,
+    };
+    let size: u64 = comptime if IS_RAW_MODE { @sizeof(Pair<i32>) as u64 } else { 0u64 };
+    return total + @sizeof(Point) as i32 + size as i32 + typeof(value);
+}
+
+fn main() {
+    print("highlight sample\n");
+    assert control(1, [1, 2, 3]) > 0: "always true";
+    defer {
+        print("done\n");
+    }
+}

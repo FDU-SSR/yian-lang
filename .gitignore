@@ -359,3 +359,6 @@ opencode.json
 # VS Code extension (ide-support/vscode)
 ide-support/vscode/node_modules/
 *.vsix
+
+# The VS Code extension ships its own launch/task config for F5.
+!ide-support/vscode/.vscode/
