@@ -211,6 +211,7 @@ P1 建立的 TextMate grammar 作为基础高亮；真实类型、函数、变�
   （`scripts/run_tests.py --all`，运行前需已安装 `yianc` / `anx`）。为此 P2 引入的分析接口
   必须与编译器的既有行为一致，而不是另写一套解析逻辑。
 - 因此本计划**不新增** fixture 目录、不新增 runner 套件、不定义 IDE 期望文件格式。
+  （这一条只针对 IDE / LSP 功能；P0.4 里修掉的编译器缺陷所对应的回归用例属于编译器测试，不在此限。）
 
 ### 5.7 目录分层：按依赖方向切
 
@@ -567,29 +568,57 @@ context`，输出 Python traceback 并退出（直接 `yianc` 退出码 255；�
 - 最小复现二（跨 unit）：`src/types.an` 里 `pub typedef Meters = f64;`，`src/main.an` 里
   `from demo.types import Meters;` 后用 `fn twice(v: Meters) -> f64`——只要使用者的 unit 排在定义者
   之前就崩溃。
-- 根因：`GlobalResolve` 原先对每个 unit 依次执行"导入 → 定义"，而签名解析发生在这个单遍内并通过
-  `resolve_type` 立即折叠别名链；此时后定义别名的 `AliasDef.aliased_type` 仍是哨兵值 `-1`。
-  局部变量注解不受影响，因为它在更晚的 `TypeCheck` 阶段解析。
+- 根因：`TypeResolver.resolve` 在解析签名的同时**立刻把别名替换成它指向的类型**，于是"写一个别名"
+  就等价于"要求别名体此刻已经存在"；而别名体是在 `GlobalResolve` 按 unit 顺序遍历时才填的，所以
+  谁先谁后就决定了成败。局部变量注解不受影响，因为它在更晚的 `TypeCheck` 阶段解析。
 - 为什么 struct 没有这个问题（对照）：`alloc_struct` 当场铸造的是一个**可用的类型身份**，签名只需要
-  这个 id，字段是**内容**、在类型检查与布局阶段才被读取，而那时所有 unit 的定义都处理完了。别名
-  不一样：别名 id 的含义是"它别名到的那个类型"，所以任何需要类型身份的地方都需要它的**体**，而
-  `resolve_type` 恰好是签名解析时的第一个这样的消费者。
-- 修复（**让别名自己产出体，不改解析顺序**）：`AliasDef` 多一个 `resolve: Callable[[], int] | None`
-  字段，`GlobalResolve` 在收集符号时把它装成"解析这条别名声明"。`TypeCtx.resolve_aliases` 第一次
-  遇到 `aliased_type == -1` 时**当场调用它**，而不是报错。于是 `typedef` 写在同一 unit 的前面还是
-  后面、写在哪个 unit，都不再影响结果；`run()` 的"收集符号 → 绑定导入 → 解析定义"三遍结构保持原样，
-  `TypeCtx` 不新增任何公开 API。循环由 `GlobalResolve` 的一个 in-progress 集合打断，并报
-  `Circular type alias: <name>`——**带位置与插入符的正常源码诊断**（顺带把下面那条"遗留"消掉了）。
-- 明确不采用的做法：把别名留在已存类型里**不折叠**。实测过一次折中版本——未填充时静默返回别名 id
-  ——结果是把未折叠的别名烘进泛型实参，`PointPair = Pair<Meters>` 这类签名会报出误导性的
-  `cannot infer generic arguments from 'f64' for 'Meters'`。原因是泛型实参在被写入类型空间时会立即
-  折叠（`resolve_type` → `resolve_aliases`），而 `resolve_aliases` 只沿**顶层**别名链走、不会深入
-  实参内部；要彻底不折叠，就得让布局、`@sizeof`、codegen、类型比较等**所有**消费点都做一次深度
-  折叠，风险远大于收益。所以别名必须在**被存下来之前**变成具体类型，可自由选择的只是"什么时候拿到
-  它的体"。
-- 验证：14 个最小复现全部通过；`basic` / `safety` / `package` 三套件全绿。
-- 循环别名现在报 `Circular type alias: <name>`，带声明位置（上表 `E407`）；未使用的循环别名不再
-  影响构建。
+  这个 id；字段是**内容**，到类型检查与布局阶段才被读取，那时所有 unit 的定义都处理完了。别名的
+  身份和内容此前被混在一起——`AliasType` 有它自己的 `type_id`（别名类型本身），`AliasDef.aliased_type`
+  是另一个 id（它指向的类型），而 `resolve` 把后者当成了前者。
+- 修复：**别名保持自身身份，名义键先 canonical。**
+  1. `TypeResolver.resolve` 不再折叠顶层别名——声明里写别名就存**别名自己的 type id**。签名解析因此
+     完全不需要别名体，`typedef` 写在同一 unit 的前后、写在哪个 unit 都不再影响结果；`run()` 的
+     "收集符号 → 绑定导入 → 解析定义" 三遍结构保持原样。
+  2. 消费点按需要分三类：需要**形状**的地方用 `resolve_aliases`（字段访问/解引用、运算符分类、
+     `match` 策略、LLVM 类型与 fat 判定、`@sizeof` 相关路径）；需要**身份**的地方用 `canonical`
+     （LLVM 类型缓存、函数单态化、impl 注册表键）；需要**比较**的地方用 `same`（结构化相等，
+     逐层看穿别名，用于 `coerce`、`GenericInference.constrain`、`infer_common_type`）。
+  3. 名义访问器统一解析一次，避免逐个调用点打补丁：`get_struct_fields`、`get_enum_variants`、
+     `get_params`、`is_niche_enum`、`try_extract_array_length`。
+  4. `type_ops` 里按形状分类的 helper 全部看穿别名，但**返回值仍保持程序写的拼写**
+     （`default_literals` 对非字面量类型原样返回）；`instantiate` 反过来**显式保留**别名身份
+     （它有 `AliasType` 分支），这是这条规则的两个方向，不能混。
+- 为什么不能"彻底不折叠"：泛型实参在被写入类型空间时会立即折叠（`__resolve_generic_arg` →
+  `resolve`），而 `resolve_aliases` 只沿**顶层**别名链走、不深入实参内部；要彻底不折叠，就得让布局、
+  `@sizeof`、codegen、类型比较等**所有**消费点都做一次深度折叠。实测过的折中版本——未填充时静默
+  返回别名 id——会把未折叠的别名烘进泛型实参，`PointPair = Pair<Meters>` 这类签名会报出误导性的
+  `cannot infer generic arguments from 'f64' for 'Meters'`。所以可选的只是"什么时候拿到别名体"，
+  不是"要不要折叠"。
+- **同类问题的清单**（都是"把 type id 当名义键/名义判别式"这一条规则的实例，且都不在原测试套件
+  覆盖范围内，靠探针发现）：
+
+  | 位置 | 症状 |
+  | --- | --- |
+  | `ImplRegistry` 的 `__impl_cache` / `__trait_impl_cache` | `impl Trait for Alias` 注册在别名 id 下，用目标类型调用查不到 → `Unknown method call` |
+  | `expr_checker.lower_match` 的策略选择 | 别名到枚举被判成非枚举 → 走 PartialEq 路径 → 断言失败 |
+  | `llvm/translator.__emit_match` 的派发 | 别名到枚举一个分支都不匹配，**不发任何终结指令** → 生成非法 IR，只在 LLVM 解析时报错（静默失败） |
+  | `builder.unpack_enum_payload` / `is_niche_enum` | 拿别名 id 取变体 → 断言失败 |
+  | `type_ops.infer_common_type` | 数组字面量里混用两种拼写被判成类型不兼容 |
+  | 函数单态化（`call_dispatcher` / `method_lookup`） | `ident<Code>` 与 `ident<u64>` 生成两份函数（实测 `define` 7 → 6） |
+
+- 明确不采用的做法：改动解析顺序把别名体提前成独立一遍、重试式依赖排序、以及在类型模型里挂
+  "按需产出别名体"的回调。前两者把别名当成特例塞进 pass 顺序，后者引入从类型层回拨到 pass 层的
+  反向依赖；三次尝试分别在 `8b40db4`、`544d680`、`c6e0da1`，最终被本方案取代。
+- 验证：25 个最小复现、两个示例工程，以及 `basic` 752 / `safety` 156 / `package` 99 全绿；pyright 0。
+  上面清单里的每一处都落成了仓库内的回归用例，共 14 个（13 个单文件用例在
+  `tests/basic/type/alias/`，1 个跨模块项目 fixture 在 `tests/package/alias_cross_module/`），它们都
+  覆盖在原套件之外——逐个撤掉对应修复后，这些用例会分别失败（impl 注册表、枚举 match、公共类型
+  推断三处都实测过）。
+- 注意：两个单态化用例（`monomorph_explicit_type_arg` / `monomorph_inferred_type_arg`）只断言程序行为
+  正确，**不断言"只生成一份函数"**——重复单态化不影响运行时结果，套件比对的是程序输出，看不到
+  LLVM 里的函数份数。去重的证据是本节记录的 `define` 计数实验（显式类型实参那条路径上 7 → 6）。
+  要把这一点也纳入回归，需要给 runner 增加"对生成的 IR 做内容断言"的机制，目前没有。
+- 循环别名现在报 `Circular type alias detected: <name>`；未被使用的循环别名不影响构建。
 
 **缺陷 2（已记录，未修，非别名相关）：泛型结构体的静态方法必须写显式类型实参。**
 `Pair.of(1, 2)` 报 `Unknown static method call 'of' on Pair<T>`；`Pair<i32>.of(1, 2)` 正常。
