@@ -289,7 +289,7 @@ pub fn print(s: str) {
 }
 
 pub fn readline() -> String {
-    Stdin.read_line().unwrap()
+    Stdin.read_line().unwrap().clone()
 }
 
 // =====================================================================

@@ -108,7 +108,7 @@ impl str {
     // Check if the str starts with the given prefix character
     pub fn starts_with_char(prefix: char) -> bool {
         let first_char = self.chars().next();
-        first_char.is_some() && first_char.unwrap() == prefix
+        first_char.is_some() && *first_char.unwrap() == prefix
     }
 
     pub fn starts_with(prefix: str) -> bool {
@@ -329,9 +329,9 @@ impl Iterator<(u64, char)> for CharIndicesIter {
         match self.iter.next() {
             None => Option<(u64, char)>.None,
             Some(val) => {
-                u64 index = self.front_offset
-                u64 len = self.iter.byte_iter.len()
-                self.front_offset += pre_len - len
+                let index: u64 = self.front_offset;
+                let len: u64 = self.iter.byte_iter.len();
+                self.front_offset += pre_len - len;
                 Option<(u64, char)>.Some((index, val))
             },
         }
