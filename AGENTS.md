@@ -4,7 +4,7 @@ YIAN is a statically typed programming language. Its compiler is written in Pyth
 
 `.an source → tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → native executable`
 
-The supported development environment is Linux with Python 3.10 or newer and clang.
+The supported development environment is Linux with Python 3.11 or newer (`anx` reads manifests with `tomllib`) and clang.
 
 ## Working rules
 
@@ -16,14 +16,14 @@ The supported development environment is Linux with Python 3.10 or newer and cla
 
 ## Compiler CLI
 
-Always pass `lib` as a positional input because the standard library is not implicit. Input paths may be files or directories; directories are searched recursively for `.an` files.
+Always pass the standard library source root (`lib/src`) as a positional input, because the standard library is not implicit. Input paths may be files or directories; directories are searched recursively for `.an` files.
 
 ```bash
-python3 -m compiler.main lib tests/array/access.an
-python3 -m compiler.main -t none lib tests/array/access.an
-python3 -m compiler.main -t ll lib tests/array/access.an
-python3 -m compiler.main -o build/func -O2 lib tests/array/access.an
-python3 -m compiler.main --dump --log-spec "type_check=DEBUG" lib tests/array/access.an
+yianc lib/src tests/basic/array/access.an
+yianc -t none lib/src tests/basic/array/access.an
+yianc -t ll lib/src tests/basic/array/access.an
+yianc -o build/func -O2 lib/src tests/basic/array/access.an
+yianc --dump --log-spec "type_check=DEBUG" lib/src tests/basic/array/access.an
 ```
 
 Current options include:
@@ -78,6 +78,8 @@ python3 scripts/run_tests.py -v               # verbose: failure details
 python3 scripts/run_tests.py -x               # include <suite>/experimental/
 python3 scripts/run_tests.py --no-run         # analysis only
 ```
+
+The suites invoke the installed `yianc` and `anx`, so run `scripts/install.sh` (editable) before using them.
 
 `basic` compiles standalone sources twice, in fat- and raw-pointer modes; `safety` holds the fat-pointer regressions; `package` drives `package.anx` project fixtures through `anx build`, also in both pointer modes. A fixture may override the anx subcommand with `tests/input/package/<fixture>.command` (`check` or `test`). `scripts/run_safety_tests.py` is a thin wrapper for the safety suite.
 

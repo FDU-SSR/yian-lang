@@ -24,7 +24,7 @@
 ## 快速上手
 
 ```bash
-scripts/install.sh        # 一次安装：yianc 与 anx 进入 PATH（不装也可以 python3 -m anx.main）
+scripts/install.sh        # 一次安装：yianc 与 anx 进入 PATH
 
 anx new demo              # 生成 bin 项目骨架
 cd demo

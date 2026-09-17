@@ -5,7 +5,7 @@
 ## 1. 基本用法
 
 ```bash
-python3 -m compiler.main [options] <paths...>
+yianc [options] <paths...>
 ```
 
 - `paths`：一个或多个 `.an` 源文件路径或包含源文件的目录。编译器会递归查找 `.an` 文件。
@@ -14,10 +14,10 @@ python3 -m compiler.main [options] <paths...>
 
 ```bash
 # 编译单个测试文件（含标准库）
-python3 -m compiler.main lib tests/array/assign.an
+yianc lib/src tests/basic/array/assign.an
 
 # 编译多个文件
-python3 -m compiler.main lib tests/std/core/option.an tests/std/core/result.an
+yianc lib/src tests/basic/std/core/option.an tests/basic/std/core/result.an
 ```
 
 ## 2. 命令行参数
@@ -25,7 +25,7 @@ python3 -m compiler.main lib tests/std/core/option.an tests/std/core/result.an
 ### 2.1 输入路径
 
 ```bash
-python3 -m compiler.main <path> [path...]
+yianc <path> [path...]
 ```
 
 位置参数，至少一个。可以是 `.an` 文件或目录。
@@ -42,7 +42,7 @@ python3 -m compiler.main <path> [path...]
 | `asm`  | 汇编文件 (.s)            |
 
 ```bash
-python3 -m compiler.main -t ll lib tests/array/assign.an
+yianc -t ll lib/src tests/basic/array/assign.an
 ```
 
 ### 2.3 `-o` / `--output` — 输出文件路径
@@ -50,7 +50,7 @@ python3 -m compiler.main -t ll lib tests/array/assign.an
 所有产物默认输出到 `build/` 目录。用 `-o` 覆盖：
 
 ```bash
-python3 -m compiler.main -o my_prog lib tests/array/assign.an
+yianc -o my_prog lib/src tests/basic/array/assign.an
 ```
 
 默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）等。
@@ -58,7 +58,7 @@ python3 -m compiler.main -o my_prog lib tests/array/assign.an
 ### 2.4 `-O` — 优化等级
 
 ```bash
-python3 -m compiler.main -O2 lib tests/array/assign.an
+yianc -O2 lib/src tests/basic/array/assign.an
 ```
 
 可选值：`0`, `1`, `2`, `3`。默认 0。`-O` 同时作用于三个位置：
@@ -72,13 +72,13 @@ python3 -m compiler.main -O2 lib tests/array/assign.an
 ### 2.5 `--profile` — 打印各阶段耗时
 
 ```bash
-python3 -m compiler.main --profile lib tests/array/assign.an
+yianc --profile lib/src tests/basic/array/assign.an
 ```
 
 ### 2.6 `--packages` — 包名导入解析
 
 ```bash
-python3 -m compiler.main --packages pkg.json files...
+yianc --packages pkg.json files...
 ```
 
 接受一个 **v2** 契约的 JSON 文件（由 `anx build` 生成）：
@@ -129,13 +129,13 @@ Yian 编译器内置了结构化日志系统，替代了旧的 `--token`、`--as
 
 ```bash
 # 显示所有阶段的 DEBUG 摘要
-python3 -m compiler.main --log-spec "all=DEBUG" lib tests/array/assign.an
+yianc --log-spec "all=DEBUG" lib/src tests/basic/array/assign.an
 
 # 仅追踪类型检查中的表达式求值
-python3 -m compiler.main --log-spec "type_check.expr=TRACE" lib tests/array/assign.an
+yianc --log-spec "type_check.expr=TRACE" lib/src tests/basic/array/assign.an
 
 # 追踪方法调度 + CFG 逻辑展开
-python3 -m compiler.main --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib tests/array/assign.an
+yianc --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib/src tests/basic/array/assign.an
 ```
 
 ### 3.2 日志级别
@@ -154,20 +154,20 @@ python3 -m compiler.main --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib 
 默认日志写入 `build/compile.log`。用 `--log-file` 覆盖：
 
 ```bash
-python3 -m compiler.main --log-spec "all=DEBUG" --log-file /tmp/debug.log lib tests/array/assign.an
+yianc --log-spec "all=DEBUG" --log-file /tmp/debug.log lib/src tests/basic/array/assign.an
 ```
 
 ### 3.4 环境变量
 
 ```bash
 # 等价于 --log-spec
-YIAN_LOG="all=DEBUG,type_check=TRACE" python3 -m compiler.main lib tests/array/assign.an
+YIAN_LOG="all=DEBUG,type_check=TRACE" yianc lib/src tests/basic/array/assign.an
 
 # 等价于 --log-file
-YIAN_LOG_FILE=/tmp/debug.log python3 -m compiler.main lib tests/array/assign.an
+YIAN_LOG_FILE=/tmp/debug.log yianc lib/src tests/basic/array/assign.an
 
 # 完全关闭日志
-YIAN_LOG="all=OFF" python3 -m compiler.main lib tests/array/assign.an
+YIAN_LOG="all=OFF" yianc lib/src tests/basic/array/assign.an
 ```
 
 ### 3.5 日志频道列表
@@ -186,19 +186,19 @@ YIAN_LOG="all=OFF" python3 -m compiler.main lib tests/array/assign.an
 ### 4.1 快速编译运行
 
 ```bash
-python3 -m compiler.main lib tests/array/assign.an && ./build/a.out
+yianc lib/src tests/basic/array/assign.an && ./build/a.out
 ```
 
 ### 4.2 调试类型错误
 
 ```bash
-python3 -m compiler.main --log-spec "type_check=DEBUG,type_check.expr=TRACE" lib tests/my_test.an
+yianc --log-spec "type_check=DEBUG,type_check.expr=TRACE" lib/src tests/basic/array/assign.an
 ```
 
 ### 4.3 查看各阶段摘要
 
 ```bash
-python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
+yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
 输出示例：
@@ -216,13 +216,13 @@ python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
 ### 4.4 仅做语义检查（不生成代码）
 
 ```bash
-python3 -m compiler.main -t none lib tests/array/assign.an
+yianc -t none lib/src tests/basic/array/assign.an
 ```
 
 ### 4.5 导出 LLVM IR
 
 ```bash
-python3 -m compiler.main -t ll -o output.ll lib tests/array/assign.an
+yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 ```
 
 ## 5. 日志输出位置
