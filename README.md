@@ -51,7 +51,7 @@ python3 -m anx.main run
 python3 -m anx.main check
 ```
 
-项目内使用包名导入（`from myapp.utils.math import add`），依赖在 `package.anx` 中声明。详见 [anx 设计文档](bak/anx_design.md)。
+项目内使用包名导入（`from myapp.utils.math import add`），依赖在 `package.anx` 中声明。详见 [anx 设计文档](docs/plan/anx-design.md)，远程依赖与版本的结论见 [远程依赖结论](docs/plan/anx-remote-deps.md)。
 
 编译器的完整命令行用法见[编译脚本文档](docs/compile_script.md)。
 

@@ -26,8 +26,9 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 
 1. **单一事实来源**：「规范名 → 源码根」（定义见 §3.1）的映射只由 anx 从 `package.anx`
    产生一次，命令行（经 `--packages`）与编辑器（经 `Project`）都消费同一结果。
-   当前**标准库根是例外**：`anx/main.py` 与 `compiler/analysis/source_provenance.py`
-   各自推导一次，v2 落地、编译器在 package 模式下改读 `packages["std"].sourceRoot` 后才统一为一处。
+   标准库根也走同一处：`compiler/analysis/source_provenance.resolve_stdlib_root()` 是
+   A4 之后唯一的解析入口，`anx` 与 `yianc` 都调用它；package 模式下编译器改读
+   `packages["std"].sourceRoot`（A2）。
 2. **模型与 I/O 分离**：`Project` 是数据；加载、诊断收集和子进程调用是外层行为。
 3. **失败可定位**：每个失败携带诊断码、涉及的文件路径和（若可得）源码范围。
 4. **解析规则与编译器一致**：`anx` 解析出的目标文件，必须与 `GlobalResolve.__resolve_import_path` 解析出的是同一个。
@@ -1341,8 +1342,26 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 ### A5 远程依赖与版本（只出结论）
 
+**状态：已完成**（结论见 `docs/plan/anx-remote-deps.md`）。
+
 - 评估远程依赖、版本约束和锁文件的需求，产出书面建议，不写实现。
 - **验收**：`docs/plan/` 下有一份结论文档，明确纳入/不纳入及理由。
+
+**结论摘要**：三件事都不在本阶段纳入，但**它们是同一件事的三半**——远程来源、
+锁文件、内容哈希必须同时到来，缺任何一个都会得到比现在更差的模型。
+
+| 事项 | 结论 | 重审条件 |
+| --- | --- | --- |
+| 远程依赖（git/URL/tarball） | 不纳入 | 出现跨项目复用同一包的真实需求时 |
+| registry 与发布流程 | 不纳入，且不在近期计划 | 有第三方发布者时 |
+| 版本约束 / 求解 | 不纳入；`version` 只做格式校验 | 远程依赖落地后作为配套 |
+| 锁文件 | 暂不纳入（当前无「约束 → 精确版本」这一步） | 与远程依赖**同一次设计** |
+| 内容哈希校验 | 不纳入 | 同上 |
+
+理由要点：YIAN「整体源码编译 + 单一顶层命名空间」意味着同一个包的两个版本无法共存，
+版本选择因此在一般形式下是 NP-完全的（`docs/plan/anx-remote-deps.md` §3.2 引 Russ Cox 的
+证明）；而当前依赖只有本地路径、`path` 已精确到目录，锁文件此时只是把 manifest 抄一遍。
+推荐路线是先做「内容寻址的包身份」（与 §6.3 的按包产物前置约束同向），再谈远程与版本。
 
 ## 11. 与学期计划的对应关系
 
@@ -1354,13 +1373,13 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 | 理清模块导入与包依赖关系，统一解析规则 | §3.5、§4.3、§5 |
 | 完善依赖解析及错误诊断（缺失/环/可见性） | §4.4、§7；可见性边界见 §7.3 |
 | 完善以项目为单位的构建/运行/检查，补充多包集成测试 | §8、A3；package 模式测试并入 `tests/`：A0.5 |
-| 评估远程依赖和版本解析 | §10-A5 |
+| 评估远程依赖和版本解析 | §10-A5；结论文档 `docs/plan/anx-remote-deps.md` |
 | （前置研究）按包编译与产物格式 | §2.5（现状：编译单元是整个程序）、§6.3（四条约束）；归属 proposal 实施顺序「补齐自举所需基础设施」之前 |
 
 ## 12. 文档定位说明
 
-本文件位于 `docs/plan/`，与 `ide-support-plan.md` 并列。注意仓库现有两处指向 anx 设计文档的
-失效链接，本次不修改，登记为后续清理项：
+本文件位于 `docs/plan/`，与 `ide-support-plan.md`、`anx-remote-deps.md` 并列。
+原先两处指向 anx 设计文档的失效链接已在 A5 一并修好：
 
-- `README.md` → `bak/anx_design.md`（不存在）；
-- `docs/manual/index.md` → `docs/manual/anx.md`（不存在）。
+- `README.md` → `docs/plan/anx-design.md`（原指向不存在的 `bak/anx_design.md`）；
+- `docs/manual/index.md` → `../plan/anx-design.md`（原指向不存在的 `docs/manual/anx.md`）。
