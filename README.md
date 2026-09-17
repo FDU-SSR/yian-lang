@@ -6,40 +6,64 @@ YIAN 是一门自研的静态类型编程语言，编译器用 Python 实现。
 ## 运行环境
 
 - Linux（如 Ubuntu）
-- python3.10+
+- Python 3.11+（`yianc` 本身在 3.10 上也能跑，但 `anx` 用 `tomllib` 读清单，安装脚本要求 ≥ 3.11）
 - clang
 
-## 安装依赖库
+## 安装与卸载
+
+一键安装，把 `yianc`（编译器）与 `anx`（包管理器）装进当前 Python 环境：
 
 ```bash
-pip install -r ./requirements.txt
+scripts/install.sh                    # 默认：editable 安装，两个命令指向本检出
+scripts/install.sh --with-deps        # 让 pip 解析依赖（否则要求 llvmlite 已可导入）
+scripts/install.sh --user             # 装进用户 site-packages
+scripts/install.sh --python PATH      # 指定解释器
 ```
+
+- **editable**（默认）：`yianc` / `anx` 直接指向这个检出，改 `compiler/`、`anx/`
+  （含新增模块）后无需重装。开发时请用这种安装。
+- **`--regular`**：拷贝安装。它**不包含 `lib/`**，所以要告诉工具标准库在哪：
+
+  ```bash
+  export YIAN_LIB=/path/to/yian/lib/src     # 标准库源码根
+  # 或者
+  export YIAN_ROOT=/path/to/yian            # 检出根
+  ```
+
+- 脚本会预检 Python ≥ 3.11 与 llvmlite，并在已安装 setuptools ≥ 68 时加上
+  `--no-build-isolation`（离线环境也能装），最后校验两个入口是否在 `PATH` 上。
+
+卸载：
+
+```bash
+scripts/uninstall.sh
+```
+
+只想装依赖、不装命令，也可以手工装 `pip install -r ./requirements.txt`。
 
 ## 编译 yian 代码
 
-### 直接调用编译器
-
-通过 `compiler.main` 模块调用编译器。若用到标准库，需把 `lib` 目录一并放入路径列表：
+标准库不是隐式输入：用到 `std.*` 时要把源码根 `lib/src` 一并放进路径列表。
 
 ```bash
 # 编译单个文件（含标准库）
-python3 -m compiler.main lib tests/array/assign.an
+yianc lib/src tests/basic/array/assign.an
 
 # 仅输出 LLVM IR
-python3 -m compiler.main -t ll lib tests/array/assign.an
+yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
 
 # 按阶段打印日志
-python3 -m compiler.main --log-spec "main=DEBUG" lib tests/array/assign.an
+yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
-### 使用 anx 包管理器
+完整选项（`-t` / `-o` / `-O` / `--dump` / `--packages` …）见
+[编译脚本文档](docs/compile_script.md)。
 
-`anx` 负责项目创建、包名导入解析，以及构建 / 运行 / 检查 / 测试。装好后直接用 `anx`，
-不装也可以走 `python3 -m anx.main`：
+## 使用 anx 包管理器
+
+`anx` 负责项目创建、包名导入解析，以及构建 / 运行 / 检查 / 测试：
 
 ```bash
-scripts/install.sh          # 把 yianc 与 anx 装进 PATH（默认 editable 安装）
-
 anx new myapp               # 可执行项目；--kind lib / hybrid 建库 / 库+CLI
 cd myapp
 anx run                     # 构建到 build/app 并执行
@@ -59,15 +83,22 @@ mathlib = { path = "vendor/mathlib" }
 testkit = { path = "vendor/testkit" }   # 只有 `anx test` 看得见
 ```
 
-完整用法见 [anx 用户指南](docs/anx/index.md)；远程依赖与版本为什么不做，见 [远程依赖结论](docs/plan/anx-remote-deps.md)。
-
-编译器的完整命令行用法见[编译脚本文档](docs/compile_script.md)。
+完整用法见 [anx 用户指南](docs/anx/index.md)；远程依赖与版本为什么不做，见
+[远程依赖结论](docs/plan/anx-remote-deps.md)。
 
 ## 运行测试
 
+三套件（basic / safety / package）由同一个 runner 驱动，它调用**已安装的** `yianc` / `anx`，
+所以先跑一次安装：
+
 ```bash
-python3 scripts/run_tests.py            # 运行全部测试
-python3 scripts/run_tests.py -f call    # 只运行名字匹配 "call" 的测试
+scripts/install.sh
+
+python3 scripts/run_tests.py                  # basic 套件（默认）
+python3 scripts/run_tests.py --suite package  # 只跑 package 套件
+python3 scripts/run_tests.py --all            # basic + safety + package
+python3 scripts/run_tests.py -f call          # 只跑名字匹配 "call" 的用例
+python3 scripts/run_tests.py -q               # 只打印汇总
 ```
 
 ## 文档
@@ -85,22 +116,29 @@ Python. Pipeline: `.an source → Tokens → AST → HIR → CFG IR → LLVM IR 
 ### Environment
 
 - Linux (like Ubuntu)
-- python3.10+
+- Python 3.11+ (`yianc` also runs on 3.10; `anx` needs `tomllib`)
 - clang
 
-Install required packages:
+### Install
 
 ```bash
-pip install -r ./requirements.txt
+scripts/install.sh              # editable install of `yianc` and `anx`
+scripts/install.sh --with-deps  # let pip resolve llvmlite
+scripts/uninstall.sh            # remove the `yian` distribution
 ```
+
+`--regular` copies the packages instead of linking them; it does not ship
+`lib/`, so point the tools at a checkout with `YIAN_LIB=/path/to/yian/lib/src`
+(or `YIAN_ROOT=/path/to/yian`). Installing only the dependency by hand works
+too: `pip install -r ./requirements.txt`.
 
 ### Compiling an example file
 
-Invoke the compiler through the `compiler.main` module. Include the `lib`
-directory when the program uses the standard library:
+The standard library is not implicit — pass its source root (`lib/src`) as an
+input when the program uses `std.*`:
 
 ```bash
-python3 -m compiler.main lib tests/array/access.an
+yianc lib/src tests/basic/array/access.an
 ```
 
 See [the compiler CLI guide](docs/compile_script.md) for full usage, and the

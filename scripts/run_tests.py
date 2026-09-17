@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -47,6 +48,13 @@ from typing import TextIO
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
+
+# The suites drive the installed console scripts, never `python3 -m ...`: that is
+# the same entry point users and CI have, and it keeps one way of invoking the
+# toolchain. Development requires the editable install (`scripts/install.sh`).
+COMPILER_COMMAND = "yianc"
+ANX_COMMAND = "anx"
+
 SUITES = ("basic", "safety", "package")
 SUITE_NAME = "basic"
 SOURCE_DIR = TESTS_DIR / SUITE_NAME
@@ -570,7 +578,7 @@ def run_test(
     if test.package_root is not None:
         return run_package_test(test, run=run, compile_only=compile_only)
 
-    cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
+    cmd = [COMPILER_COMMAND, str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
     cmd += ["-O3"]
     cmd += test.compiler_args
@@ -655,14 +663,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
     """
     assert test.package_root is not None
     subcommand = test.anx_command or ("check" if compile_only else "build")
-    cmd = [
-        sys.executable,
-        "-m",
-        "anx.main",
-        subcommand,
-        str(test.package_root),
-        *test.anx_args,
-    ]
+    cmd = [ANX_COMMAND, subcommand, str(test.package_root), *test.anx_args]
 
     start = time.monotonic()
     proc = subprocess.run(
@@ -1010,6 +1011,20 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         suites = [args.suite]
     else:
         suites = [suite]
+
+    needed = [COMPILER_COMMAND]
+    if "package" in suites:
+        needed.append(ANX_COMMAND)
+    missing = [tool for tool in needed if shutil.which(tool) is None]
+    if missing:
+        names = ", ".join(f"'{tool}'" for tool in missing)
+        print(
+            f"error: {names} not found on PATH.\n"
+            "       The suites invoke the installed tools; run scripts/install.sh first\n"
+            "       (an editable install points them at this checkout).",
+            file=sys.stderr,
+        )
+        return 1
 
     exit_code = 0
     for name in suites:
