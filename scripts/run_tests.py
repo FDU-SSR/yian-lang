@@ -1,38 +1,52 @@
 #!/usr/bin/env python3
-"""Run the basic YIAN test suite in fat- and raw-pointer modes.
+"""Run the YIAN test suites.
 
-This is the basic-suite entry point. It discovers .an source files under
-``tests/basic`` and compiles each one with the standard library twice: once
-with the default fat-pointer representation and once with
-``--raw-pointers``. Tests without a corresponding .ans file in
-``tests/output/basic`` are treated as success tests (expected exit code 0,
-no output comparison).
+Three suites live under ``tests/`` and share one runner:
 
-Test inputs are discovered from ``tests/input/basic``:
+- ``basic``   — standalone compilation of one or more .an files, each run
+  twice: once with the default fat-pointer representation and once with
+  ``--raw-pointers``.
+- ``safety``  — the fat-pointer safety regressions.
+- ``package`` — package-mode fixtures (a ``package.anx`` project directory),
+  driven through ``anx build`` / ``anx check``.
+
+Tests without a corresponding .ans file under ``tests/output/<suite>`` are
+treated as success tests (expected exit code 0, no output comparison).
+
+Expected results for .an sources use ``<name>.an.ans`` (``<name>.ans`` for
+multi-file directories, where the whole directory is one test). Package
+fixtures are directories too: ``<dir>.ans`` for success and ``<dir>.err.ans``
+for an expected failure whose content is a diagnostic substring.
+
+Test inputs are discovered from ``tests/input/<suite>``:
   - <name>.args  → CLI arguments passed to the executable (whitespace-separated)
   - <name>.stdin → content piped to the executable's stdin
 
 Usage:
-    python scripts/run_tests.py                  # run all tests
+    python scripts/run_tests.py                  # basic suite
+    python scripts/run_tests.py --suite safety   # one suite
+    python scripts/run_tests.py --all            # basic + safety + package
     python scripts/run_tests.py -v               # verbose: show failure details
     python scripts/run_tests.py -q               # quiet: only the summary line
-    python scripts/run_tests.py -x               # include basic/experimental/
+    python scripts/run_tests.py -x               # include <suite>/experimental/
     python scripts/run_tests.py -f call          # only run tests matching "call"
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from dataclasses import field
-import json
 from pathlib import Path
 from typing import TextIO
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
+SUITES = ("basic", "safety", "package")
 SUITE_NAME = "basic"
 SOURCE_DIR = TESTS_DIR / SUITE_NAME
 OUTPUT_DIR = TESTS_DIR / "output" / SUITE_NAME
@@ -98,6 +112,9 @@ class TestCase:
 
     compile_variants: list[CompileVariant] = field(default_factory=list)
     """Existing compiler-mode variants for this test."""
+
+    package_root: Path | None = None
+    """For package-suite fixtures: the project directory driven through anx."""
 
 
 @dataclass
@@ -321,11 +338,16 @@ def _find_orphaned_compile_configs() -> list[str]:
 
 
 def discover_tests() -> list[TestCase]:
-    """Walk the active suite for .an files and build a TestCase for each.
+    """Discover the active suite's test cases.
 
-    Tests without a corresponding .ans file are treated as success tests
-    (expected exit code 0, no output comparison).
+    Package fixtures are project directories and are discovered separately;
+    every other suite is walked for .an files. Tests without a corresponding
+    .ans file are treated as success tests (expected exit code 0, no output
+    comparison).
     """
+
+    if SUITE_NAME == "package":
+        return discover_package_tests()
 
     helpers: set[str] = {h for v in EXTRA_SOURCES.values() for h in v}
     seen_multi: set[str] = set()
@@ -420,6 +442,81 @@ def discover_tests() -> list[TestCase]:
     return tests
 
 
+def _find_package_ans(fixture: str) -> tuple[Path | None, bool]:
+    """Expected-result file for a package fixture, given its directory name.
+
+    Directory fixtures use ``<dir>.err.ans`` for an expected failure (content
+    is a diagnostic substring) and ``<dir>.ans`` otherwise. Returns
+    ``(path, is_error)``; ``(None, False)`` when the fixture ships no
+    expectation, which means "build, run, expect exit 0, ignore stdout".
+    """
+    err = OUTPUT_DIR / (fixture + ".err.ans")
+    if err.exists():
+        return err, True
+    ok = OUTPUT_DIR / (fixture + ".ans")
+    if ok.exists():
+        return ok, False
+    return None, False
+
+
+def discover_package_tests() -> list[TestCase]:
+    """Discover package-mode fixtures: directories holding a ``package.anx``.
+
+    A fixture is a case when it is not nested inside another case and either
+    defines an entry (``src/main.an``) or ships an expected-result file. Its
+    path dependencies usually have neither, so they are skipped; the nested
+    check covers the rest.
+    """
+    cases: list[Path] = []
+    tests: list[TestCase] = []
+
+    for manifest in sorted(SOURCE_DIR.rglob("package.anx")):
+        base = manifest.parent
+        if any(parent in base.parents for parent in cases):
+            continue
+
+        name = str(base.relative_to(SOURCE_DIR))
+        ans_path, ans_is_error = _find_package_ans(name)
+        if not (base / "src" / "main.an").exists() and ans_path is None:
+            continue
+        cases.append(base)
+
+        if ans_path is not None:
+            expect_error, expected_exit_code, expected_output, expected_substr = _parse_ans(
+                ans_path, is_error_test=ans_is_error
+            )
+        else:
+            expect_error, expected_exit_code, expected_output, expected_substr = False, None, "", ""
+
+        cli_args, stdin = _find_input(name)
+        tests.append(TestCase(
+            name=name,
+            source_files=sorted((base / "src").rglob("*.an")),
+            expect_error=expect_error,
+            expected_substring=expected_substr,
+            expected_exit_code=expected_exit_code,
+            expected_output=expected_output,
+            cli_args=cli_args,
+            stdin=stdin,
+            package_root=base,
+        ))
+
+    orphans: list[str] = []
+    for ans_file in sorted(OUTPUT_DIR.rglob("*.ans")):
+        rel = ans_file.relative_to(OUTPUT_DIR)
+        suffix = ".err.ans" if rel.name.endswith(".err.ans") else ".ans"
+        fixture = str(rel.parent / rel.name[: -len(suffix)])
+        if not (SOURCE_DIR / fixture / "package.anx").exists():
+            orphans.append(str(ans_file))
+    if orphans:
+        print("⚠  Orphaned package expectations (no matching fixture):")
+        for orphan in orphans:
+            print(f"   {orphan}")
+        print()
+
+    return tests
+
+
 # ---------------------------------------------------------------------------
 # Test execution
 # ---------------------------------------------------------------------------
@@ -436,6 +533,9 @@ def run_test(
     run it (with CLI args and stdin from tests/input/ if present),
     and capture stdout + exit code.
     """
+
+    if test.package_root is not None:
+        return run_package_test(test, run=run, compile_only=compile_only)
 
     cmd = [sys.executable, "-m", "compiler.main", str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
@@ -509,6 +609,70 @@ def run_test(
         elapsed_ms=compile_elapsed,
         output=compiler_output,
         compile_only=compile_only,
+    )
+
+
+def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResult:
+    """Drive a package fixture through anx, then run its executable.
+
+    ``compile_only`` uses ``anx check`` so no executable is produced.
+    """
+    assert test.package_root is not None
+    subcommand = "check" if compile_only else "build"
+    cmd = [sys.executable, "-m", "anx.main", subcommand, str(test.package_root)]
+
+    start = time.monotonic()
+    proc = subprocess.run(
+        cmd,
+        cwd=ROOT_DIR,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    compile_elapsed = (time.monotonic() - start) * 1000.0
+    output = proc.stdout + proc.stderr
+
+    if proc.returncode != 0 or test.expect_error:
+        return TestResult(
+            test=test,
+            exit_code=proc.returncode,
+            elapsed_ms=compile_elapsed,
+            output=output,
+            compile_only=compile_only,
+        )
+
+    if not run:
+        return TestResult(
+            test=test,
+            exit_code=proc.returncode,
+            elapsed_ms=compile_elapsed,
+            output=output,
+            compile_only=True,
+        )
+
+    exe_cmd = [str(test.package_root / "build" / "app")]
+    if test.cli_args:
+        exe_cmd += test.cli_args
+    run_start = time.monotonic()
+    run_proc = subprocess.run(
+        exe_cmd,
+        cwd=ROOT_DIR,
+        input=test.stdin or None,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    run_elapsed = (time.monotonic() - run_start) * 1000.0
+
+    return TestResult(
+        test=test,
+        exit_code=run_proc.returncode,
+        elapsed_ms=compile_elapsed + run_elapsed,
+        output=output + run_proc.stderr,
+        stdout=run_proc.stdout,
+        check_stdout=True,
     )
 
 
@@ -684,55 +848,13 @@ def _indent(text: str, prefix: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
-    import argparse
-
-    if suite not in {"basic", "safety"}:
-        raise ValueError(f"unsupported test suite: {suite}")
-
+def run_suite(suite: str, args: argparse.Namespace) -> int:
+    """Run one suite and return its exit code."""
     global SUITE_NAME, SOURCE_DIR, OUTPUT_DIR, INPUT_DIR
     SUITE_NAME = suite
     SOURCE_DIR = TESTS_DIR / suite
     OUTPUT_DIR = TESTS_DIR / "output" / suite
     INPUT_DIR = TESTS_DIR / "input" / suite
-
-    parser = argparse.ArgumentParser(
-        description="Batch test runner for the YIAN compiler.",
-    )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Show failure details for each failed test.",
-    )
-    parser.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Only print the summary line (no progress, no details).",
-    )
-    parser.add_argument(
-        "-x", "--experimental",
-        action="store_true",
-        dest="include_experimental",
-        help=f"Include tests under tests/{suite}/experimental/.",
-    )
-    parser.add_argument(
-        "-f", "--filter",
-        metavar="SUBSTRING",
-        dest="filter_str",
-        default=None,
-        help="Only run tests whose name contains SUBSTRING.",
-    )
-    parser.add_argument(
-        "--dump",
-        action="store_true",
-        help="Enable compiler intermediate output (token, AST, HIR, CFG).",
-    )
-    parser.add_argument(
-        "--no-run",
-        action="store_true",
-        help="Analysis only: do not compile and run executables.",
-    )
-    args = parser.parse_args(argv)
 
     # Discover.
     all_tests = discover_tests()
@@ -760,7 +882,7 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
             print(f"No tests match filter '{args.filter_str}'.")
             return 1
 
-    print(f"Running {len(all_tests)} test(s)…\n")
+    print(f"Running {len(all_tests)} test(s) in suite '{suite}'…\n")
 
     # Run.
     results: list[TestResult] = []
@@ -791,7 +913,7 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     # Write detailed failure log.
     failed = [r for r in results if not r.passed()]
     if failed:
-        log_path = ROOT_DIR / "build" / f"test_failures_{SUITE_NAME}.log"
+        log_path = ROOT_DIR / "build" / f"test_failures_{suite}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as log:
             log.write(f"Test run at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -799,6 +921,75 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         print(f"\nFailure details written to {log_path}")
 
     return 0 if not failed else 1
+
+
+def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
+    if suite not in SUITES:
+        raise ValueError(f"unsupported test suite: {suite}")
+
+    parser = argparse.ArgumentParser(
+        description="Batch test runner for the YIAN compiler.",
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show failure details for each failed test.",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Only print the summary line (no progress, no details).",
+    )
+    parser.add_argument(
+        "-x", "--experimental",
+        action="store_true",
+        dest="include_experimental",
+        help="Include tests under <suite>/experimental/.",
+    )
+    parser.add_argument(
+        "-f", "--filter",
+        metavar="SUBSTRING",
+        dest="filter_str",
+        default=None,
+        help="Only run tests whose name contains SUBSTRING.",
+    )
+    parser.add_argument(
+        "--dump",
+        action="store_true",
+        help="Enable compiler intermediate output (token, AST, HIR, CFG).",
+    )
+    parser.add_argument(
+        "--no-run",
+        action="store_true",
+        help="Analysis only: do not compile and run executables.",
+    )
+    parser.add_argument(
+        "--suite",
+        choices=SUITES,
+        default=None,
+        help="Run a single suite (default: the caller's suite, normally 'basic').",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="run_all",
+        help=f"Run every suite: {', '.join(SUITES)}.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.run_all:
+        suites = list(SUITES)
+    elif args.suite is not None:
+        suites = [args.suite]
+    else:
+        suites = [suite]
+
+    exit_code = 0
+    for name in suites:
+        if len(suites) > 1:
+            print(f"\n{'#' * 60}\n# suite: {name}\n{'#' * 60}")
+        exit_code |= run_suite(name, args)
+    return exit_code
 
 
 if __name__ == "__main__":

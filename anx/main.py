@@ -88,8 +88,13 @@ def cmd_check(args: argparse.Namespace) -> None:
 
 
 def cmd_test(args: argparse.Namespace) -> None:
-    test_runner = _YIAN_ROOT / "anx" / "tests" / "run.py"
-    subprocess.run([sys.executable, str(test_runner)], check=True, cwd=str(_YIAN_ROOT))
+    """Run anx's own integration suite — the ``package`` suite under ``tests/``."""
+    runner = _YIAN_ROOT / "scripts" / "run_tests.py"
+    subprocess.run(
+        [sys.executable, str(runner), "--suite", "package"],
+        check=True,
+        cwd=str(_YIAN_ROOT),
+    )
 
 
 def _add_project_arg(sub: argparse.ArgumentParser) -> None:
