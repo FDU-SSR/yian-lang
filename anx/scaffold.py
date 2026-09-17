@@ -19,6 +19,23 @@ fn main() {{
 }}
 """
 
+#: A project's own test: `anx test` compiles each file under tests/ as its own
+#: program and compares the result with tests/output/<name>.an.ans (docs §8.5).
+TEMPLATE_TEST = """\
+// `anx test` runs every .an file under tests/ as its own program.
+// Expected output lives in tests/output/<name>.an.ans.
+from std.core.io import print;
+
+fn main() {
+    print("tests ok\\n");
+}
+"""
+
+TEMPLATE_GITIGNORE = """\
+# anx build artifacts
+build/
+"""
+
 #: Accepted ``kind`` values for ``anx new --kind``.
 KINDS = ("bin", "lib", "hybrid")
 
@@ -41,5 +58,12 @@ def scaffold(name: str, root: Path | None = None, *, kind: str = "bin") -> Path:
     )
     if kind != "lib":
         (src_dir / "main.an").write_text(TEMPLATE_MAIN.format(name=pkg_name))
+
+    tests_dir = pkg_dir / "tests"
+    (tests_dir / "output").mkdir(parents=True)
+    (tests_dir / "smoke.an").write_text(TEMPLATE_TEST)
+    (tests_dir / "output" / "smoke.an.ans").write_text("tests ok\n")
+
+    (pkg_dir / ".gitignore").write_text(TEMPLATE_GITIGNORE)
 
     return pkg_dir

@@ -75,7 +75,7 @@ anx 是 YIAN 的项目与依赖管理工具，负责项目发现、清单解析�
 | G9 | `anx test` 运行的是 anx 自身的集成套件，而不是用户项目的测试 | `main.py:73-75`。**A3 已完成**：`anx test` 跑项目自己的 `tests/`（§8.5），anx 自身套件改由 `scripts/run_tests.py --suite package` 调用 |
 | G10 | anx 只能在仓库检出内工作：`_YIAN_ROOT` 由文件位置推导，无安装入口和编译器定位配置 | `main.py:14-15`。**A4 已完成**：`resolve_stdlib_root()`（`--compiler-root` / `YIAN_LIB` / `YIAN_ROOT`）+ `install.sh --regular`；根目录从不从输入路径推断 |
 | G11 | `build/pkg.json` 每次构建无条件重写，无版本标记 | `main.py:32-34`。**A3 已完成**：内容不变则不重写 `build/pkg.json`（§6.2） |
-| G12 | 诊断只有 `stderr` 文本，没有结构化结果，编辑器无法直接消费 | `main.py:29` |
+| G12 | 诊断只有 `stderr` 文本，没有结构化结果，编辑器无法直接消费 | `main.py:29`。**A1/A4 已完成**：`Diagnostic`（`code`/`message`/`path`/`span`/`hint`）经 `LoadResult.diagnostics` 交给调用方，`anx graph --json` 再把它变成可被脚本消费的载荷（§7.1、§7.4） |
 | G13 | Package 模式第一段只查包名、无相对回退；本包内目录与某个依赖包同名时，**依赖包无条件遮蔽本包模块**且无任何诊断 | 实测：本包 `src/dup/foo.an` 与依赖 `dup` 各有 `which()`，`from dup.foo` 取到依赖的值；断言本包值时运行期失败。§5.1 需固定该情形。**A2 已完成**：语义由 `self_shadow_dir` 固定，编译器额外给出 `warning:` 提示 |
 | G14 | 依赖键与根包名相同时，该依赖被丢弃并报**误导性**的循环诊断 | `app` 的依赖键写作 `app` → `error: Circular dependency: app → app`（`resolver.py:40` 的 `if name in adj: return`）。**A1 已完成**：报 `AX007`（`errors/duplicate_name`） |
 | G15 | 编译器不计算「导入方属于哪个包」 | `__resolve_import_path` 的 Package 分支不使用 `unit`，只用 `paths[0]` 查表；§4.3 的可见性校验缺少这一前置。**A2 已完成**：按 `sourceRoot` 最长前缀归属 |
@@ -209,6 +209,9 @@ package fixture 的 `build/`），
   把它当库模块用会带来执行顺序与重复求值的困惑；Cargo 用「bin 是独立 crate root」、
   Go 用「`package main` 不可导入」达到同样效果。
 - `build/` 全部内容都是产物，可随时删除重建。
+- `anx new` 按这套规范生成骨架：`package.anx`、`src/`（`lib` 不生成入口）、
+  `tests/smoke.an` 与 `tests/output/smoke.an.ans`（开箱即 `anx test` 通过）、
+  以及忽略 `build/` 的 `.gitignore`。
 
 ### 3.2 清单格式
 
@@ -1408,7 +1411,7 @@ A0 验收里的「`anx.main test` 19/19 不变」由本项的「`--suite package
 
 | 计划条目 | 本设计落点 |
 | --- | --- |
-| 完善项目初始化模板，明确目录规范 | §3.1、A0（`new` 模板补 `tests/`、`.gitignore` 说明） |
+| 完善项目初始化模板，明确目录规范 | §3.1；`anx new` 现在生成 `package.anx`、`src/`（`lib` 无入口）、`tests/smoke.an` + 期望文件、`.gitignore`（`build/`），三种 `kind` 都有可跑的项目测试 |
 | 理清模块导入与包依赖关系，统一解析规则 | §3.5、§4.3、§5 |
 | 完善依赖解析及错误诊断（缺失/环/可见性） | §4.4、§7；可见性边界见 §7.3 |
 | 完善以项目为单位的构建/运行/检查，补充多包集成测试 | §8、A3；package 模式测试并入 `tests/`：A0.5 |
