@@ -12,6 +12,7 @@ from typing import cast
 
 from anx import project_tests
 from anx.diagnostics import (
+    AX_DEPENDENCY_CYCLE,
     AX_NO_PROJECT_ROOT,
     Diagnostic,
     diagnostic_payload,
@@ -85,7 +86,7 @@ def __load_project(project_dir: str) -> tuple[Project, Path]:
     try:
         result = load(root_dir, std_root=__STD_SRC)
     except CycleError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error[{AX_DEPENDENCY_CYCLE}]: {exc}", file=sys.stderr)
         sys.exit(1)
 
     for diagnostic in result.diagnostics:
@@ -213,46 +214,61 @@ def cmd_graph(args: argparse.Namespace) -> int:
     __require_stdlib()
     start = Path(args.project)
     root_dir = discover(start)
+    clean = False
+
     if root_dir is None:
-        payload: dict[str, object] = {
-            "root": None,
-            "std": None,
-            "packages": {},
-            "files": [],
-            "dependencies": {},
-            "diagnostics": [
-                diagnostic_payload(
-                    Diagnostic(
-                        AX_NO_PROJECT_ROOT,
-                        f"No package.anx found in {start.resolve()} or any parent directory",
-                        start.resolve(),
-                    )
+        payload = __empty_graph_payload(
+            [
+                Diagnostic(
+                    AX_NO_PROJECT_ROOT,
+                    f"No package.anx found in {start.resolve()} or any parent directory",
+                    start.resolve(),
                 )
-            ],
-        }
-        result_ok = False
-    else:
-        result = load(root_dir, std_root=__STD_SRC)
-        project = result.project
-        payload = (
-            project.describe(result.diagnostics)
-            if project is not None
-            else {
-                "root": None,
-                "std": None,
-                "packages": {},
-                "files": [],
-                "dependencies": {},
-                "diagnostics": [diagnostic_payload(d) for d in result.diagnostics],
-            }
+            ]
         )
-        result_ok = project is not None and not result.diagnostics
+    else:
+        try:
+            result = load(root_dir, std_root=__STD_SRC)
+        except CycleError as exc:
+            # A cycle has no partial graph to describe, but `graph` still owes
+            # its caller a payload, so the cycle is reported as one diagnostic.
+            payload = __empty_graph_payload(
+                [
+                    Diagnostic(
+                        AX_DEPENDENCY_CYCLE,
+                        str(exc),
+                        root_dir / "package.anx",
+                        hint="Remove one of the dependency edges in the cycle, or "
+                        "extract the shared code into a third package.",
+                    )
+                ]
+            )
+        else:
+            project = result.project
+            if project is None:
+                payload = __empty_graph_payload(list(result.diagnostics))
+            else:
+                payload = project.describe(result.diagnostics)
+                clean = not result.diagnostics
 
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
         __print_graph(payload)
-    return 0 if result_ok else 1
+    return 0 if clean else 1
+
+
+def __empty_graph_payload(diagnostics: list[Diagnostic]) -> dict[str, object]:
+    """The payload for a project that could not be described."""
+    return {
+        "root": None,
+        "std": None,
+        "packages": {},
+        "files": [],
+        "dependencies": {},
+        "devDependencies": {},
+        "diagnostics": [diagnostic_payload(d) for d in diagnostics],
+    }
 
 
 def __print_graph(payload: dict[str, object]) -> None:
@@ -266,9 +282,11 @@ def __print_graph(payload: dict[str, object]) -> None:
                 continue
             entry = spec.get("entry")
             suffix = f"  entry={entry}" if entry is not None else ""
+            dev = spec.get("devDependencies")
+            dev_suffix = f"  dev={dev}" if dev else ""
             print(
                 f"  {name:<16} {spec.get('kind')!s:<7} {spec.get('sourceRoot')}"
-                f"{suffix}  deps={spec.get('dependencies')}"
+                f"{suffix}  deps={spec.get('dependencies')}{dev_suffix}"
             )
     files_value = payload.get("files")
     files: list[object] = (
