@@ -21,12 +21,20 @@ def ch_tc():
 
 
 class TypeCheck:
-    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx):
+    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, check_all: bool = False,
+                 check_all_stdlib: bool = False):
         self.__units = units
         self.__type_ctx = type_ctx
 
         self.__worklist: list[DefPoint] = []
         self.__def_points: dict[int, DefPoint] = {}  # type_id -> DefPoint
+        # S1 spike: `__check_all` additionally type-checks every non-generic
+        # procedure of the non-stdlib units, but only the definitions reachable
+        # from `main` (the "generated" set) are exported for code generation.
+        self.__check_all = check_all
+        self.__check_all_stdlib = check_all_stdlib
+        self.__generating = True
+        self.__generated: set[int] = set()
 
         self.__current_type_id: int = -1
         self.__current_locals: list[int] = []
@@ -53,10 +61,19 @@ class TypeCheck:
         dp = DefPoint(type_id=type_id, unit_id=unit_id, ast_body=body, symbol_ctx=unit.symbol_ctx)
         self.__def_points[type_id] = dp
         self.__worklist.append(dp)
+        if self.__generating:
+            self.__generated.add(type_id)
 
     def run(self) -> None:
+        self.__generating = True
         self.__find_main()
+        self.__drain()
 
+        if self.__check_all:
+            self.__check_all_definitions()
+            self.__drain()
+
+    def __drain(self) -> None:
         processed_def: set[int] = set()
         while self.__worklist:
             def_point = self.__worklist.pop()
@@ -66,8 +83,37 @@ class TypeCheck:
             ch_tc().trace(lambda: f"checking {self.__type_ctx.get_name(def_point.type_id)}")
             self.__type_check_def(def_point)
 
+    def __check_all_definitions(self) -> None:
+        """S1 spike: check every top-level definition of the non-stdlib units.
+
+        Definitions seeded here are checked but never marked as generated, so
+        they do not reach CFG/LLVM lowering.
+        """
+        self.__generating = False
+        seeded = 0
+        skipped_generic = 0
+        for type_id, _body, unit_id in self.__type_ctx.iter_procedures():
+            if type_id in self.__def_points:
+                continue
+            if self.__units[unit_id].is_stdlib and not self.__check_all_stdlib:
+                continue
+            if self.__type_ctx.contains_generic(type_id):
+                skipped_generic += 1
+                continue
+            self.__report_def_point(type_id)
+            seeded += 1
+        ch_tc().debug(f"check-all: seeded {seeded} extra definition(s), skipped {skipped_generic} generic")
+
     def export(self) -> dict[int, DefPoint]:
         return self.__def_points
+
+    def export_generated(self) -> dict[int, DefPoint]:
+        """Return only the definitions reachable from the program entry.
+
+        Without `--check-all` this equals `export()`; with it, the extra
+        check-only definitions are filtered out so code generation is unchanged.
+        """
+        return {type_id: dp for type_id, dp in self.__def_points.items() if type_id in self.__generated}
 
     def __find_main(self) -> None:
         for unit in self.__units.values():
@@ -93,6 +139,7 @@ class TypeCheck:
                     main_def_point = DefPoint(type_id=symbol.type_id, unit_id=unit.unit_id, ast_body=item.body, symbol_ctx=unit.symbol_ctx)
                     self.__worklist.append(main_def_point)
                     self.__def_points[symbol.type_id] = main_def_point
+                    self.__generated.add(symbol.type_id)
         if not self.__worklist:
             raise CompilerError("No 'main' function found")
 

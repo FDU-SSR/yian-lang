@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -402,7 +403,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     type_check_start = time.perf_counter() if args.profile else 0.0
-    type_checker = TypeCheck(unit_datas, type_ctx)
+    # S1 spike: `YIAN_CHECK_ALL=1` type-checks every non-generic definition of the
+    # non-stdlib units; code generation still uses only the definitions reachable
+    # from `main` (`export_generated`).
+    check_all = os.environ.get("YIAN_CHECK_ALL", "") not in ("", "0")
+    check_all_stdlib = os.environ.get("YIAN_CHECK_ALL_STDLIB", "") not in ("", "0")
+    type_checker = TypeCheck(unit_datas, type_ctx, check_all=check_all, check_all_stdlib=check_all_stdlib)
     try:
         type_checker.run()
     except AnalysisError as error:
@@ -410,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     except CompilerError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    def_points = type_checker.export()
+    def_points = type_checker.export_generated()
 
     # --- Compile-time conditional specialization ---
     unit_names = __build_unit_names(unit_datas)

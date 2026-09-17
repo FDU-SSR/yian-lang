@@ -101,7 +101,7 @@ class TypeCtx:
 
         self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
-        self.__procedures: dict[int, tuple[AST.Block, int]] = {}  # procedure_id -> procedure block
+        self.__procedures: dict[int, tuple[int, AST.Block, int]] = {}  # def_id -> (type_id, block, unit_id)
 
         # Caches for hot-path type queries — the type_id fully encodes the
         # generic instantiation, so the cache key is just the type_id.
@@ -562,7 +562,14 @@ class TypeCtx:
         else:
             raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
 
-        self.__procedures[def_id] = (body, unit_id)
+        self.__procedures[def_id] = (type_id, body, unit_id)
+
+    def iter_procedures(self) -> list[tuple[int, AST.Block, int]]:
+        """Snapshot every registered procedure as ``(type_id, body, unit_id)``.
+
+        Returns a list so callers may register further procedures while iterating.
+        """
+        return list(self.__procedures.values())
 
     def get_procedure(self, type_id: int) -> tuple[AST.Block, int]:
         ty = self.__space[type_id]
@@ -574,7 +581,8 @@ class TypeCtx:
             raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
 
         if def_id in self.__procedures:
-            return self.__procedures[def_id]
+            _, body, unit_id = self.__procedures[def_id]
+            return body, unit_id
         raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
 
     def try_deref(self, type_id: int) -> int | None:
