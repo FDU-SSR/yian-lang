@@ -13,9 +13,8 @@ version = "0.1.0"
 TEMPLATE_MAIN = """\
 from std.core.io import print;
 
-fn main() -> i32 {{
+fn main() {{
     print("Hello from {name}!\\n");
-    return 0;
 }}
 """
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +14,24 @@ from anx.resolver import CycleError, resolve
 from anx.scaffold import scaffold
 
 _YIAN_ROOT = Path(__file__).resolve().parent.parent
-_STD_LIB = _YIAN_ROOT / "lib"
+_STD_SRC = _YIAN_ROOT / "lib" / "src"
+
+
+def compiler_command() -> list[str]:
+    """Return the argv prefix used to invoke the YIAN compiler.
+
+    Prefer an explicit ``YIANC`` override, then a ``yianc`` executable on
+    ``PATH``, so that anx and user scripts share one entry point.  Fall back to
+    ``python3 -m compiler.main`` when the compiler is only importable from this
+    checkout.
+    """
+    override = os.environ.get("YIANC")
+    if override:
+        return [override]
+    found = shutil.which("yianc")
+    if found is not None:
+        return [found]
+    return [sys.executable, "-m", "compiler.main"]
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -24,7 +43,7 @@ def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
     project = Path(project_dir).resolve()
     manifest = Manifest.from_file(project / "package.anx")
     try:
-        all_files, pkg_roots = resolve(manifest, _STD_LIB, cwd=project)
+        all_files, pkg_roots = resolve(manifest, _STD_SRC, cwd=project)
     except CycleError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -34,7 +53,7 @@ def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
     pkg_json.write_text(json.dumps({k: str(v) for k, v in pkg_roots.items()}, indent=2))
 
     cmd = [
-        sys.executable, "-m", "compiler.main",
+        *compiler_command(),
         "--packages", str(pkg_json),
         *(extra_flags or []),
         *(str(f) for f in all_files),

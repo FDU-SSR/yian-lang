@@ -1,3 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yian"
+version = "0.1.1"
+description = "YIAN programming language compiler (yianc) and package manager (anx)"
+requires-python = ">=3.11"
+dependencies = ["llvmlite>=0.44.0"]
+
+[project.scripts]
+yianc = "compiler.main:main"
+anx = "anx.main:main"
+
+[tool.setuptools.packages.find]
+include = ["compiler*", "anx*"]
+namespaces = true
+
 [tool.pyright]
 include = ["compiler", "anx"]
 exclude = ["bak", "tests", "docs", "**/node_modules", "**/__pycache__", "**/.*"]

@@ -37,7 +37,7 @@ SUITE_NAME = "basic"
 SOURCE_DIR = TESTS_DIR / SUITE_NAME
 OUTPUT_DIR = TESTS_DIR / "output" / SUITE_NAME
 INPUT_DIR = TESTS_DIR / "input" / SUITE_NAME
-LIB_DIR = ROOT_DIR / "lib"
+LIB_DIR = ROOT_DIR / "lib" / "src"
 BUILD_DIR = ROOT_DIR / "build"
 
 # ---------------------------------------------------------------------------

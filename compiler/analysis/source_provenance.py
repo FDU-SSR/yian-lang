@@ -30,8 +30,8 @@ class SourceTrust:
 
 
 def default_stdlib_root() -> Path:
-    """Return the standard library shipped with this compiler checkout."""
-    return Path(__file__).resolve().parents[2] / "lib"
+    """Return the standard library source root shipped with this checkout."""
+    return Path(__file__).resolve().parents[2] / "lib" / "src"
 
 
 def build_source_trust(stdlib_root: Path | None = None) -> SourceTrust:
