@@ -9,7 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from anx.manifest import Manifest
 from anx.resolver import CycleError, resolve
 from anx.scaffold import scaffold
 
@@ -41,9 +40,8 @@ def cmd_new(args: argparse.Namespace) -> None:
 
 def _do_build(project_dir: str, extra_flags: list[str] | None = None) -> None:
     project = Path(project_dir).resolve()
-    manifest = Manifest.from_file(project / "package.anx")
     try:
-        all_files, pkg_roots = resolve(manifest, _STD_SRC, cwd=project)
+        all_files, pkg_roots = resolve(project, _STD_SRC)
     except CycleError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
