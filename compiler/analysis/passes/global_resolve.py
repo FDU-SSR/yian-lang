@@ -36,6 +36,16 @@ class GlobalResolve:
         self.__packages = packages
         self.__strict_pkg = packages is not None
 
+        # Alias bodies are filled on demand: a signature may name an alias that
+        # is declared later, in the same unit or in another one, so resolving
+        # bodies in unit order is not enough.  The type context asks back here
+        # through this hook the first time it needs a body (see
+        # TypeCtx.set_alias_resolver); the registry below says which AST item
+        # belongs to which alias type id.
+        self.__alias_items: dict[int, tuple[UnitData, AST.Alias]] = {}
+        self.__filling_aliases: set[int] = set()
+        type_ctx.set_alias_resolver(self.__fill_alias)
+
         self.__build_std_lookup()
 
     def run(self) -> None:
@@ -44,11 +54,6 @@ class GlobalResolve:
 
         for unit in self.__units.values():
             self.__resolve_imports(unit)
-
-        # Alias bodies must be resolved before any declaration signature is:
-        # a signature may name an alias declared later in the same unit or in
-        # another unit, and resolve_type collapses alias chains eagerly.
-        self.__resolve_aliases()
 
         for unit in self.__units.values():
             self.__resolve_definitions(unit)
@@ -86,6 +91,8 @@ class GlobalResolve:
                 case AST.Alias(name=name, attrs=attrs, span=span):
                     # alloc in type space
                     type_id = self.__type_ctx.alloc_alias(name.name, span)
+                    # Remember the AST item so the body can be filled on demand.
+                    self.__alias_items[type_id] = (unit, item)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -317,8 +324,13 @@ class GlobalResolve:
         for item in unit.items():
             match item:
                 case AST.Alias():
-                    # Resolved by __resolve_aliases before this pass runs.
-                    pass
+                    # Already filled if a signature needed it earlier; filling it
+                    # here covers aliases nothing refers to.  An alias that cannot
+                    # be filled (a cycle) stays empty and is reported where used.
+                    try:
+                        self.__resolve_alias(unit, item)
+                    except UnfilledAliasError:
+                        pass
                 case AST.FuncDef():
                     self.__resolve_func_decl(unit, item)
                 case AST.StructDef():
@@ -333,33 +345,27 @@ class GlobalResolve:
                     # other items are ignored in this pass
                     pass
 
-    def __resolve_aliases(self) -> None:
-        """Fill in every alias body, retrying the ones that depend on later aliases.
+    def __fill_alias(self, type_id: int) -> bool:
+        """Fill one alias body, called by the type context when it needs it.
 
-        An alias body may name an alias declared later in the same unit or in
-        another unit, and it may carry an alias as a generic argument
-        (``typedef PairOf = Pair<Meters>``).  Resolution therefore repeats until
-        a whole round makes no progress; whatever is still pending then forms a
-        cycle (or names something that does not exist) and stays unfilled, which
-        surfaces as an error the first time it is used.
+        Returns ``False`` when the alias cannot be filled — its body is already
+        being filled further up the call chain (a cycle), or it names something
+        that has no definition.
         """
-        pending: list[tuple[UnitData, AST.Alias]] = [
-            (unit, item)
-            for unit in self.__units.values()
-            for item in unit.items()
-            if isinstance(item, AST.Alias)
-        ]
-        while pending:
-            remaining: list[tuple[UnitData, AST.Alias]] = []
-            for unit, item in pending:
-                if not self.__resolve_alias(unit, item):
-                    remaining.append((unit, item))
-            if len(remaining) == len(pending):
-                break
-            pending = remaining
+        item = self.__alias_items.get(type_id)
+        if item is None or type_id in self.__filling_aliases:
+            return False
+        unit, alias = item
+        self.__filling_aliases.add(type_id)
+        try:
+            self.__resolve_alias(unit, alias)
+        except UnfilledAliasError:
+            return False
+        finally:
+            self.__filling_aliases.discard(type_id)
+        return True
 
-    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> bool:
-        """Fill in one alias body; return False when it must be retried later."""
+    def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
         symbol = unit.symbol_ctx.lookup(alias.name.name)
         assert symbol is not None
         ty = self.__type_ctx[symbol.type_id]
@@ -370,14 +376,11 @@ class GlobalResolve:
 
         try:
             aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
-        except UnfilledAliasError:
-            return False
         finally:
             unit.symbol_ctx.exit_scope()
 
         # update the alias symbol with the resolved type
         ty.custom_def.aliased_type = aliased_type_id
-        return True
 
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup(func_def.name.name)

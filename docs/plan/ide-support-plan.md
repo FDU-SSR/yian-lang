@@ -570,9 +570,17 @@ context`，输出 Python traceback 并退出（直接 `yianc` 退出码 255；�
 - 根因：`GlobalResolve` 原先对每个 unit 依次执行"导入 → 定义"，而签名解析发生在这个单遍内并通过
   `resolve_type` 立即折叠别名链；此时后定义别名的 `AliasDef.aliased_type` 仍是哨兵值 `-1`。
   局部变量注解不受影响，因为它在更晚的 `TypeCheck` 阶段解析。
-- 修复：`GlobalResolve` 增加一个只解析别名体的前置循环，别名依赖未就绪时**重试**而不是放弃；
-  `TypeCtx.resolve_aliases` 遇到未填充的别名抛 `UnfilledAliasError` 供该循环重试（不再静默返回
-  别名 id——静默返回会把未折叠的别名烘进泛型实参，留下更难查的错误）。
+- 修复（**惰性填充，不改解析顺序**）：`GlobalResolve` 在收集符号时把「别名 type id → AST 声明」
+  登记下来，并通过 `TypeCtx.set_alias_resolver` 把"按需填充一个别名体"的回调交给类型上下文；
+  `resolve_aliases` 第一次遇到仍未填充的别名（`aliased_type == -1`）时**当场要求填充**，而不是
+  报告失败。这样写 `typedef` 的位置（同一 unit 的前后、跨 unit）都不再影响结果，`run()` 的
+  "收集符号 → 绑定导入 → 解析定义" 三遍结构保持原样。`__resolve_definitions` 里仍然解析别名，
+  作为"没人引用的别名"的兜底；填充不了（循环、或名字没有定义）时由 `UnfilledAliasError` 报错，
+  而不是静默返回别名 id。
+- 明确不采用的做法：把别名留在已存类型里**不折叠**（即让每个类型消费者自己折叠）。实测过一次
+  折中版本——未填充时静默返回别名 id——结果是把未折叠的别名烘进泛型实参，`PointPair = Pair<Meters>`
+  这类签名会报出误导性的 `cannot infer generic arguments from 'f64' for 'Meters'`；而彻底不折叠
+  则要求布局、`@sizeof`、codegen、泛型推断比较等所有消费点都记得折叠，风险远大于收益。
 - 验证：14 个最小复现全部通过；`basic` / `safety` / `package` 三套件全绿。
 - 遗留：真正的**循环别名**（`typedef A = B; typedef B = A;`）目前以未捕获的 `UnfilledAliasError`
   结束——不再挂起，但仍没有位置和 `E407` 码。P2 的"捕获并结构化"（§5.11 第一层）应当把它变成
