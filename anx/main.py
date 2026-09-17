@@ -158,7 +158,7 @@ def __do_build(
         "--packages", str(pkg_json),
         *extra_flags,
         *flags,
-        *(str(f) for f in project.files),
+        *(str(f) for f in project.build_files()),
     ]
     result = subprocess.run(
         cmd,

@@ -5,3 +5,6 @@ version = "0.1.0"
 
 [dependencies]
 mathlib = { path = "vendor/mathlib" }
+
+[dev-dependencies]
+testkit = { path = "vendor/testkit" }

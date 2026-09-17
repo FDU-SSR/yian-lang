@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from anx.project import Project
+from anx.project import PackageKind, Project
 
 TESTS_DIR_NAME = "tests"
 
@@ -131,15 +131,20 @@ def __test_package_map(project: Project, test: ProjectTest) -> dict[str, object]
     direct dependencies — the same set the root package itself can see.
     """
     root = project.root_package
-    tests_dir = project.packages[root].root / TESTS_DIR_NAME
+    root_package = project.packages[root]
+    tests_dir = root_package.root / TESTS_DIR_NAME
     packages = project.package_specs()
     packages[TEST_PACKAGE] = {
         "sourceRoot": str(tests_dir.resolve()),
         "kind": "bin",
         "entry": str(test.source.resolve()),
+        # Cargo's model: integration tests link the package's *library* (so a
+        # bin-only root has no library interface to import), plus the package's
+        # dependencies and its dev-dependencies.
         "dependencies": [
-            root,
-            *(dependency.name for dependency in project.packages[root].dependencies),
+            *([root] if root_package.kind is not PackageKind.BIN else []),
+            *(dependency.name for dependency in root_package.dependencies),
+            *(dependency.name for dependency in root_package.dev_dependencies),
         ],
     }
     return {"format": 2, "root": TEST_PACKAGE, "packages": packages}
@@ -174,6 +179,7 @@ def __run_one(
         env=env,
     )
     compiler_output = compiled.stdout + compiled.stderr
+    hint = __bin_root_hint(project, compiler_output)
 
     if test.expect_error:
         if compiled.returncode == 0:
@@ -181,12 +187,12 @@ def __run_one(
         if test.expected_substring and test.expected_substring not in compiler_output:
             return (
                 f"expected the diagnostic substring:\n  {test.expected_substring}\n"
-                f"compiler output:\n{compiler_output}"
+                f"compiler output:\n{compiler_output}{hint}"
             )
         return None
 
     if compiled.returncode != 0:
-        return f"compilation failed:\n{compiler_output}"
+        return f"compilation failed:\n{compiler_output}{hint}"
 
     executed = subprocess.run(
         [str(exe), *(test.cli_args or ())],
@@ -209,6 +215,25 @@ def __run_one(
     elif executed.returncode != test.expected_exit_code:
         return f"expected exit code {test.expected_exit_code}, got {executed.returncode}"
     return None
+
+
+def __bin_root_hint(project: Project, compiler_output: str) -> str:
+    """Explain the one surprising consequence of the Cargo-aligned rule.
+
+    A ``bin`` root has no library interface, so its own tests cannot import it;
+    that surfaces as an ordinary ``AX009`` from the synthetic test package,
+    which reads oddly without this note.
+    """
+    root = project.root_package
+    if project.packages[root].kind is not PackageKind.BIN:
+        return ""
+    if "AX009" not in compiler_output or f"'{root}'" not in compiler_output:
+        return ""
+    return (
+        f"\nhint: package '{root}' has kind 'bin', so its modules are not visible to tests.\n"
+        f'      Declare kind = "hybrid" to expose a library interface, or move the\n'
+        f"      reusable code into a lib dependency.\n"
+    )
 
 
 def __base_name(rel: str) -> str:

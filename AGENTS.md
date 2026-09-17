@@ -89,7 +89,7 @@ Test data lives under `tests/`; the runner and the other Python tooling live und
 
 ## anx package manager
 
-`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, and `test`. Projects declare metadata and path dependencies in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated v2 `build/pkg.json` package map. `anx test` runs the project's own tests under `<project>/tests/`; the repository fixtures for anx itself live in `tests/package/` and run via `scripts/run_tests.py --suite package`.
+`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated v2 `build/pkg.json` package map. `anx test` runs the project's own tests under `<project>/tests/`; the repository fixtures for anx itself live in `tests/package/` and run via `scripts/run_tests.py --suite package`.
 
 ## Architecture
 

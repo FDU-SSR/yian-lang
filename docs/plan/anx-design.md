@@ -221,6 +221,9 @@ version = "0.1.0"       # 可选，默认 "0.1.0"；本阶段不参与版本求�
 
 [dependencies]
 mathlib = { path = "../lib" }   # 键必须等于 ../lib 清单里的 [package].name
+
+[dev-dependencies]
+testkit = { path = "../testkit" }   # 只有 `anx test` 看得见
 ```
 
 规则：
@@ -257,6 +260,18 @@ mathlib = { path = "../lib" }   # 键必须等于 ../lib 清单里的 [package].
 - `[dependencies]` 的每个键**必须等于**被依赖包清单的 `[package].name`，否则 `AX005`。
 - 依赖条目的 `path` 必需，相对清单所在目录解析为绝对路径。
 - 本阶段**不支持依赖重命名**；将来若加入 `package = "<declared>"`，必须按 §3.5 的前提实现。
+- `[dev-dependencies]`（Cargo 同名概念）：与 `[dependencies]` 同样的形状和校验
+  （键 == 对方 `name`、`path` 必需、`kind` 不能是 `bin`），参与依赖图与环检测，但
+  **项目代码看不见、普通构建也不编译**：
+
+  | 谁能用 | `[dependencies]` | `[dev-dependencies]` |
+  | --- | --- | --- |
+  | 本包源码 | ✅ | ❌（`AX009`） |
+  | 本包的测试（`anx test`） | ✅ | ✅ |
+  | 传递依赖 | 不可见（§4.3） | 不可见 |
+  | `anx build` / `run` / `check` 编译的文件 | ✅ | ❌（不传给编译器） |
+
+  这对应 Cargo 的 `[dev-dependencies]`：`cargo build` 不构建它们，`cargo test` 才链接。
 
 ### 3.3 数据模型
 
@@ -282,7 +297,8 @@ class Package:
     manifest_path: Path
     source_root: Path       # root / "src"
     entry: Path | None      # BIN / HYBRID 的入口文件（默认 src/main.an）；LIB 为 None
-    dependencies: tuple[Dependency, ...]   # 按 name 排序
+    dependencies: tuple[Dependency, ...]      # 按 name 排序
+    dev_dependencies: tuple[Dependency, ...]  # 同上，但只有 `anx test` 可见
 
 @dataclass(frozen=True)
 class SourceFile:
@@ -295,8 +311,9 @@ class Project:
     root_package: str
     packages: Mapping[str, Package]              # 规范名 -> 包（只读）
     files: Mapping[Path, SourceFile]             # 绝对路径 -> 文件归属（只读）
-    dependencies: Mapping[str, tuple[str, ...]]  # 规范名 -> 直接依赖的规范名（只读）
-    std_package: str                             # 标准库的规范名，固定 "std"
+    dependencies: Mapping[str, tuple[str, ...]]      # 规范名 -> 直接依赖（只读）
+    dev_dependencies: Mapping[str, tuple[str, ...]]  # 规范名 -> dev 依赖（只读）
+    std_package: str                                 # 标准库的规范名，固定 "std"
 ```
 
 加载期的诊断不在 `Project` 上，而在 `LoadResult` 里（§3.4）——因为「清单损坏」时并不存在
@@ -308,6 +325,8 @@ class Project:
 def file_of(self, path: Path) -> SourceFile | None
 def package_of(self, path: Path) -> Package | None
 def resolve_import(self, importer: Path, paths: Sequence[str]) -> ImportResolution
+def build_packages(self) -> frozenset[str]   # 普通构建编译的包：根包 + 非 dev 闭包 + std
+def build_files(self) -> tuple[Path, ...]    # 上面这些包的文件，顺序同 files
 ```
 
 `resolve_import` **不返回 `None`**，而是返回带失败原因的判别结果——否则调用方无法区分
@@ -438,6 +457,9 @@ name = "mathlib"                # 这是清单 name
 3. 同一规范名再次出现时（菱形依赖），比较解析后的绝对路径：
    - 相同 → 复用，跳过；
    - 不同 → `AX007` 同名包冲突（替换当前的静默先到者）。
+4. `[dev-dependencies]` 的表按同样规则遍历并校验，只是把边记在**另一张表**里
+   （`Project.dev_dependencies`）：它决定「测试能看见什么」，不决定「项目代码能看见什么」。
+   环检测用两张表的并集——穿过 dev 边的环仍然是环。
 
 ### 4.2 环检测
 
@@ -615,7 +637,8 @@ Standalone 的报错文本保持原样：它是没有项目上下文的低层模
   类型检查的根集合也以它为界（A3）。standalone 模式没有这个字段，此时**根包 = 本次传入的、
   不属于标准库的文件**（用 `source_provenance.build_source_trust` 判定）；`std` 与其它依赖
   一样按需检查。
-- `packages`：规范名 → 该包的全部信息，一条里自洽：
+- `packages`：规范名 → 该包的全部信息，一条里自洽（**没有** dev 字段：dev 依赖不是包对外的
+  一部分，只有 `anx test` 生成的合成测试包会把它们列进自己的 `dependencies`）：
   - `sourceRoot`：源码根；`std` 必须存在，编译器也用它做可信源判定。
   - `kind`：`"bin"` / `"lib"` / `"hybrid"`（§3.2）。
   - `entry`：入口文件绝对路径；`"lib"` 没有这个字段，`"bin"` / `"hybrid"` 必须有。
@@ -773,7 +796,7 @@ anx 的职责是「不丢失地转发」：
 | `anx run [project] [-O n] [--raw-pointers] [--release] [-- args...]` | 构建并运行，转发参数与标准输入，传播退出码（仅 `bin`/`hybrid`） | 已实现 |
 | `anx check [project] [-O n] [--raw-pointers]` | 只做分析（`-t none`），`lib` 根也可用 | 已实现 |
 | `anx test [project]` | 运行**项目**测试（`tests/`，D6、§8.5） | 已实现 |
-| `anx graph [project] [--json]` | 输出依赖图、文件索引与诊断（编辑器/调试用）；有诊断时打印载荷并退出 1 | 已实现 |
+| `anx graph [project] [--json]` | 输出依赖图（含 dev 依赖）、文件索引与诊断（编辑器/调试用）；有诊断时打印载荷并退出 1 | 已实现 |
 
 行为随根包的 `kind` 变化（§3.2）：
 
@@ -898,7 +921,14 @@ anx build
   期望在 `tests/output/<suite>/`」的形状。
 - **测试以 package 模式编译**：每个用例额外注册一个**合成测试包**
   （`packages["__anx_test"]`），它的 `sourceRoot` 是 `<项目根>/tests`、`entry` 是当前用例文件、
-  `dependencies` 是**根包 + 根包的直接依赖**。于是：
+  `dependencies` 是**根包的库接口 + 根包的直接依赖 + 根包的 dev 依赖**。这里刻意对齐
+  Cargo 集成测试的模型（"a separate crate which is linked with the project's **library**"）：
+  - 根包是 `lib` / `hybrid` 时才有**库接口**，测试才能导入它；
+    根包是 `bin` 时测试导入根包会得到 `AX009`，`anx test` 会在失败详情里补一句
+    「declare kind = "hybrid"」——这正是 Cargo 里「bin-only crate 的 `tests/` 没有 library
+    可链接、要加 `src/lib.rs`」的对应物；
+  - `[dev-dependencies]` 只在这里可见（§3.2 的表）；
+  - 测试看见的集合恰好是「项目代码能看见的」加上「dev 依赖」。于是：
   - 用例可以像项目代码一样导入项目（`from <包名>.<模块> import ...`），根包自己的 `main`
     只是一个普通函数（入口是当前用例），不会撞 `Multiple 'main' functions found`（G22）；
   - 可见性规则（§4.3）对测试同样成立——**传递依赖不可见**：`mathlib` 的依赖 `inner`

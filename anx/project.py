@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path
@@ -36,6 +37,7 @@ from anx.diagnostics import (
 )
 from anx.manifest import DEFAULT_ENTRY
 from anx.manifest import MANIFEST_NAME
+from anx.manifest import DependencySpec
 from anx.manifest import Manifest
 from anx.manifest import read_manifest
 
@@ -91,6 +93,7 @@ class Package:
     source_root: Path  # root / "src"
     entry: Path | None  # BIN/HYBRID entry file; None for LIB
     dependencies: tuple[Dependency, ...]  # sorted by name
+    dev_dependencies: tuple[Dependency, ...] = ()  # visible only to `anx test`
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,10 @@ class Project:
     files: Mapping[Path, SourceFile]
     dependencies: Mapping[str, tuple[str, ...]]
     std_package: str
+    #: Development dependencies per package.  They are resolved and indexed like
+    #: normal dependencies but are invisible to project code and are only
+    #: compiled by ``anx test``.
+    dev_dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict[str, tuple[str, ...]])
 
     def file_of(self, path: Path) -> SourceFile | None:
         return self.files.get(path)
@@ -177,6 +184,35 @@ class Project:
             package.entry for package in self.packages.values() if package.entry is not None
         )
 
+    def build_packages(self) -> frozenset[str]:
+        """Packages a normal build compiles: the root, its non-dev closure and ``std``.
+
+        Development dependencies are deliberately excluded: a build must not
+        compile (or fail on) code that only tests use, which is also what
+        ``cargo build`` does with ``[dev-dependencies]``.
+        """
+        reachable: set[str] = set()
+        pending = [self.root_package]
+        while pending:
+            name = pending.pop()
+            if name in reachable or name not in self.packages:
+                continue
+            reachable.add(name)
+            pending.extend(self.dependencies.get(name, ()))
+        reachable.add(self.std_package)
+        return frozenset(reachable)
+
+    def build_files(self) -> tuple[Path, ...]:
+        """Indexed files a normal build passes to the compiler.
+
+        The order is the same as :attr:`files`, which the compiler relies on for
+        unit numbering.
+        """
+        packages = self.build_packages()
+        return tuple(
+            path for path, source in self.files.items() if source.package in packages
+        )
+
     def package_specs(self) -> dict[str, object]:
         """Per-package v2 entries: ``sourceRoot`` / ``kind`` / ``entry`` / ``dependencies``.
 
@@ -216,6 +252,9 @@ class Project:
                 "sourceRoot": str(package.source_root),
                 "entry": None if package.entry is None else str(package.entry),
                 "dependencies": [dependency.name for dependency in package.dependencies],
+                "devDependencies": [
+                    dependency.name for dependency in package.dev_dependencies
+                ],
             }
         return {
             "root": self.root_package,
@@ -226,6 +265,9 @@ class Project:
                 for source in self.files.values()
             ],
             "dependencies": {name: list(deps) for name, deps in self.dependencies.items()},
+            "devDependencies": {
+                name: list(deps) for name, deps in self.dev_dependencies.items()
+            },
             "diagnostics": [diagnostic_payload(diagnostic) for diagnostic in diagnostics],
         }
 
@@ -294,11 +336,17 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
     roots: dict[str, Path] = {root_manifest.name: root}
     order: list[str] = []
     adjacency: dict[str, tuple[str, ...]] = {}
+    dev_adjacency: dict[str, tuple[str, ...]] = {}
 
     def walk(name: str, path: Path, manifest: Manifest) -> None:
         order.append(name)
+        adjacency[name] = walk_edges(name, path, manifest.dependencies)
+        dev_adjacency[name] = walk_edges(name, path, manifest.dev_dependencies)
+
+    def walk_edges(name: str, path: Path, specs: tuple[DependencySpec, ...]) -> tuple[str, ...]:
+        """Resolve one dependency table of *name*, recursing into new packages."""
         declared: list[str] = []
-        for spec in manifest.dependencies:
+        for spec in specs:
             dep_root = spec.path
             dep_manifest_path = dep_root / MANIFEST_NAME
             if not dep_root.is_dir():
@@ -366,10 +414,16 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
             roots[canonical] = dep_root
             declared.append(canonical)
             walk(canonical, dep_root, dep_manifest)
-        adjacency[name] = tuple(sorted(set(declared)))
+        return tuple(sorted(set(declared)))
 
     walk(root_manifest.name, root, root_manifest)
-    __check_cycles(adjacency)
+    # A cycle through a dev-dependency is still a cycle: the edge exists in the
+    # graph even though only tests may follow it.
+    combined = {
+        name: tuple(sorted(set(adjacency.get(name, ())) | set(dev_adjacency.get(name, ()))))
+        for name in [*adjacency, *dev_adjacency]
+    }
+    __check_cycles(combined)
 
     built: dict[str, Package] = {}
     for name in order:
@@ -395,17 +449,23 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
     diagnostics.extend(__nested_source_root_diagnostics(built))
 
     dependencies: dict[str, tuple[str, ...]] = {}
+    dev_dependencies: dict[str, tuple[str, ...]] = {}
     for name in [*order, STD_PACKAGE]:
         if name not in built:
             continue
         dependencies[name] = tuple(dep for dep in adjacency.get(name, ()) if dep in built)
+        dev_dependencies[name] = tuple(dep for dep in dev_adjacency.get(name, ()) if dep in built)
 
     packages: dict[str, Package] = {}
     for name, package in built.items():
-        edges = dependencies[name]
         packages[name] = replace(
             package,
-            dependencies=tuple(Dependency(name=dep, path=roots[dep]) for dep in edges),
+            dependencies=tuple(
+                Dependency(name=dep, path=roots[dep]) for dep in dependencies[name]
+            ),
+            dev_dependencies=tuple(
+                Dependency(name=dep, path=roots[dep]) for dep in dev_dependencies[name]
+            ),
         )
 
     files = __index_files(packages, [*order, STD_PACKAGE])
@@ -415,6 +475,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
         files=MappingProxyType(files),
         dependencies=MappingProxyType(dependencies),
         std_package=STD_PACKAGE,
+        dev_dependencies=MappingProxyType(dev_dependencies),
     )
     return LoadResult(project=project, diagnostics=sort_diagnostics(diagnostics))
 

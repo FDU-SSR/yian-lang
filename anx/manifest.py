@@ -35,7 +35,7 @@ __VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
 
 @dataclass(frozen=True)
 class DependencySpec:
-    """One ``[dependencies]`` entry as written in the manifest.
+    """One ``[dependencies]`` or ``[dev-dependencies]`` entry as written.
 
     ``key`` is the name used in the manifest; ``path`` is already resolved
     against the manifest's directory.  Whether the key matches the dependency's
@@ -53,6 +53,10 @@ class Manifest:
     entry: str | None  # raw, relative to the package root
     version: str
     dependencies: tuple[DependencySpec, ...]
+    #: Resolved like ``dependencies`` but visible only to ``anx test`` (Cargo's
+    #: dev-dependencies): project code cannot import them and a normal build
+    #: does not compile them.
+    dev_dependencies: tuple[DependencySpec, ...]
 
 
 def __as_table(value: object) -> dict[str, object] | None:
@@ -150,29 +154,10 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
             )
         )
 
-    dependencies: list[DependencySpec] = []
-    spec_table = __as_table(data.get("dependencies", {}))
-    if spec_table is None:
-        diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[dependencies] must be a table", path))
-    else:
-        for key, value in spec_table.items():
-            if not __IDENTIFIER.match(key):
-                diagnostics.append(
-                    Diagnostic(AX_BAD_MANIFEST, f"'{key}' is not a valid dependency name", path)
-                )
-                continue
-            spec = __as_table(value)
-            dep_path = spec.get("path") if spec is not None else None
-            if not isinstance(dep_path, str) or dep_path == "":
-                diagnostics.append(
-                    Diagnostic(
-                        AX_BAD_MANIFEST,
-                        f"Dependency '{key}' must set a non-empty string 'path'",
-                        path,
-                    )
-                )
-                continue
-            dependencies.append(DependencySpec(key=key, path=(path.parent / dep_path).resolve()))
+    dependencies, dependency_diagnostics = __read_dependencies(data, path, "dependencies")
+    diagnostics.extend(dependency_diagnostics)
+    dev_dependencies, dev_diagnostics = __read_dependencies(data, path, "dev-dependencies")
+    diagnostics.extend(dev_diagnostics)
 
     if not name_ok or not kind_ok:
         return None, sort_diagnostics(diagnostics)
@@ -182,6 +167,40 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
         kind=kind,
         entry=entry,
         version=version,
-        dependencies=tuple(dependencies),
+        dependencies=dependencies,
+        dev_dependencies=dev_dependencies,
     )
     return manifest, sort_diagnostics(diagnostics)
+
+
+def __read_dependencies(
+    data: dict[str, object], path: Path, table: str
+) -> tuple[tuple[DependencySpec, ...], tuple[Diagnostic, ...]]:
+    """Parse one dependency table (``dependencies`` or ``dev-dependencies``)."""
+    diagnostics: list[Diagnostic] = []
+    specs: list[DependencySpec] = []
+    raw = __as_table(data.get(table, {}))
+    if raw is None:
+        diagnostics.append(Diagnostic(AX_BAD_MANIFEST, f"[{table}] must be a table", path))
+        return (), tuple(diagnostics)
+
+    for key, value in raw.items():
+        if not __IDENTIFIER.match(key):
+            diagnostics.append(
+                Diagnostic(AX_BAD_MANIFEST, f"'{key}' is not a valid dependency name", path)
+            )
+            continue
+        entry = __as_table(value)
+        dep_path = entry.get("path") if entry is not None else None
+        if not isinstance(dep_path, str) or dep_path == "":
+            diagnostics.append(
+                Diagnostic(
+                    AX_BAD_MANIFEST,
+                    f"Dependency '{key}' in [{table}] must set a non-empty string 'path'",
+                    path,
+                )
+            )
+            continue
+        specs.append(DependencySpec(key=key, path=(path.parent / dep_path).resolve()))
+
+    return tuple(specs), tuple(diagnostics)
