@@ -29,8 +29,8 @@ DEFAULT_ENTRY = "src/main.an"
 #: Accepted ``[package].kind`` values, in the order the manual lists them.
 KINDS = ("bin", "lib", "hybrid")
 
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
-_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
+__IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+__VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.-]+)?\Z")
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class Manifest:
     dependencies: tuple[DependencySpec, ...]
 
 
-def _as_table(value: object) -> dict[str, object] | None:
+def __as_table(value: object) -> dict[str, object] | None:
     """Return *value* as a string-keyed table, or ``None`` when it is not one.
 
     ``tomllib`` hands back ``dict[str, Any]``; narrowing through this helper
@@ -82,7 +82,7 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
     """
     try:
         with open(path, "rb") as handle:
-            data = _as_table(tomllib.load(handle))
+            data = __as_table(tomllib.load(handle))
     except tomllib.TOMLDecodeError as exc:
         return None, (Diagnostic(AX_BAD_MANIFEST, f"Could not parse manifest: {exc}", path),)
     except OSError as exc:
@@ -90,7 +90,7 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
     if data is None:
         return None, (Diagnostic(AX_BAD_MANIFEST, "Manifest is not a TOML table", path),)
 
-    table = _as_table(data.get("package"))
+    table = __as_table(data.get("package"))
     if table is None:
         return None, (Diagnostic(AX_BAD_MANIFEST, "Missing [package] table", path),)
 
@@ -100,7 +100,7 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
     name = name_value if isinstance(name_value, str) else ""
     if name == "":
         diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "Missing or empty [package].name", path))
-    elif not _IDENTIFIER.match(name):
+    elif not __IDENTIFIER.match(name):
         diagnostics.append(
             Diagnostic(AX_BAD_MANIFEST, f"'{name}' is not a valid package name", path)
         )
@@ -113,7 +113,7 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
                 hint="Pick another name; 'std' always refers to the bundled standard library.",
             )
         )
-    name_ok = bool(name) and _IDENTIFIER.match(name) is not None
+    name_ok = bool(name) and __IDENTIFIER.match(name) is not None
 
     kind_value = table.get("kind", KINDS[0])
     kind = kind_value if isinstance(kind_value, str) else ""
@@ -138,7 +138,7 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
             )
 
     version_value = table.get("version", DEFAULT_VERSION)
-    if isinstance(version_value, str) and _VERSION.match(version_value):
+    if isinstance(version_value, str) and __VERSION.match(version_value):
         version = version_value
     else:
         version = DEFAULT_VERSION
@@ -151,17 +151,17 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
         )
 
     dependencies: list[DependencySpec] = []
-    spec_table = _as_table(data.get("dependencies", {}))
+    spec_table = __as_table(data.get("dependencies", {}))
     if spec_table is None:
         diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[dependencies] must be a table", path))
     else:
         for key, value in spec_table.items():
-            if not _IDENTIFIER.match(key):
+            if not __IDENTIFIER.match(key):
                 diagnostics.append(
                     Diagnostic(AX_BAD_MANIFEST, f"'{key}' is not a valid dependency name", path)
                 )
                 continue
-            spec = _as_table(value)
+            spec = __as_table(value)
             dep_path = spec.get("path") if spec is not None else None
             if not isinstance(dep_path, str) or dep_path == "":
                 diagnostics.append(

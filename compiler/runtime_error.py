@@ -20,7 +20,7 @@ class RuntimeErrorCode(IntEnum):
     R003 = 2003
 
 
-_RUNTIME_ERROR_MESSAGES: dict[RuntimeErrorCode, bytes] = {
+__RUNTIME_ERROR_MESSAGES: dict[RuntimeErrorCode, bytes] = {
     RuntimeErrorCode.S001: b"yian: safety error [S001]: out-of-bounds memory access\n",
     RuntimeErrorCode.S002: b"yian: safety error [S002]: invalid memory access\n",
     RuntimeErrorCode.S003: b"yian: safety error [S003]: dangling reference access\n",
@@ -33,19 +33,19 @@ _RUNTIME_ERROR_MESSAGES: dict[RuntimeErrorCode, bytes] = {
     RuntimeErrorCode.R003: b"yian: runtime error [R003]: safety metadata exhausted\n",
 }
 
-_RUNTIME_ERROR_CODES: dict[str, RuntimeErrorCode] = {
+__RUNTIME_ERROR_CODES: dict[str, RuntimeErrorCode] = {
     code.name: code for code in RuntimeErrorCode
 }
 
 
 def parse_runtime_error_code(value: str) -> RuntimeErrorCode | None:
     """Parse a source spelling such as ``S001`` or return ``None``."""
-    return _RUNTIME_ERROR_CODES.get(value)
+    return __RUNTIME_ERROR_CODES.get(value)
 
 
 def runtime_error_message(code: RuntimeErrorCode) -> bytes:
     """Return the complete protocol diagnostic, including its newline."""
-    return _RUNTIME_ERROR_MESSAGES[code]
+    return __RUNTIME_ERROR_MESSAGES[code]
 
 
 def runtime_error_name(code: RuntimeErrorCode) -> str:

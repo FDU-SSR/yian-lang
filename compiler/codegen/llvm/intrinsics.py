@@ -30,7 +30,7 @@ class IntrinsicKind(Enum):
 
 
 class IntrinsicManager:
-    _DECLARATIONS: dict[IntrinsicKind, tuple[ir.Type, list[ir.Type], str]] = {
+    __DECLARATIONS: dict[IntrinsicKind, tuple[ir.Type, list[ir.Type], str]] = {
         IntrinsicKind.Malloc:    (ir.PointerType(ir.IntType(8)), [ir.IntType(64)], "malloc"),
         IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType(ir.IntType(8))], "free"),
         IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "write"),
@@ -50,7 +50,7 @@ class IntrinsicManager:
     def get(self, kind: IntrinsicKind) -> ir.Function:
         if kind in self.__cache:
             return self.__cache[kind]
-        return_type, param_types, name = self._DECLARATIONS[kind]
+        return_type, param_types, name = self.__DECLARATIONS[kind]
         func = ir.Function(self.__module, ir.FunctionType(return_type, param_types), name=name)
         self.__cache[kind] = func
         return func

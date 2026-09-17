@@ -109,6 +109,7 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 ## Conventions and gotchas
 
 - Pyright strict checking covers `compiler/` and `anx/`; avoid `Any`, `object`, and `hasattr()`. Keep imports at the top of new files and preserve the existing handler-map dispatch style in the type checker and LLVM translator.
+- Python private names use a **double** leading underscore: module-level functions and constants (`__helper`, `__CONSTANT`), methods (`self.__drain()`), nested helpers, and instance attributes. Use a **single** underscore only where the double form breaks the reference at run time: a name written as `__name` inside a class body is rewritten to `_ClassName__name`, so a *module-level* private that a class body mentions (for example `_SEP` in `compiler/utils/log.py`, `_is_within` in `compiler/analysis/source_provenance.py`) must keep one underscore. A private defined *and* used inside the same class body is `__name` like any other. Audit with `grep -rnE "def _[^_]|^_[A-Za-z]|(self|cls)\._[^_]" --include=*.py compiler anx scripts`: every hit must be one of those module-level/class-body exceptions.
 - `bak/` is ignored legacy material, `.conda/` is a local environment, and `build/` contains compiler and test output. Do not modify them unless the user explicitly asks for it.
 - `ide-support/` contains the packaged VS Code extension and `licenses/` contains the project license texts.
 - Documentation is written in Chinese. Update it only when the user explicitly requests documentation changes.

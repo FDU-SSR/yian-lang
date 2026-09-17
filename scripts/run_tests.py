@@ -173,7 +173,7 @@ class TestResult:
 # Test discovery
 # ---------------------------------------------------------------------------
 
-def _parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int | None, str, str]:
+def __parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int | None, str, str]:
     """Parse an .ans file into (expect_error, expected_exit_code, expected_output, expected_substring).
 
     Convention for .ans files:
@@ -209,7 +209,7 @@ def _parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int 
     return False, 0, raw, ""
 
 
-def _find_ans(test_rel: str) -> Path | None:
+def __find_ans(test_rel: str) -> Path | None:
     """Look for a .ans file corresponding to *test_rel*.
 
     *test_rel* is relative to SOURCE_DIR:
@@ -230,14 +230,14 @@ def _find_ans(test_rel: str) -> Path | None:
     return p if p.exists() else None
 
 
-def _find_input(test_rel: str) -> tuple[list[str] | None, str]:
+def __find_input(test_rel: str) -> tuple[list[str] | None, str]:
     """Look for input files corresponding to *test_rel* in the suite input directory.
 
     Returns ``(cli_args, stdin)`` where:
       - *cli_args* is a list of whitespace-split args (None if no .args file).
       - *stdin* is the content of the .stdin file (empty string if not found).
 
-    *test_rel* follows the same naming convention as ``_find_ans``:
+    *test_rel* follows the same naming convention as ``__find_ans``:
       - "env/args.an"            → …/env/args.args, …/env/args.stdin
       - "error/no_main.err.an"   → …/error/no_main.an.args  (strip .err)
     """
@@ -259,13 +259,13 @@ def _find_input(test_rel: str) -> tuple[list[str] | None, str]:
     return cli_args, stdin
 
 
-def _find_compile_config(test_rel: str) -> Path | None:
+def __find_compile_config(test_rel: str) -> Path | None:
     """Find the optional compiler-variant metadata for a test."""
     path = INPUT_DIR / (test_rel + ".compile.json")
     return path if path.exists() else None
 
 
-def _parse_compile_variants(file_path: Path) -> list[CompileVariant]:
+def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
     """Parse strict compiler-variant metadata from *file_path*."""
     raw = json.loads(file_path.read_text())
     if not isinstance(raw, list):
@@ -333,7 +333,7 @@ def _parse_compile_variants(file_path: Path) -> list[CompileVariant]:
     return variants
 
 
-def _find_orphaned_compile_configs() -> list[str]:
+def __find_orphaned_compile_configs() -> list[str]:
     """Return compiler metadata files without a corresponding YIAN source."""
     orphaned: list[str] = []
     for config in sorted(INPUT_DIR.rglob("*.compile.json")):
@@ -390,19 +390,19 @@ def discover_tests() -> list[TestCase]:
         is_err = name.endswith(".err.an") or any(f.name.endswith(".err.an") for f in source_files)
 
         # Look up expected output.
-        ans_path = _find_ans(name)
+        ans_path = __find_ans(name)
         if ans_path is not None:
-            expect_error, expected_exit_code, expected_output, expected_substr = _parse_ans(ans_path, is_error_test=is_err)
+            expect_error, expected_exit_code, expected_output, expected_substr = __parse_ans(ans_path, is_error_test=is_err)
         else:
             expect_error = is_err
             expected_exit_code = None
             expected_output = ""
             expected_substr = ""
 
-        cli_args, stdin = _find_input(name)
-        config_path = _find_compile_config(name)
+        cli_args, stdin = __find_input(name)
+        config_path = __find_compile_config(name)
         compile_variants = (
-            _parse_compile_variants(config_path) if config_path is not None else []
+            __parse_compile_variants(config_path) if config_path is not None else []
         )
 
         tests.append(TestCase(
@@ -439,7 +439,7 @@ def discover_tests() -> list[TestCase]:
             print(f"   {m}")
         print()
 
-    orphaned_configs = _find_orphaned_compile_configs()
+    orphaned_configs = __find_orphaned_compile_configs()
     if orphaned_configs:
         print("⚠  Orphaned compiler variant files (no matching source):")
         for config in orphaned_configs:
@@ -449,7 +449,7 @@ def discover_tests() -> list[TestCase]:
     return tests
 
 
-def _find_package_ans(fixture: str) -> tuple[Path | None, bool]:
+def __find_package_ans(fixture: str) -> tuple[Path | None, bool]:
     """Expected-result file for a package fixture, given its directory name.
 
     Directory fixtures use ``<dir>.err.ans`` for an expected failure (content
@@ -466,7 +466,7 @@ def _find_package_ans(fixture: str) -> tuple[Path | None, bool]:
     return None, False
 
 
-def _find_package_command(fixture: str) -> list[str] | None:
+def __find_package_command(fixture: str) -> list[str] | None:
     """Optional ``tests/input/package/<fixture>.command`` override.
 
     The file holds the anx command line to drive the fixture with, for example
@@ -499,8 +499,8 @@ def discover_package_tests() -> list[TestCase]:
             continue
 
         name = str(base.relative_to(SOURCE_DIR))
-        ans_path, ans_is_error = _find_package_ans(name)
-        command_tokens = _find_package_command(name)
+        ans_path, ans_is_error = __find_package_ans(name)
+        command_tokens = __find_package_command(name)
         anx_command = command_tokens[0] if command_tokens is not None else None
         # A dependency package has no entry, no expectation and no command of
         # its own, so it is not a case; anything else is.
@@ -513,13 +513,13 @@ def discover_package_tests() -> list[TestCase]:
         cases.append(base)
 
         if ans_path is not None:
-            expect_error, expected_exit_code, expected_output, expected_substr = _parse_ans(
+            expect_error, expected_exit_code, expected_output, expected_substr = __parse_ans(
                 ans_path, is_error_test=ans_is_error
             )
         else:
             expect_error, expected_exit_code, expected_output, expected_substr = False, None, "", ""
 
-        cli_args, stdin = _find_input(name)
+        cli_args, stdin = __find_input(name)
         tests.append(TestCase(
             name=name,
             source_files=sorted((base / "src").rglob("*.an")),
@@ -720,7 +720,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
     )
 
 
-def _mode_test(test: TestCase, mode: str) -> TestCase:
+def __mode_test(test: TestCase, mode: str) -> TestCase:
     """Create the fat or raw execution of a basic-suite test.
 
     The ordinary suite has one source and one expected result for both pointer
@@ -774,7 +774,7 @@ def _mode_test(test: TestCase, mode: str) -> TestCase:
     )
 
 
-def _package_mode_test(test: TestCase, mode: str) -> TestCase:
+def __package_mode_test(test: TestCase, mode: str) -> TestCase:
     """Create the fat or raw execution of a package fixture.
 
     Package fixtures go through ``anx``, so the pointer representation is a flag
@@ -810,7 +810,7 @@ def print_summary(
             if not r.passed():
                 status = "PASS" if r.passed() else "FAIL"
                 out.write(f"  [{status}] {r.test.name}  ({r.elapsed_ms:.0f} ms)\n")
-                _print_failure_detail(r, out)
+                __print_failure_detail(r, out)
 
     out.write("\n")
     out.write(f"{'=' * 60}\n")
@@ -826,7 +826,7 @@ def print_summary(
             out.write(f"  ✗ {r.test.name}\n")
 
 
-def _print_failure_detail(r: TestResult, out: TextIO) -> None:
+def __print_failure_detail(r: TestResult, out: TextIO) -> None:
     """Print why a single test failed."""
     if r.test.expect_error:
         expect_kind = "error"
@@ -841,25 +841,25 @@ def _print_failure_detail(r: TestResult, out: TextIO) -> None:
 
     if r.test.expected_output and r.stdout:
         out.write("      --- expected stdout ---\n")
-        out.write(_indent(r.test.expected_output, "      "))
+        out.write(__indent(r.test.expected_output, "      "))
         out.write("      --- actual stdout ---\n")
-        out.write(_indent(r.stdout, "      "))
+        out.write(__indent(r.stdout, "      "))
 
     if r.test.expected_substring:
         out.write("      --- expected substring ---\n")
-        out.write(_indent(r.test.expected_substring, "      "))
+        out.write(__indent(r.test.expected_substring, "      "))
     if r.test.expect_error and r.exit_code == 0:
         out.write("      (compiler succeeded but was expected to fail)\n")
     elif not r.test.expect_error and r.exit_code != 0:
         out.write("      --- compiler output ---\n")
-        out.write(_indent(r.output, "      "))
+        out.write(__indent(r.output, "      "))
     elif r.test.expect_error and r.test.expected_substring and r.test.expected_substring not in r.output:
         out.write("      --- compiler output ---\n")
-        out.write(_indent(r.output, "      "))
+        out.write(__indent(r.output, "      "))
     out.write("\n")
 
 
-def _indent(text: str, prefix: str) -> str:
+def __indent(text: str, prefix: str) -> str:
     if not text:
         return f"{prefix}(empty)\n"
     return "".join(f"{prefix}{line}\n" for line in text.splitlines())
@@ -890,8 +890,8 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
     if suite == "basic":
         expanded_tests: list[TestCase] = []
         for test in all_tests:
-            expanded_tests.append(_mode_test(test, "fat"))
-            expanded_tests.append(_mode_test(test, "raw"))
+            expanded_tests.append(__mode_test(test, "fat"))
+            expanded_tests.append(__mode_test(test, "raw"))
         all_tests = expanded_tests
     elif suite == "package":
         # Package fixtures also run under both pointer representations; the
@@ -902,8 +902,8 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
             if test.anx_command == "graph":
                 package_tests.append(test)
                 continue
-            package_tests.append(_package_mode_test(test, "fat"))
-            package_tests.append(_package_mode_test(test, "raw"))
+            package_tests.append(__package_mode_test(test, "fat"))
+            package_tests.append(__package_mode_test(test, "raw"))
         all_tests = package_tests
 
     if args.filter_str:

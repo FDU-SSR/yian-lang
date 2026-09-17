@@ -196,7 +196,7 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
     """Return whether the given `type_id` contains any unresolved generic parameter."""
     visiting: set[int] = set()
 
-    def _contains(tid: int) -> bool:
+    def __contains(tid: int) -> bool:
         if tid in visiting:
             return False
         visiting.add(tid)
@@ -207,25 +207,25 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
             case Type.LiteralValueType():
                 return False
             case Type.PointerType(pointee_type=pointee_type):
-                return _contains(pointee_type)
+                return __contains(pointee_type)
             case Type.RefType(pointee_type=pointee_type):
-                return _contains(pointee_type)
+                return __contains(pointee_type)
             case Type.SliceType(element_type=element_type):
-                return _contains(element_type)
+                return __contains(element_type)
             case Type.ArrayType(element_type=element_type, length=length):
-                return _contains(element_type) or _contains(length)
+                return __contains(element_type) or __contains(length)
             case Type.TupleType(element_types=element_types):
-                return any(_contains(element_type) for element_type in element_types)
+                return any(__contains(element_type) for element_type in element_types)
             case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
-                return any(_contains(parameter_type) for parameter_type in parameter_types) or _contains(return_type)
+                return any(__contains(parameter_type) for parameter_type in parameter_types) or __contains(return_type)
             case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
                 if len(ty.custom_def.generics) > 0 and len(generic_args) == 0:
                     return True
-                return any(_contains(arg_type) for arg_type in generic_args)
+                return any(__contains(arg_type) for arg_type in generic_args)
             case _:
                 return False
 
-    return _contains(type_id)
+    return __contains(type_id)
 
 
 def is_int_literal_type(ctx: TypeCtx, type_id: int) -> bool:

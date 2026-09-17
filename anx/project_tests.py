@@ -51,8 +51,8 @@ def discover(project_root: Path) -> tuple[ProjectTest, ...]:
     tests: list[ProjectTest] = []
     for source in sorted(source_dir.rglob("*.an")):
         rel = source.relative_to(source_dir).as_posix()
-        expectation = _expectation(output_dir, rel)
-        base = _base_name(rel)
+        expectation = __expectation(output_dir, rel)
+        base = __base_name(rel)
         args_path = input_dir / f"{base}.args"
         stdin_path = input_dir / f"{base}.stdin"
         tests.append(
@@ -92,7 +92,7 @@ def run(
 
     failures: list[tuple[str, str]] = []
     for test in tests:
-        detail = _run_one(test, compiler, std_root, build_dir, flags, env)
+        detail = __run_one(test, compiler, std_root, build_dir, flags, env)
         tag = "ok" if detail is None else "FAIL"
         print(f"  [{tag}] {test.name}", file=stream)
         if detail is not None:
@@ -104,7 +104,7 @@ def run(
     return 1 if failures else 0
 
 
-def _run_one(
+def __run_one(
     test: ProjectTest,
     compiler: list[str],
     std_root: Path,
@@ -166,7 +166,7 @@ def _run_one(
     return None
 
 
-def _base_name(rel: str) -> str:
+def __base_name(rel: str) -> str:
     """Map a test source path to its expectation/input base name."""
     if rel.endswith(".err.an"):
         return rel[: -len(".err.an")]
@@ -175,10 +175,10 @@ def _base_name(rel: str) -> str:
     return rel
 
 
-def _expectation(output_dir: Path, rel: str) -> tuple[bool, int | None, str, str]:
+def __expectation(output_dir: Path, rel: str) -> tuple[bool, int | None, str, str]:
     """Read the expectation for *rel*; returns expect_error/code/stdout/substring."""
     is_error = rel.endswith(".err.an")
-    ans = output_dir / (f"{_base_name(rel)}.an.ans" if is_error else f"{rel}.ans")
+    ans = output_dir / (f"{__base_name(rel)}.an.ans" if is_error else f"{rel}.ans")
     if not ans.is_file():
         return is_error, None, "", ""
 

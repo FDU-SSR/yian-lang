@@ -168,11 +168,11 @@ class Project:
         if found is None:
             return ImportResolution(None, ImportFailure.NOT_A_MODULE)
 
-        if found.path in self._entry_paths():
+        if found.path in self.__entry_paths():
             return ImportResolution(None, ImportFailure.ENTRY_MODULE)
         return ImportResolution(found, None)
 
-    def _entry_paths(self) -> frozenset[Path]:
+    def __entry_paths(self) -> frozenset[Path]:
         return frozenset(
             package.entry for package in self.packages.values() if package.entry is not None
         )
@@ -360,11 +360,11 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
         adjacency[name] = tuple(sorted(set(declared)))
 
     walk(root_manifest.name, root, root_manifest)
-    _check_cycles(adjacency)
+    __check_cycles(adjacency)
 
     built: dict[str, Package] = {}
     for name in order:
-        package, package_diagnostics = _build_package(name, roots[name], manifests[name])
+        package, package_diagnostics = __build_package(name, roots[name], manifests[name])
         diagnostics.extend(package_diagnostics)
         if package is not None:
             built[name] = package
@@ -383,7 +383,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
         dependencies=(),
     )
 
-    diagnostics.extend(_nested_source_root_diagnostics(built))
+    diagnostics.extend(__nested_source_root_diagnostics(built))
 
     dependencies: dict[str, tuple[str, ...]] = {}
     for name in [*order, STD_PACKAGE]:
@@ -399,7 +399,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
             dependencies=tuple(Dependency(name=dep, path=roots[dep]) for dep in edges),
         )
 
-    files = _index_files(packages, [*order, STD_PACKAGE])
+    files = __index_files(packages, [*order, STD_PACKAGE])
     project = Project(
         root_package=root_manifest.name,
         packages=MappingProxyType(packages),
@@ -410,7 +410,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
     return LoadResult(project=project, diagnostics=sort_diagnostics(diagnostics))
 
 
-def _build_package(
+def __build_package(
     name: str, root: Path, manifest: Manifest
 ) -> tuple[Package | None, tuple[Diagnostic, ...]]:
     """Validate one package's source layout and, if it holds, build the package.
@@ -504,7 +504,7 @@ def _build_package(
     )
 
 
-def _nested_source_root_diagnostics(packages: Mapping[str, Package]) -> tuple[Diagnostic, ...]:
+def __nested_source_root_diagnostics(packages: Mapping[str, Package]) -> tuple[Diagnostic, ...]:
     """Report every pair of mutually nested source roots (``AX013``, §3.6).
 
     The standard library is excluded: it lives in the compiler checkout and is
@@ -533,7 +533,7 @@ def _nested_source_root_diagnostics(packages: Mapping[str, Package]) -> tuple[Di
     return tuple(diagnostics)
 
 
-def _index_files(packages: Mapping[str, Package], order: list[str]) -> dict[Path, SourceFile]:
+def __index_files(packages: Mapping[str, Package], order: list[str]) -> dict[Path, SourceFile]:
     """Index ``*.an`` files, attributing each to its deepest source root.
 
     The insertion order follows the dependency walk with the standard library
@@ -546,7 +546,7 @@ def _index_files(packages: Mapping[str, Package], order: list[str]) -> dict[Path
         if package is None:
             continue
         for path in sorted(package.source_root.rglob("*.an")):
-            owner = _owner_of(path, source_roots)
+            owner = __owner_of(path, source_roots)
             if owner != name:
                 continue
             files[path] = SourceFile(
@@ -557,7 +557,7 @@ def _index_files(packages: Mapping[str, Package], order: list[str]) -> dict[Path
     return files
 
 
-def _owner_of(path: Path, source_roots: Mapping[str, Path]) -> str:
+def __owner_of(path: Path, source_roots: Mapping[str, Path]) -> str:
     """Return the package whose source root is the longest prefix of *path*."""
     best = ""
     best_depth = -1
@@ -572,7 +572,7 @@ def _owner_of(path: Path, source_roots: Mapping[str, Path]) -> str:
     return best
 
 
-def _check_cycles(adjacency: Mapping[str, tuple[str, ...]]) -> None:
+def __check_cycles(adjacency: Mapping[str, tuple[str, ...]]) -> None:
     visited: set[str] = set()
     in_stack: list[str] = []
 

@@ -21,10 +21,10 @@ from anx.project import CycleError, PackageKind, Project, discover, load
 from anx.scaffold import KINDS, scaffold
 from compiler.analysis.source_provenance import resolve_stdlib_root
 
-_CHECKOUT = Path(__file__).resolve().parent.parent
+__CHECKOUT = Path(__file__).resolve().parent.parent
 # The standard library an anx run compiles against. In a non-editable install
 # this comes from YIAN_LIB / YIAN_ROOT (docs §8.4).
-_STD_SRC = resolve_stdlib_root()
+__STD_SRC = resolve_stdlib_root()
 
 
 def compiler_command() -> list[str]:
@@ -53,12 +53,12 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
-def _require_stdlib() -> None:
+def __require_stdlib() -> None:
     """Fail early when the standard library cannot be located (docs §8.4)."""
-    if _STD_SRC.is_dir():
+    if __STD_SRC.is_dir():
         return
     print(
-        f"error: standard library source root {_STD_SRC} does not exist.\n"
+        f"error: standard library source root {__STD_SRC} does not exist.\n"
         "       Set YIAN_LIB to the stdlib src directory, or YIAN_ROOT to a\n"
         "       checkout root; a non-editable install does not carry lib/.",
         file=sys.stderr,
@@ -66,13 +66,13 @@ def _require_stdlib() -> None:
     sys.exit(1)
 
 
-def _load_project(project_dir: str) -> tuple[Project, Path]:
+def __load_project(project_dir: str) -> tuple[Project, Path]:
     """Discover, load and validate the project at or above *project_dir*.
 
     Returns the project and its root directory; exits with 1 after reporting
     every diagnostic.
     """
-    _require_stdlib()
+    __require_stdlib()
     start = Path(project_dir)
     root_dir = discover(start)
     if root_dir is None:
@@ -83,7 +83,7 @@ def _load_project(project_dir: str) -> tuple[Project, Path]:
         sys.exit(1)
 
     try:
-        result = load(root_dir, std_root=_STD_SRC)
+        result = load(root_dir, std_root=__STD_SRC)
     except CycleError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -100,7 +100,7 @@ def _load_project(project_dir: str) -> tuple[Project, Path]:
     return project, root_dir
 
 
-def _compiler_flags(args: argparse.Namespace) -> list[str]:
+def __compiler_flags(args: argparse.Namespace) -> list[str]:
     """Compiler options whitelisted from the anx command line."""
     flags: list[str] = []
     level = args.opt
@@ -113,7 +113,7 @@ def _compiler_flags(args: argparse.Namespace) -> list[str]:
     return flags
 
 
-def _write_package_map(project: Project) -> Path:
+def __write_package_map(project: Project) -> Path:
     """Write ``build/pkg.json`` when its content changed, and return its path."""
     build_dir = project.packages[project.root_package].root / "build"
     pkg_json = build_dir / "pkg.json"
@@ -124,7 +124,7 @@ def _write_package_map(project: Project) -> Path:
     return pkg_json
 
 
-def _do_build(
+def __do_build(
     project_dir: str,
     *,
     command: str,
@@ -135,7 +135,7 @@ def _do_build(
 
     Returns the produced executable for ``-t exe`` runs, otherwise ``None``.
     """
-    project, root_dir = _load_project(project_dir)
+    project, root_dir = __load_project(project_dir)
     root = project.packages[project.root_package]
 
     if root.kind is PackageKind.LIB and command in ("build", "run"):
@@ -152,7 +152,7 @@ def _do_build(
         exe = root_dir / "build" / "app"
         extra_flags += ["-o", str(exe)]
 
-    pkg_json = _write_package_map(project)
+    pkg_json = __write_package_map(project)
     cmd = [
         *compiler_command(),
         "--packages", str(pkg_json),
@@ -166,7 +166,7 @@ def _do_build(
         capture_output=True,
         text=True,
         check=False,
-        env=_compiler_env(),
+        env=__compiler_env(),
     )
 
     # Forward both streams whether or not the compiler succeeded, so warnings
@@ -181,12 +181,12 @@ def _do_build(
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    _do_build(args.project, command="build", target="exe", flags=_compiler_flags(args))
+    __do_build(args.project, command="build", target="exe", flags=__compiler_flags(args))
     return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    exe = _do_build(args.project, command="run", target="exe", flags=_compiler_flags(args))
+    exe = __do_build(args.project, command="run", target="exe", flags=__compiler_flags(args))
     if exe is None or not exe.exists():
         print(f"error: no executable was produced at {exe}", file=sys.stderr)
         return 1
@@ -199,7 +199,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    _do_build(args.project, command="check", target="none", flags=_compiler_flags(args))
+    __do_build(args.project, command="check", target="none", flags=__compiler_flags(args))
     return 0
 
 
@@ -210,7 +210,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
     exit code reports a problem: 1 means the project was unusable or carried
     diagnostics, 0 means it loaded cleanly.
     """
-    _require_stdlib()
+    __require_stdlib()
     start = Path(args.project)
     root_dir = discover(start)
     if root_dir is None:
@@ -232,7 +232,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
         }
         result_ok = False
     else:
-        result = load(root_dir, std_root=_STD_SRC)
+        result = load(root_dir, std_root=__STD_SRC)
         project = result.project
         payload = (
             project.describe(result.diagnostics)
@@ -251,17 +251,17 @@ def cmd_graph(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        _print_graph(payload)
+        __print_graph(payload)
     return 0 if result_ok else 1
 
 
-def _print_graph(payload: dict[str, object]) -> None:
+def __print_graph(payload: dict[str, object]) -> None:
     """Human-readable rendering of the ``anx graph`` payload."""
     print(f"project: {payload.get('root')}")
-    packages = _as_table(payload.get("packages"))
+    packages = __as_table(payload.get("packages"))
     if packages is not None:
         for name, value in packages.items():
-            spec = _as_table(value)
+            spec = __as_table(value)
             if spec is None:
                 continue
             entry = spec.get("entry")
@@ -282,13 +282,13 @@ def _print_graph(payload: dict[str, object]) -> None:
     if diagnostics:
         print("diagnostics:")
         for value in diagnostics:
-            item = _as_table(value)
+            item = __as_table(value)
             if item is None:
                 continue
             print(f"  error[{item.get('code')}]: {item.get('path')}: {item.get('message')}")
 
 
-def _as_table(value: object) -> dict[str, object] | None:
+def __as_table(value: object) -> dict[str, object] | None:
     """Narrow an untyped JSON value to a string-keyed table."""
     if not isinstance(value, dict):
         return None
@@ -302,17 +302,17 @@ def _as_table(value: object) -> dict[str, object] | None:
 
 def cmd_test(args: argparse.Namespace) -> int:
     """Run the project's own tests under ``<project>/tests`` (D6, §8.5)."""
-    _project, root_dir = _load_project(args.project)
+    _project, root_dir = __load_project(args.project)
     return project_tests.run(
         root_dir,
         compiler_command(),
-        _STD_SRC,
-        flags=_compiler_flags(args),
-        env=_compiler_env(),
+        __STD_SRC,
+        flags=__compiler_flags(args),
+        env=__compiler_env(),
     )
 
 
-def _compiler_env() -> dict[str, str]:
+def __compiler_env() -> dict[str, str]:
     """Environment for compiler subprocesses.
 
     Only a source checkout needs help: its fallback entry point is
@@ -321,18 +321,18 @@ def _compiler_env() -> dict[str, str]:
     importable.
     """
     env = os.environ.copy()
-    if not (_CHECKOUT / "compiler" / "main.py").is_file():
+    if not (__CHECKOUT / "compiler" / "main.py").is_file():
         return env
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(_CHECKOUT) if not existing else f"{_CHECKOUT}{os.pathsep}{existing}"
+    env["PYTHONPATH"] = str(__CHECKOUT) if not existing else f"{__CHECKOUT}{os.pathsep}{existing}"
     return env
 
 
-def _add_project_arg(sub: argparse.ArgumentParser) -> None:
+def __add_project_arg(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("project", nargs="?", default=".", help="Project root directory (default: cwd)")
 
 
-def _add_build_args(sub: argparse.ArgumentParser) -> None:
+def __add_build_args(sub: argparse.ArgumentParser) -> None:
     sub.add_argument(
         "-O",
         dest="opt",
@@ -369,23 +369,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--lib", action="store_true", help="Shorthand for --kind lib")
 
     p = sub.add_parser("build")
-    _add_project_arg(p)
-    _add_build_args(p)
+    __add_project_arg(p)
+    __add_build_args(p)
 
     p = sub.add_parser("run")
-    _add_project_arg(p)
-    _add_build_args(p)
+    __add_project_arg(p)
+    __add_build_args(p)
 
     p = sub.add_parser("check")
-    _add_project_arg(p)
-    _add_build_args(p)
+    __add_project_arg(p)
+    __add_build_args(p)
 
     p = sub.add_parser("test")
-    _add_project_arg(p)
-    _add_build_args(p)
+    __add_project_arg(p)
+    __add_build_args(p)
 
     p = sub.add_parser("graph")
-    _add_project_arg(p)
+    __add_project_arg(p)
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     args = parser.parse_args(raw_argv)

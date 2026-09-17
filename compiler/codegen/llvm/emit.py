@@ -46,7 +46,7 @@ class Emitter:
         emission (-O0 = no IR passes) and the backend target machine gets
         ``opt=opt_level``; ``-t ll`` always emits the unoptimized IR as-is.
         """
-        normalized_kind = self._normalize_kind(kind)
+        normalized_kind = self.__normalize_kind(kind)
         paths = {"ll": f"{stem}.ll", "bc": f"{stem}.bc", "obj": f"{stem}.o", "asm": f"{stem}.s"}
 
         if normalized_kind == "ll":
@@ -100,7 +100,7 @@ class Emitter:
         return output_path
 
     @staticmethod
-    def _normalize_kind(kind: str) -> str:
+    def __normalize_kind(kind: str) -> str:
         kind_map = {"ll": "ll", "ir": "ll", "llvm-ir": "ll", "bc": "bc", "bytecode": "bc",
                     "o": "obj", "obj": "obj", "object": "obj", "s": "asm", "asm": "asm", "assembly": "asm"}
         value = kind_map.get(kind.lower())

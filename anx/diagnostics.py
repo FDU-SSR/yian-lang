@@ -43,7 +43,7 @@ class Diagnostic:
     hint: str | None = None
 
 
-def sort_key(diagnostic: Diagnostic) -> tuple[int, str, int, str, str]:
+def __sort_key(diagnostic: Diagnostic) -> tuple[int, str, int, str, str]:
     """Sort by path (``None`` first), then span start, then code."""
     has_path = diagnostic.path is not None
     path = str(diagnostic.path) if diagnostic.path is not None else ""
@@ -53,7 +53,7 @@ def sort_key(diagnostic: Diagnostic) -> tuple[int, str, int, str, str]:
 
 def sort_diagnostics(diagnostics: Iterable[Diagnostic]) -> tuple[Diagnostic, ...]:
     """Return *diagnostics* in the stable order callers may compare."""
-    return tuple(sorted(diagnostics, key=sort_key))
+    return tuple(sorted(diagnostics, key=__sort_key))
 
 
 def format_diagnostic(diagnostic: Diagnostic) -> str:
