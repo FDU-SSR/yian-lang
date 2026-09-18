@@ -1,0 +1,8 @@
+fn f() {
+    let v: Vec<i32> = Vec<i32>.new();
+    let p: Pair<Pair<i32>> = Pair<Pair<i32>>.of(1, 2);
+    let q: Vec<i32>* = &v;
+    let r: Vec<Vec<Option<i32>>> = w();
+    let less: bool = a < b;
+    let greater: bool = a > b;
+}

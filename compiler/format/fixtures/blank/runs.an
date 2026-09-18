@@ -1,0 +1,12 @@
+fn first() {
+    return;
+}
+
+
+
+fn second() {
+    let x: i32 = 1;
+
+
+    return;
+}

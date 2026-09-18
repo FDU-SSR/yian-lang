@@ -37,6 +37,7 @@ from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.restricted_ops import check_restricted_ops
 from compiler.analysis.source_provenance import build_source_trust, resolve_stdlib_root
+from compiler.format import format_text
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -156,6 +157,29 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "With --analyze, print one JSON object with the diagnostics on stdout. "
             "stdout then carries only that object; everything else goes to stderr."
         ),
+    )
+    parser.add_argument(
+        "--format",
+        action="store_true",
+        default=False,
+        help=(
+            "Format the given source files (lex, parse, then re-emit with canonical "
+            "whitespace, line breaks and comment placement). Prints to stdout; use "
+            "-w to rewrite in place, or --check to report the files that differ."
+        ),
+    )
+    parser.add_argument(
+        "-w",
+        "--write",
+        action="store_true",
+        default=False,
+        help="With --format, rewrite the files in place instead of printing them.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        default=False,
+        help="With --format, report the files that need formatting and exit 1 if any.",
     )
     parser.add_argument(
         "--raw-pointers",
@@ -420,12 +444,50 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def __format(args: argparse.Namespace) -> int:
+    """The ``--format`` path: no analysis, no build/ output, just layout."""
+    files = collect_an_files(args.paths)
+    if not files:
+        print("error: --format needs at least one source file", file=sys.stderr)
+        return 1
+    if not args.write and not args.check and len(files) != 1:
+        print("error: --format prints one file; add -w or --check", file=sys.stderr)
+        return 1
+    unformatted: list[Path] = []
+    for path in files:
+        text = path.read_text()
+        formatted = format_text(text, path=path)
+        if formatted is None:
+            print(f"skip {path}: cannot be formatted", file=sys.stderr)
+            continue
+        if formatted == text:
+            continue
+        unformatted.append(path)
+        if args.check:
+            continue
+        if args.write:
+            path.write_text(formatted)
+        else:
+            sys.stdout.write(formatted)
+    if args.check:
+        for path in unformatted:
+            print(path)
+        print(f"{len(unformatted)} of {len(files)} file(s) need formatting")
+        return 1 if unformatted else 0
+    if args.write:
+        print(f"{len(files)} file(s) checked, {len(unformatted)} rewritten")
+    return 0
+
+
 def __run(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
     if args.json and not args.analyze:
         print("error: --json requires --analyze", file=sys.stderr)
         return 1
+
+    if args.format:
+        return __format(args)
 
     if args.analyze:
         return __analyze(args)

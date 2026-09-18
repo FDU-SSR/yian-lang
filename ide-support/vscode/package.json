@@ -2,7 +2,7 @@
     "name": "yian-language-support",
     "displayName": "YIAN Language Support",
     "description": "YIAN language support: syntax highlighting, comment/bracket behaviour, language configuration and the YIAN language server client",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "publisher": "yian",
     "license": "MIT OR Apache-2.0",
     "engines": {

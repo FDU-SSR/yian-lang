@@ -21,6 +21,7 @@ from anx.diagnostics import (
 from anx.project import CycleError, PackageKind, Project, discover, load
 from anx.scaffold import KINDS, scaffold
 from compiler.analysis.source_provenance import resolve_stdlib_root
+from compiler.format import format_text
 
 __CHECKOUT = Path(__file__).resolve().parent.parent
 # The standard library an anx run compiles against. In a non-editable install
@@ -205,6 +206,40 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     __do_build(args.project, command="check", target="none", flags=__compiler_flags(args))
+    return 0
+
+
+def cmd_fmt(args: argparse.Namespace) -> int:
+    """Format the project's own sources, or report the files that differ.
+
+    Only the root package's files are touched: the standard library and
+    dependencies are inputs, not part of this project.
+    """
+    project, _ = __load_project(args.project)
+    root = project.packages[project.root_package]
+    files = sorted(
+        path
+        for path in project.files
+        if path.resolve().is_relative_to(root.source_root.resolve())
+    )
+    unformatted: list[Path] = []
+    for path in files:
+        text = path.read_text()
+        formatted = format_text(text, path=path)
+        if formatted is None:
+            print(f"skip {path}: cannot be formatted", file=sys.stderr)
+            continue
+        if formatted == text:
+            continue
+        unformatted.append(path)
+        if not args.check:
+            path.write_text(formatted)
+    if args.check:
+        for path in unformatted:
+            print(path)
+        print(f"{len(unformatted)} of {len(files)} file(s) need formatting")
+        return 1 if unformatted else 0
+    print(f"{len(files)} file(s) checked, {len(unformatted)} rewritten")
     return 0
 
 
@@ -408,6 +443,15 @@ def main(argv: list[str] | None = None) -> int:
     __add_project_arg(p)
     __add_build_args(p)
 
+    p = sub.add_parser("fmt")
+    __add_project_arg(p)
+    p.add_argument(
+        "--check",
+        action="store_true",
+        default=False,
+        help="report files that are not formatted instead of rewriting them",
+    )
+
     p = sub.add_parser("graph")
     __add_project_arg(p)
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -424,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_run(args)
         case "check":
             return cmd_check(args)
+        case "fmt":
+            return cmd_fmt(args)
         case "test":
             return cmd_test(args)
         case "graph":

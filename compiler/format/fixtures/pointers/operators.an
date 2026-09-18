@@ -1,0 +1,10 @@
+fn f(p: i32*, q: Meters&, a: i32, b: i32, bytes: u8[], v: Vec<i32>) {
+let x: i32= *p+1;
+let y=a*b- -b;
+*p = a * b;
+let z: Vec<i32>* = &v;
+let deref: i32 = *p;
+let shifted: i32 = a << 2;
+let masked: i32 = a & b;
+let text: str = str.from(&bytes[0u64..4]);
+}

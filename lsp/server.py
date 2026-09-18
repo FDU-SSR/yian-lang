@@ -42,6 +42,7 @@ from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.completion import completion_list, signature_help
 from lsp.diagnostics import diagnostics_by_document
+from lsp.formatting import document_edits
 from lsp.refactor import (
     code_actions,
     document_highlights,
@@ -63,7 +64,7 @@ SERVER_NAME = "yian-lsp"
 #: Reported to the client as ``serverInfo``.  It tracks the VS Code extension's
 #: version on purpose: the two are released together from this repository, and
 #: the extension warns when the pair it started does not match (plan §6.1, §7 P8).
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.7.0"
 
 #: LSP's ``RequestFailed``: the request was understood, but cannot be fulfilled.
 #: A refused rename (a standard library symbol, an unusable name, an unchecked
@@ -433,6 +434,19 @@ def __register_features(server: YianLanguageServer) -> None:
         path, row, col = located
         info = signature_info(result, path, row, col, std_root=ls.model.std_root)
         return None if info is None else signature_help(info)
+
+    # ── formatting ────────────────────────────────────────────────────────────
+
+    @server.feature(types.TEXT_DOCUMENT_FORMATTING)
+    def formatting(
+        ls: YianLanguageServer, params: types.DocumentFormattingParams
+    ) -> list[types.TextEdit] | None:
+        # Formatting reads the buffer, not the snapshot: it needs no analysis, and
+        # a file that does not parse yet gets no edits rather than a partial
+        # rewrite.
+        path = uri_to_path(params.text_document.uri)
+        text = ls.model.documents.text(path)
+        return document_edits(text, path)
 
     # ── references, rename and quick fixes (plan §7 P7) ───────────────────────
 

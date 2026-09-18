@@ -1,0 +1,6 @@
+impl Clone for i8  { fn clone() -> Self { *self } }
+impl Clone for u8 { fn clone() -> Self { *self } }
+trait Empty {}
+struct Unit { }
+fn add1(x: i32) -> i32 { return x + 1; }
+fn main() { }

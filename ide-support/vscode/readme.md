@@ -33,8 +33,9 @@ YIAN（`.an`）的编辑器支持：声明式的语言注册与编辑体验、�
 - 快速修复（`codeAction`）：删掉无法解析的导入。`from X import a, b;` 只坏一项时只删那一项
   和它的分隔符，单独一项坏掉或路径本身坏掉时删整条语句；动作回带它针对的诊断
 
-不做格式化、内联提示、折叠范围、选择范围与文档链接：AST 不保留注释与空白，格式化需要一份保留
-trivia 的词法/语法层，是另一个项目。
+格式化由语言服务器提供：`Shift+Alt+F` 或 `editor.formatOnSave` 都会请求 `textDocument/formatting`，
+服务器返回一个覆盖全文的编辑，可一次撤销。格式化只改空白与注释的位置，token 序列逐字不变；语法有错的
+文件不产生任何修改。内联提示、折叠范围、选择范围与文档链接不做。
 
 引用高亮/重命名/代码操作都基于解析结果，因此**分析没跑到的代码不会被连带修改**；
 这也意味着重命名在"项目里存在未实例化的泛型体用到该名字"时会拒绝而不是只改一半。
@@ -88,7 +89,7 @@ python3 -m lsp --version                    # 用同一个解释器确认入口�
 
 ### 版本匹配
 
-扩展与服务器从同一个仓库一起发布，版本号相同（当前 **0.6.0**：`package.json` 的 `version` 与
+扩展与服务器从同一个仓库一起发布，版本号相同（当前 **0.7.0**：`package.json` 的 `version` 与
 `lsp/server.py` 的 `SERVER_VERSION` 一起改）。服务器在 `initialize` 里回 `serverInfo`，扩展比对不一致
 时会在输出通道记一条警告并弹提示——出现它说明启动服务器的那个解释器里的 `yian` 是旧安装，重新
 `pip install -e '.[lsp]'` 即可。能力以扩展版本为准：服务器更旧时新特性会失效（例如旧服务器不认
@@ -156,7 +157,7 @@ f-string、`dyn` 数组与 `del`）、`handles.an`（`T&` 引用、指针参数�
    `let n: i32 = "x";`）保存后应看到 `E4xx` 波浪线，改回后再保存消失；
 4. 把光标放到符号上悬停：日志里若出现 `(request, full)`，说明是语义请求触发的完整分析，之后继续
    悬停只有 `reused`（快照已就绪）；
-5. 输出通道里能看到 `connected to yian-lsp 0.6.0`；把 `command` 指向一个**装有旧版 `yian`** 的解释器
+5. 输出通道里能看到 `connected to yian-lsp 0.7.0`；把 `command` 指向一个**装有旧版 `yian`** 的解释器
    会弹版本不匹配提示（指向完全没装 `yian` 的解释器则是 `could not start`），改回后恢复正常；
 6. 打开 `ide-support/sample-errors/src/errors.an` 应看到 **5 条**诊断。
 
@@ -181,8 +182,8 @@ cd ide-support/vscode
 npm install
 npm run compile
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.6.0.vsix --force
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.6.0
+code --install-extension yian-language-support-0.7.0.vsix --force
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.7.0
 ```
 
 在 WSL / 远程窗口里 `code` 是远端 CLI，安装、卸载、`--list-extensions` 都作用于**远端**扩展目录，
@@ -300,13 +301,14 @@ YIAN Language Server）。要把日志留档或开到更详细：
 | 0.4.0 | 补全、参数提示、语义高亮 |
 | 0.5.0 | 查找引用、文档高亮、重命名（含拒绝规则）、删除无效导入的快速修复 |
 | 0.6.0 | 打字只跑前端、`--log-file` 与日志级别设置、扩展/服务器版本匹配检查、安装与故障排查文档 |
+| 0.7.0 | 格式化（`textDocument/formatting`）、扩展与服务器版本同号 0.7.0 |
 
 版本号规则：扩展 `package.json` 的 `version` 与服务器 `lsp/server.py` 的 `SERVER_VERSION` 一起改，
 两处不一致时扩展会在输出通道里警告（见"版本匹配"）。
 
 ## 已知限制
 
-- 不提供：格式化、内联提示（inlay hints）、折叠范围、选择范围、文档链接、工作区符号搜索
+- 不提供：内联提示（inlay hints）、折叠范围、选择范围、文档链接、工作区符号搜索
   （`workspace/symbol`）、`declaration` / `typeDefinition` / `implementation`、模糊匹配补全、
   snippet 补全、doc 注释补全、自动补 import。
 - 打字期间只运行编译器前端，因此 Problems 面板暂时只有词法/语法诊断，类型诊断在保存或下一次语义

@@ -1,0 +1,10 @@
+from std.core.io import print;
+
+fn main() {
+    let name = "yian";
+    let count: i32 = 3;
+    let message = f"{name} has {count} items";
+    let spaced = f"  {name}  ";
+    print(message.as_str());
+    print(spaced.as_str());
+}
