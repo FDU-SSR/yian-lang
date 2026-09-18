@@ -47,7 +47,7 @@ from compiler.codegen.cfg import ir as CFG_IR
 from compiler.codegen.cfg.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
-from compiler.codegen.llvm.module import LLModule
+from compiler.codegen.llvm.module import LLModule, apply_target
 from compiler.codegen.llvm.translator import LLTranslator
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.error import CompilerError
@@ -336,7 +336,7 @@ def __unit_name(unit_data: UnitData, packages: PackageMap | None) -> str:
 
 def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool) -> Callable[[int], int]:
     module = ir.Module(name="yian.comptime.layout")
-    module.triple = "x86_64-unknown-linux-gnu"
+    apply_target(module)
     ll_type_ctx = LLTypeCtx(type_ctx, module, unit_names, raw_pointers)
     return ll_type_ctx.get_type_size
 

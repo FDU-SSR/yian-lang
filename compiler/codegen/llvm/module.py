@@ -13,6 +13,26 @@ from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 
+# 目标平台: 三元组与 data layout 必须成对出现在模块上。
+#
+# 只写 triple、留空 data layout 时, 模块内声明的布局与目标机布局不一致: 中端
+# pass 按"无 ABI 对齐约束"的空布局折叠字段偏移, 后端按目标机布局落子, 同一个
+# 字段的读写偏移就会不同 (例如 4 字节 tag + 8 字节指针的 enum 之后跟 u64:
+# 空布局给 12, 目标机给 16), 表现为静默取错值, 且只在 -O1 及以上出现
+# (见 docs/llvm_note.md「目标三元组与 data layout」)。
+TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
+TARGET_DATA_LAYOUT = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+
+
+def apply_target(module: ir.Module) -> None:
+    """把目标三元组与配套的 data layout 写到 ``module`` 上。
+
+    LLVM 类型的具体布局(TargetData)由模块的 data layout 决定, 编译期布局查询与
+    发射阶段的优化/后端必须看到同一份, 故两者只能在同一个地方定义、一起落盘。
+    """
+    module.triple = TARGET_TRIPLE
+    module.data_layout = TARGET_DATA_LAYOUT
+
 
 class LLFunction:
     """Wraps an ``ir.Function`` with codegen context."""

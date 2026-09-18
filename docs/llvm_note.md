@@ -1,5 +1,25 @@
 # 笔记
 
+## 目标三元组与 data layout
+
+模块上必须**成对**写目标三元组与配套的 data layout: 类型的具体布局(TargetData)、字段偏移、
+对齐填充都由 data layout 决定, 而中端优化 pass 与后端代码生成必须看到同一份。
+
+本编译器的目标固定为 `x86_64-unknown-linux-gnu`, 常量与落盘位置:
+
+- `compiler/codegen/llvm/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
+  `apply_target(module)`;
+- `compiler/codegen/llvm/translator.py`(真正的模块)与 `compiler/main.py`
+  的 `__type_size_provider`(编译期 `@sizeof`/布局查询用的临时模块)都调用 `apply_target`;
+- `compiler/codegen/llvm/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
+  data layout, 就用目标机的 `target_data` 补上。
+
+只写三元组而留空 data layout 会出错, 且**只在 `-O1` 及以上**出现: 空布局把 `i64` 当作
+4 字节对齐, 中端把结构体字段访问的 typed GEP 折叠成字节偏移(例如 4 字节 tag + 8 字节指针的
+enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字段写在 16, 同一次访问的读写
+偏移不一致, 表现为静默取错值。外部工具(`clang`/`llc`)读入 data layout 为空的模块会先补上
+目标机布局再优化, 因此复现不出来; 只有 llvmlite 进程内管线会带着空布局跑 pass。
+
 ## 链接性(Linkage)
 
 `llvm` 中, 全局变量和函数可以有不同的链接性 (linkage), 包括:

@@ -72,6 +72,12 @@ class Emitter:
             llvm_mod.verify()
             if opt_level > 0 or normalized_kind in ("obj", "asm"):
                 target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", opt=opt_level)  # type: ignore[union-attr]
+            if target_machine is not None and not llvm_mod.data_layout:
+                # 发射端只保证 triple (apply_target 已写上配套 layout); 这里再兜
+                # 一道: 模块若没有 data layout, 中端 pass 会按空布局折叠字段偏移
+                # 而后端按目标机布局落子, 同一次访问读写偏移不一致 (见
+                # docs/llvm_note.md「目标三元组与 data layout」)。
+                llvm_mod.data_layout = str(target_machine.target_data)
             if opt_level > 0:
                 # speed_level 即 -O 档位:LLVMPY_buildPerModuleDefaultPipeline
                 # 据此构建 per-module 默认管线。

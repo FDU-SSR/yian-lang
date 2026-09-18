@@ -10,7 +10,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.builder import BuilderPosition, LLBuilder
-from compiler.codegen.llvm.module import LLFunction, LLModule
+from compiler.codegen.llvm.module import LLFunction, LLModule, apply_target
 from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.utils.log import CompilerLog
@@ -29,7 +29,7 @@ class LLTranslator:
         self.__raw_pointers = raw_pointers
 
         ll_module = ir.Module(name="yian.module")
-        ll_module.triple = "x86_64-unknown-linux-gnu"
+        apply_target(ll_module)
 
         self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names, raw_pointers)
         self.__module = LLModule(ll_module, self.__ll_type_ctx, entry_type_id)
