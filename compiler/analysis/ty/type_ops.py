@@ -139,6 +139,12 @@ def same(ctx: TypeCtx, left: int, right: int) -> bool:
     those different, so compare the shapes instead, resolving aliases as we
     descend.
     """
+    # The error type is a poison value, not a type: anything compared against it
+    # matches, so the one error that produced it does not turn into a mismatch at
+    # every use site (plan §5.11 layer three).
+    if left == ctx.error_id or right == ctx.error_id:
+        return True
+
     left = ctx.resolve_aliases(left)
     right = ctx.resolve_aliases(right)
     if left == right:

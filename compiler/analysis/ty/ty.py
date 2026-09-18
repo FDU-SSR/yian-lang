@@ -36,6 +36,19 @@ class NeverType:
 
 
 @dataclass
+class ErrorType:
+    """The type of something whose checking failed (plan §5.11 layer three).
+
+    A *poison* value, not a real type: it is deliberately **not** ``NeverType``
+    (the bottom type, which has language meaning), and comparisons against it
+    succeed so that one error does not cascade into "expected X, got error" at
+    every use site.  Editors render it as ``error``.
+    """
+
+    type_id: int
+
+
+@dataclass
 class BoolType:
     type_id: int
 
@@ -130,6 +143,9 @@ class StructField:
     type_id: int
     access_mode: AccessMode
     index: int
+    #: Declaration span of the field's name; ``None`` for synthesized fields
+    #: (unnamed structs built for enum payloads, prelude types).
+    span: SrcSpan | None = None
 
 
 @dataclass
@@ -160,6 +176,7 @@ class StructType:
                 type_id=context.instantiate(field_.type_id, substs),
                 access_mode=field_.access_mode,
                 index=field_.index,
+                span=field_.span,
             ))
         return fields
 
@@ -172,6 +189,7 @@ class StructType:
                     type_id=context.instantiate(field_.type_id, substs),
                     access_mode=field_.access_mode,
                     index=field_.index,
+                    span=field_.span,
                 )
         return None
 
@@ -181,6 +199,8 @@ class EnumVariant:
     name: str
     payload_type: int | None
     discriminant: int
+    #: Declaration span of the variant's name; ``None`` when synthesized.
+    span: SrcSpan | None = None
 
 
 @dataclass
@@ -213,6 +233,7 @@ class EnumType:
                 name=variant.name,
                 payload_type=payload_type,
                 discriminant=variant.discriminant,
+                span=variant.span,
             ))
         return variants
 
@@ -227,6 +248,7 @@ class EnumType:
                     name=variant.name,
                     payload_type=payload_type,
                     discriminant=variant.discriminant,
+                    span=variant.span,
                 )
         return None
 
@@ -235,6 +257,8 @@ class EnumType:
 class Parameter:
     name: str
     type_id: int
+    #: Declaration span of the parameter's name; ``None`` when synthesized.
+    span: SrcSpan | None = None
 
 
 @dataclass
@@ -263,6 +287,7 @@ class FunctionType:
             parameters.append(Parameter(
                 name=param.name,
                 type_id=context.instantiate(param.type_id, substs),
+                span=param.span,
             ))
         return parameters
 
@@ -309,6 +334,7 @@ class MethodType:
             parameters.append(Parameter(
                 name=param.name,
                 type_id=context.instantiate(param.type_id, substs),
+                span=param.span,
             ))
         return parameters
 
@@ -365,7 +391,7 @@ class AliasType:
 
 
 BasicType: TypeAlias = (
-    VoidType | NeverType | BoolType | CharType | StrType
+    VoidType | NeverType | ErrorType | BoolType | CharType | StrType
     | IntType | FloatType
     | IntLiteralType | FloatLiteralType
 )
@@ -403,6 +429,7 @@ Ty: TypeAlias = BasicType | DerivedType | CustomType | ClosureType | GenericType
 class IntrinsicType(Enum):
     Never = "!"
     Void = "void"
+    Error = "error"
     Bool = "bool"
     Char = "char"
     Str = "str"

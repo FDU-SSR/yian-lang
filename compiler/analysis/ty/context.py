@@ -55,6 +55,9 @@ class TypeCtx:
     int_literal_id: int = 25
     float_literal_id: int = 26
 
+    #: Poison type for a definition whose checking failed; see ``ErrorType``.
+    error_id: int = 27
+
     # intrinsic trait IDs
     add_id: int = 50
     sub_id: int = 51
@@ -139,6 +142,7 @@ class TypeCtx:
     INTRINSIC_TYPE_DICT: dict[Type.IntrinsicType, int] = {
         Type.IntrinsicType.Never: never_id,
         Type.IntrinsicType.Void: void_id,
+        Type.IntrinsicType.Error: error_id,
         Type.IntrinsicType.Bool: bool_id,
         Type.IntrinsicType.Char: char_id,
         Type.IntrinsicType.Str: str_id,

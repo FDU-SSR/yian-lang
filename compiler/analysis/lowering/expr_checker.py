@@ -728,7 +728,7 @@ class ExprChecker:
     def __declare_local_symbol(self, name: AST.Identifier, type_id: int) -> int:
         assert self.__ctx.symbol_ctx is not None
 
-        symbol_id = self.__ctx.symbol_ctx.add_symbol(name.name, SymbolKind.Variable, type_id)
+        symbol_id = self.__ctx.symbol_ctx.add_symbol(name.name, SymbolKind.Variable, type_id, span=name.span)
         if symbol_id is None:
             raise AnalysisError(f"Variable '{name.name}' is already defined in the current scope", name.span)
         self.__ctx.push_local(symbol_id)

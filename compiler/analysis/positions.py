@@ -23,14 +23,15 @@ def utf16_length(text: str) -> int:
     return sum(2 if ord(character) > 0xFFFF else 1 for character in text)
 
 
-def to_lsp_position(line_text: str, col: int) -> dict[str, int]:
-    """Convert a 1-based code-point column on *line_text* to a 0-based UTF-16 one.
+def to_lsp_position(row: int, line_text: str, col: int) -> dict[str, int]:
+    """Convert a compiler position to a 0-based line with a UTF-16 character.
 
-    The row is not involved: both sides count lines from 0.
+    *row* is already 0-based and is passed through; *col* is 1-based and counted
+    in code points, so *line_text* is needed to convert it.
     """
     code_point_index = max(0, col - 1)
     character = utf16_length(line_text[:code_point_index])
-    return {"line": 0, "character": character}
+    return {"line": row, "character": character}
 
 
 def to_lsp_range(span: SrcSpan, text: str) -> dict[str, dict[str, int]]:
@@ -43,11 +44,10 @@ def to_lsp_range(span: SrcSpan, text: str) -> dict[str, dict[str, int]]:
     start_line = lines[span.start.row] if 0 <= span.start.row < len(lines) else ""
     end_line = lines[span.end.row] if 0 <= span.end.row < len(lines) else ""
 
-    start = to_lsp_position(start_line, span.start.col)
-    start["line"] = span.start.row
-    end = to_lsp_position(end_line, span.end.col)
-    end["line"] = span.end.row
-    return {"start": start, "end": end}
+    return {
+        "start": to_lsp_position(span.start.row, start_line, span.start.col),
+        "end": to_lsp_position(span.end.row, end_line, span.end.col),
+    }
 
 
 def path_to_uri(path: Path) -> str:

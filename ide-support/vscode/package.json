@@ -1,8 +1,8 @@
 {
     "name": "yian-language-support",
     "displayName": "YIAN Language Support",
-    "description": "YIAN language support: syntax highlighting, comment/bracket behaviour and language configuration",
-    "version": "0.1.1",
+    "description": "YIAN language support: syntax highlighting, comment/bracket behaviour, language configuration and the YIAN language server client",
+    "version": "0.2.2",
     "publisher": "yian",
     "license": "MIT OR Apache-2.0",
     "engines": {
@@ -48,7 +48,27 @@
                 "language": "yian",
                 "path": "./snippets/yian.json"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "YIAN",
+            "properties": {
+                "yian.languageServer.command": {
+                    "type": "string",
+                    "default": "yian-lsp",
+                    "markdownDescription": "Command that starts the YIAN language server. The default expects `yian-lsp` on `PATH`; set an absolute path when it is installed elsewhere (for example a conda environment's `bin` directory).",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "markdownDescription": "Arguments passed to the language server command, for example `--compiler-root` or `--log-level DEBUG`.",
+                    "scope": "machine-overridable"
+                }
+            }
+        }
     },
     "scripts": {
         "compile": "tsc -p ./",
@@ -59,5 +79,8 @@
         "@types/node": "^22.15.3",
         "@types/vscode": "^1.90.0",
         "typescript": "^5.8.3"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^10.1.1"
     }
 }

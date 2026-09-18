@@ -57,33 +57,41 @@ class PackageMap:
             raise CompilerError(f"could not read --packages file {path}: {error}") from error
         except json.JSONDecodeError as error:
             raise CompilerError(f"could not parse --packages file {path}: {error}") from error
+        return cls.from_document(raw, source=f"--packages file {path}")
 
+    @classmethod
+    def from_document(cls, raw: object, *, source: str) -> PackageMap:
+        """Validate an already-parsed v2 document.
+
+        ``project.compiler_package_map()`` produces exactly this payload, so the
+        language server can hand a project model straight to the analysis session
+        without writing and re-reading a JSON file.  *source* names the origin in
+        error messages.
+        """
         data = _as_table(raw)
         if data is None:
-            raise CompilerError(f"--packages file {path} must contain a JSON object")
+            raise CompilerError(f"{source} must contain a JSON object")
 
         version = data.get("format")
         if version != SUPPORTED_FORMAT:
             raise CompilerError(
-                f"--packages file {path} declares format {version!r}; "
+                f"{source} declares format {version!r}; "
                 f"this compiler requires format {SUPPORTED_FORMAT}"
             )
 
         table = _as_table(data.get("packages"))
         if table is None:
-            raise CompilerError(f"--packages file {path} must contain a 'packages' object")
+            raise CompilerError(f"{source} must contain a 'packages' object")
 
         packages: dict[str, PackageSpec] = {}
         for name, value in table.items():
             spec = _as_table(value)
             if spec is None:
-                raise CompilerError(f"--packages entry '{name}' must be an object")
+                raise CompilerError(f"{source}: packages entry '{name}' must be an object")
             packages[name] = _parse_spec(name, spec)
 
         if STD_PACKAGE not in packages:
-            raise CompilerError(
-                f"--packages file {path} must describe the '{STD_PACKAGE}' package"
-            )
+            raise CompilerError(f"{source} must describe the '{STD_PACKAGE}' package")
 
         root_value = data.get("root")
         if root_value is None:
@@ -92,7 +100,7 @@ class PackageMap:
             root = root_value
         else:
             raise CompilerError(
-                f"--packages 'root' must name a package declared in the file, got {root_value!r}"
+                f"{source}: 'root' must name a package declared in the file, got {root_value!r}"
             )
 
         return cls(root=root, packages=MappingProxyType(packages))

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Install the YIAN compiler (`yianc`) and package manager (`anx`) into the
-# active Python environment.
+# Install the YIAN compiler (`yianc`), package manager (`anx`) and language
+# server (`yian-lsp`) into the active Python environment.
 #
-# The default install is editable: both commands point at this checkout, so
-# edits under compiler/ and anx/ take effect without reinstalling. A regular
+# The default install is editable: the commands point at this checkout, so edits
+# under compiler/, anx/ and lsp/ take effect without reinstalling. A regular
 # (non-editable) install is also supported; it does not carry the standard
 # library, so it needs YIAN_LIB (or YIAN_ROOT) at run time.
 #
@@ -19,7 +19,7 @@ REGULAR=0
 
 usage() {
     cat <<'EOF'
-Install yianc and anx into the active Python environment.
+Install yianc, anx and yian-lsp into the active Python environment.
 
 Usage: scripts/install.sh [options]
 
@@ -28,7 +28,8 @@ Options:
                  The installed commands then need YIAN_LIB or YIAN_ROOT to find
                  the standard library; the script prints the exact export line.
   --with-deps    Let pip resolve dependencies. Without it the environment is left
-                 untouched and llvmlite must already be importable.
+                 untouched and llvmlite must already be importable (and pygls, for
+                 yian-lsp, which a plain install does not pull in).
   --user         Install into the user site-packages instead of the environment.
   --python PATH  Python interpreter to use (default: $PYTHON, then python3).
   -h, --help     Show this help.
@@ -36,13 +37,14 @@ Options:
 Environment:
   PYTHON         Same as --python.
 
-The default install is editable: both commands point at this checkout, so edits
-to compiler/ and anx/ take effect immediately, including newly added modules.
+The default install is editable: the commands point at this checkout, so edits
+to compiler/, anx/ and lsp/ take effect immediately, including newly added
+modules.
 Only changes to [project.scripts], dependencies, or a new top-level package
 require reinstalling.
 
-A --regular install copies compiler/ and anx/ into site-packages without lib/,
-so point the tools at a checkout first:
+A --regular install copies compiler/, anx/ and lsp/ into site-packages without
+lib/, so point the tools at a checkout first:
 
   export YIAN_LIB="/path/to/yian/lib/src"     # the source root itself
   export YIAN_ROOT="/path/to/yian"            # or a checkout root
@@ -119,11 +121,11 @@ printf 'Installing (%s) from %s with %s\n' \
 SCRIPTS_DIR="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"
 MISSING=0
 printf '\nEntry points:\n'
-for cmd in yianc anx; do
+for cmd in yianc anx yian-lsp; do
     if command -v "$cmd" >/dev/null 2>&1; then
-        printf '  %-6s -> %s\n' "$cmd" "$(command -v "$cmd")"
+        printf '  %-8s -> %s\n' "$cmd" "$(command -v "$cmd")"
     else
-        printf '  %-6s -> NOT on PATH\n' "$cmd"
+        printf '  %-8s -> NOT on PATH\n' "$cmd"
         MISSING=1
     fi
 done

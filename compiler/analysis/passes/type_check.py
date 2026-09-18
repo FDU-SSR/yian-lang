@@ -1,7 +1,18 @@
-"""Worklist-driven type checking — lowers AST function/method bodies to HIR."""
+"""Worklist-driven type checking — lowers AST function/method bodies to HIR.
+
+With ``recover=True`` the pass also collects errors instead of stopping at the
+first one: the granularity is the **top-level definition** (plan §5.11 layer
+three).  A definition whose body fails is recorded as a diagnostic and skipped;
+the rest of the program is still checked, which is what turns "this file has one
+error" into "this file has five errors" in the Problems panel.  Recovery is for
+the analysis session (``--analyze`` and the language server); a build keeps the
+strict first-error behaviour, because code generation cannot proceed past a
+definition it could not type.
+"""
 
 from __future__ import annotations
 
+from compiler.analysis.diagnostics import Diagnostic, Stage, diagnostic_from_error
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
@@ -21,15 +32,33 @@ def ch_tc():
     return CompilerLog.get("type_check")
 
 
+#: The errors a definition body may raise and still be recoverable from.
+#: Anything else (an assertion, a key error) is a compiler bug and must not be
+#: swallowed by recovery.
+RECOVERABLE_ERRORS = (AnalysisError, CompilerError)
+
+
 class TypeCheck:
     def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, packages: PackageMap | None = None,
-                 require_entry: bool = True):
+                 require_entry: bool = True, entry_optional: bool = False, recover: bool = False):
         self.__units = units
         self.__type_ctx = type_ctx
         self.__packages = packages
         # A library root has no program entry; `-t none` still checks its
         # definitions, but a codegen run without an entry is a user error.
         self.__require_entry = require_entry
+        # ``entry_optional`` is for callers that analyze *text* rather than build
+        # a program (the analysis session behind `--analyze` and the language
+        # server): a file set with no `main` at all, or whose `main` is being
+        # edited, is not an error there.  The command line keeps its stricter
+        # behaviour because a build needs exactly one program entry.
+        self.__entry_optional = entry_optional
+        self.__recover = recover
+        self.__errors: list[Diagnostic] = []
+        # One condition at one position is one diagnostic: a generic body that
+        # fails is instantiated once per use, and the editor must not show the
+        # same squiggle five times.
+        self.__reported: set[tuple[str, str, int, int]] = set()
 
         self.__worklist: list[DefPoint] = []
         self.__def_points: dict[int, DefPoint] = {}  # type_id -> DefPoint
@@ -83,7 +112,22 @@ class TypeCheck:
                 continue
             processed_def.add(def_point.type_id)
             ch_tc().trace(lambda: f"checking {self.__type_ctx.get_name(def_point.type_id)}")
-            self.__type_check_def(def_point)
+            try:
+                self.__type_check_def(def_point)
+            except RECOVERABLE_ERRORS as error:
+                if not self.__recover:
+                    raise
+                self.__record(error)
+
+    def __record(self, error: Exception) -> None:
+        """Record one recovered error, ignoring a repeat of the same condition."""
+        diagnostic = diagnostic_from_error(error, stage=Stage.TYPE_CHECK)
+        span = diagnostic.span
+        key = (diagnostic.code, str(span.path), span.start.row, span.start.col)
+        if key in self.__reported:
+            return
+        self.__reported.add(key)
+        self.__errors.append(diagnostic)
 
     def __check_root_definitions(self) -> None:
         """Seed every top-level definition of the root package (G18/G21).
@@ -111,14 +155,35 @@ class TypeCheck:
         ch_tc().debug(f"check-roots: seeded {seeded} extra definition(s), skipped {skipped_generic} generic")
 
     def __is_root_unit(self, unit_id: int) -> bool:
-        """True when *unit_id* belongs to the package being checked."""
+        """True when *unit_id* belongs to the code being checked."""
         unit = self.__units[unit_id]
         if self.__packages is not None and self.__packages.root is not None:
-            return self.__packages.package_of(unit.path) == self.__packages.root
+            owner = self.__packages.package_of(unit.path)
+            # A file that belongs to no package is not part of a dependency: it
+            # is an extra file on the command line, or an editor buffer outside
+            # every source root, and the caller asked for it to be checked.
+            return owner == self.__packages.root or owner is None
         return not unit.is_stdlib
 
     def export(self) -> dict[int, DefPoint]:
         return self.__def_points
+
+    def export_diagnostics(self) -> tuple[Diagnostic, ...]:
+        """Errors collected while recovering (empty unless ``recover=True``).
+
+        Ordered by position so a client that renders them in order sees them top
+        to bottom, the way they appear in the file.
+        """
+        return tuple(
+            sorted(
+                self.__errors,
+                key=lambda diagnostic: (
+                    str(diagnostic.span.path),
+                    diagnostic.span.start.row,
+                    diagnostic.span.start.col,
+                ),
+            )
+        )
 
     def export_generated(self) -> dict[int, DefPoint]:
         """Return only the definitions reachable from the program entry.
@@ -156,8 +221,12 @@ class TypeCheck:
             if item.generics:
                 raise AnalysisError("The 'main' function cannot have generics", item.span)
         if not candidates:
+            if self.__entry_optional:
+                return
             raise CompilerError("No 'main' function found")
         if len(candidates) > 1:
+            if self.__entry_optional:
+                return
             raise AnalysisError("Multiple 'main' functions found", candidates[1][1].span)
         self.__register_main(candidates[0][0], candidates[0][1])
 
@@ -179,6 +248,10 @@ class TypeCheck:
             raise CompilerError(f"Program entry {entry} was not passed to the compiler")
         item = self.__main_def(unit)
         if item is None:
+            # The entry file is present but has no `main`: with an editor that is
+            # a file being written, not a program that must build.
+            if self.__entry_optional:
+                return
             raise CompilerError(f"No 'main' function found in the program entry {entry}")
         self.__register_main(unit, item)
 
@@ -256,7 +329,7 @@ class TypeCheck:
                 self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.ConstGeneric, generic_arg_id)
 
         for param in func_ty.parameters(self.__type_ctx):
-            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id, span=param.span)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
 
@@ -302,7 +375,7 @@ class TypeCheck:
             self.__sem_ctx.push_local(symbol_id)
 
         for param in method_ty.parameters(self.__type_ctx):
-            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id, span=param.span)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
 
@@ -341,7 +414,7 @@ class TypeCheck:
 
         # Inject parameters as locals
         for param in closure_ty.parameters:
-            sid = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id)
+            sid = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id, span=param.span)
             if sid is not None:
                 self.__sem_ctx.push_local(sid)
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from compiler.analysis.symbol.symbol import Symbol, SymbolAttribute, SymbolKind
 from compiler.analysis.ty.context import TypeCtx
 from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 
 
 @dataclass
@@ -93,10 +94,13 @@ class SymbolCtx:
             raise CompilerError("Cannot exit global scope")
         self.__current_scope = self.__current_scope.parent
 
-    def add_symbol(self, name: str, kind: SymbolKind, type_id: int, attributes: set[SymbolAttribute] = set()) -> int | None:
+    def add_symbol(self, name: str, kind: SymbolKind, type_id: int,
+                   attributes: set[SymbolAttribute] = set(),
+                   span: SrcSpan | None = None) -> int | None:
         """
         Adds a new symbol to the current scope and returns its symbol ID.
 
+        ``span`` is the declaration's name span, kept so editors can jump to it.
         returns None if the symbol already exists in the current scope.
         """
         if name in self.__current_scope.symbols:
@@ -106,7 +110,7 @@ class SymbolCtx:
         self.__ensure_scope_owned()
         symbol_id = self.__next_symbol_id()
         self.__current_scope.symbols[name] = symbol_id
-        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=attributes)
+        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=attributes, span=span)
         self.__all_symbols[symbol_id] = symbol
 
         # add a pub symbol to global scope will be exported
@@ -117,7 +121,7 @@ class SymbolCtx:
         return symbol_id
 
     def add_symbol_with_id(self, symbol_id: int, name: str, kind: SymbolKind,
-                            type_id: int) -> bool:
+                            type_id: int, span: SrcSpan | None = None) -> bool:
         """Add a symbol with a specific symbol_id. Returns False if ID exists."""
         if symbol_id in self.__all_symbols:
             return False
@@ -126,7 +130,7 @@ class SymbolCtx:
         self.__ensure_all_owned()
         self.__ensure_scope_owned()
         self.__current_scope.symbols[name] = symbol_id
-        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=set())
+        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=set(), span=span)
         self.__all_symbols[symbol_id] = symbol
         self.__next_id_holder[0] = max(self.__next_id_holder[0], symbol_id + 1)
         return True

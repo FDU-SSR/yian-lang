@@ -9,16 +9,22 @@ description = "YIAN programming language compiler (yianc) and package manager (a
 requires-python = ">=3.11"
 dependencies = ["llvmlite>=0.44.0"]
 
+[project.optional-dependencies]
+# The language server (yian-lsp) and therefore the IDE support; `yianc` and `anx`
+# work without it. How the server is distributed is still open (plan §6.1).
+lsp = ["pygls>=2.1"]
+
 [project.scripts]
 yianc = "compiler.main:main"
 anx = "anx.main:main"
+yian-lsp = "lsp.main:main"
 
 [tool.setuptools.packages.find]
-include = ["compiler*", "anx*"]
+include = ["compiler*", "anx*", "lsp*"]
 namespaces = true
 
 [tool.pyright]
-include = ["compiler", "anx"]
+include = ["compiler", "anx", "lsp"]
 exclude = ["bak", "tests", "docs", "**/node_modules", "**/__pycache__", "**/.*"]
 typeCheckingMode = "strict"
 useLibraryCodeForTypes = true

@@ -58,6 +58,7 @@ E101_UNTERMINATED_BLOCK_COMMENT = "E101"
 E102_FSTRING_BRACE = "E102"
 E103_UNTERMINATED_ESCAPE = "E103"
 E104_INVALID_LITERAL = "E104"
+E105_UNTERMINATED_LITERAL = "E105"
 E199_LEXICAL = "E199"
 
 # ── syntax (E2xx) ─────────────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ class Diagnostic:
 #: belongs to project/package-level diagnostics (``anx``), so a source-level
 #: diagnostic reports the equivalent ``E3xx`` code instead, and the message stops
 #: repeating the code (plan P0.3).
-_AX_TO_SOURCE_CODE: dict[str, str] = {
+__AX_TO_SOURCE_CODE: dict[str, str] = {
     "AX009": E309_NOT_A_DEPENDENCY,
     "AX010": E310_NOT_A_MODULE,
     "AX012": E308_UNKNOWN_PACKAGE,
@@ -136,7 +137,7 @@ def __split_embedded_code(message: str) -> tuple[str | None, str]:
         return None, message
     prefix, rest = message.split("]: ", 1)
     embedded = prefix[len("error[") :]
-    code = _AX_TO_SOURCE_CODE.get(embedded)
+    code = __AX_TO_SOURCE_CODE.get(embedded)
     if code == E310_NOT_A_MODULE and "does not resolve" in rest:
         code = E304_IMPORT_NOT_FOUND
     return code, rest
@@ -180,6 +181,8 @@ def diagnostic_from_error(
 def __lexical_code(message: str) -> str:
     if "Unterminated block comment" in message:
         return E101_UNTERMINATED_BLOCK_COMMENT
+    if "Unterminated string literal" in message or "Unterminated character literal" in message or "Unterminated byte literal" in message:
+        return E105_UNTERMINATED_LITERAL
     if "f-string" in message:
         return E102_FSTRING_BRACE
     if "unterminated" in message and "escape" in message:

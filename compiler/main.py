@@ -175,22 +175,23 @@ class _CompilationFailed(Exception):
     """Internal: a diagnostic has been reported; unwind to main() and exit 1."""
 
 
-#: Overlay used when the compiler runs in-process (the analysis session sets it
-#: through :func:`analyze_documents`); empty for a plain CLI run.
-_DOCUMENTS = DocumentStore()
+#: Source text of the current run, so an error is rendered against the text the
+#: compiler actually read rather than re-reading a file that may have moved on.
+#: Module level and outside any class body, hence the double underscore.
+__DOCUMENTS = DocumentStore()
 
 
-def __report_error(error: Exception, *, stage: object = None) -> NoReturn:
+def __report_error(error: Exception, *, stage: Stage | None = None) -> NoReturn:
     """Render one compiler error to stderr and unwind to ``main``.
 
     Replaces the old traceback-to-stdout + ``sys.exit(-1)`` path: diagnostics go
     to stderr and the process exit code is the CLI's usual success/failure, which
     is what ``docs/grammar/16.runtime_errors.md`` asks for.
     """
-    diagnostic = diagnostic_from_error(error, stage=None)
+    diagnostic = diagnostic_from_error(error, stage=stage)
     path = diagnostic.span.path
     try:
-        text = _DOCUMENTS.text(path)
+        text = __DOCUMENTS.text(path)
     except OSError:
         text = ""
     print(format_source_error(diagnostic, text), file=sys.stderr)
@@ -374,7 +375,7 @@ def __link_exe(obj_path: Path, output_path: Path, opt_level: int) -> None:
 def __lex(src_files: list[Path]) -> list[list[Token]]:
     token_lists: list[list[Token]] = []
     for src_file in src_files:
-        lexer = Lexer(src_file, text=_DOCUMENTS.text(src_file))
+        lexer = Lexer(src_file, text=__DOCUMENTS.text(src_file))
 
         try:
             lexer.lex()
@@ -442,7 +443,7 @@ def __run(argv: list[str] | None = None) -> int:
     # have to read the files again
     src_files = collect_an_files(args.paths)
     for src_file in src_files:
-        _DOCUMENTS.add(Document(path=src_file, text=src_file.read_text()))
+        __DOCUMENTS.add(Document(path=src_file, text=src_file.read_text()))
 
     # lex all source files
     lex_start = time.perf_counter() if args.profile else 0.0

@@ -39,6 +39,9 @@ class GlobalResolve:
         # Guards alias bodies that are being produced right now, see
         # __resolve_alias: a body that reaches its own alias is a cycle.
         self.__filling_aliases: set[int] = set()
+        # Resolution is the only place that knows how an import actually
+        # resolved, so record the edges here for the declaration index.
+        self.__import_edges: dict[int, list[int]] = {}
 
         self.__build_std_lookup()
 
@@ -53,6 +56,13 @@ class GlobalResolve:
             self.__resolve_definitions(unit)
 
         self.__type_ctx.check_impls()
+
+    def import_edges(self) -> dict[int, tuple[int, ...]]:
+        """Resolved import edges: unit id → unit ids it imports (deduplicated)."""
+        return {
+            unit_id: tuple(sorted(set(targets)))
+            for unit_id, targets in self.__import_edges.items()
+        }
 
     def __build_std_lookup(self) -> None:
         for unit in self.__units.values():
@@ -88,7 +98,7 @@ class GlobalResolve:
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
@@ -105,7 +115,7 @@ class GlobalResolve:
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
@@ -122,7 +132,7 @@ class GlobalResolve:
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
@@ -140,7 +150,7 @@ class GlobalResolve:
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
@@ -158,7 +168,7 @@ class GlobalResolve:
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
                     symbol = unit.symbol_ctx.get(symbol_id)
@@ -211,7 +221,9 @@ class GlobalResolve:
                 raise AnalysisError(f"Cannot import variable '{item.target.name}'", item.target.span)
 
             imported_name = item.alias.name if item.alias is not None else item.target.name
-            unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id)
+            import_span = item.alias.span if item.alias is not None else item.target.span
+            unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id, span=import_span)
+            self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
         """Resolve an import path to a UnitData, or raise with a diagnostic.
@@ -379,6 +391,7 @@ class GlobalResolve:
             Type.Parameter(
                 name=param.name.name,
                 type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                span=param.name.span,
             )
             for param in func_def.params
         ]
@@ -401,9 +414,9 @@ class GlobalResolve:
         for param, ty_id in zip(ast_generics, ty_generic_ids):
             match param:
                 case AST.TypeGenericParam(name=name):
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, ty_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, ty_id, span=name.span)
                 case AST.ConstGenericParam(name=name):
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, ty_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, ty_id, span=name.span)
 
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
         symbol = unit.symbol_ctx.lookup(struct_def.name.name)
@@ -423,6 +436,7 @@ class GlobalResolve:
                 type_id=field_type_id,
                 access_mode=Type.AccessMode.Public if is_pub else Type.AccessMode.Private,
                 index=index,
+                span=field.name.span,
             ))
         unit.symbol_ctx.exit_scope()
 
@@ -449,6 +463,7 @@ class GlobalResolve:
                 name=variant.name.name,
                 payload_type=payload_type_id,
                 discriminant=index,
+                span=variant.name.span,
             ))
         unit.symbol_ctx.exit_scope()
 
@@ -489,11 +504,11 @@ class GlobalResolve:
             match param:
                 case AST.TypeGenericParam(name=name):
                     g_id = self.__type_ctx.alloc_generic(name.name)
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
                     vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
                     g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
         target_type_id = self.__type_ctx.resolve_type(impl.target, unit.symbol_ctx)
@@ -528,7 +543,7 @@ class GlobalResolve:
 
         # alloc in symbol space
         symbol_attrs = self.__convert_attrs(decl.attrs)
-        symbol_id = unit.symbol_ctx.add_symbol(decl.name.name, SymbolKind.Function, type_id, symbol_attrs)
+        symbol_id = unit.symbol_ctx.add_symbol(decl.name.name, SymbolKind.Function, type_id, symbol_attrs, decl.name.span)
         if symbol_id is None:
             raise AnalysisError(f"Duplicate method name: {decl.name.name}", decl.name.span)
         symbol = unit.symbol_ctx.get(symbol_id)
@@ -540,17 +555,18 @@ class GlobalResolve:
             match param:
                 case AST.TypeGenericParam(name=name):
                     g_id = self.__type_ctx.alloc_generic(name.name)
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
                     vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
                     g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
-                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id)
+                    unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
         parameters = [
             Type.Parameter(
                 name=param.name.name,
                 type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                span=param.name.span,
             )
             for param in decl.params
         ]

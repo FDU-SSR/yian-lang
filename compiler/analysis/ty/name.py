@@ -23,6 +23,8 @@ class TypeFormatter:
                 name = "void"
             case Type.NeverType():
                 name = "!"
+            case Type.ErrorType():
+                name = "error"
             case Type.BoolType():
                 name = "bool"
             case Type.CharType():

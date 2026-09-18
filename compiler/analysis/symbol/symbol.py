@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from compiler.frontend.lex.position import SrcSpan
+
 
 class SymbolKind(Enum):
     Variable = "variable"
@@ -22,3 +24,7 @@ class Symbol:
     kind: SymbolKind
     type_id: int
     attributes: set[SymbolAttribute]
+    #: Where the symbol is declared — the *name* span.  ``None`` for synthesized
+    #: symbols (prelude injection, implicit `Self`), which no source position
+    #: points at.  Editors need this to answer "go to definition" (plan §5.8.2 #5).
+    span: SrcSpan | None = None

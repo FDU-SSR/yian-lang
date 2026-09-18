@@ -13,11 +13,12 @@ never writes to standard output.
 
 Error handling follows plan §5.11 layer one: an error aborts the analysis and is
 reported as a structured diagnostic.  "Keep going after an error" and multiple
-diagnostics per document are later layers (P3/P4).
+diagnostics per document are the next layer (P4).
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,7 @@ from compiler.analysis.diagnostics import (
 )
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.index import Index, build_index
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
@@ -47,6 +49,10 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
+
+#: Bumped when analysis semantics change, so snapshot keys from an older
+#: compiler never look reusable to a newer one (plan §5.12).
+ANALYSIS_FORMAT = 1
 
 #: The errors the analysis pipeline is expected to raise.  Anything else is a
 #: compiler bug: it is not swallowed here, so it stays visible while the analysis
@@ -95,6 +101,14 @@ class AnalysisResult:
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
+    #: Declaration index built from the units, or ``None`` when the run stopped.
+    index: Index | None = None
+    #: Editor version of each analyzed document (``None`` when unknown).
+    versions: Mapping[Path, int | None] = field(default_factory=dict[Path, int | None])
+    #: Snapshot key: every input's hash and version plus the compile flags.  A
+    #: result is only reusable when this matches, which is what keeps stale
+    #: definitions or diagnostics from surviving an edit (plan §5.12).
+    key: tuple[object, ...] = ()
 
     def ok(self) -> bool:
         """True when no diagnostic has error severity."""
@@ -163,19 +177,20 @@ class AnalysisSession:
         store = documents if documents is not None else DocumentStore()
         src_files = collect_an_files(paths, overlay=store)
         sources = {path: self.__text(store, path) for path in src_files}
+        key = self.__snapshot_key(sources, store)
 
         tokens = self.__lex(src_files, sources)
         if isinstance(tokens, AnalysisResult):
-            return tokens
+            return self.__keyed(tokens, key, store)
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
-            return programs
+            return self.__keyed(programs, key, store)
 
         try:
             for program in programs:
                 Desugar(program).run()
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.DESUGAR, sources)
+            return self.__keyed(self.__failed(error, Stage.DESUGAR, sources), key, store)
 
         units: dict[int, UnitData] = {
             index: UnitData(program=program, path=path, unit_id=index)
@@ -190,37 +205,105 @@ class AnalysisSession:
         try:
             inject_prelude(units.values())
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.PRELUDE, sources, units)
+            return self.__keyed(self.__failed(error, Stage.PRELUDE, sources, units), key, store)
 
         try:
             check_restricted_ops(units.values())
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.RESTRICTED_OPS, sources, units)
+            return self.__keyed(
+                self.__failed(error, Stage.RESTRICTED_OPS, sources, units), key, store
+            )
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
+        resolver = GlobalResolve(units, type_ctx, self.__packages, source_trust.stdlib_root)
         try:
-            GlobalResolve(units, type_ctx, self.__packages, source_trust.stdlib_root).run()
+            resolver.run()
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.RESOLVE, sources, units, type_ctx)
+            return self.__keyed(
+                self.__failed(error, Stage.RESOLVE, sources, units, type_ctx), key, store
+            )
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.FINALIZE, sources, units, type_ctx)
+            return self.__keyed(
+                self.__failed(error, Stage.FINALIZE, sources, units, type_ctx), key, store
+            )
 
-        checker = TypeCheck(units, type_ctx, self.__packages, require_entry=require_entry)
+        # The session analyzes text, not a build: an entry-less or entry-broken
+        # file set is a normal editor state (plan §5.11 layer one), and a file
+        # with several broken definitions reports all of them (layer three,
+        # granularity = top-level definition).
+        checker = TypeCheck(
+            units,
+            type_ctx,
+            self.__packages,
+            require_entry=require_entry,
+            entry_optional=True,
+            recover=True,
+        )
         try:
             checker.run()
         except ANALYSIS_ERRORS as error:
-            return self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx)
+            # Everything recoverable was collected by the checker; what reaches
+            # here is a failure before the worklist started (the program entry).
+            return self.__keyed(
+                self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx), key, store
+            )
 
+        # A recovered error does not stop the index from being built, so a file
+        # with one broken definition still answers navigation for the others.
+        index = build_index(units, type_ctx, resolver.import_edges(), self.__packages)
         return AnalysisResult(
-            diagnostics=(),
+            diagnostics=checker.export_diagnostics(),
             sources=sources,
             units=units,
             type_ctx=type_ctx,
             def_points=checker.export_generated(),
+            index=index,
+            versions=store.versions(),
+            key=key,
         )
+
+    def snapshot_key(
+        self, paths: Sequence[Path], *, documents: DocumentStore | None = None
+    ) -> tuple[object, ...]:
+        """The key :meth:`analyze` would produce for *paths* right now.
+
+        A caller that keeps the result of an earlier run compares this key to
+        ``result.key`` and reuses that result when they match, which is how the
+        language server avoids re-analyzing an unchanged project (plan §5.12).
+        The key covers each input's text and editor version plus the compile
+        flags, so it never matches across an edit.
+        """
+        store = documents if documents is not None else DocumentStore()
+        src_files = collect_an_files(paths, overlay=store)
+        sources = {path: self.__text(store, path) for path in src_files}
+        return self.__snapshot_key(sources, store)
+
+    def __snapshot_key(self, sources: Mapping[Path, str], store: DocumentStore) -> tuple[object, ...]:
+        """Key a snapshot by its inputs: text hashes, versions, and compile flags."""
+        entries = tuple(
+            sorted(
+                (str(path), hashlib.sha256(text.encode("utf-8")).hexdigest(), store.version(path))
+                for path, text in sources.items()
+            )
+        )
+        return (ANALYSIS_FORMAT, entries, self.__raw_pointers)
+
+    def __keyed(
+        self, result: AnalysisResult, key: tuple[object, ...], store: DocumentStore
+    ) -> AnalysisResult:
+        """Attach the snapshot key to a failed run.
+
+        A run that stopped at a diagnostic is still a complete description of its
+        inputs, so it is keyed like a successful one: the editor reuses it while
+        the text is unchanged instead of re-analyzing a broken file on every
+        request (plan §5.12).
+        """
+        result.key = key
+        result.versions = store.versions()
+        return result
 
     # ── pipeline stages ────────────────────────────────────────────────────────
 

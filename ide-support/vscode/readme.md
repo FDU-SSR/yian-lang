@@ -1,15 +1,68 @@
 # YIAN Language Support（VS Code 扩展）
 
-YIAN（`.an`）的编辑器支持。当前是 **P1** 阶段：只提供声明式的语言注册与编辑体验，没有语言服务器。
+YIAN（`.an`）的编辑器支持。当前是 **P4** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
+（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10），以及实时诊断。
 
 - 语言 id `yian`，文件关联 `.an`
 - TextMate 语法高亮（关键字、类型、字面量、f-string 内插、属性与内建、注释）
 - 注释切换（`//`、`/* */`）、括号匹配与自动闭合、缩进规则
 - `[yian]` 的默认编辑器设置：4 空格缩进、关闭自动检测
+- 语言服务器客户端：随窗口启动 `yian-lsp`，同步文档、监听工作区文件变化，
+  并把服务器日志收进 **YIAN Language Server** 输出通道
+- 实时诊断（波浪线 + Problems 面板）：词法、语法、名称/导入/可见性、类型与成员错误，
+  每个错误带稳定错误码（`E1xx`–`E5xx`）、`source: yian` 与文档版本号
 
-语义诊断、跳转、补全、语义高亮在后续阶段实现（见 `docs/plan/ide-support-plan.md`）。
-`src/extension.ts` 目前是空的 `activate()`：上面的能力全部由 VS Code 依据本扩展的声明式贡献注册，
-不需要运行时代码；语言服务器客户端在 **P3** 接入（stdio 传输，启动 `yian-lsp`）。
+跳转与类型查看（P5）、补全与语义高亮（P6）在后续阶段实现。
+
+诊断的策略：文件改动后等 200ms 空闲再分析（防抖），保存时立即分析；分析结果按**整个项目**
+计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此丢弃过期结果；
+文件修好、关闭或不再被分析时，该文档的诊断会被清空。分析只跑编译器流水线的前半段
+（词法 → 类型检查），不生成代码，也不调用 LLVM/clang/链接器。
+
+## 语言服务器
+
+`src/extension.ts` 只做 LSP 客户端：打开 `.an` 文件时通过 stdio 启动 `yian-lsp`，把文档事件转发过去，
+并把服务器的 stderr 收进输出通道。语言规则、索引与分析都在服务器侧（`lsp/` + `compiler/`），
+扩展里没有任何 YIAN 语法知识。
+
+前提：`yian-lsp` 在 `PATH` 上，且其 Python 环境能 `import pygls`：
+
+```bash
+scripts/install.sh --with-deps              # 仓库内：editable 安装三个命令
+python3 -m pip install '.[lsp]'             # 或者只补语言服务器的依赖
+yian-lsp --version                          # 确认入口点可用
+```
+
+设置：
+
+| 设置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `yian.languageServer.command` | `yian-lsp` | 服务器启动命令；不在 `PATH` 上时填绝对路径 |
+| `yian.languageServer.args` | `[]` | 追加参数，例如 `--compiler-root /path/to/yian`、`--log-level DEBUG` |
+
+分析模式由**工作区**决定，与之后打开哪个文件无关：
+
+- 工作区本身（或其上层）有 `package.anx` → **package 模式**：加载项目模型，分析该包的整个文件索引；
+  日志里出现 `project <名字> at <路径>: N packages, M files` 与
+  `analysis #1 (startup): N files, K declarations, D diagnostics in X ms`。
+- 工作区不是 YIAN 包 → **standalone 模式**：只分析打开的文档加标准库，包名导入（如
+  `from sample.geometry import …`）会报无法解析；日志里出现
+  `<工作区> is not a YIAN package; standalone mode` 与 `standalone mode: waiting for a document`，
+  之后每打开/关闭一个文档都会出现一条 `analysis #N (didOpen|didClose): …`。
+
+分析在「被分析的文件集合变化」时重跑（standalone 模式下打开/关闭文档就是这种变化，
+package 模式下只有打开包外文件才会）；纯文本修改只作废快照，重新分析属于 **P4**。
+
+验证：
+
+1. 打开 `.an` 文件，`Ctrl+Shift+P` → `Output: Focus on Output View`，通道选 **YIAN Language Server**
+2. 对照上面两种模式，日志里应出现对应的那几行
+3. 打开/修改/关闭文件时出现 `textDocument/didOpen|didChange|didClose` 行
+4. 关闭窗口后 `yian-lsp` 进程退出（`pgrep -f yian-lsp` 无结果），不留孤儿进程
+
+服务器启动失败（命令不存在、缺少 `pygls`）会在输出通道里给出原因，并弹出一条提示。
+要人工验收诊断，可把工作区设为 `ide-support/sample-errors`（它每个错误都放在独立的顶层定义里）：
+打开 `src/errors.an` 应看到 **5 条**波浪线/Problems 条目，修好某一条后它立刻消失。
 
 ## 构建
 
@@ -22,18 +75,21 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 ## 调试
 
 用 VS Code 打开本目录，按 `F5` 启动 Extension Development Host，在新窗口里打开任意 `.an` 文件
-（例如 `ide-support/sample/src/main.an`）验证高亮与编辑行为。
+（例如 `ide-support/sample/src/main.an`）验证高亮、编辑行为与语言服务器日志
+（Development Host 继承启动者的 `PATH`，所以 `yian-lsp` 要能在该 `PATH` 上找到）。
 
 ## 打包与安装
 
 ```bash
 cd ide-support/vscode
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.1.1.vsix
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.1.0
+code --install-extension yian-language-support-0.2.2.vsix
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.2.2
 ```
 
-打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。
+打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上
+`node_modules/vscode-languageclient/`：不打包 `node_modules` 而又没有 bundler 时，
+扩展运行时会 `Cannot find module 'vscode-languageclient/node'`。
 
 ## 代码片段
 
