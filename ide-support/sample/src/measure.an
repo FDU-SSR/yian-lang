@@ -1,0 +1,51 @@
+// 特征（trait）、默认方法与条件实现：跨实现跳转、补全与悬停的素材。
+from sample.types import Meters;
+
+pub trait Measured {
+    // 默认方法：实现者不写也能调用，编辑器应能跳到 trait 里的这一处。
+    fn label() -> str {
+        return "measured";
+    }
+
+    fn measure() -> Meters;
+}
+
+pub struct Rect {
+    pub width: Meters,
+    pub height: Meters,
+}
+
+impl Measured for Rect {
+    fn measure() -> Meters {
+        return self.width * self.height;
+    }
+}
+
+pub struct Circle {
+    pub radius: Meters,
+}
+
+impl Measured for Circle {
+    fn label() -> str {
+        return "circle";
+    }
+
+    fn measure() -> Meters {
+        return 3.0 * self.radius * self.radius;
+    }
+}
+
+pub struct Bagged<T> {
+    pub value: T,
+}
+
+// 条件实现：只有 T 可度量时 Bagged<T> 才可度量。
+impl<T> Measured for Bagged<T> if T: Measured {
+    fn label() -> str {
+        return "bagged";
+    }
+
+    fn measure() -> Meters {
+        return self.value.measure();
+    }
+}

@@ -1,0 +1,52 @@
+// 跑一遍新增模块：`anx test` 与编辑器验收共用。
+from std.core.io import print;
+from std.core.string import String;
+from std.core.vec import Vec;
+from sample.handles import Marks, accumulate, pointer_bytes, scaled, tally;
+from sample.measure import Bagged, Circle, Rect;
+from sample.text import describe, first_label, labels, offset_by, sum_block;
+from sample.types import Meters;
+from std.core.option import Option;
+
+fn main() {
+    let rect: Rect = Rect(width=3.0, height=4.0);
+    let circle: Circle = Circle(radius=2.0);
+    let bag: Bagged<Rect> = Bagged<Rect>(value=rect);
+
+    assert rect.measure() == 12.0: "rect area through the trait";
+    assert circle.measure() == 12.0: "circle area through the trait";
+    assert bag.measure() == 12.0: "conditional impl forwards to the inner value";
+    assert rect.label() == "measured": "default trait method";
+    assert circle.label() == "circle": "overridden trait method";
+
+    assert sum_block(4) == 6: "dynamic array and for loops";
+    assert offset_by(41) == 42: "closure captures a local";
+    assert labels(3).len() == 3: "Vec<String> built in a loop";
+
+    let maybe: Option<String> = first_label(labels(1));
+    assert maybe.is_some(): "a non-empty vec has a first label";
+    assert first_label(labels(0)).is_none(): "an empty vec has none";
+
+    let text: String = describe("items", 3.0);
+    assert text.len() > 0: "f-string builds a message";
+    let expected: Meters = 3.0;
+    assert expected == 3.0: "Meters is still an f64 alias";
+
+    let width: Meters = 3.0;
+    assert scaled(&width, 2.0) == 6.0: "reference parameter dereferences in arithmetic";
+
+    let counter: i32 = 0;
+    let seen: i32 = tally(&counter, 5);
+    assert seen == 5: "defer runs when the scope exits";
+    assert counter == 6: "deferred update reached the caller's local";
+    assert accumulate(&counter, 4) == 10: "pointer parameter writes through";
+
+    let marks: i32 = 0;
+    let guard: Marks = Marks(value=1, count=&marks);
+    guard.drop();
+    assert marks == 1: "explicit drop calls the implementation";
+
+    assert pointer_bytes() > 0: "comptime if picks a value per pointer mode";
+
+    print("tour ok\n");
+}

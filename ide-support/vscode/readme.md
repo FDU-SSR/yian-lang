@@ -121,6 +121,12 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 要人工验收诊断，可把工作区设为 `ide-support/sample-errors`（它每个错误都放在独立的顶层定义里）：
 打开 `src/errors.an` 应看到 **5 条**波浪线/Problems 条目，修好某一条后它立刻消失。
 
+示例工程 `ide-support/sample` 的语法覆盖：`types.an`（类型别名）、`geometry.an`（结构体、泛型结构体、
+方法、静态方法）、`shapes.an`（带载荷的枚举、`match`、泛型函数）、`measure.an`（trait、默认方法、
+条件实现 `impl<T> Trait for T if T: Trait`）、`text.an`（`Vec`/`String`/`Option`、`for`、闭包、
+f-string、`dyn` 数组与 `del`）、`handles.an`（`T&` 引用、指针参数、`Drop`、`defer`、`comptime if`），
+以及入口 `main.an`；`tests/tour.an` 跑一遍新增模块。
+
 要验收导航，把工作区设为 `ide-support/sample`，打开 `src/main.an`：在 `corner.scaled(2.0)` 的
 `scaled` 上 `F12` 应跳到 `src/geometry.an` 的方法定义；在 `flipped.first` 的 `first` 上悬停应显示
 `field first: Meters`；在 `print(` 上 `F12` 应跳到 `lib/src/core/io.an`；大纲（`Ctrl+Shift+O`）

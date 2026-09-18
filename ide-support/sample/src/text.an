@@ -1,0 +1,51 @@
+// 标准库容器、循环、闭包与 f-string：给补全、语义高亮与悬停更多标识符。
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from sample.types import Meters;
+
+// 动态数组 + for 循环 + 索引，`del` 显式释放。
+pub fn sum_block(size: u64) -> i64 {
+    let block: i32* = dyn[8] i32;
+    for i in 0..size {
+        block[i] = i32(i);
+    }
+    let total: i64 = 0;
+    for i in 0..size {
+        total += i64(block[i]);
+    }
+    del block;
+    return total;
+}
+
+// 闭包捕获局部变量。
+pub fn offset_by(base: i32) -> i32 {
+    let shift = |captured = base| (value: i32) -> i32 {
+        captured + value
+    };
+    return shift(1);
+}
+
+// Vec<String>：容器、方法链与循环里的局部变量。
+pub fn labels(count: u64) -> Vec<String> {
+    let out: Vec<String> = Vec<String>.new();
+    for i in 0..count {
+        let text: String = String.new();
+        text.push_str("item");
+        out.push(text);
+    }
+    return out;
+}
+
+// Option：enum 载荷、is_empty 与索引。
+pub fn first_label(out: Vec<String>) -> Option<String> {
+    if out.is_empty() {
+        return Option<String>.None;
+    }
+    return Option<String>.Some(val=out[0]);
+}
+
+// f-string 内插：一个 str，一个取整后的 Meters。
+pub fn describe(name: str, count: Meters) -> String {
+    return f"{name} count={i64(count)}";
+}

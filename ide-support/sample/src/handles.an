@@ -1,0 +1,42 @@
+// 引用、指针、Drop、defer 与 comptime：更多可供跳转、悬停与补全的形态。
+from sample.types import Meters as Scalars;
+from std.core.drop import Drop;
+
+// 引用参数：算术里的解引用。
+pub fn scaled(value: Scalars&, factor: Scalars) -> Scalars {
+    return *value * factor;
+}
+
+// 指针参数：写入调用方的局部变量。
+pub fn accumulate(target: i32*, amount: i32) -> i32 {
+    *target += amount;
+    return *target;
+}
+
+// defer：离开作用域时执行。
+pub fn tally(counter: i32*, amount: i32) -> i32 {
+    defer *counter += 1;
+    *counter += amount;
+    return *counter;
+}
+
+// 显式 drop：Drop 特征由类型实现，调用由使用者写出。
+pub struct Marks {
+    pub value: i32,
+    pub count: i32*,
+}
+
+impl Drop for Marks {
+    fn drop() {
+        *self.count += 1;
+    }
+}
+
+// comptime if：两种指针模式下的常量。
+pub fn pointer_bytes() -> u64 {
+    return comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        16u64
+    };
+}
