@@ -23,6 +23,12 @@ from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
 TARGET_DATA_LAYOUT = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
+# llvmlite 的 IR 层默认把指针打印成有型的 `T*` (兼容旧 IR)。本项目的指针类型已统一
+# 为 opaque pointer (见 types.py 与 builder.py), 因此关掉这套打印, 使发射的 IR 与
+# LLVM 的指针表示一致。该开关只影响类型打印: llvmlite 侧的指针判定与生成的机器码
+# 都不变。
+ir.types.ir_layer_typed_pointers_enabled = False  # type: ignore
+
 
 def apply_target(module: ir.Module) -> None:
     """把目标三元组与配套的 data layout 写到 ``module`` 上。
@@ -192,7 +198,7 @@ class LLModule:
     @property
     def argv_global(self) -> ir.GlobalVariable:
         if self.__argv_global is None:
-            argv_type = ir.PointerType(ir.PointerType(ir.IntType(8)))
+            argv_type = ir.PointerType()
             self.__argv_global = ir.GlobalVariable(
                 self.__module, argv_type, name="__yian_argv"
             )
@@ -237,7 +243,7 @@ class LLModule:
         if self.__runtime_fail_func is not None:
             return self.__runtime_fail_func
 
-        i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+        i8_ptr = ir.PointerType()  # type: ignore
         i64 = ir.IntType(64)  # type: ignore
         fn = ir.Function(
             self.__module,
@@ -271,7 +277,7 @@ class LLModule:
             return self.__panic_func
 
         i8 = ir.IntType(8)  # type: ignore
-        i8_ptr = ir.PointerType(i8)  # type: ignore
+        i8_ptr = ir.PointerType()  # type: ignore
         i64 = ir.IntType(64)  # type: ignore
         fn = ir.Function(
             self.__module,
@@ -378,7 +384,7 @@ class LLModule:
 
     def __pool_head(self) -> ir.GlobalVariable:
         if self.__pool_head_global is None:
-            i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+            i8_ptr = ir.PointerType()  # type: ignore
             self.__pool_head_global = ir.GlobalVariable(
                 self.__module, i8_ptr, name="__secl_pool_head"
             )
@@ -388,12 +394,13 @@ class LLModule:
 
     @staticmethod
     def __pool_field_ptr(
-        builder: ir.IRBuilder, block: ir.Value, offset: int, field_type: ir.Type
+        builder: ir.IRBuilder, block: ir.Value, offset: int
     ) -> ir.Value:
-        byte_ptr = builder.gep(
-            block, [ir.Constant(ir.IntType(64), offset)], inbounds=False  # type: ignore
+        """块内字节偏移处的字段地址 (opaque 指针; 读写由调用方给值类型)。"""
+        return builder.gep(
+            block, [ir.Constant(ir.IntType(64), offset)], inbounds=False,  # type: ignore
+            source_etype=ir.IntType(8),  # type: ignore
         )
-        return builder.bitcast(byte_ptr, ir.PointerType(field_type))  # type: ignore
 
     def get_pool_alloc(self) -> ir.Function:
         """Return the internal first-fit allocator for stable-header blocks."""
@@ -401,8 +408,8 @@ class LLModule:
             return self.__pool_alloc_func
 
         i8 = ir.IntType(8)  # type: ignore
-        i8_ptr = ir.PointerType(i8)  # type: ignore
-        i8_ptr_ptr = ir.PointerType(i8_ptr)  # type: ignore
+        i8_ptr = ir.PointerType()  # type: ignore
+        i8_ptr_ptr = ir.PointerType()  # type: ignore
         i64 = ir.IntType(64)  # type: ignore
         fn = ir.Function(
             self.__module,
@@ -428,30 +435,24 @@ class LLModule:
         scan_builder = ir.IRBuilder(scan)
         link = scan_builder.phi(i8_ptr_ptr, name="link")
         link.add_incoming(self.__pool_head(), entry)
-        current = scan_builder.load(link, name="current")
+        current = scan_builder.load(link, name="current", typ=i8_ptr)
         is_null = scan_builder.icmp_unsigned("==", current, ir.Constant(i8_ptr, None))
         scan_builder.cbranch(is_null, fresh, inspect)
 
         inspect_builder = ir.IRBuilder(inspect)
-        capacity_ptr = self.__pool_field_ptr(
-            inspect_builder, current, IR.BlockHeader.CAPACITY_OFFSET, i64
-        )
-        capacity = inspect_builder.load(capacity_ptr, name="capacity")
+        capacity_ptr = self.__pool_field_ptr(inspect_builder, current, IR.BlockHeader.CAPACITY_OFFSET)
+        capacity = inspect_builder.load(capacity_ptr, name="capacity", typ=i64)
         fits = inspect_builder.icmp_unsigned(">=", capacity, requested)
         inspect_builder.cbranch(fits, reuse, advance)
 
         advance_builder = ir.IRBuilder(advance)
-        next_link = self.__pool_field_ptr(
-            advance_builder, current, IR.BlockHeader.NEXT_OFFSET, i8_ptr
-        )
+        next_link = self.__pool_field_ptr(advance_builder, current, IR.BlockHeader.NEXT_OFFSET)
         advance_builder.branch(scan)
         link.add_incoming(next_link, advance)
 
         reuse_builder = ir.IRBuilder(reuse)
-        reuse_next_ptr = self.__pool_field_ptr(
-            reuse_builder, current, IR.BlockHeader.NEXT_OFFSET, i8_ptr
-        )
-        reuse_next = reuse_builder.load(reuse_next_ptr, name="next")
+        reuse_next_ptr = self.__pool_field_ptr(reuse_builder, current, IR.BlockHeader.NEXT_OFFSET)
+        reuse_next = reuse_builder.load(reuse_next_ptr, name="next", typ=i8_ptr)
         reuse_builder.store(reuse_next, link)
         reuse_builder.store(ir.Constant(i8_ptr, None), reuse_next_ptr)
         reuse_builder.ret(current)
@@ -473,15 +474,9 @@ class LLModule:
         fail_builder.unreachable()
 
         fresh_builder = ir.IRBuilder(fresh_init)
-        fresh_capacity_ptr = self.__pool_field_ptr(
-            fresh_builder, block, IR.BlockHeader.CAPACITY_OFFSET, i64
-        )
-        fresh_next_ptr = self.__pool_field_ptr(
-            fresh_builder, block, IR.BlockHeader.NEXT_OFFSET, i8_ptr
-        )
-        active_size_ptr = self.__pool_field_ptr(
-            fresh_builder, block, IR.BlockHeader.ACTIVE_SIZE_OFFSET, i64
-        )
+        fresh_capacity_ptr = self.__pool_field_ptr(fresh_builder, block, IR.BlockHeader.CAPACITY_OFFSET)
+        fresh_next_ptr = self.__pool_field_ptr(fresh_builder, block, IR.BlockHeader.NEXT_OFFSET)
+        active_size_ptr = self.__pool_field_ptr(fresh_builder, block, IR.BlockHeader.ACTIVE_SIZE_OFFSET)
         fresh_builder.store(requested, fresh_capacity_ptr)
         fresh_builder.store(ir.Constant(i8_ptr, None), fresh_next_ptr)
         fresh_builder.store(ir.Constant(i64, 0), active_size_ptr)
@@ -495,7 +490,7 @@ class LLModule:
         if self.__pool_release_func is not None:
             return self.__pool_release_func
 
-        i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
+        i8_ptr = ir.PointerType()  # type: ignore
         fn = ir.Function(
             self.__module,
             ir.FunctionType(ir.VoidType(), [i8_ptr]),
@@ -506,10 +501,8 @@ class LLModule:
         block.name = "block"
         entry = fn.append_basic_block("entry")
         builder = ir.IRBuilder(entry)
-        head = builder.load(self.__pool_head(), name="head")
-        next_ptr = self.__pool_field_ptr(
-            builder, block, IR.BlockHeader.NEXT_OFFSET, i8_ptr
-        )
+        head = builder.load(self.__pool_head(), name="head", typ=i8_ptr)
+        next_ptr = self.__pool_field_ptr(builder, block, IR.BlockHeader.NEXT_OFFSET)
         builder.store(head, next_ptr)
         builder.store(block, self.__pool_head())
         builder.ret_void()
@@ -522,7 +515,7 @@ class LLModule:
         assert self.__yian_main_type_id is not None
 
         i32: ir.IntType = ir.IntType(32)  # type: ignore
-        argv_type = ir.PointerType(ir.PointerType(ir.IntType(8)))
+        argv_type = ir.PointerType()
         wrapper_type = ir.FunctionType(ir.IntType(32), [i32, argv_type])
         wrapper = ir.Function(self.__module, wrapper_type, name="main")
         entry = wrapper.append_basic_block("entry")

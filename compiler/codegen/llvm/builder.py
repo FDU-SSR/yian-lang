@@ -59,6 +59,26 @@ class LLBuilder:
     def undef(self, type_id: int) -> LLValue:
         return LLValue(type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(type_id).ir_type, ir.Undefined))  # type: ignore
 
+    def __bitcast(self, value: ir.Value, typ: ir.Type, name: str = "") -> ir.Value:
+        """Bitcast that really re-types its operand.
+
+        ``IRBuilder.bitcast`` returns the operand unchanged whenever the two
+        IR-layer types compare equal, and a typed pointer compares equal to an
+        opaque one.  Data pointers are opaque since the opaque-pointer
+        migration, so a cast onto one of them would silently keep the operand's
+        static pointee type; a later GEP would then scale its indices by that
+        stale type.  Build the instruction directly so the value carries
+        ``typ``; every other case keeps llvmlite's behaviour, including the
+        intentional no-op when nothing has to change.
+        """
+        source_type: ir.Type = value.type  # type: ignore
+        if isinstance(source_type, ir.PointerType) and isinstance(typ, ir.PointerType) \
+                and typ.is_opaque and not source_type.is_opaque:
+            instr = ir.instructions.CastInstr(self.__builder.block, "bitcast", value, typ, name)  # type: ignore
+            self.__builder._insert(instr)  # type: ignore
+            return instr
+        return self.__builder.bitcast(value, typ, name)  # type: ignore
+
     def sizeof_const(self, type_id: int, result: str) -> None:
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(type_id))))  # type: ignore
 
@@ -143,7 +163,7 @@ class LLBuilder:
         if self.__is_fat_type(ll_val.type_id) and not self.__is_fat(ll_val):
             lock_ir, key_ir = self.__lit_lock_pair()
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                           self.__builder.bitcast(ll_val.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                           self.__bitcast(ll_val.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
             lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
             key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
             zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -164,12 +184,11 @@ class LLBuilder:
             ty = self.__type_ctx[self.__type_ctx.resolve_aliases(ll_val.type_id)]
             if isinstance(ty, Type.RefType):
                 # T& 3 字段 {data, lock_ptr, key}:无 index,恒指单个元素——
-                # 有效地址 = data(bitcast 到 T* 供调用方按字段 GEP)
-                addr = self.__builder.bitcast(data, pointee_ll.as_pointer())  # type: ignore
+                # 有效地址 = data (opaque 指针无需 bitcast)
+                addr = data
             else:
                 index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
-                typed = self.__builder.bitcast(data, pointee_ll.as_pointer())  # type: ignore
-                addr = self.__builder.gep(typed, [index], inbounds=False)  # type: ignore
+                addr = self.__builder.gep(data, [index], inbounds=False, source_etype=pointee_ll)  # type: ignore
         else:
             addr = ll_val.ir_val
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
@@ -282,8 +301,7 @@ class LLBuilder:
         guard = self.__builder.icmp_signed("!=", lock_ptr, ir.Constant(lock_ptr.type, None))  # type: ignore
 
         def compute(builder: ir.IRBuilder) -> ir.Value:
-            slot = builder.bitcast(lock_ptr, ir.PointerType(ir.IntType(64)))  # type: ignore
-            slot_val = builder.load(slot)  # type: ignore
+            slot_val = builder.load(lock_ptr, typ=ir.IntType(64))  # type: ignore
             return builder.icmp_signed("==", slot_val, key)  # type: ignore
 
         return LLValue(self.__type_ctx.bool_id, self.__emit_guarded(guard, compute))  # type: ignore
@@ -346,14 +364,14 @@ class LLBuilder:
         else:
             # 5 字段合成 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                           self.__builder.bitcast(alloca_ptr.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                           self.__bitcast(alloca_ptr.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
             if frame_lock_ptr is None or frame_key is None:
                 e_f_ir, k_f_ir = self.__lit_lock_pair()
             else:
                 e_f_ir = frame_lock_ptr.ir_val
                 k_f_ir = frame_key.ir_val
             lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                           self.__builder.bitcast(e_f_ir, ir.PointerType(ir.IntType(8))))  # type: ignore
+                           self.__bitcast(e_f_ir, ir.PointerType(ir.IntType(8))))  # type: ignore
             key = LLValue(self.__type_ctx.u64_id, k_f_ir)  # type: ignore
             result_val = self.__build_fat(
                 data, lock, key,
@@ -396,14 +414,14 @@ class LLBuilder:
         else:
             data = LLValue(
                 self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                self.__builder.bitcast(alloca_val.ir_val, ir.PointerType(ir.IntType(8))),  # type: ignore
+                self.__bitcast(alloca_val.ir_val, ir.PointerType(ir.IntType(8))),  # type: ignore
             )
             if frame_lock_ptr is None or frame_key is None:
                 raise ValueError("fat temporary alloca missing current frame lock")
             lock_ir, key_ir = frame_lock_ptr.ir_val, frame_key.ir_val
             lock = LLValue(
                 self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                self.__builder.bitcast(lock_ir, ir.PointerType(ir.IntType(8))),  # type: ignore
+                self.__bitcast(lock_ir, ir.PointerType(ir.IntType(8))),  # type: ignore
             )
             key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
             result_val = self.__build_fat(
@@ -452,8 +470,9 @@ class LLBuilder:
             nonnull = self.__builder.icmp_signed("!=", raw.ir_val, ir.Constant(raw.ir_val.type, None))  # type: ignore
             self.__emit_check(LLValue(self.__type_ctx.bool_id, nonnull), RuntimeErrorCode.R002, "malloc-null")
             # raw 模式:data = 块基址,直接返回裸指针(无锁头偏移、无 5 字段聚合)。
-            # malloc intrinsic 返回 i8*,须 bitcast 到有型 T*(raw 指针为 T*)。
-            typed = self.__builder.bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
+            # malloc intrinsic 返回的 i8* 重新定型成 raw 指针(opaque), 值类型随后由
+            # 使用点的 typ=/source_etype= 给出。
+            typed = self.__bitcast(raw.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type)  # type: ignore
             result_val = LLValue(ptr_type_id, typed)  # type: ignore
             self.__func.set_reg(result, result_val)
             return result_val
@@ -466,11 +485,11 @@ class LLBuilder:
             block_base.ir_val,
             [ir.Constant(ir.IntType(64), IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
             inbounds=False,
+            source_etype=ir.IntType(8),  # 块头按字节偏移索引
         )
-        active_size_ptr = self.__builder.bitcast(active_size_ptr, ir.PointerType(ir.IntType(64)))  # type: ignore
         self.__builder.store(payload_ir, active_size_ptr)  # type: ignore
         if key is not None:
-            slot_ptr = self.__builder.bitcast(block_base.ir_val, ir.PointerType(ir.IntType(64)))  # type: ignore
+            slot_ptr = self.__bitcast(block_base.ir_val, ir.PointerType(ir.IntType(64)))  # type: ignore
             self.__builder.store(key.ir_val, slot_ptr)  # type: ignore
             key_ir = key.ir_val
         else:
@@ -479,6 +498,7 @@ class LLBuilder:
             block_base.ir_val,
             [ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)],  # type: ignore
             inbounds=False,
+            source_etype=ir.IntType(8),  # 载荷区按字节偏移索引
         )
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), data_ir)  # type: ignore
         block_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), block_base.ir_val)  # type: ignore
@@ -503,10 +523,10 @@ class LLBuilder:
             # 字段(0)——直接 bitcast 聚合为指针是非法 IR。T*/T& 在 raw 模式
             # 为裸 8B 指针,不受影响。
             data = self.__builder.extract_value(ptr.ir_val, 0)  # type: ignore
-            casted = self.__builder.bitcast(data, ir.PointerType(ir.IntType(8)))  # type: ignore
+            casted = self.__bitcast(data, ir.PointerType(ir.IntType(8)))  # type: ignore
             self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
             return
-        casted = self.__builder.bitcast(ptr.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
+        casted = self.__bitcast(ptr.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
         self.__call_intrinsic(IntrinsicKind.Free, [LLValue(i8_ptr_type_id, casted)])  # type: ignore
 
     # -- fat-pointer mechanism nodes (LLVM 层) --
@@ -554,7 +574,7 @@ class LLBuilder:
         指针恒非空,锁槽恒可写(空容器持真实堆块)。
         """
         raw = self.__fat_data(lock_ptr).ir_val
-        slot_ptr = self.__builder.bitcast(raw, ir.PointerType(ir.IntType(64)))  # type: ignore
+        slot_ptr = self.__bitcast(raw, ir.PointerType(ir.IntType(64)))  # type: ignore
         self.__builder.store(value.ir_val, slot_ptr)  # type: ignore
 
     def check_safe_access(self, ptr: LLValue) -> None:
@@ -692,7 +712,7 @@ class LLBuilder:
             return
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(base, IR.FAT_SIZE).ir_val
-        off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
+        off64 = self.__bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
         sum = self.__builder.add(index, off64)  # type: ignore
         no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
@@ -716,7 +736,7 @@ class LLBuilder:
         # icmp ule sum, size;语义等价性论证见 check_element_arith 注释)
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(base, IR.FAT_SIZE).ir_val
-        off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
+        off64 = self.__bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
         sum = self.__builder.add(index, off64)  # type: ignore
         no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
@@ -831,9 +851,9 @@ class LLBuilder:
                 lock,
                 [ir.Constant(i64, IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
                 inbounds=False,
+                source_etype=ir.IntType(8),  # 块头按字节偏移索引
             )
-            field = builder.bitcast(field, ir.PointerType(i64))  # type: ignore
-            return builder.load(field)  # type: ignore
+            return builder.load(field, typ=i64)  # type: ignore
 
         return self.__emit_guarded(guard, load_header, ir.IntType(64))  # type: ignore
 
@@ -892,17 +912,18 @@ class LLBuilder:
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[self.__type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
-        if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
+        pointee_type_id = self.__type_ctx.resolve_aliases(ptr_type.pointee_type)
+        if self.__ll_type_ctx.is_zst(pointee_type_id):
             # Loading a zero-sized value yields nothing: emit no `load` and
             # bind no register (the result is never consumed).
-            return self.undef(ptr_type.pointee_type)
+            return self.undef(pointee_type_id)
         if self.__is_fat(ptr):
-            addr = self.__fat_addr(ptr, ptr_type.pointee_type)
-            ir_val = self.__builder.load(addr.ir_val)  # type: ignore
-            result_val = LLValue(ptr_type.pointee_type, ir_val)
+            addr = self.__fat_addr(ptr, pointee_type_id)
+            ir_val = self.__builder.load(addr.ir_val, typ=self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type)  # type: ignore
+            result_val = LLValue(pointee_type_id, ir_val)
         else:
-            ir_val = self.__builder.load(ptr.ir_val)  # type: ignore
-            result_val = LLValue(ptr_type.pointee_type, ir_val)
+            ir_val = self.__builder.load(ptr.ir_val, typ=self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type)  # type: ignore
+            result_val = LLValue(pointee_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
 
@@ -918,25 +939,27 @@ class LLBuilder:
             self.__builder.store(value.ir_val, ptr.ir_val)  # type: ignore
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
-        base_type = self.__type_ctx[base.type_id]
+        base_type = self.__type_ctx[self.__type_ctx.resolve_aliases(base.type_id)]
         if isinstance(base_type, (Type.PointerType, Type.RefType)):
-            pointee_type_id = base_type.pointee_type
+            # 别名 (typedef) 必须解析到目标类型: 否则下面的字段游走认不出 StructType,
+            # 结果类型会停在别名上 (load/store 会按错误的类型取值)。
+            pointee_type_id = self.__type_ctx.resolve_aliases(base_type.pointee_type)
         else:
-            pointee_type_id = base.type_id
+            pointee_type_id = self.__type_ctx.resolve_aliases(base.type_id)
 
         # If we are already pointing at ZST, every offset is meaningless —
         # return undef before touching the (empty-struct) LLVM value.
         if self.__ll_type_ctx.is_zst(pointee_type_id):
             return self.undef(self.__type_ctx.alloc_pointer(pointee_type_id))
 
-        # 被索引类型必须先materialize: llvmlite 的有型指针 GEP 会遍历 ptr.type.pointee
-        # 的字段表, 而 struct/enum 的 body 可能是延迟填充的 (见 types.py 的
-        # __declare_pointee), 未完成时 llvmlite 会读到 elements=None 而抛 TypeError。
-        self.__ll_type_ctx.get_ll_type(pointee_type_id)
+        # opaque 指针的 GEP 必须显式给出 source element type; 有型指针 (alloca/全局)
+        # 不能给: llvmlite 会把结果类型设成 base 类型而不走索引, 后续 store/load 就
+        # 会类型不符。规则: base 是 opaque 才传 source_etype。
+        source_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
 
         # Walk sub-indices to find the final pointee.
         for idx in indices[1:]:
-            ty = self.__type_ctx[pointee_type_id]
+            ty = self.__type_ctx[self.__type_ctx.resolve_aliases(pointee_type_id)]
             if isinstance(ty, Type.StructType):
                 fields = self.__type_ctx.get_struct_fields(ty.type_id)
                 pointee_type_id = fields[idx].type_id
@@ -961,11 +984,13 @@ class LLBuilder:
         if self.__is_fat(base):
             # 规则 3.5.2 重锚定:data' = addr_T(p_s,0) + δ,index'=0,size'=1,锁字段继承
             base_def = self.__type_ctx[base.type_id]
+            element_ll = self.__ll_type_ctx.get_ll_type(base_def.pointee_type).ir_type  # type: ignore[union-attr]
             addr = self.__fat_addr(base, base_def.pointee_type)  # type: ignore
             idx_vals = [self.i32(i).ir_val for i in indices]
-            field_addr = self.__builder.gep(addr.ir_val, idx_vals, inbounds=True)  # type: ignore
+            addr_source = element_ll if addr.ir_val.type.is_opaque else None  # type: ignore
+            field_addr = self.__builder.gep(addr.ir_val, idx_vals, inbounds=True, source_etype=addr_source)  # type: ignore
             field_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                                self.__builder.bitcast(field_addr, ir.PointerType(ir.IntType(8))))  # type: ignore
+                                self.__bitcast(field_addr, ir.PointerType(ir.IntType(8))))  # type: ignore
             if isinstance(base_def, Type.PointerType):
                 # PointerType base:锁字段继承、完全不提取;直插 data=field_addr、
                 # index=0、size=1(重锚定常量,非 base 原值,规则 3.5.2)
@@ -985,7 +1010,8 @@ class LLBuilder:
                 result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
         else:
             idx_vals = [self.i32(i).ir_val for i in indices]
-            ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True)  # type: ignore
+            base_source = source_ll if base.ir_val.type.is_opaque else None  # type: ignore
+            ir_val = self.__builder.gep(base.ir_val, idx_vals, inbounds=True, source_etype=base_source)  # type: ignore
             result_val = LLValue(result_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -1021,11 +1047,11 @@ class LLBuilder:
                                 self.__builder.add(index.ir_val, offset.ir_val))  # type: ignore
             result_val = self.insert_value(base, new_index, IR.FAT_INDEX)
         else:
-            # 同上: 先 materialize 元素类型, 避免 llvmlite 遍历未完成的 body。
             base_def = self.__type_ctx[base.type_id]
             element_type_id = base_def.pointee_type if isinstance(base_def, (Type.PointerType, Type.RefType)) else base.type_id
-            self.__ll_type_ctx.get_ll_type(element_type_id)
-            ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
+            element_ll = self.__ll_type_ctx.get_ll_type(element_type_id).ir_type
+            element_source = element_ll if base.ir_val.type.is_opaque else None  # type: ignore
+            ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False, source_etype=element_source)  # type: ignore
             result_val = LLValue(base.type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
@@ -1078,7 +1104,7 @@ class LLBuilder:
                     self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val)
         ty = self.__type_ctx[ll_val.type_id]
         if isinstance(ty, Type.PointerType):
-            data = self.__builder.bitcast(ll_val.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
+            data = self.__bitcast(ll_val.ir_val, ir.PointerType(ir.IntType(8)))  # type: ignore
             return (data, ir.Constant(ir.IntType(64), 0))  # type: ignore
         raise ValueError(f"Unsupported pointer comparison operand: {type(ty).__name__}")
 
@@ -1166,7 +1192,7 @@ class LLBuilder:
                     and not self.__type_ctx.is_zst(dst.pointee_type):
                 lock_ir, key_ir = self.__lit_lock_pair()
                 if self.__raw_pointers or raw:
-                    ir_val = self.__builder.bitcast(lock_ir, dest_ll_type)  # type: ignore
+                    ir_val = self.__bitcast(lock_ir, dest_ll_type)  # type: ignore
                 else:
                     data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
                     lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
@@ -1214,7 +1240,7 @@ class LLBuilder:
                 # *T 的 LLVM 型是 5 字段聚合,须手动取 pointee 的裸指针型
                 # (裸数组退化 T[N]*→T* 的纯地址重贴)。
                 pointee_ll = self.__ll_type_ctx.get_ll_type(dst.pointee_type).ir_type
-                ir_val = self.__builder.bitcast(value.ir_val, pointee_ll.as_pointer())  # type: ignore
+                ir_val = self.__bitcast(value.ir_val, pointee_ll.as_pointer())  # type: ignore
             elif self.__is_fat(value):
                 # 指针→指针:5 字段结构重贴;数组退化 T[m]*→T* 时重锚定 + size=m
                 if isinstance(self.__type_ctx[src.pointee_type], Type.ArrayType):
@@ -1223,7 +1249,7 @@ class LLBuilder:
                     if arr_ty.element_type == dst.pointee_type:
                         eff = self.__fat_addr(value, src.pointee_type)
                         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                                       self.__builder.bitcast(eff.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                                       self.__bitcast(eff.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
                         lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
                         key = self.__extract_fat_field(value, IR.FAT_KEY)
                         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -1248,7 +1274,7 @@ class LLBuilder:
                 if arr_ty.element_type == dst.pointee_type:
                     lock_ir, key_ir = self.__lit_lock_pair()
                     data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                                   self.__builder.bitcast(value.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                                   self.__bitcast(value.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
                     lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
                     key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
                     zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -1257,9 +1283,9 @@ class LLBuilder:
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
                     ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
                 else:
-                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                    ir_val = self.__bitcast(value.ir_val, dest_ll_type)  # type: ignore
             else:
-                ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                ir_val = self.__bitcast(value.ir_val, dest_ll_type)  # type: ignore
         elif isinstance(src, Type.RefType) and isinstance(dst, Type.RefType):
             # T& → T&: 同为 3 字段布局(表示层),identity 重贴。
             ir_val = value.ir_val
@@ -1271,13 +1297,13 @@ class LLBuilder:
                 # 标量/同型引用类型一致,恒 identity。
                 src_pointee = self.__type_ctx[src.pointee_type]
                 if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
-                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                    ir_val = self.__bitcast(value.ir_val, dest_ll_type)  # type: ignore
                 else:
                     ir_val = value.ir_val
             elif self.__is_fat(value):
                 eff = self.__fat_addr(value, src.pointee_type)
                 data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                               self.__builder.bitcast(eff.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                               self.__bitcast(eff.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
                 lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
                 key = self.__extract_fat_field(value, IR.FAT_KEY)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -1293,7 +1319,7 @@ class LLBuilder:
                 # 标量/同型引用类型一致,恒 identity。
                 src_pointee = self.__type_ctx[src.pointee_type]
                 if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
-                    ir_val = self.__builder.bitcast(value.ir_val, dest_ll_type)  # type: ignore
+                    ir_val = self.__bitcast(value.ir_val, dest_ll_type)  # type: ignore
                 else:
                     ir_val = value.ir_val
             elif self.__is_fat(value):
@@ -1340,7 +1366,7 @@ class LLBuilder:
                 ir_val = self.__builder.extract_value(value.ir_val, 0)  # type: ignore
             else:
                 data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                               self.__builder.bitcast(self.__builder.extract_value(value.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
+                               self.__bitcast(self.__builder.extract_value(value.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
                 lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
                                self.__builder.extract_value(value.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
                 key = LLValue(self.__type_ctx.u64_id,
@@ -1427,7 +1453,7 @@ class LLBuilder:
         (锁继承)——这是 T[]→T* 派生的锁继承来源。
         """
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                       self.__builder.bitcast(self.__builder.extract_value(base.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
+                       self.__bitcast(self.__builder.extract_value(base.ir_val, IR.FAT_DATA), ir.PointerType(ir.IntType(8))))  # type: ignore
         lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
                        self.__builder.extract_value(base.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
         key = LLValue(self.__type_ctx.u64_id,
@@ -1440,7 +1466,7 @@ class LLBuilder:
     def __lit_lock_pair(self) -> tuple[ir.Value, ir.Value]:
         """字面量锁槽 ⟨&__yian_lit_lock, 1⟩(i8*, u64)。"""
         lit_lock = self.__module.get_lit_lock()
-        lock_ir = self.__builder.bitcast(lit_lock, ir.PointerType(ir.IntType(8)))  # type: ignore
+        lock_ir = self.__bitcast(lit_lock, ir.PointerType(ir.IntType(8)))  # type: ignore
         return lock_ir, ir.Constant(ir.IntType(64), 1)  # type: ignore
 
     def insert_value(self, agg: LLValue, value: LLValue, index: int) -> LLValue:
@@ -1501,7 +1527,7 @@ class LLBuilder:
         """
         lock_ir, key_ir = self.__lit_lock_pair()
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                       self.__builder.bitcast(value.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
+                       self.__bitcast(value.ir_val, ir.PointerType(ir.IntType(8))))  # type: ignore
         lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
         key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
@@ -1521,7 +1547,7 @@ class LLBuilder:
             elem_type = type_def.element_type if isinstance(type_def, Type.SliceType) else self.__type_ctx.u8_id
             field_ptr_ll = self.__ll_type_ctx.get_ll_type(elem_type).ir_type.as_pointer()  # type: ignore
             raw = self.__fat_addr(field_values[0], elem_type)
-            raw_ir = self.__builder.bitcast(raw.ir_val, field_ptr_ll)  # type: ignore
+            raw_ir = self.__bitcast(raw.ir_val, field_ptr_ll)  # type: ignore
             if self.__raw_pointers:
                 val = self.undef(type_id)
                 val = self.insert_value(val, LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir), 0)  # type: ignore
@@ -1611,7 +1637,7 @@ class LLBuilder:
             # Bitcast the payload array pointer (field 1) to the payload struct pointer
             payload_arr_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
             payload_ptr_ll = self.__ll_type_ctx.get_ll_type(payload_type).ir_type.as_pointer()  # type: ignore
-            payload_typed_ptr = self.__builder.bitcast(payload_arr_ptr, payload_ptr_ll)  # type: ignore
+            payload_typed_ptr = self.__bitcast(payload_arr_ptr, payload_ptr_ll)  # type: ignore
             self.__builder.store(payload_val.ir_val, payload_typed_ptr)  # type: ignore
 
         ir_val = self.__builder.load(tmp_ptr)  # type: ignore
@@ -1633,11 +1659,15 @@ class LLBuilder:
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, Type.PointerType) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
 
+        enum_ll = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
             for field_index, symbol_id in fields:
                 if field_index != 0:
                     continue
-                field_value = self.__builder.load(base_ptr.ir_val)  # type: ignore
+                field_ll = self.__ll_type_ctx.get_ll_type(
+                    self.__type_ctx.get_struct_fields(payload_type_id)[field_index].type_id
+                ).ir_type
+                field_value = self.__builder.load(base_ptr.ir_val, typ=field_ll)  # type: ignore
                 alloca_ptr = self.__func.get_var_ptr(symbol_id)
                 self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
             return
@@ -1646,15 +1676,16 @@ class LLBuilder:
             return  # ZST payload: nothing to unpack
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
 
-        gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-        payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore
-        payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
-
+        payload_ll = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type
+        payload = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True, source_etype=enum_ll)  # type: ignore
         for field_index, symbol_id in fields:
             if field_index >= len(payload_fields):
                 break
-            field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True)  # type: ignore
-            field_value = self.__builder.load(field_ptr)  # type: ignore
+            field_ll = self.__ll_type_ctx.get_ll_type(payload_fields[field_index].type_id).ir_type
+            # payload 槽是字节数组: 步进必须按 payload 结构体算, 故显式给 source_etype
+            # (llvmlite 对指针的 bitcast 是 no-op, 拿不到有型指针; 值类型由 typ= 给出)。
+            field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True, source_etype=payload_ll)  # type: ignore
+            field_value = self.__builder.load(field_ptr, typ=field_ll)  # type: ignore
             alloca_ptr = self.__func.get_var_ptr(symbol_id)
             self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
 
@@ -1678,6 +1709,7 @@ class LLBuilder:
         enum_type_id = matched_ty.pointee_type if isinstance(matched_ty, (Type.PointerType, Type.RefType)) else matched.type_id
         base_ptr = self.__fat_addr(matched, enum_type_id) if self.__is_fat(matched) else matched
         payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
+        enum_ll = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
 
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
             for field_index, symbol_id in fields:
@@ -1691,14 +1723,13 @@ class LLBuilder:
         if self.__type_ctx.is_zst(payload_type_id):
             return  # ZST payload: no fields to unpack
 
-        gep_val = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-        payload_ptr_ll_type = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type.as_pointer()  # type: ignore
-        payload = self.__builder.bitcast(gep_val, payload_ptr_ll_type)  # type: ignore
+        payload_ll = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type
+        payload = self.__builder.gep(base_ptr.ir_val, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True, source_etype=enum_ll)  # type: ignore
 
         for field_index, symbol_id in fields:
             if field_index >= len(payload_fields):
                 break
-            field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True)  # type: ignore
+            field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True, source_etype=payload_ll)  # type: ignore
             alloca_ptr = self.__func.get_var_ptr(symbol_id)
             # &T 引用槽为 5 字段胖指针:裸字段地址补全元数据(规则 3.5.1)
             field_ll = LLValue(self.__type_ctx.alloc_pointer(payload_fields[field_index].type_id), field_ptr)  # type: ignore
@@ -1721,11 +1752,11 @@ class LLBuilder:
         i8_ptr_type = ir.PointerType(ir.IntType(8))
         dest_raw = LLValue(
             self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-            self.__builder.bitcast(self.__fat_data(dest).ir_val, i8_ptr_type),  # type: ignore
+            self.__bitcast(self.__fat_data(dest).ir_val, i8_ptr_type),  # type: ignore
         )
         src_raw = LLValue(
             self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-            self.__builder.bitcast(self.__fat_data(src).ir_val, i8_ptr_type),  # type: ignore
+            self.__bitcast(self.__fat_data(src).ir_val, i8_ptr_type),  # type: ignore
         )
         self.__call_intrinsic(IntrinsicKind.MemCopy, [dest_raw, src_raw, count])
 
@@ -1785,9 +1816,9 @@ class LLBuilder:
             "argv-index",
         )
 
-        argv = self.__builder.load(self.__module.argv_global)  # type: ignore
-        slot = self.__builder.gep(argv, [index.ir_val], inbounds=False)  # type: ignore
-        ptr_ir = self.__builder.load(slot)  # type: ignore
+        argv = self.__builder.load(self.__module.argv_global, typ=self.__ll_type_ctx.ptr_type)  # type: ignore
+        slot = self.__builder.gep(argv, [index.ir_val], inbounds=False, source_etype=self.__ll_type_ctx.ptr_type)  # type: ignore
+        ptr_ir = self.__builder.load(slot, typ=self.__ll_type_ctx.ptr_type)  # type: ignore
         ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         ptr = LLValue(ptr_type_id, ptr_ir)
         nonnull = self.__builder.icmp_unsigned(
@@ -1997,10 +2028,11 @@ class LLBuilder:
         }[op]
         if isinstance(lhs.type, (ir.IntType, ir.PointerType)):  # type: ignore
             if isinstance(lhs.type, ir.PointerType) and lhs.type != rhs.type:  # type: ignore
-                # raw 模式:有型指针比较时不同 pointee 的 T* 不能直接 icmp → 统一 bitcast i8*
+                # raw 模式:两侧都是有型指针且 pointee 不同时统一 bitcast i8*
+                # (icmp 要求同型操作数;opaque 指针彼此相等,不会走到这里)。
                 i8_ptr = ir.PointerType(ir.IntType(8))  # type: ignore
-                lhs = self.__builder.bitcast(lhs, i8_ptr)  # type: ignore
-                rhs = self.__builder.bitcast(rhs, i8_ptr)  # type: ignore
+                lhs = self.__bitcast(lhs, i8_ptr)  # type: ignore
+                rhs = self.__bitcast(rhs, i8_ptr)  # type: ignore
             ty = self.__type_ctx[type_id]
             if isinstance(ty, Type.IntType) and not ty.signed:
                 return self.__builder.icmp_unsigned(predicate, lhs, rhs)  # type: ignore
@@ -2023,7 +2055,7 @@ class LLBuilder:
                 second_idx = 1
             return (self.__builder.extract_value(v, IR.FAT_DATA),  # type: ignore
                     self.__builder.extract_value(v, second_idx))  # type: ignore
-        return (self.__builder.bitcast(v, ir.PointerType(ir.IntType(8))),  # type: ignore
+        return (self.__bitcast(v, ir.PointerType(ir.IntType(8))),  # type: ignore
                 ir.Constant(ir.IntType(64), 0))  # type: ignore
 
     def __cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:

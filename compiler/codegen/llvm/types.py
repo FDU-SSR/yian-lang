@@ -30,7 +30,10 @@ class LLTypeCtx:
         self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
-        self.__ptr: ir.PointerType = ir.PointerType(self.__i8)  # type: ignore
+        # opaque pointer: 数据指针不再携带 pointee (LLVM 15+ 的唯一表示)。
+        # GEP/load 的显式类型由调用点给出 (见 builder.py), 因此指针构造不再需要
+        # materialize pointee —— 这也是 B3(枚举/结构体经指针回指时的重入) 的根治。
+        self.__ptr: ir.PointerType = ir.PointerType()  # type: ignore
         # str = slice(分级指针表示):4 字段 {data, lock_ptr, key, size} 32B;
         # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
         if self.__raw_pointers:
@@ -42,13 +45,18 @@ class LLTypeCtx:
         self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
-        # 只登记了 identified type、body 尚未填充的类型: 指针/切片取 pointee 时先登记
-        # 占位 (指针布局与 pointee 无关), 真正按值使用该类型时再补 body。
-        self.__incomplete: set[int] = set()
 
     # ------------------------------------------------------------------
     # public
     # ------------------------------------------------------------------
+
+    @property
+    def ptr_type(self) -> ir.PointerType:
+        """opaque pointer 类型: 数据指针(dyn/T*/T&/切片 data)的唯一 LLVM 表示。
+
+        GEP 的元素类型与 load 的值类型由调用点显式给出, 指针本身不带 pointee。
+        """
+        return self.__ptr
 
     def get_ll_type(self, type_id: int) -> LLType:
         return LLType(type_id, self.__get_raw_type(type_id))
@@ -151,8 +159,6 @@ class LLTypeCtx:
         # (`Option<i32, ErrorCode>` / `Option<i32, u64>`) share one LLVM type.
         type_id = self.__type_ctx.canonical(type_id)
         if type_id in self.__storage:
-            if type_id in self.__incomplete:
-                self.__complete_type(type_id)
             return self.__storage[type_id]
 
         ty_def = self.__type_ctx[type_id]
@@ -202,32 +208,23 @@ class LLTypeCtx:
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
         # §7.4 方案 A: 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
-        # 诊断模式:raw_pointers 下指针退化为裸 8B **有型**指针 T*(load/store/gep
-        # 需 pointee 布局;早期使用无型 i8* 致 store/gep 类型错配,当前改为有型)。
+        # 诊断模式:raw_pointers 下指针退化为裸 8B opaque 指针;元素/值类型(GEP 的
+        # source_etype、load 的 typ)由使用点显式给出。
         if self.__raw_pointers:
-            return self.__declare_pointee(type_def.pointee_type).as_pointer()
+            return self.__ptr
         return self.__fat_pointer
 
     def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
         # 3 字段引用 ⟨data, lock_ptr, key⟩ 24B(不含 index 和 size)。
-        # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸 T*。
+        # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸指针 (opaque)。
         if self.__raw_pointers:
-            pointee_type_id = type_def.pointee_type
-            pointee_type = self.__type_ctx[pointee_type_id]
-            # ClosureLowering erases ordinary ClosureType values before LLVM,
-            # but a reference produced from a closure field can retain the
-            # closure type as its pointee.  The closure already has an
-            # anonymous capture-struct representation; use that existing
-            # representation for the raw data pointer as well.
-            if isinstance(pointee_type, Type.ClosureType):
-                pointee_type_id = pointee_type.struct_type_id
-            return self.__declare_pointee(pointee_type_id).as_pointer()
+            return self.__ptr
         return self.__ref_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
         # 4 字段切片 {data: T*, lock_ptr: i8*, key: u64, size: u64} 32B(不含 index)。
         # 诊断模式(raw_pointers)下退化为 2 字段 {T*, u64}。
-        data_type = self.__declare_pointee(type_def.element_type).as_pointer()
+        data_type = self.__ptr
         if self.__raw_pointers:
             return ir.LiteralStructType([data_type, self.__i64])
         return ir.LiteralStructType([data_type, self.__ptr, self.__i64, self.__i64])
@@ -247,7 +244,6 @@ class LLTypeCtx:
         return identified  # type: ignore
 
     def __fill_struct_body(self, type_id: int, identified: ir.Type) -> None:
-        self.__incomplete.discard(type_id)
         identified.set_body(*[self.__get_raw_type(f.type_id) for f in self.__type_ctx.get_struct_fields(type_id)])  # type: ignore
 
     def __handle_enum(self, type_id: int, _type_def: Type.EnumType) -> ir.Type:
@@ -261,7 +257,6 @@ class LLTypeCtx:
         return identified  # type: ignore
 
     def __fill_enum_body(self, type_id: int, identified: ir.Type) -> None:
-        self.__incomplete.discard(type_id)
         max_size, max_align = 0, 1
         for variant in self.__type_ctx.get_enum_variants(type_id):
             if variant.payload_type is None:
@@ -270,42 +265,6 @@ class LLTypeCtx:
             max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
         identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))  # type: ignore
-
-    def __complete_type(self, type_id: int) -> None:
-        """补齐只登记过 body 的 identified 类型 (见 `__declare_pointee`)。"""
-        self.__incomplete.discard(type_id)
-        identified = self.__storage[type_id]
-        ty_def = self.__type_ctx[type_id]
-        if isinstance(ty_def, Type.StructType):
-            self.__fill_struct_body(type_id, identified)
-        elif isinstance(ty_def, Type.EnumType):
-            self.__fill_enum_body(type_id, identified)
-        else:  # pragma: no cover - 只有 struct/enum 会被登记为未完成
-            raise ValueError(f"incomplete type is not a struct/enum: {type(ty_def).__name__}")
-
-    def __declare_pointee(self, type_id: int) -> ir.Type:
-        """取 pointee 的类型对象, 但**不强制完成它的 body**。
-
-        指针/切片的 LLVM 布局只要求"存在一个 pointee 类型对象"(尺寸与 pointee 无关),
-        而 struct/enum 的 body 可能要经指针回指自身: 在这里递归物化, 就会在"body 尚未
-        set"的类型上求 ABI 尺寸, 撞上 LLVM 的 unsized 断言 (见 bak/bug.md B3)。故
-        struct/enum 先只登记 identified type, 真正按值使用时再由 __get_raw_type 补齐;
-        niche enum 的 LLVM 类型就是其 payload 类型 (不是独立 identified type), 直接物化。
-        """
-        type_id = self.__type_ctx.canonical(type_id)
-        if type_id in self.__storage:
-            return self.__storage[type_id]
-        if not self.__type_ctx.is_zst(type_id):
-            ty_def = self.__type_ctx[type_id]
-            deferred = isinstance(ty_def, Type.StructType) or (
-                isinstance(ty_def, Type.EnumType) and not self.is_niche_enum(type_id)
-            )
-            if deferred:
-                identified = self.__module.context.get_identified_type(self.__mangle_type(type_id))  # type: ignore
-                self.__storage[type_id] = identified
-                self.__incomplete.add(type_id)
-                return identified  # type: ignore
-        return self.__get_raw_type(type_id)
 
     def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
         # A zero-sized return type lowers to `void` (nothing is returned);
@@ -339,6 +298,9 @@ class LLTypeCtx:
         )
 
     def __handle_function_pointer(self, type_def: Type.FunctionPointerType) -> ir.Type:
+        # 函数指针保留有型指针: llvmlite 的 CallInstr/Value.function_type 从 callee 的
+        # pointee 取函数签名, 间接调用需要一个带签名的指针类型 (LLVM 侧 opaque 也要求
+        # 调用点显式给出签名, 而 llvmlite 只支持从 pointee 推导)。
         return self.__build_function_type(type_def.return_type, type_def.parameter_types).as_pointer()
 
     # ------------------------------------------------------------------

@@ -31,15 +31,15 @@ class IntrinsicKind(Enum):
 
 class IntrinsicManager:
     __DECLARATIONS: dict[IntrinsicKind, tuple[ir.Type, list[ir.Type], str]] = {
-        IntrinsicKind.Malloc:    (ir.PointerType(ir.IntType(8)), [ir.IntType(64)], "malloc"),
-        IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType(ir.IntType(8))], "free"),
-        IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "write"),
-        IntrinsicKind.Read:      (ir.IntType(64), [ir.IntType(32), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "read"),
-        IntrinsicKind.Open:      (ir.IntType(32), [ir.PointerType(ir.IntType(8)), ir.IntType(32), ir.IntType(32)], "open"),
+        IntrinsicKind.Malloc:    (ir.PointerType(), [ir.IntType(64)], "malloc"),
+        IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType()], "free"),
+        IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "write"),
+        IntrinsicKind.Read:      (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "read"),
+        IntrinsicKind.Open:      (ir.IntType(32), [ir.PointerType(), ir.IntType(32), ir.IntType(32)], "open"),
         IntrinsicKind.Close:     (ir.IntType(32), [ir.IntType(32)], "close"),
         IntrinsicKind.ImmediateExit: (ir.VoidType(), [ir.IntType(32)], "_exit"),
-        IntrinsicKind.StrLen: (ir.IntType(64), [ir.PointerType(ir.IntType(8))], "strlen"),
-        IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(ir.IntType(8)), ir.PointerType(ir.IntType(8)), ir.IntType(64)], "memcpy"),
+        IntrinsicKind.StrLen: (ir.IntType(64), [ir.PointerType()], "strlen"),
+        IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(), ir.PointerType(), ir.IntType(64)], "memcpy"),
         IntrinsicKind.SysRandom: (ir.IntType(32), [], "rand"),
     }
 
