@@ -131,21 +131,43 @@ class Navigator:
         return None if best is None else best[1]
 
     def __body_span(self, def_point: DefPoint) -> SrcSpan | None:
-        """The smallest span covering every statement of *def_point*'s body."""
+        """The extent of *def_point*'s body: opening brace to matching close.
+
+        Statement spans are not uniformly wide (a ``return`` statement's span is
+        the keyword itself), so the extent is found by matching braces in the
+        token stream rather than by unioning statements.
+        """
         cached = self.__body_spans.get(id(def_point))
         if cached is not None:
             return cached
-        span: SrcSpan | None = None
-        for statement in def_point.ast_body.stmts:
-            if not self.__real(statement.span):
+        body = def_point.ast_body
+        tokens = self.__result.tokens.get(body.span.path.resolve(), ())
+        start: int | None = None
+        for index, token in enumerate(tokens):
+            if (token.span.start.row, token.span.start.col) == (
+                body.span.start.row,
+                body.span.start.col,
+            ):
+                start = index
+                break
+        if start is None:
+            return None
+        depth = 0
+        from compiler.frontend.lex import token as Tok
+
+        for index in range(start, len(tokens)):
+            token = tokens[index]
+            if not isinstance(token, Tok.Punctuator):
                 continue
-            if span is None:
-                span = SrcSpan(statement.span.start.clone(), statement.span.end.clone())
-            elif statement.span.path == span.path:
-                span += statement.span
-        if span is not None:
-            self.__body_spans[id(def_point)] = span
-        return span
+            if token.kind == Tok.PunctuatorKind.LBrace:
+                depth += 1
+            elif token.kind == Tok.PunctuatorKind.RBrace:
+                depth -= 1
+                if depth == 0:
+                    span = SrcSpan(tokens[start].span.start.clone(), token.span.end.clone())
+                    self.__body_spans[id(def_point)] = span
+                    return span
+        return None
 
     # ── the one query ─────────────────────────────────────────────────────────
 
@@ -220,6 +242,12 @@ class Navigator:
                     declarations.setdefault(key, declaration)
             self.__declarations = declarations
         return self.__declarations
+
+    def all_references(self) -> tuple[Type.NameRef, ...]:
+        """Every recorded name in the analysis, for project-wide queries."""
+        if self.__type_ctx is None:
+            return ()
+        return tuple(self.__type_ctx.name_refs())
 
     def reference_in_span(self, span: SrcSpan) -> Type.NameRef | None:
         """The resolved name inside *span*, if one was recorded there."""

@@ -27,16 +27,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lsprotocol import types
+from pygls.exceptions import JsonRpcException
 from pygls.lsp.server import LanguageServer
 
 from compiler.analysis.navigation import Navigator
 from compiler.analysis.session import AnalysisResult
 from compiler.analysis.completion import complete, signature_help as signature_info
+from compiler.analysis.refactor import (
+    ReferenceResult,
+    find_references,
+    import_removal_actions,
+    rename as rename_symbol,
+)
 from compiler.analysis.semantic import classify
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.completion import completion_list, signature_help
 from lsp.diagnostics import diagnostics_by_document
+from lsp.refactor import code_actions, document_highlights, locations, to_range, workspace_edit
 from lsp.navigation import document_symbols, hover, location
 from lsp.semantic_tokens import encode, legend
 from lsp.workspace import Snapshot, Workspace
@@ -48,6 +56,11 @@ __all__ = ["SERVER_NAME", "SERVER_VERSION", "YianLanguageServer", "create_server
 
 SERVER_NAME = "yian-lsp"
 SERVER_VERSION = "0.1.0"
+
+#: LSP's ``RequestFailed``: the request was understood, but cannot be fulfilled.
+#: A refused rename (a standard library symbol, an unusable name, an unchecked
+#: use) is exactly that.
+REQUEST_FAILED = -32803
 
 #: How long the server waits for typing to pause before analyzing.  The value is
 #: the debounce half of plan §5.12 level a; it is deliberately short enough to
@@ -351,6 +364,106 @@ def __register_features(server: YianLanguageServer) -> None:
         info = signature_info(result, path, row, col, std_root=ls.model.std_root)
         return None if info is None else signature_help(info)
 
+    # ── references, rename and quick fixes (plan §7 P7) ───────────────────────
+
+    @server.feature(types.TEXT_DOCUMENT_REFERENCES)
+    def references(
+        ls: YianLanguageServer, params: types.ReferenceParams
+    ) -> list[types.Location] | None:
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        navigator, path, row, col = located
+        result = __result_of(ls)
+        if result is None:
+            return None
+        found = find_references(
+            result,
+            path,
+            row,
+            col,
+            include_declaration=params.context.include_declaration,
+            std_root=ls.model.std_root,
+        )
+        return None if found is None else locations(found, navigator)
+
+    @server.feature(types.TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT)
+    def highlights(
+        ls: YianLanguageServer, params: types.DocumentHighlightParams
+    ) -> list[types.DocumentHighlight] | None:
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        navigator, path, row, col = located
+        result = __result_of(ls)
+        if result is None:
+            return None
+        found = find_references(result, path, row, col, std_root=ls.model.std_root)
+        if found is None:
+            return None
+        # Only this file: highlighting is what the editor does around the caret.
+        same_file = ReferenceResult(
+            target=found.target,
+            sites=tuple(
+                site for site in found.sites if site.span.path.resolve() == path.resolve()
+            ),
+        )
+        return document_highlights(same_file, navigator)
+
+    @server.feature(types.TEXT_DOCUMENT_PREPARE_RENAME)
+    def prepare_rename(
+        ls: YianLanguageServer, params: types.PrepareRenameParams
+    ) -> types.PrepareRenamePlaceholder | None:
+        """Whether a rename is possible here, and what it would rename.
+
+        The placeholder is what the client shows before the user types the new
+        name, so refusing here is how "not a symbol" becomes a clear message
+        instead of an edit that does nothing.
+        """
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        navigator, path, row, col = located
+        result = __result_of(ls)
+        if result is None:
+            return None
+        found = find_references(result, path, row, col, std_root=ls.model.std_root)
+        if found is None:
+            return None
+        return types.PrepareRenamePlaceholder(
+            range=to_range(found.target.span, navigator), placeholder=found.target.name
+        )
+
+    @server.feature(types.TEXT_DOCUMENT_RENAME)
+    def rename(
+        ls: YianLanguageServer, params: types.RenameParams
+    ) -> types.WorkspaceEdit | None:
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        navigator, path, row, col = located
+        result = __result_of(ls)
+        if result is None:
+            return None
+        outcome = rename_symbol(
+            result, path, row, col, params.new_name, std_root=ls.model.std_root
+        )
+        if not outcome.ok:
+            # A refused rename is a *request* failure with a readable reason, not
+            # a server error: the client shows the message instead of applying a
+            # partial edit (plan §7 P7: 拒绝批量修改).
+            raise JsonRpcException(outcome.refusal, code=REQUEST_FAILED)
+        return workspace_edit(outcome, navigator)
+
+    @server.feature(types.TEXT_DOCUMENT_CODE_ACTION, types.CodeActionOptions(code_action_kinds=[types.CodeActionKind.QuickFix]))
+    def code_action(
+        ls: YianLanguageServer, params: types.CodeActionParams
+    ) -> list[types.CodeAction]:
+        navigator, path, result = __file_context(ls, params.text_document.uri)
+        if navigator is None or path is None or result is None:
+            return []
+        return code_actions(import_removal_actions(result, path), navigator, path)
+
     @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     def did_save(ls: YianLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
         # Registering this feature also advertises `save: true`, which is what
@@ -451,6 +564,17 @@ def __located(
         return None
     path, row, col = located
     return navigator, path, row, col
+
+
+def __file_context(
+    server: YianLanguageServer, uri: str
+) -> tuple[Navigator | None, Path | None, AnalysisResult | None]:
+    """Navigator, path and result for a request that is about a whole file."""
+    analysis = __analysis(server)
+    if analysis is None:
+        return None, None, None
+    result, navigator = analysis
+    return navigator, uri_to_path(uri), result
 
 
 def __result_of(server: YianLanguageServer) -> AnalysisResult | None:

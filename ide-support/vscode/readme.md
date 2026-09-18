@@ -1,8 +1,8 @@
 # YIAN Language Support（VS Code 扩展）
 
-YIAN（`.an`）的编辑器支持。当前是 **P6** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
+YIAN（`.an`）的编辑器支持。当前是 **P7** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
 （`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断、
-导航与类型查看，以及补全、参数提示与语义高亮。
+导航与类型查看、补全/参数提示/语义高亮，以及查找引用、重命名与快速修复。
 
 - 语言 id `yian`，文件关联 `.an`
 - TextMate 语法高亮（关键字、类型、字面量、f-string 内插、属性与内建、注释）
@@ -24,8 +24,22 @@ YIAN（`.an`）的编辑器支持。当前是 **P6** 阶段：声明式的语言
 - 语义高亮：按符号索引给标识符分类（类型/函数/方法/变量/参数/字段/枚举成员），
   声明处加 `declaration`、标准库符号加 `defaultLibrary`；字符串、注释与数字仍由
   P1 的 TextMate 语法负责，语义 token 只覆盖标识符本身
+- 查找引用（`references`）与当前文件引用高亮（`documentHighlight`）：按**符号身份**
+  匹配，同名但不同作用域的符号不会混在一起；声明处标为写入、使用处标为读取
+- 重命名（`prepareRename` + `rename`）：跨文件、跨包，覆盖声明、使用与别名导入里的
+  原名；**只在解析出的名字 span 上改**，字符串、注释和无关同名符号不受影响；整体是
+  一个 `WorkspaceEdit`，可一次撤销。无法保证完整时会**拒绝**并给出原因：重命名标准库
+  符号、非法/关键字名字、以及"分析没检查到的定义里还用到这个名字"（未实例化的泛型体）
+- 快速修复（`codeAction`）：删掉无法解析的导入。`from X import a, b;` 只坏一项时只删那一项
+  和它的分隔符，单独一项坏掉或路径本身坏掉时删整条语句；动作回带它针对的诊断
 
-引用/重命名/代码操作（P7）、格式化与内联提示（不做）在后续阶段实现。
+格式化**暂不提供**。评估结论：复用解析树不可行——AST 不保留注释与空白（§5.8.2 第 4 条
+"全保真信息"仍缺），格式化需要一份保留 trivia 的词法/语法层；独立 formatter 是另一个
+项目（缩进、换行、注释归属都要重新定义），与本阶段"不重写前端"的约束冲突。因此先把
+幂等性与风格定义留到确实需要时单独立项。内联提示、折叠范围、选择范围、文档链接同理不做。
+
+引用高亮/重命名/代码操作都基于解析结果，因此**分析没跑到的代码不会被连带修改**；
+这也意味着重命名在"项目里存在未实例化的泛型体用到该名字"时会拒绝而不是只改一半。
 
 诊断的策略：文件改动后等 200ms 空闲再分析（防抖），保存时立即分析；分析结果按**整个项目**
 计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此丢弃过期结果；
@@ -88,6 +102,12 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 签名提示。语义高亮可以在设置里关掉（`editor.semanticHighlighting.enabled`），关掉后 TextMate
 的着色不受影响。
 
+要验收 P7：在 `src/main.an` 的局部变量 `corner` 上按 `Shift+F12`（查找引用）只应列出本文件里
+的三处；`F2`（重命名）成 `cornerstone` 应只改这三处，字符串与注释不动。在 `src/shapes.an` 的
+枚举成员 `Point` 上 `F2` 改名会同时改到 `main.an` 里的使用。把 `print` 改名会被拒绝并提示它是
+标准库符号。把某条导入写坏（例如 `from sample.types import Meters, Nope;`）后，问题处会出现
+"Remove this import: …" 的快速修复，执行后只剩 `import Meters;`。
+
 ## 构建
 
 ```bash
@@ -107,8 +127,8 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 ```bash
 cd ide-support/vscode
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.4.0.vsix
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.4.0
+code --install-extension yian-language-support-0.5.0.vsix
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.5.0
 ```
 
 打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上

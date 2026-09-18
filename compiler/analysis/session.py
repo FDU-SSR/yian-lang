@@ -103,7 +103,11 @@ class AnalysisResult:
     )
     units: Mapping[int, UnitData] = field(default_factory=dict[int, UnitData])
     type_ctx: TypeCtx | None = None
-    #: Definitions reachable from the program entry, for later index building.
+    #: Every definition the checker ran — the entry-reachable ones *and* the
+    #: root package's remaining definitions, which are checked but never
+    #: generated.  The editor needs both: navigation has to answer for a function
+    #: `main` never calls, and rename has to know which bodies were actually
+    #: analysed before it can trust its reference set (plan §7 P5/P7).
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
@@ -290,7 +294,7 @@ class AnalysisSession:
             tokens=lexed,
             units=units,
             type_ctx=type_ctx,
-            def_points=checker.export_generated(),
+            def_points=checker.export(),
             index=index,
             versions=store.versions(),
             key=key,

@@ -255,6 +255,18 @@ def __unit_declarations(
                         module=module,
                     )
                 )
+                if alias is not None and __is_real_span(target.span):
+                    # An aliased import names two things: the local alias (above)
+                    # and the imported name, which rename has to be able to find.
+                    declarations.append(
+                        Declaration(
+                            name=target.name,
+                            kind=DeclarationKind.IMPORT,
+                            path=path,
+                            span=target.span,
+                            module=module,
+                        )
+                    )
             case _:
                 continue
     return declarations
