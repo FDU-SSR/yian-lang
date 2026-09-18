@@ -20,6 +20,22 @@ yianc lib/src tests/basic/array/assign.an
 yianc lib/src tests/basic/std/core/option.an tests/basic/std/core/result.an
 ```
 
+### 1.1 工具链要求
+
+编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
+
+```bash
+scripts/setup_llvm_toolchain.sh --check            # 只报告当前版本，不做修改
+scripts/setup_llvm_toolchain.sh --with-clang-22    # 安装 LLVM 22 并把系统默认命令切到 22（需要 sudo）
+scripts/setup_llvm_toolchain.sh --with-conda-clang # 或：只把 clang 22 装进当前 conda 环境（无需 sudo）
+```
+
+链接阶段使用的 C 编译器按 `$YIAN_CC` → `clang` → `cc` 选择，不隐式回落到带版本号的旧 clang：
+
+```bash
+export YIAN_CC=/usr/lib/llvm-22/bin/clang
+```
+
 ## 2. 命令行参数
 
 ### 2.1 输入路径
@@ -65,7 +81,7 @@ yianc -O2 lib/src tests/basic/array/assign.an
 
 1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc/obj/asm），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
 2. **后端 target machine**：`create_target_machine(opt=N)`，`-O0` → 0；
-3. **链接 clang**：`clang -O<N>`。
+3. **链接 C 编译器**：按 `$YIAN_CC` → `clang` → `cc` 选择链接器，并加 `-O<N>`。
 
 `-t ll` 输出始终为**未优化**的 IR（零优化保留，供调试）。注意 `-t bc` 导出的 bitcode 是优化后的 IR（非源码级）。
 
@@ -74,6 +90,8 @@ yianc -O2 lib/src tests/basic/array/assign.an
 ```bash
 yianc --profile lib/src tests/basic/array/assign.an
 ```
+
+输出末尾还会打印实际使用的链接器及其版本，以及 llvmlite 绑定的 LLVM 版本。
 
 ### 2.6 `--packages` — 包名导入解析
 

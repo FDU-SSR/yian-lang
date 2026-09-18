@@ -59,6 +59,7 @@ class Emitter:
         # automatically cleaned up (even when parsing fails).
         fd, ll_path = tempfile.mkstemp(suffix=".ll", prefix="yian_")
         os.close(fd)
+        target_machine = None
         try:
             ir_text = str(llvm_module)
             binding = self.__ensure_binding()
@@ -69,15 +70,14 @@ class Emitter:
             self.emit_ll(llvm_module, ll_path)
             llvm_mod = binding.parse_assembly(ir_text)
             llvm_mod.verify()
+            if opt_level > 0 or normalized_kind in ("obj", "asm"):
+                target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", opt=opt_level)  # type: ignore[union-attr]
             if opt_level > 0:
-                # C1: IR-level optimization pipeline.  llvmlite 0.44 shape
-                # (verified by the C1 spike): PassManagerBuilder's opt_level
-                # is a SETTER property, NOT a constructor kwarg.
-                pm = binding.create_module_pass_manager()
-                pmb = binding.PassManagerBuilder()
-                pmb.opt_level = opt_level
-                pmb.populate(pm)
-                pm.run(llvm_mod)
+                # speed_level 即 -O 档位:LLVMPY_buildPerModuleDefaultPipeline
+                # 据此构建 per-module 默认管线。
+                pto = binding.PipelineTuningOptions(opt_level)  # type: ignore[attr-defined]
+                builder = binding.create_pass_builder(target_machine, pto)  # type: ignore[attr-defined]
+                builder.getModulePassManager().run(llvm_mod, builder)
                 llvm_mod.verify()
         finally:
             if os.path.exists(ll_path):
@@ -89,7 +89,7 @@ class Emitter:
             with open(output_path, "wb") as f:
                 f.write(llvm_mod.as_bitcode())
         elif normalized_kind in ("obj", "asm"):
-            target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", opt=opt_level)  # type: ignore[union-attr]
+            assert target_machine is not None
             if normalized_kind == "obj":
                 with open(output_path, "wb") as f:
                     f.write(target_machine.emit_object(llvm_mod))

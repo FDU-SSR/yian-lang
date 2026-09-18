@@ -4,7 +4,7 @@ YIAN is a statically typed programming language. Its compiler is written in Pyth
 
 `.an source → tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → native executable`
 
-The supported development environment is Linux with Python 3.11 or newer (`anx` reads manifests with `tomllib`) and clang.
+The supported development environment is Linux with Python 3.11 or newer (`anx` reads manifests with `tomllib`) and the LLVM 22 toolchain: llvmlite 0.49 (which bundles LLVM 22), clang 22, and the LLVM tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`). `scripts/setup_llvm_toolchain.sh` installs that toolchain — llvmlite into the active environment, the clang-22 packages system-wide, and the unversioned commands switched to 22; `--check` only reports. `YIAN_CC` selects the compiler used for linking; it defaults to `clang`, then `cc`.
 
 ## Working rules
 

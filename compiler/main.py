@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from llvmlite import ir
 
@@ -378,12 +379,40 @@ def __derive_output(args: argparse.Namespace, src_files: list[Path]) -> Path:
     return Path(first_stem)
 
 
-def __link_exe(obj_path: Path, output_path: Path, opt_level: int) -> None:
-    """Link a .o file to a native executable via clang (or cc as fallback)."""
+def __select_linker() -> str:
+    """链接目标文件所用的 C 编译器。
+
+    顺序:``$YIAN_CC`` → ``clang`` → ``cc``。不隐式回落到带版本号的
+    ``clang-18``/``clang-20``:工具链版本由环境显式给出(见
+    ``scripts/setup_llvm_toolchain.sh``),避免"看起来能用但版本不对"。
+    """
+    override = os.environ.get("YIAN_CC", "")
+    if override:
+        resolved = shutil.which(override)
+        if resolved is None and Path(override).exists():
+            resolved = override
+        if resolved is None:
+            print(f"error: YIAN_CC={override!r} not found", file=sys.stderr)
+            sys.exit(1)
+        return resolved
     linker = shutil.which("clang") or shutil.which("cc")
     if linker is None:
-        print("error: no linker found (tried clang, cc). Install clang to link executables.", file=sys.stderr)
+        print(
+            "error: no linker found (tried clang, cc). Install clang or point YIAN_CC at one"
+            " (see scripts/setup_llvm_toolchain.sh --check).",
+            file=sys.stderr,
+        )
         sys.exit(1)
+    return linker
+
+
+def __link_exe(obj_path: Path, output_path: Path, opt_level: int, profile: bool = False) -> None:
+    """Link a .o file to a native executable via clang (or cc as fallback)."""
+    linker = __select_linker()
+    if profile:
+        version = subprocess.run([linker, "--version"], capture_output=True, text=True, check=False)
+        first_line = version.stdout.splitlines()[0] if version.stdout else "version unknown"
+        print(f"  linker: {linker} ({first_line})", file=sys.stderr)
 
     cmd = [linker, str(obj_path), "-o", str(output_path), f"-O{opt_level}"]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -681,7 +710,7 @@ def __run(argv: list[str] | None = None) -> int:
         elif args.target == "exe":
             obj_path = out_dir / (stem + ".o")
             emitter.emit_module(llvm_module, str(out_dir), "obj", stem, opt_level=args.O)
-            __link_exe(obj_path, output_path, args.O)
+            __link_exe(obj_path, output_path, args.O, profile=args.profile)
         if args.profile:
             timings["emit"] = time.perf_counter() - emit_start
 
@@ -692,6 +721,14 @@ def __run(argv: list[str] | None = None) -> int:
             pct = elapsed / total * 100 if total > 0 else 0
             print(f"  {phase:<20} {elapsed:8.4f}s  ({pct:5.1f}%)", file=sys.stderr)
         print(f"  {'total':<20} {total:8.4f}s", file=sys.stderr)
+        try:
+            import llvmlite.binding as _binding
+
+            version_info = cast("tuple[int, ...]", _binding.llvm_version_info)  # type: ignore[reportUnknownMemberType]
+            llvm_version = ".".join(str(part) for part in version_info)
+        except Exception:
+            llvm_version = "unknown"
+        print(f"  llvmlite: LLVM {llvm_version}", file=sys.stderr)
         print(f"{'':-^40}", file=sys.stderr)
 
     return 0
