@@ -39,6 +39,10 @@ enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字�
 - 函数指针保持有型 (`types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
   `Value.function_type` 从 callee 的 pointee 取签名, 间接调用需要带签名的指针类型。
 
+指针不携带 pointee, 因此"字节视图"(把 `T*` 当 `i8*` 用)不再需要 `bitcast`: 值原样传递, 字节
+步进由使用点的 `source_etype=ir.IntType(8)` 给出(`free`/`memcpy` 等 intrinsic 的参数本来就是
+opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__bitcast`。
+
 指针构造不再为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
 只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好, 没有"只登记未填 body"的
 中间状态。
