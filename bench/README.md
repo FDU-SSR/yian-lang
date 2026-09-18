@@ -212,8 +212,9 @@ fn main() {
 
 实测 `s.id` 读成 `7 << 32`（读偏移比写偏移少 4 字节，即 enum tag 的大小）。单独
 `{k: E, id: u64}` 或 `{k: E, id: u64, w: u64}`（无 `Option`）正常；`{p: Option<Rec&>,
-k: E, id: u64}`（`Option` 在前）同样错。规避：把 enum 字段放在结构体**最后**
-（`richards.an` 的 `TaskControlBlock.kind` 即此写法）。
+k: E, id: u64}`（`Option` 在前）同样错。**已修复**（`310e9b8`：模块此前只写 target triple、
+data layout 为空，中端 pass 因此按空布局折叠字段偏移，见 `docs/llvm_note.md`「目标三元组与
+data layout」）；`richards.an` 原先"把 enum 字段放在最后"的规避已随修复撤回。
 
 ### 3. raw 模式下"enum 载荷按值包含 `Vec<自身>`"触发 LLVM 布局重入崩溃
 

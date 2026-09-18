@@ -420,7 +420,3 @@ class Navigator:
     @staticmethod
     def __size(span: SrcSpan) -> tuple[int, int]:
         return (span.end.row - span.start.row, span.end.col - span.start.col)
-
-    @staticmethod
-    def __position_key(span: SrcSpan) -> tuple[int, int]:
-        return (span.start.row, span.start.col)

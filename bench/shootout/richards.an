@@ -22,9 +22,10 @@
 //     Handler{record} / Device{record} } + match」; runTask 的 if 部分保留在
 //     Scheduler.run_task, 四个 lambda 的函数体分别落在 run_idle/run_worker/
 //     run_handler/run_device, 状态机与分支逐条对应。
-//   - 字段顺序注意: 实测内联 enum 字段之后紧跟标量字段时, 该标量字段读偏移会
-//     少算 enum 的 tag (如 enum 后接 u64 读出 7<<32); 故 TaskControlBlock 把
-//     TaskKind 放在最后一个字段 (引用/Option 字段在前), 语义与上游一致。
+//   - TaskKind (类层次判别子) 放在 TaskControlBlock 首个字段: 语义与上游字段
+//     集合一致; 字段顺序不承载语义 (曾为绕开一个 -O1 下的字段偏移误编译而把
+//     TaskKind 放最后, 该 bug 已修, 见 compiler/codegen/llvm/module.py 的
+//     TARGET_DATA_LAYOUT 注释与 docs/llvm_note.md)。
 //   - 上游 TaskControlBlock extends TaskState 继承的三个布尔量改为内嵌 TaskState
 //     值字段 (pending/waiting/holding), 方法 packetPending()/running()/
 //     isTaskHoldingOrWaiting()/isWaitingWithPacket() 逐条照搬。
@@ -168,16 +169,15 @@ enum TaskKind {
 }
 
 // ── TaskControlBlock (上游 richards/TaskControlBlock.java) ──
-// 字段声明顺序: 引用/Option 字段在前, TaskKind 放最后 (规避内联 enum 之后紧跟
-// 标量字段时的布局问题; 语义与上游字段集合一致)。
+// 字段集合与上游一致; TaskKind 是类层次的判别子, 放首位。
 
 struct TaskControlBlock {
+    kind: TaskKind,
     link: Option<TaskControlBlock&>,
     identity: i32,
     priority: i32,
     input: Option<Packet&>,
     state: TaskState,
-    kind: TaskKind,
 }
 
 // 上游 TaskControlBlock.addInputAndCheckPriority: 入队并按优先级决定下一个任务
