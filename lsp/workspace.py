@@ -77,6 +77,7 @@ class Workspace:
             compiler_root=compiler_root, packages=None, raw_pointers=raw_pointers
         )
         self.__snapshot: Snapshot | None = None
+        self.__syntax: Snapshot | None = None
         self.__generation = 0
 
     # ── documents ──────────────────────────────────────────────────────────────
@@ -192,30 +193,69 @@ class Workspace:
 
     @property
     def snapshot(self) -> Snapshot:
-        """The current analysis, reusing the previous one while inputs match."""
-        return self.__snapshot_now()
+        """The full analysis, reusing the previous one while inputs match."""
+        return self.__snapshot_now(syntax_only=False)
+
+    @property
+    def syntax_snapshot(self) -> Snapshot:
+        """The front-end-only analysis, cached like the full one.
+
+        Plan §5.12 level b: while text is changing the editor only needs the
+        diagnostics lexing, parsing and desugaring can decide.  At a few hundred
+        files that is ~70-110 ms against ~200-470 ms for the full prefix, and it
+        is honest — it reports what it actually ran, never a stale type error.
+        """
+        return self.__snapshot_now(syntax_only=True)
+
+    @property
+    def fresh_snapshot(self) -> Snapshot | None:
+        """The cached *full* snapshot while it still matches the inputs.
+
+        Semantic tokens are recomputed on every visible edit, so asking for a
+        full analysis there would undo level b; ``None`` tells the caller the
+        text moved on and it should answer without types (the editor then keeps
+        its TextMate highlighting, plan §5.12).
+        """
+        return self.__cached(syntax_only=False)
 
     def invalidate(self) -> None:
-        """Drop the cached snapshot; the next :meth:`snapshot` re-analyzes."""
+        """Drop the cached snapshots; the next request re-analyzes."""
         self.__snapshot = None
+        self.__syntax = None
 
-    def __snapshot_now(self) -> Snapshot:
-        files = self.files()
-        key = self.__session.snapshot_key(files, documents=self.__documents)
-        cached = self.__snapshot
-        if cached is not None and cached.result.key == key and cached.files == files:
+    def __snapshot_now(self, *, syntax_only: bool) -> Snapshot:
+        cached = self.__cached(syntax_only=syntax_only)
+        if cached is not None:
             return cached
 
-        result = self.__session.analyze(files, documents=self.__documents)
+        files = self.files()
+        result = self.__session.analyze(
+            files, documents=self.__documents, syntax_only=syntax_only
+        )
         self.__generation += 1
-        self.__snapshot = Snapshot(
+        snapshot = Snapshot(
             generation=self.__generation,
             project_root=self.__project_root,
             project=self.__project,
             files=files,
             result=result,
         )
-        return self.__snapshot
+        if syntax_only:
+            self.__syntax = snapshot
+        else:
+            self.__snapshot = snapshot
+        return snapshot
+
+    def __cached(self, *, syntax_only: bool) -> Snapshot | None:
+        """The cached snapshot for the current inputs, or ``None``."""
+        cached = self.__syntax if syntax_only else self.__snapshot
+        if cached is None:
+            return None
+        files = self.files()
+        key = self.__session.snapshot_key(files, documents=self.__documents)
+        if cached.result.key == key and cached.files == files:
+            return cached
+        return None
 
     # ── internals ─────────────────────────────────────────────────────────────
 

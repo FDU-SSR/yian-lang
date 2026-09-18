@@ -39,13 +39,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--raw-pointers",
         action="store_true",
-        help="analyze in raw-pointer mode, matching `yianc -r`",
+        help="analyze in raw-pointer mode, matching `yianc --raw-pointers`",
     )
     parser.add_argument(
         "--log-level",
         choices=__LOG_LEVELS,
         default=os.environ.get("YIAN_LSP_LOG", __DEFAULT_LOG_LEVEL),
         help=f"stderr log level (default: ${'YIAN_LSP_LOG'} or {__DEFAULT_LOG_LEVEL})",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=os.environ.get("YIAN_LSP_LOG_FILE"),
+        help="also append the log to this file (default: $YIAN_LSP_LOG_FILE, else stderr only)",
     )
     # `vscode-languageclient` appends this to the command line whenever the
     # transport is stdio (node/main.js pushes `--stdio` for an Executable), and
@@ -59,10 +65,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"{SERVER_NAME} {SERVER_VERSION}")
     args = parser.parse_args(argv)
 
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    if args.log_file is not None:
+        # A file handler is for bug reports and for watching a long session;
+        # it never replaces stderr, so the extension's output channel still gets
+        # everything the user is used to.
+        try:
+            handlers.append(logging.FileHandler(args.log_file, encoding="utf-8"))
+        except OSError as error:
+            print(f"{SERVER_NAME}: cannot open log file {args.log_file}: {error}", file=sys.stderr)
+            return 2
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        stream=sys.stderr,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+        force=True,
     )
     server = create_server(compiler_root=args.compiler_root, raw_pointers=args.raw_pointers)
     server.start_io()

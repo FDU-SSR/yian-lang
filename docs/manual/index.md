@@ -1,10 +1,12 @@
 # Yian 开发文档
 
-本文档描述 Yian 工具链的内部实现，分两部分：
+本文档描述 Yian 工具链的内部实现，分三部分：
 
 - **编译器**（01–19）：内部架构、数据流与关键算法，按源文件模块组织，每章对应编译管线的一个阶段。
 - **anx 包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
   以及 anx 自身的测试。
+- **分析接口与语言服务器**（26–27）：编辑器复用的分析会话与位置/引用模型，以及 `lsp/` 的
+  协议服务、调度与分发。
 
 ## 目录 · 编译器
 
@@ -40,5 +42,12 @@
 | [23](23.anx_graph.md) | 依赖图与 v2 包图 | `anx/project.py`、`compiler/analysis/package_map.py` |
 | [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/main.py`、`compiler/analysis/source_provenance.py` |
 | [25](25.anx_tests.md) | anx 自身的测试 | `anx/project_tests.py`、`scripts/run_tests.py` |
+
+## 目录 · 分析接口与语言服务器
+
+| 章 | 标题 | 对应源文件 |
+|----|------|-----------|
+| [26](26.analysis_interface.md) | 分析接口 | `compiler/analysis/`：会话、位置转换、声明索引、导航/补全/语义/重命名 |
+| [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 
 > 用户视角的用法见 [anx 用户指南](../anx/index.md)。

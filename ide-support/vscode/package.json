@@ -2,7 +2,7 @@
     "name": "yian-language-support",
     "displayName": "YIAN Language Support",
     "description": "YIAN language support: syntax highlighting, comment/bracket behaviour, language configuration and the YIAN language server client",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "publisher": "yian",
     "license": "MIT OR Apache-2.0",
     "engines": {
@@ -65,6 +65,25 @@
                     },
                     "default": [],
                     "markdownDescription": "Arguments passed to the language server command, for example `--compiler-root` or `--log-level DEBUG`.",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.logLevel": {
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "DEBUG",
+                        "INFO",
+                        "WARNING",
+                        "ERROR"
+                    ],
+                    "default": "",
+                    "markdownDescription": "Log level passed to the language server as `--log-level`. Empty keeps the server's own default (`INFO`, or `$YIAN_LSP_LOG`). `DEBUG` also logs every JSON-RPC payload and analysis timing, which is what a bug report needs.",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.logFile": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "File the language server appends its log to, in addition to the output channel (passed as `--log-file`). `${workspaceFolder}` is expanded to the first workspace folder. Empty logs to the output channel only.",
                     "scope": "machine-overridable"
                 }
             }

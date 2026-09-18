@@ -119,6 +119,9 @@ class AnalysisResult:
     #: result is only reusable when this matches, which is what keeps stale
     #: definitions or diagnostics from surviving an edit (plan §5.12).
     key: tuple[object, ...] = ()
+    #: True when the run stopped after desugaring: its diagnostics are the
+    #: front end's, and it carries no names, types or index (plan §5.12 level b).
+    syntax_only: bool = False
 
     def ok(self) -> bool:
         """True when no diagnostic has error severity."""
@@ -176,6 +179,7 @@ class AnalysisSession:
         *,
         documents: DocumentStore | None = None,
         require_entry: bool = False,
+        syntax_only: bool = False,
     ) -> AnalysisResult:
         """Analyze *paths* and return diagnostics plus the resolved state.
 
@@ -183,6 +187,12 @@ class AnalysisSession:
         from disk, which covers the standard library and untouched dependencies.
         A missing path raises :class:`FileNotFoundError` — that is a caller
         mistake, not a diagnostic about a document.
+
+        With *syntax_only* the run stops after desugaring and reports only what
+        the front end can see.  That is the cheap half of plan §5.12 level b: the
+        editor publishes syntax diagnostics while typing (60–110 ms even for a
+        few hundred files) and pays for the full prefix only when a semantic
+        request or a save asks for it.
         """
         store = documents if documents is not None else DocumentStore()
         src_files = collect_an_files(paths, overlay=store)
@@ -191,21 +201,40 @@ class AnalysisSession:
 
         tokens = self.__lex(src_files, sources)
         if isinstance(tokens, AnalysisResult):
-            return self.__keyed(tokens, key, store)
+            return self.__keyed(self.__mark_syntax(tokens, syntax_only), key, store)
         # Kept for the stages that can still fail: a file the parser rejects has
         # no symbol table, but its tokens are what a degraded completion or
         # semantic pass works from (plan §7 P6).
         lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
-            return self.__keyed(self.__with_tokens(programs, lexed), key, store)
+            return self.__keyed(
+                self.__mark_syntax(self.__with_tokens(programs, lexed), syntax_only), key, store
+            )
 
         try:
             for program in programs:
                 Desugar(program).run()
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
-                self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed), key, store
+                self.__mark_syntax(
+                    self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed),
+                    syntax_only,
+                ),
+                key,
+                store,
+            )
+
+        if syntax_only:
+            # Everything the front end can decide, and nothing that needs the
+            # program's names or types.
+            return AnalysisResult(
+                diagnostics=(),
+                sources=sources,
+                tokens=lexed,
+                versions=store.versions(),
+                key=key,
+                syntax_only=True,
             )
 
         units: dict[int, UnitData] = {
@@ -380,6 +409,17 @@ class AnalysisSession:
             except ANALYSIS_ERRORS as error:
                 return self.__failed(error, Stage.PARSE, sources)
         return programs
+
+    def __mark_syntax(self, result: AnalysisResult, syntax_only: bool) -> AnalysisResult:
+        """Flag a failed front-end result with the mode it was asked for.
+
+        A run that stops during lexing, parsing or desugaring has no index and no
+        types, so it *is* a syntax-only answer even though it took the error path
+        (plan §5.12 level b); a caller that checks the flag must not be told
+        otherwise.
+        """
+        result.syntax_only = syntax_only
+        return result
 
     def __failed(
         self,

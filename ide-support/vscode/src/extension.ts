@@ -31,10 +31,67 @@ const LEVEL_PREFIX = /^\S+ \S+ (TRACE|DEBUG|INFO|WARNING|ERROR|CRITICAL) /;
 
 function serverConfig(): { command: string; args: string[] } {
     const config = vscode.workspace.getConfiguration('yian.languageServer');
+    const args = [...config.get<string[]>('args', [])];
+    const level = config.get<string>('logLevel', '');
+    if (level !== '') {
+        args.push('--log-level', level);
+    }
+    const logFile = config.get<string>('logFile', '');
+    if (logFile !== '') {
+        // Settings are plain strings, so the editor does not expand variables
+        // for us; the workspace folder is the only one worth having, because a
+        // log written next to the project is easy to find and easy to delete.
+        args.push('--log-file', expandWorkspaceFolder(logFile));
+    }
     return {
         command: config.get<string>('command', 'yian-lsp'),
-        args: config.get<string[]>('args', []),
+        args,
     };
+}
+
+function expandWorkspaceFolder(value: string): string {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (folder === undefined) {
+        return value;
+    }
+    return value.replaceAll('${workspaceFolder}', folder.uri.fsPath);
+}
+
+/**
+ * Report which server answered, and whether it belongs to this extension.
+ *
+ * The extension and the server are released together from one repository, so a
+ * mismatch means the interpreter that started the server has an older (or a
+ * different) `yian` install — the usual cause is a second Python environment.
+ * That is a warning with a fix, not an error: the features that do exist still
+ * work (plan §6.1, §7 P8).
+ */
+function checkServerVersion(
+    context: vscode.ExtensionContext,
+    outputChannel: vscode.LogOutputChannel,
+    started: LanguageClient,
+): void {
+    const expected = context.extension.packageJSON.version as string;
+    const info = started.initializeResult?.serverInfo;
+    if (info === undefined) {
+        outputChannel.warn(
+            `the language server did not report its version; expected ${expected}. ` +
+                `Update the server with: pip install -e '.[lsp]'`,
+        );
+        return;
+    }
+    if (info.version === expected) {
+        outputChannel.info(`connected to ${info.name} ${info.version}`);
+        return;
+    }
+    outputChannel.warn(
+        `the language server reported ${info.name} ${info.version}, but this ` +
+            `extension is ${expected}; the two are released together`,
+    );
+    void vscode.window.showWarningMessage(
+        `YIAN: language server ${info.version} does not match extension ${expected}. ` +
+            `Update the server in the interpreter that runs it: pip install -e '.[lsp]'`,
+    );
 }
 
 /**
@@ -121,14 +178,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // A missing `yian-lsp` (not installed, or not on PATH) must be an actionable
     // message rather than a silently dead extension.
-    void languageClient.start().catch((error: unknown) => {
-        const reason = error instanceof Error ? error.message : String(error);
-        outputChannel.error(`could not start '${command}': ${reason}`);
-        void vscode.window.showErrorMessage(
-            `YIAN: could not start '${command}'. Install the language server ` +
-                `(pip install '.[lsp]') or set "yian.languageServer.command" to its full path.`,
-        );
-    });
+    void languageClient
+        .start()
+        .then(() => {
+            checkServerVersion(context, outputChannel, languageClient);
+        })
+        .catch((error: unknown) => {
+            const reason = error instanceof Error ? error.message : String(error);
+            outputChannel.error(`could not start '${command}': ${reason}`);
+            void vscode.window.showErrorMessage(
+                `YIAN: could not start '${command}'. Install the language server ` +
+                    `(pip install '.[lsp]') or set "yian.languageServer.command" to the ` +
+                    `interpreter that has it, with "yian.languageServer.args": ["-m", "lsp"].`,
+            );
+        });
 }
 
 export async function deactivate(): Promise<void> {

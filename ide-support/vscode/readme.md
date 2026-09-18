@@ -1,8 +1,9 @@
 # YIAN Language Support（VS Code 扩展）
 
-YIAN（`.an`）的编辑器支持。当前是 **P7** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
-（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断、
-导航与类型查看、补全/参数提示/语义高亮，以及查找引用、重命名与快速修复。
+YIAN（`.an`）的编辑器支持。当前是 **P8** 阶段（性能、打包与发布）：声明式的语言注册与编辑体验、一个
+语言服务器客户端（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断、
+导航与类型查看、补全/参数提示/语义高亮、查找引用/重命名/快速修复，以及分发与排查方式（§6.1 选定的
+方式是**依赖本机 Python**，不随扩展打包运行时）。
 
 - 语言 id `yian`，文件关联 `.an`
 - TextMate 语法高亮（关键字、类型、字面量、f-string 内插、属性与内建、注释）
@@ -41,10 +42,16 @@ YIAN（`.an`）的编辑器支持。当前是 **P7** 阶段：声明式的语言
 引用高亮/重命名/代码操作都基于解析结果，因此**分析没跑到的代码不会被连带修改**；
 这也意味着重命名在"项目里存在未实例化的泛型体用到该名字"时会拒绝而不是只改一半。
 
-诊断的策略：文件改动后等 200ms 空闲再分析（防抖），保存时立即分析；分析结果按**整个项目**
-计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此丢弃过期结果；
-文件修好、关闭或不再被分析时，该文档的诊断会被清空。分析只跑编译器流水线的前半段
-（词法 → 类型检查），不生成代码，也不调用 LLVM/clang/链接器。
+诊断的策略分两条路（计划 §5.12 的级别 a + b）。**打字期间只跑编译器前端**（词法 → 语法 → 去糖），
+所以改完等 200ms 空闲后先出现的是词法/语法错误；**打开文件、保存、以及悬停/补全/跳转/引用/重命名
+这类语义请求**才跑完整前缀（词法 → 类型检查），跑完立刻把类型错误、成员错误一并发布。也就是说，
+边打字时 Problems 面板只反映前端能确定的错误，类型错误会在保存或下一次语义请求后回来——这是"不按键
+触发类型检查"的直接结果，换来的是打字反馈与项目规模基本无关。语义高亮同理：只有完整分析落地后才给
+颜色，中间返回空数组，由文本语法（TextMate）兜底。
+
+分析结果按**整个项目**计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此
+丢弃过期结果；文件修好、关闭或不再被分析时，该文档的诊断会被清空。分析不生成代码，也不调用
+LLVM/clang/链接器。
 
 ## 语言服务器
 
@@ -52,20 +59,43 @@ YIAN（`.an`）的编辑器支持。当前是 **P7** 阶段：声明式的语言
 并把服务器的 stderr 收进输出通道。语言规则、索引与分析都在服务器侧（`lsp/` + `compiler/`），
 扩展里没有任何 YIAN 语法知识。
 
-前提：`yian-lsp` 在 `PATH` 上，且其 Python 环境能 `import pygls`：
+### 安装（依赖本机 Python）
+
+服务器不随扩展分发（计划 §6.1 候选②）：扩展启动的是本机已有的 `yian-lsp`，所以**装在哪个解释器里，
+就要让扩展用那个解释器**。在仓库根目录：
 
 ```bash
-scripts/install.sh --with-deps              # 仓库内：editable 安装三个命令
-python3 -m pip install '.[lsp]'             # 或者只补语言服务器的依赖
-yian-lsp --version                          # 确认入口点可用
+scripts/install.sh --with-deps              # editable 安装 yianc / anx / yian-lsp
+python3 -m pip install '.[lsp]'             # 只补语言服务器依赖（pygls；llvmlite 是基础依赖）
+python3 -m lsp --version                    # 用同一个解释器确认入口点可用
+```
+
+默认配置直接用 `PATH` 上的 `yian-lsp`。多环境机器（多个 conda 环境、系统 Python 与虚拟环境并存）
+推荐显式写解释器，否则很容易出现"VS Code 里的 Python"与"PATH 上的 Python"不是同一个：
+
+```jsonc
+{
+    "yian.languageServer.command": "/home/<用户>/miniconda3/envs/yian-env/bin/python",
+    "yian.languageServer.args": ["-m", "lsp"]
+}
 ```
 
 设置：
 
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `yian.languageServer.command` | `yian-lsp` | 服务器启动命令；不在 `PATH` 上时填绝对路径 |
-| `yian.languageServer.args` | `[]` | 追加参数，例如 `--compiler-root /path/to/yian`、`--log-level DEBUG` |
+| `yian.languageServer.command` | `yian-lsp` | 服务器启动命令；多环境时填解释器的绝对路径 |
+| `yian.languageServer.args` | `[]` | 追加参数；配合上面的写法是 `["-m", "lsp"]`，也可加 `--compiler-root`（可用 `--help` 看全部） |
+| `yian.languageServer.logLevel` | `""` | 传给服务器的 `--log-level`（`DEBUG`/`INFO`/`WARNING`/`ERROR`）；空表示用服务器默认（`INFO`） |
+| `yian.languageServer.logFile` | `""` | 服务器额外写入的日志文件（`--log-file`），`${workspaceFolder}` 会被展开 |
+
+### 版本匹配
+
+扩展与服务器从同一个仓库一起发布，版本号相同（当前 **0.6.0**：`package.json` 的 `version` 与
+`lsp/server.py` 的 `SERVER_VERSION` 一起改）。服务器在 `initialize` 里回 `serverInfo`，扩展比对不一致
+时会在输出通道记一条警告并弹提示——出现它说明启动服务器的那个解释器里的 `yian` 是旧安装，重新
+`pip install -e '.[lsp]'` 即可。能力以扩展版本为准：服务器更旧时新特性会失效（例如旧服务器不认
+`--log-file`）。
 
 分析模式由**工作区**决定，与之后打开哪个文件无关：
 
@@ -78,7 +108,9 @@ yian-lsp --version                          # 确认入口点可用
   之后每打开/关闭一个文档都会出现一条 `analysis #N (didOpen|didClose): …`。
 
 分析在「被分析的文件集合变化」时重跑（standalone 模式下打开/关闭文档就是这种变化，
-package 模式下只有打开包外文件才会）；纯文本修改只作废快照，重新分析属于 **P4**。
+package 模式下只有打开包外文件才会）；纯文本修改只作废快照：打字路径重跑前端，完整前缀留给保存与
+语义请求（见上文"诊断的策略"）。DEBUG 日志里两条路径分别记为 `analysis #N (<事件>, syntax)` 与
+`analysis #N (<事件>, full)`，后者还会多一行声明数量。
 
 验证：
 
@@ -108,6 +140,21 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 标准库符号。把某条导入写坏（例如 `from sample.types import Meters, Nope;`）后，问题处会出现
 "Remove this import: …" 的快速修复，执行后只剩 `import Meters;`。
 
+要验收 P8（性能路径与发布项），把工作区设为 `ide-support/sample`，`yian.languageServer.logLevel`
+设为 `DEBUG`，然后：
+
+1. 打开 `src/main.an`：日志里出现一条 `analysis #N (didOpen, full): … N declarations`，Problems
+   面板是完整诊断（示例工程为 0 条）；
+2. 随便改动一个字符：日志里出现 `(didChange, syntax)`，耗时明显小于上一条；此时语义高亮会退回
+   TextMate 着色（不再返回 token）；
+3. `Ctrl+S`：出现 `(didSave, full)`，完整诊断与语义高亮一起回来；把某处类型写错（例如
+   `let n: i32 = "x";`）保存后应看到 `E4xx` 波浪线，改回后再保存消失；
+4. 把光标放到符号上悬停：日志里若出现 `(request, full)`，说明是语义请求触发的完整分析，之后继续
+   悬停只有 `reused`（快照已就绪）；
+5. 输出通道里能看到 `connected to yian-lsp 0.6.0`；把 `command` 指向一个**装有旧版 `yian`** 的解释器
+   会弹版本不匹配提示（指向完全没装 `yian` 的解释器则是 `could not start`），改回后恢复正常；
+6. 打开 `ide-support/sample-errors/src/errors.an` 应看到 **5 条**诊断，与 P7 验收一致。
+
 ## 构建
 
 ```bash
@@ -122,18 +169,68 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 （例如 `ide-support/sample/src/main.an`）验证高亮、编辑行为与语言服务器日志
 （Development Host 继承启动者的 `PATH`，所以 `yian-lsp` 要能在该 `PATH` 上找到）。
 
-## 打包与安装
+## 打包、安装、卸载与回滚
 
 ```bash
 cd ide-support/vscode
+npm install
+npm run compile
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.5.0.vsix
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.5.0
+code --install-extension yian-language-support-0.6.0.vsix --force
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.6.0
 ```
+
+在 WSL / 远程窗口里 `code` 是远端 CLI，安装、卸载、`--list-extensions` 都作用于**远端**扩展目录，
+要在该窗口的终端里执行（本机 profile 名与 CLI 的 `--profile` 不一定一致，`--force` 重装最省事）。
+
+- 卸载扩展：`code --uninstall-extension yian.yian-language-support`。
+- 回滚扩展：重新安装上一版 VSIX 并加 `--force`；也可以 `git checkout <上一个提交>` 后重新
+  `vsce package` 得到旧版。
+- 回滚服务器：`git checkout <上一个提交> && scripts/install.sh --with-deps`——editable 安装跟着源码走，
+  回滚源码就等于回滚服务器；再用输出通道里的 `connected to yian-lsp <版本>` 核对。
+- 兼容性：扩展要求 VS Code `^1.90.0`；服务器要求 Python ≥ 3.11 与 `pygls` ≥ 2.1，`llvmlite` 由基础
+  依赖提供；扩展与服务器的版本必须同号（见上文"版本匹配"）。
 
 打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上
 `node_modules/vscode-languageclient/`：不打包 `node_modules` 而又没有 bundler 时，
 扩展运行时会 `Cannot find module 'vscode-languageclient/node'`。
+
+## 故障排查
+
+先看 **YIAN Language Server** 输出通道（`Ctrl+Shift+P` → `Output: Focus on Output View`，通道选
+YIAN Language Server）。要把日志留档或开到更详细：
+
+1. `yian.languageServer.logLevel` 设为 `DEBUG`（等价于在 `args` 里加 `--log-level DEBUG`）；
+2. `yian.languageServer.logFile` 设为例如 `${workspaceFolder}/build/yian-lsp.log`，日志同时写文件与
+   输出通道；也可以直接用 `--log-file` 或环境变量 `YIAN_LSP_LOG_FILE`；
+3. `DEBUG` 会记录每次分析的文件数、耗时与声明数量（`analysis #N (didChange, syntax): … in X ms`），
+   也会记录 JSON-RPC 载荷——**其中含源码文本**，外发前自行删减。
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| 弹 `could not start '…'`，输出通道同名报错 | 命令不在 `PATH` 上，或那个解释器里没有 `pygls` | 按"安装"配好 `command`/`args`，在该解释器里 `pip install -e '.[lsp]'` |
+| 弹 `language server X does not match extension Y` | 启动服务器的解释器里 `yian` 是旧安装 | 在那个解释器里重新 `pip install -e '.[lsp]'` |
+| 完全没有诊断 | 服务器没连上，或当前文件不属于被分析的文件集合 | 输出通道里应有 `project … N files` 或 `standalone mode`；没有就先解决启动问题 |
+| 打字时类型错误消失 | 打字路径只跑前端（计划 §5.12 级别 b） | 保存一次，或做一次悬停/补全；要确认可看 `(…, syntax)` 与 `(…, full)` 两类日志 |
+| 语义高亮没颜色 | 文本已改动、完整分析还没落地，或客户端关了语义高亮 | 保存一次；检查 `editor.semanticHighlighting.enabled` 与 `yian` 语言的 token 主题色 |
+| 跳转不到标准库 | 找不到 `lib/src` | 加 `--compiler-root <仓库根>`，或设 `YIAN_LIB` |
+| 服务器崩溃 | 编译器 bug | 输出通道里有 Python traceback；扩展只记录并提示，不会让 VS Code 崩溃，把日志附到 issue |
+
+## 性能
+
+P8 在一台开发机上按 34 / 39 / 95 / 285 个文件（标准库 34 个文件，其余是生成的包）实测，热态、单次：
+
+| 路径 | 39 文件 | 95 文件 | 285 文件 |
+| --- | --- | --- | --- |
+| 打字（只前端） | 78 ms | 103 ms | 145 ms |
+| 首次打开（完整） | 132 ms | 263 ms | 582 ms |
+| 悬停（快照已就绪） | 10 ms | 13 ms | 20 ms |
+| 补全（快照已就绪） | 2 ms | 7 ms | 17 ms |
+
+常驻内存约 32–56 MB。结论（计划 §5.12）：打字反馈在 100 文件以内低于 100 ms，285 文件时约 145 ms，
+仍低于"不可接受"的 200 ms；悬停与补全远低于 100 ms，因此**不引入**更细粒度的增量分析（级别 e）。
+标准库只有 34 个文件，却占前端耗时的多数（约 60–76 ms），如果将来要在几百文件规模把打字反馈压到
+100 ms 以内，下一个该做的是级别 c（标准库结果跨快照复用），而不是级别 d/e。
 
 ## 代码片段
 
@@ -188,6 +285,21 @@ code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.5.0
 
 已知近似：`Pair<Meters>` 的 `<` `>` 会按 `keyword.operator.yian` 高亮，而不是泛型括号。`<`/`>`
 同时是比较运算符，TextMate 无法可靠区分，真正的类型/函数/变量区分留给 P6 的语义 token（计划 §5.4）。
+
+## 变更日志
+
+| 版本 | 阶段 | 内容 |
+| --- | --- | --- |
+| 0.1.0 | P1a | 重建扩展源码树：语言注册、TextMate 语法、注释/括号/缩进 |
+| 0.1.1 | P1b | 代码片段、折叠标记、scope 检查方法 |
+| 0.2.2 | P3 + P4 | 语言服务器客户端（stdio）、工作区/符号索引/快照、实时诊断 |
+| 0.3.0 | P5 | 跳转定义、悬停、文档符号（大纲） |
+| 0.4.0 | P6 | 补全、参数提示、语义高亮 |
+| 0.5.0 | P7 | 查找引用、文档高亮、重命名（含拒绝规则）、删除无效导入的快速修复 |
+| 0.6.0 | P8 | 打字只跑前端（计划 §5.12 级别 b）、`--log-file` 与日志级别设置、扩展/服务器版本匹配检查、安装与故障排查文档 |
+
+版本号规则：扩展 `package.json` 的 `version` 与服务器 `lsp/server.py` 的 `SERVER_VERSION` 一起改，
+两处不一致时扩展会在输出通道里警告（见"版本匹配"）。
 
 ## 说明
 

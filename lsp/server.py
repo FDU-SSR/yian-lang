@@ -55,7 +55,10 @@ if TYPE_CHECKING:
 __all__ = ["SERVER_NAME", "SERVER_VERSION", "YianLanguageServer", "create_server"]
 
 SERVER_NAME = "yian-lsp"
-SERVER_VERSION = "0.1.0"
+#: Reported to the client as ``serverInfo``.  It tracks the VS Code extension's
+#: version on purpose: the two are released together from this repository, and
+#: the extension warns when the pair it started does not match (plan §6.1, §7 P8).
+SERVER_VERSION = "0.6.0"
 
 #: LSP's ``RequestFailed``: the request was understood, but cannot be fulfilled.
 #: A refused rename (a standard library symbol, an unusable name, an unchecked
@@ -106,21 +109,30 @@ class YianLanguageServer(LanguageServer):
         #: drops out of the next round has to be cleared explicitly, or the
         #: Problems panel keeps entries for a file nobody analyzes any more.
         self.__published: set[Path] = set()
+        #: Generation of the snapshot those diagnostics came from, so a full
+        #: analysis triggered by a semantic request is published exactly once.
+        self.__publish_generation = -1
 
-    # ── analysis scheduling (plan §5.12 level a) ───────────────────────────────
+    # ── analysis scheduling (plan §5.12 levels a and b) ────────────────────────
 
     def schedule_analysis(self, reason: str) -> None:
-        """Analyze once the editor goes quiet; the latest event in a burst wins."""
+        """Analyze once the editor goes quiet; the latest event in a burst wins.
+
+        This is the path a keystroke takes, so it asks for the *front end* only
+        (plan §5.12 level b): syntax diagnostics are what a reader can trust
+        mid-edit, and the full prefix runs when a save or a semantic request
+        needs it.
+        """
         if self.__timer is not None:
             self.__timer.cancel()
         self.__timer = asyncio.get_running_loop().call_later(
-            DEBOUNCE_SECONDS, self.__analyze, reason
+            DEBOUNCE_SECONDS, self.__analyze, reason, False
         )
 
     def analyze_now(self, reason: str) -> None:
-        """Analyze without waiting for the debounce: a save is a deliberate act."""
+        """Analyze the whole prefix without waiting: a save is a deliberate act."""
         self.__cancel_timer()
-        self.__analyze(reason)
+        self.__analyze(reason, True)
 
     def cancel_analysis(self) -> None:
         """Forget a scheduled analysis; the server is shutting down."""
@@ -131,26 +143,69 @@ class YianLanguageServer(LanguageServer):
             self.__timer.cancel()
             self.__timer = None
 
-    def __analyze(self, reason: str) -> None:
+    def __analyze(self, reason: str, full: bool) -> None:
         self.__timer = None
+        if not full:
+            cached = self.model.fresh_snapshot
+            if cached is not None:
+                # A save or a semantic request already analyzed exactly these
+                # inputs: reusing that beats running anything at all.
+                self.notify_analysis(cached, reason, "reused")
+                return
         started = time.perf_counter()
         try:
-            snapshot = self.model.snapshot
+            snapshot = self.model.snapshot if full else self.model.syntax_snapshot
         except Exception as error:  # a compiler bug, not something the user typed
             _LOGGER.error("analysis failed (%s): %s", reason, error, exc_info=error)
             return
         elapsed = (time.perf_counter() - started) * 1000
-        index = snapshot.index
         _LOGGER.info(
-            "analysis #%d (%s): %d files, %d declarations, %d diagnostics in %.0f ms",
+            "analysis #%d (%s, %s): %d files, %d diagnostics in %.0f ms",
             snapshot.generation,
             reason,
+            "full" if full else "syntax",
             len(snapshot.files),
-            0 if index is None else len(index.declarations),
             len(snapshot.result.diagnostics),
             elapsed,
         )
+        self.notify_analysis(snapshot, reason, "full" if full else "syntax")
+
+    def notify_analysis(self, snapshot: Snapshot, reason: str, mode: str) -> None:
+        """Publish *snapshot* once, whatever asked for it.
+
+        Called from the debounced path and from every semantic request (through
+        :func:`__snapshot`), so the Problems panel follows the newest analysis
+        instead of waiting for the next keystroke — and a snapshot that was
+        already published is not repeated.
+        """
+        if snapshot.generation == self.__publish_generation:
+            return
+        index = snapshot.index
+        if mode == "full":
+            _LOGGER.info(
+                "analysis #%d (%s, full): %d declarations",
+                snapshot.generation,
+                reason,
+                0 if index is None else len(index.declarations),
+            )
+        self.__publish_generation = snapshot.generation
         self.__publish(snapshot)
+        if mode == "full":
+            self.refresh_semantic_tokens()
+
+    def refresh_semantic_tokens(self) -> None:
+        """Ask a supporting client to re-request semantic tokens.
+
+        Colours fall back to TextMate while the text is ahead of the analysis
+        (see :func:`semantic_tokens`), so when a full run finally lands the
+        client has to be told that there is something new to fetch.  Clients
+        without the capability just keep what they have.
+        """
+        workspace = self.client_capabilities.workspace
+        tokens = None if workspace is None else workspace.semantic_tokens
+        if tokens is None or not tokens.refresh_support:
+            return
+        self.workspace_semantic_tokens_refresh(None)
 
     def __publish(self, snapshot: Snapshot) -> None:
         """Send the snapshot's diagnostics for every open document.
@@ -255,7 +310,12 @@ def __register_features(server: YianLanguageServer) -> None:
     def did_open(ls: YianLanguageServer, params: types.DidOpenTextDocumentParams) -> None:
         document = params.text_document
         ls.model.open(uri_to_path(document.uri), document.text, document.version)
-        __document_changed(ls, "didOpen", document.uri, document.version)
+        # Opening a file is deliberate, like saving one: run the whole prefix so
+        # a freshly opened buffer starts with its type errors, hover and semantic
+        # highlighting available, and only later keystrokes take the cheap path.
+        ls.model.invalidate()
+        _LOGGER.info("textDocument/didOpen %s v%s", document.uri, document.version)
+        ls.analyze_now("didOpen")
 
     @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
     def did_change(ls: YianLanguageServer, params: types.DidChangeTextDocumentParams) -> None:
@@ -316,14 +376,17 @@ def __register_features(server: YianLanguageServer) -> None:
     def semantic_tokens(
         ls: YianLanguageServer, params: types.SemanticTokensParams
     ) -> types.SemanticTokens | None:
-        analysis = __analysis(ls)
-        if analysis is None:
-            return None
-        result, navigator = analysis
+        # The client re-asks on every visible edit, so this feature reads the
+        # cache instead of filling it (plan §5.12 level b): colours follow the
+        # type checker when a full snapshot is current, and fall back to the
+        # client's TextMate highlighting in between — an empty array is not an
+        # error.
+        snapshot = ls.model.fresh_snapshot
+        if snapshot is None:
+            return types.SemanticTokens(data=[])
+        navigator = __navigator(ls, snapshot)
         path = uri_to_path(params.text_document.uri)
-        classified = classify(result, path, std_root=ls.model.std_root)
-        # An empty array is not an error: the client keeps the TextMate colours,
-        # which is exactly the fallback the plan asks for.
+        classified = classify(snapshot.result, path, std_root=ls.model.std_root)
         return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
 
     # ── completion and signature help (plan §7 P6) ────────────────────────────
@@ -491,12 +554,18 @@ def __register_features(server: YianLanguageServer) -> None:
 
 
 def __snapshot(server: YianLanguageServer) -> Snapshot | None:
-    """The current analysis, or ``None`` when the server cannot produce one."""
+    """The current full analysis, or ``None`` when the server cannot produce one.
+
+    A semantic request is a reason to run the whole prefix (plan §5.12 level b),
+    so whatever it produces also refreshes the diagnostics the editor shows.
+    """
     try:
-        return server.model.snapshot
+        snapshot = server.model.snapshot
     except Exception as error:  # a compiler bug, not something the user typed
         _LOGGER.error("analysis failed (navigation): %s", error, exc_info=error)
         return None
+    server.notify_analysis(snapshot, "request", "full")
+    return snapshot
 
 
 def __navigator(server: YianLanguageServer, snapshot: Snapshot) -> Navigator:
