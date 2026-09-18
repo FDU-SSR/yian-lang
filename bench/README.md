@@ -54,20 +54,25 @@ python3 scripts/check_bench_regression.py
 
 ## 基准与来源
 
-`bench/shootout/` 共 14 个基准 + 1 个裸态覆盖源：
+`bench/shootout/` 共 19 个基准 + 1 个裸态覆盖源：
 
 | 基准 | 内容 | 上游 |
 | --- | --- | --- |
 | binarytree | 二叉树构建/遍历 | Benchmarks Game |
 | bounce | 球体弹跳模拟（LCG 随机数） | AWFY |
+| cd | 碰撞检测（红黑树 + 体素归并） | AWFY（CD） |
+| deltablue | 约束求解器（DeltaBlue） | AWFY（DeltaBlue） |
 | fann | 浮点神经网络前向计算 | Benchmarks Game |
 | fasta | 随机 DNA/氨基酸序列生成 | Benchmarks Game |
+| havlak | 循环识别（Havlak，图算法） | AWFY（Havlak） |
+| json | JSON 解析与序列化 | AWFY（Json） |
 | list | 链表构建与遍历 | AWFY |
 | mand | Mandelbrot 集合 | AWFY（Mandelbrot） |
 | nbody | N 体积分（浮点密集） | AWFY |
 | permute | 排列枚举 | AWFY |
 | queen | N 皇后 | AWFY（Queens） |
 | revcomp | 序列反向互补 | Benchmarks Game |
+| richards | 任务调度器模拟（Richards） | AWFY（Richards） |
 | sieve | 埃拉托斯特尼筛法 | AWFY |
 | spectralnorm | 谱范数幂迭代 | Benchmarks Game |
 | storage | 树形结构的分配/回收 | AWFY |
@@ -77,30 +82,31 @@ python3 scripts/check_bench_regression.py
 计时），语义权威值与各 `.an` 头部注释对齐，一条命令校验：
 
 ```bash
-python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和, 14/14 PASS
+python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和, 19/19 PASS
 ```
 
 来源与许可：
 
 - 性能测评代码移植自本仓库分支 `archive/secl-paper-20260909`（`bench/shootout`、
   `bench/shootout_raw`、`scripts/bench_fat.py`，最近提交 `70db192`）；
-- 9 项改写自 **AWFY**（[are-we-fast-yet](https://github.com/smarr/are-we-fast-yet)，
-  `benchmarks/Java/src/`）：Bounce、List、Mandelbrot、NBody、Permute、Queens、Sieve、
-  Storage、Towers。AWFY 另有 5 个宏基准（CD、Havlak、Richards、DeltaBlue、Json），
-  本目录的补齐进度见 `docs/plan/fat-vs-raw-bench-plan.md` §5 P5；
+- 14 项改写自 **AWFY**（[are-we-fast-yet](https://github.com/smarr/are-we-fast-yet)，
+  `benchmarks/Java/src/`）：AWFY 的全部 14 个基准——Bounce、CD、DeltaBlue、Havlak、Json、
+  List、Mandelbrot、NBody、Permute、Queens、Richards、Sieve、Storage、Towers（已补齐）；
 - 5 项改写自 **Benchmarks Game**（shootout）：binarytree、fann、fasta、revcomp、
   spectralnorm；
 - 每个 `.an` 头部标注上游来源与许可状态，并保留**语义权威源**（`bench/c/<name>.c`）
   与规模调整说明；规模在两态相同，只按可接受的运行时长做过折中；
 - 许可：AWFY 的 `LICENSE.md` 说明 Richards、DeltaBlue 源自 Mario Wolczko 的 Smalltalk
-  版本（许可指向已归档的 Sun Labs 页面），其 Benchmarks Game 部分为 Revised BSD
-  （Copyright 2008-2012 Isaac Gouy）；CD、Havlak、Json 的逐文件许可未在该文件列明。
-  `bench/c/*.c` 为本仓库自写、无上游许可头。本目录引入的都是**本仓库的改写版**，
-  按本仓库许可发布。
+  版本（许可指向已归档的 Sun Labs 页面）；其 Benchmarks Game 部分为 Revised BSD
+  （Copyright 2008-2012 Isaac Gouy）。AWFY 的 Java 文件本身带 MIT 头
+  （Copyright (c) 2001-2016 Stefan Marr；Json 为 2015，部分文件另含 EclipseSource 版权），
+  `havlak/HavlakLoopFinder.java` 为 Google 的 Apache-2.0（Copyright 2011 Google Inc.）；
+  `cd/*.java` 无逐文件许可头。`bench/c/*.c` 为本仓库自写、无上游许可头。本目录引入的
+  都是**本仓库的改写版**，按本仓库许可发布，各源头部逐文件标注上游来源与许可状态。
 
 ## 单一源的合并规则
 
-14 个基准默认**每个只有一份源**，两态共用。合并按以下实测规则进行
+19 个基准里 18 个**每个只有一份源**（`storage` 有 `.raw.an` 覆盖源），两态共用。合并按以下实测规则进行
 （详见 `docs/plan/fat-vs-raw-bench-plan.md` §3）：
 
 1. `dyn[N] T` 在胖模式下是 `T[]`、裸模式下是 `T*`，且**两个方向都不能隐式互转**
@@ -170,6 +176,52 @@ python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和
   这条对照行是协议的一部分：它说明为什么两态产物必须**同目录、等长文件名**
   （`<name>.fat` / `<name>.raw`），也说明分配密集型基准的绝对值只在同一路径口径内可比。
 - 论文里的胖态绝对值不能与本表直接对照（LLVM 15 → 22 换代，加上上述口径差异）。
+
+## 本轮实测发现的问题
+
+补齐 AWFY 宏基准的过程中撞到三个**运行时/编译器**问题，都不是基准写法问题；各基准头部
+记录了各自的规避方式，问题本身待单独修复：
+
+### 1. fat 运行时分配器的 free-list 退化（O(N²)）
+
+DeltaBlue 在 N=7000（上游默认规模）下 fat 6.53 s / raw 0.027 s（240×）。计数器实验
+（`incremental_add`/`satisfy`/`add_propagate`/`remove_propagate_from`/`make_plan`/
+`extract_plan`）显示**两态调用次数逐个数字完全相同**，即工作量一致、无模式相关复杂度差异。
+纯分配微基准（约 24 B 小块与 >123 B 大块交替分配、"先大后小"批量释放）独立复现：fat
+N=1000/2000/4000 → 14/56/220 ms（O(N²)），raw → 1/2/3 ms（O(N)）。callgrind + 反汇编
+定位到胖态 free-list 的首次适配扫描：分配 >123 B 的 `Constraint` 时会顺序跳过 free-list
+上所有 ≤123 B 的小块，而 `projectionTest` 每轮末尾"先释放大块再释放小块"，于是下一轮每个
+`Constraint` 分配都要扫过 n 个小块。`deltablue.an` 因此改用上游经典规模
+（N=100 + 14000 次外循环，fat 1.95 s，比值 2.85×），未改算法与分配次数。
+
+### 2. 内联 enum + `Option<T&>` 混合结构体的字段偏移误编译
+
+最小复现（fat 与 raw 都错）：
+
+```an
+struct Rec { v: i32 }
+enum E { A { r: Rec& }, B { r: Rec& } }
+struct S { k: E, id: u64, p: Option<Rec&> }
+
+fn main() {
+    let r: Rec& = dyn Rec(1);
+    let s: S& = dyn S(E.A(r), 7u64, Option<Rec&>.None);
+    if s.id == 7u64 { print("ok\n"); } else { print("bad\n"); }  // 实测走 bad
+}
+```
+
+实测 `s.id` 读成 `7 << 32`（读偏移比写偏移少 4 字节，即 enum tag 的大小）。单独
+`{k: E, id: u64}` 或 `{k: E, id: u64, w: u64}`（无 `Option`）正常；`{p: Option<Rec&>,
+k: E, id: u64}`（`Option` 在前）同样错。规避：把 enum 字段放在结构体**最后**
+（`richards.an` 的 `TaskControlBlock.kind` 即此写法）。
+
+### 3. raw 模式下"enum 载荷按值包含 `Vec<自身>`"触发 LLVM 布局重入崩溃
+
+`json.an` 的 `JsonValue` 变体需要放 `Vec<JsonValue>`；raw 模式下该枚举的 LLVM 类型在
+payload body 尚未完成时被 `Vec<Self>` 的方法声明路径再次进入，`get_abi_size` 落在
+opaque 结构体上，llvmlite/LLVM 断言崩溃（fat 模式下指针是 5 字段结构体、不递归 pointee
+而幸免）。规避：让第一个被 declare 的函数签名**按值**使用该枚举
+（`parse_document(...) -> JsonValue`），先把枚举类型完整物化；算法与数据布局不变。
 
 ## 不包含的内容
 

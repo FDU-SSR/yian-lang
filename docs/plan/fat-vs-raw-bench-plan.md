@@ -115,7 +115,8 @@ scripts/
 
 > 状态（2026-09-18）：P1–P4 均已落地。基准与结果见 `bench/`（`README.md`、`results.md`、
 > `results.csv`），测量与门禁见 `scripts/bench_fat_vs_raw.py`、`scripts/check_bench_regression.py`。
-> P5（按 AWFY 补齐 5 个宏基准）与 P6（C 参考与来源修正）进行中。
+> P5（按 AWFY 补齐 5 个宏基准）与 P6（C 参考与来源修正）已完成：AWFY 的 14 个基准全部
+> 齐备，`bench/c/` 与 `verify_bench_c.py` 覆盖 19 项（19/19 PASS）。
 
 ### P1 拉取并合并基准
 
@@ -154,8 +155,12 @@ scripts/
   分配次数保持不变。标准库已具备所需设施：`HashMap`/`HashSet`/`Vec`/`String`/`str`
   切片（随机数用 AWFY 同款 LCG 内联）。每项的头部注释必须记录这处适配。
 - **顺序**：CD → Havlak → Richards → DeltaBlue → Json（由易到难；Json 依赖字符串解析
-  与哈希表，放最后）。进度：CD 已完成（2026-09-18，fat 单趟 2.7 s，比值 1.28×；
-  适配要点=带标签键的泛型红黑树、节点 id 做身份比较、自备 mysin/mycos/mysqrt）。
+  与哈希表，放最后）。**5 项均已完成（2026-09-18）**，规模与实测见 `bench/results.md`：
+  CD（100 架 × 200 帧 × 80 趟）、Havlak（上游断言点 1605/5213 × 2 轮）、Richards
+  （2400 趟，23246/9297）、DeltaBlue（上游经典 N=100 + 14000 趟）、Json（156 operations /
+  25820 序列化字节 × 2000 趟）。共性适配要点：类层次 → tagged enum + `match`；引用身份判定
+  → 自增 id；闭包 → 显式循环；自备 `sqrt`（`@bitcast` 在 bench 下受限）；每项都有同规模
+  C 参考并纳入 `scripts/verify_bench_c.py`。
 - **每项验收（与 P1 相同）**：两模式 `-O2` 编译通过、运行通过、stdout 逐字节一致、
   §3.4 的 diff/计时判定通过、单趟耗时记录；随后并入全量基线。
 - **许可**：AWFY `LICENSE.md` 说明 Richards/DeltaBlue 源自 Mario Wolczko 的 Smalltalk
@@ -177,7 +182,17 @@ scripts/
 - **单一源写法的边界**：若某个基准存在"两模式没有共同合法写法"的分歧（目前 14 个里只有视图构造与一个签名分歧，均有共同写法），需要单独处理并记录。
 - **语言仍在演进**：基准来自 2026-08/09；若后续再动标准库或指针语义，需重跑 P1 验收（§3.1 的四条规则是判断依据）。
 - **`list` 主导时长**：占全量约 40%，可对慢基准降低 runs（协议注明）或缩小规模（两态同规模）。
-- **测量噪声**：仅绑核 + 交替 + 中位数可比；LLVM 15 → 22 已换代，分支的历史数字不能直接对照。
+- **测量噪声**：仅绑核 + 交替 + 取最小值可比；LLVM 15 → 22 已换代，分支的历史数字不能直接对照。
+- **fat 分配器 free-list 退化（本轮实测发现）**：DeltaBlue 大 N（7000）下 fat 6.53 s vs
+  raw 0.027 s（240×）。计数器实验证明两态工作量逐个数字相同；纯分配微基准独立复现
+  fat O(N²) vs raw O(N)（约 24 B 小块与 >123 B 大块交替分配、先大后小批量释放）；根因是
+  胖态 free-list 首次适配会顺序跳过所有小块。基准改用上游经典 N=100 + 14000 外循环规避，
+  运行时缺陷待单独修（见 `bench/README.md`「本轮实测发现的问题」1）。
+- **enum + `Option<T&>` 字段偏移误编译（本轮实测发现）**：结构体同时含内联 enum 与
+  `Option<T&>` 时，enum 之后的 u64 字段被读成 `值<<32`（fat/raw 都错，最小复现见
+  `bench/README.md`）；bench 侧规避 = 把 enum 字段放到结构体最后（`richards.an`）。
+- **raw 模式 enum 载荷含 `Vec<自身>` 的 LLVM 布局崩溃（本轮实测发现）**：需让第一个以该
+  枚举为按值签名参数的函数先声明以物化类型；见 `bench/README.md` 第 3 条。
 - **正确性判据边界**：fat/raw 输出一致只证明两态做同一件事，不证明基准实现了目标算法（C 交叉验证可补，P4 可选）。
 - **许可**：`bench/c/*.c` 无许可头；若拉入为参考需在 README 注明来源与许可状态。
 

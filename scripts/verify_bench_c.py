@@ -7,7 +7,7 @@
 算法 (fat/raw 输出一致只说明两态做同一件事)。
 
 用法:
-  python3 scripts/verify_bench_c.py            # 全部 14 个
+  python3 scripts/verify_bench_c.py            # 全部 19 个
   python3 scripts/verify_bench_c.py --names bounce,sieve
 
 退出码: 0 = 全部通过; 1 = 存在失败 (仍跑完其余基准)。
@@ -41,14 +41,22 @@ BENCHMARKS: list[tuple[str, Check, str]] = [
     ("bounce", lambda rc, out: "368285073" in out, 'stdout contains "368285073"'),
     ("cd", lambda rc, out: rc == 0 and out.strip() == "4305",
      'rc==0, stdout=="4305" (100 架 200 帧)'),
+    ("deltablue", lambda rc, out: rc == 0 and out.strip() == "4993240000",
+     'rc==0, stdout=="4993240000" (N=100 × ITER=14000; 每趟 356660)'),
     ("fann", lambda rc, out: rc == 51 and "51" in out, 'rc==51, stdout contains "51"'),
     ("fasta", lambda rc, out: "-71" in out, 'stdout contains "-71"'),
+    ("havlak", lambda rc, out: rc == 0 and out.strip() == "1605 5213",
+     'rc==0, stdout=="1605 5213" (loops × nodes)'),
+    ("json", lambda rc, out: rc == 0 and "5869103028000" in out,
+     'rc==0, stdout contains "5869103028000" (ops/成员/字符数)'),
     ("list", lambda rc, out: rc == 0, "rc==0"),
     ("mand", lambda rc, out: "126" in out, 'stdout contains "126"'),
     ("nbody", lambda rc, out: "-1" in out, 'stdout contains "-1"'),
     ("permute", lambda rc, out: "823059745" in out, 'stdout contains "823059745"'),
     ("queen", lambda rc, out: rc == 0, "rc==0"),
     ("revcomp", lambda rc, out: "128" in out, 'stdout contains "128" (Checksum:)'),
+    ("richards", lambda rc, out: rc == 0 and "23246 9297" in out,
+     'rc==0, stdout contains "23246 9297" (queue/hold 计数)'),
     ("sieve", lambda rc, out: rc == 0, "rc==0"),
     ("spectralnorm", lambda rc, out: "78" in out, 'stdout contains "78"'),
     ("storage", lambda rc, out: "21523360" in out, 'stdout contains "21523360"'),
