@@ -35,12 +35,11 @@
 //   8. 内嵌文档: 上游 Json.java 的 rapBenchmarkMinified 字符串逐字搬运 (Java
 //      字面量解码后重新按 YIAN 转义写回; 文档为纯 ASCII、无转义、无换行)。
 //
-// 单一源: fat 与 raw 共用本文件。注意: raw 模式下 "enum 变体的 payload 结构
-//   体按值包含 Vec<自身>" 会触发编译器 LLVM 类型布局的重入缺陷 (payload 结构
-//   体在自身 body 未完成时被 get_abi_size)。规避方式与 storage 等基准一致: 让
-//   第一个被声明 (declare) 的函数签名按值使用 JsonValue (parse_document 返回
-//   JsonValue), 从而先把枚举的 LLVM 类型完整物化, 之后 Vec<JsonValue> 的方法
-//   实例再声明就安全。算法/数据布局不受影响。
+// 单一源: fat 与 raw 共用本文件。raw 模式下 "enum 变体的 payload 结构体按值
+//   包含 Vec<自身>" 曾触发编译器 LLVM 类型布局的重入缺陷 (payload 结构体在自身
+//   body 未完成时被 get_abi_size), 一度靠声明顺序规避; 该缺陷已修 (类型体延迟
+//   填充, 见 compiler/codegen/llvm/types.py 的 __declare_pointee 与
+//   docs/llvm_note.md), 顺序不再有约束。
 //
 // 规模: ITER=2000 (fat 单趟约 2.0s / raw 约 0.8s, 空闲核实测)。
 // 校验值 (两态逐字节一致, 与 bench/c/json.c 相同):
