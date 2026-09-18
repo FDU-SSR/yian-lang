@@ -1,11 +1,10 @@
 """Structured compiler diagnostics.
 
 Source-level diagnostics carry a code, a severity, a message and a source span.
-The codes follow the scheme fixed in ``docs/plan/ide-support-plan.md`` (P0.3):
-``E`` plus one group digit and two digits — ``E1xx`` lexical, ``E2xx`` syntax,
-``E3xx`` names/imports/visibility, ``E4xx`` types, ``E5xx`` other compile-time
-checks.  One code stands for one diagnostic *condition* (not one message text),
-and a shipped code is never renumbered or reused.
+A code is ``E`` plus one group digit and two digits: ``E1xx`` lexical, ``E2xx``
+syntax, ``E3xx`` names/imports/visibility, ``E4xx`` types, ``E5xx`` other
+compile-time checks.  One code stands for one diagnostic *condition* (not one
+message text), and a shipped code is never renumbered or reused.
 
 Every compiler error path funnels through :func:`diagnostic_from_error`, so the
 CLI and any in-process analysis session report the same structure.

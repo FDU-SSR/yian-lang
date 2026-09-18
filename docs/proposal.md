@@ -25,7 +25,8 @@
 - 定义跳转和引用查找；
 - 重命名及其他代码重构功能。
 
-Language Server 暂定使用 Python 开发。详细阶段、技术选项和验收标准见 [IDE 支持开发计划](plan/ide-support-plan.md)。现阶段保留完整功能目标，后续根据实际进度调整。
+Language Server 使用 Python 开发（`lsp/`），与命令行共用 `compiler/analysis/` 的分析接口：编辑器与
+`yianc --analyze` 看到的是同一份诊断、符号与类型信息（见 `docs/manual/26`、`27`）。
 
 语言服务器与 anx 应共用项目配置和依赖解析规则，保证编辑器与命令行对同一项目的理解一致。
 
