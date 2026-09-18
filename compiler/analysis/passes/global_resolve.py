@@ -223,6 +223,11 @@ class GlobalResolve:
             imported_name = item.alias.name if item.alias is not None else item.target.name
             import_span = item.alias.span if item.alias is not None else item.target.span
             unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id, span=import_span)
+            # The written name is a resolved reference of its own, in both forms:
+            # for `import A` it is the name that is bound, and for `import A as B`
+            # the original spelling of `A` appears nowhere else in the file.  An
+            # editor needs it to rename `A` without leaving the import behind.
+            self.__type_ctx.record_name_ref(item.target.span, target_symbol, target_symbol.type_id)
             self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
