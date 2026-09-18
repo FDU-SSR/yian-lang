@@ -929,6 +929,11 @@ class LLBuilder:
         if self.__ll_type_ctx.is_zst(pointee_type_id):
             return self.undef(self.__type_ctx.alloc_pointer(pointee_type_id))
 
+        # 被索引类型必须先materialize: llvmlite 的有型指针 GEP 会遍历 ptr.type.pointee
+        # 的字段表, 而 struct/enum 的 body 可能是延迟填充的 (见 types.py 的
+        # __declare_pointee), 未完成时 llvmlite 会读到 elements=None 而抛 TypeError。
+        self.__ll_type_ctx.get_ll_type(pointee_type_id)
+
         # Walk sub-indices to find the final pointee.
         for idx in indices[1:]:
             ty = self.__type_ctx[pointee_type_id]
@@ -1016,6 +1021,10 @@ class LLBuilder:
                                 self.__builder.add(index.ir_val, offset.ir_val))  # type: ignore
             result_val = self.insert_value(base, new_index, IR.FAT_INDEX)
         else:
+            # 同上: 先 materialize 元素类型, 避免 llvmlite 遍历未完成的 body。
+            base_def = self.__type_ctx[base.type_id]
+            element_type_id = base_def.pointee_type if isinstance(base_def, (Type.PointerType, Type.RefType)) else base.type_id
+            self.__ll_type_ctx.get_ll_type(element_type_id)
             ir_val = self.__builder.gep(base.ir_val, [offset.ir_val], inbounds=False)  # type: ignore
             result_val = LLValue(base.type_id, ir_val)
         self.__func.set_reg(result, result_val)
