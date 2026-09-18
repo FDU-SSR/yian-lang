@@ -124,13 +124,34 @@ class ExprChecker:
         return self.__op_builder.build_unary(node.span, node.op, node.operand)
 
     def __handle_field_access(self, node: AST.FieldAccess) -> HIR.Expr:
-        return self.__op_builder.build_field_access(node.span, node.receiver, node.field_name.name)
+        result = self.__op_builder.build_field_access(
+            node.span, node.receiver, node.field_name.name
+        )
+        match result:
+            case HIR.FieldAccess(field=field, type_id=type_id):
+                self.__ctx.type_ctx.record_name_ref(node.field_name.span, field, type_id)
+            case HIR.VariantConstruct(variant=variant, type_id=type_id):
+                # A variant without payload is spelled like a field access
+                # (`Shape.Point`), so it arrives here rather than as a call.
+                self.__ctx.type_ctx.record_name_ref(node.field_name.span, variant, type_id)
+            case _:
+                pass
+        return result
 
     def __handle_call(self, node: AST.Call) -> HIR.Expr:
         return self.__call_dispatcher.handle_call(node)
 
     def __handle_method_call(self, node: AST.MethodCall) -> HIR.Expr:
-        return self.__call_dispatcher.handle_method_call(node)
+        result = self.__call_dispatcher.handle_method_call(node)
+        match result:
+            case HIR.MethodCall(method_id=method_id, type_id=type_id):
+                # The method itself, not the receiver's type (plan §7 P5).
+                self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
+            case HIR.VariantConstruct(variant=variant, type_id=type_id):
+                self.__ctx.type_ctx.record_name_ref(node.method_name.span, variant, type_id)
+            case _:
+                pass
+        return result
 
     def __handle_dyn_value(self, node: AST.DynValue) -> HIR.Expr:
         return self.__op_builder.build_dyn_value(node.span, node.value)
@@ -219,8 +240,12 @@ class ExprChecker:
         if symbol is None:
             raise AnalysisError(f"Unknown identifier '{node.name}'", node.span)
 
+        # Every identifier that resolves is recorded: this is the referring side
+        # of navigation and hover (plan §7 P5), so no later pass has to guess
+        # which declaration a name stood for.
         match symbol.kind:
             case SymbolKind.Variable:
+                self.__ctx.type_ctx.record_name_ref(node.span, symbol, symbol.type_id)
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Function:
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
@@ -229,6 +254,7 @@ class ExprChecker:
                         f"a function variable must bind a concrete function",
                         node.span,
                     )
+                self.__ctx.type_ctx.record_name_ref(node.span, symbol, symbol.type_id)
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
@@ -236,7 +262,9 @@ class ExprChecker:
                 ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
+                    self.__ctx.type_ctx.record_name_ref(node.span, symbol, ty.value_type)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
+                self.__ctx.type_ctx.record_name_ref(node.span, symbol, type_id)
                 return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
@@ -812,6 +840,7 @@ class ExprChecker:
         variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)
         if variant is None:
             raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
+        self.__ctx.type_ctx.record_name_ref(ident.span, variant)
         return variant
 
     def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: HIR.Expr) -> HIR.Block:

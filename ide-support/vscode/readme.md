@@ -1,7 +1,8 @@
 # YIAN Language Support（VS Code 扩展）
 
-YIAN（`.an`）的编辑器支持。当前是 **P4** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
-（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10），以及实时诊断。
+YIAN（`.an`）的编辑器支持。当前是 **P5** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
+（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断，
+以及导航与类型查看。
 
 - 语言 id `yian`，文件关联 `.an`
 - TextMate 语法高亮（关键字、类型、字面量、f-string 内插、属性与内建、注释）
@@ -11,8 +12,12 @@ YIAN（`.an`）的编辑器支持。当前是 **P4** 阶段：声明式的语言
   并把服务器日志收进 **YIAN Language Server** 输出通道
 - 实时诊断（波浪线 + Problems 面板）：词法、语法、名称/导入/可见性、类型与成员错误，
   每个错误带稳定错误码（`E1xx`–`E5xx`）、`source: yian` 与文档版本号
+- 跳转定义：局部、参数、函数、方法（跳到方法本身而不是接收者类型）、结构体字段、
+  枚举成员、类型与别名、导入符号；跨文件、跨包、标准库都能跳（标准库目标直接落在 `lib/src`）
+- 悬停：符号种类、完整名、按当前实例化渲染的类型或函数签名，并标出"声明于标准库"
+- 文档符号（大纲）：当前文件的顶层定义与嵌套成员（结构体的字段、impl 的方法、枚举成员）
 
-跳转与类型查看（P5）、补全与语义高亮（P6）在后续阶段实现。
+补全与语义高亮（P6）、引用/重命名/代码操作（P7）在后续阶段实现。
 
 诊断的策略：文件改动后等 200ms 空闲再分析（防抖），保存时立即分析；分析结果按**整个项目**
 计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此丢弃过期结果；
@@ -64,6 +69,11 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 要人工验收诊断，可把工作区设为 `ide-support/sample-errors`（它每个错误都放在独立的顶层定义里）：
 打开 `src/errors.an` 应看到 **5 条**波浪线/Problems 条目，修好某一条后它立刻消失。
 
+要验收导航，把工作区设为 `ide-support/sample`，打开 `src/main.an`：在 `corner.scaled(2.0)` 的
+`scaled` 上 `F12` 应跳到 `src/geometry.an` 的方法定义；在 `flipped.first` 的 `first` 上悬停应显示
+`field first: Meters`；在 `print(` 上 `F12` 应跳到 `lib/src/core/io.an`；大纲（`Ctrl+Shift+O`）
+应显示 `Point` 及其字段与方法。
+
 ## 构建
 
 ```bash
@@ -83,8 +93,8 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 ```bash
 cd ide-support/vscode
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.2.2.vsix
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.2.2
+code --install-extension yian-language-support-0.3.0.vsix
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.3.0
 ```
 
 打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上

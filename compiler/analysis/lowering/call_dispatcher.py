@@ -525,10 +525,26 @@ class CallDispatcher:
         assert isinstance(struct_ty, Type.StructType)
 
         fields = self.__ctx.type_ctx.get_struct_fields(struct_type_id)
+        self.__record_field_names(args, fields)
         coerced_fields, inference = self.__resolve_named_or_positional_struct_args(span, struct_type_id, fields, args)
 
         instantiated_struct_id = inference.instantiate(struct_type_id)
         return HIR.StructConstruct(span=span, struct_id=instantiated_struct_id, field_values=coerced_fields, type_id=instantiated_struct_id, is_place=False)
+
+    def __record_field_names(self, args: list[AST.Arg], fields: list[Type.StructField]) -> None:
+        """Record ``field = value`` names in a construction as references.
+
+        The HIR keeps only the field *names* of a construction, so the name span
+        has to be captured here, where the AST argument and the resolved field
+        are both in hand (plan §7 P5).
+        """
+        for arg in args:
+            if arg.name is None:
+                continue
+            for field in fields:
+                if field.name == arg.name.name:
+                    self.__ctx.type_ctx.record_name_ref(arg.name.span, field, field.type_id)
+                    break
 
     def __handle_cast(self, span: SrcSpan, target_type_id: int, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):
@@ -603,6 +619,10 @@ class CallDispatcher:
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=None, type_id=enum_type_id, is_place=False)
 
         if self.__has_named_arg(args):
+            if variant.payload_type is not None:
+                self.__record_field_names(
+                    args, self.__ctx.type_ctx.get_struct_fields(variant.payload_type)
+                )
             coerced_args = self.__resolve_named_variant_args(span, variant, args)
             return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
 

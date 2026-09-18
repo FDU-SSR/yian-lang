@@ -18,6 +18,8 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from compiler.analysis.symbol.context import SymbolCtx
 
 
@@ -104,6 +106,10 @@ class TypeCtx:
 
         self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
+        #: Resolved names the checker has seen, keyed for deduplication by
+        #: position.  Bounded by distinct names, not by instantiations.
+        self.__name_refs: list[Type.NameRef] = []
+        self.__name_ref_keys: set[tuple[str, int, int]] = set()
         self.__procedures: dict[int, tuple[int, AST.Block, int]] = {}  # def_id -> (type_id, block, unit_id)
 
         # Caches for hot-path type queries — the type_id fully encodes the
@@ -269,8 +275,8 @@ class TypeCtx:
     def alloc_struct(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_struct(name, span)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan) -> int:
-        return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics, span)
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
+        return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics, span, field_spans)
 
     def alloc_enum(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_enum(name, span)
@@ -298,6 +304,30 @@ class TypeCtx:
 
     def get_name(self, type_id: int) -> str:
         return self.__formatter.get_name(type_id)
+
+    def record_name_ref(
+        self, span: SrcSpan, target: Type.NameTarget, expression_type: int | None = None
+    ) -> None:
+        """Remember that the name written at *span* resolved to *target*.
+
+        One record per position: the same name is resolved again for every
+        instantiation of the definition it appears in, and an editor wants one
+        answer.  A zero-width or synthesized span is skipped — nothing can point
+        at it.
+        """
+        if span.start.row == 0 and span.start.col == 0 and span.end.row == 0 and span.end.col == 0:
+            return
+        key = (str(span.path), span.start.row, span.start.col)
+        if key in self.__name_ref_keys:
+            return
+        self.__name_ref_keys.add(key)
+        self.__name_refs.append(
+            Type.NameRef(span=span, target=target, expression_type=expression_type)
+        )
+
+    def name_refs(self) -> Sequence[Type.NameRef]:
+        """Every resolved name the checker saw, in first-seen order."""
+        return self.__name_refs
 
     def infer_common_type(self, type_ids: list[int], span: SrcSpan, context_name: str) -> int:
         return type_ops.infer_common_type(self, type_ids, span, context_name)

@@ -29,8 +29,11 @@ from typing import TYPE_CHECKING
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from compiler.analysis.positions import path_to_uri, uri_to_path
+from compiler.analysis.navigation import Navigator
+from compiler.frontend.lex.position import SrcPosition, SrcSpan
+from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.diagnostics import diagnostics_by_document
+from lsp.navigation import document_symbols, hover, location
 from lsp.workspace import Snapshot, Workspace
 
 if TYPE_CHECKING:
@@ -246,6 +249,45 @@ def __register_features(server: YianLanguageServer) -> None:
         ls.model.change(uri_to_path(document.uri), changes[-1].text, document.version)
         __document_changed(ls, "didChange", document.uri, document.version)
 
+    # ── navigation (plan §7 P5) ───────────────────────────────────────────────
+
+    @server.feature(types.TEXT_DOCUMENT_DEFINITION)
+    def definition(
+        ls: YianLanguageServer, params: types.DefinitionParams
+    ) -> types.Location | None:
+        navigator, row, col = __query(ls, params.text_document.uri, params.position)
+        if navigator is None or row is None or col is None:
+            return None
+        resolution = navigator.resolve(uri_to_path(params.text_document.uri), row, col)
+        if resolution is None or resolution.target is None:
+            return None
+        return location(resolution.target, navigator)
+
+    @server.feature(types.TEXT_DOCUMENT_HOVER)
+    def hover_at(ls: YianLanguageServer, params: types.HoverParams) -> types.Hover | None:
+        navigator, row, col = __query(ls, params.text_document.uri, params.position)
+        if navigator is None or row is None or col is None:
+            return None
+        path = uri_to_path(params.text_document.uri)
+        resolution = navigator.resolve(path, row, col)
+        if resolution is None:
+            return None
+        span = __span_of(navigator, path, params.position)
+        if span is None:
+            return None
+        return hover(resolution, navigator, span)
+
+    @server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
+    def symbols(
+        ls: YianLanguageServer, params: types.DocumentSymbolParams
+    ) -> list[types.DocumentSymbol] | None:
+        snapshot = __snapshot(ls)
+        if snapshot is None:
+            return None
+        path = uri_to_path(params.text_document.uri)
+        navigator = __navigator(ls, snapshot)
+        return document_symbols(navigator.declarations_in(path), navigator)
+
     @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     def did_save(ls: YianLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
         # Registering this feature also advertises `save: true`, which is what
@@ -270,6 +312,50 @@ def __register_features(server: YianLanguageServer) -> None:
     @server.feature(types.WORKSPACE_DID_CHANGE_WATCHED_FILES)
     def watched_files(ls: YianLanguageServer, params: types.DidChangeWatchedFilesParams) -> None:
         __watched_files_changed(ls, params)
+
+
+def __snapshot(server: YianLanguageServer) -> Snapshot | None:
+    """The current analysis, or ``None`` when the server cannot produce one."""
+    try:
+        return server.model.snapshot
+    except Exception as error:  # a compiler bug, not something the user typed
+        _LOGGER.error("analysis failed (navigation): %s", error, exc_info=error)
+        return None
+
+
+def __navigator(server: YianLanguageServer, snapshot: Snapshot) -> Navigator:
+    return Navigator(snapshot.result, std_root=server.model.std_root)
+
+
+def __query(
+    server: YianLanguageServer, uri: str, position: types.Position
+) -> tuple[Navigator | None, int | None, int | None]:
+    """The navigator plus the compiler position for a client position.
+
+    The client speaks 0-based UTF-16; the analysis speaks 1-based code points
+    (plan §5.1), so the conversion happens here, at the boundary, and only for a
+    document the analysis actually read.
+    """
+    snapshot = __snapshot(server)
+    if snapshot is None:
+        return None, None, None
+    navigator = __navigator(server, snapshot)
+    path = uri_to_path(uri)
+    lines = navigator.text_of(path).splitlines()
+    if not 0 <= position.line < len(lines):
+        return navigator, None, None
+    column = to_compiler_column(lines[position.line], position.character)
+    return navigator, position.line, column
+
+
+def __span_of(navigator: Navigator, path: Path, position: types.Position) -> SrcSpan | None:
+    """A one-character span at the client position, for hover's range."""
+    lines = navigator.text_of(path).splitlines()
+    if not 0 <= position.line < len(lines):
+        return None
+    column = to_compiler_column(lines[position.line], position.character)
+    start = SrcPosition(position.line, column, path)
+    return SrcSpan(start, SrcPosition(position.line, column + 1, path))
 
 
 def __document_changed(

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypeAlias
 
+from compiler.analysis.symbol.symbol import Symbol
 from compiler.frontend.lex.position import SrcSpan
 
 if TYPE_CHECKING:
@@ -33,6 +34,29 @@ class VoidType:
 @dataclass
 class NeverType:
     type_id: int
+
+
+#: What a written name resolved to: a symbol, a struct field, an enum variant, or
+#: a type id (for type names, which have no symbol to hand back).
+NameTarget: TypeAlias = "Symbol | StructField | EnumVariant | int"
+
+
+@dataclass(frozen=True)
+class NameRef:
+    """One resolved name: where it is written and what it turned out to be.
+
+    The checker records this at the moment it resolves a name, so an editor can
+    answer "go to definition" and "what is this?" without re-implementing name
+    resolution (plan §5.2, §5.8.2 #5).  The declaration side of navigation lives
+    in the declaration index; this is the referring side, including type names in
+    annotations and signatures, which no HIR expression represents.
+    """
+
+    #: The name as written — what the caret has to be on.
+    span: SrcSpan
+    target: NameTarget
+    #: Type of the expression the name appears in, for hover.
+    expression_type: int | None = None
 
 
 @dataclass

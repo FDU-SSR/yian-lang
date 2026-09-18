@@ -169,14 +169,17 @@ class TypeSpace:
 
         return self.__add_type(struct_ty)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan) -> int:
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
         if len(field_names) != len(field_types):
             raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
 
         struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}", span=span)
         struct_def.generics = generics.copy()
         for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
-            struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index))
+            # `field_spans` keeps the written name of fields that came from an
+            # enum variant's payload declaration, so an editor can jump to them.
+            field_span = None if field_spans is None else field_spans[index]
+            struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index, span=field_span))
         struct_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generics.copy())
         return self.__add_type(struct_ty)
 

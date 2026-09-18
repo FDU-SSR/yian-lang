@@ -34,6 +34,22 @@ def to_lsp_position(row: int, line_text: str, col: int) -> dict[str, int]:
     return {"line": row, "character": character}
 
 
+def to_compiler_column(line_text: str, character: int) -> int:
+    """Convert a 0-based UTF-16 *character* to a 1-based code-point column.
+
+    The inverse of :func:`to_lsp_position`, and the reason it needs the line's
+    text: UTF-16 units and code points part ways after the first non-BMP
+    character.  A *character* past the end of the line clamps to one past its
+    last code point, which is where a caret at the end of a line sits.
+    """
+    units = 0
+    for index, code_point in enumerate(line_text):
+        if units >= character:
+            return index + 1
+        units += 2 if ord(code_point) > 0xFFFF else 1
+    return len(line_text) + 1
+
+
 def to_lsp_range(span: SrcSpan, text: str) -> dict[str, dict[str, int]]:
     """Convert *span* to an LSP range, using *text* to resolve columns.
 
@@ -68,6 +84,7 @@ def uri_to_path(uri: str) -> Path:
 
 __all__ = [
     "path_to_uri",
+    "to_compiler_column",
     "to_lsp_position",
     "to_lsp_range",
     "uri_to_path",
