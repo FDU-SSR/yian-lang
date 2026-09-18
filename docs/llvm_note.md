@@ -20,38 +20,33 @@ enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字�
 偏移不一致, 表现为静默取错值。外部工具(`clang`/`llc`)读入 data layout 为空的模块会先补上
 目标机布局再优化, 因此复现不出来; 只有 llvmlite 进程内管线会带着空布局跑 pass。
 
-## 有型指针与 opaque pointer（现状与迁移评估）
+## 指针表示（opaque pointer）
 
-LLVM 15 起默认 opaque pointer，17 起移除有型指针;llvmlite 的 `ir` 仍按**有型指针**建模:
-`ir.PointerType(pointee)` 打印成 `T*`, LLVM 解析时一律升级为 `ptr`——即 pointee 信息只存在于
-llvmlite 侧, LLVM 本身不再使用。
+数据指针在 LLVM 层统一是 opaque pointer `ptr`, 不带 pointee; pointee 信息只存在于 llvmlite 的
+`ir` 层(`ir.PointerType(pointee)` 得到 `T*`)。本编译器只在**函数指针**上保留有型指针, 其余指针
+构造都返回 `LLTypeCtx.ptr_type`(`ir.PointerType()`), 见 `codegen/llvm/types.py`。
 
-**llvmlite 0.49 已支持 opaque pointer**:`ir.PointerType()`(不带 pointee)打印 `ptr`,
-`PointerType.is_opaque` 驱动其"兼容有型指针"的分支(源码注释也说明这些分支将来会移除)。
-opaque 下的额外要求:
+由此在 `codegen/llvm/builder.py` 里的约定:
 
-- `builder.load(ptr)` 必须显式给 `typ=...`, 否则 `ValueError("Load lacks type.")`;
-- `builder.gep(ptr, indices)` 必须显式给 `source_etype=...`, 否则 `ValueError("GEP lacks type.")`;
-- `store` 由值类型决定, 无需额外信息;
-- `bitcast ptr to ptr` 仍被 LLVM 22 接受(实测 `opt` 退出码 0), 但已是冗余。
+- `load` 显式给 `typ=...`(值类型), 否则 llvmlite 抛 `ValueError("Load lacks type.")`;
+- `gep` 的元素类型按"基指针是否 opaque"分派: opaque 必须显式给 `source_etype=...`, 否则抛
+  `ValueError("GEP lacks type.")`; 有型指针(`alloca`、全局变量、函数指针)仍由 llvmlite 按 pointee
+  推导, 结果类型的 pointee 也是准的;
+- `store` 只在目标指针有型时校验值类型, opaque 目标不校验 (值类型由生成端保证);
+- 目标为 opaque、源为有型的 `bitcast` 不能走 `IRBuilder.bitcast`: llvmlite 认为有型指针与 opaque
+  指针相等, 会原样返回操作数, 值会留着旧的 pointee (`gep` 就会按旧 pointee 缩放下标)。`__bitcast`
+  在这种情况下直接构造 `CastInstr`, 保证值真正被重新定型; 其余情况沿用 llvmlite 的行为;
+- 函数指针保持有型 (`types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
+  `Value.function_type` 从 callee 的 pointee 取签名, 间接调用需要带签名的指针类型。
 
-**当前编译器的依赖面**(统计):`.gep(` 20、`.load(` 21、`.store(` 29、`.bitcast(` 44(其中目标类型是
-`ir.PointerType` 的约 24 处)、`as_pointer()` 11 处, 集中在 `codegen/llvm/builder.py`(另有
-`types.py`、`module.py`)。
+指针构造不再为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
+只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好, 没有"只登记未填 body"的
+中间状态。
 
-**迁移收益**:① 从结构上消除"为造 `T*` 而物化 pointee"这一类重入缺陷(`bak/bug.md` B3), 届时
-`types.py` 的 `__declare_pointee` / `__incomplete` 机制可以删掉; ② 与 LLVM 实际模型一致
-(有型指针信息今天就被丢弃); ③ 省掉每次指针构造的 pointee 物化, IR 文本更小; ④ 少依赖一层
-llvmlite 兼容分支。
-
-**迁移成本/风险**:约 100+ 处机械改动, 集中在 `builder.py`; 每个 GEP/load 要显式带上元素/值类型
-(这些位置本来就有类型 id), 24 处指针 `bitcast` 变为冗余可删; `self.__ptr`、fat/ref/slice 的内部
-字段指针统一换成 opaque。风险中等偏"面广"而非"难", 必须用三套测试(basic/safety/package)+ 19 项
-基准金丝雀回归; `@sizeof`/布局不受影响。
-
-**建议路径**(作为独立任务、独立提交, 不要与 bug 修复混在一起):(1) 集中指针构造(例如
-`types.py` 里的 `ptr_type()` 统一返回 `ir.PointerType()`);(2) 逐处给 GEP/load 补显式类型、删冗余
-`bitcast`;(3) 全量回归;(4) 删除 `__declare_pointee`/`__incomplete`(不再需要)。
+发射文本由 `codegen/llvm/module.py` 关闭 llvmlite 的有型指针打印
+(`ir.types.ir_layer_typed_pointers_enabled = False`), 因此模块里所有指针都是 `ptr`(`alloca`、
+全局变量也一样)。该开关只影响类型打印: llvmlite 侧的类型判定不变, 生成的机器码也不变
+(同一基准在开关两侧的目标文件逐字节相同)。`bitcast ptr to ptr` LLVM 22 接受(实测 `opt` 退出码 0)。
 
 ## 链接性(Linkage)
 
