@@ -28,11 +28,22 @@ def document_edits(text: str, path: Path) -> list[types.TextEdit]:
 
 
 def document_range(text: str) -> types.Range:
-    """A range covering the whole document, in UTF-16 columns."""
+    """A range covering the whole document, in UTF-16 columns.
+
+    The end has to reach past a trailing line break: ``"…}\n"`` is one line of
+    text followed by an empty line, and a range that stops at the last character
+    of the text leaves the old newline behind — the buffer then grows a blank line
+    every time it is formatted.
+    """
     lines = text.splitlines()
     if not lines:
         return types.Range(
             start=types.Position(line=0, character=0), end=types.Position(line=0, character=0)
+        )
+    if text.endswith(("\n", "\r")):
+        return types.Range(
+            start=types.Position(line=0, character=0),
+            end=types.Position(line=len(lines), character=0),
         )
     last = len(lines) - 1
     return types.Range(
