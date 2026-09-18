@@ -32,7 +32,7 @@ from compiler.analysis.diagnostics import (
 )
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.index import Index, build_index
+from compiler.analysis.index import DeclarationIndex, LazyIndex
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
@@ -111,8 +111,10 @@ class AnalysisResult:
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
-    #: Declaration index built from the units, or ``None`` when the run stopped.
-    index: Index | None = None
+    #: Declaration index over the units, or ``None`` when the run stopped.  It is
+    #: built on the first question, not during the run (see
+    #: :class:`~compiler.analysis.index.LazyIndex`).
+    index: DeclarationIndex | None = None
     #: Editor version of each analyzed document (``None`` when unknown).
     versions: Mapping[Path, int | None] = field(default_factory=dict[Path, int | None])
     #: Snapshot key: every input's hash and version plus the compile flags.  A
@@ -316,7 +318,14 @@ class AnalysisSession:
 
         # A recovered error does not stop the index from being built, so a file
         # with one broken definition still answers navigation for the others.
-        index = build_index(units, type_ctx, resolver.import_edges(), self.__packages)
+        # The index is handed over unbuilt: it is a projection of what this run
+        # already produced, and only an editor asks for it (plan §5.12).
+        index: DeclarationIndex = LazyIndex(
+            units=units,
+            type_ctx=type_ctx,
+            import_edges=resolver.import_edges,
+            packages=self.__packages,
+        )
         return AnalysisResult(
             diagnostics=checker.export_diagnostics(),
             sources=sources,

@@ -101,7 +101,8 @@ python3 -m lsp --version                    # 用同一个解释器确认入口�
 
 - 工作区本身（或其上层）有 `package.anx` → **package 模式**：加载项目模型，分析该包的整个文件索引；
   日志里出现 `project <名字> at <路径>: N packages, M files` 与
-  `analysis #1 (startup): N files, K declarations, D diagnostics in X ms`。
+  `analysis #1 (startup, full): N files, D diagnostics in X ms`（声明索引是首次被查询时才构建的，
+  所以 `K declarations` 只在它已经建好之后的分析行里出现）。
 - 工作区不是 YIAN 包 → **standalone 模式**：只分析打开的文档加标准库，包名导入（如
   `from sample.geometry import …`）会报无法解析；日志里出现
   `<工作区> is not a YIAN package; standalone mode` 与 `standalone mode: waiting for a document`，
@@ -143,8 +144,9 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 要验收 P8（性能路径与发布项），把工作区设为 `ide-support/sample`，`yian.languageServer.logLevel`
 设为 `DEBUG`，然后：
 
-1. 打开 `src/main.an`：日志里出现一条 `analysis #N (didOpen, full): … N declarations`，Problems
-   面板是完整诊断（示例工程为 0 条）；
+1. 打开 `src/main.an`：日志里出现一条 `analysis #N (didOpen, full): N files, D diagnostics in X ms`，
+   Problems 面板是完整诊断（示例工程为 0 条）；随后做一次悬停/大纲，下一次分析行里会多出
+   `K declarations`；
 2. 随便改动一个字符：日志里出现 `(didChange, syntax)`，耗时明显小于上一条；此时语义高亮会退回
    TextMate 着色（不再返回 token）；
 3. `Ctrl+S`：出现 `(didSave, full)`，完整诊断与语义高亮一起回来；把某处类型写错（例如

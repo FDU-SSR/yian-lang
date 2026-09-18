@@ -489,8 +489,10 @@ class ExprParser:
         """
         span = self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace).span
         stmts = list(self.__stream.consume_until(self.__parse_expr_stmt, TERM_RBRACE))
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace)
-        return AST.Block(span=span, stmts=stmts)
+        # The closing brace is ours to see: record where the block ends so a
+        # consumer can ask for the body's extent instead of scanning tokens.
+        close = self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace).span
+        return AST.Block(span=span, stmts=stmts, end=close.end.clone())
 
     def __parse_return(self) -> AST.Return:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Return).span

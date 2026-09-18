@@ -14,10 +14,11 @@ declaration side that navigation resolves *to*.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Protocol
 
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.ty import ty as Type
@@ -77,6 +78,38 @@ class Declaration:
         return ".".join(parts)
 
 
+class DeclarationIndex(Protocol):
+    """What a caller may ask a declaration index, however it was produced.
+
+    Analysis hands out an index that is built on the first question
+    (:class:`LazyIndex`); :class:`Index` is that same index once it exists.  Both
+    satisfy this surface, so a caller never needs to know which one it holds.
+    """
+
+    @property
+    def declarations(self) -> tuple[Declaration, ...]: ...
+
+    @property
+    def imports(self) -> Mapping[Path, tuple[Path, ...]]: ...
+
+    @property
+    def packages(self) -> Mapping[Path, str]: ...
+
+    @property
+    def modules(self) -> Mapping[Path, str]: ...
+
+    @property
+    def built(self) -> bool:
+        """True once the index has been materialized."""
+        ...
+
+    def in_file(self, path: Path) -> tuple[Declaration, ...]: ...
+
+    def by_name(self, name: str) -> tuple[Declaration, ...]: ...
+
+    def dependents_of(self, path: Path) -> tuple[Path, ...]: ...
+
+
 @dataclass(frozen=True)
 class Index:
     """Immutable declaration index for one analysis result."""
@@ -97,6 +130,11 @@ class Index:
         default_factory=dict[str, tuple[Declaration, ...]]
     )
 
+    @property
+    def built(self) -> bool:
+        """Always true: this form already exists."""
+        return True
+
     def in_file(self, path: Path) -> tuple[Declaration, ...]:
         """Declarations made in *path* (module-level and nested)."""
         return self._by_path.get(path.resolve(), ())
@@ -114,6 +152,72 @@ class Index:
         """
         target = path.resolve()
         return tuple(sorted(source for source, targets in self.imports.items() if target in targets))
+
+
+class LazyIndex:
+    """A declaration index that is built the first time anything reads it.
+
+    The index is a *projection* of facts the run already holds — the units'
+    symbol tables, the type space, the resolver's import edges — so building it
+    is not extra analysis, and only an editor ever reads it.  Building it inside
+    :meth:`AnalysisSession.analyze` charged every caller for work most of them
+    never use: ``yianc --analyze`` never looks at the index at all, and an editor
+    save that no query follows does not either (7 / 17 / 59 ms at 39 / 95 / 285
+    files).  The projection happens on the first question instead.
+    """
+
+    def __init__(
+        self,
+        *,
+        units: Mapping[int, UnitData],
+        type_ctx: TypeCtx | None,
+        import_edges: Callable[[], Mapping[int, tuple[int, ...]] | None],
+        packages: PackageMap | None,
+    ) -> None:
+        self.__units = units
+        self.__type_ctx = type_ctx
+        self.__import_edges = import_edges
+        self.__packages = packages
+        self.__index: Index | None = None
+
+    @property
+    def built(self) -> bool:
+        """True once something has read the index."""
+        return self.__index is not None
+
+    @property
+    def declarations(self) -> tuple[Declaration, ...]:
+        return self.__current().declarations
+
+    @property
+    def imports(self) -> Mapping[Path, tuple[Path, ...]]:
+        return self.__current().imports
+
+    @property
+    def packages(self) -> Mapping[Path, str]:
+        return self.__current().packages
+
+    @property
+    def modules(self) -> Mapping[Path, str]:
+        return self.__current().modules
+
+    def in_file(self, path: Path) -> tuple[Declaration, ...]:
+        return self.__current().in_file(path)
+
+    def by_name(self, name: str) -> tuple[Declaration, ...]:
+        return self.__current().by_name(name)
+
+    def dependents_of(self, path: Path) -> tuple[Path, ...]:
+        return self.__current().dependents_of(path)
+
+    def __current(self) -> Index:
+        built = self.__index
+        if built is None:
+            built = build_index(
+                self.__units, self.__type_ctx, self.__import_edges(), self.__packages
+            )
+            self.__index = built
+        return built
 
 
 def build_index(

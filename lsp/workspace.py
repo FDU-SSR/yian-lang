@@ -19,7 +19,7 @@ from pathlib import Path
 from anx.diagnostics import AX_DEPENDENCY_CYCLE, Diagnostic as AnxDiagnostic
 from anx.project import MANIFEST_NAME, CycleError, LoadResult, Project, discover, load
 from compiler.analysis.documents import Document, DocumentStore
-from compiler.analysis.index import Declaration, Index
+from compiler.analysis.index import Declaration, DeclarationIndex
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.session import AnalysisResult, AnalysisSession
 from compiler.analysis.source_provenance import resolve_stdlib_root
@@ -46,7 +46,7 @@ class Snapshot:
     result: AnalysisResult
 
     @property
-    def index(self) -> Index | None:
+    def index(self) -> DeclarationIndex | None:
         """The declaration index, or ``None`` when the run stopped early."""
         return self.result.index
 

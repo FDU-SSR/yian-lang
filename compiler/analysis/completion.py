@@ -17,12 +17,12 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from compiler.analysis.index import Declaration, DeclarationKind, Index
+from compiler.analysis.index import Declaration, DeclarationKind
 from compiler.analysis.navigation import Navigator
 from compiler.analysis.session import AnalysisResult
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.view import AnalysisView
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 
@@ -59,16 +59,16 @@ class CompletionKind(Enum):
 
 @dataclass(frozen=True)
 class Completion:
-    """One candidate: what to show, what to insert, and what it is."""
+    """One candidate: what it is, and the facts an editor shows for it."""
 
     label: str
     kind: CompletionKind
     #: Rendered type or signature, shown next to the label.
     detail: str | None = None
-    #: Text to insert; callables get their parameters as snippet placeholders.
-    insert_text: str | None = None
-    #: True when :attr:`insert_text` contains ``${n:...}`` placeholders.
-    snippet: bool = False
+    #: Parameter names of a callable, in order.  How an editor inserts them — a
+    #: snippet with placeholders, a plain name, a signature preview — is its own
+    #: decision; the compiler reports the names it knows.
+    parameters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -184,10 +184,10 @@ def complete(
     *row* is 0-based and *col* is 1-based in code points (the compiler's model).
     """
     navigator = Navigator(result, std_root=std_root)
-    text = __text_of(result, path)
-    tokens = result.tokens.get(path.resolve(), ())
+    text = navigator.text_of(path)
+    tokens = navigator.tokens_of(path)
     prefix, prefix_span = __prefix_at(path, text, row, col)
-    if not __has_symbols(result, path):
+    if not navigator.view.has_symbols(path):
         # The analysis never reached a symbol table — a syntax error stops the
         # pipeline before resolution.  The names in the file itself are still a
         # better answer than nothing while the user is mid-expression, as long as
@@ -195,28 +195,18 @@ def complete(
         return CompletionResult(items=__lexical_items(tokens, prefix), span=prefix_span)
     context = __context_at(path, tokens, row, col)
     if context == __CONTEXT_MEMBER:
-        items = __member_items(result, navigator, path, row, col)
+        items = __member_items(navigator, path, row, col)
     elif context == __CONTEXT_TYPE:
-        items = __type_items(result, navigator, path)
+        items = __type_items(navigator, path)
     elif context == __CONTEXT_IMPORT_PATH:
-        items = __import_path_items(result)
+        items = __import_path_items(navigator)
     elif context == __CONTEXT_IMPORT_NAME:
-        items = __import_name_items(result, path, row, col)
+        items = __import_name_items(navigator, path, row, col)
     else:
-        items = __value_items(result, navigator, path, row, col)
+        items = __value_items(navigator, path, row, col)
     if prefix:
         items = tuple(item for item in items if item.label.startswith(prefix))
     return CompletionResult(items=items, span=prefix_span)
-
-
-def __has_symbols(result: AnalysisResult, path: Path) -> bool:
-    """True when the analysis produced a symbol table for *path*."""
-    if result.index is not None:
-        return True
-    for unit in result.units.values():
-        if unit.path.resolve() == path.resolve():
-            return True
-    return False
 
 
 def __lexical_items(
@@ -244,32 +234,25 @@ def signature_help(
     result: AnalysisResult, path: Path, row: int, col: int, *, std_root: Path | None = None
 ) -> SignatureInfo | None:
     """Signature help for the call the position is inside, if any."""
-    tokens = result.tokens.get(path.resolve(), ())
+    navigator = Navigator(result, std_root=std_root)
+    tokens = navigator.tokens_of(path)
     call = __call_at(path, tokens, row, col)
     if call is None:
         return None
     callee_span, active_parameter = call
-    navigator = Navigator(result, std_root=std_root)
     reference = navigator.reference_starting_at(
         path, callee_span.start.row, callee_span.start.col
     )
     if reference is None:
         return None
     type_id = __callable_type_id(reference.target, reference.expression_type)
-    signature = __signature_of(result.type_ctx, type_id)
+    signature = __signature_of(navigator.view, type_id)
     if signature is None:
         return None
     return SignatureInfo(signatures=(signature,), active_parameter=active_parameter)
 
 
 # ── the position ───────────────────────────────────────────────────────────────
-
-
-def __text_of(result: AnalysisResult, path: Path) -> str:
-    for candidate, text in result.sources.items():
-        if candidate.resolve() == path.resolve():
-            return text
-    return ""
 
 
 def __prefix_at(
@@ -400,7 +383,7 @@ def __last_index(tokens: list[Tok.Token], keyword: Tok.KeywordKind) -> int | Non
 
 
 def __value_items(
-    result: AnalysisResult, navigator: Navigator, path: Path, row: int, col: int
+    navigator: Navigator, path: Path, row: int, col: int
 ) -> tuple[Completion, ...]:
     """Names visible at a value or expression position.
 
@@ -422,20 +405,18 @@ def __value_items(
         if declaration.container != container:
             continue
         items.setdefault(declaration.name, __from_declaration(declaration))
-    for symbol in __visible_symbols(result, path):
-        items.setdefault(symbol.name, __from_symbol(result.type_ctx, symbol))
+    for symbol in navigator.view.symbols_in(path):
+        items.setdefault(symbol.name, __from_symbol(navigator.view, symbol))
     for name in PRIMITIVE_TYPE_NAMES:
         items.setdefault(name, Completion(label=name, kind=CompletionKind.PRIMITIVE, detail="type"))
     return tuple(items.values())
 
 
-def __type_items(
-    result: AnalysisResult, navigator: Navigator, path: Path
-) -> tuple[Completion, ...]:
+def __type_items(navigator: Navigator, path: Path) -> tuple[Completion, ...]:
     """Names that can appear where a type is expected."""
     items: dict[str, Completion] = {}
-    for symbol in __visible_symbols(result, path):
-        item = __from_symbol(result.type_ctx, symbol)
+    for symbol in navigator.view.symbols_in(path):
+        item = __from_symbol(navigator.view, symbol)
         if item.kind in (
             CompletionKind.STRUCT,
             CompletionKind.ENUM,
@@ -458,7 +439,7 @@ def __type_items(
 
 
 def __member_items(
-    result: AnalysisResult, navigator: Navigator, path: Path, row: int, col: int
+    navigator: Navigator, path: Path, row: int, col: int
 ) -> tuple[Completion, ...]:
     """Fields and methods of the expression to the left of the dot.
 
@@ -466,10 +447,10 @@ def __member_items(
     the list matches the *static* type the analysis computed rather than what the
     name looks like (plan §7 P6: 成员补全与接收者静态类型一致).
     """
-    type_ctx = result.type_ctx
-    if type_ctx is None:
+    view = navigator.view
+    if not view.has_types:
         return ()
-    tokens = result.tokens.get(path.resolve(), ())
+    tokens = view.tokens_of(path)
     before = __tokens_before(path, tokens, row, col)
     if not before or not isinstance(before[-1], Tok.Punctuator):
         return ()
@@ -482,17 +463,17 @@ def __member_items(
     type_id, static = __receiver_type(reference)
     if type_id is None:
         return ()
-    resolved = type_ctx.resolve_aliases(type_id)
+    resolved = view.canonical_type(type_id)
     if not static:
         # Field access auto-dereferences a pointer or reference; completion has
         # to follow the same path or `p.` on a `T*` would offer nothing.
-        dereferenced = type_ctx.try_deref(resolved)
+        dereferenced = view.deref_type(resolved)
         if dereferenced is not None:
-            resolved = type_ctx.resolve_aliases(dereferenced)
+            resolved = view.canonical_type(dereferenced)
     items: dict[str, Completion] = {}
-    resolved_ty = type_ctx[resolved]
+    resolved_ty = view.type_of(resolved)
     if isinstance(resolved_ty, Type.StructType) and not static:
-        for field in type_ctx.get_struct_fields(resolved):
+        for field in view.fields_of(resolved):
             if field.access_mode is Type.AccessMode.Private and not __visible_here(field.span, path):
                 continue
             items.setdefault(
@@ -500,16 +481,16 @@ def __member_items(
                 Completion(
                     label=field.name,
                     kind=CompletionKind.FIELD,
-                    detail=type_ctx.get_name(field.type_id),
+                    detail=view.type_name(field.type_id),
                 ),
             )
-    for name, method_id in type_ctx.methods_of(resolved):
-        method_ty = type_ctx[method_id]
+    for name, method_id in view.methods_of(resolved):
+        method_ty = view.type_of(method_id)
         if isinstance(method_ty, Type.MethodType) and method_ty.custom_def.is_static != static:
             continue
-        items.setdefault(name, __from_callable(type_ctx, name, method_id, CompletionKind.METHOD))
+        items.setdefault(name, __from_callable(view, name, method_id, CompletionKind.METHOD))
     if static and isinstance(resolved_ty, Type.EnumType):
-        for variant in type_ctx.get_enum_variants(resolved):
+        for variant in view.variants_of(resolved):
             items.setdefault(
                 variant.name,
                 Completion(
@@ -517,27 +498,24 @@ def __member_items(
                     kind=CompletionKind.VARIANT,
                     detail=None
                     if variant.payload_type is None
-                    else type_ctx.get_name(variant.payload_type),
+                    else view.type_name(variant.payload_type),
                 ),
             )
     return tuple(items.values())
 
 
-def __import_path_items(result: AnalysisResult) -> tuple[Completion, ...]:
+def __import_path_items(navigator: Navigator) -> tuple[Completion, ...]:
     """Package and module names, for ``import`` and ``from …`` paths."""
-    index = result.index
-    if index is None:
-        return ()
     items: dict[str, Completion] = {}
-    for package in sorted(set(index.packages.values())):
+    for package in navigator.view.package_names():
         items.setdefault(package, Completion(label=package, kind=CompletionKind.PACKAGE))
-    for module in sorted(set(index.modules.values())):
+    for module in navigator.view.module_names():
         items.setdefault(module, Completion(label=module, kind=CompletionKind.MODULE))
     return tuple(items.values())
 
 
 def __import_name_items(
-    result: AnalysisResult, path: Path, row: int, col: int
+    navigator: Navigator, path: Path, row: int, col: int
 ) -> tuple[Completion, ...]:
     """Public names of the module named by the import statement being written.
 
@@ -545,20 +523,18 @@ def __import_name_items(
     list is exactly what the compiler would accept (plan §7 P6: 补全不包含不可见
     的私有符号).
     """
-    index = result.index
-    if index is None:
-        return ()
-    tokens = result.tokens.get(path.resolve(), ())
+    view = navigator.view
+    tokens = view.tokens_of(path)
     statement = __statement_tokens(__tokens_before(path, tokens, row, col))
     dotted = __dotted_path(statement)
     if dotted is None:
         return ()
-    target = __module_file(index, dotted)
+    target = view.module_file(dotted)
     if target is None:
         return ()
     return tuple(
         __from_declaration(declaration)
-        for declaration in index.in_file(target)
+        for declaration in view.declarations_in(target)
         if declaration.public and declaration.kind in IMPORTABLE_KINDS
     )
 
@@ -577,33 +553,7 @@ def __dotted_path(statement: list[Tok.Token]) -> str | None:
     return ".".join(names) or None
 
 
-def __module_file(index: Index, dotted: str) -> Path | None:
-    for file, module in index.modules.items():
-        if module == dotted:
-            return file
-    return None
-
-
 # ── items from the analysis ───────────────────────────────────────────────────
-
-
-def __visible_symbols(result: AnalysisResult, path: Path) -> tuple[Symbol, ...]:
-    """Symbols of the file's own unit: its declarations and everything imported.
-
-    The unit's symbol table is the authoritative "what names exist in this file"
-    set, and it is where the prelude's injected imports appear — an import the
-    compiler synthesized sits at the file's start, a position the index skips
-    because an editor cannot jump there, but the *name* is visible.
-    """
-    for unit in result.units.values():
-        if unit.path.resolve() != path.resolve():
-            continue
-        return tuple(
-            symbol
-            for _, symbol in unit.symbol_ctx.items()
-            if symbol.span is not None and symbol.span.path.resolve() == path.resolve()
-        )
-    return ()
 
 
 def __from_declaration(declaration: Declaration) -> Completion:
@@ -614,26 +564,27 @@ def __from_declaration(declaration: Declaration) -> Completion:
     )
 
 
-def __from_symbol(type_ctx: TypeCtx | None, symbol: Symbol) -> Completion:
+def __from_symbol(view: AnalysisView, symbol: Symbol) -> Completion:
     """A symbol's candidate entry, with its kind refined by its type."""
-    if type_ctx is None:
+    resolved = view.type_of(symbol.type_id)
+    if resolved is None:
         return Completion(label=symbol.name, kind=CompletionKind.VARIABLE)
-    match type_ctx[symbol.type_id]:
+    match resolved:
         case Type.StructType() | Type.EnumType() | Type.TraitType() | Type.AliasType():
             return Completion(
                 label=symbol.name,
-                kind=KIND_BY_TYPE[type(type_ctx[symbol.type_id]).__name__],
-                detail=type_ctx.get_name(symbol.type_id),
+                kind=KIND_BY_TYPE[type(resolved).__name__],
+                detail=view.type_name(symbol.type_id),
             )
         case Type.FunctionType() | Type.MethodType():
-            return __from_callable(type_ctx, symbol.name, symbol.type_id, CompletionKind.FUNCTION)
+            return __from_callable(view, symbol.name, symbol.type_id, CompletionKind.FUNCTION)
         case _:
             kind = {
                 SymbolKind.Function: CompletionKind.FUNCTION,
                 SymbolKind.Type: CompletionKind.STRUCT,
             }.get(symbol.kind, CompletionKind.VARIABLE)
             return Completion(
-                label=symbol.name, kind=kind, detail=type_ctx.get_name(symbol.type_id)
+                label=symbol.name, kind=kind, detail=view.type_name(symbol.type_id)
             )
 
 
@@ -646,7 +597,7 @@ KIND_BY_TYPE = {
 
 
 def __from_callable(
-    type_ctx: TypeCtx, name: str, type_id: int, kind: CompletionKind
+    view: AnalysisView, name: str, type_id: int, kind: CompletionKind
 ) -> Completion:
     """A callable candidate: its signature, and a snippet with placeholders.
 
@@ -654,60 +605,33 @@ def __from_callable(
     caret in its first parameter instead of leaving a bare name behind (plan §7
     P6: 补全项的插入文本与参数占位符).
     """
-    parameters = __parameters_of(type_ctx, type_id)
-    signature = __render_signature(type_ctx, name, type_id)
-    if not parameters:
-        return Completion(label=name, kind=kind, detail=signature)
-    placeholders = ", ".join(
-        f"${{{index}:{parameter[0]}}}" for index, parameter in enumerate(parameters, start=1)
-    )
+    parameters = view.parameters_of(type_id)
+    signature = __render_signature(view, name, type_id)
     return Completion(
         label=name,
         kind=kind,
         detail=signature,
-        insert_text=f"{name}({placeholders})",
-        snippet=True,
+        parameters=tuple(parameter for parameter, _ in parameters),
     )
 
 
-def __signature_of(type_ctx: TypeCtx | None, type_id: int | None) -> Signature | None:
-    if type_ctx is None or type_id is None:
+def __signature_of(view: AnalysisView, type_id: int | None) -> Signature | None:
+    if type_id is None or view.type_of(type_id) is None:
         return None
-    if not isinstance(type_ctx[type_id], (Type.FunctionType, Type.MethodType)):
+    if not isinstance(view.type_of(type_id), (Type.FunctionType, Type.MethodType)):
         return None
-    parameters = __parameters_of(type_ctx, type_id)
-    return Signature(label=__render_signature(type_ctx, __callable_name(type_ctx, type_id), type_id), parameters=parameters)
+    parameters = view.parameters_of(type_id)
+    return Signature(
+        label=__render_signature(view, view.callable_name(type_id), type_id),
+        parameters=parameters,
+    )
 
 
-def __callable_name(type_ctx: TypeCtx, type_id: int) -> str:
-    ty = type_ctx[type_id]
-    if isinstance(ty, (Type.FunctionType, Type.MethodType)):
-        return ty.custom_def.name
-    return type_ctx.get_name(type_id)
-
-
-def __render_signature(type_ctx: TypeCtx, name: str, type_id: int) -> str:
+def __render_signature(view: AnalysisView, name: str, type_id: int) -> str:
     parameters = ", ".join(
-        f"{parameter[0]}: {parameter[1]}" for parameter in __parameters_of(type_ctx, type_id)
+        f"{parameter[0]}: {parameter[1]}" for parameter in view.parameters_of(type_id)
     )
-    return f"fn {name}({parameters}) -> {__return_of(type_ctx, type_id)}"
-
-
-def __parameters_of(type_ctx: TypeCtx, type_id: int) -> tuple[tuple[str, str], ...]:
-    ty = type_ctx[type_id]
-    if not isinstance(ty, (Type.FunctionType, Type.MethodType)):
-        return ()
-    return tuple(
-        (parameter.name, type_ctx.get_name(parameter.type_id))
-        for parameter in ty.parameters(type_ctx)
-    )
-
-
-def __return_of(type_ctx: TypeCtx, type_id: int) -> str:
-    ty = type_ctx[type_id]
-    if isinstance(ty, (Type.FunctionType, Type.MethodType)):
-        return type_ctx.get_name(ty.return_type(type_ctx))
-    return type_ctx.get_name(type_id)
+    return f"fn {name}({parameters}) -> {view.return_type_name(type_id)}"
 
 
 def __callable_type_id(target: Type.NameTarget | None, expression_type: int | None) -> int | None:

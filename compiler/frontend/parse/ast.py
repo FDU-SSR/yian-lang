@@ -4,13 +4,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.ast_export import export_program
 from compiler.frontend.parse.ast_type import DeducedType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.parse.ast_type import ASTType, ConstExpr
 
 if TYPE_CHECKING:
-    from compiler.frontend.lex.position import SrcSpan
+    from compiler.frontend.lex.position import SrcPosition
     from compiler.frontend.lex.token import CharLiteral, IntLiteral
     from compiler.frontend.lex.token import Literal as LexLiteral
     from compiler.frontend.lex.token import StrLiteral
@@ -99,6 +100,22 @@ class Import:
     paths: list[Identifier]
     target: Identifier
     alias: Identifier | None
+    #: Position just past the statement's terminator, recorded by the parser —
+    #: the only place that sees it.  Both halves of an ``import a, b;`` statement
+    #: carry the same end.  ``None`` for an import the compiler injected.
+    end: SrcPosition | None = None
+
+    def full_span(self) -> SrcSpan | None:
+        """The whole statement, keyword through terminator.
+
+        ``span`` is only the ``import``/``from`` keyword, which is what an error
+        about the name points at.  Removing the statement (a quick fix for an
+        import that cannot resolve) needs its extent, and that is a fact the
+        parser has, not something a consumer should re-derive from tokens.
+        """
+        if self.end is None:
+            return None
+        return SrcSpan(self.span.start.clone(), self.end.clone())
 
     def __repr__(self) -> str:
         paths_str = ".".join(path.name for path in self.paths)
@@ -278,6 +295,21 @@ class MethodDecl:
 class Block:
     span: SrcSpan
     stmts: list[Expr]
+    #: Position just past the closing ``}``, recorded by the parser.  ``None``
+    #: for a block the compiler synthesized (desugaring), which no source owns.
+    end: SrcPosition | None = None
+
+    def full_span(self) -> SrcSpan | None:
+        """The block's extent: opening brace through matching closing brace.
+
+        ``span`` is only the opening brace, because that is where an error about
+        the block points.  Anything that needs the whole body — deciding which
+        references are *inside* a definition, say — reads this instead of
+        counting braces in the token stream.
+        """
+        if self.end is None:
+            return None
+        return SrcSpan(self.span.start.clone(), self.end.clone())
 
 
 @dataclass

@@ -181,6 +181,20 @@ cd /home/zhx/workspace/yian/ide-support/vscode && npm install vscode-languagecli
 分工与主流实现一致：gopls 把 `go/types` 的结果收进自己的 `Snapshot`，语言服务器层不重新实现分析
 （§5.8）。
 
+**P8 补充：编译器只提供事实，不为编辑器多做一份分析。** 这条把上面的分层落成可检验的判据：
+
+1. 解析时就知道的事实（符号的名字 span、块的结束位置、import 语句的范围）由前端记下来，不让上层
+   到 token 流里重新数一遍；
+2. 只有消费者才需要的东西（声明索引）按需生成，不在 `analyze()` 里提前物化——`yianc --analyze`
+   根本不读索引；
+3. 编辑器词汇与策略（语义 token 类型、补全项插入文本、删除无效 import 的编辑范围）住在 `lsp/`，
+   分析层只回答"这个名字是什么、这个类型有哪些成员、这个符号的引用在哪"。
+
+据此做了四处调整：`AnalysisView`（`compiler/analysis/view.py`）成为唯一读取 `TypeCtx` 与声明索引
+的只读事实层（`Navigator` 在它之上只加"位置解析"）；`Index` 改为首次读取才构建（`LazyIndex`）；
+`AST.Block`/`AST.Import` 由 parser 记录结束位置（`full_span()`）；`semantic.py` 的分类与删除 import
+的快速修复移到 `lsp/semantic_tokens.py` 与 `lsp/refactor.py`。
+
 ### 5.3 第一版采用全量重分析
 
 打开文件后对当前内存文本做一次完整分析，先保证正确性。只有在 §5.12 的指标无法满足时才考虑

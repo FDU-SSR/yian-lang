@@ -36,17 +36,22 @@ from compiler.analysis.completion import complete, signature_help as signature_i
 from compiler.analysis.refactor import (
     ReferenceResult,
     find_references,
-    import_removal_actions,
     rename as rename_symbol,
 )
-from compiler.analysis.semantic import classify
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.completion import completion_list, signature_help
 from lsp.diagnostics import diagnostics_by_document
-from lsp.refactor import code_actions, document_highlights, locations, to_range, workspace_edit
+from lsp.refactor import (
+    code_actions,
+    document_highlights,
+    import_removals,
+    locations,
+    to_range,
+    workspace_edit,
+)
 from lsp.navigation import document_symbols, hover, location
-from lsp.semantic_tokens import encode, legend
+from lsp.semantic_tokens import classify, encode, legend
 from lsp.workspace import Snapshot, Workspace
 
 if TYPE_CHECKING:
@@ -159,35 +164,37 @@ class YianLanguageServer(LanguageServer):
             _LOGGER.error("analysis failed (%s): %s", reason, error, exc_info=error)
             return
         elapsed = (time.perf_counter() - started) * 1000
-        _LOGGER.info(
-            "analysis #%d (%s, %s): %d files, %d diagnostics in %.0f ms",
-            snapshot.generation,
-            reason,
-            "full" if full else "syntax",
-            len(snapshot.files),
-            len(snapshot.result.diagnostics),
-            elapsed,
-        )
-        self.notify_analysis(snapshot, reason, "full" if full else "syntax")
+        self.notify_analysis(snapshot, reason, "full" if full else "syntax", elapsed)
 
-    def notify_analysis(self, snapshot: Snapshot, reason: str, mode: str) -> None:
-        """Publish *snapshot* once, whatever asked for it.
+    def notify_analysis(
+        self, snapshot: Snapshot, reason: str, mode: str, elapsed_ms: float | None = None
+    ) -> None:
+        """Log and publish *snapshot* once, whatever asked for it.
 
         Called from the debounced path and from every semantic request (through
         :func:`__snapshot`), so the Problems panel follows the newest analysis
         instead of waiting for the next keystroke — and a snapshot that was
         already published is not repeated.
+
+        The declaration count is only logged when the index already exists: an
+        analysis must not build it just to write a log line (see ``LazyIndex``).
         """
         if snapshot.generation == self.__publish_generation:
             return
+        parts = [f"{len(snapshot.files)} files"]
         index = snapshot.index
-        if mode == "full":
-            _LOGGER.info(
-                "analysis #%d (%s, full): %d declarations",
-                snapshot.generation,
-                reason,
-                0 if index is None else len(index.declarations),
-            )
+        if index is not None and index.built:
+            parts.append(f"{len(index.declarations)} declarations")
+        parts.append(f"{len(snapshot.result.diagnostics)} diagnostics")
+        if elapsed_ms is not None:
+            parts.append(f"in {elapsed_ms:.0f} ms")
+        _LOGGER.info(
+            "analysis #%d (%s, %s): %s",
+            snapshot.generation,
+            reason,
+            mode,
+            ", ".join(parts),
+        )
         self.__publish_generation = snapshot.generation
         self.__publish(snapshot)
         if mode == "full":
@@ -386,7 +393,7 @@ def __register_features(server: YianLanguageServer) -> None:
             return types.SemanticTokens(data=[])
         navigator = __navigator(ls, snapshot)
         path = uri_to_path(params.text_document.uri)
-        classified = classify(snapshot.result, path, std_root=ls.model.std_root)
+        classified = classify(navigator, path)
         return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
 
     # ── completion and signature help (plan §7 P6) ────────────────────────────
@@ -525,7 +532,7 @@ def __register_features(server: YianLanguageServer) -> None:
         navigator, path, result = __file_context(ls, params.text_document.uri)
         if navigator is None or path is None or result is None:
             return []
-        return code_actions(import_removal_actions(result, path), navigator, path)
+        return code_actions(import_removals(result, navigator, path), navigator, path)
 
     @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     def did_save(ls: YianLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
@@ -559,12 +566,15 @@ def __snapshot(server: YianLanguageServer) -> Snapshot | None:
     A semantic request is a reason to run the whole prefix (plan §5.12 level b),
     so whatever it produces also refreshes the diagnostics the editor shows.
     """
+    started = time.perf_counter()
     try:
         snapshot = server.model.snapshot
     except Exception as error:  # a compiler bug, not something the user typed
         _LOGGER.error("analysis failed (navigation): %s", error, exc_info=error)
         return None
-    server.notify_analysis(snapshot, "request", "full")
+    server.notify_analysis(
+        snapshot, "request", "full", (time.perf_counter() - started) * 1000
+    )
     return snapshot
 
 

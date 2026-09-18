@@ -73,17 +73,24 @@ class Parser:
                 # Parse `import xxx.yyy as zzz;`
                 paths = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_DOT, EMPTY_SET)
                 target = paths.pop()
+                alias: AST.Identifier | None = None
                 match self.__stream.peek():
                     case Keyword(KeywordKind.As, _):
                         self.__stream.advance()
                         alias = self.__stream.consume_identifier()
-                        result = [AST.Import(span=span, paths=paths, target=target, alias=alias)]
                     case _:
-                        result = [AST.Import(span=span, paths=paths, target=target, alias=None)]
+                        pass
+                last = alias if alias is not None else target
                 # consume any trailing semicolons/commas between imports
                 token = self.__stream.peek()
                 if isinstance(token, Punctuator) and token.kind in SEMI_OR_COMMA:
                     self.__stream.advance()
+                    last = token
+                result = [
+                    AST.Import(
+                        span=span, paths=paths, target=target, alias=alias, end=last.span.end.clone()
+                    )
+                ]
                 return result
 
             case Keyword(KeywordKind.From, span):
@@ -105,12 +112,16 @@ class Parser:
                 targets_and_aliases = self.__stream.consume_separated(parse_target, SEP_COMMA, TERM_SEMICOLON)
                 targets, aliases = zip(*targets_and_aliases)
 
-                # each target corresponds to a separate import stmt
-                result = [AST.Import(span=span, paths=paths, target=target, alias=alias) for target, alias in zip(targets, aliases)]
+                # The statement's end belongs to every target it introduced.
+                last = aliases[-1] if aliases[-1] is not None else targets[-1]
                 # consume trailing semicolon
                 token = self.__stream.peek()
                 if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Semicolon:
                     self.__stream.advance()
+                    last = token
+
+                # each target corresponds to a separate import stmt
+                result = [AST.Import(span=span, paths=paths, target=target, alias=alias, end=last.span.end.clone()) for target, alias in zip(targets, aliases)]
                 return result
 
             case _:

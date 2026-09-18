@@ -11,6 +11,7 @@ from __future__ import annotations
 from lsprotocol import types
 
 from compiler.analysis.completion import (
+    Completion,
     CompletionKind,
     CompletionResult,
     SignatureInfo,
@@ -51,7 +52,7 @@ def completion_list(
     items: list[types.CompletionItem] = []
     rendered_range = __range(result.span, navigator)
     for item in result.items:
-        inserted = item.insert_text if item.insert_text is not None else item.label
+        inserted, snippet = __insert_text(item)
         items.append(
             types.CompletionItem(
                 label=item.label,
@@ -59,7 +60,7 @@ def completion_list(
                 detail=item.detail,
                 insert_text_format=(
                     types.InsertTextFormat.Snippet
-                    if item.snippet
+                    if snippet
                     else types.InsertTextFormat.PlainText
                 ),
                 # `insertText` carries the snippet whenever the range is unknown;
@@ -90,6 +91,22 @@ def signature_help(info: SignatureInfo) -> types.SignatureHelp:
         active_signature=info.active_signature,
         active_parameter=info.active_parameter,
     )
+
+
+def __insert_text(item: Completion) -> tuple[str, bool]:
+    """What the editor inserts for *item*, and whether it has placeholders.
+
+    Snippet syntax belongs to the client: the compiler reports the candidate and
+    the parameter names it resolved, and this module decides that accepting a
+    callable should put the caret in its first parameter rather than leave a bare
+    name behind (plan §7 P6: 补全项的插入文本与参数占位符).
+    """
+    if not item.parameters:
+        return item.label, False
+    placeholders = ", ".join(
+        f"${{{index}:{name}}}" for index, name in enumerate(item.parameters, start=1)
+    )
+    return f"{item.label}({placeholders})", True
 
 
 def __range(span: SrcSpan | None, navigator: Navigator) -> types.Range | None:

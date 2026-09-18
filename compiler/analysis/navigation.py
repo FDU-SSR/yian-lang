@@ -31,12 +31,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from compiler.analysis.index import Declaration, DeclarationKind, Index
+from compiler.analysis.index import Declaration, DeclarationKind
 from compiler.analysis.session import AnalysisResult
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.def_point import DefPoint
+from compiler.analysis.view import AnalysisView
+from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcSpan
 
 __all__ = ["Navigator", "Resolution", "Target"]
@@ -81,93 +81,56 @@ class Navigator:
     """
 
     def __init__(self, result: AnalysisResult, *, std_root: Path | None = None) -> None:
-        self.__result = result
+        self.__view = AnalysisView(result)
         self.__std_root = std_root
-        self.__index: Index | None = result.index
-        self.__type_ctx: TypeCtx | None = result.type_ctx
-        # Position → what is there, built once per navigator: a request may ask
-        # about many positions (semantic tokens, completion), and each answer is
-        # then a dictionary lookup rather than a scan of every reference.
-        self.__references: dict[tuple[Path, int, int], Type.NameRef] | None = None
-        self.__declarations: dict[tuple[Path, int, int], Declaration] | None = None
-        self.__references_by_path_cache: dict[Path, tuple[Type.NameRef, ...]] | None = None
-        self.__body_spans: dict[int, SrcSpan] = {}
+
+    @property
+    def view(self) -> AnalysisView:
+        """The facts this navigator answers from.
+
+        Resolution is all this class adds; everything it reads — tokens, symbols,
+        declarations, the type space, the recorded names — comes from the view,
+        which is the only place that touches the compiler's internals (plan §5.2).
+        """
+        return self.__view
 
     # ── sources ───────────────────────────────────────────────────────────────
 
     def text_of(self, path: Path) -> str:
         """The analyzed text of *path*, which is what ranges are measured in."""
-        for candidate, text in self.__result.sources.items():
-            if candidate.resolve() == path.resolve():
-                return text
-        return ""
+        return self.__view.text_of(path)
+
+    def tokens_of(self, path: Path) -> tuple[Tok.Token, ...]:
+        """The lexed tokens of *path*, for the queries that read the text."""
+        return self.__view.tokens_of(path)
 
     def declarations_in(self, path: Path) -> tuple[Declaration, ...]:
         """Declarations made in *path* — the document symbol tree's input."""
-        return () if self.__index is None else self.__index.in_file(path)
+        return self.__view.declarations_in(path)
+
+    def declarations_by_name(self, name: str) -> tuple[Declaration, ...]:
+        """Declarations with this exact name, anywhere in the project."""
+        return self.__view.declarations_by_name(name)
 
     def module_of(self, path: Path) -> str | None:
         """The ``<package>.<module>`` name of *path*, for hover's origin line."""
-        return None if self.__index is None else self.__index.modules.get(path.resolve())
+        return self.__view.module_of(path)
 
     def enclosing_definition_name(self, path: Path, row: int, col: int) -> str | None:
         """The name of the definition whose body covers the position.
 
-        A body's own span is not usable (the parser records only the opening
-        brace), so the extent is the union of its statements; the innermost such
-        definition wins, which is what a closure inside a function needs.
+        A body's ``span`` is only its opening brace, so the extent comes from the
+        parser's recorded end position; the innermost such definition wins, which
+        is what a closure inside a function needs.
         """
         best: tuple[tuple[int, int], str] | None = None
-        for def_point in self.__result.def_points.values():
-            unit = self.__result.units.get(def_point.unit_id)
-            if unit is None or unit.path.resolve() != path.resolve():
-                continue
-            span = self.__body_span(def_point)
-            if span is None or not self.__spans(span, path, row, col):
+        for type_id, span in self.__view.definition_bodies_in(path):
+            if not self.__spans(span, path, row, col):
                 continue
             size = self.__size(span)
             if best is None or size < best[0]:
-                best = (size, self.__name(def_point.type_id) or "")
+                best = (size, self.__name(type_id) or "")
         return None if best is None else best[1]
-
-    def __body_span(self, def_point: DefPoint) -> SrcSpan | None:
-        """The extent of *def_point*'s body: opening brace to matching close.
-
-        Statement spans are not uniformly wide (a ``return`` statement's span is
-        the keyword itself), so the extent is found by matching braces in the
-        token stream rather than by unioning statements.
-        """
-        cached = self.__body_spans.get(id(def_point))
-        if cached is not None:
-            return cached
-        body = def_point.ast_body
-        tokens = self.__result.tokens.get(body.span.path.resolve(), ())
-        start: int | None = None
-        for index, token in enumerate(tokens):
-            if (token.span.start.row, token.span.start.col) == (
-                body.span.start.row,
-                body.span.start.col,
-            ):
-                start = index
-                break
-        if start is None:
-            return None
-        depth = 0
-        from compiler.frontend.lex import token as Tok
-
-        for index in range(start, len(tokens)):
-            token = tokens[index]
-            if not isinstance(token, Tok.Punctuator):
-                continue
-            if token.kind == Tok.PunctuatorKind.LBrace:
-                depth += 1
-            elif token.kind == Tok.PunctuatorKind.RBrace:
-                depth -= 1
-                if depth == 0:
-                    span = SrcSpan(tokens[start].span.start.clone(), token.span.end.clone())
-                    self.__body_spans[id(def_point)] = span
-                    return span
-        return None
 
     # ── the one query ─────────────────────────────────────────────────────────
 
@@ -201,7 +164,7 @@ class Navigator:
     def __reference_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
         """The innermost resolved name the position is inside."""
         best: Type.NameRef | None = None
-        for reference in self.__references_of(path):
+        for reference in self.__view.references_of(path):
             if not self.__spans(reference.span, path, row, col):
                 continue
             if best is None or self.__size(reference.span) < self.__size(best.span):
@@ -214,63 +177,19 @@ class Navigator:
         A recorded name is exactly one identifier, so its start position
         identifies it: this is the lookup semantic tokens and completion use.
         """
-        return self.__reference_map().get((path.resolve(), row, col))
+        return self.__view.reference_starting_at(path, row, col)
 
     def declaration_starting_at(self, path: Path, row: int, col: int) -> Declaration | None:
         """The declaration whose *name* starts at the position, if any."""
-        return self.__declaration_map().get((path.resolve(), row, col))
-
-    def __reference_map(self) -> dict[tuple[Path, int, int], Type.NameRef]:
-        if self.__references is None:
-            references: dict[tuple[Path, int, int], Type.NameRef] = {}
-            if self.__type_ctx is not None:
-                for reference in self.__type_ctx.name_refs():
-                    key = (reference.span.path.resolve(), reference.span.start.row, reference.span.start.col)
-                    references.setdefault(key, reference)
-            self.__references = references
-        return self.__references
-
-    def __declaration_map(self) -> dict[tuple[Path, int, int], Declaration]:
-        if self.__declarations is None:
-            declarations: dict[tuple[Path, int, int], Declaration] = {}
-            if self.__index is not None:
-                for declaration in self.__index.declarations:
-                    span = declaration.span
-                    if span is None:
-                        continue
-                    key = (span.path.resolve(), span.start.row, span.start.col)
-                    declarations.setdefault(key, declaration)
-            self.__declarations = declarations
-        return self.__declarations
+        return self.__view.declaration_starting_at(path, row, col)
 
     def all_references(self) -> tuple[Type.NameRef, ...]:
         """Every recorded name in the analysis, for project-wide queries."""
-        if self.__type_ctx is None:
-            return ()
-        return tuple(self.__type_ctx.name_refs())
+        return self.__view.name_refs()
 
     def reference_in_span(self, span: SrcSpan) -> Type.NameRef | None:
         """The resolved name inside *span*, if one was recorded there."""
-        for reference in self.__references_of(span.path):
-            if self.__contains(span, reference.span.start.row, reference.span.start.col):
-                return reference
-        return None
-
-    def __references_of(self, path: Path) -> tuple[Type.NameRef, ...]:
-        """Every recorded name in *path* (built once per navigator)."""
-        by_path = self.__references_by_path()
-        return by_path.get(path.resolve(), ())
-
-    def __references_by_path(self) -> dict[Path, tuple[Type.NameRef, ...]]:
-        if self.__references_by_path_cache is None:
-            grouped: dict[Path, list[Type.NameRef]] = {}
-            if self.__type_ctx is not None:
-                for reference in self.__type_ctx.name_refs():
-                    grouped.setdefault(reference.span.path.resolve(), []).append(reference)
-            self.__references_by_path_cache = {
-                path: tuple(references) for path, references in grouped.items()
-            }
-        return self.__references_by_path_cache
+        return self.__view.reference_in_span(span)
 
     # ── the declaration index ─────────────────────────────────────────────────
 
@@ -299,12 +218,8 @@ class Navigator:
         return self.__target_from_declaration(declaration, self.__is_stdlib(declaration.path))
 
     def __imported_target(self, path: Path, name: str) -> Target | None:
-        for unit in self.__result.units.values():
-            if unit.path.resolve() != path.resolve():
-                continue
-            symbol = unit.symbol_ctx.lookup_global(name)
-            return None if symbol is None else self.target_of(symbol)
-        return None
+        symbol = self.__view.symbol_named_in(path, name)
+        return None if symbol is None else self.target_of(symbol)
 
     # ── targets from what the analysis resolved ──────────────────────────────
 
@@ -350,9 +265,7 @@ class Navigator:
 
     def __target_of_type(self, type_id: int) -> Target | None:
         """The declaration a type id came from, if it has one."""
-        if self.__type_ctx is None:
-            return None
-        match self.__type_ctx[type_id]:
+        match self.__view.type_of(type_id):
             case Type.StructType(custom_def=custom_def):
                 return self.__target_of_def(custom_def.name, DeclarationKind.STRUCT, custom_def.span)
             case Type.EnumType(custom_def=custom_def):
@@ -404,17 +317,14 @@ class Navigator:
         call through ``Pair<f64>.of`` shows ``f64`` where the declaration is
         written with ``T``.
         """
-        if self.__type_ctx is None:
-            return None
-        resolved = self.__type_ctx[type_id]
+        resolved = self.__view.type_of(type_id)
         if not isinstance(resolved, (Type.FunctionType, Type.MethodType)):
             return None
-        parameters = resolved.parameters(self.__type_ctx)
-        return_type = resolved.return_type(self.__type_ctx)
         rendered = ", ".join(
-            f"{parameter.name}: {self.__name(parameter.type_id)}" for parameter in parameters
+            f"{parameter}: {type_name}"
+            for parameter, type_name in self.__view.parameters_of(type_id)
         )
-        return f"fn {name}({rendered}) -> {self.__name(return_type)}"
+        return f"fn {name}({rendered}) -> {self.__view.return_type_name(type_id)}"
 
     def __target_of_field(self, field: Type.StructField) -> Target | None:
         if field.span is None or not self.__real(field.span):
@@ -446,9 +356,7 @@ class Navigator:
 
     def __name(self, type_id: int | None) -> str | None:
         """Rendered name of a type, from the analysis."""
-        if type_id is None or self.__type_ctx is None:
-            return None
-        return self.__type_ctx.get_name(type_id)
+        return self.__view.type_name(type_id)
 
     def __is_stdlib(self, path: Path) -> bool:
         """True when *path* is part of the standard library."""
