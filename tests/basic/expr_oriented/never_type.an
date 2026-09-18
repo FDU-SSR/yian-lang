@@ -10,7 +10,7 @@ fn main() {
     let x: i32 = if true {
         42
     } else {
-        exit_fn()  // diverges, never reached
+        exit_fn() // diverges, never reached
     };
     assert x == 42: "never type test failed";
 }

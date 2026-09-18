@@ -14,7 +14,7 @@ enum BadEnum {
 }
 
 fn main() {
-    let e1 = BadEnum.A(val = 1);
+    let e1 = BadEnum.A(val=1);
     let e2 = e1;
     match e1 { A(val) => assert val == 1, _ => @panic("source changed") }
     match e2 { A(val) => assert val == 1, _ => @panic("copy changed") }

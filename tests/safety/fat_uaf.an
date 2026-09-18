@@ -7,5 +7,5 @@ fn main() {
     let p: i32* = dyn[2] i32;
     p[0] = 1;
     del p;
-    p[0] = 99  // UAF: lock slot = SENTINEL → live 失败 → safety error
+    p[0] = 99 // UAF: lock slot = SENTINEL → live 失败 → safety error
 }

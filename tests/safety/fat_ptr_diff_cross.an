@@ -12,6 +12,6 @@ fn main() {
     b[0] = 3;
     b[1] = 4;
 
-    let d: i64 = b - a;  // 异对象指针差 → data 不等 → CheckPtrDiff 失败 → safety error
+    let d: i64 = b - a; // 异对象指针差 → data 不等 → CheckPtrDiff 失败 → safety error
     assert d == 0: "unreachable"
 }

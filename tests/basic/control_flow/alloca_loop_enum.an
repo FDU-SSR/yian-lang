@@ -15,8 +15,8 @@ fn main() {
     let index: u64 = 0;
 
     while index < rounds {
-        let first: Mode = Mode.B(value = 1);
-        let second: Mode = Mode.C(value = 2, extra = 3);
+        let first: Mode = Mode.B(value=1);
+        let second: Mode = Mode.C(value=2, extra=3);
 
         match first {
             B(value) => total += value,

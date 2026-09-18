@@ -5,7 +5,7 @@
 fn main() {
     let a: i32[0];
     let b: i32[0];
-    b = a;  // no-op copy of a zero-sized array
+    b = a; // no-op copy of a zero-sized array
 
     // an array whose element is itself zero-sized is also zero-sized
     let c: void[4];

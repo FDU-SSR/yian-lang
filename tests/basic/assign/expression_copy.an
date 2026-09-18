@@ -18,7 +18,8 @@ fn main() {
         None => Box(0),
     };
     let from_loop = loop { break source; };
-    let repeated: Box[3] = [source; 3];
+    let repeated: Box[3] = [source;
+        3];
     let returned = tail(source);
 
     assert source.value == 7;

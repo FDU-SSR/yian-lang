@@ -19,7 +19,7 @@ fn main() {
     // grow()
     v.grow();
     assert v.capacity() == 4: "grow empty vector failed";
-    
+
     // reserve()
     // current v capacity is 4. len assumed 0. additional 5 -> required 5.
     // implementation: if cap >= required -> return.

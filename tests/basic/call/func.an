@@ -2,15 +2,15 @@
 //
 // Expected output: 0
 
-fn add(a: i8, b: i8) -> i8{
+fn add(a: i8, b: i8) -> i8 {
     return a + b;
 }
 
-fn sub(a: i8, b: i8) -> i8{
+fn sub(a: i8, b: i8) -> i8 {
     return a - b;
 }
 
-fn main(){
+fn main() {
     let one: i8 = 1;
     let two: i8 = 2;
     let three: i8 = add(one, two);

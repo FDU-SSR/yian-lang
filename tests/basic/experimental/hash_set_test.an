@@ -52,7 +52,7 @@ fn main() {
 
     // duplicate insert should fail
     inserted = set2.insert(MyVal(1))
-    assert ! inserted: "duplicate insert should return false"
+    assert !inserted: "duplicate insert should return false"
     assert set2.len() == 1: "len should ! change after duplicate insert"
 
     // insert more and test remove
@@ -64,11 +64,11 @@ fn main() {
     removed = set2.remove(&MyVal(2))
     assert removed: "remove should return true for existing item"
     assert set2.len() == 2: "len should decrement after remove"
-    assert ! set2.contains(&MyVal(2)): "removed item should ! be contained"
+    assert !set2.contains(&MyVal(2)): "removed item should ! be contained"
 
     // remove missing
     removed = set2.remove(&MyVal(99))
-    assert ! removed: "remove should return false for missing item"
+    assert !removed: "remove should return false for missing item"
 
     // clear
     set2.clear()

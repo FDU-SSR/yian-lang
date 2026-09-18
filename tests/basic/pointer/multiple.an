@@ -11,5 +11,5 @@ fn main() {
     let f: i32***** = &e;
 
     assert *****f == 66: "Expected *****f to be 66";
-    
+
 }

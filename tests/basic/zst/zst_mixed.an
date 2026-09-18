@@ -3,9 +3,9 @@
 //
 // Expected output: 0
 
-struct NoZst   { a: i32, c: f64 }               // i32+f64, no zst field
-struct Mixed3  { a: i32, z: void, c: f64 }
-struct Mixed5  { a: void, b: i32, c: void, d: f64, e: void }
+struct NoZst { a: i32, c: f64 } // i32+f64, no zst field
+struct Mixed3 { a: i32, z: void, c: f64 }
+struct Mixed5 { a: void, b: i32, c: void, d: f64, e: void }
 struct NestedZ { x: (void, void), y: i32 }
 struct AllZst2 { a: void, b: ! }
 

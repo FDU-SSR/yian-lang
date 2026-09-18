@@ -21,14 +21,14 @@ fn main() {
     assert a == 3: "%= failed";
 
     // Test bitwise compound assignments
-    let b: i32 = 0x0F;  // 15
-    b &= 0x0A;          // 10
+    let b: i32 = 0x0F; // 15
+    b &= 0x0A; // 10
     assert b == 10: "&= failed";
 
-    b |= 0x05;          // 15
+    b |= 0x05; // 15
     assert b == 15: "|= failed";
 
-    b ^= 0x0F;          // 0
+    b ^= 0x0F; // 0
     assert b == 0: "^= failed";
 
     // Test shift compound assignments

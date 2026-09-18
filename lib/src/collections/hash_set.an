@@ -11,15 +11,15 @@ pub struct HashSet<T> {
 
 impl<T> HashSet<T> {
     static pub fn new() -> Self {
-        Self(map = HashMap<T, void>.new())
+        Self(map=HashMap<T, void>.new())
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
-        Self(map = HashMap<T, void>.with_capacity(capacity))
+        Self(map=HashMap<T, void>.with_capacity(capacity))
     }
 
     static pub fn with_capacity_and_hasher(capacity: u64, builder: Murmur3BuildHasher) -> Self {
-        Self(map = HashMap<T, void>.with_capacity_and_hasher(capacity, builder))
+        Self(map=HashMap<T, void>.with_capacity_and_hasher(capacity, builder))
     }
 
     pub fn insert(value: T) -> bool {
@@ -62,7 +62,7 @@ impl<T> Drop for HashSet<T> {
 
 impl<T> Clone for HashSet<T> {
     pub fn clone() -> Self {
-        Self(map = self.map.clone())
+        Self(map=self.map.clone())
     }
 }
 

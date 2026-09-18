@@ -18,9 +18,9 @@ fn main() {
     };
 
     // sizeof / type position
-    assert @sizeof(Tuple<i32, u8>)    == @sizeof(WT): "Tuple<i32,u8>";
-    assert @sizeof(Fn<(i32,), bool>)   == @sizeof(WF): "Fn<(i32,),bool>";
-    assert @sizeof(Fn<(), void>)      == @sizeof(fn() -> void): "Fn<(),void>";
+    assert @sizeof(Tuple<i32, u8>) == @sizeof(WT): "Tuple<i32,u8>";
+    assert @sizeof(Fn<(i32,), bool>) == @sizeof(WF): "Fn<(i32,),bool>";
+    assert @sizeof(Fn<(), void>) == @sizeof(fn() -> void): "Fn<(),void>";
 
     // nesting (Tuple inside Ptr — Ptr is library typedef)
     assert @sizeof(Ptr<Tuple<i32, u8>>) == expected_ptr_size: "Ptr<Tuple<...>>";

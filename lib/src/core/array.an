@@ -41,8 +41,8 @@ impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
 impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
     pub fn into_iter() -> SliceIter<T> {
         SliceIter<T>(
-            ptr = @bitcast<T*>(self),
-            n = N,
+            ptr=@bitcast<T*>(self),
+            n=N,
         )
     }
 }

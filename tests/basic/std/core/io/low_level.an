@@ -2,7 +2,6 @@
 //
 // Expected output: 0
 
-
 fn main() {
     // O_WRONLY | O_CREAT | O_TRUNC = 577
     let wfd: i32 = @open("/tmp/yian_test_low.txt", 577);

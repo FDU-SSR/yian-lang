@@ -11,6 +11,6 @@ fn main() {
     r[2] = 3;
     r[3] = 4;
 
-    let v: i32 = r[4];  // OOB read: index 4 + 1 > size 4 → in_bounds 失败 → safety error
+    let v: i32 = r[4]; // OOB read: index 4 + 1 > size 4 → in_bounds 失败 → safety error
     assert v == 5: "unreachable"
 }

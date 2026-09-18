@@ -44,7 +44,6 @@ impl<T> Neg<Value<T>> for Value<T> {
     }
 }
 
-
 fn main() {
     let a: Value<i32> = Value<i32>(10);
     let b: Value<i32> = Value<i32>(20);

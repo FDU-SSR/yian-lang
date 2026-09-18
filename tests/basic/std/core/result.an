@@ -12,8 +12,8 @@ fn main() {
     let res1: Result<i32, ErrorCode> = Result<i32, ErrorCode>.Ok(42);
     let res2: Result<i32, ErrorCode> = Result<i32, ErrorCode>.Err(1);
     assert res1.is_ok(): "res1 should be Ok";
-    assert ! res1.is_err(): "res1 should ! be Err";
-    assert ! res2.is_ok(): "res2 should ! be Ok";
+    assert !res1.is_err(): "res1 should ! be Err";
+    assert !res2.is_ok(): "res2 should ! be Ok";
     assert res2.is_err(): "res2 should be Err";
 
     // Unwrap with a default value

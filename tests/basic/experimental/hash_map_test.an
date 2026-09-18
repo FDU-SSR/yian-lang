@@ -92,6 +92,6 @@ fn main() {
 
     // === Test 8: contains ===
     assert map3.contains(&MyKey(10)): "contains existing key"
-    assert ! map3.contains(&MyKey(99)): "contains missing key"
+    assert !map3.contains(&MyKey(99)): "contains missing key"
 
 }

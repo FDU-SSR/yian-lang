@@ -18,10 +18,10 @@ fn main() {
     };
 
     // sizeof / type position
-    assert @sizeof(Ptr<i32>)      == @sizeof(WP): "Ptr<i32>";
-    assert @sizeof(Slice<i32>)    == @sizeof(WS): "Slice<i32>";
+    assert @sizeof(Ptr<i32>) == @sizeof(WP): "Ptr<i32>";
+    assert @sizeof(Slice<i32>) == @sizeof(WS): "Slice<i32>";
     assert @sizeof(Array<i32, 4>) == @sizeof(i32) * 4: "Array<i32,4>";
-    assert @sizeof(Never)         == 0: "Never";
+    assert @sizeof(Never) == 0: "Never";
     assert @sizeof(Ptr<Ptr<i32>>) == @sizeof(WP): "nested Ptr";
 
     let value: i32 = 0;

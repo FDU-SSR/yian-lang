@@ -19,5 +19,5 @@ fn main() {
     del p
 
     let r: i32* = dyn[4] i32
-    r[4] = 99  // OOB write: index 4 is one past the last element (0..3) → safety error
+    r[4] = 99 // OOB write: index 4 is one past the last element (0..3) → safety error
 }

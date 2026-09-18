@@ -3,7 +3,7 @@
 
 fn test() -> i32 {
     let x: i32 = 42;
-    x  // implicit return (no semicolon)
+    x // implicit return (no semicolon)
 }
 
 fn main() {

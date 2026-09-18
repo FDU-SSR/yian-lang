@@ -9,7 +9,7 @@ struct Holder<F> { f: F }
 fn add1(x: i32) -> i32 { return x + 1; }
 
 fn main() {
-    let h = Holder(f = add1);
+    let h = Holder(f=add1);
     assert (h.f)(41) == 42: "call function item stored in a struct field";
 
     // Equivalent: bind the field to a variable, then call it.

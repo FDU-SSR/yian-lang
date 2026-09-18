@@ -6,5 +6,5 @@
 fn main() {
     let p: i32* = dyn[3] i32;
     let q: i32* = p + 1;
-    del q  // is_raw 拒: index != 0 → safety error
+    del q // is_raw 拒: index != 0 → safety error
 }

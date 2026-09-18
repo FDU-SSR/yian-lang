@@ -2,7 +2,6 @@
 // Reused from SECL's tests/std/raw_slice_ref.an after removing mode-specific
 // raw slice/string builtin checks.
 
-
 fn main() {
     let x: i32 = 42;
     let p: i32* = &x;

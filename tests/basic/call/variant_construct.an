@@ -11,6 +11,6 @@ enum Command {
 
 fn main() {
     let c1: Command = Command.Start;
-    let c3: Command = Command.Move(is_forward = true, distance = 5);
-    let c4: Command = Command.Speak(message = "hello");
+    let c3: Command = Command.Move(is_forward=true, distance=5);
+    let c4: Command = Command.Speak(message="hello");
 }

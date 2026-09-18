@@ -13,7 +13,7 @@ fn main() {
     let or_result: bool = true || false;
     assert or_result == true: "true || false should be true";
 
-    let not_result: bool = ! true;
+    let not_result: bool = !true;
     assert not_result == false: "! true should be false";
 
 }

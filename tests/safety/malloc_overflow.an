@@ -7,5 +7,5 @@
 
 fn main() {
     let p: u64* = dyn[4611686018427387905] u64;
-    p[0] = 1;  // 修复前:写越界不 safety error;修复后:分配即 safety error
+    p[0] = 1; // 修复前:写越界不 safety error;修复后:分配即 safety error
 }

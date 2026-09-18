@@ -3,7 +3,8 @@
 // Expected output: 0
 
 fn main() {
-    let arr: i32[1024] = [0; 1024];
+    let arr: i32[1024] = [0;
+        1024];
     for i in 0u64..1024 {
         arr[i] = i32(i);
     }

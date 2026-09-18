@@ -12,7 +12,7 @@ fn main() {
     p[2] = 3;
     p[3] = 4;
 
-    let end: i32* = p + 4;   // one-past-end: index == size,算术良构
-    let v: i32 = *end;       // one-past-end 读 → in_bounds(p,1) 失败 → safety error
+    let end: i32* = p + 4; // one-past-end: index == size,算术良构
+    let v: i32 = *end; // one-past-end 读 → in_bounds(p,1) 失败 → safety error
     assert v == 5: "unreachable"
 }

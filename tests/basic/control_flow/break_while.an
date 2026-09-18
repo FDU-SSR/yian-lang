@@ -16,4 +16,3 @@ fn main() {
     }
     assert sum == 45: "Break in while loop failed";
 }
-

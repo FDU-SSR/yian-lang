@@ -107,13 +107,13 @@ fn main() {
     // ---- bitwise compound ----
 
     let b: Value<i32> = Value<i32>(0x0F); // 00001111
-    b &= Value<i32>(0x3C);               // 00111100
+    b &= Value<i32>(0x3C); // 00111100
     assert b.value == 0x0C: "bitand_assign: 0x0F & 0x3C = 0x0C";
 
-    b |= Value<i32>(0x03);               // 00000011
+    b |= Value<i32>(0x03); // 00000011
     assert b.value == 0x0F: "bitor_assign: 0x0C | 0x03 = 0x0F";
 
-    b ^= Value<i32>(0xFF);               // 11111111
+    b ^= Value<i32>(0xFF); // 11111111
     assert b.value == 0xF0: "bitxor_assign: 0x0F ^ 0xFF = 0xF0";
 
     // ---- shift compound ----

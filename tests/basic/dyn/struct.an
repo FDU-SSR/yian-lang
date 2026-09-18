@@ -5,12 +5,12 @@
 
 from std.core.io import print;
 
-struct Person{
+struct Person {
     age: i32,
     name: str,
 }
 
-impl Person{
+impl Person {
     static pub fn new(age: i32, name: str) -> Self {
         return Self(age, name);
     }
@@ -23,7 +23,6 @@ impl Person{
         return self.name;
     }
 }
-
 
 fn main() {
     let p1: Person* = dyn Person.new(25, "Alice");

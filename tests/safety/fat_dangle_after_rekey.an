@@ -8,6 +8,6 @@ fn make() -> i32* { let x: i32 = 42; &x }
 
 fn main() {
     let p: i32* = make();
-    make()  // 第二次调用触发帧锁槽 re-key(新键)
-    p[0] = 99  // 旧键失配 → live 失败 → safety error
+    make() // 第二次调用触发帧锁槽 re-key(新键)
+    p[0] = 99 // 旧键失配 → live 失败 → safety error
 }

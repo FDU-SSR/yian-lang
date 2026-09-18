@@ -6,8 +6,8 @@ fn main() {
     let arr: i32[4] = [0, 0, 0, 0];
     arr[0] = 3;
     arr[1] = 4;
-    arr[2] = arr[0] + arr[1];  // arr[2] = 3 + 4 = 7
-    arr[3] = arr[2] + arr[0];  // arr[3] = 7 + 3 = 10
+    arr[2] = arr[0] + arr[1]; // arr[2] = 3 + 4 = 7
+    arr[3] = arr[2] + arr[0]; // arr[3] = 7 + 3 = 10
 
     assert arr[0] == 3: "arr[0] should be 3";
     assert arr[1] == 4: "arr[1] should be 4";

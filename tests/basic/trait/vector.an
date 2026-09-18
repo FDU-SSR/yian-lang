@@ -80,5 +80,5 @@ fn main() {
     }
 
     assert sum == 15: "Sum should be 15";
-    
+
 }

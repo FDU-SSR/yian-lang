@@ -69,7 +69,7 @@ fn main() {
     assert roundtrip.view[2] == 30: "aggregate return projection";
 
     let tuple: (Payload, Envelope, fn(i32) -> i32) =
-        (payload, Envelope.Full(payload), choose_callback());
+    (payload, Envelope.Full(payload), choose_callback());
     let copies: Payload[2] = [payload, tuple[0]];
     assert tuple[0].view[2] == 30: "tuple nested projection";
     assert copies[1].ptr[0] == 10: "array nested projection";
@@ -84,7 +84,7 @@ fn main() {
     let closure = |base = &anchor| (delta: i32) -> i32 {
         *base + delta
     };
-    let boxed = ClosureBox(payload = payload, call = closure);
+    let boxed = ClosureBox(payload=payload, call=closure);
     assert boxed.payload.view[0] == 10: "closure box aggregate field";
     assert boxed.run(2) == 6: "closure receiver call";
     assert apply(closure, 3) == 7: "closure parameter call";

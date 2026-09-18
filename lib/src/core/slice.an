@@ -14,8 +14,8 @@ impl<T> T[] {
     // Convert a slice to a SliceStruct
     fn as_struct() -> SliceStruct<T> {
         SliceStruct<T>(
-            ptr = @slice_get_ptr(*self),
-            len = @slice_get_len(*self),
+            ptr=@slice_get_ptr(*self),
+            len=@slice_get_len(*self),
         )
     }
 
@@ -63,7 +63,7 @@ impl<T> T[] {
 
 pub struct SliceIter<T> {
     pub ptr: T*,
-    pub n: u64,   // remaining count (ZST-safe, also used for len())
+    pub n: u64, // remaining count (ZST-safe, also used for len())
 }
 
 impl<T> SliceIter<T> {
@@ -71,17 +71,17 @@ impl<T> SliceIter<T> {
         self.n
     }
 
-    pub fn rev() -> RevSliceIter<T>  {
+    pub fn rev() -> RevSliceIter<T> {
         // ptr stays at the forward start; Rev moves backward from ptr+n
         RevSliceIter<T>(
-            ptr = self.ptr,
-            n = self.n,
+            ptr=self.ptr,
+            n=self.n,
         )
     }
 }
 
 pub struct RevSliceIter<T> {
-    pub ptr: T*,    // forward start, stays fixed; next() returns ptr+n
+    pub ptr: T*, // forward start, stays fixed; next() returns ptr+n
     pub n: u64,
 }
 
@@ -92,8 +92,8 @@ impl<T> RevSliceIter<T> {
 
     pub fn rev() -> SliceIter<T> {
         SliceIter<T>(
-            ptr = self.ptr,
-            n = self.n,
+            ptr=self.ptr,
+            n=self.n,
         )
     }
 }
@@ -124,8 +124,8 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
     pub fn into_iter() -> SliceIter<T> {
         let s = self.as_struct();
         SliceIter<T>(
-            ptr = s.ptr,
-            n = s.len,
+            ptr=s.ptr,
+            n=s.len,
         )
     }
 }

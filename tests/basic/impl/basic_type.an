@@ -21,7 +21,7 @@ impl i32 {
 
 impl bool {
     pub fn toggle() -> bool {
-        return ! *self;
+        return !*self;
     }
 }
 
@@ -31,7 +31,6 @@ impl str {
         print("\n");
     }
 }
-
 
 fn main() {
     let a: i32 = -5;

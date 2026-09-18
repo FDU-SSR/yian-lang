@@ -13,12 +13,12 @@ fn unit() -> void { return; }
 fn main() {
     let s: Mixed = Mixed(10, unit());
     s.a = 42;
-    s.z = unit();                       // no-op store into a zero-sized field
+    s.z = unit(); // no-op store into a zero-sized field
     assert s.a == 42: "real field around a zst field works";
     assert @sizeof(Mixed) == @sizeof(i32): "zst field adds no size";
 
     let az: AllZst = AllZst(unit(), unit());
-    az.x = unit();                      // field access on an all-zst struct
+    az.x = unit(); // field access on an all-zst struct
     assert @sizeof(AllZst) == 0: "all-zst struct is zero-sized";
 
 }

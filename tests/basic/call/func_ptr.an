@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-struct Person{
+struct Person {
     pub age: i32,
     pub score: i32,
 }
@@ -21,7 +21,7 @@ fn main() {
 
     let p: Person = person_func(2, 3);
     assert p.age == 2 && p.score == 3: "person_func should return Person(2, 3)";
-    
+
     assert add_func(1, 2) == 3: "add_func should return 3";
-    
+
 }

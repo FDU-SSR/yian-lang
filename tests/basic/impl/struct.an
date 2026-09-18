@@ -2,14 +2,14 @@
 //
 // Expected output: 0
 
-struct Pair{
+struct Pair {
     a: i32,
     b: i32,
 }
 
-impl Pair{
+impl Pair {
     pub static fn new(a: i32, b: i32) -> Self {
-        return Self(a = a, b = b);
+        return Self(a=a, b=b);
     }
 
     pub fn sum() -> i32 {

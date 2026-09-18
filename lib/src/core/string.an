@@ -25,7 +25,7 @@ impl String {
 
     // Create a new String with pre-allocated byte capacity.
     static pub fn with_capacity(capacity: u64) -> Self {
-        Self(data = Vec<u8>.with_capacity(capacity))
+        Self(data=Vec<u8>.with_capacity(capacity))
     }
 }
 

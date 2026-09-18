@@ -10,7 +10,6 @@
 //
 // Expected output: 0
 
-
 fn get_len(s: i32[]) -> u64 {
     s.len()
 }

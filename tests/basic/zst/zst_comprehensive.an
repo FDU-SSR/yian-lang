@@ -2,20 +2,20 @@
 //
 // Expected output: 0
 
-struct Real    { a: i32, c: f64 }          // no ZST field — layout reference
-struct Mixed   { a: i32, z: void, c: f64 }
-struct Empty   {}
-struct AllZst  { x: void, y: void }
+struct Real { a: i32, c: f64 } // no ZST field — layout reference
+struct Mixed { a: i32, z: void, c: f64 }
+struct Empty {}
+struct AllZst { x: void, y: void }
 struct WrapZst { p: void* }
 
-enum E0    { Only }
-enum EZst  { Z { v: Empty } }
+enum E0 { Only }
+enum EZst { Z { v: Empty } }
 enum EMany { A, B }
 
 fn unit() -> void { return; }
 
 fn pass_through_zst(z: void, n: i32) -> i32 {
-    return n;   // z is ZST, stripped from params — call must still align
+    return n; // z is ZST, stripped from params — call must still align
 }
 
 fn main() {
@@ -34,7 +34,7 @@ fn main() {
     assert @sizeof(Mixed) == @sizeof(Real): "mixed struct layout ok";
 
     // ---- all-ZST struct ----
-    let az: AllZst = AllZst(x = unit(), y = unit());
+    let az: AllZst = AllZst(x=unit(), y=unit());
     assert @sizeof(AllZst) == 0: "sizeof all-zst struct";
 
     // ---- struct with ZST pointer field (pointers to ZST are ZST) ----

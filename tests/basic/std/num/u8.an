@@ -27,8 +27,8 @@ fn main() {
     assert b'5'.is_ascii_digit(): "5 should be digit";
     assert b'9'.is_ascii_digit(): "9 should be digit";
     assert !b'A'.is_ascii_digit(): "letter should not be digit";
-    assert !b'/'.is_ascii_digit(): "slash should not be digit";   // before '0'
-    assert !b':'.is_ascii_digit(): "colon should not be digit";   // after '9'
+    assert !b'/'.is_ascii_digit(): "slash should not be digit"; // before '0'
+    assert !b':'.is_ascii_digit(): "colon should not be digit"; // after '9'
 
     // ---- is_ascii_alphanumeric ----
 

@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-struct Person{
+struct Person {
     pub age: i32,
 }
 

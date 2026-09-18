@@ -11,8 +11,8 @@ impl<T> RawVec<T> {
     static pub fn new() -> Self {
         let data: T* = dyn[0] T;
         Self(
-            data = data,
-            cap = 0x8000_0000_0000_0000u64
+            data=data,
+            cap=0x8000_0000_0000_0000u64
         )
     }
 
@@ -27,8 +27,8 @@ impl<T> RawVec<T> {
         // Allocate memory for capacity elements
         let data: T* = dyn[capacity] T;
         Self(
-            data = data,
-            cap = capacity | 0x8000_0000_0000_0000u64
+            data=data,
+            cap=capacity | 0x8000_0000_0000_0000u64
         )
     }
 

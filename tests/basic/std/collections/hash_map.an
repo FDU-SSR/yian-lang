@@ -38,7 +38,7 @@ fn main() {
 
     // === Test 4: get missing key ===
     assert map2.get(&99).is_none(): "get missing key should return None";
-    assert ! map2.contains(&99): "contains missing key should be false";
+    assert !map2.contains(&99): "contains missing key should be false";
 
     // === Test 5: remove ===
     assert map2.remove(&2): "remove existing should return true";
@@ -47,7 +47,7 @@ fn main() {
     assert **map2.get(&1).unwrap() == 999: "key 1 still exists";
     assert **map2.get(&3).unwrap() == 300: "key 3 still exists";
 
-    assert ! map2.remove(&99): "remove missing should return false";
+    assert !map2.remove(&99): "remove missing should return false";
     assert map2.len() == 2: "len unchanged after removing missing";
 
     // === Test 6: clear ===

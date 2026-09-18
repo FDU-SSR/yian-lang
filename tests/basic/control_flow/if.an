@@ -3,10 +3,10 @@
 // Expected output: 0
 
 fn main() {
-   let a: i32 = 3;
-   if a > 10 {
-      @panic("a is greater than 10");
-   } else {
-      assert a == 3: "If-else condition failed";
-   }
+    let a: i32 = 3;
+    if a > 10 {
+        @panic("a is greater than 10");
+    } else {
+        assert a == 3: "If-else condition failed";
+    }
 }

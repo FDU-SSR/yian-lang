@@ -10,11 +10,11 @@ pub trait Clone {
 // Clone is an ordinary trait. Scalar implementations are explicit; pointers,
 // slices and str intentionally have no default Clone implementation.
 
-impl Clone for i8  { fn clone() -> Self { *self } }
+impl Clone for i8 { fn clone() -> Self { *self } }
 impl Clone for i16 { fn clone() -> Self { *self } }
 impl Clone for i32 { fn clone() -> Self { *self } }
 impl Clone for i64 { fn clone() -> Self { *self } }
-impl Clone for u8  { fn clone() -> Self { *self } }
+impl Clone for u8 { fn clone() -> Self { *self } }
 impl Clone for u16 { fn clone() -> Self { *self } }
 impl Clone for u32 { fn clone() -> Self { *self } }
 impl Clone for u64 { fn clone() -> Self { *self } }

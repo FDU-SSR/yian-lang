@@ -4,5 +4,5 @@
 fn make() -> i32* { let x: i32 = 42; &x }
 fn main() {
     let p: i32* = make();
-    p[0] = 99   // stack dangle → safety error (Exit code 1)
+    p[0] = 99 // stack dangle → safety error (Exit code 1)
 }

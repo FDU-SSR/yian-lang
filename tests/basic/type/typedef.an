@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-struct Person{
+struct Person {
     pub a: i32,
     pub b: i32,
 }
@@ -17,7 +17,5 @@ fn main() {
     let b: LL = 12345;
     let c: INT2 = 4;
     let d: INT3 = 5;
-    let p: Pr = Pr(a = 1, b = 2);
+    let p: Pr = Pr(a=1, b=2);
 }
-
-

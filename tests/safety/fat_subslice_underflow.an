@@ -14,7 +14,7 @@ fn main() {
     p[2] = 3;
     p[3] = 4;
 
-    let q: i32* = p + 2;   // 子切片:base.index = 2
-    let r: i32* = q - 1;   // 下溢偏移:offset = u64(-1) ≥ 2^63 → 回绕 → safety error
+    let q: i32* = p + 2; // 子切片:base.index = 2
+    let r: i32* = q - 1; // 下溢偏移:offset = u64(-1) ≥ 2^63 → 回绕 → safety error
     assert false: "unreachable"
 }

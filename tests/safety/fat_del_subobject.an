@@ -12,5 +12,5 @@ struct S {
 fn main() {
     let s: S = S(1, 2);
     let pf: i32* = &s.b;
-    del pf  // is_raw 拒: 非首字段 data 偏移 → safety error
+    del pf // is_raw 拒: 非首字段 data 偏移 → safety error
 }

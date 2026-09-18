@@ -6,5 +6,5 @@
 fn foo() -> void { return; }
 
 fn main() {
-    let f: fn()->void = foo;
+    let f: fn() -> void = foo;
 }

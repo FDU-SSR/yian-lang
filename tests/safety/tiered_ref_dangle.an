@@ -10,8 +10,8 @@
 fn main() {
     let p: i32* = dyn[3] i32;
     p[0] = 1;
-    let s: i32[] = p[0u64..3];  // slice view, 真锁继承
-    let r: i32& = s.ptr();      // slice element → T* → T&
-    del p;                      // backing freed → lock slot SENTINEL
-    *r = 99                     // dangling ref → live 失败 → safety error
+    let s: i32[] = p[0u64..3]; // slice view, 真锁继承
+    let r: i32& = s.ptr(); // slice element → T* → T&
+    del p; // backing freed → lock slot SENTINEL
+    *r = 99 // dangling ref → live 失败 → safety error
 }

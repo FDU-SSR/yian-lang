@@ -2,7 +2,7 @@
 //
 // Expected output: 0
 
-struct Person{
+struct Person {
     pub age: i32,
     pub score: i32,
 }
@@ -17,17 +17,14 @@ impl Person {
     }
 }
 
-
 fn add(a: i32, b: i32) -> i32
 {
     return a + b
 }
 
-fn sub(a: i32, b: i32) -> i32{
+fn sub(a: i32, b: i32) -> i32 {
     return a - b;
 }
-
-
 
 fn make_person(x: i32, y: i32) -> Person {
     return Person(x, y);
@@ -37,7 +34,7 @@ fn accumulate(a: i32, b: i32, func: fn(i32, i32) -> i32) -> i32 {
     let c: i32 = func(a, b);
     return c;
 }
-struct Table{
+struct Table {
     Add_pointer: fn(i32, i32) -> i32,
     Sub_pointer: fn(i32, i32) -> i32,
 }
@@ -55,7 +52,6 @@ fn main()
 
     let res: i32 = (tb.Add_pointer)(10, 2)
     let res2: i32 = (tb.Sub_pointer)(3, 2)
-    
 
     let p: Person = per_func(2, 3)
     let age: i32 = p.get_age()
@@ -66,9 +62,8 @@ fn main()
     let d: i32 = p.age + p.score
     let g: i32 = accumulate(5, 9, add_func)
     let h: i32 = sub_func(5, 1)
-    
 
     let checksum: i32 = res + res2 + res3 + res4 + d + g + h
 
-    assert checksum == 44 : "fail"
+    assert checksum == 44: "fail"
 }

@@ -27,7 +27,7 @@ struct Calculator {
 
 impl Calculator {
     static pub fn new() -> Self {
-        return Self(last_result = 0, op_count = 0);
+        return Self(last_result=0, op_count=0);
     }
 
     pub fn execute(op: Operation) -> i32 {
@@ -57,10 +57,10 @@ impl Calculator {
 fn main() {
     let calc: Calculator = Calculator.new();
 
-    let r1: i32 = calc.execute(Operation.Add(a = 40, b = 44));
+    let r1: i32 = calc.execute(Operation.Add(a=40, b=44));
     assert r1 == 84: "Add failed";
 
-    let r2: i32 = calc.execute(Operation.Multiply(a = 6, b = 7));
+    let r2: i32 = calc.execute(Operation.Multiply(a=6, b=7));
     assert r2 == 42: "Multiply failed";
 
     let opt: Option<i32> = Calculator.try_get_positive(r1);

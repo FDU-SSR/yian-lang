@@ -9,12 +9,15 @@
 
 fn main() {
     let p: i32* = dyn[4] i32;
-    p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
     let s: i32[] = p[0u64..4];
     let total: i32 = 0;
     for i in 0..4u64 {
-        i = 1000;   // 重赋值: 若注入 assume(i<4) 则为假事实
-        s[i] = 42;  // 必须 safety error(-4), 否则 OOB 写
+        i = 1000; // 重赋值: 若注入 assume(i<4) 则为假事实
+        s[i] = 42; // 必须 safety error(-4), 否则 OOB 写
         total += 0;
     }
     assert total == 0: "unreachable";

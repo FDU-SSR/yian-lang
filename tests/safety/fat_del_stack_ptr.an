@@ -6,5 +6,5 @@
 fn main() {
     let x: i32 = 5;
     let p: i32* = &x;
-    del p  // is_heap 拒: 栈键最高位 0 → safety error
+    del p // is_heap 拒: 栈键最高位 0 → safety error
 }

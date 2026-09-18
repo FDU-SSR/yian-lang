@@ -12,4 +12,3 @@ fn main() {
     }
     assert ret == 66: "Break statement failed";
 }
-

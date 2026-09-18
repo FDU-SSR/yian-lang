@@ -20,4 +20,3 @@ fn main() {
     assert h4.finish() == h5.finish(): "builder should produce hasher with same seed state";
 
 }
-

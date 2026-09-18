@@ -7,7 +7,7 @@
 fn consume_never(z: !) -> void { return; }
 
 fn produce_never() -> ! {
-    loop {}  // diverges, never returns
+    loop {} // diverges, never returns
 }
 
 fn main() {

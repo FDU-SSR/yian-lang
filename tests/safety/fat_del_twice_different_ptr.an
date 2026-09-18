@@ -7,5 +7,5 @@ fn main() {
     let p: i32* = dyn[2] i32;
     let q: i32* = p;
     del p;
-    del q  // q 为 p 拷贝, 锁槽已 SENTINEL → live 失败 → safety error
+    del q // q 为 p 拷贝, 锁槽已 SENTINEL → live 失败 → safety error
 }

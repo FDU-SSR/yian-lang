@@ -6,9 +6,9 @@ fn main() {
     let buff1: i32[5] = [0, 0, 0, 0, 0];
     let buff2: i32[5];
     for i in 0..5i32 {
-        buff1[u64(i)] = i * 10       // buff1 = [0, 10, 20, 30, 40]
+        buff1[u64(i)] = i * 10 // buff1 = [0, 10, 20, 30, 40]
     }
-    buff2 = buff1                 // assign buff1 to buff2;
+    buff2 = buff1 // assign buff1 to buff2;
 
     assert buff2[0] == 0: "buff2[0] should be 0";
     assert buff2[1] == 10: "buff2[1] should be 10";
@@ -16,12 +16,12 @@ fn main() {
     assert buff2[3] == 30: "buff2[3] should be 30";
     assert buff2[4] == 40: "buff2[4] should be 40";
 
-    buff2[0] = 999          // modify buff2
+    buff2[0] = 999 // modify buff2
     assert buff1[0] == 0: "buff1[0] should still be 0";
     assert buff2[0] == 999: "buff2[0] should be 999";
 
     let ptr1: i32[5]* = &buff1;
-    *ptr1 = buff2                // assign buff2 to *ptr1 (which is buff1);
+    *ptr1 = buff2 // assign buff2 to *ptr1 (which is buff1);
     assert buff1[0] == 999: "buff1[0] should be 999 after assignment";
     assert buff1[1] == 10: "buff1[1] should be 10";
     assert buff1[2] == 20: "buff1[2] should be 20";

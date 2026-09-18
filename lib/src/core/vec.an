@@ -7,7 +7,6 @@ from std.core.convert import From, Into;
 from std.core.drop import Drop;
 from std.core.range import Range;
 
-
 pub struct Vec<T> {
     raw_vec: RawVec<T>,
     len: u64,
@@ -17,16 +16,16 @@ impl<T> Vec<T> {
     // Create a new, empty Vec
     static pub fn new() -> Self {
         Self(
-            raw_vec = RawVec<T>.new(),
-            len = 0
+            raw_vec=RawVec<T>.new(),
+            len=0
         )
     }
 
     // Create a Vec with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
         Self(
-            raw_vec = RawVec<T>.with_capacity(capacity),
-            len = 0
+            raw_vec=RawVec<T>.with_capacity(capacity),
+            len=0
         )
     }
 
@@ -133,7 +132,7 @@ impl<T> Vec<T> {
         self.len -= 1;
 
         if index != self.len {
-             // Copy the last element to the removed spot
+            // Copy the last element to the removed spot
             buf[index] = buf[self.len];
         }
 

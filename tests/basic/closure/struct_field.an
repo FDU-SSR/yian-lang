@@ -5,7 +5,7 @@ fn main() {
     let closure = |x_in = x| (y: i32) -> i32 {
         x_in + y
     };
-    let h = Holder(f = closure);
+    let h = Holder(f=closure);
     let result = (h.f)(5);
     assert result == 15: "closure in generic struct field";
 }

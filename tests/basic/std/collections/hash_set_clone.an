@@ -34,15 +34,15 @@ impl PartialEq<SKey> for SKey {
 
 impl Clone for SKey {
     fn clone() -> Self {
-        SKey(tag = self.tag.clone(), drops = self.drops)
+        SKey(tag=self.tag.clone(), drops=self.drops)
     }
 }
 
 fn main() {
     let drops: i32 = 0;
     let s = HashSet<SKey>.with_capacity(4);
-    s.insert(SKey(tag = String.from(&"alpha"), drops = &drops));
-    s.insert(SKey(tag = String.from(&"beta"), drops = &drops));
+    s.insert(SKey(tag=String.from(&"alpha"), drops=&drops));
+    s.insert(SKey(tag=String.from(&"beta"), drops=&drops));
     assert drops == 0 && s.len() == 2;
 
     let c = s.clone();
@@ -50,7 +50,7 @@ fn main() {
     assert c.len() == 2;
 
     // The clone owns independent key copies: removing from it keeps s intact.
-    let probe_alpha = SKey(tag = String.from(&"alpha"), drops = &drops);
+    let probe_alpha = SKey(tag=String.from(&"alpha"), drops=&drops);
     assert c.remove(&probe_alpha);
     assert drops == 0: "clone remove must not clean the stored element";
     assert s.contains(&probe_alpha): "original set unaffected by clone removal";
@@ -59,8 +59,8 @@ fn main() {
     for t in c {
         t.tag.push('!');
     }
-    let probe_beta = SKey(tag = String.from(&"beta"), drops = &drops);
-    let probe_beta_bang = SKey(tag = String.from(&"beta!"), drops = &drops);
+    let probe_beta = SKey(tag=String.from(&"beta"), drops=&drops);
+    let probe_beta_bang = SKey(tag=String.from(&"beta!"), drops=&drops);
     assert c.contains(&probe_beta_bang) && !c.contains(&probe_beta);
     assert s.contains(&probe_beta): "original elements were deep-copied, untouched";
 

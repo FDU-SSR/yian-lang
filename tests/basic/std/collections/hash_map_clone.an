@@ -35,7 +35,7 @@ impl PartialEq<SKey> for SKey {
 
 impl Clone for SKey {
     fn clone() -> Self {
-        SKey(tag = self.tag.clone(), drops = self.drops)
+        SKey(tag=self.tag.clone(), drops=self.drops)
     }
 }
 
@@ -87,8 +87,8 @@ fn main() {
     // === 3: heap-backed keys: deep-copied, explicitly cleaned while reachable ===
     let key_drops: i32 = 0;
     let m3 = HashMap<SKey, i32>.with_capacity(4);
-    m3.insert(SKey(tag = String.from(&"k1"), drops = &key_drops), 10);
-    m3.insert(SKey(tag = String.from(&"k2"), drops = &key_drops), 20);
+    m3.insert(SKey(tag=String.from(&"k1"), drops=&key_drops), 10);
+    m3.insert(SKey(tag=String.from(&"k2"), drops=&key_drops), 20);
     assert key_drops == 0 && m3.len() == 2;
 
     let c3 = m3.clone();
@@ -99,9 +99,9 @@ fn main() {
     for k in c3 {
         k.tag.push('!');
     }
-    let probe1 = SKey(tag = String.from(&"k1"), drops = &key_drops);
-    let probe1b = SKey(tag = String.from(&"k1!"), drops = &key_drops);
-    let probe2 = SKey(tag = String.from(&"k2"), drops = &key_drops);
+    let probe1 = SKey(tag=String.from(&"k1"), drops=&key_drops);
+    let probe1b = SKey(tag=String.from(&"k1!"), drops=&key_drops);
+    let probe2 = SKey(tag=String.from(&"k2"), drops=&key_drops);
     assert m3.contains(&probe1) && !m3.contains(&probe1b): "original keys stay untouched";
     assert c3.contains(&probe1b) && !c3.contains(&probe1): "clone keys were deep-copied";
 

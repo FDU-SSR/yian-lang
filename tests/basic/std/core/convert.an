@@ -10,7 +10,7 @@ struct FakeI32 {
 
 impl From<i32> for FakeI32 {
     static fn from(value: i32*) -> Self {
-        return FakeI32 (value=*value);
+        return FakeI32(value=*value);
     }
 }
 

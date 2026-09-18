@@ -11,7 +11,6 @@ struct Person {
     pub score: i64,
 }
 
-
 fn main() {
     let arr: i32[3] = [get_num(1), get_num(2), get_num(3)]
     assert arr[1] == 2: "arr[1] should be 2"
