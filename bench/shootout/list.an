@@ -1,7 +1,8 @@
 // bench/shootout/list.an — 链表 tail 递归归约 (shootout list)
 //
-// 语义权威源: bak/old_exp/performance/c/list.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/list.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/list.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 make_list 45/30/20, 断言 tail 结果长度 == 30。
 //   (规模未调整; 与 C 版语义一致。)
 //

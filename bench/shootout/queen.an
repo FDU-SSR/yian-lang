@@ -1,7 +1,8 @@
 // bench/shootout/queen.an — N 皇后回溯 (shootout queens)
 //
-// 语义权威源: bak/old_exp/performance/c/queen.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/queen.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Queens.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/queen.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 8000 皇后, 求解 1000 次, 断言 overall_result == 1000。
 //   规模调整: 全胖模式单次求解 ~0.35s, 1000 次实测远超可接受运行时长,
 //   折中为求解 SOLVES=150 次 (每次均成功, 断言 overall_result == SOLVES;

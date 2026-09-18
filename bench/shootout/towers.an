@@ -1,7 +1,8 @@
 // bench/shootout/towers.an — 汉诺塔指针栈模拟 (shootout towers)
 //
-// 语义权威源: bak/old_exp/performance/c/towers.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/towers.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Towers.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/towers.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 disks=30, 断言 moves_done == 1073741823 (2^30 - 1)。
 //   (规模未调整; 与 C 版语义一致。)
 //

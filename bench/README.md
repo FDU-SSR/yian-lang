@@ -16,6 +16,8 @@ python3 scripts/check_bench_regression.py
 
 产物：
 
+- `bench/shootout/*.an` — 基准源码（单一源，两态共用；`<name>.raw.an` 为裸态覆盖源）；
+- `bench/c/*.c` — 同规模的自写 C 参考，只做跨语言正确性对照；
 - `bench/results.md` — 表格 + 环境指纹 + 协议说明（人读）；
 - `bench/results.csv` — 机读基线，由 `scripts/check_bench_regression.py` 对照。
 
@@ -54,30 +56,47 @@ python3 scripts/check_bench_regression.py
 
 `bench/shootout/` 共 14 个基准 + 1 个裸态覆盖源：
 
-| 基准 | 内容 |
-| --- | --- |
-| binarytree | 二叉树构建/遍历 |
-| bounce | 球体弹跳模拟（LCG 随机数） |
-| fann | 浮点神经网络前向计算 |
-| fasta | 随机 DNA/氨基酸序列生成 |
-| list | 链表构建与遍历 |
-| mand | Mandelbrot 集合 |
-| nbody | N 体积分（浮点密集） |
-| permute | 排列枚举 |
-| queen | N 皇后 |
-| revcomp | 序列反向互补 |
-| sieve | 埃拉托斯特尼筛法 |
-| spectralnorm | 谱范数幂迭代 |
-| storage | 树形结构的分配/回收 |
-| towers | 汉诺塔 |
+| 基准 | 内容 | 上游 |
+| --- | --- | --- |
+| binarytree | 二叉树构建/遍历 | Benchmarks Game |
+| bounce | 球体弹跳模拟（LCG 随机数） | AWFY |
+| fann | 浮点神经网络前向计算 | Benchmarks Game |
+| fasta | 随机 DNA/氨基酸序列生成 | Benchmarks Game |
+| list | 链表构建与遍历 | AWFY |
+| mand | Mandelbrot 集合 | AWFY（Mandelbrot） |
+| nbody | N 体积分（浮点密集） | AWFY |
+| permute | 排列枚举 | AWFY |
+| queen | N 皇后 | AWFY（Queens） |
+| revcomp | 序列反向互补 | Benchmarks Game |
+| sieve | 埃拉托斯特尼筛法 | AWFY |
+| spectralnorm | 谱范数幂迭代 | Benchmarks Game |
+| storage | 树形结构的分配/回收 | AWFY |
+| towers | 汉诺塔 | AWFY |
 
-来源：这些程序是经典 *Benchmarks Game*（shootout）基准的改写版，性能测评相关代码
-移植自本仓库分支 `archive/secl-paper-20260909`（该分支的 `bench/shootout`、
-`bench/shootout_raw` 与 `scripts/bench_fat.py`，最近提交 `70db192`）。每个源的头部
-注释保留其**语义权威源**（`bak/old_exp/performance/c/*.c`）与规模调整说明；规模在两态
-相同，只按可接受的运行时长做过折中（见各源头部注释）。改写版按本仓库的许可发布；
-上游 Benchmarks Game 程序逐文件的许可状态本轮未逐一核对，因此本目录**未**附带 C
-参考源（`bench/c/*.c`），跨语言正确性参考不在本轮范围内。
+`bench/c/` 是**同规模的自写 C 参考实现**（只用于跨语言正确性对照，不参与 fat/raw
+计时），语义权威值与各 `.an` 头部注释对齐，一条命令校验：
+
+```bash
+python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和, 14/14 PASS
+```
+
+来源与许可：
+
+- 性能测评代码移植自本仓库分支 `archive/secl-paper-20260909`（`bench/shootout`、
+  `bench/shootout_raw`、`scripts/bench_fat.py`，最近提交 `70db192`）；
+- 9 项改写自 **AWFY**（[are-we-fast-yet](https://github.com/smarr/are-we-fast-yet)，
+  `benchmarks/Java/src/`）：Bounce、List、Mandelbrot、NBody、Permute、Queens、Sieve、
+  Storage、Towers。AWFY 另有 5 个宏基准（CD、Havlak、Richards、DeltaBlue、Json），
+  本目录的补齐进度见 `docs/plan/fat-vs-raw-bench-plan.md` §5 P5；
+- 5 项改写自 **Benchmarks Game**（shootout）：binarytree、fann、fasta、revcomp、
+  spectralnorm；
+- 每个 `.an` 头部标注上游来源与许可状态，并保留**语义权威源**（`bench/c/<name>.c`）
+  与规模调整说明；规模在两态相同，只按可接受的运行时长做过折中；
+- 许可：AWFY 的 `LICENSE.md` 说明 Richards、DeltaBlue 源自 Mario Wolczko 的 Smalltalk
+  版本（许可指向已归档的 Sun Labs 页面），其 Benchmarks Game 部分为 Revised BSD
+  （Copyright 2008-2012 Isaac Gouy）；CD、Havlak、Json 的逐文件许可未在该文件列明。
+  `bench/c/*.c` 为本仓库自写、无上游许可头。本目录引入的都是**本仓库的改写版**，
+  按本仓库许可发布。
 
 ## 单一源的合并规则
 

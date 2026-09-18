@@ -115,7 +115,7 @@ scripts/
 
 > 状态（2026-09-18）：P1–P4 均已落地。基准与结果见 `bench/`（`README.md`、`results.md`、
 > `results.csv`），测量与门禁见 `scripts/bench_fat_vs_raw.py`、`scripts/check_bench_regression.py`。
-> 未做的只有 P4 的可选项（`bench/c/*.c` 跨语言参考源）。
+> P5（按 AWFY 补齐 5 个宏基准）与 P6（C 参考与来源修正）进行中。
 
 ### P1 拉取并合并基准
 
@@ -138,6 +138,37 @@ scripts/
 - `bench/README.md`：协议、运行方式、结果解读、**来源与许可**（移植自 `archive/secl-paper-20260909`；shootout 基准源自经典 Benchmarks Game 的改写）；
 - 可选：拉入 `bench/c/*.c` 与 `scripts/verify_bench_c.py` 作跨语言正确性参考（不参与 fat/raw 计时）；
 - 验收：README 与脚本行为一致；一条命令完成"编译两态 + 校验输出一致 + 测量 + 生成结果"。
+
+### P5 按 AWFY 补齐宏基准（CD / Havlak / Richards / DeltaBlue / Json）
+
+- **现状盘点（2026-09-18）**：现有 14 项 = AWFY `benchmarks/Java/src` 的 9 项
+  （Bounce / List / Mandelbrot / NBody / Permute / Queens / Sieve / Storage / Towers）
+  + Benchmarks Game 的 5 项（binarytree / fann / fasta / revcomp / spectralnorm）。
+  AWFY 尚缺的 5 项恰好是它的宏基准：CD、Havlak、Richards、DeltaBlue、Json
+  （上游 Java 源码量约 26 / 27 / 19 / 38 / 63 KB，Json 含 SOM `Dictionary`/`Vector`
+  与 28 KB 内嵌测试文档）。
+- **参考实现**：`https://github.com/smarr/are-we-fast-yet`（`benchmarks/Java/src/`，
+  规范参考为其 SOM 风格源码）。规模自定，取 fat 单趟 1–5 s（与现有基准同量级）。
+- **YIAN 侧适配（关键约束）**：YIAN 没有 trait object / 动态分派（`bak/todo.md` 仍是
+  TODO），因此 AWFY 的类层次必须改用 **tagged enum + `match`**；算法、数据布局、
+  分配次数保持不变。标准库已具备所需设施：`HashMap`/`HashSet`/`Vec`/`String`/`str`
+  切片（随机数用 AWFY 同款 LCG 内联）。每项的头部注释必须记录这处适配。
+- **顺序**：CD → Havlak → Richards → DeltaBlue → Json（由易到难；Json 依赖字符串解析
+  与哈希表，放最后）。
+- **每项验收（与 P1 相同）**：两模式 `-O2` 编译通过、运行通过、stdout 逐字节一致、
+  §3.4 的 diff/计时判定通过、单趟耗时记录；随后并入全量基线。
+- **许可**：AWFY `LICENSE.md` 说明 Richards/DeltaBlue 源自 Mario Wolczko 的 Smalltalk
+  版本，Benchmarks Game 那批为 Revised BSD；CD/Havlak/Json 的逐文件许可未在该文件
+  列明。本项目引入的是**改写版**，在各源头部与 `bench/README.md` 标注来源与许可状态。
+
+### P6 跨语言参考与来源修正
+
+- 拉入分支 `archive/secl-paper-20260909` 的 `bench/c/*.c`（14 个 C 参考）与
+  `scripts/verify_bench_c.py`；C 源只用于跨语言正确性对照，不参与 fat/raw 计时；
+- 现有 14 个 `.an` 头部注释里的语义权威源写作 `bak/old_exp/performance/c/<name>.c`，
+  该路径在本 checkout 已不存在（`bak/` 只剩 `todo.md`）→ 改为 `bench/c/<name>.c`，
+  并补上上游来源（AWFY / Benchmarks Game）与许可状态；
+- 验收：`scripts/verify_bench_c.py` 可跑通；头部路径全部指向真实文件。
 
 ## 6. 风险与开放问题
 

@@ -1,7 +1,8 @@
 // bench/shootout/fann.an — fannkuchredux (shootout fannkuchredux)
 //
-// 语义权威源: bak/old_exp/performance/c/fann.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/fann.an):
+// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
+// 语义权威源: bench/c/fann.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 n=12 (12! = 479M 排列), 断言 max_flips == 65。
 //   规模调整: 实测全胖模式 n=12 远超 60s, 折中为 n=11 (11! = 39.9M
 //   排列, 断言 max_flips == 51, 与 C 版 n=11 实测一致)。

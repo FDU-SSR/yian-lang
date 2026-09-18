@@ -1,7 +1,8 @@
 // bench/shootout/bounce.an — 球弹跳模拟 (shootout bounce)
 //
-// 语义权威源: bak/old_exp/performance/c/bounce.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/bounce.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Bounce.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/bounce.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 ball_count=100000, 弹跳轮数 50000, 断言 bounces == 1841353453。
 //   规模调整: 胖模式下 100000×50000 = 5e9 次 bounce 远超可接受运行时长,
 //   折中为 ball_count=100000 × 轮数 10000 (三态同源码, 不影响归因; 断言

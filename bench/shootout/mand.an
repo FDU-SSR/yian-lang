@@ -1,7 +1,8 @@
 // bench/shootout/mand.an — Mandelbrot 集位图校验和 (shootout mandelbrot)
 //
-// 语义权威源: bak/old_exp/performance/c/mand.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/mand.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Mandelbrot.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/mand.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 w=h=16000, iter=50, 断言 checksum % 256 == 135。
 //   规模调整: 实测全胖模式 16000×16000 远超 60s, 折中为 w=h=8000,
 //   iter=50 (C 版实测 w=h=8000 时 checksum == 126, 断言值同步改为

@@ -1,7 +1,8 @@
 // bench/shootout/storage.an — 递归数组树分配/释放 (shootout storage)
 //
-// 语义权威源: bak/old_exp/performance/c/storage.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/storage.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Storage.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/storage.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 depth=17, 断言 count_arrays == 64570081。
 //   规模调整: 胖指针下 array_tree 结构体为 48 字节 (40B 子指针 + i32),
 //   depth=17 需峰值 ~14GB 堆, 超出本机 (15GB, 可用 ~12GB) 会被 OOM。

@@ -1,8 +1,9 @@
 // bench/shootout/revcomp.an — 反向互补 (shootout revcomp, compute-only)
 //
-// 语义权威源: bak/old_exp/performance/c/revcomp.c (C 版, 取校验和部分,
+// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
+// 语义权威源: bench/c/revcomp.c (项目自写 C 参考, 取校验和部分,
 //   不输出反向互补序列文本)
-// 规模参数取自原 .an (bak/old_exp/performance/an/revcomp.an):
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 iterations=25000000, 断言 i32(checksum)%256 == 64。
 //   规模调整: 实测全胖模式 25M 次远超 60s, 折中为 2000000 次。
 //   校验和随迭代次数线性变化 (每轮贡献恒定, 取模循环): C 版实测

@@ -1,7 +1,8 @@
 // bench/shootout/nbody.an — N 体引力模拟 (shootout nbody)
 //
-// 语义权威源: bak/old_exp/performance/c/nbody.c (C 版)
-// 规模参数取自原 .an (bak/old_exp/performance/an/nbody.an):
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/NBody.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/c/nbody.c (项目自写 C 参考)
+// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
 //   原规模 n=50000000 步 advance, 断言 result == -1。
 //   规模调整: 实测全胖模式 50M 步远超 60s, 折中为 n=12000000 步
 //   (C 版实测 n=12M 与 50M 同为 result == -1, 断言值与原版一致;
