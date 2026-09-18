@@ -36,6 +36,7 @@ from compiler.analysis.session import AnalysisResult
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit.def_point import DefPoint
 from compiler.frontend.lex.position import SrcSpan
 
 __all__ = ["Navigator", "Resolution", "Target"]
@@ -84,6 +85,13 @@ class Navigator:
         self.__std_root = std_root
         self.__index: Index | None = result.index
         self.__type_ctx: TypeCtx | None = result.type_ctx
+        # Position → what is there, built once per navigator: a request may ask
+        # about many positions (semantic tokens, completion), and each answer is
+        # then a dictionary lookup rather than a scan of every reference.
+        self.__references: dict[tuple[Path, int, int], Type.NameRef] | None = None
+        self.__declarations: dict[tuple[Path, int, int], Declaration] | None = None
+        self.__references_by_path_cache: dict[Path, tuple[Type.NameRef, ...]] | None = None
+        self.__body_spans: dict[int, SrcSpan] = {}
 
     # ── sources ───────────────────────────────────────────────────────────────
 
@@ -102,6 +110,43 @@ class Navigator:
         """The ``<package>.<module>`` name of *path*, for hover's origin line."""
         return None if self.__index is None else self.__index.modules.get(path.resolve())
 
+    def enclosing_definition_name(self, path: Path, row: int, col: int) -> str | None:
+        """The name of the definition whose body covers the position.
+
+        A body's own span is not usable (the parser records only the opening
+        brace), so the extent is the union of its statements; the innermost such
+        definition wins, which is what a closure inside a function needs.
+        """
+        best: tuple[tuple[int, int], str] | None = None
+        for def_point in self.__result.def_points.values():
+            unit = self.__result.units.get(def_point.unit_id)
+            if unit is None or unit.path.resolve() != path.resolve():
+                continue
+            span = self.__body_span(def_point)
+            if span is None or not self.__spans(span, path, row, col):
+                continue
+            size = self.__size(span)
+            if best is None or size < best[0]:
+                best = (size, self.__name(def_point.type_id) or "")
+        return None if best is None else best[1]
+
+    def __body_span(self, def_point: DefPoint) -> SrcSpan | None:
+        """The smallest span covering every statement of *def_point*'s body."""
+        cached = self.__body_spans.get(id(def_point))
+        if cached is not None:
+            return cached
+        span: SrcSpan | None = None
+        for statement in def_point.ast_body.stmts:
+            if not self.__real(statement.span):
+                continue
+            if span is None:
+                span = SrcSpan(statement.span.start.clone(), statement.span.end.clone())
+            elif statement.span.path == span.path:
+                span += statement.span
+        if span is not None:
+            self.__body_spans[id(def_point)] = span
+        return span
+
     # ── the one query ─────────────────────────────────────────────────────────
 
     def resolve(self, path: Path, row: int, col: int) -> Resolution | None:
@@ -115,7 +160,7 @@ class Navigator:
 
         reference = self.__reference_at(path, row, col)
         if reference is not None:
-            target = self.__target_of(reference.target)
+            target = self.target_of(reference.target)
             expression_type = self.__name(reference.expression_type)
 
         if target is None:
@@ -123,7 +168,7 @@ class Navigator:
             # like: the name is being introduced, not used.
             declaration = self.__declaration_at(path, row, col)
             if declaration is not None:
-                target = self.__target_of_declaration(declaration, path)
+                target = self.target_of_declaration(declaration, path)
                 if expression_type is None:
                     expression_type = declaration.type_name
 
@@ -132,16 +177,72 @@ class Navigator:
         return Resolution(target=target, expression_type=expression_type)
 
     def __reference_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
-        """The innermost resolved name at the position."""
-        if self.__type_ctx is None:
-            return None
+        """The innermost resolved name the position is inside."""
         best: Type.NameRef | None = None
-        for reference in self.__type_ctx.name_refs():
+        for reference in self.__references_of(path):
             if not self.__spans(reference.span, path, row, col):
                 continue
             if best is None or self.__size(reference.span) < self.__size(best.span):
                 best = reference
         return best
+
+    def reference_starting_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
+        """The resolved name whose span *starts* at the position.
+
+        A recorded name is exactly one identifier, so its start position
+        identifies it: this is the lookup semantic tokens and completion use.
+        """
+        return self.__reference_map().get((path.resolve(), row, col))
+
+    def declaration_starting_at(self, path: Path, row: int, col: int) -> Declaration | None:
+        """The declaration whose *name* starts at the position, if any."""
+        return self.__declaration_map().get((path.resolve(), row, col))
+
+    def __reference_map(self) -> dict[tuple[Path, int, int], Type.NameRef]:
+        if self.__references is None:
+            references: dict[tuple[Path, int, int], Type.NameRef] = {}
+            if self.__type_ctx is not None:
+                for reference in self.__type_ctx.name_refs():
+                    key = (reference.span.path.resolve(), reference.span.start.row, reference.span.start.col)
+                    references.setdefault(key, reference)
+            self.__references = references
+        return self.__references
+
+    def __declaration_map(self) -> dict[tuple[Path, int, int], Declaration]:
+        if self.__declarations is None:
+            declarations: dict[tuple[Path, int, int], Declaration] = {}
+            if self.__index is not None:
+                for declaration in self.__index.declarations:
+                    span = declaration.span
+                    if span is None:
+                        continue
+                    key = (span.path.resolve(), span.start.row, span.start.col)
+                    declarations.setdefault(key, declaration)
+            self.__declarations = declarations
+        return self.__declarations
+
+    def reference_in_span(self, span: SrcSpan) -> Type.NameRef | None:
+        """The resolved name inside *span*, if one was recorded there."""
+        for reference in self.__references_of(span.path):
+            if self.__contains(span, reference.span.start.row, reference.span.start.col):
+                return reference
+        return None
+
+    def __references_of(self, path: Path) -> tuple[Type.NameRef, ...]:
+        """Every recorded name in *path* (built once per navigator)."""
+        by_path = self.__references_by_path()
+        return by_path.get(path.resolve(), ())
+
+    def __references_by_path(self) -> dict[Path, tuple[Type.NameRef, ...]]:
+        if self.__references_by_path_cache is None:
+            grouped: dict[Path, list[Type.NameRef]] = {}
+            if self.__type_ctx is not None:
+                for reference in self.__type_ctx.name_refs():
+                    grouped.setdefault(reference.span.path.resolve(), []).append(reference)
+            self.__references_by_path_cache = {
+                path: tuple(references) for path, references in grouped.items()
+            }
+        return self.__references_by_path_cache
 
     # ── the declaration index ─────────────────────────────────────────────────
 
@@ -156,7 +257,7 @@ class Navigator:
                 best = declaration
         return best
 
-    def __target_of_declaration(self, declaration: Declaration, path: Path) -> Target | None:
+    def target_of_declaration(self, declaration: Declaration, path: Path) -> Target | None:
         """Turn a declaration into a target, following imports to their source.
 
         A position on an import names the imported thing, not the import
@@ -174,12 +275,13 @@ class Navigator:
             if unit.path.resolve() != path.resolve():
                 continue
             symbol = unit.symbol_ctx.lookup_global(name)
-            return None if symbol is None else self.__target_of(symbol)
+            return None if symbol is None else self.target_of(symbol)
         return None
 
     # ── targets from what the analysis resolved ──────────────────────────────
 
-    def __target_of(self, target: Type.NameTarget) -> Target | None:
+    def target_of(self, target: Type.NameTarget) -> Target | None:
+        """The declaration a recorded resolution points at."""
         if isinstance(target, int):
             return self.__target_of_type(target)
         if isinstance(target, Symbol):
@@ -382,3 +484,7 @@ class Navigator:
     @staticmethod
     def __size(span: SrcSpan) -> tuple[int, int]:
         return (span.end.row - span.start.row, span.end.col - span.start.col)
+
+    @staticmethod
+    def __position_key(span: SrcSpan) -> tuple[int, int]:
+        return (span.start.row, span.start.col)

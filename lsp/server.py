@@ -30,10 +30,15 @@ from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
 from compiler.analysis.navigation import Navigator
+from compiler.analysis.session import AnalysisResult
+from compiler.analysis.completion import complete, signature_help as signature_info
+from compiler.analysis.semantic import classify
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
+from lsp.completion import completion_list, signature_help
 from lsp.diagnostics import diagnostics_by_document
 from lsp.navigation import document_symbols, hover, location
+from lsp.semantic_tokens import encode, legend
 from lsp.workspace import Snapshot, Workspace
 
 if TYPE_CHECKING:
@@ -255,24 +260,28 @@ def __register_features(server: YianLanguageServer) -> None:
     def definition(
         ls: YianLanguageServer, params: types.DefinitionParams
     ) -> types.Location | None:
-        navigator, row, col = __query(ls, params.text_document.uri, params.position)
-        if navigator is None or row is None or col is None:
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
             return None
-        resolution = navigator.resolve(uri_to_path(params.text_document.uri), row, col)
+        navigator, path, row, col = located
+        resolution = navigator.resolve(path, row, col)
         if resolution is None or resolution.target is None:
             return None
         return location(resolution.target, navigator)
 
     @server.feature(types.TEXT_DOCUMENT_HOVER)
     def hover_at(ls: YianLanguageServer, params: types.HoverParams) -> types.Hover | None:
-        navigator, row, col = __query(ls, params.text_document.uri, params.position)
-        if navigator is None or row is None or col is None:
+        located = __located(ls, params.text_document.uri, params.position)
+        if located is None:
             return None
-        path = uri_to_path(params.text_document.uri)
+        navigator, path, row, col = located
+        result = __result_of(ls)
+        if result is None:
+            return None
         resolution = navigator.resolve(path, row, col)
         if resolution is None:
             return None
-        span = __span_of(navigator, path, params.position)
+        span = __span_of(result, path, params.position)
         if span is None:
             return None
         return hover(resolution, navigator, span)
@@ -287,6 +296,60 @@ def __register_features(server: YianLanguageServer) -> None:
         path = uri_to_path(params.text_document.uri)
         navigator = __navigator(ls, snapshot)
         return document_symbols(navigator.declarations_in(path), navigator)
+
+    # ── semantic highlighting (plan §5.4, §7 P6) ──────────────────────────────
+
+    @server.feature(types.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL, legend())
+    def semantic_tokens(
+        ls: YianLanguageServer, params: types.SemanticTokensParams
+    ) -> types.SemanticTokens | None:
+        analysis = __analysis(ls)
+        if analysis is None:
+            return None
+        result, navigator = analysis
+        path = uri_to_path(params.text_document.uri)
+        classified = classify(result, path, std_root=ls.model.std_root)
+        # An empty array is not an error: the client keeps the TextMate colours,
+        # which is exactly the fallback the plan asks for.
+        return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
+
+    # ── completion and signature help (plan §7 P6) ────────────────────────────
+
+    @server.feature(
+        types.TEXT_DOCUMENT_COMPLETION,
+        types.CompletionOptions(trigger_characters=[".", ":", "<"]),
+    )
+    def completions(
+        ls: YianLanguageServer, params: types.CompletionParams
+    ) -> types.CompletionList | None:
+        analysis = __analysis(ls)
+        if analysis is None:
+            return None
+        result, navigator = analysis
+        located = __compiler_position(result, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        path, row, col = located
+        candidates = complete(result, path, row, col, std_root=ls.model.std_root)
+        return completion_list(candidates, navigator)
+
+    @server.feature(
+        types.TEXT_DOCUMENT_SIGNATURE_HELP,
+        types.SignatureHelpOptions(trigger_characters=["(", ","]),
+    )
+    def signature(
+        ls: YianLanguageServer, params: types.SignatureHelpParams
+    ) -> types.SignatureHelp | None:
+        analysis = __analysis(ls)
+        if analysis is None:
+            return None
+        result, _ = analysis
+        located = __compiler_position(result, params.text_document.uri, params.position)
+        if located is None:
+            return None
+        path, row, col = located
+        info = signature_info(result, path, row, col, std_root=ls.model.std_root)
+        return None if info is None else signature_help(info)
 
     @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     def did_save(ls: YianLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
@@ -327,35 +390,72 @@ def __navigator(server: YianLanguageServer, snapshot: Snapshot) -> Navigator:
     return Navigator(snapshot.result, std_root=server.model.std_root)
 
 
-def __query(
-    server: YianLanguageServer, uri: str, position: types.Position
-) -> tuple[Navigator | None, int | None, int | None]:
-    """The navigator plus the compiler position for a client position.
+def __analysis(
+    server: YianLanguageServer,
+) -> tuple[AnalysisResult, Navigator] | None:
+    """The current analysis and a navigator over it, or ``None``.
 
-    The client speaks 0-based UTF-16; the analysis speaks 1-based code points
-    (plan §5.1), so the conversion happens here, at the boundary, and only for a
-    document the analysis actually read.
+    Every query starts here: the navigator answers "what is at this position",
+    and the raw result is what completion and semantic tokens read their tables
+    from.
     """
     snapshot = __snapshot(server)
     if snapshot is None:
-        return None, None, None
-    navigator = __navigator(server, snapshot)
+        return None
+    return snapshot.result, __navigator(server, snapshot)
+
+
+def __compiler_position(
+    result: AnalysisResult, uri: str, position: types.Position
+) -> tuple[Path, int, int] | None:
+    """The document path and the compiler position for a client position.
+
+    The client speaks 0-based lines and UTF-16 characters; the analysis speaks
+    0-based rows and 1-based code points (plan §5.1), so the conversion happens
+    here, at the boundary, and only for a document the analysis actually read.
+    """
     path = uri_to_path(uri)
-    lines = navigator.text_of(path).splitlines()
-    if not 0 <= position.line < len(lines):
-        return navigator, None, None
-    column = to_compiler_column(lines[position.line], position.character)
-    return navigator, position.line, column
-
-
-def __span_of(navigator: Navigator, path: Path, position: types.Position) -> SrcSpan | None:
-    """A one-character span at the client position, for hover's range."""
-    lines = navigator.text_of(path).splitlines()
+    lines = __text_of(result, path).splitlines()
     if not 0 <= position.line < len(lines):
         return None
-    column = to_compiler_column(lines[position.line], position.character)
-    start = SrcPosition(position.line, column, path)
-    return SrcSpan(start, SrcPosition(position.line, column + 1, path))
+    return path, position.line, to_compiler_column(lines[position.line], position.character)
+
+
+def __text_of(result: AnalysisResult, path: Path) -> str:
+    for candidate, text in result.sources.items():
+        if candidate.resolve() == path.resolve():
+            return text
+    return ""
+
+
+def __span_of(result: AnalysisResult, path: Path, position: types.Position) -> SrcSpan | None:
+    """A one-character span at the client position, for hover's range."""
+    located = __compiler_position(result, path.as_uri(), position)
+    if located is None:
+        return None
+    _, row, column = located
+    start = SrcPosition(row, column, path)
+    return SrcSpan(start, SrcPosition(row, column + 1, path))
+
+
+def __located(
+    server: YianLanguageServer, uri: str, position: types.Position
+) -> tuple[Navigator, Path, int, int] | None:
+    """Navigator, path and compiler position for one client request."""
+    analysis = __analysis(server)
+    if analysis is None:
+        return None
+    result, navigator = analysis
+    located = __compiler_position(result, uri, position)
+    if located is None:
+        return None
+    path, row, col = located
+    return navigator, path, row, col
+
+
+def __result_of(server: YianLanguageServer) -> AnalysisResult | None:
+    analysis = __analysis(server)
+    return None if analysis is None else analysis[0]
 
 
 def __document_changed(

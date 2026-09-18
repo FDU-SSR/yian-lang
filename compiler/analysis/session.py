@@ -95,6 +95,12 @@ class AnalysisResult:
 
     diagnostics: tuple[Diagnostic, ...] = ()
     sources: Mapping[Path, str] = field(default_factory=dict[Path, str])
+    #: Lexed tokens per file.  Semantic highlighting needs the exact extent of
+    #: every name and the primitive type keywords, which only the lexer knows
+    #: (plan §5.4: TextMate stays the base grammar, these tokens overlay it).
+    tokens: Mapping[Path, tuple[Token, ...]] = field(
+        default_factory=dict[Path, tuple[Token, ...]]
+    )
     units: Mapping[int, UnitData] = field(default_factory=dict[int, UnitData])
     type_ctx: TypeCtx | None = None
     #: Definitions reachable from the program entry, for later index building.
@@ -182,15 +188,21 @@ class AnalysisSession:
         tokens = self.__lex(src_files, sources)
         if isinstance(tokens, AnalysisResult):
             return self.__keyed(tokens, key, store)
+        # Kept for the stages that can still fail: a file the parser rejects has
+        # no symbol table, but its tokens are what a degraded completion or
+        # semantic pass works from (plan §7 P6).
+        lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
-            return self.__keyed(programs, key, store)
+            return self.__keyed(self.__with_tokens(programs, lexed), key, store)
 
         try:
             for program in programs:
                 Desugar(program).run()
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(self.__failed(error, Stage.DESUGAR, sources), key, store)
+            return self.__keyed(
+                self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed), key, store
+            )
 
         units: dict[int, UnitData] = {
             index: UnitData(program=program, path=path, unit_id=index)
@@ -205,13 +217,19 @@ class AnalysisSession:
         try:
             inject_prelude(units.values())
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(self.__failed(error, Stage.PRELUDE, sources, units), key, store)
+            return self.__keyed(
+                self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units), lexed), key, store
+            )
 
         try:
             check_restricted_ops(units.values())
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
-                self.__failed(error, Stage.RESTRICTED_OPS, sources, units), key, store
+                self.__with_tokens(
+                    self.__failed(error, Stage.RESTRICTED_OPS, sources, units), lexed
+                ),
+                key,
+                store,
             )
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
@@ -220,14 +238,22 @@ class AnalysisSession:
             resolver.run()
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
-                self.__failed(error, Stage.RESOLVE, sources, units, type_ctx), key, store
+                self.__with_tokens(
+                    self.__failed(error, Stage.RESOLVE, sources, units, type_ctx), lexed
+                ),
+                key,
+                store,
             )
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
-                self.__failed(error, Stage.FINALIZE, sources, units, type_ctx), key, store
+                self.__with_tokens(
+                    self.__failed(error, Stage.FINALIZE, sources, units, type_ctx), lexed
+                ),
+                key,
+                store,
             )
 
         # The session analyzes text, not a build: an entry-less or entry-broken
@@ -248,7 +274,11 @@ class AnalysisSession:
             # Everything recoverable was collected by the checker; what reaches
             # here is a failure before the worklist started (the program entry).
             return self.__keyed(
-                self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx), key, store
+                self.__with_tokens(
+                    self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx), lexed
+                ),
+                key,
+                store,
             )
 
         # A recovered error does not stop the index from being built, so a file
@@ -257,6 +287,7 @@ class AnalysisSession:
         return AnalysisResult(
             diagnostics=checker.export_diagnostics(),
             sources=sources,
+            tokens=lexed,
             units=units,
             type_ctx=type_ctx,
             def_points=checker.export_generated(),
@@ -280,6 +311,17 @@ class AnalysisSession:
         src_files = collect_an_files(paths, overlay=store)
         sources = {path: self.__text(store, path) for path in src_files}
         return self.__snapshot_key(sources, store)
+
+    def __with_tokens(
+        self, result: AnalysisResult, tokens: Mapping[Path, tuple[Token, ...]]
+    ) -> AnalysisResult:
+        """Attach the lexed tokens to a failed run.
+
+        The lexer succeeded even though a later stage did not, and those tokens
+        are what a degraded editor answer is built from.
+        """
+        result.tokens = tokens
+        return result
 
     def __snapshot_key(self, sources: Mapping[Path, str], store: DocumentStore) -> tuple[object, ...]:
         """Key a snapshot by its inputs: text hashes, versions, and compile flags."""

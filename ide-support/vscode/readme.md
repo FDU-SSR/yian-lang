@@ -1,8 +1,8 @@
 # YIAN Language Support（VS Code 扩展）
 
-YIAN（`.an`）的编辑器支持。当前是 **P5** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
-（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断，
-以及导航与类型查看。
+YIAN（`.an`）的编辑器支持。当前是 **P6** 阶段：声明式的语言注册与编辑体验、一个语言服务器客户端
+（`yian-lsp`，stdio 传输，见 `docs/plan/ide-support-plan.md` §5.9、§5.10）、实时诊断、
+导航与类型查看，以及补全、参数提示与语义高亮。
 
 - 语言 id `yian`，文件关联 `.an`
 - TextMate 语法高亮（关键字、类型、字面量、f-string 内插、属性与内建、注释）
@@ -16,8 +16,16 @@ YIAN（`.an`）的编辑器支持。当前是 **P5** 阶段：声明式的语言
   枚举成员、类型与别名、导入符号；跨文件、跨包、标准库都能跳（标准库目标直接落在 `lib/src`）
 - 悬停：符号种类、完整名、按当前实例化渲染的类型或函数签名，并标出"声明于标准库"
 - 文档符号（大纲）：当前文件的顶层定义与嵌套成员（结构体的字段、impl 的方法、枚举成员）
+- 补全：按上下文区分**值位置**（局部/参数/模块公开符号/预定义类型）、**成员位置**
+  （按接收者静态类型列字段与方法，`Shape.` 这类静态访问列枚举成员）、**类型位置**
+  与**导入位置**（包名、模块路径、该模块的公开符号）；函数项带 `fn(x: T)` 签名与
+  `${1:x}` 参数占位符；同名项去重且局部符号优先
+- 参数提示（`signatureHelp`）：调用处显示签名并标出正在写的参数
+- 语义高亮：按符号索引给标识符分类（类型/函数/方法/变量/参数/字段/枚举成员），
+  声明处加 `declaration`、标准库符号加 `defaultLibrary`；字符串、注释与数字仍由
+  P1 的 TextMate 语法负责，语义 token 只覆盖标识符本身
 
-补全与语义高亮（P6）、引用/重命名/代码操作（P7）在后续阶段实现。
+引用/重命名/代码操作（P7）、格式化与内联提示（不做）在后续阶段实现。
 
 诊断的策略：文件改动后等 200ms 空闲再分析（防抖），保存时立即分析；分析结果按**整个项目**
 计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此丢弃过期结果；
@@ -74,6 +82,12 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 `field first: Meters`；在 `print(` 上 `F12` 应跳到 `lib/src/core/io.an`；大纲（`Ctrl+Shift+O`）
 应显示 `Point` 及其字段与方法。
 
+要验收补全与语义高亮，在 `src/main.an` 里输入 `corner.` 应只列出 `Point` 的字段与方法（不应出现
+`Vec`/`Pair` 的成员），`Shape.` 应只列出三个枚举成员；输入 `from sample.` 应列出模块路径，
+`from sample.geometry import ` 应只列出该模块的 `pub` 项；把光标放进 `Pair<Meters>.of(` 应出现
+签名提示。语义高亮可以在设置里关掉（`editor.semanticHighlighting.enabled`），关掉后 TextMate
+的着色不受影响。
+
 ## 构建
 
 ```bash
@@ -93,8 +107,8 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 ```bash
 cd ide-support/vscode
 npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
-code --install-extension yian-language-support-0.3.0.vsix
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.3.0
+code --install-extension yian-language-support-0.4.0.vsix
+code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.4.0
 ```
 
 打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上

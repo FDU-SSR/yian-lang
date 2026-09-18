@@ -341,6 +341,17 @@ class TypeCtx:
     def is_integer_type(self, type_id: int, include_literals: bool = True) -> bool:
         return type_ops.is_integer_type(self, type_id, include_literals)
 
+    def methods_of(self, type_id: int) -> Sequence[tuple[str, int]]:
+        """Methods that can apply to *type_id*, as ``(name, method type id)``.
+
+        Impls whose target cannot be this receiver are filtered out, so completion
+        does not offer a generic type's methods on an unrelated one.  A
+        conditional generic impl can still be listed; evaluating its conditions
+        per name is what :meth:`method_lookup` does, and completion trades that
+        precision for listing every reachable member.
+        """
+        return self.__impl_registry.methods_of(type_id)
+
     def canonical(self, type_id: int) -> int:
         """Id of the type after resolving aliases at every level (see type_ops.canonical)."""
         return type_ops.canonical(self, type_id)

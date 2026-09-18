@@ -83,6 +83,10 @@ class CallDispatcher:
             assert self.__ctx.symbol_ctx is not None
             symbol = self.__ctx.symbol_ctx.lookup(node.callee.name)
             if symbol is not None and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
+                # A generic function is called through its symbol, not by
+                # evaluating the callee as a value, so the reference is recorded
+                # here: navigation, hover and signature help all need it.
+                self.__ctx.type_ctx.record_name_ref(node.callee.span, symbol, symbol.type_id)
                 return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
 
         callee = self.__expr.value(node.callee)

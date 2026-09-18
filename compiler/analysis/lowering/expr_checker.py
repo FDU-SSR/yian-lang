@@ -204,6 +204,11 @@ class ExprChecker:
         if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
+        # A type written in an expression (`Point.new(...)`, `Pair<Meters>.of(...)`)
+        # is a reference like any other: recording it is what lets navigation,
+        # hover and member completion know what the receiver is (plan §7 P5/P6).
+        self.__ctx.type_ctx.record_name_ref(node.name.span, symbol, symbol.type_id)
+
         type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
         type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
 
