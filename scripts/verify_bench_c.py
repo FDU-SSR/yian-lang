@@ -39,6 +39,8 @@ BENCHMARKS: list[tuple[str, Check, str]] = [
     ("binarytree", lambda rc, out: rc == 0 and int(out.strip()) % 256 == 176,
      "rc==0, check%256==176"),
     ("bounce", lambda rc, out: "368285073" in out, 'stdout contains "368285073"'),
+    ("cd", lambda rc, out: rc == 0 and out.strip() == "4305",
+     'rc==0, stdout=="4305" (100 架 200 帧)'),
     ("fann", lambda rc, out: rc == 51 and "51" in out, 'rc==51, stdout contains "51"'),
     ("fasta", lambda rc, out: "-71" in out, 'stdout contains "-71"'),
     ("list", lambda rc, out: rc == 0, "rc==0"),

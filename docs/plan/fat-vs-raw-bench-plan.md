@@ -154,7 +154,8 @@ scripts/
   分配次数保持不变。标准库已具备所需设施：`HashMap`/`HashSet`/`Vec`/`String`/`str`
   切片（随机数用 AWFY 同款 LCG 内联）。每项的头部注释必须记录这处适配。
 - **顺序**：CD → Havlak → Richards → DeltaBlue → Json（由易到难；Json 依赖字符串解析
-  与哈希表，放最后）。
+  与哈希表，放最后）。进度：CD 已完成（2026-09-18，fat 单趟 2.7 s，比值 1.28×；
+  适配要点=带标签键的泛型红黑树、节点 id 做身份比较、自备 mysin/mycos/mysqrt）。
 - **每项验收（与 P1 相同）**：两模式 `-O2` 编译通过、运行通过、stdout 逐字节一致、
   §3.4 的 diff/计时判定通过、单趟耗时记录；随后并入全量基线。
 - **许可**：AWFY `LICENSE.md` 说明 Richards/DeltaBlue 源自 Mario Wolczko 的 Smalltalk
