@@ -1,0 +1,13 @@
+fn f(p: i32**, q: i32*, a: i32, b: i32, c: i32) {
+    let x: i32*[3] = make();
+    let deep: T** = other();
+    assert @sizeof(i32*[3]) == 3: "ptr-array";
+    assert **p == 0: "two dereferences";
+    assert * (p + 2) == 30: "space removed";
+    assert & (x) == q: "space removed";
+    assert a * *p == 0: "binary then dereference";
+    let y: i32 = a * (b + c);
+    let z: i32 = a * -b;
+    let w: i32 = a - -b;
+    return;
+}

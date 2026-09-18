@@ -153,7 +153,8 @@ AST 的角色表只回答几个问题，由节点 span → token 位置映射得
 `match` 臂与 `impl`/`trait` 成员的规则；用 `--bless` 建起第一批自带用例（缩进与块、注释归属、
 f-string、单行块、空行）。
 
-**验收**：`--cases` 全部通过；token 守恒、幂等、AST 等价、注释守恒四条全部通过；`lib/src` 与 `tests` 的格式化 diff 人工过一遍，
+**验收**：`--cases` 全部通过；token 守恒、幂等、AST 等价、注释守恒四条全部通过，另加一条
+**邻接空格**检查（词法器不敏感的位置，token 守恒看不见）；`lib/src` 与 `tests` 的格式化 diff 人工过一遍，
 确认只有空白与注释位置变化；编译器三套件（basic/safety/package）保持全绿。
 
 ### P3：命令行与编辑器接入

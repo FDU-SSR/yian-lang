@@ -13,6 +13,10 @@ owns them — they run over the repository's own `.an` corpus, not over fixtures
    placement.
 4. **layout**: no trailing whitespace, no tabs, indentation in whole levels, and
    exactly one newline at the end — outside literal regions, which are verbatim.
+5. **spacing**: the adjacencies the lexer does *not* police.  A space between `(`
+   and `[`, or a missing one after `return`, still tokenises identically, so the
+   token check cannot see it; this one states the expectation for those pairs
+   independently of the engine and reads it back out of the text.
 """
 
 from __future__ import annotations
@@ -78,6 +82,7 @@ def verify_text(text: str, path: Path) -> tuple[Problem, ...]:
     problems.extend(__idempotent(formatted, path))
     problems.extend(__comments_match(text, formatted, path))
     problems.extend(__layout(formatted, tokens, path))
+    problems.extend(__spacing(formatted, path))
     return tuple(problems)
 
 
@@ -136,6 +141,231 @@ def __layout(formatted: str, tokens: list[Tok.Token], path: Path) -> list[Proble
     if formatted.endswith("\n\n"):
         problems.append(Problem(path, "layout", "blank line at end of file"))
     return problems
+
+
+#: Keywords after which an operand starts: a `(` or `[` that follows one keeps its
+#: space (`return [1, 2]`, `if (x)`).  Deliberately restated here rather than
+#: imported from the layout engine — this check exists to disagree with it.
+_OPERAND_KEYWORDS = frozenset(
+    {"return", "let", "in", "assert", "defer", "if", "elif", "while", "for", "else", "match"}
+)
+
+#: Tokens that hug what precedes them, so the keyword rule below skips them.
+_HUG_BEFORE_TOKENS = (
+    Tok.PunctuatorKind.Comma,
+    Tok.PunctuatorKind.Semicolon,
+    Tok.PunctuatorKind.RParen,
+    Tok.PunctuatorKind.RBracket,
+    Tok.PunctuatorKind.RBrace,
+    Tok.PunctuatorKind.Dot,
+    Tok.PunctuatorKind.Colon,
+)
+
+_HUGS = (
+    # A generic's argument list starts right after `<`: `Fn<(i32,), bool>`.
+    Tok.PunctuatorKind.LAngle,
+    # The never type takes an array suffix: `![4]`.
+    Tok.PunctuatorKind.Exclamation,
+    Tok.PunctuatorKind.RParen,
+    Tok.PunctuatorKind.RBracket,
+    Tok.PunctuatorKind.RBrace,
+    Tok.PunctuatorKind.RAngle,
+    Tok.PunctuatorKind.LParen,
+    Tok.PunctuatorKind.LBracket,
+    Tok.PunctuatorKind.Dot,
+)
+
+
+def __spacing(formatted: str, path: Path) -> list[Problem]:
+    """Check the spacing the token stream cannot: `(` and `[` adjacency.
+
+    A prefix operator hugs its `(` (`*(p + 2)`, `&(x)`), and a postfix type marker
+    hugs its `[` (`i32*[3]`); both are derived here from the neighbourhood, the way
+    the engine does it, so the two statements of the rule stay independent.
+    """
+    tokens = [token for token in (lex_tokens(formatted, path) or []) if not __is_eof(token)]
+    prefix, postfix = __operator_uses(tokens)
+    lines = formatted.splitlines(keepends=True)
+    problems: list[Problem] = []
+    for index in range(1, len(tokens)):
+        previous, token = tokens[index - 1], tokens[index]
+        if previous.span.end.row != token.span.start.row:
+            continue
+        between = lines[previous.span.end.row][previous.span.end.col - 1 : token.span.start.col - 1]
+        if between.strip():
+            continue  # a comment or something else sits in between
+        hug: bool | None = None
+        if isinstance(previous, Tok.Punctuator) and previous.kind is Tok.PunctuatorKind.Exclamation:
+            # `!ok` and `![4]` hug; the never type keeps a space before a block
+            # (`-> ! {`), which is how it is told from a prefix `!`.
+            hug = __hugs_after_bang(token)
+        if isinstance(previous, Tok.Keyword) and previous.kind.value in _OPERAND_KEYWORDS:
+            # `assert **p`, `return *self`, `if (x)`: a keyword that expects a value
+            # is followed by a space, whatever comes next.
+            if not (isinstance(token, Tok.Punctuator) and token.kind in _HUG_BEFORE_TOKENS):
+                hug = False
+        if (
+            isinstance(token, Tok.Punctuator)
+            and token.kind in (Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand)
+            and ((index - 1) in prefix or (index - 1) in postfix)
+        ):
+            # `**p` (two dereferences) and `T**` (a pointer to a pointer) hug; in
+            # `a * *p` the first marker is binary, so the space stays.
+            hug = True
+        if isinstance(token, Tok.Punctuator) and token.kind is Tok.PunctuatorKind.LBracket:
+            hug = __hugs(previous) or (index - 1) in postfix
+        elif isinstance(token, Tok.Punctuator) and token.kind is Tok.PunctuatorKind.LParen:
+            hug = __hugs(previous) or (index - 1) in prefix
+        if hug is None:
+            continue
+        spaced = " " in between
+        if hug and spaced:
+            problems.append(
+                Problem(path, "spacing", f"line {token.span.start.row + 1}: space before "
+                                         f"{token_text(token)!r} after {token_text(previous)!r}")
+            )
+        elif not hug and not spaced:
+            problems.append(
+                Problem(path, "spacing", f"line {token.span.start.row + 1}: no space before "
+                                         f"{token_text(token)!r} after {token_text(previous)!r}")
+            )
+    return problems
+
+
+def __operator_uses(tokens: list[Tok.Token]) -> tuple[frozenset[int], frozenset[int]]:
+    """Indices of prefix and postfix uses of `*`, `&`, `-`, `+`, `!` and `~`."""
+    prefixable = (
+        Tok.PunctuatorKind.Star,
+        Tok.PunctuatorKind.Ampersand,
+        Tok.PunctuatorKind.Minus,
+        Tok.PunctuatorKind.Plus,
+        Tok.PunctuatorKind.Exclamation,
+        Tok.PunctuatorKind.Tilde,
+    )
+    closers = (
+        Tok.PunctuatorKind.RParen,
+        Tok.PunctuatorKind.RBracket,
+        Tok.PunctuatorKind.RBrace,
+        Tok.PunctuatorKind.RAngle,
+    )
+    type_tail = (
+        Tok.PunctuatorKind.Comma,
+        Tok.PunctuatorKind.RParen,
+        Tok.PunctuatorKind.RBracket,
+        Tok.PunctuatorKind.RBrace,
+        Tok.PunctuatorKind.Equal,
+        Tok.PunctuatorKind.Semicolon,
+        Tok.PunctuatorKind.LBrace,
+        Tok.PunctuatorKind.LBracket,
+        Tok.PunctuatorKind.Colon,
+        Tok.PunctuatorKind.RAngle,
+    )
+    prefixes: set[int] = set()
+    postfixes: set[int] = set()
+    operand_end = False
+    for index, token in enumerate(tokens):
+        if isinstance(token, Tok.Punctuator) and token.kind in prefixable:
+            if operand_end and __closes_type(tokens, index, type_tail):
+                postfixes.add(index)
+            elif not operand_end:
+                prefixes.add(index)
+            operand_end = index in postfixes
+            continue
+        operand_end = __ends_operand(token, closers)
+    return frozenset(prefixes), frozenset(postfixes)
+
+
+def __hugs_after_bang(token: Tok.Token) -> bool:
+    """Whether a token hugs a preceding `!`.
+
+    `}` does not: `struct S { b: ! }` keeps its space before the closing brace,
+    just as `-> ! {` keeps it before the opening one.
+    """
+    if isinstance(token, Tok.Punctuator) and token.kind in (
+        Tok.PunctuatorKind.LParen,
+        Tok.PunctuatorKind.LBracket,
+        Tok.PunctuatorKind.Star,
+        Tok.PunctuatorKind.Ampersand,
+        Tok.PunctuatorKind.Comma,
+        Tok.PunctuatorKind.Semicolon,
+        Tok.PunctuatorKind.RParen,
+        Tok.PunctuatorKind.RBracket,
+        Tok.PunctuatorKind.Dot,
+        Tok.PunctuatorKind.Colon,
+    ):
+        return True
+    return isinstance(token, (Tok.Identifier, Tok.Keyword)) or isinstance(
+        token,
+        (
+            Tok.IntLiteral,
+            Tok.FloatLiteral,
+            Tok.CharLiteral,
+            Tok.StrLiteral,
+            Tok.BoolLiteral,
+            Tok.FStrStart,
+        ),
+    )
+
+
+def __closes_type(
+    tokens: list[Tok.Token], index: int, type_tail: tuple[Tok.PunctuatorKind, ...]
+) -> bool:
+    """Whether the marker chain at *index* ends where an operand cannot start."""
+    probe = index
+    while probe < len(tokens):
+        candidate = tokens[probe]
+        if not (
+            isinstance(candidate, Tok.Punctuator)
+            and candidate.kind in (Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand)
+        ):
+            break
+        probe += 1
+    if probe >= len(tokens):
+        return True
+    after = tokens[probe]
+    return isinstance(after, Tok.Punctuator) and after.kind in type_tail
+
+
+def __ends_operand(token: Tok.Token, closers: tuple[Tok.PunctuatorKind, ...]) -> bool:
+    """Whether *token* can be the last token of an operand.
+
+    A keyword that introduces a value (`return`, `assert`, `if`, …) cannot: the
+    operand comes after it.
+    """
+    if isinstance(token, Tok.Keyword):
+        return token.kind.value not in _OPERAND_KEYWORDS
+    if isinstance(token, Tok.Identifier) or isinstance(
+        token,
+        (
+            Tok.IntLiteral,
+            Tok.FloatLiteral,
+            Tok.CharLiteral,
+            Tok.StrLiteral,
+            Tok.BoolLiteral,
+            Tok.FStrStart,
+        ),
+    ):
+        return True
+    return isinstance(token, Tok.Punctuator) and token.kind in closers
+
+
+def __hugs(previous: Tok.Token) -> bool:
+    """Whether `(`/`[` follows *previous* with no space."""
+    if isinstance(previous, Tok.Keyword):
+        return previous.kind.value not in _OPERAND_KEYWORDS
+    if isinstance(previous, Tok.Identifier) or isinstance(
+        previous,
+        (
+            Tok.IntLiteral,
+            Tok.FloatLiteral,
+            Tok.CharLiteral,
+            Tok.StrLiteral,
+            Tok.BoolLiteral,
+            Tok.FStrStart,
+        ),
+    ):
+        return True
+    return isinstance(previous, Tok.Punctuator) and previous.kind in _HUGS
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

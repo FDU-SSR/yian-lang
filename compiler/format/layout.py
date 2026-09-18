@@ -45,6 +45,10 @@ _OPERAND_KEYWORDS = frozenset(
     {"return", "let", "in", "assert", "defer", "if", "elif", "while", "else", "match"}
 )
 
+#: The same set for "has an operand ended here?" questions: `dyn` starts an
+#: allocation (`dyn 42i8`), so nothing has ended after it either.
+_EXPECTS_OPERAND = _OPERAND_KEYWORDS | {"dyn"}
+
 #: Operators written with a space on both sides.
 _BINARY = frozenset(
     {
@@ -97,7 +101,6 @@ _HUG_AFTER = frozenset(
         Tok.PunctuatorKind.LBracket,
         Tok.PunctuatorKind.Dot,
         Tok.PunctuatorKind.At,
-        Tok.PunctuatorKind.Exclamation,
         Tok.PunctuatorKind.Tilde,
     }
 )
@@ -115,8 +118,6 @@ _TYPE_TAIL = frozenset(
         Tok.PunctuatorKind.LBrace,
         Tok.PunctuatorKind.LBracket,
         Tok.PunctuatorKind.Colon,
-        Tok.PunctuatorKind.Star,
-        Tok.PunctuatorKind.Ampersand,
         Tok.PunctuatorKind.RAngle,
     }
 )
@@ -178,6 +179,75 @@ def _spaces_before_paren(token: Token) -> bool:
     """True for the keywords that keep a space before their `(`."""
     return isinstance(token, Tok.Keyword) and token.kind.value in (
         _CONDITION_KEYWORDS | {"match", "else"}
+    )
+
+
+def _hugs_bracket(previous: Token, *, postfix: bool) -> bool:
+    """True when a ``[`` follows *previous* with no space between them.
+
+    Keywords are two-sided here: a type keyword continues a type (``i32[4]``) and
+    ``dyn`` starts an allocation (``dyn[3] i32``), while a keyword that expects an
+    operand starts a literal (``return [1, 2]``).  A postfix marker continues a
+    type too: ``i32*[3]`` is an array of pointers.
+    """
+    if postfix:
+        return True
+    if isinstance(previous, Tok.Keyword):
+        return previous.kind.value not in _OPERAND_KEYWORDS
+    if isinstance(previous, Tok.Identifier) or _is_literal(previous):
+        return True
+    return _is(
+        previous,
+        Tok.PunctuatorKind.Exclamation,
+        Tok.PunctuatorKind.RParen,
+        Tok.PunctuatorKind.RBracket,
+        Tok.PunctuatorKind.RBrace,
+        Tok.PunctuatorKind.RAngle,
+        Tok.PunctuatorKind.LParen,
+        Tok.PunctuatorKind.LBracket,
+    )
+
+
+def _closes_type(tokens: Sequence[Token], index: int) -> bool:
+    """True when the ``*``/``&`` at *index* closes a pointer or reference type.
+
+    The markers are looked at as a chain: ``T**`` and ``i32*[3]`` end where an
+    operand cannot start, while in ``a * *p`` the chain is followed by ``p``, so
+    the first marker was multiplication and the second is a dereference.
+    """
+    probe = index
+    while probe < len(tokens) and _is(
+        tokens[probe], Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand
+    ):
+        probe += 1
+    if probe >= len(tokens):
+        return True
+    return _is(tokens[probe], *_TYPE_TAIL)
+
+
+def _ends_operand(token: Token) -> bool:
+    """True when *token* can be the last token of an operand.
+
+    Keywords are two-sided: a type keyword ends a type (`i32*`), while one that
+    expects a value does not end anything — `assert **first.unwrap()` writes two
+    dereferences after `assert`, not a pointer type.
+    """
+    if isinstance(token, Tok.Keyword):
+        return token.kind.value not in _EXPECTS_OPERAND
+    return _word_like(token) or _is(token, *_CLOSERS)
+
+
+def _is_literal(token: Token) -> bool:
+    return isinstance(
+        token,
+        (
+            Tok.IntLiteral,
+            Tok.FloatLiteral,
+            Tok.CharLiteral,
+            Tok.StrLiteral,
+            Tok.BoolLiteral,
+            Tok.FStrStart,
+        ),
     )
 
 
@@ -269,11 +339,16 @@ class _Layout:
         if _is(token, *_HUG_BEFORE):
             return False
         if _is(token, Tok.PunctuatorKind.LBracket):
-            return not (_word_like(previous) or _is(previous, *_CLOSERS))
+            # A bracket that continues what came before hugs: `i32[4]`, `arr[i]`,
+            # `f()[0]`, `dyn[3] i32`, `f([1, 2])`, `[[1], [2]]`.  A bracket that
+            # *starts* an operand keeps its space: `return [1, 2]`, `= [1, 2]`,
+            # `f(a, [1, 2])`.
+            return not _hugs_bracket(previous, postfix=(index - 1) in self.__postfix)
         if _is(token, Tok.PunctuatorKind.LParen):
             # A call, a cast or a grouping hugs: `print(…)`, `i32(…)`, `Self(…)`.
             return not (
                 (_word_like(previous) and not _spaces_before_paren(previous))
+                or _is_prefix(previous, before_previous)
                 or _is(
                     previous,
                     Tok.PunctuatorKind.RParen,
@@ -286,6 +361,19 @@ class _Layout:
             )
         if _is(previous, *_HUG_AFTER):
             return False
+        if _is(previous, Tok.PunctuatorKind.Exclamation):
+            # `!ok` and `!(a && b)` hug their operand; `!` as the never type keeps
+            # a space before a block (`-> ! {`) and hugs an array suffix (`![4]`).
+            return not (
+                _word_like(token)
+                or _is(
+                    token,
+                    Tok.PunctuatorKind.LParen,
+                    Tok.PunctuatorKind.LBracket,
+                    Tok.PunctuatorKind.Star,
+                    Tok.PunctuatorKind.Ampersand,
+                )
+            )
         if _is(token, Tok.PunctuatorKind.Equal) and index in self.__tight_equals:
             return False
         if _is(previous, Tok.PunctuatorKind.Equal) and index - 1 in self.__tight_equals:
@@ -299,7 +387,10 @@ class _Layout:
         if _is(previous, Tok.PunctuatorKind.Minus, Tok.PunctuatorKind.Plus):
             return not _is_prefix(previous, before_previous)
         if _is(previous, Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand):
-            # `*p` (prefix) hugs its operand; `a * b` and `i32* = p` keep a space.
+            if (index - 1) in self.__postfix:
+                # A type marker: `T**` keeps hugging, `i32* = p` was spaced above.
+                return index not in self.__postfix
+            # `*p` (prefix) hugs its operand; `a * b` keeps a space.
             return not _is_prefix(previous, before_previous)
         if _is(token, Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand):
             return index not in self.__postfix
@@ -454,12 +545,11 @@ class _Layout:
         operand_end = False
         for index, token in enumerate(self.__tokens):
             if _is(token, Tok.PunctuatorKind.Star, Tok.PunctuatorKind.Ampersand):
-                after = self.__tokens[index + 1] if index + 1 < len(self.__tokens) else None
-                if operand_end and (after is None or _is(after, *_TYPE_TAIL)):
+                if operand_end and _closes_type(self.__tokens, index):
                     markers.add(index)
                 operand_end = index in markers
                 continue
-            operand_end = _word_like(token) or _is(token, *_CLOSERS)
+            operand_end = _ends_operand(token)
         return frozenset(markers)
 
     def __field_initializers(self) -> frozenset[int]:
@@ -502,7 +592,7 @@ class _Layout:
                     opening = None
                 operand_end = False
                 continue
-            operand_end = _word_like(token) or _is(token, *_CLOSERS) or index in self.__postfix
+            operand_end = _ends_operand(token) or index in self.__postfix
         return frozenset(opens), frozenset(closes)
 
     def __inline_indices(self) -> frozenset[int]:
