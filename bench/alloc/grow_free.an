@@ -1,0 +1,38 @@
+// bench/alloc/grow_free.an — 增长-释放循环: 每轮分配 4096 个 4 KiB 块 (16 MiB)、
+// 逐个释放, 再进入下一轮.
+//
+// 规模: 40 轮.
+// 断言: checksum == 每块写入值 7 × 块数 × 轮数.
+//
+// 稳态 RSS 是否随轮数增长, 反映分配器对"分配-释放"循环的复用/归还能力.
+
+from std.core.io import print;
+
+fn main() {
+    let cycles: u64 = 40;
+    let chunk_count: u64 = 4096;
+    let checksum: i64 = 0;
+
+    let cycle: u64 = 0;
+    while cycle < cycles {
+        let batch = dyn[chunk_count] u8[];
+        let i: u64 = 0;
+        while i < chunk_count {
+            batch[i] = dyn[4096] u8;
+            batch[i][0] = 7;
+            checksum += i64(batch[i][0]);
+            i += 1;
+        }
+        let j: u64 = 0;
+        while j < chunk_count {
+            let chunk: u8[] = batch[j];
+            del chunk;
+            j += 1;
+        }
+        del batch;
+        cycle += 1;
+    }
+
+    assert checksum == i64(chunk_count) * i64(cycles) * 7: "grow/free checksum";
+    print("grow pass\n");
+}

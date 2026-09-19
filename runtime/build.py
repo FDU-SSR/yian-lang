@@ -65,7 +65,13 @@ def build(force: bool = False, quiet: bool = False) -> None:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     if not quiet:
         print(f"[runtime] 构建 {LIB_ARCHIVE.relative_to(ROOT)}")
-    __run([CC, *CFLAGS, "-c", str(SOURCES[0]), "-o", str(LIB_OBJECT)])
+    objects: list[Path] = []
+    for source in SOURCES:
+        obj = BUILD_DIR / (source.stem + ".o")
+        __run([CC, *CFLAGS, "-c", str(source), "-o", str(obj)])
+        objects.append(obj)
+    # 合并为单个可重定位对象: 供 `-t obj` 与用户对象再合并, 也作为静态库的唯一成员.
+    __run([CC, "-r", "-nostdlib", *[str(obj) for obj in objects], "-o", str(LIB_OBJECT)])
     __run(["llvm-ar", "rcs", str(LIB_ARCHIVE), str(LIB_OBJECT)])
 
 
@@ -116,10 +122,21 @@ def check_consistency() -> None:
         raise SystemExit(
             f"[check] 帧锁槽宽不一致: 头文件 {slot_bytes} / lockmech {lockmech.FrameLockArena.SLOT_BYTES}"
         )
-    abi_message = __macro_bytes("YIAN_ABI_FAIL_MESSAGE")
-    expected = runtime_error_message(RuntimeErrorCode.S002)
-    if abi_message != expected:
-        raise SystemExit(f"[check] ABI 失败消息与 S002 不一致:\n  头文件 {abi_message!r}\n  Python {expected!r}")
+    header_bytes = __macro_int("YIAN_HDR_BYTES")
+    if header_bytes != lockmech.BlockHeader.BYTES:
+        raise SystemExit(
+            f"[check] 堆块头字节数不一致: 头文件 {header_bytes} / lockmech {lockmech.BlockHeader.BYTES}"
+        )
+    for macro, code in (
+        ("YIAN_ABI_FAIL_MESSAGE", RuntimeErrorCode.S002),
+        ("YIAN_OOM_MESSAGE", RuntimeErrorCode.R002),
+    ):
+        declared = __macro_bytes(macro)
+        expected = runtime_error_message(code)
+        if declared != expected:
+            raise SystemExit(
+                f"[check] {macro} 与 {code.name} 消息不一致:\n  头文件 {declared!r}\n  Python {expected!r}"
+            )
     print("[runtime] ABI 常量与 lockmech.py / runtime_error.py 一致")
 
 

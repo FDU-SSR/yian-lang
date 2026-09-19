@@ -1,0 +1,33 @@
+// bench/alloc/grow_varied.an — 变尺寸增长-释放: 每轮分配一个更大的块, 写入后释放.
+//
+// 规模: 32 轮, 第 c 轮分配 (c+1) MiB (单块 u8 数组).
+// 断言: checksum == 轮数 × 7.
+//
+// 反映"分配-释放后是否复用/归还内存": 块尺寸逐轮变大且互不相同, 释放后若既不复用也
+// 不归还, 峰值 RSS 会随轮数线性增长到全部尺寸之和 (约 528 MiB).
+
+from std.core.io import print;
+
+fn main() {
+    let cycles: u64 = 32;
+    let mib: u64 = 1024 * 1024;
+    let checksum: i64 = 0;
+
+    let cycle: u64 = 0;
+    while cycle < cycles {
+        let length: u64 = (cycle + 1) * mib;
+        let chunk = dyn[length] u8;
+        // 每 4 KiB 写一次: 触达整块的所有页, 峰值 RSS 才反映真实占用.
+        let k: u64 = 0;
+        while k < length {
+            chunk[k] = 7;
+            k += 4096;
+        }
+        checksum += i64(chunk[0]);
+        del chunk;
+        cycle += 1;
+    }
+
+    assert checksum == i64(cycles) * 7: "varied-size checksum";
+    print("varied pass\n");
+}

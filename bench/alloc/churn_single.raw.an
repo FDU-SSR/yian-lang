@@ -1,0 +1,36 @@
+// bench/alloc/churn_single.raw.an — 同尺寸 churn (裸态): 与 churn_single.an 同算法,
+// 元素类型是 T* (裸态没有切片).
+//
+// 规模: 1000 轮 × 4096 个 dyn[4] i32 (16 B 负载).
+// 断言: checksum == 每轮读回值 2 × 块数 × 轮数.
+
+from std.core.io import print;
+
+fn main() {
+    let batch_count: u64 = 4096;
+    let rounds: u64 = 1000;
+    let checksum: i64 = 0;
+
+    let round: u64 = 0;
+    while round < rounds {
+        let batch = dyn[batch_count] i32*;
+        let i: u64 = 0;
+        while i < batch_count {
+            batch[i] = dyn[4] i32;
+            batch[i][0] = 2;
+            i += 1;
+        }
+        let j: u64 = 0;
+        while j < batch_count {
+            let block: i32* = batch[j];
+            checksum += i64(block[0]);
+            del block;
+            j += 1;
+        }
+        del batch;
+        round += 1;
+    }
+
+    assert checksum == i64(batch_count) * i64(rounds) * 2: "single-size churn checksum";
+    print("single pass\n");
+}

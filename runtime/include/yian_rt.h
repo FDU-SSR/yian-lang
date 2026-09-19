@@ -20,12 +20,23 @@
 #define YIAN_FRAME_LOCK_SLOTS (1u << 20)
 #define YIAN_FRAME_LOCK_SLOT_BYTES 8u
 
+/* 堆块头字节数: 必须与 lockmech.py::BlockHeader.BYTES 一致. */
+#define YIAN_HDR_BYTES 32u
+
 /* 进程生命周期锁槽的键 (字面量锁与环境锁都永不失效). */
 #define YIAN_LITERAL_KEY 1ull
 
 /* wrapper main 的参数 ABI 校验失败时写出的诊断 (必须与
  * compiler/runtime_error.py 的 S002 消息逐字节一致). */
 #define YIAN_ABI_FAIL_MESSAGE "yian: safety error [S002]: invalid memory access\n"
+
+/* 分配失败时写出的诊断 (必须与 compiler/runtime_error.py 的 R002 消息逐字节一致). */
+#define YIAN_OOM_MESSAGE "yian: runtime error [R002]: memory allocation failed\n"
+
+/* 堆分配器: 返回块基址 (锁槽地址), 负载 = 基址 + YIAN_HDR_BYTES;
+ * 释放整块归还; 两者都不返回失败 (内存耗尽时按 R002 终止). */
+void *__secl_pool_alloc(uint64_t requested);
+void __secl_pool_release(void *block);
 
 /* 进程参数: 由 wrapper main 校验后写入. */
 extern int32_t __yian_argc;

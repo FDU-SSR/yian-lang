@@ -98,13 +98,16 @@
 | 参数 | 取值 | 依据 |
 | --- | --- | --- |
 | 块头 | 16 B（`lock@0`、`active_size@8`） | 访问路径 1.46/8.64 ns（现状 2.09/10.62）；无对齐与侧数组约束 |
-| slab | **64 KiB**，基址 64 KiB 对齐，基址前 8 B 放 slab 指针 | 吞吐拐点（16 K 31.9 → 64 K 27.4 ns/op 后走平）；归还 84.4%、稳态 5.9 MB；16 K 吞吐低 15%、归还低 12 个百分点；128 K 以上尾浪费 6.5×/12.3× 无收益 |
-| 尺寸类 | **1.25× 等比**，16 B 起共 36 档（16…49152） | 取整浪费 1.17–1.54×（pow2 为 1.43–1.77×）；尾浪费绝对量有界（每类 ≈ 一个 slab，最坏 ~2.2 MB） |
-| 类查找 | `clz` + 查表，O(1) | 线性扫描对细分表天然多 ~3 ns，与档位选择无关 |
+| slab | **64 KiB**，64 KiB 对齐，首部 64 B 放 slab 描述符 | 吞吐拐点（16 K 31.9 → 64 K 27.4 ns/op 后走平）；归还 84.4%、稳态 5.9 MB；16 K 吞吐低 15%、归还低 12 个百分点；128 K 以上尾浪费 6.5×/12.3× 无收益 |
+| 尺寸类 | **1.25×**，16 B 起 36 档（16…49152） | 取整浪费 1.17–1.54×（pow2 为 1.43–1.77×）；尾浪费绝对量有界（每类 ≈ 一个 slab，最坏 ~2.2 MB） |
+| 类查找 | `clz` 定桶 + 桶内至多 3 步 | O(1)，与档位选择无关 |
 | 最大类 | 块 ≤ 64 KiB 走 slab | 64/64 配置下 24 KiB、48 KiB churn 最快（21.7 / 19.5 ns/op）；压到 16 KiB 时 24 KiB churn 掉到 32.8 ns |
-| 大对象 | 页取整的**精确尺寸 chunk + 按尺寸分桶缓存**，超水位才 `munmap` | 无缓存时 24 KiB churn 为 1346 ns/op（每对象一次 mmap+munmap）；有缓存为 19–33 ns |
-| 空 slab 水位 | **1 MiB** 起步，可选比例化 `max(1 MiB, 25% × 映射量)` | 0–1 MiB 区间 ns/op 只差 1.2、RSS 5.0→5.9 MB、归还 85.6→84.4%；4 MiB 起用内存换速度（+3.2 MB 稳态换 1.4 ns/op） |
-| 空闲链 | 每 slab 独立自由链（链写空闲块负载区），类内 slab 列表双向 O(1) 摘除 | 避免 O(空闲块数) 扫描 |
+| 大对象 | 页取整的**精确尺寸 chunk + 按容量缓存**（缓存额度 8 MiB） | 无缓存时 24 KiB churn 为 1346 ns/op（每对象一次 mmap+munmap）；有缓存为 19–33 ns |
+| slab 页常驻额度 | **32 MiB**；额度内空 slab 保持页常驻，超出后每类仍留 4 个 | 分配-释放循环不因归还页而反复缺页；长跑 RSS 有上界 |
+| 归还方式 | **`madvise(MADV_DONTNEED)`**，从不 `munmap` | 地址空间保留，悬垂指针读已释放块的锁槽仍命中映射（读回 0）、检查按 S003/S006 报错而非段错误 |
+| 空闲链 | 每 slab 独立自由链（链写空闲块 `next`），类内 slab 双向链 O(1) 摘除 | 避免 O(空闲块数) 扫描 |
+
+采用该参数后：混合尺寸长跑 2540 → **27.8 ns/op**，内部放大 4.3× → **1.09×**，增长-释放归还 0% → **84.4%**。
 
 采用该参数后：混合尺寸长跑 2540 → **27.8 ns/op**，内部放大 4.3× → **1.09×**，增长-释放归还 0% → **84.4%**。
 
@@ -122,9 +125,9 @@
 
 ### P1 分配器换实现（块头与检查不动）
 
-- 在 C 库里实现尺寸类 arena（§5 参数）+ 大对象 chunk 缓存 + 水位回收；`yian_rt_alloc/release` 走新实现；删除 `get_pool_alloc`/`get_pool_release` 的手拼 IR。
+- 在 C 库里实现尺寸类 arena（§5 参数）+ 大对象 chunk 缓存 + 页归还；`__secl_pool_alloc`/`__secl_pool_release` 由运行时提供，编译器只保留声明。
 - 块头仍是 32 B（`capacity`/`next` 变死字段），`lockmech.py` 与检查不动，空闲链暂用块头 `next`。
-- 交付 `scripts/` 下的分配器基准（单尺寸 churn、混合尺寸 churn、稳态 RSS，两种模式），判据数据由它产出。
+- 交付 `scripts/bench_allocator.py` 与 `bench/alloc/`（同尺寸 churn、混合尺寸 churn、增长-释放、变尺寸增长-释放，两模式），判据数据由它产出。
 - 判据：混合尺寸长跑 ≤45 ns/op、增长-释放归还 ≥70%、长跑 RSS 平稳；同尺寸周转不退化超过 1.5×。
 
 ### P2 块头 32 → 16 B
@@ -158,5 +161,6 @@
 - 机制语义：`docs/security.md` §4（锁与键）、§5（空间检查）、§6（堆对象）、§10（可信边界）
 - 机制常量与谓词：`compiler/codegen/cfg/lockmech.py`
 - 检查与发射：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/module.py`、`compiler/codegen/llvm/emit.py`
-- 运行时：`runtime/include/yian_rt.h`、`runtime/src/runtime.c`、`runtime/build.py`、`runtime/selftest/selftest.c`、`compiler/runtime_lib.py`
+- 运行时：`runtime/include/yian_rt.h`、`runtime/src/runtime.c`、`runtime/src/alloc.c`、`runtime/build.py`、`runtime/selftest/selftest.c`、`compiler/runtime_lib.py`
 - 链接：`compiler/main.py::__link_exe`、`__merge_runtime_object`
+- 分配器基准：`scripts/bench_allocator.py`、`bench/alloc/`

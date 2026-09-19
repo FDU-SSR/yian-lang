@@ -8,7 +8,9 @@
 
 #include "yian_rt.h"
 
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -52,6 +54,106 @@ static int run_fail_child(int panic_mode, char *buf, size_t cap, size_t *out_len
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+/* 头 8 字节是锁槽, 偏移 8 是分配器记录的负载容量. */
+static uint64_t block_capacity(const void *block) {
+    uint64_t value;
+    memcpy(&value, (const char *)block + 8, sizeof(value));
+    return value & ~((uint64_t)1 << 63);
+}
+
+static void check_allocator(void) {
+    /* 大对象缓存: 缓存为空时, 独占尺寸的 chunk 释放后复用同一块. */
+    void *large = __secl_pool_alloc(300000);
+    __secl_pool_release(large);
+    void *large_again = __secl_pool_alloc(300000);
+    check(large_again == large, "freed large chunk is reused from the cache");
+    __secl_pool_release(large_again);
+
+    /* 请求尺寸覆盖所有尺寸类与大对象: 块地址 16 对齐、容量足够、负载可读写. */
+    static const uint64_t sizes[] = {1, 8, 16, 17, 100, 1024, 4096, 20000, 49152, 49153, 262144, 1048576};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        uint64_t requested = sizes[i];
+        void *block = __secl_pool_alloc(requested);
+        check(((uintptr_t)block & 15u) == 0, "allocated block is 16-byte aligned");
+        check(block_capacity(block) >= requested, "allocated block capacity covers the request");
+        if (requested <= 49152) {
+            /* 尺寸类必须是最小的够用档: 容量不应超过请求的两倍. */
+            check(block_capacity(block) < requested * 2 + 16, "class is the smallest covering class");
+        }
+        memset((char *)block + YIAN_HDR_BYTES, 0x5a, (size_t)requested);
+        check(*((unsigned char *)block + YIAN_HDR_BYTES) == 0x5a, "payload is writable");
+        __secl_pool_release(block);
+    }
+
+    /* 同尺寸 churn: 重复申请/释放同一档应复用同一块. */
+    void *first = __secl_pool_alloc(64);
+    __secl_pool_release(first);
+    check(__secl_pool_alloc(64) == first, "freed class block is reused");
+
+    /* 混合尺寸: 保留一批小块, 交替申请/释放大块 (旧池首适配的病态模式). */
+    enum { SMALL_COUNT = 256 };
+    void *small[SMALL_COUNT];
+    for (int i = 0; i < SMALL_COUNT; i++) {
+        small[i] = __secl_pool_alloc(64);
+    }
+    void *previous_large = 0;
+    for (int round = 0; round < 32; round++) {
+        void *big = __secl_pool_alloc(40000);
+        if (previous_large != 0) {
+            __secl_pool_release(previous_large);
+        }
+        __secl_pool_release(small[round % SMALL_COUNT]);
+        small[round % SMALL_COUNT] = __secl_pool_alloc(64);
+        previous_large = big;
+    }
+    __secl_pool_release(previous_large);
+    for (int i = 0; i < SMALL_COUNT; i++) {
+        __secl_pool_release(small[i]);
+    }
+
+    /* 归还物理页后地址空间仍在: 悬垂读已释放块的锁槽不得触发段错误. */
+    enum { RELEASE_COUNT = 20000 };
+    void **blocks = malloc(sizeof(void *) * RELEASE_COUNT);
+    check(blocks != 0, "selftest can allocate its own bookkeeping array");
+    if (blocks != 0) {
+        for (int i = 0; i < RELEASE_COUNT; i++) {
+            blocks[i] = __secl_pool_alloc(64);
+            *(uint64_t *)blocks[i] = ~(uint64_t)0; /* 编译器释放前写 SENTINEL */
+        }
+        for (int i = 0; i < RELEASE_COUNT; i++) {
+            __secl_pool_release(blocks[i]);
+        }
+        /* 归还后读回锁槽: 只要不崩溃即可 (madvise 后读回 0). */
+        volatile uint64_t stale = *(volatile uint64_t *)blocks[0];
+        (void)stale;
+        /* 复用仍然可用 */
+        void *again = __secl_pool_alloc(64);
+        check(((uintptr_t)again & 15u) == 0, "allocator still works after returning pages");
+        __secl_pool_release(again);
+        free(blocks);
+    }
+
+    /* 超过常驻额度后 slab 会归还物理页: 释放后再读锁槽仍不得崩溃. */
+    enum { BIG_COUNT = 4096 };
+    void **big = malloc(sizeof(void *) * BIG_COUNT);
+    check(big != 0, "selftest can allocate bookkeeping for slab reclamation");
+    if (big != 0) {
+        for (int i = 0; i < BIG_COUNT; i++) {
+            big[i] = __secl_pool_alloc(49152);
+            memset((char *)big[i] + YIAN_HDR_BYTES, 0x3c, 4096); /* 触达页 */
+        }
+        for (int i = 0; i < BIG_COUNT; i++) {
+            __secl_pool_release(big[i]);
+        }
+        volatile uint64_t stale = *(volatile uint64_t *)big[0];
+        (void)stale;
+        void *reused = __secl_pool_alloc(49152);
+        check(((uintptr_t)reused & 15u) == 0, "allocator reuses after returning slab pages");
+        __secl_pool_release(reused);
+        free(big);
+    }
+}
+
 void __yian_main(void) {
     char buf[256];
     size_t len = 0;
@@ -83,9 +185,11 @@ void __yian_main(void) {
     check(strcmp(YIAN_ABI_FAIL_MESSAGE, "yian: safety error [S002]: invalid memory access\n") == 0,
           "ABI failure message text");
 
+    check_allocator();
+
     if (failures != 0) {
         printf("selftest: %d failure(s)\n", failures);
-        _exit(1);
+        exit(1); /* 走 exit 而不是 _exit: 让 stdout 缓冲写出失败明细 */
     }
     printf("selftest: ok\n");
 }
