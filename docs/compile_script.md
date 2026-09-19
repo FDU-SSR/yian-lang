@@ -243,7 +243,32 @@ yianc -t none lib/src tests/basic/array/assign.an
 yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 ```
 
-## 5. 日志输出位置
+## 5. 运行时库与链接
+
+`-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径，以及堆分配器。
+
+```text
+runtime/include/yian_rt.h        ABI 常量与声明
+runtime/src/*.c                  C 源码（唯一真值）
+runtime/build.py                 构建、ABI 一致性断言、自测
+build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
+```
+
+| 目标 | 处理 |
+| --- | --- |
+| `exe` | `clang <user>.o build/runtime/libyian_rt.a -o <out>` |
+| `obj` | `clang -r -nostdlib <user>.o libyian_rt.o -o <out>`，产物单文件自包含 |
+| `ll` / `bc` / `asm` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
+
+手动构建与校验：
+
+```bash
+python3 runtime/build.py            # 构建（已是最新则跳过）
+python3 runtime/build.py --check    # ABI 常量一致性断言 + 自测
+python3 runtime/build.py --asan     # ASan/UBSan 自测
+```
+
+## 6. 日志输出位置
 
 - **默认**：写入 `build/compile.log`，同时输出到 stderr
 - stderr 输出可以用 `2>/dev/null` 丢弃
@@ -251,10 +276,11 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 - `YIAN_LOG_FILE=PATH`：环境变量方式指定额外文件
 - 日志不影响 stdout，编译产物（如 `-t exe`）正常输出
 
-## 6. 相关文件
+## 7. 相关文件
 
 | 文件                    | 说明             |
 | ----------------------- | ---------------- |
 | `compiler/main.py`      | 编译器入口       |
 | `compiler/utils/log.py` | 日志系统实现     |
+| `runtime/`              | 运行时库（C）    |
 | `bak/quest_log.md`      | 日志系统设计文档 |

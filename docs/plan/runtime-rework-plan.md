@@ -143,7 +143,7 @@
 
 ### P4 收口
 
-- `docs/compile_script.md` 补运行时的构建与链接说明；`AGENTS.md` 的 CLI 说明加入运行时库这一输入；`scripts/` 的基准带阈值，改动后必跑。
+- `docs/compile_script.md` 补运行时的构建与链接说明；`AGENTS.md` 的 CLI 说明加入运行时库这一输入；`scripts/bench_allocator.py` 与 `bench/alloc/` 作为分配器的参考口径（性能试验只作参考，不设回归阈值）。
 - 判据：文档与实测一致；基准脚本一条命令产出报告。
 
 ## 7. 风险与开放问题
