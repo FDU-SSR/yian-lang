@@ -54,12 +54,8 @@ static int run_fail_child(int panic_mode, char *buf, size_t cap, size_t *out_len
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
-/* 头 8 字节是锁槽, 偏移 8 是分配器记录的负载容量. */
-static uint64_t block_capacity(const void *block) {
-    uint64_t value;
-    memcpy(&value, (const char *)block + 8, sizeof(value));
-    return value & ~((uint64_t)1 << 63);
-}
+/* 分配器自测钩子: 块的可用负载容量 (块头本身不再记录容量). */
+extern uint64_t __secl_pool_payload(const void *block);
 
 static void check_allocator(void) {
     /* 大对象缓存: 缓存为空时, 独占尺寸的 chunk 释放后复用同一块. */
@@ -75,10 +71,10 @@ static void check_allocator(void) {
         uint64_t requested = sizes[i];
         void *block = __secl_pool_alloc(requested);
         check(((uintptr_t)block & 15u) == 0, "allocated block is 16-byte aligned");
-        check(block_capacity(block) >= requested, "allocated block capacity covers the request");
+        check(__secl_pool_payload(block) >= requested, "allocated block capacity covers the request");
         if (requested <= 49152) {
             /* 尺寸类必须是最小的够用档: 容量不应超过请求的两倍. */
-            check(block_capacity(block) < requested * 2 + 16, "class is the smallest covering class");
+            check(__secl_pool_payload(block) < requested * 2 + 16, "class is the smallest covering class");
         }
         memset((char *)block + YIAN_HDR_BYTES, 0x5a, (size_t)requested);
         check(*((unsigned char *)block + YIAN_HDR_BYTES) == 0x5a, "payload is writable");

@@ -145,20 +145,18 @@ def is_raw(data: int, lock_ptr: int, index: int) -> bool:
 class BlockHeader:
     """SecL 单线程堆池的固定块头布局。
 
-    ``{lock:u64, capacity:u64, next:i8*, active_size_bytes:u64}`` occupies
-    32 bytes.  ``capacity`` is the reusable physical payload capacity, while
-    ``active_size_bytes`` is the logical payload size of the current owner.
-    The fixed size preserves 16-byte payload alignment.  Freed blocks remain
-    mapped and only this header is reused as allocator metadata, so stale
-    pointers may safely read ``lock`` and can never reach a user-controlled
-    payload through ``lock_ptr``.
+    ``{lock:u64, active_size_bytes:u64}`` occupies 16 bytes; the payload starts at
+    ``lock_ptr + 16`` and ``active_size_bytes`` is the logical payload size of the
+    current owner (delete/view checks compare against it).  The allocator keeps no
+    field of its own in the header: the size class implies the physical capacity,
+    and a free block's chain pointer lives in the first word of its payload.
+    Freed blocks remain mapped and only the lock slot is read by stale pointers,
+    so they can never reach a user-controlled payload through ``lock_ptr``.
     """
 
-    BYTES: ClassVar[int] = 32
+    BYTES: ClassVar[int] = 16
     LOCK_SLOT_OFFSET: ClassVar[int] = 0  # 锁槽 = 块首首字(偏移 0)
-    CAPACITY_OFFSET: ClassVar[int] = 8
-    NEXT_OFFSET: ClassVar[int] = 16
-    ACTIVE_SIZE_OFFSET: ClassVar[int] = 24
+    ACTIVE_SIZE_OFFSET: ClassVar[int] = 8
 
     @staticmethod
     def data_addr(block_base: int) -> int:

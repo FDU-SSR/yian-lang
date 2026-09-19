@@ -20,8 +20,9 @@
 #define YIAN_FRAME_LOCK_SLOTS (1u << 20)
 #define YIAN_FRAME_LOCK_SLOT_BYTES 8u
 
-/* 堆块头字节数: 必须与 lockmech.py::BlockHeader.BYTES 一致. */
-#define YIAN_HDR_BYTES 32u
+/* 堆块头字节数: 必须与 lockmech.py::BlockHeader.BYTES 一致.
+ * 16 B = {lock, active_size}; 负载 = 基址 + YIAN_HDR_BYTES. */
+#define YIAN_HDR_BYTES 16u
 
 /* 进程生命周期锁槽的键 (字面量锁与环境锁都永不失效). */
 #define YIAN_LITERAL_KEY 1ull

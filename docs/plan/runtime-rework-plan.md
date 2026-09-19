@@ -126,7 +126,7 @@
 ### P1 分配器换实现（块头与检查不动）
 
 - 在 C 库里实现尺寸类 arena（§5 参数）+ 大对象 chunk 缓存 + 页归还；`__secl_pool_alloc`/`__secl_pool_release` 由运行时提供，编译器只保留声明。
-- 块头仍是 32 B（`capacity`/`next` 变死字段），`lockmech.py` 与检查不动，空闲链暂用块头 `next`。
+- P1 只换分配器：块头保持 32 B（`capacity`/`next` 变死字段），`lockmech.py` 与检查不动，空闲链暂用块头 `next`；块头收缩在 P2。
 - 交付 `scripts/bench_allocator.py` 与 `bench/alloc/`（同尺寸 churn、混合尺寸 churn、增长-释放、变尺寸增长-释放，两模式），判据数据由它产出。
 - 判据：混合尺寸长跑 ≤45 ns/op、增长-释放归还 ≥70%、长跑 RSS 平稳；同尺寸周转不退化超过 1.5×。
 

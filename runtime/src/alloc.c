@@ -1,20 +1,17 @@
 /*
  * alloc.c — YIAN 堆分配器: 尺寸类 arena.
  *
- * 块布局 (P1 沿用 32 B 块头, 与 lockmech.py::BlockHeader 一致):
- *   [lock(8) | capacity(8) | next(8) | active_size(8) | payload...]
- * 编译器负责写 lock 与 active_size; 分配器只用 capacity 与 next:
- *   - capacity 记录块所属尺寸类的负载容量; 最高位为 1 表示"大对象 chunk";
- *   - next 在空闲块里串自由链 (P2 起改写到空闲负载区).
+ * 块布局 (与 lockmech.py::BlockHeader 一致): [lock(8) | active_size(8) | 负载...],
+ * 负载从基址 + YIAN_HDR_BYTES 开始. 编译器写 lock 与 active_size; 分配器不占用块头,
+ * 空闲块的自由链写在空闲负载的首字 (YIAN_NEXT_OFFSET = YIAN_HDR_BYTES).
  *
- * 尺寸类: 16 B 起、每倍频 3 档、比例约 1.25, 共 36 档至 49152 B; 更大的请求走
- * 大对象 chunk (mmap, 按容量缓存). 每个 slab 是 64 KiB、64 KiB 对齐的独立映射:
- *   [Slab 描述符(64 B) | 块...]
- * 类内维护"有空闲块的 slab"链, 分配与释放都是 O(1).
+ * 尺寸类: 16 B 起、每倍频 3 档、比例约 1.25, 共 36 档至 49152 B; 更大的请求走大对象
+ * chunk. 每个 slab 是 64 KiB、64 KiB 对齐的独立映射: [Slab 描述符(64 B) | 块...];
+ * 大对象 chunk 同样放在 64 KiB 对齐 region 的 +64 处, region 首部放 LargeHeader.
+ * 因此 `block & ~(SLAB_BYTES-1)` 对两种块都指向 region 首部, 用其中的 magic 区分.
  *
  * 归还: 只用 madvise(MADV_DONTNEED) 归还物理页, 从不 munmap——地址空间始终保留,
- * 因此悬垂指针读已释放块的锁槽仍然命中映射 (读回 0/SENTINEL), 检查按 S003/S006
- * 报错而不是段错误. 空 slab 进"已归还"链等待复用, 水位以下的空 slab 留在 partial 链.
+ * 悬垂指针读已释放块的锁槽仍命中映射 (读回 0), 检查按 S003/S006 报错而非段错误.
  *
  * 单线程: 不加锁 (见 docs/security.md §10).
  */
@@ -35,10 +32,12 @@
 /* 超过额度后每类仍保留的"空但页常驻"slab 数. */
 #define YIAN_SLAB_KEEP_EMPTY 4u
 #define YIAN_LARGE_CACHE ((uint64_t)8 << 20)
-#define YIAN_LARGE_FLAG ((uint64_t)1 << 63)
 
-#define YIAN_CAPACITY_OFFSET 8u
-#define YIAN_NEXT_OFFSET 16u
+#define YIAN_SLAB_MAGIC 0x5949414e534c4142ull  /* "YIANSLAB" */
+#define YIAN_LARGE_MAGIC 0x5949414e4c415247ull /* "YIANLARG" */
+
+/* 空闲链与缓存链写在空闲块负载的首字. */
+#define YIAN_NEXT_OFFSET YIAN_HDR_BYTES
 
 static const uint32_t yian_class_bytes[] = {
     16,     20,     25,     32,     40,     50,     64,     80,     100,
@@ -50,31 +49,41 @@ static const uint32_t yian_class_bytes[] = {
 #define YIAN_CLASS_COUNT ((uint32_t)(sizeof(yian_class_bytes) / sizeof(yian_class_bytes[0])))
 
 typedef struct Slab {
-    struct Slab *next;   /* 同类链表 */
+    uint64_t magic;
+    struct Slab *next;   /* 同类"有空闲块"链 */
     struct Slab *prev;
-    void *free_head;     /* 空闲块链 (链在块的 next 字段) */
+    void *free_head;     /* 空闲块链 (链在空闲负载首字) */
     void *bump;          /* 尚未借出过的块游标 */
     uint32_t class_index;
     uint32_t capacity;   /* 本 slab 的块数 */
     uint32_t live_count; /* 已借出的块数 */
     uint32_t madvised;   /* 是否已归还物理页 */
     uint32_t resident_empty; /* 空 slab 且页常驻 (计入 class_resident_empty) */
+    uint32_t pad;
 } Slab;
+
+_Static_assert(sizeof(Slab) <= YIAN_SLAB_HEADER, "Slab descriptor must fit the slab header");
+
+/* 大对象 region 首部 (region 与 chunk 的偏移见 large_alloc). */
+typedef struct LargeHeader {
+    uint64_t magic;
+    uint64_t payload;
+} LargeHeader;
 
 static uint32_t class_stride[YIAN_CLASS_COUNT];
 static uint32_t class_bucket_start[64];
-static Slab *class_partial[YIAN_CLASS_COUNT]; /* 有空闲块的 slab */
+static Slab *class_partial[YIAN_CLASS_COUNT];  /* 有空闲块的 slab */
 static Slab *class_returned[YIAN_CLASS_COUNT]; /* 已归还物理页的空 slab */
-static uint32_t class_resident_empty[YIAN_CLASS_COUNT]; /* 各类型保留的常驻空 slab 数 */
+static uint32_t class_resident_empty[YIAN_CLASS_COUNT];
 static uint64_t slab_mapped_bytes = 0;
 static int alloc_inited = 0;
 
-/* 大对象缓存: 块头 next/capacity 复用为链与容量; 超水位后仅移出缓存、不归还地址空间 */
+/* 大对象缓存: 块负载首字复用为链; 超额度者移出缓存并归还物理页 */
 static void *large_head = 0;
 static void *large_tail = 0;
 static uint64_t large_cached_bytes = 0;
 
-/* ── 块头访问 ── */
+/* ── 块与 region ── */
 
 static inline void *block_next(const void *block) {
     void *value;
@@ -86,14 +95,9 @@ static inline void block_set_next(void *block, void *next) {
     memcpy((char *)block + YIAN_NEXT_OFFSET, &next, sizeof(next));
 }
 
-static inline uint64_t block_capacity(const void *block) {
-    uint64_t value;
-    memcpy(&value, (const char *)block + YIAN_CAPACITY_OFFSET, sizeof(value));
-    return value;
-}
-
-static inline void block_set_capacity(void *block, uint64_t capacity) {
-    memcpy((char *)block + YIAN_CAPACITY_OFFSET, &capacity, sizeof(capacity));
+/* region 首部: slab 块与大小对象块都按 64 KiB 对齐, 因此掩码即可定位. */
+static inline void *block_region(const void *block) {
+    return (void *)((uintptr_t)block & ~(uintptr_t)(YIAN_SLAB_BYTES - 1));
 }
 
 static inline uint64_t align_up(uint64_t value, uint64_t align) {
@@ -192,6 +196,7 @@ static Slab *slab_new(uint32_t index) {
     if (slab == 0) {
         alloc_fail();
     }
+    slab->magic = YIAN_SLAB_MAGIC;
     slab->class_index = index;
     slab->capacity = (uint32_t)((YIAN_SLAB_BYTES - YIAN_SLAB_HEADER) / class_stride[index]);
     slab->live_count = 0;
@@ -257,13 +262,11 @@ static void *class_alloc(uint64_t bytes) {
     if (slab->live_count == slab->capacity) {
         list_unlink(&class_partial[index], slab);
     }
-    block_set_capacity(block, yian_class_bytes[index]);
-    block_set_next(block, 0);
     return block;
 }
 
 static void slab_release_block(void *block) {
-    Slab *slab = (Slab *)((uintptr_t)block & ~(uintptr_t)(YIAN_SLAB_BYTES - 1));
+    Slab *slab = (Slab *)block_region(block);
     block_set_next(block, slab->free_head);
     slab->free_head = block;
     slab->live_count--;
@@ -271,14 +274,14 @@ static void slab_release_block(void *block) {
     if (slab->live_count == 0) {
         if (class_resident_empty[class] < YIAN_SLAB_KEEP_EMPTY
             || slab_mapped_bytes <= YIAN_SLAB_WATERMARK) {
-            /* 保留页常驻: slab 仍在 partial 链上, 直接复用 (避免归还后立刻重触页). */
+            /* 保留页常驻: slab 仍在 partial 链上, 直接复用. */
             if (slab->resident_empty == 0) {
                 slab->resident_empty = 1;
                 class_resident_empty[class]++;
             }
             return;
         }
-        /* 保留额度用尽且超过水位: 归还物理页并移入"已归还"链; 地址空间保留, 悬垂读仍命中映射. */
+        /* 保留额度用尽且超过额度: 归还物理页并移入"已归还"链; 地址空间保留. */
         list_unlink(&class_partial[class], slab);
         release_pages((char *)slab + YIAN_SLAB_HEADER, YIAN_SLAB_BYTES - YIAN_SLAB_HEADER);
         slab->madvised = 1;
@@ -295,10 +298,14 @@ static void slab_release_block(void *block) {
 
 /* ── 大对象 ── */
 
+static inline LargeHeader *large_header(void *chunk) {
+    return (LargeHeader *)block_region(chunk);
+}
+
 static void *large_alloc(uint64_t bytes) {
     void *previous = 0;
     for (void *chunk = large_head; chunk != 0; chunk = block_next(chunk)) {
-        if ((block_capacity(chunk) & ~YIAN_LARGE_FLAG) >= bytes) {
+        if (large_header(chunk)->payload >= bytes) {
             void *next = block_next(chunk);
             if (previous == 0) {
                 large_head = next;
@@ -308,7 +315,7 @@ static void *large_alloc(uint64_t bytes) {
             if (large_tail == chunk) {
                 large_tail = previous;
             }
-            large_cached_bytes -= block_capacity(chunk) & ~YIAN_LARGE_FLAG;
+            large_cached_bytes -= large_header(chunk)->payload;
             block_set_next(chunk, 0);
             return chunk;
         }
@@ -316,18 +323,30 @@ static void *large_alloc(uint64_t bytes) {
     }
 
     uint64_t payload = align_up(bytes, 16);
-    uint64_t mapped = align_up(YIAN_HDR_BYTES + payload, 4096);
-    void *chunk = mmap(0, (size_t)mapped, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (chunk == MAP_FAILED) {
+    uint64_t total = align_up(YIAN_HDR_BYTES + payload + YIAN_SLAB_BYTES * 2, 4096);
+    void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw == MAP_FAILED) {
         alloc_fail();
     }
-    block_set_capacity(chunk, payload | YIAN_LARGE_FLAG);
-    block_set_next(chunk, 0);
-    return chunk;
+    /* chunk 放在 64 KiB 对齐 region 的 +64 处, region 首部放 LargeHeader. */
+    uintptr_t region = (uintptr_t)align_up((uintptr_t)raw + YIAN_SLAB_HEADER, YIAN_SLAB_BYTES);
+    uintptr_t chunk = region + YIAN_SLAB_HEADER;
+    if (region > (uintptr_t)raw) {
+        munmap(raw, (size_t)(region - (uintptr_t)raw));
+    }
+    uintptr_t end = chunk + YIAN_HDR_BYTES + payload;
+    if (end < (uintptr_t)raw + total) {
+        munmap((void *)end, (size_t)((uintptr_t)raw + total - end));
+    }
+    LargeHeader *header = (LargeHeader *)region;
+    header->magic = YIAN_LARGE_MAGIC;
+    header->payload = payload;
+    block_set_next((void *)chunk, 0);
+    return (void *)chunk;
 }
 
 static void large_release(void *chunk) {
-    uint64_t payload = block_capacity(chunk) & ~YIAN_LARGE_FLAG;
+    uint64_t payload = large_header(chunk)->payload;
     block_set_next(chunk, 0);
     if (large_tail == 0) {
         large_head = chunk;
@@ -339,7 +358,7 @@ static void large_release(void *chunk) {
     while (large_cached_bytes > YIAN_LARGE_CACHE && large_head != large_tail) {
         /* 淘汰出缓存: 归还它的物理页, 地址空间仍保留给悬垂读. */
         void *victim = large_head;
-        uint64_t victim_payload = block_capacity(victim) & ~YIAN_LARGE_FLAG;
+        uint64_t victim_payload = large_header(victim)->payload;
         large_head = block_next(victim);
         release_pages((char *)victim + YIAN_HDR_BYTES, victim_payload);
         block_set_next(victim, 0);
@@ -347,7 +366,7 @@ static void large_release(void *chunk) {
     }
 }
 
-/* ── 对外接口 (编译器调用, 与旧池函数同名同签名) ── */
+/* ── 对外接口 (编译器调用, 块头与检查不动) ── */
 
 void *__secl_pool_alloc(uint64_t requested) {
     if (!alloc_inited) {
@@ -366,9 +385,19 @@ void __secl_pool_release(void *block) {
     if (block == 0) {
         return;
     }
-    if ((block_capacity(block) & YIAN_LARGE_FLAG) != 0) {
-        large_release(block);
+    if (*(uint64_t *)block_region(block) == YIAN_SLAB_MAGIC) {
+        slab_release_block(block);
         return;
     }
-    slab_release_block(block);
+    large_release(block);
+}
+
+/* 自测钩子: 块的可用负载容量 (slab 块取尺寸类, 大对象取 chunk 容量). */
+uint64_t __secl_pool_payload(const void *block) {
+    void *region = block_region(block);
+    if (*(const uint64_t *)region == YIAN_SLAB_MAGIC) {
+        const Slab *slab = (const Slab *)region;
+        return yian_class_bytes[slab->class_index];
+    }
+    return ((const LargeHeader *)region)->payload;
 }
