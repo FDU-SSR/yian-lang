@@ -5,15 +5,19 @@
 ### 1.1 目标
 
 胖指针（安全模式）机制的正确性验证已告一段落，本阶段解决它的**运行开销与内存占用**：给出可复现的
-度量，按收益/风险依次消除主要开销，并把结果固化成回归门槛。安全语义不变——任何优化都必须保持
+度量，按收益/风险依次消除主要开销。安全语义不变——任何优化都必须保持
 `docs/security.md` 描述的检查语义，`tests/safety/` 与两个指针模式下的三套件必须保持全绿。
+
+已经落地的两项（检查合并、堆池与块头）见 §5 的 P1/P3；本计划剩下的主要工作是**表示的 ABI 评估**、
+**检查提升**与**代码规模度量**。
 
 ### 1.2 第一版不做
 
 - 不改变语言语义与 ABI 承诺（`T&` 在两种表示下的关系、one-past 规则、释放协议）；
 - 不引入并发/多线程支持（当前模型假设单线程，见 `security.md` §10）；
 - 不做编译期逃逸分析之外的跨过程优化（本阶段只做机制层与局部优化）；
-- 不把安全检查改为"可选关闭"：raw 模式已经存在，安全模式不做逐项开关。
+- 不把安全检查改为"可选关闭"：raw 模式已经存在，安全模式不做逐项开关；
+- 不设性能回归门槛：性能试验只作参考（见 §3.3）。
 
 ## 2. 现状
 
@@ -21,159 +25,186 @@
 
 | 组成 | 位置 | 现状 |
 | --- | --- | --- |
-| 胖指针表示 | `compiler/codegen/llvm/builder.py::__build_fat` | 指针 5 字段 ⟨data, lock, key, index, size⟩ **40 B**；切片/字符串 4 字段 **32 B**；引用 3 字段 **24 B**；raw 模式 8 B |
-| 机制常量 | `compiler/codegen/cfg/lockmech.py` | `KeyGen`（堆键最高位 1、栈键 0，单调 63 位）、`SENTINEL`、`BlockHeader` 32 B（lock/capacity/next/active_size）、`FrameLock` + 影子栈 2^20 槽 × 8 B |
-| 检查插入 | `compiler/codegen/cfg/builder.py`（34 处） | `CheckSafeAccess`、`CheckViewAccess`、`CheckInBounds`、`CheckElementArith`、`CheckElementAccess`、`CheckSliceNonEmpty`、`CheckRefAccess`、`CheckRawBounds`、`CheckPtrDiff` |
-| 检查发射 | `compiler/codegen/llvm/builder.py::__emit_check` | 每个检查**分裂基本块**：条件分支到 `ok`/`fail`，`fail` 调 `__yian_runtime_fail(code)` 后 `unreachable` |
-| 堆池 | `compiler/codegen/llvm/module.py::get_pool_alloc` 等 | 单线程首适配（first-fit）空闲链表，块头 32 B 固定；释放先写 `SENTINEL` 再入空闲链表，复用时换新键 |
+| 胖指针表示 | `compiler/codegen/llvm/types.py`、`builder.py::__build_fat` | 指针 5 字段 ⟨data, lock, key, index, size⟩ **40 B**；切片/字符串 4 字段 **32 B**；引用 3 字段 **24 B**；raw 模式 8 B；指针在 LLVM IR 里是 opaque pointer |
+| 机制常量 | `compiler/codegen/cfg/lockmech.py` | `KeyGen`（堆键最高位 1、栈键 0，单调 63 位）、`SENTINEL`、`BlockHeader` **16 B**（`lock@0`、`active_size@8`）、`FrameLock` + 影子栈 2^20 槽 × 8 B |
+| 检查插入 | `compiler/codegen/cfg/builder.py`（22 处 `IR.Check*`） | `CheckSafeAccess`、`CheckViewAccess`、`CheckInBounds`、`CheckElementArith`、`CheckElementAccess`（合取）、`CheckSliceNonEmpty`、`CheckRefAccess`、`CheckRawBounds`、`CheckPtrDiff`、`CheckPtrCmp`、`CheckDelete` |
+| 检查去重与合并 | 同文件 | `(base, offset)` 二元检查去重；相邻的良构 + `in_bounds` + `live` 三重检查合并为单个 `CheckElementAccess`；派生链失效时补发挂起义务 |
+| 检查发射 | `compiler/codegen/llvm/builder.py::__emit_check` | 每个检查**分裂基本块**：条件分支到 `ok`/`fail`；`fail` 调运行时库的 `__yian_runtime_fail(ptr, len)`（`cold noreturn`）后 `unreachable`。消息表只在编译器侧（`compiler/runtime_error.py`） |
+| 堆池 | `runtime/src/alloc.c`（C 运行时库） | 单线程尺寸类 arena：36 档 16 B…49152 B（约 1.25×）+ 大对象 chunk；64 KiB slab（1 MiB 成批映射后切成区域）、类内空闲链 + 正在填充 slab 的 bump 游标；大对象 8 MiB 缓存、超额度用 `madvise(MADV_DONTNEED)` 退页、从不 `munmap` 用户块。编译器只发外部声明，尺寸编译期已知时直接传类号 |
 | 帧锁 | `builder.py::acquire_frame_lock`、`lockmech.py::FrameLockArena` | 每帧一个活动锁槽，进入 re-key、返回写 `SENTINEL`；槽位在进程生命期内固定 |
 
 ### 2.2 实测基线
 
-用两个微基准（`-O0` 与 `-O2`，两种模式各取 3 次最小值；`lib/src` 参与编译，`-t exe`）：
+当前基线是 `bench/results.csv`（由 `scripts/bench_three_way.py --pin 4` 生成，表头记录 commit 与
+工具链指纹；19 个 shootout 基准三态轮转、各 5 次取最小）：
 
-```bash
-# traversal：p[i] = p[i-1] + k 的串行依赖，6M 元素 = 12M 次受检访问
-yianc -O2 [--raw-pointers] -o traversal.<mode> lib/src traversal.an
-# alloc：4M 轮 dyn[4] i32 + del，池复用 + 锁失效 + 新键
-yianc -O2 [--raw-pointers] -o alloc.<mode> lib/src alloc.an
-```
+| 负载形态 | 代表基准 | raw (ms) | fat (ms) | fat/raw | fat 峰值 RSS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 同尺寸分配密集 | binarytree | 3303.6 | 3125.2 | **0.95** | 321.6 MB |
+| 整数/浮点为主 | mand / fann / spectralnorm | — | — | 1.00 | ≤1.3 MB |
+| 混合尺寸长跑 | havlak | 75.6 | 175.8 | 2.33 | 9.6 MB |
+| 大量小对象 + 视图构造 | json | 680.2 | 1759.4 | 2.59 | 2.2 MB |
+| 链表 + 频繁视图 | list | 6839.7 | 30906.5 | 4.52 | 1.1 MB |
+| 分支/对象密集 | queen | 1449.1 | 6976.9 | 4.81 | 2.8 MB |
+| 大活集合 | storage | 1193.8 | 1766.2 | 1.48 | 4394.5 MB |
 
-| 基准 | 优化级 | raw | fat | 比值 | fat RSS |
-| --- | --- | --- | --- | --- | --- |
-| traversal（12M 次访问） | `-O0` | 0.02 s | 0.12 s | **6.0×** | 24.6 MB（负载 24 MB） |
-| traversal | `-O2` | 0.02 s | 0.03 s | **1.5×** | 24.6 MB |
-| alloc（4M 次分配/释放） | `-O0` | 0.02 s | 0.07 s | **3.5×** | 1.1 MB |
-| alloc | `-O2` | 0.02 s | 0.02 s | ~1.0× | 1.1 MB |
-| 整数循环（对照） | `-O0`/`-O2` | — | — | 1.0× | 1.1 MB |
+全部 19 项：fat/raw 几何平均 **1.64**、中位 1.30、最差 4.81；fat 峰值 RSS 全部 ≤ raw（storage 4394.5 MB
+是活集合本身）。
+
+分配器专项（`scripts/bench_allocator.py --runs 7 --pin 4`，fat 最小 / raw 最小）：
+
+| 基准 | fat | raw | fat 峰值 RSS |
+| --- | ---: | ---: | ---: |
+| churn_mixed（混合尺寸周转） | 19.9 ms | 57.0 ms | 1.1 MB |
+| churn_single（4M 次 16 B 周转） | 16.5 ms | 45.3 ms | 1.3 MB |
+| grow_free（40 轮 × 4096 个 4 KiB） | 6.5 ms | 128.6 ms | 17.3 MB |
+| grow_varied（逐轮变大 1…32 MiB） | 115.0 ms | 108.6 ms | 64.2 MB |
 
 三条读数：
 
-1. **`-O0` 的 6.0× 是机制裸开销**：每个检查两个基本块 + 分支 + 失败块。`-O2` 把时序检查（锁/键比较）
-   提升为循环不变量后降到 1.5×，剩下的主要是逐次访问的空间检查与 40 B 值的搬运。
-2. **分配/释放路径在 `-O2` 下已经与 raw 持平**，`-O0` 的 3.5× 主要是池函数调用与锁写入，不是分配本身。
-3. **单尺寸 churn 不涨内存**：4M 轮 `dyn[4]` 复用同一个块，RSS 稳定在 1.1 MB。混合尺寸、长期运行的
-   碎片与锁槽保留尚未测量——这正是 `docs/proposal.md` 里点名的待查项。
+1. **分配/释放路径不再是开销来源**：arena 的同尺寸周转比 libc `malloc`/`free` 快（churn_single
+   16.5 vs 45.3 ms），binarytree 这类 3 亿次分配/释放的负载反而比 raw 快 5%。旧表里 `-O0` 3.5× 的
+   池开销已经不成立。
+2. **剩余开销集中在逐次访问的检查、40/32 B 胖值的搬运与视图构造**：fat/raw 最差的几项（queen、
+   list、richards、json、deltablue）都是"小对象 + 高频访问 + 频繁指针↔切片↔引用转换"的形态。
+3. **RSS 与活集合绑定**：storage 的 4.4 GB 是全部对象同时存活，任何分配器都改不动；分配器退页只对
+   大对象生效（grow_varied 峰值 64 MB），小对象 slab 页常驻（见 §6 的取舍）。
 
 ### 2.3 当前缺口
 
-- **没有基准集与回归门槛**：性能数据只在这次调研里手工测过，`scripts/` 下没有任何 benchmark 工具，
-  也没有"改动后不能退化"的门槛。
-- **没有混合尺寸/长时间的 RSS 观测**：碎片、锁槽保留、空闲块上限、帧锁影子栈常驻页都未知。
-- **没有代码规模数据**：检查带来的基本块数量、目标文件体积与编译时间没有记录（每个检查 2 个块
-  × 每函数访问次数 → 大函数会有几百个块）。
+- **检查提升未做**：时序检查（锁/键比较）在 `-O2` 下靠 LLVM 提升为循环不变量；`-O0` 下每次访问
+  仍走完整的 `live ∧ in_bounds`。改动后没有复测 `-O0`，也没有"CFG 层就消掉检查"的实现。
+- **表示与 ABI 未动**：40/32/24 B 的表示、按值传参走内存、`index`/`size` 的 64 位宽度都保持原样。
+- **代码规模无数据**：检查带来的基本块数量、`-t ll` 行数、目标文件体积与 `-O2` 编译时间没有记录。
+- **小对象 slab 页不回收**：长跑程序在峰值后不会把空闲 slab 的物理页还给内核（延迟回收的代价已测，
+  见 §6）。
+- **帧锁影子栈未观测**：2^20 槽的页触达与"同时活动的取址帧数"上限在真实程序里的表现没有测量。
+- **视图转换开销无专项基准**：`ptr()`/`as_slice()`/`T[] → T&` 往返的开销混在 shootout 里，没有独立读数。
 
 ## 3. 度量方法
 
-1. **基准集**（建议放 `bench/fatptr/`，数据是 `.an`，运行器放 `scripts/`）：分离四类开销——
-   - 时序检查主导：对同一指针反复读写（锁/键比较次数固定、空间检查不变）；
-   - 空间检查主导：带索引的逐元素访问与算术；
-   - 视图转换主导：指针 ↔ 切片 ↔ 引用的转换与 `ptr()`/`as_slice()` 往返；
-   - 分配/释放主导：单尺寸 churn、混合尺寸 churn、长寿命对象与短寿命对象交错。
-   每个基准都用 `env.args().len()` 之类的不透明边界，避免 `-O2` 把循环折成闭式（这次调研已经踩到）。
-2. **指标**：墙钟时间（3 次最小值）、峰值与稳态 RSS（`/usr/bin/time -f "%e %M"`，长时间基准按间隔
-   采样）、fat/raw 比值、代码规模（目标文件大小、`-t ll` 的 IR 行数与基本块数）、编译时间（`--profile`）。
-3. **对照**：每个基准都在 raw 模式跑同一份源码，比值才是指标；整数循环作为与指针无关的对照，
-   用于确认测量本身没有漂移。
-4. **安全性门槛**：`tests/safety/` 与 basic/package 两套件在两种模式下全绿是每次改动的硬门槛。
+### 3.1 已交付的基准与运行器
 
-## 4. 优化方向（候选，按收益/风险排序）
+- `bench/shootout/*.an` + `bench/c/*.c`：19 个基准的 YIAN 源与同算法同规模的 C 参考；
+  `scripts/bench_three_way.py` 逐次轮转测三态，写 `bench/results.md`（人读）与 `bench/results.csv`
+  （机读，含环境指纹与 commit）；`--names` 的部分测量写 `results.partial.*`，不覆盖全量基线。
+- `bench/alloc/*.an` + `scripts/bench_allocator.py`：分配器四类负载（同尺寸 churn、混合尺寸 churn、
+  增长-释放、变尺寸增长-释放），fat 与 raw 两态，裸态用 `<name>.raw.an` 覆盖源。
+- 语义护栏：C 态 warmup 必须满足脚本内记录的权威 `(退出码, stdout)`；raw 与 fat 的 warmup 输出必须
+  逐字节一致；退出码必须为 0。
 
-### A. 检查的合并、提升与冷路径（预期收益最高，风险低）
+### 3.2 指标与协议
 
-- 在 CFG 层做**检查的公共子表达式与循环不变量提升**：同一指针的多次访问共享一次时序检查；索引与
-  长度的比较如果能被归纳变量关系覆盖，就只保留一处（这是 `-O2` 下 6.0× → 1.5× 的那部分，目前靠
-  LLVM 兜底，前置到 CFG 层可让 `-O0` 也受益）。
-- **合并相邻检查**：`CheckElementArith` + `CheckSafeAccess` + `CheckInBounds` 常常描述同一次访问，
-  可以合成一次范围判断（语义按 `security.md` §5 的五条条件逐条保留，只是合并失败判定）。
-- **冷路径**：失败块标记为冷（`llvm.expect`/`cold` 属性），让热路径保持直线；评估在 `-O0` 下是否
-  仍然每检查一个分支（必要时提供"检查不失败时直接落到下一块"的形态，减少块分裂）。
-- **可证明安全的访问不插检查**：编译期长度已知的裸数组访问已经是单次无符号比较
-  （`check_raw_bounds`，索引为常量时由 LLVM 折叠）；把这类"能静态判定"的范围扩展到归纳变量可证的
-  循环（例如 `for i in 0..N` 内的 `p[i]`），让检查在 CFG 层就被消掉而不是留给后端。
+墙钟（`-O2`、`taskset -c 4` 绑核、min-of-N）、峰值 RSS（`/usr/bin/time -v` 的
+`Maximum resident set size`）、fat/raw 与 fat/C 比值、stdout 一致性。机器噪声在这台机器上可达 ±10%
+（同一二进制的 min 与中位能差 20%），因此结论只在"多次轮转 + 取最小"的口径下比较，并优先看
+min 与中位是否同向。
 
-### B. 指针表示与 ABI（预期收益中高，风险中）
+### 3.3 不设门槛
 
-- **从 40 B 收缩**：`size` 与 `index` 在对象内是相关的（剩余长度 = 头部 `active_size_bytes` − index），
-  评估"指针只带 index，剩余长度按需从块头读"是否更快——头部通常在缓存里，但每次边界检查会多一次
-  加载，需要用基准在"指针拷贝密集"与"边界检查密集"两类负载上分别测。
-- **位宽压缩**：`index`/`size` 是否可以用 32 位（对象大小上限 `MAX_HEAP_BODY`/`MAX_STACK_BODY` 已经
-  限定了键空间，尺寸上限需要单独定义）；把 key 与 index 打包进一个字。
-- **传参 ABI**：40 B 聚合按值传参会走内存；评估把胖指针降为 2 个寄存器可传的值（例如 ⟨data, 句柄⟩
-  其中句柄指向元数据）对函数调用密集代码的影响。任何表示改动都要同步 `lockmech.py` 的字段下标与
-  `security.md` 的描述。
+性能试验只作参考，不写回归阈值脚本：改动后重跑 `bench_three_way.py` 与 `bench_allocator.py`，看
+`results.csv` 的 min/中位与 RSS 是否掉出噪声即可。安全门槛不变：`tests/safety/` 与 basic/package
+两套件在两种指针模式下全绿是每次改动的硬门槛；运行时改动另需 `python3 runtime/build.py --check --asan`。
 
-### C. 堆池与锁槽（预期收益中，风险中）
+## 4. 优化方向
 
-- **空闲链表策略**：当前首适配 + 固定 32 B 块头，混合尺寸下容易留下无法复用的碎片；评估按尺寸分级
-  （size-class）或伙伴分配，并测量长期 RSS 是否稳定。
-- **块头大小**：32 B 头对小块（如 `dyn[4] i32` 的 16 B 负载）占比很高；评估把 `capacity` 与
-  `active_size` 合并、或用对齐基址隐式编码。
-- **空闲块上限与回收**：给空闲链表设上限并在超限时把块还给底层分配器，避免长跑程序把峰值内存
-  永久占住（需要保持"锁槽地址稳定"的前提，见 `lockmech.py::BlockHeader` 的说明）。
-- **帧锁影子栈**：2^20 槽 × 8 B 的虚拟空间按需常驻；评估槽位复用的 LIFO 语义在深递归下的页触达
-  模式，并测量"同时活动的取址帧数"上限对真实程序的影响。
+### A. 检查的合并、提升与冷路径
 
-### D. 编译期与生成代码（预期收益低到中，风险低）
+- **合并相邻检查：已做**。相邻派生链上的良构 + `in_bounds` + `live` 合并为单个 `CheckElementAccess`，
+  `(base, offset)` 二元检查去重，派生链失效时补发挂起义务（`cfg/builder.py`）。
+- **提升与消解：待做**。把"同一指针在循环内的重复时序检查"提升为循环不变量、把归纳变量可证的
+  边界检查在 CFG 层消掉（`-O0` 也能受益），而不是留给 LLVM。
+- **冷路径：部分**。失败块已经是 `cold noreturn` 的运行时调用，但仍逐检查分裂基本块；评估
+  `-O0` 下减少块分裂的形态（例如检查通过时直接落到同一块的下一句）。
 
-- 记录并压缩检查产生的**基本块数量**（大函数的块数、`-t ll` 行数），避免检查把优化器的分析成本
-  推高；观察 `-O2` 编译时间随检查数的增长。
+### B. 指针表示与 ABI（未动，候选中预期收益最高）
+
+- **从 40 B 收缩**：`size` 与 `index` 相关（剩余长度 = 块头 `active_size` − index），评估"指针只带
+  index、剩余长度按需从块头读"在"指针拷贝密集"与"边界检查密集"两类负载上的取舍。
+- **位宽压缩**：`index`/`size` 是否可用 32 位（对象上限需单独定义）；key 与 index 打包进一个字。
+- **传参 ABI**：40 B 聚合按值传参走内存；评估降为 2 个寄存器可传的值（如 ⟨data, 句柄⟩）。
+- 任何表示改动都要同步 `lockmech.py` 的字段下标与 `docs/security.md`。
+
+### C. 堆池与锁槽
+
+- **分配器：已做**。尺寸类 arena + 16 B 块头 + 大对象缓存与退页 + 成批映射 slab（§2.1）。实测：
+  havlak 1752 → 176 ms（旧池首适配的病态）、grow_varied 峰值 RSS 529 → 64 MB、storage 系统调用
+  14 万 → 4 千、19 项 shootout 峰值 RSS 全部不升。
+- **小对象 slab 页回收：未做**，保留为待决策项。加回回收要在 `free` 上做 slab 存活计数，并处理
+  "整块变空后从类空闲链里摘除"的代价；带这类簿记的版本实测让 churn_single 慢 20%、binarytree 慢
+  一倍，因此当时选择让 slab 页常驻。若某个场景确实需要"小对象峰值后掉 RSS"，再按延迟回收重做。
+- **帧锁影子栈：未观测**。评估槽位复用的 LIFO 语义在深递归下的页触达，并测"同时活动的取址帧数"上限。
+
+### D. 编译期与生成代码
+
+- 记录检查产生的**基本块数量**（大函数块数、`-t ll` 行数、目标文件体积）与 `-O2` 编译时间随检查数
+  的增长，避免检查把优化器分析成本推高。
 - 失败路径与消息表可以合并（同一 `RuntimeErrorCode` 共享失败块或共享消息指针）。
 
 ## 5. 阶段与验收
 
-### P0：基准集与基线
+### P0：基准集与基线 —— 已完成
 
-**工作内容**：建 `bench/fatptr/`（四类基准）与 `scripts/` 下的运行器（跑两种模式 × 两档 `-O`，
-输出时间/RSS/代码规模/比值，结果落 JSON 便于比较）；把 §2.2 的基线固化成首份记录；确定门槛形式
-（示例：内存带宽类基准 fat/raw ≤ 1.5×，分配类 ≤ 1.2×，且 RSS 在 10 分钟混合 churn 后不再增长）。
+**实际交付**：`bench/shootout/` + `bench/c/` + `scripts/bench_three_way.py`（三态、绑核、min-of-N、
+RSS、stdout 护栏、`-t ll` 不参与）、`bench/alloc/` + `scripts/bench_allocator.py`（分配器四类负载），
+基线固化在 `bench/results.{md,csv}`（记录 commit 与工具链指纹）。没有 JSON 中间产物，也不设门槛
+（§3.3）——机器可读的部分由 CSV 承担。
 
-**验收**：一条命令产出完整报告；换台机器或改代码后能复现出可比的数字；三套件与 safety 在两模式下全绿。
+**验收**：一条命令产出完整报告；换机器/改代码后能复现可比数字；三套件两模式全绿。均已满足。
 
-### P1：检查的合并与提升
+### P1：检查的合并与提升 —— 部分完成
 
-**工作内容**：方向 A。先在 CFG 层做时序检查的提升与相邻检查合并，再评估冷路径形态。
+**已做**：相邻检查合并 + 二元检查去重 + 义务补发。
+**待做**：循环不变量提升与归纳变量消解；`-O0` 复测。
+**验收（更新）**：`-O0` 的 traversal 类负载比值明显下降（不依赖 `-O2`）；`-O2` 与 shootout 基线不退化；
+三套件全绿；失败语义逐条对照 `security.md` §5 复核。
 
-**验收**：`-O0` 的 traversal 比值从 6.0× 降到 3× 以内（不依赖 `-O2`）；`-O2` 不退化；safety 套件全绿；
-失败语义逐条对照 `security.md` §5 的五个条件复核。
+### P2：表示与 ABI 评估 —— 待做
 
-### P2：表示与 ABI 评估
+**工作内容**：方向 B。先做测量型原型（例如 "size 从块头读"），用基准判断"指针拷贝密集"（shootout 的
+list/json/richards）与"边界检查密集"（queen/deltablue）两类负载的取舍；再决定是否收缩表示、压缩位宽。
+**验收**：给出取舍结论与数据；若采纳，两种模式三套件全绿，且 `bench/results.csv` 的 fat/raw 与 RSS
+不退化。
 
-**工作内容**：方向 B。先做测量型原型（例如 size 从块头读的小改动），用基准判断"指针拷贝密集"与
-"边界检查密集"两类负载的取舍；决定是否收缩表示、是否压缩位宽，并把结论写进 `security.md` 与
-`lockmech.py` 的注释。
+### P3：池与锁槽 —— 已完成（回收策略留待决策）
 
-**验收**：给出取舍结论与数据；若采纳，则两种模式下三套件全绿，且 traversal/alloc 两类基准不退化。
+**已做**：尺寸类 arena、16 B 块头、大对象退页、成批映射 slab（§4C）。
+**待决策**：小对象 slab 页回收；帧锁影子栈的页触达观测。
+**验收**：混合尺寸 churn 稳态 RSS 有明确上界（grow_varied 64 MB、churn 1.1–1.3 MB）；长跑 RSS 平稳；
+单尺寸 churn 不退化（churn_single 16.5 ms，快于 raw 的 45.3 ms）。已满足；回收策略若要做，按
+"`free` 上簿记 ≤ 噪声" 与 "峰值后 RSS 可回落" 两个指标单独验收。
 
-### P3：池与锁槽
+### P4：收口 —— 部分完成
 
-**工作内容**：方向 C。混合尺寸与长时间 RSS 测量先行，再决定是否换分配策略或给空闲链表设上限。
-
-**验收**：混合尺寸 churn 的稳态 RSS 有明确上界；长跑基准 RSS 稳定；单尺寸 churn 不退化。
-
-### P4：收尾
-
-**工作内容**：把结论（采纳与不采纳的优化、门槛数值、遗留风险）写进 `docs/security.md` 或手册；
-基准与门槛纳入日常检查流程。
-
-**验收**：文档与实测一致；门槛脚本可在改动后一键复核。
+**已做**：块头与堆池描述同步进 `docs/security.md` §6 与 `docs/compile_script.md` §5
+（运行时库的构建、链接、符号表与尺寸类 ABI）；`docs/manual/12`、`14` 补运行时边界与链接说明。
+**未做**：代码规模数据（方向 D）；把基准纳入日常检查流程（按 §3.3 只保留"改动后重跑一次"的惯例，
+不设自动门槛）。
+**验收**：文档与实测一致；基准脚本一条命令可复核。前者已满足，后者取决于方向 D 是否要做。
 
 ## 6. 风险与开放问题
 
 - **安全回退**是最大的风险：任何检查合并/提升都必须给出"检查集合等价"的论证，而不是靠测试通过。
-  safety 套件 + 手工构造的边界用例（one-past、内部指针释放、视图转换、整数回绕）作为底线。
-- **`-O0` 与 `-O2` 结论可能相反**：表示收缩会减少拷贝但增加加载，需分别测量，门槛要按优化级分档。
-- **帧锁粒度**是整个函数帧（`security.md` §7 已说明是设计限制），细化为词法作用域是语义改动，
-  不在本阶段范围。
-- **单线程假设**：池与影子栈都不加锁；引入并发需要重新设计，本阶段只保证不把这条路堵死。
+  safety 套件 + 手工边界用例（one-past、内部指针释放、视图转换、整数回绕）是底线。
+- **小对象 slab 页常驻**：进程峰值后 RSS 不回落。这是有意取舍（回收簿记实测让分配密集负载慢 20% 以上），
+  若改回回收，必须重新测 churn 与 binarytree。
+- **`-O0` 与 `-O2` 结论可能相反**：表示收缩会减少拷贝但增加加载，需分别测量；当前只有 `-O2` 基线。
+- **帧锁粒度**是整个函数帧（`security.md` §7 已说明是设计限制），细化为词法作用域是语义改动，不在本阶段。
+- **单线程假设**：arena 与影子栈都不加锁；引入并发需要重新设计，本阶段只保证不把这条路堵死。
 - **键与槽位耗尽**：当前是确定性终止（不回绕）。长时间运行程序的键消耗速率需要在基准里观察，
   确认 2^63 量级不会成为实际限制。
+- **表示改动的 ABI 同步面**：`lockmech.py` 字段下标、`security.md`、`runtime/` 的块头常量与
+  `runtime/build.py --check` 的断言必须一起改。
 
 ## 7. 参考
 
 - 机制语义：[`docs/security.md`](../security.md)（三形态、锁与键、空间检查、堆/栈保护、可信边界）
 - 机制常量与布局：`compiler/codegen/cfg/lockmech.py`（`BlockHeader`、`KeyGen`、`FrameLockArena`、字段下标）
-- 检查插入与发射：`compiler/codegen/cfg/builder.py`、`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/module.py`
+- 检查插入、合并与发射：`compiler/codegen/cfg/builder.py`、`compiler/codegen/cfg/ir.py`、
+  `compiler/codegen/llvm/builder.py`
+- 运行时库：`runtime/include/yian_rt.h`、`runtime/src/alloc.c`、`runtime/build.py`、
+  `docs/compile_script.md` §5
 - 运行期错误码与消息：`compiler/runtime_error.py`
+- 基准与基线：`scripts/bench_three_way.py`、`bench/shootout/`、`bench/c/`、`bench/results.{md,csv}`、
+  `scripts/bench_allocator.py`、`bench/alloc/`
 - 回归语料：`tests/safety/`、`tests/basic/std/tiered_*`
-- 上游计划：`docs/proposal.md` §安全机制（性能开销与内存池）
