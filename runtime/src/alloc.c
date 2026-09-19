@@ -10,6 +10,10 @@
  *   free : 由块地址定位 region 首部的 magic/类号, 把块压回该类自由链.
  * 两个路径都是 O(1) 且只碰热数据: 类数组、当前 slab 的 bump 游标、空闲块自身.
  *
+ * 热路径是两个叶子函数: 弹链/取 bump 只有几条指令, 不建栈帧; 换 slab、大对象、内存
+ * 耗尽全部转到 noinline 冷路径. 尺寸编译期已知的分配点由编译器算好类号直接调用
+ * (类表在 yian_rt.h::YIAN_CLASS_BYTES), 运行时不必再按字节数查表.
+ *
  * 尺寸类: 16 B 起、每倍频 3 档、比例约 1.25, 共 36 档至 49152 B; 更大的请求走大对象
  * chunk. slab 是 64 KiB、64 KiB 对齐的独立映射; 大对象 chunk 放在 64 KiB 对齐 region
  * 的 +64 处, region 首部放 LargeHeader. 因此 `block & ~(SLAB_BYTES-1)` 对两种块都指向
@@ -40,14 +44,10 @@
 /* 空闲链与缓存链写在空闲块负载的首字. */
 #define YIAN_NEXT_OFFSET YIAN_HDR_BYTES
 
-static const uint32_t yian_class_bytes[] = {
-    16,     20,     25,     32,     40,     50,     64,     80,     100,
-    128,    160,    200,    256,    320,    400,    512,    640,    800,
-    1024,   1280,   1600,   2048,   2560,   3200,   4096,   5120,   6400,
-    8192,   10240,  12800,  16384,  20480,  25600,  32768,  40960,  49152,
-};
+static const uint32_t yian_class_bytes[] = {YIAN_CLASS_BYTES};
 
-#define YIAN_CLASS_COUNT ((uint32_t)(sizeof(yian_class_bytes) / sizeof(yian_class_bytes[0])))
+_Static_assert(sizeof(yian_class_bytes) / sizeof(yian_class_bytes[0]) == YIAN_CLASS_COUNT,
+               "YIAN_CLASS_BYTES must list YIAN_CLASS_COUNT classes");
 
 typedef struct Slab {
     uint64_t magic;
@@ -64,11 +64,8 @@ typedef struct LargeHeader {
     uint64_t payload;
 } LargeHeader;
 
-static uint32_t class_stride[YIAN_CLASS_COUNT];
-static uint32_t class_bucket_start[64];
 static void *class_free[YIAN_CLASS_COUNT];  /* 每类空闲块链 */
 static Slab *class_fill[YIAN_CLASS_COUNT];  /* 每类正在填充的 slab */
-static int alloc_inited = 0;
 
 /* 大对象缓存: 块负载首字复用为链; 超额度者移出缓存并归还物理页 */
 static void *large_head = 0;
@@ -107,14 +104,14 @@ static void release_pages(void *start, uint64_t length) {
     }
 }
 
-/* ── 初始化与类查找 ── */
+/* ── 类查找与块尺寸 ── */
 
-static void alloc_init(void) {
-    for (uint32_t i = 0; i < YIAN_CLASS_COUNT; i++) {
-        class_stride[i] = (uint32_t)align_up(YIAN_HDR_BYTES + yian_class_bytes[i], 16);
-    }
+static uint32_t class_bucket_start[64]; /* 每个 2 的幂桶里第一个够用的尺寸类 */
+static int alloc_inited = 0;
+
+/* 只在第一次通用分配时执行, 放在冷路径以免污染热路径的代码布局. */
+static __attribute__((noinline, cold)) void alloc_init_slow(void) {
     for (uint32_t bucket = 0; bucket < 64; bucket++) {
-        /* 该桶里第一个"容量 ≥ 2^bucket"的尺寸类; 桶内再线性微调. */
         uint64_t threshold = (uint64_t)1 << bucket;
         class_bucket_start[bucket] = YIAN_CLASS_COUNT - 1;
         for (uint32_t i = 0; i < YIAN_CLASS_COUNT; i++) {
@@ -127,16 +124,22 @@ static void alloc_init(void) {
     alloc_inited = 1;
 }
 
-static uint32_t class_index(uint64_t bytes) {
-    uint32_t bucket = (uint32_t)(63 - __builtin_clzll(bytes));
-    uint32_t index = class_bucket_start[bucket];
-    while (index + 1 < YIAN_CLASS_COUNT && yian_class_bytes[index] < bytes) {
+/* 能容纳 ``bytes`` 的最小尺寸类的类号: clz 定桶 + 桶内至多 3 步.
+ * 调用方保证 bytes 落在 [1, 最大类容量] 内, 且已执行过一次初始化. */
+static inline uint32_t class_index(uint64_t bytes) {
+    uint32_t index = class_bucket_start[63 - __builtin_clzll(bytes)];
+    while (yian_class_bytes[index] < bytes) {
         index++;
     }
     return index;
 }
 
-static void alloc_fail(void) {
+/* 类内一块占用的字节数 (块头 + 负载, 16 B 对齐). 无需预计算表. */
+static inline uint32_t class_stride(uint32_t index) {
+    return (uint32_t)align_up(YIAN_HDR_BYTES + yian_class_bytes[index], 16);
+}
+
+static _Noreturn void alloc_fail(void) {
     static const uint8_t message[] = YIAN_OOM_MESSAGE;
     __yian_runtime_fail(message, sizeof(message) - 1);
 }
@@ -144,7 +147,7 @@ static void alloc_fail(void) {
 /* ── slab ── */
 
 /* 映射一块 64 KiB、64 KiB 对齐的 slab 区域, 描述符放在区域首部. */
-static Slab *slab_map(void) {
+static __attribute__((noinline)) Slab *slab_map(void) {
     uint64_t total = YIAN_SLAB_BYTES * 2;
     void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED) {
@@ -173,36 +176,41 @@ static Slab *slab_new(uint32_t index) {
 }
 
 /* 从 slab 顺序取一块; 用尽返回 0. */
-static void *slab_take(Slab *slab) {
+static inline void *slab_take(Slab *slab) {
     char *cursor = slab->bump;
-    if (cursor + class_stride[slab->class_index] > (char *)slab + YIAN_SLAB_BYTES) {
+    if (cursor + class_stride(slab->class_index) > (char *)slab + YIAN_SLAB_BYTES) {
         return 0;
     }
-    slab->bump = cursor + class_stride[slab->class_index];
+    slab->bump = cursor + class_stride(slab->class_index);
     return cursor;
 }
 
 /* ── 分配与释放 ── */
 
-static void *class_alloc(uint64_t bytes) {
-    uint32_t index = class_index(bytes);
-    void *block = class_free[index];
-    if (block != 0) {
-        class_free[index] = block_next(block);
-        return block;
-    }
+/* 冷路径: 该类空闲链为空, 从正在填充的 slab 顺序取, 用尽则映射新 slab. */
+static __attribute__((noinline)) void *class_refill(uint32_t index) {
     Slab *slab = class_fill[index];
     if (slab == 0) {
         slab = slab_new(index);
         class_fill[index] = slab;
     }
-    block = slab_take(slab);
+    void *block = slab_take(slab);
     if (block == 0) { /* 当前 slab 用尽: 换一块继续顺序取 */
         slab = slab_new(index);
         class_fill[index] = slab;
         block = slab_take(slab);
     }
     return block;
+}
+
+/* 热路径: 弹该类空闲链, 链空转冷路径. */
+static inline void *class_pop(uint32_t index) {
+    void *block = class_free[index];
+    if (block != 0) {
+        class_free[index] = block_next(block);
+        return block;
+    }
+    return class_refill(index);
 }
 
 static void slab_release(void *block, uint32_t index) {
@@ -216,7 +224,7 @@ static inline LargeHeader *large_header(void *chunk) {
     return (LargeHeader *)block_region(chunk);
 }
 
-static void *large_alloc(uint64_t bytes) {
+static __attribute__((noinline)) void *large_alloc(uint64_t bytes) {
     void *previous = 0;
     for (void *chunk = large_head; chunk != 0; chunk = block_next(chunk)) {
         if (large_header(chunk)->payload >= bytes) {
@@ -259,7 +267,8 @@ static void *large_alloc(uint64_t bytes) {
     return (void *)chunk;
 }
 
-static void large_release(void *chunk) {
+/* 冷路径: 大对象归还 (含按额度淘汰与退页). */
+static __attribute__((noinline)) void large_release(void *chunk) {
     uint64_t payload = large_header(chunk)->payload;
     block_set_next(chunk, 0);
     if (large_tail == 0) {
@@ -280,19 +289,30 @@ static void large_release(void *chunk) {
     }
 }
 
-/* ── 对外接口 (编译器调用, 块头与检查不动) ── */
+/* ── 对外接口 (编译器调用, 块头与检查不动) ──
+ *
+ * 两个分配入口都写成叶子函数: 热路径只碰类链头与空闲块自身, 换 slab / 大对象 /
+ * 内存耗尽全部转 YIAN_NOINLINE 的冷路径, 因此没有栈帧与寄存器保存开销. */
 
 void *__secl_pool_alloc(uint64_t requested) {
-    if (!alloc_inited) {
-        alloc_init();
-    }
     if (requested == 0) {
-        requested = 1;
+        requested = 1; /* 与 active_size 的空请求归一化一致 */
     }
     if (requested <= yian_class_bytes[YIAN_CLASS_COUNT - 1]) {
-        return class_alloc(requested);
+        if (__builtin_expect(!alloc_inited, 0)) {
+            alloc_init_slow();
+        }
+        return class_pop(class_index(requested));
     }
     return large_alloc(requested);
+}
+
+/* 编译器在尺寸编译期已知的分配点直接用类号调用, 省掉按字节数查表. */
+void *__secl_pool_alloc_class(uint32_t class_index_value) {
+    if (class_index_value >= YIAN_CLASS_COUNT) { /* ABI 误用/版本不一致: 显式终止 */
+        alloc_fail();
+    }
+    return class_pop(class_index_value);
 }
 
 void __secl_pool_release(void *block) {

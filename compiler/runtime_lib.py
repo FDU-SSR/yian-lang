@@ -22,6 +22,24 @@ class RuntimeBuildError(Exception):
     """运行时库构建失败（源码缺失或 clang 报错）。"""
 
 
+# 尺寸类表: yian_rt.h::YIAN_CLASS_BYTES 的 Python 镜像, 类号即下标.
+# runtime/build.py --check 断言两侧逐项相等.
+CLASS_BYTES: tuple[int, ...] = (
+    16, 20, 25, 32, 40, 50, 64, 80, 100,
+    128, 160, 200, 256, 320, 400, 512, 640, 800,
+    1024, 1280, 1600, 2048, 2560, 3200, 4096, 5120, 6400,
+    8192, 10240, 12800, 16384, 20480, 25600, 32768, 40960, 49152,
+)
+
+
+def class_index_for_payload(payload: int) -> int | None:
+    """返回能容纳 ``payload`` 字节的最小尺寸类的类号; 超过最大类时返回 ``None``。"""
+    for index, capacity in enumerate(CLASS_BYTES):
+        if payload <= capacity:
+            return index
+    return None
+
+
 def __sources() -> list[Path]:
     return (
         sorted(RUNTIME_DIR.rglob("*.c"))

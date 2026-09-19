@@ -86,6 +86,18 @@ static void check_allocator(void) {
     __secl_pool_release(first);
     check(__secl_pool_alloc(64) == first, "freed class block is reused");
 
+    /* 类号入口 (编译器在尺寸已知的分配点直接传类号): 逐档容量正确且可复用. */
+    static const uint32_t classes[] = {YIAN_CLASS_BYTES};
+    check(sizeof(classes) / sizeof(classes[0]) == YIAN_CLASS_COUNT, "class table matches the count macro");
+    for (uint32_t index = 0; index < YIAN_CLASS_COUNT; index++) {
+        void *block = __secl_pool_alloc_class(index);
+        check(((uintptr_t)block & 15u) == 0, "class-indexed block is 16-byte aligned");
+        check(__secl_pool_payload(block) == classes[index], "class-indexed block has the class capacity");
+        __secl_pool_release(block);
+        check(__secl_pool_alloc_class(index) == block, "class-indexed block is reused");
+        __secl_pool_release(block);
+    }
+
     /* 混合尺寸: 保留一批小块, 交替申请/释放大块 (旧池首适配的病态模式). */
     enum { SMALL_COUNT = 256 };
     void *small[SMALL_COUNT];

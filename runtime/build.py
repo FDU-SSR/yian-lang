@@ -12,7 +12,10 @@
 一致性断言:
   - runtime/include/yian_rt.h 的 YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
     与 compiler/codegen/cfg/lockmech.py::FrameLockArena 相等;
-  - YIAN_ABI_FAIL_MESSAGE 与 compiler/runtime_error.py 的 S002 消息逐字节相等.
+  - YIAN_HDR_BYTES 与 lockmech.py::BlockHeader.BYTES 相等;
+  - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES 与 compiler/runtime_lib.py::CLASS_BYTES 逐项相等;
+  - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE 与 compiler/runtime_error.py 的 S002/R002
+    消息逐字节相等.
 """
 
 from __future__ import annotations
@@ -109,10 +112,24 @@ def __macro_bytes(name: str) -> bytes:
     return match.group(1).encode("utf-8").decode("unicode_escape").encode("latin-1")
 
 
+def __macro_int_list(name: str) -> list[int]:
+    """读取由整数字面量逗号分隔 (可带续行反斜杠) 的宏, 例如尺寸类表."""
+    text = HEADER.read_text(encoding="utf-8")
+    match = re.search(rf"^#define\s+{name}\s+((?:[^\n]*\\\n)*[^\n]*)$", text, re.MULTILINE)
+    if match is None:
+        raise SystemExit(f"[check] {HEADER.name} 缺少宏 {name}")
+    body = match.group(1).replace("\\\n", " ")
+    items = [item.strip() for item in body.split(",")]
+    if any(re.fullmatch(r"[0-9]+[uUlL]*", item) is None for item in items):
+        raise SystemExit(f"[check] 宏 {name} 含非整数字面量: {body!r}")
+    return [int(re.sub(r"[uUlL]+$", "", item)) for item in items]
+
+
 def check_consistency() -> None:
     sys.path.insert(0, str(ROOT))
     from compiler.codegen.cfg import lockmech  # noqa: PLC0415
     from compiler.runtime_error import RuntimeErrorCode, runtime_error_message  # noqa: PLC0415
+    from compiler.runtime_lib import CLASS_BYTES  # noqa: PLC0415
 
     slots = __macro_int("YIAN_FRAME_LOCK_SLOTS")
     slot_bytes = __macro_int("YIAN_FRAME_LOCK_SLOT_BYTES")
@@ -137,7 +154,18 @@ def check_consistency() -> None:
             raise SystemExit(
                 f"[check] {macro} 与 {code.name} 消息不一致:\n  头文件 {declared!r}\n  Python {expected!r}"
             )
-    print("[runtime] ABI 常量与 lockmech.py / runtime_error.py 一致")
+    class_count = __macro_int("YIAN_CLASS_COUNT")
+    class_bytes = __macro_int_list("YIAN_CLASS_BYTES")
+    if class_count != len(class_bytes):
+        raise SystemExit(
+            f"[check] YIAN_CLASS_COUNT={class_count} 与尺寸类表项数 {len(class_bytes)} 不一致"
+        )
+    if tuple(class_bytes) != CLASS_BYTES:
+        raise SystemExit(
+            f"[check] 尺寸类表与 runtime_lib.CLASS_BYTES 不一致:\n"
+            f"  头文件 {class_bytes}\n  Python {list(CLASS_BYTES)}"
+        )
+    print("[runtime] ABI 常量与 lockmech.py / runtime_error.py / runtime_lib.py 一致")
 
 
 def main() -> int:

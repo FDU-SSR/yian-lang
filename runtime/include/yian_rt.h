@@ -34,9 +34,25 @@
 /* 分配失败时写出的诊断 (必须与 compiler/runtime_error.py 的 R002 消息逐字节一致). */
 #define YIAN_OOM_MESSAGE "yian: runtime error [R002]: memory allocation failed\n"
 
+/* 尺寸类表: 每档的负载容量 (B), 从 16 B 起按约 1.25 的比例到 49152 B. 类号就是
+ * 表下标; 更大的请求走大对象路径.
+ *
+ * 编译器在尺寸已知的分配点直接传类号 (见 __secl_pool_alloc_class), 因此这张表是
+ * ABI 的一部分: compiler/runtime_lib.py::CLASS_BYTES 是它的 Python 镜像,
+ * runtime/build.py --check 断言两侧逐项相等. */
+#define YIAN_CLASS_COUNT 36u
+#define YIAN_CLASS_BYTES                                                                     \
+    16, 20, 25, 32, 40, 50, 64, 80, 100, 128, 160, 200, 256, 320, 400, 512, 640, 800, 1024, \
+        1280, 1600, 2048, 2560, 3200, 4096, 5120, 6400, 8192, 10240, 12800, 16384, 20480,    \
+        25600, 32768, 40960, 49152
+
 /* 堆分配器: 返回块基址 (锁槽地址), 负载 = 基址 + YIAN_HDR_BYTES;
- * 释放整块归还; 两者都不返回失败 (内存耗尽时按 R002 终止). */
+ * 释放整块归还; 两者都不返回失败 (内存耗尽时按 R002 终止).
+ *
+ * __secl_pool_alloc 按请求字节数查表选类; __secl_pool_alloc_class 直接用编译器
+ * 算好的类号 (省掉查表), class_index 必须落在 [0, YIAN_CLASS_COUNT). */
 void *__secl_pool_alloc(uint64_t requested);
+void *__secl_pool_alloc_class(uint32_t class_index);
 void __secl_pool_release(void *block);
 
 /* 进程参数: 由 wrapper main 校验后写入. */

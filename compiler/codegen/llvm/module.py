@@ -117,6 +117,7 @@ class LLModule:
         self.__lit_lock_global: ir.GlobalVariable | None = None
         self.__pool_head_global: ir.GlobalVariable | None = None
         self.__pool_alloc_func: ir.Function | None = None
+        self.__pool_alloc_class_func: ir.Function | None = None
         self.__pool_release_func: ir.Function | None = None
         self.__frame_lock_arena_global: ir.GlobalVariable | None = None
         self.__frame_lock_depth_global: ir.GlobalVariable | None = None
@@ -339,6 +340,22 @@ class LLModule:
             fn.args[0].name = "requested"
             self.__pool_alloc_func = fn
         return self.__pool_alloc_func
+
+    def get_pool_alloc_class(self) -> ir.Function:
+        """Return the size-class allocator declaration (类号由编译器算好).
+
+        尺寸在编译期已知的分配点直接传类号, 运行时省掉按字节数查表; 类号取值见
+        `runtime_lib.CLASS_BYTES`。
+        """
+        if self.__pool_alloc_class_func is None:
+            fn = ir.Function(
+                self.__module,
+                ir.FunctionType(ir.PointerType(), [ir.IntType(32)]),
+                name="__secl_pool_alloc_class",
+            )
+            fn.args[0].name = "class_index"
+            self.__pool_alloc_class_func = fn
+        return self.__pool_alloc_class_func
 
     def get_pool_release(self) -> ir.Function:
         """Return the runtime release declaration; 归还整块 (物理页由运行时回收)."""

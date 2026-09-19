@@ -23,6 +23,7 @@ from compiler.codegen.llvm.types import LLTypeCtx
 from compiler.codegen.llvm.value import LLValue
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.runtime_error import RuntimeErrorCode
+from compiler.runtime_lib import class_index_for_payload
 
 
 class BuilderPosition(Enum):
@@ -425,13 +426,25 @@ class LLBuilder:
             )
         self.__func.set_reg(result, result_val)
 
+    def __constant_class_index(self, count_ir: ir.Value, elem_size: int) -> int | None:
+        """元素数为编译期常量时返回尺寸类号; 否则返回 ``None`` (走通用分配入口)。"""
+        if not isinstance(count_ir, ir.Constant):  # type: ignore
+            return None
+        count = count_ir.constant  # type: ignore
+        if not isinstance(count, int) or count < 0:
+            return None
+        payload = count * elem_size
+        if payload == 0:
+            payload = 1  # 与运行时的空请求归一化一致
+        return class_index_for_payload(payload)
+
     def malloc(self, type_id: int, size: LLValue, key: LLValue | None, result: str) -> LLValue:
         if self.__type_ctx.is_zst(type_id):
             ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
             self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
             return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
         # Convert element count to byte count for allocation.
-        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及固定池块头,一律在 i128
+        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及堆块头,一律在 i128
         # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ 报告 R001。否则纯 64 位乘法
         # 回绕(如 n=2^62+1,|T|=8 → 2^65 → 小值)会令物理分配过小,而胖指针
         # size 字段 = n(元素数,无回绕),in_bounds 全部通过 → 越界访问逃过检查。
@@ -441,7 +454,7 @@ class LLBuilder:
         payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
         total128 = payload128
         if not self.__raw_pointers:
-            # 规则 3.6.1:块 = 稳定池块头(H=32)+负载;块头首字为锁槽。
+            # 规则 3.6.1:块 = 堆块头 + 负载;块头首字为锁槽。
             # raw 模式无锁头(块 = 负载,data = 块基址)。
             total128 = self.__builder.add(
                 total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
@@ -467,7 +480,16 @@ class LLBuilder:
             result_val = LLValue(ptr_type_id, typed)  # type: ignore
             self.__func.set_reg(result, result_val)
             return result_val
-        block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
+        # 元素数与元素大小都是编译期常量时, 直接传尺寸类号: 运行时不再按字节数查表.
+        # 运行时取不到类号 (请求大于最大类) 或元素数非常量时走通用入口.
+        constant_class = self.__constant_class_index(size.ir_val, elem_size)
+        if constant_class is None:
+            block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
+        else:
+            block_ir = self.__builder.call(
+                self.__module.get_pool_alloc_class(),
+                [ir.Constant(ir.IntType(32), constant_class)],  # type: ignore
+            )  # type: ignore
         block_base = LLValue(ptr_type_id, block_ir)  # type: ignore
         # Keep the logical payload extent separate from the pool's reusable
         # physical capacity.  Delete and external view checks must validate
