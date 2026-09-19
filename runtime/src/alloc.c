@@ -35,6 +35,7 @@
 /* ── 参数 ── */
 
 #define YIAN_SLAB_BYTES ((uint64_t)64 * 1024)
+#define YIAN_SLAB_CHUNK ((uint64_t)16 * YIAN_SLAB_BYTES)
 #define YIAN_SLAB_HEADER ((uint64_t)64)
 #define YIAN_LARGE_CACHE ((uint64_t)8 << 20)
 
@@ -146,20 +147,50 @@ static _Noreturn void alloc_fail(void) {
 
 /* ── slab ── */
 
-/* 映射一块 64 KiB、64 KiB 对齐的 slab 区域, 描述符放在区域首部. */
+/* 空闲区域链: 地址空间已经映射好、但还没交给任何尺寸类的 64 KiB 区域.
+ * 链写在区域首字, 区域成为 slab 时被 magic 覆盖. */
+static void *region_free = 0;
+
+static inline void *region_next(const void *region) {
+    void *value;
+    memcpy(&value, region, sizeof(value));
+    return value;
+}
+
+static inline void region_set_next(void *region, void *next) {
+    memcpy(region, &next, sizeof(next));
+}
+
+/* 映射一块 64 KiB、64 KiB 对齐的 slab 区域, 描述符放在区域首部.
+ *
+ * 一次映射 YIAN_SLAB_CHUNK 字节并切成若干个 64 KiB 区域: 一个本次返回, 其余进
+ * 空闲区域链. 区域粒度仍是 64 KiB (每个尺寸类的尾浪费上限不随 chunk 变大),
+ * 而系统调用摊薄到每个区域不足一次; 头尾不足一个区域的零头还回内核. */
 static __attribute__((noinline)) Slab *slab_map(void) {
-    uint64_t total = YIAN_SLAB_BYTES * 2;
+    if (region_free != 0) {
+        Slab *region = region_free;
+        region_free = region_next(region);
+        return region;
+    }
+    uint64_t total = YIAN_SLAB_CHUNK + YIAN_SLAB_BYTES;
     void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED) {
         return 0;
     }
     uintptr_t base = (uintptr_t)align_up((uintptr_t)raw, YIAN_SLAB_BYTES);
-    uintptr_t end = base + YIAN_SLAB_BYTES;
+    uintptr_t end = (uintptr_t)raw + total;
+    uint32_t count = (uint32_t)((end - base) / YIAN_SLAB_BYTES);
     if (base > (uintptr_t)raw) {
         munmap(raw, (size_t)(base - (uintptr_t)raw));
     }
-    if (end < (uintptr_t)raw + total) {
-        munmap((void *)end, (size_t)((uintptr_t)raw + total - end));
+    uintptr_t used = base + (uintptr_t)count * YIAN_SLAB_BYTES;
+    if (used < end) {
+        munmap((void *)used, (size_t)(end - used));
+    }
+    for (uint32_t i = 1; i < count; i++) {
+        void *spare = (void *)(base + (uintptr_t)i * YIAN_SLAB_BYTES);
+        region_set_next(spare, region_free);
+        region_free = spare;
     }
     return (Slab *)base;
 }
