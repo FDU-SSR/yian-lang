@@ -1,56 +1,65 @@
-# bench — 胖指针 vs 裸指针性能基准
+# bench — C / raw / fat 三态性能基准
 
-本目录是 **两态**性能对照：同一份 YIAN 源码分别用胖指针（默认）与裸指针
-（`--raw-pointers`）编译，比较端到端墙钟时间与峰值内存。**没有 `nocheck` 态**：
-编译器已移除关闭检查的开关，比较对象就是完整胖指针实现相对裸指针实现的总开销。
+本目录是**三态**性能对照：同一算法、同一规模的三个实现, 以 **C 参考实现为基线**——
+
+| 态 | 实现 | 编译 |
+| --- | --- | --- |
+| `c` | `bench/c/<name>.c` | `clang -O2 -lm` |
+| `raw` | `bench/shootout/<name>.an` | `yianc -O2 --raw-pointers` |
+| `fat` | `bench/shootout/<name>.an` | `yianc -O2` (胖指针为默认) |
+
+**没有 `nocheck` 态**：编译器已移除关闭检查的开关, 因此 `raw/C` 是裸指针实现相对 C
+的开销, `fat/raw` 是完整胖指针相对裸指针的总开销。
 
 ## 一条命令
 
 ```bash
-# 编译两态 + 校验两态输出一致 + 测量 + 生成结果 (建议绑核, 正式记录必须绑核)
-python3 scripts/bench_fat_vs_raw.py --pin 4
+# 编译三态 + 校验 C 权威值与两态语义 + 测量 + 生成结果 (建议绑核, 正式记录必须绑核)
+python3 scripts/bench_three_way.py --pin 4
 
-# 与已提交基线对照 (单侧 ±20%: 只拦变慢)
+# 与已提交基线对照 (单侧 ±20%: 只拦 raw/C、fat/C 比值变差)
 python3 scripts/check_bench_regression.py
+
+# 独立校验 C 参考实现确实跑出权威值 (19/19 PASS)
+python3 scripts/verify_bench_c.py
 ```
 
 产物：
 
-- `bench/shootout/*.an` — 基准源码（单一源，两态共用；`<name>.raw.an` 为裸态覆盖源）；
-- `bench/c/*.c` — 同规模的自写 C 参考，只做跨语言正确性对照；
+- `bench/shootout/*.an` — YIAN 基准源码（两态共用；`<name>.raw.an` 为裸态覆盖源）；
+- `bench/c/*.c` — 同算法同规模的 C 参考实现；
 - `bench/results.md` — 表格 + 环境指纹 + 协议说明（人读）；
 - `bench/results.csv` — 机读基线，由 `scripts/check_bench_regression.py` 对照。
 
-`results.{md,csv}` 是**生成物**，每次运行覆盖；`results.csv` 需要提交，它是回归门禁的基线。
-二进制与中间日志写入 `build/bench/`（不提交）。
+`results.{md,csv}` 是**生成物**，每次运行覆盖；`results.csv` 需要提交，它是回归门禁的基线
+（文件头有 `# format:` 标记，旧格式会被门禁明确拒绝而不是误判）。二进制与中间日志写入
+`build/bench/`（不提交），三态分别放在 `build/bench/{cbin,yfat,yraw}/`。
 
 ## 协议
 
 | 项 | 取值 |
 | --- | --- |
-| 源码 | 每个基准一份源，两态共用 |
-| 编译 | 胖态 `yianc -O2 lib/src <src> -o <bin>`；裸态追加 `--raw-pointers`；两者同一 `lib/src` |
-| 采样 | 每态 1 次 warmup（不计入样本）+ 5 次测量取中位数；峰值 RSS 取各次最大值 |
-| 交替 | 同一基准的**两态逐次交替**测量（fat, raw, fat, raw, …），消除跨时段频率/温度漂移 |
+| 源码 | YIAN 两态共用一份源；C 参考独立一份 |
+| C 侧 argv | `scripts/bench_common.py` 的 `argv`（`cd 100 80`、`richards 2400`，其余无参），保证与 `.an` 迭代次数一致 |
+| 采样 | 每态 1 次 warmup（不计入样本）+ 5 次测量取最小值（同时记录中位数与 CV）；峰值 RSS 取各次最大值 |
+| 轮转 | 同一基准的**三态逐次轮转**测量（C, raw, fat, C, raw, fat, …），消除跨时段频率/温度漂移 |
 | 降噪 | `taskset -c <cpu>` 绑核；结果文件记录绑核编号 |
-| 产物命名 | 两态二进制同目录、等长文件名（`<name>.fat` / `<name>.raw`），避免路径长度影响进程布局（分配密集型基准的绝对值对布局敏感） |
-| 语义护栏 | 两态 warmup 的 stdout 与退出码必须一致；不一致即基线失效，脚本报错并在报告标注 |
-| 自适应降次 | 两态 warmup 合计超过 `--max-state-sec`（默认 120 s）时测量次数降到 3 |
-
-与来源分支 `archive/secl-paper-20260909` 的协议差异：该分支为三态
-（`raw` / `nocheck` / `check`）、块式分态测量、`-O3`；此处按两态、逐次交替、`-O2`
-重新基线化。**分支的历史数字不可直接对照**（LLVM 已换代）。
+| 产物命名 | 三态二进制同目录、**等长路径**（`build/bench/<state>/<name>`，state 目录名等长），避免 argv[0] 长度影响进程布局（分配密集型基准的绝对值对布局敏感） |
+| 语义护栏 | ① C warmup 的 `(退出码, stdout)` 必须满足 `scripts/bench_common.py` 的权威值；② raw 与 fat 的 warmup stdout/退出码必须逐字节一致；③ 两态退出码必须为 0。任一不成立即该基准的比值不可用（报告标 `否`） |
+| 自适应降次 | 三态 warmup 合计超过 `--max-state-sec`（默认 120 s）时测量次数降到 3 |
 
 ## 结果解读
 
-- **比值 = fat 中位数 / raw 中位数**，即完整胖指针相对裸指针的总开销（含检查、
-  锁槽/帧锁、胖表示本身）。比值是基准内的相对量，**不可跨基准相加**；报告里的
-  “几何平均比值”只作总览。
-- 比值 ≈ 1.0 表示两态性能相当（该基准的检查被优化器基本消除，或本来就不是检查
-  敏感型）；比值高表示该基准的访问模式触发大量运行时检查，是胖指针开销的主要来源。
-- 基线对照是**单侧**的：只拦“变慢”与“比值变大”，不拦变快。环境指纹
-  （hostname / machine / cpu_count / clang）不一致时门禁拒绝判定（退出码 2），
-  因为绝对时间跨机不可比；跨机对照须显式 `--allow-env-mismatch`，结论仅供参考。
+- 三个比值都取自**最小值**：`raw/C`、`fat/C`（以 C 为基线）与 `fat/raw`。比值是基准内的
+  相对量，**不可跨基准相加**；报告里的“几何平均比值”只作总览。
+- `raw/C` ≈ 1.0 表示裸指针实现的抽象开销被优化器基本消除；`fat/C` 是完整胖指针（含检查、
+  锁槽/帧锁、胖表示本身）相对 C 的总开销。
+- 基线对照是**单侧**的：只拦 `raw/C` 与 `fat/C` 变大（默认 +20%），不拦变快。C 的绝对时间
+  变慢（默认 +20%）只给警告：C 由 clang 编译，不受 YIAN 代码生成影响，它变慢说明机器/工具链
+  状态变化，而比值仍可对照。
+- 环境指纹（hostname / machine / cpu_count / clang / cflags / llvmlite / llvm / opt）不一致时
+  门禁拒绝判定（退出码 2），因为绝对时间跨机不可比；跨机对照须显式 `--allow-env-mismatch`，
+  结论仅供参考。
 
 ## 基准与来源
 
@@ -62,7 +71,7 @@ python3 scripts/check_bench_regression.py
 | bounce | 球体弹跳模拟（LCG 随机数） | AWFY |
 | cd | 碰撞检测（红黑树 + 体素归并） | AWFY（CD） |
 | deltablue | 约束求解器（DeltaBlue） | AWFY（DeltaBlue） |
-| fann | 浮点神经网络前向计算 | Benchmarks Game |
+| fann | 浮点神经网络前向计算（fannkuchredux） | Benchmarks Game |
 | fasta | 随机 DNA/氨基酸序列生成 | Benchmarks Game |
 | havlak | 循环识别（Havlak，图算法） | AWFY（Havlak） |
 | json | JSON 解析与序列化 | AWFY（Json） |
@@ -78,36 +87,52 @@ python3 scripts/check_bench_regression.py
 | storage | 树形结构的分配/回收 | AWFY |
 | towers | 汉诺塔 | AWFY |
 
-`bench/c/` 是**同规模的自写 C 参考实现**（只用于跨语言正确性对照，不参与 fat/raw
-计时），语义权威值与各 `.an` 头部注释对齐，一条命令校验：
-
-```bash
-python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和, 19/19 PASS
-```
-
 来源与许可：
 
 - 性能测评代码移植自本仓库分支 `archive/secl-paper-20260909`（`bench/shootout`、
-  `bench/shootout_raw`、`scripts/bench_fat.py`，最近提交 `70db192`）；
+  `bench/shootout_raw`、`scripts/bench_fat.py`，最近提交 `70db192`），随后按三态口径重写；
 - 14 项改写自 **AWFY**（[are-we-fast-yet](https://github.com/smarr/are-we-fast-yet)，
-  `benchmarks/Java/src/`）：AWFY 的全部 14 个基准——Bounce、CD、DeltaBlue、Havlak、Json、
-  List、Mandelbrot、NBody、Permute、Queens、Richards、Sieve、Storage、Towers（已补齐）；
-- 5 项改写自 **Benchmarks Game**（shootout）：binarytree、fann、fasta、revcomp、
-  spectralnorm；
-- 每个 `.an` 头部标注上游来源与许可状态，并保留**语义权威源**（`bench/c/<name>.c`）
-  与规模调整说明；规模在两态相同，只按可接受的运行时长做过折中；
-- 许可：AWFY 的 `LICENSE.md` 说明 Richards、DeltaBlue 源自 Mario Wolczko 的 Smalltalk
-  版本（许可指向已归档的 Sun Labs 页面）；其 Benchmarks Game 部分为 Revised BSD
-  （Copyright 2008-2012 Isaac Gouy）。AWFY 的 Java 文件本身带 MIT 头
-  （Copyright (c) 2001-2016 Stefan Marr；Json 为 2015，部分文件另含 EclipseSource 版权），
-  `havlak/HavlakLoopFinder.java` 为 Google 的 Apache-2.0（Copyright 2011 Google Inc.）；
-  `cd/*.java` 无逐文件许可头。`bench/c/*.c` 为本仓库自写、无上游许可头。本目录引入的
-  都是**本仓库的改写版**，按本仓库许可发布，各源头部逐文件标注上游来源与许可状态。
+  `benchmarks/Java/src/`）：Bounce、CD、DeltaBlue、Havlak、Json、List、Mandelbrot、NBody、
+  Permute、Queens、Richards、Sieve、Storage、Towers；
+- 5 项改写自 **Benchmarks Game**（shootout）：binarytree、fann、fasta、revcomp、spectralnorm；
+- 每个 `.an` 头部标注上游来源与许可状态，并保留**语义权威源**（`bench/c/<name>.c`）与规模
+  调整说明；`bench/c/*.c` 为本仓库自写、无上游许可头；
+- 许可：AWFY 的 `LICENSE.md` 说明 Richards、DeltaBlue 源自 Mario Wolczko 的 Smalltalk 版本
+  （许可指向已归档的 Sun Labs 页面）；其 Benchmarks Game 部分为 Revised BSD（Copyright
+  2008-2012 Isaac Gouy）。AWFY 的 Java 文件本身带 MIT 头（Copyright (c) 2001-2016 Stefan
+  Marr；Json 为 2015，部分文件另含 EclipseSource 版权），`havlak/HavlakLoopFinder.java` 为
+  Google 的 Apache-2.0（Copyright 2011 Google Inc.）；`cd/*.java` 无逐文件许可头。本目录引入
+  的都是**本仓库的改写版**，按本仓库许可发布，各源头部逐文件标注上游来源与许可状态。
+
+## 算法与规模对齐
+
+C 要当基线, 前提是两侧跑的是同一算法、同一规模。19 项逐一核对过（输入规模、迭代次数、
+数据结构、断言值），结论与处理如下：
+
+- **17 项同算法同规模**：binarytree、bounce、deltablue、fann、fasta、havlak、json、list、
+  mand、nbody、permute、queen、revcomp、sieve、spectralnorm、storage、towers。差异只在
+  表示与内存管理（见下），迭代次数与每步工作量一致。
+- **cd / richards：C 参考的默认迭代次数与 `.an` 不同**——`cd.c` 默认 1 轮而 `cd.an` 跑 80 轮,
+  `richards.c` 默认 1 轮而 `richards.an` 跑 2400 轮。两个 C 参考都支持 argv 覆盖, 因此由
+  `scripts/bench_common.py` 显式传参（`100 80` / `2400`）对齐, 并用对齐后的权威值校验。
+- **nbody：C 用 `sqrt`, YIAN 曾用 40 次牛顿迭代**（语言此前没有平方根内建）, 每对天体约 40 倍
+  工作量, 计算法不可比。语言现补了 `@sqrt` 内建与标准库 `std.num.f64.sqrt`（`llvm.sqrt.f64`
+  → `sqrtsd`）, `nbody.an` 改用该函数, 两侧热循环原语相同, 断言值同为 `-1`。
+- **storage：C 的 LCG 状态原为 32 位、`.an` 为 64 位**, 叶子容量抽样因此不同（叶子元素总量
+  差约 0.003%, 计数不变）。已把 C 参考的 `Random` 状态改为 64 位, 两侧抽样一致。
+- **cd：C 参考原先不释放每帧的体素/`seen` 结构**, `./cd 100 80` 峰值 RSS 约 1594 MB, 而 YIAN
+  侧约 2-4 MB。已按 `.an` 的做法逐帧释放（体素树与 `seen` 树、`MotionList`、被替换的
+  `Vector3D`）, 两侧内存行为一致。
+
+已知的**常量级**差异（不改变迭代次数与每步算法, 保留为各语言的惯用写法）：json 的 YIAN 每轮
+新建 `Parser` 而 C 复用同一个；cd 的 YIAN 在树中按值存 `Vector3D` 而 C 存指针；queen 的
+自由列标记 YIAN 用 `bool[]`、C 用 `int[]`；havlak 的并查集 YIAN 用下标、C 用自指针。这些影响
+的是常数因子而不是工作量, 读比值时按“语言实现差异”理解。
 
 ## 单一源的合并规则
 
-19 个基准里 18 个**每个只有一份源**（`storage` 有 `.raw.an` 覆盖源），两态共用。合并按以下实测规则进行
-（详见 `docs/plan/fat-vs-raw-bench-plan.md` §3）：
+19 个基准里 18 个**每个只有一份源**（`storage` 有 `.raw.an` 覆盖源），YIAN 两态共用。合并
+按以下实测规则进行：
 
 1. `dyn[N] T` 在胖模式下是 `T[]`、裸模式下是 `T*`，且**两个方向都不能隐式互转**
    （胖下 slice→`T*` 报 E401，裸下 `T*`→切片报 E499）→ 合并时去掉 `dyn` 的显式
@@ -135,27 +160,27 @@ python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和
   | raw | **7.29 s** | 7.40 s |
 
   按值传在胖下快约 6.9%、裸下也不慢，因此统一采用按值传的单一源。该选择直接决定
-  报告的比值（按值 4.46×，按指针 4.69×），故在此留档。
+  报告的 `fat/raw`, 故在此留档。
 
 - **`storage`（保留两份模式专源：`storage.an` + `storage.raw.an`）**：该基准的
   函数把分配结果作为 `Option<array_tree[]>` 返回。胖模式下可返回的切片必须是**堆
   owner**的（`let arr: array_tree[] = dyn[n] array_tree;` 直接返回）；若按合并配方
   在函数内构造局部视图再返回，视图的 owner 是**当前帧锁**，函数返回后帧锁槽被置
   `SENTINEL`，返回的切片即失效。裸模式没有帧锁机制，只能用 `arr[0u64..n]` 形式。
-  两模式没有既合法又等价的共同写法，故按 §3.4 规则 3 保留两份专源（各自取该模式的
-  分支原形式）。
+  两模式没有既合法又等价的共同写法，故保留两份专源（各自取该模式的分支原形式）。
 
 - **`sieve`（单一源，胖态 +6%）**：合并源用范围视图 `flags[0u64..SIEVE_SIZE]` 同时
   承担填充与传参，是单源下的最优形式：填充走视图比走 `dyn` 变量（`Index` trait 派发）
   快约 9%。但视图 owner 是帧锁，胖态下填充循环里的 `live` 检查（`load lock; icmp key`）
   无法被优化器外提，而同机分支胖源（`let flags: bool[] = dyn[...]`，堆 owner）可以外提，
   因此合并源胖态仍比分支源慢约 6%（约 3.17 s vs 2.98 s）。该差异只影响胖态绝对值、
-  不改变算法，已在此记录（判定数据见 `docs/plan/fat-vs-raw-bench-plan.md` §3.4）。
+  不改变算法。
 
-## 与分支胖源的性能对照
+## 合并源与分支胖源的差异
 
 合并源是**第三种程序**（分支的胖源与裸源各是一版），因此与论文所用的分支胖源之间会有
-小幅性能差异。同机绑核（`taskset -c 4`）两态逐次交替、各 5 次取最小值：
+小幅性能差异。下表是历史上一次性对照（两态口径、同机绑核 `taskset -c 4`、各 5 次取最小值），
+仅用于说明合并带来的偏差量级：
 
 | 基准 | 分支胖源 (s) | 合并源 (s) | Δ |
 | --- | ---: | ---: | ---: |
@@ -173,60 +198,20 @@ python3 scripts/verify_bench_c.py      # 编译 clang -O2 -lm 并断言校验和
 - fasta 的 −5.4% 来自合并源用切片视图替代分支胖源的 `&iub[0]` 指针传参形式。
 - storage 两侧是**逐字节相同的二进制**（`cmp` 相同），差值纯粹是**路径/进程布局**
   造成的测量假象（±15%～30%，分配密集型基准对 argv 长度→栈/mmap 布局尤其敏感）。
-  这条对照行是协议的一部分：它说明为什么两态产物必须**同目录、等长文件名**
-  （`<name>.fat` / `<name>.raw`），也说明分配密集型基准的绝对值只在同一路径口径内可比。
-- 论文里的胖态绝对值不能与本表直接对照（LLVM 15 → 22 换代，加上上述口径差异）。
+  这条对照行是协议的一部分：它说明为什么三态产物必须**同目录、等长路径**。
+- 该表是**牛顿迭代版 nbody** 时代的数字（nbody 现用 `sqrt`, 绝对值已不同）；论文里的
+  胖态绝对值也不能与本表直接对照（LLVM 15 → 22 换代，加上上述口径差异）。
 
-## 本轮实测发现的问题
+## 影响当前测量的问题
 
-补齐 AWFY 宏基准的过程中撞到三个**运行时/编译器**问题，都不是基准写法问题；各基准头部
-记录了各自的规避方式，问题本身待单独修复：
-
-### 1. fat 运行时分配器的 free-list 退化（O(N²)）
-
-DeltaBlue 在 N=7000（上游默认规模）下 fat 6.53 s / raw 0.027 s（240×）。计数器实验
-（`incremental_add`/`satisfy`/`add_propagate`/`remove_propagate_from`/`make_plan`/
-`extract_plan`）显示**两态调用次数逐个数字完全相同**，即工作量一致、无模式相关复杂度差异。
-纯分配微基准（约 24 B 小块与 >123 B 大块交替分配、"先大后小"批量释放）独立复现：fat
-N=1000/2000/4000 → 14/56/220 ms（O(N²)），raw → 1/2/3 ms（O(N)）。callgrind + 反汇编
-定位到胖态 free-list 的首次适配扫描：分配 >123 B 的 `Constraint` 时会顺序跳过 free-list
-上所有 ≤123 B 的小块，而 `projectionTest` 每轮末尾"先释放大块再释放小块"，于是下一轮每个
-`Constraint` 分配都要扫过 n 个小块。`deltablue.an` 因此改用上游经典规模
-（N=100 + 14000 次外循环，fat 1.95 s，比值 2.85×），未改算法与分配次数。
-
-### 2. 内联 enum + `Option<T&>` 混合结构体的字段偏移误编译
-
-最小复现（fat 与 raw 都错）：
-
-```an
-struct Rec { v: i32 }
-enum E { A { r: Rec& }, B { r: Rec& } }
-struct S { k: E, id: u64, p: Option<Rec&> }
-
-fn main() {
-    let r: Rec& = dyn Rec(1);
-    let s: S& = dyn S(E.A(r), 7u64, Option<Rec&>.None);
-    if s.id == 7u64 { print("ok\n"); } else { print("bad\n"); }  // 实测走 bad
-}
-```
-
-实测 `s.id` 读成 `7 << 32`（读偏移比写偏移少 4 字节，即 enum tag 的大小）。单独
-`{k: E, id: u64}` 或 `{k: E, id: u64, w: u64}`（无 `Option`）正常；`{p: Option<Rec&>,
-k: E, id: u64}`（`Option` 在前）同样错。**已修复**（`310e9b8`：模块此前只写 target triple、
-data layout 为空，中端 pass 因此按空布局折叠字段偏移，见 `docs/llvm_note.md`「目标三元组与
-data layout」）；`richards.an` 原先"把 enum 字段放在最后"的规避已随修复撤回。
-
-### 3. raw 模式下"enum 载荷按值包含 `Vec<自身>`"触发 LLVM 布局重入崩溃
-
-`json.an` 的 `JsonValue` 变体需要放 `Vec<JsonValue>`；raw 模式下该枚举的 LLVM 类型在
-payload body 尚未完成时被 `Vec<Self>` 的方法声明路径再次进入，`get_abi_size` 落在
-opaque 结构体上，llvmlite/LLVM 断言崩溃（fat 模式下指针是 5 字段结构体、不递归 pointee
-而幸免）。规避：让第一个被 declare 的函数签名**按值**使用该枚举
-（`parse_document(...) -> JsonValue`），先把枚举类型完整物化；算法与数据布局不变。
+- **fat 运行时分配器的 free-list 退化（O(N²)）**：分配大块时会顺序跳过 free-list 上的小块,
+  "先释放大块再释放小块"的分配模式下, 每个大块分配都要扫过所有小块。DeltaBlue 在上游默认
+  规模（N=7000）下 fat 6.53 s / raw 0.027 s（240×）, 分配计数器显示两态调用次数逐个数字
+  完全相同, 即工作量一致、无模式相关复杂度差异；纯分配微基准独立复现了 O(N²)。因此
+  `deltablue.an` 与 C 参考都改用 N=100 + 14000 次外循环（每趟 356660）。该问题本身尚未修复,
+  修好后可把规模调回上游默认值并重新基线化。
 
 ## 不包含的内容
 
 - `nocheck` 对照态：编译器已无该开关；
-- C/C++/Rust 参考基线计时、ASan 交叉对比、三态成本分解表：属于分支的论文实验口径，
-  与 fat/raw 两态对照无关；
 - `bak/` 下的历史基准与 `docs/` 下的历史结果表。
