@@ -421,6 +421,28 @@ static void rb_foreach(RBTree *tree, RBVisitor visit, void *ctx) {
     }
 }
 
+// ── 释放整棵树: 后序遍历释放全部节点; 传入 free_value 时同时释放节点值 ──
+typedef void (*RBValueFree)(void *value);
+
+static void rb_free_subtree(RBNode *node, RBValueFree free_value) {
+    if (node == NULL) {
+        return;
+    }
+    rb_free_subtree(node->left, free_value);
+    rb_free_subtree(node->right, free_value);
+    if (free_value != NULL) {
+        free_value(node->value);
+    }
+    free(node);
+}
+
+static void rb_free_all_with(RBTree *tree, RBValueFree free_value) {
+    rb_free_subtree(tree->root, free_value);
+    tree->root = NULL;
+}
+
+static void rb_free_all(RBTree *tree) { rb_free_all_with(tree, NULL); }
+
 // ── CD 本体 ──
 typedef struct {
     int callsign;
@@ -539,6 +561,13 @@ static void list_append(MotionList *list, Motion motion) {
     list->items[list->size++] = motion;
 }
 
+// 释放体素桶: 先释放 items 缓冲, 再释放 MotionList 本身
+static void motion_list_free(void *value) {
+    MotionList *list = value;
+    free(list->items);
+    free(list);
+}
+
 static void put_into_map(RBTree *voxel_map, Vector2D voxel, Motion motion) {
     Key key = key_voxel(voxel);
     MotionList *list = rb_get(voxel_map, key);
@@ -598,6 +627,7 @@ static void draw_motion_on_voxel_map(RBTree *voxel_map, Motion motion) {
     RBTree seen;
     seen.root = NULL;
     recurse(voxel_map, &seen, voxel_hash(motion.pos_one), motion);
+    rb_free_all(&seen);
 }
 
 typedef struct {
@@ -626,6 +656,9 @@ typedef struct {
 } Detector;
 
 static void detector_init(Detector *detector) { detector->state.root = NULL; }
+
+// 释放 state 中所有 Vector3D 值与树节点
+static void detector_destroy(Detector *detector) { rb_free_all_with(&detector->state, free); }
 
 // 收集 state 中本帧未出现的键 (上游 toRemove 的 forEach)
 typedef struct {
@@ -661,12 +694,14 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
         Vector3D *old_position = rb_put(&detector->state, key, stored);
         Vector3D new_position = frame[i].position;
         rb_put(&seen, key, &marker);
-        if (old_position == NULL) {
-            old_position = &new_position;  // 新出现的飞机按静止处理
-        }
         Motion motion;
         motion.callsign = frame[i].callsign;
-        motion.pos_one = *old_position;
+        if (old_position == NULL) {
+            motion.pos_one = new_position;  // 新出现的飞机按静止处理
+        } else {
+            motion.pos_one = *old_position;
+            free(old_position);  // 被替换的旧位置已归本树所有
+        }
         motion.pos_two = new_position;
         motions[i] = motion;
     }
@@ -676,7 +711,7 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
     RemoveCtx remove_ctx = {to_remove, 0, &seen};
     rb_foreach(&detector->state, collect_removable, &remove_ctx);
     for (int i = 0; i < remove_ctx.size; i++) {
-        rb_remove(&detector->state, key_sign(to_remove[i]));
+        free(rb_remove(&detector->state, key_sign(to_remove[i])));
     }
     free(to_remove);
 
@@ -709,6 +744,8 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
     int count = collisions.size;
     free(collisions.items);
     free(buckets.buckets);
+    rb_free_all_with(&voxel_map, motion_list_free);
+    rb_free_all(&seen);
     free(motions);
     return count;
 }
@@ -729,6 +766,7 @@ static int benchmark(int num_aircrafts) {
         actual_collisions += handle_new_frame(&detector, frame, num_aircrafts);
     }
     free(frame);
+    detector_destroy(&detector);
     return actual_collisions;
 }
 

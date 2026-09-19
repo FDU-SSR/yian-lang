@@ -8,8 +8,8 @@
 //   (C 版实测 n=12M 与 50M 同为 result == -1, 断言值与原版一致;
 //   三态同源码, 不影响归因)。
 //
-// 注: 当前语法无 sqrt 内建, 用牛顿迭代 mysqrt 实现 (相对误差 ~1ulp,
-//     C 版 12M 步结果 -1 已实测对齐)。
+// 注: 距离用标准库 sqrt (llvm.sqrt.f64 → sqrtsd), 与 C 参考的 libm sqrt 同一原语,
+//     因此热循环工作量与 C 可比; 12M 步断言结果 -1 与 C 版一致。
 //
 // 算法: 5 天体 (太阳+4 行星) 牛顿引力积分, advance() 对每对天体
 //       更新速度与位置, energy() 计算系统总能量, 输出 (s2-s1)*1e5。
@@ -25,6 +25,7 @@
 // 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
 //           不引入热路径构造, 算法与规模与分支版本一致。
 from std.core.io import print;
+from std.num.f64 import sqrt;
 
 struct Planet {
     x: f64,
@@ -34,19 +35,6 @@ struct Planet {
     vy: f64,
     vz: f64,
     mass: f64,
-}
-
-fn mysqrt(x: f64) -> f64 {
-    if x <= 0.0 {
-        return 0.0;
-    }
-    let r: f64 = (x + 1.0) * 0.5;
-    let i: u32 = 0;
-    while i < 40 {
-        r = (r + x / r) * 0.5;
-        i += 1;
-    }
-    return r;
 }
 
 fn advance(nbodies: u64, bodies: Planet[], dt: f64) {
@@ -62,7 +50,7 @@ fn advance(nbodies: u64, bodies: Planet[], dt: f64) {
             let dz: f64 = b.z - b2.z;
 
             let distanced: f64 = dx * dx + dy * dy + dz * dz;
-            let distance: f64 = mysqrt(distanced);
+            let distance: f64 = sqrt(distanced);
             let mag: f64 = dt / (distanced * distance);
 
             b.vx -= dx * b2.mass * mag;
@@ -107,7 +95,7 @@ fn energy(nbodies: u64, bodies: Planet[]) -> f64 {
             let dy: f64 = b.y - b2.y;
             let dz: f64 = b.z - b2.z;
 
-            let distance: f64 = mysqrt(dx * dx + dy * dy + dz * dz);
+            let distance: f64 = sqrt(dx * dx + dy * dy + dz * dz);
 
             e -= (b.mass * b2.mass) / distance;
             j += 1;

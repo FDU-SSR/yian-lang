@@ -13,20 +13,20 @@ typedef struct array_tree {
 } array_tree;
 
 typedef struct Random {
-    unsigned int stage;
+    unsigned long long stage;
 } Random;
 
 // 全局变量
 int count_arrays = 0;
 
 // 初始化随机数生成器
-void Random_init(Random* r, unsigned int seed) {
+void Random_init(Random* r, unsigned long long seed) {
     r->stage = seed;
 }
 
-// 生成下一个随机数
-unsigned int Random_next(Random* r) {
-    r->stage = (unsigned int)(r->stage * LCG_A + LCG_C);
+// 生成下一个随机数 (与 .an 基准同为 64 位状态, 保证叶子容量抽样一致)
+unsigned long long Random_next(Random* r) {
+    r->stage = r->stage * LCG_A + LCG_C;
     return r->stage;
 }
 
