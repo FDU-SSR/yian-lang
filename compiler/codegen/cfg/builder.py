@@ -54,6 +54,14 @@ class CfgBuilder:
         # 及裸派生(Cast/FieldPtr/ElementPtr 沿裸基址)记入;胖指针判定与检查插入据此
         # 分派——裸指针跳检查,胖指针原检查保留。名字由 __new_name() 生成,全局唯一。
         self.__raw_ptrs: set[str] = set()
+        # 帧内指针:锁字段取自当前函数帧锁槽的胖指针/视图(取址、帧内派生、
+        # ptr→ptr 重贴与视图退化)。帧锁槽只在函数入口写入、返回时失效,所以
+        # 这些指针的 live 在函数体内恒真——访问点不再发射时序项(空间项保留)。
+        self.__frame_locked: set[str] = set()
+        # 检查消解:胖指针的锁字段出处。同一出处(同一变量取址 / 同一分配 /
+        # 由它们经 ElementPtr/FieldPtr/Cast 派生)的指针, lock_ptr 与 key 完全相同,
+        # 因而 live 的判定相同——本块内同出处的第二次访问不必重复时序检查。
+        self.__fat_root: dict[str, str] = {}
         # 保守去重/合并状态(仅当 all 条件成立):
         #   __checked      — 当前块内已发射检查的键集合。键 = (SSA 名, 种类) 或
         #                    (base 键, offset 键, 种类);命中 ⟺ 同块同 SSA 值
@@ -1255,9 +1263,12 @@ class CfgBuilder:
         """
         e_f, k_f = self.__emit_frame_lock()
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
-        return self.__emit(IR.VarPtr(
+        fat = self.__emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f,
         )).result
+        self.__frame_locked.add(fat.name)
+        self.__fat_root[fat.name] = fat.name
+        return fat
 
     def __build_var_ptr_raw(self, var_ref: IR.VarRef) -> IR.Value:
         """惰性左值路径:裸取址——未取址左值(赋值/读取/字段派生基址)
@@ -1281,10 +1292,41 @@ class CfgBuilder:
                 frame_lock_ptr=frame_lock_ptr,
                 frame_key=frame_key,
             )).result
+            self.__frame_locked.add(addr.name)
+            self.__fat_root[addr.name] = addr.name
         else:
             addr = self.__emit(IR.Alloca(result=result, value=value, raw=True)).result
             self.__raw_ptrs.add(addr.name)
         return addr
+
+    def __root_of(self, ptr: IR.Value) -> str | None:
+        """胖指针锁字段的出处(SSA 名);未知出处返回 None。"""
+        if not isinstance(ptr, IR.Reg):
+            return None
+        return self.__fat_root.get(ptr.name)
+
+    def __live_key(self, ptr: IR.Value) -> tuple[str, ...] | None:
+        """live 项的去重键:按锁字段出处;出处未知时退化为指针自身。"""
+        if not isinstance(ptr, IR.Reg):
+            return None
+        return (self.__fat_root.get(ptr.name, ptr.name), "live")
+
+    def __is_frame_locked(self, ptr: IR.Value) -> bool:
+        """指针的锁字段是否取自当前函数帧锁槽(live 恒真)。"""
+        return isinstance(ptr, IR.Reg) and ptr.name in self.__frame_locked
+
+    def __inherit_frame_lock(self, derived: IR.Value, source: IR.Value) -> None:
+        """派生指针继承源指针的锁字段:源是帧内指针时,派生结果也是。"""
+        if isinstance(derived, IR.Reg) and self.__is_frame_locked(source):
+            self.__frame_locked.add(derived.name)
+
+    def __inherit_root(self, derived: IR.Value, source: IR.Value) -> None:
+        """派生指针继承源指针的锁字段出处(ElementPtr/FieldPtr/Cast 不改 lock/key)。"""
+        if not isinstance(derived, IR.Reg):
+            return
+        root = self.__root_of(source)
+        if root is not None:
+            self.__fat_root[derived.name] = root
 
     def __value_key(self, v: IR.Value) -> str | None:
         """检查合并:SSA 值去重键——寄存器用名,整数字面量用值;其余返回 None(不参与去重)。"""
@@ -1338,7 +1380,7 @@ class CfgBuilder:
         self.__elem_derived.clear()
         self.__field_derived.clear()
 
-    def __merge_access(self, ptr: IR.Value) -> bool:
+    def __merge_access(self, ptr: IR.Value, live: bool = True) -> bool:
         """合并访问检查:ptr 是 elem.field(派生链可对且访问相邻)时,以单个
         合取检查(ElementArith 良构+无回绕 ∧ InBounds ∧ SafeAccess 的 live 项)
         替代 FieldPtr 的 InBounds(挂起义务)与本访问的 SafeAccess。SafeAccess
@@ -1360,7 +1402,7 @@ class CfgBuilder:
         key = self.__pair_key(base, offset, "eacc")
         if self.__dedup(key):
             return True
-        self.__emit(IR.CheckElementAccess(base=base, offset=offset, ptr=elem))
+        self.__emit(IR.CheckElementAccess(base=base, offset=offset, ptr=elem, live=live))
         return True
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
@@ -1370,8 +1412,10 @@ class CfgBuilder:
         merged_elem_name: str | None = None
         base_ty = self.__type_ctx[base.type_id]
         if isinstance(base_ty, Type.RefType) and not self.__raw_pointers:
-            if self.__dedup(self.__ptr_key(base, "ref")):
-                ch_cfg_block().debug(lambda: "check dedup FieldPtr(T&): live(r) 共享(同块同值相邻)")
+            if self.__is_frame_locked(base):
+                ch_cfg_block().debug(lambda: "check skip FieldPtr(T&): 帧内引用 live 恒真")
+            elif self.__dedup(self.__live_key(base)) or self.__dedup(self.__ptr_key(base, "ref")):
+                ch_cfg_block().debug(lambda: "check dedup FieldPtr(T&): live(r) 共享(同块同值或同出处)")
             else:
                 self.__emit(IR.CheckRefAccess(ptr=base))
                 ch_cfg_block().debug(lambda: "check insert FieldPtr(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
@@ -1406,6 +1450,9 @@ class CfgBuilder:
         # 惰性左值路径:沿裸基址的字段派生保持裸(检查已由基址判定跳过)
         if self.__is_raw_pointer(base):
             self.__raw_ptrs.add(field_ptr.name)
+        else:
+            self.__inherit_frame_lock(field_ptr, base)
+            self.__inherit_root(field_ptr, base)
         return field_ptr
 
     def __build_load(self, ptr: IR.Value) -> IR.Value:
@@ -1414,19 +1461,25 @@ class CfgBuilder:
         # 按指针层级插入检查(按 type_id 分派):
         #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
+        frame_locked = self.__is_frame_locked(ptr)
+        live_covered = frame_locked or self.__dedup(self.__live_key(ptr))
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
-            if self.__dedup(self.__ptr_key(ptr, "ref")):
+            if live_covered:
+                ch_cfg_block().debug(lambda: "check skip Load(T&): 帧内或同出处 live 已覆盖")
+            elif self.__dedup(self.__ptr_key(ptr, "ref")):
                 ch_cfg_block().debug(lambda: "check dedup Load(T&): live(r) 共享(同块同值相邻)")
             else:
                 self.__emit(IR.CheckRefAccess(ptr=ptr))
                 ch_cfg_block().debug(lambda: "check insert Load(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
         elif self.__is_fat_pointer(ptr):
-            if self.__merge_access(ptr):
+            if live_covered and self.__merge_access(ptr, live=False):
+                ch_cfg_block().debug(lambda: "check merge Load: ElementArith∧InBounds(同出处 live 已覆盖)")
+            elif not live_covered and self.__merge_access(ptr):
                 ch_cfg_block().debug(lambda: "check merge Load: ElementArith∧InBounds∧live 合取检查")
             elif self.__dedup(self.__ptr_key(ptr, "safe")):
                 ch_cfg_block().debug(lambda: "check dedup Load: safe_access(p,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckSafeAccess(ptr=ptr))
+                self.__emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
                 ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
         return self.__emit(IR.Load(result=result, ptr=ptr)).result
@@ -1436,19 +1489,25 @@ class CfgBuilder:
         # 按指针层级插入检查(按 type_id 分派,同 Load 的检查与地址折算):
         #   PointerType → safe_access(p, 1)
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
+        frame_locked = self.__is_frame_locked(ptr)
+        live_covered = frame_locked or self.__dedup(self.__live_key(ptr))
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
-            if self.__dedup(self.__ptr_key(ptr, "ref")):
+            if live_covered:
+                ch_cfg_block().debug(lambda: "check skip Store(T&): 帧内或同出处 live 已覆盖")
+            elif self.__dedup(self.__ptr_key(ptr, "ref")):
                 ch_cfg_block().debug(lambda: "check dedup Store(T&): live(r) 共享(同块同值相邻)")
             else:
                 self.__emit(IR.CheckRefAccess(ptr=ptr))
                 ch_cfg_block().debug(lambda: "check insert Store(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
         elif self.__is_fat_pointer(ptr):
-            if self.__merge_access(ptr):
+            if live_covered and self.__merge_access(ptr, live=False):
+                ch_cfg_block().debug(lambda: "check merge Store: ElementArith∧InBounds(同出处 live 已覆盖)")
+            elif not live_covered and self.__merge_access(ptr):
                 ch_cfg_block().debug(lambda: "check merge Store: ElementArith∧InBounds∧live 合取检查")
             elif self.__dedup(self.__ptr_key(ptr, "safe")):
                 ch_cfg_block().debug(lambda: "check dedup Store: safe_access(p,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckSafeAccess(ptr=ptr))
+                self.__emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
                 ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
         self.__emit(IR.Store(ptr=ptr, value=value))
 
@@ -1461,7 +1520,10 @@ class CfgBuilder:
         if not self.__type_ctx.is_zst(type_id) and not self.__raw_pointers:
             key = self.__build_gen_key(is_heap=True)
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
-        return self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
+        malloc = self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
+        if not self.__raw_pointers:
+            self.__fat_root[malloc.name] = malloc.name
+        return malloc
 
     def __build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         type_id = default_literals(self.__type_ctx, type_id)
@@ -1520,6 +1582,8 @@ class CfgBuilder:
         # 合并跟踪:记录派生链 (base, offset),供 FieldPtr→Load/Store 合取检查
         if self.__is_fat_pointer(base):
             self.__elem_derived[elem_ptr.name] = (elem_ptr, base, offset)
+            self.__inherit_frame_lock(elem_ptr, base)
+            self.__inherit_root(elem_ptr, base)
         # 惰性左值路径:沿裸基址的算术派生保持裸(检查已由基址判定跳过)
         if self.__is_raw_pointer(base):
             self.__raw_ptrs.add(elem_ptr.name)
@@ -1578,6 +1642,9 @@ class CfgBuilder:
         cast = self.__emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
         if raw:
             self.__raw_ptrs.add(cast.name)
+        else:
+            self.__inherit_frame_lock(cast, value)
+            self.__inherit_root(cast, value)
         # 嵌套派生链(安全修复 复核):ptr→ptr cast = identity(5 字段重贴),
         # 挂起义务沿 cast 传播——(ptr+k).a[j] 的 elementptr base 是 cast
         # 结果时,义务仍可被访问点合并或提前补发。
@@ -1603,19 +1670,19 @@ class CfgBuilder:
 
     def __build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__is_fat_view(buf):
-            self.__emit(IR.CheckViewAccess(view=buf))
+            self.__emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.str_id)
         return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
     def __build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__is_fat_view(buf):
-            self.__emit(IR.CheckViewAccess(view=buf))
+            self.__emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
         self.__emit(IR.SysWrite(fd=fd, buf=buf))
         return self.__void_reg()
 
     def __build_open(self, path: IR.Value, flags: IR.Value) -> IR.Value:
         if self.__is_fat_view(path):
-            self.__emit(IR.CheckViewAccess(view=path))
+            self.__emit(IR.CheckViewAccess(view=path, live=not self.__is_frame_locked(path)))
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i32_id)
         return self.__emit(IR.Open(result=result, path=path, flags=flags)).result
 

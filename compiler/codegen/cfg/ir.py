@@ -243,8 +243,12 @@ class CheckSafeAccess:
 
     Load/Store 插入点。live = 锁槽键比较(含 lock_ptr=0 短路为假);
     in_bounds = 0 ≤ index ∧ index+1 ≤ size。LLVM 层 发射。
+
+    ``live=False``:指针的锁槽已知恒等于其键(函数帧内取址的指针,帧锁槽只在
+    函数入口写、返回时失效),时序项本身恒真,只发射空间项——错误码不变。
     """
     ptr: Value
+    live: bool = True
 
 
 @dataclass
@@ -255,8 +259,11 @@ class CheckViewAccess:
     checks heap views against the active allocation extent recorded in the
     block header; stack/global views rely on their live lock and constructor
     range invariant.
+
+    ``live=False``:调用点已确认该视图来自当前函数帧(帧锁槽恒等于其键)。
     """
     view: Value
+    live: bool = True
 
 
 @dataclass
@@ -316,6 +323,7 @@ class CheckElementAccess:
     base: Value
     offset: Value
     ptr: Value  # elem:ElementPtr 结果,承载派生后 index/size/lock_ptr/key
+    live: bool = True  # 同上:帧内指针的时序项恒真时不再发射
 
 
 @dataclass

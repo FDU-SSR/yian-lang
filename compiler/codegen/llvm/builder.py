@@ -238,7 +238,9 @@ class LLBuilder:
         fail_block = self.__func.new_block(self.__split_block_name(suffix, "fail", seq))
         self.__func.add_block(ok_block.name, ok_block)  # type: ignore
         self.__func.add_block(fail_block.name, fail_block)  # type: ignore
-        self.__builder.cbranch(cond.ir_val, ok_block, fail_block)  # type: ignore
+        branch = self.__builder.cbranch(cond.ir_val, ok_block, fail_block)  # type: ignore
+        # 冷路径:检查失败几乎不发生,给出分支权重让后端把 fail 块移出热路径直线
+        branch.set_weights([2000, 1])  # type: ignore
         fail_builder = ir.IRBuilder(fail_block)
         self.__module.emit_runtime_fail(fail_builder, error_code)
         fail_builder.unreachable()  # type: ignore
@@ -586,16 +588,25 @@ class LLBuilder:
         raw = self.__fat_data(lock_ptr).ir_val
         self.__builder.store(value.ir_val, raw)  # type: ignore
 
-    def check_safe_access(self, ptr: LLValue) -> None:
-        """safe_access(p,1) = live(p) ∧ in_bounds(p,1)。"""
+    def check_safe_access(self, ptr: LLValue, live: bool = True) -> None:
+        """safe_access(p,1) = live(p) ∧ in_bounds(p,1)。
+
+        ``live=False``:调用点已确认该指针的锁槽恒等于其键(函数帧内取址),
+        时序项恒真,只发射空间项;错误码与失败条件(排除恒真项后)不变。
+        """
         if not self.__is_fat(ptr):
+            return
+        if not live:
+            index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
+            size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+            self.__emit_check(self.__check_in_bounds_cond(index, size), RuntimeErrorCode.S002, "safe")
             return
         lock, key, index, size = self.__extract_check_fields(ptr)
         in_bounds = self.__check_in_bounds_cond(index, size)
         cond = self.__check_live_and(lock, key, in_bounds.ir_val)
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "safe")
 
-    def check_view_access(self, view: LLValue) -> None:
+    def check_view_access(self, view: LLValue, live: bool = True) -> None:
         """Validate a slice/str before passing its span to a syscall."""
         if not self.__is_fat(view):
             return
@@ -607,7 +618,11 @@ class LLBuilder:
         lock = self.__extract_fat_field(view, IR.SLICE_LOCK_PTR).ir_val
         key = self.__extract_fat_field(view, IR.SLICE_KEY).ir_val
         size = self.__extract_fat_field(view, IR.SLICE_SIZE).ir_val
-        live_ok = self.__check_live(lock, key)
+        if live:
+            live_ok = self.__check_live(lock, key)
+        else:
+            # 帧内视图:锁槽恒等于其键,live 项恒真(见 check_safe_access)。
+            live_ok = LLValue(self.__type_ctx.bool_id, ir.Constant(ir.IntType(1), 1))  # type: ignore
 
         zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
         nonempty = self.__builder.icmp_unsigned("!=", size, zero)  # type: ignore
@@ -728,7 +743,7 @@ class LLBuilder:
         cond: ir.Value = self.__builder.and_(no_wrap, in_range)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S004, "elarith")
 
-    def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue) -> None:
+    def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue, live: bool = True) -> None:
         """合并检查:ElementArith→InBounds→SafeAccess 合取谓词(检查合并优化)。
 
         派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
@@ -754,11 +769,14 @@ class LLBuilder:
         e_index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
         e_size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
-        # live 部分:锁槽键比较,含 null 短路
-        lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
-        key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
-        live_ok = self.__check_live(lock, key)
-        cond: ir.Value = self.__builder.and_(self.__builder.and_(elarith_cond, ib_cond), live_ok.ir_val)  # type: ignore
+        # live 部分:锁槽键比较,含 null 短路(帧内 elem 恒真时不再发射)
+        if live:
+            lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
+            key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
+            live_ok = self.__check_live(lock, key)
+            cond: ir.Value = self.__builder.and_(self.__builder.and_(elarith_cond, ib_cond), live_ok.ir_val)  # type: ignore
+        else:
+            cond = self.__builder.and_(elarith_cond, ib_cond)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "eacc")
 
     def check_raw_bounds(self, index: LLValue, length: int) -> None:

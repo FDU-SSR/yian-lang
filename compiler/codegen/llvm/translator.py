@@ -193,9 +193,9 @@ class LLTranslator:
             case IR.WriteLockSlot():
                 builder.write_lock_slot(self.__resolve(builder, stmt.lock_ptr), self.__resolve(builder, stmt.value))
             case IR.CheckSafeAccess():
-                builder.check_safe_access(self.__resolve(builder, stmt.ptr))
+                builder.check_safe_access(self.__resolve(builder, stmt.ptr), stmt.live)
             case IR.CheckViewAccess():
-                builder.check_view_access(self.__resolve(builder, stmt.view))
+                builder.check_view_access(self.__resolve(builder, stmt.view), stmt.live)
             case IR.CheckInBounds():
                 builder.check_in_bounds(self.__resolve(builder, stmt.ptr))
             case IR.CheckSliceNonEmpty():
@@ -209,6 +209,7 @@ class LLTranslator:
                     self.__resolve(builder, stmt.base),
                     self.__resolve(builder, stmt.offset),
                     self.__resolve(builder, stmt.ptr),
+                    stmt.live,
                 )
             case IR.CheckRawBounds():
                 builder.check_raw_bounds(self.__resolve(builder, stmt.index), stmt.length)
