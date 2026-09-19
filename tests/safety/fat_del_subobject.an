@@ -1,6 +1,6 @@
 // Fat-pointer delete of a subobject pointer — negative test
 //
-// delete 前提 is_raw(p):data 分量必须 p.data = p.lock_ptr + H(定义 9/规则 3.6.2)。
+// delete 前提 is_raw(p):data 分量必须 p.data = p.lock_ptr + H。
 // 字段取址 &s.b 重锚定后 index 归零但 data 指向 b 槽(偏移 lock_ptr + H + 8),
 // data 折算后 != lock_ptr + H → is_raw 拒 → fail-stop → Exit code 1。
 

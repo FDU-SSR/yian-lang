@@ -1,7 +1,7 @@
 // Fat-pointer delete of a stack pointer — negative test
 //
-// delete 前提 is_heap(p)(定义 9:键最高位 msb 0 = 栈)拒绝栈指针,
-// 规则 3.6.2 前提不满足 → fail-stop → Exit code 1。
+// delete 前提 is_heap(p)(键最高位 msb 0 = 栈)拒绝栈指针,
+// 前提不满足 → fail-stop → Exit code 1。
 
 fn main() {
     let x: i32 = 5;

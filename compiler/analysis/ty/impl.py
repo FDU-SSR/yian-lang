@@ -340,7 +340,7 @@ class ImplRegistry:
         whose target cannot be the receiver at all: an `impl<T> Vec<T>` must not
         put `push` on a `Point`.  Conditional generic impls are still offered —
         deciding those needs the per-name inference, which completion
-        deliberately does not run for every candidate (plan §7 P6).
+        deliberately does not run for every candidate.
         """
         methods: dict[str, int] = {}
         receiver = self.__ctx.canonical(type_id)

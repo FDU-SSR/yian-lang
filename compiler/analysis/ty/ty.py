@@ -47,7 +47,7 @@ class NameRef:
 
     The checker records this at the moment it resolves a name, so an editor can
     answer "go to definition" and "what is this?" without re-implementing name
-    resolution (plan §5.2, §5.8.2 #5).  The declaration side of navigation lives
+    resolution. The declaration side of navigation lives
     in the declaration index; this is the referring side, including type names in
     annotations and signatures, which no HIR expression represents.
     """
@@ -61,7 +61,7 @@ class NameRef:
 
 @dataclass
 class ErrorType:
-    """The type of something whose checking failed (plan §5.11 layer three).
+    """The type of something whose checking failed.
 
     A *poison* value, not a real type: it is deliberately **not** ``NeverType``
     (the bottom type, which has language meaning), and comparisons against it

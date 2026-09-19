@@ -197,7 +197,7 @@ class ExprParser:
                 if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.EOF:
                     # A half-written expression: report it as end-of-file rather
                     # than as a stray token, which is what the editor shows
-                    # while the user is typing (plan §5.11 layer two).
+                    # while the user is typing.
                     raise ParseError("Unexpected end of file while parsing expression", token.span)
                 raise ParseError(f"Unexpected token '{token}' while parsing expression", token.span)
 

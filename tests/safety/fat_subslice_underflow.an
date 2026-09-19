@@ -1,6 +1,6 @@
 // Fat-pointer arithmetic underflow on a sub-slice (negative test, 指针算术检查优化, Metis H2)
 //
-// CheckElementArith(定义 13):0 ≤ index + offset ≤ size,u64 同型化(回绕检测
+// CheckElementArith:0 ≤ index + offset ≤ size,u64 同型化(回绕检测
 // + 上界比较)。子切片 q = p + 2(base.index = 2)再 q - 1:offset = u64(-1) =
 // 2^64-1 ≥ 2^63(下溢偏移 = 极大无符号下标)→ u64 回绕检测 sum = 2 + (2^64-1)
 // = 1 < index 2 → no_wrap 失败 → fail-stop → Exit code 1。

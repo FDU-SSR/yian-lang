@@ -1,11 +1,11 @@
-"""Finding, renaming and quick-fixing code (plan §7 P7).
+"""Finding, renaming and quick-fixing code.
 
 Everything here is based on **symbol identity**, never on the text: a reference is
 a name the analysis resolved to a particular declaration, so two same-named
 symbols in different scopes stay apart, and a rename edits exactly those spans.
 That is also why a rename can refuse: when the analysis cannot account for every
 use of the name, editing some of them would leave the program half-renamed, and
-refusing is the safe answer (plan §7 P7: 无法确认符号身份时拒绝批量修改).
+refusing is the safe answer (无法确认符号身份时拒绝批量修改).
 
 Formatting is deliberately absent — see the project readme for the evaluation;
 the short version is that the AST keeps no comment or whitespace trivia, so a

@@ -2,7 +2,7 @@
 //
 // The T& is derived from a slice element (s[0], i.e. T[]→T*→T&). The slice
 // view inherits the real heap lock of the `dyn` backing block; after `del p`
-// the block-header lock slot is SENTINEL (规则 3.6.2 动作①). Deref of the
+// the block-header lock slot is SENTINEL. Deref of the
 // stale reference fails live (slot ≠ key) → fail-stop → Exit code 1.
 //
 // Expected exit code: 1

@@ -5,8 +5,8 @@ resolutions, a declaration index, the spans the parser kept — and an editor ne
 to *read* those facts, not to run any analysis of its own.  This module is the one
 place where that reading happens: ``TypeCtx`` and the declaration index appear
 here and nowhere else in the query layer, so every other module depends on
-questions about the program rather than on how the compiler stores it (plan §5.2,
-§5.7).
+questions about the program rather than on how the compiler stores it (
+).
 
 Two rules make the surface trustworthy:
 
@@ -46,7 +46,7 @@ class AnalysisView:
     """Facts about one analysis result, for readers that must not guess.
 
     A view holds references only; it is created per request, so it stays valid
-    exactly as long as the snapshot it was built from (plan §5.12 — a stale
+    exactly as long as the snapshot it was built from (a stale
     snapshot is not something to query, it is something to replace).
     """
 
@@ -299,7 +299,7 @@ class AnalysisView:
         This is the filtered view the editor wants: an ``impl<T> Vec<T>`` does
         not put ``push`` on a ``Point``.  Conditional generic impls are still
         offered — deciding those needs per-name inference, which completion
-        deliberately does not run for every candidate (plan §7 P6).
+        deliberately does not run for every candidate.
         """
         if self.__type_ctx is None:
             return ()

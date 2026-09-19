@@ -1,7 +1,7 @@
 // `del self` inside a method body: migrated from compile_err (was a
 // compile-time rejection) to a runtime safety error. 本测试 receiver 是栈变量,
-// del self 作用于栈 receiver: delete 前提 is_heap(p)(定义 9:键最高位
-// msb 0 = 栈)拒绝栈指针,规则 3.6.2 前提不满足 → fail-stop →
+// del self 作用于栈 receiver: delete 前提 is_heap(p)(键最高位
+// msb 0 = 栈)拒绝栈指针, 前提不满足 → fail-stop →
 // Exit code 1。
 //
 // 语义声明: 本计划定义 del self 在堆 receiver 上释放 receiver 自身为

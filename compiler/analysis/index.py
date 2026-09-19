@@ -4,11 +4,11 @@ The index answers the questions an editor asks about a *project* rather than a
 single file: which package and module a file belongs to, what each file imports,
 and where each declaration lives.  It is built from the analyzed units, so it
 covers code the program never calls — analysis checks a root package's top-level
-definitions whether or not `main` reaches them (plan §2.2) — and it lives on the
-Python side, so the editor never re-implements name resolution (plan §5.7).
+definitions whether or not `main` reaches them — and it lives on the
+Python side, so the editor never re-implements name resolution.
 
 References are deliberately *not* indexed here: resolving the name at a position
-needs the type checker's view and belongs to navigation (P5).  This is the
+needs the type checker's view and belongs to navigation. This is the
 declaration side that navigation resolves *to*.
 """
 
@@ -148,7 +148,7 @@ class Index:
 
         This is the invalidation unit the snapshot layer needs: after a file
         changes, these are the files whose analysis can change because of it
-        (plan §7 P3).
+.
         """
         target = path.resolve()
         return tuple(sorted(source for source, targets in self.imports.items() if target in targets))
@@ -508,7 +508,7 @@ def __variables(body: AST.Block, path: Path, module: str, container: str) -> lis
     are indexed like any other declaration.  Block nesting is *not* modelled:
     every local is recorded under its enclosing function, which is the scope the
     type checker already reconstructs from its symbol table when a position has
-    to be resolved (plan §7 P3).
+    to be resolved.
     """
     declarations: list[Declaration] = []
     __walk_block(body, path, module, container, declarations)

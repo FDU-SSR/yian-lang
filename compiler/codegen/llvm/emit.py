@@ -11,7 +11,7 @@ import tempfile
 
 from compiler.codegen.llvm.module import LLModule
 
-# 帧退出 SENTINEL 写(规则 3.7.2,all-ones u64)在优化路径上须为 volatile:
+# 帧退出 SENTINEL 写(all-ones u64)在优化路径上须为 volatile:
 # LLVM 内存模型把"经悬垂指针读已退出帧"视为 UB,DSE 可证明该写为死存储而
 # 删除,锁槽残留入口键 → 调用方 live 检查误通过,丢失 Exit -4 语义。
 _SENTINEL_STORE = re.compile(r"\bstore i64 18446744073709551615\b")

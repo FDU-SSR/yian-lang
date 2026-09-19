@@ -26,5 +26,5 @@ class Symbol:
     attributes: set[SymbolAttribute]
     #: Where the symbol is declared — the *name* span.  ``None`` for synthesized
     #: symbols (prelude injection, implicit `Self`), which no source position
-    #: points at.  Editors need this to answer "go to definition" (plan §5.8.2 #5).
+    # points at. Editors need this to answer "go to definition".
     span: SrcSpan | None = None

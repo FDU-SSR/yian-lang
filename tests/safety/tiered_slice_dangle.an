@@ -1,7 +1,7 @@
 // Tiered-pointer 分级指针 (T[] 真锁): a slice view whose backing is freed safety errors
 // on access. The slice carries the real heap lock of the `dyn` backing
 // (表示层 真锁, not lit-lock); after `del p` the block-header lock slot is
-// SENTINEL (规则 3.6.2 动作①). `s[0]` derives a T* (lock-inherited) and the
+// SENTINEL. `s[0]` derives a T* (lock-inherited) and the
 // deref live check fails → fail-stop → Exit code 1.
 //
 // Expected exit code: 1

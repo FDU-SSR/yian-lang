@@ -1,8 +1,8 @@
 // Fat-pointer one-past-end METHOD CALL negative test (安全修复 安全语义固化)
 //
-// p + 4 是良构的 one-past-end 指针(index == size,定义 13 允许);对其调用方法
+// p + 4 是良构的 one-past-end 指针(index == size, 允许);对其调用方法
 // (impl i32 的 get_val 内 *self)等价于解引用 one-past-end 指针 → 触发
-// receiver 折算前插入的 CheckInBounds(p,1)(规则 3.2.1/3.5.2):index + 1 > size
+// receiver 折算前插入的 CheckInBounds(p,1):index + 1 > size
 // → 失败 → safety error(期望 Exit code 1)。
 //
 // 背景:方法签名 receiver 折算为 T&(24B)后,方法体内 self 访问仅剩 CheckRefAccess

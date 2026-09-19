@@ -141,7 +141,7 @@ def same(ctx: TypeCtx, left: int, right: int) -> bool:
     """
     # The error type is a poison value, not a type: anything compared against it
     # matches, so the one error that produced it does not turn into a mismatch at
-    # every use site (plan §5.11 layer three).
+    # every use site.
     if left == ctx.error_id or right == ctx.error_id:
         return True
 

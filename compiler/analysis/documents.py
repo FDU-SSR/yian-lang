@@ -4,7 +4,7 @@ The editor holds unsaved buffers, so analysis must not read files from disk for
 the documents it was handed.  :class:`DocumentStore` keeps the overlay and falls
 back to disk for everything else (the standard library, dependencies the editor
 has not opened).  A document's identity is its path; the version is the editor's
-document version and is part of the snapshot key (plan §5.12).
+document version and is part of the snapshot key.
 """
 
 from __future__ import annotations

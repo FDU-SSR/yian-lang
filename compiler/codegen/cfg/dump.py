@@ -131,13 +131,13 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"write_lock_slot {__dump_value(lock_ptr)}, {__dump_value(value)}"
 
         case IR.CheckSafeAccess(ptr=ptr):
-            return f"check_safe_access {__dump_value(ptr)}  (live ∧ in_bounds, 规则 3.2.1-3.2.2)"
+            return f"check_safe_access {__dump_value(ptr)}  (live ∧ in_bounds)"
 
         case IR.CheckViewAccess(view=view):
             return f"check_view_access {__dump_value(view)}  (live ∧ span)"
 
         case IR.CheckInBounds(ptr=ptr):
-            return f"check_in_bounds {__dump_value(ptr)}  (规则 3.5.2)"
+            return f"check_in_bounds {__dump_value(ptr)}  (index < size)"
 
         case IR.CheckSliceNonEmpty(ptr=ptr):
             return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
@@ -146,7 +146,7 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
 
         case IR.CheckElementArith(base=base, offset=offset):
-            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (定义 13)"
+            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (0 ≤ index+n ≤ size)"
 
         case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
             return (
@@ -158,10 +158,10 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
-            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.3.3)"
+            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 良构 + 无回绕)"
 
         case IR.CheckPtrCmp(lhs=lhs, rhs=rhs):
-            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (规则 3.4.1)"
+            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等)"
 
         case IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs):
             return (
@@ -171,7 +171,7 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             )
 
         case IR.CheckDelete(ptr=ptr):
-            return f"check_delete {__dump_value(ptr)}  (is_heap ∧ live ∧ is_raw, 规则 3.6.2)"
+            return f"check_delete {__dump_value(ptr)}  (is_heap ∧ live ∧ is_raw)"
 
         case IR.Call(result=result, callee_type=callee_type, args=args):
             arg_str = ", ".join(__dump_value(a) for a in args)

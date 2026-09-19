@@ -557,7 +557,7 @@ class CallDispatcher:
 
         The HIR keeps only the field *names* of a construction, so the name span
         has to be captured here, where the AST argument and the resolved field
-        are both in hand (plan §7 P5).
+        are both in hand.
         """
         for arg in args:
             if arg.name is None:

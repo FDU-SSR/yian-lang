@@ -110,14 +110,14 @@ class Diagnostic:
     message: str
     span: SrcSpan
     #: True when the message reports a recovery rather than a hard failure; the
-    #: editor renders these as warnings (plan P0.3).
+    # editor renders these as warnings.
     recovered: bool = False
 
 
 #: ``AX`` codes the *compiler* reuses for source-level import failures.  ``AX``
 #: belongs to project/package-level diagnostics (``anx``), so a source-level
 #: diagnostic reports the equivalent ``E3xx`` code instead, and the message stops
-#: repeating the code (plan P0.3).
+# repeating the code.
 __AX_TO_SOURCE_CODE: dict[str, str] = {
     "AX009": E309_NOT_A_DEPENDENCY,
     "AX010": E310_NOT_A_MODULE,

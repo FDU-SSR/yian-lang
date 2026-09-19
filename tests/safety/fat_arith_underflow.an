@@ -1,6 +1,6 @@
-// Fat-pointer arithmetic underflow (negative direction) negative test (胖指针表示, 规则 3.3.1-3.3.2)
+// Fat-pointer arithmetic underflow (negative direction) negative test (胖指针表示)
 //
-// CheckElementArith(定义 13):0 ≤ index + offset ≤ size。
+// CheckElementArith:0 ≤ index + offset ≤ size。
 // p - 1:offset = -1 → index 0 + (-1) < 0 → 良构失败 → fail-stop → Exit code 1。
 
 fn main() {

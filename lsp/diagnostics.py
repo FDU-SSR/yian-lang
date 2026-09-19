@@ -1,10 +1,10 @@
-"""Compiler diagnostics as LSP diagnostics (plan §7 P4).
+"""Compiler diagnostics as LSP diagnostics.
 
 The conversion is deliberately narrow: the compiler's
 :class:`~compiler.analysis.diagnostics.Diagnostic` already carries everything the
 editor needs (code, severity, message, span), so this module only maps it onto
 the protocol shape and hands the span to :func:`~compiler.analysis.positions.to_lsp_range`,
-the single place that knows the two position models differ (plan §5.1).
+the single place that knows the two position models differ.
 """
 
 from __future__ import annotations

@@ -49,7 +49,7 @@ class CfgBuilder:
         self.__counter = 0
         self.__loops: list[LoopCtx] = []
         self.__defer_scopes: list[list[HIR.Expr]] = []
-        self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(CFG 层,规则 3.7.1)
+        self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(CFG 层)
         # 惰性左值路径:裸指针寄存器名集合。未取址左值(VarPtr raw / Alloca)
         # 及裸派生(Cast/FieldPtr/ElementPtr 沿裸基址)记入;胖指针判定与检查插入据此
         # 分派——裸指针跳检查,胖指针原检查保留。名字由 __new_name() 生成,全局唯一。
@@ -107,9 +107,9 @@ class CfgBuilder:
         # ── termination guard ──
         self.__guard_termination(dp)
 
-        # ── 帧锁实体化标记(规则 3.7.1)──
+        # ── 帧锁实体化标记 ──
         # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
-        # 写 SENTINEL 并从稳定影子栈弹出槽位(规则 3.7.2),
+        # 写 SENTINEL 并从稳定影子栈弹出槽位,
         # 使栈悬垂访问经 live 键比较确定性失败。标记随函数传给 LLTranslator。
         self.__func.frame_lock = self.__frame_lock
 
@@ -438,19 +438,19 @@ class CfgBuilder:
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
         if self.__is_del_target(ptr):
-            # CFG 层插入检查:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(规则 3.6.2;
+            # CFG 层插入检查:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(
             # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
             # data=lock_ptr+H 与 index=0;del-view: T*/T[]/T& 三族通用,仅
             # PointerType 含 index 分量,Slice/Ref 退化为恒真)
             self.__emit(IR.CheckDelete(ptr=ptr))
-            ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p) (规则 3.6.2)")
-            # 动作①:锁槽写 SENTINEL(规则 3.6.2)——提取 lock_ptr 字段寻址
+            ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p)")
+            # 锁槽写 SENTINEL ——提取 lock_ptr 字段寻址
             lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
             sentinel = IR.IntLiteral(value=IR.SENTINEL, type_id=TypeCtx.u64_id)
             self.__emit(IR.WriteLockSlot(lock_ptr=lock_ptr, value=sentinel))
             # 检查合并:Delete 写锁槽 → 去重/合并状态失效(先补发挂起 InBounds 义务)
             self.__invalidate_checks()
-        # 动作②:整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
+        # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
         self.__emit(IR.Delete(ptr))
         return self.__void_reg()
 
@@ -896,8 +896,8 @@ class CfgBuilder:
         receiver_addr = self.__resolve_addr_fat(expr.receiver)
         # 调用侧修复:调用侧 T* receiver 折算(T*→T&)前恢复 in_bounds 检查。
         # 折算删除 index/size 字段,方法体内 self 访问仅剩 CheckRefAccess(live),
-        # one-past-end 指针(index==size,定义 13 良构)的 in_bounds 语义随之丢失。
-        # 折算前对胖 T* receiver 发射 CheckInBounds(p,1)(规则 3.2.1/3.5.2,与
+        # one-past-end 指针(index==size, 良构)的 in_bounds 语义随之丢失。
+        # 折算前对胖 T* receiver 发射 CheckInBounds(p,1)(与
         # FieldPtr/解引用同一前提);RefType receiver(方法体内 self.method())天然
         # 24B 引用、无越界概念,__is_fat_pointer 恒 False 自动跳过;raw 模式无检查。
         if self.__is_fat_pointer(receiver_addr):
@@ -1149,11 +1149,11 @@ class CfgBuilder:
     # ------------------------------------------------------------------
 
     def __emit_frame_lock(self) -> tuple[IR.Value | None, IR.Value | None]:
-        """帧锁实体化(§2.6、规则 3.7.1):k_f ← Gen()(栈键 MSB 0),从独立
+        """帧锁实体化:k_f ← Gen()(栈键 MSB 0),从独立
         稳定影子栈 push 一个 u64 锁槽并写入 k_f。仅在首次
         取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
         终止符;无取址的函数不含帧锁节点。VarPtr 的 frame_key 已是
-        GenKey 结果。帧退出写 SENTINEL 并 pop(全部返回路径,规则 3.7.2)
+        GenKey 结果。帧退出写 SENTINEL 并 pop(全部返回路径)
         的发射由 LLVM 层完成。
         raw 模式:无帧锁——直接返回 None 帧字段,不实体化
         GenKey/AcquireFrameLock。"""
@@ -1186,7 +1186,7 @@ class CfgBuilder:
     def __is_fat_pointer(self, ptr: IR.Value) -> bool:
         """胖指针判定:PointerType 且 pointee 非 ZST。
 
-        指针-to-ZST 保持 ZST(§7.6 风险 2),走既有快路径、无检查;
+        指针-to-ZST 保持 ZST,走既有快路径、无检查;
         FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
         诊断模式 raw_pointers 下恒 False:指针一律按裸 8B 处理,全部
         Check*/WriteLockSlot/Delete 检查与 PtrCmp 路由一并关闭。
@@ -1231,7 +1231,7 @@ class CfgBuilder:
         return isinstance(ty, (Type.PointerType, Type.SliceType, Type.RefType))
 
     def __build_gen_key(self, is_heap: bool) -> IR.Value:
-        """k ← Gen()(定义 10):堆键 MSB 1 / 栈键 MSB 0。"""
+        """k ← Gen():堆键 MSB 1 / 栈键 MSB 0。"""
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
         return self.__emit(IR.GenKey(result=result, is_heap=is_heap)).result
 
@@ -1247,7 +1247,7 @@ class CfgBuilder:
         return self.__build_extract_value(ptr, field_index, field_type)
 
     def __build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
-        """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)。
+        """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩。
 
         data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(首次取址时惰性
         实体化于函数入口);index = 0;size = 1(取址总是指向单个元素,含数组取址)。
@@ -1325,9 +1325,9 @@ class CfgBuilder:
 
         于 Delete / WriteLockSlot / 调用 / 终止符之前调用——中间有失效操作
         (释放、锁槽写、任意函数副作用)时,已检查状态不再可靠,逐访问前提
-        (规则 3.2.1/3.2.2)必须重新建立。挂起义务(派生链可对的 FieldPtr
+        必须重新建立。挂起义务(派生链可对的 FieldPtr
         跳过的 in_bounds(elem,1))在此补发,保证 one-past-end 的 elem 取
-        字段在任何逃逸(传参 / 返回 / 跨块)前报告安全错误(规则 3.5.2 前提不丢)。
+        字段在任何逃逸(传参 / 返回 / 跨块)前报告安全错误(前提不丢)。
         """
         if self.__field_derived:
             for elem_name in dict.fromkeys(self.__field_derived.values()):
@@ -1365,7 +1365,7 @@ class CfgBuilder:
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         # 按指针层级插入检查(按 type_id 分派):
-        #   PointerType → in_bounds(p_s, 1)(规则 3.5.2 重锚定前提,对 one-past-end 的 s 取字段时失败)
+        #   PointerType → in_bounds(p_s, 1)(重锚定前提,对 one-past-end 的 s 取字段时失败)
         #   RefType     → 仅 live(r)(T& 免 in_bounds;引用无 index/size,恒指单个元素)
         merged_elem_name: str | None = None
         base_ty = self.__type_ctx[base.type_id]
@@ -1378,7 +1378,7 @@ class CfgBuilder:
         elif self.__is_fat_pointer(base):
             # 嵌套派生链(安全修复 复核):base 是挂起 FieldPtr 结果时先补发
             # in_bounds(elem,1)(消费义务)再派发——OOB 读/写必须先于访问
-            # 报告安全错误,不得推迟到终止符补发(每访问前提仍成立,规则 3.5.2)。
+            # 报告安全错误,不得推迟到终止符补发(每访问前提仍成立)。
             if isinstance(base, IR.Reg) and base.name in self.__field_derived:
                 owed_name = self.__field_derived.pop(base.name)
                 elem, _b, _o = self.__elem_derived[owed_name]
@@ -1391,14 +1391,14 @@ class CfgBuilder:
             if elem_entry is not None and isinstance(elem_entry[0], IR.Reg):
                 # 合并路径:in_bounds(elem,1) 挂起为义务,并入访问点的
                 # CheckElementAccess 合取检查;若访问不相邻,失效点(调用/
-                # Delete/终止)补发——one-past-end 前提不丢(规则 3.5.2)。
+                # Delete/终止)补发——one-past-end 前提不丢。
                 merged_elem_name = elem_entry[0].name
                 ch_cfg_block().debug(lambda: "check merge FieldPtr: in_bounds 挂起并入 ElementAccess (检查合并, 派生链可对)")
             elif self.__dedup(self.__ptr_key(base, "ib")):
                 ch_cfg_block().debug(lambda: "check dedup FieldPtr: in_bounds(p_s,1) 共享(同块同值相邻)")
             else:
                 self.__emit(IR.CheckInBounds(ptr=base))
-                ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (规则 3.5.2 重锚定前提)")
+                ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (重锚定前提)")
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
         field_ptr = self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
         if merged_elem_name is not None:
@@ -1412,7 +1412,7 @@ class CfgBuilder:
         ptr_type = self.__type_ctx[self.__type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         # 按指针层级插入检查(按 type_id 分派):
-        #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检(规则 3.2.1)
+        #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
             if self.__dedup(self.__ptr_key(ptr, "ref")):
@@ -1427,14 +1427,14 @@ class CfgBuilder:
                 ch_cfg_block().debug(lambda: "check dedup Load: safe_access(p,1) 共享(同块同值相邻)")
             else:
                 self.__emit(IR.CheckSafeAccess(ptr=ptr))
-                ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.1)")
+                ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
         result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
         return self.__emit(IR.Load(result=result, ptr=ptr)).result
 
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
         ptr_type = self.__type_ctx[ptr.type_id]
         # 按指针层级插入检查(按 type_id 分派,同 Load 的检查与地址折算):
-        #   PointerType → safe_access(p, 1)(规则 3.2.2)
+        #   PointerType → safe_access(p, 1)
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
             if self.__dedup(self.__ptr_key(ptr, "ref")):
@@ -1449,13 +1449,13 @@ class CfgBuilder:
                 ch_cfg_block().debug(lambda: "check dedup Store: safe_access(p,1) 共享(同块同值相邻)")
             else:
                 self.__emit(IR.CheckSafeAccess(ptr=ptr))
-                ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1) (规则 3.2.2)")
+                ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
         self.__emit(IR.Store(ptr=ptr, value=value))
 
     def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
-        # CFG 层:Malloc 块头锁槽写键 k ← Gen()(规则 3.6.1,堆键 MSB 1),返回
+        # CFG 层:Malloc 块头锁槽写键 k ← Gen()(堆键 MSB 1),返回
         # 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(由 LLVM 层构造);
-        # pointee 为 ZST 时维持快路径(undef,不写锁槽;key=None,§7.6 风险 2)。
+        # pointee 为 ZST 时维持快路径(undef,不写锁槽;key=None)。
         # raw 模式:无锁槽,key=None(省 GenKey)。
         key: IR.Value | None = None
         if not self.__type_ctx.is_zst(type_id) and not self.__raw_pointers:
@@ -1488,7 +1488,7 @@ class CfgBuilder:
                 neg_offset = self.__build_binary(BinaryOperator.Sub, zero, rhs, rhs.type_id)
                 return self.__build_element_ptr(lhs, neg_offset, type_id)
 
-        # ── 指针比较字段化(规则 3.4.1-3.4.2,§7.6 风险 3,指针比较)──
+        # ── 指针比较字段化(指针比较)──
         # 胖指针(双方 PointerType 且 pointee 非 ZST)的比较路由至 PtrCmp:
         # 序比较先插 CheckPtrCmp(data 相等前提,跨对象失败);相等比较按
         # (data, index) 二元组。FunctionPointerType 非 PointerType,不参与。
@@ -1499,7 +1499,7 @@ class CfgBuilder:
         return self.__emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
-        # CFG 层插入检查:算术 → 良构检查(定义 13:0 ≤ index+n ≤ size;规则 3.3.1-3.3.2)
+        # CFG 层插入检查:算术 → 良构检查(0 ≤ index+n ≤ size)
         if self.__is_fat_pointer(base):
             # 嵌套派生链(安全修复 复核):同 FieldPtr——base 有挂起义务先补发再继续
             if isinstance(base, IR.Reg) and base.name in self.__field_derived:
@@ -1514,7 +1514,7 @@ class CfgBuilder:
                 ch_cfg_block().debug(lambda: "check dedup ElementPtr: well_formed(p') 共享(同 base/offset, 检查合并)")
             else:
                 self.__emit(IR.CheckElementArith(base=base, offset=offset))
-                ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p') (定义 13;规则 3.3.1-3.3.2)")
+                ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p')")
         result = IR.Reg(name=self.__new_name(), type_id=result_type)
         elem_ptr = self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
         # 合并跟踪:记录派生链 (base, offset),供 FieldPtr→Load/Store 合取检查
@@ -1526,21 +1526,21 @@ class CfgBuilder:
         return elem_ptr
 
     def __build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
-        # CFG 层插入检查:data 相等 + 良构 + 无回绕(规则 3.3.3,异对象指针差失败)。
+        # CFG 层插入检查:data 相等 + 良构 + 无回绕(异对象指针差失败)。
         # 与 ElementPtr 算术一致:该运算不访问内存,不检查 allocation live。
         if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
             self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
-            ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕 (规则 3.3.3)")
+            ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕")
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i64_id)
         return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
-        # 指针序比较检查:序比较先查 data 相等(规则 3.4.1 前提,跨对象序比较失败);
-        # 相等比较(规则 3.4.2)按 (data, index) 二元组、无前提检查。
+        # 指针序比较检查:序比较先查 data 相等(前提,跨对象序比较失败);
+        # 相等比较 按 (data, index) 二元组、无前提检查。
         # 与 ElementPtr 算术一致:比较本身不访问内存,不检查 allocation live。
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
             self.__emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
-            ch_cfg_block().debug(lambda: "check insert PtrCmp: data 相等 (规则 3.4.1)")
+            ch_cfg_block().debug(lambda: "check insert PtrCmp: data 相等")
         result = IR.Reg(name=self.__new_name(), type_id=type_id)
         return self.__emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
@@ -1565,7 +1565,7 @@ class CfgBuilder:
         return self.__emit(IR.Invoke(result=result, callee=callee, args=args)).result
 
     def __build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
-        # CFG 层:Cast 指针→指针语义(§7.1)——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
+        # CFG 层:Cast 指针→指针语义 ——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
         #   (5 字段结构重贴,LLVM 类型同为 {i8*,i8*,i64,i64,i64});涉及 ptr-to-ZST
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
         # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
@@ -1580,7 +1580,7 @@ class CfgBuilder:
             self.__raw_ptrs.add(cast.name)
         # 嵌套派生链(安全修复 复核):ptr→ptr cast = identity(5 字段重贴),
         # 挂起义务沿 cast 传播——(ptr+k).a[j] 的 elementptr base 是 cast
-        # 结果时,义务仍可被访问点合并或提前补发(规则 3.5.2)。
+        # 结果时,义务仍可被访问点合并或提前补发。
         if isinstance(value, IR.Reg) and value.name in self.__field_derived and self.__is_fat_pointer(cast):
             self.__field_derived[cast.name] = self.__field_derived.pop(value.name)
         return cast

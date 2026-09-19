@@ -2,7 +2,7 @@
 // T*→T[] 降级产生覆盖整个堆块的视图(data = lock_ptr+8,lo=0):CheckDelete
 // 四前提 is_heap(p) ∧ live(p) ∧ is_raw(p) 全部满足(SliceType 无 index 分量,
 // index==0 检查退化为恒真,仅查 data==lock_ptr+8)→ del arr 整块交还,
-// 动作①锁槽写 SENTINEL + 动作②free(lock_ptr 寻址)。del 后重分配验证堆稳定。
+// 锁槽写 SENTINEL + free(lock_ptr 寻址)。del 后重分配验证堆稳定。
 //
 // Expected output: 0
 

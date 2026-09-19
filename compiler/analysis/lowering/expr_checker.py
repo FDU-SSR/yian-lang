@@ -145,7 +145,7 @@ class ExprChecker:
         result = self.__call_dispatcher.handle_method_call(node)
         match result:
             case HIR.MethodCall(method_id=method_id, type_id=type_id):
-                # The method itself, not the receiver's type (plan §7 P5).
+                # The method itself, not the receiver's type.
                 self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
             case HIR.VariantConstruct(variant=variant, type_id=type_id):
                 self.__ctx.type_ctx.record_name_ref(node.method_name.span, variant, type_id)
@@ -206,7 +206,7 @@ class ExprChecker:
 
         # A type written in an expression (`Point.new(...)`, `Pair<Meters>.of(...)`)
         # is a reference like any other: recording it is what lets navigation,
-        # hover and member completion know what the receiver is (plan §7 P5/P6).
+        # hover and member completion know what the receiver is.
         self.__ctx.type_ctx.record_name_ref(node.name.span, symbol, symbol.type_id)
 
         type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
@@ -246,7 +246,7 @@ class ExprChecker:
             raise AnalysisError(f"Unknown identifier '{node.name}'", node.span)
 
         # Every identifier that resolves is recorded: this is the referring side
-        # of navigation and hover (plan §7 P5), so no later pass has to guess
+        # of navigation and hover, so no later pass has to guess
         # which declaration a name stood for.
         match symbol.kind:
             case SymbolKind.Variable:

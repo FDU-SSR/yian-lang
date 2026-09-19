@@ -45,7 +45,7 @@ class LLBuilder:
         self.__check_seq = 0
         self.__continuations: dict[str, str] = {}
         self.__current_cfg_block = ""
-        self.__frame_lock_slot_name: str | None = None  # 已从稳定影子栈取得的 e_f 寄存器名(规则 3.7.1)
+        self.__frame_lock_slot_name: str | None = None  # 已从稳定影子栈取得的 e_f 寄存器名
 
     # ------------------------------------------------------------------
     # constants
@@ -159,7 +159,7 @@ class LLBuilder:
         """把裸 8B 指针值(如 Alloca 结果)提升为 5 字段胖指针 ⟨data, e_f, k_f, 0, 1⟩。
 
         值层统一:type_id 为 PointerType 的 LLVM 值须是 40B 聚合才能跨调用/返回/
-        存储;Alloca 等产生裸指针的原语在此补全元数据(规则 3.5.1 帧锁)。
+        存储;Alloca 等产生裸指针的原语在此补全元数据(帧锁)。
         """
         if self.__is_fat_type(ll_val.type_id) and not self.__is_fat(ll_val):
             lock_ir, key_ir = self.__lit_lock_pair()
@@ -172,7 +172,7 @@ class LLBuilder:
         return ll_val
 
     def __fat_addr(self, ll_val: LLValue, pointee_type_id: int) -> LLValue:
-        """定义 17 地址折算:有效地址 = data + index·|T|,一次 GEP(检查与取数共用)。
+        """地址折算:有效地址 = data + index·|T|,一次 GEP(检查与取数共用)。
 
         对 fat 值提取 data/index 字段,bitcast 到 T* 后按元素索引 GEP;对裸 8B
         指针直接使用(索引恒 0 语义)。T&无 index 字段,恒指单个元素——
@@ -254,7 +254,7 @@ class LLBuilder:
     ) -> ir.Value:
         """短路守卫:guard 真 → compute(由调用方提供闭包,在新块中),假 → false。
 
-        用于 live 的 null 短路(定义 8:lock_ptr = 0 时短路为假,不读地址 0
+        用于 live 的 null 短路(lock_ptr = 0 时短路为假,不读地址 0
         物理槽位,避免段错误退化)。
         """
         seq = self.__check_seq
@@ -292,7 +292,7 @@ class LLBuilder:
         return lock, key, index, size
 
     def __check_live(self, lock_ptr: ir.Value, key: ir.Value) -> LLValue:
-        """定义 8 live(p):锁槽键比较 μ⟨lock_ptr⟩ == key,含 null 短路。
+        """live(p):锁槽键比较 μ⟨lock_ptr⟩ == key,含 null 短路。
 
         lock_ptr/key 由调用方预提取传入(check_delete/check_safe_access 复用提取,
         避免重复 extract);锁槽 load 留在 __emit_guarded 守卫内——null 短路为假,
@@ -307,7 +307,7 @@ class LLBuilder:
         return LLValue(self.__type_ctx.bool_id, self.__emit_guarded(guard, compute))  # type: ignore
 
     def __check_in_bounds_cond(self, index: ir.Value, size: ir.Value) -> LLValue:
-        """定义 12 in_bounds(p,1):0 ≤ index ∧ index+1 ≤ size,简化为 index < size(u64)。"""
+        """in_bounds(p,1):0 ≤ index ∧ index+1 ≤ size,简化为 index < size(u64)。"""
         cond = self.__builder.icmp_unsigned("<", index, size)  # type: ignore
         return LLValue(self.__type_ctx.bool_id, cond)  # type: ignore
 
@@ -362,7 +362,7 @@ class LLBuilder:
             # __is_fat_type 恒 False(既有行为),此处同样裸返回。
             result_val = alloca_ptr
         else:
-            # 5 字段合成 ⟨a_x, e_f, k_f, 0, 1⟩(定义 15、规则 3.5.1)
+            # 5 字段合成 ⟨a_x, e_f, k_f, 0, 1⟩
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), alloca_ptr.ir_val)  # type: ignore
             if frame_lock_ptr is None or frame_key is None:
                 e_f_ir, k_f_ir = self.__lit_lock_pair()
@@ -454,7 +454,7 @@ class LLBuilder:
         payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
         total128 = payload128
         if not self.__raw_pointers:
-            # 规则 3.6.1:块 = 堆块头 + 负载;块头首字为锁槽。
+            # 块 = 堆块头 + 负载;块头首字为锁槽。
             # raw 模式无锁头(块 = 负载,data = 块基址)。
             total128 = self.__builder.add(
                 total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
@@ -524,7 +524,7 @@ class LLBuilder:
     def delete(self, ptr: LLValue) -> None:
         if self.__type_ctx.is_zst(ptr.type_id):
             return  # freeing a ZST pointer is a no-op
-        # 规则 3.6.2 动作②:块进入稳定头空闲池,不向 libc 归还。
+        # 块进入稳定头空闲池,不向 libc 归还。
         if self.__is_fat(ptr):
             block_base = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
             self.__builder.call(self.__module.get_pool_release(), [block_base.ir_val])  # type: ignore
@@ -545,7 +545,7 @@ class LLBuilder:
         self.__func.set_reg(result, self.__gen_key_value(is_heap))
 
     def acquire_frame_lock(self, key: LLValue, result: str) -> None:
-        """规则 3.7.1:在固定地址的独立影子栈上 push 一个帧锁槽。
+        """在固定地址的独立影子栈上 push 一个帧锁槽。
 
         热路径只执行一次深度检查、一次 GEP 和两次 store;无动态
         分配或空闲链指针追踪。槽位先写新键,再发布新深度,且在任何
@@ -579,7 +579,7 @@ class LLBuilder:
         )
 
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
-        """μ⟨lock_ptr⟩ := value(规则 3.6.2 动作① SENTINEL / 3.7.1 帧锁写键)。
+        """μ⟨lock_ptr⟩ := value(SENTINEL / 3.7.1 帧锁写键)。
 
         指针恒非空,锁槽恒可写(空容器持真实堆块)。
         """
@@ -587,7 +587,7 @@ class LLBuilder:
         self.__builder.store(value.ir_val, raw)  # type: ignore
 
     def check_safe_access(self, ptr: LLValue) -> None:
-        """safe_access(p,1) = live(p) ∧ in_bounds(p,1)(规则 3.2.1-3.2.2)。"""
+        """safe_access(p,1) = live(p) ∧ in_bounds(p,1)。"""
         if not self.__is_fat(ptr):
             return
         lock, key, index, size = self.__extract_check_fields(ptr)
@@ -669,7 +669,7 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "view")
 
     def check_in_bounds(self, ptr: LLValue) -> None:
-        """in_bounds(p_s,1)(规则 3.5.2 重锚定前提)。"""
+        """in_bounds(p_s,1)(重锚定前提)。"""
         if not self.__is_fat(ptr):
             return
         index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
@@ -690,7 +690,7 @@ class LLBuilder:
         """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers)。
 
         引用无 index/size(3 字段 ⟨data,lock_ptr,key⟩),无越界概念;
-        live = 锁槽键比较(定义 8,含 null 短路)。live 失败 → 报告 S003。
+        live = 锁槽键比较(含 null 短路)。live 失败 → 报告 S003。
         """
         if not self.__is_fat(ptr):
             return
@@ -700,7 +700,7 @@ class LLBuilder:
         self.__emit_check(cond, RuntimeErrorCode.S003, "ref")
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
-        """定义 13 良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
+        """良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
 
         指针算术本身不访问内存，因此这里与 PtrDiff/PtrCmp 一样不检查
         allocation live 状态；后续解引用或外部 I/O 在各自访问边界检查 live。
@@ -732,15 +732,15 @@ class LLBuilder:
         """合并检查:ElementArith→InBounds→SafeAccess 合取谓词(检查合并优化)。
 
         派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
-        良构(elem)(定义 13,u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
-        (规则 3.5.2,one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(定义 8,
+        良构(elem)(u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
+        (one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(
         SafeAccess 的 live 项;in_bounds(f,1) 对重锚定字段指针恒真、
         live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项。
         LLVM 层 发射。
         """
         if not (self.__is_fat(base) and self.__is_fat(ptr)):
             return
-        # ElementArith 部分(定义 13,同 check_element_arith 的 u64 同型化:
+        # ElementArith 部分(同 check_element_arith 的 u64 同型化:
         # 回绕检测 no_wrap = icmp uge sum, index + 上界比较 in_range =
         # icmp ule sum, size;语义等价性论证见 check_element_arith 注释)
         index = self.__extract_fat_field(base, IR.FAT_INDEX).ir_val
@@ -750,11 +750,11 @@ class LLBuilder:
         no_wrap = self.__builder.icmp_unsigned(">=", sum, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", sum, size)  # type: ignore
         elarith_cond: ir.Value = self.__builder.and_(no_wrap, in_range)  # type: ignore
-        # InBounds 部分(规则 3.5.2):elem.index < elem.size
+        # InBounds 部分:elem.index < elem.size
         e_index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
         e_size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
-        # live 部分(定义 8):锁槽键比较,含 null 短路
+        # live 部分:锁槽键比较,含 null 短路
         lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
         key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
         live_ok = self.__check_live(lock, key)
@@ -771,7 +771,7 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
-        """规则 3.3.3 前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。
+        """前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。
 
         PtrDiff 不访问内存，故沿用指针算术策略，不检查 allocation live。
         """
@@ -795,7 +795,7 @@ class LLBuilder:
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """规则 3.4.1 序比较前提:data 相等(跨对象序比较报告 S005,§7.6 风险 3)。
+        """序比较前提:data 相等(跨对象序比较报告 S005)。
 
         PtrCmp 不访问内存，故沿用指针算术策略，不检查 allocation live。
         """
@@ -991,7 +991,7 @@ class LLBuilder:
         if self.__ll_type_ctx.is_zst(pointee_type_id):
             return self.undef(result_type_id)
         if self.__is_fat(base):
-            # 规则 3.5.2 重锚定:data' = addr_T(p_s,0) + δ,index'=0,size'=1,锁字段继承
+            # 重锚定:data' = addr_T(p_s,0) + δ,index'=0,size'=1,锁字段继承
             base_def = self.__type_ctx[base.type_id]
             element_ll = self.__ll_type_ctx.get_ll_type(base_def.pointee_type).ir_type  # type: ignore[union-attr]
             addr = self.__fat_addr(base, base_def.pointee_type)  # type: ignore
@@ -1001,7 +1001,7 @@ class LLBuilder:
             field_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), field_addr)  # type: ignore
             if isinstance(base_def, Type.PointerType):
                 # PointerType base:锁字段继承、完全不提取;直插 data=field_addr、
-                # index=0、size=1(重锚定常量,非 base 原值,规则 3.5.2)
+                # index=0、size=1(重锚定常量,非 base 原值)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                 one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
                 ir_val = self.__builder.insert_value(base.ir_val, field_ptr.ir_val, IR.FAT_DATA)  # type: ignore
@@ -1048,7 +1048,7 @@ class LLBuilder:
             self.__func.set_reg(result, base)
             return base
         if self.__is_fat(base):
-            # 规则 3.3.1-3.3.2:算术仅更新 index' = index + n(检查已保证良构)。
+            # 算术仅更新 index' = index + n(检查已保证良构)。
             # 单字段直插保留 data/lock/key/size 原值,无需 5 提取 + undef 重建。
             index = self.__extract_fat_field(base, IR.FAT_INDEX)
             new_index = LLValue(self.__type_ctx.u64_id,
@@ -1117,8 +1117,8 @@ class LLBuilder:
         raise ValueError(f"Unsupported pointer comparison operand: {type(ty).__name__}")
 
     def ptr_cmp(self, op: BinaryOperator, lhs: LLValue, rhs: LLValue, result: str) -> LLValue:
-        """指针比较(规则 3.4.1-3.4.2,§7.6 风险 3):相等按 (data, index) 二元组;
-        序比较在 CheckPtrCmp 前提(规则 3.4.1)下按 index。LLVM 无聚合 icmp → 字段提取。"""
+        """指针比较:相等按 (data, index) 二元组;
+        序比较在 CheckPtrCmp 前提 下按 index。LLVM 无聚合 icmp → 字段提取。"""
         lhs_ty = self.__type_ctx[lhs.type_id]
         assert isinstance(lhs_ty, Type.PointerType)
         if self.__ll_type_ctx.is_zst(lhs_ty.pointee_type):
@@ -1524,7 +1524,7 @@ class LLBuilder:
     # -- aggregate construct --
 
     def __synthesize_fat_value(self, value: LLValue, size: LLValue) -> LLValue:
-        """把裸 8B 指针值合成 5 字段胖指针 ⟨data, e_f, k_f, 0, size⟩(时序机制 §1.6)。
+        """把裸 8B 指针值合成 5 字段胖指针 ⟨data, e_f, k_f, 0, size⟩。
 
         用于 slice/str 边界:从 16B slice 取出的 ptr 字段是裸 8B 指针,落入
         {T*, u64} 形态聚合(SliceStruct 等)时补全元数据。锁用全局字面量锁槽
@@ -1734,7 +1734,7 @@ class LLBuilder:
                 break
             field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True, source_etype=payload_ll)  # type: ignore
             alloca_ptr = self.__func.get_var_ptr(symbol_id)
-            # &T 引用槽为 5 字段胖指针:裸字段地址补全元数据(规则 3.5.1)
+            # &T 引用槽为 5 字段胖指针:裸字段地址补全元数据
             field_ll = LLValue(self.__type_ctx.alloc_pointer(payload_fields[field_index].type_id), field_ptr)  # type: ignore
             self.__builder.store(self.__promote_fat(field_ll).ir_val, alloca_ptr.ir_val)  # type: ignore
 
@@ -1865,7 +1865,7 @@ class LLBuilder:
         self.__frame_lock_slot_name = e_f.name
 
     def __release_frame_lock(self) -> None:
-        """规则 3.7.2:帧退出写 SENTINEL,再从稳定影子栈 pop。
+        """帧退出写 SENTINEL,再从稳定影子栈 pop。
 
         槽位保持映射且永不成为用户数据;后续 push 复用该地址时会在
         任何用户步之前写入新键。编译器生成的函数进退严格 LIFO,
@@ -2020,7 +2020,7 @@ class LLBuilder:
             is_eq = op in (BinaryOperator.Eq,)
             return ir.Constant(ir.IntType(1), 1 if is_eq else 0)  # type: ignore
         if isinstance(lhs.type, ir.LiteralStructType) or isinstance(rhs.type, ir.LiteralStructType):  # type: ignore
-            # 胖指针聚合比较兜底(规则 3.4.1-3.4.2,§7.6 风险 3):LLVM 无聚合
+            # 胖指针聚合比较兜底:LLVM 无聚合
             # icmp → 字段比较。正常路径由 CFG 路由至 PtrCmp;此分支兜底 CFG
             # 未路由的聚合操作数。
             return self.__cmp_fat_values(op, lhs, rhs)
@@ -2061,9 +2061,9 @@ class LLBuilder:
         return (v, ir.Constant(ir.IntType(64), 0))  # type: ignore
 
     def __cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        """对 ir.Value 级胖指针聚合操作数做字段比较(规则 3.4.1-3.4.2)。
+        """对 ir.Value 级胖指针聚合操作数做字段比较。
 
-        相等按 (data, index) 二元组;序比较先插 data 相等前提检查(规则 3.4.1,
+        相等按 (data, index) 二元组;序比较先插 data 相等前提检查(
         跨对象失败)——未由 CFG 路由至此分支,须现场插检。
         """
         data_l, idx_l = self.__fat_value_pair(lhs)

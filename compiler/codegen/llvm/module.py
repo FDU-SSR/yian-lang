@@ -203,10 +203,10 @@ class LLModule:
     # -- fat-pointer mechanism globals (LLVM 层) --
 
     def get_key_counter(self, is_heap: bool) -> ir.GlobalVariable:
-        """Gen 单调计数器全局(定义 10):堆/栈各一个 63 位计数,键 = 最高位标志拼接计数。
+        """Gen 单调计数器全局:堆/栈各一个 63 位计数,键 = 最高位标志拼接计数。
 
         ``k ← Gen()`` 的 LLVM 发射:load 全局计数 → add 1 → store 回 → 堆键 or MSB
-        标志位。全局变量保证跨函数单调(同类内任意两次调用输出不同,定义 10)。
+        标志位。全局变量保证跨函数单调(同类内任意两次调用输出不同)。
         """
         if is_heap:
             if self.__key_heap_global is None:
@@ -281,7 +281,7 @@ class LLModule:
 
         字面量数据是全局只读区、生命周期为整个程序——live(p) 读该锁槽恒等于
         键,字面量派生的指针恒 live;键 1 与任何真实帧键只在各自锁槽内比较,
-        无跨槽串扰(定义 8 以锁槽地址寻址)。初始化与所有权在运行时库。
+        无跨槽串扰(以锁槽地址寻址)。初始化与所有权在运行时库。
         """
         if self.__lit_lock_global is None:
             global_var = ir.GlobalVariable(self.__module, ir.IntType(64), name="__yian_lit_lock")  # type: ignore

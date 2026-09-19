@@ -1,6 +1,6 @@
 """Conversion between compiler positions and editor (LSP) positions.
 
-This is the **only** module allowed to know both coordinate systems (plan §5.1).
+This is the **only** module allowed to know both coordinate systems.
 The compiler keeps its own representation — ``SrcPosition(row, col, path)`` with a
 0-based row, a 1-based column counted in code points, and a ``Path`` — and it is
 not modified.  Editors speak LSP: 0-based lines, 0-based characters counted in

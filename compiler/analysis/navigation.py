@@ -2,10 +2,10 @@
 
 `definition` and `hover` are two renderings of one question: which declaration
 does this position name, and what is the type of the expression here?  Both are
-answered from the analysis (plan §5.2, §5.8.2 #5) through two tables that the
+answered from the analysis through two tables that the
 analysis itself filled in:
 
-* the **declaration index** (P3) knows every declaration's name span, which is
+* the **declaration index** knows every declaration's name span, which is
   the declaration side of navigation — a function name, a struct field, an enum
   variant, a parameter, a type, an import;
 * the checker's **resolved names** (:class:`~compiler.analysis.ty.ty.NameRef`)
@@ -14,16 +14,16 @@ analysis itself filled in:
   fields, enum variants, constructed structs, and type names in annotations.
 
 Nothing is re-derived from the text: the text is consulted for one thing only,
-to convert the client's position into a compiler position (plan §5.1).  A
+to convert the client's position into a compiler position. A
 position in a comment, in whitespace, or in a definition the analysis never
-checked resolves to ``None`` rather than to something unrelated (plan §7 P5).
+checked resolves to ``None`` rather than to something unrelated.
 
-One consequence of recovery being per *definition* (plan §5.11 layer three): a
+One consequence of recovery being per *definition*: a
 body that fails stops contributing references at the point it failed, so
 positions after the first error in that body resolve to nothing.  Resolving to
 nothing is the honest answer there — the alternative would be a jump to whatever
 the name meant in some earlier revision, which is exactly the stale result the
-snapshot rule forbids (plan §5.12).
+snapshot rule forbids.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ class Navigator:
     """Editor queries over one analyzed result.
 
     The navigator holds references only: it is created per request, so it stays
-    valid exactly as long as the snapshot it was built from (plan §5.12 — a stale
+    valid exactly as long as the snapshot it was built from (a stale
     snapshot is not something to query, it is something to replace).
     """
 
@@ -90,7 +90,7 @@ class Navigator:
 
         Resolution is all this class adds; everything it reads — tokens, symbols,
         declarations, the type space, the recorded names — comes from the view,
-        which is the only place that touches the compiler's internals (plan §5.2).
+        which is the only place that touches the compiler's internals.
         """
         return self.__view
 
@@ -138,7 +138,7 @@ class Navigator:
         """Resolve the position ``(row, col)`` in *path*.
 
         *row* is 0-based and *col* is 1-based in code points, i.e. the compiler's
-        own position model: the LSP layer converts at its boundary (plan §5.1).
+        own position model: the LSP layer converts at its boundary.
         """
         target: Target | None = None
         expression_type: str | None = None
@@ -208,7 +208,7 @@ class Navigator:
         """Turn a declaration into a target, following imports to their source.
 
         A position on an import names the imported thing, not the import
-        statement, so it resolves to the declaration it came from (plan §7 P5:
+        statement, so it resolves to the declaration it came from (
         导入符号).
         """
         if declaration.kind is DeclarationKind.IMPORT:
@@ -236,7 +236,7 @@ class Navigator:
     def __target_of_symbol(self, symbol: Symbol) -> Target | None:
         """A symbol's declaration site.
 
-        ``Symbol.span`` is the name span registered at declaration time (P3),
+        ``Symbol.span`` is the name span registered at declaration time,
         which for a local or a parameter *is* the declaration.  A callable or
         type symbol has a type whose ``custom_def`` knows the declaration it came
         from, which is what an imported symbol resolves to — its original

@@ -1,4 +1,4 @@
-"""References, rename and quick fixes as protocol payloads (plan §7 P7).
+"""References, rename and quick fixes as protocol payloads.
 
 The compiler side decides which spans a symbol occupies
 (:mod:`compiler.analysis.refactor`) and where every import statement begins and
@@ -108,7 +108,7 @@ def workspace_edit(result: RenameResult, navigator: Navigator) -> types.Workspac
 
     Edits are grouped per file, and each one replaces the symbol's *name span*:
     nothing is matched by text, so strings, comments and unrelated same-named
-    symbols are untouched (plan §7 P7).
+    symbols are untouched.
     """
     changes: dict[str, list[types.TextEdit]] = {}
     for edit in result.edits:

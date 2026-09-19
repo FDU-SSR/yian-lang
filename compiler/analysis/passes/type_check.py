@@ -1,7 +1,7 @@
 """Worklist-driven type checking — lowers AST function/method bodies to HIR.
 
 With ``recover=True`` the pass also collects errors instead of stopping at the
-first one: the granularity is the **top-level definition** (plan §5.11 layer
+first one: the granularity is the **top-level definition** (layer
 three).  A definition whose body fails is recorded as a diagnostic and skipped;
 the rest of the program is still checked, which is what turns "this file has one
 error" into "this file has five errors" in the Problems panel.  Recovery is for

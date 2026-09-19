@@ -1,4 +1,4 @@
-"""``yian-lsp``: the stdio language server process (plan §5.10).
+"""``yian-lsp``: the stdio language server process.
 
 The entry point stays thin: it configures logging on **stderr** (stdout belongs
 to JSON-RPC), parses the few options the extension may pass, and hands control to

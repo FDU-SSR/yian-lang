@@ -1,7 +1,7 @@
 """The editor's view of a YIAN project: documents, project model, snapshots.
 
 The language server answers questions about a *workspace*, not about one file.
-This module holds that state on the Python side (plan §5.7): the open documents
+This module holds that state on the Python side: the open documents
 as an overlay over disk, the project model produced by ``anx``, and the analysis
 snapshot those two imply.
 
@@ -32,8 +32,8 @@ class Snapshot:
     """One immutable analysis of the workspace.
 
     A snapshot is replaced, never patched: the analysis passes rewrite their
-    units in place, so a new run always starts from the current text (plan §5.3,
-    §5.12).  ``generation`` counts snapshots in this process and is what makes a
+    units in place, so a new run always starts from the current text (
+    ). ``generation`` counts snapshots in this process and is what makes a
     stale result recognisable to a caller that held on to one.
     """
 
@@ -60,7 +60,7 @@ class Workspace:
     """Documents plus project model plus the latest analysis snapshot.
 
     The workspace is *not* thread-safe: it is owned by the language server's
-    single-threaded request loop (plan §5.10).  Analysis runs only when
+    single-threaded request loop. Analysis runs only when
     :meth:`snapshot` is called, and reuses the previous run while the inputs are
     unchanged, so repeated requests on an idle editor cost one key computation.
     """
@@ -95,7 +95,7 @@ class Workspace:
         """Record new text for an open document.
 
         The client sends whole documents (``textDocumentSync = Full``, plan
-        §5.10), so this is the same operation as :meth:`open`.
+        ), so this is the same operation as:meth:`open`.
         """
         self.open(path, text, version)
 
@@ -173,7 +173,7 @@ class Workspace:
 
         In a project that is the loaded file index — including packages nothing
         imports, so a library function the program never calls still has a
-        declaration (plan §2.2) — followed by any open document the index does not
+        declaration — followed by any open document the index does not
         own, so a scratch file or a repository example outside ``src/`` is
         analyzed too.  Without a project it is the open documents plus the
         standard library.
@@ -200,7 +200,7 @@ class Workspace:
     def syntax_snapshot(self) -> Snapshot:
         """The front-end-only analysis, cached like the full one.
 
-        Plan §5.12 level b: while text is changing the editor only needs the
+        Plan: while text is changing the editor only needs the
         diagnostics lexing, parsing and desugaring can decide.  At a few hundred
         files that is ~70-110 ms against ~200-470 ms for the full prefix, and it
         is honest — it reports what it actually ran, never a stale type error.
@@ -212,9 +212,9 @@ class Workspace:
         """The cached *full* snapshot while it still matches the inputs.
 
         Semantic tokens are recomputed on every visible edit, so asking for a
-        full analysis there would undo level b; ``None`` tells the caller the
-        text moved on and it should answer without types (the editor then keeps
-        its TextMate highlighting, plan §5.12).
+        full analysis there would undo the syntax-only granularity; ``None``
+        tells the caller the text moved on and it should answer without types
+        (the editor then keeps its TextMate highlighting).
         """
         return self.__cached(syntax_only=False)
 

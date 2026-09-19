@@ -4,16 +4,16 @@ The session runs the **analysis prefix** of the pipeline — lex, parse, desugar
 prelude injection, restricted-operation check, global resolution, type
 finalization and type checking — and stops there.  CFG lowering, LLVM emission,
 clang and executable generation are deliberately not involved, so a file can be
-analyzed without producing a program (plan §5.8.2, §5.12).
+analyzed without producing a program.
 
 It is designed to live inside a long-running process (the language server): it
 takes text from a :class:`~compiler.analysis.documents.DocumentStore` rather than
 reading files directly, returns diagnostics instead of printing or exiting, and
 never writes to standard output.
 
-Error handling follows plan §5.11 layer one: an error aborts the analysis and is
+Error handling follows: an error aborts the analysis and is
 reported as a structured diagnostic.  "Keep going after an error" and multiple
-diagnostics per document are the next layer (P4).
+diagnostics per document are the next layer.
 """
 
 from __future__ import annotations
@@ -51,12 +51,12 @@ from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
 
 #: Bumped when analysis semantics change, so snapshot keys from an older
-#: compiler never look reusable to a newer one (plan §5.12).
+# compiler never look reusable to a newer one.
 ANALYSIS_FORMAT = 1
 
 #: The errors the analysis pipeline is expected to raise.  Anything else is a
 #: compiler bug: it is not swallowed here, so it stays visible while the analysis
-#: layers above (the language server, in P3) decide what to do with it.
+# layers above (the language server, in ) decide what to do with it.
 ANALYSIS_ERRORS = (CompilerError, LexError, ParseError, AnalysisError)
 
 
@@ -97,7 +97,7 @@ class AnalysisResult:
     sources: Mapping[Path, str] = field(default_factory=dict[Path, str])
     #: Lexed tokens per file.  Semantic highlighting needs the exact extent of
     #: every name and the primitive type keywords, which only the lexer knows
-    #: (plan §5.4: TextMate stays the base grammar, these tokens overlay it).
+    # (TextMate stays the base grammar, these tokens overlay it).
     tokens: Mapping[Path, tuple[Token, ...]] = field(
         default_factory=dict[Path, tuple[Token, ...]]
     )
@@ -107,7 +107,7 @@ class AnalysisResult:
     #: root package's remaining definitions, which are checked but never
     #: generated.  The editor needs both: navigation has to answer for a function
     #: `main` never calls, and rename has to know which bodies were actually
-    #: analysed before it can trust its reference set (plan §7 P5/P7).
+    # analysed before it can trust its reference set.
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
@@ -119,10 +119,10 @@ class AnalysisResult:
     versions: Mapping[Path, int | None] = field(default_factory=dict[Path, int | None])
     #: Snapshot key: every input's hash and version plus the compile flags.  A
     #: result is only reusable when this matches, which is what keeps stale
-    #: definitions or diagnostics from surviving an edit (plan §5.12).
+    # definitions or diagnostics from surviving an edit.
     key: tuple[object, ...] = ()
     #: True when the run stopped after desugaring: its diagnostics are the
-    #: front end's, and it carries no names, types or index (plan §5.12 level b).
+    # front end's, and it carries no names, types or index.
     syntax_only: bool = False
 
     def ok(self) -> bool:
@@ -144,7 +144,7 @@ class AnalysisSession:
     package map, pointer mode) is resolved once, while every :meth:`analyze` call
     starts from text and therefore never observes a half-mutated AST — the passes
     rewrite their units in place, which is exactly why analysis always starts
-    from the source text (plan §5.3).
+    from the source text.
     """
 
     def __init__(
@@ -160,7 +160,7 @@ class AnalysisSession:
         ``--compiler-root``); the standard library source root is derived from it
         by :func:`resolve_stdlib_root`, which also covers ``$YIAN_LIB`` /
         ``$YIAN_ROOT`` and this checkout.  In package mode the map's ``std`` entry
-        wins (plan §5.5).
+        wins.
         """
         self.__packages = packages
         self.__raw_pointers = raw_pointers
@@ -191,7 +191,7 @@ class AnalysisSession:
         mistake, not a diagnostic about a document.
 
         With *syntax_only* the run stops after desugaring and reports only what
-        the front end can see.  That is the cheap half of plan §5.12 level b: the
+        the front end can see. That is the cheap half of: the
         editor publishes syntax diagnostics while typing (60–110 ms even for a
         few hundred files) and pays for the full prefix only when a semantic
         request or a save asks for it.
@@ -206,7 +206,7 @@ class AnalysisSession:
             return self.__keyed(self.__mark_syntax(tokens, syntax_only), key, store)
         # Kept for the stages that can still fail: a file the parser rejects has
         # no symbol table, but its tokens are what a degraded completion or
-        # semantic pass works from (plan §7 P6).
+        # semantic pass works from.
         lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
@@ -292,9 +292,9 @@ class AnalysisSession:
             )
 
         # The session analyzes text, not a build: an entry-less or entry-broken
-        # file set is a normal editor state (plan §5.11 layer one), and a file
-        # with several broken definitions reports all of them (layer three,
-        # granularity = top-level definition).
+        # file set is a normal editor state, and a file
+        # with several broken definitions reports all of them: recovery
+        # granularity is the top-level definition.
         checker = TypeCheck(
             units,
             type_ctx,
@@ -319,7 +319,7 @@ class AnalysisSession:
         # A recovered error does not stop the index from being built, so a file
         # with one broken definition still answers navigation for the others.
         # The index is handed over unbuilt: it is a projection of what this run
-        # already produced, and only an editor asks for it (plan §5.12).
+        # already produced, and only an editor asks for it.
         index: DeclarationIndex = LazyIndex(
             units=units,
             type_ctx=type_ctx,
@@ -345,7 +345,7 @@ class AnalysisSession:
 
         A caller that keeps the result of an earlier run compares this key to
         ``result.key`` and reuses that result when they match, which is how the
-        language server avoids re-analyzing an unchanged project (plan §5.12).
+        language server avoids re-analyzing an unchanged project.
         The key covers each input's text and editor version plus the compile
         flags, so it never matches across an edit.
         """
@@ -383,7 +383,7 @@ class AnalysisSession:
         A run that stopped at a diagnostic is still a complete description of its
         inputs, so it is keyed like a successful one: the editor reuses it while
         the text is unchanged instead of re-analyzing a broken file on every
-        request (plan §5.12).
+        request.
         """
         result.key = key
         result.versions = store.versions()
@@ -424,7 +424,7 @@ class AnalysisSession:
 
         A run that stops during lexing, parsing or desugaring has no index and no
         types, so it *is* a syntax-only answer even though it took the error path
-        (plan §5.12 level b); a caller that checks the flag must not be told
+; a caller that checks the flag must not be told
         otherwise.
         """
         result.syntax_only = syntax_only

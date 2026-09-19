@@ -1,4 +1,4 @@
-"""Rendering the analyzed answer as LSP navigation payloads (plan §7 P5).
+"""Rendering the analyzed answer as LSP navigation payloads.
 
 The compiler side answers "what does this position resolve to" once
 (:class:`~compiler.analysis.navigation.Navigator`); this module renders that one
@@ -84,7 +84,7 @@ def location(target: Target, navigator: Navigator) -> types.Location:
 def hover(resolution: Resolution, navigator: Navigator, span: SrcSpan) -> types.Hover | None:
     """The declaration and the expression's type, as markdown.
 
-    Everything shown comes from the analysis (plan §7 P5: 悬停类型来自分析结果):
+    Everything shown comes from the analysis (悬停类型来自分析结果):
     the kind and name from the declaration, the signature or type from the type
     in hand, and a note when the declaration is the standard library's.
     """

@@ -1,7 +1,7 @@
 // delete on a T& reference: migrated from compile_err (was a compile-time
 // rejection) to a runtime safety error. `del r` on a T& whose receiver is a stack
-// variable: delete 前提 is_heap(p)(定义 9:键最高位 msb 0 = 栈)拒绝栈指针,
-// 规则 3.6.2 前提不满足 → fail-stop → Exit code 1。
+// variable: delete 前提 is_heap(p)(键最高位 msb 0 = 栈)拒绝栈指针,
+// 前提不满足 → fail-stop → Exit code 1。
 //
 // 注: 本测试 `r` 指向栈对象,is_heap 检查失败触发 safety error;若 r 指向堆对象,
 // 释放语义另行覆盖。

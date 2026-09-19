@@ -207,7 +207,7 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
-        # §7.4 方案 A: 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
+        # 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
         # 诊断模式:raw_pointers 下指针退化为裸 8B opaque 指针;元素/值类型(GEP 的
         # source_etype、load 的 typ)由使用点显式给出。
@@ -273,7 +273,7 @@ class LLTypeCtx:
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         # Zero-sized parameters carry no data and are dropped from the signature.
         # Pointer params/returns lower to the 5-field fat pointer aggregate
-        # (§7.4 方案 A); pointer-to-ZST params stay ZST and remain dropped.
+        # pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
             # 接收者以 `T&` 值类型引用传递:receiver_type_id 是值类型,
@@ -335,7 +335,7 @@ class LLTypeCtx:
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.PointerType):
-            # §7.4 方案 A: fat pointer — 5 × 8B fields = 40B, align 8.
+            # fat pointer — 5 × 8B fields = 40B, align 8.
             # 诊断模式:raw_pointers 下指针为裸 8B,align 8。
             if self.__raw_pointers:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore

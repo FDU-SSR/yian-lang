@@ -1,5 +1,5 @@
 // Same-object pointer difference: ptr - ptr → i64 element offset
-// (规则 3.3.3; 定型规则 8.1.9, result typed i64). Complementary angle to
+// (result typed i64). Complementary angle to
 // ptr_diff.an: larger array, different offsets, self-diff, explicit i64 width.
 //
 // Expected output: 0

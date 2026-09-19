@@ -1,6 +1,6 @@
 // Fat-pointer delete of an offset pointer — negative test
 //
-// delete 前提 is_raw(p):index 分量必须 p.index = 0(规则 3.6.2)。
+// delete 前提 is_raw(p):index 分量必须 p.index = 0。
 // p + 1 产生的 q 携带 index = 1 → is_raw 拒 → fail-stop → Exit code 1。
 
 fn main() {

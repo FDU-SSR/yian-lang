@@ -96,7 +96,7 @@ class TypeResolver:
                 if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
                     raise AnalysisError(f"{name} is not a type", ty.span)
                 # Record the name as written: editors navigate and hover type
-                # annotations, which no HIR expression represents (plan §7 P5).
+                # annotations, which no HIR expression represents.
                 self.__ctx.record_name_ref(name.span, symbol.type_id)
                 return symbol.type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):

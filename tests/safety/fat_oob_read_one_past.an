@@ -1,6 +1,6 @@
-// Fat-pointer one-past-end READ negative test (胖指针表示, 规则 3.2.1)
+// Fat-pointer one-past-end READ negative test (胖指针表示)
 //
-// p + 4 是良构的 one-past-end 指针(index == size,定义 13 允许);
+// p + 4 是良构的 one-past-end 指针(index == size, 允许);
 // 但对其解引用 *end 触发 safe_access(p,1) = live(p) ∧ in_bounds(p,1),
 // in_bounds(p,1) 要求 index + 1 ≤ size → 4 + 1 > 4 → 失败 → safety error。
 // 期望 Exit code 1。

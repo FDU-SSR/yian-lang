@@ -99,7 +99,7 @@ class LLTranslator:
 
         builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx, self.__raw_pointers)
         if cfg.frame_lock is not None:
-            # 帧退出写 SENTINEL 并弹出影子栈(规则 3.7.2)
+            # 帧退出写 SENTINEL 并弹出影子栈
             builder.set_frame_lock(cfg.frame_lock[0])
 
         # entry block + local var allocas

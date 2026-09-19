@@ -1,17 +1,17 @@
 """The YIAN language server: protocol adapter over the analysis session.
 
-Scope (plan §7 P3/P4): the process form, document synchronisation, the workspace
-snapshot, and published diagnostics.  Navigation requests arrive in P5.
+Scope: the process form, document synchronisation, the workspace
+snapshot, and published diagnostics. Navigation requests arrive in.
 
 Two rules shape this module:
 
-* **stdout is the JSON-RPC channel** (plan §5.10), so the server only ever writes
+* **stdout is the JSON-RPC channel**, so the server only ever writes
   to it through pygls.  Everything human-readable goes to the ``stderr`` logger.
-* **the protocol layer holds no language knowledge** (plan §1.3): a handler's job
+* **the protocol layer holds no language knowledge**: a handler's job
   is to turn an LSP payload into a :class:`~lsp.workspace.Workspace` call and a
   log line, nothing more.
 
-Analysis is *lazy and debounced* rather than per keystroke (plan §5.12 level a):
+Analysis is *lazy and debounced* rather than per keystroke:
 a burst of edits arms one timer, and the analysis runs when typing pauses.  That
 is what keeps a half-typed `x.` or an unfinished string from painting the file
 red, and it is the reason a stale publish cannot happen — the timer coalesces
@@ -63,7 +63,7 @@ __all__ = ["SERVER_NAME", "SERVER_VERSION", "YianLanguageServer", "create_server
 SERVER_NAME = "yian-lsp"
 #: Reported to the client as ``serverInfo``.  It tracks the VS Code extension's
 #: version on purpose: the two are released together from this repository, and
-#: the extension warns when the pair it started does not match (plan §6.1, §7 P8).
+# the extension warns when the pair it started does not match.
 SERVER_VERSION = "0.7.0"
 
 #: LSP's ``RequestFailed``: the request was understood, but cannot be fulfilled.
@@ -72,7 +72,7 @@ SERVER_VERSION = "0.7.0"
 REQUEST_FAILED = -32803
 
 #: How long the server waits for typing to pause before analyzing.  The value is
-#: the debounce half of plan §5.12 level a; it is deliberately short enough to
+# the debounce half of; it is deliberately short enough to
 #: feel immediate and long enough to swallow a keystroke burst.
 DEBOUNCE_SECONDS = 0.2
 
@@ -88,7 +88,7 @@ class YianLanguageServer(LanguageServer):
     Handlers run on a single worker thread (``max_workers=1``): analysis is
     CPU-bound and the workspace is stateful, so requests are serialized in the
     order the client sent them.  ``$/cancelRequest`` still works — pygls cancels
-    a request that has not started yet (plan §5.10).
+    a request that has not started yet.
     """
 
     def __init__(
@@ -105,7 +105,7 @@ class YianLanguageServer(LanguageServer):
             name=SERVER_NAME,
             version=SERVER_VERSION,
             # Whole documents per change: analysis always restarts from text
-            # (plan §5.3, §5.10), so applying incremental diffs buys nothing.
+            # so applying incremental diffs buys nothing.
             text_document_sync_kind=types.TextDocumentSyncKind.Full,
             max_workers=max_workers,
         )
@@ -119,13 +119,13 @@ class YianLanguageServer(LanguageServer):
         #: analysis triggered by a semantic request is published exactly once.
         self.__publish_generation = -1
 
-    # ── analysis scheduling (plan §5.12 levels a and b) ────────────────────────
+    # ── analysis scheduling (a and b) ────────────────────────
 
     def schedule_analysis(self, reason: str) -> None:
         """Analyze once the editor goes quiet; the latest event in a burst wins.
 
         This is the path a keystroke takes, so it asks for the *front end* only
-        (plan §5.12 level b): syntax diagnostics are what a reader can trust
+syntax diagnostics are what a reader can trust
         mid-edit, and the full prefix runs when a save or a semantic request
         needs it.
         """
@@ -277,7 +277,7 @@ def __register_features(server: YianLanguageServer) -> None:
         if root is None:
             _LOGGER.info("no workspace folder; analyzing opened files only")
             return
-        # The *workspace* decides the mode (plan §5.5): a workspace folder that
+        # The *workspace* decides the mode: a workspace folder that
         # is (or lives inside) a package is analyzed in package mode, anything
         # else in standalone mode.  Which file the user happens to open later
         # does not switch modes.
@@ -335,7 +335,7 @@ def __register_features(server: YianLanguageServer) -> None:
         ls.model.change(uri_to_path(document.uri), changes[-1].text, document.version)
         __document_changed(ls, "didChange", document.uri, document.version)
 
-    # ── navigation (plan §7 P5) ───────────────────────────────────────────────
+    # ── navigation ───────────────────────────────────────────────
 
     @server.feature(types.TEXT_DOCUMENT_DEFINITION)
     def definition(
@@ -378,14 +378,14 @@ def __register_features(server: YianLanguageServer) -> None:
         navigator = __navigator(ls, snapshot)
         return document_symbols(navigator.declarations_in(path), navigator)
 
-    # ── semantic highlighting (plan §5.4, §7 P6) ──────────────────────────────
+    # ── semantic highlighting ──────────────────────────────
 
     @server.feature(types.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL, legend())
     def semantic_tokens(
         ls: YianLanguageServer, params: types.SemanticTokensParams
     ) -> types.SemanticTokens | None:
         # The client re-asks on every visible edit, so this feature reads the
-        # cache instead of filling it (plan §5.12 level b): colours follow the
+        # cache instead of filling it: colours follow the
         # type checker when a full snapshot is current, and fall back to the
         # client's TextMate highlighting in between — an empty array is not an
         # error.
@@ -397,7 +397,7 @@ def __register_features(server: YianLanguageServer) -> None:
         classified = classify(navigator, path)
         return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
 
-    # ── completion and signature help (plan §7 P6) ────────────────────────────
+    # ── completion and signature help ────────────────────────────
 
     @server.feature(
         types.TEXT_DOCUMENT_COMPLETION,
@@ -448,7 +448,7 @@ def __register_features(server: YianLanguageServer) -> None:
         text = ls.model.documents.text(path)
         return document_edits(text, path)
 
-    # ── references, rename and quick fixes (plan §7 P7) ───────────────────────
+    # ── references, rename and quick fixes ───────────────────────
 
     @server.feature(types.TEXT_DOCUMENT_REFERENCES)
     def references(
@@ -535,7 +535,7 @@ def __register_features(server: YianLanguageServer) -> None:
         if not outcome.ok:
             # A refused rename is a *request* failure with a readable reason, not
             # a server error: the client shows the message instead of applying a
-            # partial edit (plan §7 P7: 拒绝批量修改).
+            # partial edit (拒绝批量修改).
             raise JsonRpcException(outcome.refusal, code=REQUEST_FAILED)
         return workspace_edit(outcome, navigator)
 
@@ -577,7 +577,7 @@ def __register_features(server: YianLanguageServer) -> None:
 def __snapshot(server: YianLanguageServer) -> Snapshot | None:
     """The current full analysis, or ``None`` when the server cannot produce one.
 
-    A semantic request is a reason to run the whole prefix (plan §5.12 level b),
+    A semantic request is a reason to run the whole prefix,
     so whatever it produces also refreshes the diagnostics the editor shows.
     """
     started = time.perf_counter()
@@ -617,7 +617,7 @@ def __compiler_position(
     """The document path and the compiler position for a client position.
 
     The client speaks 0-based lines and UTF-16 characters; the analysis speaks
-    0-based rows and 1-based code points (plan §5.1), so the conversion happens
+    0-based rows and 1-based code points, so the conversion happens
     here, at the boundary, and only for a document the analysis actually read.
     """
     path = uri_to_path(uri)
@@ -682,7 +682,7 @@ def __document_changed(
 
     Every event invalidates the snapshot — the text changed, or the file set did
     — and then arms one debounce timer, so a burst of keystrokes costs a single
-    analysis (plan §5.12 level a).  Whatever changed is picked up by that
+    analysis. Whatever changed is picked up by that
     analysis; nothing here needs to know what it was.
     """
     server.model.invalidate()

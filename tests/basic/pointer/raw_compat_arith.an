@@ -2,7 +2,7 @@
 //
 // 覆盖同对象指针算术语义:p+n 取值、指针差 (p+n)-(p+n)=n、同对象序比较
 // < <= > >=,以及 n==0 恒等。p-n(n≥1) 在 fat 模式为下溢偏移(offset ≥ 2^63,
-// u64 回绕)→ 良构检查(定义 13)收紧 trap(u64 索引语义,Metis H2),语义由
+// u64 回绕)→ 良构检查 收紧 trap(u64 索引语义,Metis H2),语义由
 // negative/fat_subslice_underflow.an 锁定,此处不覆盖(仅 raw/nocheck 态合法)。
 // 其余全部为正确程序,fat 与 raw 双模式都必须 exit 0。
 //
