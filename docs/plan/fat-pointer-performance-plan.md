@@ -145,13 +145,19 @@ list −34%、deltablue/richards −25%、havlak −23%、json −17%、storage 
 queen/binarytree −9%。已落地的消解吃掉了其中一部分；剩下的集中在"从内存读出的堆指针"上，
 要么靠逃逸/过程间分析证明目标块不会被释放，要么靠方向 B 让每次检查本身更便宜。
 
-### B. 指针表示与 ABI（未动，候选中预期收益最高）
+### B. 指针表示与 ABI
 
-- **从 40 B 收缩**：`size` 与 `index` 相关（剩余长度 = 块头 `active_size` − index），评估"指针只带
-  index、剩余长度按需从块头读"在"指针拷贝密集"与"边界检查密集"两类负载上的取舍。
-- **位宽压缩**：`index`/`size` 是否可用 32 位（对象上限需单独定义）；key 与 index 打包进一个字。
-- **传参 ABI**：40 B 聚合按值传参走内存；评估降为 2 个寄存器可传的值（如 ⟨data, 句柄⟩）。
-- 任何表示改动都要同步 `lockmech.py` 的字段下标与 `docs/security.md`。
+细化计划见 [`docs/plan/fat-pointer-representation-plan.md`](fat-pointer-representation-plan.md)（现状度量、
+候选设计与分阶段）。要点：
+
+- 当前布局：`T*` 40 B、`T[]`/`str` 32 B、`T&` 24 B、raw 8 B；热点结构里存的主要是 `T&` 与切片。
+- 实测两条曲线：按值传结构体在 24/32/40 B 分别是 8 B 的 +33%/+50%/+67%（≤16 B 才进寄存器档）；
+  指针追逐的节点 16/24/32/40 B 分别是 5.51/7.42/9.25/10.99 ns/节点——**尺寸直接等于 cache 足迹**。
+- 候选：**B1** `index`/`size` 压 32 位（`T*` 40 → 32 B，代价是单对象 >4 GiB 的语义收缩）；
+  **B2** 胖值按标量传参的内部调用约定（不动布局，调用密集基准受益，实测拆标量省 9–10%）；
+  **B3** 16 B 指针 + 地址反查（收益最大、要改机制，只做原型）；B4/B5 为备选与相邻项。
+- 任何表示改动都要同步 `lockmech.py` 的字段下标、`docs/security.md`、`docs/grammar/02.type_system.md`、
+  `docs/manual/12.llvm_codegen.md` 与 `tests/` 里的 `@sizeof`/niche 断言。
 
 ### C. 堆池与锁槽
 
@@ -193,10 +199,11 @@ RSS、stdout 护栏、`-t ll` 不参与）、`bench/alloc/` + `scripts/bench_all
 
 ### P2：表示与 ABI 评估 —— 待做
 
-**工作内容**：方向 B。先做测量型原型（例如 "size 从块头读"），用基准判断"指针拷贝密集"（shootout 的
-list/json/richards）与"边界检查密集"（queen/deltablue）两类负载的取舍；再决定是否收缩表示、压缩位宽。
-**验收**：给出取舍结论与数据；若采纳，两种模式三套件全绿，且 `bench/results.csv` 的 fat/raw 与 RSS
-不退化。
+**工作内容**：方向 B，分五个阶段（度量与基线 → 调用约定原型 → 32 位打包原型 → 16 B 指针可行性
+原型 → 迁移与文档），详见
+[`docs/plan/fat-pointer-representation-plan.md`](fat-pointer-representation-plan.md)。
+**验收**：给出每个候选的取舍结论与数据；若采纳，两种模式三套件全绿、语义清单逐条通过，且
+`bench/results.csv` 的 fat/raw 与 RSS 不退化；文档与 `@sizeof` 断言同步。
 
 ### P3：池与锁槽 —— 已完成（回收策略留待决策）
 
