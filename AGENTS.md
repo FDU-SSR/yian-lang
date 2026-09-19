@@ -115,5 +115,6 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 - `bak/` is ignored legacy material, `.conda/` is a local environment, and `build/` contains compiler and test output. Do not modify them unless the user explicitly asks for it.
 - `ide-support/` contains the packaged VS Code extension and `licenses/` contains the project license texts.
 - Documentation is written in Chinese. Update it only when the user explicitly requests documentation changes.
+- Code comments and persistent documentation must be self-contained: never cite a temporary document or its content — an implementation plan (such as those under `docs/plan/`), a proposal, a TODO list, a bug log, or review notes — and never cite rule, section, or definition numbers that exist only there. State the fact itself instead; referring to another persistent document is fine. Existing violations are left in place: fix one when the surrounding code or document is next touched.
 - `CLAUDE.md` must remain a relative symbolic link to `AGENTS.md`.
 - There is no CI, pre-commit hook, or formatter configuration. Run relevant checks locally and use `git diff --check` before committing.
