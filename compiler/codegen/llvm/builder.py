@@ -1766,6 +1766,11 @@ class LLBuilder:
         raw = self.__call_intrinsic(IntrinsicKind.Close, [fd])
         self.__func.set_reg(result, raw)
 
+    def sqrt(self, value: LLValue, result: str) -> None:
+        """``f64`` square root (hardware square root, same primitive as C ``sqrt``)."""
+        raw = self.__call_intrinsic(IntrinsicKind.Sqrt, [value])
+        self.__func.set_reg(result, raw)
+
     # -- process arguments / exit --
 
     def arg_count(self, result: str) -> None:
@@ -1958,6 +1963,8 @@ class LLBuilder:
                 return self.__type_ctx.u64_id
             case IntrinsicKind.Open | IntrinsicKind.Close:
                 return self.__type_ctx.i32_id
+            case IntrinsicKind.Sqrt:
+                return self.__type_ctx.f64_id
             case IntrinsicKind.StrLen:
                 return self.__type_ctx.u64_id
             case IntrinsicKind.SysRandom:

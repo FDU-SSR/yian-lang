@@ -265,6 +265,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Close(result=result, fd=fd):
             return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
 
+        case IR.Sqrt(result=result, value=value):
+            return f"%{result.name} = sqrt {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
         case IR.ArgCount(result=result):
             return f"%{result.name} = arg_count  [{__type_str(result.type_id)}]"
 

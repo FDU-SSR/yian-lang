@@ -197,6 +197,8 @@ class ClosureLowering:
                 expr.message = self.__rewrite_type_ids(expr.message)
             case HIR.RuntimeFail():
                 pass
+            case HIR.Sqrt():
+                expr.value = self.__rewrite_type_ids(expr.value)
             case HIR.ArgCount():
                 pass
             case HIR.ArgBytes():
@@ -382,6 +384,8 @@ class ClosureLowering:
                 expr.message = self.__rewrite_one_capture(expr.message)
             case HIR.RuntimeFail():
                 pass
+            case HIR.Sqrt():
+                expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.ArgCount():
                 pass
             case HIR.ArgBytes():

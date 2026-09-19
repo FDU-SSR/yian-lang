@@ -143,6 +143,8 @@ class ComptimeIfSpecializer:
                 expr.flags = self.__rewrite_expr(expr.flags)
             case HIR.Close():
                 expr.fd = self.__rewrite_expr(expr.fd)
+            case HIR.Sqrt():
+                expr.value = self.__rewrite_expr(expr.value)
             case HIR.ArgCount():
                 pass
             case HIR.ArgBytes():

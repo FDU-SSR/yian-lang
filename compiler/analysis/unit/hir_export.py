@@ -176,6 +176,14 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_open(expr, guides, is_last, type_ctx)
         case HIR.Close():
             return __export_close(expr, guides, is_last, type_ctx)
+        case HIR.Sqrt():
+            res = __line(
+                guides,
+                is_last,
+                f"Sqrt: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}",
+            )
+            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+            return res
         case HIR.ArgCount():
             return __line(
                 guides,

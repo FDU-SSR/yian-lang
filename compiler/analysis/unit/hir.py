@@ -369,6 +369,15 @@ class Close:
 
 
 @dataclass
+class Sqrt:
+    """Square root of an ``f64`` value (hardware square root)."""
+    span: SrcSpan
+    value: Expr  # f64
+    type_id: int  # f64
+    is_place: bool
+
+
+@dataclass
 class ArgCount:
     """Return the process argument count supplied by the C entry point."""
     span: SrcSpan
@@ -532,7 +541,7 @@ Expr: TypeAlias = (
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | BitCast | SysRead | SysWrite | Open | Close
-    | ArgCount | ArgBytes | ProcessExit
+    | Sqrt | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block

@@ -639,6 +639,8 @@ class CfgBuilder:
                 return self.__resolve_open(expr)
             case HIR.Close():
                 return self.__resolve_close(expr)
+            case HIR.Sqrt():
+                return self.__resolve_sqrt(expr)
             case HIR.ArgCount():
                 return self.__resolve_arg_count(expr)
             case HIR.ArgBytes():
@@ -1014,6 +1016,11 @@ class CfgBuilder:
     def __resolve_close(self, expr: HIR.Close) -> IR.Value:
         fd = self.__resolve_val(expr.fd)
         return self.__build_close(fd)
+
+    def __resolve_sqrt(self, expr: HIR.Sqrt) -> IR.Value:
+        value = self.__resolve_val(expr.value)
+        result = IR.Reg(name=self.__new_name(), type_id=expr.type_id)
+        return self.__emit(IR.Sqrt(result=result, value=value)).result
 
     def __resolve_arg_count(self, _expr: HIR.ArgCount) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)

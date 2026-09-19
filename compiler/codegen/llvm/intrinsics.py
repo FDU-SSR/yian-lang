@@ -26,6 +26,7 @@ class IntrinsicKind(Enum):
     ImmediateExit = auto()
     StrLen = auto()
     MemCopy = auto()
+    Sqrt = auto()
     SysRandom = auto()
 
 
@@ -40,6 +41,8 @@ class IntrinsicManager:
         IntrinsicKind.ImmediateExit: (ir.VoidType(), [ir.IntType(32)], "_exit"),
         IntrinsicKind.StrLen: (ir.IntType(64), [ir.PointerType()], "strlen"),
         IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(), ir.PointerType(), ir.IntType(64)], "memcpy"),
+        # LLVM 内建(llvm.sqrt.f64): 后端直接落 sqrtsd, 与 C 参考的 `sqrt()` 同一原语。
+        IntrinsicKind.Sqrt:      (ir.DoubleType(), [ir.DoubleType()], "llvm.sqrt.f64"),
         IntrinsicKind.SysRandom: (ir.IntType(32), [], "rand"),
     }
 

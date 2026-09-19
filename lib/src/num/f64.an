@@ -60,3 +60,7 @@ impl From<str> for f64 {
         f64(int_part) + frac_part
     }
 }
+
+pub fn sqrt(value: f64) -> f64 {
+    return @sqrt(value);
+}

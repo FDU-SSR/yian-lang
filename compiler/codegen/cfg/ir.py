@@ -476,6 +476,13 @@ class Close:
 
 
 @dataclass
+class Sqrt:
+    """Square root of an ``f64`` value."""
+    result: Reg
+    value: Value
+
+
+@dataclass
 class ArgCount:
     """Load the process argument count."""
     result: Reg
@@ -509,7 +516,7 @@ Stmt: TypeAlias = (
     | Call | Invoke
     | Cast | SizeOf | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead | Open | Close | ArgCount | ArgBytes
+    | SysWrite | SysRead | Open | Close | Sqrt | ArgCount | ArgBytes
     | MemCopy
     | GenKey | AcquireFrameLock | WriteLockSlot
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty

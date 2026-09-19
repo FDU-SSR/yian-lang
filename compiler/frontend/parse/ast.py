@@ -45,6 +45,7 @@ class BuiltinKind(Enum):
     SysWrite = "sys_write"
     Open = "open"
     Close = "close"
+    Sqrt = "sqrt"
     Argc = "argc"
     ArgBytes = "arg_bytes"
     Exit = "exit"

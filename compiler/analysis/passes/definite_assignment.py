@@ -352,6 +352,9 @@ class DefiniteAssignment:
             return self.__check_expr(expr.value, state)
 
         # -- sys calls ----------------------------------------------------
+        if isinstance(expr, HIR.Sqrt):
+            return self.__check_expr(expr.value, state)
+
         if isinstance(expr, HIR.SysRead):
             state = self.__check_expr(expr.fd, state)
             state = self.__check_expr(expr.buf, state)
@@ -699,6 +702,9 @@ class DefiniteAssignment:
             return self.__walk_neutral(expr.value, state)
 
         if isinstance(expr, HIR.BitCast):
+            return self.__walk_neutral(expr.value, state)
+
+        if isinstance(expr, HIR.Sqrt):
             return self.__walk_neutral(expr.value, state)
 
         if isinstance(expr, HIR.SysRead):
