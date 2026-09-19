@@ -22,7 +22,7 @@ impl<T> Option<T> {
     }
 
     // Unwrap the value if it is Some, otherwise @panic(|| return an error)
-    pub fn unwrap() -> T* {
+    pub fn unwrap() -> T& {
         match self {
             None => @panic("Called unwrap on a None value"),
             Some(val) => val,
@@ -30,7 +30,7 @@ impl<T> Option<T> {
     }
 
     // Unwrap the value if it is Some, otherwise return the provided default value
-    pub fn unwrap_or(default: T*) -> T* {
+    pub fn unwrap_or(default: T*) -> T& {
         match self {
             None => default,
             Some(val) => val,

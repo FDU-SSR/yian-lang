@@ -24,11 +24,11 @@ fn main() {
     let arr: i32* = dyn[2] i32
     arr[0] = 5
     p.next = Option<i32*>.Some(arr)
-    let q: i32* = p.next.unwrap()[0]
+    let q: i32* = *p.next.unwrap()
     assert q[0] == 5: "Expected q[0] to be 5 via p.next"
 
     // Write through the re-fetched sub-pointer, visible via all paths.
     q[0] = 6
     assert arr[0] == 6: "Expected arr[0] to be 6 after write via q"
-    assert p.next.unwrap()[0][0] == 6: "Expected p.next[0] to be 6"
+    assert (*p.next.unwrap())[0] == 6: "Expected p.next[0] to be 6"
 }

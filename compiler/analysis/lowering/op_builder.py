@@ -430,7 +430,14 @@ class OpBuilder:
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
 
-        left_ty = self.__type_ctx[left_hir.type_id]
+        left_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(left_hir.type_id)]
+
+        # auto-deref (与字段访问同规则): `r[i]` 索引的是引用所指对象——数组走
+        # ArrayAccess、切片走 SliceAccess、指针走 T* 的 Index 实现。指针自身不在这里
+        # 解引用: `p[i]` 由 T* 的 Index 实现与随后的 lvalue 化 deref 处理。
+        while isinstance(left_ty, Type.RefType):
+            left_hir = HIR.Unary(span, UnaryOperator.Deref, left_hir, left_ty.pointee_type, is_place=True)
+            left_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(left_ty.pointee_type)]
 
         # Tuple indexing
         if isinstance(left_ty, Type.TupleType):

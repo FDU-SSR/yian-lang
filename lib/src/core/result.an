@@ -20,14 +20,14 @@ impl<T, E> Result<T, E> {
     }
 
     // Unwrap the value if it is Ok, otherwise return the provided default value
-    pub fn unwrap_or(default: T*) -> T* {
+    pub fn unwrap_or(default: T*) -> T& {
         match self {
             Ok(val) => val,
             _ => default,
         }
     }
 
-    pub fn unwrap() -> T* {
+    pub fn unwrap() -> T& {
         match self {
             Ok(val) => val,
             Err(err) => @panic("Called unwrap on an Err value"),
@@ -35,14 +35,14 @@ impl<T, E> Result<T, E> {
     }
 
     // Unwrap the error message if it is Err, otherwise return the provided default error message
-    pub fn unwrap_or_err(default: E*) -> E* {
+    pub fn unwrap_or_err(default: E*) -> E& {
         match self {
             Err(err) => err,
             _ => default,
         }
     }
 
-    pub fn unwrap_err() -> E* {
+    pub fn unwrap_err() -> E& {
         match self {
             Err(err) => err,
             Ok(val) => @panic("Called unwrap_err on an Ok value"),

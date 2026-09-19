@@ -21,10 +21,10 @@ fn main() {
     let sum: i32 = 0;
     let cur: Option<Node*> = Option<Node*>.Some(n1);
     while cur.is_some() {
-        let cn: Node* = cur.unwrap()[0];
+        let cn: Node* = *cur.unwrap();
         sum = sum + cn.value;
         if cn.next.is_some() {
-            cur = Option<Node*>.Some(cn.next.unwrap()[0]);
+            cur = Option<Node*>.Some(*cn.next.unwrap());
         } else {
             cur = Option<Node*>.None;
         };
@@ -43,10 +43,10 @@ fn main() {
     let d: Option<Node*> = Option<Node*>.Some(n1);
     let count: i32 = 0;
     while d.is_some() {
-        let dn: Node* = d.unwrap()[0];
+        let dn: Node* = *d.unwrap();
         let nx: Option<Node*>;
         if dn.next.is_some() {
-            nx = Option<Node*>.Some(dn.next.unwrap()[0]);
+            nx = Option<Node*>.Some(*dn.next.unwrap());
         } else {
             nx = Option<Node*>.None;
         };

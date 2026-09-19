@@ -13,7 +13,7 @@ fn main() {
     }
     // Metis G6: Some 路径被实际执行——断言 n2.next 为 Some 且值流过
     assert n2.next.is_some(): "match assign some flows through";
-    assert n2.next.unwrap()[0].val == 0: "some payload preserved";
+    assert n2.next.unwrap().val == 0: "some payload preserved";
     del n0;
     del n1;
     del n2;

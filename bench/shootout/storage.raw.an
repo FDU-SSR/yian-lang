@@ -71,7 +71,7 @@ fn free_tree(arr: Option<array_tree[]>) {
     if arr.is_none() {
         return;
     }
-    let view: array_tree[] = arr.unwrap()[0];
+    let view: array_tree[] = *arr.unwrap();
     let i: u64 = 0;
     while i < view.len() {
         if view[i].children.is_some() && view[i].child_count > 0 {

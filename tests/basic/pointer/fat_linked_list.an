@@ -23,11 +23,11 @@ fn main() {
     let cur: Option<Node*> = Option<Node*>.Some(n1);
     let expected: i32 = 1;
     while cur.is_some() {
-        let cn: Node* = cur.unwrap()[0];
+        let cn: Node* = *cur.unwrap();
         assert cn.value == expected: "linked list value mismatch";
         expected += 1;
         if cn.next.is_some() {
-            cur = Option<Node*>.Some(cn.next.unwrap()[0]);
+            cur = Option<Node*>.Some(*cn.next.unwrap());
         } else {
             cur = Option<Node*>.None;
         };
@@ -38,10 +38,10 @@ fn main() {
     let p: Option<Node*> = Option<Node*>.Some(n1);
     let count: i32 = 0;
     while p.is_some() {
-        let pn: Node* = p.unwrap()[0];
+        let pn: Node* = *p.unwrap();
         let next: Option<Node*>;
         if pn.next.is_some() {
-            next = Option<Node*>.Some(pn.next.unwrap()[0]);
+            next = Option<Node*>.Some(*pn.next.unwrap());
         } else {
             next = Option<Node*>.None;
         };

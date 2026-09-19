@@ -20,15 +20,15 @@ fn main() {
     arr[2] = Option<i32*>.Some(dyn i32(3))
     arr[3] = Option<i32*>.Some(dyn i32(4))
 
-    let e0: i32* = arr[0].unwrap()[0]
+    let e0: i32* = *arr[0].unwrap()
     assert e0[0] == 1: "arr[0][0] == 1"
-    let e3: i32* = arr[3].unwrap()[0]
+    let e3: i32* = *arr[3].unwrap()
     assert e3[0] == 4: "arr[3][0] == 4"
 
     // Write through an element pointer, visible via the array.
-    let e1: i32* = arr[1].unwrap()[0]
+    let e1: i32* = *arr[1].unwrap()
     e1[0] = 22
-    assert arr[1].unwrap()[0][0] == 22: "arr[1][0] == 22 after write"
+    assert (*arr[1].unwrap())[0] == 22: "arr[1][0] == 22 after write"
 
     // Heap array of pointers (i32**).
     let h: i32** = dyn[2] i32 *

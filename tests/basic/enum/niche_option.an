@@ -13,7 +13,7 @@ fn main() {
     assert @sizeof(Option<i32*>) == @sizeof(i32*): "pointer niche layout";
     assert some.is_some(): "Some pointer";
     assert none.is_none(): "None pointer";
-    assert some.unwrap()[0][0] == 42: "pointer payload";
+    assert (*some.unwrap())[0] == 42: "pointer payload";
 
     let value_match: i32 = match some {
         Some(value) => value[1],
@@ -39,8 +39,8 @@ fn main() {
     let scalar_fallback: i32 = 7;
     let scalar_some: Option<i32> = Option<i32>.Some(scalar_value);
     let scalar_none: Option<i32> = Option<i32>.None;
-    assert scalar_some.unwrap_or(&scalar_fallback)[0] == 42: "Some unwrap_or";
-    assert scalar_none.unwrap_or(&scalar_fallback)[0] == 7: "None unwrap_or";
+    assert *scalar_some.unwrap_or(&scalar_fallback) == 42: "Some unwrap_or";
+    assert *scalar_none.unwrap_or(&scalar_fallback) == 7: "None unwrap_or";
 
     let empty_dyn: i32* = dyn[0] i32;
     let empty_dyn_some: Option<i32*> = Option<i32*>.Some(empty_dyn);
