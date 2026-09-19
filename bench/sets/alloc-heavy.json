@@ -8,5 +8,5 @@
     "AWFY/json"
   ],
   "exclude": [],
-  "note": "分配密集但仍走三态; 纯分配器专项见 bench/ALLOC + scripts/bench_allocator.py"
+  "note": "分配密集但仍走三态; 纯分配器专项见 bench/ALLOC + bench/bench_allocator.py"
 }

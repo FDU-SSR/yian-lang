@@ -16,6 +16,9 @@ bench/
 │   ├── an/  specs/
 ├── sets/*.json      集合清单: 成员 + 默认规模档 + 测量次数
 ├── results/         生成物: <set>.{md,csv}、alloc.{md,csv}、partial.{md,csv}
+├── bench_three_way.py 三态运行器 (C / raw / fat)
+├── bench_allocator.py 分配器运行器 (fat / raw 两态)
+├── SUITES.md        来源/许可登记与候选套件调研
 └── README.md
 ```
 
@@ -24,14 +27,14 @@ bench/
 ## 集合
 
 ```bash
-python3 scripts/bench_three_way.py --list-sets          # 列出集合、规模档、成员数
-python3 scripts/bench_three_way.py --set full           # 完全档: 全部 19 项 (正式记录)
-python3 scripts/bench_three_way.py --set fast --pin 4   # 快速档: 代表性子集 + 缩小规模
-python3 scripts/bench_three_way.py --set ptr            # 侧重: 对象/指针图
-python3 scripts/bench_three_way.py --set numeric        # 侧重: 数值/循环
-python3 scripts/bench_three_way.py --set string         # 侧重: 字符串/IO
-python3 scripts/bench_three_way.py --bench AWFY/queen,BG/fasta --scale full
-python3 scripts/bench_three_way.py --source AWFY --set fast
+python3 bench/bench_three_way.py --list-sets           # 列出集合、规模档、成员数
+python3 bench/bench_three_way.py --set full            # 完全档: 全部 19 项 (正式记录)
+python3 bench/bench_three_way.py --set fast --pin 4    # 快速档: 代表性子集 + 缩小规模
+python3 bench/bench_three_way.py --set ptr             # 侧重: 对象/指针图
+python3 bench/bench_three_way.py --set numeric         # 侧重: 数值/循环
+python3 bench/bench_three_way.py --set string          # 侧重: 字符串/IO
+python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta --scale full
+python3 bench/bench_three_way.py --source AWFY --set fast
 ```
 
 | 集合 | 内容 | 默认规模档 | 用途 |
@@ -89,8 +92,8 @@ queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、
 ## 分配器专项
 
 ```bash
-python3 scripts/bench_allocator.py --scale full --pin 4    # 完全档: 每态 7 次
-python3 scripts/bench_allocator.py --scale fast --pin 4    # 快速档: 每态 3 次 + 缩小规模
+python3 bench/bench_allocator.py --scale full --pin 4    # 完全档: 每态 7 次
+python3 bench/bench_allocator.py --scale fast --pin 4    # 快速档: 每态 3 次 + 缩小规模
 ```
 
 `bench/ALLOC` 的四项没有 C 参考，对照态是 libc `malloc`/`free`（raw 态），因此是两态比较：

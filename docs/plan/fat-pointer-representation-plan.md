@@ -191,7 +191,7 @@ LLVM 是否把拆分后的参数保持在寄存器里要靠实测确认（`-O2` 
 | `chase` | 链表/树节点追逐，节点里放 1 个胖引用，fat 与 raw 两态 | 节点尺寸 → cache 足迹 |
 
 三件都遵守现有协议：`-O2`、绑核、min-of-N、峰值 RSS、fat/raw 比值；产物与运行器沿用
-`scripts/bench_three_way.py` 的形态（如需要可加 `--names` 的分组，不要另起一套）。
+`bench/bench_three_way.py` 的形态（如需要可加 `--names` 的分组，不要另起一套）。
 
 ### 4.2 现有基准
 
@@ -265,5 +265,5 @@ LLVM 是否把拆分后的参数保持在寄存器里要靠实测确认（`-O2` 
 - LLVM 类型映射与冲突点：[`docs/manual/12.llvm_codegen.md`](../manual/12.llvm_codegen.md)
 - 字段下标与谓词：`compiler/codegen/cfg/lockmech.py`
 - 构造/提取/折算：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/types.py`、`compiler/codegen/cfg/builder.py`
-- 基准与基线：`scripts/bench_three_way.py`、`bench/results/{full,alloc}.{md,csv}`、`scripts/bench_allocator.py`
+- 基准与基线：`bench/bench_three_way.py`、`bench/results/{full,alloc}.{md,csv}`、`bench/bench_allocator.py`
 - 主计划：`docs/plan/fat-pointer-performance-plan.md`（§4A 检查消解、§4C 堆池、§5 阶段）

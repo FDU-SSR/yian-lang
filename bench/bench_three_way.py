@@ -23,13 +23,13 @@
     逐字节一致; 两态退出码必须为 0。任一不成立, 该基准的比值标注为不可用。
 
 用法:
-  python3 scripts/bench_three_way.py                      # 默认 --set full
-  python3 scripts/bench_three_way.py --set fast            # 快速档 (开发中频繁跑)
-  python3 scripts/bench_three_way.py --set ptr --scale full
-  python3 scripts/bench_three_way.py --bench AWFY/queen,BG/fasta
-  python3 scripts/bench_three_way.py --source AWFY --set fast
-  python3 scripts/bench_three_way.py --list-sets
-  python3 scripts/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
+  python3 bench/bench_three_way.py --list-sets          # 列出集合、规模档与成员数
+  python3 bench/bench_three_way.py --set full           # 默认: 完全档 (正式记录)
+  python3 bench/bench_three_way.py --set fast           # 快速档 (开发中频繁跑)
+  python3 bench/bench_three_way.py --set ptr --scale full
+  python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta
+  python3 bench/bench_three_way.py --source AWFY --set fast
+  python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
 输出:
   bench/results/<set>.{md,csv}   命名集合的结果 (含指纹/协议/commit)
@@ -262,7 +262,7 @@ def load_spec(
 def discover() -> list[BenchSpec]:
     """发现 bench/<SOURCE>/{an,c,specs} 下的三态基准。
 
-    没有 `c/` 的来源 (纯分配器专项 bench/ALLOC) 不在这里发现, 由 scripts/bench_allocator.py 负责。
+    没有 `c/` 的来源 (纯分配器专项 bench/ALLOC) 不在这里发现, 由 bench/bench_allocator.py 负责。
     """
     specs: list[BenchSpec] = []
     for source_dir in sorted(
@@ -652,7 +652,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         f"# C / raw / fat 三态实测结果 — 集合 `{fingerprint['set']}` (规模档 `{fingerprint['scale']}`)\n"
     )
     lines.append(
-        "由 `scripts/bench_three_way.py` 生成; 三态同一算法与规模, 差异只在实现与指针表示"
+        "由 `bench/bench_three_way.py` 生成; 三态同一算法与规模, 差异只在实现与指针表示"
         " (C 为 clang `-O2` 参考实现)。集合成员与规模档见 `bench/sets/<set>.json` 与各基准的"
         " `specs/<name>.json`。\n"
     )
@@ -763,8 +763,8 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
 
 def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
     header = (
-        f"# bench/results/{fingerprint['set']}.csv — C / raw / fat 三态性能结果 "
-        "(scripts/bench_three_way.py 生成)"
+        f"# bench/results/{path.name} — C / raw / fat 三态性能结果 "
+        "(bench/bench_three_way.py 生成)"
     )
     comments = [
         header,

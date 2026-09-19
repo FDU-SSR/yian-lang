@@ -7,7 +7,7 @@
 
 | 阶段 | 状态 |
 | --- | --- |
-| **S1 目录与集合** | **已完成**。`bench/{AWFY,BG}/{an,c,specs}` + `bench/ALLOC/{an,specs}` + `bench/sets/*.json` + `bench/results/*`;`C_SPECS` 外置成声明式 `spec.json`（`rc`/`stdout_eq`/`stdout_contains`/`stdout_int_mod`）;运行器新 CLI `--set/--scale/--source/--bench/--list-sets`,`bench_allocator.py` 跟随 `bench/ALLOC`。等价校验:同一工具链（yian-env）下搬目录前后的 `full` 基线逐项对比,几何平均 1.010、中位 +1.7%、最大 \|3.8%\|,峰值 RSS 全项不变——落在机器噪声内 |
+| **S1 目录与集合** | **已完成**。`bench/{AWFY,BG}/{an,c,specs}` + `bench/ALLOC/{an,specs}` + `bench/sets/*.json` + `bench/results/*`;`C_SPECS` 外置成声明式 `spec.json`（`rc`/`stdout_eq`/`stdout_contains`/`stdout_int_mod`）;运行器新 CLI `--set/--scale/--source/--bench/--list-sets`,`bench_allocator.py` 跟随 `bench/ALLOC`;两个运行器随评测集一起放在 `bench/`（`bench/bench_three_way.py`、`bench/bench_allocator.py`）,`scripts/` 只留仓库级工具。等价校验:同一工具链（yian-env）下搬目录前后的 `full` 基线逐项对比,几何平均 1.010、中位 +1.7%、最大 \|3.8%\|,峰值 RSS 全项不变——落在机器噪声内 |
 | **S2 快速档** | **机制已完成**。规模由源里 `// bench-scale` 标记行 + `specs/*.json` 的 `scale` 描述;fast 档在 `build/bench/src/fast/` 下生成替换过规模的构建副本,同一个值作为 argv 传给 C 参考,三态同参;fast 档不触发降次。已标定 6 项:queen 150→10、sieve ITER 500→25、ALLOC 四项 1000/20000/40/32 → 100/2000/8/8。**待做**:list、towers、binarytree、deltablue、json、richards 等其余基准的 fast 规模标定（缩放时不得改变内部断言语义,见 §4.1） |
 | **S3–S5 引入新套件** | 未开始;已登记到 `docs/proposal.md` 的"评测集与性能度量",调研结论留档在 `bench/SUITES.md` |
 
@@ -17,7 +17,7 @@
 
 ## 1. 现状与问题
 
-### 1.1 现在的目录
+### 1.1 重组前的目录
 
 ```text
 bench/shootout/*.an        19 个基准（14 项来自 AWFY + 5 项来自 Benchmarks Game）
@@ -62,7 +62,7 @@ fat 最慢 6 项：list 30.3 s、queen 6.9 s、towers 4.4 s、binarytree 2.9 s�
 - 不改三态协议与语义护栏（C 权威值、raw/fat stdout 逐字节一致、退出码 0）。
 - 不设性能回归门槛（性能只作参考，见主计划 §3.3）。
 - 不引入多线程/多进程评测（YIAN 当前是单线程模型）。
-- 不改编译器与运行时；本计划只动 `bench/`、`scripts/bench_*.py` 与相关文档。
+- 不改编译器与运行时；本计划只动 `bench/`（含 `bench/bench_*.py` 运行器）与相关文档。
 
 ## 3. 目录与集合设计
 
@@ -129,7 +129,7 @@ bench/
 
 ### 3.4 运行器改造
 
-`scripts/bench_three_way.py`：
+`bench/bench_three_way.py`：
 
 - 发现规则：扫描 `bench/*/an/*.an`（跳过 `*.raw.an`），基准名 = `<SOURCE>/<name>`；`*.raw.an` 作为同名的
   裸态覆盖源；缺 `specs/<name>.json` 或 C 参考时**报错退出**（沿用现在"缺 C_SPECS 就报错"的严格性）。
@@ -145,7 +145,7 @@ bench/
 - 构建路径：`build/bench/<set>/<state>/<source>_<name>`，`<state>` 三个目录名仍等长（`cbin/yraw/yfat`），
   保持"分配密集基准对 argv[0] 长度敏感"的既有约束。
 
-`scripts/bench_allocator.py`：跟随 `bench/ALLOC` 的路径与新 spec（argv/规模档），并把结果写进
+`bench/bench_allocator.py`：跟随 `bench/ALLOC` 的路径与新 spec（argv/规模档），并把结果写进
 `bench/results/alloc.{md,csv}`，作为 `alloc` 集合的一部分（或保留独立入口、由集合清单调用）。
 
 ## 4. 快速档与完全档
@@ -196,7 +196,7 @@ bench/
 | **plb2**（attractivechaos/plb2） | 每语言 4 个程序：`matmul.c`、`nqueen.c`、`sudoku.c`、`bedcov.c`（C 参考齐全） | **CC0-1.0**（已核实） | 补"数值 + 回溯搜索 + 哈希/区间覆盖"侧重；体量小、单线程 | **建议引入 matmul/nqueen/sudoku**；bedcov 需要文件 I/O，后置 |
 | **PolyBench/C**（经 LLVM test-suite 分发） | ~30 个数值内核（线性代数/数据挖掘/模板计算/medley） | LLVM test-suite = Apache-2.0 with LLVM exceptions（已核实；Polybench 目录自带 LICENSE） | 与 `numeric` 侧重重叠，但能补"长数组 + 边界检查密集"的形态 | **可选**：先引 3–5 个（如 gemm、2mm、atax、jacobi-2d、fdtd-2d）作为 `numeric` 补充 |
 | **mimalloc-bench**（daanx/mimalloc-bench） | 分配器压力测试若干（`alloc-test`、`rptest`、`sh6bench`/`sh8bench`、`xmalloc-test`、`cache-scratch`、`larson`/`mstress` 等） | **MIT**（已核实） | 多为多线程；单线程子集能补"随机尺寸分布"的分配压力（我们现有 4 件是固定/两类尺寸） | **建议引入 1–2 个单线程项**进 `ALLOC` |
-| **Olden**（compor/olden；LLVM test-suite 也有一份） | 10 个指针/递归密集 C 程序：bh、bisort、em3d、health、mst、perimeter、power、treeadd、tsp、voronoi | **不可直接 vendor**：LICENSE 为 LLVM + "不得与商业产品或服务一起分发"的原始限制（已核实） | 与方向 A/B 最相关的侧重（对象图、递归、分配） | **不 vendor**：要么按同样算法**自写 YIAN + C 参考**（像现在对 AWFY 做的那样），要么作为"外部可选套件"（`scripts/fetch_bench_suite.py` 下载到 `build/`，不进仓库） |
+| **Olden**（compor/olden；LLVM test-suite 也有一份） | 10 个指针/递归密集 C 程序：bh、bisort、em3d、health、mst、perimeter、power、treeadd、tsp、voronoi | **不可直接 vendor**：LICENSE 为 LLVM + "不得与商业产品或服务一起分发"的原始限制（已核实） | 与方向 A/B 最相关的侧重（对象图、递归、分配） | **不 vendor**：要么按同样算法**自写 YIAN + C 参考**（像现在对 AWFY 做的那样），要么作为"外部可选套件"（`bench/fetch_suite.py` 下载到 `build/`，不进仓库） |
 | **MiBench** | 35 个嵌入式 C 程序（汽车/消费/办公/安全/网络/通信） | "free for academic use"（需人工核对具体条款） | 与指针/内存机制相关性低 | **暂缓**（许可与相关性都不占优） |
 | **Embench-IoT** | 19 个嵌入式基准 | **GPL-3.0**（已核实） | 相关度低 | **不引入**：与本仓库 Apache-2.0/MIT 双许可不兼容 |
 | SPEC CPU、PARSEC/Splash-3、NPB、Rodinia、DaCapo、cBench | — | 授权收费 / 多线程 / JVM / 许可混杂 | 低 | **不引入**（单线程模型与许可都不合适） |
@@ -273,5 +273,5 @@ bench/
 - PolyBench（经 LLVM test-suite）：<https://llvm.googlesource.com/llvm-test-suite/+/refs/heads/main/SingleSource/Benchmarks/Polybench/>
 - Embench-IoT：<https://github.com/embench/embench-iot>（`COPYING` = GPL-3.0）
 - MiBench：<https://web.eecs.umich.edu/mibench/>
-- 现有协议与基线：`bench/README.md`、`scripts/bench_three_way.py`、`bench/results.{md,csv}`、
-  `scripts/bench_allocator.py`
+- 现有协议与基线：`bench/README.md`、`bench/bench_three_way.py`、`bench/results.{md,csv}`、
+  `bench/bench_allocator.py`

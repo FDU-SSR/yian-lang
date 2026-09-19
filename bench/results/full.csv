@@ -1,0 +1,27 @@
+# bench/results/full.csv — C / raw / fat 三态性能结果 (bench/bench_three_way.py 生成)
+# 列: bench 形如 <SOURCE>/<name>; <state>_min_ms/<state>_med_ms/<state>_cv_pct 各态最小值(正式指标)/中位数/变异系数, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, ratio_fat_c = fat_min/c_min, ratio_fat_raw = fat_min/raw_min; <state>_rss_mb 峰值常驻; runs, stdout_match (raw/fat), c_check (C 权威值), c_argv, raw_source
+# fingerprint: hostname=zhx machine=x86_64 cpu_count=28 clang=Ubuntu clang version 22.1.8 (++20260613092327+e80beda6e255-1~exp1~20260613092437.81) cflags=-O2 -lm
+# env: python=3.12.3 llvmlite=0.49.0 llvm=22.1.0 opt=-O2 pin=4 runs=5
+# set: full  scale: full
+# commit: 46e7552
+# date: 2026-09-20
+bench,c_min_ms,c_med_ms,c_cv_pct,raw_min_ms,raw_med_ms,raw_cv_pct,fat_min_ms,fat_med_ms,fat_cv_pct,ratio_raw_c,ratio_fat_c,ratio_fat_raw,c_rss_mb,raw_rss_mb,fat_rss_mb,runs,stdout_match,c_check,c_argv,raw_source
+AWFY/bounce,2542.8,2577.7,0.67,2780.7,2786.7,0.56,2906.0,2914.3,0.25,1.094,1.143,1.045,2.8,2.4,2.6,5,yes,pass,,bounce.an
+AWFY/cd,943.7,958.1,1.21,1842.6,1858.2,0.49,2196.7,2215.9,0.70,1.953,2.328,1.192,2.4,2.0,2.6,5,yes,pass,100 80,cd.an
+AWFY/deltablue,542.0,545.5,0.45,632.1,644.4,1.40,1644.0,1667.3,1.27,1.166,3.033,2.601,5.7,1.1,1.3,5,yes,pass,,deltablue.an
+AWFY/havlak,43.7,44.1,0.97,69.2,69.8,0.64,162.3,164.4,1.08,1.582,3.712,2.347,4.2,4.2,9.6,5,yes,pass,,havlak.an
+AWFY/json,271.5,272.7,0.31,680.2,687.9,0.74,1738.8,1748.3,0.41,2.505,6.405,2.556,2.4,1.5,2.2,5,yes,pass,,json.an
+AWFY/list,6510.4,6652.4,1.92,6706.8,6863.4,1.25,30727.8,30915.9,0.37,1.030,4.720,4.582,1.8,1.1,1.1,5,yes,pass,,list.an
+AWFY/mand,2433.1,2457.0,0.61,2440.6,2483.3,0.88,2448.8,2472.7,0.63,1.003,1.006,1.003,1.8,1.1,1.1,5,yes,pass,,mand.an
+AWFY/nbody,335.5,337.7,2.49,371.6,376.2,1.34,382.8,384.0,0.30,1.108,1.141,1.030,1.8,1.1,1.1,5,yes,pass,,nbody.an
+AWFY/permute,955.5,968.2,1.03,1506.6,1519.7,0.51,2415.7,2444.8,0.94,1.577,2.528,1.603,1.8,1.1,1.1,5,yes,pass,,permute.an
+AWFY/queen,963.5,975.8,1.24,1436.5,1451.4,0.59,6833.5,6954.4,0.89,1.491,7.093,4.757,2.4,2.4,2.8,5,yes,pass,,queen.an
+AWFY/richards,468.9,477.5,2.04,681.3,693.0,1.45,1893.9,1909.2,0.61,1.453,4.039,2.780,3.5,3.3,5.0,5,yes,pass,2400,richards.an
+AWFY/sieve,1994.1,2015.1,1.67,2138.5,2172.0,1.87,2815.9,2843.2,1.58,1.072,1.412,1.317,3.5,2.8,3.1,5,yes,pass,,sieve.an
+AWFY/storage,1776.8,1861.4,3.12,1178.8,1229.5,3.47,1765.7,1809.2,7.76,0.663,0.994,1.498,1862.9,2519.1,4394.5,5,yes,pass,,storage.raw.an
+AWFY/towers,1519.6,1564.2,4.75,2023.3,2044.3,1.35,4422.5,4497.0,1.01,1.331,2.910,2.186,1.3,1.1,1.1,5,yes,pass,,towers.an
+BG/binarytree,3356.9,3383.2,1.49,3287.4,3295.5,0.28,2939.0,3052.1,2.48,0.979,0.875,0.894,129.7,129.1,321.6,5,yes,pass,,binarytree.an
+BG/fann,1602.4,1734.0,4.52,1433.4,1479.1,4.03,1403.5,1424.9,4.52,0.895,0.876,0.979,1.8,1.1,1.1,5,yes,pass,,fann.an
+BG/fasta,1757.7,1772.3,0.46,1664.1,1681.7,0.52,2005.8,2008.1,0.37,0.947,1.141,1.205,1.8,1.1,1.1,5,yes,pass,,fasta.an
+BG/revcomp,662.1,683.3,4.96,634.0,651.1,4.38,729.0,795.9,5.48,0.957,1.101,1.150,1.8,1.1,1.1,5,yes,pass,,revcomp.an
+BG/spectralnorm,1883.9,1888.4,1.64,1876.3,1895.6,1.23,1887.5,1897.5,0.31,0.996,1.002,1.006,2.0,1.3,1.3,5,yes,pass,,spectralnorm.an

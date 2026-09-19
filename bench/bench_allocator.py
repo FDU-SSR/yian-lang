@@ -17,10 +17,10 @@
   基准内部断言都写成规模的函数, 因此缩小规模不改变断言语义。
 
 用法:
-  python3 scripts/bench_allocator.py                     # 全部基准 (完全档)
-  python3 scripts/bench_allocator.py --scale fast        # 快速档
-  python3 scripts/bench_allocator.py --names churn_single --runs 5 --pin 4
-  python3 scripts/bench_allocator.py --compiler-root /tmp/yian_old   # 换一份源码树编译
+  python3 bench/bench_allocator.py                       # 全部基准 (完全档)
+  python3 bench/bench_allocator.py --scale fast          # 快速档
+  python3 bench/bench_allocator.py --names churn_single --runs 5 --pin 4
+  python3 bench/bench_allocator.py --compiler-root /tmp/yian_old  # 换一份源码树编译
 """
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ def main() -> int:
     md = [
         f"# 分配器基准 (fat vs raw) — 规模档 `{args.scale}`",
         "",
-        "由 `scripts/bench_allocator.py` 生成; 分配器基准没有 C 参考, 对照态是 libc `malloc`/`free`。",
+        "由 `bench/bench_allocator.py` 生成; 分配器基准没有 C 参考, 对照态是 libc `malloc`/`free`。",
         f"采样: 每态 {runs} 次取最小墙钟 / 最大峰值 RSS; 绑核: {args.pin if args.pin is not None else '否'}; "
         f"commit: `{_git_head()}`; 日期: {datetime.date.today().isoformat()}",
         "",
