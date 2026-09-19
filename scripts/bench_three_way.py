@@ -3,7 +3,7 @@
 
 协议:
   - 三态同一算法、同一规模 (对齐核对见 bench/README.md「算法与规模对齐」):
-    C 态 `clang -O2 -lm bench/c/<name>.c` (argv 见 scripts/bench_common.py);
+    C 态 `clang -O2 -lm bench/c/<name>.c` (argv 见本脚本的 `C_SPECS`);
     raw 态 `yianc -O2 --raw-pointers lib/src bench/shootout/<name>.an`;
     fat 态 `yianc -O2 lib/src bench/shootout/<name>.an`;
     `<name>.raw.an` 存在时 raw 态改用该文件 (如 storage: 两态的语义形式无法共用一份源)。
@@ -17,8 +17,8 @@
     重复运行会落在相差约 20% 的两个性能状态上 (进程级内存布局/频率假象, 与代码无关),
     最小值估计无干扰性能, 中位数会被落态运气左右。
   - 自适应降次: 三态 warmup 合计超过 --max-state-sec 时测量次数降到 3。
-  - 语义护栏: ① C warmup 的 (退出码, stdout) 必须满足 scripts/bench_common.py 记录的
-    权威值, 否则 C 基线失效; ② raw 与 fat 的 warmup stdout/退出码必须逐字节一致;
+  - 语义护栏: ① C warmup 的 (退出码, stdout) 必须满足本脚本 `C_SPECS` 记录的权威值,
+    否则 C 基线失效; ② raw 与 fat 的 warmup stdout/退出码必须逐字节一致;
     ③ 两态退出码必须为 0。三者任一不成立, 该基准的比值不可用 (报告列标注)。
 
 用法 (需在已安装 yianc 的环境下运行, 如 yian-env; YIAN 侧编译由 `sys.executable`
@@ -33,7 +33,7 @@
 
 输出:
   bench/results.md   表格 + 环境指纹 + 协议说明 (人读)
-  bench/results.csv  机读基线 (scripts/check_bench_regression.py 的门禁对照)
+  bench/results.csv  机读结果 (表头注释记录列含义与环境指纹)
   --names 部分测量写入 bench/results.partial.{md,csv}, 不覆盖全量基线
 
 独立脚本: 不触碰 scripts/run_tests.py; 不修改基准源码; 二进制与日志写入 build/bench/。
@@ -53,8 +53,61 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
-from bench_common import C_SPECS
+Check = Callable[[int, str], bool]
+
+
+@dataclass(frozen=True)
+class CBenchSpec:
+    """C 参考实现的运行参数与语义权威值。
+
+    `argv` 是与 `.an` 同步工作量所需的 C 侧参数 (缺省空 = 跑 C 参考自身的默认规模);
+    `check` 判断 C 的 (退出码, stdout) 是否为该基准的权威结果。`.an` 基准在内部断言
+    同一组值, 因此 C 与 YIAN 两侧跑的是同一件事; 核对结论见 bench/README.md。
+    """
+
+    argv: list[str]
+    check: Check
+    expect: str
+
+
+C_SPECS: dict[str, CBenchSpec] = {
+    "binarytree": CBenchSpec([], lambda rc, out: rc == 0 and int(out.strip()) % 256 == 176,
+                             "rc==0, check%256==176"),
+    "bounce": CBenchSpec([], lambda rc, out: rc == 0 and "368285073" in out,
+                         'rc==0, stdout contains "368285073"'),
+    "cd": CBenchSpec(["100", "80"], lambda rc, out: rc == 0 and out.strip() == "344400",
+                     'rc==0, stdout=="344400" (100 架 200 帧 × 80 轮, 与 cd.an 的 ITER 一致)'),
+    "deltablue": CBenchSpec([], lambda rc, out: rc == 0 and out.strip() == "4993240000",
+                            'rc==0, stdout=="4993240000" (N=100 × ITER=14000; 每趟 356660)'),
+    "fann": CBenchSpec([], lambda rc, out: rc == 51 and "51" in out,
+                       'rc==51, stdout contains "51"'),
+    "fasta": CBenchSpec([], lambda rc, out: rc == 0 and "-71" in out,
+                        'rc==0, stdout contains "-71"'),
+    "havlak": CBenchSpec([], lambda rc, out: rc == 0 and out.strip() == "1605 5213",
+                         'rc==0, stdout=="1605 5213" (loops × nodes)'),
+    "json": CBenchSpec([], lambda rc, out: rc == 0 and "5869103028000" in out,
+                       'rc==0, stdout contains "5869103028000" (ops/成员/字符数)'),
+    "list": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
+    "mand": CBenchSpec([], lambda rc, out: rc == 0 and "126" in out,
+                       'rc==0, stdout contains "126"'),
+    "nbody": CBenchSpec([], lambda rc, out: rc == 0 and "-1" in out,
+                        'rc==0, stdout contains "-1"'),
+    "permute": CBenchSpec([], lambda rc, out: rc == 0 and "823059745" in out,
+                          'rc==0, stdout contains "823059745"'),
+    "queen": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
+    "revcomp": CBenchSpec([], lambda rc, out: rc == 0 and "128" in out,
+                          'rc==0, stdout contains "128" (Checksum:)'),
+    "richards": CBenchSpec(["2400"], lambda rc, out: rc == 0 and out.strip() == "55790400 22312800",
+                           'rc==0, stdout=="55790400 22312800" (23246/9297 × 2400 轮, 与 richards.an 的 ITER 一致)'),
+    "sieve": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
+    "spectralnorm": CBenchSpec([], lambda rc, out: rc == 0 and "78" in out,
+                               'rc==0, stdout contains "78"'),
+    "storage": CBenchSpec([], lambda rc, out: rc == 0 and "21523360" in out,
+                          'rc==0, stdout contains "21523360"'),
+    "towers": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
+}
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "lib" / "src"
@@ -74,7 +127,6 @@ TIME_BIN = "/usr/bin/time"
 DEFAULT_RUNS = 5
 DEFAULT_MAX_STATE_SEC = 120.0
 RAW_SUFFIX = ".raw.an"
-CSV_FORMAT = "three-way-1"
 
 STATES = ("c", "raw", "fat")
 STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}
@@ -143,7 +195,7 @@ def discover() -> list[BenchSpec]:
         raise SystemExit(f"[discover] 缺少 C 参考: {', '.join(missing_c)}")
     missing_spec = sorted(set(fat_srcs) - set(C_SPECS))
     if missing_spec:
-        raise SystemExit(f"[discover] scripts/bench_common.py 缺少规格: {', '.join(missing_spec)}")
+        raise SystemExit(f"[discover] 脚本内 C_SPECS 缺少规格: {', '.join(missing_spec)}")
     return [
         BenchSpec(name=name, fat_src=fat_srcs[name], raw_src=raw_srcs.get(name, fat_srcs[name]))
         for name in sorted(fat_srcs)
@@ -470,7 +522,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, 裸态追加 `--raw-pointers`。"
     )
     lines.append(
-        "- C 侧 argv: 见 `scripts/bench_common.py` 的 `argv` (`cd 100 80`、`richards 2400`, "
+        "- C 侧 argv: 见本脚本 `C_SPECS` 的 `argv` (`cd 100 80`、`richards 2400`, "
         "其余无参), 保证 C 与 `.an` 的迭代次数一致。"
     )
     lines.append(
@@ -482,7 +534,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         "等长路径 (argv[0] 长度影响分配密集型基准的进程布局)。"
     )
     lines.append(
-        "- 语义护栏: C warmup 必须通过 `scripts/bench_common.py` 的权威值校验; "
+        "- 语义护栏: C warmup 必须通过本脚本 `C_SPECS` 的权威值校验; "
         "raw 与 fat 的 stdout/退出码必须逐字节一致。报告中标 `否` 即该基准比值不可用。"
     )
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -490,12 +542,11 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
 
 def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
     header = (
-        "# bench/results.csv — C / raw / fat 三态性能基线 "
+        "# bench/results.csv — C / raw / fat 三态性能结果 "
         "(scripts/bench_three_way.py 生成)"
     )
     comments = [
         header,
-        f"# format: {CSV_FORMAT}",
         "# 列: bench, <state>_min_ms/<state>_med_ms/<state>_cv_pct 各态最小值(正式指标)/中位数/"
         "变异系数, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, ratio_fat_c = fat_min/c_min, "
         "ratio_fat_raw = fat_min/raw_min; <state>_rss_mb 峰值常驻; runs, stdout_match (raw/fat), "
