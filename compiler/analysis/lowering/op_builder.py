@@ -602,6 +602,11 @@ class OpBuilder:
             if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
                 if left_ty.pointee_type == right_ty.pointee_type:
                     return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
+            # 引用只支持 == / != (身份比较: 比较所指对象的有效地址); 序比较对引用无意义。
+            if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq) \
+                    and isinstance(left_ty, Type.RefType) and isinstance(right_ty, Type.RefType):
+                if left_ty.pointee_type == right_ty.pointee_type:
+                    return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
 
         self.__raise_unsupported_binary_operator(span, desc.symbol, left_hir.type_id, right_hir.type_id)
 
