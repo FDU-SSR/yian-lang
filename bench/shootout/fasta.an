@@ -3,32 +3,16 @@
 // 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
 // 语义权威源: bench/c/fasta.c (项目自写 C 参考, 取 compute-only
 //   部分: 不输出序列文本, 只累计字符校验和)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 n=25000000 (总迭代 10n = 2.5 亿), 断言 i32(checksum)%256 == -71。
-//   规模调整: n 保留原版 25000000 (实测全胖 ~9s < 60s), 断言值 -71
-//   与原版一致。
+// 规模: n=25000000 (总迭代 10n = 2.5 亿), 断言 i32(checksum)%256 == -71
+//   (与 C 版一致)。
 //
 // 算法: LCG (g_seed*IA+IC)%IM 生成随机数 r, 按累积概率表选择碱基,
 //       与 repeat_fasta (alu 序列循环取碱基) 一起累计 checksum。
 //
-// 签名升级 (2026-08): g_seed: i32& + checksum: i64& (T& 化, raw 下
-//   identity, 无劣化); genelist 初升 AminoAcid[] 后因重测超限 (+7.0%,
-//   热循环 {ptr,i64} 聚合参数放大 genelist[j] 提取开销) 恢复 AminoAcid*
-//   (count 参数单独传递, T[] 化无收益)。
-// 签名升级 (2026-08-20, bench-ptr-to-view todo 4): genelist 再次 AminoAcid*
-//   → AminoAcid[](Fix B 编译器修复后): 旧劣化根因系 T[] 索引走
-//   index→ptr→as_struct 三层未内联方法调用链(emit_object 无优化), 非参数聚合;
-//   编译器新增 T[] 整数索引内建路径(HIR.SliceAccess, 镜像 T[N] ArrayAccess)
-//   后热循环零调用, 实测 check 3521~3750ms 快于 T* 基线 5160ms(-27%),
-//   三态关系 raw≤nocheck≤check 保持。make_cumulative 冷路径保持
-//   AminoAcid[]。函数体 deref (*g_seed = / *checksum +=) 原样保留
-//   (去 deref 会 codegen 崩溃/类型拒绝)。无 del, 无 T* 局部。
+// 签名: g_seed: i32&, checksum: i64&; genelist 为 AminoAcid[]。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/fasta.an -o build/shootout_check/fasta
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
+//         x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 struct AminoAcid {

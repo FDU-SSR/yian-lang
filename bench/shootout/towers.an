@@ -2,9 +2,7 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Towers.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/c/towers.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 disks=30, 断言 moves_done == 1073741823 (2^30 - 1)。
-//   (规模未调整; 与 C 版语义一致。)
+// 规模: disks=30, 断言 moves_done == 1073741823 (2^30 - 1)。
 //
 // 算法: 3 根柱子各存一张 TowersDisk 链表 (按 size 从大到小, 栈顶最小)。
 //       push_disk 把 disk 压到某柱 (校验 size 递增), pop_disk_from 弹出
@@ -12,20 +10,15 @@
 //       build_tower_at 建 0..disks 的塔, 结束后 free_pile 逐节点释放。
 //       总移动次数 = 2^disks - 1。
 //
-// Option 迁移 (2026-08): 链表尾哨兵/空柱由 Option 表达。Option 值禁止
-// 简单复制 → 读取位置用 match 直接取 payload (裸模式 Some/None),
-// 槽位/字段更新用构造表达式,全文件统一 match 风格。
-// T& 迁移 (2026-08): next 与 piles 元素由 Option 指针 payload 升级为
-// Option<TowersDisk&>(40B→24B);push_disk 参数改 T& 避免热路径 bitcast
-// (调用侧传 T* 隐式折算),节点本体直接 dyn T 分配并绑 T& (let T& = dyn,
-// 免 T* 中间绑定; let 绑定位直连 2026-08 冒烟确认),free_pile
-// 释放路径直接 del T& (del-view: del T& 合法, 零 bitcast)。
+// Option/T& 表示: 链表尾哨兵/空柱由 Option 表达。Option 值禁止简单复制 →
+//       读取位置用 match 直接取 payload (裸模式 Some/None), 槽位/字段更新
+//       用构造表达式, 全文件统一 match 风格。next 与 piles 元素为
+//       Option<TowersDisk&> (40B→24B); push_disk 参数为 T&, 节点本体直接
+//       dyn T 分配并绑 T& (let T& = dyn, 免 T* 中间绑定), free_pile 释放路径
+//       直接 del T& (del-view: del T& 合法, 零 bitcast)。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/towers.an -o build/shootout_check/towers
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。
+// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 struct TowersDisk {

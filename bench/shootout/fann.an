@@ -2,20 +2,13 @@
 //
 // 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
 // 语义权威源: bench/c/fann.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 n=12 (12! = 479M 排列), 断言 max_flips == 65。
-//   规模调整: 实测全胖模式 n=12 远超 60s, 折中为 n=11 (11! = 39.9M
-//   排列, 断言 max_flips == 51, 与 C 版 n=11 实测一致)。
-//   (三态同源码, 不影响归因。)
+// 规模: n=11 (11! = 39.9M 排列), 断言 max_flips == 51 (与 C 版 n=11 一致)。
 //
 // 算法: 经典 fannkuchredux —— 增量生成排列, 对每个排列反转前缀
 //        (首元素 k → 反转前 k+1 个), 统计最大反转次数与校验和。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/fann.an -o build/shootout_check/fann
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
+//         x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 fn fannkuchredux(n: u64) -> i32 {

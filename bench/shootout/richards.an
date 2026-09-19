@@ -23,9 +23,7 @@
 //     Scheduler.run_task, 四个 lambda 的函数体分别落在 run_idle/run_worker/
 //     run_handler/run_device, 状态机与分支逐条对应。
 //   - TaskKind (类层次判别子) 放在 TaskControlBlock 首个字段: 语义与上游字段
-//     集合一致; 字段顺序不承载语义 (曾为绕开一个 -O1 下的字段偏移误编译而把
-//     TaskKind 放最后, 该 bug 已修, 见 compiler/codegen/llvm/module.py 的
-//     TARGET_DATA_LAYOUT 注释与 docs/llvm_note.md)。
+//     集合一致; 字段顺序不承载语义。
 //   - 上游 TaskControlBlock extends TaskState 继承的三个布尔量改为内嵌 TaskState
 //     值字段 (pending/waiting/holding), 方法 packetPending()/running()/
 //     isTaskHoldingOrWaiting()/isWaitingWithPacket() 逐条照搬。
@@ -33,28 +31,23 @@
 //     pending, 不清 waiting/holding), 与 packetPending() 转移不同; 本实现保留
 //     这一区别 (只写 t.state.pending), 否则调度器永不到达链尾 idler。
 //   - packet 的 int[DATA_SIZE] 用定长内联数组 i32[4] (两模式同为内联布局, 无
-//     跨模式类型分歧, 访问也无需切片)。分配次数对照 (单趟): 上游 Java 分配
-//     taskTable 数组 1 + TCB 6 + 数据记录 4 + Packet 8 + int[4] 8 + 捕获 this 的
-//     lambda 对象 6 ≈ 33 次; 本实现 taskTable 的 Vec 1 + TCB 6 + 数据记录 4 +
-//     Packet 8 = 19 次 (无 lambda 对象是 tagged enum 的必然结果, int[4] 内联是
-//     8 次微小分配之差)。算法层面的四类对象 (TCB/记录/Packet) 次数完全一致,
-//     且整趟 run 只在启动时分配一次, 无逐帧分配。
+//     跨模式类型分歧, 访问也无需切片)。单趟分配次数: taskTable 的 Vec 1 +
+//     TCB 6 + 数据记录 4 + Packet 8 = 19 次, 算法层面的四类对象 (TCB/记录/
+//     Packet) 次数与上游一致, 且整趟 run 只在启动时分配一次, 无逐帧分配。
 //   - 任务表 taskTable[NUM_TYPES] 用 Vec<Option<TaskControlBlock&>> (with_capacity,
 //     一次分配); 上游为 Java 数组。
 //   - 上游 ForEachInterface/闭包类用法本基准没有; 上游 4 个 lambda 是唯一的分派点。
 //   - 上游用引用相等判断 null (NO_WORK/NO_TASK == x), 本实现全部落在 Option 的
 //     is_none/is_some 上; 本基准没有需要「两引用判等」的身份判定, 故未加 id 字段。
 //   - 显式释放: 上游依赖 GC; 本实现只在每趟末尾释放 taskTable 的 Vec 缓冲, 6 个
-//     TCB/4 个数据记录/8 个 Packet 交由进程生命周期 (单趟约 1.5KB, ITER 趟仍很小),
+//     TCB/4 个数据记录/8 个 Packet 交由进程生命周期 (单趟约 1.5KB),
 //     从而保持与上游相同的「分配后不立即回收」语义, 并避免环状引用图的重复释放。
 //
 // 单一源: fat 与 raw 共用本文件; 可选引用一律 Option<T&> (两模式通用)。
 // 规模: ITER=2400 趟 start() (上游 Java 每趟 new Scheduler().start()), 每趟
-//       校验 queuePacketCount==23246 / holdCount==9297; 另断言 ITER 趟总和,
-//       防止规模被静默改动。实测 (taskset 绑核): fat 约 2.0s, raw 约 0.77s。
+//       校验 queuePacketCount==23246 / holdCount==9297; 另断言 ITER 趟总和。
 // 校验值: queuePacketCount=23246, holdCount=9297 (单趟), 与 bench/c/richards.c
 //         及上游 Java 官方期望值一致。
-// 编译: yianc -O2 lib/src bench/shootout/richards.an -o build/bench/richards.fat
 from std.core.io import print;
 from std.core.vec import Vec;
 

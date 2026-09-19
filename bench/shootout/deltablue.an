@@ -21,7 +21,7 @@
 //     改为 tagged enum Constraint { Equality {...}, Scale {...}, Stay {...}, Edit {...} }
 //     + match 分派。上游虚方法 isInput/isSatisfied/addToGraph/removeFromGraph/
 //     chooseMethod/execute/inputsDo/inputsHasOne/inputsKnown/markUnsatisfied/
-//     getOutput/recalculate 各成为 Constraint 上的一个方法, 分支到对应变体;
+//     getOutput/recalculate 各成为 Constraint 上的一个方法, 分派到对应变体;
 //     Scale 的 addToGraph/removeFromGraph/inputs/recalculate 按上游覆写语义处理。
 //   - Strength (Strength.java) 是 interned 常量对象, 上游只用 arithmeticValue 比较
 //     (sameAs/stronger/weaker/strongest/weakest), 且 sameAs(required) 也只看算术值;
@@ -31,8 +31,8 @@
 //     `determinedBy == c` (Variable.removeConstraint) 改比 id; Variable 无需身份比较。
 //   - 上游 ForEachInterface/TestInterface 闭包 + forEach 改显式循环 (等价, 无闭包分配);
 //     inputsKnown 直接写成「该约束所有输入都已知」的布尔合取。
-//   - 上游 Vector.removeFirst 队列改「Vec + head 游标」(避免 O(n^2) 搬移; 语义与分配
-//     次数不变); unsatisfied 的 sort 手写稳定插入排序, 与 Java TimSort 在
+//   - 上游 Vector.removeFirst 队列用「Vec + head 游标」表达 (语义与分配次数不变);
+//     unsatisfied 的 sort 手写稳定插入排序, 与 Java TimSort 在
 //     「stronger ? -1 : 1」比较器下的稳定性一致 (等强度保持入队顺序)。
 //   - 无 GC: 每个测试结束时显式释放全部 Variable/Constraint (Java 靠 GC 回收);
 //     change() 内部的 EditConstraint 在 destroyConstraint 后 del。分配次数与上游一致
@@ -41,19 +41,11 @@
 //   - 上游 Planner.propagateFrom 未被 chainTest/projectionTest 使用, 本移植省略。
 //
 // 单一源: fat 与 raw 共用本文件; 约束/变量互相引用用 T&, 约束列表用 Vec<Constraint&>。
-// 规模: N=100 (上游经典 chainTest(100)/projectionTest(100) 规模), ITER=14000
-//       (fat 单趟约 2.0 s; 对应 AWFY 的 numIterations 外循环)。每趟校验值
-//       PER_RUN=356660 (chainTest 贡献 4950 + projectionTest 贡献 351710),
-//       总校验值 PER_RUN*ITER=4993240000 (与 bench/c/deltablue.c 一致)。
-//       说明: 这里不用「单次大 N」(如 N=7000) 作规模。fat 运行时的分配器对
-//       「先分配大量小对象、再分配较大对象, 批量释放后重复」的模式存在 free-list
-//       线性扫描退化: 大对象分配要跳过 free-list 上所有 <=123B 的小对象块, 于是
-//       projectionTest 变成 O(N^2) (纯分配微基准即可复现, 与 DeltaBlue 算法无关;
-//       两态热路径调用计数完全相同)。经典 N=100 + 多次外循环既贴合上游规模, 又让
-//       两态耗时反映算法本身的开销 (实测 fat/raw ≈ 2.9x, 而非大 N 下的 240x)。
-// 构建: yianc -O2 lib/src bench/shootout/deltablue.an -o build/bench/deltablue.fat
-//       yianc -O2 --raw-pointers lib/src bench/shootout/deltablue.an -o build/bench/deltablue.raw
-// 预期: exit 0 (全部断言通过), stdout == "deltablue pass\n" (两态逐字节一致)。
+// 规模: N=100 (上游 chainTest(100)/projectionTest(100) 规模), ITER=14000
+//       (对应 AWFY 的 numIterations 外循环)。每趟校验值 PER_RUN=356660
+//       (chainTest 贡献 4950 + projectionTest 贡献 351710), 总校验值
+//       PER_RUN*ITER=4993240000 (与 bench/c/deltablue.c 一致)。
+// 断言: stdout == "deltablue pass\n" (两态逐字节一致)。
 from std.core.io import print;
 from std.core.vec import Vec;
 

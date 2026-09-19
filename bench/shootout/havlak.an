@@ -45,9 +45,6 @@
 // 规模: INNER=1 (每轮 LoopTesterApp 即上游官方断言点 1605/5213), ITER=2 轮外层重复;
 //       断言 total_loops == 1605*ITER 且 total_nodes == 5213*ITER。
 // 校验值: 每轮 loops=1605, nodes=5213; C 参考实现同样打印 "1605 5213"。
-// 耗时 (taskset -c 4, -O2, 空闲核, 用户态): fat ≈ 2.05s, raw ≈ 0.07s。
-// 编译: yianc -O2 lib/src bench/shootout/havlak.an -o build/bench/havlak.fat
-//       yianc -O2 --raw-pointers lib/src bench/shootout/havlak.an -o build/bench/havlak.raw
 from std.core.io import print;
 from std.core.vec import Vec;
 

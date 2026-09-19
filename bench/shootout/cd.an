@@ -19,16 +19,15 @@
 //     上游的 `x == y.left` / `y != z` 等身份判定改比 id, 语义等价。
 //   - 上游 ForEachInterface 闭包改为显式中序遍历 (等价, 无闭包分配)。
 //   - 无 sin/cos 内建: mysin/mycos 用区间归约 + fdlibm 内核多项式 (精度 <1ulp),
-//     与 libm/Java 的 ULP 差异不影响碰撞计数 (已用 bench/c/cd.c 的 libm 版本核对:
-//     2/10/100/250 架的计数完全一致)。sqrt 用标准库 std.num.f64.sqrt
+//     与 libm/Java 的 ULP 差异不影响碰撞计数 (与 bench/c/cd.c 的 libm 版本
+//     在 2/10/100/250 架上计数一致)。sqrt 用标准库 std.num.f64.sqrt
 //     (llvm.sqrt.f64 → sqrtsd), 与 C 参考的 libm sqrt 同一原语; 碰撞计数对 sqrt
-//     的末位差异敏感, 换用该精确实现后计数仍为上游校验值 4305 (实测)。
+//     的末位差异敏感, 100 架时计数为 4305, 与 C 参考及上游校验值一致。
 //     同一 discr 只开方一次 (上游 Java 写了两次 Math.sqrt, 等值)。
 //   - state 树的值为 Vector3D 值型 (上游是对象引用), 树节点/键布局见下。
 //
 // 单一源: fat 与 raw 共用本文件; 树链用 Option<RBNode<V>&> (两模式通用)。
-// 规模: AIRCRAFT=100 (上游校验值 4305), FRAMES=200, ITER=80 (fat 单趟约 2.7s)。
-// 编译: yianc -O2 lib/src bench/shootout/cd.an -o build/bench/cd.fat
+// 规模: AIRCRAFT=100, FRAMES=200, ITER=80; 断言 aircraft=100 时碰撞数 4305。
 from std.core.io import print;
 from std.num.f64 import sqrt;
 from std.core.vec import Vec;

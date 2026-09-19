@@ -2,9 +2,7 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/c/list.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 make_list 45/30/20, 断言 tail 结果长度 == 30。
-//   (规模未调整; 与 C 版语义一致。)
+// 规模: make_list 45/30/20, 断言 tail 结果长度 == 30。
 //
 // 算法: 单链表 (val + next 指针)。Element_make_list 递归建表 (长度
 //       递减, val=length), tail(x,y,z) 三链表归约: 当 y 比 x 短时
@@ -12,28 +10,11 @@
 //       递归嵌套, 否则返回 z。最终 tail 结果指向原 z 表的中段, 断言
 //       其长度 == 30。free_list 释放整条链 (含头节点)。
 //
-// NULL 迁移 (2026-08): 链表尾哨兵改为 Option 指针 (next 字段)。
-// 遍历位置一律用 match 解包读取 (match 风格, 2026-08; towers 同款)。
-// Element_length_method 的 self 为 Element& (入参非空, 单元素解引用;
-// 内部 current 保持 Option 需遍历)。
-// Element_free_method/free_list 释放链, 直接 del T& (del-view: del T&
-// 合法, 零 bitcast; 形参不再需要 Element*)。
+// 数据布局: next 为 Option<Element&> (空/链尾为 None); 遍历位置用 match
+//       解包读取, 节点由 dyn Element(...) 分配, 释放直接 del T&。
 //
-// Option<T&> 迁移 (2026-08): next 字段改为 Option<Element&> (niche
-// 24B, 省 16B/字段)。match Some(e) 对 Option<T&> 绑定 e 为 T& (非 T*)
-// → 读路径局部一律 Element& (字段访问经 T& 自动解引用, 零 bitcast);
-// 节点本体直接 dyn Element(...) 绑 T& (let T& = dyn 直连, 2026-08;
-// binarytree 同款直连先例)。del 直接作用于 match 所得 T& (del-view:
-// del T& 合法, 零 bitcast; T&→T* 无隐式折算, 故释放形参保持 T&)。
-//
-// 赋值回归 (2026-08): 赋值/传参按位复制, Option<Element&> 直接传递
-//       (tail(opt_copy(x), ...) / free_list(x)), 不再需要 clone/move 调用。
-//
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/list.an -o build/shootout_check/list
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
+//         x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 struct Element {

@@ -2,28 +2,19 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Permute.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/c/permute.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 n=12, 断言 count == 2109842094 (i32 回绕值)。
-//   规模调整: 全胖模式 n=12 (真实调用 1.07e10 次) 实测 ~6 分钟, 远超
-//   可接受运行时长; 折中为 n=11 (真实调用 823059745 次, 未回绕), 断言
-//   count == 823059745 (C 版同规模实测值, 三态同源码, 不影响归因)。
+// 规模: n=11, 断言 count == 823059745。
 //
 // 算法: permute_inner(n, v) 对长度 n 的前缀做递归交换排列, 每次调用
 //       count+=1; n==0 时仅计数返回, 否则先递归 (n-1) 再对 i 从 n-1
 //       递减到 0 做 swap+递归+swap。swap_indices 通过指针索引交换
-//       v[i] 与 v[j]。总调用次数 = 1 + n*(1 + (n-1)*(1 + ...)) 即
-//       n=12 时为 2109842094。
+//       v[i] 与 v[j]。总调用次数 = 1 + n*(1 + (n-1)*(1 + ...))。
 //
-// tiered-pointers t6 标注: 热路径 (swap_indices/permute_inner) 数组参数
-//   v 改为 i32[] (块访问语义, 免 index 字段), count 改为 i32& (引用)。
-//   benchmark_permute 局部 v 直绑 i32[] (let x: T[] = dyn[n] T, del-view
-//   后 del T[] 整块合法)。
+// 数组表示: swap_indices/permute_inner 的数组参数 v 为 i32[] (块访问语义,
+//   免 index 字段), count 为 i32& (引用)。benchmark_permute 局部 v 直绑
+//   i32[] (let x: T[] = dyn[n] T, del-view 后 del T[] 整块合法)。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/permute.an -o build/shootout_check/permute
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。
+// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 fn swap_indices(i: u64, j: u64, v: i32[]) {

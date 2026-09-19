@@ -2,24 +2,17 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Sieve.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/c/sieve.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 SIEVE_SIZE=2000000 × 5000 次迭代。
-//   规模调整: 实测全胖模式 2M×5000 远超 60s, 折中为
-//   SIEVE_SIZE=2000000 × ITER=500 次迭代 (三态同源码, 不影响归因;
-//   每趟仍完整覆盖 2M 位数组, 断言 prime_count==148933 与原版一致)。
+// 规模: SIEVE_SIZE=2000000 × ITER=500 次迭代, 每趟断言 prime_count==148933。
 //
 // 算法: 每趟将 flags[0..SIEVE_SIZE-1] 全置 true (i 表示数 i+1),
 //        sieve() 从 i=2 起标记合数, 统计素数个数。
 //
-// tiered-pointers t6 标注: sieve 的 flags 参数改为 bool[] (块访问语义,
-//   免 index 字段)。main 局部 flags 直绑 bool[] (let x: T[] = dyn[n] T,
-//   del-view 后 del T[] 整块合法)。
+// 数组表示: sieve 的 flags 参数为 bool[] (块访问语义, 免 index 字段)。
+//   main 局部 flags 直绑 bool[] (let x: T[] = dyn[n] T, del-view 后
+//   del T[] 整块合法)。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout/sieve.an -o build/shootout_check/sieve
-// 预期: exit 0 (断言全过)
-// 单一源: fat 与 raw 共用本文件（分支 archive/secl-paper-20260909 曾用 shootout/shootout_raw 两份）。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）;
-//           不引入热路径构造, 算法与规模与分支版本一致。
+// 单一源: fat 与 raw 共用本文件。
+// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
 from std.core.io import print;
 
 fn sieve(flags: bool[], size: u64) -> i32 {

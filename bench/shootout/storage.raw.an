@@ -1,31 +1,21 @@
-// bench/shootout/storage.an — 递归数组树分配/释放 (shootout storage)
-// raw 适配套件: T*→T[] 用 range 视图 arr[0u64..n](裸模式下隐式 coerce
-//       被拒, expr_checker.py L349-353, T[] 直绑 dyn[n] T 不可用)
+// bench/shootout/storage.raw.an — 递归数组树分配/释放 (shootout storage, raw 模式)
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Storage.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/c/storage.c (项目自写 C 参考)
-// 规模: 与 C 版对齐的取值与调整依据 (原始 .an 未随仓库保留):
-//   原规模 depth=17, 断言 count_arrays == 64570081。
-//   规模调整: 胖指针下 array_tree 结构体为 48 字节 (40B 子指针 + i32),
-//   depth=17 需峰值 ~14GB 堆, 超出本机 (15GB, 可用 ~12GB) 会被 OOM。
-//   depth 减至 16: 总节点数按几何级数缩至 1/3, 断言 count_arrays ==
-//   21523360 (同样来自 build_tree_depth 调用计数, C 语义不变; 三态同
-//   源码, 不影响归因)。
+// 规模: depth=16, 断言 count_arrays == 21523360。
 //
 // 算法: build_tree_depth 递归建树 — depth==1 时按 LCG 随机分配
 //       (1..10) 个叶数组 (children=null), 否则分配 3 个内部节点并在
 //       children 挂子数组。每次调用计数 +1 (count_arrays)。free_tree
 //       递归释放全部子数组。LCG: stage = stage*1103515245 + 12345。
 //
-// T[] 迁移 (2026-08, 与 shootout 版同步): children 字段升级为
-// Option<array_tree[]> (切片自带长度); raw 下 dyn[n] T 产生 T*, T*→T[]
-// 直绑被拒, 故 build_tree_depth 用 range 视图 arr[0u64..n] 构造;
-// free_tree 去 count 参数, 遍历 view.len() 后 del view 整块归还——
-// 零 bitcast/显式视图重建。节点本体保持 dyn 数组分配 (T*)。
+// 切片表示: children 元素类型为 Option<array_tree[]> (切片自带长度)。raw 下
+//       dyn[n] T 产生 T*, T*→T[] 直绑被拒, 故 build_tree_depth 用 range 视图
+//       arr[0u64..n] 构造; free_tree 遍历 view.len() 后 del view 整块归还,
+//       节点本体保持 dyn 数组分配 (T*)。
 //
-// 编译: python3 -m compiler.main -O2 lib bench/shootout_raw/storage.an -o build/shootout_check/storage
-// 预期: exit 0 (断言全过)
-// raw 专用源 (fat 使用 storage.an): raw 下切片必须由 T* 显式构造。
+// 模式专源: 本文件供 raw 模式使用 (fat 使用 storage.an); raw 下切片必须由 T*
+//       显式构造。
 from std.core.io import print;
 
 struct array_tree {
