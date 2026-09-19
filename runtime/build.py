@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""build.py — 构建 YIAN 运行时库并做一致性检查与自测.
+
+用法 (在仓库根或任意位置执行):
+
+  python3 runtime/build.py            # 构建 build/runtime/libyian_rt.{o,a} (已最新则跳过)
+  python3 runtime/build.py --force    # 强制重建
+  python3 runtime/build.py --check    # 构建 + ABI 常量一致性断言 + 自测
+  python3 runtime/build.py --asan     # 构建并运行 ASan/UBSan 版自测
+  python3 runtime/build.py --quiet    # 只输出错误 (供编译器内部调用)
+
+一致性断言:
+  - runtime/include/yian_rt.h 的 YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
+    与 compiler/codegen/cfg/lockmech.py::FrameLockArena 相等;
+  - YIAN_ABI_FAIL_MESSAGE 与 compiler/runtime_error.py 的 S002 消息逐字节相等.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_DIR = ROOT / "runtime"
+HEADER = RUNTIME_DIR / "include" / "yian_rt.h"
+SOURCES = sorted((RUNTIME_DIR / "src").glob("*.c"))
+SELFTEST = RUNTIME_DIR / "selftest" / "selftest.c"
+BUILD_DIR = ROOT / "build" / "runtime"
+LIB_OBJECT = BUILD_DIR / "libyian_rt.o"
+LIB_ARCHIVE = BUILD_DIR / "libyian_rt.a"
+SELFTEST_BIN = BUILD_DIR / "selftest"
+SELFTEST_ASAN_BIN = BUILD_DIR / "selftest-asan"
+
+CC = "clang"
+CFLAGS = ["-O2", "-fno-strict-aliasing", f"-I{RUNTIME_DIR / 'include'}"]
+ASAN_FLAGS = ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+
+
+def __sources() -> list[Path]:
+    return SOURCES + [HEADER, SELFTEST, Path(__file__).resolve()]
+
+
+def __is_fresh() -> bool:
+    if not (LIB_OBJECT.exists() and LIB_ARCHIVE.exists()):
+        return False
+    built = min(LIB_OBJECT.stat().st_mtime, LIB_ARCHIVE.stat().st_mtime)
+    newest = max(path.stat().st_mtime for path in __sources())
+    return built >= newest
+
+
+def __run(cmd: list[str]) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
+    if proc.returncode != 0:
+        raise SystemExit(f"[runtime] 命令失败: {' '.join(cmd)}\n{proc.stdout}\n{proc.stderr}")
+
+
+def build(force: bool = False, quiet: bool = False) -> None:
+    if not force and __is_fresh():
+        if not quiet:
+            print(f"[runtime] 已是最新: {LIB_ARCHIVE.relative_to(ROOT)}")
+        return
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    if not quiet:
+        print(f"[runtime] 构建 {LIB_ARCHIVE.relative_to(ROOT)}")
+    __run([CC, *CFLAGS, "-c", str(SOURCES[0]), "-o", str(LIB_OBJECT)])
+    __run(["llvm-ar", "rcs", str(LIB_ARCHIVE), str(LIB_OBJECT)])
+
+
+def run_selftest(sanitizers: bool) -> None:
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    flags = [*ASAN_FLAGS, f"-I{RUNTIME_DIR / 'include'}"] if sanitizers else list(CFLAGS)
+    binary = SELFTEST_ASAN_BIN if sanitizers else SELFTEST_BIN
+    __run([CC, *flags, str(SELFTEST), *[str(src) for src in SOURCES], "-o", str(binary)])
+    proc = subprocess.run([str(binary)], capture_output=True, text=True, check=False, cwd=ROOT)
+    label = "ASan/UBSan" if sanitizers else "普通"
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
+    if proc.returncode != 0:
+        raise SystemExit(f"[runtime] {label} 自测失败 (退出码 {proc.returncode})\n{proc.stderr}")
+    print(f"[runtime] {label} 自测通过")
+
+
+def __macro_int(name: str) -> int:
+    text = HEADER.read_text(encoding="utf-8")
+    match = re.search(rf"^#define\s+{name}\s+(.+)$", text, re.MULTILINE)
+    if match is None:
+        raise SystemExit(f"[check] {HEADER.name} 缺少宏 {name}")
+    expr = match.group(1).strip()
+    expr = re.sub(r"(?<=[0-9])[uUlL]+", "", expr)
+    if re.fullmatch(r"[0-9()<>&| +\-*]+", expr) is None:
+        raise SystemExit(f"[check] 宏 {name} 不是可求值的整数字面量表达式: {expr!r}")
+    return int(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - 已限制字符集
+
+
+def __macro_bytes(name: str) -> bytes:
+    text = HEADER.read_text(encoding="utf-8")
+    match = re.search(rf'^#define\s+{name}\s+"((?:[^"\\]|\\.)*)"', text, re.MULTILINE)
+    if match is None:
+        raise SystemExit(f"[check] {HEADER.name} 缺少字符串宏 {name}")
+    return match.group(1).encode("utf-8").decode("unicode_escape").encode("latin-1")
+
+
+def check_consistency() -> None:
+    sys.path.insert(0, str(ROOT))
+    from compiler.codegen.cfg import lockmech  # noqa: PLC0415
+    from compiler.runtime_error import RuntimeErrorCode, runtime_error_message  # noqa: PLC0415
+
+    slots = __macro_int("YIAN_FRAME_LOCK_SLOTS")
+    slot_bytes = __macro_int("YIAN_FRAME_LOCK_SLOT_BYTES")
+    if slots != lockmech.FrameLockArena.SLOTS:
+        raise SystemExit(f"[check] 帧锁槽位数不一致: 头文件 {slots} / lockmech {lockmech.FrameLockArena.SLOTS}")
+    if slot_bytes != lockmech.FrameLockArena.SLOT_BYTES:
+        raise SystemExit(
+            f"[check] 帧锁槽宽不一致: 头文件 {slot_bytes} / lockmech {lockmech.FrameLockArena.SLOT_BYTES}"
+        )
+    abi_message = __macro_bytes("YIAN_ABI_FAIL_MESSAGE")
+    expected = runtime_error_message(RuntimeErrorCode.S002)
+    if abi_message != expected:
+        raise SystemExit(f"[check] ABI 失败消息与 S002 不一致:\n  头文件 {abi_message!r}\n  Python {expected!r}")
+    print("[runtime] ABI 常量与 lockmech.py / runtime_error.py 一致")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="构建 YIAN 运行时库并做检查与自测")
+    parser.add_argument("--force", action="store_true", help="强制重建")
+    parser.add_argument("--check", action="store_true", help="一致性断言 + 普通自测")
+    parser.add_argument("--asan", action="store_true", help="构建并运行 ASan/UBSan 自测")
+    parser.add_argument("--quiet", action="store_true", help="只输出错误")
+    args = parser.parse_args()
+
+    build(force=args.force, quiet=args.quiet)
+    if args.check or args.asan:
+        check_consistency()
+    if args.check:
+        run_selftest(sanitizers=False)
+    if args.asan:
+        run_selftest(sanitizers=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

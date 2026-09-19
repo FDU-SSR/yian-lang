@@ -68,12 +68,13 @@
 
 | 项 | 说明 |
 | --- | --- |
-| `yian_rt_alloc(uint64_t bytes) -> void *` | 返回**块基址**（= `lock_ptr`）；负载 = 基址 + `YIAN_HDR_BYTES` |
-| `yian_rt_release(void *block)` | 归还整块；幂等与合法性由编译器的 S006 检查保证 |
-| `yian_rt_key_exhausted(uint32_t kind)` | 键/槽耗尽时确定性终止（R003），冷路径 |
-| `yian_rt_fail(uint32_t code)` / `yian_rt_panic(const uint8_t *, uint64_t)` | `noreturn` + `cold`；只 `write(2, …)` + `_exit`，**不分配内存** |
-| `yian_lit_lock`、`yian_secl_frame_locks[]`、`yian_secl_frame_depth`、堆键/栈键计数器 | 全局对象（数据段/BSS），由内联代码以外部符号读写 |
-| `yian_rt_argc` / `yian_rt_argv` 与 wrapper `main` | 参数 ABI 校验（`argc >= 0`、`argv != null`）整体搬 C |
+| `__yian_runtime_fail(const uint8_t *message, uint64_t length)` | 原样写 stderr 后 `_exit(1)`；`noreturn` + `cold`，不分配内存。消息文本由编译器决定 |
+| `__yian_panic(const uint8_t *message, uint64_t length)` | 写 `yian: panic: ` + 消息 + 换行后 `_exit(1)` |
+| `main(int argc, char **argv)`（wrapper） | 校验参数 ABI（`argc >= 0`、`argv != null`），写入参数全局，调用 `__yian_main()`，返回 0 |
+| `__yian_argc` / `__yian_argv` | 进程参数全局（wrapper 写，`@argc`/`@arg_bytes` 读） |
+| `__yian_lit_lock`、`__yian_env_lock`、`__yian_key_heap`、`__yian_key_stack` | 锁槽与键计数器；由内联代码直接 load/store |
+| `__secl_frame_locks[]`（2^20 × u64）、`__secl_frame_lock_depth` | 帧锁影子栈（BSS，页按首次触达常驻） |
+| P1 起：`__secl_pool_alloc` / `__secl_pool_release` 的新实现 | 尺寸类 arena（P1 换实现，块头先不动） |
 
 ### 4.3 交付形式与链接
 
@@ -87,9 +88,9 @@
 
 ### 4.4 唯一真值
 
-- `runtime/include/yian_rt.h` 定义 `YIAN_HDR_BYTES`、`YIAN_SLAB_BYTES`、`YIAN_SENTINEL`、尺寸类表、错误码与消息等 ABI 常量。
-- `compiler/codegen/cfg/lockmech.py` 保持 Python 镜像；新增两侧常量一致性断言（在构建运行时库时执行）。
-- 错误码与消息表以 C 头为准，Python 侧由它生成或校验，避免拆库后出现两份。
+- `runtime/include/yian_rt.h` 定义 ABI 常量与全局对象声明：`YIAN_FRAME_LOCK_SLOTS`、`YIAN_FRAME_LOCK_SLOT_BYTES`、`YIAN_LITERAL_KEY`、`YIAN_ABI_FAIL_MESSAGE`、堆块头大小（P2 起）。
+- `compiler/codegen/cfg/lockmech.py` 是这些常量的 Python 镜像；`runtime/build.py --check` 断言两侧相等，并断言 `YIAN_ABI_FAIL_MESSAGE` 与 S002 消息逐字节一致。
+- 失败诊断的消息表只有一份：留在编译器侧（`compiler/runtime_error.py`），运行时只接收 `(指针, 长度)` 并原样写出，因此两侧都不会有第二份消息。
 - `docs/security.md` §4/§5/§6/§10 的块头与池描述按新块头、新分配器更新。
 
 ## 5. 参数
@@ -113,9 +114,10 @@
 
 ### P0 运行时库的构建与链接骨架（语义零变化）
 
-- 新增 `runtime/`（C 源码 + 头文件 + 构建脚本），产出 `libyian_rt.o` / `libyian_rt.a`；先实现与现状等价的运行时部分：`runtime_fail`、`panic`、键计数器、argv/env/字面量/帧锁全局、wrapper `main`；池暂时留在编译器。
-- `compiler/main.py::__link_exe` 加上运行时库输入；`-t obj` 用 `clang -r` 合并；`-t ll`/`bc`/`asm` 保持外部声明、不并入。
-- 自测放在 `runtime/`：C 自测 + `clang -fsanitize=address,undefined` 构建脚本，不纳入 `tests/`。
+- 新增 `runtime/`：`include/yian_rt.h`（ABI 常量与声明）、`src/runtime.c`（全局对象、失败路径、wrapper `main`）、`build.py`（构建 + 一致性断言 + 自测）、`selftest/selftest.c`。产物 `build/runtime/libyian_rt.{o,a}`，由 `compiler/runtime_lib.py` 按需构建并缓存（源码比产物新才重建）。
+- 编译器侧把对应全局与函数改成**外部声明**（池暂时留在编译器），不再发射 wrapper `main`。
+- `compiler/main.py::__link_exe` 链接时加入静态库；`-t obj` 用 `clang -r -nostdlib` 把它与用户对象合并为单个可重定位对象；`-t ll`/`bc`/`asm` 保持外部声明、不并入。
+- 自测放在 `runtime/`：`python3 runtime/build.py --check`（一致性断言 + 普通自测）与 `--asan`（ASan/UBSan 自测），不纳入 `tests/`。
 - 判据：三套件全绿；`-t exe`/`-t obj` 产物自包含（`nm -u` 无未定义运行时符号）；`-t ll`/`bc`/`asm` 里运行时符号为外部声明，按文档命令可与运行时库一起链接运行；运行时库可 ASan/UBSan 构建并通过自测。
 
 ### P1 分配器换实现（块头与检查不动）
@@ -156,4 +158,5 @@
 - 机制语义：`docs/security.md` §4（锁与键）、§5（空间检查）、§6（堆对象）、§10（可信边界）
 - 机制常量与谓词：`compiler/codegen/cfg/lockmech.py`
 - 检查与发射：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/module.py`、`compiler/codegen/llvm/emit.py`
-- 链接：`compiler/main.py::__link_exe`
+- 运行时：`runtime/include/yian_rt.h`、`runtime/src/runtime.c`、`runtime/build.py`、`runtime/selftest/selftest.c`、`compiler/runtime_lib.py`
+- 链接：`compiler/main.py::__link_exe`、`__merge_runtime_object`

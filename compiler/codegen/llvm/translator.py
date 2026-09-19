@@ -44,8 +44,6 @@ class LLTranslator:
             self.__module.declare(function)
         for function in functions.values():
             self.__build(function)
-        if self.__module.has_yian_main:
-            self.__module.emit_wrapper_main()
 
     def export(self) -> LLModule:
         return self.__module

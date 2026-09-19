@@ -50,6 +50,7 @@ from compiler.codegen.llvm.emit import Emitter
 from compiler.codegen.llvm.module import LLModule, apply_target
 from compiler.codegen.llvm.translator import LLTranslator
 from compiler.codegen.llvm.types import LLTypeCtx
+from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError
 from compiler.frontend.lex.token import Token
@@ -407,14 +408,15 @@ def __select_linker() -> str:
 
 
 def __link_exe(obj_path: Path, output_path: Path, opt_level: int, profile: bool = False) -> None:
-    """Link a .o file to a native executable via clang (or cc as fallback)."""
+    """Link a .o file plus the runtime library to a native executable via clang."""
     linker = __select_linker()
     if profile:
         version = subprocess.run([linker, "--version"], capture_output=True, text=True, check=False)
         first_line = version.stdout.splitlines()[0] if version.stdout else "version unknown"
         print(f"  linker: {linker} ({first_line})", file=sys.stderr)
 
-    cmd = [linker, str(obj_path), "-o", str(output_path), f"-O{opt_level}"]
+    runtime_archive = ensure_archive()
+    cmd = [linker, str(obj_path), str(runtime_archive), "-o", str(output_path), f"-O{opt_level}"]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(f"error: linker failed:\n{proc.stderr}", file=sys.stderr)
@@ -423,6 +425,27 @@ def __link_exe(obj_path: Path, output_path: Path, opt_level: int, profile: bool 
     # Remove intermediate .o file
     if obj_path.exists():
         obj_path.unlink()
+
+
+def __merge_runtime_object(obj_path: Path, output_path: Path) -> None:
+    """Merge the user object with the runtime object into one relocatable object.
+
+    ``-t obj`` 的产物保持单文件自包含：用户对象与运行时对象用 ``clang -r`` 合并，
+    链接阶段与普通对象一样使用。
+    """
+    linker = __select_linker()
+    runtime_object = ensure_object()
+    merged_path = obj_path.with_suffix(".merged.o")
+    proc = subprocess.run(
+        [linker, "-r", "-nostdlib", str(obj_path), str(runtime_object), "-o", str(merged_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(f"error: merging the runtime object failed:\n{proc.stderr}", file=sys.stderr)
+        sys.exit(proc.returncode)
+    merged_path.replace(output_path)
 
 
 def __lex(src_files: list[Path]) -> list[list[Token]]:
@@ -705,12 +728,18 @@ def __run(argv: list[str] | None = None) -> int:
         # Emit target output — all under build/ by default
         out_dir = output_path.parent
         stem = output_path.stem if output_path.suffix else output_path.name
-        if args.target in ("ll", "bc", "obj", "asm"):
-            emitter.emit_module(llvm_module, str(out_dir), args.target, stem, opt_level=args.O)
-        elif args.target == "exe":
-            obj_path = out_dir / (stem + ".o")
-            emitter.emit_module(llvm_module, str(out_dir), "obj", stem, opt_level=args.O)
-            __link_exe(obj_path, output_path, args.O, profile=args.profile)
+        try:
+            if args.target in ("ll", "bc", "obj", "asm"):
+                emitted = Path(emitter.emit_module(llvm_module, str(out_dir), args.target, stem, opt_level=args.O))
+                if args.target == "obj":
+                    __merge_runtime_object(emitted, output_path)
+            elif args.target == "exe":
+                obj_path = out_dir / (stem + ".o")
+                emitter.emit_module(llvm_module, str(out_dir), "obj", stem, opt_level=args.O)
+                __link_exe(obj_path, output_path, args.O, profile=args.profile)
+        except RuntimeBuildError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
         if args.profile:
             timings["emit"] = time.perf_counter() - emit_start
 
