@@ -97,6 +97,9 @@ P1/P3；本计划剩下的主要工作是**循环不变量外提（配循环携�
 
 ### 3.1 已交付的基准与运行器
 
+评测集的重组（按来源分目录、按侧重分集合、快速/完全两档、引入更多现成套件的调研与许可结论）见
+[`docs/plan/bench-suite-plan.md`](bench-suite-plan.md)。
+
 - `bench/shootout/*.an` + `bench/c/*.c`：19 个基准的 YIAN 源与同算法同规模的 C 参考；
   `scripts/bench_three_way.py` 逐次轮转测三态，写 `bench/results.md`（人读）与 `bench/results.csv`
   （机读，含环境指纹与 commit）；`--names` 的部分测量写 `results.partial.*`，不覆盖全量基线。
