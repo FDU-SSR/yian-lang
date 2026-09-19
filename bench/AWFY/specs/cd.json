@@ -1,0 +1,17 @@
+{
+  "name": "cd",
+  "source": "AWFY",
+  "tags": [
+    "control",
+    "numeric"
+  ],
+  "argv": [
+    "100",
+    "80"
+  ],
+  "check": {
+    "rc": 0,
+    "stdout_eq": "344400"
+  },
+  "note": "rc==0, stdout==\"344400\" (100 架 200 帧 × 80 轮, 与 cd.an 的 ITER 一致)"
+}

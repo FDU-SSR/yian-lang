@@ -1,0 +1,18 @@
+{
+  "name": "queen",
+  "source": "AWFY",
+  "tags": [
+    "ptr",
+    "control"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (内部断言 overall_result == SOLVES)",
+  "scale": {
+    "default": 150,
+    "fast": 10,
+    "c": "argv"
+  }
+}

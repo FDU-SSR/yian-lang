@@ -1,0 +1,15 @@
+{
+  "name": "json",
+  "source": "AWFY",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "5869103028000"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"5869103028000\" (ops/成员/字符数)"
+}

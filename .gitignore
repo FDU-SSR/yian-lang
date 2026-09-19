@@ -362,3 +362,9 @@ ide-support/vscode/node_modules/
 
 # The VS Code extension ships its own launch/task config for F5.
 !ide-support/vscode/.vscode/
+
+# 评测集: 快速档与临时子集是开发过程的产物, 不进入版本历史 (完全档与分配器记录要提交)
+bench/results/fast.md
+bench/results/fast.csv
+bench/results/partial.md
+bench/results/partial.csv

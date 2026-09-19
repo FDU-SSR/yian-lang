@@ -1,0 +1,12 @@
+{
+  "name": "list",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (list.an 内部断言尾段长度为 30)"
+}

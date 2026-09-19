@@ -1,0 +1,36 @@
+// bench/ALLOC/an/grow_free.raw.an — 增长-释放循环 (裸态): 与 grow_free.an 同算法,
+// 元素类型是 T* (裸态没有切片).
+//
+// 规模: 40 轮 × 4096 个 4 KiB 块 (每轮 16 MiB).
+// 断言: checksum == 每块写入值 7 × 块数 × 轮数.
+
+from std.core.io import print;
+
+fn main() {
+    let cycles: u64 = 40;  // bench-scale
+    let chunk_count: u64 = 4096;
+    let checksum: i64 = 0;
+
+    let cycle: u64 = 0;
+    while cycle < cycles {
+        let batch = dyn[chunk_count] u8*;
+        let i: u64 = 0;
+        while i < chunk_count {
+            batch[i] = dyn[4096] u8;
+            batch[i][0] = 7;
+            checksum += i64(batch[i][0]);
+            i += 1;
+        }
+        let j: u64 = 0;
+        while j < chunk_count {
+            let chunk: u8* = batch[j];
+            del chunk;
+            j += 1;
+        }
+        del batch;
+        cycle += 1;
+    }
+
+    assert checksum == i64(chunk_count) * i64(cycles) * 7: "grow/free checksum";
+    print("grow pass\n");
+}

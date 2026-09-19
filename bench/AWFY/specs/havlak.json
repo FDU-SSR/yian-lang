@@ -1,0 +1,13 @@
+{
+  "name": "havlak",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_eq": "1605 5213"
+  },
+  "note": "rc==0, stdout==\"1605 5213\" (loops × nodes)"
+}

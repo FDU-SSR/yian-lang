@@ -195,7 +195,7 @@ LLVM 是否把拆分后的参数保持在寄存器里要靠实测确认（`-O2` 
 
 ### 4.2 现有基准
 
-`bench/results.csv`（19 项 shootout）与 `bench_allocator.py`（分配器）每次改动都要重跑：
+`bench/results/full.csv`（19 项 shootout）与 `bench_allocator.py`（分配器）每次改动都要重跑：
 **整基准不退化**是硬门槛，单点的改善不算数（本机同一代码两次全量跑的逐项差可达 ±2%）。
 
 ### 4.3 语义验收清单
@@ -243,7 +243,7 @@ LLVM 是否把拆分后的参数保持在寄存器里要靠实测确认（`-O2` 
 
 **工作**：`docs/grammar/02.type_system.md`、`docs/manual/12.llvm_codegen.md`、`docs/security.md`（若机制变）、
 `lockmech.py` 的字段下标与常量、`runtime/build.py --check`（若块头相关）一起改；
-`bench/results.csv` 重跑并在干净提交上记录。
+`bench/results/full.csv` 重跑并在干净提交上记录。
 **验收**：文档与实测一致；仓库里没有互相矛盾的尺寸描述。
 
 ## 6. 风险与开放问题
@@ -265,5 +265,5 @@ LLVM 是否把拆分后的参数保持在寄存器里要靠实测确认（`-O2` 
 - LLVM 类型映射与冲突点：[`docs/manual/12.llvm_codegen.md`](../manual/12.llvm_codegen.md)
 - 字段下标与谓词：`compiler/codegen/cfg/lockmech.py`
 - 构造/提取/折算：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/types.py`、`compiler/codegen/cfg/builder.py`
-- 基准与基线：`scripts/bench_three_way.py`、`bench/results.{md,csv}`、`scripts/bench_allocator.py`
+- 基准与基线：`scripts/bench_three_way.py`、`bench/results/{full,alloc}.{md,csv}`、`scripts/bench_allocator.py`
 - 主计划：`docs/plan/fat-pointer-performance-plan.md`（§4A 检查消解、§4C 堆池、§5 阶段）

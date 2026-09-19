@@ -1,0 +1,798 @@
+// bench/AWFY/an/havlak.an — Havlak 循环识别 (AWFY 宏基准)
+//
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Havlak.java + havlak/*.java
+//       Havlak.java 与 BasicBlock/BasicBlockEdge/ControlFlowGraph/HavlakLoopFinder/
+//       LoopStructureGraph/LoopTesterApp/SimpleLoop.java:
+//         `// Copyright 2011 Google Inc.` + Apache-2.0 (见 licenses/LICENSE-APACHE);
+//       UnionFindNode.java 与 som/*.java (Vector/Set/IdentitySet/IdentityDictionary):
+//         MIT, Copyright (c) 2001-2016 Stefan Marr / AWFY AUTHORS.md (见 licenses/LICENSE-MIT)。
+// 语义权威源: bench/AWFY/c/havlak.c (C 参考实现, 逐行对应上游; 与上游官方断言值逐项一致:
+//       innerIterations=1→(1605,5213), 15→(1647,5213), 150→(2052,5213), 1500→(6102,5213))
+//
+// 算法 (一句话): 对 CFG 做 DFS 前序编号 (last[w] 区间即支配判据), 每个节点的入边按
+//       回边/非回边分流; 再从后往前对每个 header w 反向追回边源, 用 Union-Find 把
+//       SCC 折叠成 SimpleLoop 并挂进 LoopStructureGraph 树, 最后递归标注嵌套层级。
+//
+// YIAN 侧适配 (逐条; 除此之外与上游逐行对应):
+//   1. 类层次: 上游 SimpleLoop/BasicBlock/BasicBlockEdge/ControlFlowGraph/
+//      LoopStructureGraph/HavlakLoopFinder/LoopTesterApp 均为 final class (无子类、
+//      无动态分派), 故直接落成 struct; som.Vector/Set/IdentitySet 用 Vec<T> 表达
+//      (som.Set 本就是线性扫描的插入序集合)。
+//   2. 身份判定: 引用不可比较相等 (E406) → BasicBlock 以 name (CFG 内唯一) 为 id,
+//      SimpleLoop 以 counter (LoopStructureGraph 内唯一) 为 id; 上游
+//      IdentitySet.contains / `e == ydash` / 节点复用判定等改比 id, 语义等价。
+//   3. Union-Find: 上游 parent 是自引用指针 (initNode 中 parent=this); 这里 parent
+//      改用 nodes 数组下标 u64, 自指即 parent == 自身下标, 语义等价。
+//   4. findSet 路径压缩按 AWFY 原样保留: 上游 nodeList.forEach(iter -> iter.union(parent))
+//      里的 `parent` 是接收者的 parent 字段而非找到的根; 这是复现官方校验值的关键,
+//      不可"修正" (C 参考实现里同样保留)。
+//   5. 枚举: 上游 HavlakLoopFinder.BasicBlockClass 落成 YIAN enum BBClass (7 个无载荷
+//      变体); 枚举不支持 ==, 故 type[w] == BB_SELF / != BB_IRREDUCIBLE 改用
+//      bb_is_self / bb_is_irreducible 两个 match 辅助。
+//   6. 闭包: 上游 forEach (initAllNodes/doDFS/processEdges/stepD/stepE/
+//      setLoopAttributes/calculateNestingLevel*) 改为显式循环 (等价, 无闭包分配);
+//      stepE 对 nonBackPreds[x.dfsNumber] 的迭代在 w == x.dfsNumber 会追加同一集合,
+//      YIAN 版重读长度, 与 Java Vector.forEach 的迭代语义一致。
+//   7. 字典: IdentityDictionary<BasicBlock,Integer> number (customHash()=BasicBlock.name)
+//      与 header/last/nodes 一致, 落成按 name 索引的数组 (CFG 节点名唯一)。
+//   8. 释放: 上游靠 GC; 这里每轮 benchmark 显式释放 finder 缓冲、LoopStructureGraph
+//      (含每个 SimpleLoop 的 basicBlocks/children) 与 ControlFlowGraph。
+//   9. 无受限内建 (@bitcast/@memcpy/@slice_from_parts/@str_from_parts); 本基准不需要
+//      sqrt/sin/cos, 故无自备数学。
+//
+// 单一源: fat 与 raw 共用本文件; 树/集合用 Option<T&> 与 Vec<T&>, 无切片,
+//         dyn 变量一律绑 T& (不写 T[]/T* 标注), 两模式通用。
+// 规模: INNER=1 (每轮 LoopTesterApp 即上游官方断言点 1605/5213), ITER=2 轮外层重复;
+//       断言 total_loops == 1605*ITER 且 total_nodes == 5213*ITER。
+// 校验值: 每轮 loops=1605, nodes=5213; C 参考实现同样打印 "1605 5213"。
+from std.core.io import print;
+from std.core.vec import Vec;
+
+// ── 基本块 / 边 / CFG (上游 havlak/BasicBlock.java, BasicBlockEdge.java,
+//    ControlFlowGraph.java) ──
+
+struct BasicBlock {
+    name: i32,
+    in_edges: Vec<BasicBlock&>,
+    out_edges: Vec<BasicBlock&>,
+}
+
+struct BasicBlockEdge {
+    src: BasicBlock&,
+    dst: BasicBlock&,
+}
+
+struct ControlFlowGraph {
+    // basicBlockMap: 下标即 name (None 表示该下标尚未建点)
+    basic_blocks: Vec<Option<BasicBlock&>>,
+    start_node: Option<BasicBlock&>,
+    edge_list: Vec<BasicBlockEdge&>,
+}
+
+impl ControlFlowGraph {
+    static pub fn new() -> ControlFlowGraph& {
+        return dyn ControlFlowGraph(basic_blocks=Vec<Option<BasicBlock&>>.new(), start_node=Option<BasicBlock&>.None, edge_list=Vec<BasicBlockEdge&>.new());
+    }
+
+    // 上游 createNode: 已存在则复用, 否则新建; size 首次为 1 时记 startNode
+    pub fn create_node(name: i32) -> BasicBlock& {
+        let idx: u64 = u64(name);
+        if idx < self.basic_blocks.len() && self.basic_blocks[idx].is_some() {
+            let existing: BasicBlock& = *self.basic_blocks[idx].unwrap();
+            if self.basic_blocks.len() == 1 {
+                self.start_node = Option<BasicBlock&>.Some(existing);
+            }
+            return existing;
+        }
+        let node: BasicBlock& = dyn BasicBlock(name=name, in_edges=Vec<BasicBlock&>.new(), out_edges=Vec<BasicBlock&>.new());
+        while self.basic_blocks.len() <= idx {
+            self.basic_blocks.push(Option<BasicBlock&>.None);
+        }
+        self.basic_blocks[idx] = Option<BasicBlock&>.Some(node);
+        if self.basic_blocks.len() == 1 {
+            self.start_node = Option<BasicBlock&>.Some(node);
+        }
+        return node;
+    }
+
+    pub fn num_nodes() -> i32 {
+        return i32(self.basic_blocks.len());
+    }
+}
+
+// 上游 BasicBlockEdge 构造: 建/取两端点, 挂 out/in 边, 并登记进 edgeList
+fn new_basic_block_edge(cfg: ControlFlowGraph&, from_name: i32, to_name: i32) {
+    let from_node: BasicBlock& = cfg.create_node(from_name);
+    let to_node: BasicBlock& = cfg.create_node(to_name);
+    from_node.out_edges.push(to_node);
+    to_node.in_edges.push(from_node);
+    let edge: BasicBlockEdge& = dyn BasicBlockEdge(src=from_node, dst=to_node);
+    cfg.edge_list.push(edge);
+}
+
+// ── 循环 (上游 havlak/SimpleLoop.java, LoopStructureGraph.java) ──
+
+struct SimpleLoop {
+    counter: i32,        // 身份 id (IdentitySet 去重用)
+    basic_blocks: Vec<BasicBlock&>,
+    children: Vec<SimpleLoop&>,
+    parent: Option<SimpleLoop&>,
+    root_flag: bool,
+    is_reducible: bool,
+    nesting_level: i32,
+    depth_level: i32,
+}
+
+impl SimpleLoop {
+    // 上游 SimpleLoop(bb, isReducible); bb == None 即人造根
+    static pub fn new(bb: Option<BasicBlock&>, is_reducible: bool) -> SimpleLoop& {
+        let loop_: SimpleLoop& = dyn SimpleLoop(counter=0, basic_blocks=Vec<BasicBlock&>.new(), children=Vec<SimpleLoop&>.new(), parent=Option<SimpleLoop&>.None, root_flag=false, is_reducible=is_reducible, nesting_level=0, depth_level=0);
+        if bb.is_some() {
+            let b: BasicBlock& = *bb.unwrap();
+            loop_.add_node(b);
+        }
+        return loop_;
+    }
+
+    pub fn add_node(bb: BasicBlock&) {
+        let i: u64 = 0;
+        while i < self.basic_blocks.len() {
+            if self.basic_blocks[i].name == bb.name {
+                return;
+            }
+            i += 1;
+        }
+        self.basic_blocks.push(bb);
+    }
+
+    pub fn add_child_loop(child: SimpleLoop&) {
+        let i: u64 = 0;
+        while i < self.children.len() {
+            if self.children[i].counter == child.counter {
+                return;
+            }
+            i += 1;
+        }
+        self.children.push(child);
+    }
+
+    // 上游 setParent(parent): 记父并把自己挂进 parent.children
+    pub fn set_parent(parent: SimpleLoop&) {
+        self.parent = Option<SimpleLoop&>.Some(parent);
+        parent.add_child_loop(self);
+    }
+
+    pub fn set_counter(value: i32) {
+        self.counter = value;
+    }
+
+    pub fn set_nesting_level(level: i32) {
+        self.nesting_level = level;
+        if level == 0 {
+            self.root_flag = true;
+        }
+    }
+
+    pub fn set_depth_level(level: i32) {
+        self.depth_level = level;
+    }
+
+    pub fn is_root() -> bool {
+        return self.root_flag;
+    }
+
+    pub fn get_children_len() -> u64 {
+        return self.children.len();
+    }
+
+    pub fn get_child(i: u64) -> SimpleLoop& {
+        return self.children[i];
+    }
+
+    pub fn get_nesting_level() -> i32 {
+        return self.nesting_level;
+    }
+}
+
+struct LoopStructureGraph {
+    root: SimpleLoop&,
+    loops: Vec<SimpleLoop&>,
+    loop_counter: i32,
+}
+
+impl LoopStructureGraph {
+    static pub fn new() -> LoopStructureGraph& {
+        let root: SimpleLoop& = SimpleLoop.new(Option<BasicBlock&>.None, true);
+        let lsg: LoopStructureGraph& = dyn LoopStructureGraph(root=root, loops=Vec<SimpleLoop&>.new(), loop_counter=0);
+        root.set_nesting_level(0);
+        root.set_counter(lsg.loop_counter);
+        lsg.loop_counter += 1;
+        lsg.loops.push(root);
+        return lsg;
+    }
+
+    pub fn create_new_loop(bb: BasicBlock&, is_reducible: bool) -> SimpleLoop& {
+        let loop_: SimpleLoop& = SimpleLoop.new(Option<BasicBlock&>.Some(bb), is_reducible);
+        loop_.set_counter(self.loop_counter);
+        self.loop_counter += 1;
+        self.loops.push(loop_);
+        return loop_;
+    }
+
+    pub fn num_loops() -> i32 {
+        return i32(self.loops.len());
+    }
+
+    pub fn get_loop(i: u64) -> SimpleLoop& {
+        return self.loops[i];
+    }
+
+    // 上游 calculateNestingLevel
+    pub fn calculate_nesting_level() {
+        let i: u64 = 0;
+        while i < self.loops.len() {
+            let loop_: SimpleLoop& = self.loops[i];
+            if !loop_.is_root() {
+                if loop_.parent.is_none() {
+                    loop_.set_parent(self.root);
+                }
+            }
+            i += 1;
+        }
+        self.calculate_nesting_level_rec(self.root, 0);
+    }
+
+    fn calculate_nesting_level_rec(loop_: SimpleLoop&, depth: i32) {
+        loop_.set_depth_level(depth);
+        let i: u64 = 0;
+        while i < loop_.get_children_len() {
+            let child: SimpleLoop& = loop_.get_child(i);
+            self.calculate_nesting_level_rec(child, depth + 1);
+            let candidate: i32 = 1 + child.get_nesting_level();
+            if loop_.get_nesting_level() < candidate {
+                loop_.set_nesting_level(candidate);
+            }
+            i += 1;
+        }
+    }
+}
+
+// ── Union/Find (上游 havlak/UnionFindNode.java) ──
+// parent 用 nodes 数组下标表达 (自指即 parent == 自身下标)
+
+struct UnionFindNode {
+    parent: u64,
+    bb: Option<BasicBlock&>,
+    loop_: Option<SimpleLoop&>,
+    dfs_number: i32,
+}
+
+// ── 节点分类标记 (上游 HavlakLoopFinder.BasicBlockClass) ──
+
+enum BBClass {
+    Top,
+    NonHeader,
+    Reducible,
+    SelfLoop,
+    Irreducible,
+    Dead,
+    Last,
+}
+
+fn bb_is_self(k: BBClass) -> bool {
+    return match k {
+        SelfLoop => true,
+        _ => false,
+    };
+}
+
+fn bb_is_irreducible(k: BBClass) -> bool {
+    return match k {
+        Irreducible => true,
+        _ => false,
+    };
+}
+
+// ── 整数集合 (上游 som.Set<Integer>: 插入序 + 线性去重) ──
+
+struct IntSet {
+    items: Vec<i32>,
+}
+
+impl IntSet {
+    static pub fn new() -> Self {
+        return Self(items=Vec<i32>.new());
+    }
+
+    pub fn add(v: i32) {
+        let i: u64 = 0;
+        while i < self.items.len() {
+            if self.items[i] == v {
+                return;
+            }
+            i += 1;
+        }
+        self.items.push(v);
+    }
+
+    pub fn len() -> u64 {
+        return self.items.len();
+    }
+
+    pub fn get(i: u64) -> i32 {
+        return self.items[i];
+    }
+
+    pub fn drop_all() {
+        self.items.drop();
+    }
+}
+
+fn vec_u64_has(v: Vec<u64>&, x: u64) -> bool {
+    let i: u64 = 0;
+    while i < v.len() {
+        if v.deref()[i] == x {
+            return true;
+        }
+        i += 1;
+    }
+    return false;
+}
+
+// ── 循环识别 (上游 havlak/HavlakLoopFinder.java) ──
+
+struct HavlakLoopFinder {
+    cfg: ControlFlowGraph&,
+    lsg: LoopStructureGraph&,
+    non_back_preds: Vec<IntSet>,
+    back_preds: Vec<Vec<i32>>,
+    number: Vec<i32>,
+    header: Vec<i32>,
+    bb_type: Vec<BBClass>,
+    last: Vec<i32>,
+    nodes: Vec<UnionFindNode>,
+}
+
+impl HavlakLoopFinder {
+    static pub fn new(cfg: ControlFlowGraph&, lsg: LoopStructureGraph&) -> Self {
+        return Self(cfg=cfg, lsg=lsg, non_back_preds=Vec<IntSet>.new(), back_preds=Vec<Vec<i32>>.new(), number=Vec<i32>.new(), header=Vec<i32>.new(), bb_type=Vec<BBClass>.new(), last=Vec<i32>.new(), nodes=Vec<UnionFindNode>.new());
+    }
+
+    // 上游 isAncestor: 用 DFS 前序编号做支配判定
+    fn is_ancestor(w: i32, v: i32) -> bool {
+        return w <= v && v <= self.last[u64(w)];
+    }
+
+    // 上游 UnionFindNode.findSet: 注意末行 union 的是 `this.parent` (AWFY 语义)
+    fn find_set(x: u64) -> u64 {
+        let node_list: Vec<u64> = Vec<u64>.new();
+        let node: u64 = x;
+        while node != self.nodes[node].parent {
+            let p: u64 = self.nodes[node].parent;
+            if p != self.nodes[p].parent {
+                node_list.push(node);
+            }
+            node = p;
+        }
+        let parent: u64 = self.nodes[x].parent;
+        let k: u64 = 0;
+        while k < node_list.len() {
+            self.nodes[node_list[k]].parent = parent;
+            k += 1;
+        }
+        node_list.drop();
+        return node;
+    }
+
+    // 上游 doDFS
+    fn do_dfs(current_node: BasicBlock&, current: i32) -> i32 {
+        let ci: u64 = u64(current);
+        self.nodes[ci].parent = ci;
+        self.nodes[ci].bb = Option<BasicBlock&>.Some(current_node);
+        self.nodes[ci].dfs_number = current;
+        self.nodes[ci].loop_ = Option<SimpleLoop&>.None;
+        self.number[u64(current_node.name)] = current;
+
+        let last_id: i32 = current;
+        let i: u64 = 0;
+        while i < current_node.out_edges.len() {
+            let target: BasicBlock& = current_node.out_edges[i];
+            if self.number[u64(target.name)] == 2147483647 {
+                last_id = self.do_dfs(target, last_id + 1);
+            }
+            i += 1;
+        }
+        self.last[ci] = last_id;
+        return last_id;
+    }
+
+    // 上游 processEdges
+    fn process_edges(node_w: BasicBlock&, w: i32) {
+        if node_w.in_edges.len() > 0 {
+            let i: u64 = 0;
+            while i < node_w.in_edges.len() {
+                let node_v: BasicBlock& = node_w.in_edges[i];
+                let v: i32 = self.number[u64(node_v.name)];
+                if v != 2147483647 {
+                    if self.is_ancestor(w, v) {
+                        self.back_preds[u64(w)].push(v);
+                    } else {
+                        self.non_back_preds[u64(w)].add(v);
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
+
+    // 上游 identifyEdges
+    fn identify_edges(size: i32) {
+        let w: i32 = 0;
+        while w < size {
+            let wi: u64 = u64(w);
+            self.header[wi] = 0;
+            self.bb_type[wi] = BBClass.NonHeader;
+            if self.nodes[wi].bb.is_none() {
+                self.bb_type[wi] = BBClass.Dead;
+            } else {
+                let node_w: BasicBlock& = *self.nodes[wi].bb.unwrap();
+                self.process_edges(node_w, w);
+            }
+            w += 1;
+        }
+    }
+
+    // 上游 stepD
+    fn step_d(w: i32, node_pool: Vec<u64>&) {
+        let wi: u64 = u64(w);
+        let i: u64 = 0;
+        while i < self.back_preds[wi].len() {
+            let v: i32 = self.back_preds[wi][i];
+            if v != w {
+                let root: u64 = self.find_set(u64(v));
+                node_pool.push(root);
+            } else {
+                self.bb_type[wi] = BBClass.SelfLoop;
+            }
+            i += 1;
+        }
+    }
+
+    // 上游 stepEProcessNonBackPreds
+    fn step_e(w: i32, node_pool: Vec<u64>&, work_list: Vec<u64>&, x: u64) {
+        let nbp: u64 = u64(self.nodes[x].dfs_number);
+        let k: u64 = 0;
+        while k < self.non_back_preds[nbp].len() {
+            let iter: i32 = self.non_back_preds[nbp].get(k);
+            let ydash: u64 = self.find_set(u64(iter));
+            let ydash_dfs: i32 = self.nodes[ydash].dfs_number;
+
+            if !self.is_ancestor(w, ydash_dfs) {
+                self.bb_type[u64(w)] = BBClass.Irreducible;
+                self.non_back_preds[u64(w)].add(ydash_dfs);
+            } else {
+                if ydash_dfs != w {
+                    if !vec_u64_has(node_pool, ydash) {
+                        work_list.push(ydash);
+                        node_pool.push(ydash);
+                    }
+                }
+            }
+            k += 1;
+        }
+    }
+
+    // 上游 setLoopAttributes
+    fn set_loop_attributes(w: i32, node_pool: Vec<u64>&, loop_: SimpleLoop&) {
+        self.nodes[u64(w)].loop_ = Option<SimpleLoop&>.Some(loop_);
+        let i: u64 = 0;
+        while i < node_pool.len() {
+            let n: u64 = node_pool.deref()[i];
+            self.header[u64(self.nodes[n].dfs_number)] = w;
+            self.nodes[n].parent = u64(w);
+            if self.nodes[n].loop_.is_some() {
+                let child: SimpleLoop& = *self.nodes[n].loop_.unwrap();
+                child.set_parent(loop_);
+            } else {
+                let bb: BasicBlock& = *self.nodes[n].bb.unwrap();
+                loop_.add_node(bb);
+            }
+            i += 1;
+        }
+    }
+
+    // 上游 findLoops
+    pub fn find_loops() {
+        if self.cfg.start_node.is_none() {
+            return;
+        }
+
+        let size: i32 = self.cfg.num_nodes();
+
+        let i: u64 = 0;
+        while i < u64(size) {
+            self.header.push(0);
+            self.bb_type.push(BBClass.NonHeader);
+            self.last.push(0);
+            self.number.push(2147483647);
+            self.nodes.push(UnionFindNode(parent=i, bb=Option<BasicBlock&>.None, loop_=Option<SimpleLoop&>.None, dfs_number=0));
+            self.non_back_preds.push(IntSet.new());
+            self.back_preds.push(Vec<i32>.new());
+            i += 1;
+        }
+
+        // 上游 initAllNodes: 全标 UNVISITED + DFS 编号
+        let start: BasicBlock& = *self.cfg.start_node.unwrap();
+        self.do_dfs(start, 0);
+
+        self.identify_edges(size);
+
+        // 起始节点是所有其它循环的根
+        self.header[0] = 0;
+
+        // Step c
+        let w: i32 = size - 1;
+        while w >= 0 {
+            let node_pool: Vec<u64> = Vec<u64>.new();
+            let wi: u64 = u64(w);
+            if self.nodes[wi].bb.is_some() {
+                let node_w: BasicBlock& = *self.nodes[wi].bb.unwrap();
+                self.step_d(w, &node_pool);
+
+                let work_list: Vec<u64> = Vec<u64>.new();
+                let ci: u64 = 0;
+                while ci < node_pool.len() {
+                    work_list.push(node_pool.deref()[ci]);
+                    ci += 1;
+                }
+
+                if node_pool.len() != 0 {
+                    self.bb_type[wi] = BBClass.Reducible;
+                }
+
+                let head: u64 = 0;
+                while head < work_list.len() {
+                    let x: u64 = work_list.deref()[head];
+                    head += 1;
+
+                    let non_back_size: u64 = self.non_back_preds[u64(self.nodes[x].dfs_number)].len();
+                    if non_back_size > 32768u64 {
+                        node_pool.drop();
+                        work_list.drop();
+                        return;
+                    }
+                    self.step_e(w, &node_pool, &work_list, x);
+                }
+
+                if node_pool.len() > 0 || bb_is_self(self.bb_type[wi]) {
+                    let loop_: SimpleLoop& = self.lsg.create_new_loop(node_w, !bb_is_irreducible(self.bb_type[wi]));
+                    self.set_loop_attributes(w, &node_pool, loop_);
+                }
+                work_list.drop();
+            }
+            node_pool.drop();
+            w -= 1;
+        }
+    }
+
+    // 释放 finder 持有的全部缓冲 (上游靠 GC)
+    pub fn free_buffers() {
+        let i: u64 = 0;
+        while i < self.non_back_preds.len() {
+            let s: IntSet = self.non_back_preds[i];
+            s.drop_all();
+            i += 1;
+        }
+        self.non_back_preds.drop();
+
+        let j: u64 = 0;
+        while j < self.back_preds.len() {
+            let b: Vec<i32> = self.back_preds[j];
+            b.drop();
+            j += 1;
+        }
+        self.back_preds.drop();
+
+        self.number.drop();
+        self.header.drop();
+        self.bb_type.drop();
+        self.last.drop();
+        self.nodes.drop();
+    }
+}
+
+// ── 释放辅助 ──
+
+fn free_cfg(cfg: ControlFlowGraph&) {
+    let i: u64 = 0;
+    while i < cfg.edge_list.len() {
+        let e: BasicBlockEdge& = cfg.edge_list[i];
+        del e;
+        i += 1;
+    }
+    cfg.edge_list.drop();
+
+    let j: u64 = 0;
+    while j < cfg.basic_blocks.len() {
+        if cfg.basic_blocks[j].is_some() {
+            let b: BasicBlock& = *cfg.basic_blocks[j].unwrap();
+            b.in_edges.drop();
+            b.out_edges.drop();
+            del b;
+        }
+        j += 1;
+    }
+    cfg.basic_blocks.drop();
+    del cfg;
+}
+
+fn free_lsg(lsg: LoopStructureGraph&) {
+    let i: u64 = 0;
+    while i < lsg.loops.len() {
+        let l: SimpleLoop& = lsg.loops[i];
+        l.basic_blocks.drop();
+        l.children.drop();
+        del l;
+        i += 1;
+    }
+    lsg.loops.drop();
+    del lsg;
+}
+
+// ── 测试驱动 (上游 havlak/LoopTesterApp.java) ──
+
+struct AppResult {
+    loops: i32,
+    nodes: i32,
+}
+
+struct LoopTesterApp {
+    cfg: ControlFlowGraph&,
+    lsg: LoopStructureGraph&,
+}
+
+impl LoopTesterApp {
+    static pub fn new() -> Self {
+        let cfg: ControlFlowGraph& = ControlFlowGraph.new();
+        let lsg: LoopStructureGraph& = LoopStructureGraph.new();
+        cfg.create_node(0);
+        return Self(cfg=cfg, lsg=lsg);
+    }
+
+    // 上游 buildDiamond
+    fn build_diamond(start: i32) -> i32 {
+        let bb0: i32 = start;
+        new_basic_block_edge(self.cfg, bb0, bb0 + 1);
+        new_basic_block_edge(self.cfg, bb0, bb0 + 2);
+        new_basic_block_edge(self.cfg, bb0 + 1, bb0 + 3);
+        new_basic_block_edge(self.cfg, bb0 + 2, bb0 + 3);
+        return bb0 + 3;
+    }
+
+    // 上游 buildConnect
+    fn build_connect(start: i32, end: i32) {
+        new_basic_block_edge(self.cfg, start, end);
+    }
+
+    // 上游 buildStraight
+    fn build_straight(start: i32, n: i32) -> i32 {
+        let i: i32 = 0;
+        while i < n {
+            self.build_connect(start + i, start + i + 1);
+            i += 1;
+        }
+        return start + n;
+    }
+
+    // 上游 buildBaseLoop
+    fn build_base_loop(from: i32) -> i32 {
+        let header: i32 = self.build_straight(from, 1);
+        let diamond1: i32 = self.build_diamond(header);
+        let d11: i32 = self.build_straight(diamond1, 1);
+        let diamond2: i32 = self.build_diamond(d11);
+        let footer: i32 = self.build_straight(diamond2, 1);
+        self.build_connect(diamond2, d11);
+        self.build_connect(diamond1, header);
+
+        self.build_connect(footer, from);
+        let footer2: i32 = self.build_straight(footer, 1);
+        return footer2;
+    }
+
+    // 上游 constructCFG
+    fn construct_cfg(par_loops: i32, ppar_loops: i32, pppar_loops: i32) {
+        let n: i32 = 2;
+        let parlooptrees: i32 = 0;
+        while parlooptrees < par_loops {
+            self.cfg.create_node(n + 1);
+            self.build_connect(2, n + 1);
+            n += 1;
+
+            let i: i32 = 0;
+            while i < ppar_loops {
+                let top: i32 = n;
+                n = self.build_straight(n, 1);
+                let j: i32 = 0;
+                while j < pppar_loops {
+                    n = self.build_base_loop(n);
+                    j += 1;
+                }
+                let bottom: i32 = self.build_straight(n, 1);
+                self.build_connect(n, top);
+                n = bottom;
+                i += 1;
+            }
+            self.build_connect(n, 1);
+            parlooptrees += 1;
+        }
+    }
+
+    // 上游 findLoops(loopStructure)
+    fn run_find_loops(loop_structure: LoopStructureGraph&) {
+        let finder: HavlakLoopFinder = HavlakLoopFinder.new(self.cfg, loop_structure);
+        finder.find_loops();
+        finder.free_buffers();
+    }
+
+    // 上游 addDummyLoops
+    fn add_dummy_loops(num_dummy_loops: i32) {
+        let dummyloop: i32 = 0;
+        while dummyloop < num_dummy_loops {
+            self.run_find_loops(self.lsg);
+            dummyloop += 1;
+        }
+    }
+
+    // 上游 constructSimpleCFG
+    fn construct_simple_cfg() {
+        self.cfg.create_node(0);
+        self.build_base_loop(0);
+        self.cfg.create_node(1);
+        new_basic_block_edge(self.cfg, 0, 2);
+    }
+
+    // 上游 LoopTesterApp.main
+    pub fn run(num_dummy_loops: i32, find_loop_iterations: i32, par_loops: i32, ppar_loops: i32, pppar_loops: i32) -> AppResult {
+        self.construct_simple_cfg();
+        self.add_dummy_loops(num_dummy_loops);
+        self.construct_cfg(par_loops, ppar_loops, pppar_loops);
+
+        self.run_find_loops(self.lsg);
+        let i: i32 = 0;
+        while i < find_loop_iterations {
+            let tmp: LoopStructureGraph& = LoopStructureGraph.new();
+            self.run_find_loops(tmp);
+            free_lsg(tmp);
+            i += 1;
+        }
+
+        self.lsg.calculate_nesting_level();
+        return AppResult(loops=self.lsg.num_loops(), nodes=self.cfg.num_nodes());
+    }
+}
+
+// 一轮完整 app (上游 Havlak.innerBenchmarkLoop 的一次调用)
+fn benchmark(inner_iterations: i32) -> AppResult {
+    let app: LoopTesterApp = LoopTesterApp.new();
+    let result: AppResult = app.run(inner_iterations, 50, 10, 10, 5);
+    free_lsg(app.lsg);
+    free_cfg(app.cfg);
+    return result;
+}
+
+fn main() {
+    let INNER: i32 = 1;
+    let ITER: i64 = 2;
+    let total_loops: i64 = 0;
+    let total_nodes: i64 = 0;
+    let i: i64 = 0;
+    while i < ITER {
+        let r: AppResult = benchmark(INNER);
+        total_loops += i64(r.loops);
+        total_nodes += i64(r.nodes);
+        i += 1;
+    }
+    assert total_loops == 1605 * ITER: "havlak: loop count is not correct";
+    assert total_nodes == 5213 * ITER: "havlak: node count is not correct";
+    print("havlak pass\n");
+}

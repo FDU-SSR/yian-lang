@@ -1,0 +1,17 @@
+{
+  "name": "binarytree",
+  "source": "BG",
+  "tags": [
+    "alloc",
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_int_mod": [
+      256,
+      176
+    ]
+  },
+  "note": "rc==0, check%256==176"
+}

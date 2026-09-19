@@ -3,6 +3,18 @@
 本计划把现在的单一评测集拆成"按来源分目录、按侧重点分集合"的小评测集，每个集合都跑 C/raw/fat
 三态，并给每个集合加"快速 / 完全"两档规模：快速档用于开发过程中的频繁回归，完全档用于正式记录。
 
+## 0. 状态
+
+| 阶段 | 状态 |
+| --- | --- |
+| **S1 目录与集合** | **已完成**。`bench/{AWFY,BG}/{an,c,specs}` + `bench/ALLOC/{an,specs}` + `bench/sets/*.json` + `bench/results/*`;`C_SPECS` 外置成声明式 `spec.json`（`rc`/`stdout_eq`/`stdout_contains`/`stdout_int_mod`）;运行器新 CLI `--set/--scale/--source/--bench/--list-sets`,`bench_allocator.py` 跟随 `bench/ALLOC`。等价校验:同一工具链（yian-env）下搬目录前后的 `full` 基线逐项对比,几何平均 1.010、中位 +1.7%、最大 \|3.8%\|,峰值 RSS 全项不变——落在机器噪声内 |
+| **S2 快速档** | **机制已完成**。规模由源里 `// bench-scale` 标记行 + `specs/*.json` 的 `scale` 描述;fast 档在 `build/bench/src/fast/` 下生成替换过规模的构建副本,同一个值作为 argv 传给 C 参考,三态同参;fast 档不触发降次。已标定 6 项:queen 150→10、sieve ITER 500→25、ALLOC 四项 1000/20000/40/32 → 100/2000/8/8。**待做**:list、towers、binarytree、deltablue、json、richards 等其余基准的 fast 规模标定（缩放时不得改变内部断言语义,见 §4.1） |
+| **S3–S5 引入新套件** | 未开始;已登记到 `docs/proposal.md` 的"评测集与性能度量",调研结论留档在 `bench/SUITES.md` |
+
+快速档实测:8 项代表性子集含编译 **1 分 42 秒**（目标 ≤2 分钟）;分配器快速档四项各 2.7–8.9 ms。
+生成物策略:完全档与分配器记录（`bench/results/full.*`、`bench/results/alloc.*`）进版本历史;
+快速档与临时子集（`bench/results/fast.*`、`partial.*`）已加入 `.gitignore`。
+
 ## 1. 现状与问题
 
 ### 1.1 现在的目录

@@ -1,0 +1,104 @@
+// bench/AWFY/an/queen.an — N 皇后回溯 (shootout queens)
+//
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Queens.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 语义权威源: bench/AWFY/c/queen.c (项目自写 C 参考)
+// 规模: 8000 皇后, 求解 SOLVES=150 次, 断言 overall_result == SOLVES。
+//
+// 算法: 经典 N 皇后回溯。free_rows[r] 标记行 r 是否空闲,
+//       free_maxs[r+c] 标记右对角线, free_mins[c-r+7999] 标记左对角线
+//       (偏移 7999 保证下标非负)。place_queen 逐列放置, 回溯时恢复
+//       棋盘状态。solve_queens_once 每轮重建 4 个数组并求解一次。
+//
+// 数组表示: is_safe/update_board_state/place_queen 的数组参数为
+//   bool[]/i32[] (块访问语义, 32B 表示, 免 index 字段)。
+//   solve_queens_once 局部直接绑 bool[]/i32[] (let x: T[] = dyn[n] T,
+//   del-view 后 del T[] 整块合法, 免原始指针显式视图)。
+//
+// 单一源: fat 与 raw 共用本文件。
+// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
+from std.core.io import print;
+
+fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
+    if !free_rows[r] {
+        return false;
+    }
+    if !free_maxs[r + c] {
+        return false;
+    }
+    if !free_mins[r - c + 7999] {
+        return false;
+    }
+    return true;
+}
+
+fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) {
+    free_rows[r] = value;
+    free_maxs[c + r] = value;
+    free_mins[c - r + 7999] = value;
+}
+
+fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], queen_rows: i32[]) -> bool {
+    let r: u64 = 0;
+    while r < 8000 {
+        if is_safe(r, c, free_rows, free_maxs, free_mins) {
+            queen_rows[r] = i32(c);
+            update_board_state(r, c, false, free_rows, free_maxs, free_mins);
+            if c == 7999 {
+                return true;
+            }
+            if place_queen(c + 1, free_rows, free_maxs, free_mins, queen_rows) {
+                return true;
+            }
+            update_board_state(r, c, true, free_rows, free_maxs, free_mins);
+        }
+        r += 1;
+    }
+    return false;
+}
+
+fn solve_queens_once() -> bool {
+    let free_rows = dyn[8000] bool;
+    let free_maxs = dyn[16000] bool;
+    let free_mins = dyn[16000] bool;
+    let queen_rows = dyn[8000] i32;
+
+    let i: u64 = 0;
+    while i < 8000 {
+        free_rows[i] = true;
+        i += 1;
+    }
+    let j: u64 = 0;
+    while j < 16000 {
+        free_maxs[j] = true;
+        free_mins[j] = true;
+        j += 1;
+    }
+
+    let fr: bool[] = free_rows[0u64..8000u64];
+    let fm: bool[] = free_maxs[0u64..16000u64];
+    let fmi: bool[] = free_mins[0u64..16000u64];
+    let qr: i32[] = queen_rows[0u64..8000u64];
+    let ok: bool = place_queen(0, fr, fm, fmi, qr);
+
+    del free_rows;
+    del free_maxs;
+    del free_mins;
+    del queen_rows;
+    return ok;
+}
+
+fn main() {
+    let SOLVES: u64 = 150;  // bench-scale
+    let overall_result: i64 = 0;
+    let i: u64 = 0;
+    while i < SOLVES {
+        overall_result = overall_result + 1;
+        if !solve_queens_once() {
+            overall_result = 16000;
+            break;
+        }
+        i += 1;
+    }
+    assert overall_result == i64(SOLVES): "queens Error";
+    print("queen pass\n");
+}

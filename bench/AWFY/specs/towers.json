@@ -1,0 +1,12 @@
+{
+  "name": "towers",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (内部断言 moves_done == 1073741823)"
+}

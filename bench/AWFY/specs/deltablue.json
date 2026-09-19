@@ -1,0 +1,13 @@
+{
+  "name": "deltablue",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_eq": "4993240000"
+  },
+  "note": "rc==0, stdout==\"4993240000\" (N=100 × ITER=14000; 每趟 356660)"
+}

@@ -1,0 +1,15 @@
+{
+  "name": "richards",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [
+    "2400"
+  ],
+  "check": {
+    "rc": 0,
+    "stdout_eq": "55790400 22312800"
+  },
+  "note": "rc==0, stdout==\"55790400 22312800\" (23246/9297 × 2400 轮, 与 richards.an 的 ITER 一致)"
+}

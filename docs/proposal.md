@@ -90,6 +90,29 @@ anx 是 Python 实现，提供 `new`（`--kind bin|lib|hybrid`）、`build`、`r
 
 anx 继续使用 Python 开发。
 
+### 评测集与性能度量
+
+评测集已按来源（`bench/AWFY`、`bench/BG`、`bench/ALLOC`）、侧重（`ptr`/`numeric`/`string`/
+`alloc` 等集合）与规模（快速/完全两档）重组，三态协议（C 权威值 + raw/fat 一致性护栏、等长路径、
+绑核、min-of-N）与"性能只作参考、不设回归门槛"的口径不变；组织方式、规模档与运行命令见
+`bench/README.md`，候选套件的许可与内容调研见 `bench/SUITES.md`。
+
+后续扩展按"能补上新的机制侧重"排序，而不是按数量：
+
+- **plb2**（CC0-1.0，四个程序都有 C 参考）：引入 `matmul`/`nqueen`/`sudoku`，补数值与回溯搜索侧重；
+- **Benchmarks Game 的 `k-nucleotide`**（与已引入部分同源的 Revised BSD）：补哈希 + 字符串；
+- **mimalloc-bench**（MIT）里 1–2 个单线程分配压力测试：补随机尺寸分布的分配形态；
+- **Olden 类指针/递归密集基准**：上游许可带非商业限制，不能直接进仓库，按"用同样算法自写
+  YIAN + C 参考"的路线做（与现有 AWFY 基准的做法一致）；
+- **PolyBench 子集**（经 LLVM test-suite，Apache-2.0 with LLVM exception）：可选，补长数组 +
+  边界检查密集的形态。
+
+明确不引入：Embench-IoT（GPL-3.0，与 Apache-2.0/MIT 双许可不兼容）、SPEC CPU（授权与体量）、
+PARSEC/Splash-3/NPB/Rodinia（多线程模型）、DaCapo/JVM 套件本体（与 C 参考三态协议不符）、
+MiBench（"academic use" 条款待确认且相关性低）。已引入基准的快速档规模标定（list/queens/towers/
+binarytree 等尚未标定）与"把评测集纳入日常流程"也属于本项，详见
+`docs/plan/bench-suite-plan.md` 的 S2–S5。
+
 ## 安全机制
 
 胖指针安全机制作为独立实现维护，不改变共同语言章节中的类型和赋值语义。

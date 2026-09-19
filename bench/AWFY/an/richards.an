@@ -1,0 +1,492 @@
+// bench/AWFY/an/richards.an — 任务调度器模拟 (Richards, AWFY 宏基准)
+//
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Richards.java + richards/*.java
+//       (MIT, Copyright (c) 2001-2016 Stefan Marr; richards/*.java 逐文件带同一 MIT 头)
+//       再上游: Mario Wolczko 的 Java/Smalltalk 版 Richards (SOM 移植;
+//       AWFY LICENSE.md 指向已归档的 Sun Labs 页面)。
+// 语义权威源: bench/AWFY/c/richards.c (C 参考实现, 与上游 Java 断言值一致:
+//       queuePacketCount == 23246 && holdCount == 9297, 单趟 run)。
+//
+// 算法: 单趟 run 建 6 个任务 (idler + worker + handlerA/B + deviceA/B, 优先级
+//       0/1000/2000/3000/4000/5000) 与 8 个 packet, 然后 schedule() 反复从任务链
+//       表头扫描: 跳过 holding/无包 waiting 的任务, 否则 runTask() 弹出输入包并
+//       按其种类执行一步 (idler 递减计数并 release 设备; worker 生成 A-Z 数据包
+//       发给 handler; handler 把 work/device 包入队并逐字节转发; device 暂存/回送
+//       包), 各步通过 queuePacket/holdSelf/markWaiting/release 返回下一个任务。
+//       idler 计数从 10000 减到 0 后 holdSelf 返回链尾的 null, schedule 结束。
+//       全程只分配 6 个 TCB + 4 个数据记录 + 8 个 Packet (与上游一致, 无逐帧分配)。
+//
+// YIAN 侧适配 (与上游逐行对应, 仅以下写法差异):
+//   - 无 trait object/动态分派: 上游 TaskControlBlock 持有的 ProcessFunction
+//     lambda 改为「带标签 enum TaskKind { Idle{record} / Worker{record} /
+//     Handler{record} / Device{record} } + match」; runTask 的 if 部分保留在
+//     Scheduler.run_task, 四个 lambda 的函数体分别落在 run_idle/run_worker/
+//     run_handler/run_device, 状态机与分支逐条对应。
+//   - TaskKind (类层次判别子) 放在 TaskControlBlock 首个字段: 语义与上游字段
+//     集合一致; 字段顺序不承载语义。
+//   - 上游 TaskControlBlock extends TaskState 继承的三个布尔量改为内嵌 TaskState
+//     值字段 (pending/waiting/holding), 方法 packetPending()/running()/
+//     isTaskHoldingOrWaiting()/isWaitingWithPacket() 逐条照搬。
+//   - 上游 addInputAndCheckPriority 用裸 setter setPacketPending(true) (只置
+//     pending, 不清 waiting/holding), 与 packetPending() 转移不同; 本实现保留
+//     这一区别 (只写 t.state.pending), 否则调度器永不到达链尾 idler。
+//   - packet 的 int[DATA_SIZE] 用定长内联数组 i32[4] (两模式同为内联布局, 无
+//     跨模式类型分歧, 访问也无需切片)。单趟分配次数: taskTable 的 Vec 1 +
+//     TCB 6 + 数据记录 4 + Packet 8 = 19 次, 算法层面的四类对象 (TCB/记录/
+//     Packet) 次数与上游一致, 且整趟 run 只在启动时分配一次, 无逐帧分配。
+//   - 任务表 taskTable[NUM_TYPES] 用 Vec<Option<TaskControlBlock&>> (with_capacity,
+//     一次分配); 上游为 Java 数组。
+//   - 上游 ForEachInterface/闭包类用法本基准没有; 上游 4 个 lambda 是唯一的分派点。
+//   - 上游用引用相等判断 null (NO_WORK/NO_TASK == x), 本实现全部落在 Option 的
+//     is_none/is_some 上; 本基准没有需要「两引用判等」的身份判定, 故未加 id 字段。
+//   - 显式释放: 上游依赖 GC; 本实现只在每趟末尾释放 taskTable 的 Vec 缓冲, 6 个
+//     TCB/4 个数据记录/8 个 Packet 交由进程生命周期 (单趟约 1.5KB),
+//     从而保持与上游相同的「分配后不立即回收」语义, 并避免环状引用图的重复释放。
+//
+// 单一源: fat 与 raw 共用本文件; 可选引用一律 Option<T&> (两模式通用)。
+// 规模: ITER=2400 趟 start() (上游 Java 每趟 new Scheduler().start()), 每趟
+//       校验 queuePacketCount==23246 / holdCount==9297; 另断言 ITER 趟总和。
+// 校验值: queuePacketCount=23246, holdCount=9297 (单趟), 与 bench/AWFY/c/richards.c
+//         及上游 Java 官方期望值一致。
+from std.core.io import print;
+from std.core.vec import Vec;
+
+// ── 常量 (上游 richards/RBObject.java) ──
+// IDLER=0, WORKER=1, HANDLER_A=2, HANDLER_B=3, DEVICE_A=4, DEVICE_B=5,
+// NUM_TYPES=6, DEVICE_PACKET_KIND=0, WORK_PACKET_KIND=1, DATA_SIZE=4
+// (YIAN 顶层无全局常量, 各函数内以局部 let / 字面量使用, 含义见注释)
+
+// ── Packet (上游 richards/Packet.java) ──
+
+struct Packet {
+    link: Option<Packet&>,
+    identity: i32,
+    kind: i32,
+    datum: i32,
+    data: i32[4],
+}
+
+fn create_packet(link: Option<Packet&>, identity: i32, kind: i32) -> Packet& {
+    let zeros: i32[4] = [0, 0, 0, 0];
+    let packet: Packet& = dyn Packet(link=link, identity=identity, kind=kind, datum=0, data=zeros);
+    return packet;
+}
+
+// 上游 RBObject.append: 把 packet 接到 queue_head 链尾, 返回 (可能更新的) 队头
+fn append_packet(packet: Packet&, queue_head: Option<Packet&>) -> Option<Packet&> {
+    packet.link = Option<Packet&>.None;
+    if queue_head.is_none() {
+        return Option<Packet&>.Some(packet);
+    }
+    let mouse: Packet& = *queue_head.unwrap();
+    while mouse.link.is_some() {
+        mouse = *mouse.link.unwrap();
+    }
+    mouse.link = Option<Packet&>.Some(packet);
+    return queue_head;
+}
+
+// ── TaskState (上游 richards/TaskState.java) ──
+
+struct TaskState {
+    pending: bool,
+    waiting: bool,
+    holding: bool,
+}
+
+impl TaskState {
+    static pub fn create_running() -> Self {
+        return Self(pending=false, waiting=false, holding=false);
+    }
+
+    static pub fn create_waiting() -> Self {
+        return Self(pending=false, waiting=true, holding=false);
+    }
+
+    static pub fn create_waiting_with_packet() -> Self {
+        return Self(pending=true, waiting=true, holding=false);
+    }
+
+    // 上游 packetPending(): 三个布尔量一起重置
+    pub fn packet_pending() {
+        self.pending = true;
+        self.waiting = false;
+        self.holding = false;
+    }
+
+    // 上游 running()
+    pub fn running() {
+        self.pending = false;
+        self.waiting = false;
+        self.holding = false;
+    }
+
+    // 上游 isTaskHoldingOrWaiting()
+    pub fn is_task_holding_or_waiting() -> bool {
+        return self.holding || (!self.pending && self.waiting);
+    }
+
+    // 上游 isWaitingWithPacket()
+    pub fn is_waiting_with_packet() -> bool {
+        return self.pending && self.waiting && !self.holding;
+    }
+}
+
+// ── 四类任务的私有数据 (上游 richards/*TaskDataRecord.java) ──
+
+struct IdleRecord {
+    control: i32,
+    count: i32,
+}
+
+struct WorkerRecord {
+    destination: i32,
+    count: i32,
+}
+
+struct HandlerRecord {
+    work_in: Option<Packet&>,
+    device_in: Option<Packet&>,
+}
+
+struct DeviceRecord {
+    pending: Option<Packet&>,
+}
+
+// 上游的 ProcessFunction 虚分派 (4 个 lambda) → 标签 enum + match
+enum TaskKind {
+    Idle { record: IdleRecord& },
+    Worker { record: WorkerRecord& },
+    Handler { record: HandlerRecord& },
+    Device { record: DeviceRecord& },
+}
+
+// ── TaskControlBlock (上游 richards/TaskControlBlock.java) ──
+// 字段集合与上游一致; TaskKind 是类层次的判别子, 放首位。
+
+struct TaskControlBlock {
+    kind: TaskKind,
+    link: Option<TaskControlBlock&>,
+    identity: i32,
+    priority: i32,
+    input: Option<Packet&>,
+    state: TaskState,
+}
+
+// 上游 TaskControlBlock.addInputAndCheckPriority: 入队并按优先级决定下一个任务
+fn add_input_and_check_priority(t: TaskControlBlock&, packet: Packet&, old_task: TaskControlBlock&) -> Option<TaskControlBlock&> {
+    if t.input.is_none() {
+        t.input = Option<Packet&>.Some(packet);
+        // 上游是裸 setter setPacketPending(true): 只置 pending, 不动 waiting/holding
+        t.state.pending = true;
+        if t.priority > old_task.priority {
+            return Option<TaskControlBlock&>.Some(t);
+        }
+    } else {
+        t.input = append_packet(packet, t.input);
+    }
+    return Option<TaskControlBlock&>.Some(old_task);
+}
+
+// ── Scheduler (上游 richards/Scheduler.java) ──
+
+struct Scheduler {
+    task_list: Option<TaskControlBlock&>,
+    current_task: Option<TaskControlBlock&>,
+    current_task_identity: i32,
+    task_table: Vec<Option<TaskControlBlock&>>,
+    queue_packet_count: i32,
+    hold_count: i32,
+}
+
+impl Scheduler {
+    static pub fn new() -> Self {
+        let table: Vec<Option<TaskControlBlock&>> = Vec<Option<TaskControlBlock&>>.with_capacity(6u64);
+        let i: i32 = 0;
+        while i < 6 {
+            table.push(Option<TaskControlBlock&>.None);
+            i += 1;
+        }
+        return Self(
+            task_list=Option<TaskControlBlock&>.None,
+            current_task=Option<TaskControlBlock&>.None,
+            current_task_identity=0,
+            task_table=table,
+            queue_packet_count=0,
+            hold_count=0
+        );
+    }
+
+    // 上游 findTask (taskTable[identity], 缺席即抛异常)
+    fn find_task(identity: i32) -> Option<TaskControlBlock&> {
+        let t: Option<TaskControlBlock&> = self.task_table[u64(identity)];
+        assert t.is_some(): "richards: findTask failed";
+        return t;
+    }
+
+    // 上游 holdSelf
+    fn hold_self() -> Option<TaskControlBlock&> {
+        self.hold_count += 1;
+        let current: TaskControlBlock& = *self.current_task.unwrap();
+        current.state.holding = true;
+        return current.link;
+    }
+
+    // 上游 queuePacket
+    fn queue_packet(packet: Packet&) -> Option<TaskControlBlock&> {
+        let t: Option<TaskControlBlock&> = self.find_task(packet.identity);
+        if t.is_none() {
+            return Option<TaskControlBlock&>.None;
+        }
+        self.queue_packet_count += 1;
+        packet.link = Option<Packet&>.None;
+        packet.identity = self.current_task_identity;
+        let current: TaskControlBlock& = *self.current_task.unwrap();
+        return add_input_and_check_priority(*t.unwrap(), packet, current);
+    }
+
+    // 上游 release
+    fn release(identity: i32) -> Option<TaskControlBlock&> {
+        let t: Option<TaskControlBlock&> = self.find_task(identity);
+        if t.is_none() {
+            return Option<TaskControlBlock&>.None;
+        }
+        t.unwrap().state.holding = false;
+        let current: TaskControlBlock& = *self.current_task.unwrap();
+        if t.unwrap().priority > current.priority {
+            return t;
+        }
+        return self.current_task;
+    }
+
+    // 上游 markWaiting
+    fn mark_waiting() -> Option<TaskControlBlock&> {
+        let current: TaskControlBlock& = *self.current_task.unwrap();
+        current.state.waiting = true;
+        return self.current_task;
+    }
+
+    // 上游 TaskControlBlock.runTask 的取包部分 + 4 个 lambda 的 match 分派
+    fn run_task() -> Option<TaskControlBlock&> {
+        let current: TaskControlBlock& = *self.current_task.unwrap();
+        let message: Option<Packet&> = Option<Packet&>.None;
+        if current.state.is_waiting_with_packet() {
+            message = current.input;
+            let packed: Packet& = *message.unwrap();
+            current.input = packed.link;
+            if current.input.is_none() {
+                current.state.running();
+            } else {
+                current.state.packet_pending();
+            }
+        }
+        return match current.kind {
+            Idle(record) => self.run_idle(record, message),
+            Worker(record) => self.run_worker(record, message),
+            Handler(record) => self.run_handler(record, message),
+            Device(record) => self.run_device(record, message),
+        };
+    }
+
+    // 上游 createIdler 的 lambda 体
+    fn run_idle(record: IdleRecord&, message: Option<Packet&>) -> Option<TaskControlBlock&> {
+        let DEVICE_A: i32 = 4;
+        let DEVICE_B: i32 = 5;
+        record.count -= 1;
+        if record.count == 0 {
+            return self.hold_self();
+        }
+        if (record.control & 1) == 0 {
+            record.control = record.control / 2;
+            return self.release(DEVICE_A);
+        }
+        record.control = (record.control / 2) ^ 53256;
+        return self.release(DEVICE_B);
+    }
+
+    // 上游 createWorker 的 lambda 体
+    fn run_worker(record: WorkerRecord&, message: Option<Packet&>) -> Option<TaskControlBlock&> {
+        let HANDLER_A: i32 = 2;
+        let HANDLER_B: i32 = 3;
+        let DATA_SIZE: i32 = 4;
+        if message.is_none() {
+            return self.mark_waiting();
+        }
+        let work: Packet& = *message.unwrap();
+        if record.destination == HANDLER_A {
+            record.destination = HANDLER_B;
+        } else {
+            record.destination = HANDLER_A;
+        }
+        work.identity = record.destination;
+        work.datum = 0;
+        let i: i32 = 0;
+        while i < DATA_SIZE {
+            record.count += 1;
+            if record.count > 26 {
+                record.count = 1;
+            }
+            work.data[u64(i)] = 65 + record.count - 1;
+            i += 1;
+        }
+        return self.queue_packet(work);
+    }
+
+    // 上游 createHandler 的 lambda 体
+    fn run_handler(record: HandlerRecord&, work: Option<Packet&>) -> Option<TaskControlBlock&> {
+        let WORK_PACKET_KIND: i32 = 1;
+        let DATA_SIZE: i32 = 4;
+        if work.is_some() {
+            let packet: Packet& = *work.unwrap();
+            if packet.kind == WORK_PACKET_KIND {
+                record.work_in = append_packet(packet, record.work_in);
+            } else {
+                record.device_in = append_packet(packet, record.device_in);
+            }
+        }
+        let work_packet: Option<Packet&> = record.work_in;
+        if work_packet.is_none() {
+            return self.mark_waiting();
+        }
+        let wp: Packet& = *work_packet.unwrap();
+        let count: i32 = wp.datum;
+        if count >= DATA_SIZE {
+            record.work_in = wp.link;
+            return self.queue_packet(wp);
+        }
+        let device_packet: Option<Packet&> = record.device_in;
+        if device_packet.is_none() {
+            return self.mark_waiting();
+        }
+        let dp: Packet& = *device_packet.unwrap();
+        record.device_in = dp.link;
+        dp.datum = wp.data[u64(count)];
+        wp.datum = count + 1;
+        return self.queue_packet(dp);
+    }
+
+    // 上游 createDevice 的 lambda 体
+    fn run_device(record: DeviceRecord&, work: Option<Packet&>) -> Option<TaskControlBlock&> {
+        if work.is_none() {
+            let pending: Option<Packet&> = record.pending;
+            if pending.is_none() {
+                return self.mark_waiting();
+            }
+            record.pending = Option<Packet&>.None;
+            return self.queue_packet(*pending.unwrap());
+        }
+        record.pending = work;
+        return self.hold_self();
+    }
+
+    // 上游 createTask: 新任务插到 taskList 头部并登记进 taskTable
+    fn create_task(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState, kind: TaskKind) {
+        let t: TaskControlBlock& = dyn TaskControlBlock(
+            link=self.task_list,
+            identity=identity,
+            priority=priority,
+            input=work,
+            state=state,
+            kind=kind
+        );
+        self.task_list = Option<TaskControlBlock&>.Some(t);
+        self.task_table[u64(identity)] = Option<TaskControlBlock&>.Some(t);
+    }
+
+    // 上游 createIdler
+    fn create_idler(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
+        let record: IdleRecord& = dyn IdleRecord(control=1, count=10000);
+        self.create_task(identity, priority, work, state, TaskKind.Idle(record));
+    }
+
+    // 上游 createWorker
+    fn create_worker(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
+        let HANDLER_A: i32 = 2;
+        let record: WorkerRecord& = dyn WorkerRecord(destination=HANDLER_A, count=0);
+        self.create_task(identity, priority, work, state, TaskKind.Worker(record));
+    }
+
+    // 上游 createHandler
+    fn create_handler(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
+        let record: HandlerRecord& = dyn HandlerRecord(work_in=Option<Packet&>.None, device_in=Option<Packet&>.None);
+        self.create_task(identity, priority, work, state, TaskKind.Handler(record));
+    }
+
+    // 上游 createDevice
+    fn create_device(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
+        let record: DeviceRecord& = dyn DeviceRecord(pending=Option<Packet&>.None);
+        self.create_task(identity, priority, work, state, TaskKind.Device(record));
+    }
+
+    // 上游 createPacket 是 Scheduler 方法; 本实现为自由函数 create_packet
+
+    // 上游 Scheduler.start(): 建任务/包, schedule(), 返回两个计数是否命中官方值
+    pub fn start() -> bool {
+        let IDLER: i32 = 0;
+        let WORKER: i32 = 1;
+        let HANDLER_A: i32 = 2;
+        let HANDLER_B: i32 = 3;
+        let DEVICE_A: i32 = 4;
+        let DEVICE_B: i32 = 5;
+        let WORK_PACKET_KIND: i32 = 1;
+        let DEVICE_PACKET_KIND: i32 = 0;
+
+        let no_work: Option<Packet&> = Option<Packet&>.None;
+
+        self.create_idler(IDLER, 0, no_work, TaskState.create_running());
+        let work_q: Option<Packet&> = Option<Packet&>.Some(create_packet(no_work, WORKER, WORK_PACKET_KIND));
+        work_q = Option<Packet&>.Some(create_packet(work_q, WORKER, WORK_PACKET_KIND));
+        self.create_worker(WORKER, 1000, work_q, TaskState.create_waiting_with_packet());
+
+        work_q = Option<Packet&>.Some(create_packet(no_work, DEVICE_A, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
+        self.create_handler(HANDLER_A, 2000, work_q, TaskState.create_waiting_with_packet());
+
+        work_q = Option<Packet&>.Some(create_packet(no_work, DEVICE_B, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
+        self.create_handler(HANDLER_B, 3000, work_q, TaskState.create_waiting_with_packet());
+
+        self.create_device(DEVICE_A, 4000, no_work, TaskState.create_waiting());
+        self.create_device(DEVICE_B, 5000, no_work, TaskState.create_waiting());
+
+        self.schedule();
+
+        return self.queue_packet_count == 23246 && self.hold_count == 9297;
+    }
+
+    // 上游 Scheduler.schedule()
+    fn schedule() {
+        self.current_task = self.task_list;
+        while self.current_task.is_some() {
+            let current: TaskControlBlock& = *self.current_task.unwrap();
+            if current.state.is_task_holding_or_waiting() {
+                self.current_task = current.link;
+            } else {
+                self.current_task_identity = current.identity;
+                self.current_task = self.run_task();
+            }
+        }
+    }
+}
+
+fn main() {
+    let ITER: i64 = 2400;
+    let queue_total: i64 = 0;
+    let hold_total: i64 = 0;
+    let i: i64 = 0;
+    while i < ITER {
+        let scheduler: Scheduler = Scheduler.new();
+        let valid: bool = scheduler.start();
+        assert valid: "richards: scheduler counters differ from upstream";
+        queue_total += i64(scheduler.queue_packet_count);
+        hold_total += i64(scheduler.hold_count);
+        let table: Vec<Option<TaskControlBlock&>> = scheduler.task_table;
+        table.drop();
+        i += 1;
+    }
+    assert queue_total == 23246 * ITER: "richards: queuePacketCount is not correct";
+    assert hold_total == 9297 * ITER: "richards: holdCount is not correct";
+    print("richards pass\n");
+}

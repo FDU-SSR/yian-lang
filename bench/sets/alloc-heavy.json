@@ -1,0 +1,12 @@
+{
+  "name": "alloc-heavy",
+  "scale": "full",
+  "runs": 5,
+  "include": [
+    "tag:alloc",
+    "AWFY/storage",
+    "AWFY/json"
+  ],
+  "exclude": [],
+  "note": "分配密集但仍走三态; 纯分配器专项见 bench/ALLOC + scripts/bench_allocator.py"
+}

@@ -37,7 +37,7 @@ P1/P3；本计划剩下的主要工作是**循环不变量外提（配循环携�
 
 ### 2.2 实测基线
 
-当前基线是 `bench/results.csv`（由 `scripts/bench_three_way.py --pin 4` 生成，表头记录 commit 与
+当前基线是 `bench/results/full.csv`（由 `scripts/bench_three_way.py --pin 4` 生成，表头记录 commit 与
 工具链指纹；19 个 shootout 基准三态轮转、各 5 次取最小）：
 
 | 负载形态 | 代表基准 | raw (ms) | fat (ms) | fat/raw | fat 峰值 RSS |
@@ -100,10 +100,12 @@ P1/P3；本计划剩下的主要工作是**循环不变量外提（配循环携�
 评测集的重组（按来源分目录、按侧重分集合、快速/完全两档、引入更多现成套件的调研与许可结论）见
 [`docs/plan/bench-suite-plan.md`](bench-suite-plan.md)。
 
-- `bench/shootout/*.an` + `bench/c/*.c`：19 个基准的 YIAN 源与同算法同规模的 C 参考；
-  `scripts/bench_three_way.py` 逐次轮转测三态，写 `bench/results.md`（人读）与 `bench/results.csv`
-  （机读，含环境指纹与 commit）；`--names` 的部分测量写 `results.partial.*`，不覆盖全量基线。
-- `bench/alloc/*.an` + `scripts/bench_allocator.py`：分配器四类负载（同尺寸 churn、混合尺寸 churn、
+- `bench/<SOURCE>/an/*.an` + `bench/<SOURCE>/c/*.c`（SOURCE ∈ {AWFY, BG}）：19 个基准的 YIAN 源与
+  同算法同规模的 C 参考，每项另有 `bench/<SOURCE>/specs/<name>.json`（argv / 权威校验 / tag / 规模档）；
+  `scripts/bench_three_way.py --set full|fast|ptr|numeric|string` 逐次轮转测三态，命名集合写
+  `bench/results/<set>.{md,csv}`（含环境指纹与 commit），`--bench/--source` 的临时子集写
+  `bench/results/partial.{md,csv}`，不覆盖集合结果。
+- `bench/ALLOC/an/*.an` + `scripts/bench_allocator.py`：分配器四类负载（同尺寸 churn、混合尺寸 churn、
   增长-释放、变尺寸增长-释放），fat 与 raw 两态，裸态用 `<name>.raw.an` 覆盖源。
 - 语义护栏：C 态 warmup 必须满足脚本内记录的权威 `(退出码, stdout)`；raw 与 fat 的 warmup 输出必须
   逐字节一致；退出码必须为 0。
@@ -182,10 +184,10 @@ queen/binarytree −9%。已落地的消解吃掉了其中一部分；剩下的�
 
 ### P0：基准集与基线 —— 已完成
 
-**实际交付**：`bench/shootout/` + `bench/c/` + `scripts/bench_three_way.py`（三态、绑核、min-of-N、
-RSS、stdout 护栏、`-t ll` 不参与）、`bench/alloc/` + `scripts/bench_allocator.py`（分配器四类负载），
-基线固化在 `bench/results.{md,csv}`（记录 commit 与工具链指纹）。没有 JSON 中间产物，也不设门槛
-（§3.3）——机器可读的部分由 CSV 承担。
+**实际交付**：`bench/{AWFY,BG}/{an,c,specs}` + `bench/sets/*.json` + `scripts/bench_three_way.py`
+（三态、绑核、min-of-N、RSS、stdout 护栏）、`bench/ALLOC/` + `scripts/bench_allocator.py`（分配器四类负载），
+基线固化在 `bench/results/{full,alloc}.{md,csv}`（记录 commit 与工具链指纹）；`--set fast` 为开发中的
+快速档（代表性子集 + 缩小规模，含编译约 2 分钟）。没有 JSON 中间产物，也不设门槛（§3.3）。
 
 **验收**：一条命令产出完整报告；换机器/改代码后能复现可比数字；三套件两模式全绿。均已满足。
 
@@ -206,7 +208,7 @@ RSS、stdout 护栏、`-t ll` 不参与）、`bench/alloc/` + `scripts/bench_all
 原型 → 迁移与文档），详见
 [`docs/plan/fat-pointer-representation-plan.md`](fat-pointer-representation-plan.md)。
 **验收**：给出每个候选的取舍结论与数据；若采纳，两种模式三套件全绿、语义清单逐条通过，且
-`bench/results.csv` 的 fat/raw 与 RSS 不退化；文档与 `@sizeof` 断言同步。
+`bench/results/full.csv` 的 fat/raw 与 RSS 不退化；文档与 `@sizeof` 断言同步。
 
 ### P3：池与锁槽 —— 已完成（回收策略留待决策）
 
@@ -252,6 +254,6 @@ RSS、stdout 护栏、`-t ll` 不参与）、`bench/alloc/` + `scripts/bench_all
 - 运行时库：`runtime/include/yian_rt.h`、`runtime/src/alloc.c`、`runtime/build.py`、
   `docs/compile_script.md` §5
 - 运行期错误码与消息：`compiler/runtime_error.py`
-- 基准与基线：`scripts/bench_three_way.py`、`bench/shootout/`、`bench/c/`、`bench/results.{md,csv}`、
-  `scripts/bench_allocator.py`、`bench/alloc/`
+- 基准与基线：`scripts/bench_three_way.py`、`scripts/bench_allocator.py`、`bench/{AWFY,BG,ALLOC}/{an,c,specs}/`、
+  `bench/sets/`、`bench/results/{full,alloc}.{md,csv}`、`bench/README.md`、`bench/SUITES.md`
 - 回归语料：`tests/safety/`、`tests/basic/std/tiered_*`

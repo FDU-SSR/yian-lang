@@ -1,0 +1,15 @@
+{
+  "name": "spectralnorm",
+  "source": "BG",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "78"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"78\""
+}

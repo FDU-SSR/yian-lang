@@ -1,0 +1,15 @@
+{
+  "name": "permute",
+  "source": "AWFY",
+  "tags": [
+    "control"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "823059745"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"823059745\""
+}

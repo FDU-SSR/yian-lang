@@ -1,48 +1,48 @@
 #!/usr/bin/env python3
-"""bench_three_way.py — C / raw / fat 三态性能实测 (以 C 参考为基线).
+"""bench_three_way.py — C / raw / fat 三态性能实测 (以 C 参考为基线)。
+
+评测集按来源分目录、按侧重分集合、按规模分快速/完全两档:
+
+  bench/<SOURCE>/an/<name>.an       胖态源 (`<name>.raw.an` 为裸态覆盖源)
+  bench/<SOURCE>/c/<name>.c         C 参考 (三态的权威值)
+  bench/<SOURCE>/specs/<name>.json  argv / 权威校验 / 侧重 tag / 规模档
+  bench/sets/<set>.json             集合: 成员 + 默认规模档 + 测量次数
+  bench/results/<set>.{md,csv}      生成物 (含环境指纹与 commit)
 
 协议:
-  - 三态同一算法、同一规模 (对齐核对见 bench/README.md「算法与规模对齐」):
-    C 态 `clang -O2 -lm bench/c/<name>.c` (argv 见本脚本的 `C_SPECS`);
-    raw 态 `yianc -O2 --raw-pointers lib/src bench/shootout/<name>.an`;
-    fat 态 `yianc -O2 lib/src bench/shootout/<name>.an`;
-    `<name>.raw.an` 存在时 raw 态改用该文件 (如 storage: 两态的语义形式无法共用一份源)。
-  - 产物同目录、等长路径 (`build/bench/{cbin,yraw,yfat}/<name>`): 分配密集型基准的
-    绝对值对 argv[0] 长度→栈/mmap 布局敏感, 等长路径消除该项偏差。
-  - 绑核 (`taskset -c <cpu>`, 可选但正式记录必须绑核)。
-  - 每基准三态**逐次轮转**测量: 三态各 1 次 warmup (不计入样本), 再按 C→raw→fat
-    轮转测量 N 次 (默认 5, 协议要求 ≥5); 正式指标取**最小值**, 同时记录中位数与 CV。
-    指标为端到端墙钟时间 (ms) 与峰值常驻内存 (Maximum resident set size, 取各次最大
-    值)。逐次轮转消除三态之间的跨时段系统状态漂移。取最小值而非中位数: 同一二进制
-    重复运行会落在相差约 20% 的两个性能状态上 (进程级内存布局/频率假象, 与代码无关),
-    最小值估计无干扰性能, 中位数会被落态运气左右。
-  - 自适应降次: 三态 warmup 合计超过 --max-state-sec 时测量次数降到 3。
-  - 语义护栏: ① C warmup 的 (退出码, stdout) 必须满足本脚本 `C_SPECS` 记录的权威值,
-    否则 C 基线失效; ② raw 与 fat 的 warmup stdout/退出码必须逐字节一致;
-    ③ 两态退出码必须为 0。三者任一不成立, 该基准的比值不可用 (报告列标注)。
+  - 三态同一算法、同一规模: C `clang -O2 -lm bench/<SOURCE>/c/<name>.c`;
+    raw `yianc -O2 --raw-pointers lib/src <src>`; fat `yianc -O2 lib/src <src>`。
+  - 规模档 fast: 对声明了 `scale.fast` 的基准, 把源里 `// bench-scale` 标记行的数字换成
+    fast 值, 生成构建副本 `build/bench/src/<profile>/<SOURCE>/<name>.an` 再编译; 同一个值
+    作为 argv 传给 C 参考 (`scale.c == "argv"`)。未声明的基准两档跑同一规模。
+  - 产物同目录、等长路径 (`build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>`)。
+  - 带任务的绑核 (`taskset -c <cpu>`) 可选, 正式记录必须绑核。
+  - 三态逐次轮转测量: 各 1 次 warmup (不计入样本) → 按 C→raw→fat 轮转 N 次; 正式指标取
+    各态最小值, 同时记录中位数/四分位距/CV/峰值 RSS。
+  - 语义护栏: C warmup 必须通过 spec 的权威值校验; raw 与 fat 的 warmup stdout/退出码必须
+    逐字节一致; 两态退出码必须为 0。任一不成立, 该基准的比值标注为不可用。
 
-用法 (需在已安装 yianc 的环境下运行, 如 yian-env; YIAN 侧编译由 `sys.executable`
-驱动, 因此解释器决定 llvmlite/LLVM 版本, 该版本是基线的一部分):
-
-  python3 scripts/bench_three_way.py                      # 全部基准
-  python3 scripts/bench_three_way.py --names list,queen    # 指定基准 (逗号分隔)
-  python3 scripts/bench_three_way.py --pin 4 --runs 5      # 绑核 + 测量次数
-  python3 scripts/bench_three_way.py --no-compile          # 复用已有二进制只测量
-  python3 scripts/bench_three_way.py --compile-only        # 只编译不测量
-  python3 scripts/bench_three_way.py --max-state-sec 120   # 慢基准降次阈值 (秒)
+用法:
+  python3 scripts/bench_three_way.py                      # 默认 --set full
+  python3 scripts/bench_three_way.py --set fast            # 快速档 (开发中频繁跑)
+  python3 scripts/bench_three_way.py --set ptr --scale full
+  python3 scripts/bench_three_way.py --bench AWFY/queen,BG/fasta
+  python3 scripts/bench_three_way.py --source AWFY --set fast
+  python3 scripts/bench_three_way.py --list-sets
+  python3 scripts/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
 输出:
-  bench/results.md   表格 + 环境指纹 + 协议说明 (人读)
-  bench/results.csv  机读结果 (表头注释记录列含义与环境指纹)
-  --names 部分测量写入 bench/results.partial.{md,csv}, 不覆盖全量基线
+  bench/results/<set>.{md,csv}   命名集合的结果 (含指纹/协议/commit)
+  bench/results/partial.{md,csv} --bench/--source 的临时子集, 不覆盖集合结果
 
-独立脚本: 不触碰 scripts/run_tests.py; 不修改基准源码; 二进制与日志写入 build/bench/。
+独立脚本: 不触碰 scripts/run_tests.py; 不修改基准源码 (fast 档只在 build/ 下生成副本)。
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import math
 import os
 import platform
@@ -53,102 +53,118 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
-
-Check = Callable[[int, str], bool]
-
-
-@dataclass(frozen=True)
-class CBenchSpec:
-    """C 参考实现的运行参数与语义权威值。
-
-    `argv` 是与 `.an` 同步工作量所需的 C 侧参数 (缺省空 = 跑 C 参考自身的默认规模);
-    `check` 判断 C 的 (退出码, stdout) 是否为该基准的权威结果。`.an` 基准在内部断言
-    同一组值, 因此 C 与 YIAN 两侧跑的是同一件事; 核对结论见 bench/README.md。
-    """
-
-    argv: list[str]
-    check: Check
-    expect: str
-
-
-C_SPECS: dict[str, CBenchSpec] = {
-    "binarytree": CBenchSpec([], lambda rc, out: rc == 0 and int(out.strip()) % 256 == 176,
-                             "rc==0, check%256==176"),
-    "bounce": CBenchSpec([], lambda rc, out: rc == 0 and "368285073" in out,
-                         'rc==0, stdout contains "368285073"'),
-    "cd": CBenchSpec(["100", "80"], lambda rc, out: rc == 0 and out.strip() == "344400",
-                     'rc==0, stdout=="344400" (100 架 200 帧 × 80 轮, 与 cd.an 的 ITER 一致)'),
-    "deltablue": CBenchSpec([], lambda rc, out: rc == 0 and out.strip() == "4993240000",
-                            'rc==0, stdout=="4993240000" (N=100 × ITER=14000; 每趟 356660)'),
-    "fann": CBenchSpec([], lambda rc, out: rc == 51 and "51" in out,
-                       'rc==51, stdout contains "51"'),
-    "fasta": CBenchSpec([], lambda rc, out: rc == 0 and "-71" in out,
-                        'rc==0, stdout contains "-71"'),
-    "havlak": CBenchSpec([], lambda rc, out: rc == 0 and out.strip() == "1605 5213",
-                         'rc==0, stdout=="1605 5213" (loops × nodes)'),
-    "json": CBenchSpec([], lambda rc, out: rc == 0 and "5869103028000" in out,
-                       'rc==0, stdout contains "5869103028000" (ops/成员/字符数)'),
-    "list": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
-    "mand": CBenchSpec([], lambda rc, out: rc == 0 and "126" in out,
-                       'rc==0, stdout contains "126"'),
-    "nbody": CBenchSpec([], lambda rc, out: rc == 0 and "-1" in out,
-                        'rc==0, stdout contains "-1"'),
-    "permute": CBenchSpec([], lambda rc, out: rc == 0 and "823059745" in out,
-                          'rc==0, stdout contains "823059745"'),
-    "queen": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
-    "revcomp": CBenchSpec([], lambda rc, out: rc == 0 and "128" in out,
-                          'rc==0, stdout contains "128" (Checksum:)'),
-    "richards": CBenchSpec(["2400"], lambda rc, out: rc == 0 and out.strip() == "55790400 22312800",
-                           'rc==0, stdout=="55790400 22312800" (23246/9297 × 2400 轮, 与 richards.an 的 ITER 一致)'),
-    "sieve": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
-    "spectralnorm": CBenchSpec([], lambda rc, out: rc == 0 and "78" in out,
-                               'rc==0, stdout contains "78"'),
-    "storage": CBenchSpec([], lambda rc, out: rc == 0 and "21523360" in out,
-                          'rc==0, stdout contains "21523360"'),
-    "towers": CBenchSpec([], lambda rc, out: rc == 0, "rc==0"),
-}
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "lib" / "src"
 BENCH_DIR = ROOT / "bench"
-SHOOTOUT_DIR = BENCH_DIR / "shootout"
-BENCH_C_DIR = BENCH_DIR / "c"
+SETS_DIR = BENCH_DIR / "sets"
+RESULTS_DIR = BENCH_DIR / "results"
 OUT_DIR = ROOT / "build" / "bench"
-RESULTS_MD = BENCH_DIR / "results.md"
-RESULTS_CSV = BENCH_DIR / "results.csv"
-PARTIAL_MD = BENCH_DIR / "results.partial.md"
-PARTIAL_CSV = BENCH_DIR / "results.partial.csv"
+SRC_BUILD_DIR = OUT_DIR / "src"
+PARTIAL_MD = RESULTS_DIR / "partial.md"
+PARTIAL_CSV = RESULTS_DIR / "partial.csv"
 
-OPT_LEVEL = "-O2"
-C_COMPILER = "clang"
-C_FLAGS = ["-O2", "-lm"]
-TIME_BIN = "/usr/bin/time"
-DEFAULT_RUNS = 5
-DEFAULT_MAX_STATE_SEC = 120.0
-RAW_SUFFIX = ".raw.an"
+RESERVED_DIRS = {"sets", "results"}
+DEFAULT_SET = "full"
+SCALE_PROFILES = ("fast", "full")
+SCALE_MARKER = "// bench-scale"
 
-STATES = ("c", "raw", "fat")
-STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}
 
-_RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
+@dataclass(frozen=True)
+class Check:
+    """C 参考的权威结果 (声明式, 见 bench/<SOURCE>/specs/<name>.json)。"""
+
+    rc: int = 0
+    stdout_eq: str | None = None
+    stdout_contains: tuple[str, ...] = ()
+    stdout_int_mod: tuple[int, int] | None = None
+
+    def ok(self, rc: int, out: str) -> bool:
+        if rc != self.rc:
+            return False
+        text = out.strip()
+        if self.stdout_eq is not None and text != self.stdout_eq:
+            return False
+        for needle in self.stdout_contains:
+            if needle not in out:
+                return False
+        if self.stdout_int_mod is not None:
+            modulus, expected = self.stdout_int_mod
+            try:
+                value = int(text)
+            except ValueError:
+                return False
+            if value % modulus != expected:
+                return False
+        return True
+
+    def describe(self) -> str:
+        parts = [f"rc=={self.rc}"]
+        if self.stdout_eq is not None:
+            parts.append(f"stdout=={self.stdout_eq!r}")
+        for needle in self.stdout_contains:
+            parts.append(f"stdout 含 {needle!r}")
+        if self.stdout_int_mod is not None:
+            parts.append(f"stdout%{self.stdout_int_mod[0]}=={self.stdout_int_mod[1]}")
+        return ", ".join(parts)
+
+
+@dataclass(frozen=True)
+class Scale:
+    """规模档: 源里 `// bench-scale` 标记行的默认值与快速档值, 以及 C 侧如何接收。"""
+
+    default: int
+    fast: int | None = None
+    c: str = "none"  # "argv" = 把规模值作为 argv 传给 C 参考; "none" = C 不支持缩放
 
 
 @dataclass(frozen=True)
 class BenchSpec:
-    """一个基准: 胖态源码 + 裸态源码 (缺省同名, 有 `<name>.raw.an` 则用覆盖源)。"""
+    """一个三态基准: 源码 + C 参考 + spec (argv/权威值/tag/规模)。"""
 
     name: str
+    source: str
     fat_src: Path
     raw_src: Path
+    c_src: Path
+    argv: tuple[str, ...]
+    check: Check
+    tags: tuple[str, ...]
+    note: str
+    scale: Scale | None = None
+
+    @property
+    def key(self) -> str:
+        return f"{self.source}/{self.name}"
 
     @property
     def raw_override(self) -> bool:
         return self.raw_src != self.fat_src
 
-    @property
-    def c_src(self) -> Path:
-        return BENCH_C_DIR / f"{self.name}.c"
+    def scale_value(self, profile: str) -> int | None:
+        """该档要写入源副本的规模值; None = 用源里的默认值 (full 档总是 None)。"""
+        if self.scale is None or profile != "fast":
+            return None
+        return self.scale.fast
+
+    def run_argv(self, profile: str) -> tuple[str, ...]:
+        """三态共用的运行参数 (含 fast 档传给 C 参考的规模值)。"""
+        value = self.scale_value(profile)
+        if value is not None and self.scale is not None and self.scale.c == "argv":
+            return (*self.argv, str(value))
+        return self.argv
+
+
+@dataclass(frozen=True)
+class SetDef:
+    """集合: 成员模式 (精确键 / `SOURCE/*` / `tag:x` / `*`) + 默认规模档与测量次数。"""
+
+    name: str
+    scale: str
+    runs: int
+    include: tuple[str, ...]
+    exclude: tuple[str, ...]
+    note: str
 
 
 @dataclass(frozen=True)
@@ -172,34 +188,219 @@ class Row:
     exit_codes: dict[str, int]
 
 
-def spec_bin(spec: BenchSpec, state: str) -> Path:
-    return OUT_DIR / STATE_DIR[state] / spec.name
+def _load_json(path: Path, what: str) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"[{what}] 读取 {path} 失败: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"[{what}] {path}: 顶层必须是 JSON 对象")
+    return data
+
+
+def _as_str_list(value: object, where: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SystemExit(f"[spec] {where}: 期望字符串数组, 实际 {value!r}")
+    return tuple(value)
+
+
+def load_spec(
+    spec_path: Path, source: str, name: str, fat_src: Path, raw_src: Path, c_src: Path
+) -> BenchSpec:
+    data = _load_json(spec_path, "spec")
+    if data.get("name") != name:
+        raise SystemExit(f"[spec] {spec_path}: name 应为 {name!r}, 实际 {data.get('name')!r}")
+    if data.get("source") != source:
+        raise SystemExit(f"[spec] {spec_path}: source 应为 {source!r}, 实际 {data.get('source')!r}")
+    check_raw = data.get("check")
+    if not isinstance(check_raw, dict):
+        raise SystemExit(f"[spec] {spec_path}: 缺少 check 对象")
+    int_mod_raw = check_raw.get("stdout_int_mod")
+    int_mod: tuple[int, int] | None = None
+    if int_mod_raw is not None:
+        if not isinstance(int_mod_raw, list) or len(int_mod_raw) != 2 or any(
+            not isinstance(item, int) for item in int_mod_raw
+        ):
+            raise SystemExit(f"[spec] {spec_path}: stdout_int_mod 期望 [模, 期望余数]")
+        int_mod = (int(int_mod_raw[0]), int(int_mod_raw[1]))
+    eq_raw = check_raw.get("stdout_eq")
+    check = Check(
+        rc=int(check_raw.get("rc", 0)),
+        stdout_eq=str(eq_raw) if eq_raw is not None else None,
+        stdout_contains=_as_str_list(check_raw.get("stdout_contains"), f"{spec_path}: stdout_contains"),
+        stdout_int_mod=int_mod,
+    )
+    scale_raw = data.get("scale")
+    scale: Scale | None = None
+    if scale_raw is not None:
+        if not isinstance(scale_raw, dict) or "default" not in scale_raw:
+            raise SystemExit(f"[spec] {spec_path}: scale 需要 default (快速档值 fast 可选)")
+        fast_raw = scale_raw.get("fast")
+        scale = Scale(
+            default=int(scale_raw["default"]),
+            fast=int(fast_raw) if fast_raw is not None else None,
+            c=str(scale_raw.get("c", "none")),
+        )
+        if scale.c not in ("argv", "none"):
+            raise SystemExit(f"[spec] {spec_path}: scale.c 只能是 \"argv\" 或 \"none\"")
+    return BenchSpec(
+        name=name,
+        source=source,
+        fat_src=fat_src,
+        raw_src=raw_src,
+        c_src=c_src,
+        argv=_as_str_list(data.get("argv"), f"{spec_path}: argv"),
+        check=check,
+        tags=_as_str_list(data.get("tags"), f"{spec_path}: tags"),
+        note=str(data.get("note", "")),
+        scale=scale,
+    )
 
 
 def discover() -> list[BenchSpec]:
-    """发现 bench/shootout 下的基准; `<name>.raw.an` 作为同名基准的裸态覆盖源。"""
-    fat_srcs: dict[str, Path] = {}
-    raw_srcs: dict[str, Path] = {}
-    for path in sorted(SHOOTOUT_DIR.glob("*.an")):
-        if path.name.endswith(RAW_SUFFIX):
-            raw_srcs[path.name[: -len(RAW_SUFFIX)]] = path
-        else:
-            fat_srcs[path.stem] = path
-    if not fat_srcs:
-        raise SystemExit(f"[discover] {SHOOTOUT_DIR} 下没有 .an 基准")
-    orphans = sorted(set(raw_srcs) - set(fat_srcs))
-    if orphans:
-        raise SystemExit(f"[discover] 裸态覆盖源缺少同名胖态源: {', '.join(orphans)}")
-    missing_c = sorted(name for name in fat_srcs if not (BENCH_C_DIR / f"{name}.c").exists())
-    if missing_c:
-        raise SystemExit(f"[discover] 缺少 C 参考: {', '.join(missing_c)}")
-    missing_spec = sorted(set(fat_srcs) - set(C_SPECS))
-    if missing_spec:
-        raise SystemExit(f"[discover] 脚本内 C_SPECS 缺少规格: {', '.join(missing_spec)}")
-    return [
-        BenchSpec(name=name, fat_src=fat_srcs[name], raw_src=raw_srcs.get(name, fat_srcs[name]))
-        for name in sorted(fat_srcs)
+    """发现 bench/<SOURCE>/{an,c,specs} 下的三态基准。
+
+    没有 `c/` 的来源 (纯分配器专项 bench/ALLOC) 不在这里发现, 由 scripts/bench_allocator.py 负责。
+    """
+    specs: list[BenchSpec] = []
+    for source_dir in sorted(
+        path for path in BENCH_DIR.iterdir() if path.is_dir() and path.name not in RESERVED_DIRS
+    ):
+        an_dir, c_dir, spec_dir = source_dir / "an", source_dir / "c", source_dir / "specs"
+        if not an_dir.is_dir() or not c_dir.is_dir():
+            continue
+        fat: dict[str, Path] = {}
+        raw: dict[str, Path] = {}
+        for path in sorted(an_dir.glob("*.an")):
+            if path.name.endswith(RAW_SUFFIX):
+                raw[path.name[: -len(RAW_SUFFIX)]] = path
+            else:
+                fat[path.stem] = path
+        if not fat:
+            raise SystemExit(f"[discover] {an_dir} 下没有 .an 基准")
+        orphans = sorted(set(raw) - set(fat))
+        if orphans:
+            raise SystemExit(f"[discover] 裸态覆盖源缺少同名胖态源: {', '.join(orphans)}")
+        for name in sorted(fat):
+            c_src = c_dir / f"{name}.c"
+            if not c_src.exists():
+                raise SystemExit(f"[discover] {source_dir.name}/{name} 缺少 C 参考: {c_src}")
+            spec_path = spec_dir / f"{name}.json"
+            if not spec_path.exists():
+                raise SystemExit(f"[discover] {source_dir.name}/{name} 缺少 spec: {spec_path}")
+            specs.append(
+                load_spec(spec_path, source_dir.name, name, fat[name], raw.get(name, fat[name]), c_src)
+            )
+    if not specs:
+        raise SystemExit(f"[discover] {BENCH_DIR} 下没有带 C 参考与 spec 的基准")
+    return specs
+
+
+def load_sets() -> dict[str, SetDef]:
+    """读取 bench/sets/*.json。"""
+    if not SETS_DIR.is_dir():
+        raise SystemExit(f"[sets] 缺少目录 {SETS_DIR}")
+    sets: dict[str, SetDef] = {}
+    for path in sorted(SETS_DIR.glob("*.json")):
+        data = _load_json(path, "sets")
+        name = str(data.get("name", path.stem))
+        scale = str(data.get("scale", "full"))
+        if scale not in SCALE_PROFILES:
+            raise SystemExit(f"[sets] {path}: scale 只能是 {'/'.join(SCALE_PROFILES)}")
+        sets[name] = SetDef(
+            name=name,
+            scale=scale,
+            runs=int(data.get("runs", DEFAULT_RUNS)),
+            include=_as_str_list(data.get("include", ["*"]), f"{path}: include"),
+            exclude=_as_str_list(data.get("exclude"), f"{path}: exclude"),
+            note=str(data.get("note", "")),
+        )
+    if DEFAULT_SET not in sets:
+        raise SystemExit(f"[sets] 缺少默认集合 {DEFAULT_SET}")
+    return sets
+
+
+def _match(pattern: str, spec: BenchSpec) -> bool:
+    if pattern == "*":
+        return True
+    if pattern.startswith("tag:"):
+        return pattern[4:] in spec.tags
+    if pattern.endswith("/*"):
+        return spec.source == pattern[:-2]
+    return pattern == spec.key or pattern == spec.name
+
+
+def resolve_set(
+    specs: list[BenchSpec],
+    set_def: SetDef,
+    bench_filter: tuple[str, ...] = (),
+    source_filter: tuple[str, ...] = (),
+) -> list[BenchSpec]:
+    """把集合定义展开成基准列表, 并校验模式确实命中 (拼错集合项要立刻报错)。"""
+    for pattern in (*set_def.include, *set_def.exclude):
+        if not any(_match(pattern, spec) for spec in specs):
+            raise SystemExit(f"[select] 集合 {set_def.name} 的成员 {pattern!r} 没有匹配任何基准")
+    chosen = [
+        spec
+        for spec in specs
+        if any(_match(pattern, spec) for pattern in set_def.include)
+        and not any(_match(pattern, spec) for pattern in set_def.exclude)
     ]
+    if source_filter:
+        chosen = [spec for spec in chosen if spec.source in source_filter]
+    if bench_filter:
+        wanted = set(bench_filter)
+        unknown = sorted(item for item in wanted if not any(_match(item, spec) for spec in specs))
+        if unknown:
+            raise SystemExit(f"[select] 未知基准: {', '.join(unknown)}")
+        chosen = [spec for spec in chosen if spec.key in wanted or spec.name in wanted]
+    if not chosen:
+        raise SystemExit("[select] 选出的基准为空 (检查 --set/--scale/--source/--bench)")
+    return sorted(chosen, key=lambda spec: spec.key)
+
+
+_SCALE_LINE_RE = re.compile(
+    r"^(?P<head>\s*let\s+[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*\s*=\s*)(?P<value>\d+)(?P<tail>;\s*"
+    + re.escape(SCALE_MARKER)
+    + r".*)$",
+    re.MULTILINE,
+)
+
+
+def materialize(spec: BenchSpec, profile: str) -> tuple[Path, Path]:
+    """返回该规模档下的 (胖态源, 裸态源)。
+
+    fast 档且 spec 声明了 `scale.fast` 时, 把 `// bench-scale` 标记行的数字替换掉, 生成
+    `build/bench/src/<profile>/<SOURCE>/<name>.an` 作为构建副本; 否则直接用仓库里的源。
+    """
+    value = spec.scale_value(profile)
+    if value is None:
+        return spec.fat_src, spec.raw_src
+    out_dir = SRC_BUILD_DIR / profile / spec.source
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def emit(src: Path) -> Path:
+        text = src.read_text(encoding="utf-8")
+        patched, count = _SCALE_LINE_RE.subn(
+            lambda match: f"{match.group('head')}{value}{match.group('tail')}", text
+        )
+        if count != 1:
+            raise SystemExit(
+                f"[scale] {src}: 需要恰好 1 行 `{SCALE_MARKER}` 标记, 实际 {count} 行"
+            )
+        dst = out_dir / src.name
+        dst.write_text(patched, encoding="utf-8")
+        return dst
+
+    fat = emit(spec.fat_src)
+    raw = emit(spec.raw_src) if spec.raw_override else fat
+    return fat, raw
+
+
+def spec_bin(spec: BenchSpec, state: str) -> Path:
+    return OUT_DIR / STATE_DIR[state] / f"{spec.source}_{spec.name}"
 
 
 def compile_c(spec: BenchSpec) -> Path:
@@ -214,16 +415,17 @@ def compile_c(spec: BenchSpec) -> Path:
     )
     if res.returncode != 0:
         raise SystemExit(
-            f"[compile] {spec.name} (c) 失败 ({C_COMPILER} {' '.join(C_FLAGS)}):\n{res.stdout}\n{res.stderr}"
+            f"[compile] {spec.key} (c) 失败 ({C_COMPILER} {' '.join(C_FLAGS)}):\n{res.stdout}\n{res.stderr}"
         )
     return binary
 
 
-def compile_an(spec: BenchSpec, raw: bool) -> Path:
+def compile_an(spec: BenchSpec, profile: str, raw: bool) -> Path:
     """编译单态 YIAN 基准; 失败即终止 (编译错误属于基线失效, 不做部分结果)。"""
     state = "raw" if raw else "fat"
     binary = spec_bin(spec, state)
-    src = spec.raw_src if raw else spec.fat_src
+    fat_src, raw_src = materialize(spec, profile)
+    src = raw_src if raw else fat_src
     cmd = [sys.executable, "-m", "compiler.main", OPT_LEVEL]
     if raw:
         cmd.append("--raw-pointers")
@@ -231,10 +433,22 @@ def compile_an(spec: BenchSpec, raw: bool) -> Path:
     binary.parent.mkdir(parents=True, exist_ok=True)
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     if res.returncode != 0:
-        raise SystemExit(
-            f"[compile] {spec.name} ({state}) 失败:\n{res.stdout}\n{res.stderr}"
-        )
+        raise SystemExit(f"[compile] {spec.key} ({state}) 失败:\n{res.stdout}\n{res.stderr}")
     return binary
+
+
+OPT_LEVEL = "-O2"
+C_COMPILER = "clang"
+C_FLAGS = ["-O2", "-lm"]
+TIME_BIN = "/usr/bin/time"
+DEFAULT_RUNS = 5
+DEFAULT_MAX_STATE_SEC = 120.0
+RAW_SUFFIX = ".raw.an"
+
+STATES = ("c", "raw", "fat")
+STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}
+
+_RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
 
 
 def _env_plain() -> dict[str, str]:
@@ -286,38 +500,38 @@ def _stats(samples: list[float]) -> Stats:
 
 
 def measure_triple(
-    spec: BenchSpec, runs: int, pin: int | None, max_state_sec: float
+    spec: BenchSpec, runs: int, pin: int | None, max_state_sec: float, profile: str
 ) -> Row:
-    """三态逐次轮转测量: warmup 各 1 次 → 按 C→raw→fat 轮转 used_runs 次。"""
-    argv_c = C_SPECS[spec.name].argv
+    """三态逐次轮转测量: warmup 各 1 次 → 按 C→raw→fat 轮转 used_runs 次。
+
+    三态共用同一份 argv (fast 档下含传给 C 参考的规模值); YIAN 侧的规模已经在编译期
+    由源副本固化, 因此两态跑的是与 C 相同的工作量。
+    """
+    argv = list(spec.run_argv(profile))
     bins = {state: spec_bin(spec, state) for state in STATES}
 
     t0 = time.monotonic()
-    warm = {
-        "c": _run(bins["c"], argv_c, pin),
-        "raw": _run(bins["raw"], [], pin),
-        "fat": _run(bins["fat"], [], pin),
-    }
+    warm = {state: _run(bins[state], argv, pin) for state in STATES}
     warm_sec = time.monotonic() - t0
 
-    c_check_ok = C_SPECS[spec.name].check(warm["c"][3], warm["c"][2])
+    c_check_ok = spec.check.ok(warm["c"][3], warm["c"][2])
     if not c_check_ok:
         print(
-            f"[{spec.name}] 警告: C 基线未通过权威值校验 "
+            f"[{spec.key}] 警告: C 基线未通过权威值校验 "
             f"(exit={warm['c'][3]}, stdout={warm['c'][2].strip()!r}); 该基准的 C 比值不可用",
             file=sys.stderr,
         )
     yian_stdout_match = warm["raw"][2] == warm["fat"][2] and warm["raw"][3] == warm["fat"][3]
     if not yian_stdout_match:
         print(
-            f"[{spec.name}] 警告: 两态 warmup 的 stdout/退出码不一致 "
+            f"[{spec.key}] 警告: 两态 warmup 的 stdout/退出码不一致 "
             f"(raw exit={warm['raw'][3]}, fat exit={warm['fat'][3]})",
             file=sys.stderr,
         )
     for state in ("raw", "fat"):
         if warm[state][3] != 0:
             print(
-                f"[{spec.name}] 警告: {state} 态 warmup 退出码 {warm[state][3]} (应为 0)",
+                f"[{spec.key}] 警告: {state} 态 warmup 退出码 {warm[state][3]} (应为 0)",
                 file=sys.stderr,
             )
 
@@ -325,7 +539,7 @@ def measure_triple(
     if warm_sec > max_state_sec and runs > 3:
         used_runs = 3
         print(
-            f"[{spec.name}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
+            f"[{spec.key}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
             f"测量次数降到 {used_runs}",
             file=sys.stderr,
         )
@@ -334,7 +548,7 @@ def measure_triple(
     rss: dict[str, list[int]] = {state: [] for state in STATES}
     for _ in range(used_runs):
         for state in STATES:
-            wall, peak, _, _ = _run(bins[state], argv_c if state == "c" else [], pin)
+            wall, peak, _, _ = _run(bins[state], argv, pin)
             samples[state].append(wall)
             rss[state].append(peak)
 
@@ -387,9 +601,11 @@ def _git_head() -> str:
     return res.stdout.strip() if res.returncode == 0 else "n/a"
 
 
-def machine_fingerprint(pin: int | None, runs: int) -> dict[str, str]:
+def machine_fingerprint(pin: int | None, runs: int, bench_set: str, profile: str) -> dict[str, str]:
     llvmlite_ver, llvm_ver = _llvmlite_info()
     return {
+        "set": bench_set,
+        "scale": profile,
         "hostname": platform.node() or "unknown",
         "machine": platform.machine(),
         "cpu_count": str(os.cpu_count() or 0),
@@ -432,10 +648,13 @@ def _ratio_usable(row: Row) -> bool:
 
 def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines: list[str] = []
-    lines.append("# C / raw / fat 三态实测结果 (以 C 参考为基线)\n")
+    lines.append(
+        f"# C / raw / fat 三态实测结果 — 集合 `{fingerprint['set']}` (规模档 `{fingerprint['scale']}`)\n"
+    )
     lines.append(
         "由 `scripts/bench_three_way.py` 生成; 三态同一算法与规模, 差异只在实现与指针表示"
-        " (C 为 clang `-O2` 参考实现, YIAN 无检查对照态 `nocheck` 已移除)。\n"
+        " (C 为 clang `-O2` 参考实现)。集合成员与规模档见 `bench/sets/<set>.json` 与各基准的"
+        " `specs/<name>.json`。\n"
     )
     lines.append("## 环境指纹\n")
     lines.append("| 项 | 值 |")
@@ -450,6 +669,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines.append(f"| YIAN 优化级 | `{fingerprint['opt']}` (两态相同) |")
     lines.append(f"| 绑核 | `taskset -c {fingerprint['pin']}` |")
     lines.append(f"| 每态测量次数 | {fingerprint['runs']} (另加 1 次 warmup) |")
+    lines.append(f"| 集合 / 规模档 | `{fingerprint['set']}` / `{fingerprint['scale']}` |")
     lines.append(f"| commit | `{fingerprint['commit']}` |")
     lines.append(f"| 日期 | {fingerprint['date']} |")
     lines.append("")
@@ -469,7 +689,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         if not _ratio_usable(row):
             ratio_rc = ratio_fc = float("nan")
         lines.append(
-            f"| {row.spec.name} | {_fmt_ms(row.times['c'].min)} | {_fmt_ms(row.times['raw'].min)} "
+            f"| {row.spec.key} | {_fmt_ms(row.times['c'].min)} | {_fmt_ms(row.times['raw'].min)} "
             f"| {_fmt_ms(row.times['fat'].min)} | {ratio_rc:.2f}× | {ratio_fc:.2f}× | {ratio_fr:.2f}× "
             f"| {_fmt_mb(row.rss_mb['c'])} | {_fmt_mb(row.rss_mb['raw'])} | {_fmt_mb(row.rss_mb['fat'])} "
             f"| {raw_src} | {'是' if row.yian_stdout_match else '**否**'} | {c_flag} |"
@@ -508,7 +728,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
             f"| {_fmt_ms(row.times[state].max)} | {row.times[state].cv:.1f}"
             for state in STATES
         )
-        lines.append(f"| {row.spec.name} | {cells} | {row.runs} |")
+        lines.append(f"| {row.spec.key} | {cells} | {row.runs} |")
     lines.append("")
     lines.append(
         "正式指标取**最小值**: 机器处于高压/热态时, 同一二进制重复运行会落在相差约 20% 的"
@@ -518,12 +738,13 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
 
     lines.append("## 协议\n")
     lines.append(
-        f"- 编译: C `{C_COMPILER} {' '.join(C_FLAGS)} bench/c/<name>.c`; "
+        f"- 编译: C `{C_COMPILER} {' '.join(C_FLAGS)} bench/<SOURCE>/c/<name>.c`; "
         f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, 裸态追加 `--raw-pointers`。"
     )
     lines.append(
-        "- C 侧 argv: 见本脚本 `C_SPECS` 的 `argv` (`cd 100 80`、`richards 2400`, "
-        "其余无参), 保证 C 与 `.an` 的迭代次数一致。"
+        "- 规模与 argv: 见各基准 `specs/<name>.json` 的 `argv` (如 `cd 100 80`、`richards 2400`) "
+        "与 `scale`; fast 档对声明了 `scale.fast` 的基准生成缩小规模的构建副本, 并把同一数值"
+        "作为 argv 传给 C 参考, 保证三态工作量一致。"
     )
     lines.append(
         "- 测量: 每基准三态各 1 次 warmup (不计入样本) 后按 C→raw→fat **逐次轮转**测量; "
@@ -534,7 +755,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         "等长路径 (argv[0] 长度影响分配密集型基准的进程布局)。"
     )
     lines.append(
-        "- 语义护栏: C warmup 必须通过本脚本 `C_SPECS` 的权威值校验; "
+        "- 语义护栏: C warmup 必须通过 spec 的权威值校验 (见 `specs/<name>.json` 的 `check`); "
         "raw 与 fat 的 stdout/退出码必须逐字节一致。报告中标 `否` 即该基准比值不可用。"
     )
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -542,20 +763,21 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
 
 def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
     header = (
-        "# bench/results.csv — C / raw / fat 三态性能结果 "
+        f"# bench/results/{fingerprint['set']}.csv — C / raw / fat 三态性能结果 "
         "(scripts/bench_three_way.py 生成)"
     )
     comments = [
         header,
-        "# 列: bench, <state>_min_ms/<state>_med_ms/<state>_cv_pct 各态最小值(正式指标)/中位数/"
-        "变异系数, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, ratio_fat_c = fat_min/c_min, "
-        "ratio_fat_raw = fat_min/raw_min; <state>_rss_mb 峰值常驻; runs, stdout_match (raw/fat), "
-        "c_check (C 权威值), c_argv, raw_source",
+        "# 列: bench 形如 <SOURCE>/<name>; <state>_min_ms/<state>_med_ms/<state>_cv_pct 各态最小值"
+        "(正式指标)/中位数/变异系数, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, "
+        "ratio_fat_c = fat_min/c_min, ratio_fat_raw = fat_min/raw_min; <state>_rss_mb 峰值常驻; "
+        "runs, stdout_match (raw/fat), c_check (C 权威值), c_argv, raw_source",
         f"# fingerprint: hostname={fingerprint['hostname']} machine={fingerprint['machine']} "
         f"cpu_count={fingerprint['cpu_count']} clang={fingerprint['clang']} cflags={fingerprint['cflags']}",
         f"# env: python={fingerprint['python']} llvmlite={fingerprint['llvmlite']} "
         f"llvm={fingerprint['llvm']} opt={fingerprint['opt']} pin={fingerprint['pin']} "
         f"runs={fingerprint['runs']}",
+        f"# set: {fingerprint['set']}  scale: {fingerprint['scale']}",
         f"# commit: {fingerprint['commit']}",
         f"# date: {fingerprint['date']}",
     ]
@@ -569,8 +791,8 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
     )
     for row in rows:
         raw_src = row.spec.raw_src.name if row.spec.raw_override else row.spec.fat_src.name
-        argv = " ".join(C_SPECS[row.spec.name].argv)
-        fields = [row.spec.name]
+        argv = " ".join(row.spec.run_argv(fingerprint["scale"]))
+        fields = [row.spec.key]
         for state in STATES:
             stats = row.times[state]
             fields += [f"{stats.min:.1f}", f"{stats.med:.1f}", f"{stats.cv:.2f}"]
@@ -593,49 +815,87 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="C / raw / fat 三态性能实测 (以 C 为基线)")
-    parser.add_argument("--names", help="只测指定基准 (逗号分隔)")
-    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="每态测量次数 (默认 5)")
+    parser.add_argument("--set", dest="bench_set", default=DEFAULT_SET,
+                        help=f"集合名 (默认 {DEFAULT_SET}; --list-sets 查看)")
+    parser.add_argument("--scale", choices=SCALE_PROFILES,
+                        help="规模档 (默认取集合的 scale)")
+    parser.add_argument("--source", help="只测指定来源 (逗号分隔, 如 AWFY,BG)")
+    parser.add_argument("--bench", dest="bench_keys",
+                        help="只测指定基准 (SOURCE/name 或 name, 逗号分隔)")
+    parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # 旧名, 保留兼容
+    parser.add_argument("--list-sets", action="store_true", help="列出集合与成员数后退出")
+    parser.add_argument("--runs", type=int, default=None,
+                        help="每态测量次数 (默认取集合的 runs)")
     parser.add_argument("--pin", type=int, help="taskset 绑定的 CPU 编号")
     parser.add_argument("--max-state-sec", type=float, default=DEFAULT_MAX_STATE_SEC,
-                        help="三态 warmup 合计超过该秒数则测量次数降到 3")
+                        help="三态 warmup 合计超过该秒数则测量次数降到 3 (fast 档不降次)")
     parser.add_argument("--no-compile", action="store_true", help="不重新编译, 复用已有二进制")
     parser.add_argument("--compile-only", action="store_true", help="只编译不测量")
     args = parser.parse_args()
 
     specs = discover()
-    if args.names:
-        wanted = [name.strip() for name in args.names.split(",") if name.strip()]
-        by_name = {spec.name: spec for spec in specs}
-        missing = [name for name in wanted if name not in by_name]
-        if missing:
-            raise SystemExit(f"[args] 未知基准: {', '.join(missing)}")
-        specs = [by_name[name] for name in wanted]
+    sets = load_sets()
 
+    if args.list_sets:
+        for set_def in sorted(sets.values(), key=lambda item: item.name):
+            members = resolve_set(specs, set_def)
+            print(
+                f"{set_def.name:12s} scale={set_def.scale:4s} runs={set_def.runs} "
+                f"members={len(members):2d}  {set_def.note}"
+            )
+        return 0
+
+    if args.bench_set not in sets:
+        raise SystemExit(
+            f"[args] 未知集合 {args.bench_set!r}; 可用: {', '.join(sorted(sets))}"
+        )
+    set_def = sets[args.bench_set]
+    profile = args.scale or set_def.scale
+    bench_filter = tuple(item.strip() for item in (args.bench_keys or "").split(",") if item.strip())
+    source_filter = tuple(item.strip() for item in (args.source or "").split(",") if item.strip())
+    chosen = resolve_set(specs, set_def, bench_filter, source_filter)
+    runs = args.runs if args.runs is not None else set_def.runs
+
+    print(
+        f"[bench] 集合 {set_def.name} 规模档 {profile} 基准 {len(chosen)} 项 "
+        f"测量 {runs} 次 (fast 档不降次)",
+        file=sys.stderr,
+    )
     if not args.no_compile:
-        for spec in specs:
+        for spec in chosen:
             compile_c(spec)
-            compile_an(spec, raw=False)
-            compile_an(spec, raw=True)
-            print(f"[compile] {spec.name} ok", file=sys.stderr)
+            compile_an(spec, profile, raw=False)
+            compile_an(spec, profile, raw=True)
+            scale_value = spec.scale_value(profile)
+            scale_note = f" scale={scale_value}" if scale_value is not None else ""
+            print(f"[compile] {spec.key} ok{scale_note}", file=sys.stderr)
     if args.compile_only:
         return 0
 
-    fingerprint = machine_fingerprint(args.pin, args.runs)
+    fingerprint = machine_fingerprint(args.pin, runs, set_def.name, profile)
+    max_state_sec = float("inf") if profile == "fast" else args.max_state_sec
     rows: list[Row] = []
-    for spec in specs:
-        row = measure_triple(spec, args.runs, args.pin, args.max_state_sec)
+    for spec in chosen:
+        row = measure_triple(spec, runs, args.pin, max_state_sec, profile)
         rows.append(row)
+        scale_value = spec.scale_value(profile)
+        scale_note = f" scale={scale_value}" if scale_value is not None else ""
         print(
-            f"[measure] {spec.name}: C {row.times['c'].min:.1f}ms "
+            f"[measure] {spec.key}{scale_note}: C {row.times['c'].min:.1f}ms "
             f"raw {row.times['raw'].min:.1f}ms fat {row.times['fat'].min:.1f}ms "
             f"raw/C {_ratio(row, 'raw', 'c'):.2f}x fat/C {_ratio(row, 'fat', 'c'):.2f}x "
             f"({row.runs} runs)",
             file=sys.stderr,
         )
 
-    # 部分测量不覆盖全量基线 (基线是门禁的对照数据)
-    md_path = PARTIAL_MD if args.names else RESULTS_MD
-    csv_path = PARTIAL_CSV if args.names else RESULTS_CSV
+    # 临时子集 (--bench/--source) 不覆盖集合结果; 命名集合写入 results/<set>.{md,csv}
+    partial = bool(bench_filter or source_filter)
+    if partial:
+        md_path, csv_path = PARTIAL_MD, PARTIAL_CSV
+    else:
+        md_path = RESULTS_DIR / f"{set_def.name}.md"
+        csv_path = RESULTS_DIR / f"{set_def.name}.csv"
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     md_path.write_text(render_md(rows, fingerprint), encoding="utf-8")
     write_csv(rows, fingerprint, csv_path)
     print(f"[write] {md_path.relative_to(ROOT)}", file=sys.stderr)

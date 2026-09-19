@@ -1,0 +1,17 @@
+{
+  "name": "grow_free",
+  "source": "ALLOC",
+  "tags": [
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "fat/raw stdout 一致 (无 C 权威; 对照态是 libc malloc/free)",
+  "scale": {
+    "default": 40,
+    "fast": 8,
+    "c": "none"
+  }
+}

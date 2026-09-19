@@ -1,0 +1,15 @@
+{
+  "name": "storage",
+  "source": "AWFY",
+  "tags": [
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "21523360"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"21523360\""
+}

@@ -1,0 +1,17 @@
+{
+  "name": "sieve",
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (sieve 每轮断言 prime_count == 148933)",
+  "scale": {
+    "default": 500,
+    "fast": 25,
+    "c": "argv"
+  }
+}
