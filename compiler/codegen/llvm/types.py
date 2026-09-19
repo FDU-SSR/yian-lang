@@ -32,7 +32,8 @@ class LLTypeCtx:
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
         # opaque pointer: 数据指针不再携带 pointee (LLVM 15+ 的唯一表示)。
         # GEP/load 的显式类型由调用点给出 (见 builder.py), 因此指针构造不再需要
-        # materialize pointee —— 这也是 B3(枚举/结构体经指针回指时的重入) 的根治。
+        # materialize pointee: 指针布局与 pointee 无关, 经指针回指自身的 struct/enum
+        # 也不必在构造指针时补齐自己的 body。
         self.__ptr: ir.PointerType = ir.PointerType()  # type: ignore
         # str = slice(分级指针表示):4 字段 {data, lock_ptr, key, size} 32B;
         # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
