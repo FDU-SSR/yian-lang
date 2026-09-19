@@ -245,11 +245,12 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 
 ## 5. 运行时库与链接
 
-`-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径，以及堆分配器。
+`-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
 
 ```text
-runtime/include/yian_rt.h        ABI 常量与声明
-runtime/src/*.c                  C 源码（唯一真值）
+runtime/include/yian_rt.h        ABI 常量与声明（唯一真值）
+runtime/src/*.c                  C 源码
+runtime/selftest/selftest.c      自测
 runtime/build.py                 构建、ABI 一致性断言、自测
 build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 ```
@@ -259,6 +260,19 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 | `exe` | `clang <user>.o build/runtime/libyian_rt.a -o <out>` |
 | `obj` | `clang -r -nostdlib <user>.o libyian_rt.o -o <out>`，产物单文件自包含 |
 | `ll` / `bc` / `asm` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
+
+自行链接 `-t ll`/`bc`/`asm` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
+
+| 类别 | 符号 |
+| --- | --- |
+| 进程参数 | `__yian_argc`、`__yian_argv`（由包装 `main` 校验并写入） |
+| 锁槽与键 | `__yian_lit_lock`、`__yian_env_lock`、`__yian_key_heap`、`__yian_key_stack`、`__secl_frame_locks[]`、`__secl_frame_lock_depth` |
+| 入口与失败路径 | 包装 `main`、`__yian_runtime_fail`、`__yian_panic` |
+| 堆 | `__secl_pool_alloc`、`__secl_pool_alloc_class`、`__secl_pool_release` |
+
+堆分配器是单线程尺寸类 arena：64 KiB、64 KiB 对齐的 slab，每个尺寸类一条空闲块链加一个正在填充的 slab；大于最大类的请求走独占尺寸块，并按额度缓存、按 `madvise` 归还物理页。用户程序不直接调用它：尺寸在编译期已知的分配点由编译器直接传尺寸类号（`YIAN_CLASS_BYTES` 的下标），否则传字节数。
+
+尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `compiler/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `compiler/codegen/cfg/lockmech.py`、`compiler/runtime_error.py` 一致，然后运行自测。
 
 手动构建与校验：
 

@@ -37,7 +37,7 @@ Current options include:
 
 Executables default to `build/a.out`; LLVM bitcode and object outputs default to `build/<stem>.<ext>`, while assembly defaults to `<stem>.s` in the current directory. Pass `-o` whenever the output name matters.
 
-`-t exe` and `-t obj` link the runtime library (`runtime/`, C sources, built on demand into `build/runtime/`); `-t ll`, `-t bc` and `-t asm` leave its symbols as external declarations, so those outputs need the runtime linked in separately. `runtime/build.py --check` builds the library, asserts its ABI constants against `compiler/codegen/cfg/lockmech.py` and `compiler/runtime_error.py`, and runs its self-test (`--asan` for the sanitizer build).
+`-t exe` and `-t obj` link the runtime library (`runtime/`, C sources, built on demand into `build/runtime/`); `-t ll`, `-t bc` and `-t asm` leave its symbols as external declarations, so those outputs need the runtime linked in separately. `runtime/build.py --check` builds the library, asserts its ABI constants against `compiler/codegen/cfg/lockmech.py`, `compiler/runtime_error.py` and `compiler/runtime_lib.py` (the size-class table mirror), and runs its self-test (`--asan` for the sanitizer build).
 
 `yianc` and `anx` locate the standard library through `--compiler-root` (a YIAN checkout root), then `YIAN_LIB` (the `lib/src` directory itself), then `YIAN_ROOT` (a checkout root); an editable install falls back to this checkout, while a non-editable one must be configured.
 
