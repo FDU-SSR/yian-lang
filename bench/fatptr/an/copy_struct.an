@@ -1,15 +1,17 @@
 // bench/fatptr/an/copy_struct.an — 胖值驻留结构体时的拷贝/传参成本 (方向 B 微基准)
 //
-// 目的: 把"表示尺寸"这一项单独量出来。元素是含一个 T& 字段的结构体, 热循环只做
+// 目的: 把"表示尺寸"这一项单独量出来。元素含一个 T& 字段与一个 T* 字段, 热循环只做
 //       结构体级浅拷贝 (不进入元素内部), 校验和只依赖数据值, 因此三态 stdout 一致,
 //       fat/raw 之差只能来自表示尺寸与按值传参档位。
+//       T& 是 B6 的目标 (24 → 16 B), T* 是 B1 的目标 (40 → 32 B; B6 不变)。
 // 规模: ROUNDS (拷贝轮数, `// bench-scale` 标记行); ITEMS 固定 (100000 元素)。
 // C 参考: bench/fatptr/c/copy_struct.c (同算法同规模, 8 B 裸指针字段)。
 //
 // 数据布局: payloads 与 Item 各一个堆数组; Item.ref = &payloads[i] (堆内引用),
+//           Item.view = &payloads[0] + i (视图, 用索引取到本元素);
 //           逐元素 src[i] → 局部变量 → dst[i] 浅拷贝, 并按值传给 sum_item。
 //
-// 单一源: fat 与 raw 共用本文件 (raw 下 T& 退化为 8 B 裸指针)。
+// 单一源: fat 与 raw 共用本文件 (raw 下 T&/T* 都退化为 8 B 裸指针)。
 from std.core.io import print;
 
 struct Payload {
@@ -19,23 +21,24 @@ struct Payload {
 struct Item {
     value: i64,
     ref: Payload&,
+    view: Payload*,
 }
 
-// 按值接收一个含胖引用的结构体 (观测传参档位: 超过 16 B 走内存)
+// 按值接收一个含胖值的结构体 (观测传参档位: 超过 16 B 走内存)
 fn sum_item(src: Item) -> i64 {
     return src.value;
 }
 
 fn main() {
     let ITEMS: u64 = 100000;
-    let ROUNDS: u64 = 64;  // bench-scale
+    let ROUNDS: u64 = 1024;  // bench-scale
     let payloads = dyn[ITEMS] Payload(0);
-    let src = dyn[ITEMS] Item(0, &payloads[0]);
-    let dst = dyn[ITEMS] Item(0, &payloads[0]);
+    let src = dyn[ITEMS] Item(0, &payloads[0], payloads);
+    let dst = dyn[ITEMS] Item(0, &payloads[0], payloads);
     let i: u64 = 0;
     while i < ITEMS {
         payloads[i] = Payload(i64(i));
-        src[i] = Item(i64(i), &payloads[i]);
+        src[i] = Item(i64(i), &payloads[i], payloads);
         i += 1;
     }
     let acc: i64 = 0;
@@ -55,10 +58,10 @@ fn main() {
     let check: i64 = 0;
     i = 0;
     while i < ITEMS {
-        check = check + dst[i].value + dst[i].ref.value;
+        check = check + dst[i].value + dst[i].ref.value + dst[i].view[i].value;
         i += 1;
     }
-    assert check == i64(ITEMS) * (i64(ITEMS) - 1): "copy_struct dst";
+    assert check == 3 * (i64(ITEMS) * (i64(ITEMS) - 1) / 2): "copy_struct dst";
     print("copy_struct pass\n");
     del dst;
     del src;

@@ -73,7 +73,7 @@ fatptr 2 项（copy_struct、chase）。
 | ALLOC/churn_mixed | `rounds` | 20000 | 2000 |
 | ALLOC/grow_free | `cycles` | 40 | 8 |
 | ALLOC/grow_varied | `cycles` | 32 | 8 |
-| fatptr/copy_struct | `ROUNDS` | 64 | 8 |
+| fatptr/copy_struct | `ROUNDS` | 1024 | 128 |
 | fatptr/chase | `NODES` | 4000000 | 2000000 |
 
 其余基准（list、towers、binarytree、deltablue、json、richards、……）的 fast 规模尚未标定：

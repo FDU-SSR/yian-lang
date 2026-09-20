@@ -8,10 +8,10 @@
   "check": {
     "rc": 0
   },
-  "note": "rc==0 (内部断言: 拷贝校验和 == ROUNDS·ITEMS·(ITEMS-1)/2)",
+  "note": "rc==0 (内部断言: 拷贝校验和 == ROUNDS·ITEMS·(ITEMS-1)/2); 元素含 T& 与 T* 两个胖字段",
   "scale": {
-    "default": 64,
-    "fast": 8,
+    "default": 1024,
+    "fast": 128,
     "c": "argv"
   }
 }
