@@ -363,10 +363,12 @@ ide-support/vscode/node_modules/
 # The VS Code extension ships its own launch/task config for F5.
 !ide-support/vscode/.vscode/
 
-# 评测集结果: 完全档与分配器记录 (bench/results/full.*, alloc.*) 进版本历史; 快速档与临时
-# 子集是开发过程的产物, 不提交。上面的通用 `results/` 规则会把整个目录忽略掉, 这里先把它收回来。
+# 评测集结果: 只把完全档与分配器记录 (full.*, alloc.*) 进版本历史; 其余集合与临时子集都是
+# 开发过程的产物, 不提交。上面的通用 `results/` 规则会把整个目录忽略掉, 这里先把它收回来,
+# 再只放行两份记录。
 !bench/results/
-bench/results/fast.md
-bench/results/fast.csv
-bench/results/partial.md
-bench/results/partial.csv
+bench/results/*
+!bench/results/full.md
+!bench/results/full.csv
+!bench/results/alloc.md
+!bench/results/alloc.csv

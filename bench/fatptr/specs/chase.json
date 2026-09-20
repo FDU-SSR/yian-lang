@@ -1,0 +1,17 @@
+{
+  "name": "chase",
+  "source": "fatptr",
+  "tags": [
+    "micro"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (内部断言: 追逐校验和 == ROUNDS·NODES·(NODES+1)/2); 节点数取到超过 LLC",
+  "scale": {
+    "default": 4000000,
+    "fast": 2000000,
+    "c": "argv"
+  }
+}

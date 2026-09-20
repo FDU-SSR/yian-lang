@@ -35,7 +35,7 @@ fn sieve(flags: bool[], size: u64) -> i32 {
 fn main() {
     let SIEVE_SIZE: u64 = 2000000;
     let ITER: u64 = 500;  // bench-scale
-    let flags = dyn[SIEVE_SIZE] bool;
+    let flags = dyn[SIEVE_SIZE] false;
     // 视图是循环不变量: 提到循环外, 两模式每次运行只构造一次 (合并前 fat 源直接传切片)。
     // 填充也走视图: dyn 变量直接下标会走 Index trait 派发, 胖模式下比内建切片索引慢约 16%
     // (分支 fat 源因标注了 bool[] 而走内建路径); 视图与 flags 指向同一块内存, 语义不变。

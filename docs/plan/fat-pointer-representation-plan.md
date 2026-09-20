@@ -288,6 +288,11 @@ B6:    T& = ⟨data(8) | word(8)⟩                                   = 16 B
 三件都遵守现有协议：`-O2`、绑核、min-of-N、峰值 RSS、fat/raw 比值；产物与运行器沿用
 `bench/bench_three_way.py` 的形态（如需要可加 `--names` 的分组，不要另起一套）。
 
+**现状**：`copy_struct`（`bench/fatptr/an/copy_struct.an`）与 `chase`（`chase.an`）已落地并进
+`micro` 集合（`--set micro`，源目录 `bench/fatptr/`）；`call_abi` 待办——第一版实测发现 `-O2`
+会把整条节点链与调用一起折叠掉（调用被外提、循环被归纳成闭式），需要给基准接入**编译器看不到的
+输入**（如 `env.args()` 导出的种子）才能测到真实调用成本，放到 B6 之前补齐。
+
 ### 4.2 现有基准
 
 `bench/results/full.csv`（19 项 shootout）与 `bench_allocator.py`（分配器）每次改动都要重跑：

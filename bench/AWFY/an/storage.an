@@ -43,7 +43,7 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
 
     if depth == 1 {
         let n: u64 = Random_next(random) % 10 + 1;
-        let arr: array_tree[] = dyn[n] array_tree;
+        let arr: array_tree[] = dyn[n] array_tree(Option<array_tree[]>.None, 0);
         let i: u64 = 0;
         while i < n {
             arr[i].children = Option<array_tree[]>.None;
@@ -55,7 +55,7 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
     }
 
     let n: u64 = 3;
-    let arr: array_tree[] = dyn[n] array_tree;
+    let arr: array_tree[] = dyn[n] array_tree(Option<array_tree[]>.None, 0);
     let i: u64 = 0;
     while i < n {
         let child_count: i32 = 0;

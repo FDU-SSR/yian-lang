@@ -1,0 +1,10 @@
+{
+  "name": "micro",
+  "scale": "full",
+  "runs": 5,
+  "include": [
+    "tag:micro"
+  ],
+  "exclude": [],
+  "note": "机制专项微基准 (方向 B): 拷贝/传参/追逐三件, 直接把表示尺寸与检查开销读成 ns/元素与 ns/节点; 只用于判断方向与量级"
+}

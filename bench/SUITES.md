@@ -14,7 +14,8 @@
 | Are We Fast Yet（`smarr/are-we-fast-yet` 的 Java 微基准改写：Bounce/CD/DeltaBlue/Havlak/Json/List/Mandelbrot/NBody/Permute/Queens/Richards/Sieve/Storage/Towers） | `bench/AWFY/` | 14 | 混合：Benchmarks Game 部分为 Revised BSD；Richards/DeltaBlue 转自 Mario Wolczko 的 Smalltalk 源，上游 `LICENSE.md` 只给出其归档链接。每个源的头部注释都标注了上游来源与许可状态 |
 | The Computer Language Benchmarks Game（binarytrees、fannkuch-redux、fasta、reverse-complement、spectral-norm） | `bench/BG/` | 5 | Revised BSD（`Copyright © 2004-2008 Brent Fulgham, 2005-2025 Isaac Gouy`） |
 | 本仓库自写（分配器四类负载） | `bench/ALLOC/` | 4 | 本仓库许可 |
-| 本仓库自写（C 参考） | `bench/AWFY/c/`、`bench/BG/c/` | 19 | 本仓库许可；与对应 `.an` 同算法同规模 |
+| 本仓库自写（方向 B 机制微基准：copy_struct、chase） | `bench/fatptr/` | 2 | 本仓库许可；只用于表示尺寸/拷贝/追逐的量级读数，不参与对外结论 |
+| 本仓库自写（C 参考） | `bench/AWFY/c/`、`bench/BG/c/`、`bench/fatptr/c/` | 21 | 本仓库许可；与对应 `.an` 同算法同规模 |
 
 ## 二、候选套件（调研结论：许可已核实）
 

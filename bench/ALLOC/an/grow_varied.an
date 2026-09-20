@@ -16,7 +16,7 @@ fn main() {
     let cycle: u64 = 0;
     while cycle < cycles {
         let length: u64 = (cycle + 1) * mib;
-        let chunk = dyn[length] u8;
+        let chunk = dyn[length] 0u8;
         // 每 4 KiB 写一次: 触达整块的所有页, 峰值 RSS 才反映真实占用.
         let k: u64 = 0;
         while k < length {

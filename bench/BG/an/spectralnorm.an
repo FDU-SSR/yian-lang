@@ -83,9 +83,9 @@ fn normalize(v: f64[], n: u64) {
 
 fn main() {
     let n: u64 = 8000;
-    let u = dyn[n] f64;
-    let v = dyn[n] f64;
-    let tmp = dyn[n] f64;
+    let u = dyn[n] 0.0;
+    let v = dyn[n] 0.0;
+    let tmp = dyn[n] 0.0;
 
     let us: f64[] = u[0u64..n];
     let vs: f64[] = v[0u64..n];

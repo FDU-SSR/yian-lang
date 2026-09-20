@@ -166,7 +166,7 @@ fn init_bodies(bodies: Planet[]) {
 
 fn main() {
     let n: u64 = 12000000;
-    let bodies = dyn[5] Planet;
+    let bodies = dyn[5] Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let bs: Planet[] = bodies[0u64..5u64];
 
     init_bodies(bs);

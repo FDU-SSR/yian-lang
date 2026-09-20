@@ -1,0 +1,56 @@
+// bench/fatptr/an/chase.an — 节点尺寸 → cache 足迹 (方向 B 微基准)
+//
+// 目的: 链表追逐。节点只有一个 i64 值和一个 Option<Node&> 后继, 因此节点尺寸就是
+//       表示尺寸的直接读数: raw 16 B、fat 32 B (24 B 引用 + 8 B 值), 正是"节点尺寸 =
+//       cache 足迹"那条曲线的两端。节点数取到超出 LLC, 让尺寸差表现为 miss 率差。
+// 规模: NODES (节点数, `// bench-scale` 标记行); ROUNDS 固定。
+// C 参考: bench/fatptr/c/chase.c (同算法同规模, 16 B 节点)。
+//
+// 数据布局: 从尾到头建单链 (head 始终是已建部分), 每轮从 head 走到底累加 value,
+//           最后逐节点 del 释放整条链。
+//
+// 单一源: fat 与 raw 共用本文件 (raw 下 Option<Node&> 为 8 B 裸指针)。
+from std.core.io import print;
+
+struct Node {
+    value: i64,
+    next: Option<Node&>,
+}
+
+fn main() {
+    let NODES: u64 = 4000000;  // bench-scale
+    let ROUNDS: u64 = 8;
+    let head: Option<Node&> = Option<Node&>.None;
+    let i: u64 = NODES;
+    while i > 0 {
+        head = Option<Node&>.Some(dyn Node(i64(i), head));
+        i -= 1;
+    }
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < ROUNDS {
+        let cur: Option<Node&> = head;
+        while true {
+            match cur {
+                None => { break; },
+                Some(node) => {
+                    acc = acc + node.value;
+                    cur = node.next;
+                }
+            }
+        }
+        round += 1;
+    }
+    assert acc == i64(ROUNDS) * (i64(NODES) * (i64(NODES) + 1) / 2): "chase checksum";
+    print("chase pass\n");
+    while true {
+        match head {
+            None => { break; },
+            Some(node) => {
+                let next: Option<Node&> = node.next;
+                del node;
+                head = next;
+            }
+        }
+    }
+}

@@ -40,7 +40,7 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
 
 fn benchmark_permute() -> i32 {
     let count: i32 = 0;
-    let v = dyn[11] i32;
+    let v = dyn[11] 0i32;
     let i: u64 = 0;
     while i < 11 {
         v[i] = i32(i);

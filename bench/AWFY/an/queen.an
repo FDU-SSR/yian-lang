@@ -57,10 +57,10 @@ fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], 
 }
 
 fn solve_queens_once() -> bool {
-    let free_rows = dyn[8000] bool;
-    let free_maxs = dyn[16000] bool;
-    let free_mins = dyn[16000] bool;
-    let queen_rows = dyn[8000] i32;
+    let free_rows = dyn[8000] false;
+    let free_maxs = dyn[16000] false;
+    let free_mins = dyn[16000] false;
+    let queen_rows = dyn[8000] 0i32;
 
     let i: u64 = 0;
     while i < 8000 {

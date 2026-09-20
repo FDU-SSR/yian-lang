@@ -11,12 +11,13 @@ fn main() {
     let rounds: u64 = 1000;  // bench-scale
     let checksum: i64 = 0;
 
+    let seed = dyn[1] 0i32;
     let round: u64 = 0;
     while round < rounds {
-        let batch = dyn[batch_count] i32*;
+        let batch = dyn[batch_count] seed;
         let i: u64 = 0;
         while i < batch_count {
-            batch[i] = dyn[4] i32;
+            batch[i] = dyn[4] 0i32;
             batch[i][0] = 2;
             i += 1;
         }
@@ -31,6 +32,7 @@ fn main() {
         round += 1;
     }
 
+    del seed;
     assert checksum == i64(batch_count) * i64(rounds) * 2: "single-size churn checksum";
     print("single pass\n");
 }

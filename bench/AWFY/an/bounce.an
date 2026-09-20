@@ -109,7 +109,7 @@ fn benchmark() -> i64 {
     let ball_count: u64 = 100000;
     let rounds: u64 = 10000;
     let bounces: i64 = 0;
-    let balls = dyn[ball_count] Ball;
+    let balls = dyn[ball_count] Ball(0, 0, 0, 0);
     let balls_slice: Ball[] = balls[0u64..ball_count];
 
     let i: u64 = 0;
