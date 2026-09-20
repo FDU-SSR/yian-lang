@@ -35,17 +35,17 @@ class LLTypeCtx:
         # materialize pointee: 指针布局与 pointee 无关, 经指针回指自身的 struct/enum
         # 也不必在构造指针时补齐自己的 body。
         self.__ptr: ir.PointerType = ir.PointerType()  # type: ignore
-        # str = slice(分级指针表示):4 字段 {data, lock_ptr, key, size} 32B;
+                # str = slice:3 字段 {data, word, size} 24B;
         # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
         if self.__raw_pointers:
             self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
         else:
-            self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64])  # type: ignore
-        # 5 字段胖指针 {data, lock_ptr, key, index, size} = 8+8+8+4+4 = 32 B;
-        # index/size 是 32 位元素数 (上限 MAX_VIEW_COUNT, 见 lockmech)。
-        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i32, self.__i32])  # type: ignore
-        # 3 字段引用 {data, lock_ptr, key} 24B(已替换早期的 5 字段临时布局)。
-        self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64])  # type: ignore
+            self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__i64, self.__i64])  # type: ignore
+        # 4 字段胖指针 {data, word, index:u32, size:u32} = 8+8+4+4 = 24 B;
+        # word = ⟨kind:2 | field | id⟩(见 lockmech), index/size 是 32 位元素数。
+        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64, self.__i32, self.__i32])  # type: ignore
+        # 2 字段引用 {data, word} 16 B。
+        self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
@@ -209,8 +209,8 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
-        # 5-field fat pointer {data, lock_ptr, key, index, size} = 32B
-        # (index/size 为 32 位元素数, 见 lockmech.MAX_VIEW_COUNT).
+        # 4-field fat pointer {data, word, index, size} = 24B
+        # (word 打包锁址与键; index/size 为 32 位元素数, 见 lockmech).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
         # 诊断模式:raw_pointers 下指针退化为裸 8B opaque 指针;元素/值类型(GEP 的
         # source_etype、load 的 typ)由使用点显式给出。
@@ -219,19 +219,19 @@ class LLTypeCtx:
         return self.__fat_pointer
 
     def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
-        # 3 字段引用 ⟨data, lock_ptr, key⟩ 24B(不含 index 和 size)。
+        # 2 字段引用 ⟨data, word⟩ 16B(不含 index 和 size)。
         # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸指针 (opaque)。
         if self.__raw_pointers:
             return self.__ptr
         return self.__ref_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
-        # 4 字段切片 {data: T*, lock_ptr: i8*, key: u64, size: u64} 32B(不含 index)。
+        # 3 字段切片 {data: T*, word: u64, size: u64} 24B(不含 index)。
         # 诊断模式(raw_pointers)下退化为 2 字段 {T*, u64}。
         data_type = self.__ptr
         if self.__raw_pointers:
             return ir.LiteralStructType([data_type, self.__i64])
-        return ir.LiteralStructType([data_type, self.__ptr, self.__i64, self.__i64])
+        return ir.LiteralStructType([data_type, self.__i64, self.__i64])
 
     def __handle_array(self, type_def: Type.ArrayType) -> ir.Type:
         length_ty = self.__type_ctx[type_def.length]
@@ -338,7 +338,7 @@ class LLTypeCtx:
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.PointerType):
-            # fat pointer — {ptr, ptr, i64, i32, i32} = 32B, align 8.
+            # fat pointer — {ptr, i64, i32, i32} = 24B, align 8.
             # 诊断模式:raw_pointers 下指针为裸 8B,align 8。
             if self.__raw_pointers:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
@@ -346,7 +346,7 @@ class LLTypeCtx:
                 result = (self.__fat_pointer.get_abi_size(self.__target_data), self.__fat_pointer.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.RefType):
             # References use the same bare-pointer ABI in raw mode.  Keep the
-            # three-field metadata representation only for checked/fat mode.
+            # two-field metadata representation only for checked/fat mode.
             if self.__raw_pointers:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
             else:

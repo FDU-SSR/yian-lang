@@ -149,7 +149,7 @@ class LLTranslator:
             case IR.VarPtr():
                 builder.var_ptr(
                     stmt.var_ref.symbol_id, stmt.result.name,
-                    self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
+                    self.__resolve(builder, stmt.frame_word) if stmt.frame_word is not None else None,
                     self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
                     stmt.raw,
                 )
@@ -157,7 +157,7 @@ class LLTranslator:
                 builder.alloca_store(
                     self.__resolve(builder, stmt.value),
                     stmt.result.name,
-                    self.__resolve(builder, stmt.frame_lock_ptr) if stmt.frame_lock_ptr is not None else None,
+                    self.__resolve(builder, stmt.frame_word) if stmt.frame_word is not None else None,
                     self.__resolve(builder, stmt.frame_key) if stmt.frame_key is not None else None,
                     stmt.raw,
                 )

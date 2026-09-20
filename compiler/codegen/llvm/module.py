@@ -121,6 +121,10 @@ class LLModule:
         self.__pool_release_func: ir.Function | None = None
         self.__frame_lock_arena_global: ir.GlobalVariable | None = None
         self.__frame_lock_depth_global: ir.GlobalVariable | None = None
+        self.__lock_bump_global: ir.GlobalVariable | None = None
+        self.__lock_free_head_global: ir.GlobalVariable | None = None
+        self.__lock_new_func: ir.Function | None = None
+        self.__lock_release_func: ir.Function | None = None
 
     # -- properties --
 
@@ -168,6 +172,10 @@ class LLModule:
         else:
             llvm_name = f"{cfg_func.name}.{cfg_func.type_id}"
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
+        if llvm_name.startswith("index."):
+            # 实验: 索引/检查辅助保持内联(变体 B 下它变胖后掉出内联阈值,
+            # 每个元素多一次跨函数调用; 见 §3.7 的根因记录)。
+            ir_func.attributes.add("alwaysinline")
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
         return func
@@ -291,28 +299,72 @@ class LLModule:
 
     # -- single-threaded stable frame-lock shadow stack --
 
-    def get_frame_lock_arena(self) -> ir.GlobalVariable:
-        """Return the fixed-address frame-lock arena declaration.
+    def get_lock_table(self) -> ir.GlobalVariable:
+        """Return the fixed-address lock-table declaration (变体 B)。
 
-        The zero-initialized array lives in the runtime library, occupies
-        BSS-backed virtual address space; only pages reached by the peak active
-        address-taking depth become resident.  Its address never aliases
-        ordinary stack or heap payloads.
+        表项 8 B = {key:u32, anchor_lo32:u32}; 下标区间自带 kind:
+        [0, FRAME_LOCK_SLOTS) 帧影子栈槽, 接着两个字面量/环境常量槽, 其余由分配器发放。
+        表在运行时库里、位于 BSS: 只有被触到的页常驻。
         """
         if self.__frame_lock_arena_global is None:
             arena_type = ir.ArrayType(
-                ir.IntType(64), IR.FrameLockArena.SLOTS  # type: ignore
+                ir.IntType(64), IR.LOCK_TABLE_SLOTS  # type: ignore
             )
             global_var = ir.GlobalVariable(
-                self.__module, arena_type, name="__secl_frame_locks"
+                self.__module, arena_type, name="__secl_lock_table"
             )
             global_var.linkage = "external"
-            global_var.align = IR.FrameLockArena.SLOT_BYTES  # type: ignore
+            global_var.align = IR.LockEntry.BYTES  # type: ignore
             self.__frame_lock_arena_global = global_var
         return self.__frame_lock_arena_global
 
+    def get_lock_bump(self) -> ir.GlobalVariable:
+        """Return the lock-table bump cursor declaration (堆段下一个未用下标)."""
+        if self.__lock_bump_global is None:
+            global_var = ir.GlobalVariable(
+                self.__module, ir.IntType(64), name="__secl_lock_bump"
+            )
+            global_var.linkage = "external"
+            global_var.align = 8
+            self.__lock_bump_global = global_var
+        return self.__lock_bump_global
+
+    def get_lock_free_head(self) -> ir.GlobalVariable:
+        """Return the lock-table free-list head declaration (0 = 空, 否则 = 下标 + 1)."""
+        if self.__lock_free_head_global is None:
+            global_var = ir.GlobalVariable(
+                self.__module, ir.IntType(64), name="__secl_lock_free_head"
+            )
+            global_var.linkage = "external"
+            global_var.align = 8
+            self.__lock_free_head_global = global_var
+        return self.__lock_free_head_global
+
+    def get_lock_bump_take(self) -> ir.Function:
+        """Return the lock-table bump declaration (自由链为空时取新下标; 耗尽 R003)."""
+        if self.__lock_new_func is None:
+            fn = ir.Function(
+                self.__module,
+                ir.FunctionType(ir.IntType(64), []),
+                name="__secl_lock_bump_take",
+            )
+            self.__lock_new_func = fn
+        return self.__lock_new_func
+
+    def get_lock_release(self) -> ir.Function:
+        """Return the lock-table release declaration (按 word 释放表项)."""
+        if self.__lock_release_func is None:
+            fn = ir.Function(
+                self.__module,
+                ir.FunctionType(ir.VoidType(), [ir.IntType(64)]),
+                name="__secl_lock_release",
+            )
+            fn.args[0].name = "word"
+            self.__lock_release_func = fn
+        return self.__lock_release_func
+
     def get_frame_lock_depth(self) -> ir.GlobalVariable:
-        """Return the active-depth cursor declaration for the frame-lock arena."""
+        """Return the active-depth cursor declaration for the frame-lock segment."""
         if self.__frame_lock_depth_global is None:
             i64 = ir.IntType(64)  # type: ignore
             global_var = ir.GlobalVariable(

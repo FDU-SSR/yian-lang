@@ -45,7 +45,8 @@ class LLBuilder:
         self.__check_seq = 0
         self.__continuations: dict[str, str] = {}
         self.__current_cfg_block = ""
-        self.__frame_lock_slot_name: str | None = None  # 已从稳定影子栈取得的 e_f 寄存器名
+        self.__frame_lock_slot_name: str | None = None  # 帧锁槽寄存器名(acquire 时记录)
+        self.__frame_lock_acquired: bool = False         # 是否已取得帧锁(返回路径写 SENTINEL)
 
     # ------------------------------------------------------------------
     # constants
@@ -120,10 +121,11 @@ class LLBuilder:
         """提取胖指针聚合字段;整数字段一律零扩展到 u64、指针字段 u8*(下标见 FAT_*/SLICE_*/REF_*)。
 
         PointerType 的 index/size 是 32 位元素数, 值层统一按 u64 处理(长度来自已被
-        校验 ≤ MAX_VIEW_COUNT 的分配容量, 提取端零扩展; 比较/算术语义与 u64 版一致)。
+        校验 ≤ MAX_VIEW_COUNT 的分配容量, 提取端零扩展; 比较/算术语义与 u64 版一致);
+        word 是完整的 64 位整字(锁址 + 键)。
         """
         ir_val = self.__builder.extract_value(ll_val.ir_val, index)  # type: ignore
-        if index in (IR.FAT_DATA, IR.FAT_LOCK_PTR):
+        if index == IR.FAT_DATA:  # 只有 data 是裸指针; word 是整字, index/size 是 32 位
             field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         else:
             field_type = self.__type_ctx.u64_id
@@ -168,15 +170,16 @@ class LLBuilder:
         ok = self.__builder.icmp_unsigned("<=", value.ir_val, limit)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, ok), RuntimeErrorCode.R001, suffix)
 
-    def __build_fat(self, data: LLValue, lock_ptr: LLValue, key: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
-        """按结构构造胖值(分级指针表示):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
-        SliceType 4 字段 ⟨data,lock,key,size⟩(删 index)/ RefType 3 字段 ⟨data,lock,key⟩。
+    def __build_fat(self, data: LLValue, word: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
+        """按结构构造胖值:PointerType 4 字段 ⟨data,word,index,size⟩ /
+        SliceType·StrType 3 字段 ⟨data,word,size⟩ / RefType 2 字段 ⟨data,word⟩。
+
+        word 同时携带锁址与键(见 lockmech), 槽里存同一份。
         """
         ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
         val = self.undef(type_id)
         val = self.insert_value(val, data, IR.FAT_DATA)
-        val = self.insert_value(val, lock_ptr, IR.FAT_LOCK_PTR)
-        val = self.insert_value(val, key, IR.FAT_KEY)
+        val = self.insert_value(val, word, IR.FAT_WORD)
         if isinstance(ty, Type.PointerType):
             val = self.__insert_field_value(val, index, IR.FAT_INDEX)
             val = self.__insert_field_value(val, size, IR.FAT_SIZE)
@@ -188,6 +191,33 @@ class LLBuilder:
             raise ValueError(f"not a pointer-family type: {type(ty).__name__}")
         return val
 
+    def __lock_of(self, builder: ir.IRBuilder, word: ir.Value, data: ir.Value) -> ir.Value:
+        """从 word 取锁表项地址(变体 B: 只有一条公式, 与 data/kind 无关)。
+
+        lock 字段就是锁表下标, 地址 = @__secl_lock_table + lock*LOCK_ENTRY_BYTES;
+        下标区间自带 kind, 热路径没有分派。data 参数保留是为了与调用点同构。
+        """
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
+        table = self.__module.get_lock_table()
+        index = builder.zext(builder.trunc(word, i32), i64)  # type: ignore
+        return builder.gep(table, [ir.Constant(i64, 0), index], inbounds=True)  # type: ignore
+
+    def __word_key(self, word: ir.Value) -> ir.Value:
+        """取 word 里的 32 位 key(与锁表项里的 key 同宽)。"""
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
+        return self.__builder.and_(  # type: ignore
+            self.__builder.lshr(word, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
+            ir.Constant(i64, IR.KEY_MASK),  # type: ignore
+        )
+
+    def __literal_word(self) -> ir.Value:
+        """字面量指针携带的 word(锁表字面量槽 key = 0, 恒 live)。"""
+        return ir.Constant(ir.IntType(64), IR.LITERAL_WORD)  # type: ignore
+
+    def __env_word(self) -> ir.Value:
+        """环境指针携带的 word(锁表环境槽 key = 0, 恒 live)。"""
+        return ir.Constant(ir.IntType(64), IR.ENV_WORD)  # type: ignore
     def __fat_data(self, ll_val: LLValue) -> LLValue:
         """取胖指针的 data 字段(裸 8B 地址);已是裸指针则直接返回。
 
@@ -199,19 +229,17 @@ class LLBuilder:
         return ll_val
 
     def __promote_fat(self, ll_val: LLValue) -> LLValue:
-        """把裸 8B 指针值(如 Alloca 结果)提升为 5 字段胖指针 ⟨data, e_f, k_f, 0, 1⟩。
+        """把裸 8B 指针值(如 Alloca 结果)提升为胖指针 ⟨data, word, 0, 1⟩。
 
-        值层统一:type_id 为 PointerType 的 LLVM 值须是 40B 聚合才能跨调用/返回/
-        存储;Alloca 等产生裸指针的原语在此补全元数据(帧锁)。
+        值层统一: type_id 为 PointerType 的 LLVM 值须是聚合才能跨调用/返回/存储;
+        Alloca 等产生裸指针的原语在此补全元数据(字面量锁槽, 恒 live)。
         """
         if self.__is_fat_type(ll_val.type_id) and not self.__is_fat(ll_val):
-            lock_ir, key_ir = self.__lit_lock_pair()
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), ll_val.ir_val)  # type: ignore
-            lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-            key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+            word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
             zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
             one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-            return self.__build_fat(data, lock, key, zero, one, ll_val.type_id)
+            return self.__build_fat(data, word, zero, one, ll_val.type_id)
         return ll_val
 
     def __fat_addr(self, ll_val: LLValue, pointee_type_id: int) -> LLValue:
@@ -237,24 +265,21 @@ class LLBuilder:
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
 
     def __gen_key_value(self, is_heap: bool) -> LLValue:
-        """Emit a non-wrapping monotonic key, failing on exhaustion.
+        """Emit a non-wrapping monotonic key, failing on exhaustion (R003).
 
-        Heap body ``BODY_MASK`` is reserved because adding the heap flag would
-        produce the all-ones ``SENTINEL``.  Stack keys may use that body value
-        because their most-significant bit remains zero.
+        变体 B 里 key 与锁表项的 32 位槽严格同宽: 帧键计数到 FRAME_KEY_LIMIT
+        (0xFFFFFFFE, 0xFFFFFFFF 留给帧退出的 SENTINEL)即确定性终止, 绝不回绕——
+        回绕会让旧指针重新匹配。堆路径不再使用本函数(堆键由锁表项按块换代)。
         """
         counter = self.__module.get_key_counter(is_heap)
         loaded = self.__builder.load(counter)  # type: ignore
-        limit = IR.MAX_HEAP_BODY if is_heap else IR.MAX_STACK_BODY
         available = self.__builder.icmp_unsigned(
-            "<", loaded, ir.Constant(ir.IntType(64), limit)  # type: ignore
+            "<", loaded, ir.Constant(ir.IntType(64), IR.FRAME_KEY_LIMIT)  # type: ignore
         )
         self.__emit_check(LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "keyex")
         nxt = self.__builder.add(loaded, ir.Constant(ir.IntType(64), 1))  # type: ignore
         self.__builder.store(nxt, counter)  # type: ignore
-        if is_heap:
-            nxt = self.__builder.or_(nxt, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000))  # type: ignore
-        return LLValue(self.__type_ctx.u64_id, nxt)  # type: ignore
+        return LLValue(self.__type_ctx.u64_id, self.__builder.and_(nxt, ir.Constant(ir.IntType(64), IR.KEY_MASK)))  # type: ignore
 
     def __split_block_name(self, suffix: str, kind: str, seq: int) -> str:
         """分裂出的新块名:短 CFG 块标签作基名 + 单调序列保证唯一。
@@ -321,44 +346,77 @@ class LLBuilder:
         self.__builder = merge_builder
         return phi
 
-    def __extract_check_fields(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value, ir.Value, ir.Value]:
-        """一次提取 check 字段 bundle (lock, key, index, size)——仅 PointerType(5 字段)。
+    def __emit_either(
+        self,
+        cond: ir.Value,
+        then_fn: object,
+        else_fn: object,
+        result_type: ir.Type,
+    ) -> ir.Value:
+        """二选一求值:cond 真走 then_fn(新块), 假走 else_fn(新块), phi 合并。
 
-        check_safe_access 用 bundle 一次取齐 live(lock/key)与 in_bounds(index/size)
-        两谓词所需字段,避免各谓词重复 extract;RefType(3 字段,无 index/size)不得经此。
+        与 __emit_guarded 的区别是 else 分支也能产出值(锁表发放: 自由链非空时内联
+        弹出, 为空时才调用运行时的 bump 入口)——两条路径都必须按需执行, 不能都求值。
+        """
+        seq = self.__check_seq
+        self.__check_seq += 1
+        then_block = self.__func.new_block(self.__split_block_name("g", "then", seq))
+        else_block = self.__func.new_block(self.__split_block_name("g", "else", seq))
+        merge_block = self.__func.new_block(self.__split_block_name("g", "merge", seq))
+        self.__builder.cbranch(cond, then_block, else_block)  # type: ignore
+        then_builder = ir.IRBuilder(then_block)
+        then_val = then_fn(then_builder)  # type: ignore[operator]
+        then_builder.branch(merge_block)  # type: ignore
+        else_builder = ir.IRBuilder(else_block)
+        else_val = else_fn(else_builder)  # type: ignore[operator]
+        else_builder.branch(merge_block)  # type: ignore
+        merge_builder = ir.IRBuilder(merge_block)
+        phi = merge_builder.phi(result_type)  # type: ignore
+        phi.add_incoming(then_val, then_block)  # type: ignore
+        phi.add_incoming(else_val, else_block)  # type: ignore
+        self.__builder = merge_builder
+        return phi
+
+
+    def __extract_check_fields(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value, ir.Value, ir.Value]:
+        """一次提取 check 字段 bundle (data, word, index, size)——仅 PointerType(4 字段)。
+
+        check_safe_access 用 bundle 一次取齐 live(data/word 重建锁槽)与
+        in_bounds(index/size)两谓词所需字段, 避免各谓词重复 extract;
+        RefType(2 字段, 无 index/size)不得经此。
         """
         ty = self.__type_ctx[ll_val.type_id]
         if not isinstance(ty, Type.PointerType):
             raise ValueError(f"check field bundle requires PointerType, got {type(ty).__name__}")
-        lock = self.__extract_fat_field(ll_val, IR.FAT_LOCK_PTR).ir_val
-        key = self.__extract_fat_field(ll_val, IR.FAT_KEY).ir_val
+        data = self.__extract_fat_field(ll_val, IR.FAT_DATA).ir_val
+        word = self.__extract_fat_field(ll_val, IR.FAT_WORD).ir_val
         index = self.__extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
         size = self.__extract_fat_field(ll_val, IR.FAT_SIZE).ir_val
-        return lock, key, index, size
+        return data, word, index, size
 
-    def __check_live(self, lock_ptr: ir.Value, key: ir.Value) -> LLValue:
-        """live(p):锁槽键比较 μ⟨lock_ptr⟩ == key,含 null 短路。
+    def __check_live(self, word: ir.Value, data: ir.Value) -> LLValue:
+        """live(p):锁表项 key 比较 ∧ word ≠ 0, 无分派、无窗口。
 
-        lock_ptr/key 由调用方预提取传入(check_delete/check_safe_access 复用提取,
-        避免重复 extract);锁槽 load 留在 __emit_guarded 守卫内——null 短路为假,
-        不读地址 0 物理槽位,避免段错误退化。
+        锁槽地址只由 word 的 lock 下标给出; 表项里存的是同一个 32 位 key, 所以比较
+        恒为"一次 32 位 load + 一次 32 位比较"。null(word = 0)用一次与运算短路为假,
+        不读表项 0, 也不多一个基本块。
         """
-        guard = self.__builder.icmp_signed("!=", lock_ptr, ir.Constant(lock_ptr.type, None))  # type: ignore
-
-        def compute(builder: ir.IRBuilder) -> ir.Value:
-            slot_val = builder.load(lock_ptr, typ=ir.IntType(64))  # type: ignore
-            return builder.icmp_signed("==", slot_val, key)  # type: ignore
-
-        return LLValue(self.__type_ctx.bool_id, self.__emit_guarded(guard, compute))  # type: ignore
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
+        lock = self.__lock_of(self.__builder, word, data)
+        slot_val = self.__builder.load(lock, typ=i32)  # type: ignore
+        key = self.__builder.trunc(self.__word_key(word), i32)  # type: ignore
+        matched = self.__builder.icmp_unsigned("==", slot_val, key)  # type: ignore
+        nonnull = self.__builder.icmp_unsigned("!=", word, ir.Constant(ir.IntType(64), 0))  # type: ignore
+        return LLValue(self.__type_ctx.bool_id, self.__builder.and_(nonnull, matched))  # type: ignore
 
     def __check_in_bounds_cond(self, index: ir.Value, size: ir.Value) -> LLValue:
         """in_bounds(p,1):0 ≤ index ∧ index+1 ≤ size,简化为 index < size(u64)。"""
         cond = self.__builder.icmp_unsigned("<", index, size)  # type: ignore
         return LLValue(self.__type_ctx.bool_id, cond)  # type: ignore
 
-    def __check_live_and(self, lock_ptr: ir.Value, key: ir.Value, other: ir.Value) -> ir.Value:
+    def __check_live_and(self, word: ir.Value, data: ir.Value, other: ir.Value) -> ir.Value:
         """live(p) ∧ other(i1 值)。"""
-        live_val = self.__check_live(lock_ptr, key)
+        live_val = self.__check_live(word, data)
         return self.__builder.and_(live_val.ir_val, other)  # type: ignore
 
     def string_literal(self, value: str, type_id: int) -> LLValue:
@@ -372,9 +430,7 @@ class LLBuilder:
         length = ir.Constant(ir.IntType(64), len(encoded))  # type: ignore
         if self.__raw_pointers:
             return LLValue(type_id, ir.Constant.literal_struct([ptr, length]))  # type: ignore
-        lock_ir = self.__module.get_lit_lock().bitcast(ir.PointerType(ir.IntType(8)))  # type: ignore
-        key_ir = ir.Constant(ir.IntType(64), 1)  # type: ignore
-        return LLValue(type_id, ir.Constant.literal_struct([ptr, lock_ir, key_ir, length]))  # type: ignore
+        return LLValue(type_id, ir.Constant.literal_struct([ptr, self.__literal_word(), length]))  # type: ignore
 
     # ------------------------------------------------------------------
     # builder position
@@ -400,24 +456,21 @@ class LLBuilder:
     # statements
     # ------------------------------------------------------------------
 
-    def var_ptr(self, symbol_id: int, result: str, frame_lock_ptr: LLValue | None = None, frame_key: LLValue | None = None, raw: bool = False) -> LLValue:
+    def var_ptr(self, symbol_id: int, result: str, frame_word: LLValue | None = None, frame_key: LLValue | None = None, raw: bool = False) -> LLValue:
         alloca_ptr = self.__func.get_var_ptr(symbol_id)
         if raw or not self.__is_fat_type(alloca_ptr.type_id):
             # 惰性左值路径:裸取址(未取址左值)仅返回栈地址;raw 模式下
             # __is_fat_type 恒 False(既有行为),此处同样裸返回。
             result_val = alloca_ptr
         else:
-            # 5 字段合成 ⟨a_x, e_f, k_f, 0, 1⟩
+            # 合成 ⟨a_x, frame word, 0, 1⟩(取址恒指向单个元素)
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), alloca_ptr.ir_val)  # type: ignore
-            if frame_lock_ptr is None or frame_key is None:
-                e_f_ir, k_f_ir = self.__lit_lock_pair()
+            if frame_word is None:
+                word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
             else:
-                e_f_ir = frame_lock_ptr.ir_val
-                k_f_ir = frame_key.ir_val
-            lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), e_f_ir)  # type: ignore
-            key = LLValue(self.__type_ctx.u64_id, k_f_ir)  # type: ignore
+                word = LLValue(self.__type_ctx.u64_id, frame_word.ir_val)  # type: ignore
             result_val = self.__build_fat(
-                data, lock, key,
+                data, word,
                 LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0)),  # type: ignore
                 LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1)),  # type: ignore
                 alloca_ptr.type_id,
@@ -446,7 +499,7 @@ class LLBuilder:
         self,
         value: LLValue,
         result: str,
-        frame_lock_ptr: LLValue | None = None,
+        frame_word: LLValue | None = None,
         frame_key: LLValue | None = None,
         raw: bool = False,
     ) -> None:
@@ -456,15 +509,12 @@ class LLBuilder:
             result_val = alloca_val
         else:
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), alloca_val.ir_val)  # type: ignore
-            if frame_lock_ptr is None or frame_key is None:
+            if frame_word is None:
                 raise ValueError("fat temporary alloca missing current frame lock")
-            lock_ir, key_ir = frame_lock_ptr.ir_val, frame_key.ir_val
-            lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-            key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+            word = LLValue(self.__type_ctx.u64_id, frame_word.ir_val)  # type: ignore
             result_val = self.__build_fat(
                 data,
-                lock,
-                key,
+                word,
                 self.i64(0),
                 self.i64(1),
                 alloca_val.type_id,
@@ -546,21 +596,64 @@ class LLBuilder:
                 [ir.Constant(ir.IntType(32), constant_class)],  # type: ignore
             )  # type: ignore
         block_base = LLValue(ptr_type_id, block_ir)  # type: ignore
-        # Keep the logical payload extent separate from the pool's reusable
-        # physical capacity.  Delete and external view checks must validate
-        # the current allocation, not stale bytes left by a larger prior use.
-        active_size_ptr = self.__builder.gep(
+        # 块头 {extent:u32 @0, pad:u32 @4} = 8 B; 身份在锁表项里(变体 B)。
+        # 发放全部在发射的 IR 里完成(自由链非空 → 弹出下标; 为空 → 调 bump 入口),
+        # 因此表项的 key 写对 LLVM 可见: 刚分配内存上的 live 检查能折叠成真。
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
+        i64 = ir.IntType(64)  # type: ignore
+        anchor_lo32 = self.__builder.trunc(  # type: ignore
+            self.__builder.add(  # type: ignore
+                self.__builder.ptrtoint(block_base.ir_val, i64),  # type: ignore
+                ir.Constant(i64, IR.BlockHeader.BYTES),  # type: ignore
+            ),
+            i32,
+        )
+        table = self.__module.get_lock_table()
+        free_head_g = self.__module.get_lock_free_head()
+        head = self.__builder.load(free_head_g)  # type: ignore
+        has_free = self.__builder.icmp_unsigned("!=", head, ir.Constant(i64, 0))  # type: ignore
+
+        def take_fast(builder: ir.IRBuilder) -> ir.Value:
+            popped = builder.sub(head, ir.Constant(i64, 1))  # type: ignore
+            entry_ptr = builder.gep(table, [ir.Constant(i64, 0), popped], inbounds=True)  # type: ignore
+            next_head = builder.lshr(builder.load(entry_ptr, typ=i64), ir.Constant(i64, 32))  # type: ignore
+            builder.store(next_head, free_head_g)  # type: ignore
+            return popped
+
+        def take_slow(builder: ir.IRBuilder) -> ir.Value:
+            return builder.call(self.__module.get_lock_bump_take(), [])  # type: ignore
+
+        lock_index = self.__emit_either(has_free, take_fast, take_slow, i64)
+        entry = self.__builder.gep(table, [ir.Constant(i64, 0), lock_index], inbounds=True)  # type: ignore
+        stored = self.__builder.load(entry, typ=i64)  # type: ignore
+        next_key = self.__builder.and_(  # type: ignore
+            self.__builder.add(  # type: ignore
+                self.__builder.and_(stored, ir.Constant(i64, IR.KEY_MASK)),  # type: ignore
+                ir.Constant(i64, 1),  # type: ignore
+            ),
+            ir.Constant(i64, IR.KEY_MASK),  # type: ignore
+        )
+        next_entry = self.__builder.or_(  # type: ignore
+            next_key,
+            self.__builder.shl(  # type: ignore
+                self.__builder.zext(anchor_lo32, i64),  # type: ignore
+                ir.Constant(i64, IR.WORD_KEY_SHIFT),  # type: ignore
+            ),
+        )
+        self.__builder.store(next_entry, entry)  # type: ignore
+        word_ir = self.__builder.or_(  # type: ignore
+            lock_index,
+            self.__builder.shl(next_key, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
+        )
+        extent_ptr = self.__builder.gep(
             block_base.ir_val,
-            [ir.Constant(ir.IntType(64), IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
+            [ir.Constant(i64, IR.BlockHeader.EXTENT_OFFSET)],  # type: ignore
             inbounds=False,
             source_etype=ir.IntType(8),  # 块头按字节偏移索引
         )
-        self.__builder.store(payload_ir, active_size_ptr)  # type: ignore
-        if key is not None:
-            self.__builder.store(key.ir_val, block_base.ir_val)  # type: ignore
-            key_ir = key.ir_val
-        else:
-            key_ir = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        self.__builder.store(self.__builder.trunc(size.ir_val, i32), extent_ptr)  # type: ignore
+
+        key_ir = word_ir
         data_ir = self.__builder.gep(
             block_base.ir_val,
             [ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)],  # type: ignore
@@ -568,11 +661,10 @@ class LLBuilder:
             source_etype=ir.IntType(8),  # 载荷区按字节偏移索引
         )
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), data_ir)  # type: ignore
-        block_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), block_base.ir_val)  # type: ignore
-        key_val = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+        word_val = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
         size_val = LLValue(self.__type_ctx.u64_id, size.ir_val)  # type: ignore
-        result_val = self.__build_fat(data, block_ptr, key_val, zero, size_val, ptr_type_id)
+        result_val = self.__build_fat(data, word_val, zero, size_val, ptr_type_id)
         self.__func.set_reg(result, result_val)
         return result_val
 
@@ -581,8 +673,33 @@ class LLBuilder:
             return  # freeing a ZST pointer is a no-op
         # 块进入稳定头空闲池,不向 libc 归还。
         if self.__is_fat(ptr):
-            block_base = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
-            self.__builder.call(self.__module.get_pool_release(), [block_base.ir_val])  # type: ignore
+            # 释放: 表项里的 anchor_lo32 + data 高 32 位还原负载锚, -BYTES 得块首
+            # (分配器保证同 4 GiB 窗口); 表项 key +1 使悬垂指针立刻失配, 下标回自由链。
+            i32: ir.IntType = ir.IntType(32)  # type: ignore
+            i64: ir.IntType = ir.IntType(64)  # type: ignore
+            data = self.__extract_fat_field(ptr, IR.FAT_DATA)
+            word = self.__extract_fat_field(ptr, IR.FAT_WORD).ir_val
+            entry = self.__lock_of(self.__builder, word, data.ir_val)
+            anchor_ptr = self.__builder.gep(  # type: ignore
+                entry,
+                [ir.Constant(i64, IR.LockEntry.ANCHOR_OFFSET)],  # type: ignore
+                inbounds=False,
+                source_etype=ir.IntType(8),
+            )
+            anchor = self.__builder.load(anchor_ptr, typ=i32)  # type: ignore
+            payload_int = self.__builder.or_(  # type: ignore
+                self.__builder.and_(  # type: ignore
+                    self.__builder.ptrtoint(data.ir_val, i64),  # type: ignore
+                    ir.Constant(i64, IR.WINDOW_MASK),  # type: ignore
+                ),
+                self.__builder.zext(anchor, i64),  # type: ignore
+            )
+            block = self.__builder.inttoptr(  # type: ignore
+                self.__builder.sub(payload_int, ir.Constant(i64, IR.BlockHeader.BYTES)),  # type: ignore
+                self.__ll_type_ctx.ptr_type,
+            )
+            self.__builder.call(self.__module.get_lock_release(), [word])  # type: ignore
+            self.__builder.call(self.__module.get_pool_release(), [block])  # type: ignore
             return
         i8_ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         if isinstance(self.__type_ctx[ptr.type_id], Type.SliceType):
@@ -600,12 +717,16 @@ class LLBuilder:
         self.__func.set_reg(result, self.__gen_key_value(is_heap))
 
     def acquire_frame_lock(self, key: LLValue, result: str) -> None:
-        """在固定地址的独立影子栈上 push 一个帧锁槽。
+        """在固定地址的独立影子栈上 push 一个帧锁槽, 槽里写帧 word。
 
-        热路径只执行一次深度检查、一次 GEP 和两次 store;无动态
-        分配或空闲链指针追踪。槽位先写新键,再发布新深度,且在任何
-        用户语句之前完成。
+        帧 word = ⟨KIND_FRAME | id:42 | depth:20⟩: id 来自帧键(全局单调计数器),
+        depth 是槽位下标。节点结果是该 word(指针携带的就是它); 槽地址记在
+        __frame_lock_slot_name 里供返回路径写 SENTINEL。热路径只有一次深度检查、
+        一次 GEP 与两次 store; 槽位先写 word, 再发布新深度, 且在任何用户语句之前完成。
         """
+        if key is None:
+            # 帧锁节点可能先于它的 GenKey 被翻译(两者都插在入口), 这里就地取键。
+            key = self.__gen_key_value(False)
         depth_ptr = self.__module.get_frame_lock_depth()
         depth = self.__builder.load(depth_ptr, name="frame.depth")  # type: ignore
         available = self.__builder.icmp_unsigned(
@@ -616,22 +737,33 @@ class LLBuilder:
         self.__emit_check(
             LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "framecap"
         )
-        arena = self.__module.get_frame_lock_arena()
+        arena = self.__module.get_lock_table()
         slot = self.__builder.gep(  # type: ignore
             arena,
             [ir.Constant(ir.IntType(64), 0), depth],  # type: ignore
             inbounds=True,
             name="frame.lock",
         )
-        self.__builder.store(key.ir_val, slot)  # type: ignore
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
+        frame_key = self.__builder.and_(key.ir_val, ir.Constant(i64, IR.KEY_MASK))  # type: ignore
+        # word = ⟨key:32 | lock:32⟩, lock = 影子栈深度(锁表下标)
+        frame_word = self.__builder.or_(  # type: ignore
+            self.__builder.shl(frame_key, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
+            depth,
+        )
+        frame_key64 = frame_key
+        self.__builder.store(frame_key64, slot)  # type: ignore
         next_depth = self.__builder.add(  # type: ignore
             depth, ir.Constant(ir.IntType(64), 1), name="frame.depth.next"  # type: ignore
         )
         self.__builder.store(next_depth, depth_ptr)  # type: ignore
+        # 槽地址登记为函数级寄存器: 返回路径用它写 SENTINEL(节点结果是帧 word, 不是槽)。
         self.__func.set_reg(
-            result,
+            "frame.slot",
             LLValue(self.__type_ctx.alloc_pointer(TypeCtx.u64_id), slot),
         )
+        self.__frame_lock_slot_name = "frame.slot"
+        self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, frame_word))
 
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
         """μ⟨lock_ptr⟩ := value(SENTINEL / 3.7.1 帧锁写键)。
@@ -654,9 +786,9 @@ class LLBuilder:
             size = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
             self.__emit_check(self.__check_in_bounds_cond(index, size), RuntimeErrorCode.S002, "safe")
             return
-        lock, key, index, size = self.__extract_check_fields(ptr)
+        data, word, index, size = self.__extract_check_fields(ptr)
         in_bounds = self.__check_in_bounds_cond(index, size)
-        cond = self.__check_live_and(lock, key, in_bounds.ir_val)
+        cond = self.__check_live_and(word, data, in_bounds.ir_val)
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "safe")
 
     def check_view_access(self, view: LLValue, live: bool = True) -> None:
@@ -668,11 +800,11 @@ class LLBuilder:
             return
 
         data = self.__extract_fat_field(view, IR.SLICE_DATA).ir_val
-        lock = self.__extract_fat_field(view, IR.SLICE_LOCK_PTR).ir_val
-        key = self.__extract_fat_field(view, IR.SLICE_KEY).ir_val
+        word = self.__extract_fat_field(view, IR.SLICE_WORD).ir_val
         size = self.__extract_fat_field(view, IR.SLICE_SIZE).ir_val
+        lock = self.__lock_of(self.__builder, word, data)
         if live:
-            live_ok = self.__check_live(lock, key)
+            live_ok = self.__check_live(word, data)
         else:
             # 帧内视图:锁槽恒等于其键,live 项恒真(见 check_safe_access)。
             live_ok = LLValue(self.__type_ctx.bool_id, ir.Constant(ir.IntType(1), 1))  # type: ignore
@@ -689,17 +821,35 @@ class LLBuilder:
         # Heap views can be checked against the allocation header. Stack and
         # literal views have no allocation header; their constructors establish
         # the source range and the live lock protects their lifetime.
-        heap_flag = self.__builder.and_(  # type: ignore
-            key, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000)  # type: ignore
+        # 变体 B: kind 由锁表下标区间给出(堆区间 ≥ HEAP_LOCK_BASE); 负载锚由表项
+        # anchor_lo32 + data 高 32 位还原, 块首 = 锚 - BYTES(分配器保证同 4 GiB 窗口)。
+        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), IR.LOCK_MASK))  # type: ignore
+        heap = self.__builder.icmp_unsigned(  # type: ignore
+            ">=", index, ir.Constant(ir.IntType(64), IR.HEAP_LOCK_BASE)  # type: ignore
         )
-        heap = self.__builder.icmp_unsigned("!=", heap_flag, zero)  # type: ignore
         header_guard: ir.Value = self.__builder.and_(heap, live_ok.ir_val)  # type: ignore
-        active_size = self.__load_active_size(lock, header_guard)
+        anchor = self.__load_anchor(lock, header_guard)
+        payload_int = self.__builder.or_(  # type: ignore
+            self.__builder.and_(  # type: ignore
+                self.__builder.ptrtoint(data, ir.IntType(64)),  # type: ignore
+                ir.Constant(ir.IntType(64), IR.WINDOW_MASK),  # type: ignore
+            ),
+            anchor,
+        )
+        block_int = self.__builder.inttoptr(  # type: ignore
+            self.__builder.sub(payload_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)),  # type: ignore
+            self.__ll_type_ctx.ptr_type,
+        )
+        active_size = self.__load_active_size(block_int, header_guard)
 
         element_type = view_type.element_type if isinstance(view_type, Type.SliceType) else self.__type_ctx.u8_id
         element_size = self.__ll_type_ctx.get_type_size(element_type)
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         span_bytes, span_no_wrap = self.__mul_u64_i128(size, element_size)
+        # 块头 extent 是元素数: 按同一个元素大小折算成字节再比较。
+        active_size_bytes = self.__builder.mul(  # type: ignore
+            active_size, ir.Constant(ir.IntType(64), element_size)  # type: ignore
+        )
         data_addr = cast(
             ir.Value,
             self.__builder.zext(  # type: ignore
@@ -707,16 +857,13 @@ class LLBuilder:
             ),
         )
         base_addr, base_no_wrap = self.__add_i128_no_wrap(
-            cast(
-                ir.Value,
-                self.__builder.zext(self.__builder.ptrtoint(lock, ir.IntType(64)), i128),  # type: ignore
-            ),
-            ir.Constant(i128, IR.BlockHeader.BYTES),  # type: ignore
+            cast(ir.Value, self.__builder.zext(payload_int, i128)),  # type: ignore
+            ir.Constant(i128, 0),  # type: ignore
         )
         end_addr, end_no_wrap = self.__add_i128_no_wrap(data_addr, span_bytes)
         allocation_end, allocation_end_no_wrap = self.__add_i128_no_wrap(
             base_addr,
-            cast(ir.Value, self.__builder.zext(active_size, i128)),  # type: ignore
+            cast(ir.Value, self.__builder.zext(active_size_bytes, i128)),  # type: ignore
         )
         heap_span_ok = self.__builder.and_(  # type: ignore
             self.__builder.and_(  # type: ignore
@@ -762,9 +909,9 @@ class LLBuilder:
         """
         if not self.__is_fat(ptr):
             return
-        lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
-        key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
-        cond = self.__check_live(lock_ptr, key)
+        data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
+        word = self.__extract_fat_field(ptr, IR.FAT_WORD).ir_val
+        cond = self.__check_live(word, data)
         self.__emit_check(cond, RuntimeErrorCode.S003, "ref")
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
@@ -824,9 +971,9 @@ class LLBuilder:
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
         # live 部分:锁槽键比较,含 null 短路(帧内 elem 恒真时不再发射)
         if live:
-            lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
-            key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
-            live_ok = self.__check_live(lock, key)
+            ev_data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
+            ev_word = self.__extract_fat_field(ptr, IR.FAT_WORD).ir_val
+            live_ok = self.__check_live(ev_word, ev_data)
             cond: ir.Value = self.__builder.and_(self.__builder.and_(elarith_cond, ib_cond), live_ok.ir_val)  # type: ignore
         else:
             cond = self.__builder.and_(elarith_cond, ib_cond)  # type: ignore
@@ -891,30 +1038,36 @@ class LLBuilder:
         if not isinstance(ptr_type, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
             return
         data = self.__extract_fat_field(ptr, IR.FAT_DATA).ir_val
-        key = self.__extract_fat_field(ptr, IR.FAT_KEY).ir_val
-        flag = self.__builder.and_(key, ir.Constant(ir.IntType(64), 0x8000_0000_0000_0000))  # type: ignore
-        heap_ok = self.__builder.icmp_signed("!=", flag, ir.Constant(ir.IntType(64), 0))  # type: ignore
-        lock = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR).ir_val
-        lock_int = self.__builder.ptrtoint(lock, ir.IntType(64))  # type: ignore
-        data_int = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
-        i128: ir.IntType = ir.IntType(128)  # type: ignore
-        lock_addr = self.__builder.zext(lock_int, i128)  # type: ignore
-        data_addr = self.__builder.zext(data_int, i128)  # type: ignore
-        expected_addr, header_no_wrap = self.__add_i128_no_wrap(
-            lock_addr, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
+        word = self.__extract_fat_field(ptr, IR.FAT_WORD).ir_val
+        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), IR.LOCK_MASK))  # type: ignore
+        heap_ok = self.__builder.icmp_unsigned(  # type: ignore
+            ">=", index, ir.Constant(ir.IntType(64), IR.HEAP_LOCK_BASE)  # type: ignore
         )
-        raw_data_ok = self.__builder.and_(  # type: ignore
-            header_no_wrap,
-            self.__builder.icmp_unsigned("==", data_addr, expected_addr),  # type: ignore
+        lock = self.__lock_of(self.__builder, word, data)
+        live_ok = self.__check_live(word, data)
+        header_guard: ir.Value = self.__builder.and_(heap_ok, live_ok.ir_val)  # type: ignore
+        # 锚点判定: 表项 anchor_lo32 必须等于 data 低 32 位(重锚定指针立刻被拒)。
+        anchor = self.__load_anchor(lock, header_guard)
+        data_int = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
+        raw_data_ok = self.__builder.icmp_unsigned(  # type: ignore
+            "==",
+            self.__builder.and_(data_int, ir.Constant(ir.IntType(64), IR.LOCK_MASK)),  # type: ignore
+            anchor,
         )
         raw_cond: ir.Value = cast(ir.Value, raw_data_ok)
         if isinstance(ptr_type, Type.PointerType):
-            index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
-            raw_index_ok = self.__builder.icmp_signed("==", index, ir.Constant(ir.IntType(64), 0))  # type: ignore
+            ptr_index = self.__extract_fat_field(ptr, IR.FAT_INDEX).ir_val
+            raw_index_ok = self.__builder.icmp_signed("==", ptr_index, ir.Constant(ir.IntType(64), 0))  # type: ignore
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
-        live_ok = self.__check_live(lock, key)
-        header_guard: ir.Value = self.__builder.and_(heap_ok, live_ok.ir_val)  # type: ignore
-        active_size = self.__load_active_size(lock, header_guard)
+        payload_int = self.__builder.or_(  # type: ignore
+            self.__builder.and_(data_int, ir.Constant(ir.IntType(64), IR.WINDOW_MASK)),  # type: ignore
+            anchor,
+        )
+        block_int = self.__builder.inttoptr(  # type: ignore
+            self.__builder.sub(payload_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)),  # type: ignore
+            self.__ll_type_ctx.ptr_type,
+        )
+        active_size = self.__load_active_size(block_int, header_guard)
         extent_ok = self.__delete_extent_ok(ptr, ptr_type, active_size)
         cond: ir.Value = self.__builder.and_(
             header_guard,
@@ -922,20 +1075,40 @@ class LLBuilder:
         )  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S006, "del")
 
-    def __load_active_size(self, lock: ir.Value, guard: ir.Value) -> ir.Value:
-        """Load the current logical payload size from a guarded heap header."""
+    def __load_active_size(self, block: ir.Value, guard: ir.Value) -> ir.Value:
+        """Load the current logical payload extent (元素数) from a guarded block header.
+
+        块头里存元素数(u32); 调用方按指针元素大小折算字节再与视图跨度比较。
+        """
         i64: ir.IntType = ir.IntType(64)  # type: ignore
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
 
         def load_header(builder: ir.IRBuilder) -> ir.Value:
             field = builder.gep(  # type: ignore
-                lock,
-                [ir.Constant(i64, IR.BlockHeader.ACTIVE_SIZE_OFFSET)],  # type: ignore
+                block,
+                [ir.Constant(i64, IR.BlockHeader.EXTENT_OFFSET)],  # type: ignore
                 inbounds=False,
                 source_etype=ir.IntType(8),  # 块头按字节偏移索引
             )
-            return builder.load(field, typ=i64)  # type: ignore
+            return builder.zext(builder.load(field, typ=i32), i64)  # type: ignore
 
         return self.__emit_guarded(guard, load_header, ir.IntType(64))  # type: ignore
+
+    def __load_anchor(self, entry: ir.Value, guard: ir.Value) -> ir.Value:
+        """Load the payload-anchor low 32 bits from a guarded lock-table entry."""
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
+        i32: ir.IntType = ir.IntType(32)  # type: ignore
+
+        def load_anchor(builder: ir.IRBuilder) -> ir.Value:
+            field = builder.gep(  # type: ignore
+                entry,
+                [ir.Constant(i64, IR.LockEntry.ANCHOR_OFFSET)],  # type: ignore
+                inbounds=False,
+                source_etype=ir.IntType(8),
+            )
+            return builder.zext(builder.load(field, typ=i32), i64)  # type: ignore
+
+        return self.__emit_guarded(guard, load_anchor, ir.IntType(64))  # type: ignore
 
     def __delete_extent_ok(
         self,
@@ -957,7 +1130,10 @@ class LLBuilder:
 
         element_size = self.__ll_type_ctx.get_type_size(element_type)
         logical_bytes, logical_no_wrap = self.__mul_u64_i128(count, element_size)
-        active_bytes = self.__builder.zext(active_size, i128)  # type: ignore
+        active_bytes = self.__builder.zext(  # type: ignore
+            self.__builder.mul(active_size, ir.Constant(ir.IntType(64), element_size)),  # type: ignore
+            i128,
+        )
         return cast(
             ir.Value,
             self.__builder.and_(  # type: ignore
@@ -1082,11 +1258,10 @@ class LLBuilder:
             else:
                 # RefType(3 字段)/SliceType(4 字段):FAT_INDEX/FAT_SIZE 越界或语义错——
                 # 保留 undef 重建路径(字段数由 __build_fat 类型分派)
-                lock = self.__extract_fat_field(base, IR.FAT_LOCK_PTR)
-                key = self.__extract_fat_field(base, IR.FAT_KEY)
+                word = self.__extract_fat_field(base, IR.FAT_WORD)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                 one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-                result_val = self.__build_fat(field_ptr, lock, key, zero, one, result_type_id)
+                result_val = self.__build_fat(field_ptr, word, zero, one, result_type_id)
         else:
             idx_vals = [self.i32(i).ir_val for i in indices]
             base_source = source_ll if base.ir_val.type.is_opaque else None  # type: ignore
@@ -1270,15 +1445,19 @@ class LLBuilder:
                 empty_length = isinstance(length_ty, Type.LiteralValueType) and length_ty.value == 0
             if empty_array_type is not None and empty_length and isinstance(dst, Type.PointerType) \
                     and not self.__type_ctx.is_zst(dst.pointee_type):
-                lock_ir, key_ir = self.__lit_lock_pair()
+                lit_slot = self.__builder.gep(  # type: ignore
+                    self.__module.get_lock_table(),
+                    [ir.Constant(ir.IntType(64), 0), ir.Constant(ir.IntType(64), IR.LITERAL_LOCK_INDEX)],  # type: ignore
+                    inbounds=True,
+                )
                 if self.__raw_pointers or raw:
-                    ir_val = self.__bitcast(lock_ir, dest_ll_type)  # type: ignore
+                    lit_slot_ir = self.__builder.bitcast(lit_slot, ir.PointerType(ir.IntType(8)))  # type: ignore
+                    ir_val = self.__bitcast(lit_slot_ir, dest_ll_type)  # type: ignore
                 else:
-                    data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-                    lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-                    key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+                    data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lit_slot)  # type: ignore
+                    word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
                     zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                    ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
+                    ir_val = self.__build_fat(data, word, zero, zero, to_type).ir_val
             else:
                 # Other ZST conversions remain erased; there is no addressable
                 # object or metadata to preserve for them.
@@ -1329,14 +1508,13 @@ class LLBuilder:
                     if arr_ty.element_type == dst.pointee_type:
                         eff = self.__fat_addr(value, src.pointee_type)
                         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), eff.ir_val)  # type: ignore
-                        lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
-                        key = self.__extract_fat_field(value, IR.FAT_KEY)
+                        word = self.__extract_fat_field(value, IR.FAT_WORD)
                         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                         len_ty = self.__type_ctx[arr_ty.length]
                         assert isinstance(len_ty, Type.LiteralValueType)
                         self.__check_static_view_count(len_ty.value)
                         size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
-                        ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+                        ir_val = self.__build_fat(data, word, zero, size, to_type).ir_val
                     else:
                         ir_val = value.ir_val
                 else:
@@ -1352,15 +1530,13 @@ class LLBuilder:
                 arr_ty = self.__type_ctx[src.pointee_type]
                 assert isinstance(arr_ty, Type.ArrayType)
                 if arr_ty.element_type == dst.pointee_type:
-                    lock_ir, key_ir = self.__lit_lock_pair()
                     data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), value.ir_val)  # type: ignore
-                    lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-                    key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+                    word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
                     zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                     len_ty = self.__type_ctx[arr_ty.length]
                     assert isinstance(len_ty, Type.LiteralValueType)
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
-                    ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+                    ir_val = self.__build_fat(data, word, zero, size, to_type).ir_val
                 else:
                     ir_val = self.__bitcast(value.ir_val, dest_ll_type)  # type: ignore
             else:
@@ -1382,10 +1558,9 @@ class LLBuilder:
             elif self.__is_fat(value):
                 eff = self.__fat_addr(value, src.pointee_type)
                 data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), eff.ir_val)  # type: ignore
-                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
-                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                word = self.__extract_fat_field(value, IR.FAT_WORD)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
+                ir_val = self.__build_fat(data, word, zero, zero, to_type).ir_val
             else:
                 ir_val = value.ir_val
         elif isinstance(src, Type.RefType) and isinstance(dst, Type.PointerType):
@@ -1402,8 +1577,7 @@ class LLBuilder:
                     ir_val = value.ir_val
             elif self.__is_fat(value):
                 data = self.__extract_fat_field(value, IR.FAT_DATA)
-                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
-                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                word = self.__extract_fat_field(value, IR.FAT_WORD)
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                 src_pointee = self.__type_ctx[src.pointee_type]
                 if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
@@ -1413,7 +1587,7 @@ class LLBuilder:
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
                 else:
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
+                ir_val = self.__build_fat(data, word, zero, size, to_type).ir_val
             else:
                 ir_val = value.ir_val
         elif isinstance(src, Type.PointerType) and isinstance(dst, Type.SliceType):
@@ -1428,8 +1602,7 @@ class LLBuilder:
                 ir_val = slice_val.ir_val
             else:
                 data = self.__fat_addr(value, src.pointee_type)
-                lock = self.__extract_fat_field(value, IR.FAT_LOCK_PTR)
-                key = self.__extract_fat_field(value, IR.FAT_KEY)
+                word = self.__extract_fat_field(value, IR.FAT_WORD)
                 size = self.__extract_fat_field(value, IR.FAT_SIZE)
                 index = self.__extract_fat_field(value, IR.FAT_INDEX)
                 remaining = LLValue(
@@ -1437,7 +1610,7 @@ class LLBuilder:
                     self.__builder.sub(size.ir_val, index.ir_val),  # type: ignore
                 )
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, remaining, to_type).ir_val
+                ir_val = self.__build_fat(data, word, zero, remaining, to_type).ir_val
         elif isinstance(src, Type.SliceType) and isinstance(dst, Type.RefType):
             # T[] → T&: 取 4 字段切片 data/lock_ptr/key 合成 3 字段引用(真锁,非 lit lock)。
             if self.__raw_pointers:
@@ -1446,12 +1619,10 @@ class LLBuilder:
             else:
                 data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
                                self.__builder.extract_value(value.ir_val, IR.FAT_DATA))  # type: ignore
-                lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                               self.__builder.extract_value(value.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
-                key = LLValue(self.__type_ctx.u64_id,
-                              self.__builder.extract_value(value.ir_val, IR.FAT_KEY))  # type: ignore
+                word = LLValue(self.__type_ctx.u64_id,
+                               self.__builder.extract_value(value.ir_val, IR.FAT_WORD))  # type: ignore
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
-                ir_val = self.__build_fat(data, lock, key, zero, zero, to_type).ir_val
+                ir_val = self.__build_fat(data, word, zero, zero, to_type).ir_val
         else:
             raise ValueError(f"Unsupported cast: {type(src).__name__} → {type(dst).__name__}")
         result_val = LLValue(to_type, ir_val)  # type: ignore
@@ -1515,9 +1686,11 @@ class LLBuilder:
             result_val = self.__slice_ptr_fat(base, field_type)
             self.__func.set_reg(result, result_val)
             return result_val
-        if isinstance(base_type, (Type.SliceType, Type.StrType)) and index == 3 and self.__raw_pointers:
-            # raw 模式 2 字段 {data, size}:语义下标 3(size)映射到 LLVM 字段 1。
-            result_val = LLValue(field_type, self.__builder.extract_value(base.ir_val, 1))  # type: ignore
+        if isinstance(base_type, (Type.SliceType, Type.StrType)) and index == 3:
+            # 语义下标 3 = size:胖模式 3 字段 {data, word, size} → LLVM 字段 2,
+            # raw 模式 2 字段 {data, size} → LLVM 字段 1。
+            mapped = 1 if self.__raw_pointers else IR.SLICE_SIZE
+            result_val = LLValue(field_type, self.__builder.extract_value(base.ir_val, mapped))  # type: ignore
             self.__func.set_reg(result, result_val)
             return result_val
         ir_val = self.__builder.extract_value(base.ir_val, index)  # type: ignore
@@ -1532,23 +1705,16 @@ class LLBuilder:
         (锁继承)——这是 T[]→T* 派生的锁继承来源。
         """
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                       self.__builder.extract_value(base.ir_val, IR.FAT_DATA))  # type: ignore
-        lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                       self.__builder.extract_value(base.ir_val, IR.FAT_LOCK_PTR))  # type: ignore
-        key = LLValue(self.__type_ctx.u64_id,
-                      self.__builder.extract_value(base.ir_val, IR.FAT_KEY))  # type: ignore
+                       self.__builder.extract_value(base.ir_val, IR.SLICE_DATA))  # type: ignore
+        word = LLValue(self.__type_ctx.u64_id,
+                       self.__builder.extract_value(base.ir_val, IR.SLICE_WORD))  # type: ignore
         size = LLValue(self.__type_ctx.u64_id,
                        self.__builder.extract_value(base.ir_val, IR.SLICE_SIZE))  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
         # 长度进入 32 位 size 字段, 但不在这里检查: 视图长度都来自某个分配的容量,
         # 而分配元素数已在 malloc 处校验 ≤ MAX_VIEW_COUNT, 因此这里必然可表示。
-        return self.__build_fat(data, lock, key, zero, size, ptr_type_id)
+        return self.__build_fat(data, word, zero, size, ptr_type_id)
 
-    def __lit_lock_pair(self) -> tuple[ir.Value, ir.Value]:
-        """字面量锁槽 ⟨&__yian_lit_lock, 1⟩(i8*, u64)。"""
-        lit_lock = self.__module.get_lit_lock()
-        lock_ir = lit_lock
-        return lock_ir, ir.Constant(ir.IntType(64), 1)  # type: ignore
 
     def insert_value(self, agg: LLValue, value: LLValue, index: int) -> LLValue:
         ir_val = self.__builder.insert_value(agg.ir_val, value.ir_val, index)  # type: ignore
@@ -1606,14 +1772,12 @@ class LLBuilder:
         {T*, u64} 形态聚合(SliceStruct 等)时补全元数据。锁用全局字面量锁槽
         (恒 live)——合成点常在薄包装内,帧锁会随返回失效并逃逸到调用者死栈帧。
         """
-        lock_ir, key_ir = self.__lit_lock_pair()
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), value.ir_val)  # type: ignore
-        lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
-        key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
+        word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
         if not self.__raw_pointers:
             self.__check_view_count(size, "vcap")
-        return self.__build_fat(data, lock, key, zero, size, value.type_id)
+        return self.__build_fat(data, word, zero, size, value.type_id)
 
     def __build_aggregate(self, type_id: int, field_values: list[LLValue]) -> LLValue:
         """Build an aggregate value by inserting each field value at its index."""
@@ -1635,11 +1799,10 @@ class LLBuilder:
                 val = self.insert_value(val, field_values[1], 1)
                 return val
             data = LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir)  # type: ignore
-            lock = self.__extract_fat_field(field_values[0], IR.FAT_LOCK_PTR)
-            key = self.__extract_fat_field(field_values[0], IR.FAT_KEY)
+            word = self.__extract_fat_field(field_values[0], IR.FAT_WORD)
             # 切片 size 是 64 位, 不截断; 长度都来自分配容量, 而分配元素数已在
             # malloc 处校验 ≤ MAX_VIEW_COUNT, 因此进入 32 位指针字段时必然可表示。
-            return self.__build_fat(data, lock, key, self.i64(0), field_values[1], type_id)
+            return self.__build_fat(data, word, self.i64(0), field_values[1], type_id)
         # 全常量聚合 → 单一定值(ir.Constant),免 undef + N×insertvalue 链。
         # 条件:① 无 ZST 字段(其 {} 槽位常量需逐槽构造,保持原路径);② 无
         # {T*,u64} 形态合成(合成点是运行时位型重构,恒非常量)。
@@ -1842,8 +2005,8 @@ class LLBuilder:
         bytes_read = self.__call_intrinsic(IntrinsicKind.Read, [
             fd, buf_ptr, buf_len,
         ])
-        # construct str:4 字段 {data, lock_ptr, key, size}(raw 2 字段 {data, size});
-        # 正常模式 lock/key 继承自输入缓冲区 buf(继承锁元数据)。
+        # construct str:胖 3 字段 {data, word, size}(raw 2 字段 {data, size});
+        # 正常模式锁元数据(整字)继承自输入缓冲区 buf。
         str_ll_type = self.__ll_type_ctx.get_ll_type(self.__type_ctx.str_id).ir_type
         undef = ir.Constant(str_ll_type, ir.Undefined)  # type: ignore
         ir_val = self.__builder.insert_value(undef, buf_ptr.ir_val, 0)  # type: ignore
@@ -1851,8 +2014,7 @@ class LLBuilder:
             ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 1)  # type: ignore
         else:
             ir_val = self.__builder.insert_value(ir_val, self.__extract_value_raw(buf, 1).ir_val, 1)  # type: ignore
-            ir_val = self.__builder.insert_value(ir_val, self.__extract_value_raw(buf, 2).ir_val, 2)  # type: ignore
-            ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 3)  # type: ignore
+            ir_val = self.__builder.insert_value(ir_val, bytes_read.ir_val, 2)  # type: ignore
         self.__func.set_reg(result, LLValue(self.__type_ctx.str_id, ir_val))  # type: ignore
 
     def open(self, path: LLValue, flags: LLValue, result: str) -> None:
@@ -1918,12 +2080,9 @@ class LLBuilder:
             value = self.insert_value(value, ptr, 0)
             value = self.insert_value(value, length, 1)
         else:
-            lock_ir = self.__module.get_env_lock().bitcast(ir.PointerType(ir.IntType(8)))  # type: ignore
-            lock = LLValue(ptr_type_id, lock_ir)  # type: ignore[arg-type]
             value = self.__build_fat(
                 ptr,
-                lock,
-                self.i64(1),
+                LLValue(self.__type_ctx.u64_id, self.__env_word()),  # type: ignore
                 self.i64(0),
                 length,
                 slice_type_id,
@@ -1940,9 +2099,13 @@ class LLBuilder:
     # ------------------------------------------------------------------
 
     def set_frame_lock(self, e_f: IR.Value) -> None:
-        """标记函数已取得帧锁:全部返回路径写 SENTINEL 并 pop。"""
-        assert isinstance(e_f, IR.Reg), "帧锁槽地址 e_f 必须为入口寄存器"
-        self.__frame_lock_slot_name = e_f.name
+        """标记函数已取得帧锁:全部返回路径写 SENTINEL 并 pop。
+
+        帧 word 由 acquire_frame_lock 记在 __frame_lock_slot_name(槽地址)里;
+        这里只确认"已取得", 参数是帧 word(不是槽地址), 因此不再记录它。
+        """
+        assert isinstance(e_f, IR.Reg), "帧锁必须为入口寄存器"
+        self.__frame_lock_acquired = True
 
     def __release_frame_lock(self) -> None:
         """帧退出写 SENTINEL,再从稳定影子栈 pop。
@@ -1951,7 +2114,7 @@ class LLBuilder:
         任何用户步之前写入新键。编译器生成的函数进退严格 LIFO,
         因此退出仅需递减深度,无需空闲链或动态槽位检索。
         """
-        if self.__frame_lock_slot_name is None:
+        if not self.__frame_lock_acquired or self.__frame_lock_slot_name is None:
             return
         slot = self.__func.reg(self.__frame_lock_slot_name)
         self.write_lock_slot(slot, self.i64(IR.SENTINEL))
@@ -2131,11 +2294,11 @@ class LLBuilder:
         if isinstance(v.type, ir.LiteralStructType):  # type: ignore
             field_count = len(v.type.elements)  # type: ignore
             if field_count >= 4:
-                second_idx = IR.FAT_INDEX
+                second_idx = IR.FAT_INDEX      # 胖指针: 比较 (data, index)
             elif field_count == 3:
-                second_idx = IR.REF_KEY
+                second_idx = IR.SLICE_SIZE     # 切片: 比较 (data, size)
             else:
-                second_idx = 1
+                second_idx = IR.REF_WORD       # 引用: 比较 (data, word)
             second = self.__builder.extract_value(v, second_idx)  # type: ignore
             if isinstance(second.type, ir.IntType) and second.type.width < 64:  # type: ignore
                 second = self.__builder.zext(second, ir.IntType(64))  # type: ignore

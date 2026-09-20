@@ -442,6 +442,54 @@ extent）、`delete` 还原块首时漏减 `BYTES`、切片语义下标 3 未折
   验收口径（单项不得越出噪声带），B 不通过；它要成立需要先去掉"每次检查一次表 load"，
   那是另一个设计（例如把锁槽留在块头、只把身份放进表，或降低检查频次），不是这一版。
 
+**B 最小修复重测（第 9 轮：三处修复后 B 反超 B1）**
+
+根因（callgrind + 反汇编 + 优化 IR）：B 的失败不是"多几条 ALU"，而是**表示改动把优化器的
+折叠/提升/内联/向量化整条链掐断**——
+
+- B1 里锁槽与负载是**同一个分配的两个常量偏移**（`block` 与 `block+16`），BasicAA 能证明不别名，
+  刚分配后的 `live` 检查被 store-to-load 折叠、批量初始化得以向量化（`movups`）；B 的锁槽在
+  **全局数组**里，payload store 与它"可能别名" → 循环里的锁表 load 既不能提升也不能折叠。
+- 未修复 B 的 `grow_free`：4 KiB 归零退化成"每字节一次 `cmp` 锁表 + 一次 `movb`"的循环
+  （4 条 × 4096 字节 × 163,840 块 = 3.35e9 条 = 该基准总指令的 98%；B1 是 16 字节向量存储）；
+- 未修复 B 的 `copy_struct`：`index` 辅助被调用 2.05e8 次、每次 39 条 = 8.0e9 条（占总指令一半），
+  B1 里它被内联消除（总指令 2.98e9）。
+
+三处修复（全部落地）：
+
+1. **锁表发放内联化**：malloc 的快路径改在发射的 IR 里做（自由链非空 → 弹出下标、把新链头写回
+   全局；`key+1`、写 anchor、组装 word 也全在 IR 里），只有自由链为空才调 `__secl_lock_bump_take`。
+2. **刚分配内存的检查在编译器侧消失**：`cfg/builder.py` 新增 `__live_known`，`__resolve_dyn_buffer`
+   在填充循环期间登记缓冲出处，`__build_load/__build_store` 与帧锁同等对待（只跳过 live 项，
+   in_bounds 照常）。这是关键修复——它让 LLVM 不必再做跨全局数组的别名推理。
+3. **索引辅助强制内联**：`module.declare` 对 `index.*` 辅助加 `alwaysinline`（B 下它变胖后掉出
+   内联阈值，每个元素多一次跨函数调用）。
+
+第 3 项曾评估为"别名约束"（alias scope / TBAA），结论是**不做**：残余回退里 `churn_*` 是每次访问
+一个新指针（load 不是循环不变的，alias 约束帮不上），`copy_struct` 是辅助函数体积问题（已由
+强制内联解决），因此 alias 元数据既不是主因、又有静默误编译风险。
+
+**修复后实测（min-of-5，pin=4；基线 = B1 的 `1a89010` 记录）**
+
+full 集合（fat，负 = 更快）：`list` **−51.4%**、`deltablue` **−25.3%**、`copy_struct` **−22.7%**、
+`havlak` **−19.9%**、`json` **−18.8%**、`storage` −12.1%、`richards` −9.0%、`queen` −8.0%、
+`sieve` −7.4%、`bounce` −4.8%、`binarytree` −3.6%、`permute` −3.2%、其余（`mand`/`fann`/`nbody`/
+`cd`/`fasta`/`revcomp`/`spectralnorm`）在 ±1.5% 内。
+**仍偏慢的三项**：`towers` +8.6%、`chase` +10.6%、`churn_single` +14.3%（都是"对象小、检查/分配
+密集"的形态：表项那条 cache line 与每次分配的发放账压过了指针小 8 B 的收益）。
+alloc：`churn_mixed` **−33.2%**、`grow_varied` −1.4%、`grow_free` +1.9%、`churn_single` +14.3%。
+raw 对照多数在 ±3%（`list` +8.7%、`revcomp` +5.9%、`sieve`/`storage`/`binarytree` +4% 是布局噪声，
+对应项读数打折看）。
+
+门槛：三套件 756/156/99 全绿（fat+raw）、`runtime/build.py --check --asan` 通过（ASan 自测里
+"panic writes prefix…" 偶发失败一次，重跑 3/3 通过，属既有 flaky，与本次改动无关）。
+
+**结论：保留 B（用户裁定）。** 按 §4.4"单项不得越出噪声带"的严格口径，`towers` +8.6%、
+`chase` +10.6%、`churn_single` +14.3% 三项越界；但 19/22 项 ≤ B1、中位数约 −3%、最大项 −51%，
+与"未修复 B"的 2~6× 退化是两个量级，因此保留 B 并把这三项列为已知回退（都是"对象小、
+检查/分配密集"形态：表项那条 cache line 加每次分配的发放账压过指针小 8 B 的收益）。
+§3.6 的 16 B 头版本与变体 A 仍然否决，最终采用本节（变体 B + 三处修复）。
+
 **测量**：两条各做一次原子改动，用同一套 micro / ptr / full + alloc 记录，与 B1 基线（`1a89010` 留档）
 对比；赢的保留、输的回退，并在本节记录数据与结论。
 

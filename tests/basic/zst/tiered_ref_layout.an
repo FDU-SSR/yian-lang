@@ -23,6 +23,6 @@ fn main() {
     let empty_returned: Empty& = pass_empty(empty_ref);
     assert @sizeof(Empty&) == 0: "ZST T& layout";
 
-    let expected_ref_size: u64 = comptime if IS_RAW_MODE { 8u64 } else { 24u64 };
+    let expected_ref_size: u64 = comptime if IS_RAW_MODE { 8u64 } else { 16u64 };
     assert @sizeof(Value&) == expected_ref_size: "T& ABI layout";
 }

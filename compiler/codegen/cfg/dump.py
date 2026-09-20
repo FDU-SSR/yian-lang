@@ -37,7 +37,7 @@ def dump(func: IR.Function) -> str:
 # pylint: disable=too-many-return-statements
 def __dump_stmt(stmt: IR.Stmt) -> str:
     match stmt:
-        case IR.VarPtr(result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f, raw=raw):
+        case IR.VarPtr(result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f, raw=raw):
             if e_f is None:
                 frame = "⟨-, -⟩"
             else:

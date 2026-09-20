@@ -26,51 +26,82 @@ from compiler.runtime_error import RuntimeErrorCode
 # ---------------------------------------------------------------------------
 from compiler.codegen.cfg.lockmech import (
     BlockHeader,
+    LockEntry,
+    WORD_LOCK_SHIFT,
+    LOCK_BITS,
+    LOCK_MASK,
+    WORD_KEY_SHIFT,
+    KEY_BITS,
+    KEY_MASK,
+    FRAME_KEY_LIMIT,
+    WINDOW_MASK,
+    FRAME_LOCK_SLOTS,
+    LITERAL_LOCK_INDEX,
+    ENV_LOCK_INDEX,
+    HEAP_LOCK_BASE,
+    LOCK_ENTRY_BYTES,
+    LOCK_TABLE_SLOTS,
+    LITERAL_KEY,
+    ENV_KEY,
+    LITERAL_WORD,
+    ENV_WORD,
     FAT_DATA,
+    FAT_WORD,
     FAT_INDEX,
-    FAT_KEY,
-    FAT_LOCK_PTR,
     FAT_SIZE,
+    SLICE_DATA,
+    SLICE_WORD,
+    SLICE_SIZE,
+    REF_DATA,
+    REF_WORD,
     FrameLock,
     FrameLockArena,
     KeyGen,
     MAX_HEAP_BODY,
     MAX_STACK_BODY,
     MAX_VIEW_COUNT,
-    REF_DATA,
-    REF_KEY,
-    REF_LOCK_PTR,
-    SLICE_DATA,
-    SLICE_KEY,
-    SLICE_LOCK_PTR,
-    SLICE_SIZE,
     SENTINEL,
     is_heap,
     is_raw,
     live,
 )
-
 __all__ = [
     "BlockHeader",
+    "ENV_KEY",
+    "ENV_LOCK_INDEX",
+    "ENV_WORD",
     "FAT_DATA",
     "FAT_INDEX",
-    "FAT_KEY",
-    "FAT_LOCK_PTR",
     "FAT_SIZE",
+    "FAT_WORD",
+    "FRAME_KEY_LIMIT",
+    "FRAME_LOCK_SLOTS",
     "FrameLock",
     "FrameLockArena",
+    "HEAP_LOCK_BASE",
+    "KEY_BITS",
+    "KEY_MASK",
     "KeyGen",
+    "LITERAL_KEY",
+    "LITERAL_LOCK_INDEX",
+    "LITERAL_WORD",
+    "LOCK_BITS",
+    "LOCK_ENTRY_BYTES",
+    "LOCK_MASK",
+    "LOCK_TABLE_SLOTS",
+    "LockEntry",
     "MAX_HEAP_BODY",
     "MAX_STACK_BODY",
     "MAX_VIEW_COUNT",
     "REF_DATA",
-    "REF_KEY",
-    "REF_LOCK_PTR",
-    "SLICE_DATA",
-    "SLICE_KEY",
-    "SLICE_LOCK_PTR",
-    "SLICE_SIZE",
+    "REF_WORD",
     "SENTINEL",
+    "SLICE_DATA",
+    "SLICE_SIZE",
+    "SLICE_WORD",
+    "WINDOW_MASK",
+    "WORD_KEY_SHIFT",
+    "WORD_LOCK_SHIFT",
     "is_heap",
     "is_raw",
     "live",
@@ -88,13 +119,13 @@ class VarPtr:
     data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(
     函数入口实体化的寄存器值);index = 0;size = 1(取址总是指向单个元素
     ——标量元素类型 T、数组元素类型 T[m])。
-    raw 模式:无帧锁,frame_lock_ptr/frame_key 均为 None(裸 8B 指针)。
+    raw 模式:无帧锁,frame_word/frame_key 均为 None(裸 8B 指针)。
     """
     result: Reg
     var_ref: VarRef
-    frame_lock_ptr: Value | None  # e_f:独立稳定影子栈的 u64 槽位地址;raw 模式为 None
-    frame_key: Value | None       # k_f:帧键(帧进入 re-key);raw 模式为 None
-    raw: bool = False             # 惰性左值路径:裸取址(未取址左值)仅返回栈地址,不合成 5 字段
+    frame_word: Value | None  # 当前帧的 word(帧进入时实体化);raw 模式为 None
+    frame_key: Value | None   # 兼容字段:帧键, B6 起不再进指针(保留占位)
+    raw: bool = False         # 惰性左值路径:裸取址(未取址左值)仅返回栈地址,不合成胖值
 
 
 @dataclass
@@ -106,7 +137,7 @@ class Alloca:
     """
     result: Reg
     value: Value
-    frame_lock_ptr: Value | None = None
+    frame_word: Value | None = None
     frame_key: Value | None = None
     raw: bool = False
 
@@ -219,10 +250,11 @@ class GenKey:
 
 @dataclass
 class AcquireFrameLock:
-    """从独立稳定影子栈取得当前帧锁槽并写入新键。
+    """从独立稳定影子栈取得当前帧锁槽并写入帧 word。
 
     影子栈深度已达 ``FrameLockArena.SLOTS`` 时报告资源错误并终止。成功后
-    ``result`` 是进程生命期内持续可读的 ``u64*`` 槽位地址。
+    ``result`` 是帧 word(⟨KIND_FRAME | id | depth⟩, 指针携带的整字);
+    槽地址由 LLVM 层记录, 供返回路径写 SENTINEL。
     """
     result: Reg
     key: Value

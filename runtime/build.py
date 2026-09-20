@@ -147,6 +147,7 @@ def check_consistency() -> None:
     for macro, code in (
         ("YIAN_ABI_FAIL_MESSAGE", RuntimeErrorCode.S002),
         ("YIAN_OOM_MESSAGE", RuntimeErrorCode.R002),
+        ("YIAN_METADATA_MESSAGE", RuntimeErrorCode.R003),
     ):
         declared = __macro_bytes(macro)
         expected = runtime_error_message(code)

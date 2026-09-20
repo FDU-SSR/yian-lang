@@ -178,13 +178,14 @@ void __yian_main(void) {
     size_t len = 0;
 
     /* 全局对象初值 */
-    check(__yian_env_lock == YIAN_LITERAL_KEY, "env lock initial key");
-    check(__yian_lit_lock == YIAN_LITERAL_KEY, "literal lock initial key");
-    check(__yian_key_heap == 0, "heap key counter starts at 0");
+    check(__secl_lock_table[YIAN_LITERAL_LOCK_INDEX] == 0, "literal lock slot starts at key 0");
+    check(__secl_lock_table[YIAN_ENV_LOCK_INDEX] == 0, "env lock slot starts at key 0");
     check(__yian_key_stack == 0, "stack key counter starts at 0");
     check(__secl_frame_lock_depth == 0, "frame lock depth starts at 0");
-    check(__secl_frame_locks[0] == 0 && __secl_frame_locks[YIAN_FRAME_LOCK_SLOTS - 1] == 0,
-          "frame lock arena is zero-initialized");
+    check(__secl_lock_table[0] == 0 && __secl_lock_table[YIAN_FRAME_LOCK_SLOTS - 1] == 0,
+          "frame lock slots are zero-initialized");
+    check(__secl_lock_bump == YIAN_HEAP_LOCK_BASE, "heap lock cursor starts after the reserved slots");
+    check(__secl_lock_free_head == 0, "lock free list starts empty");
 
     /* wrapper main 已经把参数写进全局 */
     check(__yian_argc >= 1, "wrapper main stored argc");

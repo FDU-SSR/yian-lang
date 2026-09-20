@@ -375,3 +375,40 @@ uint64_t __secl_pool_payload(const void *block) {
     }
     return ((const LargeHeader *)region)->payload;
 }
+
+/* ── 锁表 (变体 B) ──
+ *
+ * 表项 = {key:u32 @0, anchor_lo32:u32 @4}. 帧段与字面量/环境槽由编译器/运行期直接使用;
+ * 堆段由这里发放: 空闲表项把"下一空闲下标 + 1"写在自己的 anchor 字段, 链头是
+ * 全局 __secl_lock_free_head(0 = 空). 发放与释放都把 key +1, 因此悬垂指针在
+ * "已释放但未再发放"的窗口里也已经失配.
+ *
+ * 编译器发射的快路径(自由链非空时)自己弹出下标并把新的链头写回全局, 然后内联
+ * "key +1 / 写 anchor / 组装 word": 表项的 key 写对 LLVM 可见, 刚分配后的 live 检查
+ * 于是能折叠成真, 不会被留在内层循环里。只有自由链为空(需要 bump)才落到
+ * __secl_lock_bump_take。
+ */
+static _Noreturn void lock_fail(void) {
+    static const uint8_t message[] = YIAN_METADATA_MESSAGE;
+    __yian_runtime_fail(message, sizeof(message) - 1);
+}
+
+static inline void lock_store(uint64_t index, uint32_t key, uint32_t anchor) {
+    __secl_lock_table[index] = (uint64_t)key | ((uint64_t)anchor << 32);
+}
+
+uint64_t __secl_lock_bump_take(void) {
+    uint64_t index = __secl_lock_bump;
+    if (index >= YIAN_LOCK_TABLE_SLOTS) {
+        lock_fail();
+    }
+    __secl_lock_bump = index + 1;
+    return index;
+}
+
+void __secl_lock_release(uint64_t word) {
+    uint64_t index = word & 0xFFFFFFFFu;
+    uint32_t key = (uint32_t)__secl_lock_table[index] + 1;
+    lock_store(index, key, (uint32_t)__secl_lock_free_head);
+    __secl_lock_free_head = index + 1;
+}

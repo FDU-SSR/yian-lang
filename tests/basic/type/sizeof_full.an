@@ -26,7 +26,7 @@ fn main() {
     let expected_str_size: u64 = comptime if IS_RAW_MODE {
         16u64
     } else {
-        32u64
+        24u64
     };
 
     // ===== primitives =====

@@ -1,7 +1,7 @@
 # bench/results/alloc.csv — 分配器基准 (fat vs raw)
-# scale: full  runs: 7  pin: 4  commit: 1a89010 (B1 基线快照)  date: 2026-09-20
+# scale: full  runs: 7  pin: 4  commit: 042f6af  commit: B + 三处修复（见 docs/plan §3.7）  date: 2026-09-21
 name,fat_min_ms,raw_min_ms,ratio_fat_raw,fat_rss_mb,raw_rss_mb,stdout_match,scale
-churn_mixed,38.8,56.6,0.686,1.1,1.1,yes,默认
-churn_single,18.9,45.2,0.417,1.3,1.3,yes,默认
-grow_free,20.6,135.3,0.152,18.4,17.1,yes,默认
-grow_varied,122.2,130.3,0.938,64.4,32.9,yes,默认
+churn_mixed,25.9,56.2,0.460,1.1,1.1,yes,默认
+churn_single,21.6,45.2,0.478,1.3,1.3,yes,默认
+grow_free,21.0,134.1,0.157,18.4,17.1,yes,默认
+grow_varied,120.5,125.2,0.963,64.4,32.9,yes,默认

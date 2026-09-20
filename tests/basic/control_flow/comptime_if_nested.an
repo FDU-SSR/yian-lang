@@ -21,7 +21,7 @@ fn main() {
             never_branch()
         }
     } else {
-        comptime if @sizeof(i32*) == 32u64 {
+        comptime if @sizeof(i32*) == 24u64 {
             fat_branch()
         } else {
             never_branch()

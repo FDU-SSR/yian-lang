@@ -14,7 +14,7 @@ fn main() {
     let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
         8u64
     } else {
-        32u64
+        24u64
     };
 
     // sizeof / type position

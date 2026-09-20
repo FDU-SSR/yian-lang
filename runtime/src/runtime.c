@@ -11,13 +11,14 @@
 int32_t __yian_argc = 0;
 char **__yian_argv = 0;
 
-uint64_t __yian_env_lock = YIAN_LITERAL_KEY;
-uint64_t __yian_lit_lock = YIAN_LITERAL_KEY;
-
-uint64_t __yian_key_heap = 0;
 uint64_t __yian_key_stack = 0;
 
-uint64_t __secl_frame_locks[YIAN_FRAME_LOCK_SLOTS];
+/* 锁表: 帧段 [0, 2^20) + 字面量/环境常量槽(key = 0, 即 BSS 初值) + 堆段.
+ * 堆段的快路径由编译器发射的 IR 直接改 bump/free_head 与表项. */
+uint64_t __secl_lock_table[YIAN_LOCK_TABLE_SLOTS];
+uint64_t __secl_lock_bump = YIAN_HEAP_LOCK_BASE;
+uint64_t __secl_lock_free_head = 0;
+
 uint64_t __secl_frame_lock_depth = 0;
 
 /* 失败路径上的写入: 尽力写完, 但不重试、不分配. */

@@ -68,27 +68,50 @@ SENTINEL = (1 << KEY_BITS) - 1
 VIEW_COUNT_BITS = 32
 MAX_VIEW_COUNT = (1 << VIEW_COUNT_BITS) - 1
 
+# word 编码(变体 B): 指针的第二个字 = ⟨key:32 | lock:32⟩(lock 在低位)。
+#
+#   live(p) = word != 0 ∧ load32(锁表[lock].key) == key
+#
+# 锁槽全部落在一张全局表里: lock 就是表下标, 地址 = 表基址 + lock*LOCK_ENTRY_BYTES,
+# 与 data / kind 都无关 —— 热路径没有 kind 分派、没有窗口公式。
+# 下标区间自带 kind: [0, FRAME_LOCK_SLOTS) 帧槽(下标 = 深度), 接着两个字面量/环境常量槽,
+# 其余由分配器发放给堆对象。
+WORD_LOCK_SHIFT = 0
+LOCK_BITS = 32
+LOCK_MASK = (1 << LOCK_BITS) - 1
+WORD_KEY_SHIFT = 32
+KEY_BITS = 32
+KEY_MASK = (1 << KEY_BITS) - 1
+FRAME_KEY_LIMIT = KEY_MASK - 1     # 0xFFFFFFFF 留给帧退出的 SENTINEL
+
+WINDOW_MASK = ((1 << 64) - 1) ^ LOCK_MASK   # 冷路径还原块首用的 4 GiB 窗口掩码
+FRAME_LOCK_SLOTS = 1 << 20
+LITERAL_LOCK_INDEX = FRAME_LOCK_SLOTS
+ENV_LOCK_INDEX = FRAME_LOCK_SLOTS + 1
+HEAP_LOCK_BASE = FRAME_LOCK_SLOTS + 2
+LOCK_ENTRY_BYTES = 8
+LOCK_TABLE_SLOTS = 1 << 26
+
+LITERAL_KEY = 0
+ENV_KEY = 0
+LITERAL_WORD = (LITERAL_KEY << WORD_KEY_SHIFT) | LITERAL_LOCK_INDEX
+ENV_WORD = (ENV_KEY << WORD_KEY_SHIFT) | ENV_LOCK_INDEX
+
 # 5 字段胖指针字段下标(PointerType 映射为
-# {data: ptr, lock_ptr: ptr, key: u64, index: u32, size: u32} 32B 聚合)。
+# {data: ptr, word: u64, index: u32, size: u32} 24B 聚合)。
 FAT_DATA = 0
-FAT_LOCK_PTR = 1
-FAT_KEY = 2
-FAT_INDEX = 3
-FAT_SIZE = 4
+FAT_WORD = 1
+FAT_INDEX = 2
+FAT_SIZE = 3
 
-# 4 字段 slice/str 字段下标(分级指针表示,删 index):
-# {data: ptr, lock_ptr: ptr, key: u64, size: u64} 32B。data/lock_ptr/key 与
-# 5 字段指针同下标(FAT_DATA/FAT_LOCK_PTR/FAT_KEY 通用),仅 size 为下标 3。
+# 4 字段 slice 字段下标: {data: ptr, word: u64, size: u64} 24B。
 SLICE_DATA = 0
-SLICE_LOCK_PTR = 1
-SLICE_KEY = 2
-SLICE_SIZE = 3
+SLICE_WORD = 1
+SLICE_SIZE = 2
 
-# 3 字段引用字段下标(已替换早期的 5 字段临时布局):{data, lock_ptr, key} 24B。
-# 引用不携带 index/size——引用恒指向单个元素。
+# 3 字段引用字段下标: {data: ptr, word: u64} 16B。
 REF_DATA = 0
-REF_LOCK_PTR = 1
-REF_KEY = 2
+REF_WORD = 1
 
 
 class KeyGen:
@@ -121,54 +144,60 @@ class KeyGen:
         return self.__stack_counter
 
 
-def is_heap(key: int) -> bool:
-    """`is_heap(p)` 纯位判定——`msb(p.key) == 1`(0 = 栈、1 = 堆)。
+def is_heap(lock: int) -> bool:
+    """`is_heap(p)` 纯下标判定——锁表下标落在堆区间(≥ HEAP_LOCK_BASE)。"""
+    return lock >= HEAP_LOCK_BASE
 
-    纯位检查不读锁槽;null 指针键 0 天然判非堆。
+
+def live(word: int, slot_key: int) -> bool:
+    """`live(p)` = word ≠ 0 ∧ 锁表项 key == 指针携带的 key。
+
+    锁表地址只由 word 的 lock 下标给出; null(word = 0)短路为假——不读表项 0
+    (否则会把尚未发放的帧槽误判成活)。
     """
-    return (key & FLAG_MASK) != 0
-
-
-def live(lock_ptr: int, slot_value: int, key: int) -> bool:
-    """`live(p)` = (μ⟨p.lock_ptr⟩ == p.key),全字相等。
-
-    null 短路:p.lock_ptr = 0(null 指针编码)时短路为假——不读地址 0 物理槽位
-    (否则 live 读地址 0 = 段错误;须以短路为假使 null 访问确定性失败)。
-    """
-    if lock_ptr == 0:
+    if word == 0:
         return False
-    return slot_value == key
+    return slot_key == (word >> WORD_KEY_SHIFT)
 
 
-def is_raw(data: int, lock_ptr: int, index: int) -> bool:
-    """`is_raw`:纯字段检查——`data == lock_ptr + H` 且 `index == 0`。
+def is_raw(data: int, block: int, index: int) -> bool:
+    """`is_raw`:纯字段检查——`data == block + H` 且 `index == 0`。
 
-    不读锁槽与块头。重锚定子对象指针(&s.field)与偏移指针(p ± n、&arr[i≠0])
-    由此偏离原始锚点、被 `delete` 拒绝(前提)。
+    block 是重建出的块首(锁槽地址);不读锁槽。重锚定子对象指针(&s.field)与
+    偏移指针(p ± n、&arr[i≠0])由此偏离原始锚点、被 `delete` 拒绝(前提)。
     """
-    return data == lock_ptr + BlockHeader.BYTES and index == 0
+    return data == block + BlockHeader.BYTES and index == 0
 
 
 class BlockHeader:
-    """SecL 单线程堆池的固定块头布局。
+    """SecL 单线程堆池的块头布局(变体 B)。
 
-    ``{lock:u64, active_size_bytes:u64}`` occupies 16 bytes; the payload starts at
-    ``lock_ptr + 16`` and ``active_size_bytes`` is the logical payload size of the
-    current owner (delete/view checks compare against it).  The allocator keeps no
-    field of its own in the header: the size class implies the physical capacity,
-    and a free block's chain pointer lives in the first word of its payload.
-    Freed blocks remain mapped and only the lock slot is read by stale pointers,
-    so they can never reach a user-controlled payload through ``lock_ptr``.
+    ``{extent:u32 @0, pad:u32 @4}`` = 8 B; 负载 = block + 8。extent 是这次分配的
+    **元素数**(u32; 删除/视图检查按指针元素大小折算字节); 身份(key)在锁表项里,
+    指针携带同一个 key。块头留 8 B 是为了负载锚保持 8 字节对齐(语言最大对齐 = 8)。
     """
 
-    BYTES: ClassVar[int] = 16
-    LOCK_SLOT_OFFSET: ClassVar[int] = 0  # 锁槽 = 块首首字(偏移 0)
-    ACTIVE_SIZE_OFFSET: ClassVar[int] = 8
+    BYTES: ClassVar[int] = 8
+    EXTENT_OFFSET: ClassVar[int] = 0  # 当前负载元素数(u32)
 
     @staticmethod
     def data_addr(block_base: int) -> int:
         """负载锚地址:`data = b + H`(分配锚定)。"""
         return block_base + BlockHeader.BYTES
+
+
+class LockEntry:
+    """锁表项布局: ``{key:u32 @0, anchor_lo32:u32 @4}`` = 8 B。
+
+    key 是这一轮生命周期的身份(发放时 +1; 释放时 +1, 悬垂指针立刻失配);
+    anchor_lo32 是负载锚地址的低 32 位, 冷路径(删除/视图)用它 + data 高位还原块首。
+    空闲表项把"下一空闲下标 + 1"写在自己的 anchor 字段里, 链头在运行时的
+    ``__secl_lock_free_head``。帧槽与字面量/环境槽只用 key 字段。
+    """
+
+    BYTES: ClassVar[int] = LOCK_ENTRY_BYTES
+    KEY_OFFSET: ClassVar[int] = 0
+    ANCHOR_OFFSET: ClassVar[int] = 4
 
 
 class FrameLockArena:

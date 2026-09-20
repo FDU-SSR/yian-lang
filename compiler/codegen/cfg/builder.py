@@ -58,6 +58,7 @@ class CfgBuilder:
         # ptr→ptr 重贴与视图退化)。帧锁槽只在函数入口写入、返回时失效,所以
         # 这些指针的 live 在函数体内恒真——访问点不再发射时序项(空间项保留)。
         self.__frame_locked: set[str] = set()
+        self.__live_known: set[str] = set()  # 刚分配、尚未释放的胖指针出处(live 恒真)
         # 检查消解:胖指针的锁字段出处。同一出处(同一变量取址 / 同一分配 /
         # 由它们经 ElementPtr/FieldPtr/Cast 派生)的指针, lock_ptr 与 key 完全相同,
         # 因而 live 的判定相同——本块内同出处的第二次访问不必重复时序检查。
@@ -452,11 +453,9 @@ class CfgBuilder:
             # PointerType 含 index 分量,Slice/Ref 退化为恒真)
             self.__emit(IR.CheckDelete(ptr=ptr))
             ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p)")
-            # 锁槽写 SENTINEL ——提取 lock_ptr 字段寻址
-            lock_ptr = self.__extract_fat_field(ptr, IR.FAT_LOCK_PTR)
-            sentinel = IR.IntLiteral(value=IR.SENTINEL, type_id=TypeCtx.u64_id)
-            self.__emit(IR.WriteLockSlot(lock_ptr=lock_ptr, value=sentinel))
-            # 检查合并:Delete 写锁槽 → 去重/合并状态失效(先补发挂起 InBounds 义务)
+            # 失效由释放路径完成: LLVM 层 Delete 重建块首并把块头里的代 +1 写回,
+            # 因此这里不再单独写锁槽(写 SENTINEL 会破坏代的单调性)。
+            # 检查合并:Delete 换代 → 去重/合并状态失效(先补发挂起 InBounds 义务)
             self.__invalidate_checks()
         # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
         self.__emit(IR.Delete(ptr))
@@ -1011,6 +1010,11 @@ class CfgBuilder:
         )).result
         self.__set_terminator(IR.CondBr(filled, body, exit_block))
 
+        # 填充循环写在刚分配的缓冲上:这段封闭区域里不存在 del, live 恒真,
+        # 因此登记出处、让元素 store 只保留 in_bounds 检查(同帧锁的 live=False 形态)。
+        fill_root = buffer.name if isinstance(buffer, IR.Reg) else None
+        if fill_root is not None:
+            self.__live_known.add(fill_root)
         self.__switch_to(body)
         elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
         elem_ptr = self.__build_element_ptr(buffer, index, elem_ptr_type)
@@ -1025,6 +1029,8 @@ class CfgBuilder:
         self.__set_terminator(IR.Br(header))
 
         self.__switch_to(exit_block)
+        if fill_root is not None:
+            self.__live_known.discard(fill_root)
         return buffer
 
     def __resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
@@ -1225,7 +1231,7 @@ class CfgBuilder:
         k_f = self.__build_gen_key(is_heap=False)
         e_f_result = IR.Reg(
             name=self.__new_name(),
-            type_id=self.__type_ctx.alloc_pointer(TypeCtx.u64_id),
+            type_id=TypeCtx.u64_id,  # 帧 word(整字)
         )
         e_f = self.__emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
         self.__current_block = saved_block
@@ -1315,7 +1321,7 @@ class CfgBuilder:
         e_f, k_f = self.__emit_frame_lock()
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
         fat = self.__emit(IR.VarPtr(
-            result=result, var_ref=var_ref, frame_lock_ptr=e_f, frame_key=k_f,
+            result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f,
         )).result
         self.__frame_locked.add(fat.name)
         self.__fat_root[fat.name] = fat.name
@@ -1328,7 +1334,7 @@ class CfgBuilder:
         """
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
         raw_ptr = self.__emit(IR.VarPtr(
-            result=result, var_ref=var_ref, frame_lock_ptr=None, frame_key=None, raw=True,
+            result=result, var_ref=var_ref, frame_word=None, frame_key=None, raw=True,
         )).result
         self.__raw_ptrs.add(raw_ptr.name)
         return raw_ptr
@@ -1336,11 +1342,11 @@ class CfgBuilder:
     def __build_alloca(self, value: IR.Value, *, fat: bool) -> IR.Value:
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
         if fat and not self.__raw_pointers:
-            frame_lock_ptr, frame_key = self.__emit_frame_lock()
+            frame_word, frame_key = self.__emit_frame_lock()
             addr = self.__emit(IR.Alloca(
                 result=result,
                 value=value,
-                frame_lock_ptr=frame_lock_ptr,
+                frame_word=frame_word,
                 frame_key=frame_key,
             )).result
             self.__frame_locked.add(addr.name)
@@ -1361,6 +1367,17 @@ class CfgBuilder:
         if not isinstance(ptr, IR.Reg):
             return None
         return (self.__fat_root.get(ptr.name, ptr.name), "live")
+
+    def __is_live_known(self, ptr: IR.Value) -> bool:
+        """指针的锁字段来自一次刚发生、尚未释放的分配(live 恒真)。
+
+        只由填充循环这类"分配后立即写、循环体内不可能 del"的封闭区域登记;
+        登记窗口内不存在 Delete, 因此不需要失效跟踪。与帧锁一样, 只跳过 live
+        项, in_bounds 等空间检查照常发射。
+        """
+        if not isinstance(ptr, IR.Reg):
+            return False
+        return self.__fat_root.get(ptr.name, ptr.name) in self.__live_known
 
     def __is_frame_locked(self, ptr: IR.Value) -> bool:
         """指针的锁字段是否取自当前函数帧锁槽(live 恒真)。"""
@@ -1512,7 +1529,7 @@ class CfgBuilder:
         # 按指针层级插入检查(按 type_id 分派):
         #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
-        frame_locked = self.__is_frame_locked(ptr)
+        frame_locked = self.__is_frame_locked(ptr) or self.__is_live_known(ptr)
         live_covered = frame_locked or self.__dedup(self.__live_key(ptr))
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
             if live_covered:
@@ -1540,7 +1557,7 @@ class CfgBuilder:
         # 按指针层级插入检查(按 type_id 分派,同 Load 的检查与地址折算):
         #   PointerType → safe_access(p, 1)
         #   RefType     → 仅 live(r)(T& 免 in_bounds)
-        frame_locked = self.__is_frame_locked(ptr)
+        frame_locked = self.__is_frame_locked(ptr) or self.__is_live_known(ptr)
         live_covered = frame_locked or self.__dedup(self.__live_key(ptr))
         if isinstance(ptr_type, Type.RefType) and not self.__raw_pointers:
             if live_covered:
@@ -1563,13 +1580,10 @@ class CfgBuilder:
         self.__emit(IR.Store(ptr=ptr, value=value))
 
     def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
-        # CFG 层:Malloc 块头锁槽写键 k ← Gen()(堆键 MSB 1),返回
-        # 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(由 LLVM 层构造);
-        # pointee 为 ZST 时维持快路径(undef,不写锁槽;key=None)。
-        # raw 模式:无锁槽,key=None(省 GenKey)。
+        # CFG 层:Malloc 返回 4 字段聚合 ⟨data=b+H, word, index=0, size=n⟩(LLVM 层构造)。
+        # word 由 LLVM 层按块首地址与块头里的上一代算好(分配处 +1), 不再用全局堆键。
+        # pointee 为 ZST 时维持快路径(undef,不写块头);raw 模式无块头。
         key: IR.Value | None = None
-        if not self.__type_ctx.is_zst(type_id) and not self.__raw_pointers:
-            key = self.__build_gen_key(is_heap=True)
         result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
         malloc = self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
         if not self.__raw_pointers:
