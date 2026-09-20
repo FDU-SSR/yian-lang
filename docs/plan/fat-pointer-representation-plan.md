@@ -250,9 +250,42 @@ load + 一次 64 位比较"，与今天同价；缩小指针靠的是把 `lock_p
 5. **负载长度仍是块头里的 extent（u64 不变）**：不需要新的字节上限，B1 的
    "元素数 ≤ 2^32-1"照旧。
 
+**实现清单（一次原子改动；每项都写清落点）**
+
+1. `lockmech.py`：word 编码常量（`WORD_KIND_SHIFT`、`KIND_{ENV,LITERAL,FRAME,HEAP}`、
+   `HEAP_FIELD_{BITS,MASK}`/`HEAP_ID_{SHIFT,MASK}`、`FRAME_FIELD_*`/`FRAME_ID_MASK`、
+   `LITERAL_WORD`/`ENV_WORD`）；字段下标改成 `FAT_{DATA,WORD,INDEX,SIZE}`=0/1/2/3、
+   `SLICE_{DATA,WORD,SIZE}`=0/1/2、`REF_{DATA,WORD}`=0/1；`BlockHeader` 变成
+   `{word:u64 @0, extent:u64 @8}`（16 B 不变，`WORD_OFFSET`/`EXTENT_OFFSET`）。
+2. `runtime/{include/yian_rt.h,src/runtime.c}`：两个全局锁槽初值改成 `YIAN_LITERAL_WORD` /
+   `YIAN_ENV_WORD`（值同 `LITERAL_WORD`/`ENV_WORD`）。`YIAN_HDR_BYTES` 保持 16。
+3. `types.py`：`PointerType {ptr,i64,i32,i32}`=24 B、`RefType {ptr,i64}`=16 B、
+   `SliceType/StrType {ptr,i64,i64}`=24 B。
+4. `builder.py`（**草稿已写好在 `/tmp/b6_patch.py` 的阶段 1+2**：`__extract_fat_field`、
+   `__build_fat`、`__lock_of`、`__literal_word`/`__env_word`、`__check_live`、
+   `__check_live_and`、`__extract_check_fields`）：
+   - `malloc`：`field = ptrtoint(block) & HEAP_FIELD_MASK`；从块头首字取上一代并 +1；
+     `word = (KIND_HEAP<<62) | (new_gen<<30) | field`；写整字与 `extent`(u64)；`data = block+16`。
+   - `delete`：`block = __lock_of(word, data)` → 同样 +1 写回（悬垂指针立刻失配）→ `release`。
+   - `check_ref_access`/`check_safe_access`/`check_element_access`：`live` 改传 `(word, data)`。
+   - `check_view_access`/`check_delete`：`lock = __lock_of(...)`；`extent = load64(lock+8)`；
+     `base = lock+16`；`is_heap = (word >> 62) == KIND_HEAP`。
+   - `acquire_frame_lock`：槽里写 `word = (KIND_FRAME<<62) | (id&FRAME_ID_MASK)<<20 | depth`，
+     word 作为节点结果（退出写 SENTINEL 用槽地址，记在 builder 状态里）；`set_frame_lock`/
+     `__release_frame_lock` 相应调整。
+   - `var_ptr`/`__promote_fat`/`string_literal`/`arg_bytes`/`__synthesize_fat_value`/
+     `__slice_ptr_fat`/`__build_aggregate`/各 cast 分支：`(lock, key)` 改成 word
+     （字面量 `__literal_word()`、环境 `__env_word()`、其它继承）。
+   - `__fat_value_pair`：指针取 `FAT_INDEX`、切片取 `SLICE_SIZE`、引用取 `REF_WORD`。
+5. `cfg/builder.py`：`IR.VarPtr` 的 `frame_lock_ptr/frame_key` 改成 `frame_word`；
+   `AcquireFrameLock.result` 类型改 u64（帧 word）；`__build_malloc` 不再发射堆 `GenKey`。
+6. 断言与文档：`@sizeof`（`T&` 16、`T[]`/`str` 24、`T*` 24；niche 4+24=28、`Result<i32*,str>` 28）、
+   `docs/grammar/02.type_system.md`、`docs/manual/12.llvm_codegen.md`、`docs/security.md`
+   （锁槽由 word 重建、堆 id 按块换代、帧 id 42 位不回绕）。
+
 **布局结果（B1+B6）**：`T&` 16 B、`T[]`/`str` 24 B、`T*` 24 B（`{data, word, index:u32, size:u32}`，
-比目标里写的 32 B 还小）、块头 8 B。以 chase 节点为例：今天 16 B 块头 + 32 B 负载 = 48 B/节点，
-B6 后 8 + 24 = 32 B/节点（−33%）。
+比目标里写的 32 B 还小）、块头 16 B 不变。以 chase 节点为例：今天 16 B 块头 + 32 B 负载
+= 48 B/节点，B6 后 16 + 24 = 40 B/节点（−17%）。
 
 ## 4. 度量与验收
 
