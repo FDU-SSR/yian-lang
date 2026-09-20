@@ -3,7 +3,7 @@
 # fingerprint: hostname=zhx machine=x86_64 cpu_count=28 clang=Ubuntu clang version 22.1.8 (++20260613092327+e80beda6e255-1~exp1~20260613092437.81) cflags=-O2 -lm
 # env: python=3.12.3 llvmlite=0.49.0 llvm=22.1.0 opt=-O2 pin=4 runs=5
 # set: full  scale: full
-# commit: 55400da (HEAD 快照)
+# commit: 1a89010 (B1 基线快照)
 # date: 2026-09-20
 bench,c_min_ms,c_med_ms,c_cv_pct,raw_min_ms,raw_med_ms,raw_cv_pct,fat_min_ms,fat_med_ms,fat_cv_pct,ratio_raw_c,ratio_fat_c,ratio_fat_raw,c_rss_mb,raw_rss_mb,fat_rss_mb,runs,stdout_match,c_check,c_argv,raw_source
 AWFY/bounce,2471.6,2520.8,1.37,2788.7,2807.2,1.46,2945.3,2980.3,1.73,1.128,1.192,1.056,2.8,2.4,2.6,5,yes,pass,,bounce.an
