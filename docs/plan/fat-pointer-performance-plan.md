@@ -97,8 +97,9 @@ P1/P3；本计划剩下的主要工作是**循环不变量外提（配循环携�
 
 ### 3.1 已交付的基准与运行器
 
-评测集的重组（按来源分目录、按侧重分集合、快速/完全两档、引入更多现成套件的调研与许可结论）见
-[`docs/plan/bench-suite-plan.md`](bench-suite-plan.md)。
+评测集的组织（按来源分目录、按侧重分集合、快速/完全两档）、三态协议与运行命令见 `bench/README.md`；
+来源与许可登记、候选套件的调研结论见 `bench/SUITES.md`；后续引入顺序见 `docs/proposal.md` 的
+"评测集与性能度量"。
 
 - `bench/<SOURCE>/an/*.an` + `bench/<SOURCE>/c/*.c`（SOURCE ∈ {AWFY, BG}）：19 个基准的 YIAN 源与
   同算法同规模的 C 参考，每项另有 `bench/<SOURCE>/specs/<name>.json`（argv / 权威校验 / tag / 规模档）；

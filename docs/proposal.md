@@ -100,6 +100,7 @@ anx 继续使用 Python 开发。
 后续扩展按"能补上新的机制侧重"排序，而不是按数量：
 
 - **plb2**（CC0-1.0，四个程序都有 C 参考）：引入 `matmul`/`nqueen`/`sudoku`，补数值与回溯搜索侧重；
+  引入后随之新增 `control` 集合（现有基准里已有 3 项带 `control` tag，还没有集合引用它）；
 - **Benchmarks Game 的 `k-nucleotide`**（与已引入部分同源的 Revised BSD）：补哈希 + 字符串；
 - **mimalloc-bench**（MIT）里 1–2 个单线程分配压力测试：补随机尺寸分布的分配形态；
 - **Olden 类指针/递归密集基准**：上游许可带非商业限制，不能直接进仓库，按"用同样算法自写
@@ -109,9 +110,10 @@ anx 继续使用 Python 开发。
 
 明确不引入：Embench-IoT（GPL-3.0，与 Apache-2.0/MIT 双许可不兼容）、SPEC CPU（授权与体量）、
 PARSEC/Splash-3/NPB/Rodinia（多线程模型）、DaCapo/JVM 套件本体（与 C 参考三态协议不符）、
-MiBench（"academic use" 条款待确认且相关性低）。已引入基准的快速档规模标定（list/queens/towers/
-binarytree 等尚未标定）与"把评测集纳入日常流程"也属于本项，详见
-`docs/plan/bench-suite-plan.md` 的 S2–S5。
+MiBench（"academic use" 条款待确认且相关性低）。此外还有两件收尾工作：把尚未标定的快速档规模
+补齐（list、queen、towers、binarytree、deltablue、json、richards 等，标定口径与实测目标见
+`bench/README.md` 的"两档规模"），以及把评测集纳入日常流程（按改动的侧重跑对应集合，只把完全档
+的结果写进记录）。
 
 ## 安全机制
 

@@ -49,6 +49,9 @@ python3 bench/bench_three_way.py --source AWFY --set fast
 AWFY 与 BG 的成员：AWFY 14 项（bounce、cd、deltablue、havlak、json、list、mand、nbody、permute、
 queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、fasta、revcomp、spectralnorm）。
 
+集合只在 `bench/sets/` 里定义：新增集合要说明它覆盖哪个机制侧重（`ptr`/`numeric`/`string`/`alloc`/
+`control`；`control` 目前只有 tag 还没有集合），避免来源与侧重的组合膨胀。
+
 ## 两档规模
 
 - **full**（默认，正式记录）：源内默认规模，每态 1 次 warmup + 5 次测量取最小值。
@@ -67,9 +70,14 @@ queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、
 | ALLOC/grow_varied | `cycles` | 32 | 8 |
 
 其余基准（list、towers、binarytree、deltablue、json、richards、……）的 fast 规模尚未标定：
-它们目前两档同规模，快速档通过"子集 + 上述 6 项缩规模"控制时长。标定方法与注意事项见
-`docs/plan/bench-suite-plan.md`（缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数
-最安全；若必须缩放问题规模，断言与权威值都要跟着写成规模的函数）。
+它们目前两档同规模，快速档通过"子集 + 上述 6 项缩规模"控制时长。标定的做法是给源加
+`// bench-scale` 标记行、在 spec 里填 `scale.fast`，再实测一遍：目标是把该基准的 fat 态压到
+0.2–0.5 s 量级，单项超过 1 s 就说明规模还没调够（storage 在 fast 档仍是 1.7 s，是最该标定的一项）。
+缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数最安全；若必须缩放问题规模，
+断言与权威值都要跟着写成规模的函数。
+
+两档结论冲突时以完全档为准，并把该基准记进"已知规模敏感性"（到目前为止没有出现冲突：两档在
+`ptr`/`alloc`/`numeric`/`string` 四类上的方向一致）。
 
 ## 三态协议
 
@@ -87,7 +95,8 @@ queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、
 - 语义护栏：C warmup 必须通过 spec 的 `check`（`rc` / `stdout_eq` / `stdout_contains` /
   `stdout_int_mod`）；raw 与 fat 的 warmup stdout 与退出码必须逐字节一致，且退出码为 0。
   报告中标 `否` 即该基准的比值不可用。
-- **不设回归门槛**：性能试验只作参考（见 `docs/plan/fat-pointer-performance-plan.md` §3.3）。
+- **不设回归门槛**：性能试验只作参考，不写阈值脚本；本机同一份代码两次全量跑的逐项差可达 ±2%，
+  单项变化小于这个量级时只当噪声，结论取 min-of-N 且要看多项同向。
 
 ## 分配器专项
 
