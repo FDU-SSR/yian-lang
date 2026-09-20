@@ -250,6 +250,25 @@ load + 一次 64 位比较"，与今天同价；缩小指针靠的是把 `lock_p
 5. **负载长度仍是块头里的 extent（u64 不变）**：不需要新的字节上限，B1 的
    "元素数 ≤ 2^32-1"照旧。
 
+**实现进展（第 6-7 轮，WIP 未提交）**
+
+补丁已全部应用（71 处替换 + 调试中补齐的落点：`ir.py` 的 re-export 表、`translator.py`/`dump.py`/
+`IR.Alloca` 的 `frame_word` 改名、CFG 里 Delete 前那次 SENTINEL 写必须删除（否则破坏代的单调性）、
+`__lock_of` 必须接收调用方的 builder（否则在守卫闭包里把指令发到已终止的块外）、
+`BlockHeader.EXTENT_OFFSET`、帧槽地址登记为函数级寄存器、三处 cast 分支的 word 化）。
+当前状态：`compileall` 通过、能产出合法 IR；最小用例里**字面量 `str` 路径通过**，
+**堆指针与帧引用在 `live` 处报 S003**。
+
+已定位的线索：IR 里 word 的构造与重建公式都正确（堆 `(KIND_HEAP<<62)|id<<30|field` 与
+`(data & ~0x3FFFFFFF)|field`；帧 `KIND_FRAME<<62|id<<20|depth` 与 `arena+depth*8`，槽里存整字、
+检查整字比较）。失配发生在 **stdlib 合成的 `index` 辅助函数**里：它接收一个 `T&`（`{ptr, i64}`）
+并在其上做 `live`，而那个引用携带的 word（IR 里 `%".86" = insertvalue {ptr, i64} %".85", i64 %".84", 1`
+的 `%".84"`）与它锁槽里的值不一致 —— 下一轮从这里往上游追：`%".84"` 是谁给的、
+以及引用派生链（`&arr[i]`、`field_ptr`、`T*→T&`）有没有在某一环丢掉/换掉了 word。
+
+调试入口：`/tmp/opt/t_heap.an`（堆）、`/tmp/opt/t_frame.an`（帧）、`/tmp/opt/t_lit.an`（字面量，通过），
+WIP 快照 `/tmp/b6_wip.patch`（回退用 `git checkout -- compiler runtime tests docs`）。
+
 **实现清单（一次原子改动；每项都写清落点）**
 
 1. `lockmech.py`：word 编码常量（`WORD_KIND_SHIFT`、`KIND_{ENV,LITERAL,FRAME,HEAP}`、
