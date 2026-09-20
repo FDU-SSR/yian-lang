@@ -276,13 +276,22 @@ static __attribute__((noinline)) void *large_alloc(uint64_t bytes) {
     }
 
     uint64_t payload = align_up(bytes, 16);
-    uint64_t total = align_up(YIAN_HDR_BYTES + payload + YIAN_SLAB_BYTES * 2, 4096);
-    void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    uint64_t span = align_up(YIAN_HDR_BYTES + payload + YIAN_SLAB_BYTES * 2, 4096);
+    /* 多留一个窗口 + 两个 slab: 保证能在映射内挑到"整块不跨 4 GiB 窗口"的落点.
+     * MAP_NORESERVE: 多留的是虚拟地址, 只在实际写入的页上提交物理内存. */
+    uint64_t total = span + YIAN_WINDOW_BYTES + YIAN_SLAB_BYTES * 2;
+    void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (raw == MAP_FAILED) {
         alloc_fail();
     }
     /* chunk 放在 64 KiB 对齐 region 的 +64 处, region 首部放 LargeHeader. */
     uintptr_t region = (uintptr_t)align_up((uintptr_t)raw + YIAN_SLAB_HEADER, YIAN_SLAB_BYTES);
+    /* 若 [chunk, chunk + 块头 + 负载) 跨窗口, 整体挪到下一个窗口起点(仍是 64 KiB 对齐). */
+    uintptr_t first = region + YIAN_SLAB_HEADER;
+    if ((first >> 32) != ((first + YIAN_HDR_BYTES + payload - 1) >> 32)) {
+        region = (uintptr_t)align_up(first, YIAN_WINDOW_BYTES);
+    }
     uintptr_t chunk = region + YIAN_SLAB_HEADER;
     if (region > (uintptr_t)raw) {
         munmap(raw, (size_t)(region - (uintptr_t)raw));

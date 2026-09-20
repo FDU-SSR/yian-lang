@@ -58,6 +58,17 @@ static int run_fail_child(int panic_mode, char *buf, size_t cap, size_t *out_len
 extern uint64_t __secl_pool_payload(const void *block);
 
 static void check_allocator(void) {
+    /* 大对象整块必须落在同一个 4 GiB 窗口内: 指针表示用数据地址高 32 位加低 32 位
+     * 字段重建块首, 跨窗口会让重建出的块首偏一个窗口. */
+    static const uint64_t window_sizes[] = {49153, 262144, 1048576, 8 * 1024 * 1024};
+    for (size_t i = 0; i < sizeof(window_sizes) / sizeof(window_sizes[0]); i++) {
+        void *block = __secl_pool_alloc(window_sizes[i]);
+        uintptr_t first = (uintptr_t)block;
+        uintptr_t last = first + YIAN_HDR_BYTES + window_sizes[i] - 1;
+        check((first >> 32) == (last >> 32), "large chunk stays within one 4 GiB window");
+        __secl_pool_release(block);
+    }
+
     /* 大对象缓存: 缓存为空时, 独占尺寸的 chunk 释放后复用同一块. */
     void *large = __secl_pool_alloc(300000);
     __secl_pool_release(large);

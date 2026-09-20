@@ -24,6 +24,11 @@
  * 16 B = {lock, active_size}; 负载 = 基址 + YIAN_HDR_BYTES. */
 #define YIAN_HDR_BYTES 16u
 
+/* 4 GiB 窗口: 指针表示用"数据地址高 32 位 + 低 32 位字段"重建块首, 因此一个块的
+ * [块首, 块首 + 块头 + 负载) 必须整体落在同一个窗口内. 64 KiB 的 slab 天然满足
+ * (4 GiB 是 64 KiB 的整数倍), 大对象由 large_alloc 挑落点保证. */
+#define YIAN_WINDOW_BYTES ((uint64_t)4 << 30)
+
 /* 进程生命周期锁槽的键 (字面量锁与环境锁都永不失效). */
 #define YIAN_LITERAL_KEY 1ull
 

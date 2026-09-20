@@ -204,113 +204,74 @@ kind 分派只占 ~1.4%；**证书/槽表方案反而更慢**（侧表多出的 
 优化器折叠（读数降到 0.1 ns/节点以下，不可能是真实追逐），小工作集的结论交给端到端的 YIAN
 基准（`--set micro` / `--set ptr`）来出。
 
-**编码（原型验证过，作为实现基线）**：`word = ⟨kind:2 | field | id⟩`，
-`live = load64(lock_addr) == id 部分`；`is_heap` 沿用最高位判定（heap 两种 kind 的最高位为 1）。
+**编码（实现基线，比上一版更省：所有锁来源共用同一个地址公式，检查里没有 kind 分派）**
 
-| kind | 来源 | field | 锁址 | field 位 | id 位 | 槽（块头/arena） |
-| --- | --- | --- | --- | ---: | ---: | --- |
-| 10 | 堆 slab | 块首在 64 KiB region 内偏移 /16 | `(data & ~0xFFFF) \| (field << 4)` | 16（用 12） | 46 | 8 B = `⟨extent:16 \| id:48⟩` |
-| 11 | 堆大对象 | 大对象 chunk 表下标 | `chunk_table[field]`（+1 次 load） | 22 | 40 | 16 B = `⟨id:u64, extent:u64⟩`（chunk 首部） |
-| 01 | 函数帧 | 影子栈深度 | `@__secl_frame_locks + field*8` | 20 | 42 | arena 8 B 槽 |
-| 00 | 字面量/环境 | 0=lit 1=env | 两个全局之一（链接期常量） | 1 | 61 | 两个全局 |
-
-- **8 B 块头与 id 位宽的账**：`active_size` 对 slab 块只需 16 位（负载 ≤ 48 KiB），所以
-  `⟨extent:16 | id:48⟩` 正好 8 B，id 仍是 48 位（每尺寸类 2.8×10^14 次分配才耗尽，维持
-  "耗尽才终止、不回绕"）。大对象的 extent 需要 32 位，所以大对象用 16 B 块头（数量少、影响可忽略）；
-  它的 id 靠 chunk 表把 field 压到 22 位后仍有 40 位。
-- 检查从"1 load + 1 比较"变成"1 load + 3~4 条位运算 + 比较"（slab 情形取 id 掩码后比较）；
-  地址重建在 slab 情形是 `and / shift / and / shl / or` 五条左右的 ALU。
-
-
-**想法**：`live` 只需要两样东西——锁槽的地址与当前键。如果锁槽地址能从 `data` 重建，指针里就只需要
-"重建所需的那几位 + 键"，两者正好合成一个字；块头里的锁字与逻辑长度也各压到 32 位：
-
-```text
-今天:  T& = ⟨data(8) | lock_ptr(8) | key(8)⟩                      = 24 B
-B6:    T& = ⟨data(8) | word(8)⟩                                   = 16 B
-       word = ⟨kind(2) | field | id⟩      ; field 按 kind 解释, id 是键
-       live = load(lock_addr(kind, field, data)) == word          ; 整字比较
+```
+word   = ⟨kind:2 | field:32 | id:30⟩            ; 16 B 引用的第二个字
+lock   = (data & ~0xFFFFFFFF) | field           ; 一条公式覆盖全部来源（4 GiB 窗口）
+live   = load32(lock) == id                     ; 槽的首 4 字节 = 当前代
+is_heap= (word >> 63) != 0                      ; 只有堆对象带块头（视图/删除检查的开关）
+块头   = { id:u32 @0, extent:u32 @4 } = 8 B     ; slab 与大对象统一；extent 是负载字节数
 ```
 
-锁有四种来源，各自的 `field` 与重建方式：
+| 来源 | kind | field | 槽在哪 | 谁维护 |
+| --- | --- | --- | --- | --- |
+| 堆对象（slab 与大对象） | 11 | 块首地址的低 32 位 | 块首 8 B | 运行时：分配时取新一代并写入 id，释放时再取一代（旧指针立刻失配） |
+| 函数帧 | 00 | 帧内锁槽地址的低 32 位 | **帧内保留的 8 B** | 编译器：帧进入写新代，全部返回路径写 0 |
+| 字符串字面量 | 01 | 假块头的低 32 位 | **`.rodata` 里字面量数据前的 8 B** | 编译器发射（id 用固定值，数据永不过期） |
+| 环境/进程参数 | 10 | — | **启动时复制到堆**，按堆对象处理 | 运行时 wrapper 复制并登记 word；`arg_bytes` 读登记表 |
 
-| kind | 来源 | `field` 内容 | 锁址重建 | field 位宽 | 键位宽 |
-| --- | --- | --- | --- | ---: | ---: |
-| 00 | 堆 slab 块 | 块首在 64 KiB region 内的偏移 / 16 | `(data & ~0xFFFF) \| (field << 4)` | 12 | 50 |
-| 01 | 堆大对象 | 块址低位（窗口内） | `(data & ~(2^k - 1)) \| field` | 26 | 36 |
-| 10 | 函数帧 | 影子栈深度 | `frame_arena + field * 8` | 20 | 42 |
-| 11 | 字面量 / 环境 | 固定槽号 | `@__yian_lit_lock` 或 `@__yian_env_lock`（链接期常量） | 1 | 61 |
+为什么不用"按 kind 分派重建"（上一版）：待重建的公式有 4 个、位宽还各不相同，热路径上是一条
+~13 条 ALU 的选择链（分支版则会切基本块，B1 已经证明检查引入的额外块会扰动优化）。改成
+"**把所有锁槽都放到与数据同一个 4 GiB 窗口内**"之后，地址重建退化为 `and / or` 两条，检查回到
+"1 次 load + 1 次 32 位比较 + 2~3 条位运算"，与今天（1 load + 1 比较）几乎持平。
 
-依据（都贴现有实现）：
+**随之改变的机制（都要同步文档）**
 
-- slab 是 64 KiB、64 KiB 对齐，`class_stride = align_up(16 + payload, 16)` 是 16 的倍数
-  ⇒ 块首偏移只要 12 位；`data` 与块首必在同一 region ⇒ "高 16 位取自 data" 恒成立。
-- 大对象 `chunk = region + 64`，payload 可跨多个 64 KiB region ⇒ 16 位不够，改用"低位 + 窗口"：
-  分配器保证对象不跨 `2^k` 窗口（`mmap` 时多留一个窗口、挑不跨界的位置；虚拟地址浪费上界 = 对象
-  大小，不额外落物理页）。起点取 k = 26（64 MiB 窗口）。
-- 帧锁在 runtime 的影子栈（BSS），与栈上的 `data` 高位必然不同 ⇒ "高位取自 data" 不成立；但 arena
-  是外部全局（链接期已知地址）、深度 ≤ 2^20 ⇒ 一个 GEP 就能拿到锁址，不需要地址字段。
-- 字面量与环境只有 `__yian_lit_lock` / `__yian_env_lock` 两个恒有效字（`YIAN_LITERAL_KEY = 1`）
-  ⇒ 一个槽号位即可，地址是链接期常量。
+1. **帧锁槽从影子栈搬到帧内**：`T&` 指向局部时，锁槽是编译器在该帧保留的 8 B；帧进入写新代、
+   全部返回路径写 0。安全论证从"槽位不属于普通栈帧、不被用户局部复用"改成"槽位由编译器保留，
+   任何用户视图都不覆盖它（胖模式下越界访问都被检查拦住）"。帧锁 arena / 深度游标 / R003
+   帧容量上限随之取消（不再有 2^20 上限）。
+2. **参数/环境字符串在启动时复制进堆**：wrapper 复制每个 argv 串到池里并登记它的 word，
+   `arg_bytes` 直接读登记表构造堆视图。`__yian_env_lock` 与"借用型环境视图"取消。
+3. **字面量前发射假块头**：`.rodata` 里每个字符串字面量前放 8 B（id 固定、extent = 字节数），
+   `live` 与堆同公式；`is_heap = false` 保证字面量视图不参与视图越界检查、也不能被 `del`。
+4. **分配 ABI 改成 `{void *data; u64 word;}`**：块头由运行时写（它知道尺寸类/大对象与新一代），
+   编译器不再计算 `data = block + H`、也不再自己写锁槽；`del` 里用同一个公式重建块首后交给
+   运行时释放。
+5. **窗口不变量**：4 GiB 窗口对齐 ⇒ 64 KiB 对齐的 slab 永不跨界；大对象由分配器在
+   `mmap` 里多留一个窗口、挑不跨界的落点（虚拟地址开销 ≤ 4 GiB，不落物理页）；帧由编译器在
+   帧进入时检查 `(base >> 32) == ((base + size - 1) >> 32)`（罕见失败报 R003，而不是算错地址）。
+6. **代（id）语义**：id 30 位，**按块/帧各自递增**（分配与释放各取一代；帧进入取一代）。
+   §4.4 的"键不回绕"相应改成"**同一个块要再被复用 2^30 次、且旧指针一直存活**才会撞代"——
+   比原来的"全局 63 位单调"弱，但比"全局 32 位计数器"强得多，也是 8 B 块头换来的必然取舍。
+7. **负载字节跨度上限 4 GiB-1**：`extent` 是 32 位字节数，分配处同时卡"元素数 ≤ 2^32-1"与
+   "字节数 ≤ 2^32-1"（R001）；宽元素类型（如 i64 数组）因此上限 5 亿元素。
 
-**检查序列**（slab 为例；kind 静态已知时全部折叠成 and/or）：
+**实现清单（按依赖顺序，全部落在同一批改动里）**
 
-```llvm
-%field = and i64 %word, 0xFFF          ; 12 位块偏移
-%lock  = and i64 %data, ~0xFFFF
-%lock  = or  i64 %lock, (shl %field, 4)
-%cur   = load i64, [%lock]             ; 仍然只有这 1 次 load, 且锁字与负载同一条 cache line
-%ok    = icmp eq %cur, %word           ; 整字比较: 位域随 kind 变化不影响比较本身
-```
+1. `runtime/include/yian_rt.h` + `src/alloc.c`：`YIAN_HDR_BYTES 16 → 8`（`{id:u32 @0, extent:u32 @4}`）、
+   `class_stride` 用新的头长、分配时写 id/extent 并返回 `{data, word}`（新增 `__secl_pool_alloc_*` 的
+   结构体返回入口）、释放时把 id 推到下一代、大对象按 4 GiB 窗口落点（**已完成**）。
+2. `runtime/src/runtime.c`：wrapper 复制 argv 到池里并登记 word（新符号 `__yian_arg_words`），
+   帧锁 arena 与 `__yian_env_lock` 删除。
+3. `compiler/codegen/cfg/lockmech.py`：`BlockHeader` 8 B / id 与 extent 偏移、word 编解码常量
+   （kind/field/id 位宽）、`live`/`is_raw` 的语义更新。
+4. `compiler/codegen/llvm/types.py`：`PointerType {ptr,i64,i32,i32}` 24 B、`RefType {ptr,i64}` 16 B、
+   `SliceType/StrType {ptr,i64,i64}` 24 B；`__stable_layout` 与注释同步。
+5. `compiler/codegen/llvm/builder.py`：`__build_fat` 改成 (data, word, index, size)；
+   `__check_live` 改成"word==0 短路 → lock 重建 → load32 == id"；
+   `check_view_access`/`check_delete` 读 `lock+4` 的 extent、`is_raw` 用 `data == lock + 8`；
+   `malloc` 改调新 ABI；`delete` 用重建出的块首调 `release`；帧锁改成帧内槽（`var_ptr` 的
+   e_f/k_f 换成帧 word）；字面量发射假块头并对齐 word。
+6. `compiler/codegen/cfg/builder.py`：`IR.WriteLockSlot`/`IR.GenKey`/`AcquireFrameLock` 的形状调整
+   （帧锁改为帧内槽 + 帧进入的窗口检查）。
+7. 断言与文档：`@sizeof`（16/24/24）、niche 系列、`docs/grammar/02.type_system.md`、
+   `docs/manual/12.llvm_codegen.md`、`docs/security.md`（锁槽位置、代语义、4 GiB 窗口与负载上限）。
 
-**三个子想法的结论**
-
-1. **锁址压到 32 位**：可行，但必须按 kind 分情况（上表），不能只写"高位取自 data"；而且 slab 只要
-   12 位，省下的位应该给键，而不是固定留 32 位。
-2. **键压到 32 位**：可行但不必要。固定 32 位会把今天"键单调不回绕、耗尽 R003 终止"（`__yian_key_heap`
-   / `__yian_key_stack`，63 位）变成"2^32 次分配后回绕"（按 1e8 次/秒 ≈ 43 秒），ABA 窗口从"事实上
-   不存在"变成"可达"。按 kind 分配位宽、并把计数器按尺寸类分开后，键宽 36–50 位，耗尽仍是 R003
-   确定性终止、不引入回绕；分配热路径仍是一次 load + 一次 store（与今天的全局计数器同价）。
-3. **`active_size` 32 位、单位改元素数**：可行且值得做，但收益是"单位统一 + 少一次宽乘"，**不是**
-   "表示更长"：`__delete_extent_ok` 今天算 `count × |T|`（i128）再与字节数比较，改元素数后变成
-   `count == extent` 直接比较；视图检查两边同乘 `|T|`，而 `|T|` 是编译期常量（强度削减）。对象字节
-   跨度上限由 (1) 的窗口约束决定，元素数上限是 2^32-1（超限报 R001）。分配器侧不需要块头存字节数：
-   slab 容量由类号隐含（`yian_class_bytes`），大对象字节数在 region 头的 `LargeHeader.payload` 里。
-
-**布局结果**
-
-| 类型 | 今天 | B6 | B6 + B1（`index`/`size` 也压 32 位） |
-| --- | ---: | ---: | ---: |
-| `T&` | 24 B | **16 B** | 16 B |
-| `T[]` / `str` | 32 B | 24 B | 24 B |
-| `T*` | 40 B | 32 B | **24 B** |
-| 块头 | 16 B | **8 B** = `{lock:u32, extent:u32}` | 同左 |
-
-**与 B3 的关系**：两者争同一个目标（16 B 引用），B6 更划算——锁字仍在块头（与负载同一条 cache line，
-检查仍是 1 次 load）、不需要"地址 → 块"的反查表或侧表、不需要改尺寸类（没有碎片率上升）、块头还从
-16 B 降到 8 B；代价是每个检查点 2–4 条 ALU，以及上表的键位宽与对象跨度两处语义上限。
-**建议顺序：B2 → B1 → B6 →（仅当 B6 的上限不可接受时）B3。**
-
-**实现面（与 B1/B2 叠加）**
-
-- 分配 ABI：`__secl_pool_alloc_class` 改成返回 `{block, word}`（16 B 结构走 `RAX:RDX`，无额外开销）；
-  键计数器从编译器发射（`IR.GenKey` / `__gen_key_value`）搬到运行时，并按尺寸类分开。
-- 分配器：大对象增加"不跨窗口"约束（`large_alloc` 的 region 选择 + 多余窗口的 `mmap`/`munmap`）；
-  块头 `YIAN_HDR_BYTES 16 → 8`（`lockmech.BlockHeader`、`runtime_lib.py`、`runtime/build.py --check` 同步）。
-- 发射点：`lockmech.py`（字段下标 / 谓词 / 编码）、`types.py`（尺寸 40/32/24 → 32/24/16）、
-  `builder.py`（`__build_fat` / `__check_live` / `check_delete` / `check_view_access` / `malloc` /
-  `acquire_frame_lock` / `__release_frame_lock` / `write_lock_slot`）。
-- 语义与文档：`docs/security.md`（键位宽与耗尽行为、锁址重建规则）、类型尺寸文档、`@sizeof`/niche
-  断言；`--raw-pointers` 不受影响。
-
-**开放问题**
-
-- 窗口大小 `k` 与键宽的分配（26 + 36 只是起点，要按 `ALLOC` 的大对象负载实测决定）。
-- 大对象"不跨窗口"约束的虚拟地址浪费与 `mmap` 重试成本。
-- 检查点里 kind 选择的形态（select 链 vs 分支；kind 静态已知时能否全部折掉）与代码体积。
-- 失去"锁槽地址即身份来源"后错误分类的细微变化（越界 / 悬垂 / 野指针可能从一条检查路径换到另一条），
-  要按 §4.3 清单逐条对照。
-- 与方向 A 的关系：帧内恒真消解与 provenance 去重仍然有效，而且能直接省掉这里的重建 ALU。
+**布局结果（B1+B6）**：`T&` 16 B、`T[]`/`str` 24 B、`T*` 24 B（`{data, word, index:u32, size:u32}`，
+比目标里写的 32 B 还小）、块头 8 B。以 chase 节点为例：今天 16 B 块头 + 32 B 负载 = 48 B/节点，
+B6 后 8 + 24 = 32 B/节点（−33%）。
 
 ## 4. 度量与验收
 
