@@ -61,8 +61,15 @@ SENTINEL = (1 << KEY_BITS) - 1
 闭合时序检查。
 """
 
-# 5 字段胖指针字段下标(胖指针表示将 PointerType 映射为
-# {data: ptr, lock_ptr: ptr, key: u64, index: u64, size: u64} 40B 聚合)。
+# 视图长度字段位宽与上限:PointerType 的 index/size 压到 32 位(元素数)。
+# 分配元素数在 Malloc 处校验 ≤ MAX_VIEW_COUNT(超限报 R001); 视图长度都来自某个
+# 分配的容量, 因此指针携带的长度分量必然可表示 —— 只有"长度来自一个不存在的分配"
+# 的原始构造才会被静默截断(见 docs/grammar/16.runtime_errors.md)。
+VIEW_COUNT_BITS = 32
+MAX_VIEW_COUNT = (1 << VIEW_COUNT_BITS) - 1
+
+# 5 字段胖指针字段下标(PointerType 映射为
+# {data: ptr, lock_ptr: ptr, key: u64, index: u32, size: u32} 32B 聚合)。
 FAT_DATA = 0
 FAT_LOCK_PTR = 1
 FAT_KEY = 2

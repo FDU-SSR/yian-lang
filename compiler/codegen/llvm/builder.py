@@ -117,13 +117,56 @@ class LLBuilder:
         return isinstance(ty, (Type.SliceType, Type.StrType, Type.RefType))
 
     def __extract_fat_field(self, ll_val: LLValue, index: int) -> LLValue:
-        """提取胖指针聚合字段;整数字段 u64、指针字段 u8*(下标约定见 FAT_*/SLICE_*/REF_*)。"""
+        """提取胖指针聚合字段;整数字段一律零扩展到 u64、指针字段 u8*(下标见 FAT_*/SLICE_*/REF_*)。
+
+        PointerType 的 index/size 是 32 位元素数, 值层统一按 u64 处理(长度来自已被
+        校验 ≤ MAX_VIEW_COUNT 的分配容量, 提取端零扩展; 比较/算术语义与 u64 版一致)。
+        """
         ir_val = self.__builder.extract_value(ll_val.ir_val, index)  # type: ignore
         if index in (IR.FAT_DATA, IR.FAT_LOCK_PTR):
             field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         else:
             field_type = self.__type_ctx.u64_id
+            if isinstance(ir_val.type, ir.IntType) and ir_val.type.width < 64:  # type: ignore
+                ir_val = self.__builder.zext(ir_val, ir.IntType(64))  # type: ignore
         return LLValue(field_type, ir_val)  # type: ignore
+
+    def __insert_field_value(self, agg: LLValue, value: LLValue, index: int) -> LLValue:
+        """按目标字段实际位宽插入聚合字段(收窄到 32 位视图字段时截断)。
+
+        收窄只发生在 index/size 上: 构造写入的长度来自受 Malloc 上限约束的分配容量,
+        算术写入由 CheckElementArith 保证 ≤ size ≤ MAX_VIEW_COUNT, 因此截断不改变语义。
+        """
+        dest: ir.Type = agg.ir_val.type.elements[index]  # type: ignore
+        ir_val: ir.Value = value.ir_val
+        if isinstance(dest, ir.IntType) and isinstance(ir_val.type, ir.IntType) and ir_val.type.width > dest.width:  # type: ignore
+            ir_val = self.__builder.trunc(ir_val, dest)  # type: ignore
+        return LLValue(agg.type_id, self.__builder.insert_value(agg.ir_val, ir_val, index))  # type: ignore
+
+    def __narrow_view_value(self, ir_val: ir.Value, agg: ir.Value, index: int) -> ir.Value:
+        """把常量视图值收窄到目标聚合字段位宽(供 undef 重建路径直插用)。"""
+        dest: ir.Type = agg.type.elements[index]  # type: ignore
+        if isinstance(dest, ir.IntType) and isinstance(ir_val.type, ir.IntType) and ir_val.type.width > dest.width:  # type: ignore
+            return self.__builder.trunc(ir_val, dest)  # type: ignore
+        return ir_val
+
+    @staticmethod
+    def __check_static_view_count(count: int) -> None:
+        """编译期数组退化的长度上限: 超过 32 位视图上限的类型无法表示, 直接报错。"""
+        if count > IR.MAX_VIEW_COUNT:
+            raise ValueError(
+                f"array length {count} exceeds the 32-bit view element limit {IR.MAX_VIEW_COUNT}"
+            )
+
+    def __check_view_count(self, value: LLValue, suffix: str) -> None:
+        """分配元素数上限: 必须 ≤ MAX_VIEW_COUNT(否则 32 位长度字段会截断)。
+
+        只在堆分配处发射一次: 视图长度都来自某个分配的容量, 分配受这条上限约束后,
+        由视图派生出的长度(子切片、T*→T[] 的剩余长度、视图转换)必然可表示。
+        """
+        limit = ir.Constant(ir.IntType(64), IR.MAX_VIEW_COUNT)
+        ok = self.__builder.icmp_unsigned("<=", value.ir_val, limit)  # type: ignore
+        self.__emit_check(LLValue(self.__type_ctx.bool_id, ok), RuntimeErrorCode.R001, suffix)
 
     def __build_fat(self, data: LLValue, lock_ptr: LLValue, key: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
         """按结构构造胖值(分级指针表示):PointerType 5 字段 ⟨data,lock,key,index,size⟩ /
@@ -135,8 +178,8 @@ class LLBuilder:
         val = self.insert_value(val, lock_ptr, IR.FAT_LOCK_PTR)
         val = self.insert_value(val, key, IR.FAT_KEY)
         if isinstance(ty, Type.PointerType):
-            val = self.insert_value(val, index, IR.FAT_INDEX)
-            val = self.insert_value(val, size, IR.FAT_SIZE)
+            val = self.__insert_field_value(val, index, IR.FAT_INDEX)
+            val = self.__insert_field_value(val, size, IR.FAT_SIZE)
         elif isinstance(ty, (Type.SliceType, Type.StrType)):
             val = self.insert_value(val, size, IR.SLICE_SIZE)
         elif isinstance(ty, Type.RefType):
@@ -446,25 +489,35 @@ class LLBuilder:
             self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
             return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
         # Convert element count to byte count for allocation.
-        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积、以及堆块头,一律在 i128
-        # 宽算中完成,再检测 total ≥ 2^64(分配请求超限)→ 报告 R001。否则纯 64 位乘法
-        # 回绕(如 n=2^62+1,|T|=8 → 2^65 → 小值)会令物理分配过小,而胖指针
-        # size 字段 = n(元素数,无回绕),in_bounds 全部通过 → 越界访问逃过检查。
+        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积不能回绕。胖态先卡 n ≤ 2^32-1 (R001),
+        # 之后 n·|T| 必然落在 u64 内; 只有 raw 模式或元素大小 ≥ 2^32 的类型仍走 i128
+        # 宽算 + total < 2^64 检查——否则纯 64 位乘法回绕(如 n=2^62+1、|T|=8 → 2^65 →
+        # 小值)会令物理分配过小, 而 in_bounds 全部通过 → 越界访问逃过检查。
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
         i128: ir.IntType = ir.IntType(128)  # type: ignore
-        size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
-        payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
-        total128 = payload128
-        if not self.__raw_pointers:
-            # 块 = 堆块头 + 负载;块头首字为锁槽。
-            # raw 模式无锁头(块 = 负载,data = 块基址)。
-            total128 = self.__builder.add(
-                total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
-            )
-        # O-1 溢出检查(raw 模式保留:防御性,决策点已定)
-        fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
-        self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), RuntimeErrorCode.R001, "mof")
-        payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
+        if not self.__raw_pointers and elem_size < (1 << 32):
+            # 胖指针的 size 字段是 32 位元素数: 先卡元素数上限(超限报 R001),
+            # 之后 元素数 × 元素大小 ≤ (2^32-1)^2 < 2^64 必然落在 u64 内 —— 这条上限
+            # 检查蕴含原来的 i128 溢出检查, 因此热路径上不再需要宽整数乘法。
+            self.__check_view_count(size, "vcap")
+            payload_ir = self.__builder.mul(size.ir_val, ir.Constant(ir.IntType(64), elem_size))  # type: ignore
+        else:
+            # raw 模式无 32 位 size 字段; 元素大小 ≥ 2^32 的类型极罕见:
+            # 两种情况都保留 O-1 的 i128 溢出检查(raw 下是防御性检查)。
+            if not self.__raw_pointers:
+                self.__check_view_count(size, "vcap")
+            size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
+            payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
+            total128 = payload128
+            if not self.__raw_pointers:
+                # 块 = 堆块头 + 负载;块头首字为锁槽。
+                # raw 模式无锁头(块 = 负载,data = 块基址)。
+                total128 = self.__builder.add(
+                    total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
+                )
+            fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
+            self.__emit_check(LLValue(self.__type_ctx.bool_id, fits), RuntimeErrorCode.R001, "mof")
+            payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
         zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
         one = ir.Constant(ir.IntType(64), 1)  # type: ignore
         has_size = self.__builder.icmp_unsigned("!=", payload_ir, zero)  # type: ignore
@@ -1023,8 +1076,8 @@ class LLBuilder:
                 zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                 one = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
                 ir_val = self.__builder.insert_value(base.ir_val, field_ptr.ir_val, IR.FAT_DATA)  # type: ignore
-                ir_val = self.__builder.insert_value(ir_val, zero.ir_val, IR.FAT_INDEX)  # type: ignore
-                ir_val = self.__builder.insert_value(ir_val, one.ir_val, IR.FAT_SIZE)  # type: ignore
+                ir_val = self.__builder.insert_value(ir_val, self.__narrow_view_value(zero.ir_val, base.ir_val, IR.FAT_INDEX), IR.FAT_INDEX)  # type: ignore
+                ir_val = self.__builder.insert_value(ir_val, self.__narrow_view_value(one.ir_val, base.ir_val, IR.FAT_SIZE), IR.FAT_SIZE)  # type: ignore
                 result_val = LLValue(result_type_id, ir_val)
             else:
                 # RefType(3 字段)/SliceType(4 字段):FAT_INDEX/FAT_SIZE 越界或语义错——
@@ -1071,7 +1124,8 @@ class LLBuilder:
             index = self.__extract_fat_field(base, IR.FAT_INDEX)
             new_index = LLValue(self.__type_ctx.u64_id,
                                 self.__builder.add(index.ir_val, offset.ir_val))  # type: ignore
-            result_val = self.insert_value(base, new_index, IR.FAT_INDEX)
+            # 良构检查 (CheckElementArith) 保证 index+n ≤ size ≤ MAX_VIEW_COUNT, 截断安全
+            result_val = self.__insert_field_value(base, new_index, IR.FAT_INDEX)
         else:
             base_def = self.__type_ctx[base.type_id]
             element_type_id = base_def.pointee_type if isinstance(base_def, (Type.PointerType, Type.RefType)) else base.type_id
@@ -1280,6 +1334,7 @@ class LLBuilder:
                         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
                         len_ty = self.__type_ctx[arr_ty.length]
                         assert isinstance(len_ty, Type.LiteralValueType)
+                        self.__check_static_view_count(len_ty.value)
                         size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
                         ir_val = self.__build_fat(data, lock, key, zero, size, to_type).ir_val
                     else:
@@ -1354,6 +1409,7 @@ class LLBuilder:
                 if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
                     len_ty = self.__type_ctx[src_pointee.length]
                     assert isinstance(len_ty, Type.LiteralValueType)
+                    self.__check_static_view_count(len_ty.value)
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), len_ty.value))  # type: ignore
                 else:
                     size = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 1))  # type: ignore
@@ -1484,6 +1540,8 @@ class LLBuilder:
         size = LLValue(self.__type_ctx.u64_id,
                        self.__builder.extract_value(base.ir_val, IR.SLICE_SIZE))  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+        # 长度进入 32 位 size 字段, 但不在这里检查: 视图长度都来自某个分配的容量,
+        # 而分配元素数已在 malloc 处校验 ≤ MAX_VIEW_COUNT, 因此这里必然可表示。
         return self.__build_fat(data, lock, key, zero, size, ptr_type_id)
 
     def __lit_lock_pair(self) -> tuple[ir.Value, ir.Value]:
@@ -1553,6 +1611,8 @@ class LLBuilder:
         lock = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), lock_ir)  # type: ignore
         key = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
+        if not self.__raw_pointers:
+            self.__check_view_count(size, "vcap")
         return self.__build_fat(data, lock, key, zero, size, value.type_id)
 
     def __build_aggregate(self, type_id: int, field_values: list[LLValue]) -> LLValue:
@@ -1577,6 +1637,8 @@ class LLBuilder:
             data = LLValue(self.__type_ctx.alloc_pointer(elem_type), raw_ir)  # type: ignore
             lock = self.__extract_fat_field(field_values[0], IR.FAT_LOCK_PTR)
             key = self.__extract_fat_field(field_values[0], IR.FAT_KEY)
+            # 切片 size 是 64 位, 不截断; 长度都来自分配容量, 而分配元素数已在
+            # malloc 处校验 ≤ MAX_VIEW_COUNT, 因此进入 32 位指针字段时必然可表示。
             return self.__build_fat(data, lock, key, self.i64(0), field_values[1], type_id)
         # 全常量聚合 → 单一定值(ir.Constant),免 undef + N×insertvalue 链。
         # 条件:① 无 ZST 字段(其 {} 槽位常量需逐槽构造,保持原路径);② 无
@@ -2074,8 +2136,10 @@ class LLBuilder:
                 second_idx = IR.REF_KEY
             else:
                 second_idx = 1
-            return (self.__builder.extract_value(v, IR.FAT_DATA),  # type: ignore
-                    self.__builder.extract_value(v, second_idx))  # type: ignore
+            second = self.__builder.extract_value(v, second_idx)  # type: ignore
+            if isinstance(second.type, ir.IntType) and second.type.width < 64:  # type: ignore
+                second = self.__builder.zext(second, ir.IntType(64))  # type: ignore
+            return (self.__builder.extract_value(v, IR.FAT_DATA), second)  # type: ignore
         return (v, ir.Constant(ir.IntType(64), 0))  # type: ignore
 
     def __cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:

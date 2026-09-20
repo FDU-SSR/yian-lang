@@ -6,7 +6,7 @@ fn main() {
     let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
         8u64
     } else {
-        40u64
+        32u64
     };
     assert @sizeof(i32*) == expected_ptr_size: "pointer ABI size"
     assert @sizeof(i32*[3]) == @sizeof(i32*) * 3: "ptr-array size"

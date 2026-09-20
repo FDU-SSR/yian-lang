@@ -41,7 +41,9 @@ class LLTypeCtx:
             self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
         else:
             self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64])  # type: ignore
-        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i64, self.__i64])  # type: ignore
+        # 5 字段胖指针 {data, lock_ptr, key, index, size} = 8+8+8+4+4 = 32 B;
+        # index/size 是 32 位元素数 (上限 MAX_VIEW_COUNT, 见 lockmech)。
+        self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64, self.__i32, self.__i32])  # type: ignore
         # 3 字段引用 {data, lock_ptr, key} 24B(已替换早期的 5 字段临时布局)。
         self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__ptr, self.__i64])  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
@@ -207,7 +209,8 @@ class LLTypeCtx:
             case _: raise ValueError(f"Invalid float size: {type_def.size}")
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
-        # 5-field fat pointer {data, lock_ptr, key, index, size} (40B).
+        # 5-field fat pointer {data, lock_ptr, key, index, size} = 32B
+        # (index/size 为 32 位元素数, 见 lockmech.MAX_VIEW_COUNT).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
         # 诊断模式:raw_pointers 下指针退化为裸 8B opaque 指针;元素/值类型(GEP 的
         # source_etype、load 的 typ)由使用点显式给出。
@@ -335,7 +338,7 @@ class LLTypeCtx:
         elif isinstance(type_def, Type.FloatType):
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.PointerType):
-            # fat pointer — 5 × 8B fields = 40B, align 8.
+            # fat pointer — {ptr, ptr, i64, i32, i32} = 32B, align 8.
             # 诊断模式:raw_pointers 下指针为裸 8B,align 8。
             if self.__raw_pointers:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore

@@ -34,7 +34,7 @@ fn main() {
     let tagged_pointer_size: u64 = comptime if IS_RAW_MODE {
         12u64
     } else {
-        44u64
+        36u64
     };
     let tagged_view_size: u64 = comptime if IS_RAW_MODE {
         20u64
@@ -44,7 +44,7 @@ fn main() {
     let tagged_pointer_or_view_size: u64 = comptime if IS_RAW_MODE {
         20u64
     } else {
-        44u64
+        36u64
     };
 
     assert @sizeof(Three) == tagged_pointer_size: "three variants retain tag";
