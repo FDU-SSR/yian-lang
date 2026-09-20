@@ -1,7 +1,7 @@
 // A short base slice does not cover the complete multi-element allocation.
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     let s: i32[] = p[0u64..1];
     del s;
 }

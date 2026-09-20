@@ -4,7 +4,7 @@
 from std.core.io import print;
 
 fn main() {
-    let old: u8* = dyn[4] u8;
+    let old: u8* = dyn[4] 0u8;
     old[0] = 65u8;
     old[1] = 66u8;
     old[2] = 67u8;
@@ -12,7 +12,7 @@ fn main() {
     let stale: str = str.from(&old[0u64..4]);
     del old;
 
-    let replacement: u8* = dyn[4] u8;
+    let replacement: u8* = dyn[4] 0u8;
     replacement[0] = 88u8;
     print(stale);
 }

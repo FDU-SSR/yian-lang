@@ -45,6 +45,14 @@ class TokenStream:
     def peek_n(self, n: int) -> list[Token]:
         return self.__tokens[self.__index: self.__index + n]
 
+    def mark(self) -> int:
+        """Snapshot the cursor position for speculative parsing (:meth:`reset`)."""
+        return self.__index
+
+    def reset(self, mark: int) -> None:
+        """Rewind the cursor to a position previously returned by :meth:`mark`."""
+        self.__index = mark
+
     def next(self) -> Token:
         if self.at_end():
             raise ParseError("End of token stream reached", self.peek().span)

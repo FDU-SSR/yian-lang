@@ -9,7 +9,7 @@ pub struct RawVec<T> {
 
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        let data: T* = dyn[0] T;
+        let data: T* = @alloc<T>(0);
         Self(
             data=data,
             cap=0x8000_0000_0000_0000u64
@@ -25,7 +25,7 @@ impl<T> RawVec<T> {
             @runtime_fail("R001");
         }
         // Allocate memory for capacity elements
-        let data: T* = dyn[capacity] T;
+        let data: T* = @alloc<T>(capacity);
         Self(
             data=data,
             cap=capacity | 0x8000_0000_0000_0000u64
@@ -55,7 +55,7 @@ impl<T> RawVec<T> {
         }
         let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
 
-        let new_data: T* = dyn[new_cap] T;
+        let new_data: T* = @alloc<T>(new_cap);
 
         if old_cap > 0 {
             // Copy existing elements to the new buffer
@@ -96,7 +96,7 @@ impl<T> RawVec<T> {
             new_cap = 4;
         }
 
-        let new_data: T* = dyn[new_cap] T;
+        let new_data: T* = @alloc<T>(new_cap);
 
         // Copy valid elements
         if len > 0 {
@@ -120,14 +120,14 @@ impl<T> RawVec<T> {
         }
 
         if len == 0 {
-            let new_data: T* = dyn[0] T;
+            let new_data: T* = @alloc<T>(0);
             del self.data;
             self.data = new_data;
             self.cap = live_bit;
             return;
         }
 
-        let new_data: T* = dyn[len] T;
+        let new_data: T* = @alloc<T>(len);
 
         // Copy valid elements
         memmove(new_data, self.data, len);

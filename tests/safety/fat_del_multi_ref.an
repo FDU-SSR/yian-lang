@@ -2,7 +2,7 @@
 // complete allocation and cannot be used as a delete target.
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     let r: i32& = &p[0];
     del r;
 }

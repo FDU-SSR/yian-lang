@@ -5,7 +5,7 @@
 // Expected output: 0
 
 fn main() {
-    let arr: i32* = dyn[5] i32;
+    let arr: i32* = dyn[5] 0i32;
     arr[0] = 10;
     arr[1] = 20;
     arr[2] = 30;

@@ -6,7 +6,7 @@ fn main() {
     // create a slice from array/pointer
     let arr: i32[5] = [1, 2, 3, 4, 5];
     let array_slice: i32[] = arr[1u64..4];
-    let heap_arr: i32* = dyn[5] i32;
+    let heap_arr: i32* = dyn[5] 0i32;
     heap_arr[0] = 10
     heap_arr[1] = 20
     heap_arr[2] = 30

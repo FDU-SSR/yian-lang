@@ -8,7 +8,7 @@ struct Value<T> {
 
 impl<T> Value<T> {
     pub static fn new_array(default_value: T, size: u64) -> Self* {
-        let arr: Self* = dyn[size] Self;
+        let arr: Self* = dyn[size] Self(val=default_value);
         for i in 0..size {
             arr[i] = Self(val=default_value)
         }

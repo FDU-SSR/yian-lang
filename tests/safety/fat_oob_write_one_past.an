@@ -5,7 +5,7 @@
 // index + 1 > size → 失败 → safety error。期望 Exit code 1。
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     p[0] = 1;
     p[1] = 2;
     p[2] = 3;

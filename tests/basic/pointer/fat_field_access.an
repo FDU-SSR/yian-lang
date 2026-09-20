@@ -21,7 +21,7 @@ fn main() {
     assert p.inner.v == 11: "Expected p.inner.v to be 11 after write"
 
     // Pointer field is a sub-pointer that can be re-dereferenced.
-    let arr: i32* = dyn[2] i32
+    let arr: i32* = dyn[2] 0i32
     arr[0] = 5
     p.next = Option<i32*>.Some(arr)
     let q: i32* = *p.next.unwrap()

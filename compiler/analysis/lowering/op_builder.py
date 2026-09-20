@@ -13,7 +13,6 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 if TYPE_CHECKING:
@@ -211,12 +210,34 @@ class OpBuilder:
         expr = HIR.DynValue(span=span, value=value_hir, type_id=ptr_type_id, is_place=False)
         return expr
 
-    def build_dyn_buffer(self, span: SrcSpan, target_type: ASTType, size: AST.Expr) -> HIR.Expr:
-        target_type_id = self.__ctx.resolve_type(target_type)
+    def build_dyn_buffer(self, span: SrcSpan, element: AST.Expr, size: AST.Expr) -> HIR.Expr:
+        element_hir = self.__evaluator.value(element)
         size_hir = self.__evaluator.coerce(self.__evaluator.value(size), TypeCtx.u64_id)
 
-        ptr_type_id = self.__type_ctx.alloc_pointer(target_type_id)
-        expr = HIR.DynBuffer(span=span, element_type=target_type_id, length=size_hir, type_id=ptr_type_id, is_place=False)
+        if isinstance(element_hir, HIR.Ty):
+            # A type name in initializer position means "allocate uninitialized".
+            # ZSTs have exactly one value, so they are always initialized.
+            element_type_id = self.__type_ctx.resolve_aliases(element_hir.type_id)
+            if not self.__type_ctx.is_zst(element_type_id):
+                raise AnalysisError(
+                    "uninitialized heap allocation is written '@alloc<T>(n)' and is only "
+                    "allowed in the standard library; otherwise initialize every element "
+                    "with 'dyn[n] <value>' (or use Vec/standard containers)",
+                    span,
+                )
+            element_hir = None
+        else:
+            element_type_id = element_hir.type_id
+
+        ptr_type_id = self.__type_ctx.alloc_pointer(element_type_id)
+        expr = HIR.DynBuffer(
+            span=span,
+            element_type=element_type_id,
+            length=size_hir,
+            element=element_hir,
+            type_id=ptr_type_id,
+            is_place=False,
+        )
         return expr
 
     def __build_add(self, span: SrcSpan, left: AST.Expr, right: AST.Expr) -> HIR.Expr:

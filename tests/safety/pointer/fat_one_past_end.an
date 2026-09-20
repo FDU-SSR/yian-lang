@@ -6,7 +6,7 @@
 // Expected output: 0
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     p[0] = 1;
     p[1] = 2;
     p[2] = 3;

@@ -340,6 +340,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_sizeof(expr, guides, is_last)
         case AST.BitCast():
             return __export_bitcast(expr, guides, is_last)
+        case AST.Alloc():
+            return __export_alloc(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -468,8 +470,8 @@ def __export_dyn_value(expr: AST.DynValue, guides: list[bool], is_last: bool) ->
 
 def __export_dyn_buffer(expr: AST.DynBuffer, guides: list[bool], is_last: bool) -> str:
     res = __line(guides, is_last, "DynBuffer")
-    res += __line(guides, False, f"TargetType: {expr.target_type}")
-    res += __export_expr_child("Size", expr.size, guides, is_last, True)
+    res += __export_expr_child("Size", expr.size, guides, False, False)
+    res += __export_expr_child("Element", expr.element, guides, is_last, True)
     return res
 
 
@@ -482,6 +484,15 @@ def __export_bitcast(expr: AST.BitCast, guides: list[bool], is_last: bool) -> st
     guides.append(not is_last)
     result += __line(guides, False, f"target_type: {expr.target_type}")
     result += __export_expr(expr.value, guides, True)
+    guides.pop()
+    return result
+
+
+def __export_alloc(expr: AST.Alloc, guides: list[bool], is_last: bool) -> str:
+    result = __line(guides, is_last, "Alloc")
+    guides.append(not is_last)
+    result += __line(guides, False, f"target_type: {expr.target_type}")
+    result += __export_expr(expr.count, guides, True)
     guides.pop()
     return result
 

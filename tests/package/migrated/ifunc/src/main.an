@@ -9,7 +9,7 @@ fn main() {
     let res: i32 = adder(10, 20);
     assert res == 30;
 
-    let arr: i32* = dyn[5] i32;
+    let arr: i32* = dyn[5] 0i32;
     arr[0] = 5
     arr[1] = 3
     arr[2] = 8

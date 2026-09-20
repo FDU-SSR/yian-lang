@@ -4,7 +4,7 @@ from std.core.io import File, OpenMode;
 
 fn main() {
     let file = File.open("/dev/null", OpenMode.Read).unwrap();
-    let bytes: u8* = dyn[4] u8;
+    let bytes: u8* = dyn[4] 0u8;
     let stale: u8[] = bytes[0u64..4];
     del bytes;
     file.read(stale);

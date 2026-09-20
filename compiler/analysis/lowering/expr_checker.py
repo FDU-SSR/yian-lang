@@ -95,6 +95,8 @@ class ExprChecker:
                 return self.__handle_sizeof(expr)
             case AST.BitCast():
                 return self.__handle_bitcast(expr)
+            case AST.Alloc():
+                return self.__handle_alloc(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -157,7 +159,7 @@ class ExprChecker:
         return self.__op_builder.build_dyn_value(node.span, node.value)
 
     def __handle_dyn_buffer(self, node: AST.DynBuffer) -> HIR.Expr:
-        return self.__op_builder.build_dyn_buffer(node.span, node.target_type, node.size)
+        return self.__op_builder.build_dyn_buffer(node.span, node.element, node.size)
 
     def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)
@@ -187,6 +189,19 @@ class ExprChecker:
             value=value,
             target_type=target_type_id,
             type_id=target_type_id,
+            is_place=False,
+        )
+
+    def __handle_alloc(self, node: AST.Alloc) -> HIR.Expr:
+        """``@alloc<T>(n)`` — trusted raw allocation of ``n`` uninitialized ``T``."""
+        element_type_id = self.__ctx.resolve_type(node.target_type)
+        count = self.coerce(self.value(node.count), TypeCtx.u64_id)
+        ptr_type_id = self.__ctx.type_ctx.alloc_pointer(element_type_id)
+        return HIR.Alloc(
+            span=node.span,
+            count=count,
+            element_type=element_type_id,
+            type_id=ptr_type_id,
             is_place=False,
         )
 
@@ -505,6 +520,21 @@ class ExprChecker:
                 if not isinstance(expected_ty, Type.PointerType):
                     raise AnalysisError(f"Expected pointer type for dynamic value, got '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
                 expr.value = self.coerce(expr.value, expected_ty.pointee_type)
+                expr.type_id = expected
+                return expr
+            case HIR.DynBuffer():
+                if not isinstance(expected_ty, Type.PointerType):
+                    raise AnalysisError(f"Expected pointer type for dynamic buffer, got '{self.__ctx.type_ctx.get_name(expected)}'", expr.span)
+                if expr.element is None:
+                    # ZST element: nothing to initialize, pointee must match as written.
+                    if not self.__ctx.type_ctx.is_same_type(expr.element_type, expected_ty.pointee_type):
+                        raise AnalysisError(
+                            f"Expected type '{self.__ctx.type_ctx.get_name(expected)}' but got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
+                            expr.span,
+                        )
+                else:
+                    expr.element = self.coerce(expr.element, expected_ty.pointee_type)
+                    expr.element_type = expected_ty.pointee_type
                 expr.type_id = expected
                 return expr
             case HIR.Block() | HIR.If() | HIR.ComptimeIf() | HIR.Loop() | HIR.Match():

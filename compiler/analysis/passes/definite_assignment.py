@@ -342,7 +342,13 @@ class DefiniteAssignment:
             return self.__check_expr(expr.value, state)
 
         if isinstance(expr, HIR.DynBuffer):
-            return self.__check_expr(expr.length, state)
+            state = self.__check_expr(expr.length, state)
+            if expr.element is not None:
+                state = self.__check_expr(expr.element, state)
+            return state
+
+        if isinstance(expr, HIR.Alloc):
+            return self.__check_expr(expr.count, state)
 
         # -- cast / bitcast -----------------------------------------------
         if isinstance(expr, HIR.Cast):
@@ -696,7 +702,13 @@ class DefiniteAssignment:
             return self.__walk_neutral(expr.value, state)
 
         if isinstance(expr, HIR.DynBuffer):
-            return self.__walk_neutral(expr.length, state)
+            state = self.__walk_neutral(expr.length, state)
+            if expr.element is not None:
+                state = self.__walk_neutral(expr.element, state)
+            return state
+
+        if isinstance(expr, HIR.Alloc):
+            return self.__walk_neutral(expr.count, state)
 
         if isinstance(expr, HIR.Cast):
             return self.__walk_neutral(expr.value, state)

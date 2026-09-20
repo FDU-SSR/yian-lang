@@ -1,7 +1,7 @@
 // A stale string passed to the trusted open boundary must fail closed.
 
 fn main() {
-    let p: u8* = dyn[4] u8;
+    let p: u8* = dyn[4] 0u8;
     p[0] = 47u8;
     p[1] = 116u8;
     p[2] = 109u8;

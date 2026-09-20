@@ -1,0 +1,7 @@
+// The removed type-directed form is not a value. A pointer element type like
+// `T*` used to be spelled here; now it must be an initializer value.
+
+fn main() {
+    let p: i32** = dyn[2] i32*;
+    del p;
+}

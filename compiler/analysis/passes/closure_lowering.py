@@ -211,8 +211,12 @@ class ClosureLowering:
                 expr.value = self.__rewrite_type_ids(expr.value)
             case HIR.DynBuffer():
                 expr.length = self.__rewrite_type_ids(expr.length)
+                if expr.element is not None:
+                    expr.element = self.__rewrite_type_ids(expr.element)
             case HIR.BitCast():
                 expr.value = self.__rewrite_type_ids(expr.value)
+            case HIR.Alloc():
+                expr.count = self.__rewrite_type_ids(expr.count)
             case HIR.AssumeInit():
                 expr.value = self.__rewrite_type_ids(expr.value)
             case _:
@@ -398,8 +402,12 @@ class ClosureLowering:
                 expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.DynBuffer():
                 expr.length = self.__rewrite_one_capture(expr.length)
+                if expr.element is not None:
+                    expr.element = self.__rewrite_one_capture(expr.element)
             case HIR.BitCast():
                 expr.value = self.__rewrite_one_capture(expr.value)
+            case HIR.Alloc():
+                expr.count = self.__rewrite_one_capture(expr.count)
             case HIR.AssumeInit():
                 expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.Closure():

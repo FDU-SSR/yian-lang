@@ -9,7 +9,7 @@ fn main() {
     let index: u64 = 0;
 
     while index < rounds {
-        let block: i32* = dyn[32] i32;
+        let block: i32* = dyn[32] 0i32;
         let element: u64 = 0;
         while element < 32 {
             block[element] = i32(element);

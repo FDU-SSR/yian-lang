@@ -3,7 +3,7 @@
 from std.core.io import append_file;
 
 fn main() {
-    let bytes: u8* = dyn[4] u8;
+    let bytes: u8* = dyn[4] 0u8;
     bytes[0] = 47u8;
     bytes[1] = 116u8;
     bytes[2] = 109u8;

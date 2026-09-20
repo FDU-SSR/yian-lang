@@ -69,17 +69,66 @@ class ExprParser:
 
         token = self.__stream.peek()
         if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LBracket:
-            # dyn[array_size] Type
+            # dyn[element_count] value — allocate `count` elements, all
+            # initialized from `value` (a type name here is diagnosed during
+            # lowering: uninitialized allocation is spelled `@alloc<T>(n)`).
             self.__stream.consume_punctuator(Tok.PunctuatorKind.LBracket)
             array_size = self.parse_expr()
             self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
 
-            target_type = self.__type_parser.parse_type()
-            return AST.DynBuffer(span=token.span, target_type=target_type, size=array_size)
+            element = self.__parse_dyn_element()
+            return AST.DynBuffer(span=token.span, size=array_size, element=element)
 
         # dyn value
         value = self.parse_expr()
         return AST.DynValue(span=token.span, value=value)
+
+    def __parse_dyn_element(self) -> AST.Expr:
+        """Parse the initializer of ``dyn[n] value``.
+
+        The removed type-directed form (``dyn[n] T`` / ``dyn[n] T*``) is not a
+        value. Plain type names already reach lowering and are diagnosed there;
+        a pointer/array type instead fails to parse (``T*`` looks like a
+        multiplication missing its right operand). When the expression parse
+        fails but a type parses cleanly up to the end of the element, report the
+        removed form instead of the raw syntax error.
+        """
+        mark = self.__stream.mark()
+        try:
+            return self.parse_expr()
+        except ParseError:
+            self.__stream.reset(mark)
+            if not self.__looks_like_removed_dyn_type():
+                raise
+            raise ParseError(
+                "'dyn[n]' initializes every element from a value, not a type: "
+                "write 'dyn[n] <initial value>'",
+                self.__stream.peek().span,
+            ) from None
+
+    def __looks_like_removed_dyn_type(self) -> bool:
+        """True when a type parses here and consumes the whole initializer."""
+        element_mark = self.__stream.mark()
+        try:
+            self.__type_parser.parse_type()
+        except ParseError:
+            self.__stream.reset(element_mark)
+            return False
+        ends_element = self.__at_initializer_end()
+        self.__stream.reset(element_mark)
+        return ends_element
+
+    def __at_initializer_end(self) -> bool:
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind in (
+            Tok.PunctuatorKind.Semicolon,
+            Tok.PunctuatorKind.RParen,
+            Tok.PunctuatorKind.Comma,
+            Tok.PunctuatorKind.RBracket,
+            Tok.PunctuatorKind.RBrace,
+        ):
+            return True
+        return self.__stream.at_end()
 
     def __parse_primary(self) -> AST.Expr:
         """Parses a primary expression."""
@@ -411,6 +460,8 @@ class ExprParser:
             return self.__parse_sizeof(at.span)
         if kind == AST.BuiltinKind.BitCast:
             return self.__parse_bitcast(at.span)
+        if kind == AST.BuiltinKind.Alloc:
+            return self.__parse_alloc(at.span)
 
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
         args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
@@ -433,6 +484,16 @@ class ExprParser:
         value = self.parse_expr()
         end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.BitCast(span=at_span + end.span, target_type=ty, value=value)
+
+    def __parse_alloc(self, at_span: SrcSpan) -> AST.Alloc:
+        """Parse ``@alloc<type>(count)`` — trusted raw allocation, standard library only."""
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+        ty = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        count = self.parse_expr()
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.Alloc(span=at_span + end.span, target_type=ty, count=count)
 
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""

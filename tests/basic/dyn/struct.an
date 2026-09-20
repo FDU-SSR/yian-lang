@@ -31,7 +31,7 @@ fn main() {
     let p2: Person* = dyn Person(30, "Bob");
     assert p2.get_age() == 30;
 
-    let p3: Person* = dyn[2] Person;
+    let p3: Person* = dyn[2] Person(0, "");
     p3[0] = Person.new(22, "Charlie")
     p3[1] = Person.new(28, "Diana")
     assert p3[0].get_age() == 22;

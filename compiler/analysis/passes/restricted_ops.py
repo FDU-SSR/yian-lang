@@ -98,6 +98,10 @@ class RestrictedOpsChecker:
                 self.__scan_expr(expr.value)
             case AST.DynBuffer():
                 self.__scan_expr(expr.size)
+                self.__scan_expr(expr.element)
+            case AST.Alloc():
+                self.__report(expr.span, AST.BuiltinKind.Alloc.spelling)
+                self.__scan_expr(expr.count)
             case AST.Tuple():
                 for element in expr.elements:
                     self.__scan_expr(element)

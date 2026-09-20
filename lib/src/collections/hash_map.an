@@ -33,11 +33,11 @@ impl<K, V> HashMap<K, V> {
         let actual_capacity = capacity.next_power_of_two();
 
         let growth_left = Self.calculate_growth_left(actual_capacity);
-        let ctrls: u8* = dyn[actual_capacity] u8;
+        let ctrls: u8* = @alloc<u8>(actual_capacity);
         for i in 0..actual_capacity {
             ctrls[i] = 0b1111_1111
         }
-        let buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
+        let buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(actual_capacity);
 
         Self(
             buckets,
@@ -183,11 +183,11 @@ impl<K, V> HashMap<K, V> {
         let old_buckets: Bucket<K, V>* = self.buckets
         let old_capacity = self.capacity;
 
-        let new_ctrls: u8* = dyn[actual_capacity] u8;
+        let new_ctrls: u8* = @alloc<u8>(actual_capacity);
         for i in 0..actual_capacity {
             new_ctrls[i] = 0b1111_1111
         }
-        let new_buckets: Bucket<K, V>* = dyn[actual_capacity] Bucket<K, V>;
+        let new_buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(actual_capacity);
 
         self.capacity = actual_capacity;
         self.growth_left = Self.calculate_growth_left(actual_capacity);

@@ -9,7 +9,7 @@ struct Inner { v: i32 }
 struct Node { inner: Inner, tag: i32 }
 
 fn main() {
-    let arr: Node* = dyn[2] Node;
+    let arr: Node* = dyn[2] Node(Inner(0), 0);
     arr[0].inner.v = 1;
     arr[1].inner.v = 2;
 

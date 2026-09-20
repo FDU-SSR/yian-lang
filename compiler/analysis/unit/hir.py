@@ -321,6 +321,7 @@ class DynBuffer:
     span: SrcSpan
     element_type: int  # type_id of the buffer element type
     length: Expr
+    element: Expr | None  # initializer; None only when element_type is a ZST
     type_id: int
     is_place: bool
 
@@ -339,6 +340,17 @@ class BitCast:
     value: Expr
     target_type: int  # type_id
     type_id: int
+    is_place: bool
+
+
+@dataclass
+class Alloc:
+    """Trusted raw allocation: ``count`` uninitialized ``element_type`` values."""
+
+    span: SrcSpan
+    count: Expr
+    element_type: int  # type_id
+    type_id: int  # type_id of the resulting T*
     is_place: bool
 
 
@@ -540,7 +552,7 @@ Expr: TypeAlias = (
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | SysRead | SysWrite | Open | Close
+    | SizeOf | BitCast | Alloc | SysRead | SysWrite | Open | Close
     | Sqrt | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure

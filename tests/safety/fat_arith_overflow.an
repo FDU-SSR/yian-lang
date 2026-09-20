@@ -5,7 +5,7 @@
 // 注意:p + 4(one-past-end,index == size)是良构的,不会 safety error;p + 5 越界才 safety error。
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     p[0] = 1;
     p[1] = 2;
     p[2] = 3;

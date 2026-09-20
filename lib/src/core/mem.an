@@ -24,7 +24,7 @@ pub fn memmove<T>(dest: T*, src: T*, count: u64) {
         // Do not order fat pointers from different allocations: checked SECL
         // rejects cross-allocation ordering comparisons. A temporary buffer
         // also gives memmove its overlap-safe behavior.
-        let temporary: T* = dyn[count] T;
+        let temporary: T* = @alloc<T>(count);
         for i in 0..count {
             temporary[i] = src[i];
         }

@@ -652,8 +652,11 @@ def __walk_expression(
             __walk_expression(count, path, module, container, out)
         case AST.DynValue(value=value) | AST.BitCast(value=value):
             __walk_expression(value, path, module, container, out)
-        case AST.DynBuffer(size=size):
+        case AST.Alloc(count=count):
+            __walk_expression(count, path, module, container, out)
+        case AST.DynBuffer(size=size, element=element):
             __walk_expression(size, path, module, container, out)
+            __walk_expression(element, path, module, container, out)
         case _:
             return
 

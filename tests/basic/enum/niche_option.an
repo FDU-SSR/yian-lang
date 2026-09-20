@@ -42,7 +42,7 @@ fn main() {
     assert *scalar_some.unwrap_or(&scalar_fallback) == 42: "Some unwrap_or";
     assert *scalar_none.unwrap_or(&scalar_fallback) == 7: "None unwrap_or";
 
-    let empty_dyn: i32* = dyn[0] i32;
+    let empty_dyn: i32* = dyn[0] 0i32;
     let empty_dyn_some: Option<i32*> = Option<i32*>.Some(empty_dyn);
     assert empty_dyn_some.is_some(): "zero-length allocation is Some";
     del empty_dyn;

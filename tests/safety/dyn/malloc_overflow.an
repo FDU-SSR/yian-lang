@@ -2,6 +2,6 @@
 // before calling malloc.
 
 fn main() {
-    let p: u64* = dyn[2305843009213693952] u64;
+    let p: u64* = dyn[2305843009213693952] 0u64;
     p[0] = 1;
 }

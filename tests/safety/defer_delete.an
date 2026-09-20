@@ -1,5 +1,5 @@
 fn make_dangling() -> i32* {
-    let ptr: i32* = dyn[1] i32;
+    let ptr: i32* = dyn[1] 0i32;
     *ptr = 42;
     defer del ptr;
     return ptr;

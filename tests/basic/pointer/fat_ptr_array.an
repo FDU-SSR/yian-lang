@@ -31,7 +31,7 @@ fn main() {
     assert (*arr[1].unwrap())[0] == 22: "arr[1][0] == 22 after write"
 
     // Heap array of pointers (i32**).
-    let h: i32** = dyn[2] i32 *
+    let h: i32** = dyn[2] e0
     h[0] = dyn i32(7)
     h[1] = dyn i32(8)
     assert h[0][0] == 7: "h[0][0] == 7"

@@ -2,10 +2,10 @@
 // been re-keyed for a new allocation.
 
 fn main() {
-    let old = dyn[1] i32;
+    let old = dyn[1] 0i32;
     del old;
 
-    let current = dyn[1] i32;
+    let current = dyn[1] 0i32;
     current[0] = 7;
     del old;
 }

@@ -31,6 +31,7 @@ class BuiltinKind(Enum):
 
     SizeOf = "sizeof"
     BitCast = "bitcast"
+    Alloc = "alloc"
     Panic = "panic"
     RuntimeFail = "runtime_fail"
     AssumeInit = "assume_init"
@@ -633,11 +634,11 @@ class DynValue:
 @dataclass
 class DynBuffer:
     span: SrcSpan
-    target_type: ASTType
     size: Expr
+    element: Expr
 
     def __repr__(self) -> str:
-        return f"dyn[{self.size}] {self.target_type}"
+        return f"dyn[{self.size}] {self.element}"
 
 
 @dataclass
@@ -657,6 +658,18 @@ class BitCast:
 
     def __repr__(self) -> str:
         return f"@bitcast<{self.target_type}>({self.value})"
+
+
+@dataclass
+class Alloc:
+    """``@alloc<T>(n)`` — trusted raw allocation of ``n`` uninitialized ``T``."""
+
+    span: SrcSpan
+    target_type: ASTType
+    count: Expr
+
+    def __repr__(self) -> str:
+        return f"@alloc<{self.target_type}>({self.count})"
 
 
 @dataclass
@@ -760,7 +773,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | BuiltinCall | MethodCall
     | DynValue | DynBuffer
-    | SizeOf | BitCast
+    | SizeOf | BitCast | Alloc
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

@@ -4,7 +4,7 @@
 // 失败 → fail-stop → Exit code 1(LLVM 层 运行期 safety error 语义)。
 
 fn main() {
-    let p: i32* = dyn[2] i32;
+    let p: i32* = dyn[2] 0i32;
     p[0] = 1;
     del p;
     let v: i32 = p[0] // UAF read: lock slot = SENTINEL → live 失败 → safety error

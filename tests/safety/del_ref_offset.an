@@ -6,7 +6,7 @@
 // Expected exit code: 1
 
 fn main() {
-    let p: i32* = dyn[3] i32;
+    let p: i32* = dyn[3] 0i32;
     let r: i32& = &p[1];
     del r;
 }

@@ -1,0 +1,24 @@
+// dyn[n] value: every element is initialized from one evaluation of `value`.
+//
+// Expected output: 0
+
+fn main() {
+    // Static size.
+    let a: i32* = dyn[4] 7i32;
+    assert a[0] == 7 && a[3] == 7: "static-size same-value init";
+
+    // Dynamic size drives a runtime loop.
+    let n: u64 = 5;
+    let b: u8* = dyn[n] 0u8;
+    let i: u64 = 0;
+    while i < n {
+        assert b[i] == 0: "dynamic-size same-value init";
+        i += 1;
+    }
+
+    // Elements remain writable and the block stays a whole-block delete target.
+    b[2] = 9;
+    assert b[2] == 9: "element write after init";
+    del a;
+    del b;
+}

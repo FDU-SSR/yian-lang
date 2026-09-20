@@ -3,7 +3,7 @@
 from std.core.io import Stdin;
 
 fn main() {
-    let bytes: u8* = dyn[4] u8;
+    let bytes: u8* = dyn[4] 0u8;
     let stale: u8[] = bytes[0u64..4];
     del bytes;
     Stdin.read(stale);

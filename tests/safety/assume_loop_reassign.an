@@ -8,7 +8,7 @@
 // 期望输出:Exit code 1。
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     p[0] = 0;
     p[1] = 0;
     p[2] = 0;

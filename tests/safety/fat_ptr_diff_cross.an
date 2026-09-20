@@ -4,11 +4,11 @@
 // a、b 是两个独立 dyn 分配 → data 不等 → 前提失败 → fail-stop → Exit code 1。
 
 fn main() {
-    let a: i32* = dyn[2] i32;
+    let a: i32* = dyn[2] 0i32;
     a[0] = 1;
     a[1] = 2;
 
-    let b: i32* = dyn[2] i32;
+    let b: i32* = dyn[2] 0i32;
     b[0] = 3;
     b[1] = 4;
 

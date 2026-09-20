@@ -3,7 +3,7 @@
 from std.core.io import print;
 
 fn main() {
-    let p: u8* = dyn[4] u8;
+    let p: u8* = dyn[4] 0u8;
     p[0] = 65u8;
     p[1] = 66u8;
     p[2] = 67u8;

@@ -4,7 +4,7 @@ from std.core.io import File, OpenMode;
 
 fn main() {
     let file = File.open("/tmp/yian_stale_file_write.txt", OpenMode.Write).unwrap();
-    let bytes: u8* = dyn[4] u8;
+    let bytes: u8* = dyn[4] 0u8;
     bytes[0] = 65u8;
     bytes[1] = 66u8;
     bytes[2] = 67u8;

@@ -8,7 +8,7 @@
 // Expected output: 0
 
 fn main() {
-    let p: i32* = dyn[4] i32;
+    let p: i32* = dyn[4] 0i32;
     p[0] = 1;
     p[3] = 4;
     let s: i32[] = @slice_from_parts(p, 4);
@@ -17,7 +17,7 @@ fn main() {
     del s;
 
     // del 后重分配:新块独立可用
-    let q: i32* = dyn[2] i32;
+    let q: i32* = dyn[2] 0i32;
     q[0] = 9;
     q[1] = 8;
     assert q[0] + q[1] == 17: "heap stable after del parts slice";

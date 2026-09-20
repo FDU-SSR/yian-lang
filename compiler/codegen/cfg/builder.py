@@ -635,6 +635,8 @@ class CfgBuilder:
                 return self.__resolve_size_of(expr)
             case HIR.BitCast():
                 return self.__resolve_bit_cast(expr)
+            case HIR.Alloc():
+                return self.__resolve_alloc(expr)
             case HIR.AssumeInit():
                 return self.__resolve_val(expr.value)
             case HIR.SysRead():
@@ -977,9 +979,58 @@ class CfgBuilder:
         return buffer
 
     def __resolve_dyn_buffer(self, expr: HIR.DynBuffer) -> IR.Value:
-        size = self.__resolve_val(expr.length)
-        buffer = self.__build_malloc(expr.element_type, size)
+        """``dyn[n] value``: allocate ``n`` elements and bit-copy ``value`` into each.
+
+        The initializer is evaluated exactly once (it dominates the fill loop);
+        ``element is None`` is the ZST-only bare form, which has nothing to
+        initialize. Supports a runtime ``n``: the loop bound is a value.
+        """
+        count = self.__resolve_val(expr.length)
+        buffer = self.__build_malloc(expr.element_type, count)
+        if expr.element is None:
+            return buffer
+        value = self.__resolve_val(expr.element)
+        if self.__type_ctx.is_zst(expr.element_type):
+            return buffer
+
+        index_slot = self.__build_alloca(
+            IR.IntLiteral(value=0, type_id=TypeCtx.u64_id), fat=False
+        )
+        header = self.__new_block("dyn.fill.head")
+        body = self.__new_block("dyn.fill.body")
+        exit_block = self.__new_block("dyn.fill.exit")
+        self.__set_terminator(IR.Br(header))
+
+        self.__switch_to(header)
+        index = self.__build_load(index_slot)
+        filled = self.__emit(IR.Binary(
+            result=IR.Reg(name=self.__new_name(), type_id=TypeCtx.bool_id),
+            op=BinaryOperator.Neq,
+            lhs=index,
+            rhs=count,
+        )).result
+        self.__set_terminator(IR.CondBr(filled, body, exit_block))
+
+        self.__switch_to(body)
+        elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
+        elem_ptr = self.__build_element_ptr(buffer, index, elem_ptr_type)
+        self.__build_store(value, elem_ptr)
+        next_index = self.__emit(IR.Binary(
+            result=IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id),
+            op=BinaryOperator.Add,
+            lhs=index,
+            rhs=IR.IntLiteral(value=1, type_id=TypeCtx.u64_id),
+        )).result
+        self.__build_store(next_index, index_slot)
+        self.__set_terminator(IR.Br(header))
+
+        self.__switch_to(exit_block)
         return buffer
+
+    def __resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
+        """``@alloc<T>(n)``: trusted raw allocation, payload left uninitialized."""
+        size = self.__resolve_val(expr.count)
+        return self.__build_malloc(expr.element_type, size)
 
     def __resolve_size_of(self, expr: HIR.SizeOf) -> IR.Value:
         return self.__build_size_of(expr.target_type)

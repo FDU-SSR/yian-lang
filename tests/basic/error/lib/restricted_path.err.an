@@ -1,6 +1,6 @@
 // A user-controlled directory named `lib` must not become a trusted source.
 
 fn main() {
-    let p: i32* = dyn[1] i32;
+    let p: i32* = dyn[1] 0i32;
     let s: i32[] = @slice_from_parts(p, 1);
 }

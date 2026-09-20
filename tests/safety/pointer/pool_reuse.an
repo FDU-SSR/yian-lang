@@ -5,12 +5,12 @@
 // Expected output: 0
 
 fn main() {
-    let first = dyn[4] i32;
+    let first = dyn[4] 0i32;
     let old = first;
     first[0] = 11;
     del first;
 
-    let second = dyn[2] i32;
+    let second = dyn[2] 0i32;
     assert old == second: "first-fit pool reuses a sufficiently large block";
     second[0] = 21;
     second[1] = 22;

@@ -365,6 +365,9 @@ class Desugar:
                 expr.value = visitor(expr.value)
             case AST.DynBuffer():
                 expr.size = visitor(expr.size)
+                expr.element = visitor(expr.element)
+            case AST.Alloc():
+                expr.count = visitor(expr.count)
             case AST.Tuple():
                 expr.elements = [visitor(e) for e in expr.elements]
             case AST.Array():
@@ -432,6 +435,9 @@ class Desugar:
                 stmt.value = expr_visitor(stmt.value)
             case AST.DynBuffer():
                 stmt.size = expr_visitor(stmt.size)
+                stmt.element = expr_visitor(stmt.element)
+            case AST.Alloc():
+                stmt.count = expr_visitor(stmt.count)
             case AST.Defer():
                 stmt.action = expr_visitor(stmt.action)
             case _:

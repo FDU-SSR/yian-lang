@@ -9,7 +9,7 @@
 
 fn main() {
     let n: u64 = 16;
-    let arr: i32* = dyn[n] i32;
+    let arr: i32* = dyn[n] 0i32;
     let i: u64 = 0;
     while i < n {
         arr[i] = i32(i) + 1;
