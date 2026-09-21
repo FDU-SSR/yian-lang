@@ -13,9 +13,9 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.lower.checks import CheckState
-from compiler.codegen.cfg.passes.lower.emitter import FunctionEmitter
-from compiler.codegen.cfg.passes.lower.values import ValueLowerer
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.values import ValueLowerer
 
 
 @dataclass(frozen=True)

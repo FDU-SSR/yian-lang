@@ -24,8 +24,8 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.lower.checks import CheckState
-from compiler.codegen.cfg.passes.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog

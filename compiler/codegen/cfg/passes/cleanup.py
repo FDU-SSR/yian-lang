@@ -1,8 +1,8 @@
-"""CFG 后处理 pass（去死块 / RPO 排序 / 终结保护）。
+"""后处理 pass（管线的第 3 段）：去死块 → RPO 排序 → 终结保护。
 
 从 `CfgBuilder` 整体搬出的三个过程，判定与顺序保持逐字一致；它们只读写
-`IR.Function` 自身，构建期状态一个都不用。搬移后 `CfgBuilder` 只负责在下降结束后
-调用 `run_pipeline`（编排者形态）。
+`IR.Function` 自身，下降期状态一个都不用（终结保护只看 `PassContext` 的返回类型
+与 void 占位通道）。入口是 `Cleanup`，由 `compiler/main.py` 在检查插入之后调用。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from compiler.codegen.cfg.passes.context import PassContext
 from compiler.codegen.error import CodegenError
 
 
-def __eliminate_dead_code(func: IR.Function) -> None:
+def _eliminate_dead_code(func: IR.Function) -> None:
     """Remove blocks that are not reachable from the entry block.
 
     Performs a BFS from the entry block following all forward edges
@@ -64,7 +64,7 @@ def __eliminate_dead_code(func: IR.Function) -> None:
         block.phis = surviving_phis
 
 
-def __sort_blocks_rpo(func: IR.Function) -> None:
+def _sort_blocks_rpo(func: IR.Function) -> None:
     """Reorder ``func.blocks`` in reverse post-order.
 
     Reverse post-order guarantees that for every forward edge
@@ -78,7 +78,7 @@ def __sort_blocks_rpo(func: IR.Function) -> None:
     This is safe because loop headers in the current lowering
     do not carry phi nodes that depend on back-edge values.
     """
-    # ── build successor map (same pattern as __eliminate_dead_code) ──
+    # ── build successor map (same pattern as _eliminate_dead_code) ──
     successors: dict[int, list[IR.Block]] = {}
     for block in func.blocks:
         succs: list[IR.Block] = []
@@ -131,7 +131,7 @@ def __sort_blocks_rpo(func: IR.Function) -> None:
     func.blocks = list(reversed(postorder))
 
 
-def __guard_termination(func: IR.Function, ctx: PassContext) -> None:
+def _guard_termination(func: IR.Function, ctx: PassContext) -> None:
     """Ensure every block has a terminator.
 
     - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
@@ -150,8 +150,22 @@ def __guard_termination(func: IR.Function, ctx: PassContext) -> None:
             )
 
 
-def run(func: IR.Function, ctx: PassContext) -> None:
-    """去死块 → RPO 排序 → 终结保护（顺序与搬移前一致）。"""
-    __eliminate_dead_code(func)
-    __sort_blocks_rpo(func)
-    __guard_termination(func, ctx)
+class Cleanup:
+    """后处理 pass（管线第 3 段）：逐函数 去死块 → RPO 排序 → 终结保护。
+
+    顺序与搬移前逐字一致；编排在 `main`。
+    """
+
+    def __init__(
+        self,
+        functions: dict[int, IR.Function],
+        contexts: dict[int, PassContext],
+    ) -> None:
+        self.__functions = functions
+        self.__contexts = contexts
+
+    def run(self) -> None:
+        for type_id, func in self.__functions.items():
+            _eliminate_dead_code(func)
+            _sort_blocks_rpo(func)
+            _guard_termination(func, self.__contexts[type_id])

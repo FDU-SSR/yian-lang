@@ -1,7 +1,8 @@
-"""下降 pass 的入口：把一个 HIR 函数体降成一条 CFG（`IR.Function`）。
+"""单函数下降：把一个 HIR 函数体降成一条 CFG（`IR.Function`）。
 
 构造时接收类型上下文与函数定义（`DefPoint`），把各下降簇与它们共用的句柄装配好；
-`build()` 按 HIR 语句/表达式产生 CFG，随后调用 `run_pipeline` 交给检查插入与后处理。
+`build()` 按 HIR 语句/表达式产生 CFG，并把后两段 pass 需要的 `PassContext` 挂在
+`pass_context` 上交给 `passes/translator.py`（本类不跑 pass，编排在 `main`）。
 """
 from __future__ import annotations
 
@@ -9,16 +10,16 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes import PassContext, run_pipeline
-from compiler.codegen.cfg.passes.lower.checks import CheckState
-from compiler.codegen.cfg.passes.lower.emitter import FunctionEmitter
-from compiler.codegen.cfg.passes.lower.predicates import PtrPredicates
-from compiler.codegen.cfg.passes.lower.stmts import StmtHost, StmtLowerer
-from compiler.codegen.cfg.passes.lower.calls import CallsHost, CallsLowerer
-from compiler.codegen.cfg.passes.lower.exprs import ExprHost, ExprLowerer
-from compiler.codegen.cfg.passes.lower.memory import MemoryHost, MemoryLowerer
-from compiler.codegen.cfg.passes.lower.sys import SysHost, SysLowerer
-from compiler.codegen.cfg.passes.lower.values import ValueHost, ValueLowerer
+from compiler.codegen.cfg.passes.context import PassContext
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.predicates import PtrPredicates
+from compiler.codegen.cfg.lower.stmts import StmtHost, StmtLowerer
+from compiler.codegen.cfg.lower.calls import CallsHost, CallsLowerer
+from compiler.codegen.cfg.lower.exprs import ExprHost, ExprLowerer
+from compiler.codegen.cfg.lower.memory import MemoryHost, MemoryLowerer
+from compiler.codegen.cfg.lower.sys import SysHost, SysLowerer
+from compiler.codegen.cfg.lower.values import ValueHost, ValueLowerer
 
 
 class CfgBuilder:
@@ -29,6 +30,7 @@ class CfgBuilder:
         self.__symbol_ctx = dp.symbol_ctx
         self.__dp = dp
         self.__func_name = func_name
+        self.__pass_ctx: PassContext | None = None
         # 诊断模式开关：开启时指针一律按裸 8B 处理，不生成检查、锁槽或帧锁。
         # 生产环境不应使用。
         self.__raw_pointers = raw_pointers
@@ -105,6 +107,12 @@ class CfgBuilder:
     # public entry point
     # ------------------------------------------------------------------
 
+    @property
+    def pass_context(self) -> PassContext:
+        """下降结束后交给后两段 pass 的只读事实（`build()` 之前不可用）。"""
+        assert self.__pass_ctx is not None, "pass_context is available after build()"
+        return self.__pass_ctx
+
     def build(self) -> IR.Function:
         dp = self.__dp
         entry_block = IR.Block("entry")
@@ -131,8 +139,8 @@ class CfgBuilder:
         if self.__emitter.current_block.terminator is None and ret_ty != TypeCtx.void_id:
             self.__set_terminator(IR.Ret(body_val))
 
-        # ── CFG pass 管线: 检查插入 → 去死块 / RPO 排序 / 终结保护(见 passes/) ──
-        run_pipeline(self.__emitter.func, PassContext(
+        # ── 下降结束：只把后两段 pass 需要的事实交出去（编排在 main） ──
+        self.__pass_ctx = PassContext(
             type_ctx=self.__type_ctx,
             symbol_ctx=self.__symbol_ctx,
             raw_pointers=self.__raw_pointers,
@@ -140,7 +148,7 @@ class CfgBuilder:
             span=dp.ast_body.span,
             return_type=ret_ty,
             new_void_value=self.__emitter.void_reg,
-        ))
+        )
 
         # ── 帧锁实体化标记 ──
         # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前

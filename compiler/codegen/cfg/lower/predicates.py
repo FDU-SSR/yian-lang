@@ -8,7 +8,7 @@ from __future__ import annotations
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.lower.checks import CheckState
+from compiler.codegen.cfg.lower.checks import CheckState
 
 
 class PtrPredicates:

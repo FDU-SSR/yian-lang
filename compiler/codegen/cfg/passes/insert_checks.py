@@ -161,7 +161,7 @@ def _materialize(request: IR.CheckRequest) -> IR.Stmt:
             raise ValueError(f"unknown check request kind: {request.kind}")
 
 
-class __CheckPlanner:
+class _CheckPlanner:
     """单个 CFG 函数的检查规划器：块内状态 + 逐语句决定检查节点。"""
 
     def __init__(self, func: IR.Function, ctx: PassContext) -> None:
@@ -390,6 +390,22 @@ class __CheckPlanner:
             block.stmts = self.__out
 
 
-def run(func: IR.Function, ctx: PassContext) -> None:
-    """就地运行：标记位置即检查位置（与逐条发射时的节点序列逐条对应）。"""
-    __CheckPlanner(func, ctx).run()
+class InsertChecks:
+    """检查插入 pass（管线第 2 段）：逐函数物化语义标记并决定访问类检查的形态。
+
+    下降产物与它的 `PassContext` 在下降段结束时交出（见 `lower.builder.CfgBuilder`），
+    这里只按 `type_id` 取用；编排在 `main`。
+    """
+
+    def __init__(
+        self,
+        functions: dict[int, IR.Function],
+        contexts: dict[int, PassContext],
+    ) -> None:
+        self.__functions = functions
+        self.__contexts = contexts
+
+    def run(self) -> None:
+        """函数间互不影响（状态都是单函数的），按 functions 的插入序逐个跑。"""
+        for type_id, func in self.__functions.items():
+            _CheckPlanner(func, self.__contexts[type_id]).run()

@@ -44,7 +44,9 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
-from compiler.codegen.cfg.passes.lower.translator import CfgTranslator
+from compiler.codegen.cfg.passes.cleanup import Cleanup
+from compiler.codegen.cfg.passes.insert_checks import InsertChecks
+from compiler.codegen.cfg.passes.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
 from compiler.codegen.llvm.module import LLModule, apply_target
@@ -299,13 +301,17 @@ def __cfg(
     type_ctx: TypeCtx,
     raw_pointers: bool = False,
 ) -> dict[int, CFG_IR.Function]:
-    """HIR → CFG IR pass. Lowers typed HIR function definitions into CFG Functions."""
-    translator = CfgTranslator(type_ctx, raw_pointers=raw_pointers)
+    """CFG 三段 pass 的编排：下降 → 检查插入 → 后处理。"""
+    cfg_lower = CfgTranslator(type_ctx, raw_pointers=raw_pointers)
     try:
-        translator.run(def_points)
+        cfg_lower.run(def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
-    return translator.export()
+    functions = cfg_lower.export()
+    contexts = cfg_lower.pass_contexts()
+    InsertChecks(functions, contexts).run()
+    Cleanup(functions, contexts).run()
+    return functions
 
 
 def __build_unit_names(unit_datas: dict[int, UnitData], packages: PackageMap | None) -> dict[int, str]:
