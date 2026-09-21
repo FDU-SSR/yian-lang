@@ -253,9 +253,15 @@ R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射
 等第 4 组把 provenance 分析搬进 pass 后再由 pass 自行推导。108/108 `cfg.txt` 等价、三套件全绿、
 `--check --asan` 通过、pyright 0 errors。
 
-**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 3 组 R11/R12（`ElementArith`、`FieldPtr` 义务）
-——这一组要先把 `elem_derived`/`field_derived` 的义务表从下降侧搬到 pass（按 IR 的
-`ElementPtr`/`FieldPtr` 派生边重建）；第 4 组 R4/R5/R6/R7/R8/R14（访问点 live 与 `Delete`，
+**路线 B 进展（第 3 组，完成）**：R11/R12 的**发射点**改发标记（`CHECK_REQUEST_ELEMENT_ARITH`、
+`CHECK_REQUEST_IN_BOUNDS` 的 owed-elem/base 两路，共 4 处，含"嵌套派生链先补发"的 2 处）——
+判定仍由下降侧的 `CheckState` 做出、标记落在原来发射检查的位置，故 108/108 `cfg.txt` 等价。
+
+**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 5 组（原第 3 组的深化 + 第 4 组）把
+`elem_derived`/`field_derived` **义务表本身**从下降侧搬进 pass（按 IR 的 `ElementPtr`/`FieldPtr`
+派生边重建，含失效点冲刷与 `CheckElementAccess` 合取检查），并与 R4/R5/R6/R7/R8/R14
+（访问点 live、`Delete`、raw/帧内/刚分配三档 provenance、同块去重）一起迁移——这组做完
+`optimize_checks` 才有信息做 P9 的循环不变提升；第 4 组 R4/R5/R6/R7/R8/R14（访问点 live 与 `Delete`，
 含帧内/刚分配/去重/合并四档 provenance），完成后再做 P9 的提升。
 
 **风险与回退**：P8 是本计划唯一高风险步骤（18 条规则、23 个发射点）。按规则分组提交，

@@ -2,7 +2,8 @@
 
 逐规则迁移：只有已迁移的规则会发标记，未迁移的仍由下降侧直接发 `Check*`。
 当前覆盖：R13（`PtrDiff`/`PtrCmp`）、R15（裸数组上界）、R16（数组退化 `InBounds`、
-`T[]→T&` 的 `SliceNonEmpty`）、R17（`CheckViewAccess`）、R18（receiver `InBounds`）；
+`T[]→T&` 的 `SliceNonEmpty`）、R17（`CheckViewAccess`）、R18（receiver `InBounds`）、
+R11/R12 的发射点（`ElementArith`、`FieldPtr` 义务补发的 `InBounds`）；
 `live` 等下降期已判定的上下文先编码进标记，等第 4 组把 provenance 分析搬进 pass 后再由 pass 自行推导。
 """
 from __future__ import annotations
@@ -28,6 +29,8 @@ def __materialize(request: IR.CheckRequest) -> IR.Stmt:
             return IR.CheckSliceNonEmpty(ptr=request.operands[0])
         case IR.CHECK_REQUEST_IN_BOUNDS:
             return IR.CheckInBounds(ptr=request.operands[0])
+        case IR.CHECK_REQUEST_ELEMENT_ARITH:
+            return IR.CheckElementArith(base=request.operands[0], offset=request.operands[1])
         case _:
             raise ValueError(f"unknown check request kind: {request.kind}")
 

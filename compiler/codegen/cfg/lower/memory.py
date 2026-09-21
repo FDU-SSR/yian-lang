@@ -118,12 +118,16 @@ class MemoryLowerer:
                 if self.__host.checks.dedup(self.__host.checks.ptr_key(owed_elem, "ib")):
                     _ch_block().debug(lambda: "check dedup ElementPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
                 else:
-                    self.__host.emitter.emit(IR.CheckInBounds(ptr=owed_elem))
+                    self.__host.emitter.emit(IR.CheckRequest(
+                        kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[owed_elem],
+                    ))
                     _ch_block().debug(lambda: "check insert ElementPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
             if self.__host.checks.dedup(self.__host.checks.pair_key(base, offset, "elarith")):
                 _ch_block().debug(lambda: "check dedup ElementPtr: well_formed(p') 共享(同 base/offset, 检查合并)")
             else:
-                self.__host.emitter.emit(IR.CheckElementArith(base=base, offset=offset))
+                self.__host.emitter.emit(IR.CheckRequest(
+                    kind=IR.CHECK_REQUEST_ELEMENT_ARITH, operands=[base, offset],
+                ))
                 _ch_block().debug(lambda: "check insert ElementPtr: well_formed(p')")
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=result_type)
         elem_ptr = self.__host.emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
@@ -160,7 +164,9 @@ class MemoryLowerer:
                 if self.__host.checks.dedup(self.__host.checks.ptr_key(owed_elem, "ib")):
                     _ch_block().debug(lambda: "check dedup FieldPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
                 else:
-                    self.__host.emitter.emit(IR.CheckInBounds(ptr=owed_elem))
+                    self.__host.emitter.emit(IR.CheckRequest(
+                        kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[owed_elem],
+                    ))
                     _ch_block().debug(lambda: "check insert FieldPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
             elem_entry = self.__host.checks.elem_entry(base)
             if elem_entry is not None and isinstance(elem_entry, IR.Reg):
@@ -172,7 +178,7 @@ class MemoryLowerer:
             elif self.__host.checks.dedup(self.__host.checks.ptr_key(base, "ib")):
                 _ch_block().debug(lambda: "check dedup FieldPtr: in_bounds(p_s,1) 共享(同块同值相邻)")
             else:
-                self.__host.emitter.emit(IR.CheckInBounds(ptr=base))
+                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[base]))
                 _ch_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (重锚定前提)")
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(field_type))
         field_ptr = self.__host.emitter.emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
