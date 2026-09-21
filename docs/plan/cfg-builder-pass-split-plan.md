@@ -251,7 +251,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P0 ✅ | 建 §6.1 harness（`/tmp/cfg_equiv.py`，108 份语料）并记录基线 | 迁移的安全网（记录 27 s / 比对 27 s） | 无 | — |
 | P1 ✅ | C1：抽 `passes/{__init__,context,cleanup}.py`（DCE/RPO/终结保护 + `PassContext` + `run_pipeline`） | builder 1770 → **1629 行**（−141），新包 208 行 | 低（已实测忠实） | 单提交 revert |
 | P2 ✅ | C2：抽 `passes/emitter.py::FunctionEmitter`（func/current_block/counter + new_name/emit/new_block/void_reg/never_reg/emit_phi/terminate/position）；`__set_terminator`/`__switch_to` 保留检查状态副作用并委托句柄 | 所有簇的共同句柄；builder 1629 → **1590 行** | 低（已实测忠实） | 单提交 revert |
-| P3 | C3：抽检查簇**为组合件 `checks.py`**（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有一个 `self.__checks` | builder −~300 行；状态显式化 | 低（纯搬移） | 单提交 revert |
+| P3 ✅ | C3：抽检查簇为组合件 `passes/checks.py::CheckState`（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有 `self.__checks`；发射能力由 `FunctionEmitter` 注入（invalidate 时补发挂起 `CheckInBounds`） | builder 1590 → **1442 行**；状态显式化 | 低（已实测忠实） | 单提交 revert |
 | P4 | C4：抽 `lower/stmts.py`（含 `loops`/`defer_scopes`） | builder −~250 行 | 低（块创建顺序照抄） | 单提交 revert |
 | P5 | C5+C6：抽 `lower/lvalues.py`、`lower/aggregates.py` | builder −~350 行 | 中 | 同上 |
 | P6 | C7+C8：抽 `lower/calls.py`、`lower/sys.py`、`lower/memory.py`（内存原语的检查部分委托 `checks`） | builder −~400 行 | 中 | 同上 |
@@ -280,6 +280,22 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 `self.__func`/`__current_block`/`__counter` 共 ~179 处调用点改为 `self.__emitter.*`；
 块终结/块切换的检查状态清理仍留在 builder（句柄无副作用）。实测 108/108 份 `cfg.txt`
 与基线逐字节一致；pyright compiler/anx 0 errors；三套件 756/156/99 全绿。
+
+**P3 进展（完成）**：`passes/checks.py::CheckState`（237 行）接管
+`raw_ptrs`/`frame_locked`/`live_known`/`fat_root`/`checked`/`elem_derived`/`field_derived`
+七个字段与全部判定（`is_raw`/`mark_*`/`root_of`/`inherit_*`/`live_key`/`ptr_key`/`pair_key`/
+`dedup`/`note_element_derived`/`note_field_derived`/`propagate_field_derived`/
+`pop_owed_in_bounds`/`elem_entry`/`merge_access`/`invalidate`/`clear_block`）；
+builder 侧只留调用（`self.__checks.*`），检查的**插入点**仍在下降侧（P8 才升级为真 pass）。
+`builder.py` 1590 → **1442 行**。忠实性实测：108/108 份 `cfg.txt` 逐字节一致；三套件
+756/156/99 全绿；runtime --check --asan 通过；pyright compiler/anx 0 errors。
+
+**踩坑记录（供后续阶段）**：脚本化搬移时出现过两类错误——(1) 按行号定位做多处替换，
+前面的替换会移动后续行号（一次 `__init__` 被切出错位、重复块）；(2) 用 `s.index(start)` /
+`s.index(end)` 时若 end < start，`s[:start] + new + s[end:]` 会**复制**中间整段（本次
+`__init__` 因此出现重复字段块），改为先断言 `start < end` 或改用唯一文本锚点。两处都是
+"IR 等价 harness 立刻报出 difference（4/108）+ 探针定位到一个 unbound 的 emitter 实例"才
+收敛的——印证了 §6.1 把它当排查工具的用法。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内
