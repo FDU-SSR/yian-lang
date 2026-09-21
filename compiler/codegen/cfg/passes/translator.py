@@ -11,8 +11,9 @@
 
     cfg_lower = CfgTranslator(type_ctx, raw_pointers=...)
     cfg_lower.run(def_points)
+    InsertChecks(cfg_lower.ctx).run()
+    Cleanup(cfg_lower.ctx).run()
     functions = cfg_lower.export()          # dict[int, IR.Function]
-    contexts = cfg_lower.pass_contexts()    # dict[int, CfgCtx]
 """
 from __future__ import annotations
 
@@ -33,31 +34,27 @@ from compiler.codegen.cfg.lower.values import ValueHost, ValueLowerer
 
 
 class CfgTranslator:
-    """把一批 HIR 定义降成 CFG 函数（`run` → `export` / `pass_contexts`）。"""
+    """把一批 HIR 定义降成 CFG 函数（`run` → `export`；共享上下文经 `ctx` 交出）。"""
 
     def __init__(self, type_ctx: TypeCtx, raw_pointers: bool = False) -> None:
-        # session 级事实放在 `CfgCtx` 里；每个函数再从它派生一份（`spawn`）
-        self.__session = CfgCtx(type_ctx, raw_pointers)
-        self.__contexts: dict[int, CfgCtx] = {}
+        self.__ctx = CfgCtx(type_ctx, raw_pointers)
+
+    @property
+    def ctx(self) -> CfgCtx:
+        """本模块的共享上下文——后两段 pass 直接拿它（函数表 + 每函数事实都在里面）。"""
+        return self.__ctx
 
     def run(self, def_points: dict[int, DefPoint]) -> None:
-        """逐个 `DefPoint` 下降成 CFG 函数，并收好各自的 `CfgCtx`。"""
+        """逐个 `DefPoint` 下降成 CFG 函数，登记进 ctx 的函数表。"""
         for dp in def_points.values():
-            ty = self.__session.type_ctx[dp.type_id]
+            ty = self.__ctx.type_ctx[dp.type_id]
             if not isinstance(ty, (Type.FunctionType, Type.MethodType)):
                 raise ValueError(f"Unsupported def type: {type(ty).__name__}")
-            ctx = self.__session.spawn()
-            func = _CfgBuilder(ctx, dp).build()
-            self.__session.declare_function(func)
-            self.__contexts[func.type_id] = ctx
+            self.__ctx.declare_function(_CfgBuilder(self.__ctx, dp).build())
 
     def export(self) -> dict[int, IR.Function]:
         """Return the translated functions keyed by type_id（函数表由 ctx 持有）。"""
-        return dict(self.__session.functions)
-
-    def pass_contexts(self) -> dict[int, CfgCtx]:
-        """Return the per-function shared facts the following passes need, keyed by type_id."""
-        return dict(self.__contexts)
+        return dict(self.__ctx.functions)
 
 
 # ---------------------------------------------------------------------------
@@ -78,10 +75,10 @@ class _CfgBuilder:
         self.__dp = dp
         # 发射句柄：当前函数 / 当前块 / 命名计数器
         self.__emitter = FunctionEmitter()
-        # 函数级事实写进共享上下文（返回类型即后处理 pass 的终结保护要用的事实）
+        # 本函数的事实存进共享上下文并留一份自用（后两段 pass 从 ctx.facts 取同一份）
         func_type = ctx.type_ctx[dp.type_id]
         assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
-        ctx.begin_def(
+        self.__facts = ctx.begin_def(
             type_id=dp.type_id,
             symbol_ctx=dp.symbol_ctx,
             func_name=func_type.custom_def.name,
@@ -151,11 +148,11 @@ class _CfgBuilder:
         ))
 
     def build(self) -> IR.Function:
-        ctx = self.__ctx
+        facts = self.__facts
         dp = self.__dp
         entry_block = IR.Block("entry")
         self.__emitter.bind(
-            IR.Function(name=ctx.func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block),
+            IR.Function(name=facts.func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block),
             entry_block,
         )
 
@@ -164,14 +161,14 @@ class _CfgBuilder:
 
         # ── register body local variables ──
         for local_id in dp.locals:
-            symbol = ctx.symbol_ctx.get(local_id)
+            symbol = facts.symbol_ctx.get(local_id)
             self.__emitter.func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 
         # ── translate the body ──
         assert dp.body is not None
         body_val = self.__stmts.translate_block(dp.body)
 
-        if self.__emitter.current_block.terminator is None and ctx.return_type != TypeCtx.void_id:
+        if self.__emitter.current_block.terminator is None and facts.return_type != TypeCtx.void_id:
             self.__set_terminator(IR.Ret(body_val))
 
         # ── 帧锁实体化标记 ──

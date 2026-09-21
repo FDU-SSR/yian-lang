@@ -393,17 +393,17 @@ class _CheckPlanner:
 class InsertChecks:
     """检查插入 pass（管线第 2 段）：逐函数物化语义标记并决定访问类检查的形态。
 
-    下降产物与它的 `CfgCtx` 在下降段结束时交出（见 `translator._CfgBuilder`），
-    这里只按 `type_id` 取用；编排在 `main`。
+    下降段把函数表与每函数事实都写进 `CfgCtx`（见 `translator._CfgBuilder`），
+    这里拿同一个 ctx 按下降序逐个跑；编排在 `main`。
     """
 
-    def __init__(self, contexts: dict[int, CfgCtx]) -> None:
-        self.__contexts = contexts
+    def __init__(self, ctx: CfgCtx) -> None:
+        self.__ctx = ctx
 
     def run(self) -> None:
         """函数间互不影响（状态都是单函数的），按下降序逐个跑。
 
-        每个 ctx 自带它那一条 `function`，并共享本模块的完整函数表（`ctx.functions`）。
+        `ctx.functions` 就是本模块的全部函数，需要跨函数信息时也从这个 ctx 取。
         """
-        for ctx in self.__contexts.values():
-            _CheckPlanner(ctx.function, ctx).run()
+        for func in self.__ctx.functions.values():
+            _CheckPlanner(func, self.__ctx).run()

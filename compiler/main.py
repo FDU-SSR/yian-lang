@@ -307,9 +307,8 @@ def __cfg(
         cfg_lower.run(def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
-    contexts = cfg_lower.pass_contexts()
-    InsertChecks(contexts).run()
-    Cleanup(contexts).run()
+    InsertChecks(cfg_lower.ctx).run()
+    Cleanup(cfg_lower.ctx).run()
     return cfg_lower.export()
 
 

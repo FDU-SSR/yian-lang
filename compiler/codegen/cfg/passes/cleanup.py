@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx, FuncFacts
 from compiler.codegen.error import CodegenError
 
 
@@ -131,7 +131,7 @@ def _sort_blocks_rpo(func: IR.Function) -> None:
     func.blocks = list(reversed(postorder))
 
 
-def _guard_termination(func: IR.Function, ctx: CfgCtx) -> None:
+def _guard_termination(func: IR.Function, facts: FuncFacts) -> None:
     """Ensure every block has a terminator.
 
     - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
@@ -140,13 +140,13 @@ def _guard_termination(func: IR.Function, ctx: CfgCtx) -> None:
     for block in func.blocks:
         if block.terminator is not None:
             continue
-        if ctx.return_type == TypeCtx.void_id:
-            block.terminator = IR.Ret(ctx.new_void_value())
+        if facts.return_type == TypeCtx.void_id:
+            block.terminator = IR.Ret(facts.new_void_value())
         else:
             raise CodegenError(
                 f"Function '{func.name}' has unterminated block '{block.label}'; "
                 f"non-void functions must have explicit return in all control paths.",
-                ctx.span,
+                facts.span,
             )
 
 
@@ -156,12 +156,11 @@ class Cleanup:
     顺序与搬移前逐字一致；编排在 `main`。
     """
 
-    def __init__(self, contexts: dict[int, CfgCtx]) -> None:
-        self.__contexts = contexts
+    def __init__(self, ctx: CfgCtx) -> None:
+        self.__ctx = ctx
 
     def run(self) -> None:
-        for ctx in self.__contexts.values():
-            func = ctx.function
+        for type_id, func in self.__ctx.functions.items():
             _eliminate_dead_code(func)
             _sort_blocks_rpo(func)
-            _guard_termination(func, ctx)
+            _guard_termination(func, self.__ctx.facts(type_id))
