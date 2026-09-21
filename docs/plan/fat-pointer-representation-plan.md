@@ -4,6 +4,42 @@
 §4B 与 P2）。方向 A 已经把"恒真的时序检查"消解掉一轮，剩下的开销分成两半：**每次访问的检查**
 （方向 A 继续做）与**胖值本身的驻留、搬运与传参**（本文件）。
 
+## 0. 状态（截至当前 HEAD）
+
+**当前实现 = 变体 B（8 B 块头 + 全局锁表）+ 三处修复**（§3.7，采纳提交 `e0c5294`）。计划里其余候选的
+最终裁定：
+
+| 候选 | 裁定 | 依据 |
+| --- | --- | --- |
+| B1（32 位打包，锁字在块头） | **被变体 B 取代**（曾长期作为基线） | §3.7 修复后重测：19/22 项 ≤ B1、中位数约 −3%、最大项 −51% |
+| B6（锁址+键打包成一个字，16 B 引用） | 否决并回退 | §3.6/§3.7：每检查点重建锁址压过"指针小 8 B"的带宽收益 |
+| 变体 A（kind 在字里，8 B 头） | 否决并回退 | §3.7：32 位比较不是瓶颈，锁址重建才是 |
+| B3（16 B 指针 + 地址反查） | 未做（只有 C 原型层评估） | §2.3/§3.3：机制改动最大、收益也最大，风险等级最高 |
+| B2（调用约定，不动布局） | **未做（待办）** | §4.1：`call_abi` 基准要接"编译器看不到的输入"才测得到真实调用成本 |
+
+**当前布局**（与 §2.1 的"计划起点"已不同）：
+
+| 类型 | 字段 | 尺寸 |
+| --- | --- | --- |
+| `T*` | data, word, index:u32, size:u32 | **24 B** |
+| `T[]` / `str` | data, word, size:u64 | **24 B** |
+| `T&` | data, word | **16 B** |
+| 堆块头 | `{extent:u32, pad:u32}` | **8 B** |
+
+`word = ⟨key:32 | lock:32⟩`；身份（key）在全局表 `__secl_lock_table` 的表项 `{key:u32, anchor_lo32:u32}`
+里，`live = word ≠ 0 ∧ load32(表项.key) == key`；释放把表项 key +1 换代（不再写块头 SENTINEL，
+帧退出仍写帧锁槽）。
+
+**已知回退（变体 B vs B1）与后续结论**：`towers` +8.6%、`chase` +10.6%、`churn_single` +14.3%。
+之后做过专项调研（三条路逐个实测，记录在 §3.7 末尾）：CFG 层检查融合、LLVM 发射层分支融合、
+以及"锚定指针直接读块头 key"的表示改动——**全部零收益或不可行**（前两者 LLVM 已自行等价化；
+后者要动 ABI 且拿不到 B1 的便宜 `live`）。结论：这三项与 B1 的布局绑定，要拿回只能整体回到
+B1 的 16 B 指针布局，代价是重新输掉 `json` −18.8% / `churn_mixed` −33.2%。
+
+**阶段状态**：P2.1 ✅｜P2.2 未做｜P2.3 ✅（后由变体 B 取代）｜P2.4 ✅（以变体 B 达成 16 B `T&`；
+B6/A 否决）｜P2.5 部分（机制常量与 `lockmech` 注释已同步；`docs/manual/12.llvm_codegen.md` 等
+用户可见的尺寸描述待核对）。
+
 ## 1. 范围与不可动的不变量
 
 目标是降低"胖值本身"的成本：结构体/数组里的胖字段占用、按值拷贝、函数传参与返回、视图构造。
@@ -11,18 +47,22 @@
 
 | 不变量 | 内容 |
 | --- | --- |
-| 时序语义 | `live(p)` = 锁槽键比较（含 `lock_ptr = 0` 短路为假）；释放写 `SENTINEL`；键单调不回绕（R003） |
+| 时序语义 | `live(p)` = 锁槽键比较（含空锁短路为假）；释放换代、键单调不回绕（R003）。**载体可变、语义不变**：计划起点是块头锁槽 + 释放写 `SENTINEL`，变体 B 是全局表项按块换代（帧退出仍写 `SENTINEL`） |
 | 空间语义 | 访问前检是**视图相对**的：`index < size`（切片子视图的越界必须失败），one-past 允许存在但不可解引用 |
 | 指针运算与比较 | 算术只更新位置分量并检查良构/无回绕；相等按 `(data, 位置)`；序比较要求 `data` 相等；差要求 `data` 相等 + 良构 + 可表示 |
 | 错误码 | S001/S002/S003/S004/S007 与 R001/R002 的触发条件与消息不变 |
 | niche 布局 | `Option<T>`（T 为单字段包装的指针/切片/引用/字符串/函数指针）与 T 同尺寸，用全零 data 表示空 |
 | ZST / raw | ZST 擦除规则不变；`--raw-pointers` 仍是 8 B 裸指针，不参与任何新表示 |
-| 分配器边界 | 运行时只认 16 B 块头（`lock@0`、`active_size@8`）；表示改动不得要求分配器改变块头以外的语义（B3 见 §3.3、B6 见 §3.6 是例外——两者都要改块头） |
+| 分配器边界 | 运行时只认当前块头（**计划起点**是 16 B `lock@0`/`active_size@8`；变体 B 落地后是 8 B `{extent, pad}` + 全局锁表项 `{key, anchor_lo32}`）；表示改动不得要求分配器改变块头以外的语义（B3 见 §3.3、B6 见 §3.6 是例外——两者都要改块头） |
 | 文档与测试可观测项 | `@sizeof` 的结果、`docs/grammar/02.type_system.md`、`docs/manual/12.llvm_codegen.md` 里的尺寸描述、`tests/` 里的 niche/布局断言必须同步 |
 
 ## 2. 现状与度量
 
-### 2.1 当前布局
+### 2.1 计划起点的布局（B1 时期）
+
+> 本节是计划写就时的基线（B1）：`T*` 40 B / `T[]`·`str` 32 B / `T&` 24 B / 块头 16 B。
+> **当前实现是变体 B，尺寸已不同——见 §0。** 下面保留原文，因为 §2.2 的度量与 §3 的候选
+> 都是相对这个基线评估的。
 
 | 类型 | 字段（下标） | 尺寸 | 说明 |
 | --- | --- | --- | --- |
@@ -35,7 +75,8 @@
 定义位置：字段下标与谓词在 `compiler/codegen/cfg/lockmech.py`；LLVM 类型映射在
 `compiler/codegen/llvm/types.py`（`__handle_pointer/__handle_ref/__handle_slice`、`__stable_layout`）；
 构造、字段提取与地址折算在 `compiler/codegen/llvm/builder.py`（`__build_fat`、`__extract_fat_field`、
-`__fat_data`、`__fat_addr`）与 `cfg/builder.py`（各 `IR.*` 节点的合成/分解）。
+`__fat_data`、`__fat_addr`）与 CFG 下降（各 `IR.*` 节点的合成/分解：`codegen/cfg/lower/` 各簇，
+由 `codegen/cfg/passes/translator.py` 逐函数装配）。
 
 改动面集中在这些中心函数，但**下游代码量很大**：热点基准里胖值的静态出现次数（`-t ll` 计数，
 "40/32/24" 列是该尺寸的聚合类型在 IR 文本里出现的行数）：
@@ -332,7 +373,8 @@ kind 专用化"，本次不做（见 §5 待办）。
      `__slice_ptr_fat`/`__build_aggregate`/各 cast 分支：`(lock, key)` 改成 word
      （字面量 `__literal_word()`、环境 `__env_word()`、其它继承）。
    - `__fat_value_pair`：指针取 `FAT_INDEX`、切片取 `SLICE_SIZE`、引用取 `REF_WORD`。
-5. `cfg/builder.py`：`IR.VarPtr` 的 `frame_lock_ptr/frame_key` 改成 `frame_word`；
+5. CFG 下降（当时在 `cfg/builder.py`，现拆在 `cfg/lower/` 各簇 + `cfg/passes/translator.py`）：
+   `IR.VarPtr` 的 `frame_lock_ptr/frame_key` 改成 `frame_word`；
    `AcquireFrameLock.result` 类型改 u64（帧 word）；`__build_malloc` 不再发射堆 `GenKey`。
 6. 断言与文档：`@sizeof`（`T&` 16、`T[]`/`str` 24、`T*` 24；niche 4+24=28、`Result<i32*,str>` 28）、
    `docs/grammar/02.type_system.md`、`docs/manual/12.llvm_codegen.md`、`docs/security.md`
@@ -459,7 +501,8 @@ extent）、`delete` 还原块首时漏减 `BYTES`、切片语义下标 3 未折
 
 1. **锁表发放内联化**：malloc 的快路径改在发射的 IR 里做（自由链非空 → 弹出下标、把新链头写回
    全局；`key+1`、写 anchor、组装 word 也全在 IR 里），只有自由链为空才调 `__secl_lock_bump_take`。
-2. **刚分配内存的检查在编译器侧消失**：`cfg/builder.py` 新增 `__live_known`，`__resolve_dyn_buffer`
+2. **刚分配内存的检查在编译器侧消失**：CFG 侧新增 `__live_known`（当时写在 `cfg/builder.py`；
+   现已外化为 `IR.LiveKnownBegin/End` 标记 + 检查插入 pass 的窗口），`__resolve_dyn_buffer`
    在填充循环期间登记缓冲出处，`__build_load/__build_store` 与帧锁同等对待（只跳过 live 项，
    in_bounds 照常）。这是关键修复——它让 LLVM 不必再做跨全局数组的别名推理。
 3. **索引辅助强制内联**：`module.declare` 对 `index.*` 辅助加 `alwaysinline`（B 下它变胖后掉出
@@ -493,6 +536,29 @@ raw 对照多数在 ±3%（`list` +8.7%、`revcomp` +5.9%、`sieve`/`storage`/`b
 **测量**：两条各做一次原子改动，用同一套 micro / ptr / full + alloc 记录，与 B1 基线（`1a89010` 留档）
 对比；赢的保留、输的回退，并在本节记录数据与结论。
 
+#### 3.7.1 三项回退的后续调研（结论：拿不回来，除非换回 B1 布局）
+
+对 `towers` / `chase` / `churn_single` 做了三条路的实测，全部否掉：
+
+1. **CFG 层"检查融合"**：把 live 去重键从"分配锚点"改成"锁字段出处"，让同一指针的所有
+   `FieldPtr`/`ElementPtr`/`Cast` 派生共享 live 键、同块内后续访问只查 `in_bounds`。
+   108 份语料的语义校验只降不增，但 9 个基准 A/B 全落在噪声内（`towers` 4839.6 → 4875.7 ms）——
+   **LLVM 已经对相同条件做了 CSE 与分支合并**，CFG 层少一个检查节点不改变机器码。
+2. **LLVM 发射层"分支融合"**：把一个"检查 + 纯地址运算"窗口内的检查合成一个热路径分支，
+   失败时按原顺序冷路径重测、报原错误码。热路径分支数确实下降（`push_disk` 安全检查分支 5→3，
+   且融合形态存活到 `-O2` 后 IR），但 9 个基准 A/B 仍全在噪声内（`towers` +0.1%）——
+   省下的分支与合取新增的 `and` 等值：**分支本身近乎免费，代价在每条检查的指令数**。
+3. **表示层"锚定指针直接读块头 key"**（把 key 从全局表搬回块头，块头仍是 8 B）：callgrind
+   `--cache-sim=yes` 显示锁表 load **不产生额外 cache miss**（D1/LL miss 与"读数据自身行"逐项相同），
+   代价在指令数；而要把锚点放进指针（word 已满，需借判别位）后，读块头 key 的两条还原指令与今天的
+   下标算术**等值**，拿不到 B1 那种 `load(data-16) == key` 的便宜形态。
+
+**归因（同机实测）**：`live` 占 `towers` 43%（锁表 load 链 ≈25% + 分支/比较 ≈18%）、`json` 9%、
+`churn_single` 7%、`chase` **0%**（`chase` 与检查无关，是节点布局/足迹）。B1 之所以便宜，是它的
+指针直接携带绝对锁槽地址 + 64 位 key（`live` 只剩 load + icmp 两条），代价是 `T&` 24 B / 块头 16 B。
+**16 B 的 `T&` 装不下"全地址 + 全 key"**——B 的紧凑（`json`/`churn_mixed` 的大赢）与 B1 的便宜 `live`
+是同一枚硬币的两面，因此这三项按现状接受，不再有检查层的优化空间。
+
 ## 4. 度量与验收
 
 ### 4.1 新增微基准（`bench/fatptr/`）
@@ -509,11 +575,11 @@ raw 对照多数在 ±3%（`list` +8.7%、`revcomp` +5.9%、`sieve`/`storage`/`b
 `bench/bench_three_way.py` 的形态（如需要可加 `--names` 的分组，不要另起一套）。
 
 **现状**：`copy_struct`（`bench/fatptr/an/copy_struct.an`）与 `chase`（`chase.an`）已落地并进
-`micro` 集合（`--set micro`，源目录 `bench/fatptr/`）。两者当前都用 `T&` 字段（24 B，B1 不动它），
-因此只对 B6 敏感；B1/B6 的"结构里放 `T*`"形态要再加一个 `T*` 字段变体（并同步提高规模：full 档
-copy_struct 目前仅 ~9 ms，低于 0.2–0.5 s 的标定目标）。`call_abi` 待办——第一版实测发现 `-O2`
-会把整条节点链与调用一起折叠掉（调用被外提、循环被归纳成闭式），需要给基准接入**编译器看不到的
-输入**（如 `env.args()` 导出的种子）才能测到真实调用成本，放到 B6 之前补齐。
+`micro` 集合（`--set micro`，源目录 `bench/fatptr/`）。两者都用 `T&` 字段（**变体 B 下 16 B**），
+因此对"引用尺寸"敏感；"结构里放 `T*`"的字段变体仍未加（并需同步提高规模，full 档读数原本偏小）。
+**`call_abi` 仍未做（P2.2 待办）**：第一版实测发现 `-O2` 会把整条节点链与调用一起折叠掉
+（调用被外提、循环被归纳成闭式），需要给基准接入**编译器看不到的输入**（如 `env.args()` 导出的
+种子）才能测到真实调用成本。
 
 ### 4.2 现有基准
 
@@ -525,7 +591,7 @@ copy_struct 目前仅 ~9 ms，低于 0.2–0.5 s 的标定目标）。`call_abi`
 
 ### 4.3 语义验收清单
 
-除三套件（752/156/99，两种指针模式）与 `runtime/build.py --check --asan` 外，每项候选都要跑
+除三套件（756/156/99，两种指针模式）与 `runtime/build.py --check --asan` 外，每项候选都要跑
 现有安全语料里与表示相关的部分并逐条对照：
 
 - one-past：`tests/safety/fat_oob_*`、`tests/basic/pointer/*one_past*`；
@@ -604,7 +670,10 @@ bounce/nbody/fasta/copy_struct 退化 +3.0%~+5.8%（fasta 已用 equal-length �
 正常访问与 one-past 行为不变）。
 
 净账：整基准中位持平、四项 >3% 改善（合计约 −25%）对三项 >3% 退化（合计约 +13%）；B1 的字段打包同时是
-B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此保留，不做回退。
+B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此当时保留、不做回退。
+
+**后续（本阶段状态已变）**：B1 后来被**变体 B**（8 B 块头 + 全局锁表 + 三处修复，见 §3.7）取代——
+`T*` 24 B、`T&` 16 B、`T[]`·`str` 24 B，身份从块头搬到全局表项。B1 自此只作为对比基线。
 
 ### P2.4 16 B 引用可行性原型（B6 先行，B3 备选；依 P2.2/P2.3 结果决定）
 
@@ -622,8 +691,12 @@ B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此保留
 按 §3.6 实现完 B6 编码后，YIAN 自己的 micro / ptr / alloc 三组端到端读数全面退化
 （`copy_struct` +249%、`havlak` +196%、`deltablue` +179%、`towers` +116%、`richards` +106%，
 分配器 churn +176%~+534%，raw 对照 ≤3.4%；详见 §3.6 表）：重建锁址的每检查成本压过了
-指针变小的带宽收益。**B6 因此否决并已回退**，保留 B1 表示；重启的前提是"检查点静态 kind
+指针变小的带宽收益。**B6 因此否决并已回退**；重启的前提是"检查点静态 kind
 专用化"（见 §6）。C 原型与端到端的口径差见 §6 最后一条。
+
+**后续（本阶段目标已达成）**：16 B 引用由**变体 B** 实现（`T&` = ⟨data, word⟩ 16 B，`T*` 24 B），
+即"不重建锁址"的 16 B 形态；B6 与变体 A 均否决。B 的代价是把"每次检查的锁址重建"换成"每次检查
+一次表 load"，收益在指针/堆密集处兑现（§3.7），三项回退见 §3.7.1。
 
 ### P2.5 迁移与文档
 
@@ -632,9 +705,12 @@ B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此保留
 `bench/results/full.csv` 重跑并在干净提交上记录。
 **验收**：文档与实测一致；仓库里没有互相矛盾的尺寸描述。
 
-**进展**：B6 否决后文档保持 B1 表示（`T*` 32 B / `T&` 24 B / `T[]`·`str` 32 B）；基线（B1）的
-`full`/`alloc` 三态结果已用 HEAD 快照重跑并刷新 `bench/results/`（`ptr`/`micro` 为本地忽略文件，
-读数记在 §3.6 表里）。
+**进展（状态已推进到变体 B）**：当前表示是 `T*` 24 B / `T&` 16 B / `T[]`·`str` 24 B / 块头 8 B
+（§0）；`lockmech.py` 的常量、谓词与注释已在后续清理中与实现对齐（编码叙述里的旧"64 位标志位键"
+模型已删），`runtime/build.py --check` 的 ABI 断言保持通过。基线（B1）的 `full`/`alloc` 三态结果
+已用 HEAD 快照重跑并刷新 `bench/results/`（`ptr`/`micro` 为本地忽略文件，读数记在 §3.6/§3.7 表里）。
+**待办**：`docs/manual/12.llvm_codegen.md`、`docs/grammar/02.type_system.md` 等用户可见的尺寸描述
+是否还停在 B1/B6 时期需要逐处核对（本次未动文档）。
 
 ## 6. 风险与开放问题
 
@@ -651,6 +727,10 @@ B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此保留
 - **B6 已实测否决**：端到端上"重建锁址"的每检查成本（约 10 条 ALU + 指针 select 链，`-O2`
   主函数 +47% 指令）压过了指针变小（8 B/指针）的带宽收益，micro / ptr / alloc 三组全面退化
   （见 §3.6 表）。只有在"检查点静态已知 kind、只走堆公式"的专用化落地后才值得重测。
+- **变体 B 的三项已知回退已定性**（`towers`/`chase`/`churn_single`）：三条优化路（CFG 融合、发射层
+  分支融合、锚定指针读块头 key）逐条实测为零收益或不可行，见 §3.7.1。它们与 B1 的 16 B 指针布局
+  绑定，因此"消除回退"与"保留 `json`/`churn_mixed` 的大赢"不可兼得，属已接受的取舍，不再作为开放
+  问题跟踪。
 - **`-O0` 未纳入**：本计划与主计划一样只以 `-O2` 基线验收；如果 `-O0` 也需要，验收要分档。
 - **C↔YIAN 的口径差**：§2.2 的曲线来自 C 微基准，只用于判断方向与量级，不作为 YIAN 的收益承诺。
 
@@ -660,6 +740,6 @@ B6 的 `T*` 布局前提（`{data, word, index:u32, size:u32}`），因此保留
 - 类型与尺寸（用户可见）：[`docs/grammar/02.type_system.md`](../grammar/02.type_system.md)
 - LLVM 类型映射与冲突点：[`docs/manual/12.llvm_codegen.md`](../manual/12.llvm_codegen.md)
 - 字段下标与谓词：`compiler/codegen/cfg/lockmech.py`
-- 构造/提取/折算：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/types.py`、`compiler/codegen/cfg/builder.py`
+- 构造/提取/折算：`compiler/codegen/llvm/builder.py`、`compiler/codegen/llvm/types.py`、CFG 下降各簇（`compiler/codegen/cfg/lower/`，逐函数装配在 `compiler/codegen/cfg/passes/translator.py`）
 - 基准与基线：`bench/bench_three_way.py`、`bench/results/{full,alloc}.{md,csv}`、`bench/bench_allocator.py`
 - 主计划：`docs/plan/fat-pointer-performance-plan.md`（§4A 检查消解、§4C 堆池、§5 阶段）
