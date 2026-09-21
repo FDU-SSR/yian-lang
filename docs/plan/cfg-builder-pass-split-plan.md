@@ -250,7 +250,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | --- | --- | --- | --- | --- |
 | P0 ✅ | 建 §6.1 harness（`/tmp/cfg_equiv.py`，108 份语料）并记录基线 | 迁移的安全网（记录 27 s / 比对 27 s） | 无 | — |
 | P1 ✅ | C1：抽 `passes/{__init__,context,cleanup}.py`（DCE/RPO/终结保护 + `PassContext` + `run_pipeline`） | builder 1770 → **1629 行**（−141），新包 208 行 | 低（已实测忠实） | 单提交 revert |
-| P2 | C2：抽 `context.py::FunctionEmitter`（emit/new_block/switch_to/set_terminator/new_name/emit_phi/split_block_name）+ `PassContext` | 所有簇的共同句柄；builder −~60 行 | 低 | 单提交 revert |
+| P2 ✅ | C2：抽 `passes/emitter.py::FunctionEmitter`（func/current_block/counter + new_name/emit/new_block/void_reg/never_reg/emit_phi/terminate/position）；`__set_terminator`/`__switch_to` 保留检查状态副作用并委托句柄 | 所有簇的共同句柄；builder 1629 → **1590 行** | 低（已实测忠实） | 单提交 revert |
 | P3 | C3：抽检查簇**为组合件 `checks.py`**（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有一个 `self.__checks` | builder −~300 行；状态显式化 | 低（纯搬移） | 单提交 revert |
 | P4 | C4：抽 `lower/stmts.py`（含 `loops`/`defer_scopes`） | builder −~250 行 | 低（块创建顺序照抄） | 单提交 revert |
 | P5 | C5+C6：抽 `lower/lvalues.py`、`lower/aggregates.py` | builder −~350 行 | 中 | 同上 |
@@ -274,6 +274,12 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
   现在 `pyright compiler` 与 `pyright anx` 均为 **0 errors**。
 - 门槛：三套件 756/156/99 全绿、`runtime/build.py --check --asan` 通过、micro 基准无漂移
   （`chase` 156.8–159.7、`copy_struct` 152.1–152.5，与 P1 前一致）。
+
+**P2 进展（完成）**：`FunctionEmitter` 落在 `passes/emitter.py`（76 行），builder 内
+`self.__emit(`/`__new_name()`/`__new_block(`/`__emit_phi(`/`__void_reg()`/`__never_reg()` 与
+`self.__func`/`__current_block`/`__counter` 共 ~179 处调用点改为 `self.__emitter.*`；
+块终结/块切换的检查状态清理仍留在 builder（句柄无副作用）。实测 108/108 份 `cfg.txt`
+与基线逐字节一致；pyright compiler/anx 0 errors；三套件 756/156/99 全绿。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内

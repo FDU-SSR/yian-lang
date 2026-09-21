@@ -11,6 +11,7 @@ from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.passes import PassContext, run_pipeline
+from compiler.codegen.cfg.passes.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
 from compiler.error import CompilerError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -47,7 +48,8 @@ class CfgBuilder:
         # 诊断模式开关：开启时指针一律按裸 8B 处理，不生成检查、锁槽或帧锁。
         # 生产环境不应使用。
         self.__raw_pointers = raw_pointers
-        self.__counter = 0
+        # 发射句柄：当前函数/当前块/命名计数器（原 self.__func / __current_block / __counter）
+        self.__emitter = FunctionEmitter()
         self.__loops: list[LoopCtx] = []
         self.__defer_scopes: list[list[HIR.Expr]] = []
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化(CFG 层)
@@ -77,7 +79,6 @@ class CfgBuilder:
         self.__checked: set[tuple[str, ...]] = set()
         self.__elem_derived: dict[str, tuple[IR.Value, IR.Value, IR.Value]] = {}
         self.__field_derived: dict[str, str] = {}
-        self.__func: IR.Function = IR.Function(name="", type_id=0, blocks=[], entry=IR.Block(""))  # placeholder; replaced in build()
 
     # ------------------------------------------------------------------
     # public entry point
@@ -86,16 +87,18 @@ class CfgBuilder:
     def build(self) -> IR.Function:
         dp = self.__dp
         entry_block = IR.Block("entry")
-        self.__func = IR.Function(name=self.__func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block)
-        self.__current_block = entry_block
+        self.__emitter.bind(
+            IR.Function(name=self.__func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block),
+            entry_block,
+        )
 
         # ── register parameters ──
-        self.__func.params = dp.params.copy()
+        self.__emitter.func.params = dp.params.copy()
 
         # ── register body local variables ──
         for local_id in dp.locals:
             symbol = self.__symbol_ctx.get(local_id)
-            self.__func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
+            self.__emitter.func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 
         # ── translate the body ──
         assert dp.body is not None
@@ -104,67 +107,43 @@ class CfgBuilder:
         func_type = self.__type_ctx[dp.type_id]
         assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
         ret_ty = func_type.return_type(self.__type_ctx)
-        if self.__current_block.terminator is None and ret_ty != TypeCtx.void_id:
+        if self.__emitter.current_block.terminator is None and ret_ty != TypeCtx.void_id:
             self.__set_terminator(IR.Ret(body_val))
 
         # ── CFG pass 管线: 去死块 / RPO 排序 / 终结保护(C1, 见 passes/) ──
-        run_pipeline(self.__func, PassContext(
+        run_pipeline(self.__emitter.func, PassContext(
             type_ctx=self.__type_ctx,
             symbol_ctx=self.__symbol_ctx,
             raw_pointers=self.__raw_pointers,
             func_name=self.__func_name,
             span=dp.ast_body.span,
             return_type=ret_ty,
-            new_void_value=self.__void_reg,
+            new_void_value=self.__emitter.void_reg,
         ))
 
         # ── 帧锁实体化标记 ──
         # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
         # 写 SENTINEL 并从稳定影子栈弹出槽位,
         # 使栈悬垂访问经 live 键比较确定性失败。标记随函数传给 LLTranslator。
-        self.__func.frame_lock = self.__frame_lock
+        self.__emitter.func.frame_lock = self.__frame_lock
 
-        return self.__func
+        return self.__emitter.func
 
     # ------------------------------------------------------------------
     # SSA names & block helpers
     # ------------------------------------------------------------------
 
-    def __new_name(self) -> str:
-        name = str(self.__counter)
-        self.__counter += 1
-        return name
-
-    def __emit[StmtType: IR.Stmt](self, stmt: StmtType) -> StmtType:
-        """Append *stmt* to the current block and return its result name."""
-        self.__current_block.stmts.append(stmt)
-        return stmt
-
-    def __new_block(self, label: str) -> IR.Block:
-        block = IR.Block(f"{label}.{self.__counter}")
-        self.__counter += 1
-        self.__func.blocks.append(block)
-        ch_cfg_block().trace(lambda: f"new block {block.label}")
-        return block
-
     def __set_terminator(self, term: IR.Terminator) -> None:
         # 检查合并:块终结前补发挂起 InBounds 义务并清空去重/合并表(状态不跨块)
         self.__invalidate_checks()
-        ch_cfg_block().trace(lambda: f"{self.__current_block.label} <- {type(term).__name__}")
-        self.__current_block.terminator = term
+        self.__emitter.terminate(term)
 
     def __switch_to(self, block: IR.Block) -> None:
         # 检查合并:块切换 → 去重/合并状态清空(义务已由 __set_terminator 补发;此处为保守兜底)
         self.__checked.clear()
         self.__elem_derived.clear()
         self.__field_derived.clear()
-        self.__current_block = block
-
-    def __void_reg(self) -> IR.Value:
-        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.void_id)
-
-    def __never_reg(self) -> IR.Value:
-        return IR.Reg(name=self.__new_name(), type_id=TypeCtx.never_id)
+        self.__emitter.position(block)
 
     # ------------------------------------------------------------------
     # block translation
@@ -172,12 +151,12 @@ class CfgBuilder:
 
     def __translate_block(self, block: HIR.Block) -> IR.Value:
         """Translate a block, returning the value of the last expression."""
-        last_val: IR.Value = self.__void_reg()
+        last_val: IR.Value = self.__emitter.void_reg()
         self.__defer_scopes.append([])
         try:
             for stmt in block.stmts:
                 last_val = self.__resolve_val(stmt)
-                if self.__current_block.terminator is not None:
+                if self.__emitter.current_block.terminator is not None:
                     # Mid-block terminator (return/break/continue/panic) → divergent.
                     return last_val
 
@@ -193,7 +172,7 @@ class CfgBuilder:
         if not self.__defer_scopes:
             raise CodegenError("defer action is outside a lexical block", stmt.span)
         self.__defer_scopes[-1].append(stmt.action)
-        return self.__void_reg()
+        return self.__emitter.void_reg()
 
     def __emit_defers_to(self, depth: int) -> bool:
         """Emit active deferred actions down to *depth* (exclusive).
@@ -205,7 +184,7 @@ class CfgBuilder:
         for scope_index in range(len(self.__defer_scopes) - 1, depth - 1, -1):
             for action in reversed(self.__defer_scopes[scope_index]):
                 self.__resolve_val(action)
-                if self.__current_block.terminator is not None:
+                if self.__emitter.current_block.terminator is not None:
                     return False
         return True
 
@@ -214,29 +193,29 @@ class CfgBuilder:
     # ------------------------------------------------------------------
 
     def __translate_return(self, stmt: HIR.Return) -> IR.Value:
-        val = self.__resolve_val(stmt.value) if stmt.value is not None else self.__void_reg()
-        if self.__current_block.terminator is not None:
-            return self.__never_reg()
+        val = self.__resolve_val(stmt.value) if stmt.value is not None else self.__emitter.void_reg()
+        if self.__emitter.current_block.terminator is not None:
+            return self.__emitter.never_reg()
         self.__emit_defers_to(0)
-        if self.__current_block.terminator is None:
+        if self.__emitter.current_block.terminator is None:
             self.__set_terminator(IR.Ret(val))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_if(self, stmt: HIR.If) -> IR.Value:
         cond_val = self.__resolve_val(stmt.cond)
 
-        then_block = self.__new_block("if.then")
-        else_block = self.__new_block("if.else") if stmt.else_branch else None
-        merge_block = self.__new_block("if.merge")
+        then_block = self.__emitter.new_block("if.then")
+        else_block = self.__emitter.new_block("if.else") if stmt.else_branch else None
+        merge_block = self.__emitter.new_block("if.merge")
 
         self.__set_terminator(IR.CondBr(cond_val, then_block, else_block or merge_block))
 
         self.__switch_to(then_block)
         then_val = self.__translate_block(stmt.then_branch)
-        then_reaches_merge = self.__current_block.terminator is None
+        then_reaches_merge = self.__emitter.current_block.terminator is None
         if then_reaches_merge:
             self.__set_terminator(IR.Br(merge_block))
-        then_end = self.__current_block
+        then_end = self.__emitter.current_block
         incoming: list[tuple[IR.Block, IR.Value]] = []
         if then_reaches_merge:
             incoming.append((then_end, then_val))
@@ -245,25 +224,25 @@ class CfgBuilder:
             assert else_block is not None
             self.__switch_to(else_block)
             else_val = self.__translate_block(stmt.else_branch)
-            if self.__current_block.terminator is None:
+            if self.__emitter.current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
-                incoming.append((self.__current_block, else_val))
+                incoming.append((self.__emitter.current_block, else_val))
 
         self.__switch_to(merge_block)
 
         if not incoming:
             # All branches diverge — no phi needed.
             if stmt.type_id == TypeCtx.void_id:
-                return self.__void_reg()
-            return self.__never_reg()
+                return self.__emitter.void_reg()
+            return self.__emitter.never_reg()
 
-        phi = self.__emit_phi(incoming)
+        phi = self.__emitter.emit_phi(incoming)
         phi.type_id = stmt.type_id
         return phi
 
     def __translate_loop(self, stmt: HIR.Loop) -> IR.Value:
-        body_block = self.__new_block("loop.body")
-        exit_block = self.__new_block("loop.exit")
+        body_block = self.__emitter.new_block("loop.body")
+        exit_block = self.__emitter.new_block("loop.exit")
 
         self.__set_terminator(IR.Br(body_block))
         self.__loops.append(LoopCtx(
@@ -274,7 +253,7 @@ class CfgBuilder:
 
         self.__switch_to(body_block)
         self.__translate_block(stmt.body)
-        if self.__current_block.terminator is None:
+        if self.__emitter.current_block.terminator is None:
             self.__set_terminator(IR.Br(body_block))
 
         self.__switch_to(exit_block)
@@ -282,26 +261,26 @@ class CfgBuilder:
         # Build phi from break values (if any non-divergent breaks)
         loop = self.__loops.pop()
         if loop.break_values:
-            phi = self.__emit_phi(loop.break_values)
+            phi = self.__emitter.emit_phi(loop.break_values)
             phi.type_id = stmt.type_id
             return phi
         if stmt.type_id == TypeCtx.void_id:
-            return self.__void_reg()
-        return self.__never_reg()
+            return self.__emitter.void_reg()
+        return self.__emitter.never_reg()
 
     def __translate_panic(self, stmt: HIR.Panic) -> IR.Value:
         msg_val = self.__resolve_val(stmt.message)
         self.__set_terminator(IR.Panic(msg_val))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_runtime_fail(self, stmt: HIR.RuntimeFail) -> IR.Value:
         self.__set_terminator(IR.RuntimeFail(stmt.code))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_process_exit(self, stmt: HIR.ProcessExit) -> IR.Value:
         code = self.__resolve_val(stmt.code)
         self.__set_terminator(IR.ProcessExit(code=code))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolve_val(stmt.target)
@@ -310,31 +289,31 @@ class CfgBuilder:
             # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
             # data=lock_ptr+H 与 index=0;del-view: T*/T[]/T& 三族通用,仅
             # PointerType 含 index 分量,Slice/Ref 退化为恒真)
-            self.__emit(IR.CheckDelete(ptr=ptr))
+            self.__emitter.emit(IR.CheckDelete(ptr=ptr))
             ch_cfg_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p)")
             # 失效由释放路径完成: LLVM 层 Delete 重建块首并把块头里的代 +1 写回,
             # 因此这里不再单独写锁槽(写 SENTINEL 会破坏代的单调性)。
             # 检查合并:Delete 换代 → 去重/合并状态失效(先补发挂起 InBounds 义务)
             self.__invalidate_checks()
         # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
-        self.__emit(IR.Delete(ptr))
-        return self.__void_reg()
+        self.__emitter.emit(IR.Delete(ptr))
+        return self.__emitter.void_reg()
 
     def __translate_match(self, stmt: HIR.Match) -> IR.Value:
         """Unified lowering for NewMatch covering integer, char, and enum patterns."""
         val = self.__resolve_val(stmt.value)
 
-        merge_block = self.__new_block("match.merge")
+        merge_block = self.__emitter.new_block("match.merge")
         default_block = None
 
         arms: list[IR.MatchArm] = []
         for arm in stmt.arms:
             if arm.pattern is None:
-                default_block = self.__new_block("match.default")
+                default_block = self.__emitter.new_block("match.default")
                 continue
 
             pattern = self.__hir_pattern_to_ir(arm.pattern)
-            block = self.__new_block("match.arm")
+            block = self.__emitter.new_block("match.arm")
             arms.append(IR.MatchArm(pattern=pattern, body=block))
 
         self.__set_terminator(IR.Match(value=val, arms=arms, default=default_block, is_ref=stmt.is_ref))
@@ -352,19 +331,19 @@ class CfgBuilder:
 
             self.__switch_to(current_block)
             arm_val = self.__translate_block(arm.body)
-            if self.__current_block.terminator is None:
+            if self.__emitter.current_block.terminator is None:
                 self.__set_terminator(IR.Br(merge_block))
-                arm_values.append((self.__current_block, arm_val))
+                arm_values.append((self.__emitter.current_block, arm_val))
 
         self.__switch_to(merge_block)
 
         if not arm_values:
             # All arms diverge — no phi needed.
             if stmt.type_id == TypeCtx.void_id:
-                return self.__void_reg()
-            return self.__never_reg()
+                return self.__emitter.void_reg()
+            return self.__emitter.never_reg()
 
-        phi = self.__emit_phi(arm_values)
+        phi = self.__emitter.emit_phi(arm_values)
         phi.type_id = stmt.type_id
         return phi
 
@@ -373,32 +352,32 @@ class CfgBuilder:
         val: IR.Value | None = None
         if stmt.value is not None:
             val = self.__resolve_val(stmt.value)
-            if self.__current_block.terminator is not None:
-                return self.__never_reg()
+            if self.__emitter.current_block.terminator is not None:
+                return self.__emitter.never_reg()
         if not self.__emit_defers_to(loop.defer_depth):
-            return self.__never_reg()
+            return self.__emitter.never_reg()
         if val is not None:
-            loop.break_values.append((self.__current_block, val))
+            loop.break_values.append((self.__emitter.current_block, val))
         self.__set_terminator(IR.Br(loop.exit))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_continue(self, _stmt: HIR.Continue) -> IR.Value:
         loop = self.__loops[-1]
         if not self.__emit_defers_to(loop.defer_depth):
-            return self.__never_reg()
+            return self.__emitter.never_reg()
         self.__set_terminator(IR.Br(loop.header))
-        return self.__never_reg()
+        return self.__emitter.never_reg()
 
     def __translate_semi(self, stmt: HIR.Semi) -> IR.Value:
         self.__resolve_val(stmt.expr)
         if stmt.type_id == TypeCtx.never_id:
-            return self.__never_reg()
-        return self.__void_reg()
+            return self.__emitter.never_reg()
+        return self.__emitter.void_reg()
 
     def __translate_let(self, stmt: HIR.Let) -> IR.Value:
         if stmt.init is not None:
             self.__resolve_val(stmt.init)
-        return self.__void_reg()
+        return self.__emitter.void_reg()
 
     # ------------------------------------------------------------------
     # Match helpers
@@ -416,7 +395,7 @@ class CfgBuilder:
             )
         fields = None
         if pattern.unpack_fields is not None:
-            fields = [self.__func.local_vars[field] for field in pattern.unpack_fields]
+            fields = [self.__emitter.func.local_vars[field] for field in pattern.unpack_fields]
         return IR.EnumPattern(
             variant=pattern.variant,
             fields=fields
@@ -525,7 +504,7 @@ class CfgBuilder:
                 return self.__resolve_literal(expr)
             case HIR.Ty():
                 if self.__type_ctx.is_zst(expr.type_id):
-                    return IR.Reg(name=self.__new_name(), type_id=expr.type_id)
+                    return IR.Reg(name=self.__emitter.new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
             case HIR.Closure():
                 raise CompilerError(f"Closure lowering should have been completed before CFG building: {expr}")
@@ -662,9 +641,9 @@ class CfgBuilder:
         ch_cfg().trace(lambda: f"logical {expr.op} at {expr.span}")
         cond_val = self.__resolve_val(expr.left)
 
-        rhs_block = self.__new_block("logical.rhs")
-        merge_block = self.__new_block("logical.merge")
-        entry_block = self.__current_block
+        rhs_block = self.__emitter.new_block("logical.rhs")
+        merge_block = self.__emitter.new_block("logical.merge")
+        entry_block = self.__emitter.current_block
 
         if expr.op == BinaryOperator.LogicalAnd:
             # a && b: evaluate b only when a is true
@@ -680,7 +659,7 @@ class CfgBuilder:
         rhs_val = self.__resolve_val(expr.right)
         # __resolve_val may have switched current_block (nested logical).
         # The block that actually produced rhs_val is where we ended up.
-        rhs_end_block = self.__current_block
+        rhs_end_block = self.__emitter.current_block
 
         # Bridge rhs_end_block to merge if it doesn't already have a terminator.
         if rhs_end_block.terminator is None:
@@ -688,13 +667,13 @@ class CfgBuilder:
 
         # ── merge block ──
         self.__switch_to(merge_block)
-        result = self.__emit_phi([
+        result = self.__emitter.emit_phi([
             (entry_block, short_circuit_value),
             (rhs_end_block, rhs_val),
         ])
         # The merge block needs a terminator so it is not left dangling.
         # Create a continuation block that callers can append to.
-        cont_block = self.__new_block("logical.cont")
+        cont_block = self.__emitter.new_block("logical.cont")
         self.__set_terminator(IR.Br(cont_block))
         self.__switch_to(cont_block)
         return result
@@ -772,7 +751,7 @@ class CfgBuilder:
             if self.__dedup(self.__ptr_key(receiver_addr, "ib")):
                 ch_cfg_block().debug(lambda: "check dedup MethodCall receiver: in_bounds(p,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckInBounds(ptr=receiver_addr))
+                self.__emitter.emit(IR.CheckInBounds(ptr=receiver_addr))
                 ch_cfg_block().debug(lambda: "check insert MethodCall receiver: in_bounds(p,1) (调用折算→安全修复, one-past-end 恢复)")
         ref_type_id = self.__receiver_ref_type(receiver_addr)
         receiver_ref = self.__build_cast(receiver_addr, ref_type_id)
@@ -854,15 +833,15 @@ class CfgBuilder:
         index_slot = self.__build_alloca(
             IR.IntLiteral(value=0, type_id=TypeCtx.u64_id), fat=False
         )
-        header = self.__new_block("dyn.fill.head")
-        body = self.__new_block("dyn.fill.body")
-        exit_block = self.__new_block("dyn.fill.exit")
+        header = self.__emitter.new_block("dyn.fill.head")
+        body = self.__emitter.new_block("dyn.fill.body")
+        exit_block = self.__emitter.new_block("dyn.fill.exit")
         self.__set_terminator(IR.Br(header))
 
         self.__switch_to(header)
         index = self.__build_load(index_slot)
-        filled = self.__emit(IR.Binary(
-            result=IR.Reg(name=self.__new_name(), type_id=TypeCtx.bool_id),
+        filled = self.__emitter.emit(IR.Binary(
+            result=IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.bool_id),
             op=BinaryOperator.Neq,
             lhs=index,
             rhs=count,
@@ -878,8 +857,8 @@ class CfgBuilder:
         elem_ptr_type = self.__type_ctx.alloc_pointer(expr.element_type)
         elem_ptr = self.__build_element_ptr(buffer, index, elem_ptr_type)
         self.__build_store(value, elem_ptr)
-        next_index = self.__emit(IR.Binary(
-            result=IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id),
+        next_index = self.__emitter.emit(IR.Binary(
+            result=IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.u64_id),
             op=BinaryOperator.Add,
             lhs=index,
             rhs=IR.IntLiteral(value=1, type_id=TypeCtx.u64_id),
@@ -908,11 +887,11 @@ class CfgBuilder:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element
                 # rather than the legal one-past pointer value.
-                self.__emit(IR.CheckInBounds(ptr=value))
+                self.__emitter.emit(IR.CheckInBounds(ptr=value))
             elif isinstance(source_type, Type.SliceType) and isinstance(target_type, Type.RefType):
                 # An empty slice has no element from which a reference can be
                 # formed.  Establish this before dropping the size field.
-                self.__emit(IR.CheckSliceNonEmpty(ptr=value))
+                self.__emitter.emit(IR.CheckSliceNonEmpty(ptr=value))
         return self.__build_cast(value, expr.type_id)
 
     def __resolve_sys_read(self, expr: HIR.SysRead) -> IR.Value:
@@ -929,8 +908,8 @@ class CfgBuilder:
         dest = self.__resolve_val(expr.dest)
         src = self.__resolve_val(expr.src)
         count = self.__resolve_val(expr.count)
-        self.__emit(IR.MemCopy(dest=dest, src=src, count=count))
-        return self.__void_reg()
+        self.__emitter.emit(IR.MemCopy(dest=dest, src=src, count=count))
+        return self.__emitter.void_reg()
 
     def __resolve_open(self, expr: HIR.Open) -> IR.Value:
         path = self.__resolve_val(expr.path)
@@ -943,17 +922,17 @@ class CfgBuilder:
 
     def __resolve_sqrt(self, expr: HIR.Sqrt) -> IR.Value:
         value = self.__resolve_val(expr.value)
-        result = IR.Reg(name=self.__new_name(), type_id=expr.type_id)
-        return self.__emit(IR.Sqrt(result=result, value=value)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=expr.type_id)
+        return self.__emitter.emit(IR.Sqrt(result=result, value=value)).result
 
     def __resolve_arg_count(self, _expr: HIR.ArgCount) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.ArgCount(result=result)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.u64_id)
+        return self.__emitter.emit(IR.ArgCount(result=result)).result
 
     def __resolve_arg_bytes(self, expr: HIR.ArgBytes) -> IR.Value:
         index = self.__resolve_val(expr.index)
-        result = IR.Reg(name=self.__new_name(), type_id=expr.type_id)
-        return self.__emit(IR.ArgBytes(result=result, index=index)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=expr.type_id)
+        return self.__emitter.emit(IR.ArgBytes(result=result, index=index)).result
 
     def __resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__resolve_val(field) for field in expr.field_values]
@@ -966,7 +945,7 @@ class CfgBuilder:
             # ``@slice_from_parts``/``@str_from_parts`` are trusted metadata
             # constructors.  Keep the requested view within the source
             # pointer's remaining extent before publishing its size field.
-            self.__emit(IR.CheckElementArith(base=field_vals[0], offset=field_vals[1]))
+            self.__emitter.emit(IR.CheckElementArith(base=field_vals[0], offset=field_vals[1]))
             ch_cfg_block().debug(lambda: "check insert slice construction: source extent + requested length")
         return self.__build_aggregate_construct(expr.type_id, field_vals)
 
@@ -1035,7 +1014,7 @@ class CfgBuilder:
         elem_base = self.__build_cast(base_addr, elem_ptr_type)
         index_val = self.__resolve_val(expr.index)
         if not fat and self.__is_raw_pointer(base_addr):
-            self.__emit(IR.CheckRawBounds(index=index_val, length=expr.length))
+            self.__emitter.emit(IR.CheckRawBounds(index=index_val, length=expr.length))
             ch_cfg_block().debug(lambda: "check insert ArrayAccess(raw): index < length (裸数组越界)")
         return self.__build_element_ptr(elem_base, index_val, elem_ptr_type)
 
@@ -1061,9 +1040,9 @@ class CfgBuilder:
         return self.__build_element_ptr(data, index_val, elem_ptr_type)
 
     def __resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:
-        if expr.symbol_id not in self.__func.local_vars:
+        if expr.symbol_id not in self.__emitter.func.local_vars:
             raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
-        var_ref = self.__func.local_vars[expr.symbol_id]
+        var_ref = self.__emitter.func.local_vars[expr.symbol_id]
         if fat:
             return self.__build_var_ptr_fat(var_ref)
         return self.__build_var_ptr_raw(var_ref)
@@ -1085,16 +1064,16 @@ class CfgBuilder:
             return (None, None)
         if self.__frame_lock is not None:
             return self.__frame_lock
-        saved_block = self.__current_block
-        self.__current_block = self.__func.entry
+        saved_block = self.__emitter.current_block
+        self.__emitter.current_block = self.__emitter.func.entry
         k_f = self.__build_gen_key(is_heap=False)
         e_f_result = IR.Reg(
-            name=self.__new_name(),
+            name=self.__emitter.new_name(),
             type_id=TypeCtx.u64_id,  # 帧 word(整字)
         )
-        e_f = self.__emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
-        self.__current_block = saved_block
-        entry = self.__func.entry
+        e_f = self.__emitter.emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
+        self.__emitter.current_block = saved_block
+        entry = self.__emitter.func.entry
         frame_stmts = entry.stmts[-2:]
         del entry.stmts[-2:]
         entry.stmts[0:0] = frame_stmts
@@ -1156,8 +1135,8 @@ class CfgBuilder:
 
     def __build_gen_key(self, is_heap: bool) -> IR.Value:
         """k ← Gen():堆键 MSB 1 / 栈键 MSB 0。"""
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.GenKey(result=result, is_heap=is_heap)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.u64_id)
+        return self.__emitter.emit(IR.GenKey(result=result, is_heap=is_heap)).result
 
     def __build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
         """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩。
@@ -1167,8 +1146,8 @@ class CfgBuilder:
         LLVM 下降由 LLVM 层完成。惰性左值路径:显式 &x 与方法 receiver 专用。
         """
         e_f, k_f = self.__emit_frame_lock()
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
-        fat = self.__emit(IR.VarPtr(
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
+        fat = self.__emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f,
         )).result
         self.__frame_locked.add(fat.name)
@@ -1180,18 +1159,18 @@ class CfgBuilder:
         仅返回栈槽地址,不合成 5 字段、不触发帧锁实体化(帧锁延迟到真正需要
         胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
         """
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
-        raw_ptr = self.__emit(IR.VarPtr(
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=self.__type_ctx.alloc_pointer(var_ref.type_id))
+        raw_ptr = self.__emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=None, frame_key=None, raw=True,
         )).result
         self.__raw_ptrs.add(raw_ptr.name)
         return raw_ptr
 
     def __build_alloca(self, value: IR.Value, *, fat: bool) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=self.__type_ctx.alloc_pointer(value.type_id))
         if fat and not self.__raw_pointers:
             frame_word, frame_key = self.__emit_frame_lock()
-            addr = self.__emit(IR.Alloca(
+            addr = self.__emitter.emit(IR.Alloca(
                 result=result,
                 value=value,
                 frame_word=frame_word,
@@ -1200,7 +1179,7 @@ class CfgBuilder:
             self.__frame_locked.add(addr.name)
             self.__fat_root[addr.name] = addr.name
         else:
-            addr = self.__emit(IR.Alloca(result=result, value=value, raw=True)).result
+            addr = self.__emitter.emit(IR.Alloca(result=result, value=value, raw=True)).result
             self.__raw_ptrs.add(addr.name)
         return addr
 
@@ -1290,7 +1269,7 @@ class CfgBuilder:
         if self.__field_derived:
             for elem_name in dict.fromkeys(self.__field_derived.values()):
                 elem, _base, _offset = self.__elem_derived[elem_name]
-                self.__emit(IR.CheckInBounds(ptr=elem))
+                self.__emitter.emit(IR.CheckInBounds(ptr=elem))
                 ch_cfg_block().debug(lambda: "check merge FieldPtr→invalidate: 补发 in_bounds(elem,1) (合并检查义务)")
         self.__checked.clear()
         self.__elem_derived.clear()
@@ -1318,7 +1297,7 @@ class CfgBuilder:
         key = self.__pair_key(base, offset, "eacc")
         if self.__dedup(key):
             return True
-        self.__emit(IR.CheckElementAccess(base=base, offset=offset, ptr=elem, live=live))
+        self.__emitter.emit(IR.CheckElementAccess(base=base, offset=offset, ptr=elem, live=live))
         return True
 
     def __build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
@@ -1333,7 +1312,7 @@ class CfgBuilder:
             elif self.__dedup(self.__live_key(base)) or self.__dedup(self.__ptr_key(base, "ref")):
                 ch_cfg_block().debug(lambda: "check dedup FieldPtr(T&): live(r) 共享(同块同值或同出处)")
             else:
-                self.__emit(IR.CheckRefAccess(ptr=base))
+                self.__emitter.emit(IR.CheckRefAccess(ptr=base))
                 ch_cfg_block().debug(lambda: "check insert FieldPtr(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
         elif self.__is_fat_pointer(base):
             # 嵌套派生链(安全修复 复核):base 是挂起 FieldPtr 结果时先补发
@@ -1345,7 +1324,7 @@ class CfgBuilder:
                 if self.__dedup(self.__ptr_key(elem, "ib")):
                     ch_cfg_block().debug(lambda: "check dedup FieldPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
                 else:
-                    self.__emit(IR.CheckInBounds(ptr=elem))
+                    self.__emitter.emit(IR.CheckInBounds(ptr=elem))
                     ch_cfg_block().debug(lambda: "check insert FieldPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
             elem_entry = self.__elem_derived.get(base.name) if isinstance(base, IR.Reg) else None
             if elem_entry is not None and isinstance(elem_entry[0], IR.Reg):
@@ -1357,10 +1336,10 @@ class CfgBuilder:
             elif self.__dedup(self.__ptr_key(base, "ib")):
                 ch_cfg_block().debug(lambda: "check dedup FieldPtr: in_bounds(p_s,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckInBounds(ptr=base))
+                self.__emitter.emit(IR.CheckInBounds(ptr=base))
                 ch_cfg_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (重锚定前提)")
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
-        field_ptr = self.__emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=self.__type_ctx.alloc_pointer(field_type))
+        field_ptr = self.__emitter.emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
         if merged_elem_name is not None:
             self.__field_derived[field_ptr.name] = merged_elem_name
         # 惰性左值路径:沿裸基址的字段派生保持裸(检查已由基址判定跳过)
@@ -1385,7 +1364,7 @@ class CfgBuilder:
             elif self.__dedup(self.__ptr_key(ptr, "ref")):
                 ch_cfg_block().debug(lambda: "check dedup Load(T&): live(r) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckRefAccess(ptr=ptr))
+                self.__emitter.emit(IR.CheckRefAccess(ptr=ptr))
                 ch_cfg_block().debug(lambda: "check insert Load(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
         elif self.__is_fat_pointer(ptr):
             if live_covered and self.__merge_access(ptr, live=False):
@@ -1395,10 +1374,10 @@ class CfgBuilder:
             elif self.__dedup(self.__ptr_key(ptr, "safe")):
                 ch_cfg_block().debug(lambda: "check dedup Load: safe_access(p,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
+                self.__emitter.emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
                 ch_cfg_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
-        result = IR.Reg(name=self.__new_name(), type_id=ptr_type.pointee_type)
-        return self.__emit(IR.Load(result=result, ptr=ptr)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=ptr_type.pointee_type)
+        return self.__emitter.emit(IR.Load(result=result, ptr=ptr)).result
 
     def __build_store(self, value: IR.Value, ptr: IR.Value) -> None:
         ptr_type = self.__type_ctx[ptr.type_id]
@@ -1413,7 +1392,7 @@ class CfgBuilder:
             elif self.__dedup(self.__ptr_key(ptr, "ref")):
                 ch_cfg_block().debug(lambda: "check dedup Store(T&): live(r) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckRefAccess(ptr=ptr))
+                self.__emitter.emit(IR.CheckRefAccess(ptr=ptr))
                 ch_cfg_block().debug(lambda: "check insert Store(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
         elif self.__is_fat_pointer(ptr):
             if live_covered and self.__merge_access(ptr, live=False):
@@ -1423,17 +1402,17 @@ class CfgBuilder:
             elif self.__dedup(self.__ptr_key(ptr, "safe")):
                 ch_cfg_block().debug(lambda: "check dedup Store: safe_access(p,1) 共享(同块同值相邻)")
             else:
-                self.__emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
+                self.__emitter.emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
                 ch_cfg_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
-        self.__emit(IR.Store(ptr=ptr, value=value))
+        self.__emitter.emit(IR.Store(ptr=ptr, value=value))
 
     def __build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
         # CFG 层:Malloc 返回 4 字段聚合 ⟨data=b+H, word, index=0, size=n⟩(LLVM 层构造)。
         # word 由 LLVM 层按块首地址与块头里的上一代算好(分配处 +1), 不再用全局堆键。
         # pointee 为 ZST 时维持快路径(undef,不写块头);raw 模式无块头。
         key: IR.Value | None = None
-        result = IR.Reg(name=self.__new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
-        malloc = self.__emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=self.__type_ctx.alloc_pointer(type_id))
+        malloc = self.__emitter.emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
         if not self.__raw_pointers:
             self.__fat_root[malloc.name] = malloc.name
         return malloc
@@ -1470,8 +1449,8 @@ class CfgBuilder:
         if op.is_comparison() and self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
             return self.__build_ptr_cmp(op, lhs, rhs, type_id)
 
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def __build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
         # CFG 层插入检查:算术 → 良构检查(0 ≤ index+n ≤ size)
@@ -1483,15 +1462,15 @@ class CfgBuilder:
                 if self.__dedup(self.__ptr_key(elem, "ib")):
                     ch_cfg_block().debug(lambda: "check dedup ElementPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
                 else:
-                    self.__emit(IR.CheckInBounds(ptr=elem))
+                    self.__emitter.emit(IR.CheckInBounds(ptr=elem))
                     ch_cfg_block().debug(lambda: "check insert ElementPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
             if self.__dedup(self.__pair_key(base, offset, "elarith")):
                 ch_cfg_block().debug(lambda: "check dedup ElementPtr: well_formed(p') 共享(同 base/offset, 检查合并)")
             else:
-                self.__emit(IR.CheckElementArith(base=base, offset=offset))
+                self.__emitter.emit(IR.CheckElementArith(base=base, offset=offset))
                 ch_cfg_block().debug(lambda: "check insert ElementPtr: well_formed(p')")
-        result = IR.Reg(name=self.__new_name(), type_id=result_type)
-        elem_ptr = self.__emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=result_type)
+        elem_ptr = self.__emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
         # 合并跟踪:记录派生链 (base, offset),供 FieldPtr→Load/Store 合取检查
         if self.__is_fat_pointer(base):
             self.__elem_derived[elem_ptr.name] = (elem_ptr, base, offset)
@@ -1506,40 +1485,40 @@ class CfgBuilder:
         # CFG 层插入检查:data 相等 + 良构 + 无回绕(异对象指针差失败)。
         # 与 ElementPtr 算术一致:该运算不访问内存,不检查 allocation live。
         if self.__is_fat_pointer(lhs) and self.__is_fat_pointer(rhs):
-            self.__emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
+            self.__emitter.emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕")
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i64_id)
-        return self.__emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.i64_id)
+        return self.__emitter.emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def __build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
         # 指针序比较检查:序比较先查 data 相等(前提,跨对象序比较失败);
         # 相等比较 按 (data, index) 二元组、无前提检查。
         # 与 ElementPtr 算术一致:比较本身不访问内存,不检查 allocation live。
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
-            self.__emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
+            self.__emitter.emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
             ch_cfg_block().debug(lambda: "check insert PtrCmp: data 相等")
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def __build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
         type_id = default_literals(self.__type_ctx, type_id)
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.Unary(result=result, op=op, operand=operand)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.Unary(result=result, op=op, operand=operand)).result
 
     def __build_extract_value(self, base: IR.Value, field_index: int, type_id: int) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.ExtractValue(result=result, base=base, field_index=field_index)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.ExtractValue(result=result, base=base, field_index=field_index)).result
 
     def __build_call(self, callee_type: int, args: list[IR.Value], result_type: int) -> IR.Value:
         # 检查合并:调用可能释放/写锁槽 → 失效(先补发挂起 InBounds 义务,保证逃逸前失败)
         self.__invalidate_checks()
-        result = IR.Reg(name=self.__new_name(), type_id=result_type)
-        return self.__emit(IR.Call(result=result, callee_type=callee_type, args=args)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=result_type)
+        return self.__emitter.emit(IR.Call(result=result, callee_type=callee_type, args=args)).result
 
     def __build_invoke(self, callee: IR.Value, args: list[IR.Value], result_type: int) -> IR.Value:
         self.__invalidate_checks()
-        result = IR.Reg(name=self.__new_name(), type_id=result_type)
-        return self.__emit(IR.Invoke(result=result, callee=callee, args=args)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=result_type)
+        return self.__emitter.emit(IR.Invoke(result=result, callee=callee, args=args)).result
 
     def __build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
         # CFG 层:Cast 指针→指针语义 ——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
@@ -1551,8 +1530,8 @@ class CfgBuilder:
         if isinstance(self.__type_ctx[to_resolved], Type.PointerType):
             ch_cfg_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
         raw = self.__is_raw_pointer(value)
-        result = IR.Reg(name=self.__new_name(), type_id=to_type)
-        cast = self.__emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=to_type)
+        cast = self.__emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
         if raw:
             self.__raw_ptrs.add(cast.name)
         else:
@@ -1566,53 +1545,46 @@ class CfgBuilder:
         return cast
 
     def __build_size_of(self, type_id: int) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
-        return self.__emit(IR.SizeOf(result=result, type_id=type_id)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.u64_id)
+        return self.__emitter.emit(IR.SizeOf(result=result, type_id=type_id)).result
 
     def __build_aggregate_construct(self, type_id: int, fields: list[IR.Value]) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.AggregateConstruct(result=result, type_id=type_id, fields=fields)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.AggregateConstruct(result=result, type_id=type_id, fields=fields)).result
 
     def __build_array_construct(self, type_id: int, elements: list[IR.Value]) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=type_id)
-        return self.__emit(IR.ArrayConstruct(result=result, type_id=type_id, elements=elements)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=type_id)
+        return self.__emitter.emit(IR.ArrayConstruct(result=result, type_id=type_id, elements=elements)).result
 
     def __build_variant_construct(self, enum_type: int, variant: Type.EnumVariant, payload_fields: list[IR.Value] | None, result_type: int) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=result_type)
-        return self.__emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=result_type)
+        return self.__emitter.emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
 
     def __build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__is_fat_view(buf):
-            self.__emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.str_id)
-        return self.__emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
+            self.__emitter.emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.str_id)
+        return self.__emitter.emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
     def __build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__is_fat_view(buf):
-            self.__emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
-        self.__emit(IR.SysWrite(fd=fd, buf=buf))
-        return self.__void_reg()
+            self.__emitter.emit(IR.CheckViewAccess(view=buf, live=not self.__is_frame_locked(buf)))
+        self.__emitter.emit(IR.SysWrite(fd=fd, buf=buf))
+        return self.__emitter.void_reg()
 
     def __build_open(self, path: IR.Value, flags: IR.Value) -> IR.Value:
         if self.__is_fat_view(path):
-            self.__emit(IR.CheckViewAccess(view=path, live=not self.__is_frame_locked(path)))
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i32_id)
-        return self.__emit(IR.Open(result=result, path=path, flags=flags)).result
+            self.__emitter.emit(IR.CheckViewAccess(view=path, live=not self.__is_frame_locked(path)))
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.i32_id)
+        return self.__emitter.emit(IR.Open(result=result, path=path, flags=flags)).result
 
     def __build_close(self, fd: IR.Value) -> IR.Value:
-        result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.i32_id)
-        return self.__emit(IR.Close(result=result, fd=fd)).result
-
-    def __emit_phi(self, incoming: list[tuple[IR.Block, IR.Value]]) -> IR.Value:
-        """Emit a phi node into the current block's dedicated phi list."""
-        result = IR.Reg(name=self.__new_name(), type_id=incoming[0][1].type_id)
-        stmt = IR.Phi(result=result, incoming=incoming)
-        self.__current_block.phis.append(stmt)
-        return stmt.result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=TypeCtx.i32_id)
+        return self.__emitter.emit(IR.Close(result=result, fd=fd)).result
 
     def __build_func_ptr(self, func_type_id: int) -> IR.Value:
         func_ty = self.__type_ctx[func_type_id]
         assert isinstance(func_ty, Type.FunctionType)
         func_ptr_ty = func_ty.as_pointer(self.__type_ctx)
-        result = IR.Reg(name=self.__new_name(), type_id=func_ptr_ty)
-        return self.__emit(IR.FuncPtr(result=result, func_type_id=func_type_id)).result
+        result = IR.Reg(name=self.__emitter.new_name(), type_id=func_ptr_ty)
+        return self.__emitter.emit(IR.FuncPtr(result=result, func_type_id=func_type_id)).result
