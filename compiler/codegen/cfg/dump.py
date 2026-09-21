@@ -120,15 +120,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Delete(ptr=ptr):
             return f"delete {__dump_value(ptr)}"
 
-        case IR.GenKey(result=result, is_heap=is_heap):
-            kind = "heap" if is_heap else "stack"
-            return f"%{result.name} = gen_key {kind}  [{__type_str(result.type_id)}]"
+        case IR.GenKey(result=result):
+            return f"%{result.name} = gen_key frame  [{__type_str(result.type_id)}]"
 
         case IR.AcquireFrameLock(result=result, key=key):
             return f"%{result.name} = acquire_frame_lock {__dump_value(key)}"
-
-        case IR.WriteLockSlot(lock_ptr=lock_ptr, value=value):
-            return f"write_lock_slot {__dump_value(lock_ptr)}, {__dump_value(value)}"
 
         case IR.CheckSafeAccess(ptr=ptr, live=live):
             item = "live ∧ in_bounds" if live else "in_bounds(live 恒真)"

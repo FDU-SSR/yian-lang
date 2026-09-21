@@ -110,7 +110,6 @@ class LLModule:
         self.__argc_global: ir.GlobalVariable | None = None
         self.__argv_global: ir.GlobalVariable | None = None
         self.__env_lock_global: ir.GlobalVariable | None = None
-        self.__key_heap_global: ir.GlobalVariable | None = None
         self.__key_stack_global: ir.GlobalVariable | None = None
         self.__runtime_fail_func: ir.Function | None = None
         self.__panic_func: ir.Function | None = None
@@ -210,16 +209,13 @@ class LLModule:
 
     # -- fat-pointer mechanism globals (LLVM 层) --
 
-    def get_key_counter(self, is_heap: bool) -> ir.GlobalVariable:
-        """Gen 单调计数器全局:堆/栈各一个 63 位计数,键 = 最高位标志拼接计数。
+    def get_key_counter(self) -> ir.GlobalVariable:
+        """帧键单调计数器全局（``__yian_key_stack``，由 runtime 定义）。
 
-        ``k ← Gen()`` 的 LLVM 发射:load 全局计数 → add 1 → store 回 → 堆键 or MSB
-        标志位。全局变量保证跨函数单调(同类内任意两次调用输出不同)。
+        ``k_f ← Gen()`` 的 LLVM 发射：load 全局计数 → 上限检查 → add 1 → store 回。
+        全局变量保证跨函数单调（同一槽位复用也不会给出相同的键）。堆对象的身份不走
+        计数器，而是由锁表项按块换代。
         """
-        if is_heap:
-            if self.__key_heap_global is None:
-                self.__key_heap_global = self.__new_key_counter("__yian_key_heap")
-            return self.__key_heap_global
         if self.__key_stack_global is None:
             self.__key_stack_global = self.__new_key_counter("__yian_key_stack")
         return self.__key_stack_global

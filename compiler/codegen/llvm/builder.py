@@ -264,14 +264,14 @@ class LLBuilder:
             addr = ll_val.ir_val
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
 
-    def __gen_key_value(self, is_heap: bool) -> LLValue:
-        """Emit a non-wrapping monotonic key, failing on exhaustion (R003).
+    def __gen_key_value(self) -> LLValue:
+        """帧进入 re-key:发射不回绕的 32 位单调键体, 耗尽即失败 (R003)。
 
-        变体 B 里 key 与锁表项的 32 位槽严格同宽: 帧键计数到 FRAME_KEY_LIMIT
-        (0xFFFFFFFE, 0xFFFFFFFF 留给帧退出的 SENTINEL)即确定性终止, 绝不回绕——
-        回绕会让旧指针重新匹配。堆路径不再使用本函数(堆键由锁表项按块换代)。
+        key 与锁表项的 32 位槽严格同宽: 计数到 FRAME_KEY_LIMIT(0xFFFFFFFE,
+        0xFFFFFFFF 留给帧退出的 SENTINEL)即确定性终止, 绝不回绕——回绕会让旧指针
+        重新匹配。堆对象的身份不走这里(锁表项按块换代)。
         """
-        counter = self.__module.get_key_counter(is_heap)
+        counter = self.__module.get_key_counter()
         loaded = self.__builder.load(counter)  # type: ignore
         available = self.__builder.icmp_unsigned(
             "<", loaded, ir.Constant(ir.IntType(64), IR.FRAME_KEY_LIMIT)  # type: ignore
@@ -713,8 +713,8 @@ class LLBuilder:
 
     # -- fat-pointer mechanism nodes (LLVM 层) --
 
-    def gen_key(self, is_heap: bool, result: str) -> None:
-        self.__func.set_reg(result, self.__gen_key_value(is_heap))
+    def gen_key(self, result: str) -> None:
+        self.__func.set_reg(result, self.__gen_key_value())
 
     def acquire_frame_lock(self, key: LLValue | None, result: str) -> None:
         """在固定地址的独立影子栈上 push 一个帧锁槽, 槽里写帧 word。
@@ -726,7 +726,7 @@ class LLBuilder:
         """
         if key is None:
             # 帧锁节点可能先于它的 GenKey 被翻译(两者都插在入口), 这里就地取键。
-            key = self.__gen_key_value(False)
+            key = self.__gen_key_value()
         depth_ptr = self.__module.get_frame_lock_depth()
         depth = self.__builder.load(depth_ptr, name="frame.depth")  # type: ignore
         available = self.__builder.icmp_unsigned(

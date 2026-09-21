@@ -190,13 +190,11 @@ class LLTranslator:
             case IR.Delete():
                 builder.delete(self.__resolve(builder, stmt.ptr))
             case IR.GenKey():
-                builder.gen_key(stmt.is_heap, stmt.result.name)
+                builder.gen_key(stmt.result.name)
             case IR.AcquireFrameLock():
                 builder.acquire_frame_lock(
                     self.__resolve(builder, stmt.key), stmt.result.name
                 )
-            case IR.WriteLockSlot():
-                builder.write_lock_slot(self.__resolve(builder, stmt.lock_ptr), self.__resolve(builder, stmt.value))
             case IR.CheckSafeAccess():
                 builder.check_safe_access(self.__resolve(builder, stmt.ptr), stmt.live)
             case IR.CheckViewAccess():

@@ -8,19 +8,16 @@ from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.runtime_error import RuntimeErrorCode
 
 # ---------------------------------------------------------------------------
-# 胖指针时序机制(块头锁槽 / 键 / 帧锁)——机制层常量与定义
+# 胖指针时序机制（锁表 / 键 / 块头 / 帧锁）——机制层常量与定义
 #
-# SENTINEL(全 1 字, 编码约定)与 Gen 单调计数器 KeyGen 等机制
-# 常量、块头布局 BlockHeader、帧锁 FrameLock
-# 与谓词 is_heap / live / is_raw 定义于 lockmech.py,
-# 此处重导出供 CFG 层机制节点(CFG 层插入检查、LLVM 层 值层下降)引用。
+# 常量、布局（LockEntry / BlockHeader / FrameLockArena）与谓词
+# （is_heap / live / is_raw）定义于 lockmech.py，此处重导出供 CFG 层与 LLVM 层引用。
 #
-#   - SENTINEL:释放 `delete p` 写块头锁槽、帧退出写帧锁槽的哨兵值
-#     全部返回路径。
-#   - KeyGen:Gen 单调计数器,堆键最高位 1、栈键最高位 0。
-#   - BlockHeader:块首 H 字节元数据(锁槽 + 负载长度,H = 16),分配锚定 data = b + H。
-#   - FrameLock:每帧一个活动锁槽,帧进入 re-key k_f ← Gen(),帧退出写 SENTINEL。
-#   - 谓词:is_heap 纯位判定 / live 锁槽键比较含 null 短路 / is_raw 纯字段检查。
+#   - word = ⟨key:32 | lock:32⟩：lock 是全局锁表下标，key 是这轮生命周期的身份。
+#   - SENTINEL：帧退出的全 1 字（32 位键比较取低 32 位，与任何活键失配）；
+#     堆路径不写哨兵，`del` 把锁表项 key +1 换代。
+#   - BlockHeader：块首 8 B 元数据（extent + 留白），分配锚定 data = b + 8。
+#   - 谓词：is_heap 纯下标判定 / live 锁表项 key 比较含 word ≠ 0 / is_raw 纯字段检查。
 #
 # 本节定义机制常量；CFG 层负责插入检查，LLVM 层负责值下降与运行期失败协议。
 # ---------------------------------------------------------------------------
@@ -31,7 +28,6 @@ from compiler.codegen.cfg.lockmech import (
     LOCK_BITS,
     LOCK_MASK,
     WORD_KEY_SHIFT,
-    KEY_BITS,
     KEY_MASK,
     FRAME_KEY_LIMIT,
     WINDOW_MASK,
@@ -54,11 +50,7 @@ from compiler.codegen.cfg.lockmech import (
     SLICE_SIZE,
     REF_DATA,
     REF_WORD,
-    FrameLock,
     FrameLockArena,
-    KeyGen,
-    MAX_HEAP_BODY,
-    MAX_STACK_BODY,
     MAX_VIEW_COUNT,
     SENTINEL,
     is_heap,
@@ -76,12 +68,9 @@ __all__ = [
     "FAT_WORD",
     "FRAME_KEY_LIMIT",
     "FRAME_LOCK_SLOTS",
-    "FrameLock",
     "FrameLockArena",
     "HEAP_LOCK_BASE",
-    "KEY_BITS",
     "KEY_MASK",
-    "KeyGen",
     "LITERAL_KEY",
     "LITERAL_LOCK_INDEX",
     "LITERAL_WORD",
@@ -90,8 +79,6 @@ __all__ = [
     "LOCK_MASK",
     "LOCK_TABLE_SLOTS",
     "LockEntry",
-    "MAX_HEAP_BODY",
-    "MAX_STACK_BODY",
     "MAX_VIEW_COUNT",
     "REF_DATA",
     "REF_WORD",
@@ -233,42 +220,31 @@ class Delete:
 # 与外部 I/O 的 CheckViewAccess。
 # 每个检查节点在 LLVM 层 落地为「前提不满足 → 诊断并以退出码 1 终止」;
 # 本文件承载节点存在性与语义,LLTranslator 的 case 由 LLVM 层 补充。
-# 锁槽交互:Malloc 块头写键、Delete 写 SENTINEL。
+# 锁槽交互:Malloc 由 LLVM 层在块首写锁表项的 key/anchor、Delete 换代(bump)。
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class GenKey:
-    """k ← Gen():堆/栈独立 63 位单调计数器。
+    """`k_f ← Gen()`：帧进入 re-key 用的 32 位单调键体。
 
-    Malloc 块头写键(堆键 MSB 1)与帧进入 re-key(
-    栈键 MSB 0)各生成一枚。LLVM 发射(全局计数器递增 + 标志位拼接)由 LLVM 层完成。
+    只有帧锁用它（堆对象的身份是锁表项里的 key，由分配器/释放路径换代，不走计数器）。
+    计数到 `FRAME_KEY_LIMIT` 即确定性失败（R003），绝不回绕。LLVM 层发射全局计数器
+    的 load/add/store 与掩码。
     """
     result: Reg
-    is_heap: bool
 
 
 @dataclass
 class AcquireFrameLock:
     """从独立稳定影子栈取得当前帧锁槽并写入帧 word。
 
-    影子栈深度已达 ``FrameLockArena.SLOTS`` 时报告资源错误并终止。成功后
-    ``result`` 是帧 word(⟨KIND_FRAME | id | depth⟩, 指针携带的整字);
+    影子栈深度已达 ``FrameLockArena.SLOTS`` 时报告资源错误并终止。成功后 ``result``
+    是帧锁槽里的整字（即本次 re-key 的键，指针的 word 高位携带同一 32 位值）；
     槽地址由 LLVM 层记录, 供返回路径写 SENTINEL。
     """
     result: Reg
     key: Value
-
-
-@dataclass
-class WriteLockSlot:
-    """锁槽写值 μ⟨lock_ptr⟩ := value。
-
-    Delete 写 SENTINEL;Malloc 块头写键由 LLVM 层的 malloc
-    下降内部完成(块首地址仅运行期可得),本节点用于已知锁槽地址的写。
-    """
-    lock_ptr: Value
-    value: Value
 
 
 @dataclass
@@ -604,7 +580,7 @@ Stmt: TypeAlias = (
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | ArgCount | ArgBytes
     | MemCopy
-    | GenKey | AcquireFrameLock | WriteLockSlot
+    | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete
     | CheckPtrCmp | PtrCmp | CheckRefAccess

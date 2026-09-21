@@ -498,7 +498,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P7 ✅ | C9：`lower/exprs.py::ExprLowerer`（`resolve_val` 分派器 + 14 个表达式解析）+ 判定簇 `passes/predicates.py::PtrPredicates`（3 个判定）；builder 只剩 `__init__/build/__set_terminator/__switch_to/__build_func_ptr` | builder 568 → **189 行**（目标 <200 达成），结构目标达成 | 低（已实测忠实） | 单提交 revert |
 | P8 ✅ | C3 升级为真 pass：下降不再发访问类 `Check*`，`passes/insert_checks.py` 接管判定与状态 | 路线 B 四组落地；`CheckState` 瘦身为出处三件；插入逻辑可独立演进 | **高** | 按规则分组小步提交（四组均已提交）；任一步测试或基准回退即回退该步 |
 | P9 ✅（结论：不改代码） | 检查优化。**三项实测否决**：CFG 层融合 0、发射层分支融合 0（分支近乎免费，成本在指令）、候选 B 0（callgrind 证明锁表不产生 cache miss；B3 的锚点还原抵消收益，B1 的便宜 live 需要 16 B 指针，装不下）。三项回退是 B 的 8 B 头编码取舍的另一面，唯一解法是回到 B1 布局（已裁定） | 回退归因 + 表示层取舍记录（§5.7/§5.8）；不产出代码 | — | 无代码改动 |
-| P10 | 清理遗留：`WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性、移除迁移用 `provenance.verify` | 去死代码 | 低 | — |
+| P10 ✅ | 清理遗留：`WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性、移除迁移用 `provenance.verify`；**顺带**清掉 `GenKey.is_heap` 死分支（堆键计数器 `__yian_key_heap` 已无定义）与 `KeyGen`/`FrameLock`/64 位标志位键的陈旧模型 | 去死代码 + 机制层叙述与实现对齐 | 低 | 单提交 revert |
 
 **进展（P0+P1 完成，第 10 轮）**
 
@@ -511,6 +511,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
   **108/108 份 `cfg.txt` 与基线逐字节相同**。
 - 顺手清理：删掉 pyright 报的死方法 `CfgBuilder.__extract_fat_field`（无调用者）与
   `lockmech.KEY_BITS` 重复定义；修掉 B 提交里 9 处 pyright 报错（注释/注解级改动）。
+  （P10 后来把 `KEY_BITS` 连同整套"64 位标志位键"旧模型一并删掉，见下方 P10 记录。）
   现在 `pyright compiler` 与 `pyright anx` 均为 **0 errors**。
 - 门槛：三套件 756/156/99 全绿、`runtime/build.py --check --asan` 通过、micro 基准无漂移
   （`chase` 156.8–159.7、`copy_struct` 152.1–152.5，与 P1 前一致）。
@@ -627,6 +628,34 @@ pyright compiler/anx 0 errors。
 第一段，`strcmp(buf, "yian: panic: test-message\n")` 偶发失败——这就是此前 `--check --asan`
 时而报 "panic writes prefix, message and newline" 的原因（与编译器/表示改动无关）。改为循环读到
 EOF 后再比较：普通自测 12/12、ASan 自测 15/15 连续通过，`--check --asan` 连跑 3 次全绿。
+
+**P10 进展（完成，去死代码）**：四件事 + 一件顺带：
+
+- **`IR.WriteLockSlot` 死节点**：无处构造（帧退出的哨兵写由 `builder.__release_frame_lock`
+  直接调 `write_lock_slot`），删掉节点、`translator` 分派、`dump` 分支，并修掉
+  `predicates.py` 里三处仍按"释放会写锁槽"叙述的注释。
+- **`provenance.verify` 及其迁移面**：pass 已成为判定权威，删掉 `verify` 与只服务它的
+  `Provenance.run`、`PassContext.checks` 字段与构建器处的一行装配；`provenance.py`
+  153 → 119 行，`PassContext` 只留只读事实。
+- **`lockmech.py` 谓词一致性**：模块与谓词按实现重写——`live` 说明"先取表项 key 比较、
+  再与 word ≠ 0 相与"（原文的"不读表项 0"与实现不符）；`is_raw` 改成实现里的
+  `(data & LOCK_MASK) == anchor ∧ index == 0`（原文写的是 `data == block + H`）；
+  `SENTINEL` 说明它只用于**帧锁槽**（堆路径靠表项 key 换代）；删掉整套已经废弃的
+  "64 位标志位键"模型（`KEY_BITS`/`FLAG_BIT`/`FLAG_MASK`/`BODY_MASK`/`MAX_HEAP_BODY`/
+  `MAX_STACK_BODY`/`STACK_FLAG`/`HEAP_FLAG`/`KeyGen`/`FrameLock`），`ir.py` 的重导出
+  与 `__all__` 同步收紧。
+- **`dump.py` 适配**：`gen_key` 只剩帧一种（标签 `gen_key stack` → `gen_key frame`），
+  这正是本轮 `cfg.txt` 的全部差异（108 份语料 69 份含帧锁，逐行核对**零违例**）。
+- **顺带**：`GenKey.is_heap` 是死分支——堆键计数全局 `__yian_key_heap` 在 runtime 里已
+  无定义（编译器也不再发射堆 `GenKey`），删掉参数、`module.get_key_counter` 的堆分支与
+  `__key_heap_global` 字段，并修掉 `intrinsics.py`/`module.py` 里"H = 16B 块头 + 锁槽
+  写 k ← Gen()"的陈旧注释；`runtime/include/yian_rt.h` 里未被任何 C 代码使用、且值与
+  `lockmech` 不符的 `YIAN_LITERAL_WORD`/`YIAN_ENV_WORD` 死宏删掉。
+
+忠实性实测：108/108 份语料 `cfg.txt` 的差异**只有** `gen_key stack → gen_key frame` 这一个
+标签（逐行核对 0 违例）；5 份代表源（含帧锁/切片/动态数组/汉诺塔）的 `-O2` 后 LLVM IR
+**逐字节相同**——纯去死代码，无机器码变化，故不另跑基准。三套件 756/156/99 全绿、
+`runtime/build.py --check --asan` 通过、pyright compiler/anx 0 errors。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内

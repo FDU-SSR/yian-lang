@@ -238,9 +238,8 @@ class ValueLowerer:
         """帧锁实体化:k_f ← Gen()(栈键 MSB 0),从独立
         稳定影子栈 push 一个 u64 锁槽并写入 k_f。仅在首次
         取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
-        终止符;无取址的函数不含帧锁节点。VarPtr 的 frame_key 已是
-        GenKey 结果。帧退出写 SENTINEL 并 pop(全部返回路径)
-        的发射由 LLVM 层完成。
+        终止符;无取址的函数不含帧锁节点。帧退出写 SENTINEL 并 pop(全部返回
+        路径)的发射由 LLVM 层完成。
         raw 模式:无帧锁——直接返回 None 帧字段,不实体化
         GenKey/AcquireFrameLock。"""
         if self.__host.raw_pointers:
@@ -249,7 +248,7 @@ class ValueLowerer:
             return self.__frame_lock
         saved_block = self.__host.emitter.current_block
         self.__host.emitter.current_block = self.__host.emitter.func.entry
-        k_f = self.build_gen_key(is_heap=False)
+        k_f = self.build_gen_key()
         e_f_result = IR.Reg(
             name=self.__host.emitter.new_name(),
             type_id=TypeCtx.u64_id,  # 帧 word(整字)
@@ -263,10 +262,10 @@ class ValueLowerer:
         self.__frame_lock = (e_f, k_f)
         return (e_f, k_f)
 
-    def build_gen_key(self, is_heap: bool) -> IR.Value:
-        """k ← Gen():堆键 MSB 1 / 栈键 MSB 0。"""
+    def build_gen_key(self) -> IR.Value:
+        """`k_f ← Gen()`：帧进入 re-key 的 32 位键体。"""
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id)
-        return self.__host.emitter.emit(IR.GenKey(result=result, is_heap=is_heap)).result
+        return self.__host.emitter.emit(IR.GenKey(result=result)).result
 
     def resolve_cast(self, expr: HIR.Cast) -> IR.Value:
         value = self.__host.resolve_val(expr.value)

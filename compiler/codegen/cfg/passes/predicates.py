@@ -25,7 +25,7 @@ class PtrPredicates:
         指针-to-ZST 保持 ZST,走既有快路径、无检查;
         FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
         诊断模式 raw_pointers 下恒 False:指针一律按裸 8B 处理,全部
-        Check*/WriteLockSlot/Delete 检查与 PtrCmp 路由一并关闭。
+        Check* 检查、Delete 与 PtrCmp 路由一并关闭。
         惰性左值路径:裸指针寄存器(未取址左值)同样恒 False——
         裸地址无胖元数据,不可承载检查。
         """
@@ -46,12 +46,12 @@ class PtrPredicates:
     def is_del_target(self, ptr: IR.Value) -> bool:
         """del 专属目标判定:非 ZST 的 PointerType / SliceType / RefType。
 
-        视图释放路径:T[]/T& 与 T* 同样支持整块释放——释放动作(WriteLockSlot
-        与 delete())只提取 FAT_LOCK_PTR=1,三族布局 data/lock_ptr/key 前缀相同。
-        两个 raw 守卫完整复刻 __is_fat_pointer(上方):诊断模式 raw_pointers 恒
-        False；惰性左值路径中的裸指针寄存器也恒为 False，否则 raw 下对裸 8B 指针
-        发射 WriteLockSlot 会写 data[0],内存破坏。指针-to-ZST 同 __is_fat_pointer
-        保持非胖(ZST 擦除为空结构,无字段可写、无检查可插)。
+        视图释放路径:T[]/T& 与 T* 同样支持整块释放——释放只按 word 取锁表项
+        (key/anchor),三族布局 data/word 前缀相同。两个 raw 守卫完整复刻
+        __is_fat_pointer(上方):诊断模式 raw_pointers 恒 False；惰性左值路径中的
+        裸指针寄存器也恒为 False，否则 raw 下对裸 8B 指针按胖字段取数会读越界。
+        指针-to-ZST 同 __is_fat_pointer 保持非胖(ZST 擦除为空结构,无字段可写、
+        无检查可插)。
         """
         if self.__raw_pointers:
             return False

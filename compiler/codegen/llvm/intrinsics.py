@@ -8,12 +8,12 @@ from enum import Enum, auto
 
 from llvmlite import ir  # type: ignore[import-untyped]
 
-# 胖指针块头布局:每个堆块布局为「块头 + 负载」——块首 H 字节元数据
-# (锁槽 + 当前负载长度,H = 16B),块头区 [b, b+H) 在负载之前;分配锚定 data = b + H。
-# 本表 Malloc 内在函数在 LLVM 层 与块头锁槽写键交互(锁槽首字写
-# k ← Gen(),堆键最高位 1),Free/Delete 与写 SENTINEL 交互。
-# 机制常量(SENTINEL / KeyGen / BlockHeader / FrameLock / 谓词)定义于
-# compiler/codegen/cfg/lockmech.py;本模块只声明 C 函数签名。
+# 胖指针块布局:每个堆块布局为「块头 + 负载」——块首 8 B 元数据
+# ({extent:u32, pad:u32},块头区 [b, b+8) 在负载之前;分配锚定 data = b + 8)。
+# 分配时把这一轮的身份与该负载锚写进全局锁表项(key / anchor_lo32),
+# 释放把它换代并把下标压回自由链;本模块只声明这些 C 函数的签名,
+# 机制常量与谓词(SENTINEL / BlockHeader / LockEntry / FrameLockArena / is_heap /
+# live / is_raw)定义于 compiler/codegen/cfg/lockmech.py。
 
 
 class IntrinsicKind(Enum):

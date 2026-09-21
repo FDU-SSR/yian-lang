@@ -8,16 +8,15 @@
 （`CheckRefAccess`/`CheckSafeAccess`/`CheckElementAccess`/`CheckInBounds`/
 `CheckElementArith`/`CheckDelete`）的最终形态与位置。
 
-`verify` 是迁移期的等价网：pass 重建的出处与下降侧仍保留的单调集合逐点比对（只读，
-不改行为）；下降侧出处只用于它自己的 IR 形态判定（惰性左值路径的 `Cast.raw`、
-裸数组上界的 `is_raw` 门、视图 `live` 项）。
+下降侧的 `CheckState` 只保留出处三件，供它自己的 IR 形态判定使用（惰性左值路径的
+`Cast.raw`、裸数组上界的 `is_raw` 门、视图 `live` 项）；判定本身已全部在本 pass 里。
 """
 from __future__ import annotations
 
 from compiler.analysis.ty import ty as Type
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.passes.context import PassContext
-from compiler.codegen.cfg.passes.provenance import Provenance, verify
+from compiler.codegen.cfg.passes.provenance import Provenance
 
 
 def _materialize(request: IR.CheckRequest) -> IR.Stmt:
@@ -273,9 +272,5 @@ class __CheckPlanner:
 
 
 def run(func: IR.Function, ctx: PassContext) -> None:
-    """就地运行：标记位置即检查位置（与迁移前的节点序列逐条对应）。"""
+    """就地运行：标记位置即检查位置（与逐条发射时的节点序列逐条对应）。"""
     __CheckPlanner(func, ctx).run()
-    # 迁移期等价网：pass 重建的出处必须与下降侧单调集合逐点一致
-    prov = Provenance(ctx.type_ctx, ctx.raw_pointers)
-    prov.run(func)
-    verify(func, ctx.checks, prov)

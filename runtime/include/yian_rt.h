@@ -35,10 +35,9 @@
  * (4 GiB 是 64 KiB 的整数倍), 大对象由 large_alloc 挑落点保证. */
 #define YIAN_WINDOW_BYTES ((uint64_t)4 << 30)
 
-/* 进程生命周期锁槽的字 (字面量/环境锁都永不失效; 值即指针携带的整字,
- * 与 compiler/codegen/cfg/lockmech.py 的 LITERAL_WORD / ENV_WORD 一致). */
-#define YIAN_LITERAL_WORD ((1ull << 62) | 1ull)
-#define YIAN_ENV_WORD 1ull
+/* 字面量/环境常量槽的 word 由编译器发射(见 compiler/codegen/cfg/lockmech.py 的
+ * LITERAL_WORD / ENV_WORD: key = 0 + 上表的常量下标), 运行时只把它们当作"永不失效"
+ * 的锁槽, 不自己构造 word, 因此这里不定义宏. */
 
 /* wrapper main 的参数 ABI 校验失败时写出的诊断 (必须与
  * compiler/runtime_error.py 的 S002 消息逐字节一致). */

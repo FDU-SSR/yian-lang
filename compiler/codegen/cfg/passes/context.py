@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.checks import CheckState
 from compiler.frontend.lex.position import SrcSpan
 
 
@@ -32,4 +31,3 @@ class PassContext:
     span: SrcSpan
     return_type: int
     new_void_value: Callable[[], IR.Value]
-    checks: CheckState

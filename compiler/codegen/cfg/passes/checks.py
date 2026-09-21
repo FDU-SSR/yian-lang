@@ -5,8 +5,8 @@
 出处事实——惰性左值路径的裸性（决定 `Cast.raw`、`ElementPtr` 派生与裸数组上界门）、
 帧锁出处与出处根（视图访问的 `live` 项）。
 
-判定与重建必须一致：`passes/provenance.py` 按同一套登记规则从 IR 重放，
-`verify` 在 pass 运行期逐点比对两边的单调集合。
+check 的判定（去重、义务表、窗口、失效）已全部搬进检查插入 pass
+（`passes/provenance.py` 按同一套登记规则从 IR 重放同一份出处）。
 """
 from __future__ import annotations
 
