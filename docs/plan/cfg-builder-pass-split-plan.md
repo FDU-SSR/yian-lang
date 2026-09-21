@@ -282,25 +282,25 @@ R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射
 pyright compiler/anx 0 errors。这组做完，`optimize_checks`（P9）拿到完整的"检查位置 + 出处 +
 义务"信息。
 
-**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 5 组（原第 3 组的深化 + 第 4 组）把
-`elem_derived`/`field_derived` **义务表本身**从下降侧搬进 pass（按 IR 的 `ElementPtr`/`FieldPtr`
-派生边重建，含失效点冲刷与 `CheckElementAccess` 合取检查），并与 R4/R5/R6/R7/R8/R14
-（访问点 live、`Delete`、raw/帧内/刚分配三档 provenance、同块去重）一起迁移——这组做完
-`optimize_checks` 才有信息做 P9 的循环不变提升；第 4 组 R4/R5/R6/R7/R8/R14（访问点 live 与 `Delete`，
-含帧内/刚分配/去重/合并四档 provenance），完成后再做 P9 的提升。
+**后续（分组迁移到此结束）**：路线 B 的四组已全部落地（第 1 组标记节点 + R13/R15；第 2 组
+R16/R17/R18；第 3 组 R11/R12 发射点；第 4 组判定+状态整体搬移）。P8 之后剩两件事：P9 在
+pass 上做循环不变检查提升/融合（攻 `churn_single`/`chase`/`towers` 三项已知回退），P10 清理
+（`IR.WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性，以及移除 `insert_checks`
+里作为迁移等价网的 `provenance.verify`——pass 已成为判定权威，长期保留等于每个函数多跑一遍
+出处重放）。
 
 **风险与回退**：P8 是本计划唯一高风险步骤（18 条规则、23 个发射点）。按规则分组提交，
 每组都以"108/108 `cfg.txt` 等价 + 三套件 + pyright"为门槛；任一组不过即回退该组。
 
 ### 5.6 第 4 组（最后一组）为何必须原子完成
 
-实测：下降侧现在有 **~60 处**调用推进检查状态（`dedup` 13、`ptr_key` 9、`is_frame_locked` 6、
+实测：下降侧原有 **~60 处**调用推进检查状态（`dedup` 13、`ptr_key` 9、`is_frame_locked` 6、
 `mark_raw` 5、`merge_access` 4、`is_raw` 4、`mark_root`/`live_key`/`invalidate`/`inherit_*` 各 3…），
 分布在下 6 个模块里。**判定与状态是同一个顺序机**：去重键在发射点即时登记、义务表在
 `FieldPtr` 处挂起、在访问点消费、在 `Call`/`Delete`/终止符处冲刷。因此"只把状态搬进 pass"
 会让 lowering 的判定看不到表（去重/合并失效 → 检查变多或变少），**必须判定+状态一起搬**。
 
-推荐的两步子步（各自可独立验收）：
+落地的两步子步（各自独立验收，均已提交）：
 
 1. **事实外化（已完成）**：`IR.LiveKnownBegin/End{root}` 窗口标记落地——下降侧在
    `mark_live_known`/`unmark_live_known` 处**同时**发标记（登记仍保留，判定暂不动），
@@ -308,9 +308,10 @@ pyright compiler/anx 0 errors。这组做完，`optimize_checks`（P9）拿到�
    raw 语义本来就由 `VarPtr(raw=True)`/`Alloca(fat=False)`/`Cast(raw=True)`/`Malloc` 承载，无需新标记；
    帧锁出处可由 `VarPtr.frame_word` 与函数 `AcquireFrameLock` 结果比对得出。
    实测 108/108 `cfg.txt` 等价、三套件全绿、`--check --asan` 通过、pyright 0 errors。
-2. **判定+状态搬移**：`insert_checks`（或新的 `optimize_checks`）按块顺序重放同一状态机，
-   自行决定 R4/R5/R14 与去重/合并/失效，下降侧只剩"发访问节点 + 语义标记"。
-   门槛仍是 108/108 `cfg.txt` 等价；过了这一步，P9 的循环不变检查提升才有信息可用。
+2. **判定+状态搬移（已完成）**：`insert_checks` 按块顺序重放同一状态机，自行决定 R4/R5/R11/R12/R14
+   与去重/合并/失效，下降侧只剩"发访问节点 + 语义标记"；出处重建（`passes/provenance.py`）先以
+   `verify` 与下降侧单调集合逐点对照作为迁移网（见 §7 第 4 组记录）。门槛仍是 108/108 `cfg.txt`
+   等价；过完这一步，P9 的循环不变检查提升才有信息可用。
 
 ## 6. 验收方法
 
@@ -355,9 +356,9 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P5 ✅ | C5+C6 **合并**为 `lower/values.py::ValueLowerer`（26 个方法 + `frame_lock` 状态；`ValueHost` 注入 emitter/checks/type_ctx/raw_pointers/resolve_val/build_element_ptr/build_field_ptr/build_func_ptr/build_extract_value/is_fat_pointer） | builder 1184 → **884 行** | 低（已实测忠实） | 单提交 revert |
 | P6 ✅ | C7+C8：抽 `lower/calls.py`（6 方法）、`lower/sys.py`（12）、`lower/memory.py`（10，内存原语的检查部分仍写在这里、状态经 `checks`）；三簇各自的 Host 注入；`ValueHost` 的三处内存回调用晚绑定 lambda 打破构造环 | builder 884 → **568 行** | 低（已实测忠实） | 单提交 revert |
 | P7 ✅ | C9：`lower/exprs.py::ExprLowerer`（`resolve_val` 分派器 + 14 个表达式解析）+ 判定簇 `passes/predicates.py::PtrPredicates`（3 个判定）；builder 只剩 `__init__/build/__set_terminator/__switch_to/__build_func_ptr` | builder 568 → **189 行**（目标 <200 达成），结构目标达成 | 低（已实测忠实） | 单提交 revert |
-| P8 | C3 升级为真 pass：P0 下降不再发 `Check*`，`insert_checks`/`optimize_checks` 接管 | §4 规则表落地；插入逻辑可独立测试 | **高** | 按规则分组小步提交；任一步测试或基准回退即回退该步 |
-| P9 | 在 `optimize_checks` 上加新优化：循环不变检查提升、检查融合 | 攻 `churn_single`/`chase`/`towers` 三项已知回退 | 中 | 单 pass 开关 |
-| P10 | 清理遗留：`WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性 | 去死代码 | 低 | — |
+| P8 ✅ | C3 升级为真 pass：下降不再发访问类 `Check*`，`passes/insert_checks.py` 接管判定与状态 | 路线 B 四组落地；`CheckState` 瘦身为出处三件；插入逻辑可独立演进 | **高** | 按规则分组小步提交（四组均已提交）；任一步测试或基准回退即回退该步 |
+| P9 | 在 `insert_checks` 上叠 `optimize_checks`：循环不变检查提升、检查融合 | 攻 `churn_single`/`chase`/`towers` 三项已知回退 | 中 | 单 pass 开关 |
+| P10 | 清理遗留：`WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性、移除迁移用 `provenance.verify` | 去死代码 | 低 | — |
 
 **进展（P0+P1 完成，第 10 轮）**
 
@@ -448,6 +449,21 @@ pyright compiler/anx 0 errors。
 
 **P0–P7 累计**：builder 1770 → **189 行（−89%）**；新模块 2151 行（`passes/` 581 + `lower/` 1570）。
 
+**P8 收尾（完成）**：路线 B 四组全部落地后，`insert_checks.py` 从 69 行的标记物化器长成 281 行的
+检查插入 pass，新增 `passes/provenance.py`（153 行）做 IR 侧出处重建与迁移期对照校验；下降侧净减
+约 300 行判定代码（`CheckState` 193 → 96 行）。`--dump` 的 `cfg.txt` 在全部 108 份语料上与 P8 之前
+逐字节一致，说明"判定+状态搬移"是忠实搬移；`optimize_checks`（P9）因此第一次能拿到完整的
+"检查位置 + 出处 + 未偿义务"信息。
+
+**踩坑记录（第六次，本轮）**：把出处重建做成"只读规则"时，两处**形状差异**只有靠对照校验才暴露——
+(1) `VarPtr` 在 raw 模式下帧锁不实体化（`frame_word=None`），下降侧却照旧登记帧内/出处；
+(2) `FieldPtr` 对非裸基址一律继承出处，而 `ElementPtr` 只在胖基址上继承（ZST 基址两边都不记）。
+第一版重建按"`is_raw` 否则继承"统一处理，`verify` 立刻在 raw 三套件里报出
+`provenance(frame) mismatch`（正是这一步把 175 个 `@raw` 用例一次性打挂的原因）。教训：**重建必须
+逐条复刻原判定的分支形状，而不是复刻它的语义意图**；`verify` 这类对照网的价值恰在于此。另外
+`__materialize` 在类体内被名字改写（`_CheckPlanner__materialize`）报 `NameError`，符合既有的
+"类体引用模块级私有必须单下划线"约定。
+
 **踩坑记录（第五次）**：又出现"生成器里写好的 def 去私有化没落到文件"（同 P6），并且构造顺序把
 `ExprLowerer` 放在 `StmtLowerer` 之前（前者引用后者）；另有搬移后的导入缺失/多余一批，全部由
 最小复现 + pyright 点出。**流程最终版**：生成后先 `grep 'def '` 核对定义名、再跑 pyright 清 unused、
@@ -465,15 +481,19 @@ EOF 后再比较：普通自测 12/12、ASan 自测 15/15 连续通过，`--chec
 
 ## 8. 风险与开放问题
 
-1. **决策迁移的等价性是最大风险**：18 条规则里任何一条漏掉都会变成"少检查"（安全问题）或
-   "多检查"（性能回退）。把关 = 三套件（safety 专门覆盖检查）+ `--check --asan` + 语义清单；
-   IR/`Check*` 计数对比只在出问题时用来定位（§6.1）。
+1. **决策迁移的等价性是最大风险**（P8 已消化）：18 条规则里任何一条漏掉都会变成"少检查"
+   （安全问题）或"多检查"（性能回退）。把关 = 三套件（safety 专门覆盖检查）+ `--check --asan`
+   + 语义清单；IR/`Check*` 计数对比只在出问题时用来定位（§6.1）。四组迁移都以 108/108
+   `cfg.txt` 逐字节等价收口；P8 之后剩下的等价性风险转移到 P9 的**故意**序列改动上。
 2. **故意改变检查序列会改 LLVM 布局**（本仓库实测过 ±10% 的布局效应）：这属于 P9 的优化改动，
-   用 §6.3 的基准把关；纯重构阶段（P1–P7）按 §5.4 预期零漂移，不需要为块顺序设约束。
-3. **`__live_known` 的 kill 语义**：今天只在 `dyn[n] value` 的填充循环窗口内登记（封闭区域、
-   不含 `del`/调用）；搬进 pass 后要显式表达"窗口"，别顺手扩大成"整个函数"（会不安全）。
-4. **raw 模式与 ZST 特例**：保持"pass 入口短路"的形态，不要在规则表里散落条件。
+   用 §6.3 的基准把关；纯重构阶段（P1–P8）按 §5.4 预期零漂移，不需要为块顺序设约束
+   （P8 第 4 组实测 micro A/B 漂移 ≤1.2%）。
+3. **`__live_known` 的 kill 语义**：只在 `dyn[n] value` 的填充循环窗口内登记（封闭区域、
+   不含 `del`/调用）；P8 用 `IR.LiveKnownBegin/End` 把窗口显式写进 IR，pass 只按标记开合，
+   不顺手扩大成"整个函数"（会不安全）。
+4. **raw 模式与 ZST 特例**：pass 侧的 `is_fat_pointer`/`is_del_target` 复刻下降侧的两个 raw 守卫，
+   规则表里不散落条件。
 5. **pyright strict**：模块级私有常量/函数用双下划线；跨类共享的状态必须放 `PassContext`
-   或 dataclass，不能靠名字改写访问。
-6. **开放问题**：P2 的 `CheckState` 是"组合进 `CfgBuilder`"还是"独立 pass"？建议先组合
-   （行为不变、易回退），P4 再升级为 pass。
+   或 dataclass，不能靠名字改写访问（类体内引用模块级私有须单下划线，见 P8 踩坑记录）。
+6. **已决**：`CheckState` 先"组合进 `CfgBuilder`"保持行为不变（P3），P8 第 4 组把判定与状态
+   升级为独立 pass，下降侧只留出处三件与语义标记。
