@@ -10,6 +10,7 @@ from compiler.analysis.ty.type_ops import default_literals
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.passes import PassContext, run_pipeline
 from compiler.codegen.error import CodegenError
 from compiler.error import CompilerError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -100,21 +101,22 @@ class CfgBuilder:
         assert dp.body is not None
         body_val = self.__translate_block(dp.body)
 
-        if self.__current_block.terminator is None:
-            func_type = self.__type_ctx[dp.type_id]
-            assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
-            ret_ty = func_type.return_type(self.__type_ctx)
-            if ret_ty != TypeCtx.void_id:
-                self.__set_terminator(IR.Ret(body_val))
+        func_type = self.__type_ctx[dp.type_id]
+        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
+        ret_ty = func_type.return_type(self.__type_ctx)
+        if self.__current_block.terminator is None and ret_ty != TypeCtx.void_id:
+            self.__set_terminator(IR.Ret(body_val))
 
-        # ── dead code elimination ──
-        self.__eliminate_dead_code()
-
-        # ── sort blocks in RPO for phi resolution ──
-        self.__sort_blocks_rpo()
-
-        # ── termination guard ──
-        self.__guard_termination(dp)
+        # ── CFG pass 管线: 去死块 / RPO 排序 / 终结保护(C1, 见 passes/) ──
+        run_pipeline(self.__func, PassContext(
+            type_ctx=self.__type_ctx,
+            symbol_ctx=self.__symbol_ctx,
+            raw_pointers=self.__raw_pointers,
+            func_name=self.__func_name,
+            span=dp.ast_body.span,
+            return_type=ret_ty,
+            new_void_value=self.__void_reg,
+        ))
 
         # ── 帧锁实体化标记 ──
         # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
@@ -123,149 +125,6 @@ class CfgBuilder:
         self.__func.frame_lock = self.__frame_lock
 
         return self.__func
-
-    # ------------------------------------------------------------------
-    # termination guard
-    # ------------------------------------------------------------------
-
-    def __eliminate_dead_code(self) -> None:
-        """Remove blocks that are not reachable from the entry block.
-
-        Performs a BFS from the entry block following all forward edges
-        (terminator targets), then filters ``self.__func.blocks`` to only
-        include reachable blocks.  Phi nodes in surviving blocks are
-        cleaned up to remove incoming entries from deleted blocks.
-        """
-        # ── collect reachable blocks via BFS ──
-        # Block is an unhashable dataclass, so track via id(…).
-        reachable_ids: set[int] = set()
-        worklist = [self.__func.entry]
-
-        while worklist:
-            block = worklist.pop()
-            if id(block) in reachable_ids:
-                continue
-            reachable_ids.add(id(block))
-
-            if block.terminator is None:
-                continue
-
-            term = block.terminator
-            match term:
-                case IR.Br():
-                    worklist.append(term.target)
-                case IR.CondBr():
-                    worklist.append(term.then_block)
-                    worklist.append(term.else_block)
-                case IR.Match():
-                    for arm in term.arms:
-                        worklist.append(arm.body)
-                    if term.default is not None:
-                        worklist.append(term.default)
-                case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
-                    pass
-
-        # ── filter blocks ──
-        self.__func.blocks = [b for b in self.__func.blocks if id(b) in reachable_ids]
-
-        # ── clean up phi nodes ──
-        for block in self.__func.blocks:
-            surviving_phis: list[IR.Phi] = []
-            for phi in block.phis:
-                phi.incoming = [
-                    (pred, val) for pred, val in phi.incoming if id(pred) in reachable_ids
-                ]
-                if phi.incoming:
-                    surviving_phis.append(phi)
-            block.phis = surviving_phis
-
-    def __sort_blocks_rpo(self) -> None:
-        """Reorder ``self.__func.blocks`` in reverse post-order.
-
-        Reverse post-order guarantees that for every forward edge
-        A -> B in the CFG, block A appears before block B in the
-        ordered list.  This ensures that when the LLVM translator
-        iterates blocks in list order, every phi node's predecessor
-        values have already been registered.
-
-        Back edges (edges that form cycles, e.g. loop back edges)
-        are detected via an ``in_progress`` set and are skipped.
-        This is safe because loop headers in the current lowering
-        do not carry phi nodes that depend on back-edge values.
-        """
-        # ── build successor map (same pattern as __eliminate_dead_code) ──
-        successors: dict[int, list[IR.Block]] = {}
-        for block in self.__func.blocks:
-            succs: list[IR.Block] = []
-            if block.terminator is not None:
-                match block.terminator:
-                    case IR.Br(target=target):
-                        succs.append(target)
-                    case IR.CondBr(then_block=then, else_block=else_):
-                        succs.append(then)
-                        succs.append(else_)
-                    case IR.Match(arms=arms, default=default):
-                        for arm in arms:
-                            succs.append(arm.body)
-                        if default is not None:
-                            succs.append(default)
-                    case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
-                        pass
-            successors[id(block)] = succs
-
-        # ── add phi incoming edges ──
-        # If block B has a phi with incoming from block P, P must appear
-        # before B.  Add B as a successor of P so the DFS visits P first.
-        for block in self.__func.blocks:
-            for phi in block.phis:
-                for pred, _ in phi.incoming:
-                    successors.setdefault(id(pred), []).append(block)
-
-        # ── DFS from entry, collecting postorder ──
-        visited: set[int] = set()
-        in_progress: set[int] = set()
-        postorder: list[IR.Block] = []
-
-        def dfs(block: IR.Block) -> None:
-            bid = id(block)
-            if bid in visited:
-                return
-            if bid in in_progress:
-                return  # back edge — block already on the DFS stack, skip
-            in_progress.add(bid)
-            for succ in successors.get(bid, []):
-                dfs(succ)
-            in_progress.discard(bid)
-            visited.add(bid)
-            postorder.append(block)
-
-        dfs(self.__func.entry)
-
-        # RPO = reverse of postorder
-        # After DCE every block is reachable from entry, so |rpo| == |blocks|
-        self.__func.blocks = list(reversed(postorder))
-
-    def __guard_termination(self, dp: DefPoint) -> None:
-        """Ensure every block has a terminator.
-
-        - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
-        - non-void-returning functions: raise ``CodegenError`` if any block is unterminated.
-        """
-        func_type = self.__type_ctx[dp.type_id]
-        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
-        return_type = func_type.return_type(self.__type_ctx)
-
-        for block in self.__func.blocks:
-            if block.terminator is not None:
-                continue
-            if return_type == TypeCtx.void_id:
-                block.terminator = IR.Ret(self.__void_reg())
-            else:
-                raise CodegenError(
-                    f"Function '{self.__func.name}' has unterminated block '{block.label}'; "
-                    f"non-void functions must have explicit return in all control paths.",
-                    dp.ast_body.span,
-                )
 
     # ------------------------------------------------------------------
     # SSA names & block helpers
@@ -1299,17 +1158,6 @@ class CfgBuilder:
         """k ← Gen():堆键 MSB 1 / 栈键 MSB 0。"""
         result = IR.Reg(name=self.__new_name(), type_id=TypeCtx.u64_id)
         return self.__emit(IR.GenKey(result=result, is_heap=is_heap)).result
-
-    def __extract_fat_field(self, ptr: IR.Value, field_index: int) -> IR.Value:
-        """从 5 字段聚合提取字段(检查所需值提取:data/lock_ptr/key/index/size)。
-
-        指针字段(data/lock_ptr)类型为 u8*(裸字节地址);整数字段为 u64。
-        """
-        if field_index in (IR.FAT_DATA, IR.FAT_LOCK_PTR):
-            field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-        else:
-            field_type = TypeCtx.u64_id
-        return self.__build_extract_value(ptr, field_index, field_type)
 
     def __build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
         """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩。

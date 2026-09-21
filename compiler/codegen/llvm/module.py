@@ -325,7 +325,7 @@ class LLModule:
                 self.__module, ir.IntType(64), name="__secl_lock_bump"
             )
             global_var.linkage = "external"
-            global_var.align = 8
+            global_var.align = 8  # type: ignore
             self.__lock_bump_global = global_var
         return self.__lock_bump_global
 
@@ -336,7 +336,7 @@ class LLModule:
                 self.__module, ir.IntType(64), name="__secl_lock_free_head"
             )
             global_var.linkage = "external"
-            global_var.align = 8
+            global_var.align = 8  # type: ignore
             self.__lock_free_head_global = global_var
         return self.__lock_free_head_global
 

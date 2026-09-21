@@ -80,8 +80,7 @@ WORD_LOCK_SHIFT = 0
 LOCK_BITS = 32
 LOCK_MASK = (1 << LOCK_BITS) - 1
 WORD_KEY_SHIFT = 32
-KEY_BITS = 32
-KEY_MASK = (1 << KEY_BITS) - 1
+KEY_MASK = 0xFFFF_FFFF   # 32 位键(与锁表项里的 u32 同宽)
 FRAME_KEY_LIMIT = KEY_MASK - 1     # 0xFFFFFFFF 留给帧退出的 SENTINEL
 
 WINDOW_MASK = ((1 << 64) - 1) ^ LOCK_MASK   # 冷路径还原块首用的 4 GiB 窗口掩码

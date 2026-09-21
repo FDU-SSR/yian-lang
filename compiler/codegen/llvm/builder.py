@@ -166,7 +166,7 @@ class LLBuilder:
         只在堆分配处发射一次: 视图长度都来自某个分配的容量, 分配受这条上限约束后,
         由视图派生出的长度(子切片、T*→T[] 的剩余长度、视图转换)必然可表示。
         """
-        limit = ir.Constant(ir.IntType(64), IR.MAX_VIEW_COUNT)
+        limit: ir.Value = ir.Constant(ir.IntType(64), IR.MAX_VIEW_COUNT)  # type: ignore
         ok = self.__builder.icmp_unsigned("<=", value.ir_val, limit)  # type: ignore
         self.__emit_check(LLValue(self.__type_ctx.bool_id, ok), RuntimeErrorCode.R001, suffix)
 
@@ -600,7 +600,7 @@ class LLBuilder:
         # 发放全部在发射的 IR 里完成(自由链非空 → 弹出下标; 为空 → 调 bump 入口),
         # 因此表项的 key 写对 LLVM 可见: 刚分配内存上的 live 检查能折叠成真。
         i32: ir.IntType = ir.IntType(32)  # type: ignore
-        i64 = ir.IntType(64)  # type: ignore
+        i64: ir.IntType = ir.IntType(64)  # type: ignore
         anchor_lo32 = self.__builder.trunc(  # type: ignore
             self.__builder.add(  # type: ignore
                 self.__builder.ptrtoint(block_base.ir_val, i64),  # type: ignore
@@ -618,12 +618,12 @@ class LLBuilder:
             entry_ptr = builder.gep(table, [ir.Constant(i64, 0), popped], inbounds=True)  # type: ignore
             next_head = builder.lshr(builder.load(entry_ptr, typ=i64), ir.Constant(i64, 32))  # type: ignore
             builder.store(next_head, free_head_g)  # type: ignore
-            return popped
+            return popped  # type: ignore
 
         def take_slow(builder: ir.IRBuilder) -> ir.Value:
             return builder.call(self.__module.get_lock_bump_take(), [])  # type: ignore
 
-        lock_index = self.__emit_either(has_free, take_fast, take_slow, i64)
+        lock_index = self.__emit_either(has_free, take_fast, take_slow, i64)  # type: ignore
         entry = self.__builder.gep(table, [ir.Constant(i64, 0), lock_index], inbounds=True)  # type: ignore
         stored = self.__builder.load(entry, typ=i64)  # type: ignore
         next_key = self.__builder.and_(  # type: ignore
@@ -716,7 +716,7 @@ class LLBuilder:
     def gen_key(self, is_heap: bool, result: str) -> None:
         self.__func.set_reg(result, self.__gen_key_value(is_heap))
 
-    def acquire_frame_lock(self, key: LLValue, result: str) -> None:
+    def acquire_frame_lock(self, key: LLValue | None, result: str) -> None:
         """在固定地址的独立影子栈上 push 一个帧锁槽, 槽里写帧 word。
 
         帧 word = ⟨KIND_FRAME | id:42 | depth:20⟩: id 来自帧键(全局单调计数器),
@@ -747,7 +747,7 @@ class LLBuilder:
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         frame_key = self.__builder.and_(key.ir_val, ir.Constant(i64, IR.KEY_MASK))  # type: ignore
         # word = ⟨key:32 | lock:32⟩, lock = 影子栈深度(锁表下标)
-        frame_word = self.__builder.or_(  # type: ignore
+        frame_word: ir.Value = self.__builder.or_(  # type: ignore
             self.__builder.shl(frame_key, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
             depth,
         )
@@ -836,7 +836,7 @@ class LLBuilder:
             ),
             anchor,
         )
-        block_int = self.__builder.inttoptr(  # type: ignore
+        block_int: ir.Value = self.__builder.inttoptr(  # type: ignore
             self.__builder.sub(payload_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)),  # type: ignore
             self.__ll_type_ctx.ptr_type,
         )
@@ -1063,7 +1063,7 @@ class LLBuilder:
             self.__builder.and_(data_int, ir.Constant(ir.IntType(64), IR.WINDOW_MASK)),  # type: ignore
             anchor,
         )
-        block_int = self.__builder.inttoptr(  # type: ignore
+        block_int: ir.Value = self.__builder.inttoptr(  # type: ignore
             self.__builder.sub(payload_int, ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)),  # type: ignore
             self.__ll_type_ctx.ptr_type,
         )
