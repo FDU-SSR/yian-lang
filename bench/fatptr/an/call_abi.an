@@ -1,0 +1,82 @@
+// bench/fatptr/an/call_abi.an — 传参档位 (方向 B 微基准)
+//
+// 目的: 把"胖值按值传参"这一项单独量出来。热循环里反复调用两个函数体相同、参数组合
+//       不同的被调者:
+//       mix_in   一个 24 B 胖参 + 一个标量;
+//       mix_wide 两个 24 B 胖参 + 一个标量 —— 同一进程内的对照, 两列之差就是
+//                "多一个胖参"的传参代价。
+//       被调者是 8 次迭代 × 4 次访问的循环体: 函数体大到 -O2 不内联 (raw 态尤其激进),
+//       因此三态跑的都是真实调用; 循环体同时保证每次调用有可观的真实工作。
+//       调用次数与实参都由 argv 个数派生 (编译器看不到具体值), 循环与实参不参与常量折叠。
+// 规模: CALLS (每轮的调用次数, `// bench-scale` 标记行); ROUNDS 固定。
+// C 参考: bench/fatptr/c/call_abi.c (同算法同规模, 8 B 裸指针字段)。
+//
+// 单一源: fat 与 raw 共用本文件 (raw 下 Node* 与 Node[] 都退化为裸指针/16 B 切片)。
+from std.core.env import args;
+from std.core.io import print;
+
+struct Node {
+    value: i64,
+}
+
+fn mix_in(p: Node*, n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = p[n + k].value;
+        let b: i64 = p[n + k + 8u64].value;
+        let c: i64 = p[n + k + 16u64].value;
+        let d: i64 = p[n + k + 24u64].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc;
+}
+
+fn mix_wide(p: Node*, view: Node[], n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = view[n + k].value;
+        let b: i64 = view[n + k + 8u64].value;
+        let c: i64 = view[n + k + 16u64].value;
+        let d: i64 = view[n + k + 24u64].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc + p[n].value;
+}
+
+fn main() {
+    let CALLS: u64 = 4096;  // bench-scale
+    let ROUNDS: u64 = 64;
+    let argv = args();
+    let base: u64 = 32 + argv.len();
+    let size: u64 = base + CALLS + 32;
+    let p: Node* = dyn[size] Node(0);
+    let i: u64 = 0;
+    while i < size {
+        p[i] = Node(i64(i));
+        i += 1;
+    }
+    let view: Node[] = p[0u64..size];
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < ROUNDS {
+        i = 0;
+        while i < CALLS {
+            let n: u64 = base + i;
+            acc = acc + mix_in(p, n) + mix_wide(p, view, n);
+            i += 1;
+        }
+        round += 1;
+    }
+    // 每次调用 = Σ_{k<8} (3(n+k) + 5(n+k+8) − 7(n+k+16) + 11(n+k+24)) + p[n] = 97n + 1872
+    let calls: i64 = i64(CALLS);
+    let b: i64 = i64(base);
+    let sum_n: i64 = calls * b + calls * (calls - 1) / 2;
+    let per_round: i64 = 193 * sum_n + 3744 * calls;
+    assert acc == i64(ROUNDS) * per_round: "call_abi checksum";
+    print("call_abi pass\n");
+    del p;
+}
