@@ -254,7 +254,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P3 ✅ | C3：抽检查簇为组合件 `passes/checks.py::CheckState`（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有 `self.__checks`；发射能力由 `FunctionEmitter` 注入（invalidate 时补发挂起 `CheckInBounds`） | builder 1590 → **1442 行**；状态显式化 | 低（已实测忠实） | 单提交 revert |
 | P4 ✅ | C4：抽 `lower/stmts.py::StmtLowerer`（16 个 `translate_*` + `LoopCtx` + `loops`/`defer_scopes`），表达式与检查能力经 `StmtHost`（emitter/checks/set_terminator/switch_to/resolve_val/is_del_target）注入 | builder 1442 → **1184 行** | 低（已实测忠实） | 单提交 revert |
 | P5 ✅ | C5+C6 **合并**为 `lower/values.py::ValueLowerer`（26 个方法 + `frame_lock` 状态；`ValueHost` 注入 emitter/checks/type_ctx/raw_pointers/resolve_val/build_element_ptr/build_field_ptr/build_func_ptr/build_extract_value/is_fat_pointer） | builder 1184 → **884 行** | 低（已实测忠实） | 单提交 revert |
-| P6 | C7+C8：抽 `lower/calls.py`、`lower/sys.py`、`lower/memory.py`（内存原语的检查部分委托 `checks`） | builder −~400 行 | 中 | 同上 |
+| P6 ✅ | C7+C8：抽 `lower/calls.py`（6 方法）、`lower/sys.py`（12）、`lower/memory.py`（10，内存原语的检查部分仍写在这里、状态经 `checks`）；三簇各自的 Host 注入；`ValueHost` 的三处内存回调用晚绑定 lambda 打破构造环 | builder 884 → **568 行** | 低（已实测忠实） | 单提交 revert |
 | P7 | C9：剩下 `lower/exprs.py`；`builder.py` 收成 §3.2 末的编排者（目标 < 200 行） | 结构目标达成 | 中 | 同上 |
 | P8 | C3 升级为真 pass：P0 下降不再发 `Check*`，`insert_checks`/`optimize_checks` 接管 | §4 规则表落地；插入逻辑可独立测试 | **高** | 按规则分组小步提交；任一步测试或基准回退即回退该步 |
 | P9 | 在 `optimize_checks` 上加新优化：循环不变检查提升、检查融合 | 攻 `churn_single`/`chase`/`towers` 三项已知回退 | 中 | 单 pass 开关 |
@@ -322,6 +322,20 @@ pyright compiler/anx 0 errors；micro 无漂移（chase 160.8 / copy_struct 155.
 (2) 去私有名的正则把 `__init__` 也改成了 `init`（构造器失效）。两条都靠"最小复现用例 + pyright"
 在 1 分钟内暴露。**流程补充**：去私有化时显式白名单 `__init__`；生成后立刻 `grep 'def '` 检查
 定义名与调用名一致，再跑 harness。
+
+**P6 进展（完成）**：`lower/calls.py`（118 行，`CallsLowerer` + `CallsHost`，含 `receiver_ref_type`）、
+`lower/sys.py`（93 行，`SysLowerer` + `SysHost`）、`lower/memory.py`（250 行，`MemoryLowerer` +
+`MemoryHost`）；`builder.py` 884 → **568 行**。构造顺序：emitter → checks → values → memory/calls/sys；
+values 需要 memory 的三个回调、memory/calls 需要 values，用三处晚绑定 lambda 打破环（已注释说明）。
+
+忠实性实测：108/108 份 `cfg.txt` 逐字节一致；三套件 756/156/99 全绿；runtime --check --asan 通过；
+pyright compiler/anx 0 errors；micro 无漂移。
+
+**踩坑记录（第四次）**：生成器把"定义名去私有化"的正则写在 transform 里但没生效（写文件时用了
+未变换的副本），表现为 `MemoryLowerer has no attribute build_malloc`；另外新模块的 `Type`/
+`BinaryOperator`/`default_literals` 等导入、以及 `sys.py` 里不再使用的 `HIR`/`CompilerLog`/
+`_ch_block`，靠 pyright 的 unused-import 全数点出。**流程补充**：去私有化后立刻 `grep 'def '`
+核对定义名；生成后先跑 pyright 清 unused，再跑 harness。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内
