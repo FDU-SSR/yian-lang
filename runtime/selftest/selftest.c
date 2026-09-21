@@ -43,10 +43,18 @@ static int run_fail_child(int panic_mode, char *buf, size_t cap, size_t *out_len
         _exit(7); /* 失败函数不返回; 到达这里说明实现有误 */
     }
     close(fds[1]);
-    ssize_t got = read(fds[0], buf, cap - 1);
+    /* panic 分多次 write 输出, 单次 read 可能只拿到第一段——读到 EOF 再收尾. */
+    size_t total = 0;
+    while (total < cap - 1) {
+        ssize_t got = read(fds[0], buf + total, cap - 1 - total);
+        if (got <= 0) {
+            break;
+        }
+        total += (size_t)got;
+    }
     close(fds[0]);
-    *out_len = got > 0 ? (size_t)got : 0;
-    buf[*out_len] = '\0';
+    *out_len = total;
+    buf[total] = '\0';
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
         return -1;

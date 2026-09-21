@@ -354,6 +354,12 @@ pyright compiler/anx 0 errors。
 最小复现 + pyright 点出。**流程最终版**：生成后先 `grep 'def '` 核对定义名、再跑 pyright 清 unused、
 最后 harness；构造顺序按"被依赖者先建、环用晚绑定 lambda"固定。
 
+**附：运行时自测偶发失败已定位并修复（本轮）**：`runtime/selftest/selftest.c::run_fail_child`
+对管道只做**一次 `read()`**，而 panic 路径分多次 `write`（前缀/消息/换行），于是父进程可能只读到
+第一段，`strcmp(buf, "yian: panic: test-message\n")` 偶发失败——这就是此前 `--check --asan`
+时而报 "panic writes prefix, message and newline" 的原因（与编译器/表示改动无关）。改为循环读到
+EOF 后再比较：普通自测 12/12、ASan 自测 15/15 连续通过，`--check --asan` 连跑 3 次全绿。
+
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内
 （语句 → 惰值 → 聚合 → 调用/内存 → 表达式），保证每一步搬的都是"只向下依赖"的层。
