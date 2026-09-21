@@ -238,8 +238,21 @@ R18 方法 receiver 的 `CheckInBounds`、R13 `PtrDiff`/`PtrCmp`。
    pass 统一决定"保留/合并/提升/删除"。收益是 P9（循环不变提升）有完整信息；代价是新增 IR 节点、
    改 `dump.py`、并要重新证明每条规则的等价性。
 
-**建议**：先走路线 A 拿到"插入可独立测试"的收益并跑通 P9 的一半（A 类里循环不变的 live 检查已足够
-覆盖 `churn_single`/`chase` 的重复检查形态）；若 P9 显示 B 类也需要提升，再补路线 B 的标记。
+**决定（用户裁定）：走路线 B**。分组迁移、每组单独提交、每组都以 108/108 `cfg.txt` 等价为准入门槛。
+
+**路线 B 进展（第 1 组，完成）**：`IR.CheckRequest{kind, operands, extra, live}` 标记节点 + 三个
+kind 常量（`CHECK_REQUEST_PTRDIFF/PTRCMP/RAW_BOUNDS`）+ `passes/insert_checks.py`（按 kind 物化，
+未知 kind 直接报错，避免静默丢检查）+ `run_pipeline` 顺序改为"物化标记 → C1 后处理"；
+下降侧把 R13（`PtrDiff`/`PtrCmp`）与 R15（裸数组上界）三条规则改为发标记；LLVM 翻译器对漏物化的
+标记直接 `ValueError`（防御管线漏 pass）。实测 108/108 `cfg.txt` 与基线逐字节一致、三套件
+756/156/99 全绿、`--check --asan` 通过、pyright compiler/anx 0 errors。
+
+**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 2 组 R16（数组退化 `InBounds(size=m)`、
+`T[]→T&` 的 `SliceNonEmpty`）+ R17（`CheckViewAccess`，需把 frame-locked 判定搬进 pass 的
+provenance 分析）+ R18（receiver `InBounds`）；第 3 组 R11/R12（`ElementArith`、`FieldPtr` 义务）
+——这一组要先把 `elem_derived`/`field_derived` 的义务表从下降侧搬到 pass（按 IR 的
+`ElementPtr`/`FieldPtr` 派生边重建）；第 4 组 R4/R5/R6/R7/R8/R14（访问点 live 与 `Delete`，
+含帧内/刚分配/去重/合并四档 provenance），完成后再做 P9 的提升。
 
 **风险与回退**：P8 是本计划唯一高风险步骤（18 条规则、23 个发射点）。按规则分组提交，
 每组都以"108/108 `cfg.txt` 等价 + 三套件 + pyright"为门槛；任一组不过即回退该组。

@@ -154,7 +154,9 @@ class ValueLowerer:
         elem_base = self.build_cast(base_addr, elem_ptr_type)
         index_val = self.__host.resolve_val(expr.index)
         if not fat and self.__host.checks.is_raw(base_addr):
-            self.__host.emitter.emit(IR.CheckRawBounds(index=index_val, length=expr.length))
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_RAW_BOUNDS, operands=[index_val], extra=expr.length,
+            ))
             _ch_block().debug(lambda: "check insert ArrayAccess(raw): index < length (裸数组越界)")
         return self.__host.build_element_ptr(elem_base, index_val, elem_ptr_type)
 

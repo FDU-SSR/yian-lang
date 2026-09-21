@@ -374,6 +374,29 @@ class CheckRawBounds:
     length: int
 
 
+# ---------------------------------------------------------------------------
+# 检查请求标记（P8 路线 B）
+# ---------------------------------------------------------------------------
+
+CHECK_REQUEST_PTRDIFF = "ptrdiff"        # operands=[lhs, rhs]
+CHECK_REQUEST_PTRCMP = "ptrcmp"          # operands=[lhs, rhs]
+CHECK_REQUEST_RAW_BOUNDS = "raw_bounds"  # operands=[index], extra=编译期长度
+
+
+@dataclass
+class CheckRequest:
+    """检查请求标记：下降只发标记，`passes/insert_checks.py` 决定最终形态。
+
+    走路线 B 的规则在下降侧不再直接发 `Check*`，而是发本标记（把单看 IR 恢复不出的
+    语义上下文放进 `operands`/`extra`）；插入 pass 就地把它物化为具体检查节点，
+    后续（P9）才有机会在其上做合并/提升。逐规则迁移，未迁移的规则仍照发 `Check*`。
+    """
+
+    kind: str
+    operands: list[Value]
+    extra: int = 0
+    live: bool = True
+
 @dataclass
 class CheckPtrDiff:
     """PtrDiff 前提:data 相等 + 良构 + 无回绕。
@@ -566,6 +589,7 @@ Stmt: TypeAlias = (
     | CheckPtrCmp | PtrCmp | CheckRefAccess
     | CheckElementAccess
     | CheckRawBounds
+    | CheckRequest
 )
 
 # ---------------------------------------------------------------------------

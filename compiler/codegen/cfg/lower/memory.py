@@ -190,7 +190,7 @@ class MemoryLowerer:
         # CFG 层插入检查:data 相等 + 良构 + 无回绕(异对象指针差失败)。
         # 与 ElementPtr 算术一致:该运算不访问内存,不检查 allocation live。
         if self.__host.is_fat_pointer(lhs) and self.__host.is_fat_pointer(rhs):
-            self.__host.emitter.emit(IR.CheckPtrDiff(lhs=lhs, rhs=rhs))
+            self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRDIFF, operands=[lhs, rhs]))
             _ch_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕")
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.i64_id)
         return self.__host.emitter.emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
@@ -200,7 +200,7 @@ class MemoryLowerer:
         # 相等比较 按 (data, index) 二元组、无前提检查。
         # 与 ElementPtr 算术一致:比较本身不访问内存,不检查 allocation live。
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
-            self.__host.emitter.emit(IR.CheckPtrCmp(lhs=lhs, rhs=rhs))
+            self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRCMP, operands=[lhs, rhs]))
             _ch_block().debug(lambda: "check insert PtrCmp: data 相等")
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=type_id)
         return self.__host.emitter.emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result

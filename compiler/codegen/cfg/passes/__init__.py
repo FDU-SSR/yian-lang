@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes import cleanup
+from compiler.codegen.cfg.passes import cleanup, insert_checks
 from compiler.codegen.cfg.passes.context import PassContext
 
 __all__ = ["PassContext", "run_pipeline"]
 
 
 def run_pipeline(func: IR.Function, ctx: PassContext) -> IR.Function:
-    """按序运行 CFG pass；当前只有 C1 后处理，后续 pass 追加在它之后。"""
+    """按序运行 CFG pass：标记物化（P8 路线 B）→ C1 后处理；后续 pass 追加在中间。"""
+    insert_checks.run(func, ctx)
     cleanup.run(func, ctx)
     return func

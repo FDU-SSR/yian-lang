@@ -157,6 +157,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckRawBounds(index=index, length=length):
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 
+        case IR.CheckRequest(kind=kind, operands=operands):
+            args = ", ".join(__dump_value(v) for v in operands)
+            return f"check_request {kind} {args}  (标记, 待插入 pass 物化)"
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
             return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 良构 + 无回绕)"
 
