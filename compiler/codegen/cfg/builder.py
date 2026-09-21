@@ -54,7 +54,7 @@ class CfgBuilder:
             build_extract_value=lambda base, idx, ty: self.__memory.build_extract_value(base, idx, ty),
             is_fat_pointer=self.__preds.is_fat_pointer,
         ))
-        # 内存/指针原语簇（C8）与调用簇、系统内建簇（C7）
+        # 内存/指针原语簇与调用簇、系统内建簇
         self.__memory = MemoryLowerer(MemoryHost(
             emitter=self.__emitter,
             checks=self.__checks,
@@ -129,7 +129,7 @@ class CfgBuilder:
         if self.__emitter.current_block.terminator is None and ret_ty != TypeCtx.void_id:
             self.__set_terminator(IR.Ret(body_val))
 
-        # ── CFG pass 管线: 去死块 / RPO 排序 / 终结保护(C1, 见 passes/) ──
+        # ── CFG pass 管线: 检查插入 → 去死块 / RPO 排序 / 终结保护(见 passes/) ──
         run_pipeline(self.__emitter.func, PassContext(
             type_ctx=self.__type_ctx,
             symbol_ctx=self.__symbol_ctx,

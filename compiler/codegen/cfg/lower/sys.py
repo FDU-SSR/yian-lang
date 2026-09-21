@@ -1,5 +1,5 @@
 
-"""C7（系统内建部分）：sys_read/write、open/close、sqrt、memcpy、进程参数。
+"""系统内建下降：sys_read/write、open/close、sqrt、memcpy、进程参数。
 
 只依赖发射句柄、检查簇与 `is_fat_view` 判定；不引用其它下降簇。
 """

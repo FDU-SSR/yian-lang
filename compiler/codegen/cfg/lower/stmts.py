@@ -1,4 +1,4 @@
-"""C4：语句与控制流下降（HIR → CFG IR）。
+"""语句与控制流下降（HIR → CFG IR）。
 
 从 `CfgBuilder` 整体搬出的语句簇：`translate_block/if/loop/match/break/continue/
 defer/return/semi/let/panic/runtime_fail/process_exit/delete` 及其私有状态

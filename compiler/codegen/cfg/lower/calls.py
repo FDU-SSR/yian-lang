@@ -1,5 +1,5 @@
 
-"""C7（调用部分）：调用/方法调用/间接调用下降。
+"""调用下降：调用/方法调用/间接调用。
 
 从 `CfgBuilder` 搬出的调用簇；表达式求值经 `CallsHost.resolve_val` 回调，
 类型转换与取址经 `CallsHost.values`（`ValueLowerer`）。

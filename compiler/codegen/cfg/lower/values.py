@@ -1,10 +1,10 @@
-"""C5+C6：惰值/取址与聚合/转换下降（HIR → CFG IR）。
+"""惰值/取址与聚合/转换下降（HIR → CFG IR）。
 
 从 `CfgBuilder` 整体搬出的两个簇：
 
-- C5 惰值/取址：`resolve_addr`/`resolve_addr_fat` 与各 `resolve_*_addr`、
+- 惰值/取址：`resolve_addr`/`resolve_addr_fat` 与各 `resolve_*_addr`、
   `build_var_ptr_fat/raw`、`build_alloca`、`emit_frame_lock`、`build_gen_key`；
-- C6 聚合/构造/转换：`resolve_cast`/`build_cast`/`resolve_bit_cast`、`build_size_of`、
+- 聚合/构造/转换：`resolve_cast`/`build_cast`/`resolve_bit_cast`、`build_size_of`、
   `build_{aggregate,array,variant}_construct`、`resolve_{tuple,array,array_repeat,
   struct_construct,variant_construct,size_of}`。
 

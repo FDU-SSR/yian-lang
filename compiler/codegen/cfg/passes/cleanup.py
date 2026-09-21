@@ -1,4 +1,4 @@
-"""C1：CFG 后处理 pass（去死块 / RPO 排序 / 终结保护）。
+"""CFG 后处理 pass（去死块 / RPO 排序 / 终结保护）。
 
 从 `CfgBuilder` 整体搬出的三个过程，判定与顺序保持逐字一致；它们只读写
 `IR.Function` 自身，构建期状态一个都不用。搬移后 `CfgBuilder` 只负责在下降结束后
@@ -151,7 +151,7 @@ def __guard_termination(func: IR.Function, ctx: PassContext) -> None:
 
 
 def run(func: IR.Function, ctx: PassContext) -> None:
-    """C1：去死块 → RPO 排序 → 终结保护（顺序与搬移前一致）。"""
+    """去死块 → RPO 排序 → 终结保护（顺序与搬移前一致）。"""
     __eliminate_dead_code(func)
     __sort_blocks_rpo(func)
     __guard_termination(func, ctx)

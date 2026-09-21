@@ -172,8 +172,8 @@ class LLModule:
             llvm_name = f"{cfg_func.name}.{cfg_func.type_id}"
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
         if llvm_name.startswith("index."):
-            # 实验: 索引/检查辅助保持内联(变体 B 下它变胖后掉出内联阈值,
-            # 每个元素多一次跨函数调用; 见 §3.7 的根因记录)。
+            # 索引/检查辅助强制内联: 变体 B 的胖指针让它变胖后掉出内联阈值,
+            # 每个元素会多一次跨函数调用(实测过的根因)。
             ir_func.attributes.add("alwaysinline")
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
