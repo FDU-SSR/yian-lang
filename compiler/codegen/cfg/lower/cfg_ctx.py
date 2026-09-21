@@ -1,7 +1,7 @@
 """单个 CFG 函数的共享上下文：三段 pass 与下降机器读同一份事实。
 
 形态对齐中端 `analysis/lowering/sem_ctx.py`：构造时只给 session 级资源
-（`type_ctx` / `raw_pointers`）；每个函数开始下降时由 `CfgBuilder` 调 `begin_def()`
+（`type_ctx` / `raw_pointers`）；每个函数开始下降时由 `passes/translator.py` 的 `_CfgBuilder` 调 `begin_def()`
 写入该函数的事实（符号表、函数名、源跨度、返回类型、void 占位通道）。此后
 `passes/` 的三段——`CfgTranslator`（下降）、`InsertChecks`、`Cleanup`——与下降机器
 （`lower/` 各簇、`PtrPredicates`）读的都是同一个对象，不再各自持有副本。

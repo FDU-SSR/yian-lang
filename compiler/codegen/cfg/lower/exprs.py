@@ -1,6 +1,6 @@
 """表达式下降与 HIR 分派（HIR → CFG IR）。
 
-从 `CfgBuilder` 搬出的最后一簇：`resolve_val` 分派器与各表达式解析
+原构建器的最后一簇：`resolve_val` 分派器与各表达式解析
 （binary/logical/assign/compound_assign/unary/field_access/tuple_access/dyn_value/
 dyn_buffer/alloc/var/literal/array_access/slice_access）。
 

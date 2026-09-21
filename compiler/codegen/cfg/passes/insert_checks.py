@@ -393,7 +393,7 @@ class _CheckPlanner:
 class InsertChecks:
     """检查插入 pass（管线第 2 段）：逐函数物化语义标记并决定访问类检查的形态。
 
-    下降产物与它的 `CfgCtx` 在下降段结束时交出（见 `lower.builder.CfgBuilder`），
+    下降产物与它的 `CfgCtx` 在下降段结束时交出（见 `translator._CfgBuilder`），
     这里只按 `type_id` 取用；编排在 `main`。
     """
 

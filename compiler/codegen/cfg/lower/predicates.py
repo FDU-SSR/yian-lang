@@ -1,6 +1,6 @@
 """指针类型判定（`T*`/`T&`/切片/函数指针 与 ZST 擦除的胖判定）。
 
-从 `CfgBuilder` 搬出：只依赖 type_ctx / raw_pointers / checks（裸指针判定），
+只依赖共享上下文 `CfgCtx`（type_ctx / raw_pointers）与 `CheckState`（裸指针判定），
 被各下降簇经 host 注入使用。
 """
 from __future__ import annotations

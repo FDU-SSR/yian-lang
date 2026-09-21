@@ -1,6 +1,6 @@
 """语句与控制流下降（HIR → CFG IR）。
 
-从 `CfgBuilder` 整体搬出的语句簇：`translate_block/if/loop/match/break/continue/
+原构建器的语句簇：`translate_block/if/loop/match/break/continue/
 defer/return/semi/let/panic/runtime_fail/process_exit/delete` 及其私有状态
 （循环栈、defer 作用域栈）。表达式求值与检查簇仍由构建器持有，经 `StmtHost`
 注入——语句下降调用 `host.resolve_val`，写 IR 走 `host.emitter`。

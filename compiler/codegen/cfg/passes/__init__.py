@@ -3,8 +3,8 @@
 三段各一个文件、各一个入口类，由 `compiler/main.py` 按序编排（与中端
 `analysis/passes/` 同形）：
 
-- `translator.py::CfgTranslator`：HIR → CFG IR。它的内部实现较重，拆在兄弟目录
-  `cfg/lower/`（`builder.CfgBuilder` 逐函数编排 + 各下降簇 + 共用句柄）；
+- `translator.py::CfgTranslator`：HIR → CFG IR（逐函数装配是文件内的私有 helper
+  `_CfgBuilder`）；各下降簇与共用句柄这些机器拆在兄弟目录 `cfg/lower/`；
 - `insert_checks.py::InsertChecks`：物化下降侧发的语义标记，并重放检查状态机决定
   访问类检查（`CheckRefAccess`/`CheckSafeAccess`/…）的形态与位置；
 - `cleanup.py::Cleanup`：去死块 → RPO 排序 → 终结保护。

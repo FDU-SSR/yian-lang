@@ -1,6 +1,6 @@
 """惰值/取址与聚合/转换下降（HIR → CFG IR）。
 
-从 `CfgBuilder` 整体搬出的两个簇：
+原构建器的两个簇：
 
 - 惰值/取址：`resolve_addr`/`resolve_addr_fat` 与各 `resolve_*_addr`、
   `build_var_ptr_fat/raw`、`build_alloca`、`emit_frame_lock`、`build_gen_key`；
