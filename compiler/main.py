@@ -307,11 +307,10 @@ def __cfg(
         cfg_lower.run(def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
-    functions = cfg_lower.export()
     contexts = cfg_lower.pass_contexts()
-    InsertChecks(functions, contexts).run()
-    Cleanup(functions, contexts).run()
-    return functions
+    InsertChecks(contexts).run()
+    Cleanup(contexts).run()
+    return cfg_lower.export()
 
 
 def __build_unit_names(unit_datas: dict[int, UnitData], packages: PackageMap | None) -> dict[int, str]:

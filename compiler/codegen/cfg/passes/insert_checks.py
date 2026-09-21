@@ -397,15 +397,13 @@ class InsertChecks:
     这里只按 `type_id` 取用；编排在 `main`。
     """
 
-    def __init__(
-        self,
-        functions: dict[int, IR.Function],
-        contexts: dict[int, CfgCtx],
-    ) -> None:
-        self.__functions = functions
+    def __init__(self, contexts: dict[int, CfgCtx]) -> None:
         self.__contexts = contexts
 
     def run(self) -> None:
-        """函数间互不影响（状态都是单函数的），按 functions 的插入序逐个跑。"""
-        for type_id, func in self.__functions.items():
-            _CheckPlanner(func, self.__contexts[type_id]).run()
+        """函数间互不影响（状态都是单函数的），按下降序逐个跑。
+
+        每个 ctx 自带它那一条 `function`，并共享本模块的完整函数表（`ctx.functions`）。
+        """
+        for ctx in self.__contexts.values():
+            _CheckPlanner(ctx.function, ctx).run()

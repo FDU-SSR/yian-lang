@@ -156,16 +156,12 @@ class Cleanup:
     顺序与搬移前逐字一致；编排在 `main`。
     """
 
-    def __init__(
-        self,
-        functions: dict[int, IR.Function],
-        contexts: dict[int, CfgCtx],
-    ) -> None:
-        self.__functions = functions
+    def __init__(self, contexts: dict[int, CfgCtx]) -> None:
         self.__contexts = contexts
 
     def run(self) -> None:
-        for type_id, func in self.__functions.items():
+        for ctx in self.__contexts.values():
+            func = ctx.function
             _eliminate_dead_code(func)
             _sort_blocks_rpo(func)
-            _guard_termination(func, self.__contexts[type_id])
+            _guard_termination(func, ctx)

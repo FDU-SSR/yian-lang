@@ -38,7 +38,6 @@ class CfgTranslator:
     def __init__(self, type_ctx: TypeCtx, raw_pointers: bool = False) -> None:
         # session 级事实放在 `CfgCtx` 里；每个函数再从它派生一份（`spawn`）
         self.__session = CfgCtx(type_ctx, raw_pointers)
-        self.__functions: dict[int, IR.Function] = {}
         self.__contexts: dict[int, CfgCtx] = {}
 
     def run(self, def_points: dict[int, DefPoint]) -> None:
@@ -49,12 +48,12 @@ class CfgTranslator:
                 raise ValueError(f"Unsupported def type: {type(ty).__name__}")
             ctx = self.__session.spawn()
             func = _CfgBuilder(ctx, dp).build()
-            self.__functions[func.type_id] = func
+            self.__session.declare_function(func)
             self.__contexts[func.type_id] = ctx
 
     def export(self) -> dict[int, IR.Function]:
-        """Return the translated functions keyed by type_id."""
-        return dict(self.__functions)
+        """Return the translated functions keyed by type_id（函数表由 ctx 持有）。"""
+        return dict(self.__session.functions)
 
     def pass_contexts(self) -> dict[int, CfgCtx]:
         """Return the per-function shared facts the following passes need, keyed by type_id."""
@@ -83,6 +82,7 @@ class _CfgBuilder:
         func_type = ctx.type_ctx[dp.type_id]
         assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
         ctx.begin_def(
+            type_id=dp.type_id,
             symbol_ctx=dp.symbol_ctx,
             func_name=func_type.custom_def.name,
             span=dp.ast_body.span,
