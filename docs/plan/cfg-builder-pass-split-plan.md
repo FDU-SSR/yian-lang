@@ -253,7 +253,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P2 ✅ | C2：抽 `passes/emitter.py::FunctionEmitter`（func/current_block/counter + new_name/emit/new_block/void_reg/never_reg/emit_phi/terminate/position）；`__set_terminator`/`__switch_to` 保留检查状态副作用并委托句柄 | 所有簇的共同句柄；builder 1629 → **1590 行** | 低（已实测忠实） | 单提交 revert |
 | P3 ✅ | C3：抽检查簇为组合件 `passes/checks.py::CheckState`（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有 `self.__checks`；发射能力由 `FunctionEmitter` 注入（invalidate 时补发挂起 `CheckInBounds`） | builder 1590 → **1442 行**；状态显式化 | 低（已实测忠实） | 单提交 revert |
 | P4 ✅ | C4：抽 `lower/stmts.py::StmtLowerer`（16 个 `translate_*` + `LoopCtx` + `loops`/`defer_scopes`），表达式与检查能力经 `StmtHost`（emitter/checks/set_terminator/switch_to/resolve_val/is_del_target）注入 | builder 1442 → **1184 行** | 低（已实测忠实） | 单提交 revert |
-| P5 | C5+C6：抽 `lower/lvalues.py`、`lower/aggregates.py` | builder −~350 行 | 中 | 同上 |
+| P5 ✅ | C5+C6 **合并**为 `lower/values.py::ValueLowerer`（26 个方法 + `frame_lock` 状态；`ValueHost` 注入 emitter/checks/type_ctx/raw_pointers/resolve_val/build_element_ptr/build_field_ptr/build_func_ptr/build_extract_value/is_fat_pointer） | builder 1184 → **884 行** | 低（已实测忠实） | 单提交 revert |
 | P6 | C7+C8：抽 `lower/calls.py`、`lower/sys.py`、`lower/memory.py`（内存原语的检查部分委托 `checks`） | builder −~400 行 | 中 | 同上 |
 | P7 | C9：剩下 `lower/exprs.py`；`builder.py` 收成 §3.2 末的编排者（目标 < 200 行） | 结构目标达成 | 中 | 同上 |
 | P8 | C3 升级为真 pass：P0 下降不再发 `Check*`，`insert_checks`/`optimize_checks` 接管 | §4 规则表落地；插入逻辑可独立测试 | **高** | 按规则分组小步提交；任一步测试或基准回退即回退该步 |
@@ -307,6 +307,21 @@ pyright compiler/anx 0 errors。
 **踩坑记录（第二次）**：这次先用"行号区间删除"又把 `__resolve_val` 的头部切掉了（前一次
 的教训没记住）——已改为**按方法文本正则切片**（`\n    def NAME\(.*?(?=\n    def |\Z)`，逐个断言
 命中数 == 1）并每步 `compileall` + harness 复核。结论写进流程：**搬移一律文本锚点、禁止行号**。
+
+**P5 进展（完成）**：`compiler/codegen/cfg/lower/values.py`（378 行）——C5 惰值/取址与 C6
+聚合/转换**合并**成一个 `ValueLowerer`：原计划分两个模块，但两者双向引用（`resolve_*_addr` 要
+`build_cast`，`build_cast` 要 `checks`/`is_fat_pointer`）且共用同一份 host 面，分开会得到两个互相
+持有的 host，故合并（计划表已按实际改写）。帧锁实体化状态随之搬入，构建器只读
+（`build()` 里 `IR.Function.frame_lock = self.__values.frame_lock`）。`builder.py` 1184 → **884 行**。
+
+忠实性实测：108/108 份 `cfg.txt` 逐字节一致；三套件 756/156/99 全绿；runtime --check --asan 通过；
+pyright compiler/anx 0 errors；micro 无漂移（chase 160.8 / copy_struct 155.6）。
+
+**踩坑记录（第三次，已固化为流程）**：搬移生成器这次连着犯两个小错——(1) 只改了调用点没改
+**方法定义名**（`def __resolve_addr` 留在原位 → `AttributeError: no attribute 'resolve_addr'`）；
+(2) 去私有名的正则把 `__init__` 也改成了 `init`（构造器失效）。两条都靠"最小复现用例 + pyright"
+在 1 分钟内暴露。**流程补充**：去私有化时显式白名单 `__init__`；生成后立刻 `grep 'def '` 检查
+定义名与调用名一致，再跑 harness。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内
