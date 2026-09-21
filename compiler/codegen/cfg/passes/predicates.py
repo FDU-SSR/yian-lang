@@ -1,0 +1,65 @@
+"""指针类型判定（`T*`/`T&`/切片/函数指针 与 ZST 擦除的胖判定）。
+
+从 `CfgBuilder` 搬出：只依赖 type_ctx / raw_pointers / checks（裸指针判定），
+被各下降簇经 host 注入使用。
+"""
+from __future__ import annotations
+
+from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.context import TypeCtx
+from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.passes.checks import CheckState
+
+
+class PtrPredicates:
+    """指针族判定器（无状态，只读查询）。"""
+
+    def __init__(self, type_ctx: TypeCtx, raw_pointers: bool, checks: CheckState) -> None:
+        self.__type_ctx = type_ctx
+        self.__raw_pointers = raw_pointers
+        self.__checks = checks
+
+    def is_fat_pointer(self, ptr: IR.Value) -> bool:
+        """胖指针判定:PointerType 且 pointee 非 ZST。
+
+        指针-to-ZST 保持 ZST,走既有快路径、无检查;
+        FunctionPointerType 非数据指针、不含 5 字段元数据,排除在外。
+        诊断模式 raw_pointers 下恒 False:指针一律按裸 8B 处理,全部
+        Check*/WriteLockSlot/Delete 检查与 PtrCmp 路由一并关闭。
+        惰性左值路径:裸指针寄存器(未取址左值)同样恒 False——
+        裸地址无胖元数据,不可承载检查。
+        """
+        if self.__raw_pointers:
+            return False
+        if self.__checks.is_raw(ptr):
+            return False
+        ty = self.__type_ctx[ptr.type_id]
+        if not isinstance(ty, Type.PointerType):
+            return False
+        return not self.__type_ctx.is_zst(ty.pointee_type)
+    def is_fat_view(self, value: IR.Value) -> bool:
+        """Whether *value* carries checked slice/str metadata."""
+        if self.__raw_pointers:
+            return False
+        ty = self.__type_ctx[value.type_id]
+        return isinstance(ty, (Type.SliceType, Type.StrType))
+    def is_del_target(self, ptr: IR.Value) -> bool:
+        """del 专属目标判定:非 ZST 的 PointerType / SliceType / RefType。
+
+        视图释放路径:T[]/T& 与 T* 同样支持整块释放——释放动作(WriteLockSlot
+        与 delete())只提取 FAT_LOCK_PTR=1,三族布局 data/lock_ptr/key 前缀相同。
+        两个 raw 守卫完整复刻 __is_fat_pointer(上方):诊断模式 raw_pointers 恒
+        False；惰性左值路径中的裸指针寄存器也恒为 False，否则 raw 下对裸 8B 指针
+        发射 WriteLockSlot 会写 data[0],内存破坏。指针-to-ZST 同 __is_fat_pointer
+        保持非胖(ZST 擦除为空结构,无字段可写、无检查可插)。
+        """
+        if self.__raw_pointers:
+            return False
+        if self.__checks.is_raw(ptr):
+            return False
+        # ZST pointers/references are erased to `{}` in LLVM.  Keep the IR
+        # Delete for the backend's no-op path, but do not inspect fat fields.
+        if self.__type_ctx.is_zst(ptr.type_id):
+            return False
+        ty = self.__type_ctx[ptr.type_id]
+        return isinstance(ty, (Type.PointerType, Type.SliceType, Type.RefType))
