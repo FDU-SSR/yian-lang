@@ -3,7 +3,7 @@
 # fingerprint: hostname=zhx machine=x86_64 cpu_count=28 clang=Ubuntu clang version 22.1.8 (++20260613092327+e80beda6e255-1~exp1~20260613092437.81) cflags=-O2 -lm
 # env: python=3.12.3 llvmlite=0.49.0 llvm=22.1.0 opt=-O2 pin=4 runs=5
 # set: full  scale: full
-# commit: B + 三处修复（工作树，见 docs/plan §3.7）
+# commit: e0c5294 (变体 B + 三处优化器修复; 当时为工作树快照)
 # date: 2026-09-21
 bench,c_min_ms,c_med_ms,c_cv_pct,raw_min_ms,raw_med_ms,raw_cv_pct,fat_min_ms,fat_med_ms,fat_cv_pct,ratio_raw_c,ratio_fat_c,ratio_fat_raw,c_rss_mb,raw_rss_mb,fat_rss_mb,runs,stdout_match,c_check,c_argv,raw_source
 AWFY/bounce,2492.3,2508.6,1.24,2678.9,2701.4,1.88,2803.8,2826.5,0.95,1.075,1.125,1.047,2.8,2.4,2.6,5,yes,pass,,bounce.an

@@ -1,7 +1,7 @@
 # 分配器基准 (fat vs raw) — 规模档 `full`
 
 由 `bench/bench_allocator.py` 生成; 分配器基准没有 C 参考, 对照态是 libc `malloc`/`free`。
-采样: 每态 7 次取最小墙钟 / 最大峰值 RSS; 绑核: 4; commit: `B + 三处修复（见 docs/plan §3.7）`; 日期: 2026-09-21
+采样: 每态 7 次取最小墙钟 / 最大峰值 RSS; 绑核: 4; commit: `e0c5294`（变体 B + 三处优化器修复；当时为工作树快照）; 日期: 2026-09-21
 
 | 基准 | fat 最小 (ms) | raw 最小 (ms) | fat/raw | fat 峰值 RSS (MB) | raw 峰值 RSS (MB) | 输出一致 | 规模 |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
