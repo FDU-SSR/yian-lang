@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable
 
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -89,17 +90,15 @@ class DefiniteAssignment:
 
     Usage::
 
-        da = DefiniteAssignment(def_points, type_ctx)
+        da = DefiniteAssignment(ctx)
         da.run()
         errors = da.export_errors()
-        for type_id, dp in def_points.items():
+        for type_id, dp in ctx.def_points.items():
             dp.validity = da.export_analysis(type_id)
     """
 
-    def __init__(self, def_points: dict[int, DefPoint],
-                 type_ctx: TypeCtx) -> None:
-        self.__def_points = def_points
-        self.__type_ctx = type_ctx
+    def __init__(self, ctx: SemCtx) -> None:
+        self.__ctx = ctx
         self.__errors: list[AnalysisError] = []
         self.__analyses: dict[int, FuncAnalysis] = {}
 
@@ -145,7 +144,7 @@ class DefiniteAssignment:
 
     def run(self) -> None:
         """Run the analysis over all DefPoints."""
-        for dp in self.__def_points.values():
+        for dp in self.__ctx.def_points.values():
             if dp.body is None:
                 continue
             self.__analyze_def_point(dp)
@@ -831,9 +830,9 @@ class DefiniteAssignment:
     def __all_fields_valid(self, sym_id: int, type_id: int, prefix: tuple[int | str, ...], state: DAState) -> bool:
         """Return True when every field / element of the type at *type_id*
         is provably VALID under the given *prefix*."""
-        ty = self.__type_ctx[type_id]
+        ty = self.__ctx.type_ctx[type_id]
         if isinstance(ty, Type.StructType):
-            fields = self.__type_ctx.get_struct_fields(type_id)
+            fields = self.__ctx.type_ctx.get_struct_fields(type_id)
             return all(
                 self.__is_field_or_whole_valid(sym_id, (*prefix, f.name), f.type_id, state)
                 for f in fields
@@ -872,7 +871,7 @@ class DefiniteAssignment:
         # always initialized, so a use is never "before assignment".
         assert self.__symbol_ctx is not None
         sym = self.__symbol_ctx.get(sym_id)
-        if self.__type_ctx.is_zst(sym.type_id):
+        if self.__ctx.type_ctx.is_zst(sym.type_id):
             return
 
         # Try recursive inference

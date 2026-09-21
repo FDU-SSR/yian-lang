@@ -26,6 +26,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.positions import path_to_uri, to_lsp_range
 from compiler.analysis.session import AnalysisSession, collect_an_files
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.utils.log import CompilerLog
@@ -41,7 +42,6 @@ from compiler.analysis.source_provenance import build_source_trust, resolve_stdl
 from compiler.format import format_text
 from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
 from compiler.codegen.cfg.passes.cleanup import Cleanup
@@ -296,15 +296,15 @@ def __analyze_payload(result: object) -> dict[str, object]:
     }
 
 
-def __cfg(
-    def_points: dict[int, DefPoint],
-    type_ctx: TypeCtx,
-    raw_pointers: bool = False,
-) -> dict[int, CFG_IR.Function]:
-    """CFG 三段 pass 的编排：下降 → 检查插入 → 后处理。"""
-    cfg_lower = CfgTranslator(type_ctx, raw_pointers=raw_pointers)
+def __cfg(ctx: SemCtx) -> dict[int, CFG_IR.Function]:
+    """CFG 三段 pass 的编排：下降 → 检查插入 → 后处理。
+
+    输入取自中端共享上下文（`ctx.def_points` / `ctx.type_ctx` / `ctx.raw_pointers`）；
+    CFG 侧自带 `CfgCtx`（每函数事实 + 函数表），两层的上下文各自管自己那一层。
+    """
+    cfg_lower = CfgTranslator(ctx.type_ctx, raw_pointers=ctx.raw_pointers)
     try:
-        cfg_lower.run(def_points)
+        cfg_lower.run(ctx.def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
     InsertChecks(cfg_lower.ctx).run()
@@ -636,9 +636,11 @@ def __run(argv: list[str] | None = None) -> int:
         timings["restricted_ops"] = time.perf_counter() - restricted_start
 
     type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
+    # 中端各段共享的上下文：session 资源 + 产物表 + 每 def 事实
+    ctx = SemCtx(type_ctx, args.raw_pointers, unit_datas, packages, source_trust.stdlib_root)
 
     resolve_start = time.perf_counter() if args.profile else 0.0
-    global_resolver = GlobalResolve(unit_datas, type_ctx, packages, source_trust.stdlib_root)
+    global_resolver = GlobalResolve(ctx)
     try:
         global_resolver.run()
     except AnalysisError as error:
@@ -658,7 +660,7 @@ def __run(argv: list[str] | None = None) -> int:
     # The program entry comes from the package map; a `lib` root has none, which
     # is only acceptable for analysis-only runs. Code generation always consumes
     # the entry-reachable subset (G23).
-    type_checker = TypeCheck(unit_datas, type_ctx, packages, require_entry=args.target != "none")
+    type_checker = TypeCheck(ctx, require_entry=args.target != "none")
     try:
         type_checker.run()
     except AnalysisError as error:
@@ -666,42 +668,44 @@ def __run(argv: list[str] | None = None) -> int:
     except CompilerError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    def_points = type_checker.export_generated()
+    ctx.declare_def_points(type_checker.export_generated())
 
     # --- Compile-time conditional specialization ---
     unit_names = __build_unit_names(unit_datas, packages)
     type_size = __type_size_provider(type_ctx, unit_names, args.raw_pointers)
     try:
-        ComptimeIfSpecializer(def_points, type_ctx, is_raw_mode=args.raw_pointers, type_size=type_size).run()
+        ComptimeIfSpecializer(ctx, type_size).run()
     except AnalysisError as error:
         __report_error(error, stage=Stage.COMPTIME)
 
     # --- Closure lowering pass ---
     from compiler.analysis.passes.closure_lowering import ClosureLowering
-    ClosureLowering(def_points, type_ctx).run()
+    ClosureLowering(ctx).run()
 
-    ch_main.debug(f"type-checked {len(def_points)} definitions")
+    ch_main.debug(f"type-checked {len(ctx.def_points)} definitions")
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start
 
     # --- Definite Assignment Analysis ---
     da_start = time.perf_counter() if args.profile else 0.0
-    da_pass = DefiniteAssignment(def_points, type_ctx)
+    da_pass = DefiniteAssignment(ctx)
     da_pass.run()
     da_errors = da_pass.export_errors()
     if da_errors:
         __report_error(da_errors[0], stage=Stage.DEFINITE_ASSIGNMENT)
-    for type_id, dp in def_points.items():
+    for type_id, dp in ctx.def_points.items():
         dp.validity = da_pass.export_analysis(type_id)
     if args.profile:
         timings["definite_assignment"] = time.perf_counter() - da_start
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(def_points, type_ctx, raw_pointers=args.raw_pointers)
+    cfg_functions = __cfg(ctx)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.dump:
-        (Path("build") / "hir.txt").write_text(format_hir_output(unit_datas, def_points, type_ctx), encoding="utf-8")
+        (Path("build") / "hir.txt").write_text(
+            format_hir_output(ctx.unit_datas, ctx.def_points, ctx.type_ctx), encoding="utf-8"
+        )
         (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
     if args.profile:
         timings["cfg_codegen"] = time.perf_counter() - cfg_start

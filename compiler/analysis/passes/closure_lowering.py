@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from typing import cast
 
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
+
 from compiler.analysis.ty.ty import AccessMode, StructField
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
@@ -26,9 +27,8 @@ from compiler.frontend.parse.operator import UnaryOperator
 class ClosureLowering:
     """Post-TypeCheck pass that eliminates ClosureType from the HIR."""
 
-    def __init__(self, def_points: dict[int, DefPoint], type_ctx: TypeCtx):
-        self.__def_points = def_points
-        self.__type_ctx = type_ctx
+    def __init__(self, ctx: SemCtx):
+        self.__ctx = ctx
         # Per-closure state for the HIR rewrite
         self.__sid_to_field: dict[int, tuple[str, int, int]] = {}
         self.__self_sid: int = 0
@@ -37,26 +37,26 @@ class ClosureLowering:
 
     def run(self) -> None:
         # --- Phase 1: lower closure DefPoints ---
-        for dp in list(self.__def_points.values()):
+        for dp in list(self.__ctx.def_points.values()):
             if dp.body is None:
                 continue
-            ty = self.__type_ctx[dp.type_id]
+            ty = self.__ctx.type_ctx[dp.type_id]
             if not isinstance(ty, Type.ClosureType):
                 continue
             self.__lower_one(dp, ty)
 
         # --- Phase 2: erase ClosureType from all HIR bodies and symbols ---
-        for dp in self.__def_points.values():
+        for dp in self.__ctx.def_points.values():
             if dp.body is None:
                 continue
             dp.body = cast(HIR.Block, self.__rewrite_type_ids(dp.body))
             self.__rewrite_symbol_types(dp.symbol_ctx)
 
         # --- Phase 3: rewrite ClosureType in TypeCtx type signatures ---
-        for type_id, ty in list(self.__type_ctx.items()):
+        for type_id, ty in list(self.__ctx.type_ctx.items()):
             if isinstance(ty, Type.StructType):
                 if self.__rewrite_struct_sig(ty):
-                    self.__type_ctx.invalidate_struct_fields_cache(type_id)
+                    self.__ctx.type_ctx.invalidate_struct_fields_cache(type_id)
             elif isinstance(ty, Type.FunctionType):
                 self.__rewrite_fn_sig(ty)
             elif isinstance(ty, Type.MethodType):
@@ -85,7 +85,7 @@ class ClosureLowering:
                 continue
             call_sym_ctx.add_symbol_with_id(sid, sym.name, sym.kind, sym.type_id)
         # self is a reference (like in __check_method)
-        self_ref_type_id = self.__type_ctx.alloc_ref(struct_type_id)
+        self_ref_type_id = self.__ctx.type_ctx.alloc_ref(struct_type_id)
         self_sid = call_sym_ctx.add_symbol("self", SymbolKind.Variable, self_ref_type_id)
         assert self_sid is not None
 
@@ -269,16 +269,16 @@ class ClosureLowering:
             ty.custom_def.return_type = self.__struct_id(ret)
 
     def __is_closure_type(self, type_id: int) -> bool:
-        ty = self.__type_ctx[type_id]
+        ty = self.__ctx.type_ctx[type_id]
         return isinstance(ty, Type.ClosureType)
 
     def __struct_id(self, closure_type_id: int) -> int:
-        ty = self.__type_ctx[closure_type_id]
+        ty = self.__ctx.type_ctx[closure_type_id]
         assert isinstance(ty, Type.ClosureType)
         return ty.struct_type_id
 
     def __method_id(self, closure_type_id: int) -> int:
-        ty = self.__type_ctx[closure_type_id]
+        ty = self.__ctx.type_ctx[closure_type_id]
         assert isinstance(ty, Type.ClosureType)
         return ty.call_method_type_id
 
@@ -291,7 +291,7 @@ class ClosureLowering:
         for cv in captured_vars:
             sid = capture_sids.get(cv.name)
             if sid is not None:
-                field = self.__type_ctx.get_struct_field_by_name(struct_type_id, cv.name)
+                field = self.__ctx.type_ctx.get_struct_field_by_name(struct_type_id, cv.name)
                 if field is not None:
                     self.__sid_to_field[sid] = (cv.name, field.type_id, field.index)
         self.__self_sid = self_sid

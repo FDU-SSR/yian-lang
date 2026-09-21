@@ -12,11 +12,11 @@ definition it could not type.
 
 from __future__ import annotations
 
+from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
 from compiler.analysis.diagnostics import Diagnostic, Stage, diagnostic_from_error
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.lowering.sem_ctx import DefKind, SemCtx
-from compiler.analysis.package_map import PackageMap
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -39,11 +39,9 @@ RECOVERABLE_ERRORS = (AnalysisError, CompilerError)
 
 
 class TypeCheck:
-    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx, packages: PackageMap | None = None,
-                 require_entry: bool = True, entry_optional: bool = False, recover: bool = False):
-        self.__units = units
-        self.__type_ctx = type_ctx
-        self.__packages = packages
+    def __init__(self, ctx: SemCtx, require_entry: bool = True,
+                 entry_optional: bool = False, recover: bool = False):
+        self.__ctx = ctx
         # A library root has no program entry; `-t none` still checks its
         # definitions, but a codegen run without an entry is a user error.
         self.__require_entry = require_entry
@@ -72,7 +70,7 @@ class TypeCheck:
         self.__current_locals: list[int] = []
         self.__current_params: list[int] = []
 
-        self.__sem_ctx = SemCtx(type_ctx)
+        self.__sem_ctx = ctx
         self.__expr_helper = ExprChecker(self.__sem_ctx)
 
         # wire sem_ctx reachable-def reporter to our enqueue function
@@ -87,9 +85,9 @@ class TypeCheck:
         """
         if type_id in self.__def_points:
             return
-        body, unit_id = self.__type_ctx.get_procedure(type_id)
+        body, unit_id = self.__ctx.type_ctx.get_procedure(type_id)
 
-        unit = self.__units[unit_id]
+        unit = self.__ctx.unit_datas[unit_id]
         dp = DefPoint(type_id=type_id, unit_id=unit_id, ast_body=body, symbol_ctx=unit.symbol_ctx)
         self.__def_points[type_id] = dp
         self.__worklist.append(dp)
@@ -111,7 +109,7 @@ class TypeCheck:
             if def_point.type_id in processed_def:
                 continue
             processed_def.add(def_point.type_id)
-            ch_tc().trace(lambda: f"checking {self.__type_ctx.get_name(def_point.type_id)}")
+            ch_tc().trace(lambda: f"checking {self.__ctx.type_ctx.get_name(def_point.type_id)}")
             try:
                 self.__type_check_def(def_point)
             except RECOVERABLE_ERRORS as error:
@@ -142,12 +140,12 @@ class TypeCheck:
         self.__generating = False
         seeded = 0
         skipped_generic = 0
-        for type_id, _body, unit_id in self.__type_ctx.iter_procedures():
+        for type_id, _body, unit_id in self.__ctx.type_ctx.iter_procedures():
             if type_id in self.__def_points:
                 continue
             if not self.__is_root_unit(unit_id):
                 continue
-            if self.__type_ctx.contains_generic(type_id):
+            if self.__ctx.type_ctx.contains_generic(type_id):
                 skipped_generic += 1
                 continue
             self.__report_def_point(type_id)
@@ -156,13 +154,13 @@ class TypeCheck:
 
     def __is_root_unit(self, unit_id: int) -> bool:
         """True when *unit_id* belongs to the code being checked."""
-        unit = self.__units[unit_id]
-        if self.__packages is not None and self.__packages.root is not None:
-            owner = self.__packages.package_of(unit.path)
+        unit = self.__ctx.unit_datas[unit_id]
+        if self.__ctx.packages is not None and self.__ctx.packages.root is not None:
+            owner = self.__ctx.packages.package_of(unit.path)
             # A file that belongs to no package is not part of a dependency: it
             # is an extra file on the command line, or an editor buffer outside
             # every source root, and the caller asked for it to be checked.
-            return owner == self.__packages.root or owner is None
+            return owner == self.__ctx.packages.root or owner is None
         return not unit.is_stdlib
 
     def export(self) -> dict[int, DefPoint]:
@@ -206,12 +204,12 @@ class TypeCheck:
         ``main`` without colliding with the program (G22). Without one, the
         entry is the single ``main`` of the non-stdlib units.
         """
-        if self.__packages is not None and self.__packages.root is not None:
+        if self.__ctx.packages is not None and self.__ctx.packages.root is not None:
             self.__find_package_main()
             return
 
         candidates: list[tuple[UnitData, AST.FuncDef]] = []
-        for unit in self.__units.values():
+        for unit in self.__ctx.unit_datas.values():
             if unit.is_stdlib:
                 continue
             item = self.__main_def(unit)
@@ -231,10 +229,10 @@ class TypeCheck:
         self.__register_main(candidates[0][0], candidates[0][1])
 
     def __find_package_main(self) -> None:
-        assert self.__packages is not None
-        root = self.__packages.root
+        assert self.__ctx.packages is not None
+        root = self.__ctx.packages.root
         assert root is not None
-        spec = self.__packages.packages.get(root)
+        spec = self.__ctx.packages.packages.get(root)
         if spec is None:
             raise CompilerError(f"the --packages file has no entry for root package '{root}'")
         if spec.entry is None:
@@ -243,7 +241,7 @@ class TypeCheck:
             return
 
         entry = spec.entry.resolve()
-        unit = next((u for u in self.__units.values() if u.path.resolve() == entry), None)
+        unit = next((u for u in self.__ctx.unit_datas.values() if u.path.resolve() == entry), None)
         if unit is None:
             raise CompilerError(f"Program entry {entry} was not passed to the compiler")
         item = self.__main_def(unit)
@@ -268,12 +266,12 @@ class TypeCheck:
         symbol = unit.symbol_ctx.lookup("main")
         assert symbol is not None
 
-        main_ty = self.__type_ctx[symbol.type_id]
+        main_ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(main_ty, Type.FunctionType)
-        ret_ty = main_ty.return_type(self.__type_ctx)
-        if ret_ty != self.__type_ctx.void_id:
+        ret_ty = main_ty.return_type(self.__ctx.type_ctx)
+        if ret_ty != self.__ctx.type_ctx.void_id:
             raise AnalysisError(
-                f"main must return void, not {self.__type_ctx.get_name(ret_ty)}; "
+                f"main must return void, not {self.__ctx.type_ctx.get_name(ret_ty)}; "
                 "use std.core.env.exit(code) for non-zero exit",
                 item.span,
             )
@@ -288,7 +286,7 @@ class TypeCheck:
         self.__current_type_id = def_point.type_id
         self.__current_locals = []
 
-        ty = self.__type_ctx[self.__current_type_id]
+        ty = self.__ctx.type_ctx[self.__current_type_id]
         if isinstance(ty, Type.ClosureType):
             def_point.body = self.__check_closure(def_point)
         elif isinstance(ty, Type.FunctionType):
@@ -304,7 +302,7 @@ class TypeCheck:
         def_point.symbol_ctx = self.__sem_ctx.symbol_ctx
 
     def __check_function(self, def_point: DefPoint) -> HIR.Block:
-        func_ty = self.__type_ctx[self.__current_type_id]
+        func_ty = self.__ctx.type_ctx[self.__current_type_id]
         assert isinstance(func_ty, Type.FunctionType)
 
         self.__sem_ctx.begin_def(
@@ -312,7 +310,7 @@ class TypeCheck:
             def_type_id=def_point.type_id,
             def_kind=DefKind.Function,
             ast_body=def_point.ast_body,
-            return_type_id=func_ty.return_type(self.__type_ctx),
+            return_type_id=func_ty.return_type(self.__ctx.type_ctx),
             receiver_type_id=None,
             is_static=False,
             symbol_ctx=def_point.symbol_ctx.clone(),
@@ -322,13 +320,13 @@ class TypeCheck:
         assert self.__sem_ctx.symbol_ctx is not None
 
         for generic_id, generic_arg_id in zip(func_ty.custom_def.generics, func_ty.generic_args):
-            generic_ty = self.__type_ctx[generic_id]
+            generic_ty = self.__ctx.type_ctx[generic_id]
             if isinstance(generic_ty, Type.GenericType):
                 self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg_id)
             elif isinstance(generic_ty, Type.ConstGenericType):
                 self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.ConstGeneric, generic_arg_id)
 
-        for param in func_ty.parameters(self.__type_ctx):
+        for param in func_ty.parameters(self.__ctx.type_ctx):
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id, span=param.span)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
@@ -336,12 +334,12 @@ class TypeCheck:
         self.__current_params = list(self.__sem_ctx.locals)
 
         body = self.__expr_helper.check_block(def_point.ast_body)
-        return_type_id = func_ty.return_type(self.__type_ctx)
+        return_type_id = func_ty.return_type(self.__ctx.type_ctx)
         self.__coerce_expression_body_tail(body, return_type_id)
         return body
 
     def __check_method(self, def_point: DefPoint) -> HIR.Block:
-        method_ty = self.__type_ctx[self.__current_type_id]
+        method_ty = self.__ctx.type_ctx[self.__current_type_id]
         assert isinstance(method_ty, Type.MethodType)
 
         self.__sem_ctx.begin_def(
@@ -349,8 +347,8 @@ class TypeCheck:
             def_type_id=def_point.type_id,
             def_kind=DefKind.Method,
             ast_body=def_point.ast_body,
-            return_type_id=method_ty.return_type(self.__type_ctx),
-            receiver_type_id=method_ty.receiver_type(self.__type_ctx),
+            return_type_id=method_ty.return_type(self.__ctx.type_ctx),
+            receiver_type_id=method_ty.receiver_type(self.__ctx.type_ctx),
             is_static=method_ty.custom_def.is_static,
             symbol_ctx=def_point.symbol_ctx.clone(),
         )
@@ -359,22 +357,22 @@ class TypeCheck:
         assert self.__sem_ctx.symbol_ctx is not None
 
         for generic_id, generic_arg_id in zip(method_ty.custom_def.generics, method_ty.generic_args):
-            generic_ty = self.__type_ctx[generic_id]
+            generic_ty = self.__ctx.type_ctx[generic_id]
             if isinstance(generic_ty, Type.GenericType):
                 self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.Type, generic_arg_id)
             elif isinstance(generic_ty, Type.ConstGenericType):
                 self.__sem_ctx.symbol_ctx.add_symbol(generic_ty.name, SymbolKind.ConstGeneric, generic_arg_id)
 
-        self_type_id = method_ty.receiver_type(self.__type_ctx)
+        self_type_id = method_ty.receiver_type(self.__ctx.type_ctx)
         self.__sem_ctx.symbol_ctx.add_symbol("Self", SymbolKind.Type, self_type_id)
 
         if not method_ty.custom_def.is_static:
-            ref_type_id = self.__type_ctx.alloc_ref(self_type_id)
+            ref_type_id = self.__ctx.type_ctx.alloc_ref(self_type_id)
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol("self", SymbolKind.Variable, ref_type_id)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
 
-        for param in method_ty.parameters(self.__type_ctx):
+        for param in method_ty.parameters(self.__ctx.type_ctx):
             symbol_id = self.__sem_ctx.symbol_ctx.add_symbol(param.name, SymbolKind.Variable, param.type_id, span=param.span)
             assert symbol_id is not None
             self.__sem_ctx.push_local(symbol_id)
@@ -382,14 +380,14 @@ class TypeCheck:
         self.__current_params = list(self.__sem_ctx.locals)
 
         body = self.__expr_helper.check_block(def_point.ast_body)
-        return_type_id = method_ty.return_type(self.__type_ctx)
+        return_type_id = method_ty.return_type(self.__ctx.type_ctx)
         self.__coerce_expression_body_tail(body, return_type_id)
         return body
 
     def __check_closure(self, def_point: DefPoint) -> HIR.Block:
         """Type-check a closure body. Captures are injected as local variables.
         The lowering pass later rewrites them to FieldAccess(self, field)."""
-        closure_ty = self.__type_ctx[def_point.type_id]
+        closure_ty = self.__ctx.type_ctx[def_point.type_id]
         assert isinstance(closure_ty, Type.ClosureType)
 
         self.__sem_ctx.begin_def(

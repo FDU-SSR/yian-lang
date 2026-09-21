@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.package_map import PackageMap
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -18,23 +18,20 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 
 if TYPE_CHECKING:
-    from compiler.analysis.ty.context import TypeCtx
     from compiler.analysis.unit.unit_data import UnitData
 
 
 class GlobalResolve:
-    def __init__(self, units: dict[int, UnitData], type_ctx: TypeCtx,
-                 packages: PackageMap | None = None,
-                 stdlib_root: Path | None = None) -> None:
-        self.__units = units
-        self.__type_ctx = type_ctx
+    def __init__(self, ctx: SemCtx) -> None:
+        self.__ctx = ctx
 
-        self.__path_lookup: dict[Path, UnitData] = {unit.path.resolve(): unit for unit in units.values()}
+        self.__path_lookup: dict[Path, UnitData] = {
+            unit.path.resolve(): unit for unit in ctx.unit_datas.values()
+        }
         self.__std_lookup: dict[tuple[str, ...], UnitData] = {}
-        self.__stdlib_root = (stdlib_root or default_stdlib_root()).resolve()
+        self.__stdlib_root = (ctx.stdlib_root or default_stdlib_root()).resolve()
 
-        self.__packages = packages
-        self.__strict_pkg = packages is not None
+        self.__strict_pkg = ctx.packages is not None
 
         # Guards alias bodies that are being produced right now, see
         # __resolve_alias: a body that reaches its own alias is a cycle.
@@ -46,16 +43,16 @@ class GlobalResolve:
         self.__build_std_lookup()
 
     def run(self) -> None:
-        for unit in self.__units.values():
+        for unit in self.__ctx.unit_datas.values():
             self.__collect_symbols(unit)
 
-        for unit in self.__units.values():
+        for unit in self.__ctx.unit_datas.values():
             self.__resolve_imports(unit)
 
-        for unit in self.__units.values():
+        for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
 
-        self.__type_ctx.check_impls()
+        self.__ctx.type_ctx.check_impls()
 
     def import_edges(self) -> dict[int, tuple[int, ...]]:
         """Resolved import edges: unit id → unit ids it imports (deduplicated)."""
@@ -65,7 +62,7 @@ class GlobalResolve:
         }
 
     def __build_std_lookup(self) -> None:
-        for unit in self.__units.values():
+        for unit in self.__ctx.unit_datas.values():
             if not unit.is_stdlib:
                 continue
             try:
@@ -94,7 +91,7 @@ class GlobalResolve:
             match item:
                 case AST.Alias(name=name, attrs=attrs, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_alias(name.name, span)
+                    type_id = self.__ctx.type_ctx.alloc_alias(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -104,14 +101,14 @@ class GlobalResolve:
                     symbol = unit.symbol_ctx.get(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__type_ctx[symbol.type_id]
+                    ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.AliasType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
 
                 case AST.FuncDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_function(name.name, span)
+                    type_id = self.__ctx.type_ctx.alloc_function(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -121,14 +118,14 @@ class GlobalResolve:
                     symbol = unit.symbol_ctx.get(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__type_ctx[symbol.type_id]
+                    ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.FunctionType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
 
                 case AST.StructDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_struct(name.name, span)
+                    type_id = self.__ctx.type_ctx.alloc_struct(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -138,7 +135,7 @@ class GlobalResolve:
                     symbol = unit.symbol_ctx.get(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__type_ctx[symbol.type_id]
+                    ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.StructType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
@@ -146,7 +143,7 @@ class GlobalResolve:
 
                 case AST.EnumDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_enum(name.name, span)
+                    type_id = self.__ctx.type_ctx.alloc_enum(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -156,7 +153,7 @@ class GlobalResolve:
                     symbol = unit.symbol_ctx.get(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__type_ctx[symbol.type_id]
+                    ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.EnumType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
@@ -164,7 +161,7 @@ class GlobalResolve:
 
                 case AST.TraitDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
-                    type_id = self.__type_ctx.alloc_trait(name.name, span)
+                    type_id = self.__ctx.type_ctx.alloc_trait(name.name, span)
 
                     # alloc in symbol space
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -174,7 +171,7 @@ class GlobalResolve:
                     symbol = unit.symbol_ctx.get(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__type_ctx[symbol.type_id]
+                    ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.TraitType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
@@ -194,10 +191,10 @@ class GlobalResolve:
         for param in item_generics:
             match param:
                 case AST.TypeGenericParam(name=name):
-                    generics.append(self.__type_ctx.alloc_generic(name.name))
+                    generics.append(self.__ctx.type_ctx.alloc_generic(name.name))
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
-                    generics.append(self.__type_ctx.alloc_const_generic(name.name, vt_id))
+                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    generics.append(self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id))
         return generics
 
     def __resolve_imports(self, unit: UnitData) -> None:
@@ -227,7 +224,7 @@ class GlobalResolve:
             # for `import A` it is the name that is bound, and for `import A as B`
             # the original spelling of `A` appears nowhere else in the file.  An
             # editor needs it to rename `A` without leaving the import behind.
-            self.__type_ctx.record_name_ref(item.target.span, target_symbol, target_symbol.type_id)
+            self.__ctx.type_ctx.record_name_ref(item.target.span, target_symbol, target_symbol.type_id)
             self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
@@ -242,7 +239,7 @@ class GlobalResolve:
         if len(paths) == 0:
             raise AnalysisError("Cannot resolve import path: <empty>", span)
 
-        if self.__packages is not None:
+        if self.__ctx.packages is not None:
             return self.__resolve_package_import(unit, paths, span)
 
         if paths[0] == "std":
@@ -259,7 +256,7 @@ class GlobalResolve:
 
     def __resolve_package_import(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
         """Package-mode import resolution and its AX009/AX010/AX012/AX014 diagnostics."""
-        packages = self.__packages
+        packages = self.__ctx.packages
         assert packages is not None
 
         first = paths[0]
@@ -312,7 +309,7 @@ class GlobalResolve:
         ``src/dup/foo.an`` can never be imported. That is a consequence of the
         rule rather than a defect, so it is reported as a warning, not an error.
         """
-        packages = self.__packages
+        packages = self.__ctx.packages
         if packages is None or importer is None or importer == first:
             return
         spec = packages.packages.get(importer)
@@ -363,7 +360,7 @@ class GlobalResolve:
         """
         symbol = unit.symbol_ctx.lookup(alias.name.name)
         assert symbol is not None
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.AliasType)
 
         if ty.type_id in self.__filling_aliases:
@@ -374,7 +371,7 @@ class GlobalResolve:
             self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
 
             try:
-                aliased_type_id = self.__type_ctx.resolve_type(alias.target, unit.symbol_ctx)
+                aliased_type_id = self.__ctx.type_ctx.resolve_type(alias.target, unit.symbol_ctx)
             finally:
                 unit.symbol_ctx.exit_scope()
 
@@ -386,7 +383,7 @@ class GlobalResolve:
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup(func_def.name.name)
         assert symbol is not None
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.FunctionType)
 
         # resolve generics, parameters and return type
@@ -395,15 +392,15 @@ class GlobalResolve:
         parameters = [
             Type.Parameter(
                 name=param.name.name,
-                type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                type_id=self.__ctx.type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
                 span=param.name.span,
             )
             for param in func_def.params
         ]
         if func_def.ret_type is None:
-            ret_type_id = self.__type_ctx.void_id
+            ret_type_id = self.__ctx.type_ctx.void_id
         else:
-            ret_type_id = self.__type_ctx.resolve_type(func_def.ret_type, unit.symbol_ctx)
+            ret_type_id = self.__ctx.type_ctx.resolve_type(func_def.ret_type, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the function symbol with the resolved type
@@ -411,7 +408,7 @@ class GlobalResolve:
         ty.custom_def.return_type = ret_type_id
 
         # add the resolved procedure to the type context
-        self.__type_ctx.add_procedure(ty.type_id, func_def.body, unit.unit_id)
+        self.__ctx.type_ctx.add_procedure(ty.type_id, func_def.body, unit.unit_id)
 
     def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: list[int]) -> None:
         """进入泛型作用域，注册类型泛型和常量泛型符号。"""
@@ -426,7 +423,7 @@ class GlobalResolve:
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
         symbol = unit.symbol_ctx.lookup(struct_def.name.name)
         assert symbol is not None
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.StructType)
 
         # resolve generics and fields
@@ -434,7 +431,7 @@ class GlobalResolve:
 
         fields: list[Type.StructField] = []
         for index, field in enumerate(struct_def.fields):
-            field_type_id = self.__type_ctx.resolve_type(field.field_type, unit.symbol_ctx)
+            field_type_id = self.__ctx.type_ctx.resolve_type(field.field_type, unit.symbol_ctx)
             is_pub = any(attr.kind == AST.AttrKind.Pub for attr in field.attrs)
             fields.append(Type.StructField(
                 name=field.name.name,
@@ -451,7 +448,7 @@ class GlobalResolve:
     def __resolve_enum_def(self, unit: UnitData, enum_def: AST.EnumDef) -> None:
         symbol = unit.symbol_ctx.lookup(enum_def.name.name)
         assert symbol is not None
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.EnumType)
 
         # resolve generics and variants
@@ -462,11 +459,11 @@ class GlobalResolve:
             payload_type_id = None
             if len(variant.fields) > 0:
                 field_names = [field.name.name for field in variant.fields]
-                field_types = [self.__type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
+                field_types = [self.__ctx.type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
                 # The payload's fields are written in the variant declaration, so
                 # their name spans are real source positions.
                 field_spans = [field.name.span for field in variant.fields]
-                payload_type_id = self.__type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types, generics=ty.custom_def.generics, span=variant.span, field_spans=field_spans)
+                payload_type_id = self.__ctx.type_ctx.alloc_unnamed_struct(symbol.name, field_names, field_types, generics=ty.custom_def.generics, span=variant.span, field_spans=field_spans)
             variants.append(Type.EnumVariant(
                 name=variant.name.name,
                 payload_type=payload_type_id,
@@ -481,7 +478,7 @@ class GlobalResolve:
     def __resolve_trait_def(self, unit: UnitData, trait_def: AST.TraitDef) -> None:
         symbol = unit.symbol_ctx.lookup(trait_def.name.name)
         assert symbol is not None
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.TraitType)
 
         # resolve generics and methods
@@ -497,7 +494,7 @@ class GlobalResolve:
                 case AST.MethodDef():
                     method_type_id = self.__resolve_method_decl(unit, item.decl, ty.custom_def.generics, symbol.type_id, False)
                     method_name = item.decl.name.name
-                    self.__type_ctx.add_procedure(method_type_id, item.body, unit.unit_id)
+                    self.__ctx.type_ctx.add_procedure(method_type_id, item.body, unit.unit_id)
             methods[method_name] = method_type_id
         unit.symbol_ctx.exit_scope()
 
@@ -511,35 +508,35 @@ class GlobalResolve:
         for param in impl.generics:
             match param:
                 case AST.TypeGenericParam(name=name):
-                    g_id = self.__type_ctx.alloc_generic(name.name)
+                    g_id = self.__ctx.type_ctx.alloc_generic(name.name)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
-                    g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
+                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    g_id = self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
-        target_type_id = self.__type_ctx.resolve_type(impl.target, unit.symbol_ctx)
+        target_type_id = self.__ctx.type_ctx.resolve_type(impl.target, unit.symbol_ctx)
         unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, target_type_id)
 
         trait_type_id = None
         if impl.trait is not None:
-            trait_type_id = self.__type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
+            trait_type_id = self.__ctx.type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
 
         conditions: dict[int, list[int]] = {}
         for param_name, trait_types in impl.conditions:
             symbol = unit.symbol_ctx.lookup(param_name.name)
             assert symbol is not None, f"condition parameter '{param_name.name}' not found"
             generic_id = symbol.type_id
-            conditions[generic_id] = [self.__type_ctx.resolve_type(tt, unit.symbol_ctx) for tt in trait_types]
+            conditions[generic_id] = [self.__ctx.type_ctx.resolve_type(tt, unit.symbol_ctx) for tt in trait_types]
 
-        impl_obj = self.__type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id, conditions)
+        impl_obj = self.__ctx.type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id, conditions)
 
         for item in impl.items:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)
 
             # add the resolved procedure to the type context
-            self.__type_ctx.add_procedure(method_id, item.body, unit.unit_id)
+            self.__ctx.type_ctx.add_procedure(method_id, item.body, unit.unit_id)
 
             impl_obj.methods[item.decl.name.name] = method_id
 
@@ -547,7 +544,7 @@ class GlobalResolve:
 
     def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: list[int], receiver_type_id: int, is_header: bool) -> int:
         # alloc in type space
-        type_id = self.__type_ctx.alloc_method(decl.name.name, span=decl.span)
+        type_id = self.__ctx.type_ctx.alloc_method(decl.name.name, span=decl.span)
 
         # alloc in symbol space
         symbol_attrs = self.__convert_attrs(decl.attrs)
@@ -562,30 +559,30 @@ class GlobalResolve:
         for param in decl.generics:
             match param:
                 case AST.TypeGenericParam(name=name):
-                    g_id = self.__type_ctx.alloc_generic(name.name)
+                    g_id = self.__ctx.type_ctx.alloc_generic(name.name)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__type_ctx.resolve_type(vty, unit.symbol_ctx)
-                    g_id = self.__type_ctx.alloc_const_generic(name.name, vt_id)
+                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    g_id = self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
         parameters = [
             Type.Parameter(
                 name=param.name.name,
-                type_id=self.__type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                type_id=self.__ctx.type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
                 span=param.name.span,
             )
             for param in decl.params
         ]
         if decl.ret_type is None:
-            ret_type_id = self.__type_ctx.void_id
+            ret_type_id = self.__ctx.type_ctx.void_id
         else:
-            ret_type_id = self.__type_ctx.resolve_type(decl.ret_type, unit.symbol_ctx)
+            ret_type_id = self.__ctx.type_ctx.resolve_type(decl.ret_type, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the method symbol with the resolved type
-        ty = self.__type_ctx[symbol.type_id]
+        ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.MethodType)
         ty.custom_def.generics = generics.copy()
         ty.custom_def.receiver_type = receiver_type_id

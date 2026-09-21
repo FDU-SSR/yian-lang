@@ -33,6 +33,7 @@ from compiler.analysis.diagnostics import (
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.index import DeclarationIndex, LazyIndex
+from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.global_resolve import GlobalResolve
@@ -268,7 +269,8 @@ class AnalysisSession:
             )
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
-        resolver = GlobalResolve(units, type_ctx, self.__packages, source_trust.stdlib_root)
+        ctx = SemCtx(type_ctx, self.__raw_pointers, units, self.__packages, source_trust.stdlib_root)
+        resolver = GlobalResolve(ctx)
         try:
             resolver.run()
         except ANALYSIS_ERRORS as error:
@@ -296,9 +298,7 @@ class AnalysisSession:
         # with several broken definitions reports all of them: recovery
         # granularity is the top-level definition.
         checker = TypeCheck(
-            units,
-            type_ctx,
-            self.__packages,
+            ctx,
             require_entry=require_entry,
             entry_optional=True,
             recover=True,
