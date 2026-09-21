@@ -367,6 +367,64 @@ A/B，min-of-5；B1 用 `55400da` 的源码树直接编译同一基准，排除�
 
 `churn_single` 除掉 live 后仍比 B1 慢约 8%，同样指向表示层的其它项（块头/extent 等），不在检查射程内。
 
+### 5.8 候选 B 设计：把堆指针的 live 从全局锁表搬回块头
+
+**目标**：堆指针的 `live` 不再"下标算术 + 512 MB 表里的一次独立 load"，改为"指针自带锚点 →
+读块头里与负载同一条 cache line 的 key"。块头仍是 8 B（`{extent:u32, pad:u32}` 的 `pad` 放 key）。
+
+**上界已经被实测过：就是 B1 配置**（key 在块头、没有锁表，代价是 16 B 头）。同机对照：
+
+| 基准 | B（8 B 头 + 锁表） | B1（16 B 头 + 块头 key） | B1 vs B |
+| --- | --- | --- | --- |
+| `AWFY/towers` | 4868.8 ms | 4555.7 ms | **−6.4%** |
+| `fatptr/chase` | 166.3 ms | 149.8 ms | **−9.9%** |
+| `ALLOC/churn_single` | 23.4 ms | 20.3 ms | **−13.3%** |
+| `AWFY/json` | 1276.6 ms | 1586.3 ms | +24% |
+| `AWFY/storage` | ~1720 ms | 1750.5 ms | ±3% |
+| `ALLOC/churn_mixed` | 26.4 ms | 39.4 ms | +49% |
+
+即：**B1 赢的地方正是 live 贵的地方（三项回退），输的地方是 16 B 头的足迹代价**（json/churn_mixed）。
+候选 B 的收益就是"拿到 B1 的 live、保住 B 的 8 B 头"——理论上两者兼得，而不是 §5.7 里估的"25%+"。
+（§5.7 的 25% 来自"整条 load 链都不做"，把 key 语义一起去掉了；只去掉下标算术的隔离实验 E7→E8
+在 towers 上 −14%，但 json 反而 +11%，噪声主导，不足以单独支撑表示层改动。）
+
+**障碍：派生指针找不到块头**。`FieldPtr`/`ElementPtr` 产生的指针 `data` 在块内部，块头只能由**锚点**
+到达，而锚点今天存在锁表项里（`anchor_lo32`）——所以"读块头 key"对派生指针会退化成"先查表拿锚点"，
+白忙。towers/chase 的热点字段访问正好全是这种派生指针。
+
+**解法：把锚点放进指针自己**（替掉锁表下标），并留一个判别位区分堆/非堆：
+
+```text
+word = ⟨key:31 | hdr:1 | anchor_or_lock:32⟩        # 方案 B3
+  hdr = 1（堆）：anchor = (data & WINDOW_MASK) | 低 32 位
+                 live    = word ≠ 0 ∧ load32(anchor - 4) == key     # 块头 key，与负载同行
+                 is_heap = hdr                                      # 纯位判定，比下标比较更便宜
+                 del / CheckViewAccess 的锚点还原也省掉锁表
+  hdr = 0（帧/字面量/环境）：维持现有锁表路径（下标 = 低 32 位）
+```
+
+低 32 位放锚点是可行的：`del`/视图今天就已经用 `(data & WINDOW_MASK) | anchor_lo32` 还原锚点
+（分配器保证同 4 GiB 窗口），所以这只是把同一个还原搬到 `live` 上。判别位从 key 借 1 位
+（32 → 31 位代际空间；帧 SENTINEL 与 `is_heap` 判定随之调整）。
+
+**触及面**（这是表示层改动，不是 pass 改动）：
+
+- `lockmech.py`：`WORD_KEY_SHIFT/KEY_MASK/LOCK_MASK/WINDOW_MASK`、`BlockHeader`（`pad` → key）、
+  `LockEntry`、`live`/`is_heap`/`is_raw` 谓词与各字段注释；
+- `runtime/`：分配器写块头 key（不再写表项 key）、释放换代、`del` 的锚点路径、自测；
+  `runtime/build.py --check` 的 ABI 常量断言（与 `lockmech.py`、`runtime_lib.py` 对齐）；
+- `compiler/codegen/llvm/builder.py`：`__check_live`/`__lock_of`/`__word_key`、`is_heap` 判定、
+  `malloc`/`delete`/`check_view_access`/`check_delete` 的锚点路径、帧字面量 word 常量；
+- 复现 docs：`fat-pointer-representation-plan.md` §4.3 语义清单；`lockmech` 注释里的编码约定。
+
+**验证门槛**（与 A/B 变体同口径）：三套件（756/156/99，fat+raw）+ `runtime/build.py --check --asan`
++ pyright + §4.3 语义清单（one-past、视图越界、释放与复用、跨对象指针算术/比较、raw 往返）
++ A/B：`towers`/`chase`/`churn_single` 应接近 B1（−6…−13%），`json`/`churn_mixed` 应保持 B 的水平。
+
+**风险**：key 位宽 32→31 的代际空间（同槽复用 2^31 次后可能让悬垂指针重获匹配；与今天 2^32 同一量级，
+但需要写进安全文档）；判别位与帧/字面量/环境路径的既有断言；`del` 与视图是安全敏感路径，必须逐条
+对照 §4.3 清单。raw 模式完全不受影响（无锁无表）。
+
 ## 6. 验收方法
 
 ### 6.1 验收口径（按用户裁定）
@@ -411,7 +469,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P6 ✅ | C7+C8：抽 `lower/calls.py`（6 方法）、`lower/sys.py`（12）、`lower/memory.py`（10，内存原语的检查部分仍写在这里、状态经 `checks`）；三簇各自的 Host 注入；`ValueHost` 的三处内存回调用晚绑定 lambda 打破构造环 | builder 884 → **568 行** | 低（已实测忠实） | 单提交 revert |
 | P7 ✅ | C9：`lower/exprs.py::ExprLowerer`（`resolve_val` 分派器 + 14 个表达式解析）+ 判定簇 `passes/predicates.py::PtrPredicates`（3 个判定）；builder 只剩 `__init__/build/__set_terminator/__switch_to/__build_func_ptr` | builder 568 → **189 行**（目标 <200 达成），结构目标达成 | 低（已实测忠实） | 单提交 revert |
 | P8 ✅ | C3 升级为真 pass：下降不再发访问类 `Check*`，`passes/insert_checks.py` 接管判定与状态 | 路线 B 四组落地；`CheckState` 瘦身为出处三件；插入逻辑可独立演进 | **高** | 按规则分组小步提交（四组均已提交）；任一步测试或基准回退即回退该步 |
-| P9 | 检查优化。**调研结论（§5.7）：CFG 层融合与发射层分支融合都实测为零**——最终检查 CFG 由 LLVM 决定，成本在每条检查的指令序列上。有产出的路只剩"少做检查"（liveness 证明 / 跨过程参数约定）或"每次检查更便宜"（候选 B：锚定指针改读块头 key） | towers/chase/churn_single 三项回退的归因；P9 需重新定义 | 中 | 两个融合原型均已回退，代码留 `/tmp` |
+| P9 | 检查优化。**调研结论（§5.7）：CFG 层融合与发射层分支融合都实测为零**——最终检查 CFG 由 LLVM 决定，成本在每条检查的指令序列上。有产出的路只剩"少做检查"（liveness 证明 / 跨过程参数约定）或"每次检查更便宜"（候选 B，上界 = B1 实测，设计见 §5.8：把锚点放进指针、live 读块头 key，需表示层改动） | towers/chase/churn_single 三项回退的归因；P9 改为候选 B 的表示层设计 | 中 | 两个融合原型均已回退，代码留 `/tmp` |
 | P10 | 清理遗留：`WriteLockSlot` 死节点、`dump.py` 适配、`lockmech.py` 谓词一致性、移除迁移用 `provenance.verify` | 去死代码 | 低 | — |
 
 **进展（P0+P1 完成，第 10 轮）**
