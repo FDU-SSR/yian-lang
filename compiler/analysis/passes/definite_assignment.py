@@ -20,7 +20,7 @@ The state dictionary uses :class:`StateKey` keys::
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable
 
@@ -74,17 +74,6 @@ class DAState(dict[StateKey, VarState]):
 # ------------------------------------------------------------------
 
 
-@dataclass
-class FuncAnalysis:
-    """Per-function result of definite assignment analysis."""
-
-    uncertain_vars: set[int] = field(default_factory=set[int])
-    """Symbol ids whose whole variable or any field is UNCERTAIN."""
-
-    exit_state: dict[StateKey, VarState] = field(default_factory=dict[StateKey, VarState])
-    """Per-variable / per-field state at the function's block-end exit."""
-
-
 class DefiniteAssignment:
     """Definite assignment analysis pass.
 
@@ -93,19 +82,14 @@ class DefiniteAssignment:
         da = DefiniteAssignment(ctx)
         da.run()
         errors = da.export_errors()
-        for type_id, dp in ctx.def_points.items():
-            dp.validity = da.export_analysis(type_id)
     """
 
     def __init__(self, ctx: SemCtx) -> None:
         self.__ctx = ctx
         self.__errors: list[AnalysisError] = []
-        self.__analyses: dict[int, FuncAnalysis] = {}
 
         # Per-definition transient state (reset for each DefPoint)
         self.__symbol_ctx = None
-        self.__uncertain_vars: set[int] = set()
-        self.__exit_state: DAState | None = None
 
     # ------------------------------------------------------------------
     # state helpers (copy-on-write)
@@ -153,10 +137,6 @@ class DefiniteAssignment:
         """Return every error collected during the run."""
         return self.__errors
 
-    def export_analysis(self, type_id: int) -> FuncAnalysis | None:
-        """Return the :class:`FuncAnalysis` for the given *type_id*."""
-        return self.__analyses.get(type_id)
-
     # ------------------------------------------------------------------
     # per-definition entry point
     # ------------------------------------------------------------------
@@ -165,24 +145,13 @@ class DefiniteAssignment:
         assert dp.body is not None
 
         self.__symbol_ctx = dp.symbol_ctx
-        self.__uncertain_vars = set()
-        self.__exit_state = None
 
         # Initial state: params are VALID (whole), other locals INVALID.
         state = DAState()
         for loc in dp.locals:
             state = self.__set(state, self.__whole(loc), (VarState.VALID if loc in dp.params else VarState.INVALID))
 
-        final_state = self.__check_expr(dp.body, state)
-
-        # Merge block-end state with recorded divergent-exit states
-        if self.__exit_state is not None:
-            final_state = self.__merge_states(final_state, self.__exit_state)
-
-        self.__analyses[dp.type_id] = FuncAnalysis(
-            uncertain_vars=self.__uncertain_vars.copy(),
-            exit_state=final_state,
-        )
+        self.__check_expr(dp.body, state)
 
     # ==================================================================
     # core walker
@@ -203,10 +172,8 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Defer):
             # A deferred action observes the registration-point state, but
             # assignments performed by the action must not affect subsequent
-            # definite-assignment facts (nor function exit states).
-            saved_exit = self.__exit_state
+            # definite-assignment facts.
             self.__check_expr(expr.action, self.__share(state))
-            self.__exit_state = saved_exit
             return state
 
         if isinstance(expr, HIR.If):
@@ -222,36 +189,29 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Return):
             if expr.value is not None:
                 state = self.__check_expr(expr.value, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Break):
             if expr.value is not None:
                 state = self.__check_expr(expr.value, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Continue):
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Panic):
             state = self.__check_expr(expr.message, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.RuntimeFail):
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.ProcessExit):
             state = self.__walk_neutral(expr.code, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.ProcessExit):
             state = self.__check_expr(expr.code, state)
-            self.__record_exit_state(state)
             return state
 
         # -- declarations -------------------------------------------------
@@ -576,9 +536,7 @@ class DefiniteAssignment:
             return self.__walk_neutral(expr.expr, state)
 
         if isinstance(expr, HIR.Defer):
-            saved_exit = self.__exit_state
             self.__walk_neutral(expr.action, self.__share(state))
-            self.__exit_state = saved_exit
             return state
 
         if isinstance(expr, HIR.If):
@@ -609,26 +567,21 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Return):
             if expr.value is not None:
                 state = self.__walk_neutral(expr.value, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Break):
             if expr.value is not None:
                 state = self.__walk_neutral(expr.value, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Continue):
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.Panic):
             state = self.__walk_neutral(expr.message, state)
-            self.__record_exit_state(state)
             return state
 
         if isinstance(expr, HIR.RuntimeFail):
-            self.__record_exit_state(state)
             return state
 
         # -- calls ---------------------------------------------------------
@@ -817,7 +770,6 @@ class DefiniteAssignment:
                 f"definitely assigned", span,
             ))
         else:
-            self.__uncertain_vars.add(sym_id)
             self.__errors.append(AnalysisError(
                 f"variable '{name}' (field) may not be assigned on all "
                 f"code paths before this use", span,
@@ -884,7 +836,6 @@ class DefiniteAssignment:
                 f"assigned", span,
             ))
         else:
-            self.__uncertain_vars.add(sym_id)
             self.__errors.append(AnalysisError(
                 f"variable '{name}' may not be assigned on all code "
                 f"paths before this use", span,
@@ -915,9 +866,3 @@ class DefiniteAssignment:
             else:
                 merged[k] = VarState.UNCERTAIN
         return merged
-
-    def __record_exit_state(self, state: DAState) -> None:
-        if self.__exit_state is None:
-            self.__exit_state = self.__share(state)
-        else:
-            self.__exit_state = self.__merge_states(self.__exit_state, state)

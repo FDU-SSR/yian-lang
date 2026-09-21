@@ -693,8 +693,6 @@ def __run(argv: list[str] | None = None) -> int:
     da_errors = da_pass.export_errors()
     if da_errors:
         __report_error(da_errors[0], stage=Stage.DEFINITE_ASSIGNMENT)
-    for type_id, dp in ctx.def_points.items():
-        dp.validity = da_pass.export_analysis(type_id)
     if args.profile:
         timings["definite_assignment"] = time.perf_counter() - da_start
 
