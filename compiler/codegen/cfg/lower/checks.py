@@ -1,12 +1,9 @@
 """下降侧指针出处状态：裸指针 / 帧内锁 / 出处根。
 
-检查的**判定**（去重、派生义务表、刚分配窗口、失效冲刷）已搬进检查插入 pass
-（`passes/insert_checks.py`，依 IR 重建同一套状态）；这里只保留下降期还要用的
-出处事实——惰性左值路径的裸性（决定 `Cast.raw`、`ElementPtr` 派生与裸数组上界门）、
-帧锁出处与出处根（视图访问的 `live` 项）。
-
-check 的判定（去重、义务表、窗口、失效）已全部搬进检查插入 pass
-（`passes/provenance.py` 按同一套登记规则从 IR 重放同一份出处）。
+检查的**判定**（去重、派生义务表、刚分配窗口、失效冲刷）已全部搬进检查插入 pass
+（`passes/insert_checks.py`，出处由 `passes/provenance.py` 按同一套登记规则从 IR 重放）；
+这里只保留下降期自己还要用的出处事实——惰性左值路径的裸性（决定 `Cast.raw`、
+`ElementPtr` 派生与裸数组上界门）、帧锁出处与出处根（视图访问的 `live` 项）。
 """
 from __future__ import annotations
 

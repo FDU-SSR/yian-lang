@@ -8,9 +8,9 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.passes import PassContext, run_pipeline
-from compiler.codegen.cfg.passes.checks import CheckState
-from compiler.codegen.cfg.passes.emitter import FunctionEmitter
-from compiler.codegen.cfg.passes.predicates import PtrPredicates
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.predicates import PtrPredicates
 from compiler.codegen.cfg.lower.stmts import StmtHost, StmtLowerer
 from compiler.codegen.cfg.lower.calls import CallsHost, CallsLowerer
 from compiler.codegen.cfg.lower.exprs import ExprHost, ExprLowerer

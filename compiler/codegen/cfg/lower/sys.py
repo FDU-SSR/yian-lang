@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.checks import CheckState
-from compiler.codegen.cfg.passes.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 
 
 @dataclass(frozen=True)

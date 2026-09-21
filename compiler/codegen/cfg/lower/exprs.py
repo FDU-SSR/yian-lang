@@ -23,8 +23,8 @@ from compiler.codegen.cfg.lower.memory import MemoryLowerer
 from compiler.codegen.cfg.lower.stmts import StmtLowerer
 from compiler.codegen.cfg.lower.sys import SysLowerer
 from compiler.codegen.cfg.lower.values import ValueLowerer
-from compiler.codegen.cfg.passes.checks import CheckState
-from compiler.codegen.cfg.passes.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.checks import CheckState
+from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
 from compiler.error import CompilerError
 from compiler.utils.log import CompilerLog
