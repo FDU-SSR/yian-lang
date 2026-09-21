@@ -213,6 +213,37 @@ Unknown      其余（正常插检查）
 - 只有**故意改变节点序列**的 pass（P9 的合并/去重/循环不变提升）才会改变 LLVM IR 与性能——
   这属于优化改动，按 §6.3 用基准把关，不属于"重构"。
 
+## 5.5 P8 的落地设计（待执行；本轮不做）
+
+P0–P7 之后下降侧已在 11 个模块里，检查**插入点**仍在下降簇中（经 `CheckState` 做去重/合并）。
+P8 要把"插入"变成真 pass，关键约束是：**有些检查带语义上下文，单看 IR 恢复不出来**。据此分成两类：
+
+**A 类（访问点规则，可从 IR 重建）**：R4 `T&` live、R5 `T*` safe_access、R6 live 三来源
+（帧内/刚分配/已检查）、R7 同块去重、R8 派生链三重合并、R11 `ElementArith`、R12 `FieldPtr`
+义务、R14 `Delete` 四前提。它们的判定只需：类型（`type_ctx`）、provenance（`VarPtr(raw)`/
+`Alloca(fat)`/`Malloc`/`Cast(raw)`/`FieldPtr`/`ElementPtr` 派生边）、以及块内顺序。
+
+**B 类（语义点，需要标记）**：R15 raw 数组上界（`CheckRawBounds`，需 length）、R16 数组退化
+`CheckInBounds(size=m)` 与 `T[]→T&` 的 `CheckSliceNonEmpty`、R17 syscall 边界的 `CheckViewAccess`、
+R18 方法 receiver 的 `CheckInBounds`、R13 `PtrDiff`/`PtrCmp`。
+
+**两条路线**：
+
+1. **路线 A（推荐，改动小）**：只把 A 类搬到 `passes/insert_checks.py`；B 类保留在下降侧照发。
+   下降侧删掉 A 类的内联发射，改为"只发访问节点 + provenance 节点"；pass 按 R4–R14 逐块重建
+   `elem_derived`/`field_derived` 义务表并插检查（顺序与今天一致：`ElementArith` → `InBounds`
+   挂起 → live/合取检查 → 访问）。验收仍是 108/108 `cfg.txt` 等价。
+2. **路线 B（彻底，改动大）**：新增一个轻量标记节点 `IR.CheckRequest(kind, operands)`，下降侧
+   在所有检查点只发标记（把语义上下文——数组长度 m、syscall 边界、receiver——编码进标记），
+   pass 统一决定"保留/合并/提升/删除"。收益是 P9（循环不变提升）有完整信息；代价是新增 IR 节点、
+   改 `dump.py`、并要重新证明每条规则的等价性。
+
+**建议**：先走路线 A 拿到"插入可独立测试"的收益并跑通 P9 的一半（A 类里循环不变的 live 检查已足够
+覆盖 `churn_single`/`chase` 的重复检查形态）；若 P9 显示 B 类也需要提升，再补路线 B 的标记。
+
+**风险与回退**：P8 是本计划唯一高风险步骤（18 条规则、23 个发射点）。按规则分组提交，
+每组都以"108/108 `cfg.txt` 等价 + 三套件 + pyright"为门槛；任一组不过即回退该组。
+
 ## 6. 验收方法
 
 ### 6.1 验收口径（按用户裁定）
