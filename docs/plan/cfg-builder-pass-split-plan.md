@@ -252,7 +252,7 @@ IR 对比（`--dump` 的 `cfg.txt` / `-t ll`）只作为**排查工具**：当�
 | P1 ✅ | C1：抽 `passes/{__init__,context,cleanup}.py`（DCE/RPO/终结保护 + `PassContext` + `run_pipeline`） | builder 1770 → **1629 行**（−141），新包 208 行 | 低（已实测忠实） | 单提交 revert |
 | P2 ✅ | C2：抽 `passes/emitter.py::FunctionEmitter`（func/current_block/counter + new_name/emit/new_block/void_reg/never_reg/emit_phi/terminate/position）；`__set_terminator`/`__switch_to` 保留检查状态副作用并委托句柄 | 所有簇的共同句柄；builder 1629 → **1590 行** | 低（已实测忠实） | 单提交 revert |
 | P3 ✅ | C3：抽检查簇为组合件 `passes/checks.py::CheckState`（方法 + 7 个独占字段整体搬，行为不变），`builder` 持有 `self.__checks`；发射能力由 `FunctionEmitter` 注入（invalidate 时补发挂起 `CheckInBounds`） | builder 1590 → **1442 行**；状态显式化 | 低（已实测忠实） | 单提交 revert |
-| P4 | C4：抽 `lower/stmts.py`（含 `loops`/`defer_scopes`） | builder −~250 行 | 低（块创建顺序照抄） | 单提交 revert |
+| P4 ✅ | C4：抽 `lower/stmts.py::StmtLowerer`（16 个 `translate_*` + `LoopCtx` + `loops`/`defer_scopes`），表达式与检查能力经 `StmtHost`（emitter/checks/set_terminator/switch_to/resolve_val/is_del_target）注入 | builder 1442 → **1184 行** | 低（已实测忠实） | 单提交 revert |
 | P5 | C5+C6：抽 `lower/lvalues.py`、`lower/aggregates.py` | builder −~350 行 | 中 | 同上 |
 | P6 | C7+C8：抽 `lower/calls.py`、`lower/sys.py`、`lower/memory.py`（内存原语的检查部分委托 `checks`） | builder −~400 行 | 中 | 同上 |
 | P7 | C9：剩下 `lower/exprs.py`；`builder.py` 收成 §3.2 末的编排者（目标 < 200 行） | 结构目标达成 | 中 | 同上 |
@@ -296,6 +296,17 @@ builder 侧只留调用（`self.__checks.*`），检查的**插入点**仍在下
 `__init__` 因此出现重复字段块），改为先断言 `start < end` 或改用唯一文本锚点。两处都是
 "IR 等价 harness 立刻报出 difference（4/108）+ 探针定位到一个 unbound 的 emitter 实例"才
 收敛的——印证了 §6.1 把它当排查工具的用法。
+
+**P4 进展（完成）**：新建 `compiler/codegen/cfg/lower/stmts.py`（322 行）——
+`StmtLowerer` 持有 16 个 `translate_*` 方法与循环栈/defer 作用域栈，`StmtHost` 是它向构建器
+借用的能力（emitter/checks/set_terminator/switch_to/resolve_val/is_del_target）；构建器的
+分派器与 `build()` 改为 `self.__stmts.*`，`builder.py` 1442 → **1184 行**。忠实性实测：
+108/108 份 `cfg.txt` 逐字节一致；三套件 756/156/99 全绿；runtime --check --asan 通过；
+pyright compiler/anx 0 errors。
+
+**踩坑记录（第二次）**：这次先用"行号区间删除"又把 `__resolve_val` 的头部切掉了（前一次
+的教训没记住）——已改为**按方法文本正则切片**（`\n    def NAME\(.*?(?=\n    def |\Z)`，逐个断言
+命中数 == 1）并每步 `compileall` + harness 复核。结论写进流程：**搬移一律文本锚点、禁止行号**。
 
 **顺序理由**：C1/C2 是叶子与句柄，先立接口；C3 的字段独占性最强、收益最大，所以放在"行为不变"
 的形态先搬（P3），把它升级为真 pass（P8）留到句柄与测试网都稳了之后。P4–P7 按调用依赖自外向内
