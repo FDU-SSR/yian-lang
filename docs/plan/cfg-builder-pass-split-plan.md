@@ -267,6 +267,25 @@ R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射
 **风险与回退**：P8 是本计划唯一高风险步骤（18 条规则、23 个发射点）。按规则分组提交，
 每组都以"108/108 `cfg.txt` 等价 + 三套件 + pyright"为门槛；任一组不过即回退该组。
 
+### 5.6 第 4 组（最后一组）为何必须原子完成
+
+实测：下降侧现在有 **~60 处**调用推进检查状态（`dedup` 13、`ptr_key` 9、`is_frame_locked` 6、
+`mark_raw` 5、`merge_access` 4、`is_raw` 4、`mark_root`/`live_key`/`invalidate`/`inherit_*` 各 3…），
+分布在下 6 个模块里。**判定与状态是同一个顺序机**：去重键在发射点即时登记、义务表在
+`FieldPtr` 处挂起、在访问点消费、在 `Call`/`Delete`/终止符处冲刷。因此"只把状态搬进 pass"
+会让 lowering 的判定看不到表（去重/合并失效 → 检查变多或变少），**必须判定+状态一起搬**。
+
+推荐的两步子步（各自可独立验收）：
+
+1. **事实外化**：把"状态由谁登记"变成 IR 上的显式事实——`VarPtr(raw=True)` / `Alloca(fat=False)` /
+   `Malloc` / `Cast(raw=True)` 已经带 raw 语义；再补两类：帧锁出处（`VarPtr.frame_word` 与函数
+   `AcquireFrameLock` 结果比对即可）与"刚分配窗口"（`exprs.py::resolve_dyn_buffer` 现在直接改
+   `live_known`，改为在 IR 上发一对窗口标记 `LiveKnownBegin/End`）。做完后 pass 能自行重建
+   provenance，无需 lowering 参与。
+2. **判定+状态搬移**：`insert_checks`（或新的 `optimize_checks`）按块顺序重放同一状态机，
+   自行决定 R4/R5/R14 与去重/合并/失效，下降侧只剩"发访问节点 + 语义标记"。
+   门槛仍是 108/108 `cfg.txt` 等价；过了这一步，P9 的循环不变检查提升才有信息可用。
+
 ## 6. 验收方法
 
 ### 6.1 验收口径（按用户裁定）
