@@ -384,6 +384,7 @@ CHECK_REQUEST_RAW_BOUNDS = "raw_bounds"  # operands=[index], extra=编译期长�
 CHECK_REQUEST_VIEW = "view"              # operands=[view], live=是否检查时序项
 CHECK_REQUEST_SLICE_NONEMPTY = "slice_nonempty"  # operands=[ptr]
 CHECK_REQUEST_IN_BOUNDS = "in_bounds"    # operands=[ptr]
+CHECK_REQUEST_RECEIVER_IN_BOUNDS = "receiver_in_bounds"  # operands=[ptr]，调用侧 receiver 折算
 CHECK_REQUEST_ELEMENT_ARITH = "element_arith"    # operands=[base, offset]
 
 

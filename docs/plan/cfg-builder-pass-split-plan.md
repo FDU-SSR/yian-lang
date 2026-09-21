@@ -257,6 +257,31 @@ R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射
 `CHECK_REQUEST_IN_BOUNDS` 的 owed-elem/base 两路，共 4 处，含"嵌套派生链先补发"的 2 处）——
 判定仍由下降侧的 `CheckState` 做出、标记落在原来发射检查的位置，故 108/108 `cfg.txt` 等价。
 
+**路线 B 进展（第 4 组，完成）**：`insert_checks` 由"标记物化器"升级为真正的检查插入 pass——
+下降侧只剩"访问节点 + 语义标记"，检查的**判定与状态**整体搬进 pass，按块顺序重放下降期那套
+状态机（`passes/insert_checks.py::__CheckPlanner`，281 行）：
+
+- **出处重建**：新增 `passes/provenance.py`（`Provenance`：raw / 帧内 / 出处根 / 刚分配窗口），
+  按同一套登记规则从 IR 重放——`VarPtr`/`Alloca`/`Malloc`/`Cast`/`FieldPtr`/`ElementPtr` 边 +
+  `LiveKnownBegin/End` 窗口标记；`verify` 在 pass 运行期把它与下降侧仍保留的单调集合逐点比对
+  （迁移期等价网，只读）。重建必须复刻下降侧的**形状差异**：`FieldPtr` 对非裸基址一律继承，
+  而 `ElementPtr` 只在胖基址上继承；`Malloc` 只在胖模式登记出处；raw 模式下 `VarPtr` 的帧登记照旧。
+- **义务表重建**：块内 `elem_derived`（`ElementPtr` 结果 → `(elem, base, offset)`）与
+  `field_derived`（`FieldPtr` 结果 → 挂起 elem）自行维护，含嵌套派生链的"先补发"、`Cast` 沿
+  identity 传播、`Call`/`Delete`/终止符处的失效冲刷与 `CheckElementAccess` 合取检查。
+- **规则迁移**：R4（`CheckRefAccess` ×3：Load/Store/FieldPtr）、R5（`CheckSafeAccess` ×2：
+  Load/Store + 合取合并）、R11/R12（`ElementArith`/`InBounds` 与嵌套链补发）、R14（`CheckDelete`
+  + 其后失效）全部改由 pass 决定；receiver 折算前提改用独立标记
+  `CHECK_REQUEST_RECEIVER_IN_BOUNDS`（去重键与其它 `in_bounds` 共享，`is_fat_pointer` 门留在 pass）。
+  仍留标记的语义点：`PtDiff`/`PtrCmp` 前提、裸数组上界、视图访问、`T*→T&` 折算前提、切片构造源跨度。
+- **下降侧瘦身**：`CheckState` 只剩出处三件（`raw_ptrs`/`frame_locked`/`fat_root`，供惰性左值路径的
+  `Cast.raw`、裸数组上界门与视图 `live` 项使用），去重/义务/窗口/失效七件字段与 12 个方法全部删除；
+  `builder.__set_terminator`/`__switch_to` 不再触碰检查状态。
+
+实测 **108/108 `cfg.txt` 与基线逐字节一致**、三套件 756/156/99 全绿、`--check --asan` 通过、
+pyright compiler/anx 0 errors。这组做完，`optimize_checks`（P9）拿到完整的"检查位置 + 出处 +
+义务"信息。
+
 **后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 5 组（原第 3 组的深化 + 第 4 组）把
 `elem_derived`/`field_derived` **义务表本身**从下降侧搬进 pass（按 IR 的 `ElementPtr`/`FieldPtr`
 派生边重建，含失效点冲刷与 `CheckElementAccess` 合取检查），并与 R4/R5/R6/R7/R8/R14

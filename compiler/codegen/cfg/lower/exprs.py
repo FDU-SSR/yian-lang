@@ -338,10 +338,10 @@ class ExprLowerer:
         self.__host.set_terminator(IR.CondBr(filled, body, exit_block))
 
         # 填充循环写在刚分配的缓冲上:这段封闭区域里不存在 del, live 恒真,
-        # 因此登记出处、让元素 store 只保留 in_bounds 检查(同帧锁的 live=False 形态)。
+        # 因此把窗口标进 IR、让元素 store 只保留 in_bounds 检查(同帧锁的 live=False
+        # 形态)。窗口的判定由检查插入 pass 依标记自行维护。
         fill_root = buffer.name if isinstance(buffer, IR.Reg) else None
         if fill_root is not None:
-            self.__host.checks.mark_live_known(fill_root)
             self.__host.emitter.emit(IR.LiveKnownBegin(root=buffer))
         self.__host.switch_to(body)
         elem_ptr_type = self.__host.type_ctx.alloc_pointer(expr.element_type)
@@ -358,7 +358,6 @@ class ExprLowerer:
 
         self.__host.switch_to(exit_block)
         if fill_root is not None:
-            self.__host.checks.unmark_live_known(fill_root)
             self.__host.emitter.emit(IR.LiveKnownEnd(root=buffer))
         return buffer
     def resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:

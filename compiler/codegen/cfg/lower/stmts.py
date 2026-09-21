@@ -18,12 +18,6 @@ from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.passes.checks import CheckState
 from compiler.codegen.cfg.passes.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
-from compiler.utils.log import CompilerLog
-
-
-def _ch_block():
-    """cfg.block 日志通道（类体内引用，按约定用单下划线）。"""
-    return CompilerLog.get("cfg.block")
 
 
 @dataclass
@@ -49,7 +43,6 @@ class StmtHost:
     set_terminator: Callable[[IR.Terminator], None]
     switch_to: Callable[[IR.Block], None]
     resolve_val: Callable[[HIR.Expr], IR.Value]
-    is_del_target: Callable[[IR.Value], bool]
 
 
 class StmtLowerer:
@@ -199,17 +192,8 @@ class StmtLowerer:
 
     def translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__host.resolve_val(stmt.target)
-        if self.__host.is_del_target(ptr):
-            # CFG 层插入检查:四前提 is_heap(p) ∧ live(p) ∧ is_raw(p)(
-            # 四项 = is_heap 纯位判定 + live 锁槽键比较 + is_raw 两分量
-            # data=lock_ptr+H 与 index=0;del-view: T*/T[]/T& 三族通用,仅
-            # PointerType 含 index 分量,Slice/Ref 退化为恒真)
-            self.__host.emitter.emit(IR.CheckDelete(ptr=ptr))
-            _ch_block().debug(lambda: "check insert Delete: is_heap(p) ∧ live(p) ∧ is_raw(p)")
-            # 失效由释放路径完成: LLVM 层 Delete 重建块首并把块头里的代 +1 写回,
-            # 因此这里不再单独写锁槽(写 SENTINEL 会破坏代的单调性)。
-            # 检查合并:Delete 换代 → 去重/合并状态失效(先补发挂起 InBounds 义务)
-            self.__host.checks.invalidate()
+        # Delete 四前提 is_heap(p) ∧ live(p) ∧ is_raw(p) 与其后的检查状态失效由
+        # 检查插入 pass 在 `IR.Delete` 处依目标形态决定；这里只发释放节点。
         # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
         self.__host.emitter.emit(IR.Delete(ptr))
         return self.__host.emitter.void_reg()

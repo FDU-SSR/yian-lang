@@ -289,11 +289,8 @@ class ValueLowerer:
         else:
             self.__host.checks.inherit_frame_lock(cast, value)
             self.__host.checks.inherit_root(cast, value)
-        # 嵌套派生链(安全修复 复核):ptr→ptr cast = identity(5 字段重贴),
-        # 挂起义务沿 cast 传播——(ptr+k).a[j] 的 elementptr base 是 cast
-        # 结果时,义务仍可被访问点合并或提前补发。
-        if self.__host.is_fat_pointer(cast):
-            self.__host.checks.propagate_field_derived(cast, value)
+        # 嵌套派生链的挂起义务沿 ptr→ptr cast（identity 重贴）传播，由检查插入
+        # pass 依 `IR.Cast` 边重建。
         return cast
 
     def resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:

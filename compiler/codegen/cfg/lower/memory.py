@@ -45,57 +45,13 @@ class MemoryLowerer:
     def build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__host.type_ctx[self.__host.type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
-        # 按指针层级插入检查(按 type_id 分派):
-        #   PointerType → safe_access(p, 1) = live(p) ∧ in_bounds(p, 1) 前检
-        #   RefType     → 仅 live(r)(T& 免 in_bounds)
-        frame_locked = self.__host.checks.is_frame_locked(ptr) or self.__host.checks.is_live_known(ptr)
-        live_covered = frame_locked or self.__host.checks.dedup(self.__host.checks.live_key(ptr))
-        if isinstance(ptr_type, Type.RefType) and not self.__host.raw_pointers:
-            if live_covered:
-                _ch_block().debug(lambda: "check skip Load(T&): 帧内或同出处 live 已覆盖")
-            elif self.__host.checks.dedup(self.__host.checks.ptr_key(ptr, "ref")):
-                _ch_block().debug(lambda: "check dedup Load(T&): live(r) 共享(同块同值相邻)")
-            else:
-                self.__host.emitter.emit(IR.CheckRefAccess(ptr=ptr))
-                _ch_block().debug(lambda: "check insert Load(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
-        elif self.__host.is_fat_pointer(ptr):
-            if live_covered and self.__host.checks.merge_access(ptr, live=False):
-                _ch_block().debug(lambda: "check merge Load: ElementArith∧InBounds(同出处 live 已覆盖)")
-            elif not live_covered and self.__host.checks.merge_access(ptr):
-                _ch_block().debug(lambda: "check merge Load: ElementArith∧InBounds∧live 合取检查")
-            elif self.__host.checks.dedup(self.__host.checks.ptr_key(ptr, "safe")):
-                _ch_block().debug(lambda: "check dedup Load: safe_access(p,1) 共享(同块同值相邻)")
-            else:
-                self.__host.emitter.emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
-                _ch_block().debug(lambda: "check insert Load: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
+        # 访问前检由检查插入 pass 依 IR 重建（T& 只查 live；胖指针查
+        # safe_access(p,1) 或 ElementArith∧InBounds∧live 合取）。
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=ptr_type.pointee_type)
         return self.__host.emitter.emit(IR.Load(result=result, ptr=ptr)).result
 
     def build_store(self, value: IR.Value, ptr: IR.Value) -> None:
-        ptr_type = self.__host.type_ctx[ptr.type_id]
-        # 按指针层级插入检查(按 type_id 分派,同 Load 的检查与地址折算):
-        #   PointerType → safe_access(p, 1)
-        #   RefType     → 仅 live(r)(T& 免 in_bounds)
-        frame_locked = self.__host.checks.is_frame_locked(ptr) or self.__host.checks.is_live_known(ptr)
-        live_covered = frame_locked or self.__host.checks.dedup(self.__host.checks.live_key(ptr))
-        if isinstance(ptr_type, Type.RefType) and not self.__host.raw_pointers:
-            if live_covered:
-                _ch_block().debug(lambda: "check skip Store(T&): 帧内或同出处 live 已覆盖")
-            elif self.__host.checks.dedup(self.__host.checks.ptr_key(ptr, "ref")):
-                _ch_block().debug(lambda: "check dedup Store(T&): live(r) 共享(同块同值相邻)")
-            else:
-                self.__host.emitter.emit(IR.CheckRefAccess(ptr=ptr))
-                _ch_block().debug(lambda: "check insert Store(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
-        elif self.__host.is_fat_pointer(ptr):
-            if live_covered and self.__host.checks.merge_access(ptr, live=False):
-                _ch_block().debug(lambda: "check merge Store: ElementArith∧InBounds(同出处 live 已覆盖)")
-            elif not live_covered and self.__host.checks.merge_access(ptr):
-                _ch_block().debug(lambda: "check merge Store: ElementArith∧InBounds∧live 合取检查")
-            elif self.__host.checks.dedup(self.__host.checks.ptr_key(ptr, "safe")):
-                _ch_block().debug(lambda: "check dedup Store: safe_access(p,1) 共享(同块同值相邻)")
-            else:
-                self.__host.emitter.emit(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
-                _ch_block().debug(lambda: "check insert Store: safe_access(p,1) = live(p) ∧ in_bounds(p,1)")
+        # 访问前检由检查插入 pass 依 IR 重建（分派同 Load）。
         self.__host.emitter.emit(IR.Store(ptr=ptr, value=value))
 
     def build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
@@ -110,30 +66,11 @@ class MemoryLowerer:
         return malloc
 
     def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
-        # CFG 层插入检查:算术 → 良构检查(0 ≤ index+n ≤ size)
-        if self.__host.is_fat_pointer(base):
-            # 嵌套派生链(安全修复 复核):同 FieldPtr——base 有挂起义务先补发再继续
-            owed_elem = self.__host.checks.pop_owed_in_bounds(base)
-            if owed_elem is not None:
-                if self.__host.checks.dedup(self.__host.checks.ptr_key(owed_elem, "ib")):
-                    _ch_block().debug(lambda: "check dedup ElementPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
-                else:
-                    self.__host.emitter.emit(IR.CheckRequest(
-                        kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[owed_elem],
-                    ))
-                    _ch_block().debug(lambda: "check insert ElementPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
-            if self.__host.checks.dedup(self.__host.checks.pair_key(base, offset, "elarith")):
-                _ch_block().debug(lambda: "check dedup ElementPtr: well_formed(p') 共享(同 base/offset, 检查合并)")
-            else:
-                self.__host.emitter.emit(IR.CheckRequest(
-                    kind=IR.CHECK_REQUEST_ELEMENT_ARITH, operands=[base, offset],
-                ))
-                _ch_block().debug(lambda: "check insert ElementPtr: well_formed(p')")
+        # 良构检查（0 ≤ index+n ≤ size）与嵌套派生链的义务补发由检查插入 pass
+        # 依 `IR.ElementPtr` 边重建；这里只发节点与登记出处。
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=result_type)
         elem_ptr = self.__host.emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
-        # 合并跟踪:记录派生链 (base, offset),供 FieldPtr→Load/Store 合取检查
         if self.__host.is_fat_pointer(base):
-            self.__host.checks.note_element_derived(elem_ptr, base, offset)
             self.__host.checks.inherit_frame_lock(elem_ptr, base)
             self.__host.checks.inherit_root(elem_ptr, base)
         # 惰性左值路径:沿裸基址的算术派生保持裸(检查已由基址判定跳过)
@@ -142,48 +79,10 @@ class MemoryLowerer:
         return elem_ptr
 
     def build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
-        # 按指针层级插入检查(按 type_id 分派):
-        #   PointerType → in_bounds(p_s, 1)(重锚定前提,对 one-past-end 的 s 取字段时失败)
-        #   RefType     → 仅 live(r)(T& 免 in_bounds;引用无 index/size,恒指单个元素)
-        merged_elem_name: str | None = None
-        base_ty = self.__host.type_ctx[base.type_id]
-        if isinstance(base_ty, Type.RefType) and not self.__host.raw_pointers:
-            if self.__host.checks.is_frame_locked(base):
-                _ch_block().debug(lambda: "check skip FieldPtr(T&): 帧内引用 live 恒真")
-            elif self.__host.checks.dedup(self.__host.checks.live_key(base)) or self.__host.checks.dedup(self.__host.checks.ptr_key(base, "ref")):
-                _ch_block().debug(lambda: "check dedup FieldPtr(T&): live(r) 共享(同块同值或同出处)")
-            else:
-                self.__host.emitter.emit(IR.CheckRefAccess(ptr=base))
-                _ch_block().debug(lambda: "check insert FieldPtr(T&): live(r) 仅 live,免 in_bounds (tiered-pointers)")
-        elif self.__host.is_fat_pointer(base):
-            # 嵌套派生链(安全修复 复核):base 是挂起 FieldPtr 结果时先补发
-            # in_bounds(elem,1)(消费义务)再派发——OOB 读/写必须先于访问
-            # 报告安全错误,不得推迟到终止符补发(每访问前提仍成立)。
-            owed_elem = self.__host.checks.pop_owed_in_bounds(base)
-            if owed_elem is not None:
-                if self.__host.checks.dedup(self.__host.checks.ptr_key(owed_elem, "ib")):
-                    _ch_block().debug(lambda: "check dedup FieldPtr flush: in_bounds(elem,1) 已检查(嵌套链, 检查合并)")
-                else:
-                    self.__host.emitter.emit(IR.CheckRequest(
-                        kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[owed_elem],
-                    ))
-                    _ch_block().debug(lambda: "check insert FieldPtr flush: 嵌套派生链补发 in_bounds(elem,1) (合并检查义务消费)")
-            elem_entry = self.__host.checks.elem_entry(base)
-            if elem_entry is not None and isinstance(elem_entry, IR.Reg):
-                # 合并路径:in_bounds(elem,1) 挂起为义务,并入访问点的
-                # CheckElementAccess 合取检查;若访问不相邻,失效点(调用/
-                # Delete/终止)补发——one-past-end 前提不丢。
-                merged_elem_name = elem_entry.name
-                _ch_block().debug(lambda: "check merge FieldPtr: in_bounds 挂起并入 ElementAccess (检查合并, 派生链可对)")
-            elif self.__host.checks.dedup(self.__host.checks.ptr_key(base, "ib")):
-                _ch_block().debug(lambda: "check dedup FieldPtr: in_bounds(p_s,1) 共享(同块同值相邻)")
-            else:
-                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[base]))
-                _ch_block().debug(lambda: "check insert FieldPtr: in_bounds(p_s,1) (重锚定前提)")
+        # 重锚定前提（in_bounds(p_s,1) / T& 的 live）与其合取合并由检查插入 pass
+        # 依 `IR.FieldPtr` 边重建；这里只发节点与登记出处。
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(field_type))
         field_ptr = self.__host.emitter.emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
-        if merged_elem_name is not None:
-            self.__host.checks.note_field_derived(field_ptr, merged_elem_name)
         # 惰性左值路径:沿裸基址的字段派生保持裸(检查已由基址判定跳过)
         if self.__host.checks.is_raw(base):
             self.__host.checks.mark_raw(field_ptr)

@@ -32,10 +32,8 @@ class CfgBuilder:
         self.__raw_pointers = raw_pointers
         # 发射句柄：当前函数/当前块/命名计数器（原 self.__func / __current_block / __counter）
         self.__emitter = FunctionEmitter()
-        # 检查簇状态（出处/活跃度 + 去重/合并/失效）整体交给 CheckState；
-        # 原来的 7 个字段（raw_ptrs/frame_locked/live_known/fat_root/checked/
-        # elem_derived/field_derived）及其判定都在 passes/checks.py 里。
-        self.__checks = CheckState(self.__emitter)
+        # 下降侧指针出处（裸/帧内/出处根）；检查决定已归检查插入 pass。
+        self.__checks = CheckState()
         # 指针族判定（无状态）
         self.__preds = PtrPredicates(
             type_ctx=self.__type_ctx,
@@ -71,7 +69,6 @@ class CfgBuilder:
             type_ctx=self.__type_ctx,
             resolve_val=lambda expr: self.__exprs.resolve_val(expr),
             set_terminator=self.__set_terminator,
-            is_fat_pointer=self.__preds.is_fat_pointer,
             values=self.__values,
         ))
         self.__sys = SysLowerer(SysHost(
@@ -87,7 +84,6 @@ class CfgBuilder:
             set_terminator=self.__set_terminator,
             switch_to=self.__switch_to,
             resolve_val=lambda expr: self.__exprs.resolve_val(expr),
-            is_del_target=self.__preds.is_del_target,
         ))
         # 表达式下降簇（含分派器）：位于各簇之上，最后装配
         self.__exprs = ExprLowerer(ExprHost(
@@ -158,13 +154,11 @@ class CfgBuilder:
     # ------------------------------------------------------------------
 
     def __set_terminator(self, term: IR.Terminator) -> None:
-        # 检查合并:块终结前补发挂起 InBounds 义务并清空去重/合并表(状态不跨块)
-        self.__checks.invalidate()
+        # 块终结前的挂起义务补发与状态清空由检查插入 pass 在终结符处完成
         self.__emitter.terminate(term)
 
     def __switch_to(self, block: IR.Block) -> None:
-        # 检查合并:块切换 → 去重/合并状态清空(义务已由 __set_terminator 补发;此处为保守兜底)
-        self.__checks.clear_block()
+        # 块切换 → 检查插入 pass 的块内状态不跨块（pass 自己按块清空）
         self.__emitter.position(block)
 
     # ------------------------------------------------------------------
