@@ -338,7 +338,9 @@ class ValueLowerer:
             # ``@slice_from_parts``/``@str_from_parts`` are trusted metadata
             # constructors.  Keep the requested view within the source
             # pointer's remaining extent before publishing its size field.
-            self.__host.emitter.emit(IR.CheckElementArith(base=field_vals[0], offset=field_vals[1]))
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_ELEMENT_ARITH, operands=[field_vals[0], field_vals[1]],
+            ))
             _ch_block().debug(lambda: "check insert slice construction: source extent + requested length")
         return self.build_aggregate_construct(expr.type_id, field_vals)
 
