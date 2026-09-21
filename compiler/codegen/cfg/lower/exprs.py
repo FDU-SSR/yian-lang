@@ -342,6 +342,7 @@ class ExprLowerer:
         fill_root = buffer.name if isinstance(buffer, IR.Reg) else None
         if fill_root is not None:
             self.__host.checks.mark_live_known(fill_root)
+            self.__host.emitter.emit(IR.LiveKnownBegin(root=buffer))
         self.__host.switch_to(body)
         elem_ptr_type = self.__host.type_ctx.alloc_pointer(expr.element_type)
         elem_ptr = self.__host.memory.build_element_ptr(buffer, index, elem_ptr_type)
@@ -358,6 +359,7 @@ class ExprLowerer:
         self.__host.switch_to(exit_block)
         if fill_root is not None:
             self.__host.checks.unmark_live_known(fill_root)
+            self.__host.emitter.emit(IR.LiveKnownEnd(root=buffer))
         return buffer
     def resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
         """``@alloc<T>(n)``: trusted raw allocation, payload left uninitialized."""

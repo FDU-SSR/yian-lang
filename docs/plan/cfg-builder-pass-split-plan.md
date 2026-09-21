@@ -277,11 +277,12 @@ R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射
 
 推荐的两步子步（各自可独立验收）：
 
-1. **事实外化**：把"状态由谁登记"变成 IR 上的显式事实——`VarPtr(raw=True)` / `Alloca(fat=False)` /
-   `Malloc` / `Cast(raw=True)` 已经带 raw 语义；再补两类：帧锁出处（`VarPtr.frame_word` 与函数
-   `AcquireFrameLock` 结果比对即可）与"刚分配窗口"（`exprs.py::resolve_dyn_buffer` 现在直接改
-   `live_known`，改为在 IR 上发一对窗口标记 `LiveKnownBegin/End`）。做完后 pass 能自行重建
-   provenance，无需 lowering 参与。
+1. **事实外化（已完成）**：`IR.LiveKnownBegin/End{root}` 窗口标记落地——下降侧在
+   `mark_live_known`/`unmark_live_known` 处**同时**发标记（登记仍保留，判定暂不动），
+   `insert_checks` 消费标记并自行维护一份窗口集合（Begin 加入 / End 移除，End 缺配 Begin 直接断言）。
+   raw 语义本来就由 `VarPtr(raw=True)`/`Alloca(fat=False)`/`Cast(raw=True)`/`Malloc` 承载，无需新标记；
+   帧锁出处可由 `VarPtr.frame_word` 与函数 `AcquireFrameLock` 结果比对得出。
+   实测 108/108 `cfg.txt` 等价、三套件全绿、`--check --asan` 通过、pyright 0 errors。
 2. **判定+状态搬移**：`insert_checks`（或新的 `optimize_checks`）按块顺序重放同一状态机，
    自行决定 R4/R5/R14 与去重/合并/失效，下降侧只剩"发访问节点 + 语义标记"。
    门槛仍是 108/108 `cfg.txt` 等价；过了这一步，P9 的循环不变检查提升才有信息可用。

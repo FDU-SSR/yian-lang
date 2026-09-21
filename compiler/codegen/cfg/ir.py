@@ -388,6 +388,22 @@ CHECK_REQUEST_ELEMENT_ARITH = "element_arith"    # operands=[base, offset]
 
 
 @dataclass
+class LiveKnownBegin:
+    """刚分配窗口开始（P8 §5.6 事实外化）：root 处出的指针在窗口内 live 恒真。
+
+    下降侧仍照旧登记 `CheckState.live_known`；本标记把同一事实写进 IR，供插入 pass
+    在后续阶段自行重建 provenance（第 2 步才由 pass 独占该判定）。
+    """
+    root: Value
+
+
+@dataclass
+class LiveKnownEnd:
+    """刚分配窗口结束（与 `LiveKnownBegin` 配对，窗口内不存在 del）。"""
+    root: Value
+
+
+@dataclass
 class CheckRequest:
     """检查请求标记：下降只发标记，`passes/insert_checks.py` 决定最终形态。
 
@@ -594,6 +610,8 @@ Stmt: TypeAlias = (
     | CheckElementAccess
     | CheckRawBounds
     | CheckRequest
+    | LiveKnownBegin
+    | LiveKnownEnd
 )
 
 # ---------------------------------------------------------------------------

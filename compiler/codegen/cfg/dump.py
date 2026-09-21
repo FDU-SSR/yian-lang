@@ -157,6 +157,10 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckRawBounds(index=index, length=length):
             return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
 
+        case IR.LiveKnownBegin(root=root):
+            return f"live_known_begin {__dump_value(root)}  (刚分配窗口开始)"
+        case IR.LiveKnownEnd(root=root):
+            return f"live_known_end {__dump_value(root)}  (刚分配窗口结束)"
         case IR.CheckRequest(kind=kind, operands=operands):
             args = ", ".join(__dump_value(v) for v in operands)
             return f"check_request {kind} {args}  (标记, 待插入 pass 物化)"

@@ -146,6 +146,8 @@ class LLTranslator:
     def __translate(self, builder: LLBuilder, stmt: IR.Stmt) -> None:
         ch_llvm().trace(lambda: type(stmt).__name__)
         match stmt:
+            case IR.LiveKnownBegin() | IR.LiveKnownEnd():
+                raise ValueError("live-known window marker reached LLVM lowering")
             case IR.CheckRequest():
                 # 标记应由 passes/insert_checks.py 物化；到这里说明管线漏了插入 pass。
                 raise ValueError(f"unmaterialized check request: {stmt.kind}")

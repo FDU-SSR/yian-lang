@@ -142,6 +142,7 @@ class CfgBuilder:
             span=dp.ast_body.span,
             return_type=ret_ty,
             new_void_value=self.__emitter.void_reg,
+            checks=self.__checks,
         ))
 
         # ── 帧锁实体化标记 ──
