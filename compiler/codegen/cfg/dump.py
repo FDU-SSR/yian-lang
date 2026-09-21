@@ -130,11 +130,13 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.WriteLockSlot(lock_ptr=lock_ptr, value=value):
             return f"write_lock_slot {__dump_value(lock_ptr)}, {__dump_value(value)}"
 
-        case IR.CheckSafeAccess(ptr=ptr):
-            return f"check_safe_access {__dump_value(ptr)}  (live ∧ in_bounds)"
+        case IR.CheckSafeAccess(ptr=ptr, live=live):
+            item = "live ∧ in_bounds" if live else "in_bounds(live 恒真)"
+            return f"check_safe_access {__dump_value(ptr)}  ({item})"
 
-        case IR.CheckViewAccess(view=view):
-            return f"check_view_access {__dump_value(view)}  (live ∧ span)"
+        case IR.CheckViewAccess(view=view, live=live):
+            item = "live ∧ span" if live else "span(live 恒真)"
+            return f"check_view_access {__dump_value(view)}  ({item})"
 
         case IR.CheckInBounds(ptr=ptr):
             return f"check_in_bounds {__dump_value(ptr)}  (index < size)"
