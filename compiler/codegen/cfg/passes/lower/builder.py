@@ -1,5 +1,7 @@
-"""
-CFG IR builder — lowers a single HIR function/method body into a CFG Function.
+"""下降 pass 的入口：把一个 HIR 函数体降成一条 CFG（`IR.Function`）。
+
+构造时接收类型上下文与函数定义（`DefPoint`），把各下降簇与它们共用的句柄装配好；
+`build()` 按 HIR 语句/表达式产生 CFG，随后调用 `run_pipeline` 交给检查插入与后处理。
 """
 from __future__ import annotations
 
@@ -8,15 +10,15 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.passes import PassContext, run_pipeline
-from compiler.codegen.cfg.lower.checks import CheckState
-from compiler.codegen.cfg.lower.emitter import FunctionEmitter
-from compiler.codegen.cfg.lower.predicates import PtrPredicates
-from compiler.codegen.cfg.lower.stmts import StmtHost, StmtLowerer
-from compiler.codegen.cfg.lower.calls import CallsHost, CallsLowerer
-from compiler.codegen.cfg.lower.exprs import ExprHost, ExprLowerer
-from compiler.codegen.cfg.lower.memory import MemoryHost, MemoryLowerer
-from compiler.codegen.cfg.lower.sys import SysHost, SysLowerer
-from compiler.codegen.cfg.lower.values import ValueHost, ValueLowerer
+from compiler.codegen.cfg.passes.lower.checks import CheckState
+from compiler.codegen.cfg.passes.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.passes.lower.predicates import PtrPredicates
+from compiler.codegen.cfg.passes.lower.stmts import StmtHost, StmtLowerer
+from compiler.codegen.cfg.passes.lower.calls import CallsHost, CallsLowerer
+from compiler.codegen.cfg.passes.lower.exprs import ExprHost, ExprLowerer
+from compiler.codegen.cfg.passes.lower.memory import MemoryHost, MemoryLowerer
+from compiler.codegen.cfg.passes.lower.sys import SysHost, SysLowerer
+from compiler.codegen.cfg.passes.lower.values import ValueHost, ValueLowerer
 
 
 class CfgBuilder:

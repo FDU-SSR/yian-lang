@@ -18,13 +18,13 @@ from compiler.analysis.ty.type_ops import default_literals
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.lower.calls import CallsLowerer
-from compiler.codegen.cfg.lower.memory import MemoryLowerer
-from compiler.codegen.cfg.lower.stmts import StmtLowerer
-from compiler.codegen.cfg.lower.sys import SysLowerer
-from compiler.codegen.cfg.lower.values import ValueLowerer
-from compiler.codegen.cfg.lower.checks import CheckState
-from compiler.codegen.cfg.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.passes.lower.calls import CallsLowerer
+from compiler.codegen.cfg.passes.lower.memory import MemoryLowerer
+from compiler.codegen.cfg.passes.lower.stmts import StmtLowerer
+from compiler.codegen.cfg.passes.lower.sys import SysLowerer
+from compiler.codegen.cfg.passes.lower.values import ValueLowerer
+from compiler.codegen.cfg.passes.lower.checks import CheckState
+from compiler.codegen.cfg.passes.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
 from compiler.error import CompilerError
 from compiler.utils.log import CompilerLog

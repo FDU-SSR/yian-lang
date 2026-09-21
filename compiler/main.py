@@ -44,7 +44,7 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
-from compiler.codegen.cfg.translator import CfgTranslator
+from compiler.codegen.cfg.passes.lower.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.emit import Emitter
 from compiler.codegen.llvm.module import LLModule, apply_target
