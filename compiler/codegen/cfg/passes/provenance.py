@@ -1,9 +1,9 @@
-"""P8 §5.6 第 2(a) 步：从 IR 重建下降期的指针出处（raw / 帧内 / 出处根 / 刚分配窗口）。
+"""从 IR 重建下降期的指针出处（raw / 帧内 / 出处根 / 刚分配窗口）。
 
-下降侧目前仍自己做这些登记（判定还没搬）；本模块是**给 pass 用的重建**，并提供一个
-对照校验：`verify` 在 pass 运行期把重建结果与下降期 `CheckState` 的单调集合逐点比对
-（raw/frame_locked/fat_root 都是只增不清的集合，因此事后比对是可靠的；`live_known`
-是窗口式的，改由 `LiveKnownBegin/End` 标记在 pass 内自行跟踪，不参与比对）。
+下降侧为它自己的 IR 形态判定（惰性左值路径的 `Cast.raw`、裸数组上界门、视图 `live`
+项）保留同一份出处；`verify` 在 pass 运行期把重建结果与之逐点比对：raw / 帧内 / 出处根
+都是只增不清的集合，因此事后比对可靠；刚分配窗口是窗口式的，由 `LiveKnownBegin/End`
+标记在 pass 内自行跟踪，不参与比对。
 """
 from __future__ import annotations
 

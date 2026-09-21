@@ -375,7 +375,7 @@ class CheckRawBounds:
 
 
 # ---------------------------------------------------------------------------
-# 检查请求标记（P8 路线 B）
+# 检查请求标记（下降只发语义标记，检查插入 pass 决定最终形态）
 # ---------------------------------------------------------------------------
 
 CHECK_REQUEST_PTRDIFF = "ptrdiff"        # operands=[lhs, rhs]
@@ -390,10 +390,10 @@ CHECK_REQUEST_ELEMENT_ARITH = "element_arith"    # operands=[base, offset]
 
 @dataclass
 class LiveKnownBegin:
-    """刚分配窗口开始（P8 §5.6 事实外化）：root 处出的指针在窗口内 live 恒真。
+    """刚分配窗口开始：root 处出的指针在窗口内 live 恒真。
 
-    下降侧仍照旧登记 `CheckState.live_known`；本标记把同一事实写进 IR，供插入 pass
-    在后续阶段自行重建 provenance（第 2 步才由 pass 独占该判定）。
+    窗口只在 `dyn[n] value` 的填充循环这类封闭区域（不含 `del`/调用）内开启，
+    由检查插入 pass 按 Begin/End 配对开合，不跨函数扩大。
     """
     root: Value
 
@@ -408,9 +408,9 @@ class LiveKnownEnd:
 class CheckRequest:
     """检查请求标记：下降只发标记，`passes/insert_checks.py` 决定最终形态。
 
-    走路线 B 的规则在下降侧不再直接发 `Check*`，而是发本标记（把单看 IR 恢复不出的
-    语义上下文放进 `operands`/`extra`）；插入 pass 就地把它物化为具体检查节点，
-    后续（P9）才有机会在其上做合并/提升。逐规则迁移，未迁移的规则仍照发 `Check*`。
+    语义上下文（单看 IR 恢复不出的数组长度、视图边界、折算前提、切片源跨度等）
+    放进 `operands`/`extra`；插入 pass 就地把它物化为具体检查节点，后续优化才有机会
+    在其上做合并/提升。
     """
 
     kind: str

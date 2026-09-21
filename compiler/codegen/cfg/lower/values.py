@@ -13,7 +13,7 @@
 一个 `ValueLowerer`：避免两个 host 互相持有。帧锁实体化状态（`frame_lock`）也随之搬入，
 构建器只读它（`build()` 里写进 `IR.Function.frame_lock`）。
 
-搬移保持逐条等价（见 `docs/plan/cfg-builder-pass-split-plan.md`）。
+搬移保持逐条等价：IR 文本在此前的搬移前后逐字节相同。
 """
 from __future__ import annotations
 

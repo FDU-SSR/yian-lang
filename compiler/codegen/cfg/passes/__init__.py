@@ -1,7 +1,7 @@
-"""CFG pass 管线（形态见 `docs/plan/cfg-builder-pass-split-plan.md`）。
+"""CFG pass 管线：检查插入 → 后处理（去死块 / RPO 排序 / 终结保护）。
 
 构建器（`CfgBuilder`）只负责 HIR→CFG 下降，下降结束后把 `IR.Function` 交给
-`run_pipeline`；后续阶段的检查插入/优化 pass 依次挂在这里。
+`run_pipeline`；后续的检查优化 pass 追加在检查插入与后处理之间。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ __all__ = ["PassContext", "run_pipeline"]
 
 
 def run_pipeline(func: IR.Function, ctx: PassContext) -> IR.Function:
-    """按序运行 CFG pass：标记物化（P8 路线 B）→ C1 后处理；后续 pass 追加在中间。"""
+    """按序运行 CFG pass：检查插入（标记物化 + 状态机重放）→ 后处理。"""
     insert_checks.run(func, ctx)
     cleanup.run(func, ctx)
     return func

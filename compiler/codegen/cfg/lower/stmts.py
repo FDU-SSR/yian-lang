@@ -5,7 +5,7 @@ defer/return/semi/let/panic/runtime_fail/process_exit/delete` 及其私有状态
 （循环栈、defer 作用域栈）。表达式求值与检查簇仍由构建器持有，经 `StmtHost`
 注入——语句下降调用 `host.resolve_val`，写 IR 走 `host.emitter`。
 
-搬移保持逐条等价（见 `docs/plan/cfg-builder-pass-split-plan.md`）。
+搬移保持逐条等价：IR 文本在此前的搬移前后逐字节相同。
 """
 from __future__ import annotations
 

@@ -1,8 +1,9 @@
 
 """C8：内存与指针原语下降（load/store/malloc、element/field ptr、ptr 算术与比较）。
 
-检查的插入点仍写在这一簇里（P8 才升级为独立 pass），检查状态经 `MemoryHost.checks`
-（`CheckState`）访问；类型转换经 `MemoryHost.values`（`ValueLowerer`）。
+检查的插入点不在这一簇里：下降只发访问节点与语义标记，检查由
+`passes/insert_checks.py` 依 IR 重建与插入；`MemoryHost.checks` 只提供指针出处查询，
+类型转换经 `MemoryHost.values`（`ValueLowerer`）。
 """
 from __future__ import annotations
 
