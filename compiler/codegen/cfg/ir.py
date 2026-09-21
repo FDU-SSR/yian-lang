@@ -381,6 +381,9 @@ class CheckRawBounds:
 CHECK_REQUEST_PTRDIFF = "ptrdiff"        # operands=[lhs, rhs]
 CHECK_REQUEST_PTRCMP = "ptrcmp"          # operands=[lhs, rhs]
 CHECK_REQUEST_RAW_BOUNDS = "raw_bounds"  # operands=[index], extra=编译期长度
+CHECK_REQUEST_VIEW = "view"              # operands=[view], live=是否检查时序项
+CHECK_REQUEST_SLICE_NONEMPTY = "slice_nonempty"  # operands=[ptr]
+CHECK_REQUEST_IN_BOUNDS = "in_bounds"    # operands=[ptr]
 
 
 @dataclass

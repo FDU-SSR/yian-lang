@@ -42,13 +42,19 @@ class SysLowerer:
 
     def build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__host.is_fat_view(buf):
-            self.__host.emitter.emit(IR.CheckViewAccess(view=buf, live=not self.__host.checks.is_frame_locked(buf)))
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_VIEW, operands=[buf],
+                live=not self.__host.checks.is_frame_locked(buf),
+            ))
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.str_id)
         return self.__host.emitter.emit(IR.SysRead(result=result, fd=fd, buf=buf)).result
 
     def build_sys_write(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
         if self.__host.is_fat_view(buf):
-            self.__host.emitter.emit(IR.CheckViewAccess(view=buf, live=not self.__host.checks.is_frame_locked(buf)))
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_VIEW, operands=[buf],
+                live=not self.__host.checks.is_frame_locked(buf),
+            ))
         self.__host.emitter.emit(IR.SysWrite(fd=fd, buf=buf))
         return self.__host.emitter.void_reg()
 
@@ -63,7 +69,10 @@ class SysLowerer:
 
     def build_open(self, path: IR.Value, flags: IR.Value) -> IR.Value:
         if self.__host.is_fat_view(path):
-            self.__host.emitter.emit(IR.CheckViewAccess(view=path, live=not self.__host.checks.is_frame_locked(path)))
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_VIEW, operands=[path],
+                live=not self.__host.checks.is_frame_locked(path),
+            ))
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.i32_id)
         return self.__host.emitter.emit(IR.Open(result=result, path=path, flags=flags)).result
 

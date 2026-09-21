@@ -304,11 +304,11 @@ class ValueLowerer:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element
                 # rather than the legal one-past pointer value.
-                self.__host.emitter.emit(IR.CheckInBounds(ptr=value))
+                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[value]))
             elif isinstance(source_type, Type.SliceType) and isinstance(target_type, Type.RefType):
                 # An empty slice has no element from which a reference can be
                 # formed.  Establish this before dropping the size field.
-                self.__host.emitter.emit(IR.CheckSliceNonEmpty(ptr=value))
+                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_SLICE_NONEMPTY, operands=[value]))
         return self.build_cast(value, expr.type_id)
 
     def build_size_of(self, type_id: int) -> IR.Value:

@@ -87,7 +87,7 @@ class CallsLowerer:
             if self.__host.checks.dedup(self.__host.checks.ptr_key(receiver_addr, "ib")):
                 _ch_block().debug(lambda: "check dedup MethodCall receiver: in_bounds(p,1) 共享(同块同值相邻)")
             else:
-                self.__host.emitter.emit(IR.CheckInBounds(ptr=receiver_addr))
+                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[receiver_addr]))
                 _ch_block().debug(lambda: "check insert MethodCall receiver: in_bounds(p,1) (调用折算→安全修复, one-past-end 恢复)")
         ref_type_id = self.receiver_ref_type(receiver_addr)
         receiver_ref = self.__host.values.build_cast(receiver_addr, ref_type_id)

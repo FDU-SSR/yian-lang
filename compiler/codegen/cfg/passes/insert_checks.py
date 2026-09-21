@@ -1,8 +1,9 @@
 """P8（路线 B）：把 `CheckRequest` 标记物化为具体检查节点。
 
 逐规则迁移：只有已迁移的规则会发标记，未迁移的仍由下降侧直接发 `Check*`。
-本 pass 目前覆盖 R13（`PtrDiff`/`PtrCmp`）与 R15（裸数组上界）三条最"语义化"的规则，
-作为路线 B 的端到端样板；其余规则按计划 §5.5 分组迁移。
+当前覆盖：R13（`PtrDiff`/`PtrCmp`）、R15（裸数组上界）、R16（数组退化 `InBounds`、
+`T[]→T&` 的 `SliceNonEmpty`）、R17（`CheckViewAccess`）、R18（receiver `InBounds`）；
+`live` 等下降期已判定的上下文先编码进标记，等第 4 组把 provenance 分析搬进 pass 后再由 pass 自行推导。
 """
 from __future__ import annotations
 
@@ -21,6 +22,12 @@ def __materialize(request: IR.CheckRequest) -> IR.Stmt:
             return IR.CheckPtrCmp(lhs=lhs, rhs=rhs)
         case IR.CHECK_REQUEST_RAW_BOUNDS:
             return IR.CheckRawBounds(index=request.operands[0], length=request.extra)
+        case IR.CHECK_REQUEST_VIEW:
+            return IR.CheckViewAccess(view=request.operands[0], live=request.live)
+        case IR.CHECK_REQUEST_SLICE_NONEMPTY:
+            return IR.CheckSliceNonEmpty(ptr=request.operands[0])
+        case IR.CHECK_REQUEST_IN_BOUNDS:
+            return IR.CheckInBounds(ptr=request.operands[0])
         case _:
             raise ValueError(f"unknown check request kind: {request.kind}")
 

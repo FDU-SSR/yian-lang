@@ -247,9 +247,13 @@ kind 常量（`CHECK_REQUEST_PTRDIFF/PTRCMP/RAW_BOUNDS`）+ `passes/insert_check
 标记直接 `ValueError`（防御管线漏 pass）。实测 108/108 `cfg.txt` 与基线逐字节一致、三套件
 756/156/99 全绿、`--check --asan` 通过、pyright compiler/anx 0 errors。
 
-**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 2 组 R16（数组退化 `InBounds(size=m)`、
-`T[]→T&` 的 `SliceNonEmpty`）+ R17（`CheckViewAccess`，需把 frame-locked 判定搬进 pass 的
-provenance 分析）+ R18（receiver `InBounds`）；第 3 组 R11/R12（`ElementArith`、`FieldPtr` 义务）
+**路线 B 进展（第 2 组，完成）**：R16（数组退化 `InBounds`、`T[]→T&` 的 `SliceNonEmpty`）、
+R17（`CheckViewAccess`，3 处）、R18（receiver `InBounds`）共 6 个发射点改为发标记
+（`CHECK_REQUEST_VIEW/SLICE_NONEMPTY/IN_BOUNDS`）；`live` 等下降期已判定的上下文先编码进标记，
+等第 4 组把 provenance 分析搬进 pass 后再由 pass 自行推导。108/108 `cfg.txt` 等价、三套件全绿、
+`--check --asan` 通过、pyright 0 errors。
+
+**后续分组（按"语义类 → 访问类"顺序，风险递增）**：第 3 组 R11/R12（`ElementArith`、`FieldPtr` 义务）
 ——这一组要先把 `elem_derived`/`field_derived` 的义务表从下降侧搬到 pass（按 IR 的
 `ElementPtr`/`FieldPtr` 派生边重建）；第 4 组 R4/R5/R6/R7/R8/R14（访问点 live 与 `Delete`，
 含帧内/刚分配/去重/合并四档 provenance），完成后再做 P9 的提升。
