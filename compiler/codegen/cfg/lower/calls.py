@@ -13,6 +13,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.checks import CheckState
 from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.cfg.lower.values import ValueLowerer
@@ -24,7 +25,7 @@ class CallsHost:
 
     emitter: FunctionEmitter
     checks: CheckState
-    type_ctx: TypeCtx
+    ctx: CfgCtx
     resolve_val: Callable[[HIR.Expr], IR.Value]
     set_terminator: Callable[[IR.Terminator], None]
     values: "ValueLowerer"
@@ -39,23 +40,23 @@ class CallsLowerer:
         arg_vals = [self.__host.resolve_val(arg) for arg in expr.args]
         result = self.build_call(expr.func, arg_vals, expr.type_id)
         # If the callee returns never, control never returns — terminate block
-        if expr.type_id == self.__host.type_ctx.never_id:
+        if expr.type_id == self.__host.ctx.type_ctx.never_id:
             self.__host.set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))
         return result
 
     def resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
         callee = self.__host.resolve_val(expr.callable)
         arg_vals = [self.__host.resolve_val(arg) for arg in expr.args]
-        resolved = self.__host.type_ctx.resolve_aliases(expr.callable.type_id)
-        if isinstance(self.__host.type_ctx[resolved], Type.FunctionType):
+        resolved = self.__host.ctx.type_ctx.resolve_aliases(expr.callable.type_id)
+        if isinstance(self.__host.ctx.type_ctx[resolved], Type.FunctionType):
             result = self.build_call(resolved, arg_vals, expr.type_id)
-            if expr.type_id == self.__host.type_ctx.never_id:
+            if expr.type_id == self.__host.ctx.type_ctx.never_id:
                 self.__host.set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))
             return result
         return self.build_invoke(callee, arg_vals, expr.type_id)
 
     def resolve_method_call(self, expr: HIR.MethodCall) -> IR.Value:
-        method_type = self.__host.type_ctx[expr.method_id]
+        method_type = self.__host.ctx.type_ctx[expr.method_id]
         assert isinstance(method_type, Type.MethodType)
 
         arg_vals = [self.__host.resolve_val(arg) for arg in expr.args]
@@ -90,10 +91,10 @@ class CallsLowerer:
         (pointee 即接收者值类型);方法体内 self.method() 已是 T&。两者 pointee
         都是值类型,统一 alloc_ref;LLVM cast 按 src/dst 分派收缩或 identity。
         """
-        resolved = self.__host.type_ctx.resolve_aliases(receiver_addr.type_id)
-        addr_ty = self.__host.type_ctx[resolved]
+        resolved = self.__host.ctx.type_ctx.resolve_aliases(receiver_addr.type_id)
+        addr_ty = self.__host.ctx.type_ctx[resolved]
         if isinstance(addr_ty, (Type.PointerType, Type.RefType)):
-            return self.__host.type_ctx.alloc_ref(addr_ty.pointee_type)
+            return self.__host.ctx.type_ctx.alloc_ref(addr_ty.pointee_type)
         return receiver_addr.type_id
 
     def build_call(self, callee_type: int, args: list[IR.Value], result_type: int) -> IR.Value:

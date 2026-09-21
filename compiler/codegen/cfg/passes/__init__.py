@@ -9,6 +9,7 @@
   访问类检查（`CheckRefAccess`/`CheckSafeAccess`/…）的形态与位置；
 - `cleanup.py::Cleanup`：去死块 → RPO 排序 → 终结保护。
 
-`context.py` 的 `PassContext` 是后两段共享的只读事实（由下降段随函数一并交出）。
-后续若要加检查优化 pass，直接在 `main` 的编排里插一段。
+三段共享同一个 `CfgCtx`（在 `lower/cfg_ctx.py`，形态对齐中端 `analysis/lowering/sem_ctx.py`）：
+session 级资源构造即定，函数级事实由下降段 `begin_def()` 写入，之后三段读的是同一份。
+后续若要加检查优化 pass，直接在 `main` 的编排里插一段并接同一个 ctx。
 """

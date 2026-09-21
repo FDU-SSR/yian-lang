@@ -18,6 +18,7 @@ from compiler.analysis.ty.type_ops import default_literals
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.calls import CallsLowerer
 from compiler.codegen.cfg.lower.memory import MemoryLowerer
 from compiler.codegen.cfg.lower.stmts import StmtLowerer
@@ -41,7 +42,7 @@ class ExprHost:
 
     emitter: FunctionEmitter
     checks: CheckState
-    type_ctx: TypeCtx
+    ctx: CfgCtx
     stmts: StmtLowerer
     values: ValueLowerer
     memory: MemoryLowerer
@@ -155,7 +156,7 @@ class ExprLowerer:
             case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral():
                 return self.resolve_literal(expr)
             case HIR.Ty():
-                if self.__host.type_ctx.is_zst(expr.type_id):
+                if self.__host.ctx.type_ctx.is_zst(expr.type_id):
                     return IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
             case HIR.Closure():
@@ -195,7 +196,7 @@ class ExprLowerer:
     def resolve_assign(self, expr: HIR.Binary) -> IR.Value:
         lhs_addr = self.__host.values.resolve_addr(expr.left)
         rhs_val = self.resolve_val(expr.right)
-        if rhs_val.type_id != self.__host.type_ctx.never_id:
+        if rhs_val.type_id != self.__host.ctx.type_ctx.never_id:
             self.__host.memory.build_store(rhs_val, lhs_addr)
         return rhs_val
     def resolve_logical(self, expr: HIR.Binary) -> IR.Value:
@@ -283,7 +284,7 @@ class ExprLowerer:
         return self.__host.memory.build_extract_value(value, expr.field.index, expr.type_id)
     def resolve_tuple_access(self, expr: HIR.TupleAccess) -> IR.Value:
         if expr.receiver.is_place:
-            receiver_ty = self.__host.type_ctx[expr.receiver.type_id]
+            receiver_ty = self.__host.ctx.type_ctx[expr.receiver.type_id]
             if isinstance(receiver_ty, (Type.SliceType, Type.StrType)):
                 # 分级指针表示:slice/str 字段须从值提取(fieldptr 只能取裸字段地址,
                 # 无法携带锁元数据)。读整个值再 extract_value。
@@ -316,7 +317,7 @@ class ExprLowerer:
         if expr.element is None:
             return buffer
         value = self.resolve_val(expr.element)
-        if self.__host.type_ctx.is_zst(expr.element_type):
+        if self.__host.ctx.type_ctx.is_zst(expr.element_type):
             return buffer
 
         index_slot = self.__host.values.build_alloca(
@@ -344,7 +345,7 @@ class ExprLowerer:
         if fill_root is not None:
             self.__host.emitter.emit(IR.LiveKnownBegin(root=buffer))
         self.__host.switch_to(body)
-        elem_ptr_type = self.__host.type_ctx.alloc_pointer(expr.element_type)
+        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
         elem_ptr = self.__host.memory.build_element_ptr(buffer, index, elem_ptr_type)
         self.__host.memory.build_store(value, elem_ptr)
         next_index = self.__host.emitter.emit(IR.Binary(
@@ -370,10 +371,10 @@ class ExprLowerer:
     def resolve_literal(self, expr: HIR.Literal) -> IR.Value:
         match expr:
             case HIR.IntLiteral():
-                type_id = default_literals(self.__host.type_ctx, expr.type_id)
+                type_id = default_literals(self.__host.ctx.type_ctx, expr.type_id)
                 return IR.IntLiteral(value=expr.value, type_id=type_id)
             case HIR.FloatLiteral():
-                type_id = default_literals(self.__host.type_ctx, expr.type_id)
+                type_id = default_literals(self.__host.ctx.type_ctx, expr.type_id)
                 return IR.FloatLiteral(value=expr.value, type_id=type_id)
             case HIR.CharLiteral():
                 return IR.CharLiteral(value=expr.value, type_id=TypeCtx.char_id)

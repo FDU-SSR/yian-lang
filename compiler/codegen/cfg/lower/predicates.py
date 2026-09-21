@@ -6,17 +6,16 @@
 from __future__ import annotations
 
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.checks import CheckState
 
 
 class PtrPredicates:
     """指针族判定器（无状态，只读查询）。"""
 
-    def __init__(self, type_ctx: TypeCtx, raw_pointers: bool, checks: CheckState) -> None:
-        self.__type_ctx = type_ctx
-        self.__raw_pointers = raw_pointers
+    def __init__(self, ctx: CfgCtx, checks: CheckState) -> None:
+        self.__ctx = ctx
         self.__checks = checks
 
     def is_fat_pointer(self, ptr: IR.Value) -> bool:
@@ -29,19 +28,19 @@ class PtrPredicates:
         惰性左值路径:裸指针寄存器(未取址左值)同样恒 False——
         裸地址无胖元数据,不可承载检查。
         """
-        if self.__raw_pointers:
+        if self.__ctx.raw_pointers:
             return False
         if self.__checks.is_raw(ptr):
             return False
-        ty = self.__type_ctx[ptr.type_id]
+        ty = self.__ctx.type_ctx[ptr.type_id]
         if not isinstance(ty, Type.PointerType):
             return False
-        return not self.__type_ctx.is_zst(ty.pointee_type)
+        return not self.__ctx.type_ctx.is_zst(ty.pointee_type)
     def is_fat_view(self, value: IR.Value) -> bool:
         """Whether *value* carries checked slice/str metadata."""
-        if self.__raw_pointers:
+        if self.__ctx.raw_pointers:
             return False
-        ty = self.__type_ctx[value.type_id]
+        ty = self.__ctx.type_ctx[value.type_id]
         return isinstance(ty, (Type.SliceType, Type.StrType))
     def is_del_target(self, ptr: IR.Value) -> bool:
         """del 专属目标判定:非 ZST 的 PointerType / SliceType / RefType。
@@ -53,13 +52,13 @@ class PtrPredicates:
         指针-to-ZST 同 __is_fat_pointer 保持非胖(ZST 擦除为空结构,无字段可写、
         无检查可插)。
         """
-        if self.__raw_pointers:
+        if self.__ctx.raw_pointers:
             return False
         if self.__checks.is_raw(ptr):
             return False
         # ZST pointers/references are erased to `{}` in LLVM.  Keep the IR
         # Delete for the backend's no-op path, but do not inspect fat fields.
-        if self.__type_ctx.is_zst(ptr.type_id):
+        if self.__ctx.type_ctx.is_zst(ptr.type_id):
             return False
-        ty = self.__type_ctx[ptr.type_id]
+        ty = self.__ctx.type_ctx[ptr.type_id]
         return isinstance(ty, (Type.PointerType, Type.SliceType, Type.RefType))

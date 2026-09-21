@@ -15,6 +15,7 @@ from compiler.analysis.ty.type_ops import default_literals
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.checks import CheckState
 from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.cfg.lower.values import ValueLowerer
@@ -32,8 +33,7 @@ class MemoryHost:
 
     emitter: FunctionEmitter
     checks: CheckState
-    type_ctx: TypeCtx
-    raw_pointers: bool
+    ctx: CfgCtx
     is_fat_pointer: Callable[[IR.Value], bool]
     values: "ValueLowerer"
 
@@ -44,7 +44,7 @@ class MemoryLowerer:
         self.__host = host
 
     def build_load(self, ptr: IR.Value) -> IR.Value:
-        ptr_type = self.__host.type_ctx[self.__host.type_ctx.resolve_aliases(ptr.type_id)]
+        ptr_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         # 访问前检由检查插入 pass 依 IR 重建（T& 只查 live；胖指针查
         # safe_access(p,1) 或 ElementArith∧InBounds∧live 合取）。
@@ -60,9 +60,9 @@ class MemoryLowerer:
         # word 由 LLVM 层按块首地址与块头里的上一代算好(分配处 +1), 不再用全局堆键。
         # pointee 为 ZST 时维持快路径(undef,不写块头);raw 模式无块头。
         key: IR.Value | None = None
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(type_id))
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(type_id))
         malloc = self.__host.emitter.emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
-        if not self.__host.raw_pointers:
+        if not self.__host.ctx.raw_pointers:
             self.__host.checks.mark_root(malloc)
         return malloc
 
@@ -82,7 +82,7 @@ class MemoryLowerer:
     def build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
         # 重锚定前提（in_bounds(p_s,1) / T& 的 live）与其合取合并由检查插入 pass
         # 依 `IR.FieldPtr` 边重建；这里只发节点与登记出处。
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(field_type))
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(field_type))
         field_ptr = self.__host.emitter.emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
         # 惰性左值路径:沿裸基址的字段派生保持裸(检查已由基址判定跳过)
         if self.__host.checks.is_raw(base):
@@ -112,10 +112,10 @@ class MemoryLowerer:
         return self.__host.emitter.emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def build_binary(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
-        type_id = default_literals(self.__host.type_ctx, type_id)
+        type_id = default_literals(self.__host.ctx.type_ctx, type_id)
         # ── route pointer arithmetic to dedicated instructions ──
-        lhs_ty = self.__host.type_ctx[lhs.type_id]
-        rhs_ty = self.__host.type_ctx[rhs.type_id]
+        lhs_ty = self.__host.ctx.type_ctx[lhs.type_id]
+        rhs_ty = self.__host.ctx.type_ctx[rhs.type_id]
 
         # LLVM requires shift operands to have the same integer width.
         if op.is_shift() and lhs.type_id != rhs.type_id:
@@ -147,7 +147,7 @@ class MemoryLowerer:
         return self.__host.emitter.emit(IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
     def build_unary(self, op: UnaryOperator, operand: IR.Value, type_id: int) -> IR.Value:
-        type_id = default_literals(self.__host.type_ctx, type_id)
+        type_id = default_literals(self.__host.ctx.type_ctx, type_id)
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=type_id)
         return self.__host.emitter.emit(IR.Unary(result=result, op=op, operand=operand)).result
 

@@ -1,14 +1,14 @@
 """后处理 pass（管线的第 3 段）：去死块 → RPO 排序 → 终结保护。
 
 从 `CfgBuilder` 整体搬出的三个过程，判定与顺序保持逐字一致；它们只读写
-`IR.Function` 自身，下降期状态一个都不用（终结保护只看 `PassContext` 的返回类型
+`IR.Function` 自身，下降期状态一个都不用（终结保护只看 `CfgCtx` 的返回类型
 与 void 占位通道）。入口是 `Cleanup`，由 `compiler/main.py` 在检查插入之后调用。
 """
 from __future__ import annotations
 
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.context import PassContext
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.error import CodegenError
 
 
@@ -131,7 +131,7 @@ def _sort_blocks_rpo(func: IR.Function) -> None:
     func.blocks = list(reversed(postorder))
 
 
-def _guard_termination(func: IR.Function, ctx: PassContext) -> None:
+def _guard_termination(func: IR.Function, ctx: CfgCtx) -> None:
     """Ensure every block has a terminator.
 
     - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
@@ -159,7 +159,7 @@ class Cleanup:
     def __init__(
         self,
         functions: dict[int, IR.Function],
-        contexts: dict[int, PassContext],
+        contexts: dict[int, CfgCtx],
     ) -> None:
         self.__functions = functions
         self.__contexts = contexts

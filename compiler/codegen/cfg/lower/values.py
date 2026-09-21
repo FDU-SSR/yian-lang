@@ -24,6 +24,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.checks import CheckState
 from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
@@ -42,8 +43,7 @@ class ValueHost:
 
     emitter: FunctionEmitter
     checks: CheckState
-    type_ctx: TypeCtx
-    raw_pointers: bool
+    ctx: CfgCtx
     resolve_val: Callable[[HIR.Expr], IR.Value]
     build_element_ptr: Callable[[IR.Value, IR.Value, int], IR.Value]
     build_field_ptr: Callable[[IR.Value, int, int], IR.Value]
@@ -150,7 +150,7 @@ class ValueLowerer:
         # 惰性左值路径:裸数组基址(普通数组变量)走裸位转换 + 编译期
         # 越界检查;胖基址(Deref 后)走原退化 + ElementPtr 良构检查。
         base_addr = self.resolve_addr_fat(expr.array) if fat else self.resolve_addr(expr.array)
-        elem_ptr_type = self.__host.type_ctx.alloc_pointer(expr.element_type)
+        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
         elem_base = self.build_cast(base_addr, elem_ptr_type)
         index_val = self.__host.resolve_val(expr.index)
         if not fat and self.__host.checks.is_raw(base_addr):
@@ -173,7 +173,7 @@ class ValueLowerer:
         """
         slice_val = self.__host.resolve_val(expr.slice)
         index_val = self.__host.resolve_val(expr.index)
-        elem_ptr_type = self.__host.type_ctx.alloc_pointer(expr.element_type)
+        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
         data = self.__host.build_extract_value(slice_val, 0, elem_ptr_type)
         return self.__host.build_element_ptr(data, index_val, elem_ptr_type)
 
@@ -197,7 +197,7 @@ class ValueLowerer:
         LLVM 下降由 LLVM 层完成。惰性左值路径:显式 &x 与方法 receiver 专用。
         """
         e_f, k_f = self.emit_frame_lock()
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(var_ref.type_id))
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(var_ref.type_id))
         fat = self.__host.emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f,
         )).result
@@ -210,7 +210,7 @@ class ValueLowerer:
         仅返回栈槽地址,不合成 5 字段、不触发帧锁实体化(帧锁延迟到真正需要
         胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
         """
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(var_ref.type_id))
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(var_ref.type_id))
         raw_ptr = self.__host.emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=None, frame_key=None, raw=True,
         )).result
@@ -218,8 +218,8 @@ class ValueLowerer:
         return raw_ptr
 
     def build_alloca(self, value: IR.Value, *, fat: bool) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.type_ctx.alloc_pointer(value.type_id))
-        if fat and not self.__host.raw_pointers:
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(value.type_id))
+        if fat and not self.__host.ctx.raw_pointers:
             frame_word, frame_key = self.emit_frame_lock()
             addr = self.__host.emitter.emit(IR.Alloca(
                 result=result,
@@ -242,7 +242,7 @@ class ValueLowerer:
         路径)的发射由 LLVM 层完成。
         raw 模式:无帧锁——直接返回 None 帧字段,不实体化
         GenKey/AcquireFrameLock。"""
-        if self.__host.raw_pointers:
+        if self.__host.ctx.raw_pointers:
             return (None, None)
         if self.__frame_lock is not None:
             return self.__frame_lock
@@ -277,8 +277,8 @@ class ValueLowerer:
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
         # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
         # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
-        to_resolved = self.__host.type_ctx.resolve_aliases(to_type)
-        if isinstance(self.__host.type_ctx[to_resolved], Type.PointerType):
+        to_resolved = self.__host.ctx.type_ctx.resolve_aliases(to_type)
+        if isinstance(self.__host.ctx.type_ctx[to_resolved], Type.PointerType):
             _ch_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
         raw = self.__host.checks.is_raw(value)
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=to_type)
@@ -294,9 +294,9 @@ class ValueLowerer:
 
     def resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:
         value = self.__host.resolve_val(expr.value)
-        source_type = self.__host.type_ctx[self.__host.type_ctx.resolve_aliases(value.type_id)]
-        target_type = self.__host.type_ctx[self.__host.type_ctx.resolve_aliases(expr.type_id)]
-        if not self.__host.raw_pointers:
+        source_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(value.type_id)]
+        target_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(expr.type_id)]
+        if not self.__host.ctx.raw_pointers:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element
                 # rather than the legal one-past pointer value.
@@ -325,7 +325,7 @@ class ValueLowerer:
 
     def resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
         field_vals = [self.__host.resolve_val(field) for field in expr.field_values]
-        tuple_type = self.__host.type_ctx[expr.type_id]
+        tuple_type = self.__host.ctx.type_ctx[expr.type_id]
         if (
             isinstance(tuple_type, (Type.SliceType, Type.StrType))
             and len(field_vals) == 2
@@ -346,9 +346,9 @@ class ValueLowerer:
 
     def resolve_array_repeat(self, expr: HIR.ArrayRepeat) -> IR.Value:
         elem_val = self.__host.resolve_val(expr.element)
-        array_ty = self.__host.type_ctx[expr.type_id]
+        array_ty = self.__host.ctx.type_ctx[expr.type_id]
         assert isinstance(array_ty, Type.ArrayType)
-        length_ty = self.__host.type_ctx[array_ty.length]
+        length_ty = self.__host.ctx.type_ctx[array_ty.length]
         assert isinstance(length_ty, Type.LiteralValueType), (
             f"array repeat count must be concrete at codegen, got {type(length_ty).__name__}"
         )
@@ -356,9 +356,9 @@ class ValueLowerer:
         return self.build_array_construct(expr.type_id, elements)
 
     def resolve_struct_construct(self, expr: HIR.StructConstruct) -> IR.Value:
-        struct_type = self.__host.type_ctx[expr.struct_id]
+        struct_type = self.__host.ctx.type_ctx[expr.struct_id]
         assert isinstance(struct_type, Type.StructType)
-        fields = self.__host.type_ctx.get_struct_fields(expr.struct_id)
+        fields = self.__host.ctx.type_ctx.get_struct_fields(expr.struct_id)
         field_vals = [self.__host.resolve_val(expr.field_values[field.name]) for field in fields]
         return self.build_aggregate_construct(expr.struct_id, field_vals)
 
@@ -367,9 +367,9 @@ class ValueLowerer:
             payload_fields = None
         else:
             assert expr.variant.payload_type is not None
-            payload_type = self.__host.type_ctx[expr.variant.payload_type]
+            payload_type = self.__host.ctx.type_ctx[expr.variant.payload_type]
             assert isinstance(payload_type, Type.StructType)
-            fields = self.__host.type_ctx.get_struct_fields(expr.variant.payload_type)
+            fields = self.__host.ctx.type_ctx.get_struct_fields(expr.variant.payload_type)
             payload_fields = [self.__host.resolve_val(expr.args[field.name]) for field in fields]
 
         return self.build_variant_construct(expr.enum_id, expr.variant, payload_fields, expr.type_id)

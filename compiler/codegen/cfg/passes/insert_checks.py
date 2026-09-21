@@ -16,7 +16,7 @@ from __future__ import annotations
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.passes.context import PassContext
+from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ def _materialize(request: IR.CheckRequest) -> IR.Stmt:
 class _CheckPlanner:
     """单个 CFG 函数的检查规划器：块内状态 + 逐语句决定检查节点。"""
 
-    def __init__(self, func: IR.Function, ctx: PassContext) -> None:
+    def __init__(self, func: IR.Function, ctx: CfgCtx) -> None:
         self.__func = func
         self.__ctx = ctx
         self.__prov = _Provenance(ctx.type_ctx, ctx.raw_pointers)
@@ -393,14 +393,14 @@ class _CheckPlanner:
 class InsertChecks:
     """检查插入 pass（管线第 2 段）：逐函数物化语义标记并决定访问类检查的形态。
 
-    下降产物与它的 `PassContext` 在下降段结束时交出（见 `lower.builder.CfgBuilder`），
+    下降产物与它的 `CfgCtx` 在下降段结束时交出（见 `lower.builder.CfgBuilder`），
     这里只按 `type_id` 取用；编排在 `main`。
     """
 
     def __init__(
         self,
         functions: dict[int, IR.Function],
-        contexts: dict[int, PassContext],
+        contexts: dict[int, CfgCtx],
     ) -> None:
         self.__functions = functions
         self.__contexts = contexts
