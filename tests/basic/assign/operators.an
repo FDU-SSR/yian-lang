@@ -13,7 +13,7 @@ impl Clone for BigInt {
 }
 
 impl PartialEq<BigInt> for BigInt {
-    fn eq(rhs: BigInt*) -> bool {
+    fn eq(rhs: BigInt&) -> bool {
         self.value == (*rhs).value
     }
 }

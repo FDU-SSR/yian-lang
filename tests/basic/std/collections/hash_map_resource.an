@@ -28,7 +28,7 @@ impl Hash<Murmur3Hasher> for KGuard {
 }
 
 impl PartialEq<KGuard> for KGuard {
-    fn eq(other: KGuard*) -> bool { self.id == other.id }
+    fn eq(other: KGuard&) -> bool { self.id == other.id }
 }
 
 fn main() {

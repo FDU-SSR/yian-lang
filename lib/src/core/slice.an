@@ -131,7 +131,7 @@ impl<T> IntoIterator<SliceIter<T>> for T[] {
 }
 
 impl<T> PartialEq<T[]> for T[] {
-    pub fn eq(other: T[]*) -> bool {
+    pub fn eq(other: T[]&) -> bool {
         if self.len() != other.len() {
             return false;
         }

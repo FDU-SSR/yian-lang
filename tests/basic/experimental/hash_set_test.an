@@ -13,7 +13,7 @@ impl Drop for MyVal {
 }
 
 impl PartialEq<MyVal> for MyVal {
-    fn eq(other: MyVal*) -> bool {
+    fn eq(other: MyVal&) -> bool {
         return self.value == other.value;
     }
 }

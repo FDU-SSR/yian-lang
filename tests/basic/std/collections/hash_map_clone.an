@@ -28,7 +28,7 @@ impl Hash<Murmur3Hasher> for SKey {
 }
 
 impl PartialEq<SKey> for SKey {
-    fn eq(other: SKey*) -> bool {
+    fn eq(other: SKey&) -> bool {
         self.tag.as_str() == other.tag.as_str()
     }
 }

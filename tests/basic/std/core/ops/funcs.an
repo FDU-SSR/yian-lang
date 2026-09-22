@@ -7,7 +7,7 @@ enum Size {
 }
 
 impl PartialOrd<Size> for Size {
-    fn partial_cmp(rhs: Size*) -> Ordering {
+    fn partial_cmp(rhs: Size&) -> Ordering {
         match self {
             Small => match rhs { Small => Ordering.Equal, _ => Ordering.Less },
             Medium => match rhs { Small => Ordering.Greater, Medium => Ordering.Equal, Large => Ordering.Less },
@@ -17,7 +17,7 @@ impl PartialOrd<Size> for Size {
 }
 
 impl PartialEq<Size> for Size {
-    fn eq(rhs: Size*) -> bool {
+    fn eq(rhs: Size&) -> bool {
         match self {
             Small => match rhs { Small => true, _ => false },
             Medium => match rhs { Medium => true, _ => false },

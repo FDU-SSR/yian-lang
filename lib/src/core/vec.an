@@ -212,7 +212,7 @@ impl<T> Index<u64, T*> for Vec<T> {
 }
 
 impl<T> PartialEq<Vec<T>> for Vec<T> {
-    pub fn eq(rhs: Vec<T>*) -> bool {
+    pub fn eq(rhs: Vec<T>&) -> bool {
         self.as_slice() == rhs.as_slice()
     }
 }

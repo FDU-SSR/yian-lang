@@ -13,7 +13,7 @@ impl Drop for MyKey {
 }
 
 impl PartialEq<MyKey> for MyKey {
-    fn eq(other: MyKey*) -> bool {
+    fn eq(other: MyKey&) -> bool {
         return self.id == other.id;
     }
 }

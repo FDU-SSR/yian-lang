@@ -166,13 +166,13 @@ impl Clone for String {
 // =============================================================================
 
 impl PartialEq<String> for String {
-    pub fn eq(other: String*) -> bool {
+    pub fn eq(other: String&) -> bool {
         self.as_str() == other.as_str()
     }
 }
 
 impl PartialEq<str> for String {
-    pub fn eq(other: str*) -> bool {
+    pub fn eq(other: str&) -> bool {
         self.as_str() == *other
     }
 }

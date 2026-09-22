@@ -19,7 +19,7 @@ impl Hash<Murmur3Hasher> for Key {
 }
 
 impl PartialEq<Key> for Key {
-    fn eq(other: Key*) -> bool { self.id == other.id }
+    fn eq(other: Key&) -> bool { self.id == other.id }
 }
 
 fn main() {

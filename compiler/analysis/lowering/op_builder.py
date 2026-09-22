@@ -762,17 +762,18 @@ class OpBuilder:
         if id(impl_trait_ty.custom_def) != id(trait_ty.custom_def):
             return None
 
-        if trait_kind == Type.IntrinsicCustomType.Index:
-            args = self.__index_args(span, value_args, lookup)
+        if takes_pointer_args:
+            args = self.__operator_args(span, value_args, lookup)
 
         return self.__call_dispatcher.build_method_call(span, receiver, lookup, args, "operator")
 
-    def __index_args(self, span: SrcSpan, value_args: list[HIR.Expr], lookup: LookupResult) -> list[HIR.Expr]:
-        """取下标实参的地址, 并按实例化后的 `Idx` 定型。
+    def __operator_args(self, span: SrcSpan, value_args: list[HIR.Expr], lookup: LookupResult) -> list[HIR.Expr]:
+        """按实例化后的形参形状取实参地址。
 
-        `Index::index` 的形参是 `Idx&`; 字面量实参在取址前仍是字面量类型, 而
-        `&<字面量>` 提升出来的临时量必须按 `Idx` 物化: 否则降级成 `Idx&` 时
-        pointee 还是字面量类型, 读写会落在错误的元素类型上。
+        `Index`/`PartialEq`/`PartialOrd` 的形参是引用(`Idx&`/`Rhs&`)时, 字面量实参
+        必须先按形参的 pointee 定型再取址: `&<字面量>` 提升出来的临时量要按该类型
+        物化, 否则降级成引用后读写会落在字面量类型上(`v[0]`、`x == 0` 都会读到垃圾)。
+        形参仍是 `T*` 的 impl 保持原来的取址方式。
         """
         method_type = self.__type_ctx[lookup.method_id]
         if not isinstance(method_type, Type.MethodType):
@@ -780,10 +781,11 @@ class OpBuilder:
         rebuilt: list[HIR.Expr] = []
         for value_arg, param in zip(value_args, method_type.parameters(self.__type_ctx)):
             param_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(param.type_id)]
-            pointee = param_ty.pointee_type if isinstance(param_ty, Type.RefType) else param.type_id
-            operand = self.__retype_literal(value_arg, pointee)
+            operand = value_arg
+            if isinstance(param_ty, Type.RefType):
+                operand = self.__retype_literal(value_arg, param_ty.pointee_type)
             rebuilt.append(HIR.Unary(span=span, op=UnaryOperator.AddrOf, operand=operand,
-                                     type_id=self.__type_ctx.alloc_pointer(pointee),
+                                     type_id=self.__type_ctx.alloc_pointer(operand.type_id),
                                      is_place=False))
         return rebuilt
 
