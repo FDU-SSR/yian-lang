@@ -196,10 +196,10 @@ fn compare_numbers(a: f64, b: f64) -> i32 {
     return -1;
 }
 
-fn key_compare(a: Key, b: Key) -> i32 {
-    match a {
+fn key_compare(a: Key&, b: Key&) -> i32 {
+    match *a {
         Sign(av) => {
-            match b {
+            match *b {
                 Sign(bv) => {
                     if av == bv {
                         return 0;
@@ -215,7 +215,7 @@ fn key_compare(a: Key, b: Key) -> i32 {
             }
         },
         Voxel(ax, ay) => {
-            match b {
+            match *b {
                 Sign(bv) => {
                     return 1;
                 },
@@ -342,7 +342,7 @@ impl<V> RBTree<V> {
         let current: Option<RBNode<V>&> = self.root;
         while current.is_some() {
             let node: RBNode<V>& = *current.unwrap();
-            let comparison: i32 = key_compare(key, node.key);
+            let comparison: i32 = key_compare(&key, &node.key);
             if comparison == 0 {
                 return Option<RBNode<V>&>.Some(node);
             }
@@ -371,7 +371,7 @@ impl<V> RBTree<V> {
         while current.is_some() {
             let node: RBNode<V>& = *current.unwrap();
             parent = Option<RBNode<V>&>.Some(node);
-            let comparison: i32 = key_compare(key, node.key);
+            let comparison: i32 = key_compare(&key, &node.key);
             if comparison < 0 {
                 current = node.left;
             } elif comparison > 0 {
@@ -391,7 +391,7 @@ impl<V> RBTree<V> {
                 self.root = Option<RBNode<V>&>.Some(z);
             },
             Some(p) => {
-                if key_compare(key, p.key) < 0 {
+                if key_compare(&key, &p.key) < 0 {
                     p.left = Option<RBNode<V>&>.Some(z);
                 } else {
                     p.right = Option<RBNode<V>&>.Some(z);

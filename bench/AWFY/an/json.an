@@ -450,15 +450,15 @@ fn write_escaped(out: String&, s: str) {
     out.push('"');
 }
 
-fn write_value(out: String&, v: JsonValue) {
-    match v {
+fn write_value(out: String&, v: JsonValue&) {
+    match *v {
         Object(names, values, table) => {
             out.push('{');
             let i: u64 = 0;
             while i < names.len() {
                 write_escaped(out, names[i]);
                 out.push(':');
-                write_value(out, values[i]);
+                write_value(out, &values[i]);
                 if i + 1u64 < names.len() {
                     out.push(',');
                 }
@@ -470,7 +470,7 @@ fn write_value(out: String&, v: JsonValue) {
             out.push('[');
             let i: u64 = 0;
             while i < values.len() {
-                write_value(out, values[i]);
+                write_value(out, &values[i]);
                 if i + 1u64 < values.len() {
                     out.push(',');
                 }
@@ -528,14 +528,14 @@ fn ops_size(root: JsonValue) -> u64 {
 }
 
 // 递归释放树 (节点内联在父 Vec 中, 逐层释放 Vec 缓冲)
-fn free_value(v: JsonValue) {
-    match v {
+fn free_value(v: JsonValue&) {
+    match *v {
         Object(names, values, table) => {
             names.drop();
             table.drop();
             let i: u64 = 0;
             while i < values.len() {
-                free_value(values[i]);
+                free_value(&values[i]);
                 i += 1;
             }
             values.drop();
@@ -543,7 +543,7 @@ fn free_value(v: JsonValue) {
         Array(values) => {
             let i: u64 = 0;
             while i < values.len() {
-                free_value(values[i]);
+                free_value(&values[i]);
                 i += 1;
             }
             values.drop();
@@ -574,10 +574,10 @@ fn main() {
         let root: JsonValue = parse_document(DOC, bytes, &arena);
         total_ops += ops_size(root);
         out.clear();
-        write_value(&out, root);
+        write_value(&out, &root);
         total_len += out.len();
         total_hash += u64(fnv1a32(out.as_str()));
-        free_value(root);
+        free_value(&root);
         i += 1;
     }
     out.drop();
