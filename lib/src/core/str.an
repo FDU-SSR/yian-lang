@@ -31,6 +31,20 @@ impl str {
         let i: u64 = 0;
 
         while i < len {
+            // ASCII 段整字跳过: 一次 8 字节读 + 一次掩码判断, 代替逐字节比较。
+            // 用 @memcpy 落到本地 u64, 避免未对齐的 8 字节解引用。
+            while i + 8 <= len {
+                let word: u64 = 0;
+                @memcpy(&word, &bytes[i], 8);
+                if (word & 0x8080_8080_8080_8080u64) != 0 {
+                    break;
+                }
+                i += 8;
+            }
+            if i >= len {
+                break;
+            }
+
             let b1 = bytes[i];
 
             // ASCII: 0xxxxxxx
@@ -164,6 +178,146 @@ impl str {
         return (bytes[index] & 192) != 128;
     }
 
+    // Check if the str ends with the given suffix
+    pub fn ends_with(suffix: str) -> bool {
+        let bytes = self.as_slice();
+        let tail = suffix.as_slice();
+        let blen = bytes.len();
+        let tlen = tail.len();
+        if tlen > blen {
+            return false;
+        }
+        let base = blen - tlen;
+        for i in 0..tlen {
+            if bytes[base + i] != tail[i] {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Check if the str ends with the given character
+    pub fn ends_with_char(c: char) -> bool {
+        let last = self.chars().rev().next();
+        last.is_some() && *last.unwrap() == c
+    }
+
+    // 在 hay[from..] 里找 sep 首次出现的字节下标(内部工具, find/split 共用)。
+    // sep 为空时返回 from。
+    static fn find_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
+        let hlen = hay.len();
+        let nlen = sep.len();
+        if nlen == 0 {
+            return Option<u64>.Some(from);
+        }
+        if from + nlen > hlen {
+            return Option<u64>.None;
+        }
+
+        // 多字节模式先比首字节, 只有首字节命中才比其余字节。
+        let last = hlen - nlen;
+        let first_byte = sep[0];
+        let i: u64 = from;
+        while i <= last {
+            if hay[i] == first_byte {
+                let j: u64 = 1;
+                while j < nlen {
+                    if hay[i + j] != sep[j] {
+                        break;
+                    }
+                    j += 1;
+                }
+                if j == nlen {
+                    return Option<u64>.Some(i);
+                }
+            }
+            i += 1;
+        }
+        Option<u64>.None
+    }
+
+    // 在 hay[..=from] 里找 sep 最后一次出现的字节下标(内部工具, rfind 用)。
+    static fn rfind_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
+        let hlen = hay.len();
+        let nlen = sep.len();
+        if nlen == 0 {
+            return Option<u64>.Some(from);
+        }
+        if nlen > hlen {
+            return Option<u64>.None;
+        }
+
+        // 起始位置不能超过最后一个可能的起点。
+        let last: u64 = if from + nlen > hlen { hlen - nlen } else { from };
+        let first_byte = sep[0];
+        let i: u64 = last + 1;
+        while i > 0 {
+            i -= 1;
+            if hay[i] == first_byte {
+                let j: u64 = 1;
+                while j < nlen {
+                    if hay[i + j] != sep[j] {
+                        break;
+                    }
+                    j += 1;
+                }
+                if j == nlen {
+                    return Option<u64>.Some(i);
+                }
+            }
+        }
+        Option<u64>.None
+    }
+
+    // Return the byte index of the first occurrence of `needle`.
+    pub fn find(needle: str) -> Option<u64> {
+        Self.find_in(self.as_slice(), needle.as_slice(), 0)
+    }
+
+    // Return the byte index of the last occurrence of `needle`.
+    pub fn rfind(needle: str) -> Option<u64> {
+        Self.rfind_in(self.as_slice(), needle.as_slice(), self.as_slice().len())
+    }
+
+    // Return true if `needle` occurs in the str.
+    pub fn contains(needle: str) -> bool {
+        Self.find_in(self.as_slice(), needle.as_slice(), 0).is_some()
+    }
+
+    // Return the byte index of the first occurrence of `c`.
+    pub fn find_char(c: char) -> Option<u64> {
+        let code: u32 = u32(c);
+        if code < 128 {
+            // 单字节字符直接扫字节(Rust 对单字节 Pattern 走 memchr)。
+            let byte = u8(code);
+            let bytes = self.as_slice();
+            let len = bytes.len();
+            let i: u64 = 0;
+            while i < len {
+                if bytes[i] == byte {
+                    return Option<u64>.Some(i);
+                }
+                i += 1;
+            }
+            return Option<u64>.None;
+        }
+        for pair in self.char_indices() {
+            if pair[1] == c {
+                return Option<u64>.Some(pair[0]);
+            }
+        }
+        Option<u64>.None
+    }
+
+    // Split the str on `sep`, yielding the segments in order (empty segments
+    // included). `sep` must not be empty.
+    pub fn split(sep: str) -> SplitIter {
+        if sep.as_slice().len() == 0 {
+            @panic("str::split: separator must not be empty");
+        }
+        SplitIter(hay=self.as_slice(), sep=sep.as_slice(), pos=0, done=false)
+    }
+
     // Trim whitespace from both ends of the String
     pub fn trim() -> str {
         let bytes: u8[] = self.as_slice();
@@ -184,15 +338,46 @@ impl str {
     }
 }
 
+pub struct SplitIter {
+    pub hay: u8[],
+    pub sep: u8[],
+    pub pos: u64,
+    pub done: bool,
+}
+
+impl IntoIterator<SplitIter> for SplitIter {
+    fn into_iter() -> SplitIter {
+        *self
+    }
+}
+
+impl Iterator<str> for SplitIter {
+    pub fn next() -> Option<str> {
+        if self.done {
+            return Option<str>.None;
+        }
+
+        let start = self.pos;
+        let hit = str.find_in(self.hay, self.sep, start);
+        match hit {
+            None => {
+                // 最后一段(可能是空串), 之后迭代结束。
+                self.done = true;
+                Option<str>.Some(str.from_slice_unchecked(self.hay[start..self.hay.len()]))
+            }
+            Some(at) => {
+                self.pos = at + self.sep.len();
+                Option<str>.Some(str.from_slice_unchecked(self.hay[start..at]))
+            }
+        }
+    }
+}
+
 pub struct CharIter {
     pub byte_iter: SliceIter<u8>,
 }
 
 impl CharIter {
-    pub fn len() -> u64 {
-        self.byte_iter.len()
-    }
-
     pub fn rev() -> RevCharIter {
         RevCharIter(self.byte_iter.rev())
     }
@@ -208,39 +393,60 @@ impl CharIter {
 
 impl Iterator<char> for CharIter {
     pub fn next() -> Option<char> {
-        let b1_opt = self.byte_iter.next();
-
-        if b1_opt.is_none() {
+        // 直接按 指针 + 剩余字节数 解码, 不再每读一个字节就构造一次
+        // `Option<u8*>` 并 unwrap(对应 Rust 的 `Chars::next` / `next_code_point`)。
+        let n = self.byte_iter.n;
+        if n == 0 {
             return Option<char>.None;
         }
-        let b1: u8 = **b1_opt.unwrap(); // We know it's Some, so unwrap is safe;
+        let p: u8* = self.byte_iter.ptr;
+        let b1: u8 = p[0];
 
         if b1 < 128 { // 0xxxxxxx
+            self.byte_iter.ptr = p + 1;
+            self.byte_iter.n = n - 1;
             return Option<char>.Some(char(b1));
         }
 
         // 2-byte: 110xxxxx 10xxxxxx
         if (b1 & 224) == 192 {
-            let b2: u8 = **self.byte_iter.next().unwrap();
+            if n < 2 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            self.byte_iter.ptr = p + 2;
+            self.byte_iter.n = n - 2;
             return Option<char>.Some(char((u32(b1 & 31) << 6) | u32(b2 & 63)));
         }
 
         // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
         if (b1 & 240) == 224 {
-            let b2: u8 = **self.byte_iter.next().unwrap();
-            let b3: u8 = **self.byte_iter.next().unwrap();
+            if n < 3 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            let b3: u8 = p[2];
+            self.byte_iter.ptr = p + 3;
+            self.byte_iter.n = n - 3;
             return Option<char>.Some(char((u32(b1 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b3 & 63)));
         }
 
         // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
         if (b1 & 248) == 240 {
-            let b2: u8 = **self.byte_iter.next().unwrap();
-            let b3: u8 = **self.byte_iter.next().unwrap();
-            let b4: u8 = **self.byte_iter.next().unwrap();
+            if n < 4 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            let b3: u8 = p[2];
+            let b4: u8 = p[3];
+            self.byte_iter.ptr = p + 4;
+            self.byte_iter.n = n - 4;
             return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
         }
 
-        // Invalid
+        // Invalid leading byte: 与之前一致, 返回 None(该字节已被消费)。
+        self.byte_iter.ptr = p + 1;
+        self.byte_iter.n = n - 1;
         return Option<char>.None;
     }
 }
@@ -256,10 +462,6 @@ pub struct RevCharIter {
 }
 
 impl RevCharIter {
-    pub fn len() -> u64 {
-        self.byte_iter.len()
-    }
-
     pub fn rev() -> CharIter {
         CharIter(self.byte_iter.rev())
     }
@@ -275,48 +477,53 @@ impl RevCharIter {
 
 impl Iterator<char> for RevCharIter {
     pub fn next() -> Option<char> {
-        let b1_opt = self.byte_iter.next();
-
-        if b1_opt.is_none() {
+        // 反向解码: `ptr` 是前向起点, 当前剩余区间是 [0, n), 从 n-1 往前找首字节。
+        let n = self.byte_iter.n;
+        if n == 0 {
             return Option<char>.None;
         }
+        let p: u8* = self.byte_iter.ptr;
+        let b_last: u8 = p[n - 1];
 
-        let b1: u8 = **b1_opt.unwrap();
-
-        if b1 < 128 {
-            return Option<char>.Some(char(b1));
+        if b_last < 128 {
+            self.byte_iter.n = n - 1;
+            return Option<char>.Some(char(b_last));
         }
 
-        let b2_opt = self.byte_iter.next();
-        if b2_opt.is_none() {
+        if n < 2 {
+            self.byte_iter.n = 0;
             return Option<char>.None;
         }
-        let b2: u8 = **b2_opt.unwrap();
+        let b2: u8 = p[n - 2];
 
         if (b2 & 224) == 192 {
-            return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b1 & 63)));
+            self.byte_iter.n = n - 2;
+            return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b_last & 63)));
         }
 
-        let b3_opt = self.byte_iter.next();
-        if b3_opt.is_none() {
+        if n < 3 {
+            self.byte_iter.n = 0;
             return Option<char>.None;
         }
-        let b3: u8 = **b3_opt.unwrap();
+        let b3: u8 = p[n - 3];
 
         if (b3 & 240) == 224 {
-            return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));
+            self.byte_iter.n = n - 3;
+            return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b_last & 63)));
         }
 
-        let b4_opt = self.byte_iter.next();
-        if b4_opt.is_none() {
+        if n < 4 {
+            self.byte_iter.n = 0;
             return Option<char>.None;
         }
-        let b4: u8 = **b4_opt.unwrap();
+        let b4: u8 = p[n - 4];
 
         if (b4 & 248) == 240 {
-            return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b1 & 63)));
+            self.byte_iter.n = n - 4;
+            return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b_last & 63)));
         }
 
+        self.byte_iter.n = 0;
         return Option<char>.None;
     }
 }

@@ -1,3 +1,4 @@
+from std.core.range import Range;
 from std.core.hash import Murmur3Hasher, Hash;
 from std.core.convert import From, Into;
 from std.core.string import String;
@@ -50,15 +51,24 @@ impl u64 {
             return String.from(&"0");
         }
 
+        // 静态数字表(不再每次分配一个 36 字节的 String) + 栈缓冲从低位往高位写,
+        // 最后一次 push_str 写出(u64 以 2 进制最多 64 位)。
+        let digits: u8[36] = [
+            b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',
+            b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', b'I', b'J', b'K', b'L', b'M',
+            b'N', b'O', b'P', b'Q', b'R', b'S', b'T', b'U', b'V', b'W', b'X', b'Y', b'Z',
+        ];
+        let buf: u8[64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let pos: u64 = 64;
         let n: u64 = *self;
-        let digits = String.from(&"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-        let out = String.new();
         while n > 0 {
-            let digit = n % radix;
-            out += char(digits.as_slice()[digit]);
+            pos -= 1;
+            buf[pos] = digits[n % radix];
             n /= radix;
         }
-        out.chars().rev().collect()
+        let out = String.with_capacity(64 - pos);
+        out.push_str(str.from_slice_unchecked(buf[pos..64]));
+        out
     }
 }
 

@@ -44,6 +44,9 @@ fn signed_to_string(value: i64) -> String {
     out
 }
 
+// 把 f64 转成十进制文本, 目前是**近似显示**: 整数部分截断, 小数部分最多 6 位,
+// 不做舍入/进位, 只在余数恰好变成 0.0 时提前收尾; 不保证"最短且可往返表示"
+// (那需要 Grisu/Dragon 一类算法, 目前没有实现)。NaN 和 0.0 走前面的分支。
 fn float_to_string(value: f64) -> String {
     if value != value {
         return String.from(&"NaN");
