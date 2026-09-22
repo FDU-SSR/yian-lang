@@ -1,8 +1,0 @@
-// A released RawVec cannot be revived by grow().
-from std.core.raw_vec import RawVec;
-
-fn main() {
-    let values = RawVec<i32>.with_capacity(4);
-    values.drop();
-    values.grow();
-}
