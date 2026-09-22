@@ -268,7 +268,13 @@ class LLTypeCtx:
             variant_size, variant_align = self.__stable_layout(variant.payload_type)
             max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
-        identified.set_body(self.__i32, ir.ArrayType(self.__i8, pad))  # type: ignore
+        # 载荷槽用 i32 而不是 i8: `[N x i8]` 会被 SROA/instcombine 拆成逐字节拷贝
+        # (一份 72B 载荷 ~150 条指令, json 里一次 Vec::push 就这样), i32 槽则是
+        # 4 字节 move。槽总大小 4*ceil(pad/4) 与旧的 align_up(pad, 4) 相同, 枚举的
+        # 尺寸/对齐(见 __stable_layout 的 EnumType 分支)不变; 载荷读写都先 bitcast
+        # 到真实 payload 类型, 槽的元素类型不影响语义。
+        slots = (pad + 3) // 4
+        identified.set_body(self.__i32, ir.ArrayType(self.__i32, slots))  # type: ignore
 
     def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
         # A zero-sized return type lowers to `void` (nothing is returned);

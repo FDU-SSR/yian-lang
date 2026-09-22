@@ -1643,7 +1643,7 @@ class LLBuilder:
         elif isinstance(base_type, Type.TupleType):
             field_type = base_type.element_types[index]
         elif isinstance(base_type, Type.EnumType):
-            # Enum layout: { i32 discriminant, [pad x i8] payload }
+            # Enum layout: { i32 discriminant, [pad/4 x i32] payload }
             # Field 0 is always the i32 discriminant.
             field_type = self.__type_ctx.u32_id
         elif isinstance(base_type, Type.PointerType):
@@ -1843,7 +1843,7 @@ class LLBuilder:
     def construct_enum_variant(self, enum_type_id: int, discriminant: int, payload_type: int | None, payload_fields: list[LLValue] | None, result: str) -> None:
         """Construct an enum variant value via temporary alloca + store + load.
 
-        Layout: { i32 discriminant, [pad x i8] payload }
+        Layout: { i32 discriminant, [pad/4 x i32] payload }
         1. alloca the enum type
         2. store discriminant into field 0
         3. if payload: bitcast field 1 to the payload struct pointer, store payload fields
@@ -1872,7 +1872,7 @@ class LLBuilder:
             self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
             return
 
-        # payload 变体:enum 布局 {i32, [pad x i8]} 的 payload 槽是字节数组——结构体
+        # payload 变体:enum 布局 {i32, [pad/4 x i32]} 的 payload 槽是 i32 数组——结构体
         # 值无法 insert_value(型别不匹配),须经 alloca+bitcast+store+load(表示级
         # 重构范围外,保持既有路径)。
         tmp_ptr = self.alloca(enum_type_id).ir_val
