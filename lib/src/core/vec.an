@@ -15,10 +15,7 @@ pub struct Vec<T> {
 impl<T> Vec<T> {
     // Create a new, empty Vec
     static pub fn new() -> Self {
-        Self(
-            raw_vec=RawVec<T>.new(),
-            len=0
-        )
+        Self.with_capacity(0)
     }
 
     // Create a Vec with specified capacity
@@ -44,20 +41,22 @@ impl<T> Vec<T> {
 
         let end = self.raw_vec.ptr() + len;
         *end = value;
-        self.len += 1
+        self.len += 1;
     }
 
-    // Clone another Vec's elements to the end; the source remains unchanged.
-    pub fn extend(other: Vec<T>) {
-        // Clone before reserving so self-extension and aliased descriptors are safe.
-        let copied = other.clone();
-        self.reserve(copied.len);
-        for i in 0..copied.len {
-            self.push(copied.raw_vec.ptr()[i]);
-        }
-        // The copied elements now belong to self; release only the temporary buffer.
-        copied.len = 0;
-        copied.drop();
+    // Append another Vec's elements to the end; the source remains unchanged.
+    // `other` may be this same Vec, so its data pointer is read only after
+    // `reserve`: growing moves the buffer that `other` pointed at before.
+    pub fn extend(other: Vec<T>&) {
+        let count = other.len;
+        self.reserve(count);
+
+        let src = other.raw_vec.ptr();
+        let dst = self.raw_vec.ptr() + self.len;
+
+        @memcpy(dst, src, count * @sizeof(T));
+
+        self.len += count;
     }
 
     // Pop an element from the end, returning None if empty
@@ -140,24 +139,25 @@ impl<T> Vec<T> {
     }
 
     // Extend the Vec with a slice
-    // This will clone the elements from the slice into the Vec, since slices are semantically not owned
+    // Elements are copied bitwise, so a `T` that owns heap data ends up sharing
+    // it with the source; the container neither clones nor owns the elements.
+    // `slice` must not point into this Vec: `reserve` may move the buffer while
+    // the slice keeps the address it was built with.
     pub fn extend_from_slice(slice: T[]) {
-        // Clone first because reserve may invalidate a slice into this Vec.
-        let copied = slice.to_vec();
-        self.reserve(copied.len);
-        for i in 0..copied.len {
-            self.push(copied.raw_vec.ptr()[i]);
-        }
-        copied.len = 0;
-        copied.drop();
+        let count = slice.len();
+        self.reserve(count);
+
+        let src = slice.ptr();
+        let dst = self.raw_vec.ptr() + self.len;
+
+        @memcpy(dst, src, count * @sizeof(T));
+
+        self.len += count;
     }
 
     // Shorten the Vec, keeping the first `len` elements
     pub fn truncate(len: u64) {
         if len > self.len {
-            return;
-        }
-        if len == self.len {
             return;
         }
 
@@ -240,12 +240,12 @@ impl<T> Deref<T[]> for Vec<T> {
     }
 }
 
-// Concatenation creates an independent Vec by cloning both inputs.
+// Concatenation builds a new Vec from bitwise copies of both inputs' elements.
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
         let res = Vec<T>.with_capacity(self.len() + rhs.len());
-        res.extend(*self);
-        res.extend(rhs);
+        res.extend(&*self);
+        res.extend(&rhs);
         res
     }
 }
