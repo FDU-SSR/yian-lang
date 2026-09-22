@@ -502,9 +502,9 @@ class OpBuilder:
         # 4) Index overload via trait
         overloaded_expr = self.__resolve_overloaded_operator(span, BinaryOperator.Index, left_hir, [right_hir])
         if overloaded_expr is not None:
-            # if index() returns a pointer, add a deref to make it an lvalue
+            # if index() returns a pointer or reference, add a deref to make it an lvalue
             result_type = self.__type_ctx[overloaded_expr.type_id]
-            if isinstance(result_type, Type.PointerType):
+            if isinstance(result_type, (Type.PointerType, Type.RefType)):
                 overloaded_expr = HIR.Unary(span, UnaryOperator.Deref, overloaded_expr, result_type.pointee_type, is_place=True)
             return overloaded_expr
 
@@ -540,6 +540,11 @@ class OpBuilder:
                 fn_ptr_type_id = self.__type_ctx.alloc_function_pointer(param_type_ids, ret_type_id)
                 return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, fn_ptr_type_id, is_place=False)
 
+        # `&*r`(r 是引用)按设计等同于 `r`: 直接折叠, 类型保持 `T&`(引用不降级成 `T*`)。
+        if isinstance(operand_hir, HIR.Unary) and operand_hir.op == UnaryOperator.Deref:
+            inner_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(operand_hir.operand.type_id)]
+            if isinstance(inner_ty, Type.RefType):
+                return operand_hir.operand
         # rvalue addr-of is allowed — CFG builder will alloca a stack temporary
         ptr_type_id = self.__type_ctx.alloc_pointer(operand_hir.type_id)
         return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
