@@ -176,6 +176,19 @@ impl<T> Vec<T> {
         self.raw_vec.reserve(self.len, additional);
     }
 
+    // 预留 `additional` 个元素并返回 `len` 处的可写指针。
+    // 调用者写入至多 `additional` 个元素, 然后用 advance_len 推进长度;
+    // 越界写入与未写入就推进都是调用者的责任(与 RawVec 的生命周期约定一致)。
+    pub fn spare(additional: u64) -> T* {
+        self.reserve(additional);
+        return self.raw_vec.ptr() + self.len;
+    }
+
+    // 已写入 `count` 个元素后推进长度。
+    pub fn advance_len(count: u64) {
+        self.len += count;
+    }
+
     // Shrinks the capacity as much as possible
     pub fn shrink_to_fit() {
         if self.len < self.raw_vec.capacity() {

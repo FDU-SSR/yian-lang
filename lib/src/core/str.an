@@ -12,7 +12,7 @@ from std.core.string import String;
 impl str {
     // Create a str from a byte slice without validation.
     // Caller must guarantee the byte slice is valid UTF-8.
-    static fn from_slice_unchecked(s: u8[]) -> Self {
+    pub static fn from_slice_unchecked(s: u8[]) -> Self {
         @str_from_parts(@slice_get_ptr(s), @slice_get_len(s))
     }
 
@@ -127,6 +127,21 @@ impl str {
 
     // Check if the str contains the given character
     pub fn contains_char(c: char) -> bool {
+        let code: u32 = u32(c);
+        if code < 128 {
+            // ASCII 字符就是单字节: 直接扫字节, 不必逐字符解码(Rust 的
+            // `str::contains(char)` 同样只对首个字节做 memchr)。
+            let bytes = self.as_slice();
+            let len = bytes.len();
+            let i: u64 = 0;
+            while i < len {
+                if bytes[i] == u8(code) {
+                    return true;
+                }
+                i += 1;
+            }
+            return false;
+        }
         for ch in self.chars() {
             if ch == c {
                 return true;

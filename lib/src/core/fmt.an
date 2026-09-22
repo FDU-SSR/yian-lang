@@ -1,3 +1,4 @@
+from std.core.range import Range;
 from std.core.string import String;
 
 pub trait ToString {
@@ -5,11 +6,22 @@ pub trait ToString {
 }
 
 fn append_unsigned_digits(out: String*, value: u64) {
-    if value >= 10u64 {
-        append_unsigned_digits(out, value / 10u64);
+    // 从低位往高位写进栈上缓冲, 再一次 append: 原实现每个数字递归一层、
+    // 每位一次 `String::push`, 现在是一条循环 + 一次 push_str。
+    let buf: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let pos: u64 = 20;
+    let v: u64 = value;
+    if v == 0 {
+        pos = 19;
+        buf[19] = b'0';
+    } else {
+        while v > 0 {
+            pos -= 1;
+            buf[pos] = b'0' + u8(v % 10u64);
+            v /= 10u64;
+        }
     }
-    let digit = u8(value % 10u64);
-    out.push(char(b'0' + digit));
+    out.push_str(str.from_slice_unchecked(buf[pos..20]));
 }
 
 fn unsigned_to_string(value: u64) -> String {
