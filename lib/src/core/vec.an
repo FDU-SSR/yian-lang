@@ -244,7 +244,7 @@ impl<T> Deref<T[]> for Vec<T> {
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
         let res = Vec<T>.with_capacity(self.len() + rhs.len());
-        res.extend(&*self);
+        res.extend(self);
         res.extend(&rhs);
         res
     }
