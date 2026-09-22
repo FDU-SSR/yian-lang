@@ -13,7 +13,7 @@ impl<T> RawVec<T> {
     static pub fn new() -> Self {
         if @sizeof(T) == 0 {
             // ZST 不需要维护任何运行时数据: 直接给一个未定义的 Self。
-            return @Undef<Self>;
+            return @Undef<Self>();
         }
         Self(
             data=@alloc<T>(0),
@@ -23,7 +23,7 @@ impl<T> RawVec<T> {
 
     static pub fn with_capacity(capacity: u64) -> Self {
         if @sizeof(T) == 0 {
-            return @Undef<Self>;
+            return @Undef<Self>();
         }
         if capacity == 0 {
             return Self.new();

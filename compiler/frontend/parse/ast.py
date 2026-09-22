@@ -646,12 +646,12 @@ class DynBuffer:
 
 @dataclass
 class Undef:
-    """``@Undef<T>`` — 一个类型为 T 的未定义值(ZST 之类的"无运行时数据"值)。"""
+    """``@Undef<T>()`` — 一个类型为 T 的未定义值(ZST 之类的"无运行时数据"值)。"""
     span: SrcSpan
     ty: ASTType
 
     def __repr__(self) -> str:
-        return f"@Undef<{self.ty}>"
+        return f"@Undef<{self.ty}>()"
 
 
 @dataclass

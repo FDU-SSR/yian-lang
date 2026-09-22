@@ -478,10 +478,15 @@ class ExprParser:
         return AST.SizeOf(span=at_span + end.span, ty=ty)
 
     def __parse_undef(self, at_span: SrcSpan) -> AST.Undef:
-        """Parse ``@Undef<T>`` — 一个类型为 T 的未定义值(标准库内部用)。"""
+        """Parse ``@Undef<T>()`` — 一个类型为 T 的未定义值(标准库内部用)。
+
+        保持函数调用风格: 类型参数之后必须有一个空实参表。
+        """
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
         ty = self.__type_parser.parse_type()
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.Undef(span=at_span + end.span, ty=ty)
 
     def __parse_bitcast(self, at_span: SrcSpan) -> AST.BitCast:
