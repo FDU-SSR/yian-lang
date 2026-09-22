@@ -6,12 +6,14 @@ pub struct RawVec<T> {
     cap: u64,
 }
 
+// 生命周期由使用者负责: 释放后再取用/再释放都是 UB, 这里不做任何检查。
+// ZST(`@sizeof(T) == 0`)没有真实数据可处理: 分配/拷贝/释放全部用 if 拦掉,
+// 只维护容量计数。
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        let data: T* = @alloc<T>(0);
         Self(
-            data=data,
-            cap=0x8000_0000_0000_0000u64
+            data=@alloc<T>(0),
+            cap=0
         )
     }
 
@@ -19,60 +21,59 @@ impl<T> RawVec<T> {
         if capacity == 0 {
             return Self.new();
         }
-        let max_capacity: u64 = 0x7FFF_FFFF_FFFF_FFFFu64;
-        if capacity > max_capacity {
-            @runtime_fail("R001");
+        if @sizeof(T) == 0 {
+            return Self(
+                data=@alloc<T>(0),
+                cap=capacity
+            )
         }
-        // Allocate memory for capacity elements
         let data: T* = @alloc<T>(capacity);
         Self(
             data=data,
-            cap=capacity | 0x8000_0000_0000_0000u64
+            cap=capacity
         )
     }
 
     pub fn ptr() -> T* {
-        self.data
+        return self.data;
     }
 
     pub fn capacity() -> u64 {
-        self.cap & 0x7FFF_FFFF_FFFF_FFFFu64
+        return self.cap;
     }
 
     pub fn grow() {
-        let live_bit: u64 = 0x8000_0000_0000_0000u64;
-        let old_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
-        if old_cap >= 0x4000_0000_0000_0000u64 {
-            @runtime_fail("R001");
+        if @sizeof(T) == 0 {
+            self.cap = if self.cap == 0 { 4 } else { self.cap * 2 };
+            return;
         }
-        let new_cap = if old_cap == 0 { 4 } else { old_cap * 2 }
+        let old_cap: u64 = self.cap;
+        let new_cap: u64 = if old_cap == 0 { 4 } else { old_cap * 2 };
 
         let new_data: T* = @alloc<T>(new_cap);
 
         if old_cap > 0 {
-            // Copy existing elements to the new buffer
             // Since we assume the vector is full when grow() is called
             @memcpy(new_data, self.data, old_cap * @sizeof(T));
         }
         del self.data;
 
         self.data = new_data;
-        self.cap = new_cap | live_bit;
+        self.cap = new_cap;
     }
 
     pub fn reserve(len: u64, additional: u64) {
-        let live_bit: u64 = 0x8000_0000_0000_0000u64;
-        let max_capacity: u64 = 0x7FFF_FFFF_FFFF_FFFFu64;
-        if additional > max_capacity || len > max_capacity - additional {
-            @runtime_fail("R001");
+        let required_cap: u64 = len + additional;
+        if self.cap >= required_cap {
+            return;
         }
-        let required_cap = len + additional;
-        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
-        if current_cap >= required_cap {
+        if @sizeof(T) == 0 {
+            self.cap = required_cap;
             return;
         }
 
-        let new_cap = if current_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
+        let current_cap: u64 = self.cap;
+        let new_cap: u64 = if current_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
             required_cap
         } else {
             current_cap * 2
@@ -95,13 +96,15 @@ impl<T> RawVec<T> {
         del self.data;
 
         self.data = new_data;
-        self.cap = new_cap | live_bit;
+        self.cap = new_cap;
     }
 
     pub fn shrink_to_fit(len: u64) {
-        let live_bit: u64 = 0x8000_0000_0000_0000u64;
-        let current_cap = self.cap & 0x7FFF_FFFF_FFFF_FFFFu64;
-        if current_cap <= len {
+        if self.cap <= len {
+            return;
+        }
+        if @sizeof(T) == 0 {
+            self.cap = len;
             return;
         }
 
@@ -109,7 +112,7 @@ impl<T> RawVec<T> {
             let new_data: T* = @alloc<T>(0);
             del self.data;
             self.data = new_data;
-            self.cap = live_bit;
+            self.cap = 0;
             return;
         }
 
@@ -121,17 +124,16 @@ impl<T> RawVec<T> {
         del self.data;
 
         self.data = new_data;
-        self.cap = len | live_bit;
+        self.cap = len;
     }
 }
 
-// Implement Drop for RawVec<T> to allow dropping the RawVec and freeing its resources
 impl<T> Drop for RawVec<T> {
     fn drop() {
-        let live_bit: u64 = 0x8000_0000_0000_0000u64;
-        if (self.cap & live_bit) != 0 {
-            del self.data;
+        if @sizeof(T) == 0 {
+            return;
         }
+        del self.data;
         self.cap = 0;
     }
 }

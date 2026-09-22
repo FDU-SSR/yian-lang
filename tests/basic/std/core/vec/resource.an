@@ -38,8 +38,6 @@ fn main() {
     assert drops == 5: "callers can explicitly drop reachable elements";
     values.drop();
     assert drops == 5: "vec drop releases storage without dropping elements";
-    values.drop();
-    assert drops == 5: "reset state makes repeated drop on one descriptor harmless";
 
     let strings = Vec<String>.new();
     strings.push(String.from(&"one"));
