@@ -207,7 +207,9 @@ impl<T> Index<u64, T&> for Vec<T> {
         if *index >= self.len {
             @runtime_fail("S001");
         }
-        return &self.raw_vec.ptr()[*index];
+        // `T*` 由返回类型隐式降级成 `T&`; 不用 `&<place>` 取址, 那会多走一次
+        // `T*` 的 Index 实现 (fat 模式下 deltablue/havlak 各慢 13~15%)。
+        return self.raw_vec.ptr() + *index;
     }
 }
 
