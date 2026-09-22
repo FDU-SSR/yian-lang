@@ -327,6 +327,14 @@ class DynBuffer:
 
 
 @dataclass
+class Undef:
+    """类型为 ``type_id`` 的未定义值; 值层不做任何初始化(标准库内部原语)。"""
+    span: SrcSpan
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class SizeOf:
     span: SrcSpan
     target_type: int  # type_id of the type to get size of
@@ -552,7 +560,7 @@ Expr: TypeAlias = (
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
-    | SizeOf | BitCast | Alloc | SysRead | SysWrite | Open | Close
+    | SizeOf | Undef | BitCast | Alloc | SysRead | SysWrite | Open | Close
     | Sqrt | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure

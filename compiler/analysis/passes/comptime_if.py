@@ -221,6 +221,8 @@ class ComptimeIfSpecializer:
                 self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
             case HIR.SizeOf():
                 return self.__type_size(expr.target_type), expr.type_id
+            case HIR.Undef():
+                self.__not_evaluable(expr, "'@Undef' is not a compile-time value")
             case HIR.Cast():
                 value, _ = self.__evaluate(expr.value)
                 return self.__cast_value(value, expr.target_type, expr)

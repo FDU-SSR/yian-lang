@@ -81,6 +81,10 @@ class LLBuilder:
             return instr
         return self.__builder.bitcast(value, typ, name)  # type: ignore
 
+    def undef_value(self, type_id: int, result: str) -> None:
+        """``@Undef<T>``: 绑定一个类型为 T 的未定义值(不做任何初始化)。"""
+        self.__func.set_reg(result, self.undef(type_id))
+
     def sizeof_const(self, type_id: int, result: str) -> None:
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(type_id))))  # type: ignore
 

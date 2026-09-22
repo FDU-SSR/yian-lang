@@ -168,6 +168,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_dyn_buffer(expr, guides, is_last, type_ctx)
         case HIR.SizeOf():
             return __export_size_of(expr, guides, is_last, type_ctx)
+        case HIR.Undef():
+            return __line(guides, is_last, f"Undef: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place}")
         case HIR.BitCast():
             return __export_bit_cast(expr, guides, is_last, type_ctx)
         case HIR.Alloc():

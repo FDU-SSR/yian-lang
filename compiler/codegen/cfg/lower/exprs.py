@@ -123,6 +123,8 @@ class ExprLowerer:
                 return self.resolve_dyn_buffer(expr)
             case HIR.SizeOf():
                 return self.__host.values.resolve_size_of(expr)
+            case HIR.Undef():
+                return self.__host.values.resolve_undef(expr)
             case HIR.BitCast():
                 return self.__host.values.resolve_bit_cast(expr)
             case HIR.Alloc():

@@ -25,6 +25,7 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.Sqrt,
         AST.BuiltinKind.AssumeInit,
         AST.BuiltinKind.MemCopy,
+        AST.BuiltinKind.Undef,
         AST.BuiltinKind.SliceFromParts,
         AST.BuiltinKind.SliceGetPtr,
         AST.BuiltinKind.SliceGetLen,

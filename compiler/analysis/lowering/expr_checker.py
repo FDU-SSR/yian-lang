@@ -93,6 +93,8 @@ class ExprChecker:
                 return self.__handle_dyn_buffer(expr)
             case AST.SizeOf():
                 return self.__handle_sizeof(expr)
+            case AST.Undef():
+                return self.__handle_undef(expr)
             case AST.BitCast():
                 return self.__handle_bitcast(expr)
             case AST.Alloc():
@@ -160,6 +162,10 @@ class ExprChecker:
 
     def __handle_dyn_buffer(self, node: AST.DynBuffer) -> HIR.Expr:
         return self.__op_builder.build_dyn_buffer(node.span, node.element, node.size)
+
+    def __handle_undef(self, node: AST.Undef) -> HIR.Expr:
+        type_id = self.__ctx.resolve_type(node.ty)
+        return HIR.Undef(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)

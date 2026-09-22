@@ -30,6 +30,7 @@ class BuiltinKind(Enum):
     """Compiler-provided instructions in the reserved ``@`` namespace."""
 
     SizeOf = "sizeof"
+    Undef = "undef"
     BitCast = "bitcast"
     Alloc = "alloc"
     Panic = "panic"
@@ -57,7 +58,9 @@ class BuiltinKind(Enum):
 
     @classmethod
     def try_from_name(cls, name: str) -> BuiltinKind | None:
-        return _BUILTIN_KIND_BY_NAME.get(name)
+        # 大小写不敏感: 既有内置按小写书写(@sizeof/@memcpy/@alloc), 新增的 @Undef<T>
+        # 习惯大写, 两种都接受。
+        return _BUILTIN_KIND_BY_NAME.get(name.lower())
 
 
 _BUILTIN_KIND_BY_NAME: dict[str, BuiltinKind] = {kind.value: kind for kind in BuiltinKind}
@@ -642,6 +645,16 @@ class DynBuffer:
 
 
 @dataclass
+class Undef:
+    """``@Undef<T>`` — 一个类型为 T 的未定义值(ZST 之类的"无运行时数据"值)。"""
+    span: SrcSpan
+    ty: ASTType
+
+    def __repr__(self) -> str:
+        return f"@Undef<{self.ty}>"
+
+
+@dataclass
 class SizeOf:
     span: SrcSpan
     ty: ASTType
@@ -773,7 +786,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | BuiltinCall | MethodCall
     | DynValue | DynBuffer
-    | SizeOf | BitCast | Alloc
+    | SizeOf | Undef | BitCast | Alloc
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

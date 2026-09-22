@@ -472,6 +472,13 @@ class Cast:
 
 
 @dataclass
+class Undef:
+    """类型为 ``type_id`` 的未定义值(LLVM ``undef``)。"""
+    result: Reg
+    type_id: int
+
+
+@dataclass
 class SizeOf:
     """Get the size of a type in bytes"""
     result: Reg
@@ -576,7 +583,7 @@ Stmt: TypeAlias = (
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
     | Call | Invoke
-    | Cast | SizeOf | FuncPtr
+    | Cast | SizeOf | Undef | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | ArgCount | ArgBytes
     | MemCopy

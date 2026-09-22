@@ -458,6 +458,8 @@ class ExprParser:
 
         if kind == AST.BuiltinKind.SizeOf:
             return self.__parse_sizeof(at.span)
+        if kind == AST.BuiltinKind.Undef:
+            return self.__parse_undef(at.span)
         if kind == AST.BuiltinKind.BitCast:
             return self.__parse_bitcast(at.span)
         if kind == AST.BuiltinKind.Alloc:
@@ -474,6 +476,13 @@ class ExprParser:
         ty = self.__type_parser.parse_type()
         end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.SizeOf(span=at_span + end.span, ty=ty)
+
+    def __parse_undef(self, at_span: SrcSpan) -> AST.Undef:
+        """Parse ``@Undef<T>`` — 一个类型为 T 的未定义值(标准库内部用)。"""
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+        ty = self.__type_parser.parse_type()
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        return AST.Undef(span=at_span + end.span, ty=ty)
 
     def __parse_bitcast(self, at_span: SrcSpan) -> AST.BitCast:
         """Parse ``@bitcast<type>(expr)`` — reinterpret a pointer as another pointer type."""

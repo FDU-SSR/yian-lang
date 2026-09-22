@@ -240,6 +240,8 @@ class LLTranslator:
                 builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name, stmt.raw)
             case IR.SizeOf():
                 builder.sizeof_const(stmt.type_id, stmt.result.name)
+            case IR.Undef():
+                builder.undef_value(stmt.type_id, stmt.result.name)
             case IR.FuncPtr():
                 builder.func_ptr_by_type(stmt.func_type_id, stmt.result.type_id, stmt.result.name)
             case IR.AggregateConstruct():
