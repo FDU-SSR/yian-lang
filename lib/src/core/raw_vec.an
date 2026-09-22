@@ -42,7 +42,7 @@ impl<T> RawVec<T> {
     pub fn capacity() -> u64 {
         if @sizeof(T) == 0 {
             // ZST 没有存储上限: 报最大容量, Vec::push 的 len == capacity() 永不成立。
-            0xFFFF_FFFF_FFFF_FFFFu64
+            u64.max()
         } else {
             self.cap
         }

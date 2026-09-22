@@ -3,6 +3,11 @@ from std.core.convert import From, Into;
 from std.core.string import String;
 
 impl u64 {
+    /// 类型级常量: u64 的最大值。写成 static 是为了能按 `u64.max()` 调用。
+    static pub fn max() -> u64 {
+        0xFFFF_FFFF_FFFF_FFFFu64
+    }
+
     pub fn rotate_left(n: u64) {
         let shift = n % 64;
         if shift == 0 {
