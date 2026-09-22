@@ -71,7 +71,13 @@ class Emitter:
             llvm_mod = binding.parse_assembly(ir_text)
             llvm_mod.verify()
             if opt_level > 0 or normalized_kind in ("obj", "asm"):
-                target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", opt=opt_level)  # type: ignore[union-attr]
+                # code model 必须显式给: llvmlite 的默认值是 jitdefault, 在 64 位平台上落到
+                # large —— 后端于是不敢用 ±2 GiB 的 PC 相对寻址, 把每个函数地址与全局地址
+                # 都用 movabs 物化进寄存器, YIAN 内部调用被编译成 `call *%reg`。本编译产物
+                # 是单个可执行/目标文件 (代码与静态数据都远小于 2 GiB), small 与 clang 的
+                # 默认一致: 直接 call、RIP 相对寻址。若将来链接镜像真的超过 ±2 GiB, 失败
+                # 方式是链接期重定位溢出 (不会静默产生错码), 那时改用 medium。
+                target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", codemodel="small", opt=opt_level)  # type: ignore[union-attr]
             if target_machine is not None and not llvm_mod.data_layout:
                 # 发射端只保证 triple (apply_target 已写上配套 layout); 这里再兜
                 # 一道: 模块若没有 data layout, 中端 pass 会按空布局折叠字段偏移
