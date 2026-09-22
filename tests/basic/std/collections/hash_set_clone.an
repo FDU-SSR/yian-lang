@@ -1,6 +1,7 @@
-// HashSet.clone() deep-copies stored elements; removing or mutating elements
-// in the clone never affects the original. Drop counting proves set operations
-// leave element cleanup to callers.
+// HashSet.clone() copies the table buffers the set itself manages; the String
+// buffers owned by the stored keys stay shared with the original. Removing in
+// one set never affects the other; element cleanup stays with the caller, and a
+// shared buffer is released exactly once.
 from std.collections.hash_set import HashSet;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -55,32 +56,25 @@ fn main() {
     assert drops == 0: "clone remove must not clean the stored element";
     assert s.contains(&probe_alpha): "original set unaffected by clone removal";
 
-    // Mutating the clone's remaining element must not reach the original.
-    for t in c {
-        t.tag.push('!');
-    }
+    // 元素的 String 缓冲区与原件共享: 两侧看到同一批键, 但不能再通过克隆改写
+    // 元素(扩容会释放共享缓冲区, 让原件悬空)。
     let probe_beta = SKey(tag=String.from(&"beta"), drops=&drops);
-    let probe_beta_bang = SKey(tag=String.from(&"beta!"), drops=&drops);
-    assert c.contains(&probe_beta_bang) && !c.contains(&probe_beta);
-    assert s.contains(&probe_beta): "original elements were deep-copied, untouched";
+    assert c.contains(&probe_beta) && s.contains(&probe_beta): "clone shares element storage";
 
     assert s.remove(&probe_alpha);
     assert drops == 0: "original remove must not clean the stored element";
 
-    // Removed keys are no longer reachable through the sets.  Clean the
-    // remaining keys and lookup values explicitly before freeing table storage.
+    // Removed keys are no longer reachable through the sets.  Clean the remaining
+    // keys and lookup values explicitly before freeing table storage; s 与 c 的键
+    // 共享同一批 String 缓冲区, 所以每个键只清一次。
     probe_alpha.drop();
     probe_beta.drop();
-    probe_beta_bang.drop();
     for key in s {
         key.drop();
     }
-    for key in c {
-        key.drop();
-    }
-    assert drops == 5: "reachable keys are cleaned only by explicit drop";
+    assert drops == 3: "reachable keys are cleaned only by explicit drop";
     s.drop();
-    assert drops == 5: "set drop releases storage without dropping keys";
+    assert drops == 3: "set drop releases storage without dropping keys";
     c.drop();
-    assert drops == 5: "clone drop releases storage without dropping keys";
+    assert drops == 3: "clone drop releases storage without dropping keys";
 }

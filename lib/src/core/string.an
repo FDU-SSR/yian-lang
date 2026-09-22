@@ -169,7 +169,7 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
-        // 一次分配 + 一次 @memcpy: u8 没有堆数据, 与逐元素 clone+push 结果相同
+        // 一次分配 + 一次 @memcpy: 只复制自己管理的字节缓冲区
         let bytes = self.as_slice();
         let out = Self.with_capacity(bytes.len());
         out.data.extend_from_slice(bytes);

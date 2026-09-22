@@ -207,8 +207,8 @@ impl<T> Vec<T> {
     }
 }
 
-// Implement Clone for Vec<T>
-// This will clone the elements in the Vec, so it requires T to be Clone
+// Clone copies the element buffer the Vec itself manages; resources owned by the
+// elements are not cloned recursively (call clone() on them explicitly if needed).
 impl<T> Clone for Vec<T> {
     pub fn clone() -> Self {
         self.as_slice().to_vec()

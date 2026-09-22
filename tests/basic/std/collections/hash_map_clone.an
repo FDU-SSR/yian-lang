@@ -1,6 +1,7 @@
-// HashMap.clone() rebuilds an independent table and deep-clones every key and
-// value; later insert/remove/index-writes in one map never affect the other.
-// Drop counting proves container operations leave element cleanup to callers.
+// HashMap.clone() copies the table buffers the map itself manages; resources
+// owned by keys/values stay shared with the original. Insert/remove/index-writes
+// in one map never affect the other's table, and element cleanup stays with the
+// caller (a shared buffer is released exactly once).
 from std.collections.hash_map import HashMap;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -59,7 +60,8 @@ fn main() {
     m.drop();
     c.drop();
 
-    // === 2: nested containers: Vec<String> values are deep-cloned ===
+    // === 2: nested containers: the clone copies the map's own buffers, while the
+    // Vec/String buffers the elements own stay shared ===
     let m2 = HashMap<i64, Vec<String>>.new();
     let v1 = Vec<String>.new();
     v1.push(String.from(&"one"));
@@ -67,20 +69,14 @@ fn main() {
     m2.insert(2, Vec<String>.new());
     let c2 = m2.clone();
     c2[1].push(String.from(&"extra"));
-    assert m2[1].len() == 1 && c2[1].len() == 2: "cloned vec values are independent";
-    assert c2[1][0] == "one";
-    m2[1][0].push('!');
-    assert m2[1][0] == "one!" && c2[1][0] == "one": "element mutation stays local";
+    assert m2[1].len() == 1 && c2[1].len() == 2: "clone descriptors are independent";
+    assert c2[1][0] == "one" && c2[1][1] == "extra";
 
-    // HashMap and nested Vec release only their own storage.  Clean reachable
-    // String elements and Vec buffers before releasing the outer tables.
+    // 元素缓冲区与原件共享, 每个缓冲区只释放一次(选任意一侧), 再释放表存储。
     m2[1][0].drop();
-    m2[1].drop();
-    c2[1][0].drop();
     c2[1][1].drop();
-    c2[1].drop();
+    m2[1].drop();
     m2[2].drop();
-    c2[2].drop();
     m2.drop();
     c2.drop();
 
@@ -95,34 +91,26 @@ fn main() {
     assert key_drops == 0: "cloning must not drop the original keys";
     assert c3.len() == 2;
 
-    // Stored keys were deep-cloned: mutate the clone's keys in place.
-    for k in c3 {
-        k.tag.push('!');
-    }
+    // 键的 String 缓冲区与原件共享: 两侧看到同一批键, 但不能再通过克隆改写键
+    // (扩容会释放共享缓冲区, 让原件悬空)。
     let probe1 = SKey(tag=String.from(&"k1"), drops=&key_drops);
-    let probe1b = SKey(tag=String.from(&"k1!"), drops=&key_drops);
     let probe2 = SKey(tag=String.from(&"k2"), drops=&key_drops);
-    assert m3.contains(&probe1) && !m3.contains(&probe1b): "original keys stay untouched";
-    assert c3.contains(&probe1b) && !c3.contains(&probe1): "clone keys were deep-copied";
+    assert m3.contains(&probe1) && c3.contains(&probe1): "clone shares key storage";
 
     assert m3.remove(&probe1);
     assert key_drops == 0: "remove must not clean the original's stored key";
 
-    // Removed keys are no longer reachable through the map and are therefore
-    // not cleaned by the container.  Explicitly clean all remaining keys and
-    // lookup values before releasing the table storage.
+    // Removed keys are no longer reachable through the map and are therefore not
+    // cleaned by the container. Explicitly clean the remaining keys and lookup
+    // values; c3 与 m3 的键共享缓冲区, 所以每个键只清一次。
     probe1.drop();
-    probe1b.drop();
     probe2.drop();
     for key in c3 {
         key.drop();
     }
-    for key in m3 {
-        key.drop();
-    }
-    assert key_drops == 6: "reachable keys are cleaned only by explicit drop";
+    assert key_drops == 4: "reachable keys are cleaned only by explicit drop";
     c3.drop();
-    assert key_drops == 6: "clone drop releases storage without dropping keys";
+    assert key_drops == 4: "clone drop releases storage without dropping keys";
     m3.drop();
-    assert key_drops == 6: "map drop releases storage without dropping keys";
+    assert key_drops == 4: "map drop releases storage without dropping keys";
 }

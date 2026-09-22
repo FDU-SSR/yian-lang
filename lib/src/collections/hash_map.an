@@ -242,19 +242,24 @@ impl<K, V> Drop for HashMap<K, V> {
 }
 
 impl<K, V> Clone for HashMap<K, V> {
-    // Deep copy: rebuild a same-capacity table and clone every stored pair.
-    // Constraints (K: Hash + Clone, V: Clone) are resolved at the call site.
+    // 只复制自己管理的两个缓冲区(ctrls + buckets): K/V 自己管理的资源不递归复制
+    // (容器 clone 的语义; 需要深拷贝时由调用者显式 clone 键值)。
     pub fn clone() -> Self {
         if self.capacity == 0 {
             @runtime_fail("S002");
         }
-        let result = Self.with_capacity_and_hasher(self.capacity, self.hasher_builder);
-        for i in 0..self.capacity {
-            if self.ctrls[i] != 0b1111_1111 && self.ctrls[i] != 0b1000_0000 {
-                result.insert(self.buckets[i].key.clone(), self.buckets[i].value.clone());
-            }
-        }
-        result
+        let ctrls: u8* = @alloc<u8>(self.capacity);
+        @memcpy(ctrls, self.ctrls, self.capacity);
+        let buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(self.capacity);
+        @memcpy(buckets, self.buckets, self.capacity * @sizeof(Bucket<K, V>));
+        Self(
+            buckets,
+            ctrls,
+            self.size,
+            self.capacity,
+            self.growth_left,
+            self.hasher_builder
+        )
     }
 }
 

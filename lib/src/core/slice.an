@@ -52,11 +52,11 @@ impl<T> T[] {
     }
 
     // Clone the slice into a Vec
+    // 只复制元素缓冲区本身: 元素自己管理的资源(如果有)不递归复制, 需要深拷贝时
+    // 由调用者显式对元素调用 clone()。
     pub fn to_vec() -> Vec<T> {
         let vec = Vec<T>.with_capacity(self.len());
-        for i in 0..self.len() {
-            vec.push(self.ptr()[i].clone());
-        }
+        vec.extend_from_slice(*self);
         vec
     }
 }
