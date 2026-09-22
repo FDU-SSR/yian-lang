@@ -258,7 +258,7 @@ impl From<str> for String {
 // =============================================================================
 
 impl Index<Range<u64>, str> for String {
-    pub fn index(range: Range<u64>*) -> str {
+    pub fn index(range: Range<u64>&) -> str {
         self.as_str()[*range]
     }
 }

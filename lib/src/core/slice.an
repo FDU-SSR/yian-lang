@@ -145,13 +145,13 @@ impl<T> PartialEq<T[]> for T[] {
 }
 
 impl<T> Index<u64, T*> for T[] {
-    fn index(index: u64*) -> T* {
+    fn index(index: u64&) -> T* {
         self.ptr() + *index
     }
 }
 
 impl<T> Index<Range<u64>, T[]> for T[] {
-    fn index(range: Range<u64>*) -> T[] {
+    fn index(range: Range<u64>&) -> T[] {
         if range.start > range.end || range.end > self.len() {
             @runtime_fail("S001");
         }

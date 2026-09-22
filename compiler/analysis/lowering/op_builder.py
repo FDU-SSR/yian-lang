@@ -9,7 +9,7 @@ from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
 from compiler.analysis.lowering.sem_ctx import DefKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.ty.context import LookupResult, TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
@@ -735,9 +735,11 @@ class OpBuilder:
         trait_kind, method_name = self.__OP_INFO[op]
 
         # Non-consuming operators take pointer params — wrap args with &.
-        if trait_kind in (Type.IntrinsicCustomType.PartialEq,
-                          Type.IntrinsicCustomType.PartialOrd,
-                          Type.IntrinsicCustomType.Index):
+        takes_pointer_args = trait_kind in (Type.IntrinsicCustomType.PartialEq,
+                                            Type.IntrinsicCustomType.PartialOrd,
+                                            Type.IntrinsicCustomType.Index)
+        value_args = list(args)
+        if takes_pointer_args:
             args = [HIR.Unary(span=span, op=UnaryOperator.AddrOf, operand=arg,
                               type_id=self.__type_ctx.alloc_pointer(arg.type_id),
                               is_place=False)
@@ -760,7 +762,39 @@ class OpBuilder:
         if id(impl_trait_ty.custom_def) != id(trait_ty.custom_def):
             return None
 
+        if trait_kind == Type.IntrinsicCustomType.Index:
+            args = self.__index_args(span, value_args, lookup)
+
         return self.__call_dispatcher.build_method_call(span, receiver, lookup, args, "operator")
+
+    def __index_args(self, span: SrcSpan, value_args: list[HIR.Expr], lookup: LookupResult) -> list[HIR.Expr]:
+        """取下标实参的地址, 并按实例化后的 `Idx` 定型。
+
+        `Index::index` 的形参是 `Idx&`; 字面量实参在取址前仍是字面量类型, 而
+        `&<字面量>` 提升出来的临时量必须按 `Idx` 物化: 否则降级成 `Idx&` 时
+        pointee 还是字面量类型, 读写会落在错误的元素类型上。
+        """
+        method_type = self.__type_ctx[lookup.method_id]
+        if not isinstance(method_type, Type.MethodType):
+            return value_args
+        rebuilt: list[HIR.Expr] = []
+        for value_arg, param in zip(value_args, method_type.parameters(self.__type_ctx)):
+            param_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(param.type_id)]
+            pointee = param_ty.pointee_type if isinstance(param_ty, Type.RefType) else param.type_id
+            operand = self.__retype_literal(value_arg, pointee)
+            rebuilt.append(HIR.Unary(span=span, op=UnaryOperator.AddrOf, operand=operand,
+                                     type_id=self.__type_ctx.alloc_pointer(pointee),
+                                     is_place=False))
+        return rebuilt
+
+    def __retype_literal(self, arg: HIR.Expr, target: int) -> HIR.Expr:
+        """整型/浮点字面量按目标类型定型; 其它实参交给常规 coerce。"""
+        target_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(target)]
+        if isinstance(arg, HIR.IntLiteral) and isinstance(target_ty, Type.IntType):
+            return HIR.IntLiteral(span=arg.span, value=arg.value, type_id=target, is_place=False)
+        if isinstance(arg, HIR.FloatLiteral) and isinstance(target_ty, Type.FloatType):
+            return HIR.FloatLiteral(span=arg.span, value=arg.value, type_id=target, is_place=False)
+        return self.__evaluator.coerce(arg, target)
 
     def __raise_unsupported_unary_operator(self, span: SrcSpan, operator_symbol: str, operand_type_id: int) -> NoReturn:
         operand_name = self.__type_ctx.get_name(operand_type_id)

@@ -360,7 +360,7 @@ impl PartialEq<str> for str {
 }
 
 impl Index<Range<u64>, str> for str {
-    pub fn index(range: Range<u64>*) -> str {
+    pub fn index(range: Range<u64>&) -> str {
         let bytes = self.as_slice();
         let len = bytes.len();
 

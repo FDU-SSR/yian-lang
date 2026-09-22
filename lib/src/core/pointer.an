@@ -2,13 +2,13 @@ from std.core.ops import Index;
 from std.core.range import Range;
 
 impl<T> Index<u64, T*> for T* {
-    fn index(index: u64*) -> T* {
+    fn index(index: u64&) -> T* {
         *self + *index
     }
 }
 
 impl<T> Index<Range<u64>, T[]> for T* {
-    fn index(range: Range<u64>*) -> T[] {
+    fn index(range: Range<u64>&) -> T[] {
         if (*range).start > (*range).end {
             @runtime_fail("S001");
         }

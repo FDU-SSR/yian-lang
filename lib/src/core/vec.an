@@ -203,7 +203,7 @@ impl<T> Clone for Vec<T> {
 }
 
 impl<T> Index<u64, T*> for Vec<T> {
-    pub fn index(index: u64*) -> T* {
+    pub fn index(index: u64&) -> T* {
         if *index >= self.len {
             @runtime_fail("S001");
         }
