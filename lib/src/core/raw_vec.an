@@ -11,22 +11,12 @@ pub struct RawVec<T> {
 // 只维护容量计数。
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
-        if @sizeof(T) == 0 {
-            // ZST 不需要维护任何运行时数据: 直接给一个未定义的 Self。
-            return @Undef<Self>();
-        }
-        Self(
-            data=@alloc<T>(0),
-            cap=0
-        )
+        Self.with_capacity(0)
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
         if @sizeof(T) == 0 {
             return @Undef<Self>();
-        }
-        if capacity == 0 {
-            return Self.new();
         }
         let data: T* = @alloc<T>(capacity);
         Self(
