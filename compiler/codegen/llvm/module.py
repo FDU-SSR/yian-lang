@@ -171,6 +171,13 @@ class LLModule:
         else:
             llvm_name = f"{cfg_func.name}.{cfg_func.type_id}"
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
+        if llvm_name != "__yian_main":
+            # 事实登记: 整个程序编译进同一个 module、交付物是单个可执行文件, YIAN 函数
+            # 不构成对外 ABI —— 除入口 (C 运行时的 main 包装要调它) 外都不需要对外可见。
+            # 副作用是 LLVM 拿得到全部定义 (IPSCCP/GlobalOpt/内联, 以及内联器对
+            # "内部符号且只有一个调用点"的加成), 方向随基准而变 (见提交信息);
+            # 将来若支持"多个 YIAN 目标文件互链", 这里要改成按导出面区分。
+            ir_func.linkage = "internal"
         if llvm_name.startswith("index."):
             # 索引/检查辅助强制内联: 变体 B 的胖指针让它变胖后掉出内联阈值,
             # 每个元素会多一次跨函数调用(实测过的根因)。
