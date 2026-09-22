@@ -231,8 +231,8 @@ fn key_compare(a: Key&, b: Key&) -> i32 {
     }
 }
 
-fn key_sign_value(k: Key) -> i32 {
-    match k {
+fn key_sign_value(k: Key&) -> i32 {
+    match *k {
         Sign(v) => {
             return v;
         },
@@ -338,11 +338,11 @@ impl<V> RBTree<V> {
         return y;
     }
 
-    fn find_node(key: Key) -> Option<RBNode<V>&> {
+    fn find_node(key: Key&) -> Option<RBNode<V>&> {
         let current: Option<RBNode<V>&> = self.root;
         while current.is_some() {
             let node: RBNode<V>& = *current.unwrap();
-            let comparison: i32 = key_compare(&key, &node.key);
+            let comparison: i32 = key_compare(key, &node.key);
             if comparison == 0 {
                 return Option<RBNode<V>&>.Some(node);
             }
@@ -355,7 +355,7 @@ impl<V> RBTree<V> {
         return Option<RBNode<V>&>.None;
     }
 
-    pub fn get(key: Key) -> Option<V*> {
+    pub fn get(key: Key&) -> Option<V*> {
         let node: Option<RBNode<V>&> = self.find_node(key);
         if node.is_none() {
             return Option<V*>.None;
@@ -364,14 +364,14 @@ impl<V> RBTree<V> {
     }
 
     // 上游 put: 返回被覆盖的旧值 (无则 None)
-    pub fn put(key: Key, value: V) -> Option<V> {
+    pub fn put(key: Key&, value: V) -> Option<V> {
         let parent: Option<RBNode<V>&> = Option<RBNode<V>&>.None;
         let current: Option<RBNode<V>&> = self.root;
 
         while current.is_some() {
             let node: RBNode<V>& = *current.unwrap();
             parent = Option<RBNode<V>&>.Some(node);
-            let comparison: i32 = key_compare(&key, &node.key);
+            let comparison: i32 = key_compare(key, &node.key);
             if comparison < 0 {
                 current = node.left;
             } elif comparison > 0 {
@@ -385,13 +385,13 @@ impl<V> RBTree<V> {
 
         let id: u64 = self.next_id;
         self.next_id += 1;
-        let z: RBNode<V>& = dyn RBNode<V>(id, key, value, Option<RBNode<V>&>.None, Option<RBNode<V>&>.None, parent, true);
+        let z: RBNode<V>& = dyn RBNode<V>(id, *key, value, Option<RBNode<V>&>.None, Option<RBNode<V>&>.None, parent, true);
         match parent {
             None => {
                 self.root = Option<RBNode<V>&>.Some(z);
             },
             Some(p) => {
-                if key_compare(&key, &p.key) < 0 {
+                if key_compare(key, &p.key) < 0 {
                     p.left = Option<RBNode<V>&>.Some(z);
                 } else {
                     p.right = Option<RBNode<V>&>.Some(z);
@@ -449,7 +449,7 @@ impl<V> RBTree<V> {
     }
 
     // 上游 remove: 返回被删除的值 (无则 None)
-    pub fn remove(key: Key) -> Option<V> {
+    pub fn remove(key: Key&) -> Option<V> {
         let found: Option<RBNode<V>&> = self.find_node(key);
         if found.is_none() {
             return Option<V>.None;
@@ -722,7 +722,7 @@ fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
     return Option<Vector3D>.None;
 }
 
-fn is_in_voxel(voxel: Vector2D, motion: Motion&) -> bool {
+fn is_in_voxel(voxel: Vector2D&, motion: Motion&) -> bool {
     if voxel.x > 1000.0 || voxel.x < 0.0 || voxel.y > 1000.0 || voxel.y < 0.0 {
         return false;
     }
@@ -760,7 +760,7 @@ fn is_in_voxel(voxel: Vector2D, motion: Motion&) -> bool {
     return (((xv == 0.0 && v_x <= x0 + r && x0 - r <= v_x + v_s) || (low_x <= 1.0 && 1.0 <= high_x) || (low_x <= 0.0 && 0.0 <= high_x) || (0.0 <= low_x && high_x <= 1.0)) && ((yv == 0.0 && v_y <= y0 + r && y0 - r <= v_y + v_s) || ((low_y <= 1.0 && 1.0 <= high_y) || (low_y <= 0.0 && 0.0 <= high_y) || (0.0 <= low_y && high_y <= 1.0))) && (xv == 0.0 || yv == 0.0 || (low_y <= high_x && high_x <= high_y) || (low_y <= low_x && low_x <= high_y) || (low_x <= low_y && high_y <= high_x)));
 }
 
-fn voxel_hash(position: Vector3D) -> Vector2D {
+fn voxel_hash(position: Vector3D&) -> Vector2D {
     let x_div: i32 = i32(position.x / 2.0);
     let y_div: i32 = i32(position.y / 2.0);
     let x: f64 = 2.0 * f64(x_div);
@@ -774,41 +774,50 @@ fn voxel_hash(position: Vector3D) -> Vector2D {
     return Vector2D(x=x, y=y);
 }
 
-fn put_into_map(voxel_map: RBTree<Vec<Motion&>>&, voxel: Vector2D, motion: Motion&) {
+fn put_into_map(voxel_map: RBTree<Vec<Motion&>>&, voxel: Vector2D&, motion: Motion&) {
     let key: Key = Key.Voxel(voxel.x, voxel.y);
-    let found: Option<Vec<Motion&>*> = voxel_map.get(key);
+    let found: Option<Vec<Motion&>*> = voxel_map.get(&key);
     if found.is_none() {
-        voxel_map.put(key, Vec<Motion&>.new());
+        voxel_map.put(&key, Vec<Motion&>.new());
     }
-    let list: Vec<Motion&>* = *voxel_map.get(key).unwrap();
+    let list: Vec<Motion&>* = *voxel_map.get(&key).unwrap();
     list.push(motion);
 }
 
-fn recurse_voxels(voxel_map: RBTree<Vec<Motion&>>&, seen: RBTree<bool>&, next_voxel: Vector2D, motion: Motion&) {
+fn recurse_voxels(voxel_map: RBTree<Vec<Motion&>>&, seen: RBTree<bool>&, next_voxel: Vector2D&, motion: Motion&) {
     if !is_in_voxel(next_voxel, motion) {
         return;
     }
     let key: Key = Key.Voxel(next_voxel.x, next_voxel.y);
-    if seen.put(key, true).is_some() {
+    if seen.put(&key, true).is_some() {
         return;
     }
     put_into_map(voxel_map, next_voxel, motion);
 
     let horizontal: Vector2D = Vector2D(x=2.0, y=0.0);
     let vertical: Vector2D = Vector2D(x=0.0, y=2.0);
-    recurse_voxels(voxel_map, seen, v2_minus(next_voxel, horizontal), motion);
-    recurse_voxels(voxel_map, seen, v2_plus(next_voxel, horizontal), motion);
-    recurse_voxels(voxel_map, seen, v2_minus(next_voxel, vertical), motion);
-    recurse_voxels(voxel_map, seen, v2_plus(next_voxel, vertical), motion);
-    recurse_voxels(voxel_map, seen, v2_minus(v2_minus(next_voxel, horizontal), vertical), motion);
-    recurse_voxels(voxel_map, seen, v2_plus(v2_minus(next_voxel, horizontal), vertical), motion);
-    recurse_voxels(voxel_map, seen, v2_minus(v2_plus(next_voxel, horizontal), vertical), motion);
-    recurse_voxels(voxel_map, seen, v2_plus(v2_plus(next_voxel, horizontal), vertical), motion);
+    let child0: Vector2D = v2_minus(*next_voxel, horizontal);
+    let child1: Vector2D = v2_plus(*next_voxel, horizontal);
+    let child2: Vector2D = v2_minus(*next_voxel, vertical);
+    let child3: Vector2D = v2_plus(*next_voxel, vertical);
+    let child4: Vector2D = v2_minus(child0, vertical);
+    let child5: Vector2D = v2_plus(child0, vertical);
+    let child6: Vector2D = v2_minus(child1, vertical);
+    let child7: Vector2D = v2_plus(child1, vertical);
+    recurse_voxels(voxel_map, seen, &child0, motion);
+    recurse_voxels(voxel_map, seen, &child1, motion);
+    recurse_voxels(voxel_map, seen, &child2, motion);
+    recurse_voxels(voxel_map, seen, &child3, motion);
+    recurse_voxels(voxel_map, seen, &child4, motion);
+    recurse_voxels(voxel_map, seen, &child5, motion);
+    recurse_voxels(voxel_map, seen, &child6, motion);
+    recurse_voxels(voxel_map, seen, &child7, motion);
 }
 
 fn draw_motion_on_voxel_map(voxel_map: RBTree<Vec<Motion&>>&, motion: Motion&) {
     let seen: RBTree<bool> = RBTree<bool>.new();
-    recurse_voxels(voxel_map, &seen, voxel_hash(motion.pos_one), motion);
+    let start_voxel: Vector2D = voxel_hash(&motion.pos_one);
+    recurse_voxels(voxel_map, &seen, &start_voxel, motion);
     seen.free_nodes();
 }
 
@@ -830,8 +839,8 @@ impl CollisionDetector {
             let callsign: i32 = frame[i].callsign;
             let new_position: Vector3D = frame[i].position;
             let key: Key = Key.Sign(callsign);
-            let old_opt: Option<Vector3D> = self.state.put(key, new_position);
-            seen.put(key, true);
+            let old_opt: Option<Vector3D> = self.state.put(&key, new_position);
+            seen.put(&key, true);
 
             let old_position: Vector3D = new_position;
             match old_opt {
@@ -851,14 +860,15 @@ impl CollisionDetector {
         let cur: Option<RBNode<Vector3D>&> = self.state.first();
         while cur.is_some() {
             let node: RBNode<Vector3D>& = *cur.unwrap();
-            if seen.get(node.key).is_none() {
-                to_remove.push(key_sign_value(node.key));
+            if seen.get(&node.key).is_none() {
+                to_remove.push(key_sign_value(&node.key));
             }
             cur = self.state.successor(node);
         }
         let r: u64 = 0;
         while r < to_remove.len() {
-            self.state.remove(Key.Sign(to_remove[r]));
+            let dead_key: Key = Key.Sign(to_remove[r]);
+            self.state.remove(&dead_key);
             r += 1;
         }
         to_remove.drop();

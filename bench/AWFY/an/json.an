@@ -504,8 +504,8 @@ fn fnv1a32(s: str) -> u32 {
 
 // ── 上游 Json.verifyResult: operations 必须是 array 且 size == 156 ──
 
-fn ops_size(root: JsonValue) -> u64 {
-    match root {
+fn ops_size(root: JsonValue&) -> u64 {
+    match *root {
         Object(names, values, table) => {
             let idx: i32 = index_of(names, table, "operations");
             if idx < 0 {
@@ -572,7 +572,7 @@ fn main() {
     let i: u64 = 0;
     while i < ITER {
         let root: JsonValue = parse_document(DOC, bytes, &arena);
-        total_ops += ops_size(root);
+        total_ops += ops_size(&root);
         out.clear();
         write_value(&out, &root);
         total_len += out.len();
