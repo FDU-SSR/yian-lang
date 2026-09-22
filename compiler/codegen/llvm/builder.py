@@ -1988,6 +1988,12 @@ class LLBuilder:
             fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf),
         ])
 
+    def __pointee_type_id(self, pointer_type_id: int) -> int:
+        """取指针类型(`@memcpy` 的两个实参按语义只允许 `T*`)的 pointee type_id。"""
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(pointer_type_id)]
+        assert isinstance(ty, Type.PointerType), type(ty).__name__
+        return ty.pointee_type
+
     def mem_copy(self, dest: LLValue, src: LLValue, count: LLValue) -> None:
         """Byte-level copy: ``memcpy(dest, src, count)``.
 
@@ -1998,8 +2004,12 @@ class LLBuilder:
         if self.__ll_type_ctx.is_zst(dest.type_id) or self.__ll_type_ctx.is_zst(src.type_id):
             # ZST 指针没有负载(ZST 值擦成 `{}`, 不是指针): 0 字节拷贝是空操作。
             return
-        dest_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), self.__fat_data(dest).ir_val)  # type: ignore
-        src_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), self.__fat_data(src).ir_val)  # type: ignore
+        # 必须用**有效地址**(data + index·|T|): 胖指针的算术只更新 index, 直接取 data
+        # 会在 index ≠ 0 时拷到错误位置(如 `p + n`、`&arr[i]` 之外的派生指针)。
+        dest_addr = self.__fat_addr(dest, self.__pointee_type_id(dest.type_id))
+        src_addr = self.__fat_addr(src, self.__pointee_type_id(src.type_id))
+        dest_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), dest_addr.ir_val)  # type: ignore
+        src_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), src_addr.ir_val)  # type: ignore
         self.__call_intrinsic(IntrinsicKind.MemCopy, [dest_raw, src_raw, count])
 
     def sys_read(self, fd: LLValue, buf: LLValue, result: str) -> None:
