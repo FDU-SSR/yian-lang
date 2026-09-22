@@ -439,6 +439,16 @@ class ExprChecker:
                     expr.span,
                 )
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
+        # `T* → U&`: pointee 本身也可以 coerce(字面量定型)。先把被取址的表达式收敛到
+        # 期望的 pointee(取址结果随之成为 `U*`), 再走下面的 `T* → T&` 降级。否则
+        # `&<字面量>` 得到的 `T*` 会原样带进引用里, 临时量按字面量类型物化, 读出来是垃圾。
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
+                and not self.__ctx.type_ctx.is_same_type(expr_ty.pointee_type, expected_ty.pointee_type) \
+                and isinstance(expr, HIR.Unary) and expr.op == UnaryOperator.AddrOf:
+            expr.operand = self.coerce(expr.operand, expected_ty.pointee_type)
+            expr.type_id = self.__ctx.type_ctx.alloc_pointer(expected_ty.pointee_type)
+            expr_resolved = self.__ctx.type_ctx.resolve_aliases(expr.type_id)
+            expr_ty = self.__ctx.type_ctx[expr_resolved]
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
                 and expected_resolved == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
             return HIR.BitCast(
