@@ -2218,6 +2218,9 @@ class LLBuilder:
     def __call_intrinsic(self, kind: IntrinsicKind, args: list[LLValue]) -> LLValue:
         callee = self.__module.intrinsics.get(kind)
         raw_args = [a.ir_val for a in args]
+        if kind is IntrinsicKind.MemCopy:
+            # llvm.memcpy 的末参是 immarg isvolatile, 恒 false。
+            raw_args.append(ir.Constant(ir.IntType(1), 0))  # type: ignore
         result = self.__builder.call(callee, raw_args)  # type: ignore
         return LLValue(self.__intrinsic_return_type_id(kind), result)
 
