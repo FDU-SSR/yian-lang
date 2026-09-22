@@ -35,16 +35,21 @@ impl<T> RawVec<T> {
     }
 
     pub fn ptr() -> T* {
-        return self.data;
+        self.data
     }
 
     pub fn capacity() -> u64 {
-        return self.cap;
+        if @sizeof(T) == 0 {
+            // ZST 没有存储上限, 报最大容量: `Vec::push` 的 len == capacity() 永不成立,
+            // 因此 ZST 向量一个元素都不会触发增长。
+            0xFFFF_FFFF_FFFF_FFFFu64
+        } else {
+            self.cap
+        }
     }
 
     pub fn grow() {
         if @sizeof(T) == 0 {
-            self.cap = if self.cap == 0 { 4 } else { self.cap * 2 };
             return;
         }
         let old_cap: u64 = self.cap;
@@ -63,21 +68,16 @@ impl<T> RawVec<T> {
     }
 
     pub fn reserve(len: u64, additional: u64) {
+        if @sizeof(T) == 0 {
+            return;
+        }
         let required_cap: u64 = len + additional;
         if self.cap >= required_cap {
             return;
         }
-        if @sizeof(T) == 0 {
-            self.cap = required_cap;
-            return;
-        }
 
         let current_cap: u64 = self.cap;
-        let new_cap: u64 = if current_cap > 0x3FFF_FFFF_FFFF_FFFFu64 {
-            required_cap
-        } else {
-            current_cap * 2
-        };
+        let new_cap: u64 = if current_cap == 0 { 4 } else { current_cap * 2 };
         if new_cap < required_cap {
             new_cap = required_cap;
         }
@@ -100,11 +100,10 @@ impl<T> RawVec<T> {
     }
 
     pub fn shrink_to_fit(len: u64) {
-        if self.cap <= len {
+        if @sizeof(T) == 0 {
             return;
         }
-        if @sizeof(T) == 0 {
-            self.cap = len;
+        if self.cap <= len {
             return;
         }
 
