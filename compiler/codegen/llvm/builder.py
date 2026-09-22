@@ -1995,6 +1995,9 @@ class LLBuilder:
         both to ``i8*`` for the C ``memcpy`` intrinsic.  Fat pointers are
         unwrapped to their ``data`` field first (LLVM 层).
         """
+        if self.__ll_type_ctx.is_zst(dest.type_id) or self.__ll_type_ctx.is_zst(src.type_id):
+            # ZST 指针没有负载(ZST 值擦成 `{}`, 不是指针): 0 字节拷贝是空操作。
+            return
         dest_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), self.__fat_data(dest).ir_val)  # type: ignore
         src_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), self.__fat_data(src).ir_val)  # type: ignore
         self.__call_intrinsic(IntrinsicKind.MemCopy, [dest_raw, src_raw, count])

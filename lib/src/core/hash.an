@@ -1,5 +1,4 @@
 from std.core.ops import min;
-from std.core.mem import memcpy;
 from std.core.range import Range;
 
 pub trait Hasher {
@@ -86,7 +85,7 @@ impl Hasher for Murmur3Hasher {
             let need: u64 = 8 - self.tail_len;
             let take: u64 = min((total_len - offset), need);
 
-            memcpy(&self.tail[self.tail_len], bytes_ptr + offset, take);
+            @memcpy(&self.tail[self.tail_len], bytes_ptr + offset, take);
 
             self.tail_len += take
             offset += take
@@ -117,7 +116,7 @@ impl Hasher for Murmur3Hasher {
 
         let remaining: u64 = total_len - offset;
         if remaining > 0 {
-            memcpy(&self.tail[0], bytes_ptr + offset, remaining);
+            @memcpy(&self.tail[0], bytes_ptr + offset, remaining);
             self.tail_len = remaining;
         }
     }
