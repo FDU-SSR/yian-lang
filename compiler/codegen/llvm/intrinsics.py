@@ -55,5 +55,12 @@ class IntrinsicManager:
             return self.__cache[kind]
         return_type, param_types, name = self.__DECLARATIONS[kind]
         func = ir.Function(self.__module, ir.FunctionType(return_type, param_types), name=name)
+        # 事实性标注(不是优化手段): 这些 C 函数不会 unwind —— libc 的 malloc/free/read/write
+        # 失败时返回错误值而不是抛异常, 本模块也用不到任何异常机制; 逐条按各自语义标:
+        # _exit 不返回(noreturn), 其余只标 nounwind。据此 LLVM 的 FunctionAttrs 才能为
+        # 调用它们的 YIAN 函数推出 nounwind(AArch64 等目标上落到无 EH 表的代码)。
+        func.attributes.add("nounwind")
+        if kind is IntrinsicKind.ImmediateExit:
+            func.attributes.add("noreturn")
         self.__cache[kind] = func
         return func

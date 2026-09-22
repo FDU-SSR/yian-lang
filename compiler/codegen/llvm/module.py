@@ -344,6 +344,8 @@ class LLModule:
                 ir.FunctionType(ir.IntType(64), []),
                 name="__secl_lock_bump_take",
             )
+            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            fn.attributes.add("nounwind")
             self.__lock_new_func = fn
         return self.__lock_new_func
 
@@ -356,6 +358,8 @@ class LLModule:
                 name="__secl_lock_release",
             )
             fn.args[0].name = "word"
+            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            fn.attributes.add("nounwind")
             self.__lock_release_func = fn
         return self.__lock_release_func
 
@@ -386,6 +390,8 @@ class LLModule:
                 name="__secl_pool_alloc",
             )
             fn.args[0].name = "requested"
+            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            fn.attributes.add("nounwind")
             self.__pool_alloc_func = fn
         return self.__pool_alloc_func
 
@@ -402,6 +408,8 @@ class LLModule:
                 name="__secl_pool_alloc_class",
             )
             fn.args[0].name = "class_index"
+            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            fn.attributes.add("nounwind")
             self.__pool_alloc_class_func = fn
         return self.__pool_alloc_class_func
 
@@ -414,5 +422,7 @@ class LLModule:
                 name="__secl_pool_release",
             )
             fn.args[0].name = "block"
+            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            fn.attributes.add("nounwind")
             self.__pool_release_func = fn
         return self.__pool_release_func
