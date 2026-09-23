@@ -55,7 +55,7 @@ queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、
 fatptr 3 项（call_abi、copy_struct、chase）。
 
 集合只在 `bench/sets/` 里定义：新增集合要说明它覆盖哪个机制侧重（`ptr`/`numeric`/`string`/`alloc`/
-`control`；`control` 目前只有 tag 还没有集合），避免来源与侧重的组合膨胀。
+`control`；`control` 只有 tag，没有对应集合），避免来源与侧重的组合膨胀。
 
 ## 两档规模
 
