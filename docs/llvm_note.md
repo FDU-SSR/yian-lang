@@ -20,6 +20,16 @@ enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字�
 偏移不一致, 表现为静默取错值。外部工具(`clang`/`llc`)读入 data layout 为空的模块会先补上
 目标机布局再优化, 因此复现不出来; 只有 llvmlite 进程内管线会带着空布局跑 pass。
 
+## 目标机与代码模型
+
+`compiler/codegen/llvm/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
+`create_target_machine(reloc="pic", codemodel="small", opt=<O>)`。code model 必须显式给出:
+llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端于是不采用 ±2 GiB 的 PC
+相对寻址, 把每个函数地址与全局地址都经 `movabs` 物化进寄存器, 内部调用被编译成
+`call *%reg`。本编译产物是单个可执行文件或目标文件, 代码与静态数据都远小于 2 GiB, `small`
+与 clang 的默认一致: 内部调用是直接 `call`, 寻址是 RIP 相对。链接镜像若真的超过 ±2 GiB,
+失败方式是链接期重定位溢出。
+
 ## 指针表示（opaque pointer）
 
 数据指针在 LLVM 层统一是 opaque pointer `ptr`, 不带 pointee; pointee 信息只存在于 llvmlite 的
@@ -39,13 +49,12 @@ enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字�
 - 函数指针保持有型 (`types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
   `Value.function_type` 从 callee 的 pointee 取签名, 间接调用需要带签名的指针类型。
 
-指针不携带 pointee, 因此"字节视图"(把 `T*` 当 `i8*` 用)不再需要 `bitcast`: 值原样传递, 字节
+指针不携带 pointee, 因此"字节视图"(把 `T*` 当 `i8*` 用)不需要 `bitcast`: 值原样传递, 字节
 步进由使用点的 `source_etype=ir.IntType(8)` 给出(`free`/`memcpy` 等 intrinsic 的参数本来就是
 opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__bitcast`。
 
-指针构造不再为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
-只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好, 没有"只登记未填 body"的
-中间状态。
+指针构造不为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
+只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好。
 
 发射文本由 `codegen/llvm/module.py` 关闭 llvmlite 的有型指针打印
 (`ir.types.ir_layer_typed_pointers_enabled = False`), 因此模块里所有指针都是 `ptr`(`alloca`、
@@ -65,6 +74,11 @@ opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__
 - `available_externally`: 表示该符号在模块外部可见, 但不会在最终生成的目标文件中包含该符号的定义. 这种链接性通常用于跨模块的内联.
 - `linkonce`: 表示该符号可以在多个模块中定义, 但链接器会选择其中一个定义进行链接.
 - `append`: 用于全局变量, 表示该变量的定义会被追加到同名变量的末尾, 适用于数组等数据结构.
+
+本编译器的 `module.py::declare` 把每个非入口函数标为 `internal`; 程序入口发射为
+`__yian_main`, 保持 `external`, 由 C 运行时包装的 `main` 调用。整个程序编译进同一个 module、
+交付物是单个可执行文件, 因此 YIAN 函数不构成对外 ABI。名字以 `index.` 开头的索引/检查辅助
+另加 `alwaysinline`, 使其在胖指针表示下体量变大后仍能内联。
 
 ## 属性(Attribute)
 
@@ -106,6 +120,17 @@ opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__
 | `MustProgress`             | EnumAttr | 函数必然会产生进展, 不会卡死(但不一定返回)                                  |
 | `AllocSize`                | IntAttr  | 函数的返回值指向的内存块大小可以通过函数的参数计算得出                      |
 | `Memory`                   | IntAttr  | 通过位掩码指定函数对内存的访问行为                                          |
+
+本编译器按事实登记这些标注, 不把它们当作优化手段:
+
+- `intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配、I/O 与随机数入口失败时
+  返回错误值而不抛异常; `_exit` 另加 `noreturn`。
+- `module.py` 声明的运行时入口 `__yian_runtime_fail` / `__yian_panic` 加 `cold`、`noreturn`、
+  `nounwind`; 堆池与锁表入口 `__secl_pool_alloc` / `__secl_pool_alloc_class` /
+  `__secl_pool_release` / `__secl_lock_bump_take` / `__secl_lock_release` 加 `nounwind`。
+- `llvm.memcpy.p0.p0.i64` 的两个指针实参加 `noalias`, `isvolatile` 实参加 `immarg`。
+
+据此 LLVM 的 FunctionAttrs 能为调用这些入口的 YIAN 函数推出 `nounwind`。
 
 ### 参数属性(Parameter Attributes)
 
@@ -238,6 +263,11 @@ float c = a + b; // 在严格浮点模式下, c 的值不能被优化为 0.3f, �
 - `malloc`, `free` 等内存分配函数
 - `sin`, `cos`, `sqrt` 等数学函数
 - `llvm.expect` 用于提供分支预测信息
+
+本编译器(`compiler/codegen/llvm/intrinsics.py`)实际声明并使用的符号是: C 库的 `malloc`、
+`free`、`write`、`read`、`open`、`close`、`_exit`、`strlen`、`rand`, 以及 LLVM 内建
+`llvm.memcpy.p0.p0.i64` 与 `llvm.sqrt.f64`。`@memcpy` 与 `@sqrt` 分别下降为这两条内建,
+因此后端可以按已知长度内联展开复制, 并把平方根直接落到 `sqrtsd`。
 
 ## 保护机制(Protection Mechanism)
 
