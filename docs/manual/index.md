@@ -23,7 +23,7 @@
 | [08](08.hir.md) | HIR IR | `compiler/analysis/unit/hir.py` |
 | [09](09.type_check.md) | 类型检查 | `compiler/analysis/passes/type_check.py` |
 | [10](10.cfg_ir.md) | CFG IR | `compiler/codegen/cfg/ir.py` |
-| [11](11.cfg_builder.md) | CFG 构建 | `compiler/codegen/cfg/builder.py` |
+| [11](11.cfg_builder.md) | CFG 构建 | `compiler/codegen/cfg/passes/translator.py`、`compiler/codegen/cfg/lower/` |
 | [12](12.llvm_codegen.md) | LLVM 代码生成 | `compiler/codegen/llvm/` |
 | [13](13.log.md) | 日志系统 | `compiler/utils/log.py` |
 | [14](14.cli_build.md) | CLI 与构建 | `compiler/main.py` |
