@@ -1,9 +1,8 @@
 // 空容器行为测试:Vec/String 空态 as_slice/len/cap/ptr + del 不 trap
 //
-// 空容器的 data 指针必须非零:胖模式是真实存活块(dyn[0] T,长度/锁字段来自
-// 块头),裸模式是共享的非零悬垂哨兵。非零保证 `Option<str>`/`Option<Slice<T>>`
-// 这类"载荷全零即 None"的 niche 编码不会把 Some(空值) 误判成 None;
-// 两模式的 del 都不 trap(胖模式释放真实块,裸模式跳过哨兵)。
+// 空容器不占堆块:data 是 `@dangling<T>()`(地址 = T 的对齐值, 恒非零), 两模式
+// 表示一致。非零保证 `Option<str>`/`Option<Slice<T>>` 这类"载荷全零即 None"的
+// niche 编码不会把 Some(空值) 误判成 None;del 空容器跳过悬垂指针, 不 trap。
 //
 // Expected output: (empty, exit 0)
 
@@ -21,14 +20,10 @@ fn main() {
     assert s.len() == 0: "empty vec slice len should be 0";
     let p: u8* = @slice_get_ptr(s);
 
-    // 胖模式的空容器各自持有存活堆块 → 指针互异;裸模式共享同一个非零哨兵。
+    // 空容器的 data 都是同一个类型级悬垂地址(对齐值), 两模式一致。
     let v2: Vec<u8> = Vec<u8>.new();
     let p2: u8* = @slice_get_ptr(v2.as_slice());
-    comptime if IS_RAW_MODE {
-        assert p == p2: "raw empty vecs share one non-zero sentinel pointer";
-    } else {
-        assert p != p2: "empty vecs must hold distinct live heap blocks (non-zero ptr)";
-    }
+    assert p == p2: "empty vecs share the dangling pointer for u8";
 
     // ---- shrink_to_fit(0) 后 Drop 不 trap ----
     // 旧缺陷:shrink 到空后 data 悬垂,随后 Drop 对已释放块 del → live trap
@@ -40,7 +35,7 @@ fn main() {
     v3.shrink_to_fit();
     assert v3.capacity() == 0: "shrink_to_fit on empty vec should set capacity 0";
     assert v3.as_slice().len() == 0: "shrunk vec slice should be empty";
-    v3.drop(); // 空态 data 是存活块(胖)/哨兵(裸) → 正常释放,不 trap
+    v3.drop(); // 空态 data 是悬垂指针 → 跳过释放,不 trap
 
     // ---- 空→非空转换(grow/reserve 从空态取新块,不泄漏不 trap)----
     let v4: Vec<u8> = Vec<u8>.new();
@@ -64,18 +59,14 @@ fn main() {
     assert st.len() == 0: "empty string len should be 0";
     assert st.capacity() == 0: "empty string capacity should be 0";
     let sp: u8* = @slice_get_ptr(st.as_slice());
-    comptime if IS_RAW_MODE {
-        assert sp == p: "raw empty String shares the same non-zero sentinel";
-    } else {
-        assert sp != p: "empty String data block should differ from empty Vec block";
-    }
+    assert sp == p: "empty String shares the dangling pointer for u8";
 
     // 空 str 放进 niche Option:载荷若退化成全零(空指针),Some 会被读成 None。
-    // (裸模式空容器不持有堆块,这条断言同时锁住"哨兵非零"这一表示约束。)
+    // (空容器不持有堆块,这条断言同时锁住"悬垂地址非零"这一表示约束。)
     let es: Option<str> = Option<str>.Some(st.as_str());
     assert es.is_some(): "empty str payload must not collide with the all-zero None encoding";
 
-    // 显式 drop 空容器:data 为存活块(胖)/哨兵(裸) → 正常释放,不 trap
+    // 显式 drop 空容器:data 是悬垂指针 → 跳过释放,不 trap
     vs.drop();
     st.drop();
 }

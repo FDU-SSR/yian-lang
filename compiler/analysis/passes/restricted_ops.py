@@ -26,6 +26,7 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.AssumeInit,
         AST.BuiltinKind.MemCopy,
         AST.BuiltinKind.Undef,
+        AST.BuiltinKind.Dangling,
         AST.BuiltinKind.SliceFromParts,
         AST.BuiltinKind.SliceGetPtr,
         AST.BuiltinKind.SliceGetLen,
@@ -103,6 +104,10 @@ class RestrictedOpsChecker:
             case AST.Alloc():
                 self.__report(expr.span, AST.BuiltinKind.Alloc.spelling)
                 self.__scan_expr(expr.count)
+            case AST.Undef():
+                self.__report(expr.span, AST.BuiltinKind.Undef.spelling)
+            case AST.Dangling():
+                self.__report(expr.span, AST.BuiltinKind.Dangling.spelling)
             case AST.Tuple():
                 for element in expr.elements:
                     self.__scan_expr(element)

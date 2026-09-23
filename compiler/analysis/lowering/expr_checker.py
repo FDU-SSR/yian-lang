@@ -95,6 +95,8 @@ class ExprChecker:
                 return self.__handle_sizeof(expr)
             case AST.Undef():
                 return self.__handle_undef(expr)
+            case AST.Dangling():
+                return self.__handle_dangling(expr)
             case AST.BitCast():
                 return self.__handle_bitcast(expr)
             case AST.Alloc():
@@ -166,6 +168,17 @@ class ExprChecker:
     def __handle_undef(self, node: AST.Undef) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)
         return HIR.Undef(span=node.span, type_id=type_id, is_place=False)
+
+    def __handle_dangling(self, node: AST.Dangling) -> HIR.Expr:
+        """``@dangling<T>()`` — 指向 T 的悬垂指针, 不做任何分配。"""
+        target_type_id = self.__ctx.resolve_type(node.ty)
+        ptr_type_id = self.__ctx.type_ctx.alloc_pointer(target_type_id)
+        return HIR.Dangling(
+            span=node.span,
+            target_type=target_type_id,
+            type_id=ptr_type_id,
+            is_place=False,
+        )
 
     def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
         type_id = self.__ctx.resolve_type(node.ty)

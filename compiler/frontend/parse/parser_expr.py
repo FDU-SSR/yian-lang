@@ -460,6 +460,8 @@ class ExprParser:
             return self.__parse_sizeof(at.span)
         if kind == AST.BuiltinKind.Undef:
             return self.__parse_undef(at.span)
+        if kind == AST.BuiltinKind.Dangling:
+            return self.__parse_dangling(at.span)
         if kind == AST.BuiltinKind.BitCast:
             return self.__parse_bitcast(at.span)
         if kind == AST.BuiltinKind.Alloc:
@@ -488,6 +490,18 @@ class ExprParser:
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
         end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.Undef(span=at_span + end.span, ty=ty)
+
+    def __parse_dangling(self, at_span: SrcSpan) -> AST.Dangling:
+        """Parse ``@dangling<T>()`` — 指向 T 的悬垂指针(标准库内部用)。
+
+        与 ``@Undef<T>()`` 同为类型参数 + 空实参表的形态。
+        """
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+        ty = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.Dangling(span=at_span + end.span, ty=ty)
 
     def __parse_bitcast(self, at_span: SrcSpan) -> AST.BitCast:
         """Parse ``@bitcast<type>(expr)`` — reinterpret a pointer as another pointer type."""

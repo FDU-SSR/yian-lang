@@ -31,6 +31,7 @@ class BuiltinKind(Enum):
 
     SizeOf = "sizeof"
     Undef = "undef"
+    Dangling = "dangling"
     BitCast = "bitcast"
     Alloc = "alloc"
     Panic = "panic"
@@ -664,6 +665,20 @@ class SizeOf:
 
 
 @dataclass
+class Dangling:
+    """``@dangling<T>()`` — 指向 T 的悬垂指针(地址 = T 的对齐值, 恒非零)。
+
+    表示"没有底层对象的合法指针"(如空容器); 调用方只允许做指针算术/传递,
+    不得解引用。
+    """
+    span: SrcSpan
+    ty: ASTType
+
+    def __repr__(self) -> str:
+        return f"@dangling<{self.ty}>()"
+
+
+@dataclass
 class BitCast:
     span: SrcSpan
     target_type: ASTType
@@ -786,7 +801,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | BuiltinCall | MethodCall
     | DynValue | DynBuffer
-    | SizeOf | Undef | BitCast | Alloc
+    | SizeOf | Undef | Dangling | BitCast | Alloc
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

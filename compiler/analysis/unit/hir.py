@@ -343,6 +343,15 @@ class SizeOf:
 
 
 @dataclass
+class Dangling:
+    """``@dangling<T>()`` — 指向 ``target_type`` 的悬垂指针(地址 = 对齐值)。"""
+    span: SrcSpan
+    target_type: int  # type_id of the pointee
+    type_id: int  # type_id of the resulting T*
+    is_place: bool
+
+
+@dataclass
 class BitCast:
     span: SrcSpan
     value: Expr
@@ -560,7 +569,7 @@ Expr: TypeAlias = (
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
-    | SizeOf | Undef | BitCast | Alloc | SysRead | SysWrite | Open | Close
+    | SizeOf | Undef | Dangling | BitCast | Alloc | SysRead | SysWrite | Open | Close
     | Sqrt | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure

@@ -88,6 +88,35 @@ class LLBuilder:
     def sizeof_const(self, type_id: int, result: str) -> None:
         self.__func.set_reg(result, LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), self.__ll_type_ctx.get_type_size(type_id))))  # type: ignore
 
+    def dangling_value(self, type_id: int, result: str) -> None:
+        """``@dangling<T>()``: 指向 T 的悬垂指针,地址取 T 的对齐值(恒非零)。
+
+        没有底层对象,只允许零长度的指针算术与传递。raw 模式就是一个裸地址;
+        fat 模式补全元数据 ⟨data, word, index=0, size=0⟩ —— size=0 让任何真实
+        元素访问都在边界检查处失败; word 借字面量锁槽(恒 live 且非堆), 使
+        "0 元素视图"的 view 检查通过: 空容器派生的空 str/切片可以参与零长度
+        操作(如 sys_write), 但取不到任何元素。
+        """
+        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        if not isinstance(ty, Type.PointerType):
+            raise ValueError(f"not a pointer type: {type(ty).__name__}")
+        if self.__ll_type_ctx.is_zst(type_id):
+            # 指向 ZST 的指针本身是 ZST(不携带可观察地址): 空值即可。
+            self.__func.set_reg(result, self.undef(type_id))
+            return
+        pointee_type_id: int = ty.pointee_type
+        align: int = self.__ll_type_ctx.get_type_alignment(pointee_type_id)
+        align_const: ir.Value = ir.Constant(ir.IntType(64), align)  # type: ignore
+        raw_addr: ir.Value = self.__builder.inttoptr(align_const, ir.PointerType())  # type: ignore
+        if self.__raw_pointers:
+            self.__func.set_reg(result, LLValue(type_id, raw_addr))
+            return
+        data = LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), raw_addr)
+        zero64: ir.Value = ir.Constant(ir.IntType(64), 0)  # type: ignore
+        word = LLValue(self.__type_ctx.u64_id, self.__literal_word())  # type: ignore
+        zero = LLValue(self.__type_ctx.u64_id, zero64)  # type: ignore
+        self.__func.set_reg(result, self.__build_fat(data, word, zero, zero, type_id))
+
     # ------------------------------------------------------------------
     # fat pointer helpers (5 字段胖指针值层下降,LLVM 层)
     # ------------------------------------------------------------------

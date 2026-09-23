@@ -125,6 +125,8 @@ class ExprLowerer:
                 return self.__host.values.resolve_size_of(expr)
             case HIR.Undef():
                 return self.__host.values.resolve_undef(expr)
+            case HIR.Dangling():
+                return self.__host.values.resolve_dangling(expr)
             case HIR.BitCast():
                 return self.__host.values.resolve_bit_cast(expr)
             case HIR.Alloc():

@@ -311,6 +311,10 @@ class ValueLowerer:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Undef(result=result, type_id=expr.type_id)).result
 
+    def resolve_dangling(self, expr: HIR.Dangling) -> IR.Value:
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
+        return self.__host.emitter.emit(IR.Dangling(result=result, type_id=expr.type_id)).result
+
     def build_size_of(self, type_id: int) -> IR.Value:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id)
         return self.__host.emitter.emit(IR.SizeOf(result=result, type_id=type_id)).result

@@ -486,6 +486,13 @@ class SizeOf:
 
 
 @dataclass
+class Dangling:
+    """指向 ``type_id`` 的悬垂指针(地址 = 该类型的对齐值, 恒非零)。"""
+    result: Reg
+    type_id: int
+
+
+@dataclass
 class AggregateConstruct:
     """Construct an aggregate value (struct or tuple) from field values."""
     result: Reg
@@ -583,7 +590,7 @@ Stmt: TypeAlias = (
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
     | Call | Invoke
-    | Cast | SizeOf | Undef | FuncPtr
+    | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | ArgCount | ArgBytes
     | MemCopy

@@ -204,6 +204,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Undef(result=result, type_id=type_id):
             return f"%{result.name} = undef {__type_str(type_id)}  [{__type_str(result.type_id)}]"
 
+        case IR.Dangling(result=result, type_id=type_id):
+            return f"%{result.name} = dangling {__type_str(type_id)}  [{__type_str(result.type_id)}]"
+
         case IR.SizeOf(result=result, type_id=type_id):
             return (
                 f"%{result.name} = sizeof"

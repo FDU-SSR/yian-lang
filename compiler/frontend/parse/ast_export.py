@@ -340,6 +340,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_sizeof(expr, guides, is_last)
         case AST.Undef():
             return __line(guides, is_last, "Undef")
+        case AST.Dangling():
+            return __line(guides, is_last, "Dangling")
         case AST.BitCast():
             return __export_bitcast(expr, guides, is_last)
         case AST.Alloc():

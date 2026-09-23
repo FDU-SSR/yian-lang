@@ -10,28 +10,20 @@ pub struct RawVec<T> {
 // ZST(`@sizeof(T) == 0`)没有真实数据可处理: 分配/拷贝/释放全部用 if 拦掉,
 // 只维护容量计数。
 //
-// 空态(`cap == 0`)的数据指针分模式取值, 但两模式满足同一组不变量:
-// 非零、且 `cap == 0` 时只做指针算术/传递, 不解引用、不释放。
-//   - 裸模式: 共享的悬垂哨兵(指向本文件的字面量字节), 不占堆块;
-//   - 胖模式: 真实的 `dyn[0] T` 块 —— 胖指针的长度/锁字段取自块头,
-//     空态也必须在可校验的存活块上, 否则 `as_slice`/指针算术会触发
-//     S003/S004。
+// 空态(`cap == 0`)不占堆块: 数据指针是 `@dangling<T>()`(地址 = T 的对齐值),
+// 两模式表示一致, 空态只做零长度的指针算术/传递, 不解引用、不释放。
 // 非零是硬要求: `Option<str>`/`Option<Slice<T>>` 这类单字段载荷用"载荷全零"
 // 编码 None, 空容器(或由它派生的空 str/切片)一旦取到全零指针, `Some(空值)`
-// 就会被误判成 `None`。因此空态指针不能用 `@Undef`(它可能物化成零)。
+// 就会被误判成 `None`。`@dangling` 给出的地址是对齐值(≥ 1), 且是定值 ——
+// `@Undef` 会在不同优化级别下物化成不同位型, 不能用来承载这个不变量。
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
         Self.with_capacity(0)
     }
 
-    // 空态数据指针: 裸模式是共享的非零哨兵, 胖模式是新分配的真实空块。
+    // 空态数据指针: 指向 T 的悬垂指针, 不分配。
     static fn empty_data() -> T* {
-        let data: T* = comptime if IS_RAW_MODE {
-            @bitcast<T*>(@str_get_ptr(" "))
-        } else {
-            @alloc<T>(0)
-        };
-        return data;
+        return @dangling<T>();
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
@@ -64,13 +56,9 @@ impl<T> RawVec<T> {
         }
     }
 
-    // 释放当前缓冲。裸模式的空态是哨兵而非堆块, 只有 cap > 0 才是分配过的。
+    // 释放当前缓冲。空态是悬垂指针而非堆块, 只有 cap > 0 才是分配过的。
     fn release_data() {
-        comptime if IS_RAW_MODE {
-            if self.cap > 0 {
-                del self.data;
-            }
-        } else {
+        if self.cap > 0 {
             del self.data;
         }
     }
