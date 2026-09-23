@@ -32,6 +32,9 @@ Current options include:
 - `-o/--output PATH`.
 - `-O {0..3}`; for non-`ll` targets this controls the LLVM optimization pipeline, backend optimization, and executable linking. `-t ll` emits unoptimized LLVM IR.
 - `--profile`, `--dump`, `--log-spec`, `--log-file`, and `--packages`.
+- `--compiler-root PATH` (locate the standard library in a checkout) and `--raw-pointers`.
+- `--analyze` runs the analysis prefix only (lex → parse → resolve → type check) with no code generation or `build/` output; `--json` additionally prints one machine-readable diagnostic object on stdout.
+- `--format` re-emits the input sources with canonical whitespace (stdout by default), `-w/--write` rewrites them in place, and `--check` lists the files that differ and exits nonzero.
 
 `--dump` writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/`; code generation also writes `ir.ll`. The removed `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` options must not be used.
 
@@ -81,7 +84,7 @@ python3 scripts/run_tests.py -x               # include <suite>/experimental/
 python3 scripts/run_tests.py --no-run         # analysis only
 ```
 
-The suites invoke the installed `yianc` and `anx`, so run `scripts/install.sh` (editable) before using them.
+The suites invoke the installed `yianc` and `anx`, so run `scripts/install.sh` (editable) before using them; it installs the three console scripts `yianc`, `anx` and the language server `yian-lsp` (`--regular` copies the packages instead of linking them, `--with-deps` lets pip resolve dependencies).
 
 `basic` compiles standalone sources twice, in fat- and raw-pointer modes; `safety` holds the fat-pointer regressions; `package` drives `package.anx` project fixtures through `anx build`, also in both pointer modes. A fixture may override the anx subcommand with `tests/input/package/<fixture>.command` (`check` or `test`). `scripts/run_safety_tests.py` is a thin wrapper for the safety suite.
 
@@ -93,7 +96,7 @@ Test data lives under `tests/`; the runner and the other Python tooling live und
 
 ## anx package manager
 
-`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated v2 `build/pkg.json` package map. `anx test` runs the project's own tests under `<project>/tests/`; the repository fixtures for anx itself live in `tests/package/` and run via `scripts/run_tests.py --suite package`.
+`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, `fmt [--check]` (formats the root package's own sources; `--check` prints the files that differ and exits nonzero), and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. `anx` invokes `compiler.main` with a generated v2 `build/pkg.json` package map. `anx test` runs the project's own tests under `<project>/tests/`; the repository fixtures for anx itself live in `tests/package/` and run via `scripts/run_tests.py --suite package`.
 
 ## Architecture
 
@@ -117,6 +120,7 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 - `bak/` is ignored legacy material, `.conda/` is a local environment, and `build/` contains compiler and test output. Do not modify them unless the user explicitly asks for it.
 - `ide-support/` contains the packaged VS Code extension and `licenses/` contains the project license texts.
 - Documentation is written in Chinese. Update it only when the user explicitly requests documentation changes.
+- Documentation states the repository as it is now. Do not narrate the iteration that produced it: no history or chronology (此前/现在/改为/曾经/第一版/本轮/后续/待办), no changelogs, no plans or promises, no comparison with an earlier state, and no defect-story framing. Write the current fact in the present tense — what the code does, what the rule is, what a value means — and let it stand on its own; when a rule exists because of a hazard, describe the hazard as a property of the current design instead of recounting the defect that motivated the rule. Keep the voice neutral: 「X 是 Y」, not 「X 改成了 Y」 or 「X 以前是 Z」. This applies to every persistent text in the repository: `docs/`, `README` files, code comments, docstrings, and commit messages.
 - Code comments and persistent documentation must be self-contained: never cite a temporary document or its content — an implementation plan (such as those under `docs/plan/`), a proposal, a TODO list, a bug log, or review notes — and never cite rule, section, or definition numbers that exist only there. State the fact itself instead; referring to another persistent document is fine. Existing violations are left in place: fix one when the surrounding code or document is next touched.
 - `CLAUDE.md` must remain a relative symbolic link to `AGENTS.md`.
 - There is no CI, pre-commit hook, or formatter configuration. Run relevant checks locally and use `git diff --check` before committing.
