@@ -5,13 +5,13 @@
     "control",
     "numeric"
   ],
-  "argv": [
-    "100",
-    "80"
-  ],
+  "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_eq": "344400"
+    "rc": 0
   },
-  "note": "rc==0, stdout==\"344400\" (100 架 200 帧 × 80 轮, 与 cd.an 的 ITER 一致)"
+  "note": "官方工作单元: 250 架飞机、200 帧, 结果 10830; 外层默认 49 次",
+  "scale": {
+    "default": 49,
+    "c": "argv"
+  }
 }

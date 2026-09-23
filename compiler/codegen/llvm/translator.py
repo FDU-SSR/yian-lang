@@ -267,6 +267,10 @@ class LLTranslator:
                 builder.close(self.__resolve(builder, stmt.fd), stmt.result.name)
             case IR.Sqrt():
                 builder.sqrt(self.__resolve(builder, stmt.value), stmt.result.name)
+            case IR.Sin():
+                builder.sin(self.__resolve(builder, stmt.value), stmt.result.name)
+            case IR.Cos():
+                builder.cos(self.__resolve(builder, stmt.value), stmt.result.name)
             case IR.ArgCount():
                 builder.arg_count(stmt.result.name)
             case IR.ArgBytes():

@@ -10,7 +10,7 @@
   bench/results/<set>.{md,csv}      生成物 (含环境指纹与 commit)
 
 协议:
-  - 三态同一算法、同一规模: C `clang -O2 -lm bench/<SOURCE>/c/<name>.c`;
+  - 三态同一算法、同一规模: C `clang -O2 -ffp-contract=off -lm bench/<SOURCE>/c/<name>.c`;
     raw `yianc -O2 --raw-pointers lib/src <src>`; fat `yianc -O2 lib/src <src>`。
   - 规模档 fast: 对声明了 `scale.fast` 的基准, 把源里 `// bench-scale` 标记行的数字换成
     fast 值, 生成构建副本 `build/bench/src/<profile>/<SOURCE>/<name>.an` 再编译; 同一个值
@@ -439,7 +439,7 @@ def compile_an(spec: BenchSpec, profile: str, raw: bool) -> Path:
 
 OPT_LEVEL = "-O2"
 C_COMPILER = "clang"
-C_FLAGS = ["-O2", "-lm"]
+C_FLAGS = ["-O2", "-ffp-contract=off", "-lm"]
 TIME_BIN = "/usr/bin/time"
 DEFAULT_RUNS = 5
 DEFAULT_MAX_STATE_SEC = 120.0
@@ -742,7 +742,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, 裸态追加 `--raw-pointers`。"
     )
     lines.append(
-        "- 规模与 argv: 见各基准 `specs/<name>.json` 的 `argv` (如 `cd 100 80`、`richards 2400`) "
+        "- 规模与 argv: 见各基准 `specs/<name>.json` 的 `scale`; argv 只覆盖 C 的外层重复次数, "
         "与 `scale`; fast 档对声明了 `scale.fast` 的基准生成缩小规模的构建副本, 并把同一数值"
         "作为 argv 传给 C 参考, 保证三态工作量一致。"
     )

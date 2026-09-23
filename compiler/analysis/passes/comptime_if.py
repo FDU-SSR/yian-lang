@@ -142,6 +142,8 @@ class ComptimeIfSpecializer:
                 expr.fd = self.__rewrite_expr(expr.fd)
             case HIR.Sqrt():
                 expr.value = self.__rewrite_expr(expr.value)
+            case HIR.Sin() | HIR.Cos():
+                expr.value = self.__rewrite_expr(expr.value)
             case HIR.ArgCount():
                 pass
             case HIR.ArgBytes():

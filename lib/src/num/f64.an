@@ -64,3 +64,11 @@ impl From<str> for f64 {
 pub fn sqrt(value: f64) -> f64 {
     return @sqrt(value);
 }
+
+pub fn sin(value: f64) -> f64 {
+    return @sin(value);
+}
+
+pub fn cos(value: f64) -> f64 {
+    return @cos(value);
+}

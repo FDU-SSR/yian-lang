@@ -420,7 +420,7 @@ def __link_exe(obj_path: Path, output_path: Path, opt_level: int, profile: bool 
         print(f"  linker: {linker} ({first_line})", file=sys.stderr)
 
     runtime_archive = ensure_archive()
-    cmd = [linker, str(obj_path), str(runtime_archive), "-o", str(output_path), f"-O{opt_level}"]
+    cmd = [linker, str(obj_path), str(runtime_archive), "-lm", "-o", str(output_path), f"-O{opt_level}"]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(f"error: linker failed:\n{proc.stderr}", file=sys.stderr)

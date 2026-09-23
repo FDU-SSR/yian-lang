@@ -6,8 +6,11 @@
   ],
   "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_eq": "1605 5213"
+    "rc": 0
   },
-  "note": "rc==0, stdout==\"1605 5213\" (loops × nodes)"
+  "note": "官方工作单元: input=1500, loops=6102, nodes=5213; 外层默认 47 次",
+  "scale": {
+    "default": 47,
+    "c": "argv"
+  }
 }

@@ -78,8 +78,8 @@ BallInitResult BallInitResult_new(Random* r) {
 
 // 球弹跳逻辑
 BounceResult Ball_bounce(Ball* self) {
-    int x_limit = 300;
-    int y_limit = 300;
+    int x_limit = 500;
+    int y_limit = 500;
     bool bounced = false;
 
     int next_x = self->x + self->x_vel;
@@ -124,7 +124,7 @@ BounceResult Ball_bounce(Ball* self) {
 int benchmark() {
     Random random = Random_new();
 
-    int ball_count = 100000;
+    int ball_count = 100;
     int bounces = 0;
     Ball* balls = (Ball*)malloc(sizeof(Ball) * ball_count);
 
@@ -134,7 +134,7 @@ int benchmark() {
         random = init_res.random_state;
     }
 
-    for (int j = 0; j < 10000; j++) {
+    for (int j = 0; j < 50; j++) {
         for (int i = 0; i < ball_count; i++) {
             BounceResult bounce_res = Ball_bounce(&balls[i]);
             balls[i] = bounce_res.ball;
@@ -149,11 +149,12 @@ int benchmark() {
     return bounces;
 }
 
-// 主函数
-int main() {
-    int result = benchmark();
-    int expected = 368285073;
-    assert(result == expected && "bounce count not expected");
-    printf("Test passed! Bounces: %d\n", result);
+// 主函数: argv[1] 只控制完整工作单元的外层重复次数。
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 300000;
+    for (int i = 0; i < iterations; i++) {
+        int result = benchmark();
+        assert(result == 1331 && "bounce count not expected");
+    }
     return 0;
 }

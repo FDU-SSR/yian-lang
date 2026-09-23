@@ -85,6 +85,16 @@ class SysLowerer:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Sqrt(result=result, value=value)).result
 
+    def resolve_sin(self, expr: HIR.Sin) -> IR.Value:
+        value = self.__host.resolve_val(expr.value)
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
+        return self.__host.emitter.emit(IR.Sin(result=result, value=value)).result
+
+    def resolve_cos(self, expr: HIR.Cos) -> IR.Value:
+        value = self.__host.resolve_val(expr.value)
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
+        return self.__host.emitter.emit(IR.Cos(result=result, value=value)).result
+
     def resolve_mem_copy(self, expr: HIR.MemCopy) -> IR.Value:
         dest = self.__host.resolve_val(expr.dest)
         src = self.__host.resolve_val(expr.src)

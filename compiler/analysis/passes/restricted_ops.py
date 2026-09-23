@@ -23,6 +23,8 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.Open,
         AST.BuiltinKind.Close,
         AST.BuiltinKind.Sqrt,
+        AST.BuiltinKind.Sin,
+        AST.BuiltinKind.Cos,
         AST.BuiltinKind.AssumeInit,
         AST.BuiltinKind.MemCopy,
         AST.BuiltinKind.Undef,

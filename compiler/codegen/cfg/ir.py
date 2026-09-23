@@ -559,6 +559,20 @@ class Sqrt:
 
 
 @dataclass
+class Sin:
+    """Sine of an ``f64`` value."""
+    result: Reg
+    value: Value
+
+
+@dataclass
+class Cos:
+    """Cosine of an ``f64`` value."""
+    result: Reg
+    value: Value
+
+
+@dataclass
 class ArgCount:
     """Load the process argument count."""
     result: Reg
@@ -592,7 +606,7 @@ Stmt: TypeAlias = (
     | Call | Invoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead | Open | Close | Sqrt | ArgCount | ArgBytes
+    | SysWrite | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
     | MemCopy
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty

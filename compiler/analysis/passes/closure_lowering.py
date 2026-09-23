@@ -199,6 +199,8 @@ class ClosureLowering:
                 pass
             case HIR.Sqrt():
                 expr.value = self.__rewrite_type_ids(expr.value)
+            case HIR.Sin() | HIR.Cos():
+                expr.value = self.__rewrite_type_ids(expr.value)
             case HIR.ArgCount():
                 pass
             case HIR.ArgBytes():
@@ -389,6 +391,8 @@ class ClosureLowering:
             case HIR.RuntimeFail():
                 pass
             case HIR.Sqrt():
+                expr.value = self.__rewrite_one_capture(expr.value)
+            case HIR.Sin() | HIR.Cos():
                 expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.ArgCount():
                 pass

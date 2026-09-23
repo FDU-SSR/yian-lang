@@ -190,6 +190,14 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             )
             res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
             return res
+        case HIR.Sin() | HIR.Cos():
+            res = __line(
+                guides,
+                is_last,
+                f"{type(expr).__name__}: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}",
+            )
+            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+            return res
         case HIR.ArgCount():
             return __line(
                 guides,

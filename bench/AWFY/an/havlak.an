@@ -42,10 +42,9 @@
 //
 // 单一源: fat 与 raw 共用本文件; 树/集合用 Option<T&> 与 Vec<T&>, 无切片,
 //         dyn 变量一律绑 T& (不写 T[]/T* 标注), 两模式通用。
-// 规模: INNER=1 (每轮 LoopTesterApp 即上游官方断言点 1605/5213), ITER=2 轮外层重复;
-//       断言 total_loops == 1605*ITER 且 total_nodes == 5213*ITER。
-// 校验值: 每轮 loops=1605, nodes=5213; C 参考实现同样打印 "1605 5213"。
-from std.core.io import print;
+// 规模: 每个工作单元使用官方 innerIterations=1500, 结果为 6102/5213。
+// 外层重复只重复完整 LoopTesterApp。
+// 校验值: 每轮 loops=6102, nodes=5213; C 参考实现执行相同断言。
 from std.core.vec import Vec;
 
 // ── 基本块 / 边 / CFG (上游 havlak/BasicBlock.java, BasicBlockEdge.java,
@@ -781,18 +780,12 @@ fn benchmark(inner_iterations: i32) -> AppResult {
 }
 
 fn main() {
-    let INNER: i32 = 1;
-    let ITER: i64 = 2;
-    let total_loops: i64 = 0;
-    let total_nodes: i64 = 0;
-    let i: i64 = 0;
+    let ITER: u64 = 47;  // bench-scale
+    let i: u64 = 0;
     while i < ITER {
-        let r: AppResult = benchmark(INNER);
-        total_loops += i64(r.loops);
-        total_nodes += i64(r.nodes);
+        let r: AppResult = benchmark(1500);
+        assert r.loops == 6102: "havlak: loop count is not correct";
+        assert r.nodes == 5213: "havlak: node count is not correct";
         i += 1;
     }
-    assert total_loops == 1605 * ITER: "havlak: loop count is not correct";
-    assert total_nodes == 5213 * ITER: "havlak: node count is not correct";
-    print("havlak pass\n");
 }

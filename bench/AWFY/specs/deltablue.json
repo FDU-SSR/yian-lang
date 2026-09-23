@@ -6,8 +6,11 @@
   ],
   "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_eq": "4993240000"
+    "rc": 0
   },
-  "note": "rc==0, stdout==\"4993240000\" (N=100 × ITER=14000; 每趟 356660)"
+  "note": "官方工作单元: chainTest(12000) 与 projectionTest(12000), 保留内部正确性检查; 外层默认 134 次",
+  "scale": {
+    "default": 134,
+    "c": "argv"
+  }
 }

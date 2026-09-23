@@ -6,10 +6,11 @@
   ],
   "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_contains": [
-      "5869103028000"
-    ]
+    "rc": 0
   },
-  "note": "rc==0, stdout 含 \"5869103028000\" (ops/成员/字符数)"
+  "note": "官方工作单元: 根与 head 为 object, operations 数量 156; 外层默认 14286 次",
+  "scale": {
+    "default": 14286,
+    "c": "argv"
+  }
 }

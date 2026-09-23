@@ -8,10 +8,10 @@
   "check": {
     "rc": 0
   },
-  "note": "rc==0 (sieve 每轮断言 prime_count == 148933)",
+  "note": "官方工作单元: flags 大小 5000, 结果 669; 外层默认 268657 次",
   "scale": {
-    "default": 500,
-    "fast": 25,
+    "default": 268657,
+    "fast": 59000,
     "c": "argv"
   }
 }

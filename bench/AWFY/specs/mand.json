@@ -6,10 +6,11 @@
   ],
   "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_contains": [
-      "126"
-    ]
+    "rc": 0
   },
-  "note": "rc==0, stdout 含 \"126\""
+  "note": "官方工作单元: 图像大小 500, 结果 191; 外层默认 69 次",
+  "scale": {
+    "default": 69,
+    "c": "argv"
+  }
 }

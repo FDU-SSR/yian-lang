@@ -4,7 +4,7 @@
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/CD.java + cd/*.java
 //       (MIT, Copyright (c) 2001-2016 Stefan Marr; 见仓库 LICENSE.md)
 // 说明: 上游用 Java 泛型红黑树 (RedBlackTree<K,V>), 这里用一个带标签键的连通实现;
-//       sin/cos/sqrt 直接用 libm (YIAN 侧无数学内建, 用自己的多项式实现, 见 .an 注释)。
+//       sin/cos/sqrt 直接用 libm。
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -771,12 +771,9 @@ static int benchmark(int num_aircrafts) {
 }
 
 int main(int argc, char **argv) {
-    int num_aircrafts = argc > 1 ? atoi(argv[1]) : 100;
-    int iterations = argc > 2 ? atoi(argv[2]) : 1;
-    int total = 0;
+    int iterations = argc > 1 ? atoi(argv[1]) : 49;
     for (int i = 0; i < iterations; i++) {
-        total += benchmark(num_aircrafts);
+        assert(benchmark(250) == 10830 && "cd: collision count is not correct");
     }
-    printf("%d\n", total);
     return 0;
 }

@@ -2,21 +2,19 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/list.c (项目自写 C 参考)
-// 规模: make_list 45/30/20, 断言 tail 结果长度 == 30。
+// 规模: make_list 15/10/6, 断言 tail 结果长度 == 10。
 //
 // 算法: 单链表 (val + next 指针)。Element_make_list 递归建表 (长度
 //       递减, val=length), tail(x,y,z) 三链表归约: 当 y 比 x 短时
 //       同时前移三者指针后对 (next_x,y,z)/(next_y,z,x)/(next_z,x,y)
 //       递归嵌套, 否则返回 z。最终 tail 结果指向原 z 表的中段, 断言
-//       其长度 == 30。free_list 释放整条链 (含头节点)。
+//       其长度 == 10。free_list 释放整条链 (含头节点)。
 //
 // 数据布局: next 为 Option<Element&> (空/链尾为 None); 遍历位置用 match
 //       解包读取, 节点由 dyn Element(...) 分配, 释放直接 del T&。
 //
 // 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
 //         x[0u64..n]（两模式通用, fat 下仍受检查）。
-from std.core.io import print;
-
 struct Element {
     val: i32,
     next: Option<Element&>,
@@ -53,24 +51,10 @@ fn Element_make_list(length: i32) -> Option<Element&> {
 }
 
 fn Element_length_method(self: Element&) -> i32 {
-    let len: i32 = 1;
-    let current: Option<Element&> = match self.next {
-        Some(n) => Option<Element&>.Some(n),
-        None => Option<Element&>.None,
+    return match self.next {
+        None => 1,
+        Some(n) => 1 + Element_length_method(n),
     };
-    loop {
-        match current {
-            None => { break; },
-            Some(cn) => {
-                len = len + 1;
-                current = match cn.next {
-                    Some(n) => Option<Element&>.Some(n),
-                    None => Option<Element&>.None,
-                };
-            }
-        }
-    };
-    return len;
 }
 
 fn Element_free_method(self: Element&) {
@@ -153,9 +137,9 @@ fn free_list(e: Option<Element&>) {
 }
 
 fn benchmark_list() -> i32 {
-    let x: Option<Element&> = Element_make_list(45);
-    let y: Option<Element&> = Element_make_list(30);
-    let z: Option<Element&> = Element_make_list(20);
+    let x: Option<Element&> = Element_make_list(15);
+    let y: Option<Element&> = Element_make_list(10);
+    let z: Option<Element&> = Element_make_list(6);
 
     let result: Option<Element&> = tail(opt_copy(x), opt_copy(y), opt_copy(z));
     let l: i32 = Element_length(result);
@@ -168,7 +152,11 @@ fn benchmark_list() -> i32 {
 }
 
 fn main() {
-    let result: i32 = benchmark_list();
-    assert result == 30: "list: tail result length should be 30";
-    print("list pass\n");
+    let ITER: u64 = 94077;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i32 = benchmark_list();
+        assert result == 10: "list: tail result length should be 10";
+        iter += 1;
+    }
 }

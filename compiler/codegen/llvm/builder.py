@@ -2081,6 +2081,16 @@ class LLBuilder:
         raw = self.__call_intrinsic(IntrinsicKind.Sqrt, [value])
         self.__func.set_reg(result, raw)
 
+    def sin(self, value: LLValue, result: str) -> None:
+        """``f64`` sine via the LLVM math intrinsic."""
+        raw = self.__call_intrinsic(IntrinsicKind.Sin, [value])
+        self.__func.set_reg(result, raw)
+
+    def cos(self, value: LLValue, result: str) -> None:
+        """``f64`` cosine via the LLVM math intrinsic."""
+        raw = self.__call_intrinsic(IntrinsicKind.Cos, [value])
+        self.__func.set_reg(result, raw)
+
     # -- process arguments / exit --
 
     def arg_count(self, result: str) -> None:
@@ -2278,6 +2288,8 @@ class LLBuilder:
             case IntrinsicKind.Open | IntrinsicKind.Close:
                 return self.__type_ctx.i32_id
             case IntrinsicKind.Sqrt:
+                return self.__type_ctx.f64_id
+            case IntrinsicKind.Sin | IntrinsicKind.Cos:
                 return self.__type_ctx.f64_id
             case IntrinsicKind.StrLen:
                 return self.__type_ctx.u64_id

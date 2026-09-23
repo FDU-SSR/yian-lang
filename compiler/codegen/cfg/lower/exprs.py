@@ -145,6 +145,10 @@ class ExprLowerer:
                 return self.__host.sys.resolve_close(expr)
             case HIR.Sqrt():
                 return self.__host.sys.resolve_sqrt(expr)
+            case HIR.Sin():
+                return self.__host.sys.resolve_sin(expr)
+            case HIR.Cos():
+                return self.__host.sys.resolve_cos(expr)
             case HIR.ArgCount():
                 return self.__host.sys.resolve_arg_count(expr)
             case HIR.ArgBytes():

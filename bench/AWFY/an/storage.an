@@ -2,12 +2,12 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Storage.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/storage.c (项目自写 C 参考)
-// 规模: depth=16, 断言 count_arrays == 21523360。
+// 规模: depth=7、内部节点分支数为 4, 断言 count_arrays == 5461。
 //
 // 算法: build_tree_depth 递归建树 — depth==1 时按 LCG 随机分配
-//       (1..10) 个叶数组 (children=null), 否则分配 3 个内部节点并在
+//       (1..10) 个叶数组 (children=null), 否则分配 4 个内部节点并在
 //       children 挂子数组。每次调用计数 +1 (count_arrays)。free_tree
-//       递归释放全部子数组。LCG: stage = stage*1103515245 + 12345。
+//       递归释放全部子数组。随机数使用官方 16 位 LCG。
 //
 // 表示: children 字段为 Option (叶子数组 children=None); free_tree 经取址
 //       参数 + is_some 判定。children 元素类型为 Option<array_tree[]>
@@ -16,8 +16,6 @@
 //
 // 模式专源: 本文件供 fat 模式使用; raw 下 T*→T[] 无隐式转换, 每次分配都要
 //       显式构造切片, 故 raw 使用同目录的 storage.raw.an。
-from std.core.io import print;
-
 struct array_tree {
     children: Option<array_tree[]>,
     child_count: i32,
@@ -32,9 +30,7 @@ fn Random_init(r: Random&, seed: u64) {
 }
 
 fn Random_next(r: Random&) -> u64 {
-    let LCG_A: u64 = 1103515245;
-    let LCG_C: u64 = 12345;
-    r.stage = r.stage * LCG_A + LCG_C;
+    r.stage = (r.stage * 1309u64 + 13849u64) & 65535u64;
     return r.stage;
 }
 
@@ -54,7 +50,7 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
         return Option<array_tree[]>.Some(arr);
     }
 
-    let n: u64 = 3;
+    let n: u64 = 4;
     let arr: array_tree[] = dyn[n] array_tree(Option<array_tree[]>.None, 0);
     let i: u64 = 0;
     while i < n {
@@ -83,8 +79,8 @@ fn free_tree(arr: Option<array_tree[]>) {
 }
 
 fn benchmark_storage(root_depth: i32) -> i64 {
-    let random: Random& = dyn Random(12345);
-    Random_init(random, 12345);
+    let random: Random& = dyn Random(74755);
+    Random_init(random, 74755);
 
     let count: i64 = 0;
     let root_count: i32 = 0;
@@ -97,9 +93,11 @@ fn benchmark_storage(root_depth: i32) -> i64 {
 }
 
 fn main() {
-    let root_depth: i32 = 16;
-    let result: i64 = benchmark_storage(root_depth);
-    let expected: i64 = 21523360;
-    assert result == expected: "storage count not expected";
-    print("storage pass\n");
+    let ITER: u64 = 9885;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i64 = benchmark_storage(7);
+        assert result == 5461: "storage count not expected";
+        iter += 1;
+    }
 }

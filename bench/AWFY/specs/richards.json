@@ -4,12 +4,13 @@
   "tags": [
     "ptr"
   ],
-  "argv": [
-    "2400"
-  ],
+  "argv": [],
   "check": {
-    "rc": 0,
-    "stdout_eq": "55790400 22312800"
+    "rc": 0
   },
-  "note": "rc==0, stdout==\"55790400 22312800\" (23246/9297 × 2400 轮, 与 richards.an 的 ITER 一致)"
+  "note": "官方工作单元: queuePacketCount=23246、holdCount=9297; 外层默认 3303 次",
+  "scale": {
+    "default": 3303,
+    "c": "argv"
+  }
 }

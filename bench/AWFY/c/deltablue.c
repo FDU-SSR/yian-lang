@@ -8,8 +8,8 @@
 // 说明: 上游的约束类层次 (AbstractConstraint -> Unary/Binary -> Equality/Scale/Stay/Edit)
 //       在 .an 里是 tagged enum + match, 在 C 里等价为一个带 kind 标签的结构体 + switch;
 //       强度 Strength 用 arithmeticValue (int) 直接表示。
-// 校验值: N=100, ITER=14000 时输出 4993240000 (= PER_RUN 356660 * 14000), 与 .an 断言一致。
-// 用法: ./deltablue [N [ITER]]   (默认 N=100, ITER=14000)
+// 工作单元: chainTest(12000) 与 projectionTest(12000), 结果由内部断言验证。
+// 用法: ./deltablue [重复次数] (默认 1)
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -644,6 +644,7 @@ static void planner_change(Planner *p, Variable *var, int new_value) {
     ConstraintVec edit_v = {NULL, 0, 0};
     cvec_push(&edit_v, edit_c);
     ConstraintVec plan = planner_extract_plan_from_constraints(p, edit_v);
+    free(edit_v.items);
 
     for (int i = 0; i < 10; i++) {
         var->value = new_value;
@@ -691,6 +692,7 @@ static int64_t planner_chain_test(int n) {
     ConstraintVec edit_v = {NULL, 0, 0};
     cvec_push(&edit_v, edit_c);
     ConstraintVec plan = planner_extract_plan_from_constraints(planner, edit_v);
+    free(edit_v.items);
 
     int64_t acc = 0;
     for (int t = 0; t < 100; t++) {
@@ -786,15 +788,10 @@ static int64_t planner_projection_test(int n) {
 }
 
 int main(int argc, char **argv) {
-    int n = argc > 1 ? atoi(argv[1]) : 100;
-    int iterations = argc > 2 ? atoi(argv[2]) : 14000;
-
-    int64_t total = 0;
+    int iterations = argc > 1 ? atoi(argv[1]) : 134;
     for (int i = 0; i < iterations; i++) {
-        total += planner_chain_test(n);
-        total += planner_projection_test(n);
+        planner_chain_test(12000);
+        planner_projection_test(12000);
     }
-
-    printf("%lld\n", (long long)total);
     return 0;
 }

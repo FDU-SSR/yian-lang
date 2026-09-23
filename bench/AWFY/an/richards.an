@@ -39,16 +39,14 @@
 //   - 上游 ForEachInterface/闭包类用法本基准没有; 上游 4 个 lambda 是唯一的分派点。
 //   - 上游用引用相等判断 null (NO_WORK/NO_TASK == x), 本实现全部落在 Option 的
 //     is_none/is_some 上; 本基准没有需要「两引用判等」的身份判定, 故未加 id 字段。
-//   - 显式释放: 上游依赖 GC; 本实现只在每趟末尾释放 taskTable 的 Vec 缓冲, 6 个
-//     TCB/4 个数据记录/8 个 Packet 交由进程生命周期 (单趟约 1.5KB),
-//     从而保持与上游相同的「分配后不立即回收」语义, 并避免环状引用图的重复释放。
+//   - 显式释放: 每趟把四类记录、TCB 与 Packet 登记在 Scheduler 中, 验证后按登记表
+//     统一释放; 不沿任务/packet 的环状引用递归释放, 因而每个对象只释放一次。
 //
 // 单一源: fat 与 raw 共用本文件; 可选引用一律 Option<T&> (两模式通用)。
-// 规模: ITER=2400 趟 start() (上游 Java 每趟 new Scheduler().start()), 每趟
-//       校验 queuePacketCount==23246 / holdCount==9297; 另断言 ITER 趟总和。
+// 规模: 外层重复完整 start() (上游 Java 每趟 new Scheduler().start()), 每趟
+//       校验 queuePacketCount==23246 / holdCount==9297。
 // 校验值: queuePacketCount=23246, holdCount=9297 (单趟), 与 bench/AWFY/c/richards.c
 //         及上游 Java 官方期望值一致。
-from std.core.io import print;
 from std.core.vec import Vec;
 
 // ── 常量 (上游 richards/RBObject.java) ──
@@ -64,12 +62,6 @@ struct Packet {
     kind: i32,
     datum: i32,
     data: i32[4],
-}
-
-fn create_packet(link: Option<Packet&>, identity: i32, kind: i32) -> Packet& {
-    let zeros: i32[4] = [0, 0, 0, 0];
-    let packet: Packet& = dyn Packet(link=link, identity=identity, kind=kind, datum=0, data=zeros);
-    return packet;
 }
 
 // 上游 RBObject.append: 把 packet 接到 queue_head 链尾, 返回 (可能更新的) 队头
@@ -195,6 +187,12 @@ struct Scheduler {
     current_task: Option<TaskControlBlock&>,
     current_task_identity: i32,
     task_table: Vec<Option<TaskControlBlock&>>,
+    packets: Vec<Packet&>,
+    tasks: Vec<TaskControlBlock&>,
+    idle_records: Vec<IdleRecord&>,
+    worker_records: Vec<WorkerRecord&>,
+    handler_records: Vec<HandlerRecord&>,
+    device_records: Vec<DeviceRecord&>,
     queue_packet_count: i32,
     hold_count: i32,
 }
@@ -207,11 +205,23 @@ impl Scheduler {
             table.push(Option<TaskControlBlock&>.None);
             i += 1;
         }
+        let packets: Vec<Packet&> = Vec<Packet&>.new();
+        let tasks: Vec<TaskControlBlock&> = Vec<TaskControlBlock&>.new();
+        let idle_records: Vec<IdleRecord&> = Vec<IdleRecord&>.new();
+        let worker_records: Vec<WorkerRecord&> = Vec<WorkerRecord&>.new();
+        let handler_records: Vec<HandlerRecord&> = Vec<HandlerRecord&>.new();
+        let device_records: Vec<DeviceRecord&> = Vec<DeviceRecord&>.new();
         return Self(
             task_list=Option<TaskControlBlock&>.None,
             current_task=Option<TaskControlBlock&>.None,
             current_task_identity=0,
             task_table=table,
+            packets=packets,
+            tasks=tasks,
+            idle_records=idle_records,
+            worker_records=worker_records,
+            handler_records=handler_records,
+            device_records=device_records,
             queue_packet_count=0,
             hold_count=0
         );
@@ -379,6 +389,14 @@ impl Scheduler {
         return self.hold_self();
     }
 
+    // 上游 createPacket: 分配后登记到本趟 Scheduler 的释放表
+    fn create_packet(link: Option<Packet&>, identity: i32, kind: i32) -> Packet& {
+        let zeros: i32[4] = [0, 0, 0, 0];
+        let packet: Packet& = dyn Packet(link=link, identity=identity, kind=kind, datum=0, data=zeros);
+        self.packets.push(packet);
+        return packet;
+    }
+
     // 上游 createTask: 新任务插到 taskList 头部并登记进 taskTable
     fn create_task(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState, kind: TaskKind) {
         let t: TaskControlBlock& = dyn TaskControlBlock(
@@ -389,6 +407,7 @@ impl Scheduler {
             state=state,
             kind=kind
         );
+        self.tasks.push(t);
         self.task_list = Option<TaskControlBlock&>.Some(t);
         self.task_table[u64(identity)] = Option<TaskControlBlock&>.Some(t);
     }
@@ -396,6 +415,7 @@ impl Scheduler {
     // 上游 createIdler
     fn create_idler(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
         let record: IdleRecord& = dyn IdleRecord(control=1, count=10000);
+        self.idle_records.push(record);
         self.create_task(identity, priority, work, state, TaskKind.Idle(record));
     }
 
@@ -403,22 +423,76 @@ impl Scheduler {
     fn create_worker(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
         let HANDLER_A: i32 = 2;
         let record: WorkerRecord& = dyn WorkerRecord(destination=HANDLER_A, count=0);
+        self.worker_records.push(record);
         self.create_task(identity, priority, work, state, TaskKind.Worker(record));
     }
 
     // 上游 createHandler
     fn create_handler(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
         let record: HandlerRecord& = dyn HandlerRecord(work_in=Option<Packet&>.None, device_in=Option<Packet&>.None);
+        self.handler_records.push(record);
         self.create_task(identity, priority, work, state, TaskKind.Handler(record));
     }
 
     // 上游 createDevice
     fn create_device(identity: i32, priority: i32, work: Option<Packet&>, state: TaskState) {
         let record: DeviceRecord& = dyn DeviceRecord(pending=Option<Packet&>.None);
+        self.device_records.push(record);
         self.create_task(identity, priority, work, state, TaskKind.Device(record));
     }
 
-    // 上游 createPacket 是 Scheduler 方法; 本实现为自由函数 create_packet
+    // 释放本趟工作单元的全部动态对象。对象之间的 link/input 形成环状图,
+    // 因此只沿登记表释放, 不沿引用递归释放。
+    fn free_allocations() {
+        let i: u64 = 0;
+        while i < self.idle_records.len() {
+            let record: IdleRecord& = self.idle_records[i];
+            del record;
+            i += 1;
+        }
+        self.idle_records.drop();
+
+        let j: u64 = 0;
+        while j < self.worker_records.len() {
+            let record: WorkerRecord& = self.worker_records[j];
+            del record;
+            j += 1;
+        }
+        self.worker_records.drop();
+
+        let k: u64 = 0;
+        while k < self.handler_records.len() {
+            let record: HandlerRecord& = self.handler_records[k];
+            del record;
+            k += 1;
+        }
+        self.handler_records.drop();
+
+        let l: u64 = 0;
+        while l < self.device_records.len() {
+            let record: DeviceRecord& = self.device_records[l];
+            del record;
+            l += 1;
+        }
+        self.device_records.drop();
+
+        let m: u64 = 0;
+        while m < self.packets.len() {
+            let packet: Packet& = self.packets[m];
+            del packet;
+            m += 1;
+        }
+        self.packets.drop();
+
+        let n: u64 = 0;
+        while n < self.tasks.len() {
+            let task: TaskControlBlock& = self.tasks[n];
+            del task;
+            n += 1;
+        }
+        self.tasks.drop();
+        self.task_table.drop();
+    }
 
     // 上游 Scheduler.start(): 建任务/包, schedule(), 返回两个计数是否命中官方值
     pub fn start() -> bool {
@@ -434,18 +508,18 @@ impl Scheduler {
         let no_work: Option<Packet&> = Option<Packet&>.None;
 
         self.create_idler(IDLER, 0, no_work, TaskState.create_running());
-        let work_q: Option<Packet&> = Option<Packet&>.Some(create_packet(no_work, WORKER, WORK_PACKET_KIND));
-        work_q = Option<Packet&>.Some(create_packet(work_q, WORKER, WORK_PACKET_KIND));
+        let work_q: Option<Packet&> = Option<Packet&>.Some(self.create_packet(no_work, WORKER, WORK_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(work_q, WORKER, WORK_PACKET_KIND));
         self.create_worker(WORKER, 1000, work_q, TaskState.create_waiting_with_packet());
 
-        work_q = Option<Packet&>.Some(create_packet(no_work, DEVICE_A, DEVICE_PACKET_KIND));
-        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
-        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(no_work, DEVICE_A, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(work_q, DEVICE_A, DEVICE_PACKET_KIND));
         self.create_handler(HANDLER_A, 2000, work_q, TaskState.create_waiting_with_packet());
 
-        work_q = Option<Packet&>.Some(create_packet(no_work, DEVICE_B, DEVICE_PACKET_KIND));
-        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
-        work_q = Option<Packet&>.Some(create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(no_work, DEVICE_B, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
+        work_q = Option<Packet&>.Some(self.create_packet(work_q, DEVICE_B, DEVICE_PACKET_KIND));
         self.create_handler(HANDLER_B, 3000, work_q, TaskState.create_waiting_with_packet());
 
         self.create_device(DEVICE_A, 4000, no_work, TaskState.create_waiting());
@@ -472,21 +546,15 @@ impl Scheduler {
 }
 
 fn main() {
-    let ITER: i64 = 2400;
-    let queue_total: i64 = 0;
-    let hold_total: i64 = 0;
-    let i: i64 = 0;
+    let ITER: u64 = 3303;  // bench-scale
+    let i: u64 = 0;
     while i < ITER {
         let scheduler: Scheduler = Scheduler.new();
         let valid: bool = scheduler.start();
         assert valid: "richards: scheduler counters differ from upstream";
-        queue_total += i64(scheduler.queue_packet_count);
-        hold_total += i64(scheduler.hold_count);
-        let table: Vec<Option<TaskControlBlock&>> = scheduler.task_table;
-        table.drop();
+        assert scheduler.queue_packet_count == 23246: "richards: queuePacketCount is not correct";
+        assert scheduler.hold_count == 9297: "richards: holdCount is not correct";
+        scheduler.free_allocations();
         i += 1;
     }
-    assert queue_total == 23246 * ITER: "richards: queuePacketCount is not correct";
-    assert hold_total == 9297 * ITER: "richards: holdCount is not correct";
-    print("richards pass\n");
 }

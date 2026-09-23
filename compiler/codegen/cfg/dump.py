@@ -279,6 +279,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.Sqrt(result=result, value=value):
             return f"%{result.name} = sqrt {__dump_value(value)}  [{__type_str(result.type_id)}]"
 
+        case IR.Sin(result=result, value=value):
+            return f"%{result.name} = sin {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
+        case IR.Cos(result=result, value=value):
+            return f"%{result.name} = cos {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
         case IR.ArgCount(result=result):
             return f"%{result.name} = arg_count  [{__type_str(result.type_id)}]"
 

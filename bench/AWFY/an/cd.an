@@ -18,103 +18,15 @@
 //   - 引用不可比较相等 (== 对 T& 报 E406): 节点带唯一 id (自增, 树内唯一),
 //     上游的 `x == y.left` / `y != z` 等身份判定改比 id, 语义等价。
 //   - 上游 ForEachInterface 闭包改为显式中序遍历 (等价, 无闭包分配)。
-//   - 无 sin/cos 内建: mysin/mycos 用区间归约 + fdlibm 内核多项式 (精度 <1ulp),
-//     与 libm/Java 的 ULP 差异不影响碰撞计数 (与 bench/AWFY/c/cd.c 的 libm 版本
-//     在 2/10/100/250 架上计数一致)。sqrt 用标准库 std.num.f64.sqrt
-//     (llvm.sqrt.f64 → sqrtsd), 与 C 参考的 libm sqrt 同一原语; 碰撞计数对 sqrt
-//     的末位差异敏感, 100 架时计数为 4305, 与 C 参考及上游校验值一致。
+//   - sin/cos/sqrt 均使用 std.num.f64 的 LLVM 数学内建, 与 C 参考使用同一类系统原语。
+//     碰撞检测中的平方根对末位差异敏感, 因此两侧保持相同的数学调用路径。
 //     同一 discr 只开方一次 (上游 Java 写了两次 Math.sqrt, 等值)。
 //   - state 树的值为 Vector3D 值型 (上游是对象引用), 树节点/键布局见下。
 //
 // 单一源: fat 与 raw 共用本文件; 树链用 Option<RBNode<V>&> (两模式通用)。
-// 规模: AIRCRAFT=100, FRAMES=200, ITER=80; 断言 aircraft=100 时碰撞数 4305。
-from std.core.io import print;
-from std.num.f64 import sqrt;
+// 规模: AIRCRAFT=250, FRAMES=200; 每个工作单元断言碰撞数 10830。
+from std.num.f64 import sqrt, sin, cos;
 from std.core.vec import Vec;
-
-// ── 浮点数学 (YIAN 无 sin/cos 内建) ──
-
-fn fabs(x: f64) -> f64 {
-    if x < 0.0 {
-        return -x;
-    }
-    return x;
-}
-
-// fdlibm __kernel_sin, 有效区间 |x| <= π/4
-fn sin_core(x: f64) -> f64 {
-    let z: f64 = x * x;
-    return x * (1.0 + z * (-1.66666666666666324348e-01 + z * (8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10))))));
-}
-
-// fdlibm __kernel_cos, 有效区间 |x| <= π/4
-fn cos_core(x: f64) -> f64 {
-    let z: f64 = x * x;
-    return 1.0 - 0.5 * z + z * z * (4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))));
-}
-
-// 归约到 [-π, π]: x - 2π·trunc(x/2π)
-fn reduce_angle(x: f64) -> f64 {
-    let PI: f64 = 3.14159265358979323846;
-    let TWO_PI: f64 = 6.28318530717958647692;
-    let k: i64 = i64(x * 0.15915494309189533577);
-    let r: f64 = x - f64(k) * TWO_PI;
-    if r > PI {
-        return r - TWO_PI;
-    }
-    if r < -PI {
-        return r + TWO_PI;
-    }
-    return r;
-}
-
-// sin(a), a ∈ [0, π]
-fn sin_pos(a: f64) -> f64 {
-    let PI: f64 = 3.14159265358979323846;
-    let PI_4: f64 = 0.78539816339744830962;
-    let PI_2: f64 = 1.57079632679489661923;
-    if a <= PI_4 {
-        return sin_core(a);
-    }
-    if a <= PI_2 {
-        return cos_core(PI_2 - a);
-    }
-    let b: f64 = PI - a;
-    if b <= PI_4 {
-        return sin_core(b);
-    }
-    return cos_core(PI_2 - b);
-}
-
-// cos(a), a ∈ [0, π]
-fn cos_pos(a: f64) -> f64 {
-    let PI: f64 = 3.14159265358979323846;
-    let PI_4: f64 = 0.78539816339744830962;
-    let PI_2: f64 = 1.57079632679489661923;
-    if a <= PI_4 {
-        return cos_core(a);
-    }
-    if a <= PI_2 {
-        return sin_core(PI_2 - a);
-    }
-    let b: f64 = PI - a;
-    if b <= PI_4 {
-        return -cos_core(b);
-    }
-    return -sin_core(PI_2 - b);
-}
-
-fn mysin(x: f64) -> f64 {
-    let r: f64 = reduce_angle(x);
-    if r < 0.0 {
-        return -sin_pos(-r);
-    }
-    return sin_pos(r);
-}
-
-fn mycos(x: f64) -> f64 {
-    return cos_pos(fabs(reduce_angle(x)));
-}
 
 // ── 值类型 (上游 cd/Vector2D.java, cd/Vector3D.java) ──
 
@@ -933,8 +845,8 @@ fn simulate(aircraft: Vec<i32>, time: f64) -> Vec<Aircraft> {
     let i: u64 = 0;
     while i < aircraft.len() {
         let callsign: i32 = aircraft[i];
-        frame.push(Aircraft(callsign=callsign, position=Vector3D(x=time, y=mycos(time) * 2.0 + f64(i) * 3.0, z=10.0)));
-        frame.push(Aircraft(callsign=aircraft[i + 1], position=Vector3D(x=time, y=mysin(time) * 2.0 + f64(i) * 3.0, z=10.0)));
+        frame.push(Aircraft(callsign=callsign, position=Vector3D(x=time, y=cos(time) * 2.0 + f64(i) * 3.0, z=10.0)));
+        frame.push(Aircraft(callsign=aircraft[i + 1], position=Vector3D(x=time, y=sin(time) * 2.0 + f64(i) * 3.0, z=10.0)));
         i += 2;
     }
     return frame;
@@ -959,19 +871,17 @@ fn benchmark(num_aircrafts: i32) -> i64 {
         frame_index += 1;
     }
 
+    detector.state.free_nodes();
     aircraft.drop();
     return actual_collisions;
 }
 
 fn main() {
-    let AIRCRAFT: i32 = 100;
-    let ITER: i64 = 80;
-    let total: i64 = 0;
-    let i: i64 = 0;
+    let AIRCRAFT: i32 = 250;
+    let ITER: u64 = 49;  // bench-scale
+    let i: u64 = 0;
     while i < ITER {
-        total += benchmark(AIRCRAFT);
+        assert benchmark(AIRCRAFT) == 10830: "cd: collision count is not correct";
         i += 1;
     }
-    assert total == 4305 * ITER: "cd: collision count is not correct";
-    print("cd pass\n");
 }

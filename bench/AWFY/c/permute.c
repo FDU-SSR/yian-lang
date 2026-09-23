@@ -31,23 +31,19 @@ void permute_inner(int n, int* v) {
 // 性能测试函数
 int benchmark_permute() {
     count = 0;
-    int* v = (int*)malloc(sizeof(int) * 11);
+    int* v = (int*)calloc(6, sizeof(int));
 
-    // 初始化数组（可选，但原代码没有初始化）
-    for (int i = 0; i < 11; i++) {
-        v[i] = i;
-    }
-
-    permute_inner(11, v);
+    permute_inner(6, v);
     free(v);
     return count;
 }
 
 // 主函数
-int main() {
-    int result = benchmark_permute();
-    int expected = 823059745;
-    assert(result == expected && "permute count not expected");
-    printf("Test passed! Permutation count: %d\n", result);
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 70866;
+    for (int i = 0; i < iterations; i++) {
+        int result = benchmark_permute();
+        assert(result == 8660 && "permute count not expected");
+    }
     return 0;
 }

@@ -9,10 +9,10 @@
   "check": {
     "rc": 0
   },
-  "note": "rc==0 (内部断言 overall_result == SOLVES)",
+  "note": "官方工作单元: 8 皇后连续求解 10 次, 结果 true; 外层默认 276923 次",
   "scale": {
-    "default": 150,
-    "fast": 10,
+    "default": 276923,
+    "fast": 65000,
     "c": "argv"
   }
 }

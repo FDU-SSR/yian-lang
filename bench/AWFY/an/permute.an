@@ -2,7 +2,7 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Permute.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/permute.c (项目自写 C 参考)
-// 规模: n=11, 断言 count == 823059745。
+// 规模: n=6, 断言 count == 8660。
 //
 // 算法: permute_inner(n, v) 对长度 n 的前缀做递归交换排列, 每次调用
 //       count+=1; n==0 时仅计数返回, 否则先递归 (n-1) 再对 i 从 n-1
@@ -15,8 +15,6 @@
 //
 // 单一源: fat 与 raw 共用本文件。
 // 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
-from std.core.io import print;
-
 fn swap_indices(i: u64, j: u64, v: i32[]) {
     let tmp: i32 = v[i];
     v[i] = v[j];
@@ -40,20 +38,18 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
 
 fn benchmark_permute() -> i32 {
     let count: i32 = 0;
-    let v = dyn[11] 0i32;
-    let i: u64 = 0;
-    while i < 11 {
-        v[i] = i32(i);
-        i += 1;
-    }
-    permute_inner(11, v[0u64..11u64], &count);
+    let v = dyn[6] 0i32;
+    permute_inner(6, v[0u64..6u64], &count);
     del v;
     return count;
 }
 
 fn main() {
-    let result: i32 = benchmark_permute();
-    let expected: i32 = 823059745;
-    assert result == expected: "permute count not expected";
-    print("permute pass\n");
+    let ITER: u64 = 70866;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i32 = benchmark_permute();
+        assert result == 8660: "permute count not expected";
+        iter += 1;
+    }
 }

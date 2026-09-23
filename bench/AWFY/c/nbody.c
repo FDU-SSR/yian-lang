@@ -1,6 +1,6 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <assert.h>
 
 typedef struct planet {
     double x, y, z;
@@ -96,7 +96,7 @@ void init_bodies(planet* bodies) {
 
     double pi = 3.141592653589793;
     double solar_mass = 4 * pi * pi;
-    double days_per_year = 365.21;
+    double days_per_year = 365.24;
 
 
     bodies[0] = (planet){0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass};
@@ -122,26 +122,17 @@ void init_bodies(planet* bodies) {
     };
 }
 
-int main() {
-    int n = 12000000;
-    double s1 = 0.0, s2 = 0.0;
-
-    planet bodies[5];
-
-    init_bodies(bodies);
-    offset_momentum(5, bodies);
-
-    s1 = energy(5, bodies);
-
-    for (int i = 0; i < n; ++i) {
-        advance(5, bodies, 0.01);
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 196;
+    for (int iteration = 0; iteration < iterations; ++iteration) {
+        planet bodies[5];
+        init_bodies(bodies);
+        offset_momentum(5, bodies);
+        for (int i = 0; i < 250000; ++i) {
+            advance(5, bodies, 0.01);
+        }
+        assert(energy(5, bodies) == -0.1690859889909308 &&
+               "nbody: final energy is not correct");
     }
-
-    s2 = energy(5, bodies);
-
-    int result = (int)((s2 - s1) * 100000.0);
-
-    printf("%d\n", result);
-
     return 0;
 }

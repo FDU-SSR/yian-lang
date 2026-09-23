@@ -49,6 +49,8 @@ class BuiltinKind(Enum):
     Open = "open"
     Close = "close"
     Sqrt = "sqrt"
+    Sin = "sin"
+    Cos = "cos"
     Argc = "argc"
     ArgBytes = "arg_bytes"
     Exit = "exit"

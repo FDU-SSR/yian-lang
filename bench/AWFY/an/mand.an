@@ -1,88 +1,71 @@
-// bench/AWFY/an/mand.an — Mandelbrot 集位图校验和 (shootout mandelbrot)
+// bench/AWFY/an/mand.an — Mandelbrot 集位图校验和 (AWFY Mandelbrot)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Mandelbrot.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/mand.c (项目自写 C 参考)
-// 规模: w=h=8000, iter=50, 断言 checksum % 256 == 126 (与 C 版一致)。
-//
-// 算法: 对 w×h 网格逐像素做 Mandelbrot 迭代 (最多 iter 次), 将每个
-//       像素是否在集合内按 8 位打包成字节, 字节累积异或得校验和。
-//
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
-from std.core.io import print;
+// 官方工作单元使用 size=500, 50 次复数迭代, 结果为 191。
+// 外层重复只重复完整图像计算。
 
-fn main() {
-    let w: i32 = 8000;
-    let h: i32 = 8000;
-    let bit_num: i32 = 0;
+fn mandelbrot(size: i32) -> i32 {
+    let sum: i32 = 0;
     let byte_acc: i32 = 0;
-    let iter: i32 = 50;
-    let limit_sq: f64 = 4.0;
-    let checksum: i32 = 0;
-
+    let bit_num: i32 = 0;
     let y: i32 = 0;
-    while y < h {
+
+    while y < size {
+        let ci: f64 = (2.0 * f64(y) / f64(size)) - 1.0;
         let x: i32 = 0;
-        while x < w {
-            let Zr: f64 = 0.0;
-            let Zi: f64 = 0.0;
-            let Tr: f64 = 0.0;
-            let Ti: f64 = 0.0;
+        while x < size {
+            let zrzr: f64 = 0.0;
+            let zi: f64 = 0.0;
+            let zizi: f64 = 0.0;
+            let cr: f64 = (2.0 * f64(x) / f64(size)) - 1.5;
 
-            let Cr: f64 = 2.0 * f64(x) / f64(w) - 1.5;
-            let Ci: f64 = 2.0 * f64(y) / f64(h) - 1.0;
+            let z: i32 = 0;
+            let not_done: bool = true;
+            let escape: i32 = 0;
+            while not_done && z < 50 {
+                let zr: f64 = zrzr - zizi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zrzr = zr * zr;
+                zizi = zi * zi;
 
-            let i: i32 = 0;
-            while i < iter {
-                if Tr + Ti > limit_sq {
-                    break;
+                if zrzr + zizi > 4.0 {
+                    not_done = false;
+                    escape = 1;
                 }
-                let new_Zi: f64 = 2.0 * Zr * Zi + Ci;
-                let new_Zr: f64 = Tr - Ti + Cr;
-
-                Zr = new_Zr;
-                Zi = new_Zi;
-
-                Tr = Zr * Zr;
-                Ti = Zi * Zi;
-                i += 1;
+                z += 1;
             }
 
-            let is_member: i32 = 0;
-            if Tr + Ti <= limit_sq {
-                is_member = 1;
-            }
-
-            byte_acc = (byte_acc * 2) % 256;
-            if is_member == 1 {
-                byte_acc |= 1;
-            }
+            byte_acc = (byte_acc * 2) + escape;
             bit_num += 1;
-
             if bit_num == 8 {
-                checksum ^= byte_acc;
+                sum ^= byte_acc;
                 byte_acc = 0;
                 bit_num = 0;
+            } else {
+                if x == size - 1 {
+                    let shift: i32 = 1;
+                    let j: i32 = 0;
+                    while j < 8 - bit_num {
+                        shift *= 2;
+                        j += 1;
+                    }
+                    byte_acc *= shift;
+                    sum ^= byte_acc;
+                    byte_acc = 0;
+                    bit_num = 0;
+                }
             }
             x += 1;
         }
-
-        if bit_num != 0 {
-            let remaining_bits: i32 = 8 - bit_num;
-            let shift: i32 = 1;
-            let j: i32 = 0;
-            while j < remaining_bits {
-                shift *= 2;
-                j += 1;
-            }
-            byte_acc = (byte_acc * shift) % 256;
-            checksum ^= byte_acc;
-            byte_acc = 0;
-            bit_num = 0;
-        }
         y += 1;
     }
+    return sum;
+}
 
-    assert checksum % 256 == 126: "mand: checksum is not correct";
-    print("mand pass\n");
+fn main() {
+    let ITER: u64 = 69;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        assert mandelbrot(500) == 191: "mand: checksum is not correct";
+        iter += 1;
+    }
 }

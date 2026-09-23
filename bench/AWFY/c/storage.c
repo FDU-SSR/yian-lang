@@ -3,9 +3,6 @@
 #include <assert.h>
 
 
-// 常量定义
-#define LCG_A 1103515245
-#define LCG_C 12345
 // 定义结构体
 typedef struct array_tree {
     struct array_tree* children;
@@ -24,9 +21,9 @@ void Random_init(Random* r, unsigned long long seed) {
     r->stage = seed;
 }
 
-// 生成下一个随机数 (与 .an 基准同为 64 位状态, 保证叶子容量抽样一致)
+// 生成下一个随机数 (与官方 SOM Random 一致)
 unsigned long long Random_next(Random* r) {
-    r->stage = r->stage * LCG_A + LCG_C;
+    r->stage = (r->stage * 1309ULL + 13849ULL) & 65535ULL;
     return r->stage;
 }
 
@@ -46,7 +43,7 @@ array_tree* build_tree_depth(int depth, Random* random, int* out_count) {
         return arr;
     }
 
-    int n = 3;
+    int n = 4;
     array_tree* arr = (array_tree*)malloc(n * sizeof(array_tree));
     for (int i = 0; i < n; i++) {
         int child_count = 0;
@@ -74,7 +71,7 @@ void free_tree(array_tree* arr, int count) {
 // 基准测试函数
 int benchmark_storage(int root_depth) {
     Random random;
-    Random_init(&random, 12345);
+    Random_init(&random, 74755);
 
     count_arrays = 0;
     int root_count = 0;
@@ -86,12 +83,11 @@ int benchmark_storage(int root_depth) {
 }
 
 // 主函数
-int main() {
-    int root_depth = 16;
-    int result = benchmark_storage(root_depth);
-    printf("Storage count: %d\n", result);
-    int expected = 21523360;
-    assert(result == expected && "storage count not expected");
-    printf("Test passed!\n");
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 9885;
+    for (int i = 0; i < iterations; i++) {
+        int result = benchmark_storage(7);
+        assert(result == 5461 && "storage count not expected");
+    }
     return 0;
 }

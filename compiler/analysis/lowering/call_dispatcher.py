@@ -144,6 +144,10 @@ class CallDispatcher:
                 return self.__handle_close(node)
             case AST.BuiltinKind.Sqrt:
                 return self.__handle_sqrt(node)
+            case AST.BuiltinKind.Sin:
+                return self.__handle_sin(node)
+            case AST.BuiltinKind.Cos:
+                return self.__handle_cos(node)
             case AST.BuiltinKind.AssumeInit:
                 return self.__handle_assume_init(node)
             case AST.BuiltinKind.MemCopy:
@@ -490,6 +494,34 @@ class CallDispatcher:
 
         value = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.f64_id)
         return HIR.Sqrt(
+            span=node.span,
+            value=value,
+            type_id=self.__ctx.type_ctx.f64_id,
+            is_place=False,
+        )
+
+    def __handle_sin(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower ``@sin(x)`` into HIR.Sin."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '@sin'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'@sin' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.f64_id)
+        return HIR.Sin(
+            span=node.span,
+            value=value,
+            type_id=self.__ctx.type_ctx.f64_id,
+            is_place=False,
+        )
+
+    def __handle_cos(self, node: AST.BuiltinCall) -> HIR.Expr:
+        """Lower ``@cos(x)`` into HIR.Cos."""
+        if self.__has_named_arg(node.args):
+            raise AnalysisError("named arguments are not supported for '@cos'", node.span)
+        if len(node.args) != 1:
+            raise AnalysisError(f"'@cos' expects exactly 1 argument, got {len(node.args)}", node.span)
+        value = self.__expr.coerce(self.__expr.value(node.args[0].value), self.__ctx.type_ctx.f64_id)
+        return HIR.Cos(
             span=node.span,
             value=value,
             type_id=self.__ctx.type_ctx.f64_id,

@@ -2,18 +2,15 @@
 //
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Bounce.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/bounce.c (项目自写 C 参考)
-// 规模: ball_count=100000, 弹跳轮数 10000, 断言 bounces == 368285073
-//       (与 C 版同轮数一致)。
+// 规模: 每个工作单元创建 100 个球并模拟 50 轮, 断言 bounces == 1331。
 //
-// 算法: LCG 随机数 (seed = (seed*1309+13849) & 65535) 初始化 100000 个
+// 算法: LCG 随机数 (seed = (seed*1309+13849) & 65535) 初始化 100 个
 //       Ball (x/y 在 [0,500), 速度在 [-150,150))。每轮对每个球做
-//       bounce: 位置+=速度, 越过 300×300 边界则反弹 (反向取 abs 并钳制),
-//       计数 bounced 次数。轮数*球数 = 总弹跳判断次数。
+//       bounce: 位置+=速度, 越过 500×500 边界则反弹 (反向取 abs 并钳制),
+//       计数 bounced 次数。外层重复只重复完整工作单元。
 //
 // 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
 //         x[0u64..n]（两模式通用, fat 下仍受检查）。
-from std.core.io import print;
-
 fn abs_int(x: i32) -> i32 {
     if x < 0 {
         return -x;
@@ -68,8 +65,8 @@ fn BallInitResult_new(r: Random) -> BallInitResult {
 }
 
 fn Ball_bounce(b: Ball) -> BounceResult {
-    let x_limit: i32 = 300;
-    let y_limit: i32 = 300;
+    let x_limit: i32 = 500;
+    let y_limit: i32 = 500;
     let bounced: bool = false;
 
     let next_x: i32 = b.x + b.x_vel;
@@ -106,8 +103,8 @@ fn Ball_bounce(b: Ball) -> BounceResult {
 fn benchmark() -> i64 {
     let random: Random = Random(74755);
 
-    let ball_count: u64 = 100000;
-    let rounds: u64 = 10000;
+    let ball_count: u64 = 100;
+    let rounds: u64 = 50;
     let bounces: i64 = 0;
     let balls = dyn[ball_count] Ball(0, 0, 0, 0);
     let balls_slice: Ball[] = balls[0u64..ball_count];
@@ -139,8 +136,11 @@ fn benchmark() -> i64 {
 }
 
 fn main() {
-    let result: i64 = benchmark();
-    let expected: i64 = 368285073;
-    assert result == expected: "bounce count not expected";
-    print("bounce pass\n");
+    let ITER: u64 = 300000;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i64 = benchmark();
+        assert result == 1331: "bounce count not expected";
+        iter += 1;
+    }
 }

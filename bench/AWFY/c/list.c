@@ -23,13 +23,7 @@ Element* Element_make_list(int length) {
 
 // 计算链表长度
 int Element_length_method(Element* self) {
-    int len = 1;
-    Element* current = self->next;
-    while (current != NULL) {
-        len += 1;
-        current = current->next;
-    }
-    return len;
+    return self->next == NULL ? 1 : 1 + Element_length_method(self->next);
 }
 
 // 释放链表（不释放头节点）
@@ -93,9 +87,9 @@ void free_list(Element* e) {
 
 // 性能测试函数
 int benchmark_list() {
-    Element* x = Element_make_list(45);
-    Element* y = Element_make_list(30);
-    Element* z = Element_make_list(20);
+    Element* x = Element_make_list(15);
+    Element* y = Element_make_list(10);
+    Element* z = Element_make_list(6);
 
     Element* result = tail(x, y, z);
     int l = Element_length(result);
@@ -108,9 +102,11 @@ int benchmark_list() {
 }
 
 // 主函数
-int main() {
-    int result = benchmark_list();
-    assert(result == 30 && "tail result length should be 30");
-    printf("Test passed! List length: %d\n", result);
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 94077;
+    for (int i = 0; i < iterations; i++) {
+        int result = benchmark_list();
+        assert(result == 10 && "tail result length should be 10");
+    }
     return 0;
 }

@@ -1,82 +1,55 @@
-#include<stdio.h>
-int main()
-{
-    const int w = 8000;
-    const int h = 8000;
-    int bit_num = 0;
+#include <assert.h>
+#include <stdlib.h>
+
+static int mandelbrot(int size) {
+    int sum = 0;
     int byte_acc = 0;
-    const int iter = 50;
-    const double limit_sq = 4.0;
-    int checksum = 0;
+    int bit_num = 0;
 
+    for (int y = 0; y < size; ++y) {
+        double ci = (2.0 * y / size) - 1.0;
+        for (int x = 0; x < size; ++x) {
+            double zrzr = 0.0;
+            double zi = 0.0;
+            double zizi = 0.0;
+            double cr = (2.0 * x / size) - 1.5;
 
-    for (int y = 0; y < h; ++y)
-    {
-
-        for (int x = 0; x < w; ++x)
-        {
-
-            double Zr = 0.0;
-            double Zi = 0.0;
-            double Tr = 0.0;
-            double Ti = 0.0;
-
-
-            double Cr = 2.0 * x / w - 1.5;
-            double Ci = 2.0 * y / h - 1.0;
-
-
-            for (int i = 0; i < iter; ++i)
-            {
-
-                if (Tr + Ti > limit_sq) {
-                    break;
+            int z = 0;
+            int not_done = 1;
+            int escape = 0;
+            while (not_done && z < 50) {
+                double zr = zrzr - zizi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zrzr = zr * zr;
+                zizi = zi * zi;
+                if (zrzr + zizi > 4.0) {
+                    not_done = 0;
+                    escape = 1;
                 }
-
-
-                double new_Zi = 2.0 * Zr * Zi + Ci;
-                double new_Zr = Tr - Ti + Cr;
-
-
-                Zr = new_Zr;
-                Zi = new_Zi;
-
-
-                Tr = Zr * Zr;
-                Ti = Zi * Zi;
+                z += 1;
             }
 
-
-            int is_member = (Tr + Ti <= limit_sq);
-
-
-            byte_acc = (byte_acc * 2) % 256;
-            if (is_member) {
-                byte_acc |= 1;
-            }
-            bit_num++;
-
-
+            byte_acc = (byte_acc * 2) + escape;
+            bit_num += 1;
             if (bit_num == 8) {
-                checksum ^= byte_acc;
+                sum ^= byte_acc;
+                byte_acc = 0;
+                bit_num = 0;
+            } else if (x == size - 1) {
+                byte_acc <<= (8 - bit_num);
+                sum ^= byte_acc;
                 byte_acc = 0;
                 bit_num = 0;
             }
         }
-
-
-        if (bit_num != 0) {
-            int remaining_bits = 8 - bit_num;
-            int shift = 1;
-            for (int j = 0; j < remaining_bits; ++j) {
-                shift *= 2;
-            }
-            byte_acc = (byte_acc * shift) % 256;
-            checksum ^= byte_acc;
-            byte_acc = 0;
-            bit_num = 0;
-        }
     }
-    printf("%d\n", checksum);
+    return sum;
+}
+
+int main(int argc, char **argv) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 69;
+    for (int i = 0; i < iterations; ++i) {
+        assert(mandelbrot(500) == 191 && "mand: checksum is not correct");
+    }
     return 0;
 }

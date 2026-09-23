@@ -1,9 +1,8 @@
 // bench/AWFY/c/havlak.c — Havlak 循环识别 (AWFY 宏基准) 的 C 参考实现
 //
-// 语义与规模与 bench/AWFY/an/havlak.an 对齐 (INNER_ITERATIONS=1, ITER=2);
-// 只用于跨语言正确性对照, 不参与 fat/raw 计时。main 打印校验值 "1605 5213"
-// (上游 AWFY Havlak.verifyResult: innerIterations=1 → r[0]=1605, r[1]=5213),
-// 并逐轮断言; 另与官方 15/150/1500 → (1647/2052/6102, 5213) 核对过 (见下)。
+// 语义与规模与 bench/AWFY/an/havlak.an 对齐: 每个工作单元使用
+// innerIterations=1500, 结果为 6102/5213; 外层重复只控制完整工作单元次数。
+// 只用于跨语言正确性对照, 不参与 fat/raw 计时, 并逐轮断言官方结果。
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Havlak.java + havlak/*.java
 //       Havlak.java / BasicBlock / BasicBlockEdge / ControlFlowGraph / HavlakLoopFinder /
 //       LoopStructureGraph / LoopTesterApp / SimpleLoop 为
@@ -19,8 +18,7 @@
 //   另: BasicBlock.name 唯一, 故 IdentityDictionary<BasicBlock,Integer> number 落成
 //   按 name 索引的 int 数组 (与 .an 一致)。
 //
-// 官方断言值核对 (clang -O2, 改动 main 的 INNER_ITERATIONS 后运行):
-//   innerIterations=1→1605 5213; 15→1647 5213; 150→2052 5213; 1500→6102 5213。
+// 官方断言值: innerIterations=1500 → 6102 5213。
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -681,11 +679,7 @@ static void app_main(LoopTesterApp *app, int num_dummy_loops, int find_loop_iter
     *out_nodes = app->cfg->n_blocks;
 }
 
-// 规模与 bench/AWFY/an/havlak.an 对齐: INNER=1 (上游官方断言值), ITER 轮
-#define INNER_ITERATIONS 1
-#define ITER 2
-
-int main(void) {
+int main(int argc, char **argv) {
     int find_loop_iterations = 50;
     int par_loops = 10;
     int ppar_loops = 10;
@@ -693,36 +687,25 @@ int main(void) {
 
     int loops = 0;
     int nodes = 0;
-    int total_loops = 0;
-    int total_nodes = 0;
-
-    for (int it = 0; it < ITER; it++) {
+    int iterations = argc > 1 ? atoi(argv[1]) : 47;
+    for (int it = 0; it < iterations; it++) {
         LoopTesterApp app;
         memset(&app, 0, sizeof(app));
         app.cfg = cfg_new();
         app.lsg = lsg_new();
         cfg_create_node(app.cfg, 0);
 
-        app_main(&app, INNER_ITERATIONS, find_loop_iterations, par_loops, ppar_loops, pppar_loops,
+        app_main(&app, 1500, find_loop_iterations, par_loops, ppar_loops, pppar_loops,
                  &loops, &nodes);
 
         lsg_free(app.lsg);
         cfg_free(app.cfg);
 
-        // 上游官方断言值 (AWFY Havlak.verifyResult): innerIterations=1 → 1605 / 5213
-        if (loops != 1605 || nodes != 5213) {
-            fprintf(stderr, "havlak: expected 1605 5213, got %d %d\n", loops, nodes);
+        // 上游官方断言值 (AWFY Havlak.verifyResult): innerIterations=1500 → 6102 / 5213
+        if (loops != 6102 || nodes != 5213) {
+            fprintf(stderr, "havlak: expected 6102 5213, got %d %d\n", loops, nodes);
             return 1;
         }
-        total_loops += loops;
-        total_nodes += nodes;
     }
-
-    if (total_loops != 1605 * ITER || total_nodes != 5213 * ITER) {
-        fprintf(stderr, "havlak: totals mismatch: %d %d\n", total_loops, total_nodes);
-        return 1;
-    }
-
-    printf("%d %d\n", loops, nodes);
     return 0;
 }

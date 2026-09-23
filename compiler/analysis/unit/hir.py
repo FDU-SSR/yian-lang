@@ -407,6 +407,24 @@ class Sqrt:
 
 
 @dataclass
+class Sin:
+    """Sine of an ``f64`` value."""
+    span: SrcSpan
+    value: Expr  # f64
+    type_id: int  # f64
+    is_place: bool
+
+
+@dataclass
+class Cos:
+    """Cosine of an ``f64`` value."""
+    span: SrcSpan
+    value: Expr  # f64
+    type_id: int  # f64
+    is_place: bool
+
+
+@dataclass
 class ArgCount:
     """Return the process argument count supplied by the C entry point."""
     span: SrcSpan
@@ -570,7 +588,7 @@ Expr: TypeAlias = (
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
     | SizeOf | Undef | Dangling | BitCast | Alloc | SysRead | SysWrite | Open | Close
-    | Sqrt | ArgCount | ArgBytes | ProcessExit
+    | Sqrt | Sin | Cos | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block

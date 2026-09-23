@@ -41,12 +41,8 @@
 //   - 上游 Planner.propagateFrom 未被 chainTest/projectionTest 使用, 本移植省略。
 //
 // 单一源: fat 与 raw 共用本文件; 约束/变量互相引用用 T&, 约束列表用 Vec<Constraint&>。
-// 规模: N=100 (上游 chainTest(100)/projectionTest(100) 规模), ITER=14000
-//       (对应 AWFY 的 numIterations 外循环)。每趟校验值 PER_RUN=356660
-//       (chainTest 贡献 4950 + projectionTest 贡献 351710), 总校验值
-//       PER_RUN*ITER=4993240000 (与 bench/AWFY/c/deltablue.c 一致)。
-// 断言: stdout == "deltablue pass\n" (两态逐字节一致)。
-from std.core.io import print;
+// 规模: 每个工作单元执行 chainTest(12000) 与 projectionTest(12000) 各一次。
+// 外层重复只重复完整工作单元。
 from std.core.vec import Vec;
 
 // ── Direction (上游 deltablue/Direction.java) ──
@@ -943,18 +939,11 @@ impl Planner {
 }
 
 fn main() {
-    let N: i32 = 100;
-    let ITER: i64 = 14000;
-    let PER_RUN: i64 = 356660;
-
-    let total: i64 = 0;
-    let i: i64 = 0;
+    let ITER: u64 = 134;  // bench-scale
+    let i: u64 = 0;
     while i < ITER {
-        total += Planner.chain_test(N);
-        total += Planner.projection_test(N);
+        Planner.chain_test(12000);
+        Planner.projection_test(12000);
         i += 1;
     }
-
-    assert total == PER_RUN * ITER: "deltablue: checksum mismatch";
-    print("deltablue pass\n");
 }
