@@ -1,7 +1,7 @@
 # anx 包管理器
 
 `anx` 是 YIAN 的项目与包管理工具：创建项目、按包名解析导入、构建/运行/检查、跑项目测试、
-输出依赖图。
+格式化源码、输出依赖图。
 
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）
 - 编译器内部实现见[开发手册](../manual/index.md)（编译器 01–19 章）
@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | [01](01.project.md) | 项目与清单 | 目录规范、`package.anx` 字段、`kind` 三档语义 |
 | [02](02.dependencies.md) | 依赖 | 路径依赖、dev 依赖、可见性、依赖诊断 |
-| [03](03.cli.md) | 命令行 | 六个子命令、选项、退出码、构建产物 |
+| [03](03.cli.md) | 命令行 | 七个子命令、选项、退出码、构建产物 |
 | [04](04.testing.md) | 项目测试 | `tests/` 布局、期望文件、用例怎么编译 |
 | [05](05.diagnostics.md) | 诊断目录 | `AX001`–`AX015` 的含义与产出方 |
 | [06](06.install.md) | 安装与环境 | `install.sh`、标准库定位、非 editable 安装 |
@@ -23,7 +23,7 @@
 ## 快速上手
 
 ```bash
-scripts/install.sh        # 一次安装：yianc 与 anx 进入 PATH
+scripts/install.sh        # 一次安装：yianc、anx 与 yian-lsp 进入 PATH
 
 anx new demo              # 生成 bin 项目骨架
 cd demo
@@ -58,6 +58,7 @@ demo/
 | 构建并运行（转发参数与 stdin） | `anx run -- alpha beta` |
 | 只做类型检查（不产出可执行文件） | `anx check` |
 | 跑项目自己的测试 | `anx test` |
+| 格式化根包源码 | `anx fmt` / `anx fmt --check` |
 | 打印依赖图 | `anx graph` / `anx graph --json` |
 | 提高优化级别 | `anx build --release` 或 `anx build -O 3` |
 
