@@ -10,16 +10,15 @@
 //       build_tower_at 建 0..disks 的塔, 结束后 free_pile 逐节点释放。
 //       总移动次数 = 2^disks - 1。
 //
-// Option/T& 表示: 链表尾哨兵/空柱由 Option 表达。Option 值禁止简单复制 →
-//       读取位置用 match 直接取 payload (裸模式 Some/None), 槽位/字段更新
-//       用构造表达式, 全文件统一 match 风格。next 与 piles 元素为
-//       Option<TowersDisk&> (40B→24B); push_disk 参数为 T&, 节点本体直接
-//       dyn T 分配并绑 T& (let T& = dyn, 免 T* 中间绑定), free_pile 释放路径
-//       直接 del T& (del-view: del T& 合法, 零 bitcast)。
+// Option/T& 表示: 链表尾/空柱由 Option 表达。push_disk 接收 Option 以表示
+//       C 参考实现的可空参数；pop_disk_from 在非空路径返回 T&，空柱路径
+//       输出错误并终止。节点本体由 dyn T 分配并绑定 T&，free_pile 直接
+//       del T&。
 //
 // 单一源: fat 与 raw 共用本文件。
 // 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
-from std.core.io import print;
+from std.core.io import Stderr;
+from std.core.env import exit;
 
 struct TowersDisk {
     size: i32,
@@ -28,58 +27,66 @@ struct TowersDisk {
 
 struct TowersState {
     piles: Option<TowersDisk&>[3],
-    moves_done: i64,
+    moves_done: i32,
 }
 
-fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
-    disk.next = match state.piles[pile] {
-        Some(d) => {
-            if disk.size >= d.size {
-                return;
+fn fail(message: str) -> ! {
+    Stderr.write_all(message).unwrap();
+    exit(1)
+}
+
+fn push_disk(maybe_disk: Option<TowersDisk&>, pile: i32, state: TowersState&) {
+    match maybe_disk {
+        None => { return; },
+        Some(disk) => {
+            disk.next = match state.piles[u64(pile)] {
+                Some(d) => {
+                    if disk.size >= d.size {
+                        fail("Cannot put a big disk on a smaller one\n");
+                    }
+                    Option<TowersDisk&>.Some(d)
+                },
+                None => Option<TowersDisk&>.None,
             }
-            Option<TowersDisk&>.Some(d)
+            state.piles[u64(pile)] = Option<TowersDisk&>.Some(disk);
         },
-        None => Option<TowersDisk&>.None,
     }
-    state.piles[pile] = Option<TowersDisk&>.Some(disk);
 }
 
-fn pop_disk_from(pile: u64, state: TowersState&) -> Option<TowersDisk&> {
-    return match state.piles[pile] {
-        None => Option<TowersDisk&>.None,
+fn pop_disk_from(pile: i32, state: TowersState&) -> TowersDisk& {
+    return match state.piles[u64(pile)] {
+        None => fail("Attempting to remove a disk from an empty pile\n"),
         Some(tt) => {
-            state.piles[pile] = match tt.next {
+            state.piles[u64(pile)] = match tt.next {
                 Some(n) => Option<TowersDisk&>.Some(n),
                 None => Option<TowersDisk&>.None,
             };
             tt.next = Option<TowersDisk&>.None;
-            Option<TowersDisk&>.Some(tt)
+            tt
         }
     };
 }
 
-fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
-    match pop_disk_from(from_pile, state) {
-        Some(d) => { push_disk(d, to_pile, state); },
-        None => { },
-    }
+fn move_top_disk(from_pile: i32, to_pile: i32, state: TowersState&) {
+    let disk: TowersDisk& = pop_disk_from(from_pile, state);
+    push_disk(Option<TowersDisk&>.Some(disk), to_pile, state);
     state.moves_done = state.moves_done + 1;
 }
 
-fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
+fn build_tower_at(pile: i32, disks: i32, state: TowersState&) {
     let i: i32 = disks;
     while i >= 0 {
         let disk: TowersDisk& = dyn TowersDisk(i, Option<TowersDisk&>.None);
-        push_disk(disk, pile, state);
+        push_disk(Option<TowersDisk&>.Some(disk), pile, state);
         i -= 1;
     };
 }
 
-fn move_disks(disks: i32, from_pile: u64, to_pile: u64, state: TowersState&) {
+fn move_disks(disks: i32, from_pile: i32, to_pile: i32, state: TowersState&) {
     if disks == 1 {
         move_top_disk(from_pile, to_pile, state);
     } else {
-        let other_pile: u64 = u64(3 - i32(from_pile) - i32(to_pile));
+        let other_pile: i32 = 3 - from_pile - to_pile;
         move_disks(disks - 1, from_pile, other_pile, state);
         move_top_disk(from_pile, to_pile, state);
         move_disks(disks - 1, other_pile, to_pile, state);
@@ -102,7 +109,7 @@ fn free_pile(disk: TowersDisk&) {
     };
 }
 
-fn benchmark() -> i64 {
+fn benchmark() -> i32 {
     let state: TowersState& = dyn TowersState(
         [Option<TowersDisk&>.None, Option<TowersDisk&>.None, Option<TowersDisk&>.None], 0);
     build_tower_at(0, 30, state);
@@ -112,18 +119,17 @@ fn benchmark() -> i64 {
     while i < 3 {
         match state.piles[i] {
             Some(p) => { free_pile(p); },
-            None => { },
+            None => {},
         }
         i += 1;
     };
 
-    let moves: i64 = state.moves_done;
+    let moves: i32 = state.moves_done;
     del state;
     return moves;
 }
 
 fn main() {
-    let result: i64 = benchmark();
+    let result: i32 = benchmark();
     assert result == 1073741823: "towers: moves_done should be 1073741823";
-    print("towers pass\n");
 }
