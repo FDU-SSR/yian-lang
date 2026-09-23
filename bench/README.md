@@ -24,13 +24,13 @@ bench/
 └── README.md
 ```
 
-来源与许可登记见 `bench/SUITES.md`（含尚未引入的候选套件调研结论）。
+来源与许可登记见 `bench/SUITES.md`（含候选套件调研结论与引入判据）。
 
 ## 集合
 
 ```bash
 python3 bench/bench_three_way.py --list-sets           # 列出集合、规模档、成员数
-python3 bench/bench_three_way.py --set full            # 完全档: 全部 21 项 (正式记录)
+python3 bench/bench_three_way.py --set full            # 完全档: 全部 22 项 (正式记录)
 python3 bench/bench_three_way.py --set fast --pin 4    # 快速档: 代表性子集 + 缩小规模
 python3 bench/bench_three_way.py --set ptr             # 侧重: 对象/指针图
 python3 bench/bench_three_way.py --set numeric         # 侧重: 数值/循环
@@ -48,11 +48,11 @@ python3 bench/bench_three_way.py --source AWFY --set fast
 | `numeric` | tag `numeric` | `full` | 数值/循环改动 |
 | `string` | tag `string` | `full` | 字符串/IO 改动 |
 | `alloc-heavy` | tag `alloc` + storage/json | `full` | 分配密集但仍走三态 |
-| `micro` | tag `micro`（fatptr 两项） | `full` | 表示与 ABI 改动（方向 B）的尺寸/检查读数 |
+| `micro` | tag `micro`（fatptr 三项） | `full` | 表示与 ABI 改动（方向 B）的尺寸/检查读数 |
 
 AWFY 与 BG 的成员：AWFY 14 项（bounce、cd、deltablue、havlak、json、list、mand、nbody、permute、
 queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、fasta、revcomp、spectralnorm），
-fatptr 2 项（copy_struct、chase）。
+fatptr 3 项（call_abi、copy_struct、chase）。
 
 集合只在 `bench/sets/` 里定义：新增集合要说明它覆盖哪个机制侧重（`ptr`/`numeric`/`string`/`alloc`/
 `control`；`control` 目前只有 tag 还没有集合），避免来源与侧重的组合膨胀。
@@ -76,15 +76,14 @@ fatptr 2 项（copy_struct、chase）。
 | fatptr/copy_struct | `ROUNDS` | 1024 | 128 |
 | fatptr/chase | `NODES` | 4000000 | 2000000 |
 
-其余基准（list、towers、binarytree、deltablue、json、richards、……）的 fast 规模尚未标定：
-它们目前两档同规模，快速档通过"子集 + 上述 6 项缩规模"控制时长。标定的做法是给源加
-`// bench-scale` 标记行、在 spec 里填 `scale.fast`，再实测一遍：目标是把该基准的 fat 态压到
-0.2–0.5 s 量级，单项超过 1 s 就说明规模还没调够（storage 在 fast 档仍是 1.7 s，是最该标定的一项）。
-缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数最安全；若必须缩放问题规模，
-断言与权威值都要跟着写成规模的函数。
+其余基准（list、towers、binarytree、deltablue、json、richards、……）两档同规模，快速档通过
+"子集 + 上述 6 项缩规模"控制时长（storage 在 fast 档约 1.7 s）。标定一项的做法是给源加
+`// bench-scale` 标记行、在 spec 里填 `scale.fast`；fast 档的量级口径是 fat 态每项 0.2–0.5 s，
+超过 1 s 的项按 full 规模运行。缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数
+最安全；若必须缩放问题规模，断言与权威值都要跟着写成规模的函数。
 
-两档结论冲突时以完全档为准，并把该基准记进"已知规模敏感性"（到目前为止没有出现冲突：两档在
-`ptr`/`alloc`/`numeric`/`string` 四类上的方向一致）。
+两档结论冲突时以完全档为准，并把该基准记进"已知规模敏感性"；当前两档在 `ptr`/`alloc`/
+`numeric`/`string` 四类上的方向一致。
 
 ## 三态协议
 
