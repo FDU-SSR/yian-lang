@@ -23,7 +23,7 @@ fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool
     if !free_maxs[r + c] {
         return false;
     }
-    if !free_mins[r - c + 7] {
+    if !free_mins[c - r + 7] {
         return false;
     }
     return true;
