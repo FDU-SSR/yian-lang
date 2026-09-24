@@ -66,6 +66,18 @@ class MemoryLowerer:
             self.__host.checks.mark_root(malloc)
         return malloc
 
+    def build_realloc(self, type_id: int, ptr: IR.Value, size: IR.Value) -> IR.Value:
+        result = IR.Reg(
+            name=self.__host.emitter.new_name(),
+            type_id=self.__host.ctx.type_ctx.alloc_pointer(type_id),
+        )
+        realloc = self.__host.emitter.emit(
+            IR.Realloc(result=result, type_id=type_id, ptr=ptr, size=size)
+        ).result
+        if not self.__host.ctx.raw_pointers:
+            self.__host.checks.mark_root(realloc)
+        return realloc
+
     def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
         # 良构检查（0 ≤ index+n ≤ size）与嵌套派生链的义务补发由检查插入 pass
         # 依 `IR.ElementPtr` 边重建；这里只发节点与登记出处。

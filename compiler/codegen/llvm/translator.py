@@ -181,6 +181,13 @@ class LLTranslator:
             case IR.Malloc():
                 key = self.__resolve(builder, stmt.key) if stmt.key is not None else None
                 builder.malloc(stmt.type_id, self.__resolve(builder, stmt.size), key, stmt.result.name)
+            case IR.Realloc():
+                builder.realloc(
+                    stmt.type_id,
+                    self.__resolve(builder, stmt.ptr),
+                    self.__resolve(builder, stmt.size),
+                    stmt.result.name,
+                )
             case IR.Binary():
                 builder.binary(stmt.op, self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs), stmt.result.name)
             case IR.Unary():

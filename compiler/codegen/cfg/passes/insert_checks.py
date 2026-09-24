@@ -114,6 +114,9 @@ class _Provenance:
             case IR.Malloc(result=reg):
                 if not self.__raw_pointers:
                     self.__mark_root(reg)
+            case IR.Realloc(result=reg):
+                if not self.__raw_pointers:
+                    self.__mark_root(reg)
             case IR.Cast(result=reg, value=value, raw=True):
                 self.__mark_raw(reg)
             case IR.Cast(result=reg, value=value):
@@ -368,6 +371,8 @@ class _CheckPlanner:
                     self.__field[reg.name] = merged_elem_name
                 return
             case IR.Delete(ptr=ptr):
+                self.__plan_delete(ptr)
+            case IR.Realloc(ptr=ptr):
                 self.__plan_delete(ptr)
             case IR.Call() | IR.Invoke():
                 self.__invalidate()

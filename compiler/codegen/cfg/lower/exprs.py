@@ -131,6 +131,8 @@ class ExprLowerer:
                 return self.__host.values.resolve_bit_cast(expr)
             case HIR.Alloc():
                 return self.resolve_alloc(expr)
+            case HIR.Realloc():
+                return self.__resolve_realloc(expr)
             case HIR.AssumeInit():
                 return self.resolve_val(expr.value)
             case HIR.SysRead():
@@ -335,10 +337,18 @@ class ExprLowerer:
         self.__host.switch_to(pattern_block)
         self.__host.emitter.emit(IR.MemSetPattern(dest=buffer, value=value, count=count))
         return buffer
+
     def resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
         """``@alloc<T>(n)``: trusted raw allocation, payload left uninitialized."""
         size = self.resolve_val(expr.count)
         return self.__host.memory.build_malloc(expr.element_type, size)
+
+    def __resolve_realloc(self, expr: HIR.Realloc) -> IR.Value:
+        """``@realloc<T>(ptr, n)``: resize a trusted allocation, preserving its prefix."""
+        pointer = self.resolve_val(expr.pointer)
+        count = self.resolve_val(expr.count)
+        return self.__host.memory.build_realloc(expr.element_type, pointer, count)
+
     def resolve_var(self, expr: HIR.Var) -> IR.Value:
         addr = self.__host.values.resolve_var_addr(expr)
         return self.__host.memory.build_load(addr)

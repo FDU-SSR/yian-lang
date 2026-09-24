@@ -466,6 +466,8 @@ class ExprParser:
             return self.__parse_bitcast(at.span)
         if kind == AST.BuiltinKind.Alloc:
             return self.__parse_alloc(at.span)
+        if kind == AST.BuiltinKind.Realloc:
+            return self.__parse_realloc(at.span)
 
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
         args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
@@ -522,6 +524,23 @@ class ExprParser:
         count = self.parse_expr()
         end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
         return AST.Alloc(span=at_span + end.span, target_type=ty, count=count)
+
+    def __parse_realloc(self, at_span: SrcSpan) -> AST.Realloc:
+        """Parse ``@realloc<type>(pointer, count)`` — stdlib-only allocation resize."""
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+        ty = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+        pointer = self.parse_expr()
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
+        count = self.parse_expr()
+        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.Realloc(
+            span=at_span + end.span,
+            target_type=ty,
+            pointer=pointer,
+            count=count,
+        )
 
     def parse_arg(self) -> AST.Arg:
         """Parses a single argument, which can be either positional (expr) or named (name=expr)."""

@@ -81,6 +81,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f" {__type_str(type_id)}, {__dump_value(size)}{key_str}"
             )
 
+        case IR.Realloc(result=result, type_id=type_id, ptr=ptr, size=size):
+            return (
+                f"%{result.name} = realloc"
+                f" {__type_str(type_id)}, {__dump_value(ptr)}, {__dump_value(size)}"
+            )
+
         case IR.FuncPtr(result=result, func_type_id=func_type_id):
             return (
                 f"%{result.name} = funcptr {__type_str(func_type_id)}"

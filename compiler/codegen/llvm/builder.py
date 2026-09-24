@@ -566,35 +566,23 @@ class LLBuilder:
             payload = 1  # 与运行时的空请求归一化一致
         return class_index_for_payload(payload)
 
-    def malloc(self, type_id: int, size: LLValue, key: LLValue | None, result: str) -> LLValue:
-        if self.__type_ctx.is_zst(type_id):
-            ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
-            self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
-            return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
-        # Convert element count to byte count for allocation.
-        # O-1 无回绕:元素数 n 与元素大小 |T| 的乘积不能回绕。胖态先卡 n ≤ 2^32-1 (R001),
-        # 之后 n·|T| 必然落在 u64 内; 只有 raw 模式或元素大小 ≥ 2^32 的类型仍走 i128
-        # 宽算 + total < 2^64 检查——否则纯 64 位乘法回绕(如 n=2^62+1、|T|=8 → 2^65 →
-        # 小值)会令物理分配过小, 而 in_bounds 全部通过 → 越界访问逃过检查。
+    def __allocation_payload(self, type_id: int, size: LLValue) -> LLValue:
+        """Convert an element count to checked, nonzero allocation bytes."""
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         if not self.__raw_pointers and elem_size < (1 << 32):
-            # 胖指针的 size 字段是 32 位元素数: 先卡元素数上限(超限报 R001),
-            # 之后 元素数 × 元素大小 ≤ (2^32-1)^2 < 2^64 必然落在 u64 内 —— 这条上限
-            # 检查蕴含原来的 i128 溢出检查, 因此热路径上不再需要宽整数乘法。
+            # 胖指针的 size 字段是 32 位元素数;卡住元素数后乘积可表示于 u64。
             self.__check_view_count(size, "vcap")
-            payload_ir = self.__builder.mul(size.ir_val, ir.Constant(ir.IntType(64), elem_size))  # type: ignore
+            payload_ir = self.__builder.mul(
+                size.ir_val, ir.Constant(ir.IntType(64), elem_size)  # type: ignore
+            )
         else:
-            # raw 模式无 32 位 size 字段; 元素大小 ≥ 2^32 的类型极罕见:
-            # 两种情况都保留 O-1 的 i128 溢出检查(raw 下是防御性检查)。
             if not self.__raw_pointers:
                 self.__check_view_count(size, "vcap")
             size128 = self.__builder.zext(size.ir_val, i128)  # type: ignore
             payload128 = self.__builder.mul(size128, ir.Constant(i128, elem_size))  # type: ignore
             total128 = payload128
             if not self.__raw_pointers:
-                # 块 = 堆块头 + 负载;块头首字为锁槽。
-                # raw 模式无锁头(块 = 负载,data = 块基址)。
                 total128 = self.__builder.add(
                     total128, ir.Constant(i128, IR.BlockHeader.BYTES)  # type: ignore
                 )
@@ -603,9 +591,16 @@ class LLBuilder:
             payload_ir = self.__builder.trunc(payload128, ir.IntType(64))  # type: ignore
         zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
         one = ir.Constant(ir.IntType(64), 1)  # type: ignore
-        has_size = self.__builder.icmp_unsigned("!=", payload_ir, zero)  # type: ignore
-        normalized_size = self.__builder.select(has_size, payload_ir, one)  # type: ignore
-        payload = LLValue(self.__type_ctx.u64_id, normalized_size)  # type: ignore
+        nonzero = self.__builder.icmp_unsigned("!=", payload_ir, zero)  # type: ignore
+        normalized = self.__builder.select(nonzero, payload_ir, one)  # type: ignore
+        return LLValue(self.__type_ctx.u64_id, normalized)  # type: ignore
+
+    def malloc(self, type_id: int, size: LLValue, key: LLValue | None, result: str) -> LLValue:
+        if self.__type_ctx.is_zst(type_id):
+            ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
+            self.__func.set_reg(result, LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined)))  # type: ignore
+            return LLValue(ptr_type_id, ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined))  # type: ignore
+        payload = self.__allocation_payload(type_id, size)
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
         if self.__raw_pointers:
             raw = self.__call_intrinsic(IntrinsicKind.Malloc, [payload])
@@ -620,6 +615,7 @@ class LLBuilder:
             return result_val
         # 元素数与元素大小都是编译期常量时, 直接传尺寸类号: 运行时不再按字节数查表.
         # 运行时取不到类号 (请求大于最大类) 或元素数非常量时走通用入口.
+        elem_size = self.__ll_type_ctx.get_type_size(type_id)
         constant_class = self.__constant_class_index(size.ir_val, elem_size)
         if constant_class is None:
             block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
@@ -700,6 +696,51 @@ class LLBuilder:
         result_val = self.__build_fat(data, word_val, zero, size_val, ptr_type_id)
         self.__func.set_reg(result, result_val)
         return result_val
+
+    def realloc(self, type_id: int, ptr: LLValue, size: LLValue, result: str) -> LLValue:
+        """Resize a root allocation; raw uses libc, fat allocates and replaces."""
+        ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
+        if self.__type_ctx.is_zst(type_id):
+            result_val = LLValue(
+                ptr_type_id,
+                ir.Constant(self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type, ir.Undefined),  # type: ignore
+            )
+            self.__func.set_reg(result, result_val)
+            return result_val
+
+        if self.__raw_pointers:
+            payload = self.__allocation_payload(type_id, size)
+            raw_ptr_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+            raw_ptr = LLValue(
+                raw_ptr_type_id,
+                self.__bitcast(ptr.ir_val, self.__ll_type_ctx.get_ll_type(raw_ptr_type_id).ir_type),  # type: ignore
+            )
+            resized = self.__call_intrinsic(IntrinsicKind.Realloc, [raw_ptr, payload])
+            nonnull = self.__builder.icmp_signed("!=", resized.ir_val, ir.Constant(resized.ir_val.type, None))  # type: ignore
+            self.__emit_check(
+                LLValue(self.__type_ctx.bool_id, nonnull), RuntimeErrorCode.R002, "realloc-null"
+            )
+            typed = self.__bitcast(
+                resized.ir_val, self.__ll_type_ctx.get_ll_type(ptr_type_id).ir_type  # type: ignore
+            )
+            result_val = LLValue(ptr_type_id, typed)  # type: ignore
+            self.__func.set_reg(result, result_val)
+            return result_val
+
+        if not self.__is_fat(ptr):
+            raise ValueError("fat-pointer realloc requires a fat root pointer")
+        old_count = self.__extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+        new_count = size.ir_val
+        use_new_count = self.__builder.icmp_unsigned("<", old_count, new_count)  # type: ignore
+        copy_count = self.__builder.select(use_new_count, old_count, new_count)  # type: ignore
+        elem_size = self.__ll_type_ctx.get_type_size(type_id)
+        copy_bytes = self.__builder.mul(  # type: ignore
+            copy_count, ir.Constant(ir.IntType(64), elem_size)  # type: ignore
+        )
+        replacement = self.malloc(type_id, size, None, result)
+        self.mem_copy(replacement, ptr, LLValue(self.__type_ctx.u64_id, copy_bytes))  # type: ignore
+        self.delete(ptr)
+        return replacement
 
     def delete(self, ptr: LLValue) -> None:
         if self.__type_ctx.is_zst(ptr.type_id):
@@ -2349,7 +2390,7 @@ class LLBuilder:
 
     def __intrinsic_return_type_id(self, kind: IntrinsicKind) -> int:
         match kind:
-            case IntrinsicKind.Malloc:
+            case IntrinsicKind.Malloc | IntrinsicKind.Realloc:
                 return self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
             case IntrinsicKind.Free | IntrinsicKind.ImmediateExit | IntrinsicKind.MemCopy | IntrinsicKind.MemSet:
                 return self.__type_ctx.void_id

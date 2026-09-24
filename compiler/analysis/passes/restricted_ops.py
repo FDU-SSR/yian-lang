@@ -106,6 +106,10 @@ class RestrictedOpsChecker:
             case AST.Alloc():
                 self.__report(expr.span, AST.BuiltinKind.Alloc.spelling)
                 self.__scan_expr(expr.count)
+            case AST.Realloc():
+                self.__report(expr.span, AST.BuiltinKind.Realloc.spelling)
+                self.__scan_expr(expr.pointer)
+                self.__scan_expr(expr.count)
             case AST.Undef():
                 self.__report(expr.span, AST.BuiltinKind.Undef.spelling)
             case AST.Dangling():

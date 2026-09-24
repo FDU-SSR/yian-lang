@@ -18,6 +18,7 @@ from llvmlite import ir  # type: ignore[import-untyped]
 
 class IntrinsicKind(Enum):
     Malloc = auto()
+    Realloc = auto()
     Free = auto()
     Write = auto()
     Read = auto()
@@ -36,6 +37,7 @@ class IntrinsicKind(Enum):
 class IntrinsicManager:
     __DECLARATIONS: dict[IntrinsicKind, tuple[ir.Type, list[ir.Type], str]] = {
         IntrinsicKind.Malloc:    (ir.PointerType(), [ir.IntType(64)], "malloc"),
+        IntrinsicKind.Realloc:   (ir.PointerType(), [ir.PointerType(), ir.IntType(64)], "realloc"),
         IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType()], "free"),
         IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "write"),
         IntrinsicKind.Read:      (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "read"),

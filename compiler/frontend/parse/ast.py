@@ -34,6 +34,7 @@ class BuiltinKind(Enum):
     Dangling = "dangling"
     BitCast = "bitcast"
     Alloc = "alloc"
+    Realloc = "realloc"
     Panic = "panic"
     RuntimeFail = "runtime_fail"
     AssumeInit = "assume_init"
@@ -703,6 +704,19 @@ class Alloc:
 
 
 @dataclass
+class Realloc:
+    """``@realloc<T>(ptr, n)`` — resize a trusted allocation to ``n`` elements."""
+
+    span: SrcSpan
+    target_type: ASTType
+    pointer: Expr
+    count: Expr
+
+    def __repr__(self) -> str:
+        return f"@realloc<{self.target_type}>({self.pointer}, {self.count})"
+
+
+@dataclass
 class TypeItem:
     """
     Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
@@ -803,7 +817,7 @@ Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | BuiltinCall | MethodCall
     | DynValue | DynBuffer
-    | SizeOf | Undef | Dangling | BitCast | Alloc
+    | SizeOf | Undef | Dangling | BitCast | Alloc | Realloc
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

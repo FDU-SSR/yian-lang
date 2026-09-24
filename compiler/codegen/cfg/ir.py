@@ -183,6 +183,16 @@ class Malloc:
 
 
 @dataclass
+class Realloc:
+    """Resize a root heap allocation to ``size`` elements, preserving its prefix."""
+
+    result: Reg
+    type_id: int
+    ptr: Value
+    size: Value
+
+
+@dataclass
 class Binary:
     """Binary operation"""
     result: Reg
@@ -608,7 +618,7 @@ class Phi:
 
 
 Stmt: TypeAlias = (
-    VarPtr | FieldPtr | ElementPtr | PtrDiff | Alloca | Malloc
+    VarPtr | FieldPtr | ElementPtr | PtrDiff | Alloca | Malloc | Realloc
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
     | Call | Invoke

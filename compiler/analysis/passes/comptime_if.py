@@ -129,6 +129,9 @@ class ComptimeIfSpecializer:
                 expr.value = self.__rewrite_expr(expr.value)
             case HIR.Alloc():
                 expr.count = self.__rewrite_expr(expr.count)
+            case HIR.Realloc():
+                expr.pointer = self.__rewrite_expr(expr.pointer)
+                expr.count = self.__rewrite_expr(expr.count)
             case HIR.SysWrite():
                 expr.fd = self.__rewrite_expr(expr.fd)
                 expr.buf = self.__rewrite_expr(expr.buf)

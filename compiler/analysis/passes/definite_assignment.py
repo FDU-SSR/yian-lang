@@ -309,6 +309,10 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Alloc):
             return self.__check_expr(expr.count, state)
 
+        if isinstance(expr, HIR.Realloc):
+            state = self.__check_expr(expr.pointer, state)
+            return self.__check_expr(expr.count, state)
+
         # -- cast / bitcast -----------------------------------------------
         if isinstance(expr, HIR.Cast):
             return self.__check_expr(expr.value, state)
@@ -663,6 +667,10 @@ class DefiniteAssignment:
             return state
 
         if isinstance(expr, HIR.Alloc):
+            return self.__walk_neutral(expr.count, state)
+
+        if isinstance(expr, HIR.Realloc):
+            state = self.__walk_neutral(expr.pointer, state)
             return self.__walk_neutral(expr.count, state)
 
         if isinstance(expr, HIR.Cast):

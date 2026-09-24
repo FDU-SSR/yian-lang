@@ -101,6 +101,8 @@ class ExprChecker:
                 return self.__handle_bitcast(expr)
             case AST.Alloc():
                 return self.__handle_alloc(expr)
+            case AST.Realloc():
+                return self.__handle_realloc(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -221,6 +223,32 @@ class ExprChecker:
             count=count,
             element_type=element_type_id,
             type_id=ptr_type_id,
+            is_place=False,
+        )
+
+    def __handle_realloc(self, node: AST.Realloc) -> HIR.Expr:
+        """``@realloc<T>(ptr, n)`` resizes a trusted allocation to ``n`` elements."""
+        element_type_id = self.__ctx.resolve_type(node.target_type)
+        pointer = self.value(node.pointer)
+        pointer_type = self.__ctx.type_ctx[
+            self.__ctx.type_ctx.resolve_aliases(pointer.type_id)
+        ]
+        if not isinstance(pointer_type, Type.PointerType) or not self.__ctx.type_ctx.is_same_type(
+            pointer_type.pointee_type, element_type_id
+        ):
+            raise AnalysisError(
+                f"'realloc' expects a '{self.__ctx.type_ctx.get_name(self.__ctx.type_ctx.alloc_pointer(element_type_id))}' pointer, "
+                f"got '{self.__ctx.type_ctx.get_name(pointer.type_id)}'",
+                node.pointer.span,
+            )
+        count = self.coerce(self.value(node.count), TypeCtx.u64_id)
+        pointer_type_id = self.__ctx.type_ctx.alloc_pointer(element_type_id)
+        return HIR.Realloc(
+            span=node.span,
+            pointer=pointer,
+            count=count,
+            element_type=element_type_id,
+            type_id=pointer_type_id,
             is_place=False,
         )
 

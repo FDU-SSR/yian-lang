@@ -372,6 +372,18 @@ class Alloc:
 
 
 @dataclass
+class Realloc:
+    """Resize a trusted allocation to ``count`` elements of ``element_type``."""
+
+    span: SrcSpan
+    pointer: Expr
+    count: Expr
+    element_type: int  # type_id
+    type_id: int  # type_id of the resulting T*
+    is_place: bool
+
+
+@dataclass
 class SysRead:
     span: SrcSpan
     fd: Expr
@@ -587,7 +599,7 @@ Expr: TypeAlias = (
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer
-    | SizeOf | Undef | Dangling | BitCast | Alloc | SysRead | SysWrite | Open | Close
+    | SizeOf | Undef | Dangling | BitCast | Alloc | Realloc | SysRead | SysWrite | Open | Close
     | Sqrt | Sin | Cos | ArgCount | ArgBytes | ProcessExit
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure

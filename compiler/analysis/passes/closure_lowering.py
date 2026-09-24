@@ -219,6 +219,9 @@ class ClosureLowering:
                 expr.value = self.__rewrite_type_ids(expr.value)
             case HIR.Alloc():
                 expr.count = self.__rewrite_type_ids(expr.count)
+            case HIR.Realloc():
+                expr.pointer = self.__rewrite_type_ids(expr.pointer)
+                expr.count = self.__rewrite_type_ids(expr.count)
             case HIR.AssumeInit():
                 expr.value = self.__rewrite_type_ids(expr.value)
             case _:
@@ -411,6 +414,9 @@ class ClosureLowering:
             case HIR.BitCast():
                 expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.Alloc():
+                expr.count = self.__rewrite_one_capture(expr.count)
+            case HIR.Realloc():
+                expr.pointer = self.__rewrite_one_capture(expr.pointer)
                 expr.count = self.__rewrite_one_capture(expr.count)
             case HIR.AssumeInit():
                 expr.value = self.__rewrite_one_capture(expr.value)

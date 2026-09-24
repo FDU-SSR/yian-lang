@@ -70,13 +70,12 @@ impl<T> RawVec<T> {
         let old_cap: u64 = self.cap;
         let new_cap: u64 = if old_cap == 0 { 4 } else { old_cap * 2 };
 
-        let new_data: T* = @alloc<T>(new_cap);
-
+        let new_data: T*;
         if old_cap > 0 {
-            // Since we assume the vector is full when grow() is called
-            @memcpy(new_data, self.data, old_cap * @sizeof(T));
+            new_data = @realloc<T>(self.data, new_cap);
+        } else {
+            new_data = @alloc<T>(new_cap);
         }
-        self.release_data();
 
         self.data = new_data;
         self.cap = new_cap;
@@ -101,14 +100,12 @@ impl<T> RawVec<T> {
             new_cap = 4;
         }
 
-        let new_data: T* = @alloc<T>(new_cap);
-
-        // Copy valid elements
-        if len > 0 {
-            @memcpy(new_data, self.data, len * @sizeof(T));
+        let new_data: T*;
+        if current_cap > 0 {
+            new_data = @realloc<T>(self.data, new_cap);
+        } else {
+            new_data = @alloc<T>(new_cap);
         }
-
-        self.release_data();
 
         self.data = new_data;
         self.cap = new_cap;
@@ -130,12 +127,7 @@ impl<T> RawVec<T> {
             return;
         }
 
-        let new_data: T* = @alloc<T>(len);
-
-        // Copy valid elements
-        @memcpy(new_data, self.data, len * @sizeof(T));
-
-        del self.data;
+        let new_data: T* = @realloc<T>(self.data, len);
 
         self.data = new_data;
         self.cap = len;

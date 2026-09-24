@@ -346,6 +346,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_bitcast(expr, guides, is_last)
         case AST.Alloc():
             return __export_alloc(expr, guides, is_last)
+        case AST.Realloc():
+            return __export_realloc(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -497,6 +499,16 @@ def __export_alloc(expr: AST.Alloc, guides: list[bool], is_last: bool) -> str:
     guides.append(not is_last)
     result += __line(guides, False, f"target_type: {expr.target_type}")
     result += __export_expr(expr.count, guides, True)
+    guides.pop()
+    return result
+
+
+def __export_realloc(expr: AST.Realloc, guides: list[bool], is_last: bool) -> str:
+    result = __line(guides, is_last, "Realloc")
+    guides.append(not is_last)
+    result += __line(guides, False, f"target_type: {expr.target_type}")
+    result += __export_expr_child("Pointer", expr.pointer, guides, True, False)
+    result += __export_expr_child("Count", expr.count, guides, True, True)
     guides.pop()
     return result
 

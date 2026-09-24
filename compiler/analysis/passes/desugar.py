@@ -368,6 +368,9 @@ class Desugar:
                 expr.element = visitor(expr.element)
             case AST.Alloc():
                 expr.count = visitor(expr.count)
+            case AST.Realloc():
+                expr.pointer = visitor(expr.pointer)
+                expr.count = visitor(expr.count)
             case AST.Tuple():
                 expr.elements = [visitor(e) for e in expr.elements]
             case AST.Array():
@@ -437,6 +440,9 @@ class Desugar:
                 stmt.size = expr_visitor(stmt.size)
                 stmt.element = expr_visitor(stmt.element)
             case AST.Alloc():
+                stmt.count = expr_visitor(stmt.count)
+            case AST.Realloc():
+                stmt.pointer = expr_visitor(stmt.pointer)
                 stmt.count = expr_visitor(stmt.count)
             case AST.Defer():
                 stmt.action = expr_visitor(stmt.action)

@@ -1,6 +1,6 @@
-// Plain assignment shallow-copies a Vec descriptor: both copies share one
-// buffer until one of them grows (realloc detaches it; the other descriptor
-// then points at freed storage — documented, never dereferenced here).
+// Plain assignment shallow-copies a Vec descriptor, so both copies initially
+// share one buffer. Growing either copy may resize that allocation in place or
+// move it; the other descriptor is not used to access or release the buffer.
 // Only the descriptor still in use is dropped, exactly once.
 from std.core.vec import Vec;
 from std.core.drop import Drop;
@@ -17,12 +17,10 @@ fn main() {
     assert &v1.as_slice()[0] == &v2.as_slice()[0]: "copies share the element buffer";
     assert v1[0] == 10 && v2[3] == 40;
 
-    // Growth reallocates v2's buffer and frees the old one; v1's descriptor is
-    // left pointing at freed storage. Only addresses and field copies are
-    // compared afterwards — never dereference the detached alias.
+    // Growth preserves v2's elements. The allocator may resize the buffer in
+    // place, so the other descriptor's pointer value is not inspected.
     v2.push(50);
     assert v1.len() == 4 && v2.len() == 5: "descriptor fields are independent";
-    assert &v1.as_slice()[0] != &v2.as_slice()[0]: "growth detaches v2 from v1's buffer";
     assert v2[4] == 50;
 
     v2.drop();

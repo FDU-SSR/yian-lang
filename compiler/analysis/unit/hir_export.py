@@ -176,6 +176,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_bit_cast(expr, guides, is_last, type_ctx)
         case HIR.Alloc():
             return __export_alloc(expr, guides, is_last, type_ctx)
+        case HIR.Realloc():
+            return __export_realloc(expr, guides, is_last, type_ctx)
         case HIR.SysRead():
             return __export_sys_read(expr, guides, is_last, type_ctx)
         case HIR.Open():
@@ -423,6 +425,13 @@ def __export_bit_cast(expr: HIR.BitCast, guides: list[bool], is_last: bool, type
 
 def __export_alloc(expr: HIR.Alloc, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
     res = __line(guides, is_last, f"Alloc: element_type={__format_type(type_ctx, expr.element_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
+    return res
+
+
+def __export_realloc(expr: HIR.Realloc, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    res = __line(guides, is_last, f"Realloc: element_type={__format_type(type_ctx, expr.element_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+    res += __export_expr_child("Pointer", expr.pointer, guides, is_last, False, type_ctx)
     res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
     return res
 
