@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.token import IntLiteral
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
@@ -85,6 +86,7 @@ class TypeResolver:
                 return self.__ctx.alloc_pointer(pointee_type_id)
             case ASTTy.RefType(pointee_type=pointee_type):
                 pointee_type_id = self.resolve(pointee_type, symbol_ctx)
+                self.__check_trait_ref_arguments(pointee_type, pointee_type_id, symbol_ctx)
                 return self.__ctx.alloc_ref(pointee_type_id)
             case ASTTy.SliceType(element_type=element_type):
                 element_type_id = self.resolve(element_type, symbol_ctx)
@@ -115,6 +117,34 @@ class TypeResolver:
                 return self.__ctx.alloc_function_pointer(param_type_ids, return_type_id)
             case ASTTy.DeducedType():
                 raise AnalysisError("Cannot resolve deduced type '_'", ty.span)
+
+    def __check_trait_ref_arguments(
+        self,
+        ast_type: ASTType,
+        type_id: int,
+        symbol_ctx: SymbolCtx,
+    ) -> None:
+        """Reject bare generic trait names before `T&` erases source syntax."""
+        if not isinstance(ast_type, ASTTy.NamedType):
+            return
+        symbol = symbol_ctx.lookup(ast_type.name.name)
+        if symbol is None or symbol.kind is not SymbolKind.Type:
+            return
+        declared_ty = self.__ctx[symbol.type_id]
+        if isinstance(declared_ty, Type.AliasType) and declared_ty.custom_def.generics \
+                and declared_ty.generic_args == declared_ty.custom_def.generics:
+            raise AnalysisError(
+                f"trait object type '{self.__ctx.get_name(type_id)}' requires all generic arguments",
+                ast_type.span,
+            )
+        trait_type_id = self.__ctx.resolve_aliases(type_id)
+        trait_ty = self.__ctx[trait_type_id]
+        if isinstance(trait_ty, Type.TraitType) and trait_ty.custom_def.generics \
+                and trait_ty.generic_args == trait_ty.custom_def.generics:
+            raise AnalysisError(
+                f"trait object type '{self.__ctx.get_name(trait_type_id)}' requires all generic arguments",
+                ast_type.span,
+            )
 
     def __resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         match const_expr:

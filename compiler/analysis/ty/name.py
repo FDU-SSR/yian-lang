@@ -46,6 +46,8 @@ class TypeFormatter:
             case Type.RefType(pointee_type=pointee_type):
                 pointee_name = self.get_name(pointee_type)
                 name = f"{pointee_name}&"
+            case Type.TraitObjectType(trait_type_id=trait_type_id):
+                name = f"{self.get_name(trait_type_id)}&"
             case Type.SliceType(element_type=element_type):
                 element_name = self.get_name(element_type)
                 name = f"{element_name}[]"

@@ -652,6 +652,8 @@ def __run(argv: list[str] | None = None) -> int:
     # Run final checks on the type space (e.g. self-referential type detection)
     try:
         type_ctx.finalize()
+    except AnalysisError as error:
+        __report_error(error, stage=Stage.FINALIZE)
     except CompilerError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

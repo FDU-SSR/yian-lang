@@ -1,0 +1,17 @@
+trait Marker {
+    fn value() -> i32;
+}
+
+struct Unit {}
+
+impl Marker for Unit {
+    fn value() -> i32 {
+        return 73;
+    }
+}
+
+fn main() {
+    let unit: Unit = Unit();
+    let marker: Marker& = &unit;
+    assert marker.value() == 73;
+}

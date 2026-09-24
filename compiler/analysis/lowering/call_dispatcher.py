@@ -68,6 +68,36 @@ class CallDispatcher:
                 else:
                     receiver = deref_call
 
+        if lookup.dynamic:
+            receiver_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(receiver.type_id)]
+            assert isinstance(receiver_ty, Type.TraitObjectType)
+            method_ty = self.__ctx.type_ctx[lookup.method_id]
+            assert isinstance(method_ty, Type.MethodType)
+            parameters = self.__ctx.type_ctx.get_params(lookup.method_id)
+            coerced_args = [
+                self.__expr.coerce(argument, parameter.type_id)
+                for argument, parameter in zip(args, parameters)
+            ]
+            slot_index = 0
+            for candidate_name, candidate_id in self.__ctx.type_ctx.get_trait_methods(receiver_ty.trait_type_id).items():
+                candidate_ty = self.__ctx.type_ctx[candidate_id]
+                assert isinstance(candidate_ty, Type.MethodType)
+                if candidate_ty.custom_def.is_static:
+                    continue
+                if candidate_name == method_name:
+                    break
+                slot_index += 1
+            return HIR.TraitObjectMethodCall(
+                span=span,
+                receiver=receiver,
+                trait_type_id=receiver_ty.trait_type_id,
+                method_id=lookup.method_id,
+                slot_index=slot_index,
+                args=coerced_args,
+                type_id=self.__ctx.type_ctx.get_return_type(lookup.method_id),
+                is_place=False,
+            )
+
         return self.build_method_call(span, receiver, lookup, args, context_name)
 
     def handle_call(self, node: AST.Call) -> HIR.Expr:

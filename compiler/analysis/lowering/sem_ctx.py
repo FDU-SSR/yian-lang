@@ -19,6 +19,7 @@ from pathlib import Path
 
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.symbol.context import SymbolCtx
+from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
@@ -236,9 +237,14 @@ class SemCtx:
 
     # helpers
     def resolve_type(self, ast_type: ASTType) -> int:
-        # delegate to TypeCtx; many call sites pass symbol_ctx for resolution
+        """Resolve a type in the current definition and validate object types."""
         assert self.__current is not None
-        return self.__type_ctx.resolve_type(ast_type, self.__current.symbol_ctx)
+        type_id = self.__type_ctx.resolve_type(ast_type, self.__current.symbol_ctx)
+        resolved_type_id = self.__type_ctx.resolve_aliases(type_id)
+        resolved_ty = self.__type_ctx[resolved_type_id]
+        if isinstance(resolved_ty, Type.TraitObjectType):
+            self.__type_ctx.check_trait_object_safe(resolved_ty.trait_type_id, ast_type.span)
+        return type_id
 
     # ----------------- reachable def reporting API -----------------
     def set_def_reporter(self, reporter: Callable[[int], None]) -> None:

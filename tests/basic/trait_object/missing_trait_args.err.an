@@ -1,0 +1,7 @@
+trait Compare<T> {
+    fn greater(other: T) -> bool;
+}
+
+fn main() {
+    let compare: Compare&;
+}

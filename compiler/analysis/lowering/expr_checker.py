@@ -142,6 +142,8 @@ class ExprChecker:
             case HIR.MethodCall(method_id=method_id, type_id=type_id):
                 # The method itself, not the receiver's type.
                 self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
+            case HIR.TraitObjectMethodCall(method_id=method_id, type_id=type_id):
+                self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
             case HIR.VariantConstruct(variant=variant, type_id=type_id):
                 self.__ctx.type_ctx.record_name_ref(node.method_name.span, variant, type_id)
             case _:
@@ -332,6 +334,53 @@ class ExprChecker:
 
         expected_ty = self.__ctx.type_ctx[expected_resolved]
         expr_ty = self.__ctx.type_ctx[expr_resolved]
+
+        if isinstance(expected_ty, Type.TraitObjectType):
+            trait_type_id = expected_ty.trait_type_id
+            self.__ctx.type_ctx.check_trait_object_safe(trait_type_id, expr.span)
+            if not isinstance(expr_ty, (Type.PointerType, Type.RefType)):
+                raise AnalysisError(
+                    f"trait object '{self.__ctx.type_ctx.get_name(expected)}' requires a concrete pointer or reference, "
+                    f"got '{self.__ctx.type_ctx.get_name(expr.type_id)}'",
+                    expr.span,
+                )
+            concrete_type_id = expr_ty.pointee_type
+            concrete_resolved = self.__ctx.type_ctx.resolve_aliases(concrete_type_id)
+            if isinstance(self.__ctx.type_ctx[concrete_resolved], Type.TraitObjectType):
+                raise AnalysisError("trait-object upcasts are not supported", expr.span)
+            if isinstance(expr, HIR.Unary) and expr.op == UnaryOperator.AddrOf and not expr.operand.is_place:
+                raise AnalysisError("cannot create a trait object from a temporary value", expr.span)
+            impl_match = self.__ctx.type_ctx.get_trait_impl(concrete_type_id, trait_type_id)
+            if impl_match is None:
+                raise AnalysisError(
+                    f"type '{self.__ctx.type_ctx.get_name(concrete_type_id)}' does not implement "
+                    f"'{self.__ctx.type_ctx.get_name(trait_type_id)}'",
+                    expr.span,
+                )
+            impl, substitutions = impl_match
+            trait_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(trait_type_id)]
+            assert isinstance(trait_ty, Type.TraitType)
+            method_ids: list[int] = []
+            for method_name, trait_method_id in self.__ctx.type_ctx.get_trait_methods(trait_type_id).items():
+                trait_method_ty = self.__ctx.type_ctx[trait_method_id]
+                assert isinstance(trait_method_ty, Type.MethodType)
+                if trait_method_ty.custom_def.is_static:
+                    continue
+                impl_method_id = impl.methods[method_name]
+                concrete_method_id = self.__ctx.type_ctx.canonical(
+                    self.__ctx.type_ctx.instantiate(impl_method_id, substitutions)
+                )
+                method_ids.append(concrete_method_id)
+                self.__ctx.report_def(concrete_method_id)
+            return HIR.TraitObjectCoerce(
+                span=expr.span,
+                value=expr,
+                concrete_type_id=concrete_type_id,
+                trait_type_id=trait_type_id,
+                method_ids=method_ids,
+                type_id=expected,
+                is_place=False,
+            )
 
         # Array decay: T[N] -> T*.  Take the address of an array value and
         # re-anchor the resulting T[N]* at its first element.
@@ -576,6 +625,9 @@ class ExprChecker:
             init_expr = self.coerce(init_expr, var_type_id)
         else:
             var_type_id = self.__ctx.resolve_type(stmt.var_type)
+            resolved_var_type = self.__ctx.type_ctx.resolve_aliases(var_type_id)
+            if isinstance(self.__ctx.type_ctx[resolved_var_type], Type.TraitType):
+                raise AnalysisError("trait types are unsized; use 'Trait&' for a trait object", stmt.span)
             init_expr = self.coerce(self.value(stmt.init_expr), var_type_id) if stmt.init_expr is not None else None
 
         symbol_id = self.__declare_local_symbol(stmt.name, var_type_id)

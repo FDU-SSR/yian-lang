@@ -1,0 +1,7 @@
+trait Measure {
+    fn value() -> i32;
+}
+
+fn main() {
+    let invalid: Measure;
+}

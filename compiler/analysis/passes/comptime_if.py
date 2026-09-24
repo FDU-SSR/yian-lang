@@ -104,8 +104,15 @@ class ComptimeIfSpecializer:
                 expr.value = self.__rewrite_expr(expr.value)
             case HIR.BitCast():
                 expr.value = self.__rewrite_expr(expr.value)
+            case HIR.TraitObjectCoerce():
+                expr.value = self.__rewrite_expr(expr.value)
+                for method_id in expr.method_ids:
+                    self.__record_procedure(method_id)
             case HIR.MethodCall():
                 self.__record_procedure(expr.method_id)
+                expr.receiver = self.__rewrite_expr(expr.receiver)
+                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
+            case HIR.TraitObjectMethodCall():
                 expr.receiver = self.__rewrite_expr(expr.receiver)
                 expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
             case HIR.VariantConstruct(args=args) if args is not None:

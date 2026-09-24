@@ -20,6 +20,10 @@ class CfgTypeMapper:
         "callee_type",
         "func_type_id",
         "payload_type",
+        "trait_type_id",
+        "concrete_type_id",
+        "method_id",
+        "object_type_id",
     }
 
     def __init__(self, type_ctx: TypeCtx) -> None:
@@ -46,6 +50,8 @@ class CfgTypeMapper:
                 result = self.__type_ctx.alloc_pointer(self.lower(pointee_type))
             case Type.RefType(pointee_type=pointee_type):
                 result = self.__type_ctx.alloc_ref(self.lower(pointee_type))
+            case Type.TraitObjectType(trait_type_id=trait_type_id):
+                result = self.__type_ctx.alloc_trait_object(self.lower(trait_type_id))
             case Type.SliceType(element_type=element_type):
                 result = self.__type_ctx.alloc_slice(self.lower(element_type))
             case Type.ArrayType(element_type=element_type, length=length):

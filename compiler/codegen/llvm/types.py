@@ -46,6 +46,10 @@ class LLTypeCtx:
         self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64, self.__i32, self.__i32])  # type: ignore
         # 2 字段引用 {data, word} 16 B。
         self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
+        self.__trait_object: ir.LiteralStructType = (
+            ir.LiteralStructType([self.__ptr, self.__ptr]) if self.__raw_pointers
+            else ir.LiteralStructType([self.__ptr, self.__i64, self.__ptr])  # type: ignore[arg-type]
+        )  # type: ignore
         self.__target_data = create_target_data(self.__module.data_layout)
         self.__layout_cache: dict[int, tuple[int, int]] = {}  # type_id → (size, align)
 
@@ -82,6 +86,21 @@ class LLTypeCtx:
                 raise ValueError(f"not a callable type: {type(ty_def).__name__}")
         assert isinstance(sig, ir.FunctionType)
         return sig
+
+    def get_trait_object_method_type(self, method_type_id: int, object_type_id: int) -> ir.FunctionType:
+        """Build the uniform dynamic-call signature for one object-safe method."""
+        method_ty = self.__type_ctx[method_type_id]
+        assert isinstance(method_ty, Type.MethodType)
+        parameters = [object_type_id]
+        parameters.extend(
+            parameter.type_id
+            for parameter in self.__type_ctx.get_params(method_type_id)
+            if not self.is_zst(parameter.type_id)
+        )
+        return self.__build_function_type(
+            self.__type_ctx.get_return_type(method_type_id),
+            parameters,
+        )
 
     def get_type_size(self, type_id: int) -> int:
         size, _ = self.__stable_layout(type_id)
@@ -184,6 +203,7 @@ class LLTypeCtx:
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
             case Type.RefType():     result = self.__handle_ref(ty_def)
+            case Type.TraitObjectType(): result = self.__trait_object
             case Type.SliceType():   result = self.__handle_slice(ty_def)
             case Type.ArrayType():   result = self.__handle_array(ty_def)
             case Type.TupleType():   result = self.__handle_tuple(ty_def)
@@ -357,6 +377,8 @@ class LLTypeCtx:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
             else:
                 result = (self.__ref_pointer.get_abi_size(self.__target_data), self.__ref_pointer.get_abi_alignment(self.__target_data))  # type: ignore
+        elif isinstance(type_def, Type.TraitObjectType):
+            result = (self.__trait_object.get_abi_size(self.__target_data), self.__trait_object.get_abi_alignment(self.__target_data))  # type: ignore
         elif isinstance(type_def, Type.FunctionPointerType):
             # Risk 5: function pointers stay bare 8-byte pointers (no fat pointer).
             result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore

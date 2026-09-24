@@ -468,6 +468,28 @@ class Invoke:
 
 
 @dataclass
+class TraitObjectConstruct:
+    """Build a non-owning trait-object handle for a concrete implementation."""
+
+    result: Reg
+    reference: Value
+    concrete_type_id: int
+    trait_type_id: int
+
+
+@dataclass
+class TraitObjectInvoke:
+    """Call one vtable slot using the trait method's dynamic ABI."""
+
+    result: Reg
+    receiver: Value
+    trait_type_id: int
+    method_id: int
+    slot_index: int
+    args: list[Value]
+
+
+@dataclass
 class Cast:
     """Cast a value to a different type
 
@@ -621,7 +643,7 @@ Stmt: TypeAlias = (
     VarPtr | FieldPtr | ElementPtr | PtrDiff | Alloca | Malloc | Realloc
     | Load | Store
     | Binary | Unary | ExtractValue | Delete
-    | Call | Invoke
+    | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes

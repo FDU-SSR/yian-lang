@@ -1,0 +1,81 @@
+struct MeasureToken {}
+
+trait Measure {
+    fn value() -> i32;
+
+    fn offset(token: MeasureToken, amount: i32) -> i32 {
+        return self.value() + amount;
+    }
+
+    fn object() -> Measure& {
+        return self;
+    }
+}
+
+struct Circle {
+    value: i32,
+}
+
+struct BoxShape {
+    value: i32,
+}
+
+impl Measure for Circle {
+    fn value() -> i32 {
+        return self.value;
+    }
+}
+
+impl Measure for BoxShape {
+    fn value() -> i32 {
+        return self.value;
+    }
+}
+
+typedef MeasureRef = Measure&;
+
+struct Holder {
+    item: Measure&,
+}
+
+fn identity(item: Measure&) -> Measure& {
+    return item;
+}
+
+fn read(item: Measure&) -> i32 {
+    return item.value();
+}
+
+fn generic_view<T>(item: T*) -> Measure& {
+    return item;
+}
+
+fn main() {
+    let circle: Circle = Circle(value=11);
+    let box: BoxShape = BoxShape(value=29);
+
+    let first: MeasureRef = &circle;
+    let copied: Measure& = first;
+    let second: Measure& = &box;
+    let second_pointer: Measure&* = &second;
+    assert copied.value() == 11;
+    assert second.value() == 29;
+    assert second_pointer.value() == 29;
+    assert second.offset(MeasureToken(), 3) == 32;
+    assert second.object().value() == 29;
+
+    let holder: Holder = Holder(item=&box);
+    assert holder.item.value() == 29;
+
+    let objects: Measure&[2] = [first, second];
+    assert objects[0].value() == 11;
+    assert objects[1].value() == 29;
+
+    let reassigned: Measure& = first;
+    reassigned = &box;
+    assert reassigned.value() == 29;
+
+    assert identity(&circle).value() == 11;
+    assert read(&box) == 29;
+    assert generic_view(&circle).value() == 11;
+}

@@ -32,7 +32,7 @@ class LLTranslator:
         apply_target(ll_module)
 
         self.__ll_type_ctx = LLTypeCtx(type_ctx, ll_module, unit_names, raw_pointers)
-        self.__module = LLModule(ll_module, self.__ll_type_ctx, entry_type_id)
+        self.__module = LLModule(ll_module, type_ctx, self.__ll_type_ctx, entry_type_id)
         self.__func: LLFunction | None = None
 
     # ------------------------------------------------------------------
@@ -242,6 +242,27 @@ class LLTranslator:
                     [self.__resolve(builder, a) for a in stmt.args if not self.__ll_type_ctx.is_zst(a.type_id)],
                     stmt.result.name,
                     stmt.result.type_id
+                )
+            case IR.TraitObjectConstruct():
+                builder.trait_object_construct(
+                    self.__resolve(builder, stmt.reference),
+                    stmt.result.type_id,
+                    stmt.concrete_type_id,
+                    stmt.trait_type_id,
+                    stmt.result.name,
+                )
+            case IR.TraitObjectInvoke():
+                builder.trait_object_call(
+                    self.__resolve(builder, stmt.receiver),
+                    stmt.trait_type_id,
+                    stmt.method_id,
+                    stmt.slot_index,
+                    [
+                        self.__resolve(builder, argument)
+                        for argument in stmt.args
+                    ],
+                    stmt.result.name,
+                    stmt.result.type_id,
                 )
             case IR.Cast():
                 builder.cast(self.__resolve(builder, stmt.value), stmt.to_type, stmt.result.name, stmt.raw)

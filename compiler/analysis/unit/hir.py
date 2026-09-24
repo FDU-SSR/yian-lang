@@ -231,10 +231,37 @@ class BitCast:
 
 
 @dataclass
+class TraitObjectCoerce:
+    """Construct a trait-object handle from a concrete typed reference."""
+
+    span: SrcSpan
+    value: Expr
+    concrete_type_id: int
+    trait_type_id: int
+    method_ids: list[int]
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class MethodCall:
     span: SrcSpan
     receiver: Expr
     method_id: int  # type_id of the method
+    args: list[Expr]
+    type_id: int
+    is_place: bool
+
+
+@dataclass
+class TraitObjectMethodCall:
+    """Dynamically dispatched call through a trait-object vtable."""
+
+    span: SrcSpan
+    receiver: Expr
+    trait_type_id: int
+    method_id: int
+    slot_index: int
     args: list[Expr]
     type_id: int
     is_place: bool
@@ -431,8 +458,8 @@ Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | Bool
 
 Expr: TypeAlias = (
     Binary | Unary
-    | Call | StructConstruct | Invoke | Cast | BitCast
-    | MethodCall | VariantConstruct | FieldAccess | TupleAccess
+    | Call | StructConstruct | Invoke | Cast | BitCast | TraitObjectCoerce
+    | MethodCall | TraitObjectMethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer | Builtin
     | Tuple | Array | ArrayRepeat

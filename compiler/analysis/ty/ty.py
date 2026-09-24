@@ -164,6 +164,14 @@ class RefType:
 
 
 @dataclass
+class TraitObjectType:
+    """A non-owning, dynamically-dispatched reference to a trait value."""
+
+    type_id: int
+    trait_type_id: int
+
+
+@dataclass
 class SliceType:
     type_id: int
     element_type: int
@@ -429,7 +437,7 @@ BasicType: TypeAlias = (
 )
 
 DerivedType: TypeAlias = (
-    ArrayType | TupleType | PointerType | RefType | SliceType | FunctionPointerType
+    ArrayType | TupleType | PointerType | RefType | TraitObjectType | SliceType | FunctionPointerType
 )
 
 

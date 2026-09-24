@@ -18,6 +18,7 @@ class TypeSpace:
 
         self.__pointer_cache: dict[int, int] = {}
         self.__ref_cache: dict[int, int] = {}
+        self.__trait_object_cache: dict[int, int] = {}
         self.__slice_cache: dict[int, int] = {}
         self.__array_cache: dict[tuple[int, int], int] = {}
         self.__tuple_cache: dict[tuple[int, ...], int] = {}
@@ -123,6 +124,14 @@ class TypeSpace:
         ref_ty_id = self.__add_type(ref_ty)
         self.__ref_cache[pointee_type] = ref_ty_id
         return ref_ty_id
+
+    def alloc_trait_object(self, trait_type_id: int) -> int:
+        if trait_type_id in self.__trait_object_cache:
+            return self.__trait_object_cache[trait_type_id]
+        object_ty = Type.TraitObjectType(type_id=-1, trait_type_id=trait_type_id)
+        object_ty_id = self.__add_type(object_ty)
+        self.__trait_object_cache[trait_type_id] = object_ty_id
+        return object_ty_id
 
     def alloc_slice(self, element_type: int) -> int:
         if element_type in self.__slice_cache:

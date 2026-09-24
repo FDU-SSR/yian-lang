@@ -133,9 +133,8 @@ class TypeCheck:
         Dependencies (including the standard library) stay on demand: each
         package is checked by its own ``anx check``.  Definitions seeded here are
         checked but never marked as generated, so they never reach CFG/LLVM
-        lowering.  Uninstantiated generics are skipped — the language has no
-        parameter constraints, so checking their bodies would produce false
-        positives (for example ``a + b``).
+        lowering. Uninstantiated generics and trait-default templates with a
+        ``Self`` receiver are checked only at concrete use sites.
         """
         self.__generating = False
         seeded = 0
@@ -145,6 +144,14 @@ class TypeCheck:
                 continue
             if not self.__is_root_unit(unit_id):
                 continue
+            procedure_ty = self.__ctx.type_ctx[type_id]
+            if isinstance(procedure_ty, Type.MethodType):
+                receiver_type_id = procedure_ty.receiver_type(self.__ctx.type_ctx)
+                receiver_ty = self.__ctx.type_ctx[
+                    self.__ctx.type_ctx.resolve_aliases(receiver_type_id)
+                ]
+                if isinstance(receiver_ty, Type.SelfType):
+                    continue
             if self.__ctx.type_ctx.contains_generic(type_id):
                 skipped_generic += 1
                 continue

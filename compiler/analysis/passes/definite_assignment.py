@@ -237,6 +237,15 @@ class DefiniteAssignment:
                 state = self.__check_expr(arg, state)
             return state
 
+        if isinstance(expr, HIR.TraitObjectMethodCall):
+            state = self.__check_expr(expr.receiver, state)
+            for arg in expr.args:
+                state = self.__check_expr(arg, state)
+            return state
+
+        if isinstance(expr, HIR.TraitObjectCoerce):
+            return self.__check_expr(expr.value, state)
+
         if isinstance(expr, HIR.Invoke):
             state = self.__check_expr(expr.callable, state)
             for arg in expr.args:
@@ -552,6 +561,15 @@ class DefiniteAssignment:
             for arg in expr.args:
                 state = self.__walk_neutral(arg, state)
             return state
+
+        if isinstance(expr, HIR.TraitObjectMethodCall):
+            state = self.__walk_neutral(expr.receiver, state)
+            for arg in expr.args:
+                state = self.__walk_neutral(arg, state)
+            return state
+
+        if isinstance(expr, HIR.TraitObjectCoerce):
+            return self.__walk_neutral(expr.value, state)
 
         if isinstance(expr, HIR.Invoke):
             state = self.__walk_neutral(expr.callable, state)

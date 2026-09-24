@@ -32,6 +32,8 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
         case Type.RefType(pointee_type=pointee_type):
             instantiated_pointee = instantiate(ctx, pointee_type, substs)
             return ctx.alloc_ref(instantiated_pointee)
+        case Type.TraitObjectType(trait_type_id=trait_type_id):
+            return ctx.alloc_trait_object(instantiate(ctx, trait_type_id, substs))
         case Type.SliceType(element_type=element_type):
             instantiated_element = instantiate(ctx, element_type, substs)
             return ctx.alloc_slice(instantiated_element)
@@ -157,6 +159,8 @@ def same(ctx: TypeCtx, left: int, right: int) -> bool:
             return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
         case (Type.RefType(), Type.RefType()):
             return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
+        case (Type.TraitObjectType(), Type.TraitObjectType()):
+            return same(ctx, left_ty.trait_type_id, right_ty.trait_type_id)
         case (Type.SliceType(), Type.SliceType()):
             return same(ctx, left_ty.element_type, right_ty.element_type)
         case (Type.ArrayType(), Type.ArrayType()):
@@ -249,6 +253,8 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
             return ctx.alloc_pointer(default_literals(ctx, pointee_type))
         case Type.RefType(pointee_type=pointee_type):
             return ctx.alloc_ref(default_literals(ctx, pointee_type))
+        case Type.TraitObjectType():
+            return type_id
         case Type.SliceType(element_type=element_type):
             return ctx.alloc_slice(default_literals(ctx, element_type))
         case Type.ArrayType(element_type=element_type, length=length):
@@ -309,6 +315,8 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
                 return __contains(pointee_type)
             case Type.RefType(pointee_type=pointee_type):
                 return __contains(pointee_type)
+            case Type.TraitObjectType(trait_type_id=trait_type_id):
+                return __contains(trait_type_id)
             case Type.SliceType(element_type=element_type):
                 return __contains(element_type)
             case Type.ArrayType(element_type=element_type, length=length):
@@ -461,6 +469,9 @@ def __merge_two(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
 
     if isinstance(left_ty, Type.RefType) and isinstance(right_ty, Type.RefType):
         return ctx.alloc_ref(__merge_two(ctx, left_ty.pointee_type, right_ty.pointee_type, span))
+
+    if isinstance(left_ty, Type.TraitObjectType) and isinstance(right_ty, Type.TraitObjectType):
+        return ctx.alloc_trait_object(__merge_two(ctx, left_ty.trait_type_id, right_ty.trait_type_id, span))
 
     if isinstance(left_ty, Type.SliceType) and isinstance(right_ty, Type.SliceType):
         return ctx.alloc_slice(__merge_two(ctx, left_ty.element_type, right_ty.element_type, span))

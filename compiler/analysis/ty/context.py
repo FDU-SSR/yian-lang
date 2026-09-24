@@ -239,7 +239,16 @@ class TypeCtx:
         return self.__space.alloc_pointer(pointee_type)
 
     def alloc_ref(self, pointee_type: int) -> int:
+        resolved = self.resolve_aliases(pointee_type)
+        if isinstance(self[resolved], Type.TraitType):
+            return self.alloc_trait_object(resolved)
         return self.__space.alloc_ref(pointee_type)
+
+    def alloc_trait_object(self, trait_type_id: int) -> int:
+        canonical_trait = self.canonical(trait_type_id)
+        if not isinstance(self[canonical_trait], Type.TraitType):
+            raise CompilerError(f"{self.get_name(trait_type_id)} is not a trait type")
+        return self.__space.alloc_trait_object(canonical_trait)
 
     def alloc_slice(self, element_type: int) -> int:
         return self.__space.alloc_slice(element_type)
@@ -505,6 +514,76 @@ class TypeCtx:
         self.__methods_cache[type_id] = methods
         return methods
 
+    def get_trait_impl(self, target_type_id: int, trait_type_id: int) -> tuple[Impl, dict[int, int]] | None:
+        """Find the unique concrete impl selected for a trait-object conversion."""
+        return self.__impl_registry.find_trait_impl(target_type_id, trait_type_id)
+
+    def check_trait_object_safe(self, trait_type_id: int, span: SrcSpan) -> None:
+        """Validate the trait restrictions required by its dynamic method table."""
+        resolved = self.resolve_aliases(trait_type_id)
+        trait_ty = self[resolved]
+        if not isinstance(trait_ty, Type.TraitType):
+            raise AnalysisError(f"'{self.get_name(trait_type_id)}' is not a trait", span)
+        if len(trait_ty.generic_args) != len(trait_ty.custom_def.generics):
+            raise AnalysisError(
+                f"trait object type '{self.get_name(trait_type_id)}' requires all generic arguments",
+                span,
+            )
+
+        def contains_self(type_id: int, seen: set[int]) -> bool:
+            type_id = self.resolve_aliases(type_id)
+            if type_id in seen:
+                return False
+            seen.add(type_id)
+            ty = self[type_id]
+            if isinstance(ty, Type.SelfType):
+                owner_ty = self[ty.trait_type_id]
+                return isinstance(owner_ty, Type.TraitType) \
+                    and owner_ty.custom_def is trait_ty.custom_def
+            if isinstance(ty, (Type.PointerType, Type.RefType)):
+                return contains_self(ty.pointee_type, seen)
+            if isinstance(ty, Type.TraitObjectType):
+                return contains_self(ty.trait_type_id, seen)
+            if isinstance(ty, Type.SliceType):
+                return contains_self(ty.element_type, seen)
+            if isinstance(ty, Type.ArrayType):
+                return contains_self(ty.element_type, seen) or contains_self(ty.length, seen)
+            if isinstance(ty, Type.TupleType):
+                return any(contains_self(item, seen) for item in ty.element_types)
+            if isinstance(ty, Type.FunctionPointerType):
+                return any(contains_self(item, seen) for item in ty.parameter_types) \
+                    or contains_self(ty.return_type, seen)
+            if isinstance(ty, Type.CustomType):
+                return any(contains_self(item, seen) for item in ty.generic_args)
+            return False
+
+        for method_name, method_id in self.get_trait_methods(resolved).items():
+            method_ty = self[method_id]
+            assert isinstance(method_ty, Type.MethodType)
+            if method_ty.custom_def.is_static:
+                continue
+            method_generic_count = len(method_ty.custom_def.generics) - len(trait_ty.custom_def.generics)
+            if method_generic_count > 0:
+                raise AnalysisError(
+                    f"trait '{trait_ty.custom_def.name}' is not object-safe: instance method "
+                    f"'{method_name}' has generic parameters",
+                    method_ty.custom_def.span,
+                )
+            for parameter in self.get_params(method_id):
+                if contains_self(parameter.type_id, set()):
+                    raise AnalysisError(
+                        f"trait '{trait_ty.custom_def.name}' is not object-safe: instance method "
+                        f"'{method_name}' uses Self in a parameter",
+                        parameter.span or trait_ty.custom_def.span,
+                    )
+            return_type = self.get_return_type(method_id)
+            if contains_self(return_type, set()):
+                raise AnalysisError(
+                    f"trait '{trait_ty.custom_def.name}' is not object-safe: instance method "
+                    f"'{method_name}' returns Self",
+                    method_ty.custom_def.span,
+                )
+
     # ------------------------------------------------------------------
 
     def merge_types(self, type_ids: list[int], span: SrcSpan) -> int:
@@ -517,8 +596,73 @@ class TypeCtx:
         1. Check self-referential types.
         """
         self.__check_self_referential_types()
+        self.__check_unsized_trait_values()
+        for _, ty in list(self.__space.items()):
+            if isinstance(ty, Type.TraitObjectType):
+                self.check_trait_object_safe(ty.trait_type_id, self.get_span(ty.trait_type_id))
         self.__memoize_enabled = True
         self.__impl_registry.enable_memoization()
+
+    def __check_unsized_trait_values(self) -> None:
+        """Reject trait markers in runtime value positions; only Trait& is sized."""
+        def contains_unsized_trait(type_id: int, visiting: set[int]) -> bool:
+            type_id = self.resolve_aliases(type_id)
+            if type_id in visiting:
+                return False
+            visiting.add(type_id)
+            ty = self[type_id]
+            if isinstance(ty, Type.TraitType):
+                return True
+            if isinstance(ty, Type.TraitObjectType):
+                return False
+            if isinstance(ty, (Type.PointerType, Type.RefType)):
+                return contains_unsized_trait(ty.pointee_type, visiting)
+            if isinstance(ty, Type.SliceType):
+                return contains_unsized_trait(ty.element_type, visiting)
+            if isinstance(ty, Type.ArrayType):
+                return contains_unsized_trait(ty.element_type, visiting)
+            if isinstance(ty, Type.TupleType):
+                return any(contains_unsized_trait(item, visiting) for item in ty.element_types)
+            if isinstance(ty, Type.FunctionPointerType):
+                return any(contains_unsized_trait(item, visiting) for item in ty.parameter_types) \
+                    or contains_unsized_trait(ty.return_type, visiting)
+            if isinstance(ty, Type.CustomType):
+                return any(contains_unsized_trait(item, visiting) for item in ty.generic_args)
+            return False
+
+        for _, ty in list(self.__space.items()):
+            if isinstance(ty, (Type.ArrayType, Type.TupleType, Type.PointerType, Type.RefType, Type.FunctionPointerType)):
+                if contains_unsized_trait(ty.type_id, set()):
+                    raise AnalysisError(
+                        f"type '{self.get_name(ty.type_id)}' contains an unsized trait value; use 'Trait&'",
+                        SrcSpan.empty(),
+                    )
+            elif isinstance(ty, Type.StructType):
+                for field in self.get_struct_fields(ty.type_id):
+                    if contains_unsized_trait(field.type_id, set()):
+                        raise AnalysisError(
+                            f"field '{field.name}' has unsized trait type; use 'Trait&'",
+                            field.span or ty.custom_def.span,
+                        )
+            elif isinstance(ty, Type.EnumType):
+                for variant in self.get_enum_variants(ty.type_id):
+                    if variant.payload_type is not None and contains_unsized_trait(variant.payload_type, set()):
+                        raise AnalysisError(
+                            f"variant '{variant.name}' has unsized trait payload; use 'Trait&'",
+                            variant.span or ty.custom_def.span,
+                        )
+            elif isinstance(ty, (Type.FunctionType, Type.MethodType)):
+                for parameter in self.get_params(ty.type_id):
+                    if contains_unsized_trait(parameter.type_id, set()):
+                        raise AnalysisError(
+                            f"parameter '{parameter.name}' has unsized trait type; use 'Trait&'",
+                            parameter.span or ty.custom_def.span,
+                        )
+                if contains_unsized_trait(self.get_return_type(ty.type_id), set()):
+                    raise AnalysisError(
+                        f"function '{ty.custom_def.name}' returns unsized trait type; use 'Trait&'",
+                        ty.custom_def.span,
+                    )
 
     def __check_self_referential_types(self) -> None:
         """
@@ -730,6 +874,21 @@ class TypeCtx:
 
             candidate_impls = self.__impl_registry.iter_candidate_impls(type_at_level)
             type_at_level_ty = self[type_at_level]
+            if isinstance(type_at_level_ty, Type.TraitObjectType):
+                self.check_trait_object_safe(type_at_level_ty.trait_type_id, receiver.span)
+                dynamic_lookup = self.__trait_object_method_lookup(
+                    receiver,
+                    type_at_level,
+                    type_at_level_ty.trait_type_id,
+                    method_name,
+                    generic_args,
+                    args,
+                )
+                if dynamic_lookup is not None:
+                    dynamic_lookup.deref_count = deref_count
+                    result = dynamic_lookup
+                    break
+                continue
             if isinstance(type_at_level_ty, Type.SelfType):
                 trait_ty = self[type_at_level_ty.trait_type_id]
                 if not isinstance(trait_ty, Type.TraitType):
@@ -808,6 +967,49 @@ class TypeCtx:
             self.__method_lookup_cache[cache_key] = result
         return result
 
+    def __trait_object_method_lookup(
+        self,
+        receiver: HIR.Expr,
+        receiver_type: int,
+        trait_type_id: int,
+        method_name: str,
+        generic_args: list[int] | None,
+        args: list[HIR.Expr],
+    ) -> LookupResult | None:
+        if generic_args:
+            return None
+        trait_ty = self[self.resolve_aliases(trait_type_id)]
+        assert isinstance(trait_ty, Type.TraitType)
+        methods = self.get_trait_methods(trait_type_id)
+        method_id = methods.get(method_name)
+        if method_id is None:
+            return None
+        method_ty = self[method_id]
+        assert isinstance(method_ty, Type.MethodType)
+        if method_ty.custom_def.is_static:
+            return None
+        method_generic_count = len(method_ty.custom_def.generics) - len(trait_ty.custom_def.generics)
+        if method_generic_count > 0:
+            return None
+        parameters = self.get_params(method_id)
+        if len(parameters) != len(args):
+            return None
+        inference = GenericInference(self, receiver.span)
+        try:
+            for parameter, arg in zip(parameters, args):
+                inference.constrain(parameter.type_id, arg.type_id)
+            method_id = self.canonical(inference.instantiate(method_id))
+        except AnalysisError:
+            return None
+        synthetic_impl = Impl(
+            span=trait_ty.custom_def.span,
+            generics=[],
+            target=receiver_type,
+            trait=trait_type_id,
+            methods=methods,
+        )
+        return LookupResult(method_id=method_id, deref_count=0, impl=synthetic_impl, dynamic=True)
+
     def iter_item_type(self, iter_type_id: int) -> int:
         """
         Get the item type of an iterator type.
@@ -839,3 +1041,4 @@ class LookupResult:
     method_id: int
     deref_count: int
     impl: Impl
+    dynamic: bool = False

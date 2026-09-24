@@ -142,10 +142,19 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             res = __line(guides, is_last, f"BitCast: target_type={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
             res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
             return res
+        case HIR.TraitObjectCoerce():
+            res = __line(guides, is_last, f"TraitObjectCoerce: concrete={__format_type(type_ctx, expr.concrete_type_id)} trait={__format_type(type_ctx, expr.trait_type_id)} type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}")
+            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+            return res
         case HIR.Cast():
             return __export_cast(expr, guides, is_last, type_ctx)
         case HIR.MethodCall():
             return __export_method_call(expr, guides, is_last, type_ctx)
+        case HIR.TraitObjectMethodCall():
+            res = __line(guides, is_last, f"TraitObjectMethodCall: method_id={expr.method_id} slot={expr.slot_index} trait={__format_type(type_ctx, expr.trait_type_id)} type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}")
+            res += __export_expr_child("Receiver", expr.receiver, guides, is_last, False, type_ctx)
+            res += __export_expr_items("Args", expr.args, guides, is_last, True, type_ctx)
+            return res
         case HIR.VariantConstruct():
             return __export_variant_construct(expr, guides, is_last, type_ctx)
         case HIR.FieldAccess():

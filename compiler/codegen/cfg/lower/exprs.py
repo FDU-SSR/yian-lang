@@ -129,6 +129,8 @@ class ExprLowerer:
                 return self.__host.values.resolve_cast(expr)
             case HIR.MethodCall():
                 return self.__host.calls.resolve_method_call(expr)
+            case HIR.TraitObjectMethodCall():
+                return self.__host.calls.resolve_trait_object_method_call(expr)
             case HIR.VariantConstruct():
                 return self.__host.values.resolve_variant_construct(expr)
             case HIR.FieldAccess():
@@ -145,6 +147,8 @@ class ExprLowerer:
                 return self.resolve_dyn_buffer(expr)
             case HIR.BitCast():
                 return self.__host.values.resolve_bit_cast(expr)
+            case HIR.TraitObjectCoerce():
+                return self.__host.values.resolve_trait_object_coerce(expr)
             case HIR.Builtin():
                 return self.resolve_builtin(expr)
             case HIR.Closure():

@@ -59,6 +59,14 @@ class GenericInference:
             self.constrain(expected_ty.pointee_type, actual_ty.pointee_type)
             return
 
+        if isinstance(expected_ty, Type.TraitObjectType) and isinstance(actual_ty, Type.TraitObjectType):
+            self.constrain(expected_ty.trait_type_id, actual_ty.trait_type_id)
+            return
+
+        if isinstance(expected_ty, Type.TraitObjectType) and isinstance(actual_ty, (Type.PointerType, Type.RefType)):
+            if not self.__type_ctx.contains_generic(expected_type_id):
+                return
+
         if isinstance(expected_ty, Type.SliceType) and isinstance(actual_ty, Type.SliceType):
             self.constrain(expected_ty.element_type, actual_ty.element_type)
             return
@@ -265,6 +273,8 @@ class GenericInference:
                 return self.__type_ctx.alloc_pointer(self.__resolve_type(pointee_type, resolving))
             case Type.RefType(pointee_type=pointee_type):
                 return self.__type_ctx.alloc_ref(self.__resolve_type(pointee_type, resolving))
+            case Type.TraitObjectType(trait_type_id=trait_type_id):
+                return self.__type_ctx.alloc_trait_object(self.__resolve_type(trait_type_id, resolving))
             case Type.SliceType(element_type=element_type):
                 return self.__type_ctx.alloc_slice(self.__resolve_type(element_type, resolving))
             case Type.ArrayType(element_type=element_type, length=length):

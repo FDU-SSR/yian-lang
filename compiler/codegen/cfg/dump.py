@@ -199,6 +199,21 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.TraitObjectConstruct(result=result, reference=reference, concrete_type_id=concrete, trait_type_id=trait):
+            return (
+                f"%{result.name} = trait_object {__dump_value(reference)} "
+                f"for {__type_str(concrete)} as {__type_str(trait)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.TraitObjectInvoke(result=result, receiver=receiver, method_id=method_id, slot_index=slot, args=args):
+            arg_str = ", ".join(__dump_value(arg) for arg in args)
+            return (
+                f"%{result.name} = trait_invoke {__dump_value(receiver)}.slot[{slot}] "
+                f"@{__type_str(method_id)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
         case IR.Cast(result=result, value=value, to_type=to_type, raw=raw):
             raw_tag = " [raw]" if raw else ""
             return (

@@ -103,6 +103,19 @@ class CallsLowerer:
         receiver_ref = self.__host.values.build_cast(receiver_addr, ref_type_id)
         return self.build_call(expr.method_id, [receiver_ref] + arg_vals, expr.type_id)
 
+    def resolve_trait_object_method_call(self, expr: HIR.TraitObjectMethodCall) -> IR.Value:
+        receiver = self.__host.resolve_val(expr.receiver)
+        args = [self.__host.resolve_val(arg) for arg in expr.args]
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
+        return self.__host.emitter.emit(IR.TraitObjectInvoke(
+            result=result,
+            receiver=receiver,
+            trait_type_id=expr.trait_type_id,
+            method_id=expr.method_id,
+            slot_index=expr.slot_index,
+            args=args,
+        )).result
+
     def receiver_ref_type(self, receiver_addr: IR.Value) -> int:
         """调用折算: receiver 折算目标类型 = alloc_ref(接收者值类型)。
 

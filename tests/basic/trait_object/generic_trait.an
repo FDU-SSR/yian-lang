@@ -1,0 +1,24 @@
+trait Compare<T> {
+    fn greater(other: T) -> bool;
+}
+
+struct Limit {
+    value: i32,
+}
+
+impl Compare<i32> for Limit {
+    fn greater(other: i32) -> bool {
+        return self.value > other;
+    }
+}
+
+fn identity<T>(compare: Compare<T>&) -> Compare<T>& {
+    return compare;
+}
+
+fn main() {
+    let limit: Limit = Limit(value=17);
+    let compare: Compare<i32>& = &limit;
+    let copied: Compare<i32>& = identity(compare);
+    assert copied.greater(12);
+}

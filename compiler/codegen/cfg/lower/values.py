@@ -310,6 +310,34 @@ class ValueLowerer:
         value = self.__host.resolve_val(expr.value)
         return self.build_cast(value, expr.target_type)
 
+    def resolve_trait_object_coerce(self, expr: HIR.TraitObjectCoerce) -> IR.Value:
+        value = self.__host.resolve_val(expr.value)
+        source_ty = self.__host.ctx.type_ctx[
+            self.__host.ctx.type_ctx.resolve_aliases(value.type_id)
+        ]
+        reference_type_id = self.__host.ctx.type_ctx.alloc_ref(expr.concrete_type_id)
+        if isinstance(source_ty, Type.PointerType):
+            if not self.__host.ctx.raw_pointers:
+                self.__host.emitter.emit(IR.CheckRequest(
+                    kind=IR.CHECK_REQUEST_IN_BOUNDS,
+                    operands=[value],
+                ))
+            reference = self.build_cast(value, reference_type_id)
+        elif isinstance(source_ty, Type.RefType):
+            reference = value
+        else:
+            raise CodegenError(
+                "trait-object coercion source is not a concrete pointer or reference",
+                expr.span,
+            )
+        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
+        return self.__host.emitter.emit(IR.TraitObjectConstruct(
+            result=result,
+            reference=reference,
+            concrete_type_id=expr.concrete_type_id,
+            trait_type_id=expr.trait_type_id,
+        )).result
+
     def build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
         # CFG 层:Cast 指针→指针语义 ——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
         #   (5 字段结构重贴,LLVM 类型同为 {i8*,i8*,i64,i64,i64});涉及 ptr-to-ZST

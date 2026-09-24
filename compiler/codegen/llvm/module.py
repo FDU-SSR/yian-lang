@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from llvmlite import ir
 
+from compiler.analysis.ty import ty as Type
+from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.intrinsics import IntrinsicManager
 from compiler.codegen.llvm.types import LLTypeCtx
@@ -99,12 +101,15 @@ class LLFunction:
 class LLModule:
     """Manages a single LLVM module."""
 
-    def __init__(self, module: ir.Module, type_ctx: LLTypeCtx, entry_type_id: int | None = None) -> None:
+    def __init__(self, module: ir.Module, type_ctx: TypeCtx, ll_type_ctx: LLTypeCtx, entry_type_id: int | None = None) -> None:
         self.__module = module
         self.__type_ctx = type_ctx
+        self.__ll_type_ctx = ll_type_ctx
         self.__entry_type_id = entry_type_id
         self.__intrinsics = IntrinsicManager(module)
         self.__functions: dict[int, LLFunction] = {}  # type_id → LLFunction
+        self.__trait_vtables: dict[tuple[int, int], ir.GlobalVariable] = {}
+        self.__trait_thunks: dict[tuple[int, int, int], ir.Function] = {}
         self.__string_counter = 0
         self.__strings: dict[bytes, ir.GlobalVariable] = {}
         self.__argc_global: ir.GlobalVariable | None = None
@@ -162,7 +167,7 @@ class LLModule:
     # -- function declaration --
 
     def declare(self, cfg_func: IR.Function) -> LLFunction:
-        func_ir_type = self.__type_ctx.get_ll_func_type(cfg_func.type_id)
+        func_ir_type = self.__ll_type_ctx.get_ll_func_type(cfg_func.type_id)
         # The program entry is identified by its type id, not by its name: a
         # dependency may define its own `main`, which is an ordinary function
         # here (renamed to `main.<type_id>`).
@@ -188,6 +193,116 @@ class LLModule:
 
     def get_func(self, type_id: int) -> LLFunction:
         return self.__functions[type_id]
+
+    def get_trait_vtable(self, concrete_type_id: int, trait_type_id: int) -> ir.GlobalVariable:
+        """Return the read-only vtable for one concrete type/trait instance."""
+        concrete_type_id = self.__type_ctx.canonical(concrete_type_id)
+        trait_type_id = self.__type_ctx.canonical(trait_type_id)
+        key = (concrete_type_id, trait_type_id)
+        cached = self.__trait_vtables.get(key)
+        if cached is not None:
+            return cached
+
+        impl_match = self.__type_ctx.get_trait_impl(concrete_type_id, trait_type_id)
+        if impl_match is None:
+            raise ValueError(
+                f"missing impl for {self.__type_ctx.get_name(concrete_type_id)}: "
+                f"{self.__type_ctx.get_name(trait_type_id)}"
+            )
+        impl, substitutions = impl_match
+        object_type_id = self.__type_ctx.alloc_trait_object(trait_type_id)
+        trait_methods = self.__type_ctx.get_trait_methods(trait_type_id)
+        thunks: list[ir.Function] = []
+        slot = 0
+        for name, trait_method_id in trait_methods.items():
+            trait_method_ty = self.__type_ctx[trait_method_id]
+            assert isinstance(trait_method_ty, Type.MethodType)
+            if trait_method_ty.custom_def.is_static:
+                continue
+            impl_method_id = impl.methods[name]
+            concrete_method_id = self.__type_ctx.canonical(
+                self.__type_ctx.instantiate(impl_method_id, substitutions)
+            )
+            thunks.append(self.__get_or_create_trait_thunk(
+                concrete_type_id,
+                trait_type_id,
+                slot,
+                object_type_id,
+                trait_method_id,
+                concrete_method_id,
+            ))
+            slot += 1
+
+        pointer_type = ir.PointerType()  # type: ignore
+        array_type = ir.ArrayType(pointer_type, len(thunks))  # type: ignore
+        vtable = ir.GlobalVariable(
+            self.__module,
+            array_type,
+            name=f"trait.vtable.{concrete_type_id}.{trait_type_id}",
+        )
+        vtable.linkage = "internal"
+        vtable.global_constant = True
+        vtable.unnamed_addr = True
+        vtable.initializer = ir.Constant(array_type, thunks)  # type: ignore[arg-type]
+        self.__trait_vtables[key] = vtable
+        return vtable
+
+    def __get_or_create_trait_thunk(
+        self,
+        concrete_type_id: int,
+        trait_type_id: int,
+        slot: int,
+        object_type_id: int,
+        trait_method_id: int,
+        impl_method_id: int,
+    ) -> ir.Function:
+        key = (concrete_type_id, trait_type_id, slot)
+        cached = self.__trait_thunks.get(key)
+        if cached is not None:
+            return cached
+        implementation = self.get_func(impl_method_id).ir_func
+        signature = self.__ll_type_ctx.get_trait_object_method_type(
+            trait_method_id, object_type_id,
+        )
+        thunk = ir.Function(
+            self.__module,
+            signature,
+            name=f"trait.thunk.{concrete_type_id}.{trait_type_id}.{slot}",
+        )
+        thunk.linkage = "internal"
+        self.__trait_thunks[key] = thunk
+
+        entry = thunk.append_basic_block("entry")
+        builder = ir.IRBuilder(entry)
+        object_value = thunk.args[0]
+        data_index = 0
+        word_index = 1
+        data = builder.extract_value(object_value, data_index)
+
+        reference_type_id = self.__type_ctx.alloc_ref(concrete_type_id)
+        call_args: list[ir.Value] = []
+        if not self.__type_ctx.is_zst(concrete_type_id):
+            reference_type = self.__ll_type_ctx.get_ll_type(reference_type_id).ir_type
+            if self.__type_ctx.raw_pointers:
+                reference = data
+            else:
+                word = builder.extract_value(object_value, word_index)
+                reference = ir.Constant(reference_type, ir.Undefined)
+                reference = builder.insert_value(reference, data, 0)
+                reference = builder.insert_value(reference, word, 1)
+            call_args.append(reference)
+
+        # The thunk signature already erased ZST parameters. Pairing these
+        # arguments with the unfiltered semantic parameter list would shift
+        # every argument after the first ZST.
+        call_args.extend(thunk.args[1:])
+        call = builder.call(implementation, call_args)
+        result_type_id = self.__type_ctx.get_return_type(trait_method_id)
+        if self.__type_ctx.is_zst(result_type_id):
+            builder.ret_void()
+        else:
+            builder.ret(call)
+        return thunk
 
     @property
     def argc_global(self) -> ir.GlobalVariable:

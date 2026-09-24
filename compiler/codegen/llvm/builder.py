@@ -26,6 +26,18 @@ from compiler.runtime_error import RuntimeErrorCode
 from compiler.runtime_lib import class_index_for_payload
 
 
+class _FunctionCallTarget:
+    """Give an opaque function pointer its call-site signature for llvmlite."""
+
+    def __init__(self, value: ir.Value, function_type: ir.FunctionType) -> None:
+        self.__value = value
+        self.type = ir.PointerType()
+        self.function_type = function_type
+
+    def get_reference(self) -> str:
+        return self.__value.get_reference()  # type: ignore[attr-defined]
+
+
 class BuilderPosition(Enum):
     End = auto()
     First = auto()
@@ -1848,6 +1860,104 @@ class LLBuilder:
         result_val = LLValue(return_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
+
+    def trait_object_construct(
+        self,
+        reference: LLValue,
+        result_type_id: int,
+        concrete_type_id: int,
+        trait_type_id: int,
+        result: str,
+    ) -> None:
+        """Package a concrete reference with its vtable and safety word."""
+        vtable = self.__module.get_trait_vtable(concrete_type_id, trait_type_id)
+        object_ir_type = self.__ll_type_ctx.get_ll_type(result_type_id).ir_type
+        data: ir.Value
+        word: ir.Value | None = None
+        if self.__type_ctx.is_zst(concrete_type_id):
+            data = ir.Constant(self.__ll_type_ctx.ptr_type, None)  # type: ignore
+            if not self.__raw_pointers:
+                word = ir.Constant(ir.IntType(64), IR.ENV_WORD)  # type: ignore
+        elif self.__raw_pointers:
+            data = reference.ir_val
+        else:
+            data = self.__builder.extract_value(reference.ir_val, 0)  # type: ignore
+            word = self.__builder.extract_value(reference.ir_val, 1)  # type: ignore
+
+        aggregate = ir.Constant(object_ir_type, ir.Undefined)  # type: ignore
+        aggregate = self.__builder.insert_value(aggregate, data, 0)  # type: ignore
+        if self.__raw_pointers:
+            vtable_index = 1
+        else:
+            assert word is not None
+            aggregate = self.__builder.insert_value(aggregate, word, 1)  # type: ignore
+            vtable_index = 2
+        aggregate = self.__builder.insert_value(aggregate, vtable, vtable_index)  # type: ignore
+        self.__func.set_reg(result, LLValue(result_type_id, aggregate))
+
+    def trait_object_call(
+        self,
+        receiver: LLValue,
+        trait_type_id: int,
+        method_type_id: int,
+        slot_index: int,
+        args: list[LLValue],
+        result: str,
+        return_type_id: int,
+    ) -> LLValue:
+        """Load one vtable slot and invoke it using the trait method ABI."""
+        if not self.__raw_pointers:
+            data = self.__builder.extract_value(receiver.ir_val, 0)  # type: ignore
+            word = self.__builder.extract_value(receiver.ir_val, 1)  # type: ignore
+            reference_type_id = self.__type_ctx.alloc_ref(self.__type_ctx.u8_id)
+            reference_ir_type = self.__ll_type_ctx.get_ll_type(reference_type_id).ir_type
+            reference = ir.Constant(reference_ir_type, ir.Undefined)  # type: ignore
+            reference = self.__builder.insert_value(reference, data, 0)  # type: ignore
+            reference = self.__builder.insert_value(reference, word, 1)  # type: ignore
+            self.check_ref_access(LLValue(reference_type_id, reference))
+
+        vtable_index = 1 if self.__raw_pointers else 2
+        vtable = self.__builder.extract_value(receiver.ir_val, vtable_index)  # type: ignore
+        trait_methods = self.__type_ctx.get_trait_methods(trait_type_id)
+        slot_count = 0
+        for method_id in trait_methods.values():
+            method_type = self.__type_ctx[self.__type_ctx.resolve_aliases(method_id)]
+            if isinstance(method_type, Type.MethodType) and not method_type.custom_def.is_static:
+                slot_count += 1
+        table_type = ir.ArrayType(self.__ll_type_ctx.ptr_type, slot_count)  # type: ignore
+        slot_ptr = self.__builder.gep(
+            vtable,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), slot_index)],  # type: ignore
+            inbounds=True,
+            source_etype=table_type,
+        )
+        function_type = self.__ll_type_ctx.get_trait_object_method_type(
+            method_type_id, receiver.type_id,
+        )
+        callee = self.__builder.load(
+            slot_ptr,
+            typ=self.__ll_type_ctx.ptr_type,
+        )  # type: ignore
+        call_args = [receiver.ir_val]
+        call_args.extend(
+            self.__promote_fat(argument).ir_val
+            for argument in args
+            if not self.__ll_type_ctx.is_zst(argument.type_id)
+        )
+        # llvmlite's CallInstr infers the signature from a typed pointer's
+        # pointee, but the module uses opaque pointers. Carry the known HIR
+        # signature separately while emitting the opaque-pointer call syntax.
+        call = ir.instructions.CallInstr(
+            self.__builder.block,  # type: ignore[attr-defined]
+            _FunctionCallTarget(callee, function_type),  # type: ignore[arg-type]
+            call_args,
+        )
+        self.__builder._insert(call)  # type: ignore[attr-defined]
+        if self.__ll_type_ctx.is_zst(return_type_id):
+            return self.undef(return_type_id)
+        result_value = LLValue(return_type_id, call)
+        self.__func.set_reg(result, result_value)
+        return result_value
 
     def func_ptr(self, func: LLFunction, func_ptr_type_id: int) -> LLValue:
         return LLValue(func_ptr_type_id, func.ir_func)  # type: ignore

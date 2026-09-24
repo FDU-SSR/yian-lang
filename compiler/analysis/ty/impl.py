@@ -141,6 +141,35 @@ class ImplRegistry:
             self.__has_impl_cache[key] = result
         return result
 
+    def find_trait_impl(self, type_id: int, trait_id: int) -> tuple[Impl, dict[int, int]] | None:
+        """Return the unique impl matching a fully concrete type and trait."""
+        type_id = self.__ctx.canonical(type_id)
+        trait_id = self.__ctx.canonical(trait_id)
+        trait_ty = self.__ctx[trait_id]
+        if not isinstance(trait_ty, Type.TraitType):
+            return None
+        matches: list[tuple[Impl, dict[int, int]]] = []
+        for impl in self.iter_candidate_impls(type_id):
+            if impl.trait is None:
+                continue
+            inference = GenericInference(self.__ctx, trait_ty.custom_def.span)
+            try:
+                inference.constrain(impl.target, type_id)
+                inference.constrain(impl.trait, trait_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            if self.check_conditions(impl, substs):
+                matches.append((impl, substs))
+
+        if len(matches) > 1:
+            raise AnalysisError(
+                f"Ambiguous implementation of trait '{self.__ctx.get_name(trait_id)}' "
+                f"for type '{self.__ctx.get_name(type_id)}'",
+                trait_ty.custom_def.span,
+            )
+        return matches[0] if matches else None
+
     def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]]) -> bool:
         """Evaluate a has_impl query without consulting or updating its cache."""
         type_id = self.__ctx.canonical(type_id)

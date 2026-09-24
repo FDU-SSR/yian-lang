@@ -374,7 +374,7 @@ class _CheckPlanner:
                 self.__plan_delete(ptr)
             case IR.Realloc(ptr=ptr):
                 self.__plan_delete(ptr)
-            case IR.Call() | IR.Invoke():
+            case IR.Call() | IR.Invoke() | IR.TraitObjectInvoke():
                 self.__invalidate()
             case _:
                 pass
