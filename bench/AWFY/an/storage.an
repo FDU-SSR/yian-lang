@@ -9,13 +9,11 @@
 //       children 挂子数组。每次调用计数 +1 (count_arrays)。free_tree
 //       递归释放全部子数组。随机数使用官方 16 位 LCG。
 //
-// 表示: children 字段为 Option (叶子数组 children=None); free_tree 经取址
-//       参数 + is_some 判定。children 元素类型为 Option<array_tree[]>
-//       (切片自带长度, niche 编码支持); build_tree_depth 直绑切片, free_tree
-//       遍历 view.len() 后 del view 整块归还, 节点本体保持 dyn 数组分配 (T[])。
+// 表示: children 字段为 Option (叶子数组 children=None); children 元素类型为
+//       Option<array_tree[]>。动态数组类型由编译模式推断, 返回时显式构造完整
+//       范围切片; free_tree 遍历 view.len() 后释放整块数组。
 //
-// 模式专源: 本文件供 fat 模式使用; raw 下 T*→T[] 无隐式转换, 每次分配都要
-//       显式构造切片, 故 raw 使用同目录的 storage.raw.an。
+// 单一源: fat 与 raw 共用本文件。
 struct array_tree {
     children: Option<array_tree[]>,
     child_count: i32,
@@ -39,7 +37,7 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
 
     if depth == 1 {
         let n: u64 = Random_next(random) % 10 + 1;
-        let arr: array_tree[] = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+        let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
         let i: u64 = 0;
         while i < n {
             arr[i].children = Option<array_tree[]>.None;
@@ -47,11 +45,11 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
             i += 1;
         };
         *out_count = i32(n);
-        return Option<array_tree[]>.Some(arr);
+        return Option<array_tree[]>.Some(arr[0u64..n]);
     }
 
     let n: u64 = 4;
-    let arr: array_tree[] = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+    let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
     let i: u64 = 0;
     while i < n {
         let child_count: i32 = 0;
@@ -60,7 +58,7 @@ fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -
         i += 1;
     };
     *out_count = i32(n);
-    return Option<array_tree[]>.Some(arr);
+    return Option<array_tree[]>.Some(arr[0u64..n]);
 }
 
 fn free_tree(arr: Option<array_tree[]>) {
