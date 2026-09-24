@@ -416,8 +416,8 @@ class Closure:
     """Closure value — carries captured expressions.
 
     ``type_id`` is the ClosureType type_id.  The variable binding keeps
-    ClosureType so the CallDispatcher recognises it as callable.
-    LLVM maps ClosureType to its struct_type_id for code generation.
+    ClosureType so the CallDispatcher recognises it as callable. CFG lowering
+    maps it to the generated capture-environment struct.
     """
 
     span: SrcSpan

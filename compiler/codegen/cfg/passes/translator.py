@@ -48,9 +48,11 @@ class CfgTranslator:
         """逐个 `DefPoint` 下降成 CFG 函数，登记进 ctx 的函数表。"""
         for dp in def_points.values():
             ty = self.__ctx.type_ctx[dp.type_id]
-            if not isinstance(ty, (Type.FunctionType, Type.MethodType)):
+            if not isinstance(ty, (Type.FunctionType, Type.MethodType, Type.ClosureType)):
                 raise ValueError(f"Unsupported def type: {type(ty).__name__}")
-            self.__ctx.declare_function(_CfgBuilder(self.__ctx, dp).build())
+            function = _CfgBuilder(self.__ctx, dp).build()
+            self.__ctx.normalize_function(function)
+            self.__ctx.declare_function(function)
 
     def export(self) -> dict[int, IR.Function]:
         """Return the translated functions keyed by type_id（函数表由 ctx 持有）。"""
@@ -73,17 +75,43 @@ class _CfgBuilder:
     def __init__(self, ctx: CfgCtx, dp: DefPoint) -> None:
         self.__ctx = ctx
         self.__dp = dp
+        semantic_type = ctx.type_ctx[dp.type_id]
+        self.__closure_type = semantic_type if isinstance(semantic_type, Type.ClosureType) else None
+        self.__function_type_id = ctx.cfg_function_type_id(dp.type_id)
+        func_type = ctx.type_ctx[self.__function_type_id]
+        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
+        self.__capture_fields: dict[int, Type.StructField] = {}
+        self.__closure_receiver_id: int | None = None
+        self.__closure_receiver_ref_type_id: int | None = None
+        self.__closure_struct_type_id: int | None = None
+        self.__closure_parameter_ids: list[int] = []
+        self.__captured_symbol_ids: set[int] = set()
+        if self.__closure_type is not None:
+            self.__closure_receiver_id = -1
+            self.__closure_struct_type_id = self.__closure_type.struct_type_id
+            self.__closure_receiver_ref_type_id = ctx.type_ctx.alloc_ref(self.__closure_struct_type_id)
+            for captured in self.__closure_type.captured_vars:
+                symbol = dp.symbol_ctx.lookup(captured.name)
+                field = ctx.type_ctx.get_struct_field_by_name(self.__closure_struct_type_id, captured.name)
+                if symbol is None or field is None:
+                    raise ValueError(f"Missing closure capture '{captured.name}' in CFG function")
+                self.__captured_symbol_ids.add(symbol.symbol_id)
+                self.__capture_fields[symbol.symbol_id] = field
+            self.__closure_parameter_ids = [
+                symbol_id for symbol_id in dp.params
+                if symbol_id not in self.__captured_symbol_ids
+            ]
+            if len(self.__closure_parameter_ids) != len(self.__closure_type.parameters):
+                raise ValueError("Closure CFG parameters do not match the checked closure signature")
         # 发射句柄：当前函数 / 当前块 / 命名计数器
         self.__emitter = FunctionEmitter()
         # 本函数的事实存进共享上下文并留一份自用（后两段 pass 从 ctx.facts 取同一份）
-        func_type = ctx.type_ctx[dp.type_id]
-        assert isinstance(func_type, (Type.FunctionType, Type.MethodType))
         self.__facts = ctx.begin_def(
-            type_id=dp.type_id,
+            type_id=self.__function_type_id,
             symbol_ctx=dp.symbol_ctx,
             func_name=func_type.custom_def.name,
             span=dp.ast_body.span,
-            return_type=func_type.return_type(ctx.type_ctx),
+            return_type=ctx.cfg_type_id(func_type.return_type(ctx.type_ctx)),
             new_void_value=self.__emitter.void_reg,
         )
         # 下降侧指针出处（裸/帧内/出处根）；检查决定已归检查插入 pass。
@@ -102,6 +130,10 @@ class _CfgBuilder:
             build_func_ptr=self.__build_func_ptr,
             build_extract_value=lambda base, idx, ty: self.__memory.build_extract_value(base, idx, ty),
             is_fat_pointer=self.__preds.is_fat_pointer,
+            closure_receiver_id=self.__closure_receiver_id,
+            closure_receiver_ref_type_id=self.__closure_receiver_ref_type_id,
+            closure_struct_type_id=self.__closure_struct_type_id,
+            closure_capture_fields=self.__capture_fields,
         ))
         # 内存/指针原语簇与调用簇、系统内建簇
         self.__memory = MemoryLowerer(MemoryHost(
@@ -152,15 +184,25 @@ class _CfgBuilder:
         dp = self.__dp
         entry_block = IR.Block("entry")
         self.__emitter.bind(
-            IR.Function(name=facts.func_name, type_id=dp.type_id, blocks=[entry_block], entry=entry_block),
+            IR.Function(name=facts.func_name, type_id=facts.type_id, blocks=[entry_block], entry=entry_block),
             entry_block,
         )
 
         # ── register parameters ──
-        self.__emitter.func.params = dp.params.copy()
+        if self.__closure_type is None:
+            self.__emitter.func.params = dp.params.copy()
+        else:
+            assert self.__closure_receiver_id is not None
+            assert self.__closure_receiver_ref_type_id is not None
+            self.__emitter.func.params = [self.__closure_receiver_id] + self.__closure_parameter_ids
+            self.__emitter.func.local_vars[self.__closure_receiver_id] = IR.VarRef(
+                "self", self.__closure_receiver_id, self.__closure_receiver_ref_type_id
+            )
 
         # ── register body local variables ──
         for local_id in dp.locals:
+            if local_id in self.__captured_symbol_ids:
+                continue
             symbol = facts.symbol_ctx.get(local_id)
             self.__emitter.func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 

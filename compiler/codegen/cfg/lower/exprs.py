@@ -28,7 +28,6 @@ from compiler.codegen.cfg.lower.values import ValueLowerer
 from compiler.codegen.cfg.lower.checks import CheckState
 from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
-from compiler.error import CompilerError
 from compiler.utils.log import CompilerLog
 
 
@@ -148,6 +147,8 @@ class ExprLowerer:
                 return self.__host.values.resolve_bit_cast(expr)
             case HIR.Builtin():
                 return self.resolve_builtin(expr)
+            case HIR.Closure():
+                return self.__host.values.resolve_closure(expr)
             case HIR.Tuple():
                 return self.__host.values.resolve_tuple(expr)
             case HIR.Array():
@@ -162,8 +163,6 @@ class ExprLowerer:
                 if self.__host.ctx.type_ctx.is_zst(expr.type_id):
                     return IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
                 raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
-            case HIR.Closure():
-                raise CompilerError(f"Closure lowering should have been completed before CFG building: {expr}")
     def resolve_binary(self, expr: HIR.Binary) -> IR.Value:
         """
         Special cases:

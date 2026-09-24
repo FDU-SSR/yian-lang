@@ -385,8 +385,7 @@ class TypeCheck:
         return body
 
     def __check_closure(self, def_point: DefPoint) -> HIR.Block:
-        """Type-check a closure body. Captures are injected as local variables.
-        The lowering pass later rewrites them to FieldAccess(self, field)."""
+        """Type-check a closure body with captures and parameters as local variables."""
         closure_ty = self.__ctx.type_ctx[def_point.type_id]
         assert isinstance(closure_ty, Type.ClosureType)
 

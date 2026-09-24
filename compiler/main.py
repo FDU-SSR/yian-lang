@@ -678,10 +678,6 @@ def __run(argv: list[str] | None = None) -> int:
     except AnalysisError as error:
         __report_error(error, stage=Stage.COMPTIME)
 
-    # --- Closure lowering pass ---
-    from compiler.analysis.passes.closure_lowering import ClosureLowering
-    ClosureLowering(ctx).run()
-
     ch_main.debug(f"type-checked {len(ctx.def_points)} definitions")
     if args.profile:
         timings["type_check"] = time.perf_counter() - type_check_start

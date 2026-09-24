@@ -27,7 +27,7 @@ class ClosureHelper:
         self.__expr = expr_checker
 
     def check_closure_expr(self, node: AST.ClosureExpr) -> HIR.Closure:
-        """Phase-1: allocate types, register AST body for later type-check."""
+        """Allocate closure types and register the AST body for type checking."""
         type_ctx = self.__ctx.type_ctx
 
         # --- capture expressions (evaluated in enclosing scope) ---

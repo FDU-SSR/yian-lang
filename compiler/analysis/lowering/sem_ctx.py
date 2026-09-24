@@ -1,7 +1,7 @@
 """中端共享上下文：session 资源 + definition 产物表 + 每 def 事实 + 当前 def 的遍历状态。
 
 一个实例由 `main`（或分析会话）创建后贯穿中端各段：`GlobalResolve` → `TypeCheck` →
-`ComptimeIfSpecializer` → `ClosureLowering` → `DefiniteAssignment` → CFG 下降；各段读 session
+`ComptimeIfSpecializer` → `DefiniteAssignment` → CFG 下降；各段读 session
 资源（`type_ctx` / `raw_pointers` / `unit_datas` / `packages` / `stdlib_root`），并就地改写同一个
 产物表（`def_points`）。type check 期间每次 `begin_def()` 装一份不可变 `DefFacts` 存表并设为
 current；遍历期的可变状态（locals / 循环栈 / 作用域深度 / span）留在 ctx 上。
@@ -62,7 +62,7 @@ class SemCtx:
     """中端各段共享的语义上下文（形态对齐 CFG 侧的 `CfgCtx`）。
 
     中端各段（`GlobalResolve` → `TypeCheck` → `ComptimeIfSpecializer` →
-    `ClosureLowering` → `DefiniteAssignment` → CFG 下降）拿的都是这一个对象：
+    `DefiniteAssignment` → CFG 下降）拿的都是这一个对象：
 
     - session 级资源：`type_ctx` / `raw_pointers` / `unit_datas` / `packages` / `stdlib_root`；
     - 产物表 `def_points`（codegen 集，type check 之后由 `main` 交进来，之后各段就地改写）；

@@ -45,10 +45,29 @@ class CallsLowerer:
         return result
 
     def resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
+        resolved = self.__host.ctx.type_ctx.resolve_aliases(expr.callable.type_id)
+        callable_type = self.__host.ctx.type_ctx[resolved]
+        if isinstance(callable_type, Type.ClosureType):
+            receiver_addr = self.__host.values.resolve_addr_fat(expr.callable)
+            self.__host.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_RECEIVER_IN_BOUNDS, operands=[receiver_addr],
+            ))
+            receiver_ref_type = self.__host.ctx.type_ctx.alloc_ref(callable_type.struct_type_id)
+            receiver_ref = self.__host.values.build_cast(receiver_addr, receiver_ref_type)
+            arg_vals = [self.__host.resolve_val(arg) for arg in expr.args]
+            result = self.build_call(
+                callable_type.call_method_type_id, [receiver_ref] + arg_vals, expr.type_id,
+            )
+            if expr.type_id == self.__host.ctx.type_ctx.never_id:
+                self.__host.set_terminator(IR.Panic(IR.StringLiteral(
+                    value="unreachable: never-returning closure returned",
+                    type_id=TypeCtx.str_id,
+                )))
+            return result
+
         callee = self.__host.resolve_val(expr.callable)
         arg_vals = [self.__host.resolve_val(arg) for arg in expr.args]
-        resolved = self.__host.ctx.type_ctx.resolve_aliases(expr.callable.type_id)
-        if isinstance(self.__host.ctx.type_ctx[resolved], Type.FunctionType):
+        if isinstance(callable_type, Type.FunctionType):
             result = self.build_call(resolved, arg_vals, expr.type_id)
             if expr.type_id == self.__host.ctx.type_ctx.never_id:
                 self.__host.set_terminator(IR.Panic(IR.StringLiteral(value="unreachable: never-returning function returned", type_id=TypeCtx.str_id)))

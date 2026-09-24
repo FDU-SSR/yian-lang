@@ -50,6 +50,10 @@ class ValueHost:
     build_func_ptr: Callable[[int], IR.Value]
     build_extract_value: Callable[[IR.Value, int, int], IR.Value]
     is_fat_pointer: Callable[[IR.Value], bool]
+    closure_receiver_id: int | None
+    closure_receiver_ref_type_id: int | None
+    closure_struct_type_id: int | None
+    closure_capture_fields: dict[int, Type.StructField]
 
 
 class ValueLowerer:
@@ -74,6 +78,9 @@ class ValueLowerer:
             return self.resolve_array_access_addr(expr)
         if isinstance(expr, HIR.SliceAccess):
             return self.resolve_slice_access_addr(expr)
+        if isinstance(expr, HIR.Closure):
+            value = self.__host.resolve_val(expr)
+            return self.build_alloca(value, fat=False)
 
         if not expr.is_place:
             val = self.__host.resolve_val(expr)
@@ -107,6 +114,9 @@ class ValueLowerer:
         # temporary's address.
         if isinstance(expr, HIR.SliceAccess):
             return self.resolve_slice_access_addr(expr, fat=True)
+        if isinstance(expr, HIR.Closure):
+            value = self.__host.resolve_val(expr)
+            return self.build_alloca(value, fat=True)
         if not expr.is_place:
             val = self.__host.resolve_val(expr)
             return self.build_alloca(val, fat=True)
@@ -178,6 +188,35 @@ class ValueLowerer:
         return self.__host.build_element_ptr(data, index_val, elem_ptr_type)
 
     def resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:
+        captured_field = self.__host.closure_capture_fields.get(expr.symbol_id)
+        if captured_field is not None:
+            receiver_id = self.__host.closure_receiver_id
+            receiver_ref_type_id = self.__host.closure_receiver_ref_type_id
+            struct_type_id = self.__host.closure_struct_type_id
+            assert receiver_id is not None
+            assert receiver_ref_type_id is not None
+            assert struct_type_id is not None
+            receiver = HIR.Var(
+                span=expr.span,
+                symbol_id=receiver_id,
+                type_id=receiver_ref_type_id,
+                is_place=True,
+            )
+            dereference = HIR.Unary(
+                span=expr.span,
+                op=UnaryOperator.Deref,
+                operand=receiver,
+                type_id=struct_type_id,
+                is_place=True,
+            )
+            field_access = HIR.FieldAccess(
+                span=expr.span,
+                receiver=dereference,
+                field=captured_field,
+                type_id=captured_field.type_id,
+                is_place=expr.is_place,
+            )
+            return self.resolve_field_access_addr(field_access, fat=fat)
         if expr.symbol_id not in self.__host.emitter.func.local_vars:
             raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
         var_ref = self.__host.emitter.func.local_vars[expr.symbol_id]
@@ -375,6 +414,14 @@ class ValueLowerer:
         fields = self.__host.ctx.type_ctx.get_struct_fields(expr.struct_id)
         field_vals = [self.__host.resolve_val(expr.field_values[field.name]) for field in fields]
         return self.build_aggregate_construct(expr.struct_id, field_vals)
+
+    def resolve_closure(self, expr: HIR.Closure) -> IR.Value:
+        """Build the ordinary capture-environment aggregate for a closure."""
+        closure_type = self.__host.ctx.type_ctx[expr.type_id]
+        assert isinstance(closure_type, Type.ClosureType)
+        fields = self.__host.ctx.type_ctx.get_struct_fields(closure_type.struct_type_id)
+        field_values = [self.__host.resolve_val(expr.captures[field.name]) for field in fields]
+        return self.build_aggregate_construct(closure_type.struct_type_id, field_values)
 
     def resolve_variant_construct(self, expr: HIR.VariantConstruct) -> IR.Value:
         if expr.args is None:
