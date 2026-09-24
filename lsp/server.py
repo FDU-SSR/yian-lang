@@ -271,7 +271,6 @@ def create_server(
 
 
 def __register_features(server: YianLanguageServer) -> None:
-    @server.feature(types.INITIALIZE)
     def initialize(ls: YianLanguageServer, params: types.InitializeParams) -> None:
         root = __workspace_root(params)
         if root is None:
@@ -302,8 +301,8 @@ def __register_features(server: YianLanguageServer) -> None:
         )
         for diagnostic in result.diagnostics:
             _LOGGER.warning("%s %s (%s)", diagnostic.code, diagnostic.message, diagnostic.path)
+    server.feature(types.INITIALIZE)(initialize)
 
-    @server.feature(types.INITIALIZED)
     def initialized(ls: YianLanguageServer, params: types.InitializedParams) -> None:
         __register_watchers(ls)
         if ls.model.project_root is None:
@@ -313,8 +312,8 @@ def __register_features(server: YianLanguageServer) -> None:
             _LOGGER.info("standalone mode: waiting for a document")
             return
         ls.analyze_now("startup")
+    server.feature(types.INITIALIZED)(initialized)
 
-    @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
     def did_open(ls: YianLanguageServer, params: types.DidOpenTextDocumentParams) -> None:
         document = params.text_document
         ls.model.open(uri_to_path(document.uri), document.text, document.version)
@@ -324,8 +323,8 @@ def __register_features(server: YianLanguageServer) -> None:
         ls.model.invalidate()
         _LOGGER.info("textDocument/didOpen %s v%s", document.uri, document.version)
         ls.analyze_now("didOpen")
+    server.feature(types.TEXT_DOCUMENT_DID_OPEN)(did_open)
 
-    @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
     def did_change(ls: YianLanguageServer, params: types.DidChangeTextDocumentParams) -> None:
         changes = params.content_changes
         if not changes:
@@ -334,10 +333,10 @@ def __register_features(server: YianLanguageServer) -> None:
         # Full synchronisation: the last change carries the whole document.
         ls.model.change(uri_to_path(document.uri), changes[-1].text, document.version)
         __document_changed(ls, "didChange", document.uri, document.version)
+    server.feature(types.TEXT_DOCUMENT_DID_CHANGE)(did_change)
 
     # ── navigation ───────────────────────────────────────────────
 
-    @server.feature(types.TEXT_DOCUMENT_DEFINITION)
     def definition(
         ls: YianLanguageServer, params: types.DefinitionParams
     ) -> types.Location | None:
@@ -349,8 +348,8 @@ def __register_features(server: YianLanguageServer) -> None:
         if resolution is None or resolution.target is None:
             return None
         return location(resolution.target, navigator)
+    server.feature(types.TEXT_DOCUMENT_DEFINITION)(definition)
 
-    @server.feature(types.TEXT_DOCUMENT_HOVER)
     def hover_at(ls: YianLanguageServer, params: types.HoverParams) -> types.Hover | None:
         located = __located(ls, params.text_document.uri, params.position)
         if located is None:
@@ -366,8 +365,8 @@ def __register_features(server: YianLanguageServer) -> None:
         if span is None:
             return None
         return hover(resolution, navigator, span)
+    server.feature(types.TEXT_DOCUMENT_HOVER)(hover_at)
 
-    @server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def symbols(
         ls: YianLanguageServer, params: types.DocumentSymbolParams
     ) -> list[types.DocumentSymbol] | None:
@@ -377,10 +376,10 @@ def __register_features(server: YianLanguageServer) -> None:
         path = uri_to_path(params.text_document.uri)
         navigator = __navigator(ls, snapshot)
         return document_symbols(navigator.declarations_in(path), navigator)
+    server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)(symbols)
 
     # ── semantic highlighting ──────────────────────────────
 
-    @server.feature(types.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL, legend())
     def semantic_tokens(
         ls: YianLanguageServer, params: types.SemanticTokensParams
     ) -> types.SemanticTokens | None:
@@ -396,13 +395,10 @@ def __register_features(server: YianLanguageServer) -> None:
         path = uri_to_path(params.text_document.uri)
         classified = classify(navigator, path)
         return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
+    server.feature(types.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL, legend())(semantic_tokens)
 
     # ── completion and signature help ────────────────────────────
 
-    @server.feature(
-        types.TEXT_DOCUMENT_COMPLETION,
-        types.CompletionOptions(trigger_characters=[".", ":", "<"]),
-    )
     def completions(
         ls: YianLanguageServer, params: types.CompletionParams
     ) -> types.CompletionList | None:
@@ -416,11 +412,11 @@ def __register_features(server: YianLanguageServer) -> None:
         path, row, col = located
         candidates = complete(result, path, row, col, std_root=ls.model.std_root)
         return completion_list(candidates, navigator)
+    server.feature(
+        types.TEXT_DOCUMENT_COMPLETION,
+        types.CompletionOptions(trigger_characters=[".", ":", "<"]),
+    )(completions)
 
-    @server.feature(
-        types.TEXT_DOCUMENT_SIGNATURE_HELP,
-        types.SignatureHelpOptions(trigger_characters=["(", ","]),
-    )
     def signature(
         ls: YianLanguageServer, params: types.SignatureHelpParams
     ) -> types.SignatureHelp | None:
@@ -434,10 +430,13 @@ def __register_features(server: YianLanguageServer) -> None:
         path, row, col = located
         info = signature_info(result, path, row, col, std_root=ls.model.std_root)
         return None if info is None else signature_help(info)
+    server.feature(
+        types.TEXT_DOCUMENT_SIGNATURE_HELP,
+        types.SignatureHelpOptions(trigger_characters=["(", ","]),
+    )(signature)
 
     # ── formatting ────────────────────────────────────────────────────────────
 
-    @server.feature(types.TEXT_DOCUMENT_FORMATTING)
     def formatting(
         ls: YianLanguageServer, params: types.DocumentFormattingParams
     ) -> list[types.TextEdit] | None:
@@ -447,10 +446,10 @@ def __register_features(server: YianLanguageServer) -> None:
         path = uri_to_path(params.text_document.uri)
         text = ls.model.documents.text(path)
         return document_edits(text, path)
+    server.feature(types.TEXT_DOCUMENT_FORMATTING)(formatting)
 
     # ── references, rename and quick fixes ───────────────────────
 
-    @server.feature(types.TEXT_DOCUMENT_REFERENCES)
     def references(
         ls: YianLanguageServer, params: types.ReferenceParams
     ) -> list[types.Location] | None:
@@ -470,8 +469,8 @@ def __register_features(server: YianLanguageServer) -> None:
             std_root=ls.model.std_root,
         )
         return None if found is None else locations(found, navigator)
+    server.feature(types.TEXT_DOCUMENT_REFERENCES)(references)
 
-    @server.feature(types.TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT)
     def highlights(
         ls: YianLanguageServer, params: types.DocumentHighlightParams
     ) -> list[types.DocumentHighlight] | None:
@@ -493,8 +492,8 @@ def __register_features(server: YianLanguageServer) -> None:
             ),
         )
         return document_highlights(same_file, navigator)
+    server.feature(types.TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT)(highlights)
 
-    @server.feature(types.TEXT_DOCUMENT_PREPARE_RENAME)
     def prepare_rename(
         ls: YianLanguageServer, params: types.PrepareRenameParams
     ) -> types.PrepareRenamePlaceholder | None:
@@ -517,8 +516,8 @@ def __register_features(server: YianLanguageServer) -> None:
         return types.PrepareRenamePlaceholder(
             range=to_range(found.target.span, navigator), placeholder=found.target.name
         )
+    server.feature(types.TEXT_DOCUMENT_PREPARE_RENAME)(prepare_rename)
 
-    @server.feature(types.TEXT_DOCUMENT_RENAME)
     def rename(
         ls: YianLanguageServer, params: types.RenameParams
     ) -> types.WorkspaceEdit | None:
@@ -538,8 +537,8 @@ def __register_features(server: YianLanguageServer) -> None:
             # partial edit (拒绝批量修改).
             raise JsonRpcException(outcome.refusal, code=REQUEST_FAILED)
         return workspace_edit(outcome, navigator)
+    server.feature(types.TEXT_DOCUMENT_RENAME)(rename)
 
-    @server.feature(types.TEXT_DOCUMENT_CODE_ACTION, types.CodeActionOptions(code_action_kinds=[types.CodeActionKind.QuickFix]))
     def code_action(
         ls: YianLanguageServer, params: types.CodeActionParams
     ) -> list[types.CodeAction]:
@@ -547,8 +546,11 @@ def __register_features(server: YianLanguageServer) -> None:
         if navigator is None or path is None or result is None:
             return []
         return code_actions(import_removals(result, navigator, path), navigator, path)
+    server.feature(
+        types.TEXT_DOCUMENT_CODE_ACTION,
+        types.CodeActionOptions(code_action_kinds=[types.CodeActionKind.QuickFix]),
+    )(code_action)
 
-    @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     def did_save(ls: YianLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
         # Registering this feature also advertises `save: true`, which is what
         # makes the client send the notification at all.  A save is a deliberate
@@ -557,21 +559,22 @@ def __register_features(server: YianLanguageServer) -> None:
         ls.model.invalidate()
         _LOGGER.info("textDocument/didSave %s", uri)
         ls.analyze_now("didSave")
+    server.feature(types.TEXT_DOCUMENT_DID_SAVE)(did_save)
 
-    @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
     def did_close(ls: YianLanguageServer, params: types.DidCloseTextDocumentParams) -> None:
         uri = params.text_document.uri
         ls.model.close(uri_to_path(uri))
         __document_changed(ls, "didClose", uri, None)
+    server.feature(types.TEXT_DOCUMENT_DID_CLOSE)(did_close)
 
-    @server.feature(types.SHUTDOWN)
     def shutdown(ls: YianLanguageServer, params: None) -> None:
         # A scheduled analysis must not run after shutdown: the client is gone.
         ls.cancel_analysis()
+    server.feature(types.SHUTDOWN)(shutdown)
 
-    @server.feature(types.WORKSPACE_DID_CHANGE_WATCHED_FILES)
     def watched_files(ls: YianLanguageServer, params: types.DidChangeWatchedFilesParams) -> None:
         __watched_files_changed(ls, params)
+    server.feature(types.WORKSPACE_DID_CHANGE_WATCHED_FILES)(watched_files)
 
 
 def __snapshot(server: YianLanguageServer) -> Snapshot | None:
