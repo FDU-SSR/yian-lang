@@ -532,6 +532,14 @@ class MemCopy:
 
 
 @dataclass
+class MemSetPattern:
+    """Repeat a typed value over a freshly allocated element buffer."""
+    dest: Value
+    value: Value
+    count: Value
+
+
+@dataclass
 class SysRead:
     result: Reg
     fd: Value
@@ -607,7 +615,7 @@ Stmt: TypeAlias = (
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
-    | MemCopy
+    | MemCopy | MemSetPattern
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete

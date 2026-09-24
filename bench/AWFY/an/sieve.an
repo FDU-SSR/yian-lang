@@ -35,13 +35,8 @@ fn main() {
     let ITER: u64 = 268657;  // bench-scale
     let iter: u64 = 0;
     while iter < ITER {
-        let flags = dyn[SIEVE_SIZE] false;
+        let flags = dyn[SIEVE_SIZE] true;
         let flags_view: bool[] = flags[0u64..SIEVE_SIZE];
-        let i: u64 = 0;
-        while i < SIEVE_SIZE {
-            flags_view[i] = true;
-            i += 1;
-        }
         let prime_count: i32 = sieve(flags_view, SIEVE_SIZE);
         assert prime_count == 669: "sieve: prime_count is not correct";
         del flags;

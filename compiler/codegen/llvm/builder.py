@@ -1198,6 +1198,37 @@ class LLBuilder:
 
     # -- memory --
 
+    def __is_bool_type(self, type_id: int) -> bool:
+        resolved_type_id = self.__type_ctx.resolve_aliases(type_id)
+        return isinstance(self.__type_ctx[resolved_type_id], Type.BoolType)
+
+    def __load_memory_value(self, type_id: int, address: ir.Value) -> ir.Value:
+        """Load a YIAN value using its memory representation.
+
+        Boolean values remain ``i1`` in SSA, but LLVM frontend guidance
+        recommends byte-wide memory accesses.  Keep the conversion at the
+        memory boundary so pointers, references, array elements, and enum fields share
+        the same representation rule.
+        """
+        if self.__is_bool_type(type_id):
+            byte_address = address
+            if isinstance(byte_address.type, ir.PointerType) and not byte_address.type.is_opaque:  # type: ignore
+                byte_address = self.__bitcast(byte_address, self.__ll_type_ctx.ptr_type)
+            byte_value = self.__builder.load(byte_address, typ=ir.IntType(8))  # type: ignore
+            return self.__builder.trunc(byte_value, ir.IntType(1))  # type: ignore
+        return self.__builder.load(
+            address, typ=self.__ll_type_ctx.get_ll_type(type_id).ir_type
+        )  # type: ignore
+
+    def __store_memory_value(self, value: LLValue, address: ir.Value) -> None:
+        """Store a YIAN value using its memory representation."""
+        ir_value = value.ir_val
+        if self.__is_bool_type(value.type_id):
+            ir_value = self.__builder.zext(ir_value, ir.IntType(8))  # type: ignore
+            if isinstance(address.type, ir.PointerType) and not address.type.is_opaque:  # type: ignore
+                address = self.__bitcast(address, self.__ll_type_ctx.ptr_type)
+        self.__builder.store(ir_value, address)  # type: ignore
+
     def load(self, ptr: LLValue, result: str) -> LLValue:
         ptr_type = self.__type_ctx[self.__type_ctx.resolve_aliases(ptr.type_id)]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
@@ -1208,11 +1239,10 @@ class LLBuilder:
             return self.undef(pointee_type_id)
         if self.__is_fat(ptr):
             addr = self.__fat_addr(ptr, pointee_type_id)
-            ir_val = self.__builder.load(addr.ir_val, typ=self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type)  # type: ignore
-            result_val = LLValue(pointee_type_id, ir_val)
+            ir_val = self.__load_memory_value(pointee_type_id, addr.ir_val)
         else:
-            ir_val = self.__builder.load(ptr.ir_val, typ=self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type)  # type: ignore
-            result_val = LLValue(pointee_type_id, ir_val)
+            ir_val = self.__load_memory_value(pointee_type_id, ptr.ir_val)
+        result_val = LLValue(pointee_type_id, ir_val)
         self.__func.set_reg(result, result_val)
         return result_val
 
@@ -1223,9 +1253,9 @@ class LLBuilder:
             ptr_type = self.__type_ctx[ptr.type_id]
             assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
             addr = self.__fat_addr(ptr, ptr_type.pointee_type)
-            self.__builder.store(value.ir_val, addr.ir_val)  # type: ignore
+            self.__store_memory_value(value, addr.ir_val)
         else:
-            self.__builder.store(value.ir_val, ptr.ir_val)  # type: ignore
+            self.__store_memory_value(value, ptr.ir_val)
 
     def gep(self, base: LLValue, indices: list[int], result: str) -> LLValue:
         base_type = self.__type_ctx[self.__type_ctx.resolve_aliases(base.type_id)]
@@ -1912,12 +1942,23 @@ class LLBuilder:
 
         if not self.__type_ctx.is_zst(payload_type):
             assert payload_fields is not None
-            payload_val = self.__build_aggregate(payload_type, payload_fields)
-            # Bitcast the payload array pointer (field 1) to the payload struct pointer
+            # Make the payload slot opaque; the GEP below supplies its struct layout.
             payload_arr_ptr = self.__builder.gep(tmp_ptr, [self.i32(0).ir_val, self.i32(1).ir_val], inbounds=True)  # type: ignore
-            payload_ptr_ll = self.__ll_type_ctx.get_ll_type(payload_type).ir_type.as_pointer()  # type: ignore
-            payload_typed_ptr = self.__bitcast(payload_arr_ptr, payload_ptr_ll)  # type: ignore
-            self.__builder.store(payload_val.ir_val, payload_typed_ptr)  # type: ignore
+            payload_ptr = self.__bitcast(payload_arr_ptr, self.__ll_type_ctx.ptr_type)
+            payload_ll = self.__ll_type_ctx.get_ll_type(payload_type).ir_type
+            payload_field_types = self.__type_ctx.get_struct_fields(payload_type)
+            for field_index, field_value in enumerate(payload_fields):
+                if field_index >= len(payload_field_types):
+                    break
+                if self.__ll_type_ctx.is_zst(payload_field_types[field_index].type_id):
+                    continue
+                field_ptr = self.__builder.gep(
+                    payload_ptr,
+                    [self.i32(0).ir_val, self.i32(field_index).ir_val],
+                    inbounds=True,
+                    source_etype=payload_ll,
+                )  # type: ignore
+                self.__store_memory_value(field_value, field_ptr)
 
         ir_val = self.__builder.load(tmp_ptr)  # type: ignore
         self.__func.set_reg(result, LLValue(enum_type_id, ir_val))
@@ -1943,12 +1984,10 @@ class LLBuilder:
             for field_index, symbol_id in fields:
                 if field_index != 0:
                     continue
-                field_ll = self.__ll_type_ctx.get_ll_type(
-                    self.__type_ctx.get_struct_fields(payload_type_id)[field_index].type_id
-                ).ir_type
-                field_value = self.__builder.load(base_ptr.ir_val, typ=field_ll)  # type: ignore
+                field_type_id = self.__type_ctx.get_struct_fields(payload_type_id)[field_index].type_id
+                field_value = self.__load_memory_value(field_type_id, base_ptr.ir_val)
                 alloca_ptr = self.__func.get_var_ptr(symbol_id)
-                self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
+                self.__store_memory_value(LLValue(field_type_id, field_value), alloca_ptr.ir_val)
             return
 
         if self.__type_ctx.is_zst(payload_type_id):
@@ -1960,13 +1999,13 @@ class LLBuilder:
         for field_index, symbol_id in fields:
             if field_index >= len(payload_fields):
                 break
-            field_ll = self.__ll_type_ctx.get_ll_type(payload_fields[field_index].type_id).ir_type
+            field_type_id = payload_fields[field_index].type_id
             # payload 槽是字节数组: 步进必须按 payload 结构体算, 故显式给 source_etype
             # (llvmlite 对指针的 bitcast 是 no-op, 拿不到有型指针; 值类型由 typ= 给出)。
             field_ptr = self.__builder.gep(payload, [self.i32(0).ir_val, self.i32(field_index).ir_val], inbounds=True, source_etype=payload_ll)  # type: ignore
-            field_value = self.__builder.load(field_ptr, typ=field_ll)  # type: ignore
+            field_value = self.__load_memory_value(field_type_id, field_ptr)
             alloca_ptr = self.__func.get_var_ptr(symbol_id)
-            self.__builder.store(field_value, alloca_ptr.ir_val)  # type: ignore
+            self.__store_memory_value(LLValue(field_type_id, field_value), alloca_ptr.ir_val)
 
     def unpack_enum_payload_ref(
         self, matched: LLValue, block_label: str,
@@ -2044,6 +2083,37 @@ class LLBuilder:
         dest_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), dest_addr.ir_val)  # type: ignore
         src_raw = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), src_addr.ir_val)  # type: ignore
         self.__call_intrinsic(IntrinsicKind.MemCopy, [dest_raw, src_raw, count])
+
+    def mem_set_pattern(self, dest: LLValue, value: LLValue, count: LLValue) -> None:
+        """Repeat a typed element pattern over an allocation's element count."""
+        if self.__ll_type_ctx.is_zst(dest.type_id):
+            return
+        dest_addr = self.__fat_addr(dest, self.__pointee_type_id(dest.type_id))
+        pattern_ir_type: ir.Type = value.ir_val.type  # type: ignore
+        if self.__ll_type_ctx.get_type_size(value.type_id) == 1 \
+                and isinstance(pattern_ir_type, ir.IntType) \
+                and pattern_ir_type.width in (1, 8):
+            # llvm.memset is byte-oriented and has better target lowering for a
+            # one-byte integer element; widen bool's i1 representation to its stored byte.
+            byte_value = value.ir_val
+            if pattern_ir_type.width == 1:
+                byte_value = self.__builder.zext(byte_value, ir.IntType(8))  # type: ignore
+            self.__call_intrinsic(
+                IntrinsicKind.MemSet,
+                [
+                    dest_addr,
+                    LLValue(self.__type_ctx.u8_id, byte_value),  # type: ignore
+                    count,
+                ],
+            )
+            return
+        callee = self.__module.intrinsics.get_memset_pattern(
+            dest_addr.ir_val.type, value.ir_val.type, count.ir_val.type  # type: ignore
+        )
+        self.__builder.call(
+            callee,
+            [dest_addr.ir_val, value.ir_val, count.ir_val, ir.Constant(ir.IntType(1), 0)],  # type: ignore
+        )
 
     def sys_read(self, fd: LLValue, buf: LLValue, result: str) -> None:
         buf_ptr = self.__extract_value_raw(buf, 0)
@@ -2271,8 +2341,8 @@ class LLBuilder:
     def __call_intrinsic(self, kind: IntrinsicKind, args: list[LLValue]) -> LLValue:
         callee = self.__module.intrinsics.get(kind)
         raw_args = [a.ir_val for a in args]
-        if kind is IntrinsicKind.MemCopy:
-            # llvm.memcpy 的末参是 immarg isvolatile, 恒 false。
+        if kind in (IntrinsicKind.MemCopy, IntrinsicKind.MemSet):
+            # llvm.memcpy / llvm.memset 的末参是 immarg isvolatile, 恒 false。
             raw_args.append(ir.Constant(ir.IntType(1), 0))  # type: ignore
         result = self.__builder.call(callee, raw_args)  # type: ignore
         return LLValue(self.__intrinsic_return_type_id(kind), result)
@@ -2281,7 +2351,7 @@ class LLBuilder:
         match kind:
             case IntrinsicKind.Malloc:
                 return self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-            case IntrinsicKind.Free | IntrinsicKind.ImmediateExit | IntrinsicKind.MemCopy:
+            case IntrinsicKind.Free | IntrinsicKind.ImmediateExit | IntrinsicKind.MemCopy | IntrinsicKind.MemSet:
                 return self.__type_ctx.void_id
             case IntrinsicKind.Write | IntrinsicKind.Read:
                 return self.__type_ctx.u64_id

@@ -259,6 +259,8 @@ class LLTranslator:
                 builder.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
             case IR.MemCopy():
                 builder.mem_copy(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.src), self.__resolve(builder, stmt.count))
+            case IR.MemSetPattern():
+                builder.mem_set_pattern(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.value), self.__resolve(builder, stmt.count))
             case IR.SysRead():
                 builder.sys_read(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf), stmt.result.name)
             case IR.Open():

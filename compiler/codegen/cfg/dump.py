@@ -256,6 +256,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         ):
             return f"mem_copy {__dump_value(dest)}, {__dump_value(src)}, {__dump_value(count)}"
 
+        case IR.MemSetPattern(dest=dest, value=value, count=count):
+            return f"mem_set_pattern {__dump_value(dest)}, {__dump_value(value)}, {__dump_value(count)}"
+
         case IR.SysRead(
             result=result,
             fd=fd,

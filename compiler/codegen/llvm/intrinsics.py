@@ -26,6 +26,7 @@ class IntrinsicKind(Enum):
     ImmediateExit = auto()
     StrLen = auto()
     MemCopy = auto()
+    MemSet = auto()
     Sqrt = auto()
     Sin = auto()
     Cos = auto()
@@ -45,6 +46,8 @@ class IntrinsicManager:
         # LLVM 内建 llvm.memcpy.p0.p0.i64: 第 4 个参数是 immarg isvolatile(恒 false)。
         # 用内建而不是 C 库 memcpy —— 后端可以按已知长度内联展开/合并, 也不再有跨模块调用。
         IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(), ir.PointerType(), ir.IntType(64), ir.IntType(1)], "llvm.memcpy.p0.p0.i64"),
+        # llvm.memset 同样以字节计数; 末参 isvolatile 恒 false。
+        IntrinsicKind.MemSet:    (ir.VoidType(), [ir.PointerType(), ir.IntType(8), ir.IntType(64), ir.IntType(1)], "llvm.memset.p0.i64"),
         # LLVM 内建(llvm.sqrt.f64): 后端直接落 sqrtsd, 与 C 参考的 `sqrt()` 同一原语。
         IntrinsicKind.Sqrt:      (ir.DoubleType(), [ir.DoubleType()], "llvm.sqrt.f64"),
         IntrinsicKind.Sin:       (ir.DoubleType(), [ir.DoubleType()], "llvm.sin.f64"),
@@ -55,16 +58,19 @@ class IntrinsicManager:
     def __init__(self, module: ir.Module) -> None:
         self.__module = module
         self.__cache: dict[IntrinsicKind, ir.Function] = {}
+        self.__memset_pattern_cache: dict[tuple[ir.Type, ir.Type, ir.Type], ir.Function] = {}
+        self.__memset_pattern_counter = 0
 
     def get(self, kind: IntrinsicKind) -> ir.Function:
         if kind in self.__cache:
             return self.__cache[kind]
         return_type, param_types, name = self.__DECLARATIONS[kind]
         func = ir.Function(self.__module, ir.FunctionType(return_type, param_types), name=name)
-        if kind is IntrinsicKind.MemCopy:
+        if kind in (IntrinsicKind.MemCopy, IntrinsicKind.MemSet):
             # llvmlite 的参数属性白名单里没有 nocapture/readonly/writeonly, 只标能标的。
-            func.args[0].add_attribute("noalias")  # type: ignore
-            func.args[1].add_attribute("noalias")  # type: ignore
+            if kind is IntrinsicKind.MemCopy:
+                func.args[0].add_attribute("noalias")  # type: ignore
+                func.args[1].add_attribute("noalias")  # type: ignore
             func.args[3].add_attribute("immarg")  # type: ignore
         # 事实性标注(不是优化手段): 这些 C 函数不会 unwind —— libc 的 malloc/free/read/write
         # 失败时返回错误值而不是抛异常, 本模块也用不到任何异常机制; 逐条按各自语义标:
@@ -74,4 +80,31 @@ class IntrinsicManager:
         if kind is IntrinsicKind.ImmediateExit:
             func.attributes.add("noreturn")  # type: ignore
         self.__cache[kind] = func
+        return func
+
+    def get_memset_pattern(
+        self,
+        pointer_type: ir.Type,
+        pattern_type: ir.Type,
+        count_type: ir.Type,
+    ) -> ir.Function:
+        """Declare ``llvm.experimental.memset.pattern`` for a sized element type."""
+        key = (pointer_type, pattern_type, count_type)
+        cached = self.__memset_pattern_cache.get(key)
+        if cached is not None:
+            return cached
+
+        function_type = ir.FunctionType(
+            ir.VoidType(),
+            [pointer_type, pattern_type, count_type, ir.IntType(1)],  # type: ignore
+        )
+        # llvmlite's intrinsic-name helper only supports types with an
+        # ``intrinsic_name`` property; identified structs do not have one.
+        # LLVM canonicalizes this unique placeholder from the declared function
+        # signature when it parses the module, including aggregate overloads.
+        name = f"llvm.experimental.memset.pattern.yian.{self.__memset_pattern_counter}"
+        self.__memset_pattern_counter += 1
+        func = ir.Function(self.__module, function_type, name=name)
+        func.args[3].add_attribute("immarg")  # type: ignore
+        self.__memset_pattern_cache[key] = func
         return func

@@ -316,9 +316,9 @@ class ExprLowerer:
     def resolve_dyn_buffer(self, expr: HIR.DynBuffer) -> IR.Value:
         """``dyn[n] value``: allocate ``n`` elements and bit-copy ``value`` into each.
 
-        The initializer is evaluated exactly once (it dominates the fill loop);
+        The initializer is evaluated exactly once before the fill operation;
         ``element is None`` is the ZST-only bare form, which has nothing to
-        initialize. Supports a runtime ``n``: the loop bound is a value.
+        initialize. The typed pattern intrinsic accepts a runtime ``n``.
         """
         count = self.resolve_val(expr.length)
         buffer = self.__host.memory.build_malloc(expr.element_type, count)
@@ -328,46 +328,12 @@ class ExprLowerer:
         if self.__host.ctx.type_ctx.is_zst(expr.element_type):
             return buffer
 
-        index_slot = self.__host.values.build_alloca(
-            IR.IntLiteral(value=0, type_id=TypeCtx.u64_id), fat=False
-        )
-        header = self.__host.emitter.new_block("dyn.fill.head")
-        body = self.__host.emitter.new_block("dyn.fill.body")
-        exit_block = self.__host.emitter.new_block("dyn.fill.exit")
-        self.__host.set_terminator(IR.Br(header))
-
-        self.__host.switch_to(header)
-        index = self.__host.memory.build_load(index_slot)
-        filled = self.__host.emitter.emit(IR.Binary(
-            result=IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.bool_id),
-            op=BinaryOperator.Neq,
-            lhs=index,
-            rhs=count,
-        )).result
-        self.__host.set_terminator(IR.CondBr(filled, body, exit_block))
-
-        # 填充循环写在刚分配的缓冲上:这段封闭区域里不存在 del, live 恒真,
-        # 因此把窗口标进 IR、让元素 store 只保留 in_bounds 检查(同帧锁的 live=False
-        # 形态)。窗口的判定由检查插入 pass 依标记自行维护。
-        fill_root = buffer.name if isinstance(buffer, IR.Reg) else None
-        if fill_root is not None:
-            self.__host.emitter.emit(IR.LiveKnownBegin(root=buffer))
-        self.__host.switch_to(body)
-        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
-        elem_ptr = self.__host.memory.build_element_ptr(buffer, index, elem_ptr_type)
-        self.__host.memory.build_store(value, elem_ptr)
-        next_index = self.__host.emitter.emit(IR.Binary(
-            result=IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id),
-            op=BinaryOperator.Add,
-            lhs=index,
-            rhs=IR.IntLiteral(value=1, type_id=TypeCtx.u64_id),
-        )).result
-        self.__host.memory.build_store(next_index, index_slot)
-        self.__host.set_terminator(IR.Br(header))
-
-        self.__host.switch_to(exit_block)
-        if fill_root is not None:
-            self.__host.emitter.emit(IR.LiveKnownEnd(root=buffer))
+        # Malloc lowering can split its CFG block for allocation checks, so isolate the
+        # fill in a fresh block; subsequent branches then use the actual LLVM predecessor.
+        pattern_block = self.__host.emitter.new_block("dyn.fill.pattern")
+        self.__host.set_terminator(IR.Br(pattern_block))
+        self.__host.switch_to(pattern_block)
+        self.__host.emitter.emit(IR.MemSetPattern(dest=buffer, value=value, count=count))
         return buffer
     def resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
         """``@alloc<T>(n)``: trusted raw allocation, payload left uninitialized."""
