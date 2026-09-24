@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 
-from compiler.codegen.llvm.module import LLModule
+from compiler.codegen.llvm.base.module import LLModule
 
 # 帧退出 SENTINEL 写(all-ones u64)在优化路径上须为 volatile:
 # LLVM 内存模型把"经悬垂指针读已退出帧"视为 UB,DSE 可证明该写为死存储而

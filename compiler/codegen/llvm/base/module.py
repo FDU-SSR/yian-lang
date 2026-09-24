@@ -10,9 +10,9 @@ from llvmlite import ir
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.llvm.intrinsics import IntrinsicManager
-from compiler.codegen.llvm.types import LLTypeCtx
-from compiler.codegen.llvm.value import LLValue
+from compiler.codegen.llvm.base.intrinsics import IntrinsicManager
+from compiler.codegen.llvm.base.types import LLTypeCtx
+from compiler.codegen.llvm.base.value import LLValue
 from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 
 # 目标平台: 三元组与 data layout 必须成对出现在模块上。

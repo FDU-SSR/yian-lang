@@ -48,10 +48,10 @@ from compiler.codegen.cfg.passes.cleanup import Cleanup
 from compiler.codegen.cfg.passes.insert_checks import InsertChecks
 from compiler.codegen.cfg.passes.translator import CfgTranslator
 from compiler.codegen.error import CodegenError
-from compiler.codegen.llvm.emit import Emitter
-from compiler.codegen.llvm.module import LLModule, apply_target
-from compiler.codegen.llvm.translator import LLTranslator
-from compiler.codegen.llvm.types import LLTypeCtx
+from compiler.codegen.llvm.pipeline.emit import Emitter
+from compiler.codegen.llvm.base.module import LLModule, apply_target
+from compiler.codegen.llvm.pipeline.translator import LLTranslator
+from compiler.codegen.llvm.base.types import LLTypeCtx
 from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
 from compiler.error import CompilerError
 from compiler.frontend.lex.lexer import Lexer, LexError

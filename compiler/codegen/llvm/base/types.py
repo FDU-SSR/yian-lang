@@ -10,7 +10,7 @@ from llvmlite.binding import create_target_data  # type: ignore
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.llvm.value import LLType
+from compiler.codegen.llvm.base.value import LLType
 
 
 class LLTypeCtx:
