@@ -251,7 +251,7 @@ impl<K, V> Clone for HashMap<K, V> {
         let ctrls: u8* = @alloc<u8>(self.capacity);
         @memcpy(ctrls, self.ctrls, self.capacity);
         let buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(self.capacity);
-        @memcpy(buckets, self.buckets, self.capacity * @sizeof(Bucket<K, V>));
+        @memcpy(buckets, self.buckets, self.capacity * @sizeof<Bucket<K, V>>);
         Self(
             buckets,
             ctrls,

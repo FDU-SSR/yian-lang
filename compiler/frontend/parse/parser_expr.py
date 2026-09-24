@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from compiler.frontend.lex import token as Tok
-from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.error import ParseError
@@ -449,97 +448,35 @@ class ExprParser:
                     return expr
 
     def __parse_builtin(self) -> AST.Expr:
-        """Parse a compiler instruction from the reserved ``@name`` namespace."""
+        """Parse the shared ``@name<types>(values)`` instruction form."""
         at = self.__stream.consume_punctuator(Tok.PunctuatorKind.At)
         name = self.__stream.consume_identifier()
         kind = AST.BuiltinKind.try_from_name(name.name)
         if kind is None:
             raise ParseError(f"unknown builtin '{name.name}' (expected '@name')", name.span)
 
-        if kind == AST.BuiltinKind.SizeOf:
-            return self.__parse_sizeof(at.span)
-        if kind == AST.BuiltinKind.Undef:
-            return self.__parse_undef(at.span)
-        if kind == AST.BuiltinKind.Dangling:
-            return self.__parse_dangling(at.span)
-        if kind == AST.BuiltinKind.BitCast:
-            return self.__parse_bitcast(at.span)
-        if kind == AST.BuiltinKind.Alloc:
-            return self.__parse_alloc(at.span)
-        if kind == AST.BuiltinKind.Realloc:
-            return self.__parse_realloc(at.span)
+        type_args: list[ASTTy.ASTType] = []
+        end_span = name.span
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LAngle:
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
+            type_args = self.__stream.consume_separated(
+                self.__type_parser.parse_type, SEP_COMMA, TERM_RANGLE
+            )
+            end_span = self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle).span
 
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.BuiltinCall(span=at.span + end.span, kind=kind, args=args)
+        args: list[AST.Arg] = []
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LParen:
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+            args = self.__stream.consume_separated(self.parse_arg, SEP_COMMA, TERM_RPAREN)
+            end_span = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen).span
 
-    def __parse_sizeof(self, at_span: SrcSpan) -> AST.SizeOf:
-        """Parse ``@sizeof(type)`` — argument is unconditionally a type."""
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        ty = self.__type_parser.parse_type()
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.SizeOf(span=at_span + end.span, ty=ty)
-
-    def __parse_undef(self, at_span: SrcSpan) -> AST.Undef:
-        """Parse ``@Undef<T>()`` — 一个类型为 T 的未定义值(标准库内部用)。
-
-        保持函数调用风格: 类型参数之后必须有一个空实参表。
-        """
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-        ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.Undef(span=at_span + end.span, ty=ty)
-
-    def __parse_dangling(self, at_span: SrcSpan) -> AST.Dangling:
-        """Parse ``@dangling<T>()`` — 指向 T 的悬垂指针(标准库内部用)。
-
-        与 ``@Undef<T>()`` 同为类型参数 + 空实参表的形态。
-        """
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-        ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.Dangling(span=at_span + end.span, ty=ty)
-
-    def __parse_bitcast(self, at_span: SrcSpan) -> AST.BitCast:
-        """Parse ``@bitcast<type>(expr)`` — reinterpret a pointer as another pointer type."""
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-        ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        value = self.parse_expr()
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.BitCast(span=at_span + end.span, target_type=ty, value=value)
-
-    def __parse_alloc(self, at_span: SrcSpan) -> AST.Alloc:
-        """Parse ``@alloc<type>(count)`` — trusted raw allocation, standard library only."""
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-        ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        count = self.parse_expr()
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.Alloc(span=at_span + end.span, target_type=ty, count=count)
-
-    def __parse_realloc(self, at_span: SrcSpan) -> AST.Realloc:
-        """Parse ``@realloc<type>(pointer, count)`` — stdlib-only allocation resize."""
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LAngle)
-        ty = self.__type_parser.parse_type()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RAngle)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        pointer = self.parse_expr()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
-        count = self.parse_expr()
-        end = self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.Realloc(
-            span=at_span + end.span,
-            target_type=ty,
-            pointer=pointer,
-            count=count,
+        return AST.Builtin(
+            span=at.span + end_span,
+            kind=kind,
+            type_args=type_args,
+            args=args,
         )
 
     def parse_arg(self) -> AST.Arg:

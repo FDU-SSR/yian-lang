@@ -4,8 +4,11 @@ External C function declarations.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum, auto
+from typing import cast
 
+from compiler.analysis.ty.context import TypeCtx
 from llvmlite import ir  # type: ignore[import-untyped]
 
 # 胖指针块布局:每个堆块布局为「块头 + 负载」——块首 8 B 元数据
@@ -34,27 +37,65 @@ class IntrinsicKind(Enum):
     SysRandom = auto()
 
 
+def _int_type(bits: int) -> ir.Type:
+    return cast(ir.Type, ir.IntType(bits))
+
+
+def _pointer_type() -> ir.Type:
+    return cast(ir.Type, ir.PointerType())
+
+
+def _void_type() -> ir.Type:
+    return cast(ir.Type, ir.VoidType())
+
+
+def _double_type() -> ir.Type:
+    return cast(ir.Type, ir.DoubleType())
+
+
+@dataclass(frozen=True)
+class IntrinsicSpec:
+    return_type: ir.Type
+    parameter_types: tuple[ir.Type, ...]
+    name: str
+    return_type_id: int | None
+    parameter_attributes: tuple[tuple[int, str], ...] = ()
+    function_attributes: tuple[str, ...] = ("nounwind",)
+    append_volatile_flag: bool = False
+
+
 class IntrinsicManager:
-    __DECLARATIONS: dict[IntrinsicKind, tuple[ir.Type, list[ir.Type], str]] = {
-        IntrinsicKind.Malloc:    (ir.PointerType(), [ir.IntType(64)], "malloc"),
-        IntrinsicKind.Realloc:   (ir.PointerType(), [ir.PointerType(), ir.IntType(64)], "realloc"),
-        IntrinsicKind.Free:      (ir.VoidType(), [ir.PointerType()], "free"),
-        IntrinsicKind.Write:     (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "write"),
-        IntrinsicKind.Read:      (ir.IntType(64), [ir.IntType(32), ir.PointerType(), ir.IntType(64)], "read"),
-        IntrinsicKind.Open:      (ir.IntType(32), [ir.PointerType(), ir.IntType(32), ir.IntType(32)], "open"),
-        IntrinsicKind.Close:     (ir.IntType(32), [ir.IntType(32)], "close"),
-        IntrinsicKind.ImmediateExit: (ir.VoidType(), [ir.IntType(32)], "_exit"),
-        IntrinsicKind.StrLen: (ir.IntType(64), [ir.PointerType()], "strlen"),
-        # LLVM 内建 llvm.memcpy.p0.p0.i64: 第 4 个参数是 immarg isvolatile(恒 false)。
-        # 用内建而不是 C 库 memcpy —— 后端可以按已知长度内联展开/合并, 也不再有跨模块调用。
-        IntrinsicKind.MemCopy:   (ir.VoidType(), [ir.PointerType(), ir.PointerType(), ir.IntType(64), ir.IntType(1)], "llvm.memcpy.p0.p0.i64"),
-        # llvm.memset 同样以字节计数; 末参 isvolatile 恒 false。
-        IntrinsicKind.MemSet:    (ir.VoidType(), [ir.PointerType(), ir.IntType(8), ir.IntType(64), ir.IntType(1)], "llvm.memset.p0.i64"),
-        # LLVM 内建(llvm.sqrt.f64): 后端直接落 sqrtsd, 与 C 参考的 `sqrt()` 同一原语。
-        IntrinsicKind.Sqrt:      (ir.DoubleType(), [ir.DoubleType()], "llvm.sqrt.f64"),
-        IntrinsicKind.Sin:       (ir.DoubleType(), [ir.DoubleType()], "llvm.sin.f64"),
-        IntrinsicKind.Cos:       (ir.DoubleType(), [ir.DoubleType()], "llvm.cos.f64"),
-        IntrinsicKind.SysRandom: (ir.IntType(32), [], "rand"),
+    __DECLARATIONS: dict[IntrinsicKind, IntrinsicSpec] = {
+        IntrinsicKind.Malloc: IntrinsicSpec(_pointer_type(), (_int_type(64),), "malloc", None),
+        IntrinsicKind.Realloc: IntrinsicSpec(_pointer_type(), (_pointer_type(), _int_type(64)), "realloc", None),
+        IntrinsicKind.Free: IntrinsicSpec(_void_type(), (_pointer_type(),), "free", TypeCtx.void_id),
+        IntrinsicKind.Write: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "write", TypeCtx.u64_id),
+        IntrinsicKind.Read: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "read", TypeCtx.u64_id),
+        IntrinsicKind.Open: IntrinsicSpec(_int_type(32), (_pointer_type(), _int_type(32), _int_type(32)), "open", TypeCtx.i32_id),
+        IntrinsicKind.Close: IntrinsicSpec(_int_type(32), (_int_type(32),), "close", TypeCtx.i32_id),
+        IntrinsicKind.ImmediateExit: IntrinsicSpec(_void_type(), (_int_type(32),), "_exit", TypeCtx.void_id, function_attributes=("nounwind", "noreturn")),
+        IntrinsicKind.StrLen: IntrinsicSpec(_int_type(64), (_pointer_type(),), "strlen", TypeCtx.u64_id),
+        # LLVM memory intrinsics take an immarg isvolatile flag, which is always false here.
+        IntrinsicKind.MemCopy: IntrinsicSpec(
+            _void_type(),
+            (_pointer_type(), _pointer_type(), _int_type(64), _int_type(1)),
+            "llvm.memcpy.p0.p0.i64",
+            TypeCtx.void_id,
+            parameter_attributes=((0, "noalias"), (1, "noalias"), (3, "immarg")),
+            append_volatile_flag=True,
+        ),
+        IntrinsicKind.MemSet: IntrinsicSpec(
+            _void_type(),
+            (_pointer_type(), _int_type(8), _int_type(64), _int_type(1)),
+            "llvm.memset.p0.i64",
+            TypeCtx.void_id,
+            parameter_attributes=((3, "immarg"),),
+            append_volatile_flag=True,
+        ),
+        IntrinsicKind.Sqrt: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.sqrt.f64", TypeCtx.f64_id),
+        IntrinsicKind.Sin: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.sin.f64", TypeCtx.f64_id),
+        IntrinsicKind.Cos: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.cos.f64", TypeCtx.f64_id),
+        IntrinsicKind.SysRandom: IntrinsicSpec(_int_type(32), (), "rand", TypeCtx.u32_id),
     }
 
     def __init__(self, module: ir.Module) -> None:
@@ -66,23 +107,24 @@ class IntrinsicManager:
     def get(self, kind: IntrinsicKind) -> ir.Function:
         if kind in self.__cache:
             return self.__cache[kind]
-        return_type, param_types, name = self.__DECLARATIONS[kind]
-        func = ir.Function(self.__module, ir.FunctionType(return_type, param_types), name=name)
-        if kind in (IntrinsicKind.MemCopy, IntrinsicKind.MemSet):
-            # llvmlite 的参数属性白名单里没有 nocapture/readonly/writeonly, 只标能标的。
-            if kind is IntrinsicKind.MemCopy:
-                func.args[0].add_attribute("noalias")  # type: ignore
-                func.args[1].add_attribute("noalias")  # type: ignore
-            func.args[3].add_attribute("immarg")  # type: ignore
-        # 事实性标注(不是优化手段): 这些 C 函数不会 unwind —— libc 的 malloc/free/read/write
-        # 失败时返回错误值而不是抛异常, 本模块也用不到任何异常机制; 逐条按各自语义标:
-        # _exit 不返回(noreturn), 其余只标 nounwind。据此 LLVM 的 FunctionAttrs 才能为
-        # 调用它们的 YIAN 函数推出 nounwind(AArch64 等目标上落到无 EH 表的代码)。
-        func.attributes.add("nounwind")  # type: ignore
-        if kind is IntrinsicKind.ImmediateExit:
-            func.attributes.add("noreturn")  # type: ignore
+        spec = self.__DECLARATIONS[kind]
+        func = ir.Function(self.__module, ir.FunctionType(spec.return_type, list(spec.parameter_types)), name=spec.name)
+        for index, attribute in spec.parameter_attributes:
+            func.args[index].add_attribute(attribute)  # type: ignore
+        for attribute in spec.function_attributes:
+            func.attributes.add(attribute)  # type: ignore
         self.__cache[kind] = func
         return func
+
+    def prepare_call_args(self, kind: IntrinsicKind, args: list[ir.Value]) -> list[ir.Value]:
+        """Adapt source operands to the declared LLVM intrinsic signature."""
+        spec = self.__DECLARATIONS[kind]
+        if spec.append_volatile_flag:
+            return [*args, ir.Constant(ir.IntType(1), 0)]  # type: ignore
+        return args
+
+    def return_type_id(self, kind: IntrinsicKind) -> int | None:
+        return self.__DECLARATIONS[kind].return_type_id
 
     def get_memset_pattern(
         self,

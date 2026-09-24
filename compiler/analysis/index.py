@@ -632,7 +632,7 @@ def __walk_expression(
         case AST.Call(callee=callee, args=args):
             __walk_expression(callee, path, module, container, out)
             __walk_arguments(args, path, module, container, out)
-        case AST.BuiltinCall(args=args):
+        case AST.Builtin(args=args):
             __walk_arguments(args, path, module, container, out)
         case AST.MethodCall(receiver=receiver, args=args):
             __walk_expression(receiver, path, module, container, out)
@@ -650,13 +650,8 @@ def __walk_expression(
         case AST.ArrayRepeat(element=element, count=count):
             __walk_expression(element, path, module, container, out)
             __walk_expression(count, path, module, container, out)
-        case AST.DynValue(value=value) | AST.BitCast(value=value):
+        case AST.DynValue(value=value):
             __walk_expression(value, path, module, container, out)
-        case AST.Alloc(count=count):
-            __walk_expression(count, path, module, container, out)
-        case AST.Realloc(pointer=pointer, count=count):
-            __walk_expression(pointer, path, module, container, out)
-            __walk_expression(count, path, module, container, out)
         case AST.DynBuffer(size=size, element=element):
             __walk_expression(size, path, module, container, out)
             __walk_expression(element, path, module, container, out)

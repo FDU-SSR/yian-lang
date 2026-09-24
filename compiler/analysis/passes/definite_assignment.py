@@ -29,6 +29,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.builtins import BuiltinKind
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
@@ -199,19 +200,13 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Continue):
             return state
 
-        if isinstance(expr, HIR.Panic):
-            state = self.__check_expr(expr.message, state)
-            return state
-
-        if isinstance(expr, HIR.RuntimeFail):
-            return state
-
-        if isinstance(expr, HIR.ProcessExit):
-            state = self.__walk_neutral(expr.code, state)
-            return state
-
-        if isinstance(expr, HIR.ProcessExit):
-            state = self.__check_expr(expr.code, state)
+        if isinstance(expr, HIR.Builtin):
+            if expr.kind == BuiltinKind.AssumeInit and expr.args and isinstance(expr.args[0], HIR.Var):
+                sym_id = expr.args[0].symbol_id
+                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
+                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
+            for arg in expr.args:
+                state = self.__check_expr(arg, state)
             return state
 
         # -- declarations -------------------------------------------------
@@ -306,61 +301,14 @@ class DefiniteAssignment:
                 state = self.__check_expr(expr.element, state)
             return state
 
-        if isinstance(expr, HIR.Alloc):
-            return self.__check_expr(expr.count, state)
-
-        if isinstance(expr, HIR.Realloc):
-            state = self.__check_expr(expr.pointer, state)
-            return self.__check_expr(expr.count, state)
-
         # -- cast / bitcast -----------------------------------------------
         if isinstance(expr, HIR.Cast):
             return self.__check_expr(expr.value, state)
-
         if isinstance(expr, HIR.BitCast):
             return self.__check_expr(expr.value, state)
 
-        # -- sys calls ----------------------------------------------------
-        if isinstance(expr, HIR.Sqrt):
-            return self.__check_expr(expr.value, state)
-
-        if isinstance(expr, (HIR.Sin, HIR.Cos)):
-            return self.__check_expr(expr.value, state)
-
-        if isinstance(expr, HIR.SysRead):
-            state = self.__check_expr(expr.fd, state)
-            state = self.__check_expr(expr.buf, state)
-            return state
-
-        if isinstance(expr, HIR.SysWrite):
-            state = self.__check_expr(expr.fd, state)
-            state = self.__check_expr(expr.buf, state)
-            return state
-
-        if isinstance(expr, HIR.ArgCount):
-            return state
-
-        if isinstance(expr, HIR.ArgBytes):
-            return self.__check_expr(expr.index, state)
-
-        if isinstance(expr, HIR.MemCopy):
-            state = self.__check_expr(expr.dest, state)
-            state = self.__check_expr(expr.src, state)
-            state = self.__check_expr(expr.count, state)
-            return state
-
         if isinstance(expr, HIR.Delete):
             return self.__check_expr(expr.target, state)
-
-        if isinstance(expr, HIR.AssumeInit):
-            # Mark the variable VALID *before* checking, so the Var use
-            # inside assume_init itself does not trigger a DA error.
-            if isinstance(expr.value, HIR.Var):
-                sym_id = expr.value.symbol_id
-                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
-                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
-            state = self.__check_expr(expr.value, state)
-            return state
 
         # -- leaf nodes ---------------------------------------------------
         return state
@@ -584,11 +532,13 @@ class DefiniteAssignment:
         if isinstance(expr, HIR.Continue):
             return state
 
-        if isinstance(expr, HIR.Panic):
-            state = self.__walk_neutral(expr.message, state)
-            return state
-
-        if isinstance(expr, HIR.RuntimeFail):
+        if isinstance(expr, HIR.Builtin):
+            if expr.kind == BuiltinKind.AssumeInit and expr.args and isinstance(expr.args[0], HIR.Var):
+                sym_id = expr.args[0].symbol_id
+                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
+                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
+            for arg in expr.args:
+                state = self.__walk_neutral(arg, state)
             return state
 
         # -- calls ---------------------------------------------------------
@@ -666,58 +616,13 @@ class DefiniteAssignment:
                 state = self.__walk_neutral(expr.element, state)
             return state
 
-        if isinstance(expr, HIR.Alloc):
-            return self.__walk_neutral(expr.count, state)
-
-        if isinstance(expr, HIR.Realloc):
-            state = self.__walk_neutral(expr.pointer, state)
-            return self.__walk_neutral(expr.count, state)
-
         if isinstance(expr, HIR.Cast):
             return self.__walk_neutral(expr.value, state)
-
         if isinstance(expr, HIR.BitCast):
             return self.__walk_neutral(expr.value, state)
 
-        if isinstance(expr, HIR.Sqrt):
-            return self.__walk_neutral(expr.value, state)
-
-        if isinstance(expr, (HIR.Sin, HIR.Cos)):
-            return self.__walk_neutral(expr.value, state)
-
-        if isinstance(expr, HIR.SysRead):
-            state = self.__walk_neutral(expr.fd, state)
-            state = self.__walk_neutral(expr.buf, state)
-            return state
-
-        if isinstance(expr, HIR.SysWrite):
-            state = self.__walk_neutral(expr.fd, state)
-            state = self.__walk_neutral(expr.buf, state)
-            return state
-
-        if isinstance(expr, HIR.ArgCount):
-            return state
-
-        if isinstance(expr, HIR.ArgBytes):
-            return self.__walk_neutral(expr.index, state)
-
-        if isinstance(expr, HIR.MemCopy):
-            state = self.__walk_neutral(expr.dest, state)
-            state = self.__walk_neutral(expr.src, state)
-            state = self.__walk_neutral(expr.count, state)
-            return state
-
         if isinstance(expr, HIR.Delete):
             return self.__walk_neutral(expr.target, state)
-
-        if isinstance(expr, HIR.AssumeInit):
-            # Mark the variable VALID before walking, matching __check_expr.
-            if isinstance(expr.value, HIR.Var):
-                sym_id = expr.value.symbol_id
-                state = self.__set(state, self.__whole(sym_id), VarState.VALID)
-                state = self.__drop_keys(state, lambda k: k.sym_id == sym_id and bool(k.path))
-            state = self.__walk_neutral(expr.value, state)
-            return state
 
         return state
 

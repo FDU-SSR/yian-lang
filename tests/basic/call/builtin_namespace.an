@@ -9,5 +9,5 @@ fn main() {
     assert panic(1) == 2: "bare panic resolves normally";
     assert sizeof(1) == 3: "bare sizeof resolves normally";
     assert bitcast(1) == 5: "bare bitcast resolves normally";
-    assert @sizeof(i32) == 4: "namespaced sizeof remains builtin";
+    assert @sizeof<i32> == 4: "namespaced sizeof remains builtin";
 }

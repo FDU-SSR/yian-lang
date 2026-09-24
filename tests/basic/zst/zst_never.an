@@ -12,16 +12,16 @@ fn produce_never() -> ! {
 
 fn main() {
     // sizeof
-    assert @sizeof(!) == 0: "sizeof never";
+    assert @sizeof<!> == 0: "sizeof never";
 
     // array of never (length > 0, still ZST)
-    assert @sizeof(![4]) == 0: "array of never";
-    assert @sizeof(![0]) == 0: "zero-length array of never";
+    assert @sizeof<![4]> == 0: "array of never";
+    assert @sizeof<![0]> == 0: "zero-length array of never";
 
     // never in tuple
-    assert @sizeof((i32, !)) == @sizeof(i32): "tuple with never";
-    assert @sizeof((!, i32)) == @sizeof(i32): "tuple never first";
-    assert @sizeof((!, !)) == 0: "all-never tuple";
+    assert @sizeof<(i32, !)> == @sizeof<i32>: "tuple with never";
+    assert @sizeof<(!, i32)> == @sizeof<i32>: "tuple never first";
+    assert @sizeof<(!, !)> == 0: "all-never tuple";
 
     // never as parameter / return — just check sizeof, no call needed
     // (calling a diverging fn would terminate)

@@ -94,8 +94,8 @@ fn control(value: i32, items: i32[]) -> i32 {
         Circle(r) => r as i32,
         _ => total,
     };
-    let size: u64 = comptime if IS_RAW_MODE { @sizeof(Pair<i32>) as u64 } else { 0u64 };
-    return total + @sizeof(Point) as i32 + size as i32 + typeof(value);
+    let size: u64 = comptime if IS_RAW_MODE { @sizeof<Pair<i32>> as u64 } else { 0u64 };
+    return total + @sizeof<Point> as i32 + size as i32 + typeof(value);
 }
 
 fn main() {

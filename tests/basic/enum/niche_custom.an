@@ -17,9 +17,9 @@ enum Bytes {
 }
 
 fn main() {
-    assert @sizeof(Link) == @sizeof(i32*): "pointer niche layout";
-    assert @sizeof(Marker) == @sizeof(i32*): "reversed pointer niche layout";
-    assert @sizeof(Bytes) == @sizeof(u8[]): "slice niche layout";
+    assert @sizeof<Link> == @sizeof<i32*>: "pointer niche layout";
+    assert @sizeof<Marker> == @sizeof<i32*>: "reversed pointer niche layout";
+    assert @sizeof<Bytes> == @sizeof<u8[]>: "slice niche layout";
 
     let values = [3i32, 4];
     let p = values.ptr();

@@ -191,22 +191,18 @@ class ClosureLowering:
                 expr.element = self.__rewrite_type_ids(expr.element)
             case HIR.Cast():
                 expr.value = self.__rewrite_type_ids(expr.value)
+            case HIR.BitCast():
+                expr.value = self.__rewrite_type_ids(expr.value)
             case HIR.VariantConstruct() if expr.args is not None:
                 expr.args = {k: self.__rewrite_type_ids(v) for k, v in expr.args.items()}
-            case HIR.Panic():
-                expr.message = self.__rewrite_type_ids(expr.message)
-            case HIR.RuntimeFail():
-                pass
-            case HIR.Sqrt():
-                expr.value = self.__rewrite_type_ids(expr.value)
-            case HIR.Sin() | HIR.Cos():
-                expr.value = self.__rewrite_type_ids(expr.value)
-            case HIR.ArgCount():
-                pass
-            case HIR.ArgBytes():
-                expr.index = self.__rewrite_type_ids(expr.index)
-            case HIR.ProcessExit():
-                expr.code = self.__rewrite_type_ids(expr.code)
+            case HIR.Builtin():
+                expr.type_args = [
+                    self.__struct_id(type_id) if self.__is_closure_type(type_id) else type_id
+                    for type_id in expr.type_args
+                ]
+                expr.args = [self.__rewrite_type_ids(arg) for arg in expr.args]
+                if self.__is_closure_type(expr.type_id):
+                    expr.type_id = self.__struct_id(expr.type_id)
             case HIR.Delete():
                 expr.target = self.__rewrite_type_ids(expr.target)
             case HIR.DynValue():
@@ -215,15 +211,6 @@ class ClosureLowering:
                 expr.length = self.__rewrite_type_ids(expr.length)
                 if expr.element is not None:
                     expr.element = self.__rewrite_type_ids(expr.element)
-            case HIR.BitCast():
-                expr.value = self.__rewrite_type_ids(expr.value)
-            case HIR.Alloc():
-                expr.count = self.__rewrite_type_ids(expr.count)
-            case HIR.Realloc():
-                expr.pointer = self.__rewrite_type_ids(expr.pointer)
-                expr.count = self.__rewrite_type_ids(expr.count)
-            case HIR.AssumeInit():
-                expr.value = self.__rewrite_type_ids(expr.value)
             case _:
                 pass
         return expr
@@ -387,22 +374,12 @@ class ClosureLowering:
                 expr.element = self.__rewrite_one_capture(expr.element)
             case HIR.Cast():
                 expr.value = self.__rewrite_one_capture(expr.value)
+            case HIR.BitCast():
+                expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.VariantConstruct() if expr.args is not None:
                 expr.args = {k: self.__rewrite_one_capture(v) for k, v in expr.args.items()}
-            case HIR.Panic():
-                expr.message = self.__rewrite_one_capture(expr.message)
-            case HIR.RuntimeFail():
-                pass
-            case HIR.Sqrt():
-                expr.value = self.__rewrite_one_capture(expr.value)
-            case HIR.Sin() | HIR.Cos():
-                expr.value = self.__rewrite_one_capture(expr.value)
-            case HIR.ArgCount():
-                pass
-            case HIR.ArgBytes():
-                expr.index = self.__rewrite_one_capture(expr.index)
-            case HIR.ProcessExit():
-                expr.code = self.__rewrite_one_capture(expr.code)
+            case HIR.Builtin():
+                expr.args = [self.__rewrite_one_capture(arg) for arg in expr.args]
             case HIR.Delete():
                 expr.target = self.__rewrite_one_capture(expr.target)
             case HIR.DynValue():
@@ -411,15 +388,6 @@ class ClosureLowering:
                 expr.length = self.__rewrite_one_capture(expr.length)
                 if expr.element is not None:
                     expr.element = self.__rewrite_one_capture(expr.element)
-            case HIR.BitCast():
-                expr.value = self.__rewrite_one_capture(expr.value)
-            case HIR.Alloc():
-                expr.count = self.__rewrite_one_capture(expr.count)
-            case HIR.Realloc():
-                expr.pointer = self.__rewrite_one_capture(expr.pointer)
-                expr.count = self.__rewrite_one_capture(expr.count)
-            case HIR.AssumeInit():
-                expr.value = self.__rewrite_one_capture(expr.value)
             case HIR.Closure():
                 expr.captures = {k: self.__rewrite_one_capture(v) for k, v in expr.captures.items()}
             case _:

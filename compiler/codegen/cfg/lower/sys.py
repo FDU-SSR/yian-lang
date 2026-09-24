@@ -30,14 +30,14 @@ class SysLowerer:
     def __init__(self, host: SysHost) -> None:
         self.__host = host
 
-    def resolve_sys_read(self, expr: HIR.SysRead) -> IR.Value:
-        fd = self.__host.resolve_val(expr.fd)
-        buf = self.__host.resolve_val(expr.buf)
+    def resolve_sys_read(self, expr: HIR.Builtin) -> IR.Value:
+        fd = self.__host.resolve_val(expr.args[0])
+        buf = self.__host.resolve_val(expr.args[1])
         return self.build_sys_read(fd, buf)
 
-    def resolve_sys_write(self, expr: HIR.SysWrite) -> IR.Value:
-        fd = self.__host.resolve_val(expr.fd)
-        buf = self.__host.resolve_val(expr.buf)
+    def resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
+        fd = self.__host.resolve_val(expr.args[0])
+        buf = self.__host.resolve_val(expr.args[1])
         return self.build_sys_write(fd, buf)
 
     def build_sys_read(self, fd: IR.Value, buf: IR.Value) -> IR.Value:
@@ -58,13 +58,13 @@ class SysLowerer:
         self.__host.emitter.emit(IR.SysWrite(fd=fd, buf=buf))
         return self.__host.emitter.void_reg()
 
-    def resolve_open(self, expr: HIR.Open) -> IR.Value:
-        path = self.__host.resolve_val(expr.path)
-        flags = self.__host.resolve_val(expr.flags)
+    def resolve_open(self, expr: HIR.Builtin) -> IR.Value:
+        path = self.__host.resolve_val(expr.args[0])
+        flags = self.__host.resolve_val(expr.args[1])
         return self.build_open(path, flags)
 
-    def resolve_close(self, expr: HIR.Close) -> IR.Value:
-        fd = self.__host.resolve_val(expr.fd)
+    def resolve_close(self, expr: HIR.Builtin) -> IR.Value:
+        fd = self.__host.resolve_val(expr.args[0])
         return self.build_close(fd)
 
     def build_open(self, path: IR.Value, flags: IR.Value) -> IR.Value:
@@ -80,33 +80,33 @@ class SysLowerer:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.i32_id)
         return self.__host.emitter.emit(IR.Close(result=result, fd=fd)).result
 
-    def resolve_sqrt(self, expr: HIR.Sqrt) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
+    def resolve_sqrt(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.__host.resolve_val(expr.args[0])
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Sqrt(result=result, value=value)).result
 
-    def resolve_sin(self, expr: HIR.Sin) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
+    def resolve_sin(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.__host.resolve_val(expr.args[0])
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Sin(result=result, value=value)).result
 
-    def resolve_cos(self, expr: HIR.Cos) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
+    def resolve_cos(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.__host.resolve_val(expr.args[0])
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Cos(result=result, value=value)).result
 
-    def resolve_mem_copy(self, expr: HIR.MemCopy) -> IR.Value:
-        dest = self.__host.resolve_val(expr.dest)
-        src = self.__host.resolve_val(expr.src)
-        count = self.__host.resolve_val(expr.count)
+    def resolve_mem_copy(self, expr: HIR.Builtin) -> IR.Value:
+        dest = self.__host.resolve_val(expr.args[0])
+        src = self.__host.resolve_val(expr.args[1])
+        count = self.__host.resolve_val(expr.args[2])
         self.__host.emitter.emit(IR.MemCopy(dest=dest, src=src, count=count))
         return self.__host.emitter.void_reg()
 
-    def resolve_arg_count(self, _expr: HIR.ArgCount) -> IR.Value:
+    def resolve_arg_count(self, _expr: HIR.Builtin) -> IR.Value:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id)
         return self.__host.emitter.emit(IR.ArgCount(result=result)).result
 
-    def resolve_arg_bytes(self, expr: HIR.ArgBytes) -> IR.Value:
-        index = self.__host.resolve_val(expr.index)
+    def resolve_arg_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        index = self.__host.resolve_val(expr.args[0])
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.ArgBytes(result=result, index=index)).result

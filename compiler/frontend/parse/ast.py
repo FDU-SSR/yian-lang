@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
+from compiler.builtins import BuiltinKind
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.ast_export import export_program
 from compiler.frontend.parse.ast_type import DeducedType
@@ -24,50 +25,6 @@ class Identifier:
 
     def __repr__(self) -> str:
         return self.name
-
-
-class BuiltinKind(Enum):
-    """Compiler-provided instructions in the reserved ``@`` namespace."""
-
-    SizeOf = "sizeof"
-    Undef = "undef"
-    Dangling = "dangling"
-    BitCast = "bitcast"
-    Alloc = "alloc"
-    Realloc = "realloc"
-    Panic = "panic"
-    RuntimeFail = "runtime_fail"
-    AssumeInit = "assume_init"
-    MemCopy = "memcpy"
-    SliceFromParts = "slice_from_parts"
-    SliceGetPtr = "slice_get_ptr"
-    SliceGetLen = "slice_get_len"
-    StrFromParts = "str_from_parts"
-    StrGetPtr = "str_get_ptr"
-    StrGetLen = "str_get_len"
-    SysRead = "sys_read"
-    SysWrite = "sys_write"
-    Open = "open"
-    Close = "close"
-    Sqrt = "sqrt"
-    Sin = "sin"
-    Cos = "cos"
-    Argc = "argc"
-    ArgBytes = "arg_bytes"
-    Exit = "exit"
-
-    @property
-    def spelling(self) -> str:
-        return f"@{self.value}"
-
-    @classmethod
-    def try_from_name(cls, name: str) -> BuiltinKind | None:
-        # 大小写不敏感: 既有内置按小写书写(@sizeof/@memcpy/@alloc), 新增的 @Undef<T>
-        # 习惯大写, 两种都接受。
-        return _BUILTIN_KIND_BY_NAME.get(name.lower())
-
-
-_BUILTIN_KIND_BY_NAME: dict[str, BuiltinKind] = {kind.value: kind for kind in BuiltinKind}
 
 
 @dataclass
@@ -593,16 +550,18 @@ class Call:
 
 
 @dataclass
-class BuiltinCall:
-    """A call in the reserved compiler-instruction namespace."""
+class Builtin:
+    """One instruction in the reserved ``@`` namespace."""
 
     span: SrcSpan
     kind: BuiltinKind
+    type_args: list[ASTType]
     args: list[Arg]
 
     def __repr__(self) -> str:
-        args_str = ", ".join(str(arg) for arg in self.args)
-        return f"{self.kind.spelling}({args_str})"
+        types = f"<{', '.join(str(arg) for arg in self.type_args)}>" if self.type_args else ""
+        args = f"({', '.join(str(arg) for arg in self.args)})" if self.args else ""
+        return f"{self.kind.spelling}{types}{args}"
 
 
 @dataclass
@@ -646,74 +605,6 @@ class DynBuffer:
 
     def __repr__(self) -> str:
         return f"dyn[{self.size}] {self.element}"
-
-
-@dataclass
-class Undef:
-    """``@Undef<T>()`` — 一个类型为 T 的未定义值(ZST 之类的"无运行时数据"值)。"""
-    span: SrcSpan
-    ty: ASTType
-
-    def __repr__(self) -> str:
-        return f"@Undef<{self.ty}>()"
-
-
-@dataclass
-class SizeOf:
-    span: SrcSpan
-    ty: ASTType
-
-    def __repr__(self) -> str:
-        return f"@sizeof({self.ty})"
-
-
-@dataclass
-class Dangling:
-    """``@dangling<T>()`` — 指向 T 的悬垂指针(地址 = T 的对齐值, 恒非零)。
-
-    表示"没有底层对象的合法指针"(如空容器); 调用方只允许做指针算术/传递,
-    不得解引用。
-    """
-    span: SrcSpan
-    ty: ASTType
-
-    def __repr__(self) -> str:
-        return f"@dangling<{self.ty}>()"
-
-
-@dataclass
-class BitCast:
-    span: SrcSpan
-    target_type: ASTType
-    value: Expr
-
-    def __repr__(self) -> str:
-        return f"@bitcast<{self.target_type}>({self.value})"
-
-
-@dataclass
-class Alloc:
-    """``@alloc<T>(n)`` — trusted raw allocation of ``n`` uninitialized ``T``."""
-
-    span: SrcSpan
-    target_type: ASTType
-    count: Expr
-
-    def __repr__(self) -> str:
-        return f"@alloc<{self.target_type}>({self.count})"
-
-
-@dataclass
-class Realloc:
-    """``@realloc<T>(ptr, n)`` — resize a trusted allocation to ``n`` elements."""
-
-    span: SrcSpan
-    target_type: ASTType
-    pointer: Expr
-    count: Expr
-
-    def __repr__(self) -> str:
-        return f"@realloc<{self.target_type}>({self.pointer}, {self.count})"
 
 
 @dataclass
@@ -815,9 +706,8 @@ class ClosureExpr:
 
 Expr: TypeAlias = (
     Binary | Unary | FieldAccess
-    | Call | BuiltinCall | MethodCall
+    | Call | Builtin | MethodCall
     | DynValue | DynBuffer
-    | SizeOf | Undef | Dangling | BitCast | Alloc | Realloc
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block

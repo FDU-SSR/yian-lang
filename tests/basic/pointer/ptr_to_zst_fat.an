@@ -8,9 +8,9 @@
 struct Empty {}
 
 fn main() {
-    // @sizeof(ptr-to-ZST) == 0  (pointer itself is ZST)
-    assert @sizeof(void*) == 0: "@sizeof(*void) == 0";
-    assert @sizeof(Empty*) == 0: "@sizeof(*Empty) == 0";
+    // @sizeof<ptr-to-ZST> == 0  (pointer itself is ZST)
+    assert @sizeof<void*> == 0: "@sizeof<*void> == 0";
+    assert @sizeof<Empty*> == 0: "@sizeof<*Empty> == 0";
 
     // ZST pointers created by dyn; equality always true (indistinguishable)
     let p: void* = dyn[1] void;

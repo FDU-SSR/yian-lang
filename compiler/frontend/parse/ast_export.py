@@ -326,8 +326,8 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_unary(expr, guides, is_last)
         case AST.Call():
             return __export_call(expr, guides, is_last)
-        case AST.BuiltinCall():
-            return __export_builtin_call(expr, guides, is_last)
+        case AST.Builtin():
+            return __export_builtin(expr, guides, is_last)
         case AST.MethodCall():
             return __export_method_call(expr, guides, is_last)
         case AST.FieldAccess():
@@ -336,18 +336,6 @@ def __export_expr(expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
             return __export_dyn_value(expr, guides, is_last)
         case AST.DynBuffer():
             return __export_dyn_buffer(expr, guides, is_last)
-        case AST.SizeOf():
-            return __export_sizeof(expr, guides, is_last)
-        case AST.Undef():
-            return __line(guides, is_last, "Undef")
-        case AST.Dangling():
-            return __line(guides, is_last, "Dangling")
-        case AST.BitCast():
-            return __export_bitcast(expr, guides, is_last)
-        case AST.Alloc():
-            return __export_alloc(expr, guides, is_last)
-        case AST.Realloc():
-            return __export_realloc(expr, guides, is_last)
         case AST.TypeItem():
             return __export_type_item(expr, guides, is_last)
         case AST.Identifier():
@@ -433,8 +421,12 @@ def __export_call(expr: AST.Call, guides: list[bool], is_last: bool) -> str:
     return res
 
 
-def __export_builtin_call(expr: AST.BuiltinCall, guides: list[bool], is_last: bool) -> str:
-    res = __line(guides, is_last, f"BuiltinCall: {expr.kind.spelling}")
+def __export_builtin(expr: AST.Builtin, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, f"Builtin: {expr.kind.spelling}")
+    if expr.type_args:
+        child_guides = guides + [not is_last]
+        res += __line(child_guides, False if expr.args else True, "TypeArgs:")
+        res += __export_type_list(expr.type_args, child_guides + [expr.args != []])
     if expr.args:
         child_guides = guides + [not is_last]
         res += __line(child_guides, True, "Args:")
@@ -479,38 +471,6 @@ def __export_dyn_buffer(expr: AST.DynBuffer, guides: list[bool], is_last: bool) 
     res += __export_expr_child("Size", expr.size, guides, False, False)
     res += __export_expr_child("Element", expr.element, guides, is_last, True)
     return res
-
-
-def __export_sizeof(expr: AST.SizeOf, guides: list[bool], is_last: bool) -> str:
-    return __line(guides, is_last, "SizeOf")
-
-
-def __export_bitcast(expr: AST.BitCast, guides: list[bool], is_last: bool) -> str:
-    result = __line(guides, is_last, "BitCast")
-    guides.append(not is_last)
-    result += __line(guides, False, f"target_type: {expr.target_type}")
-    result += __export_expr(expr.value, guides, True)
-    guides.pop()
-    return result
-
-
-def __export_alloc(expr: AST.Alloc, guides: list[bool], is_last: bool) -> str:
-    result = __line(guides, is_last, "Alloc")
-    guides.append(not is_last)
-    result += __line(guides, False, f"target_type: {expr.target_type}")
-    result += __export_expr(expr.count, guides, True)
-    guides.pop()
-    return result
-
-
-def __export_realloc(expr: AST.Realloc, guides: list[bool], is_last: bool) -> str:
-    result = __line(guides, is_last, "Realloc")
-    guides.append(not is_last)
-    result += __line(guides, False, f"target_type: {expr.target_type}")
-    result += __export_expr_child("Pointer", expr.pointer, guides, True, False)
-    result += __export_expr_child("Count", expr.count, guides, True, True)
-    guides.pop()
-    return result
 
 
 def __export_type_item(expr: AST.TypeItem, guides: list[bool], is_last: bool) -> str:

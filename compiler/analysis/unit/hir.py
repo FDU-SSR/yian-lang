@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from compiler.analysis.ty import ty as Type
+from compiler.builtins import BuiltinKind
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
-from compiler.runtime_error import RuntimeErrorCode
 
 
 @dataclass
@@ -84,32 +84,6 @@ class Defer:
     """Deferred action registered in the current lexical block."""
     span: SrcSpan
     action: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class Panic:
-    span: SrcSpan
-    message: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class RuntimeFail:
-    """Unrecoverable compiler/stdlib runtime failure with a fixed code."""
-    span: SrcSpan
-    code: RuntimeErrorCode
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class SysWrite:
-    span: SrcSpan
-    fd: Expr
-    buf: Expr
     type_id: int
     is_place: bool
 
@@ -246,6 +220,17 @@ class Cast:
 
 
 @dataclass
+class BitCast:
+    """Type-directed representation cast inserted during coercion."""
+
+    span: SrcSpan
+    value: Expr
+    target_type: int
+    type_id: int
+    is_place: bool
+
+
+@dataclass
 class MethodCall:
     span: SrcSpan
     receiver: Expr
@@ -327,138 +312,14 @@ class DynBuffer:
 
 
 @dataclass
-class Undef:
-    """类型为 ``type_id`` 的未定义值; 值层不做任何初始化(标准库内部原语)。"""
+class Builtin:
+    """A type-checked compiler-provided instruction."""
+
     span: SrcSpan
+    kind: BuiltinKind
+    type_args: list[int]
+    args: list[Expr]
     type_id: int
-    is_place: bool
-
-
-@dataclass
-class SizeOf:
-    span: SrcSpan
-    target_type: int  # type_id of the type to get size of
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class Dangling:
-    """``@dangling<T>()`` — 指向 ``target_type`` 的悬垂指针(地址 = 对齐值)。"""
-    span: SrcSpan
-    target_type: int  # type_id of the pointee
-    type_id: int  # type_id of the resulting T*
-    is_place: bool
-
-
-@dataclass
-class BitCast:
-    span: SrcSpan
-    value: Expr
-    target_type: int  # type_id
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class Alloc:
-    """Trusted raw allocation: ``count`` uninitialized ``element_type`` values."""
-
-    span: SrcSpan
-    count: Expr
-    element_type: int  # type_id
-    type_id: int  # type_id of the resulting T*
-    is_place: bool
-
-
-@dataclass
-class Realloc:
-    """Resize a trusted allocation to ``count`` elements of ``element_type``."""
-
-    span: SrcSpan
-    pointer: Expr
-    count: Expr
-    element_type: int  # type_id
-    type_id: int  # type_id of the resulting T*
-    is_place: bool
-
-
-@dataclass
-class SysRead:
-    span: SrcSpan
-    fd: Expr
-    buf: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class Open:
-    span: SrcSpan
-    path: Expr   # str
-    flags: Expr  # i32
-    type_id: int  # i32
-    is_place: bool
-
-
-@dataclass
-class Close:
-    span: SrcSpan
-    fd: Expr     # i32
-    type_id: int  # i32
-    is_place: bool
-
-
-@dataclass
-class Sqrt:
-    """Square root of an ``f64`` value (hardware square root)."""
-    span: SrcSpan
-    value: Expr  # f64
-    type_id: int  # f64
-    is_place: bool
-
-
-@dataclass
-class Sin:
-    """Sine of an ``f64`` value."""
-    span: SrcSpan
-    value: Expr  # f64
-    type_id: int  # f64
-    is_place: bool
-
-
-@dataclass
-class Cos:
-    """Cosine of an ``f64`` value."""
-    span: SrcSpan
-    value: Expr  # f64
-    type_id: int  # f64
-    is_place: bool
-
-
-@dataclass
-class ArgCount:
-    """Return the process argument count supplied by the C entry point."""
-    span: SrcSpan
-    type_id: int  # u64
-    is_place: bool
-
-
-@dataclass
-class ArgBytes:
-    """Return one process argument as a borrowed byte slice."""
-    span: SrcSpan
-    index: Expr  # u64
-    type_id: int  # u8[]
-    is_place: bool
-
-
-@dataclass
-class ProcessExit:
-    """Terminate the process with an explicit status code."""
-    span: SrcSpan
-    code: Expr   # i32
-    type_id: int  # never
     is_place: bool
 
 
@@ -544,31 +405,6 @@ class BoolLiteral:
 
 
 @dataclass
-class AssumeInit:
-    span: SrcSpan
-    value: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class MemCopy:
-    """Byte-level memory copy builtin — ``@memcpy(dest, src, count)``.
-
-    ``dest`` and ``src`` are pointer-typed expressions (``T*`` / ``U*``,
-    possibly different pointee types); ``count`` is a ``u64`` byte length.
-    Semantics: unrestricted byte copy ``memcpy(dest, src, count)`` — hence
-    only available inside the stdlib (see ``restricted_ops``).
-    """
-    span: SrcSpan
-    dest: Expr
-    src: Expr
-    count: Expr
-    type_id: int
-    is_place: bool
-
-
-@dataclass
 class Ty:
     span: SrcSpan
     type_id: int
@@ -595,22 +431,17 @@ Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | Bool
 
 Expr: TypeAlias = (
     Binary | Unary
-    | Call | StructConstruct | Invoke | Cast
+    | Call | StructConstruct | Invoke | Cast | BitCast
     | MethodCall | VariantConstruct | FieldAccess | TupleAccess
     | ArrayAccess | SliceAccess
-    | DynValue | DynBuffer
-    | SizeOf | Undef | Dangling | BitCast | Alloc | Realloc | SysRead | SysWrite | Open | Close
-    | Sqrt | Sin | Cos | ArgCount | ArgBytes | ProcessExit
+    | DynValue | DynBuffer | Builtin
     | Tuple | Array | ArrayRepeat
     | Var | Literal | Ty | CompileConfig | Closure
     | Block
     | Return | Break | Continue | Defer
     | If | ComptimeIf | Loop
-    | Panic | RuntimeFail
     | Delete
     | Match
     | Semi
     | Let
-    | AssumeInit
-    | MemCopy
 )

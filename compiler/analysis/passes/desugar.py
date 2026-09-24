@@ -161,9 +161,10 @@ class Desugar:
                 literal=Tok.StrLiteral(raw=f"\"{message_value}\"", span=stmt.span, value=message_value),
             )
 
-        panic_call = AST.BuiltinCall(
+        panic_call = AST.Builtin(
             span=stmt.span,
             kind=AST.BuiltinKind.Panic,
+            type_args=[],
             args=[AST.Arg(span=message.span, name=None, value=message)],
         )
 
@@ -350,11 +351,9 @@ class Desugar:
                 expr.callee = visitor(expr.callee)
                 for arg in expr.args:
                     arg.value = visitor(arg.value)
-            case AST.BuiltinCall():
+            case AST.Builtin():
                 for arg in expr.args:
                     arg.value = visitor(arg.value)
-            case AST.BitCast():
-                expr.value = visitor(expr.value)
             case AST.MethodCall():
                 expr.receiver = visitor(expr.receiver)
                 for arg in expr.args:
@@ -366,11 +365,6 @@ class Desugar:
             case AST.DynBuffer():
                 expr.size = visitor(expr.size)
                 expr.element = visitor(expr.element)
-            case AST.Alloc():
-                expr.count = visitor(expr.count)
-            case AST.Realloc():
-                expr.pointer = visitor(expr.pointer)
-                expr.count = visitor(expr.count)
             case AST.Tuple():
                 expr.elements = [visitor(e) for e in expr.elements]
             case AST.Array():
@@ -416,11 +410,9 @@ class Desugar:
                 stmt.callee = expr_visitor(stmt.callee)
                 for arg in stmt.args:
                     arg.value = expr_visitor(arg.value)
-            case AST.BuiltinCall():
+            case AST.Builtin():
                 for arg in stmt.args:
                     arg.value = expr_visitor(arg.value)
-            case AST.BitCast():
-                stmt.value = expr_visitor(stmt.value)
             case AST.MethodCall():
                 stmt.receiver = expr_visitor(stmt.receiver)
                 for arg in stmt.args:
@@ -439,11 +431,6 @@ class Desugar:
             case AST.DynBuffer():
                 stmt.size = expr_visitor(stmt.size)
                 stmt.element = expr_visitor(stmt.element)
-            case AST.Alloc():
-                stmt.count = expr_visitor(stmt.count)
-            case AST.Realloc():
-                stmt.pointer = expr_visitor(stmt.pointer)
-                stmt.count = expr_visitor(stmt.count)
             case AST.Defer():
                 stmt.action = expr_visitor(stmt.action)
             case _:

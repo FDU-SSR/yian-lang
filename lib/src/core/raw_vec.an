@@ -7,7 +7,7 @@ pub struct RawVec<T> {
 }
 
 // 生命周期由使用者负责: 释放后再取用/再释放都是 UB, 这里不做任何检查。
-// ZST(`@sizeof(T) == 0`)没有真实数据可处理: 分配/拷贝/释放全部用 if 拦掉,
+// ZST(`@sizeof<T> == 0`)没有真实数据可处理: 分配/拷贝/释放全部用 if 拦掉,
 // 只维护容量计数。
 //
 // 空态(`cap == 0`)不占堆块: 数据指针是 `@dangling<T>()`(地址 = T 的对齐值),
@@ -15,7 +15,7 @@ pub struct RawVec<T> {
 // 非零是硬要求: `Option<str>`/`Option<Slice<T>>` 这类单字段载荷用"载荷全零"
 // 编码 None, 空容器(或由它派生的空 str/切片)一旦取到全零指针, `Some(空值)`
 // 就会被误判成 `None`。`@dangling` 给出的地址是对齐值(≥ 1), 且是定值 ——
-// `@Undef` 会在不同优化级别下物化成不同位型, 不能用来承载这个不变量。
+// `@undef` 会在不同优化级别下物化成不同位型, 不能用来承载这个不变量。
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
         Self.with_capacity(0)
@@ -27,8 +27,8 @@ impl<T> RawVec<T> {
     }
 
     static pub fn with_capacity(capacity: u64) -> Self {
-        if @sizeof(T) == 0 {
-            return @Undef<Self>();
+        if @sizeof<T> == 0 {
+            return @undef<Self>();
         }
         if capacity == 0 {
             return Self(
@@ -48,7 +48,7 @@ impl<T> RawVec<T> {
     }
 
     pub fn capacity() -> u64 {
-        if @sizeof(T) == 0 {
+        if @sizeof<T> == 0 {
             // ZST 没有存储上限: 报最大容量, Vec::push 的 len == capacity() 永不成立。
             u64.max()
         } else {
@@ -64,7 +64,7 @@ impl<T> RawVec<T> {
     }
 
     pub fn grow() {
-        if @sizeof(T) == 0 {
+        if @sizeof<T> == 0 {
             return;
         }
         let old_cap: u64 = self.cap;
@@ -82,7 +82,7 @@ impl<T> RawVec<T> {
     }
 
     pub fn reserve(len: u64, additional: u64) {
-        if @sizeof(T) == 0 {
+        if @sizeof<T> == 0 {
             return;
         }
         let required_cap: u64 = len + additional;
@@ -112,7 +112,7 @@ impl<T> RawVec<T> {
     }
 
     pub fn shrink_to_fit(len: u64) {
-        if @sizeof(T) == 0 {
+        if @sizeof<T> == 0 {
             return;
         }
         if self.cap <= len {
@@ -136,7 +136,7 @@ impl<T> RawVec<T> {
 
 impl<T> Drop for RawVec<T> {
     fn drop() {
-        if @sizeof(T) == 0 {
+        if @sizeof<T> == 0 {
             return;
         }
         self.release_data();

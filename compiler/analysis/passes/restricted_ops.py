@@ -25,6 +25,9 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.Sqrt,
         AST.BuiltinKind.Sin,
         AST.BuiltinKind.Cos,
+        AST.BuiltinKind.BitCast,
+        AST.BuiltinKind.Alloc,
+        AST.BuiltinKind.Realloc,
         AST.BuiltinKind.AssumeInit,
         AST.BuiltinKind.MemCopy,
         AST.BuiltinKind.Undef,
@@ -76,9 +79,7 @@ class RestrictedOpsChecker:
         if self.__error is not None:
             return
         match expr:
-            case AST.BitCast():
-                self.__report(expr.span, AST.BuiltinKind.BitCast.spelling)
-            case AST.BuiltinCall():
+            case AST.Builtin():
                 if expr.kind in RESTRICTED_BUILTINS:
                     self.__report(expr.span, expr.kind.spelling)
                 for arg in expr.args:
@@ -103,17 +104,6 @@ class RestrictedOpsChecker:
             case AST.DynBuffer():
                 self.__scan_expr(expr.size)
                 self.__scan_expr(expr.element)
-            case AST.Alloc():
-                self.__report(expr.span, AST.BuiltinKind.Alloc.spelling)
-                self.__scan_expr(expr.count)
-            case AST.Realloc():
-                self.__report(expr.span, AST.BuiltinKind.Realloc.spelling)
-                self.__scan_expr(expr.pointer)
-                self.__scan_expr(expr.count)
-            case AST.Undef():
-                self.__report(expr.span, AST.BuiltinKind.Undef.spelling)
-            case AST.Dangling():
-                self.__report(expr.span, AST.BuiltinKind.Dangling.spelling)
             case AST.Tuple():
                 for element in expr.elements:
                     self.__scan_expr(element)

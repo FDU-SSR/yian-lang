@@ -108,24 +108,14 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             res = __line(guides, is_last, f"Defer: span={__format_span(expr.span)} type_id={expr.type_id}")
             res += __export_expr_child("Action", expr.action, guides, is_last, True, type_ctx)
             return res
-        case HIR.Panic():
-            res = __line(guides, is_last, f"Panic: span={__format_span(expr.span)} type_id={expr.type_id}")
-            res += __export_expr_child("Message", expr.message, guides, is_last, True, type_ctx)
-            return res
-        case HIR.RuntimeFail():
-            return __line(
-                guides,
-                is_last,
-                f"RuntimeFail: span={__format_span(expr.span)} code={expr.code.name} type_id={expr.type_id}",
-            )
+        case HIR.Builtin():
+            return __export_builtin(expr, guides, is_last, type_ctx)
         case HIR.Delete():
             res = __line(guides, is_last, f"Delete: span={__format_span(expr.span)}")
             res += __export_expr_child("Target", expr.target, guides, is_last, True, type_ctx)
             return res
         case HIR.Match():
             return __export_match(expr, guides, is_last, type_ctx)
-        case HIR.SysWrite():
-            return __export_sys_write(expr, guides, is_last, type_ctx)
         case HIR.Semi():
             res = __line(guides, is_last, f"Semi: span={__format_span(expr.span)} type_id={expr.type_id}")
             res += __export_expr_child("Expr", expr.expr, guides, is_last, True, type_ctx)
@@ -148,6 +138,10 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_struct_construct(expr, guides, is_last, type_ctx)
         case HIR.Invoke():
             return __export_invoke(expr, guides, is_last, type_ctx)
+        case HIR.BitCast():
+            res = __line(guides, is_last, f"BitCast: target_type={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
+            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
+            return res
         case HIR.Cast():
             return __export_cast(expr, guides, is_last, type_ctx)
         case HIR.MethodCall():
@@ -166,70 +160,8 @@ def __export_expr(expr: HIR.Expr, guides: list[bool], is_last: bool, type_ctx: T
             return __export_dyn_value(expr, guides, is_last, type_ctx)
         case HIR.DynBuffer():
             return __export_dyn_buffer(expr, guides, is_last, type_ctx)
-        case HIR.SizeOf():
-            return __export_size_of(expr, guides, is_last, type_ctx)
-        case HIR.Undef():
-            return __line(guides, is_last, f"Undef: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place}")
-        case HIR.Dangling():
-            return __line(guides, is_last, f"Dangling: target={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place}")
-        case HIR.BitCast():
-            return __export_bit_cast(expr, guides, is_last, type_ctx)
-        case HIR.Alloc():
-            return __export_alloc(expr, guides, is_last, type_ctx)
-        case HIR.Realloc():
-            return __export_realloc(expr, guides, is_last, type_ctx)
-        case HIR.SysRead():
-            return __export_sys_read(expr, guides, is_last, type_ctx)
-        case HIR.Open():
-            return __export_open(expr, guides, is_last, type_ctx)
-        case HIR.Close():
-            return __export_close(expr, guides, is_last, type_ctx)
-        case HIR.Sqrt():
-            res = __line(
-                guides,
-                is_last,
-                f"Sqrt: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}",
-            )
-            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
-            return res
-        case HIR.Sin() | HIR.Cos():
-            res = __line(
-                guides,
-                is_last,
-                f"{type(expr).__name__}: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}",
-            )
-            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
-            return res
-        case HIR.ArgCount():
-            return __line(
-                guides,
-                is_last,
-                f"ArgCount: type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}",
-            )
-        case HIR.ArgBytes():
-            res = __line(
-                guides,
-                is_last,
-                f"ArgBytes: type={__format_type(type_ctx, expr.type_id)} span={__format_span(expr.span)}",
-            )
-            res += __export_expr_child("Index", expr.index, guides, is_last, True, type_ctx)
-            return res
-        case HIR.ProcessExit():
-            res = __line(guides, is_last, f"ProcessExit: span={__format_span(expr.span)}")
-            res += __export_expr_child("Code", expr.code, guides, is_last, True, type_ctx)
-            return res
-        case HIR.MemCopy():
-            res = __line(guides, is_last, f"MemCopy: span={__format_span(expr.span)}")
-            res += __export_expr_child("Dest", expr.dest, guides, is_last, False, type_ctx)
-            res += __export_expr_child("Src", expr.src, guides, is_last, False, type_ctx)
-            res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
-            return res
         case HIR.Closure():
             res = __line(guides, is_last, f"Closure: type={__format_type(type_ctx, expr.type_id)} captures={list(expr.captures.keys())} span={__format_span(expr.span)}")
-            return res
-        case HIR.AssumeInit():
-            res = __line(guides, is_last, f"AssumeInit: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-            res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
             return res
         case HIR.Tuple():
             return __export_tuple(expr, guides, is_last, type_ctx)
@@ -413,53 +345,17 @@ def __export_dyn_buffer(expr: HIR.DynBuffer, guides: list[bool], is_last: bool, 
     return res
 
 
-def __export_size_of(expr: HIR.SizeOf, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    return __line(guides, is_last, f"SizeOf: target_type={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-
-
-def __export_bit_cast(expr: HIR.BitCast, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"BitCast: target_type={__format_type(type_ctx, expr.target_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Value", expr.value, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_alloc(expr: HIR.Alloc, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Alloc: element_type={__format_type(type_ctx, expr.element_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_realloc(expr: HIR.Realloc, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Realloc: element_type={__format_type(type_ctx, expr.element_type)} type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Pointer", expr.pointer, guides, is_last, False, type_ctx)
-    res += __export_expr_child("Count", expr.count, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_sys_read(expr: HIR.SysRead, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"SysRead: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
-    res += __export_expr_child("Buf", expr.buf, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_open(expr: HIR.Open, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Open: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Path", expr.path, guides, is_last, False, type_ctx)
-    res += __export_expr_child("Flags", expr.flags, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_close(expr: HIR.Close, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"Close: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Fd", expr.fd, guides, is_last, True, type_ctx)
-    return res
-
-
-def __export_sys_write(expr: HIR.SysWrite, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    res = __line(guides, is_last, f"SysWrite: type={__format_type(type_ctx, expr.type_id)} place={expr.is_place} span={__format_span(expr.span)}")
-    res += __export_expr_child("Fd", expr.fd, guides, is_last, False, type_ctx)
-    res += __export_expr_child("Buf", expr.buf, guides, is_last, True, type_ctx)
+def __export_builtin(expr: HIR.Builtin, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
+    type_args = ", ".join(__format_type(type_ctx, type_id) for type_id in expr.type_args)
+    type_suffix = f"<{type_args}>" if expr.type_args else ""
+    res = __line(
+        guides,
+        is_last,
+        f"Builtin: {expr.kind.spelling}{type_suffix} type={__format_type(type_ctx, expr.type_id)} "
+        f"place={expr.is_place} span={__format_span(expr.span)}",
+    )
+    for index, arg in enumerate(expr.args):
+        res += __export_expr_child(f"Arg {index}", arg, guides, is_last, index == len(expr.args) - 1, type_ctx)
     return res
 
 

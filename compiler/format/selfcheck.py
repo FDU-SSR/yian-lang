@@ -290,6 +290,7 @@ def __hugs_after_bang(token: Tok.Token) -> bool:
         Tok.PunctuatorKind.Semicolon,
         Tok.PunctuatorKind.RParen,
         Tok.PunctuatorKind.RBracket,
+        Tok.PunctuatorKind.RAngle,
         Tok.PunctuatorKind.Dot,
         Tok.PunctuatorKind.Colon,
     ):

@@ -18,6 +18,7 @@ from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.lower.checks import CheckState
 from compiler.codegen.cfg.lower.emitter import FunctionEmitter
 from compiler.codegen.error import CodegenError
+from compiler.runtime_error import parse_runtime_error_code
 
 
 @dataclass
@@ -176,17 +177,23 @@ class StmtLowerer:
             return self.__host.emitter.void_reg()
         return self.__host.emitter.never_reg()
 
-    def translate_panic(self, stmt: HIR.Panic) -> IR.Value:
-        msg_val = self.__host.resolve_val(stmt.message)
+    def translate_panic(self, stmt: HIR.Builtin) -> IR.Value:
+        msg_val = self.__host.resolve_val(stmt.args[0])
         self.__host.set_terminator(IR.Panic(msg_val))
         return self.__host.emitter.never_reg()
 
-    def translate_runtime_fail(self, stmt: HIR.RuntimeFail) -> IR.Value:
-        self.__host.set_terminator(IR.RuntimeFail(stmt.code))
+    def translate_runtime_fail(self, stmt: HIR.Builtin) -> IR.Value:
+        arg = stmt.args[0]
+        if not isinstance(arg, HIR.StrLiteral):
+            raise CodegenError("runtime error code must be a string literal", stmt.span)
+        code = parse_runtime_error_code(arg.value)
+        if code is None:
+            raise CodegenError(f"unknown runtime error code '{arg.value}'", stmt.span)
+        self.__host.set_terminator(IR.RuntimeFail(code))
         return self.__host.emitter.never_reg()
 
-    def translate_process_exit(self, stmt: HIR.ProcessExit) -> IR.Value:
-        code = self.__host.resolve_val(stmt.code)
+    def translate_process_exit(self, stmt: HIR.Builtin) -> IR.Value:
+        code = self.__host.resolve_val(stmt.args[0])
         self.__host.set_terminator(IR.ProcessExit(code=code))
         return self.__host.emitter.never_reg()
 
@@ -303,4 +310,3 @@ class StmtLowerer:
     # ------------------------------------------------------------------
     # expression lowering: resolve_val (value) / __resolve_addr (address)
     # ------------------------------------------------------------------
-

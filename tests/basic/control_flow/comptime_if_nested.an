@@ -15,13 +15,13 @@ fn never_branch() -> i32 {
 
 fn main() {
     let selected: i32 = comptime if IS_RAW_MODE {
-        comptime if @sizeof(i32*) == 8u64 {
+        comptime if @sizeof<i32*> == 8u64 {
             raw_branch()
         } else {
             never_branch()
         }
     } else {
-        comptime if @sizeof(i32*) == 24u64 {
+        comptime if @sizeof<i32*> == 24u64 {
             fat_branch()
         } else {
             never_branch()

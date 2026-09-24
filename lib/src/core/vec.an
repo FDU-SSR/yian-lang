@@ -54,7 +54,7 @@ impl<T> Vec<T> {
         let src = other.raw_vec.ptr();
         let dst = self.raw_vec.ptr() + self.len;
 
-        @memcpy(dst, src, count * @sizeof(T));
+        @memcpy(dst, src, count * @sizeof<T>);
 
         self.len += count;
     }
@@ -150,7 +150,7 @@ impl<T> Vec<T> {
         let src = slice.ptr();
         let dst = self.raw_vec.ptr() + self.len;
 
-        @memcpy(dst, src, count * @sizeof(T));
+        @memcpy(dst, src, count * @sizeof<T>);
 
         self.len += count;
     }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.assign_check import build_assign
+from compiler.analysis.lowering.builtin_dispatcher import BuiltinDispatcher
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
@@ -39,6 +40,7 @@ class ExprChecker:
     def __init__(self, ctx: SemCtx):
         self.__ctx = ctx
         self.__call_dispatcher = CallDispatcher(ctx, self)
+        self.__builtin_dispatcher = BuiltinDispatcher(ctx, self)
         self.__closure_helper = ClosureHelper(ctx, self)
         self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
         self.__defer_depth = 0
@@ -82,27 +84,15 @@ class ExprChecker:
             case AST.FieldAccess():
                 return self.__handle_field_access(expr)
             case AST.Call():
-                return self.__handle_call(expr)
-            case AST.BuiltinCall():
-                return self.__call_dispatcher.handle_builtin(expr)
+                return self.__call_dispatcher.handle_call(expr)
+            case AST.Builtin():
+                return self.__builtin_dispatcher.handle(expr)
             case AST.MethodCall():
                 return self.__handle_method_call(expr)
             case AST.DynValue():
                 return self.__handle_dyn_value(expr)
             case AST.DynBuffer():
                 return self.__handle_dyn_buffer(expr)
-            case AST.SizeOf():
-                return self.__handle_sizeof(expr)
-            case AST.Undef():
-                return self.__handle_undef(expr)
-            case AST.Dangling():
-                return self.__handle_dangling(expr)
-            case AST.BitCast():
-                return self.__handle_bitcast(expr)
-            case AST.Alloc():
-                return self.__handle_alloc(expr)
-            case AST.Realloc():
-                return self.__handle_realloc(expr)
             case AST.TypeItem():
                 return self.__handle_type_item(expr)
             case AST.Identifier():
@@ -146,9 +136,6 @@ class ExprChecker:
                 pass
         return result
 
-    def __handle_call(self, node: AST.Call) -> HIR.Expr:
-        return self.__call_dispatcher.handle_call(node)
-
     def __handle_method_call(self, node: AST.MethodCall) -> HIR.Expr:
         result = self.__call_dispatcher.handle_method_call(node)
         match result:
@@ -166,91 +153,6 @@ class ExprChecker:
 
     def __handle_dyn_buffer(self, node: AST.DynBuffer) -> HIR.Expr:
         return self.__op_builder.build_dyn_buffer(node.span, node.element, node.size)
-
-    def __handle_undef(self, node: AST.Undef) -> HIR.Expr:
-        type_id = self.__ctx.resolve_type(node.ty)
-        return HIR.Undef(span=node.span, type_id=type_id, is_place=False)
-
-    def __handle_dangling(self, node: AST.Dangling) -> HIR.Expr:
-        """``@dangling<T>()`` — 指向 T 的悬垂指针, 不做任何分配。"""
-        target_type_id = self.__ctx.resolve_type(node.ty)
-        ptr_type_id = self.__ctx.type_ctx.alloc_pointer(target_type_id)
-        return HIR.Dangling(
-            span=node.span,
-            target_type=target_type_id,
-            type_id=ptr_type_id,
-            is_place=False,
-        )
-
-    def __handle_sizeof(self, node: AST.SizeOf) -> HIR.Expr:
-        type_id = self.__ctx.resolve_type(node.ty)
-        return HIR.SizeOf(span=node.span, target_type=type_id, type_id=self.__ctx.type_ctx.u64_id, is_place=False)
-
-    def __handle_bitcast(self, node: AST.BitCast) -> HIR.Expr:
-        target_type_id = self.__ctx.resolve_type(node.target_type)
-        value = self.value(node.value)
-
-        value_ty = self.__ctx.type_ctx[value.type_id]
-        target_ty = self.__ctx.type_ctx[target_type_id]
-        if not isinstance(value_ty, (Type.PointerType, Type.RefType)):
-            raise AnalysisError(
-                f"'bitcast' expects a pointer expression, "
-                f"got '{self.__ctx.type_ctx.get_name(value.type_id)}'",
-                node.span,
-            )
-        if not isinstance(target_ty, Type.PointerType):
-            raise AnalysisError(
-                f"'bitcast' target type must be a pointer type, "
-                f"got '{self.__ctx.type_ctx.get_name(target_type_id)}'",
-                node.span,
-            )
-
-        return HIR.BitCast(
-            span=node.span,
-            value=value,
-            target_type=target_type_id,
-            type_id=target_type_id,
-            is_place=False,
-        )
-
-    def __handle_alloc(self, node: AST.Alloc) -> HIR.Expr:
-        """``@alloc<T>(n)`` — trusted raw allocation of ``n`` uninitialized ``T``."""
-        element_type_id = self.__ctx.resolve_type(node.target_type)
-        count = self.coerce(self.value(node.count), TypeCtx.u64_id)
-        ptr_type_id = self.__ctx.type_ctx.alloc_pointer(element_type_id)
-        return HIR.Alloc(
-            span=node.span,
-            count=count,
-            element_type=element_type_id,
-            type_id=ptr_type_id,
-            is_place=False,
-        )
-
-    def __handle_realloc(self, node: AST.Realloc) -> HIR.Expr:
-        """``@realloc<T>(ptr, n)`` resizes a trusted allocation to ``n`` elements."""
-        element_type_id = self.__ctx.resolve_type(node.target_type)
-        pointer = self.value(node.pointer)
-        pointer_type = self.__ctx.type_ctx[
-            self.__ctx.type_ctx.resolve_aliases(pointer.type_id)
-        ]
-        if not isinstance(pointer_type, Type.PointerType) or not self.__ctx.type_ctx.is_same_type(
-            pointer_type.pointee_type, element_type_id
-        ):
-            raise AnalysisError(
-                f"'realloc' expects a '{self.__ctx.type_ctx.get_name(self.__ctx.type_ctx.alloc_pointer(element_type_id))}' pointer, "
-                f"got '{self.__ctx.type_ctx.get_name(pointer.type_id)}'",
-                node.pointer.span,
-            )
-        count = self.coerce(self.value(node.count), TypeCtx.u64_id)
-        pointer_type_id = self.__ctx.type_ctx.alloc_pointer(element_type_id)
-        return HIR.Realloc(
-            span=node.span,
-            pointer=pointer,
-            count=count,
-            element_type=element_type_id,
-            type_id=pointer_type_id,
-            is_place=False,
-        )
 
     def __handle_type_item(self, node: AST.TypeItem) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None

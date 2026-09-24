@@ -30,7 +30,7 @@ fn main() {
     } else {
         0u8
     };
-    let sized: u64 = comptime if @sizeof(i32[2]) == 8u64 {
+    let sized: u64 = comptime if @sizeof<i32[2]> == 8u64 {
         8u64
     } else {
         0u64

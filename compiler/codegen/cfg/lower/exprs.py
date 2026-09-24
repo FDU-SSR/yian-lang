@@ -17,6 +17,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.type_ops import default_literals
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.builtins import BuiltinKind
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
 from compiler.codegen.cfg.lower.calls import CallsLowerer
@@ -57,6 +58,34 @@ class ExprLowerer:
 
     def __init__(self, host: ExprHost) -> None:
         self.__host = host
+        self.__builtin_handlers: dict[BuiltinKind, Callable[[HIR.Builtin], IR.Value]] = {
+            BuiltinKind.SizeOf: self.__resolve_size_of,
+            BuiltinKind.Undef: self.__resolve_undef,
+            BuiltinKind.Dangling: self.__resolve_dangling,
+            BuiltinKind.BitCast: self.__resolve_bit_cast,
+            BuiltinKind.Alloc: self.__resolve_alloc,
+            BuiltinKind.Realloc: self.__resolve_realloc,
+            BuiltinKind.Panic: self.__resolve_panic,
+            BuiltinKind.RuntimeFail: self.__resolve_runtime_fail,
+            BuiltinKind.AssumeInit: self.__resolve_assume_init,
+            BuiltinKind.MemCopy: self.__resolve_mem_copy,
+            BuiltinKind.SliceFromParts: self.__resolve_slice_from_parts,
+            BuiltinKind.SliceGetPtr: self.__resolve_slice_get_ptr,
+            BuiltinKind.SliceGetLen: self.__resolve_slice_get_len,
+            BuiltinKind.StrFromParts: self.__resolve_str_from_parts,
+            BuiltinKind.StrGetPtr: self.__resolve_str_get_ptr,
+            BuiltinKind.StrGetLen: self.__resolve_str_get_len,
+            BuiltinKind.SysRead: self.__resolve_sys_read,
+            BuiltinKind.SysWrite: self.__resolve_sys_write,
+            BuiltinKind.Open: self.__resolve_open,
+            BuiltinKind.Close: self.__resolve_close,
+            BuiltinKind.Sqrt: self.__resolve_sqrt,
+            BuiltinKind.Sin: self.__resolve_sin,
+            BuiltinKind.Cos: self.__resolve_cos,
+            BuiltinKind.Argc: self.__resolve_argc,
+            BuiltinKind.ArgBytes: self.__resolve_arg_bytes,
+            BuiltinKind.Exit: self.__resolve_exit,
+        }
 
     def resolve_val(self, expr: HIR.Expr) -> IR.Value:
         """Lower *expr* to a value."""
@@ -82,12 +111,6 @@ class ExprLowerer:
                 return self.__host.stmts.translate_defer(expr)
             case HIR.Delete():
                 return self.__host.stmts.translate_delete(expr)
-            case HIR.Panic():
-                return self.__host.stmts.translate_panic(expr)
-            case HIR.RuntimeFail():
-                return self.__host.stmts.translate_runtime_fail(expr)
-            case HIR.ProcessExit():
-                return self.__host.stmts.translate_process_exit(expr)
             case HIR.Semi():
                 return self.__host.stmts.translate_semi(expr)
             case HIR.Let():
@@ -121,40 +144,10 @@ class ExprLowerer:
                 return self.resolve_dyn_value(expr)
             case HIR.DynBuffer():
                 return self.resolve_dyn_buffer(expr)
-            case HIR.SizeOf():
-                return self.__host.values.resolve_size_of(expr)
-            case HIR.Undef():
-                return self.__host.values.resolve_undef(expr)
-            case HIR.Dangling():
-                return self.__host.values.resolve_dangling(expr)
             case HIR.BitCast():
                 return self.__host.values.resolve_bit_cast(expr)
-            case HIR.Alloc():
-                return self.resolve_alloc(expr)
-            case HIR.Realloc():
-                return self.__resolve_realloc(expr)
-            case HIR.AssumeInit():
-                return self.resolve_val(expr.value)
-            case HIR.SysRead():
-                return self.__host.sys.resolve_sys_read(expr)
-            case HIR.SysWrite():
-                return self.__host.sys.resolve_sys_write(expr)
-            case HIR.MemCopy():
-                return self.__host.sys.resolve_mem_copy(expr)
-            case HIR.Open():
-                return self.__host.sys.resolve_open(expr)
-            case HIR.Close():
-                return self.__host.sys.resolve_close(expr)
-            case HIR.Sqrt():
-                return self.__host.sys.resolve_sqrt(expr)
-            case HIR.Sin():
-                return self.__host.sys.resolve_sin(expr)
-            case HIR.Cos():
-                return self.__host.sys.resolve_cos(expr)
-            case HIR.ArgCount():
-                return self.__host.sys.resolve_arg_count(expr)
-            case HIR.ArgBytes():
-                return self.__host.sys.resolve_arg_bytes(expr)
+            case HIR.Builtin():
+                return self.resolve_builtin(expr)
             case HIR.Tuple():
                 return self.__host.values.resolve_tuple(expr)
             case HIR.Array():
@@ -338,16 +331,97 @@ class ExprLowerer:
         self.__host.emitter.emit(IR.MemSetPattern(dest=buffer, value=value, count=count))
         return buffer
 
-    def resolve_alloc(self, expr: HIR.Alloc) -> IR.Value:
-        """``@alloc<T>(n)``: trusted raw allocation, payload left uninitialized."""
-        size = self.resolve_val(expr.count)
-        return self.__host.memory.build_malloc(expr.element_type, size)
+    def resolve_builtin(self, expr: HIR.Builtin) -> IR.Value:
+        handler = self.__builtin_handlers.get(expr.kind)
+        if handler is None:
+            raise CodegenError(f"unregistered builtin instruction '{expr.kind.spelling}'", expr.span)
+        return handler(expr)
 
-    def __resolve_realloc(self, expr: HIR.Realloc) -> IR.Value:
-        """``@realloc<T>(ptr, n)``: resize a trusted allocation, preserving its prefix."""
-        pointer = self.resolve_val(expr.pointer)
-        count = self.resolve_val(expr.count)
-        return self.__host.memory.build_realloc(expr.element_type, pointer, count)
+    def __resolve_size_of(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.values.resolve_size_of(expr)
+
+    def __resolve_undef(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.values.resolve_undef(expr)
+
+    def __resolve_dangling(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.values.resolve_dangling(expr)
+
+    def __resolve_bit_cast(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.values.resolve_bit_cast(expr)
+
+    def __resolve_alloc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.memory.build_malloc(expr.type_args[0], self.resolve_val(expr.args[0]))
+
+    def __resolve_realloc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.memory.build_realloc(
+            expr.type_args[0], self.resolve_val(expr.args[0]), self.resolve_val(expr.args[1]),
+        )
+
+    def __resolve_panic(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.stmts.translate_panic(expr)
+
+    def __resolve_runtime_fail(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.stmts.translate_runtime_fail(expr)
+
+    def __resolve_assume_init(self, expr: HIR.Builtin) -> IR.Value:
+        return self.resolve_val(expr.args[0])
+
+    def __resolve_mem_copy(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_mem_copy(expr)
+
+    def __resolve_slice_from_parts(self, expr: HIR.Builtin) -> IR.Value:
+        aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)
+        return self.__host.values.resolve_tuple(aggregate)
+
+    def __resolve_slice_get_ptr(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__host.memory.build_extract_value(value, 0, expr.type_id)
+
+    def __resolve_slice_get_len(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__host.memory.build_extract_value(value, 3, expr.type_id)
+
+    def __resolve_str_from_parts(self, expr: HIR.Builtin) -> IR.Value:
+        aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)
+        return self.__host.values.resolve_tuple(aggregate)
+
+    def __resolve_str_get_ptr(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__host.memory.build_extract_value(value, 0, expr.type_id)
+
+    def __resolve_str_get_len(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__host.memory.build_extract_value(value, 3, expr.type_id)
+
+    def __resolve_sys_read(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_sys_read(expr)
+
+    def __resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_sys_write(expr)
+
+    def __resolve_open(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_open(expr)
+
+    def __resolve_close(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_close(expr)
+
+    def __resolve_sqrt(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_sqrt(expr)
+
+    def __resolve_sin(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_sin(expr)
+
+    def __resolve_cos(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_cos(expr)
+
+    def __resolve_argc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_arg_count(expr)
+
+    def __resolve_arg_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.sys.resolve_arg_bytes(expr)
+
+    def __resolve_exit(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__host.stmts.translate_process_exit(expr)
 
     def resolve_var(self, expr: HIR.Var) -> IR.Value:
         addr = self.__host.values.resolve_var_addr(expr)

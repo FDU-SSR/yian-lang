@@ -5,9 +5,9 @@ fn produce() -> ! {
 }
 
 fn main() {
-    assert @sizeof(!) == 0: "sizeof never";
-    assert @sizeof(![4]) == 0: "array of never";
-    assert @sizeof((i32, !)) == @sizeof(i32): "tuple with never";
+    assert @sizeof<!> == 0: "sizeof never";
+    assert @sizeof<![4]> == 0: "array of never";
+    assert @sizeof<(i32, !)> == @sizeof<i32>: "tuple with never";
     let flag = check();
     assert !flag: "prefix not hugs";
     assert !(flag && flag): "not of a grouping";

@@ -21,12 +21,12 @@ enum EN { N { v: i32 } }
 
 fn main() {
     // ZST enums
-    assert @sizeof(E0) == 0: "unit enum";
-    assert @sizeof(EZ) == 0: "single variant ZST payload (empty struct)";
-    assert @sizeof(EV) == 0: "single variant ZST payload (void)";
+    assert @sizeof<E0> == 0: "unit enum";
+    assert @sizeof<EZ> == 0: "single variant ZST payload (empty struct)";
+    assert @sizeof<EV> == 0: "single variant ZST payload (void)";
 
     // non-ZST: verify unchanged
-    assert @sizeof(E2) > 0: "multi-variant enum still has discriminant";
-    assert @sizeof(EN) > 0: "single non-zst payload > 0";
+    assert @sizeof<E2> > 0: "multi-variant enum still has discriminant";
+    assert @sizeof<EN> > 0: "single non-zst payload > 0";
 
 }

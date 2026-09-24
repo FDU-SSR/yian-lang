@@ -8,7 +8,7 @@ impl<T> T* {
     }
 
     fn size_of() -> u64 {
-        return @sizeof(T);
+        return @sizeof<T>;
     }
 }
 

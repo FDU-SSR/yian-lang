@@ -292,10 +292,16 @@ class ValueLowerer:
         # pass 依 `IR.Cast` 边重建。
         return cast
 
-    def resolve_bit_cast(self, expr: HIR.BitCast) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
+    def resolve_bit_cast(self, expr: HIR.Builtin | HIR.BitCast) -> IR.Value:
+        if isinstance(expr, HIR.Builtin):
+            source_expr = expr.args[0]
+            target_type_id = expr.type_id
+        else:
+            source_expr = expr.value
+            target_type_id = expr.target_type
+        value = self.__host.resolve_val(source_expr)
         source_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(value.type_id)]
-        target_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(expr.type_id)]
+        target_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(target_type_id)]
         if not self.__host.ctx.raw_pointers:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element
@@ -305,13 +311,13 @@ class ValueLowerer:
                 # An empty slice has no element from which a reference can be
                 # formed.  Establish this before dropping the size field.
                 self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_SLICE_NONEMPTY, operands=[value]))
-        return self.build_cast(value, expr.type_id)
+        return self.build_cast(value, target_type_id)
 
-    def resolve_undef(self, expr: HIR.Undef) -> IR.Value:
+    def resolve_undef(self, expr: HIR.Builtin) -> IR.Value:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Undef(result=result, type_id=expr.type_id)).result
 
-    def resolve_dangling(self, expr: HIR.Dangling) -> IR.Value:
+    def resolve_dangling(self, expr: HIR.Builtin) -> IR.Value:
         result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
         return self.__host.emitter.emit(IR.Dangling(result=result, type_id=expr.type_id)).result
 
@@ -382,5 +388,5 @@ class ValueLowerer:
 
         return self.build_variant_construct(expr.enum_id, expr.variant, payload_fields, expr.type_id)
 
-    def resolve_size_of(self, expr: HIR.SizeOf) -> IR.Value:
-        return self.build_size_of(expr.target_type)
+    def resolve_size_of(self, expr: HIR.Builtin) -> IR.Value:
+        return self.build_size_of(expr.type_args[0])

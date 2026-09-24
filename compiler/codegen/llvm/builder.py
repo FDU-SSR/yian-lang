@@ -82,7 +82,7 @@ class LLBuilder:
         return self.__builder.bitcast(value, typ, name)  # type: ignore
 
     def undef_value(self, type_id: int, result: str) -> None:
-        """``@Undef<T>``: 绑定一个类型为 T 的未定义值(不做任何初始化)。"""
+        """``@undef<T>``: 绑定一个类型为 T 的未定义值(不做任何初始化)。"""
         self.__func.set_reg(result, self.undef(type_id))
 
     def sizeof_const(self, type_id: int, result: str) -> None:
@@ -2381,31 +2381,12 @@ class LLBuilder:
 
     def __call_intrinsic(self, kind: IntrinsicKind, args: list[LLValue]) -> LLValue:
         callee = self.__module.intrinsics.get(kind)
-        raw_args = [a.ir_val for a in args]
-        if kind in (IntrinsicKind.MemCopy, IntrinsicKind.MemSet):
-            # llvm.memcpy / llvm.memset 的末参是 immarg isvolatile, 恒 false。
-            raw_args.append(ir.Constant(ir.IntType(1), 0))  # type: ignore
+        raw_args = self.__module.intrinsics.prepare_call_args(kind, [a.ir_val for a in args])
         result = self.__builder.call(callee, raw_args)  # type: ignore
-        return LLValue(self.__intrinsic_return_type_id(kind), result)
-
-    def __intrinsic_return_type_id(self, kind: IntrinsicKind) -> int:
-        match kind:
-            case IntrinsicKind.Malloc | IntrinsicKind.Realloc:
-                return self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
-            case IntrinsicKind.Free | IntrinsicKind.ImmediateExit | IntrinsicKind.MemCopy | IntrinsicKind.MemSet:
-                return self.__type_ctx.void_id
-            case IntrinsicKind.Write | IntrinsicKind.Read:
-                return self.__type_ctx.u64_id
-            case IntrinsicKind.Open | IntrinsicKind.Close:
-                return self.__type_ctx.i32_id
-            case IntrinsicKind.Sqrt:
-                return self.__type_ctx.f64_id
-            case IntrinsicKind.Sin | IntrinsicKind.Cos:
-                return self.__type_ctx.f64_id
-            case IntrinsicKind.StrLen:
-                return self.__type_ctx.u64_id
-            case IntrinsicKind.SysRandom:
-                return self.__type_ctx.u32_id
+        return_type_id = self.__module.intrinsics.return_type_id(kind)
+        if return_type_id is None:
+            return_type_id = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
+        return LLValue(return_type_id, result)
 
     def __is_all_zero(self, value: LLValue) -> LLValue:
         """niche 全零检测:LLVM 无聚合 icmp → 逐字段 icmp + and 归约。"""

@@ -10,6 +10,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.builtins import BuiltinKind
 
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
@@ -77,10 +78,8 @@ class ComptimeIfSpecializer:
                 expr.value = self.__rewrite_expr(expr.value)
                 for arm in expr.arms:
                     arm.body = self.__rewrite_block(arm.body)
-            case HIR.Panic():
-                expr.message = self.__rewrite_expr(expr.message)
-            case HIR.RuntimeFail():
-                pass
+            case HIR.Builtin():
+                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
             case HIR.Delete():
                 expr.target = self.__rewrite_expr(expr.target)
             case HIR.Semi():
@@ -102,6 +101,8 @@ class ComptimeIfSpecializer:
                 self.__record_procedure(expr.callable.type_id)
                 expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
             case HIR.Cast():
+                expr.value = self.__rewrite_expr(expr.value)
+            case HIR.BitCast():
                 expr.value = self.__rewrite_expr(expr.value)
             case HIR.MethodCall():
                 self.__record_procedure(expr.method_id)
@@ -125,34 +126,6 @@ class ComptimeIfSpecializer:
                 expr.length = self.__rewrite_expr(expr.length)
                 if expr.element is not None:
                     expr.element = self.__rewrite_expr(expr.element)
-            case HIR.BitCast():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.Alloc():
-                expr.count = self.__rewrite_expr(expr.count)
-            case HIR.Realloc():
-                expr.pointer = self.__rewrite_expr(expr.pointer)
-                expr.count = self.__rewrite_expr(expr.count)
-            case HIR.SysWrite():
-                expr.fd = self.__rewrite_expr(expr.fd)
-                expr.buf = self.__rewrite_expr(expr.buf)
-            case HIR.SysRead():
-                expr.fd = self.__rewrite_expr(expr.fd)
-                expr.buf = self.__rewrite_expr(expr.buf)
-            case HIR.Open():
-                expr.path = self.__rewrite_expr(expr.path)
-                expr.flags = self.__rewrite_expr(expr.flags)
-            case HIR.Close():
-                expr.fd = self.__rewrite_expr(expr.fd)
-            case HIR.Sqrt():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.Sin() | HIR.Cos():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.ArgCount():
-                pass
-            case HIR.ArgBytes():
-                expr.index = self.__rewrite_expr(expr.index)
-            case HIR.ProcessExit():
-                expr.code = self.__rewrite_expr(expr.code)
             case HIR.Tuple():
                 expr.field_values = [self.__rewrite_expr(value) for value in expr.field_values]
             case HIR.Array():
@@ -164,8 +137,6 @@ class ComptimeIfSpecializer:
             case HIR.Closure():
                 self.__record_procedure(expr.type_id)
                 expr.captures = {name: self.__rewrite_expr(value) for name, value in expr.captures.items()}
-            case HIR.AssumeInit():
-                expr.value = self.__rewrite_expr(expr.value)
             case HIR.Var():
                 self.__record_procedure(expr.type_id)
             case _:
@@ -224,12 +195,10 @@ class ComptimeIfSpecializer:
                 if expr.name == "IS_RAW_MODE":
                     return self.__ctx.raw_pointers, TypeCtx.bool_id
                 self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
-            case HIR.SizeOf():
-                return self.__type_size(expr.target_type), expr.type_id
-            case HIR.Undef():
-                self.__not_evaluable(expr, "'@Undef' is not a compile-time value")
-            case HIR.Dangling():
-                self.__not_evaluable(expr, "'@dangling' is not a compile-time value")
+            case HIR.Builtin(kind=BuiltinKind.SizeOf):
+                return self.__type_size(expr.type_args[0]), expr.type_id
+            case HIR.Builtin(kind=BuiltinKind.Undef | BuiltinKind.Dangling):
+                self.__not_evaluable(expr, f"'{expr.kind.spelling}' is not a compile-time value")
             case HIR.Cast():
                 value, _ = self.__evaluate(expr.value)
                 return self.__cast_value(value, expr.target_type, expr)
