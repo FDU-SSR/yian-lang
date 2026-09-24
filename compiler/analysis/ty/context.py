@@ -218,6 +218,9 @@ class TypeCtx:
     def alloc_generic(self, name: str) -> int:
         return self.__space.alloc_generic(name)
 
+    def alloc_self_type(self, trait_type_id: int) -> int:
+        return self.__space.alloc_self_type(trait_type_id)
+
     def alloc_const_generic(self, name: str, value_type: int) -> int:
         return self.__space.alloc_const_generic(name, value_type)
 
@@ -350,6 +353,9 @@ class TypeCtx:
         per name is what :meth:`method_lookup` does, and completion trades that
         precision for listing every reachable member.
         """
+        ty = self[type_id]
+        if isinstance(ty, Type.SelfType):
+            return tuple(self.get_trait_methods(ty.trait_type_id).items())
         return self.__impl_registry.methods_of(type_id)
 
     def canonical(self, type_id: int) -> int:
@@ -722,7 +728,24 @@ class TypeCtx:
         for deref_count, type_at_level in enumerate(chain):
             candidates: list[LookupResult] = []
 
-            for impl in self.__impl_registry.iter_candidate_impls(type_at_level):
+            candidate_impls = self.__impl_registry.iter_candidate_impls(type_at_level)
+            type_at_level_ty = self[type_at_level]
+            if isinstance(type_at_level_ty, Type.SelfType):
+                trait_ty = self[type_at_level_ty.trait_type_id]
+                if not isinstance(trait_ty, Type.TraitType):
+                    raise CompilerError("Self type owner is not a trait")
+                candidate_impls = [
+                    Impl(
+                        span=trait_ty.custom_def.span,
+                        generics=[],
+                        target=type_at_level,
+                        trait=type_at_level_ty.trait_type_id,
+                        methods=self.get_trait_methods(type_at_level_ty.trait_type_id),
+                    ),
+                    *candidate_impls,
+                ]
+
+            for impl in candidate_impls:
                 if method_name not in impl.methods:
                     continue
 

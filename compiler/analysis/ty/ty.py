@@ -117,6 +117,14 @@ class GenericType:
 
 
 @dataclass
+class SelfType:
+    """The abstract ``Self`` type declared by one trait."""
+
+    type_id: int
+    trait_type_id: int
+
+
+@dataclass
 class ConstGenericType:
     type_id: int
     name: str
@@ -447,7 +455,7 @@ CustomType: TypeAlias = (
     | MethodType | FunctionType | AliasType
 )
 
-Ty: TypeAlias = BasicType | DerivedType | CustomType | ClosureType | GenericType | ConstGenericType | LiteralValueType
+Ty: TypeAlias = BasicType | DerivedType | CustomType | ClosureType | GenericType | SelfType | ConstGenericType | LiteralValueType
 
 
 class IntrinsicType(Enum):

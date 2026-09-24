@@ -222,16 +222,52 @@ class ImplRegistry:
             )
 
     def __impl_compatible(self, trait_type: int, target_type: int, type_from_trait: int, type_from_impl: int) -> bool:
-        """
-        Check that the type from the impl is compatible with the type from the trait.
-        """
-        if type_from_trait == type_from_impl:
+        """Check method types after substituting only the trait's ``Self`` placeholder."""
+        if self.__ctx.is_same_type(type_from_trait, type_from_impl):
             return True
-        if type_from_trait == trait_type and type_from_impl == target_type:
+
+        trait_type_def = self.__ctx[self.__ctx.resolve_aliases(trait_type)]
+        trait_side_ty = self.__ctx[self.__ctx.resolve_aliases(type_from_trait)]
+        impl_side_ty = self.__ctx[self.__ctx.resolve_aliases(type_from_impl)]
+
+        if isinstance(trait_side_ty, Type.SelfType):
+            self_trait_ty = self.__ctx[trait_side_ty.trait_type_id]
+            if isinstance(self_trait_ty, Type.TraitType) and isinstance(trait_type_def, Type.TraitType) \
+                    and self_trait_ty.custom_def is trait_type_def.custom_def:
+                return self.__ctx.is_same_type(target_type, type_from_impl)
+
+        if isinstance(trait_side_ty, (Type.GenericType, Type.ConstGenericType)) and \
+           isinstance(impl_side_ty, (Type.GenericType, Type.ConstGenericType)):
             return True
-        if isinstance(self.__ctx[type_from_trait], (Type.GenericType, Type.ConstGenericType)) and \
-           isinstance(self.__ctx[type_from_impl], (Type.GenericType, Type.ConstGenericType)):
-            return True
+
+        if isinstance(trait_side_ty, Type.PointerType) and isinstance(impl_side_ty, Type.PointerType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.pointee_type, impl_side_ty.pointee_type)
+        if isinstance(trait_side_ty, Type.RefType) and isinstance(impl_side_ty, Type.RefType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.pointee_type, impl_side_ty.pointee_type)
+        if isinstance(trait_side_ty, Type.SliceType) and isinstance(impl_side_ty, Type.SliceType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.element_type, impl_side_ty.element_type)
+        if isinstance(trait_side_ty, Type.ArrayType) and isinstance(impl_side_ty, Type.ArrayType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.element_type, impl_side_ty.element_type) \
+                and self.__impl_compatible(trait_type, target_type, trait_side_ty.length, impl_side_ty.length)
+        if isinstance(trait_side_ty, Type.TupleType) and isinstance(impl_side_ty, Type.TupleType):
+            return len(trait_side_ty.element_types) == len(impl_side_ty.element_types) and all(
+                self.__impl_compatible(trait_type, target_type, left, right)
+                for left, right in zip(trait_side_ty.element_types, impl_side_ty.element_types)
+            )
+        if isinstance(trait_side_ty, Type.FunctionPointerType) and isinstance(impl_side_ty, Type.FunctionPointerType):
+            return len(trait_side_ty.parameter_types) == len(impl_side_ty.parameter_types) and all(
+                self.__impl_compatible(trait_type, target_type, left, right)
+                for left, right in zip(trait_side_ty.parameter_types, impl_side_ty.parameter_types)
+            ) and self.__impl_compatible(trait_type, target_type, trait_side_ty.return_type, impl_side_ty.return_type)
+
+        if isinstance(trait_side_ty, Type.CustomType) and isinstance(impl_side_ty, Type.CustomType):
+            return trait_side_ty.custom_def is impl_side_ty.custom_def \
+                and len(trait_side_ty.generic_args) == len(impl_side_ty.generic_args) \
+                and all(
+                    self.__impl_compatible(trait_type, target_type, left, right)
+                    for left, right in zip(trait_side_ty.generic_args, impl_side_ty.generic_args)
+                )
+
         return False
 
     def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int) -> bool:
@@ -244,9 +280,16 @@ class ImplRegistry:
         assert isinstance(impl_method_ty, Type.MethodType)
         receiver_type = self.__ctx.get_receiver_type(impl_method)
 
-        if receiver_type != target_type:
+        if not self.__ctx.is_same_type(receiver_type, target_type):
             return False
-        if self.__ctx.get_receiver_type(trait_method) != trait_type:
+
+        trait_receiver_type = self.__ctx.get_receiver_type(trait_method)
+        trait_receiver_ty = self.__ctx[trait_receiver_type]
+        trait_type_ty = self.__ctx[self.__ctx.resolve_aliases(trait_type)]
+        if not isinstance(trait_receiver_ty, Type.SelfType) or not isinstance(trait_type_ty, Type.TraitType):
+            return False
+        self_trait_ty = self.__ctx[trait_receiver_ty.trait_type_id]
+        if not isinstance(self_trait_ty, Type.TraitType) or self_trait_ty.custom_def is not trait_type_ty.custom_def:
             return False
         if not self.__impl_compatible(trait_type, target_type, self.__ctx.get_return_type(trait_method), self.__ctx.get_return_type(impl_method)):
             return False
@@ -290,7 +333,7 @@ class ImplRegistry:
         return method_type_id
 
     def __subst_trait_self(self, type_id: int, old_self: int, new_target: int) -> int:
-        """Replace *old_self* with *new_target* inside *type_id*, recursively."""
+        """Replace one trait's ``SelfType`` placeholder recursively."""
         if type_id == old_self:
             return new_target
         ty = self.__ctx[type_id]

@@ -272,6 +272,8 @@ class Navigator:
                 return self.__target_of_def(custom_def.name, DeclarationKind.ENUM, custom_def.span)
             case Type.TraitType(custom_def=custom_def):
                 return self.__target_of_def(custom_def.name, DeclarationKind.TRAIT, custom_def.span)
+            case Type.SelfType(trait_type_id=trait_type_id):
+                return self.__target_of_type(trait_type_id)
             case Type.AliasType(custom_def=custom_def):
                 return self.__target_of_def(custom_def.name, DeclarationKind.ALIAS, custom_def.span)
             case Type.FunctionType(custom_def=custom_def):

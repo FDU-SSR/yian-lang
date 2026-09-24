@@ -238,8 +238,11 @@ class CallDispatcher:
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 
         coerced_receiver, coerced_args, inference = self.__infer_receiver_and_args(span, receiver, expected_type_ids, args, context_name)
-        # report reachable instantiated method to the semantic context
-        self.__ctx.report_def(lookup.method_id)
+        # A Self-bound call in an abstract trait body resolves to a declaration,
+        # which may have no procedure body. The concrete cloned method is checked
+        # separately and reports its selected impl method there.
+        if not isinstance(self.__ctx.type_ctx[lookup.impl.target], Type.SelfType):
+            self.__ctx.report_def(lookup.method_id)
 
         return HIR.MethodCall(
             span=span,

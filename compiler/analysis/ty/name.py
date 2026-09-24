@@ -66,6 +66,8 @@ class TypeFormatter:
                 name = f"fn({', '.join(param_names)}) -> {return_name}"
             case Type.GenericType(name=name):
                 pass
+            case Type.SelfType():
+                name = "Self"
             case Type.StructType(custom_def=custom_def, generic_args=generic_args):
                 if len(generic_args) == 0:
                     name = custom_def.name

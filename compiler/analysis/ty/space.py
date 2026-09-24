@@ -24,6 +24,7 @@ class TypeSpace:
         self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}
         self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}
         self.__literal_cache: dict[tuple[int | bool, int], int] = {}
+        self.__self_type_cache: dict[int, int] = {}
 
         self.__add_intrinsic_types()
 
@@ -85,6 +86,14 @@ class TypeSpace:
 
     def alloc_generic(self, name: str) -> int:
         return self.__add_type(Type.GenericType(type_id=-1, name=name))
+
+    def alloc_self_type(self, trait_type_id: int) -> int:
+        if trait_type_id in self.__self_type_cache:
+            return self.__self_type_cache[trait_type_id]
+
+        self_type_id = self.__add_type(Type.SelfType(type_id=-1, trait_type_id=trait_type_id))
+        self.__self_type_cache[trait_type_id] = self_type_id
+        return self_type_id
 
     def alloc_const_generic(self, name: str, value_type: int) -> int:
         return self.__add_type(Type.ConstGenericType(type_id=-1, name=name, value_type=value_type))
