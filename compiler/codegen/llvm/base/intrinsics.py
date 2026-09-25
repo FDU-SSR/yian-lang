@@ -16,7 +16,7 @@ from llvmlite import ir  # type: ignore[import-untyped]
 # 分配时把这一轮的身份与该负载锚写进全局锁表项(key / anchor_lo32),
 # 释放把它换代并把下标压回自由链;本模块只声明这些 C 函数的签名,
 # 机制常量与谓词(SENTINEL / BlockHeader / LockEntry / FrameLockArena / is_heap /
-# live / is_raw)定义于 compiler/codegen/cfg/lockmech.py。
+# live / is_raw)定义于 compiler/codegen/abi/lockmech.py。
 
 
 class IntrinsicKind(Enum):

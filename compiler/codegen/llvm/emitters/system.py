@@ -8,7 +8,7 @@ from typing import cast
 from llvmlite import ir
 
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.base.intrinsics import IntrinsicKind
 from compiler.codegen.llvm.pointer.representation import PointerRepresentation
@@ -130,7 +130,7 @@ class SystemEmitter:
         self.__builder.unreachable()
 
     def __slice_len_field(self, base: LLValue) -> LLValue:
-        index = CFG.SLICE_SIZE if not self.__raw_pointers else 1
+        index = ABI.SLICE_SIZE if not self.__raw_pointers else 1
         return self.__extract_value_raw(base, index)
 
     def __extract_value_raw(self, base: LLValue, index: int) -> LLValue:

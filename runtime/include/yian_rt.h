@@ -7,7 +7,7 @@
  *   - 不参与任何检查判定: 键生成、锁槽写入、SENTINEL 失效、live 判定都在编译器发射的
  *     内联代码里。
  *
- * 本头文件是 ABI 常量的唯一真值; compiler/codegen/cfg/lockmech.py 是它的 Python 镜像,
+ * 本头文件是 ABI 常量的唯一真值; compiler/codegen/abi/lockmech.py 是它的 Python 镜像,
  * 两者由 runtime/build.py --check 断言一致。
  */
 
@@ -35,7 +35,7 @@
  * (4 GiB 是 64 KiB 的整数倍), 大对象由 large_alloc 挑落点保证. */
 #define YIAN_WINDOW_BYTES ((uint64_t)4 << 30)
 
-/* 字面量/环境常量槽的 word 由编译器发射(见 compiler/codegen/cfg/lockmech.py 的
+/* 字面量/环境常量槽的 word 由编译器发射(见 compiler/codegen/abi/lockmech.py 的
  * LITERAL_WORD / ENV_WORD: key = 0 + 上表的常量下标), 运行时只把它们当作"永不失效"
  * 的锁槽, 不自己构造 word, 因此这里不定义宏. */
 

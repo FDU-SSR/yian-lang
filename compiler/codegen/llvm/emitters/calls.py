@@ -7,7 +7,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.pointer.safety import FatSafety
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.base.module import LLFunction
@@ -90,7 +90,7 @@ class CallEmitter:
         if self.__type_ctx.is_zst(concrete_type_id):
             data = ir.Constant(self.__ll_type_ctx.ptr_type, None)  # type: ignore
             if not self.__raw_pointers:
-                word = ir.Constant(ir.IntType(64), CFG.ENV_WORD)  # type: ignore
+                word = ir.Constant(ir.IntType(64), ABI.ENV_WORD)  # type: ignore
         elif self.__raw_pointers:
             data = reference.ir_val
         else:

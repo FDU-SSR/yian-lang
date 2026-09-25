@@ -7,7 +7,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.pointer.representation import PointerRepresentation
 from compiler.codegen.llvm.base.types import LLTypeCtx
@@ -42,12 +42,12 @@ class PointerOps:
         if isinstance(offset.ir_val, ir.Constant) and offset.ir_val.constant == 0:  # type: ignore
             return base
         if self.__pointers.is_fat(base):
-            index = self.__pointers.extract_fat_field(base, CFG.FAT_INDEX)
+            index = self.__pointers.extract_fat_field(base, ABI.FAT_INDEX)
             new_index = LLValue(
                 self.__type_ctx.u64_id,
                 self.__builder.add(index.ir_val, offset.ir_val),  # type: ignore
             )
-            return self.__pointers.insert_field_value(base, new_index, CFG.FAT_INDEX)
+            return self.__pointers.insert_field_value(base, new_index, ABI.FAT_INDEX)
         element_type_id = ptr_type.pointee_type
         element_ll = self.__ll_type_ctx.get_ll_type(element_type_id).ir_type
         source = element_ll if base.ir_val.type.is_opaque else None  # type: ignore

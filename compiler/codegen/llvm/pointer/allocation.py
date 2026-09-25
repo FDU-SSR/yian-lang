@@ -9,7 +9,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.pointer.safety import FatSafety
 from compiler.codegen.llvm.base.intrinsics import IntrinsicKind
@@ -92,7 +92,7 @@ class AllocationEmitter:
 
         if not self.__pointers.is_fat(ptr):
             raise ValueError("fat-pointer realloc requires a fat root pointer")
-        old_count = self.__pointers.extract_fat_field(ptr, CFG.FAT_SIZE).ir_val
+        old_count = self.__pointers.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
         use_new_count = self.__builder.icmp_unsigned("<", old_count, size.ir_val)  # type: ignore
         copy_count = self.__builder.select(use_new_count, old_count, size.ir_val)  # type: ignore
         elem_size = self.__ll_type_ctx.get_type_size(type_id)
@@ -139,7 +139,7 @@ class AllocationEmitter:
             total128 = payload128
             if not self.__raw_pointers:
                 total128 = self.__builder.add(
-                    total128, ir.Constant(i128, CFG.BlockHeader.BYTES)  # type: ignore
+                    total128, ir.Constant(i128, ABI.BlockHeader.BYTES)  # type: ignore
                 )
             fits = self.__builder.icmp_unsigned("<", total128, ir.Constant(i128, 1 << 64))  # type: ignore
             self.__core.flow.emit_check(

@@ -7,7 +7,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.pointer.safety import FatSafety
 from compiler.codegen.llvm.emitters.memory import MemoryEmitter
@@ -77,7 +77,7 @@ class AggregateEmitter:
                 return LLValue(field_type, self.__builder.extract_value(base.ir_val, 0))  # type: ignore
             return self.__pointers.slice_ptr_fat(base, field_type)
         if isinstance(base_type, (Type.SliceType, Type.StrType)) and index == 3:
-            mapped = 1 if self.__core.context.raw_pointers else CFG.SLICE_SIZE
+            mapped = 1 if self.__core.context.raw_pointers else ABI.SLICE_SIZE
             return LLValue(field_type, self.__builder.extract_value(base.ir_val, mapped))  # type: ignore
         return LLValue(field_type, self.__builder.extract_value(base.ir_val, index))  # type: ignore
 
@@ -96,7 +96,7 @@ class AggregateEmitter:
                 value = self.__core.ir.undef(type_id)
                 value = self.insert_value(value, LLValue(self.__type_ctx.alloc_pointer(element_type), data.ir_val), 0)  # type: ignore
                 return self.insert_value(value, field_values[1], 1)
-            word = self.__pointers.extract_fat_field(field_values[0], CFG.FAT_WORD)
+            word = self.__pointers.extract_fat_field(field_values[0], ABI.FAT_WORD)
             return self.__pointers.build_fat(
                 LLValue(self.__type_ctx.alloc_pointer(element_type), data.ir_val),  # type: ignore
                 word,

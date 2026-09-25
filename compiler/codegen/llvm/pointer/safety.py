@@ -9,6 +9,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.base.module import LLFunction, LLModule
@@ -103,7 +104,7 @@ class FatSafety:
         只在堆分配处发射一次: 视图长度都来自某个分配的容量, 分配受这条上限约束后,
         由视图派生出的长度(子切片、T*→T[] 的剩余长度、视图转换)必然可表示。
         """
-        limit: ir.Value = ir.Constant(ir.IntType(64), IR.MAX_VIEW_COUNT)  # type: ignore
+        limit: ir.Value = ir.Constant(ir.IntType(64), ABI.MAX_VIEW_COUNT)  # type: ignore
         ok = self.__builder.icmp_unsigned("<=", value.ir_val, limit)  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, ok), RuntimeErrorCode.R001, suffix)
 
@@ -170,12 +171,12 @@ class FatSafety:
         counter = self.__module.get_key_counter()
         loaded = self.__builder.load(counter)  # type: ignore
         available = self.__builder.icmp_unsigned(
-            "<", loaded, ir.Constant(ir.IntType(64), IR.FRAME_KEY_LIMIT)  # type: ignore
+            "<", loaded, ir.Constant(ir.IntType(64), ABI.FRAME_KEY_LIMIT)  # type: ignore
         )
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "keyex")
         nxt = self.__builder.add(loaded, ir.Constant(ir.IntType(64), 1))  # type: ignore
         self.__builder.store(nxt, counter)  # type: ignore
-        return LLValue(self.__type_ctx.u64_id, self.__builder.and_(nxt, ir.Constant(ir.IntType(64), IR.KEY_MASK)))  # type: ignore
+        return LLValue(self.__type_ctx.u64_id, self.__builder.and_(nxt, ir.Constant(ir.IntType(64), ABI.KEY_MASK)))  # type: ignore
 
     # -- Fat heap-pool allocation and release --
 
@@ -206,7 +207,7 @@ class FatSafety:
         anchor_lo32 = self.__builder.trunc(  # type: ignore
             self.__builder.add(  # type: ignore
                 self.__builder.ptrtoint(block_base.ir_val, i64),  # type: ignore
-                ir.Constant(i64, IR.BlockHeader.BYTES),  # type: ignore
+                ir.Constant(i64, ABI.BlockHeader.BYTES),  # type: ignore
             ),
             i32,
         )
@@ -230,26 +231,26 @@ class FatSafety:
         stored = self.__builder.load(entry, typ=i64)  # type: ignore
         next_key = self.__builder.and_(  # type: ignore
             self.__builder.add(  # type: ignore
-                self.__builder.and_(stored, ir.Constant(i64, IR.KEY_MASK)),  # type: ignore
+                self.__builder.and_(stored, ir.Constant(i64, ABI.KEY_MASK)),  # type: ignore
                 ir.Constant(i64, 1),  # type: ignore
             ),
-            ir.Constant(i64, IR.KEY_MASK),  # type: ignore
+            ir.Constant(i64, ABI.KEY_MASK),  # type: ignore
         )
         next_entry = self.__builder.or_(  # type: ignore
             next_key,
             self.__builder.shl(  # type: ignore
                 self.__builder.zext(anchor_lo32, i64),  # type: ignore
-                ir.Constant(i64, IR.WORD_KEY_SHIFT),  # type: ignore
+                ir.Constant(i64, ABI.WORD_KEY_SHIFT),  # type: ignore
             ),
         )
         self.__builder.store(next_entry, entry)  # type: ignore
         word_ir = self.__builder.or_(  # type: ignore
             lock_index,
-            self.__builder.shl(next_key, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
+            self.__builder.shl(next_key, ir.Constant(i64, ABI.WORD_KEY_SHIFT)),  # type: ignore
         )
         extent_ptr = self.__builder.gep(
             block_base.ir_val,
-            [ir.Constant(i64, IR.BlockHeader.EXTENT_OFFSET)],  # type: ignore
+            [ir.Constant(i64, ABI.BlockHeader.EXTENT_OFFSET)],  # type: ignore
             inbounds=False,
             source_etype=ir.IntType(8),  # 块头按字节偏移索引
         )
@@ -258,7 +259,7 @@ class FatSafety:
         key_ir = word_ir
         data_ir = self.__builder.gep(
             block_base.ir_val,
-            [ir.Constant(ir.IntType(64), IR.BlockHeader.BYTES)],  # type: ignore
+            [ir.Constant(ir.IntType(64), ABI.BlockHeader.BYTES)],  # type: ignore
             inbounds=False,
             source_etype=ir.IntType(8),  # 载荷区按字节偏移索引
         )
@@ -274,12 +275,12 @@ class FatSafety:
             raise ValueError("fat pool release requires a fat pointer")
         i32: ir.IntType = ir.IntType(32)  # type: ignore
         i64: ir.IntType = ir.IntType(64)  # type: ignore
-        data = self.extract_fat_field(ptr, IR.FAT_DATA)
-        word = self.extract_fat_field(ptr, IR.FAT_WORD).ir_val
+        data = self.extract_fat_field(ptr, ABI.FAT_DATA)
+        word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val
         entry = self.lock_of(self.__builder, word, data.ir_val)
         anchor_ptr = self.__builder.gep(  # type: ignore
             entry,
-            [ir.Constant(i64, IR.LockEntry.ANCHOR_OFFSET)],  # type: ignore
+            [ir.Constant(i64, ABI.LockEntry.ANCHOR_OFFSET)],  # type: ignore
             inbounds=False,
             source_etype=ir.IntType(8),
         )
@@ -311,7 +312,7 @@ class FatSafety:
         available = self.__builder.icmp_unsigned(
             "<",
             depth,
-            ir.Constant(ir.IntType(64), IR.FrameLockArena.SLOTS),  # type: ignore
+            ir.Constant(ir.IntType(64), ABI.FrameLockArena.SLOTS),  # type: ignore
         )
         self.__core.flow.emit_check(
             LLValue(self.__type_ctx.bool_id, available), RuntimeErrorCode.R003, "framecap"
@@ -324,10 +325,10 @@ class FatSafety:
             name="frame.lock",
         )
         i64: ir.IntType = ir.IntType(64)  # type: ignore
-        frame_key = self.__builder.and_(key.ir_val, ir.Constant(i64, IR.KEY_MASK))  # type: ignore
+        frame_key = self.__builder.and_(key.ir_val, ir.Constant(i64, ABI.KEY_MASK))  # type: ignore
         # word = ⟨key:32 | lock:32⟩, lock = 影子栈深度(锁表下标)
         frame_word: ir.Value = self.__builder.or_(  # type: ignore
-            self.__builder.shl(frame_key, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
+            self.__builder.shl(frame_key, ir.Constant(i64, ABI.WORD_KEY_SHIFT)),  # type: ignore
             depth,
         )
         frame_key64 = frame_key
@@ -371,7 +372,7 @@ class FatSafety:
         if not self.__frame_lock_acquired or self.__frame_lock_slot_name is None:
             return
         slot = self.__func.reg(self.__frame_lock_slot_name)
-        sentinel = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), IR.SENTINEL))  # type: ignore
+        sentinel = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), ABI.SENTINEL))  # type: ignore
         self.write_lock_slot(slot, sentinel)
         depth_ptr = self.__module.get_frame_lock_depth()
         depth = self.__builder.load(depth_ptr, name="frame.depth.exit")  # type: ignore
@@ -422,15 +423,15 @@ class FatSafety:
         if isinstance(v.type, ir.LiteralStructType):  # type: ignore
             field_count = len(v.type.elements)  # type: ignore
             if field_count >= 4:
-                second_idx = IR.FAT_INDEX      # 胖指针: 比较 (data, index)
+                second_idx = ABI.FAT_INDEX      # 胖指针: 比较 (data, index)
             elif field_count == 3:
-                second_idx = IR.SLICE_SIZE     # 切片: 比较 (data, size)
+                second_idx = ABI.SLICE_SIZE     # 切片: 比较 (data, size)
             else:
-                second_idx = IR.REF_WORD       # 引用: 比较 (data, word)
+                second_idx = ABI.REF_WORD       # 引用: 比较 (data, word)
             second = self.__builder.extract_value(v, second_idx)  # type: ignore
             if isinstance(second.type, ir.IntType) and second.type.width < 64:  # type: ignore
                 second = self.__builder.zext(second, ir.IntType(64))  # type: ignore
-            return (self.__builder.extract_value(v, IR.FAT_DATA), second)  # type: ignore
+            return (self.__builder.extract_value(v, ABI.FAT_DATA), second)  # type: ignore
         return (v, ir.Constant(ir.IntType(64), 0))  # type: ignore
 
     def cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
@@ -460,8 +461,8 @@ class FatSafety:
         """取 word 里的 32 位 key(与锁表项里的 key 同宽)。"""
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         return self.__builder.and_(  # type: ignore
-            self.__builder.lshr(word, ir.Constant(i64, IR.WORD_KEY_SHIFT)),  # type: ignore
-            ir.Constant(i64, IR.KEY_MASK),  # type: ignore
+            self.__builder.lshr(word, ir.Constant(i64, ABI.WORD_KEY_SHIFT)),  # type: ignore
+            ir.Constant(i64, ABI.KEY_MASK),  # type: ignore
         )
 
     def __extract_check_fields(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value, ir.Value, ir.Value]:
@@ -474,10 +475,10 @@ class FatSafety:
         ty = self.__type_ctx[ll_val.type_id]
         if not isinstance(ty, Type.PointerType):
             raise ValueError(f"check field bundle requires PointerType, got {type(ty).__name__}")
-        data = self.extract_fat_field(ll_val, IR.FAT_DATA).ir_val
-        word = self.extract_fat_field(ll_val, IR.FAT_WORD).ir_val
-        index = self.extract_fat_field(ll_val, IR.FAT_INDEX).ir_val
-        size = self.extract_fat_field(ll_val, IR.FAT_SIZE).ir_val
+        data = self.extract_fat_field(ll_val, ABI.FAT_DATA).ir_val
+        word = self.extract_fat_field(ll_val, ABI.FAT_WORD).ir_val
+        index = self.extract_fat_field(ll_val, ABI.FAT_INDEX).ir_val
+        size = self.extract_fat_field(ll_val, ABI.FAT_SIZE).ir_val
         return data, word, index, size
 
     def __check_live(self, word: ir.Value, data: ir.Value) -> LLValue:
@@ -514,8 +515,8 @@ class FatSafety:
         if not self.is_fat(ptr):
             return
         if not live:
-            index = self.extract_fat_field(ptr, IR.FAT_INDEX).ir_val
-            size = self.extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+            index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
+            size = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
             self.__core.flow.emit_check(self.__check_in_bounds_cond(index, size), RuntimeErrorCode.S002, "safe")
             return
         data, word, index, size = self.__extract_check_fields(ptr)
@@ -531,9 +532,9 @@ class FatSafety:
         if not isinstance(view_type, (Type.SliceType, Type.StrType)):
             return
 
-        data = self.extract_fat_field(view, IR.SLICE_DATA).ir_val
-        word = self.extract_fat_field(view, IR.SLICE_WORD).ir_val
-        size = self.extract_fat_field(view, IR.SLICE_SIZE).ir_val
+        data = self.extract_fat_field(view, ABI.SLICE_DATA).ir_val
+        word = self.extract_fat_field(view, ABI.SLICE_WORD).ir_val
+        size = self.extract_fat_field(view, ABI.SLICE_SIZE).ir_val
         lock = self.lock_of(self.__builder, word, data)
         if live:
             live_ok = self.__check_live(word, data)
@@ -555,15 +556,15 @@ class FatSafety:
         # the source range and the live lock protects their lifetime.
         # 槽种类由锁表下标区间给出(堆区间 ≥ HEAP_LOCK_BASE); 负载锚由表项
         # anchor_lo32 + data 高 32 位还原, 块首 = 锚 - BYTES(分配器保证同 4 GiB 窗口)。
-        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), IR.LOCK_MASK))  # type: ignore
+        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), ABI.LOCK_MASK))  # type: ignore
         heap = self.__builder.icmp_unsigned(  # type: ignore
-            ">=", index, ir.Constant(ir.IntType(64), IR.HEAP_LOCK_BASE)  # type: ignore
+            ">=", index, ir.Constant(ir.IntType(64), ABI.HEAP_LOCK_BASE)  # type: ignore
         )
         header_guard: ir.Value = self.__builder.and_(heap, live_ok.ir_val)  # type: ignore
-        anchor = self.__load_guarded_u32(lock, IR.LockEntry.ANCHOR_OFFSET, header_guard)
+        anchor = self.__load_guarded_u32(lock, ABI.LockEntry.ANCHOR_OFFSET, header_guard)
         data_int: ir.Value = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
         payload_int, block_int = self.__heap_block(data_int, anchor)
-        active_size = self.__load_guarded_u32(block_int, IR.BlockHeader.EXTENT_OFFSET, header_guard)
+        active_size = self.__load_guarded_u32(block_int, ABI.BlockHeader.EXTENT_OFFSET, header_guard)
 
         element_type = view_type.element_type if isinstance(view_type, Type.SliceType) else self.__type_ctx.u8_id
         element_size = self.__ll_type_ctx.get_type_size(element_type)
@@ -610,15 +611,15 @@ class FatSafety:
         """in_bounds(p_s,1)(重锚定前提)。"""
         if not self.is_fat(ptr):
             return
-        index = self.extract_fat_field(ptr, IR.FAT_INDEX).ir_val
-        size = self.extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+        index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
+        size = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
         self.__core.flow.emit_check(self.__check_in_bounds_cond(index, size), RuntimeErrorCode.S001, "ib")
 
     def check_slice_nonempty(self, ptr: LLValue) -> None:
         """Establish the one-element origin invariant for ``T[] -> T&``."""
         if not self.is_fat(ptr):
             return
-        size = self.extract_fat_field(ptr, IR.SLICE_SIZE).ir_val
+        size = self.extract_fat_field(ptr, ABI.SLICE_SIZE).ir_val
         nonempty = self.__builder.icmp_unsigned(
             ">", size, ir.Constant(ir.IntType(64), 0)  # type: ignore
         )
@@ -632,14 +633,14 @@ class FatSafety:
         """
         if not self.is_fat(ptr):
             return
-        data = self.extract_fat_field(ptr, IR.FAT_DATA).ir_val
-        word = self.extract_fat_field(ptr, IR.FAT_WORD).ir_val
+        data = self.extract_fat_field(ptr, ABI.FAT_DATA).ir_val
+        word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val
         cond = self.__check_live(word, data)
         self.__core.flow.emit_check(cond, RuntimeErrorCode.S003, "ref")
 
     def __element_arith_cond(self, base: LLValue, offset: LLValue) -> ir.Value:
-        index = self.extract_fat_field(base, IR.FAT_INDEX).ir_val
-        size = self.extract_fat_field(base, IR.FAT_SIZE).ir_val
+        index = self.extract_fat_field(base, ABI.FAT_INDEX).ir_val
+        size = self.extract_fat_field(base, ABI.FAT_SIZE).ir_val
         off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
         total = self.__builder.add(index, off64)  # type: ignore
         no_wrap = self.__builder.icmp_unsigned(">=", total, index)  # type: ignore
@@ -683,13 +684,13 @@ class FatSafety:
             return
         elarith_cond = self.__element_arith_cond(base, offset)
         # InBounds 部分:elem.index < elem.size
-        e_index = self.extract_fat_field(ptr, IR.FAT_INDEX).ir_val
-        e_size = self.extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+        e_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
+        e_size = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
         # live 部分:锁槽键比较,含 null 短路(帧内 elem 恒真时不再发射)
         if live:
-            ev_data = self.extract_fat_field(ptr, IR.FAT_DATA).ir_val
-            ev_word = self.extract_fat_field(ptr, IR.FAT_WORD).ir_val
+            ev_data = self.extract_fat_field(ptr, ABI.FAT_DATA).ir_val
+            ev_word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val
             live_ok = self.__check_live(ev_word, ev_data)
             cond: ir.Value = self.__builder.and_(self.__builder.and_(elarith_cond, ib_cond), live_ok.ir_val)  # type: ignore
         else:
@@ -712,13 +713,13 @@ class FatSafety:
         """
         if not (self.is_fat(lhs) and self.is_fat(rhs)):
             return
-        data_l = self.extract_fat_field(lhs, IR.FAT_DATA).ir_val
-        data_r = self.extract_fat_field(rhs, IR.FAT_DATA).ir_val
+        data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
+        data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
         data_eq = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
-        idx_l = self.extract_fat_field(lhs, IR.FAT_INDEX).ir_val
-        idx_r = self.extract_fat_field(rhs, IR.FAT_INDEX).ir_val
-        size_l = self.extract_fat_field(lhs, IR.FAT_SIZE).ir_val
-        size_r = self.extract_fat_field(rhs, IR.FAT_SIZE).ir_val
+        idx_l = self.extract_fat_field(lhs, ABI.FAT_INDEX).ir_val
+        idx_r = self.extract_fat_field(rhs, ABI.FAT_INDEX).ir_val
+        size_l = self.extract_fat_field(lhs, ABI.FAT_SIZE).ir_val
+        size_r = self.extract_fat_field(rhs, ABI.FAT_SIZE).ir_val
         wf_l = self.__builder.icmp_unsigned("<=", idx_l, size_l)  # type: ignore
         wf_r = self.__builder.icmp_unsigned("<=", idx_r, size_r)  # type: ignore
         i128: ir.IntType = ir.IntType(128)  # type: ignore
@@ -736,8 +737,8 @@ class FatSafety:
         """
         if not (self.is_fat(lhs) and self.is_fat(rhs)):
             return
-        data_l = self.extract_fat_field(lhs, IR.FAT_DATA).ir_val
-        data_r = self.extract_fat_field(rhs, IR.FAT_DATA).ir_val
+        data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
+        data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
         cond = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
@@ -753,30 +754,30 @@ class FatSafety:
         ptr_type = self.__type_ctx[ptr.type_id]
         if not isinstance(ptr_type, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType)):
             return
-        data = self.extract_fat_field(ptr, IR.FAT_DATA).ir_val
-        word = self.extract_fat_field(ptr, IR.FAT_WORD).ir_val
-        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), IR.LOCK_MASK))  # type: ignore
+        data = self.extract_fat_field(ptr, ABI.FAT_DATA).ir_val
+        word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val
+        index = self.__builder.and_(word, ir.Constant(ir.IntType(64), ABI.LOCK_MASK))  # type: ignore
         heap_ok = self.__builder.icmp_unsigned(  # type: ignore
-            ">=", index, ir.Constant(ir.IntType(64), IR.HEAP_LOCK_BASE)  # type: ignore
+            ">=", index, ir.Constant(ir.IntType(64), ABI.HEAP_LOCK_BASE)  # type: ignore
         )
         lock = self.lock_of(self.__builder, word, data)
         live_ok = self.__check_live(word, data)
         header_guard: ir.Value = self.__builder.and_(heap_ok, live_ok.ir_val)  # type: ignore
         # 锚点判定: 表项 anchor_lo32 必须等于 data 低 32 位(重锚定指针立刻被拒)。
-        anchor = self.__load_guarded_u32(lock, IR.LockEntry.ANCHOR_OFFSET, header_guard)
+        anchor = self.__load_guarded_u32(lock, ABI.LockEntry.ANCHOR_OFFSET, header_guard)
         data_int: ir.Value = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
         raw_data_ok = self.__builder.icmp_unsigned(  # type: ignore
             "==",
-            self.__builder.and_(data_int, ir.Constant(ir.IntType(64), IR.LOCK_MASK)),  # type: ignore
+            self.__builder.and_(data_int, ir.Constant(ir.IntType(64), ABI.LOCK_MASK)),  # type: ignore
             anchor,
         )
         raw_cond: ir.Value = cast(ir.Value, raw_data_ok)
         if isinstance(ptr_type, Type.PointerType):
-            ptr_index = self.extract_fat_field(ptr, IR.FAT_INDEX).ir_val
+            ptr_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
             raw_index_ok = self.__builder.icmp_signed("==", ptr_index, ir.Constant(ir.IntType(64), 0))  # type: ignore
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
         _, block_int = self.__heap_block(data_int, anchor)
-        active_size = self.__load_guarded_u32(block_int, IR.BlockHeader.EXTENT_OFFSET, header_guard)
+        active_size = self.__load_guarded_u32(block_int, ABI.BlockHeader.EXTENT_OFFSET, header_guard)
         extent_ok = self.__delete_extent_ok(ptr, ptr_type, active_size)
         cond: ir.Value = self.__builder.and_(
             header_guard,
@@ -788,11 +789,11 @@ class FatSafety:
         """Reconstruct a heap payload and block base from its low-32-bit anchor."""
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         payload_int: ir.Value = self.__builder.or_(  # type: ignore
-            self.__builder.and_(data_int, ir.Constant(i64, IR.WINDOW_MASK)),  # type: ignore
+            self.__builder.and_(data_int, ir.Constant(i64, ABI.WINDOW_MASK)),  # type: ignore
             anchor,
         )
         block: ir.Value = self.__builder.inttoptr(  # type: ignore
-            self.__builder.sub(payload_int, ir.Constant(i64, IR.BlockHeader.BYTES)),  # type: ignore
+            self.__builder.sub(payload_int, ir.Constant(i64, ABI.BlockHeader.BYTES)),  # type: ignore
             self.__ll_type_ctx.ptr_type,
         )
         return payload_int, block
@@ -822,10 +823,10 @@ class FatSafety:
         """Check that *ptr* denotes exactly the active heap payload."""
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         if isinstance(ptr_type, Type.PointerType):
-            count = self.extract_fat_field(ptr, IR.FAT_SIZE).ir_val
+            count = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
             element_type = ptr_type.pointee_type
         elif isinstance(ptr_type, (Type.SliceType, Type.StrType)):
-            count = self.extract_fat_field(ptr, IR.SLICE_SIZE).ir_val
+            count = self.extract_fat_field(ptr, ABI.SLICE_SIZE).ir_val
             element_type = ptr_type.element_type if isinstance(ptr_type, Type.SliceType) else self.__type_ctx.u8_id
         else:
             count = ir.Constant(ir.IntType(64), 1)  # type: ignore

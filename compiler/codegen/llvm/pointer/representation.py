@@ -7,7 +7,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.base.value import LLValue
 
@@ -54,7 +54,7 @@ class PointerRepresentation:
 
     def extract_fat_field(self, value: LLValue, index: int) -> LLValue:
         ir_value = self.__builder.extract_value(value.ir_val, index)  # type: ignore
-        if index == CFG.FAT_DATA:
+        if index == ABI.FAT_DATA:
             field_type = self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id)
         else:
             field_type = self.__type_ctx.u64_id
@@ -84,9 +84,9 @@ class PointerRepresentation:
 
     @staticmethod
     def check_static_view_count(count: int) -> None:
-        if count > CFG.MAX_VIEW_COUNT:
+        if count > ABI.MAX_VIEW_COUNT:
             raise ValueError(
-                f"array length {count} exceeds the 32-bit view element limit {CFG.MAX_VIEW_COUNT}"
+                f"array length {count} exceeds the 32-bit view element limit {ABI.MAX_VIEW_COUNT}"
             )
 
     def build_fat(
@@ -99,26 +99,26 @@ class PointerRepresentation:
     ) -> LLValue:
         ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
         value = self.__core.ir.undef(type_id)
-        value = self.__core.ir.insert_value(value, data, CFG.FAT_DATA)
-        value = self.__core.ir.insert_value(value, word, CFG.FAT_WORD)
+        value = self.__core.ir.insert_value(value, data, ABI.FAT_DATA)
+        value = self.__core.ir.insert_value(value, word, ABI.FAT_WORD)
         if isinstance(ty, Type.PointerType):
-            value = self.insert_field_value(value, index, CFG.FAT_INDEX)
-            value = self.insert_field_value(value, size, CFG.FAT_SIZE)
+            value = self.insert_field_value(value, index, ABI.FAT_INDEX)
+            value = self.insert_field_value(value, size, ABI.FAT_SIZE)
         elif isinstance(ty, (Type.SliceType, Type.StrType)):
-            value = self.__core.ir.insert_value(value, size, CFG.SLICE_SIZE)
+            value = self.__core.ir.insert_value(value, size, ABI.SLICE_SIZE)
         elif not isinstance(ty, Type.RefType):
             raise ValueError(f"not a pointer-family type: {type(ty).__name__}")
         return value
 
     def literal_word(self) -> ir.Value:
-        return ir.Constant(ir.IntType(64), CFG.LITERAL_WORD)  # type: ignore
+        return ir.Constant(ir.IntType(64), ABI.LITERAL_WORD)  # type: ignore
 
     def env_word(self) -> ir.Value:
-        return ir.Constant(ir.IntType(64), CFG.ENV_WORD)  # type: ignore
+        return ir.Constant(ir.IntType(64), ABI.ENV_WORD)  # type: ignore
 
     def fat_data(self, value: LLValue) -> LLValue:
         if self.is_fat(value):
-            return self.extract_fat_field(value, CFG.FAT_DATA)
+            return self.extract_fat_field(value, ABI.FAT_DATA)
         return value
 
     def promote_fat(self, value: LLValue) -> LLValue:
@@ -132,21 +132,21 @@ class PointerRepresentation:
 
     def fat_addr(self, value: LLValue, pointee_type_id: int) -> LLValue:
         if self.is_fat(value):
-            data = self.extract_fat_field(value, CFG.FAT_DATA).ir_val
+            data = self.extract_fat_field(value, ABI.FAT_DATA).ir_val
             pointee_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
             ty = self.__type_ctx[self.__type_ctx.resolve_aliases(value.type_id)]
             if isinstance(ty, Type.RefType):
                 addr = data
             else:
-                index = self.extract_fat_field(value, CFG.FAT_INDEX).ir_val
+                index = self.extract_fat_field(value, ABI.FAT_INDEX).ir_val
                 addr = self.__builder.gep(data, [index], inbounds=False, source_etype=pointee_ll)  # type: ignore
         else:
             addr = value.ir_val
         return LLValue(self.__type_ctx.alloc_pointer(pointee_type_id), addr)  # type: ignore
 
     def fat_addr_i128(self, value: LLValue, pointee_type_id: int) -> ir.Value:
-        data = self.extract_fat_field(value, CFG.FAT_DATA).ir_val
-        index = self.extract_fat_field(value, CFG.FAT_INDEX).ir_val
+        data = self.extract_fat_field(value, ABI.FAT_DATA).ir_val
+        index = self.extract_fat_field(value, ABI.FAT_INDEX).ir_val
         base128 = self.__builder.zext(self.__builder.ptrtoint(data, ir.IntType(64)), ir.IntType(128))  # type: ignore
         idx128 = self.__builder.zext(index, ir.IntType(128))  # type: ignore
         scaled = self.__builder.mul(
@@ -157,8 +157,8 @@ class PointerRepresentation:
     def cmp_fat_operands(self, value: LLValue) -> tuple[ir.Value, ir.Value]:
         if self.is_fat(value):
             return (
-                self.extract_fat_field(value, CFG.FAT_DATA).ir_val,
-                self.extract_fat_field(value, CFG.FAT_INDEX).ir_val,
+                self.extract_fat_field(value, ABI.FAT_DATA).ir_val,
+                self.extract_fat_field(value, ABI.FAT_INDEX).ir_val,
             )
         ty = self.__type_ctx[value.type_id]
         if isinstance(ty, Type.PointerType):
@@ -168,15 +168,15 @@ class PointerRepresentation:
     def slice_ptr_fat(self, base: LLValue, ptr_type_id: int) -> LLValue:
         data = LLValue(
             self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-            self.__builder.extract_value(base.ir_val, CFG.SLICE_DATA),  # type: ignore
+            self.__builder.extract_value(base.ir_val, ABI.SLICE_DATA),  # type: ignore
         )
         word = LLValue(
             self.__type_ctx.u64_id,
-            self.__builder.extract_value(base.ir_val, CFG.SLICE_WORD),  # type: ignore
+            self.__builder.extract_value(base.ir_val, ABI.SLICE_WORD),  # type: ignore
         )
         size = LLValue(
             self.__type_ctx.u64_id,
-            self.__builder.extract_value(base.ir_val, CFG.SLICE_SIZE),  # type: ignore
+            self.__builder.extract_value(base.ir_val, ABI.SLICE_SIZE),  # type: ignore
         )
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
         return self.build_fat(data, word, zero, size, ptr_type_id)

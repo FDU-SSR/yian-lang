@@ -1,14 +1,9 @@
-"""后处理 pass（管线的第 3 段）：去死块 → RPO 排序 → 终结保护。
-
-原先是构建器末尾的三个过程，整体搬出后判定与顺序保持逐字一致；它们只读写
-`IR.Function` 自身，下降期状态一个都不用（终结保护只看 `CfgCtx` 的返回类型
-与 void 占位通道）。入口是 `Cleanup`，由 `compiler/main.py` 在检查插入之后调用。
-"""
+"""CFG cleanup: eliminate dead blocks, order blocks, and guard termination."""
 from __future__ import annotations
 
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx, FuncFacts
+from compiler.codegen.cfg.module import CfgFunction, CfgModule
 from compiler.codegen.error import CodegenError
 
 
@@ -131,36 +126,35 @@ def _sort_blocks_rpo(func: IR.Function) -> None:
     func.blocks = list(reversed(postorder))
 
 
-def _guard_termination(func: IR.Function, facts: FuncFacts) -> None:
+def _guard_termination(record: CfgFunction) -> None:
     """Ensure every block has a terminator.
 
     - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
     - non-void-returning functions: raise ``CodegenError`` if any block is unterminated.
     """
+    func = record.function
     for block in func.blocks:
         if block.terminator is not None:
             continue
-        if facts.return_type == TypeCtx.void_id:
-            block.terminator = IR.Ret(facts.new_void_value())
+        if record.return_type == TypeCtx.void_id:
+            block.terminator = IR.Ret(record.void_value())
         else:
             raise CodegenError(
                 f"Function '{func.name}' has unterminated block '{block.label}'; "
                 f"non-void functions must have explicit return in all control paths.",
-                facts.span,
+                record.span,
             )
 
 
 class Cleanup:
-    """后处理 pass（管线第 3 段）：逐函数 去死块 → RPO 排序 → 终结保护。
+    """Apply cleanup to every function in a lowered CFG module."""
 
-    顺序与搬移前逐字一致；编排在 `main`。
-    """
-
-    def __init__(self, ctx: CfgCtx) -> None:
-        self.__ctx = ctx
+    def __init__(self, module: CfgModule) -> None:
+        self.__module = module
 
     def run(self) -> None:
-        for type_id, func in self.__ctx.functions.items():
+        for record in self.__module.functions.values():
+            func = record.function
             _eliminate_dead_code(func)
             _sort_blocks_rpo(func)
-            _guard_termination(func, self.__ctx.facts(type_id))
+            _guard_termination(record)

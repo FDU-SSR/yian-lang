@@ -11,7 +11,7 @@
 
 一致性断言:
   - runtime/include/yian_rt.h 的 YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
-    与 compiler/codegen/cfg/lockmech.py::FrameLockArena 相等;
+    与 compiler/codegen/abi/lockmech.py::FrameLockArena 相等;
   - YIAN_HDR_BYTES 与 lockmech.py::BlockHeader.BYTES 相等;
   - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES 与 compiler/runtime_lib.py::CLASS_BYTES 逐项相等;
   - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE 与 compiler/runtime_error.py 的 S002/R002
@@ -127,7 +127,7 @@ def __macro_int_list(name: str) -> list[int]:
 
 def check_consistency() -> None:
     sys.path.insert(0, str(ROOT))
-    from compiler.codegen.cfg import lockmech  # noqa: PLC0415
+    from compiler.codegen.abi import lockmech  # noqa: PLC0415
     from compiler.runtime_error import RuntimeErrorCode, runtime_error_message  # noqa: PLC0415
     from compiler.runtime_lib import CLASS_BYTES  # noqa: PLC0415
 

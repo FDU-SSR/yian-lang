@@ -9,7 +9,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.pointer.safety import FatSafety
 from compiler.codegen.llvm.pointer.representation import PointerRepresentation
@@ -102,7 +102,7 @@ class ValueEmitter:
                     and not self.__type_ctx.is_zst(dst.pointee_type):
                 slot = self.__builder.gep(
                     self.__core.context.module.get_lock_table(),
-                    [ir.Constant(ir.IntType(64), 0), ir.Constant(ir.IntType(64), CFG.LITERAL_LOCK_INDEX)],  # type: ignore
+                    [ir.Constant(ir.IntType(64), 0), ir.Constant(ir.IntType(64), ABI.LITERAL_LOCK_INDEX)],  # type: ignore
                     inbounds=True,
                 )  # type: ignore
                 if self.__core.context.raw_pointers or raw:
@@ -176,7 +176,7 @@ class ValueEmitter:
             if isinstance(src_pointee, Type.ArrayType) and src_pointee.element_type == dst.pointee_type:
                 eff = self.__pointers.fat_addr(value, src.pointee_type)
                 data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), eff.ir_val)  # type: ignore
-                word = self.__pointers.extract_fat_field(value, CFG.FAT_WORD)
+                word = self.__pointers.extract_fat_field(value, ABI.FAT_WORD)
                 zero = self.__u64(0)
                 self.__check_static_view_count(src_pointee)
                 size = self.__u64(self.__literal_array_length(src_pointee))
@@ -204,7 +204,7 @@ class ValueEmitter:
         if self.__pointers.is_fat(value):
             eff = self.__pointers.fat_addr(value, src.pointee_type)
             data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), eff.ir_val)  # type: ignore
-            word = self.__pointers.extract_fat_field(value, CFG.FAT_WORD)
+            word = self.__pointers.extract_fat_field(value, ABI.FAT_WORD)
             zero = self.__u64(0)
             return self.__pointers.build_fat(data, word, zero, zero, to_type).ir_val
         return value.ir_val
@@ -219,8 +219,8 @@ class ValueEmitter:
                 return self.__core.ir.bitcast(value.ir_val, dest_ll_type)
             return value.ir_val
         if self.__pointers.is_fat(value):
-            data = self.__pointers.extract_fat_field(value, CFG.FAT_DATA)
-            word = self.__pointers.extract_fat_field(value, CFG.FAT_WORD)
+            data = self.__pointers.extract_fat_field(value, ABI.FAT_DATA)
+            word = self.__pointers.extract_fat_field(value, ABI.FAT_WORD)
             zero = self.__u64(0)
             src_pointee = self.__type_ctx[src.pointee_type]
             size = self.__u64(1)
@@ -237,9 +237,9 @@ class ValueEmitter:
             slice_value = self.__core.ir.insert_value(slice_value, data, 0)
             slice_value = self.__core.ir.insert_value(slice_value, self.__u64(0), 1)
             return slice_value.ir_val
-        word = self.__pointers.extract_fat_field(value, CFG.FAT_WORD)
-        size = self.__pointers.extract_fat_field(value, CFG.FAT_SIZE)
-        index = self.__pointers.extract_fat_field(value, CFG.FAT_INDEX)
+        word = self.__pointers.extract_fat_field(value, ABI.FAT_WORD)
+        size = self.__pointers.extract_fat_field(value, ABI.FAT_SIZE)
+        index = self.__pointers.extract_fat_field(value, ABI.FAT_INDEX)
         remaining = LLValue(self.__type_ctx.u64_id, self.__builder.sub(size.ir_val, index.ir_val))  # type: ignore
         return self.__pointers.build_fat(data, word, self.__u64(0), remaining, to_type).ir_val
 
@@ -247,9 +247,9 @@ class ValueEmitter:
         if self.__core.context.raw_pointers:
             return self.__builder.extract_value(value.ir_val, 0)  # type: ignore
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id),
-                       self.__builder.extract_value(value.ir_val, CFG.FAT_DATA))  # type: ignore
+                       self.__builder.extract_value(value.ir_val, ABI.FAT_DATA))  # type: ignore
         word = LLValue(self.__type_ctx.u64_id,
-                       self.__builder.extract_value(value.ir_val, CFG.FAT_WORD))  # type: ignore
+                       self.__builder.extract_value(value.ir_val, ABI.FAT_WORD))  # type: ignore
         zero = self.__u64(0)
         return self.__pointers.build_fat(data, word, zero, zero, to_type).ir_val
 

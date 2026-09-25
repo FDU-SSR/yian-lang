@@ -9,6 +9,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.base.intrinsics import IntrinsicManager
 from compiler.codegen.llvm.base.types import LLTypeCtx
@@ -426,13 +427,13 @@ class LLModule:
         """
         if self.__frame_lock_arena_global is None:
             arena_type = ir.ArrayType(
-                ir.IntType(64), IR.LOCK_TABLE_SLOTS  # type: ignore
+                ir.IntType(64), ABI.LOCK_TABLE_SLOTS  # type: ignore
             )
             global_var = ir.GlobalVariable(
                 self.__module, arena_type, name="__secl_lock_table"
             )
             global_var.linkage = "external"
-            global_var.align = IR.LockEntry.BYTES  # type: ignore
+            global_var.align = ABI.LockEntry.BYTES  # type: ignore
             self.__frame_lock_arena_global = global_var
         return self.__frame_lock_arena_global
 
@@ -493,7 +494,7 @@ class LLModule:
                 self.__module, i64, name="__secl_frame_lock_depth"
             )
             global_var.linkage = "external"
-            global_var.align = IR.FrameLockArena.SLOT_BYTES  # type: ignore
+            global_var.align = ABI.FrameLockArena.SLOT_BYTES  # type: ignore
             self.__frame_lock_depth_global = global_var
         return self.__frame_lock_depth_global
 

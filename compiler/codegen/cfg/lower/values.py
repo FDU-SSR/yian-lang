@@ -1,32 +1,13 @@
-"""惰值/取址与聚合/转换下降（HIR → CFG IR）。
-
-原构建器的两个簇：
-
-- 惰值/取址：`resolve_addr`/`resolve_addr_fat` 与各 `resolve_*_addr`、
-  `build_var_ptr_fat/raw`、`build_alloca`、`emit_frame_lock`、`build_gen_key`；
-- 聚合/构造/转换：`resolve_cast`/`build_cast`/`resolve_bit_cast`、`build_size_of`、
-  `build_{aggregate,array,variant}_construct`、`resolve_{tuple,array,array_repeat,
-  struct_construct,variant_construct,size_of}`。
-
-两个簇原先按计划分两个模块，实际它们**双向引用**（`resolve_*_addr` 要 `build_cast`，
-`build_cast` 要 `is_fat_pointer`/`checks`），且共用同一份 host 面，因此合成一个模块、
-一个 `ValueLowerer`：避免两个 host 互相持有。帧锁实体化状态（`frame_lock`）也随之搬入，
-构建器只读它（`build()` 里写进 `IR.Function.frame_lock`）。
-
-搬移保持逐条等价：IR 文本在此前的搬移前后逐字节相同。
-"""
+"""Address, aggregate, cast, and frame-lock lowering for CFG values."""
 from __future__ import annotations
-
-from collections.abc import Callable
-from dataclasses import dataclass
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
-from compiler.codegen.cfg.lower.cfg_ctx import CfgCtx
-from compiler.codegen.cfg.lower.checks import CheckState
-from compiler.codegen.cfg.lower.emitter import FunctionEmitter
+from compiler.codegen.cfg.lower.memory import MemoryOps
+from compiler.codegen.cfg.lower.resolver import ExprResolver
+from compiler.codegen.cfg.lower.state import FunctionState
 from compiler.codegen.error import CodegenError
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
@@ -37,30 +18,13 @@ def _ch_block():
     return CompilerLog.get("cfg.block")
 
 
-@dataclass(frozen=True)
-class ValueHost:
-    """惰值/聚合下降需要从构建器借用的能力（只读句柄 + 回调）。"""
-
-    emitter: FunctionEmitter
-    checks: CheckState
-    ctx: CfgCtx
-    resolve_val: Callable[[HIR.Expr], IR.Value]
-    build_element_ptr: Callable[[IR.Value, IR.Value, int], IR.Value]
-    build_field_ptr: Callable[[IR.Value, int, int], IR.Value]
-    build_func_ptr: Callable[[int], IR.Value]
-    build_extract_value: Callable[[IR.Value, int, int], IR.Value]
-    is_fat_pointer: Callable[[IR.Value], bool]
-    closure_receiver_id: int | None
-    closure_receiver_ref_type_id: int | None
-    closure_struct_type_id: int | None
-    closure_capture_fields: dict[int, Type.StructField]
-
-
 class ValueLowerer:
     """惰值/取址 + 聚合/构造/转换下降器（持有帧锁实体化状态）。"""
 
-    def __init__(self, host: ValueHost) -> None:
-        self.__host = host
+    def __init__(self, state: FunctionState, memory: MemoryOps, resolver: ExprResolver) -> None:
+        self.__state = state
+        self.__memory = memory
+        self.__resolver = resolver
         self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化
 
     @property
@@ -79,11 +43,11 @@ class ValueLowerer:
         if isinstance(expr, HIR.SliceAccess):
             return self.resolve_slice_access_addr(expr)
         if isinstance(expr, HIR.Closure):
-            value = self.__host.resolve_val(expr)
+            value = self.__resolver.resolve_val(expr)
             return self.build_alloca(value, fat=False)
 
         if not expr.is_place:
-            val = self.__host.resolve_val(expr)
+            val = self.__resolver.resolve_val(expr)
             return self.build_alloca(val, fat=False)
 
         # resolve expr that produces an address
@@ -97,7 +61,7 @@ class ValueLowerer:
             case HIR.Var():
                 return self.resolve_var_addr(expr)
             case HIR.Ty():
-                return self.__host.build_func_ptr(expr.type_id)
+                return self.__state.build_func_ptr(expr.type_id)
             case _:
                 raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
 
@@ -115,10 +79,10 @@ class ValueLowerer:
         if isinstance(expr, HIR.SliceAccess):
             return self.resolve_slice_access_addr(expr, fat=True)
         if isinstance(expr, HIR.Closure):
-            value = self.__host.resolve_val(expr)
+            value = self.__resolver.resolve_val(expr)
             return self.build_alloca(value, fat=True)
         if not expr.is_place:
-            val = self.__host.resolve_val(expr)
+            val = self.__resolver.resolve_val(expr)
             return self.build_alloca(val, fat=True)
 
         match expr:
@@ -133,7 +97,7 @@ class ValueLowerer:
             case HIR.Var():
                 return self.resolve_var_addr(expr, fat=True)
             case HIR.Ty():
-                return self.__host.build_func_ptr(expr.type_id)
+                return self.__state.build_func_ptr(expr.type_id)
             case _:
                 raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
 
@@ -142,17 +106,17 @@ class ValueLowerer:
     # ------------------------------------------------------------------
 
     def resolve_deref_addr(self, expr: HIR.Unary) -> IR.Value:
-        return self.__host.resolve_val(expr.operand)
+        return self.__resolver.resolve_val(expr.operand)
 
     def resolve_field_access_addr(self, expr: HIR.FieldAccess, *, fat: bool = False) -> IR.Value:
         # 惰性左值路径:fat=True(显式 & / 方法 receiver)时沿胖基址传播;
         # 自然形态下基址裸/胖随其形态——裸变量 → 裸字段地址,胖指针(Deref 后)→ 胖。
         base_addr = self.resolve_addr_fat(expr.receiver) if fat else self.resolve_addr(expr.receiver)
-        return self.__host.build_field_ptr(base_addr, expr.field.index, expr.type_id)
+        return self.__memory.build_field_ptr(base_addr, expr.field.index, expr.type_id)
 
     def resolve_tuple_access_addr(self, expr: HIR.TupleAccess, *, fat: bool = False) -> IR.Value:
         base_addr = self.resolve_addr_fat(expr.receiver) if fat else self.resolve_addr(expr.receiver)
-        return self.__host.build_field_ptr(base_addr, expr.index, expr.type_id)
+        return self.__memory.build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def resolve_array_access_addr(self, expr: HIR.ArrayAccess, *, fat: bool = False) -> IR.Value:
         # T[N] 元素地址:数组指针退化为 T* 后按元素索引(LLVM cast 数组退化
@@ -160,15 +124,15 @@ class ValueLowerer:
         # 惰性左值路径:裸数组基址(普通数组变量)走裸位转换 + 编译期
         # 越界检查;胖基址(Deref 后)走原退化 + ElementPtr 良构检查。
         base_addr = self.resolve_addr_fat(expr.array) if fat else self.resolve_addr(expr.array)
-        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
+        elem_ptr_type = self.__state.session.type_ctx.alloc_pointer(expr.element_type)
         elem_base = self.build_cast(base_addr, elem_ptr_type)
-        index_val = self.__host.resolve_val(expr.index)
-        if not fat and self.__host.checks.is_raw(base_addr):
-            self.__host.emitter.emit(IR.CheckRequest(
+        index_val = self.__resolver.resolve_val(expr.index)
+        if not fat and self.__state.pointers.is_raw(base_addr):
+            self.__state.emitter.emit(IR.CheckRequest(
                 kind=IR.CHECK_REQUEST_RAW_BOUNDS, operands=[index_val], extra=expr.length,
             ))
             _ch_block().debug(lambda: "check insert ArrayAccess(raw): index < length (裸数组越界)")
-        return self.__host.build_element_ptr(elem_base, index_val, elem_ptr_type)
+        return self.__memory.build_element_ptr(elem_base, index_val, elem_ptr_type)
 
     def resolve_slice_access_addr(self, expr: HIR.SliceAccess, *, fat: bool = False) -> IR.Value:
         """T[] 元素地址内建解析（切片索引内联优化）。
@@ -181,18 +145,18 @@ class ValueLowerer:
         3. __build_element_ptr → CheckElementArith + ElementPtr 得元素地址。
         调用方后续 fieldptr/load/store 照常触发 CheckInBounds/CheckSafeAccess。
         """
-        slice_val = self.__host.resolve_val(expr.slice)
-        index_val = self.__host.resolve_val(expr.index)
-        elem_ptr_type = self.__host.ctx.type_ctx.alloc_pointer(expr.element_type)
-        data = self.__host.build_extract_value(slice_val, 0, elem_ptr_type)
-        return self.__host.build_element_ptr(data, index_val, elem_ptr_type)
+        slice_val = self.__resolver.resolve_val(expr.slice)
+        index_val = self.__resolver.resolve_val(expr.index)
+        elem_ptr_type = self.__state.session.type_ctx.alloc_pointer(expr.element_type)
+        data = self.__memory.build_extract_value(slice_val, 0, elem_ptr_type)
+        return self.__memory.build_element_ptr(data, index_val, elem_ptr_type)
 
     def resolve_var_addr(self, expr: HIR.Var, *, fat: bool = False) -> IR.Value:
-        captured_field = self.__host.closure_capture_fields.get(expr.symbol_id)
+        captured_field = self.__state.closure_capture_fields.get(expr.symbol_id)
         if captured_field is not None:
-            receiver_id = self.__host.closure_receiver_id
-            receiver_ref_type_id = self.__host.closure_receiver_ref_type_id
-            struct_type_id = self.__host.closure_struct_type_id
+            receiver_id = self.__state.closure_receiver_id
+            receiver_ref_type_id = self.__state.closure_receiver_ref_type_id
+            struct_type_id = self.__state.closure_struct_type_id
             assert receiver_id is not None
             assert receiver_ref_type_id is not None
             assert struct_type_id is not None
@@ -217,9 +181,9 @@ class ValueLowerer:
                 is_place=expr.is_place,
             )
             return self.resolve_field_access_addr(field_access, fat=fat)
-        if expr.symbol_id not in self.__host.emitter.func.local_vars:
+        if expr.symbol_id not in self.__state.emitter.func.local_vars:
             raise CodegenError(f"Undefined variable: {expr.symbol_id}", expr.span)
-        var_ref = self.__host.emitter.func.local_vars[expr.symbol_id]
+        var_ref = self.__state.emitter.func.local_vars[expr.symbol_id]
         if fat:
             return self.build_var_ptr_fat(var_ref)
         return self.build_var_ptr_raw(var_ref)
@@ -236,12 +200,10 @@ class ValueLowerer:
         LLVM 下降由 LLVM 层完成。惰性左值路径:显式 &x 与方法 receiver 专用。
         """
         e_f, k_f = self.emit_frame_lock()
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(var_ref.type_id))
-        fat = self.__host.emitter.emit(IR.VarPtr(
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(var_ref.type_id))
+        fat = self.__state.emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f,
         )).result
-        self.__host.checks.mark_frame_locked(fat)
-        self.__host.checks.mark_root(fat)
         return fat
 
     def build_var_ptr_raw(self, var_ref: IR.VarRef) -> IR.Value:
@@ -249,28 +211,24 @@ class ValueLowerer:
         仅返回栈槽地址,不合成 5 字段、不触发帧锁实体化(帧锁延迟到真正需要
         胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
         """
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(var_ref.type_id))
-        raw_ptr = self.__host.emitter.emit(IR.VarPtr(
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(var_ref.type_id))
+        raw_ptr = self.__state.emitter.emit(IR.VarPtr(
             result=result, var_ref=var_ref, frame_word=None, frame_key=None, raw=True,
         )).result
-        self.__host.checks.mark_raw(raw_ptr)
         return raw_ptr
 
     def build_alloca(self, value: IR.Value, *, fat: bool) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=self.__host.ctx.type_ctx.alloc_pointer(value.type_id))
-        if fat and not self.__host.ctx.raw_pointers:
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(value.type_id))
+        if fat and not self.__state.session.raw_pointers:
             frame_word, frame_key = self.emit_frame_lock()
-            addr = self.__host.emitter.emit(IR.Alloca(
+            addr = self.__state.emitter.emit(IR.Alloca(
                 result=result,
                 value=value,
                 frame_word=frame_word,
                 frame_key=frame_key,
             )).result
-            self.__host.checks.mark_frame_locked(addr)
-            self.__host.checks.mark_root(addr)
         else:
-            addr = self.__host.emitter.emit(IR.Alloca(result=result, value=value, raw=True)).result
-            self.__host.checks.mark_raw(addr)
+            addr = self.__state.emitter.emit(IR.Alloca(result=result, value=value, raw=True)).result
         return addr
 
     def emit_frame_lock(self) -> tuple[IR.Value | None, IR.Value | None]:
@@ -281,20 +239,20 @@ class ValueLowerer:
         路径)的发射由 LLVM 层完成。
         raw 模式:无帧锁——直接返回 None 帧字段,不实体化
         GenKey/AcquireFrameLock。"""
-        if self.__host.ctx.raw_pointers:
+        if self.__state.session.raw_pointers:
             return (None, None)
         if self.__frame_lock is not None:
             return self.__frame_lock
-        saved_block = self.__host.emitter.current_block
-        self.__host.emitter.current_block = self.__host.emitter.func.entry
+        saved_block = self.__state.emitter.current_block
+        self.__state.emitter.current_block = self.__state.emitter.func.entry
         k_f = self.build_gen_key()
         e_f_result = IR.Reg(
-            name=self.__host.emitter.new_name(),
+            name=self.__state.emitter.new_name(),
             type_id=TypeCtx.u64_id,  # 帧 word(整字)
         )
-        e_f = self.__host.emitter.emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
-        self.__host.emitter.current_block = saved_block
-        entry = self.__host.emitter.func.entry
+        e_f = self.__state.emitter.emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
+        self.__state.emitter.current_block = saved_block
+        entry = self.__state.emitter.func.entry
         frame_stmts = entry.stmts[-2:]
         del entry.stmts[-2:]
         entry.stmts[0:0] = frame_stmts
@@ -303,22 +261,22 @@ class ValueLowerer:
 
     def build_gen_key(self) -> IR.Value:
         """`k_f ← Gen()`：帧进入 re-key 的 32 位键体。"""
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id)
-        return self.__host.emitter.emit(IR.GenKey(result=result)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.u64_id)
+        return self.__state.emitter.emit(IR.GenKey(result=result)).result
 
     def resolve_cast(self, expr: HIR.Cast) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
+        value = self.__resolver.resolve_val(expr.value)
         return self.build_cast(value, expr.target_type)
 
     def resolve_trait_object_coerce(self, expr: HIR.TraitObjectCoerce) -> IR.Value:
-        value = self.__host.resolve_val(expr.value)
-        source_ty = self.__host.ctx.type_ctx[
-            self.__host.ctx.type_ctx.resolve_aliases(value.type_id)
+        value = self.__resolver.resolve_val(expr.value)
+        source_ty = self.__state.session.type_ctx[
+            self.__state.session.type_ctx.resolve_aliases(value.type_id)
         ]
-        reference_type_id = self.__host.ctx.type_ctx.alloc_ref(expr.concrete_type_id)
+        reference_type_id = self.__state.session.type_ctx.alloc_ref(expr.concrete_type_id)
         if isinstance(source_ty, Type.PointerType):
-            if not self.__host.ctx.raw_pointers:
-                self.__host.emitter.emit(IR.CheckRequest(
+            if not self.__state.session.raw_pointers:
+                self.__state.emitter.emit(IR.CheckRequest(
                     kind=IR.CHECK_REQUEST_IN_BOUNDS,
                     operands=[value],
                 ))
@@ -330,8 +288,8 @@ class ValueLowerer:
                 "trait-object coercion source is not a concrete pointer or reference",
                 expr.span,
             )
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
-        return self.__host.emitter.emit(IR.TraitObjectConstruct(
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=expr.type_id)
+        return self.__state.emitter.emit(IR.TraitObjectConstruct(
             result=result,
             reference=reference,
             concrete_type_id=expr.concrete_type_id,
@@ -344,17 +302,12 @@ class ValueLowerer:
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
         # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
         # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
-        to_resolved = self.__host.ctx.type_ctx.resolve_aliases(to_type)
-        if isinstance(self.__host.ctx.type_ctx[to_resolved], Type.PointerType):
+        to_resolved = self.__state.session.type_ctx.resolve_aliases(to_type)
+        if isinstance(self.__state.session.type_ctx[to_resolved], Type.PointerType):
             _ch_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
-        raw = self.__host.checks.is_raw(value)
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=to_type)
-        cast = self.__host.emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
-        if raw:
-            self.__host.checks.mark_raw(cast)
-        else:
-            self.__host.checks.inherit_frame_lock(cast, value)
-            self.__host.checks.inherit_root(cast, value)
+        raw = self.__state.pointers.is_raw(value)
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=to_type)
+        cast = self.__state.emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
         # 嵌套派生链的挂起义务沿 ptr→ptr cast（identity 重贴）传播，由检查插入
         # pass 依 `IR.Cast` 边重建。
         return cast
@@ -366,70 +319,70 @@ class ValueLowerer:
         else:
             source_expr = expr.value
             target_type_id = expr.target_type
-        value = self.__host.resolve_val(source_expr)
-        source_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(value.type_id)]
-        target_type = self.__host.ctx.type_ctx[self.__host.ctx.type_ctx.resolve_aliases(target_type_id)]
-        if not self.__host.ctx.raw_pointers:
+        value = self.__resolver.resolve_val(source_expr)
+        source_type = self.__state.session.type_ctx[self.__state.session.type_ctx.resolve_aliases(value.type_id)]
+        target_type = self.__state.session.type_ctx[self.__state.session.type_ctx.resolve_aliases(target_type_id)]
+        if not self.__state.session.raw_pointers:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element
                 # rather than the legal one-past pointer value.
-                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[value]))
+                self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_IN_BOUNDS, operands=[value]))
             elif isinstance(source_type, Type.SliceType) and isinstance(target_type, Type.RefType):
                 # An empty slice has no element from which a reference can be
                 # formed.  Establish this before dropping the size field.
-                self.__host.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_SLICE_NONEMPTY, operands=[value]))
+                self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_SLICE_NONEMPTY, operands=[value]))
         return self.build_cast(value, target_type_id)
 
     def resolve_undef(self, expr: HIR.Builtin) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
-        return self.__host.emitter.emit(IR.Undef(result=result, type_id=expr.type_id)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=expr.type_id)
+        return self.__state.emitter.emit(IR.Undef(result=result, type_id=expr.type_id)).result
 
     def resolve_dangling(self, expr: HIR.Builtin) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=expr.type_id)
-        return self.__host.emitter.emit(IR.Dangling(result=result, type_id=expr.type_id)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=expr.type_id)
+        return self.__state.emitter.emit(IR.Dangling(result=result, type_id=expr.type_id)).result
 
     def build_size_of(self, type_id: int) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=TypeCtx.u64_id)
-        return self.__host.emitter.emit(IR.SizeOf(result=result, type_id=type_id)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.u64_id)
+        return self.__state.emitter.emit(IR.SizeOf(result=result, type_id=type_id)).result
 
     def build_aggregate_construct(self, type_id: int, fields: list[IR.Value]) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=type_id)
-        return self.__host.emitter.emit(IR.AggregateConstruct(result=result, type_id=type_id, fields=fields)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
+        return self.__state.emitter.emit(IR.AggregateConstruct(result=result, type_id=type_id, fields=fields)).result
 
     def build_array_construct(self, type_id: int, elements: list[IR.Value]) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=type_id)
-        return self.__host.emitter.emit(IR.ArrayConstruct(result=result, type_id=type_id, elements=elements)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
+        return self.__state.emitter.emit(IR.ArrayConstruct(result=result, type_id=type_id, elements=elements)).result
 
     def build_variant_construct(self, enum_type: int, variant: Type.EnumVariant, payload_fields: list[IR.Value] | None, result_type: int) -> IR.Value:
-        result = IR.Reg(name=self.__host.emitter.new_name(), type_id=result_type)
-        return self.__host.emitter.emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=result_type)
+        return self.__state.emitter.emit(IR.VariantConstruct(result=result, enum_type=enum_type, variant=variant, payload_fields=payload_fields)).result
 
     def resolve_tuple(self, expr: HIR.Tuple) -> IR.Value:
-        field_vals = [self.__host.resolve_val(field) for field in expr.field_values]
-        tuple_type = self.__host.ctx.type_ctx[expr.type_id]
+        field_vals = [self.__resolver.resolve_val(field) for field in expr.field_values]
+        tuple_type = self.__state.session.type_ctx[expr.type_id]
         if (
             isinstance(tuple_type, (Type.SliceType, Type.StrType))
             and len(field_vals) == 2
-            and self.__host.is_fat_pointer(field_vals[0])
+            and self.__state.pointers.is_fat_pointer(field_vals[0])
         ):
             # ``@slice_from_parts``/``@str_from_parts`` are trusted metadata
             # constructors.  Keep the requested view within the source
             # pointer's remaining extent before publishing its size field.
-            self.__host.emitter.emit(IR.CheckRequest(
+            self.__state.emitter.emit(IR.CheckRequest(
                 kind=IR.CHECK_REQUEST_ELEMENT_ARITH, operands=[field_vals[0], field_vals[1]],
             ))
             _ch_block().debug(lambda: "check insert slice construction: source extent + requested length")
         return self.build_aggregate_construct(expr.type_id, field_vals)
 
     def resolve_array(self, expr: HIR.Array) -> IR.Value:
-        elements = [self.__host.resolve_val(element) for element in expr.elements]
+        elements = [self.__resolver.resolve_val(element) for element in expr.elements]
         return self.build_array_construct(expr.type_id, elements)
 
     def resolve_array_repeat(self, expr: HIR.ArrayRepeat) -> IR.Value:
-        elem_val = self.__host.resolve_val(expr.element)
-        array_ty = self.__host.ctx.type_ctx[expr.type_id]
+        elem_val = self.__resolver.resolve_val(expr.element)
+        array_ty = self.__state.session.type_ctx[expr.type_id]
         assert isinstance(array_ty, Type.ArrayType)
-        length_ty = self.__host.ctx.type_ctx[array_ty.length]
+        length_ty = self.__state.session.type_ctx[array_ty.length]
         assert isinstance(length_ty, Type.LiteralValueType), (
             f"array repeat count must be concrete at codegen, got {type(length_ty).__name__}"
         )
@@ -437,18 +390,18 @@ class ValueLowerer:
         return self.build_array_construct(expr.type_id, elements)
 
     def resolve_struct_construct(self, expr: HIR.StructConstruct) -> IR.Value:
-        struct_type = self.__host.ctx.type_ctx[expr.struct_id]
+        struct_type = self.__state.session.type_ctx[expr.struct_id]
         assert isinstance(struct_type, Type.StructType)
-        fields = self.__host.ctx.type_ctx.get_struct_fields(expr.struct_id)
-        field_vals = [self.__host.resolve_val(expr.field_values[field.name]) for field in fields]
+        fields = self.__state.session.type_ctx.get_struct_fields(expr.struct_id)
+        field_vals = [self.__resolver.resolve_val(expr.field_values[field.name]) for field in fields]
         return self.build_aggregate_construct(expr.struct_id, field_vals)
 
     def resolve_closure(self, expr: HIR.Closure) -> IR.Value:
         """Build the ordinary capture-environment aggregate for a closure."""
-        closure_type = self.__host.ctx.type_ctx[expr.type_id]
+        closure_type = self.__state.session.type_ctx[expr.type_id]
         assert isinstance(closure_type, Type.ClosureType)
-        fields = self.__host.ctx.type_ctx.get_struct_fields(closure_type.struct_type_id)
-        field_values = [self.__host.resolve_val(expr.captures[field.name]) for field in fields]
+        fields = self.__state.session.type_ctx.get_struct_fields(closure_type.struct_type_id)
+        field_values = [self.__resolver.resolve_val(expr.captures[field.name]) for field in fields]
         return self.build_aggregate_construct(closure_type.struct_type_id, field_values)
 
     def resolve_variant_construct(self, expr: HIR.VariantConstruct) -> IR.Value:
@@ -456,10 +409,10 @@ class ValueLowerer:
             payload_fields = None
         else:
             assert expr.variant.payload_type is not None
-            payload_type = self.__host.ctx.type_ctx[expr.variant.payload_type]
+            payload_type = self.__state.session.type_ctx[expr.variant.payload_type]
             assert isinstance(payload_type, Type.StructType)
-            fields = self.__host.ctx.type_ctx.get_struct_fields(expr.variant.payload_type)
-            payload_fields = [self.__host.resolve_val(expr.args[field.name]) for field in fields]
+            fields = self.__state.session.type_ctx.get_struct_fields(expr.variant.payload_type)
+            payload_fields = [self.__resolver.resolve_val(expr.args[field.name]) for field in fields]
 
         return self.build_variant_construct(expr.enum_id, expr.variant, payload_fields, expr.type_id)
 

@@ -7,7 +7,7 @@ from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
-from compiler.codegen.cfg import ir as CFG
+from compiler.codegen.abi import lockmech as ABI
 from compiler.codegen.llvm.function.core import FunctionCore
 from compiler.codegen.llvm.base.intrinsics import IntrinsicKind
 from compiler.codegen.llvm.pointer.representation import PointerRepresentation
@@ -149,19 +149,19 @@ class MemoryEmitter:
             )  # type: ignore
             field_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), field_addr)  # type: ignore
             if isinstance(base_def, Type.PointerType):
-                value = self.__builder.insert_value(base.ir_val, field_ptr.ir_val, CFG.FAT_DATA)  # type: ignore
+                value = self.__builder.insert_value(base.ir_val, field_ptr.ir_val, ABI.FAT_DATA)  # type: ignore
                 value = self.__builder.insert_value(
                     value,
-                    self.__pointers.narrow_view_value(self.__u64(0).ir_val, base.ir_val, CFG.FAT_INDEX),
-                    CFG.FAT_INDEX,
+                    self.__pointers.narrow_view_value(self.__u64(0).ir_val, base.ir_val, ABI.FAT_INDEX),
+                    ABI.FAT_INDEX,
                 )  # type: ignore
                 value = self.__builder.insert_value(
                     value,
-                    self.__pointers.narrow_view_value(self.__u64(1).ir_val, base.ir_val, CFG.FAT_SIZE),
-                    CFG.FAT_SIZE,
+                    self.__pointers.narrow_view_value(self.__u64(1).ir_val, base.ir_val, ABI.FAT_SIZE),
+                    ABI.FAT_SIZE,
                 )  # type: ignore
                 return LLValue(result_type_id, value)
-            word = self.__pointers.extract_fat_field(base, CFG.FAT_WORD)
+            word = self.__pointers.extract_fat_field(base, ABI.FAT_WORD)
             return self.__pointers.build_fat(
                 field_ptr, word, self.__u64(0), self.__u64(1), result_type_id
             )

@@ -44,9 +44,7 @@ from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
-from compiler.codegen.cfg.passes.cleanup import Cleanup
-from compiler.codegen.cfg.passes.insert_checks import InsertChecks
-from compiler.codegen.cfg.passes.translator import CfgTranslator
+from compiler.codegen.cfg.pipeline import CfgPipeline
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.pipeline.emit import Emitter
 from compiler.codegen.llvm.base.module import LLModule, apply_target
@@ -297,19 +295,11 @@ def __analyze_payload(result: object) -> dict[str, object]:
 
 
 def __cfg(ctx: SemCtx) -> dict[int, CFG_IR.Function]:
-    """CFG 三段 pass 的编排：下降 → 检查插入 → 后处理。
-
-    输入取自中端共享上下文（`ctx.def_points` / `ctx.type_ctx` / `ctx.raw_pointers`）；
-    CFG 侧自带 `CfgCtx`（每函数事实 + 函数表），两层的上下文各自管自己那一层。
-    """
-    cfg_lower = CfgTranslator(ctx.type_ctx, raw_pointers=ctx.raw_pointers)
+    """Lower HIR definitions and run CFG transformations."""
     try:
-        cfg_lower.run(ctx.def_points)
+        return CfgPipeline(ctx.type_ctx, ctx.raw_pointers).run(ctx.def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
-    InsertChecks(cfg_lower.ctx).run()
-    Cleanup(cfg_lower.ctx).run()
-    return cfg_lower.export()
 
 
 def __build_unit_names(unit_datas: dict[int, UnitData], packages: PackageMap | None) -> dict[int, str]:
