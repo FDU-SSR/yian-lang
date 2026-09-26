@@ -10,17 +10,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from compiler.analysis.session import ANALYSIS_ERRORS
+from compiler.analysis.error import AnalysisError
+from compiler.error import CompilerError
 from compiler.format.layout import format_tokens
-from compiler.frontend.lex.lexer import Lexer
+from compiler.frontend.lex.lexer import LexError, Lexer
 from compiler.frontend.lex.token import Token
+from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
 
 __all__ = ["format_text", "format_tokens", "lex_tokens"]
 
 #: A path is only used for spans and error messages, so a buffer without one gets
 #: a placeholder instead of failing.
-_PLACEHOLDER = Path("<buffer>.an")
+__PLACEHOLDER = Path("<buffer>.an")
+__FORMAT_ERRORS = (CompilerError, LexError, ParseError, AnalysisError)
 
 
 def format_text(text: str, *, path: Path | None = None) -> str | None:
@@ -28,12 +31,12 @@ def format_text(text: str, *, path: Path | None = None) -> str | None:
 
     *path* names the file for position tracking; it does not have to exist.
     """
-    tokens = lex_tokens(text, path or _PLACEHOLDER)
+    tokens = lex_tokens(text, path or __PLACEHOLDER)
     if tokens is None:
         return None
     try:
         Parser(tokens).parse()
-    except ANALYSIS_ERRORS:
+    except __FORMAT_ERRORS:
         return None
     return format_tokens(text, tokens)
 
@@ -44,6 +47,6 @@ def lex_tokens(text: str, path: Path) -> list[Token] | None:
     lexer = Lexer(path, text=text)
     try:
         lexer.lex()
-    except ANALYSIS_ERRORS:
+    except __FORMAT_ERRORS:
         return None
     return lexer.export()

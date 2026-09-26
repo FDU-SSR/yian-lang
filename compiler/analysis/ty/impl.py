@@ -39,6 +39,7 @@ class ImplRegistry:
         # queries share a cycle-detection set and are context-dependent.
         self.__memoize_enabled = False
         self.__has_impl_cache: dict[tuple[int, int], bool] = {}
+        self.__procedure_copies: list[tuple[int, int]] = []
 
     def enable_memoization(self) -> None:
         """Enable has_impl memoization after impl registration is complete."""
@@ -49,11 +50,12 @@ class ImplRegistry:
         self.__impls.append(impl)
         return impl
 
-    def check_impls(self) -> None:
+    def check_impls(self) -> tuple[tuple[int, int], ...]:
         for impl in self.__impls:
             self.__check_impl(impl)
 
         self.__cache_impls()
+        return tuple(self.__procedure_copies)
 
     def iter_impls(self) -> list[Impl]:
         return list(self.__impls)
@@ -356,8 +358,7 @@ class ImplRegistry:
 
         method_ty.generic_args = trait_method_ty.generic_args + impl.generics
 
-        # add cloned procedure to the type context
-        self.__ctx.add_procedure(method_type_id, *self.__ctx.get_procedure(trait_method_id))
+        self.__procedure_copies.append((trait_method_id, method_type_id))
 
         return method_type_id
 

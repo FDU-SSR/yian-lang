@@ -8,7 +8,7 @@ analysis itself filled in:
 * the **declaration index** knows every declaration's name span, which is
   the declaration side of navigation — a function name, a struct field, an enum
   variant, a parameter, a type, an import;
-* the checker's **resolved names** (:class:`~compiler.analysis.ty.ty.NameRef`)
+* the checker's **resolved names** (:class:`~compiler.analysis.facts.names.NameRef`)
   record, for every name it resolved anywhere in a body or a signature, what that
   name turned out to be — the reference side: locals, parameters, calls, methods,
   fields, enum variants, constructed structs, and type names in annotations.
@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.facts.names import NameRef, NameTarget
 from compiler.analysis.queries.index import Declaration, DeclarationKind
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -160,9 +161,9 @@ class Navigator:
             return None
         return Resolution(target=target, expression_type=expression_type)
 
-    def __reference_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
+    def __reference_at(self, path: Path, row: int, col: int) -> NameRef | None:
         """The innermost resolved name the position is inside."""
-        best: Type.NameRef | None = None
+        best: NameRef | None = None
         for reference in self.__view.references_of(path):
             if not self.__spans(reference.span, path, row, col):
                 continue
@@ -170,7 +171,7 @@ class Navigator:
                 best = reference
         return best
 
-    def reference_starting_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
+    def reference_starting_at(self, path: Path, row: int, col: int) -> NameRef | None:
         """The resolved name whose span *starts* at the position.
 
         A recorded name is exactly one identifier, so its start position
@@ -182,11 +183,11 @@ class Navigator:
         """The declaration whose *name* starts at the position, if any."""
         return self.__view.declaration_starting_at(path, row, col)
 
-    def all_references(self) -> tuple[Type.NameRef, ...]:
+    def all_references(self) -> tuple[NameRef, ...]:
         """Every recorded name in the analysis, for project-wide queries."""
         return self.__view.name_refs()
 
-    def reference_in_span(self, span: SrcSpan) -> Type.NameRef | None:
+    def reference_in_span(self, span: SrcSpan) -> NameRef | None:
         """The resolved name inside *span*, if one was recorded there."""
         return self.__view.reference_in_span(span)
 
@@ -221,7 +222,7 @@ class Navigator:
 
     # ── targets from what the analysis resolved ──────────────────────────────
 
-    def target_of(self, target: Type.NameTarget) -> Target | None:
+    def target_of(self, target: NameTarget) -> Target | None:
         """The declaration a recorded resolution points at."""
         if isinstance(target, int):
             return self.__target_of_type(target)

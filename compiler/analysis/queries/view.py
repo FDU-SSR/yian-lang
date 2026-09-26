@@ -28,6 +28,7 @@ from compiler.analysis.queries.index import (
     DeclarationIndex,
 )
 from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.facts.names import NameRef
 from compiler.analysis.symbol.symbol import Symbol
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -56,9 +57,9 @@ class AnalysisView:
         # Position → what is there, built once per view: a request may ask about
         # many positions (semantic tokens, completion), and each answer is then a
         # dictionary lookup rather than a scan of every reference.
-        self.__references: dict[tuple[Path, int, int], Type.NameRef] | None = None
+        self.__references: dict[tuple[Path, int, int], NameRef] | None = None
         self.__declarations: dict[tuple[Path, int, int], Declaration] | None = None
-        self.__references_by_path: dict[Path, tuple[Type.NameRef, ...]] | None = None
+        self.__references_by_path: dict[Path, tuple[NameRef, ...]] | None = None
 
     # ── sources and tokens ────────────────────────────────────────────────────
 
@@ -142,13 +143,11 @@ class AnalysisView:
 
     # ── recorded names ────────────────────────────────────────────────────────
 
-    def name_refs(self) -> tuple[Type.NameRef, ...]:
+    def name_refs(self) -> tuple[NameRef, ...]:
         """Every name the analysis resolved, in the order it resolved them."""
-        if self.__type_ctx is None:
-            return ()
-        return tuple(self.__type_ctx.name_refs())
+        return self.__result.name_refs
 
-    def reference_starting_at(self, path: Path, row: int, col: int) -> Type.NameRef | None:
+    def reference_starting_at(self, path: Path, row: int, col: int) -> NameRef | None:
         """The resolved name whose span *starts* at the position.
 
         A recorded name is exactly one identifier, so its start position
@@ -156,11 +155,11 @@ class AnalysisView:
         """
         return self.__reference_map().get((path.resolve(), row, col))
 
-    def references_of(self, path: Path) -> tuple[Type.NameRef, ...]:
+    def references_of(self, path: Path) -> tuple[NameRef, ...]:
         """Every recorded name in *path* (grouped once per view)."""
         return self.__references_by_path_map().get(path.resolve(), ())
 
-    def reference_in_span(self, span: SrcSpan) -> Type.NameRef | None:
+    def reference_in_span(self, span: SrcSpan) -> NameRef | None:
         """The resolved name inside *span*, if one was recorded there."""
         for reference in self.references_of(span.path):
             start = reference.span.start
@@ -235,9 +234,7 @@ class AnalysisView:
 
     def procedures(self) -> tuple[tuple[int, AST.Block, int], ...]:
         """Every registered procedure as ``(type id, body, unit id)``."""
-        if self.__type_ctx is None:
-            return ()
-        return tuple(self.__type_ctx.iter_procedures())
+        return self.__result.procedures
 
     # ── the type space ────────────────────────────────────────────────────────
 
@@ -339,9 +336,9 @@ class AnalysisView:
 
     # ── internals ─────────────────────────────────────────────────────────────
 
-    def __reference_map(self) -> dict[tuple[Path, int, int], Type.NameRef]:
+    def __reference_map(self) -> dict[tuple[Path, int, int], NameRef]:
         if self.__references is None:
-            references: dict[tuple[Path, int, int], Type.NameRef] = {}
+            references: dict[tuple[Path, int, int], NameRef] = {}
             for reference in self.name_refs():
                 start = reference.span.start
                 key = (reference.span.path.resolve(), start.row, start.col)
@@ -362,9 +359,9 @@ class AnalysisView:
             self.__declarations = declarations
         return self.__declarations
 
-    def __references_by_path_map(self) -> dict[Path, tuple[Type.NameRef, ...]]:
+    def __references_by_path_map(self) -> dict[Path, tuple[NameRef, ...]]:
         if self.__references_by_path is None:
-            grouped: dict[Path, list[Type.NameRef]] = {}
+            grouped: dict[Path, list[NameRef]] = {}
             for reference in self.name_refs():
                 grouped.setdefault(reference.span.path.resolve(), []).append(reference)
             self.__references_by_path = {

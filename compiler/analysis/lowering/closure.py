@@ -9,7 +9,7 @@ from compiler.frontend.parse import ast as AST
 
 if TYPE_CHECKING:
     from compiler.analysis.lowering.expr_checker import ExprChecker
-    from compiler.analysis.lowering.sem_ctx import SemCtx
+    from compiler.analysis.lowering.state import DefinitionState
 
 
 class ClosureHelper:
@@ -22,7 +22,7 @@ class ClosureHelper:
 
     closure_counter = 0
 
-    def __init__(self, ctx: SemCtx, expr_checker: ExprChecker):
+    def __init__(self, ctx: DefinitionState, expr_checker: ExprChecker):
         self.__ctx = ctx
         self.__expr = expr_checker
 
@@ -88,7 +88,7 @@ class ClosureHelper:
         closure_ty.call_method_type_id = method_type_id
 
         # --- register AST body as procedure (keyed by closure_type_id) ---
-        type_ctx.add_procedure(closure_type_id, node.body, self.__ctx.unit_id)
+        self.__ctx.procedures.register(closure_type_id, node.body, self.__ctx.unit_id)
         self.__ctx.report_def(closure_type_id)
 
         # --- return HIR.Closure (variable keeps ClosureType for dispatch) ---

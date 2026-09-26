@@ -14,7 +14,7 @@ from compiler.frontend.parse import ast as AST
 from compiler.runtime_error import parse_runtime_error_code
 
 if TYPE_CHECKING:
-    from compiler.analysis.lowering.sem_ctx import SemCtx
+    from compiler.analysis.lowering.state import DefinitionState
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class _BuiltinSpec:
 # ordinary user-defined functions with the same bare names are never
 # intercepted here.
 class BuiltinDispatcher:
-    def __init__(self, ctx: SemCtx, expr: ExprEvaluator):
+    def __init__(self, ctx: DefinitionState, expr: ExprEvaluator):
         self.__ctx = ctx
         self.__expr = expr
         self.__builtin_specs: dict[BuiltinKind, _BuiltinSpec] = {

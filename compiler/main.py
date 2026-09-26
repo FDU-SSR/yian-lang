@@ -22,7 +22,6 @@ from compiler.analysis.documents import Document, DocumentStore
 from compiler.analysis.package_map import PackageMap
 from compiler.interop.positions import path_to_uri, to_lsp_range
 from compiler.analysis.session import AnalysisSession, collect_an_files
-from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.utils.log import CompilerLog
 from compiler.utils.log import (
     format_cfg_output,
@@ -30,6 +29,7 @@ from compiler.utils.log import (
 )
 from compiler.format import format_text
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as CFG_IR
 from compiler.codegen.cfg.pipeline import CfgPipeline
 from compiler.codegen.error import CodegenError
@@ -278,10 +278,10 @@ def __analyze_payload(result: object) -> dict[str, object]:
     }
 
 
-def __cfg(ctx: SemCtx) -> dict[int, CFG_IR.Function]:
+def __cfg(type_ctx: TypeCtx, raw_pointers: bool, def_points: dict[int, DefPoint]) -> dict[int, CFG_IR.Function]:
     """Lower HIR definitions and run CFG transformations."""
     try:
-        return CfgPipeline(ctx.type_ctx, ctx.raw_pointers).run(ctx.def_points)
+        return CfgPipeline(type_ctx, raw_pointers).run(def_points)
     except CodegenError as error:
         __report_error(error, stage=Stage.CODEGEN)
 
@@ -507,23 +507,22 @@ def __run(argv: list[str] | None = None) -> int:
         return 1
     for path, source in analysis.sources.items():
         __DOCUMENTS.add(Document(path=path, text=source))
-    ctx = analysis.sem_ctx
     type_ctx = analysis.type_ctx
-    assert ctx is not None and type_ctx is not None
+    assert type_ctx is not None
     src_files = list(analysis.sources)
     unit_names = dict(analysis.unit_names)
-    ctx.declare_def_points(dict(analysis.generated_def_points))
+    generated_def_points = dict(analysis.generated_def_points)
     ch_main.debug(f"type-checked {len(analysis.def_points)} definitions")
     if args.profile:
         timings.update(analysis.timings)
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
-    cfg_functions = __cfg(ctx)
+    cfg_functions = __cfg(type_ctx, args.raw_pointers, generated_def_points)
     ch_main.debug(f"generated {len(cfg_functions)} CFG functions")
     if args.dump:
         (Path("build") / "hir.txt").write_text(
-            format_hir_output(ctx.unit_datas, ctx.def_points, ctx.type_ctx), encoding="utf-8"
+            format_hir_output(dict(analysis.units), generated_def_points, type_ctx), encoding="utf-8"
         )
         (Path("build") / "cfg.txt").write_text(format_cfg_output(cfg_functions), encoding="utf-8")
     if args.profile:

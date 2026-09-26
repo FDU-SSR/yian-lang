@@ -6,7 +6,7 @@ from compiler.analysis.lowering.builtin_dispatcher import BuiltinDispatcher
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
-from compiler.analysis.lowering.sem_ctx import LoopFrame, SemCtx
+from compiler.analysis.lowering.state import LoopFrame, DefinitionState
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -37,7 +37,7 @@ class ExprChecker:
     semantic checks and return `HIR.Expr` carrying HIR nodes and type ids.
     """
 
-    def __init__(self, ctx: SemCtx):
+    def __init__(self, ctx: DefinitionState):
         self.__ctx = ctx
         self.__call_dispatcher = CallDispatcher(ctx, self)
         self.__builtin_dispatcher = BuiltinDispatcher(ctx, self)
@@ -127,11 +127,11 @@ class ExprChecker:
         )
         match result:
             case HIR.FieldAccess(field=field, type_id=type_id):
-                self.__ctx.type_ctx.record_name_ref(node.field_name.span, field, type_id)
+                self.__ctx.names.record(node.field_name.span, field, type_id)
             case HIR.VariantConstruct(variant=variant, type_id=type_id):
                 # A variant without payload is spelled like a field access
                 # (`Shape.Point`), so it arrives here rather than as a call.
-                self.__ctx.type_ctx.record_name_ref(node.field_name.span, variant, type_id)
+                self.__ctx.names.record(node.field_name.span, variant, type_id)
             case _:
                 pass
         return result
@@ -141,11 +141,11 @@ class ExprChecker:
         match result:
             case HIR.MethodCall(method_id=method_id, type_id=type_id):
                 # The method itself, not the receiver's type.
-                self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
+                self.__ctx.names.record(node.method_name.span, method_id, type_id)
             case HIR.TraitObjectMethodCall(method_id=method_id, type_id=type_id):
-                self.__ctx.type_ctx.record_name_ref(node.method_name.span, method_id, type_id)
+                self.__ctx.names.record(node.method_name.span, method_id, type_id)
             case HIR.VariantConstruct(variant=variant, type_id=type_id):
-                self.__ctx.type_ctx.record_name_ref(node.method_name.span, variant, type_id)
+                self.__ctx.names.record(node.method_name.span, variant, type_id)
             case _:
                 pass
         return result
@@ -173,7 +173,7 @@ class ExprChecker:
         # A type written in an expression (`Point.new(...)`, `Pair<Meters>.of(...)`)
         # is a reference like any other: recording it is what lets navigation,
         # hover and member completion know what the receiver is.
-        self.__ctx.type_ctx.record_name_ref(node.name.span, symbol, symbol.type_id)
+        self.__ctx.names.record(node.name.span, symbol, symbol.type_id)
 
         type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
         type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
@@ -216,7 +216,7 @@ class ExprChecker:
         # which declaration a name stood for.
         match symbol.kind:
             case SymbolKind.Variable:
-                self.__ctx.type_ctx.record_name_ref(node.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.span, symbol, symbol.type_id)
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Function:
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
@@ -225,7 +225,7 @@ class ExprChecker:
                         f"a function variable must bind a concrete function",
                         node.span,
                     )
-                self.__ctx.type_ctx.record_name_ref(node.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.span, symbol, symbol.type_id)
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
@@ -233,9 +233,9 @@ class ExprChecker:
                 ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
-                    self.__ctx.type_ctx.record_name_ref(node.span, symbol, ty.value_type)
+                    self.__ctx.names.record(node.span, symbol, ty.value_type)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
-                self.__ctx.type_ctx.record_name_ref(node.span, symbol, type_id)
+                self.__ctx.names.record(node.span, symbol, type_id)
                 return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
@@ -886,7 +886,7 @@ class ExprChecker:
         variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)
         if variant is None:
             raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-        self.__ctx.type_ctx.record_name_ref(ident.span, variant)
+        self.__ctx.names.record(ident.span, variant)
         return variant
 
     def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: HIR.Expr) -> HIR.Block:

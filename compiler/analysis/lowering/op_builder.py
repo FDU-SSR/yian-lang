@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, NoReturn
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
-from compiler.analysis.lowering.sem_ctx import DefKind
+from compiler.analysis.lowering.state import DefKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
@@ -16,7 +16,7 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 if TYPE_CHECKING:
-    from compiler.analysis.lowering.sem_ctx import SemCtx
+    from compiler.analysis.lowering.state import DefinitionState
 
 
 class OperandType(Enum):
@@ -90,7 +90,7 @@ class OpBuilder:
     of the methods below should follow the project's op routing rules.
     """
 
-    def __init__(self, ctx: SemCtx, expr_evaluator: ExprEvaluator, call_dispatcher: CallDispatcher) -> None:
+    def __init__(self, ctx: DefinitionState, expr_evaluator: ExprEvaluator, call_dispatcher: CallDispatcher) -> None:
         self.__ctx = ctx
         self.__type_ctx = ctx.type_ctx
         self.__evaluator = expr_evaluator
@@ -750,7 +750,10 @@ class OpBuilder:
 
         trait_id = TypeCtx.intrinsic_custom_type(trait_kind)
 
-        lookup = self.__type_ctx.method_lookup(receiver, method_name, None, args)
+        lookup = self.__type_ctx.method_lookup(
+            receiver.type_id, receiver.span, method_name, None,
+            [arg.type_id for arg in args],
+        )
         if lookup is None:
             return None
         impl_trait_id = lookup.impl.trait

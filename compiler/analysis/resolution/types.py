@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.token import IntLiteral
@@ -17,8 +18,9 @@ if TYPE_CHECKING:
 
 
 class TypeResolver:
-    def __init__(self, type_ctx: TypeCtx):
+    def __init__(self, type_ctx: TypeCtx, names: NameReferences):
         self.__ctx = type_ctx
+        self.__names = names
 
     INT_MAPPING = {
         (True, 1): 14,
@@ -99,7 +101,7 @@ class TypeResolver:
                     raise AnalysisError(f"{name} is not a type", ty.span)
                 # Record the name as written: editors navigate and hover type
                 # annotations, which no HIR expression represents.
-                self.__ctx.record_name_ref(name.span, symbol.type_id)
+                self.__names.record(name.span, symbol.type_id)
                 return symbol.type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
                 # Hardcoded type constructors (Tuple / Fn) are not

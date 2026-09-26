@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import NoReturn
 
-from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -23,15 +22,18 @@ CompileTimeResult = tuple[CompileTimeValue, int]
 class ComptimeIfSpecializer:
     """Evaluate ``comptime if`` nodes and remove the unselected HIR branch."""
 
-    def __init__(self, ctx: SemCtx, type_size: Callable[[int], int]) -> None:
-        self.__ctx = ctx
+    def __init__(self, def_points: Mapping[int, DefPoint], type_ctx: TypeCtx,
+                 raw_pointers: bool, type_size: Callable[[int], int]) -> None:
+        self.__def_points = def_points
+        self.__type_ctx = type_ctx
+        self.__raw_pointers = raw_pointers
         self.__type_size = type_size
         self.__edges: dict[int, set[int]] = {}
         self.__current_def_type_id = -1
 
     def run(self, *, recover: bool = False) -> tuple[AnalysisError, ...]:
         errors: list[AnalysisError] = []
-        for def_point in list(self.__ctx.def_points.values()):
+        for def_point in list(self.__def_points.values()):
             if def_point.body is None:
                 continue
             self.__current_def_type_id = def_point.type_id
@@ -87,7 +89,7 @@ class ComptimeIfSpecializer:
                     self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
                 return HIR.BoolLiteral(
                     span=expr.span,
-                    value=self.__ctx.raw_pointers,
+                    value=self.__raw_pointers,
                     type_id=TypeCtx.bool_id,
                     is_place=False,
                 )
@@ -183,8 +185,8 @@ class ComptimeIfSpecializer:
         return expr
 
     def __record_procedure(self, type_id: int) -> None:
-        resolved = self.__ctx.type_ctx.resolve_aliases(type_id)
-        ty = self.__ctx.type_ctx[resolved]
+        resolved = self.__type_ctx.resolve_aliases(type_id)
+        ty = self.__type_ctx[resolved]
         if isinstance(ty, (Type.FunctionType, Type.MethodType, Type.ClosureType)):
             self.__edges.setdefault(self.__current_def_type_id, set()).add(type_id)
 
@@ -195,13 +197,13 @@ class ComptimeIfSpecializer:
             case HIR.IntLiteral():
                 return expr.value, expr.type_id
             case HIR.Ty():
-                ty = self.__ctx.type_ctx[expr.type_id]
+                ty = self.__type_ctx[expr.type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     return ty.value, ty.value_type
                 self.__not_evaluable(expr, "constant generic is not instantiated")
             case HIR.CompileConfig():
                 if expr.name == "IS_RAW_MODE":
-                    return self.__ctx.raw_pointers, TypeCtx.bool_id
+                    return self.__raw_pointers, TypeCtx.bool_id
                 self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
             case HIR.Builtin(kind=BuiltinKind.SizeOf):
                 return self.__type_size(expr.type_args[0]), expr.type_id
@@ -308,7 +310,7 @@ class ComptimeIfSpecializer:
         return self.__normalize_integer(result, expr.type_id), expr.type_id
 
     def __cast_value(self, value: CompileTimeValue, target_type: int, expr: HIR.Cast) -> CompileTimeResult:
-        target = self.__ctx.type_ctx[target_type]
+        target = self.__type_ctx[target_type]
         if isinstance(target, Type.IntType):
             if type(value) is not int:
                 self.__not_evaluable(expr, "integer cast requires an integer")
@@ -320,7 +322,7 @@ class ComptimeIfSpecializer:
         self.__not_evaluable(expr, "cast is not compile-time evaluable")
 
     def __normalize_integer(self, value: int, type_id: int) -> int:
-        ty = self.__ctx.type_ctx[type_id]
+        ty = self.__type_ctx[type_id]
         if isinstance(ty, Type.LiteralValueType):
             return self.__normalize_integer(value, ty.value_type)
         if not isinstance(ty, Type.IntType):

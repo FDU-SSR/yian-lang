@@ -22,7 +22,9 @@ from compiler.analysis.diagnostics import (
 )
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.lowering.sem_ctx import SemCtx
+from compiler.analysis.facts.names import NameRef
+from compiler.analysis.lowering.state import DefinitionState
+from compiler.analysis.state import SemanticState
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
@@ -103,7 +105,8 @@ class AnalysisResult:
     # analysed before it can trust its reference set.
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     generated_def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
-    sem_ctx: SemCtx | None = None
+    procedures: tuple[tuple[int, AST.Block, int], ...] = ()
+    name_refs: tuple[NameRef, ...] = ()
     entry_type_id: int | None = None
     unit_names: Mapping[int, str] = field(default_factory=dict[int, str])
     timings: Mapping[str, float] = field(default_factory=dict[str, float])
@@ -261,8 +264,8 @@ class AnalysisSession:
         timings["restricted_ops"] = time.perf_counter() - started
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
-        ctx = SemCtx(type_ctx, self.__raw_pointers, units, self.__packages, source_trust.stdlib_root)
-        resolver = GlobalResolve(ctx)
+        semantic = SemanticState(type_ctx, self.__raw_pointers, units, self.__packages, source_trust.stdlib_root)
+        resolver = GlobalResolve(semantic)
         started = time.perf_counter()
         try:
             resolver.run()
@@ -281,7 +284,7 @@ class AnalysisSession:
 
         started = time.perf_counter()
         checker = TypeCheck(
-            ctx,
+            DefinitionState(semantic),
             require_entry=require_entry,
             entry_optional=entry_optional,
             recover=recover,
@@ -296,10 +299,10 @@ class AnalysisSession:
             )
 
         all_def_points = checker.export()
-        ctx.declare_def_points(all_def_points)
         unit_names = self.__unit_names(units)
         specializer = ComptimeIfSpecializer(
-            ctx, self.__type_size_factory(type_ctx, unit_names, self.__raw_pointers)
+            all_def_points, type_ctx, self.__raw_pointers,
+            self.__type_size_factory(type_ctx, unit_names, self.__raw_pointers)
         )
         try:
             comptime_errors = specializer.run(recover=recover)
@@ -310,7 +313,7 @@ class AnalysisSession:
         timings["type_check"] = time.perf_counter() - started
 
         started = time.perf_counter()
-        definite_assignment = DefiniteAssignment(ctx)
+        definite_assignment = DefiniteAssignment(all_def_points, type_ctx)
         try:
             definite_assignment.run()
         except ANALYSIS_ERRORS as error:
@@ -344,7 +347,8 @@ class AnalysisSession:
             type_ctx=type_ctx,
             def_points=all_def_points,
             generated_def_points=generated,
-            sem_ctx=ctx,
+            procedures=semantic.procedures.entries(),
+            name_refs=semantic.names.entries(),
             entry_type_id=checker.entry_type_id,
             unit_names=unit_names,
             import_edges=resolver.import_edges(),

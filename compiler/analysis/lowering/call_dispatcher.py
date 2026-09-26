@@ -20,17 +20,20 @@ def ch_call():
 
 
 if TYPE_CHECKING:
-    from compiler.analysis.lowering.sem_ctx import SemCtx
+    from compiler.analysis.lowering.state import DefinitionState
 
 
 class CallDispatcher:
-    def __init__(self, ctx: SemCtx, expr: ExprEvaluator):
+    def __init__(self, ctx: DefinitionState, expr: ExprEvaluator):
         self.__ctx = ctx
         self.__expr = expr
 
     def dispatch_method_call(self, span: SrcSpan, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr], context_name: str) -> HIR.Expr:
         ch_call().trace(lambda: f"dispatch '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}")
-        lookup = self.__ctx.type_ctx.method_lookup(receiver, method_name, generic_args, args)
+        lookup = self.__ctx.type_ctx.method_lookup(
+            receiver.type_id, receiver.span, method_name, generic_args,
+            [arg.type_id for arg in args],
+        )
 
         if lookup is None:
             raise AnalysisError(f"Unknown {context_name} '{method_name}' on {self.__ctx.type_ctx.get_name(receiver.type_id)}", span)
@@ -58,7 +61,9 @@ class CallDispatcher:
                 receiver = HIR.Unary(span, UnaryOperator.Deref, receiver, current_ty.pointee_type, is_place=True)
             else:
                 # Deref trait deref: call deref() method
-                deref_lookup = self.__ctx.type_ctx.method_lookup(receiver, "deref", None, [])
+                deref_lookup = self.__ctx.type_ctx.method_lookup(
+                    receiver.type_id, receiver.span, "deref", None, []
+                )
                 assert deref_lookup is not None, f"Deref trait impl expected for type '{self.__ctx.type_ctx.get_name(receiver.type_id)}'"
                 deref_call = self.build_method_call(span, receiver, deref_lookup, [], context_name)
                 result_ty = self.__ctx.type_ctx[deref_call.type_id]
@@ -108,7 +113,7 @@ class CallDispatcher:
                 # A generic function is called through its symbol, not by
                 # evaluating the callee as a value, so the reference is recorded
                 # here: navigation, hover and signature help all need it.
-                self.__ctx.type_ctx.record_name_ref(node.callee.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.callee.span, symbol, symbol.type_id)
                 return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
 
         callee = self.__expr.value(node.callee)
@@ -211,7 +216,7 @@ class CallDispatcher:
                 continue
             for field in fields:
                 if field.name == arg.name.name:
-                    self.__ctx.type_ctx.record_name_ref(arg.name.span, field, field.type_id)
+                    self.__ctx.names.record(arg.name.span, field, field.type_id)
                     break
 
     def __handle_cast(self, span: SrcSpan, target_type_id: int, args: list[AST.Arg]) -> HIR.Expr:
@@ -257,7 +262,7 @@ class CallDispatcher:
         """Construct HIR.MethodCall from a successful `method_lookup` result.
 
         Handles GenericInference + coercion for receiver and args,
-        reports the instantiated method via SemCtx.report_def,
+        reports the instantiated method via DefinitionState.report_def,
         and returns a fully-typed HIR.MethodCall node.
 
         `lookup.method_id` is expected to be an instantiated/concrete method type id.

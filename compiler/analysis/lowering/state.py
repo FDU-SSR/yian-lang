@@ -1,28 +1,18 @@
-"""中端共享上下文：session 资源 + definition 产物表 + 每 def 事实 + 当前 def 的遍历状态。
-
-一个实例由 `main`（或分析会话）创建后贯穿中端各段：`GlobalResolve` → `TypeCheck` →
-`ComptimeIfSpecializer` → `DefiniteAssignment` → CFG 下降；各段读 session
-资源（`type_ctx` / `raw_pointers` / `unit_datas` / `packages` / `stdlib_root`），并就地改写同一个
-产物表（`def_points`）。type check 期间每次 `begin_def()` 装一份不可变 `DefFacts` 存表并设为
-current；遍历期的可变状态（locals / 循环栈 / 作用域深度 / span）留在 ctx 上。
-
-形态对齐 CFG 侧的 `cfg/lower/cfg_ctx.py::CfgCtx`；放在 `lowering/` 与机器的其他模块同处
-（就像 `CfgCtx` 放在 `lower/`）。
-"""
+"""Mutable state for checking one definition at a time."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
 
-from pathlib import Path
-
+from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
+from compiler.analysis.state import SemanticState
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.def_point import DefPoint
+from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
+from compiler.analysis.ty.context import TypeCtx
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
@@ -59,34 +49,11 @@ class DefFacts:
     symbol_ctx: SymbolCtx
 
 
-class SemCtx:
-    """中端各段共享的语义上下文（形态对齐 CFG 侧的 `CfgCtx`）。
+class DefinitionState:
+    """Current definition facts and traversal state owned by type checking."""
 
-    中端各段（`GlobalResolve` → `TypeCheck` → `ComptimeIfSpecializer` →
-    `DefiniteAssignment` → CFG 下降）拿的都是这一个对象：
-
-    - session 级资源：`type_ctx` / `raw_pointers` / `unit_datas` / `packages` / `stdlib_root`；
-    - 产物表 `def_points`（codegen 集，type check 之后由 `main` 交进来，之后各段就地改写）；
-    - 每 def 事实表 `facts` 与当前 def 的遍历期状态（locals / 循环栈 / 作用域深度 / span）。
-    """
-
-    def __init__(
-        self,
-        type_ctx: TypeCtx,
-        raw_pointers: bool,
-        unit_datas: dict[int, UnitData],
-        packages: PackageMap | None = None,
-        stdlib_root: Path | None = None,
-    ) -> None:
-        # session
-        self.__type_ctx: TypeCtx = type_ctx
-        self.__raw_pointers: bool = raw_pointers
-        self.__unit_datas: dict[int, UnitData] = unit_datas
-        self.__packages: PackageMap | None = packages
-        self.__stdlib_root: Path | None = stdlib_root
-
-        # 产物表（codegen 集）：type check 结束后由 main 交出，之后各段共享同一个 dict
-        self.__def_points: dict[int, DefPoint] = {}
+    def __init__(self, semantic: SemanticState) -> None:
+        self.__semantic = semantic
 
         # def facts（begin_def 写入；current = 正在遍历的那一个）
         self.__facts: dict[int, DefFacts] = {}
@@ -102,38 +69,35 @@ class SemCtx:
 
     @property
     def type_ctx(self) -> TypeCtx:
-        return self.__type_ctx
+        return self.__semantic.type_ctx
 
     @property
     def raw_pointers(self) -> bool:
-        """诊断模式开关：指针一律按裸 8B 处理。"""
-        return self.__raw_pointers
+        return self.__semantic.raw_pointers
 
     @property
     def unit_datas(self) -> dict[int, UnitData]:
-        return self.__unit_datas
+        return self.__semantic.unit_datas
 
     @property
     def packages(self) -> PackageMap | None:
-        return self.__packages
+        return self.__semantic.packages
 
     @property
-    def stdlib_root(self) -> Path | None:
-        return self.__stdlib_root
+    def procedures(self) -> ProcedureRegistry:
+        return self.__semantic.procedures
 
     @property
-    def def_points(self) -> dict[int, DefPoint]:
-        """本次编译的 definition 产物表（`type_id` → `DefPoint`），各段就地改写。"""
-        return self.__def_points
+    def names(self) -> NameReferences:
+        return self.__semantic.names
 
-    def declare_def_points(self, def_points: dict[int, DefPoint]) -> None:
-        """交出产物表（由 `main` 在 type check 之后调用；**按引用持有**，各段改的就是它）。"""
-        self.__def_points = def_points
+    def resolve_type_in(self, ast_type: ASTType, symbol_ctx: SymbolCtx) -> int:
+        return self.__semantic.resolve_type_in(ast_type, symbol_ctx)
 
     @property
     def unit_id(self) -> int:
         if self.__current is None:
-            raise CompilerError("SemCtx.unit_id accessed before begin_def()")
+            raise CompilerError("DefinitionState.unit_id accessed before begin_def()")
         return self.__current.unit_id
 
     @property
@@ -239,11 +203,11 @@ class SemCtx:
     def resolve_type(self, ast_type: ASTType) -> int:
         """Resolve a type in the current definition and validate object types."""
         assert self.__current is not None
-        type_id = self.__type_ctx.resolve_type(ast_type, self.__current.symbol_ctx)
-        resolved_type_id = self.__type_ctx.resolve_aliases(type_id)
-        resolved_ty = self.__type_ctx[resolved_type_id]
+        type_id = self.resolve_type_in(ast_type, self.__current.symbol_ctx)
+        resolved_type_id = self.type_ctx.resolve_aliases(type_id)
+        resolved_ty = self.type_ctx[resolved_type_id]
         if isinstance(resolved_ty, Type.TraitObjectType):
-            self.__type_ctx.check_trait_object_safe(resolved_ty.trait_type_id, ast_type.span)
+            self.type_ctx.check_trait_object_safe(resolved_ty.trait_type_id, ast_type.span)
         return type_id
 
     # ----------------- reachable def reporting API -----------------
@@ -259,7 +223,7 @@ class SemCtx:
     def report_def(self, type_id: int) -> None:
         """Report a reachable definition `type_id` to the registered reporter."""
         if self.__def_reporter is None:
-            raise CompilerError("No def reporter registered in SemCtx")
+            raise CompilerError("No def reporter registered in DefinitionState")
         self.__def_reporter(type_id)
 
     def current_return_type(self) -> int | None:

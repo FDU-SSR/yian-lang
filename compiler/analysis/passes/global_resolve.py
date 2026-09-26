@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from compiler.analysis.lowering.sem_ctx import SemCtx
+from compiler.analysis.state import SemanticState
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class GlobalResolve:
-    def __init__(self, ctx: SemCtx) -> None:
+    def __init__(self, ctx: SemanticState) -> None:
         self.__ctx = ctx
 
         self.__path_lookup: dict[Path, UnitData] = {
@@ -52,7 +52,8 @@ class GlobalResolve:
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
 
-        self.__ctx.type_ctx.check_impls()
+        for source_id, target_id in self.__ctx.type_ctx.check_impls():
+            self.__ctx.procedures.copy(source_id, target_id)
 
     def import_edges(self) -> dict[int, tuple[int, ...]]:
         """Resolved import edges: unit id → unit ids it imports (deduplicated)."""
@@ -193,7 +194,7 @@ class GlobalResolve:
                 case AST.TypeGenericParam(name=name):
                     generics.append(self.__ctx.type_ctx.alloc_generic(name.name))
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    vt_id = self.__ctx.resolve_type_in(vty, unit.symbol_ctx)
                     generics.append(self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id))
         return generics
 
@@ -224,7 +225,7 @@ class GlobalResolve:
             # for `import A` it is the name that is bound, and for `import A as B`
             # the original spelling of `A` appears nowhere else in the file.  An
             # editor needs it to rename `A` without leaving the import behind.
-            self.__ctx.type_ctx.record_name_ref(item.target.span, target_symbol, target_symbol.type_id)
+            self.__ctx.names.record(item.target.span, target_symbol, target_symbol.type_id)
             self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
@@ -371,7 +372,7 @@ class GlobalResolve:
             self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
 
             try:
-                aliased_type_id = self.__ctx.type_ctx.resolve_type(alias.target, unit.symbol_ctx)
+                aliased_type_id = self.__ctx.resolve_type_in(alias.target, unit.symbol_ctx)
             finally:
                 unit.symbol_ctx.exit_scope()
 
@@ -392,7 +393,7 @@ class GlobalResolve:
         parameters = [
             Type.Parameter(
                 name=param.name.name,
-                type_id=self.__ctx.type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                type_id=self.__ctx.resolve_type_in(param.var_type, unit.symbol_ctx),
                 span=param.name.span,
             )
             for param in func_def.params
@@ -400,15 +401,15 @@ class GlobalResolve:
         if func_def.ret_type is None:
             ret_type_id = self.__ctx.type_ctx.void_id
         else:
-            ret_type_id = self.__ctx.type_ctx.resolve_type(func_def.ret_type, unit.symbol_ctx)
+            ret_type_id = self.__ctx.resolve_type_in(func_def.ret_type, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the function symbol with the resolved type
         ty.custom_def.parameters = parameters
         ty.custom_def.return_type = ret_type_id
 
-        # add the resolved procedure to the type context
-        self.__ctx.type_ctx.add_procedure(ty.type_id, func_def.body, unit.unit_id)
+        # Keep the resolved body associated with its callable definition.
+        self.__ctx.procedures.register(ty.type_id, func_def.body, unit.unit_id)
 
     def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: list[int]) -> None:
         """进入泛型作用域，注册类型泛型和常量泛型符号。"""
@@ -431,7 +432,7 @@ class GlobalResolve:
 
         fields: list[Type.StructField] = []
         for index, field in enumerate(struct_def.fields):
-            field_type_id = self.__ctx.type_ctx.resolve_type(field.field_type, unit.symbol_ctx)
+            field_type_id = self.__ctx.resolve_type_in(field.field_type, unit.symbol_ctx)
             is_pub = any(attr.kind == AST.AttrKind.Pub for attr in field.attrs)
             fields.append(Type.StructField(
                 name=field.name.name,
@@ -459,7 +460,7 @@ class GlobalResolve:
             payload_type_id = None
             if len(variant.fields) > 0:
                 field_names = [field.name.name for field in variant.fields]
-                field_types = [self.__ctx.type_ctx.resolve_type(field.var_type, unit.symbol_ctx) for field in variant.fields]
+                field_types = [self.__ctx.resolve_type_in(field.var_type, unit.symbol_ctx) for field in variant.fields]
                 # The payload's fields are written in the variant declaration, so
                 # their name spans are real source positions.
                 field_spans = [field.name.span for field in variant.fields]
@@ -495,7 +496,7 @@ class GlobalResolve:
                 case AST.MethodDef():
                     method_type_id = self.__resolve_method_decl(unit, item.decl, ty.custom_def.generics, self_type_id, False)
                     method_name = item.decl.name.name
-                    self.__ctx.type_ctx.add_procedure(method_type_id, item.body, unit.unit_id)
+                    self.__ctx.procedures.register(method_type_id, item.body, unit.unit_id)
             methods[method_name] = method_type_id
         unit.symbol_ctx.exit_scope()
 
@@ -512,32 +513,32 @@ class GlobalResolve:
                     g_id = self.__ctx.type_ctx.alloc_generic(name.name)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    vt_id = self.__ctx.resolve_type_in(vty, unit.symbol_ctx)
                     g_id = self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
-        target_type_id = self.__ctx.type_ctx.resolve_type(impl.target, unit.symbol_ctx)
+        target_type_id = self.__ctx.resolve_type_in(impl.target, unit.symbol_ctx)
         unit.symbol_ctx.add_symbol("Self", SymbolKind.Type, target_type_id)
 
         trait_type_id = None
         if impl.trait is not None:
-            trait_type_id = self.__ctx.type_ctx.resolve_type(impl.trait, unit.symbol_ctx)
+            trait_type_id = self.__ctx.resolve_type_in(impl.trait, unit.symbol_ctx)
 
         conditions: dict[int, list[int]] = {}
         for param_name, trait_types in impl.conditions:
             symbol = unit.symbol_ctx.lookup(param_name.name)
             assert symbol is not None, f"condition parameter '{param_name.name}' not found"
             generic_id = symbol.type_id
-            conditions[generic_id] = [self.__ctx.type_ctx.resolve_type(tt, unit.symbol_ctx) for tt in trait_types]
+            conditions[generic_id] = [self.__ctx.resolve_type_in(tt, unit.symbol_ctx) for tt in trait_types]
 
         impl_obj = self.__ctx.type_ctx.register_impl(impl.span, generics, target_type_id, trait_type_id, conditions)
 
         for item in impl.items:
             method_id = self.__resolve_method_decl(unit, item.decl, generics, target_type_id, False)
 
-            # add the resolved procedure to the type context
-            self.__ctx.type_ctx.add_procedure(method_id, item.body, unit.unit_id)
+            # Keep the resolved body associated with its callable definition.
+            self.__ctx.procedures.register(method_id, item.body, unit.unit_id)
 
             impl_obj.methods[item.decl.name.name] = method_id
 
@@ -563,7 +564,7 @@ class GlobalResolve:
                     g_id = self.__ctx.type_ctx.alloc_generic(name.name)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, g_id, span=name.span)
                 case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__ctx.type_ctx.resolve_type(vty, unit.symbol_ctx)
+                    vt_id = self.__ctx.resolve_type_in(vty, unit.symbol_ctx)
                     g_id = self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id)
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
@@ -571,7 +572,7 @@ class GlobalResolve:
         parameters = [
             Type.Parameter(
                 name=param.name.name,
-                type_id=self.__ctx.type_ctx.resolve_type(param.var_type, unit.symbol_ctx),
+                type_id=self.__ctx.resolve_type_in(param.var_type, unit.symbol_ctx),
                 span=param.name.span,
             )
             for param in decl.params
@@ -579,7 +580,7 @@ class GlobalResolve:
         if decl.ret_type is None:
             ret_type_id = self.__ctx.type_ctx.void_id
         else:
-            ret_type_id = self.__ctx.type_ctx.resolve_type(decl.ret_type, unit.symbol_ctx)
+            ret_type_id = self.__ctx.resolve_type_in(decl.ret_type, unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the method symbol with the resolved type

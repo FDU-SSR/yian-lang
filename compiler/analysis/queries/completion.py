@@ -18,6 +18,7 @@ from enum import Enum
 from pathlib import Path
 
 from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.facts.names import NameRef, NameTarget
 from compiler.analysis.queries.index import Declaration, DeclarationKind
 from compiler.analysis.queries.navigation import Navigator
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
@@ -270,7 +271,7 @@ def __prefix_at(
     return prefix, SrcSpan(__position(path, row, start), __position(path, row, index))
 
 
-def __receiver_type(reference: Type.NameRef) -> tuple[int | None, bool]:
+def __receiver_type(reference: NameRef) -> tuple[int | None, bool]:
     """The receiver's type, and whether the access is static.
 
     A name recorded as a *type* (the resolver records written type names with the
@@ -290,7 +291,7 @@ def __receiver_type(reference: Type.NameRef) -> tuple[int | None, bool]:
 
 def __receiver_reference(
     navigator: Navigator, path: Path, before: list[Tok.Token], row: int
-) -> Type.NameRef | None:
+) -> NameRef | None:
     """The name the member access is applied to.
 
     Scans back from the dot for the nearest identifier at bracket depth zero.
@@ -634,7 +635,7 @@ def __render_signature(view: AnalysisView, name: str, type_id: int) -> str:
     return f"fn {name}({parameters}) -> {view.return_type_name(type_id)}"
 
 
-def __callable_type_id(target: Type.NameTarget | None, expression_type: int | None) -> int | None:
+def __callable_type_id(target: NameTarget | None, expression_type: int | None) -> int | None:
     """The callable's type id, from a reference's target or its type."""
     if isinstance(target, int):
         return target

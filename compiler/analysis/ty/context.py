@@ -1,26 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty import type_ops
 from compiler.analysis.ty.generic_inference import GenericInference
 from compiler.analysis.ty.impl import Impl, ImplRegistry
+from compiler.analysis.ty.intrinsics import IntrinsicIds
 from compiler.analysis.ty.name import TypeFormatter
-from compiler.analysis.ty.resolver import TypeResolver
 from compiler.analysis.ty.space import TypeSpace
-from compiler.analysis.unit import hir as HIR
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
-from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import ASTType
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from compiler.analysis.symbol.context import SymbolCtx
 
 
 class _AmbiguousMethod:
@@ -32,85 +24,14 @@ class _AmbiguousMethod:
 _AMBIGUOUS_METHOD = _AmbiguousMethod()
 
 
-class TypeCtx:
-    # intrinsic basic type IDs
-    never_id: int = 9
-    void_id: int = 10
-    bool_id: int = 11
-    char_id: int = 12
-    str_id: int = 13
-
-    i8_id: int = 14
-    i16_id: int = 15
-    i32_id: int = 16
-    i64_id: int = 17
-
-    u8_id: int = 18
-    u16_id: int = 19
-    u32_id: int = 20
-    u64_id: int = 21
-
-    f16_id: int = 22
-    f32_id: int = 23
-    f64_id: int = 24
-
-    int_literal_id: int = 25
-    float_literal_id: int = 26
-
-    #: Poison type for a definition whose checking failed; see ``ErrorType``.
-    error_id: int = 27
-
-    # intrinsic trait IDs
-    add_id: int = 50
-    sub_id: int = 51
-    mul_id: int = 52
-    div_id: int = 53
-    rem_id: int = 54
-    neg_id: int = 55
-    bitand_id: int = 56
-    bitor_id: int = 57
-    bitxor_id: int = 58
-    bitnot_id: int = 59
-    shl_id: int = 60
-    shr_id: int = 61
-
-    partial_eq_id: int = 70
-    partial_ord_id: int = 71
-
-    index_id: int = 80
-    contains_id: int = 81
-    deref_id: int = 82
-    delete_id: int = 83
-
-    add_assign_id: int = 90
-    sub_assign_id: int = 91
-    mul_assign_id: int = 92
-    div_assign_id: int = 93
-    rem_assign_id: int = 94
-    bitand_assign_id: int = 95
-    bitor_assign_id: int = 96
-    bitxor_assign_id: int = 97
-    shl_assign_id: int = 98
-    shr_assign_id: int = 99
-
-    # intrinsic struct/enum IDs
-    Range_id: int = 100
-    Option_id: int = 101
-    Result_id: int = 102
-
+class TypeCtx(IntrinsicIds):
     def __init__(self, raw_pointers: bool = False):
         self.__raw_pointers = raw_pointers
 
         self.__space = TypeSpace(self)
         self.__formatter = TypeFormatter(self)
 
-        self.__resolver = TypeResolver(self)
         self.__impl_registry = ImplRegistry(self)
-        #: Resolved names the checker has seen, keyed for deduplication by
-        #: position.  Bounded by distinct names, not by instantiations.
-        self.__name_refs: list[Type.NameRef] = []
-        self.__name_ref_keys: set[tuple[str, int, int]] = set()
-        self.__procedures: dict[int, tuple[int, AST.Block, int]] = {}  # def_id -> (type_id, block, unit_id)
 
         # Caches for hot-path type queries — the type_id fully encodes the
         # generic instantiation, so the cache key is just the type_id.
@@ -146,30 +67,30 @@ class TypeCtx:
         return type_id in self.__space
 
     INTRINSIC_TYPE_DICT: dict[Type.IntrinsicType, int] = {
-        Type.IntrinsicType.Never: never_id,
-        Type.IntrinsicType.Void: void_id,
-        Type.IntrinsicType.Error: error_id,
-        Type.IntrinsicType.Bool: bool_id,
-        Type.IntrinsicType.Char: char_id,
-        Type.IntrinsicType.Str: str_id,
+        Type.IntrinsicType.Never: IntrinsicIds.never_id,
+        Type.IntrinsicType.Void: IntrinsicIds.void_id,
+        Type.IntrinsicType.Error: IntrinsicIds.error_id,
+        Type.IntrinsicType.Bool: IntrinsicIds.bool_id,
+        Type.IntrinsicType.Char: IntrinsicIds.char_id,
+        Type.IntrinsicType.Str: IntrinsicIds.str_id,
 
-        Type.IntrinsicType.I8: i8_id,
-        Type.IntrinsicType.I16: i16_id,
-        Type.IntrinsicType.I32: i32_id,
-        Type.IntrinsicType.I64: i64_id,
+        Type.IntrinsicType.I8: IntrinsicIds.i8_id,
+        Type.IntrinsicType.I16: IntrinsicIds.i16_id,
+        Type.IntrinsicType.I32: IntrinsicIds.i32_id,
+        Type.IntrinsicType.I64: IntrinsicIds.i64_id,
 
-        Type.IntrinsicType.U8: u8_id,
-        Type.IntrinsicType.U16: u16_id,
-        Type.IntrinsicType.U32: u32_id,
-        Type.IntrinsicType.U64: u64_id,
+        Type.IntrinsicType.U8: IntrinsicIds.u8_id,
+        Type.IntrinsicType.U16: IntrinsicIds.u16_id,
+        Type.IntrinsicType.U32: IntrinsicIds.u32_id,
+        Type.IntrinsicType.U64: IntrinsicIds.u64_id,
 
-        Type.IntrinsicType.F16: f16_id,
-        Type.IntrinsicType.F32: f32_id,
-        Type.IntrinsicType.F64: f64_id,
+        Type.IntrinsicType.F16: IntrinsicIds.f16_id,
+        Type.IntrinsicType.F32: IntrinsicIds.f32_id,
+        Type.IntrinsicType.F64: IntrinsicIds.f64_id,
 
-        Type.IntrinsicType.Int: i64_id,
-        Type.IntrinsicType.UInt: u64_id,
-        Type.IntrinsicType.Float: f64_id,
+        Type.IntrinsicType.Int: IntrinsicIds.i64_id,
+        Type.IntrinsicType.UInt: IntrinsicIds.u64_id,
+        Type.IntrinsicType.Float: IntrinsicIds.f64_id,
     }
 
     @classmethod
@@ -177,38 +98,38 @@ class TypeCtx:
         return cls.INTRINSIC_TYPE_DICT[intrinsic]
 
     INTRINSIC_CUSTOM_TYPE_DICT: dict[Type.IntrinsicCustomType, int] = {
-        Type.IntrinsicCustomType.Add: add_id,
-        Type.IntrinsicCustomType.Sub: sub_id,
-        Type.IntrinsicCustomType.Mul: mul_id,
-        Type.IntrinsicCustomType.Div: div_id,
-        Type.IntrinsicCustomType.Rem: rem_id,
-        Type.IntrinsicCustomType.Neg: neg_id,
+        Type.IntrinsicCustomType.Add: IntrinsicIds.add_id,
+        Type.IntrinsicCustomType.Sub: IntrinsicIds.sub_id,
+        Type.IntrinsicCustomType.Mul: IntrinsicIds.mul_id,
+        Type.IntrinsicCustomType.Div: IntrinsicIds.div_id,
+        Type.IntrinsicCustomType.Rem: IntrinsicIds.rem_id,
+        Type.IntrinsicCustomType.Neg: IntrinsicIds.neg_id,
 
-        Type.IntrinsicCustomType.BitAnd: bitand_id,
-        Type.IntrinsicCustomType.BitOr: bitor_id,
-        Type.IntrinsicCustomType.BitXor: bitxor_id,
-        Type.IntrinsicCustomType.BitNot: bitnot_id,
-        Type.IntrinsicCustomType.Shl: shl_id,
-        Type.IntrinsicCustomType.Shr: shr_id,
+        Type.IntrinsicCustomType.BitAnd: IntrinsicIds.bitand_id,
+        Type.IntrinsicCustomType.BitOr: IntrinsicIds.bitor_id,
+        Type.IntrinsicCustomType.BitXor: IntrinsicIds.bitxor_id,
+        Type.IntrinsicCustomType.BitNot: IntrinsicIds.bitnot_id,
+        Type.IntrinsicCustomType.Shl: IntrinsicIds.shl_id,
+        Type.IntrinsicCustomType.Shr: IntrinsicIds.shr_id,
 
-        Type.IntrinsicCustomType.PartialEq: partial_eq_id,
-        Type.IntrinsicCustomType.PartialOrd: partial_ord_id,
+        Type.IntrinsicCustomType.PartialEq: IntrinsicIds.partial_eq_id,
+        Type.IntrinsicCustomType.PartialOrd: IntrinsicIds.partial_ord_id,
 
-        Type.IntrinsicCustomType.AddAssign: add_assign_id,
-        Type.IntrinsicCustomType.SubAssign: sub_assign_id,
-        Type.IntrinsicCustomType.MulAssign: mul_assign_id,
-        Type.IntrinsicCustomType.DivAssign: div_assign_id,
-        Type.IntrinsicCustomType.RemAssign: rem_assign_id,
-        Type.IntrinsicCustomType.BitAndAssign: bitand_assign_id,
-        Type.IntrinsicCustomType.BitOrAssign: bitor_assign_id,
-        Type.IntrinsicCustomType.BitXorAssign: bitxor_assign_id,
-        Type.IntrinsicCustomType.ShlAssign: shl_assign_id,
-        Type.IntrinsicCustomType.ShrAssign: shr_assign_id,
+        Type.IntrinsicCustomType.AddAssign: IntrinsicIds.add_assign_id,
+        Type.IntrinsicCustomType.SubAssign: IntrinsicIds.sub_assign_id,
+        Type.IntrinsicCustomType.MulAssign: IntrinsicIds.mul_assign_id,
+        Type.IntrinsicCustomType.DivAssign: IntrinsicIds.div_assign_id,
+        Type.IntrinsicCustomType.RemAssign: IntrinsicIds.rem_assign_id,
+        Type.IntrinsicCustomType.BitAndAssign: IntrinsicIds.bitand_assign_id,
+        Type.IntrinsicCustomType.BitOrAssign: IntrinsicIds.bitor_assign_id,
+        Type.IntrinsicCustomType.BitXorAssign: IntrinsicIds.bitxor_assign_id,
+        Type.IntrinsicCustomType.ShlAssign: IntrinsicIds.shl_assign_id,
+        Type.IntrinsicCustomType.ShrAssign: IntrinsicIds.shr_assign_id,
 
-        Type.IntrinsicCustomType.Index: index_id,
-        Type.IntrinsicCustomType.Contains: contains_id,
-        Type.IntrinsicCustomType.Deref: deref_id,
-        Type.IntrinsicCustomType.Delete: delete_id,
+        Type.IntrinsicCustomType.Index: IntrinsicIds.index_id,
+        Type.IntrinsicCustomType.Contains: IntrinsicIds.contains_id,
+        Type.IntrinsicCustomType.Deref: IntrinsicIds.deref_id,
+        Type.IntrinsicCustomType.Delete: IntrinsicIds.delete_id,
     }
 
     @classmethod
@@ -316,30 +237,6 @@ class TypeCtx:
 
     def get_name(self, type_id: int) -> str:
         return self.__formatter.get_name(type_id)
-
-    def record_name_ref(
-        self, span: SrcSpan, target: Type.NameTarget, expression_type: int | None = None
-    ) -> None:
-        """Remember that the name written at *span* resolved to *target*.
-
-        One record per position: the same name is resolved again for every
-        instantiation of the definition it appears in, and an editor wants one
-        answer.  A zero-width or synthesized span is skipped — nothing can point
-        at it.
-        """
-        if span.is_synthetic():
-            return
-        key = (str(span.path), span.start.row, span.start.col)
-        if key in self.__name_ref_keys:
-            return
-        self.__name_ref_keys.add(key)
-        self.__name_refs.append(
-            Type.NameRef(span=span, target=target, expression_type=expression_type)
-        )
-
-    def name_refs(self) -> Sequence[Type.NameRef]:
-        """Every resolved name the checker saw, in first-seen order."""
-        return self.__name_refs
 
     def infer_common_type(self, type_ids: list[int], span: SrcSpan, context_name: str) -> int:
         return type_ops.infer_common_type(self, type_ids, span, context_name)
@@ -730,14 +627,6 @@ class TypeCtx:
 
         return True
 
-    def resolve_type(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
-        """
-        Resolve an ASTType to a type ID in the type context.
-
-        This is used during type checking to convert the types written in the source code (AST) to the internal type representation.
-        """
-        return self.__resolver.resolve(ty, symbol_ctx)
-
     def resolve_aliases(self, type_id: int) -> int:
         """Follow alias chains to the first non-alias concrete type.
 
@@ -769,45 +658,13 @@ class TypeCtx:
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
         return self.__impl_registry.register_impl(span, generics, target, trait, conditions)
 
-    def check_impls(self) -> None:
+    def check_impls(self) -> tuple[tuple[int, int], ...]:
         """
         Check the validity of all registered impls.
 
         This should be called after all impls are registered.
         """
-        self.__impl_registry.check_impls()
-
-    def add_procedure(self, type_id: int, body: AST.Block, unit_id: int) -> None:
-        ty = self.__space[type_id]
-        if isinstance(ty, (Type.FunctionType, Type.MethodType)):
-            def_id = id(ty.custom_def)
-        elif isinstance(ty, Type.ClosureType):
-            def_id = type_id
-        else:
-            raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
-
-        self.__procedures[def_id] = (type_id, body, unit_id)
-
-    def iter_procedures(self) -> list[tuple[int, AST.Block, int]]:
-        """Snapshot every registered procedure as ``(type_id, body, unit_id)``.
-
-        Returns a list so callers may register further procedures while iterating.
-        """
-        return list(self.__procedures.values())
-
-    def get_procedure(self, type_id: int) -> tuple[AST.Block, int]:
-        ty = self.__space[type_id]
-        if isinstance(ty, (Type.FunctionType, Type.MethodType)):
-            def_id = id(ty.custom_def)
-        elif isinstance(ty, Type.ClosureType):
-            def_id = type_id
-        else:
-            raise CompilerError(f"Type ID {type_id} is not a function, method, or closure type and cannot be associated with a procedure")
-
-        if def_id in self.__procedures:
-            _, body, unit_id = self.__procedures[def_id]
-            return body, unit_id
-        raise CompilerError(f"No procedure found for type ID {type_id} with definition ID {def_id}")
+        return self.__impl_registry.check_impls()
 
     def try_deref(self, type_id: int) -> int | None:
         """
@@ -845,7 +702,7 @@ class TypeCtx:
             self.__deref_chain_cache[type_id] = tuple(chain)
         return chain
 
-    def method_lookup(self, receiver: HIR.Expr, method_name: str, generic_args: list[int] | None, args: list[HIR.Expr]) -> LookupResult | None:
+    def method_lookup(self, receiver_type_id: int, receiver_span: SrcSpan, method_name: str, generic_args: list[int] | None, arg_type_ids: list[int]) -> LookupResult | None:
         """
         Lookup a method for a given caller type. See details in `manual/impl.md`.
 
@@ -853,16 +710,16 @@ class TypeCtx:
         matching method implementations at each level. Returns the first match
         with the fewest dereferences.
         """
-        receiver_type = self.resolve_aliases(receiver.type_id)
-        cache_key = (receiver_type, method_name, tuple(generic_args or ()), tuple(arg.type_id for arg in args))
+        receiver_type = self.resolve_aliases(receiver_type_id)
+        cache_key = (receiver_type, method_name, tuple(generic_args or ()), tuple(arg_type_ids))
         if self.__memoize_enabled:
             cache = self.__method_lookup_cache
             if cache_key in cache:
                 cached = cache[cache_key]
                 if isinstance(cached, _AmbiguousMethod):
                     raise AnalysisError(
-                        f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'",
-                        receiver.span,
+                        f"Ambiguous method '{method_name}' for type '{self.get_name(receiver_type_id)}'",
+                        receiver_span,
                     )
                 return cached
 
@@ -875,14 +732,14 @@ class TypeCtx:
             candidate_impls = self.__impl_registry.iter_candidate_impls(type_at_level)
             type_at_level_ty = self[type_at_level]
             if isinstance(type_at_level_ty, Type.TraitObjectType):
-                self.check_trait_object_safe(type_at_level_ty.trait_type_id, receiver.span)
+                self.check_trait_object_safe(type_at_level_ty.trait_type_id, receiver_span)
                 dynamic_lookup = self.__trait_object_method_lookup(
-                    receiver,
+                    receiver_span,
                     type_at_level,
                     type_at_level_ty.trait_type_id,
                     method_name,
                     generic_args,
-                    args,
+                    arg_type_ids,
                 )
                 if dynamic_lookup is not None:
                     dynamic_lookup.deref_count = deref_count
@@ -908,7 +765,7 @@ class TypeCtx:
                 if method_name not in impl.methods:
                     continue
 
-                receiver_inference = GenericInference(self, receiver.span)
+                receiver_inference = GenericInference(self, receiver_span)
                 try:
                     receiver_inference.constrain(impl.target, type_at_level)
                     impl_substs = receiver_inference.substitutions()
@@ -934,13 +791,13 @@ class TypeCtx:
                     assert isinstance(instantiated_method_ty, Type.MethodType)
 
                 parameters = self.get_params(instantiated_method_id)
-                if len(parameters) != len(args):
+                if len(parameters) != len(arg_type_ids):
                     continue
 
-                arg_inference = GenericInference(self, receiver.span)
+                arg_inference = GenericInference(self, receiver_span)
                 try:
-                    for param, arg in zip(parameters, args):
-                        arg_inference.constrain(param.type_id, arg.type_id)
+                    for param, arg_type_id in zip(parameters, arg_type_ids):
+                        arg_inference.constrain(param.type_id, arg_type_id)
                     arg_substs = arg_inference.substitutions()
                 except AnalysisError:
                     continue
@@ -961,7 +818,7 @@ class TypeCtx:
             if len(candidates) > 1:
                 if self.__memoize_enabled:
                     self.__method_lookup_cache[cache_key] = _AMBIGUOUS_METHOD
-                raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver.type_id)}'", receiver.span)
+                raise AnalysisError(f"Ambiguous method '{method_name}' for type '{self.get_name(receiver_type_id)}'", receiver_span)
 
         if self.__memoize_enabled:
             self.__method_lookup_cache[cache_key] = result
@@ -969,12 +826,12 @@ class TypeCtx:
 
     def __trait_object_method_lookup(
         self,
-        receiver: HIR.Expr,
+        receiver_span: SrcSpan,
         receiver_type: int,
         trait_type_id: int,
         method_name: str,
         generic_args: list[int] | None,
-        args: list[HIR.Expr],
+        arg_type_ids: list[int],
     ) -> LookupResult | None:
         if generic_args:
             return None
@@ -992,12 +849,12 @@ class TypeCtx:
         if method_generic_count > 0:
             return None
         parameters = self.get_params(method_id)
-        if len(parameters) != len(args):
+        if len(parameters) != len(arg_type_ids):
             return None
-        inference = GenericInference(self, receiver.span)
+        inference = GenericInference(self, receiver_span)
         try:
-            for parameter, arg in zip(parameters, args):
-                inference.constrain(parameter.type_id, arg.type_id)
+            for parameter, arg_type_id in zip(parameters, arg_type_ids):
+                inference.constrain(parameter.type_id, arg_type_id)
             method_id = self.canonical(inference.instantiate(method_id))
         except AnalysisError:
             return None
@@ -1016,8 +873,7 @@ class TypeCtx:
 
         This is used for desugaring for loops, where we need to know the item type of the iterator to type check the loop variable.
         """
-        receiver = HIR.Ty(span=SrcSpan.empty(), type_id=iter_type_id, is_place=False)
-        lookup = self.method_lookup(receiver, "next", None, [])
+        lookup = self.method_lookup(iter_type_id, SrcSpan.empty(), "next", None, [])
         if lookup is None:
             raise CompilerError(f"Type '{self.get_name(iter_type_id)}' does not provide a next() method")
 
