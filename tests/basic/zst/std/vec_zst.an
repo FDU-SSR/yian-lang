@@ -1,6 +1,4 @@
-// M8.1: Vec<ZST> — push, is_empty, and Drop.
-// The element type is zero-sized so allocations are phantom,
-// but push logic must still count correctly.
+// Vec<ZST> tracks its element count without allocating element storage.
 //
 // Expected output: 0
 

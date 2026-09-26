@@ -1,5 +1,5 @@
 // typedef: alias to a named type — construct, field access, sizeof.
-// Regression control for the typedef fix work.
+// Type aliases preserve construction, field access, and sizeof behavior.
 // Expected output: (exit 0)
 
 struct Vec2 { x: i32, y: i32 }

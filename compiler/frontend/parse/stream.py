@@ -50,7 +50,7 @@ class TokenStream:
         return self.__index
 
     def reset(self, mark: int) -> None:
-        """Rewind the cursor to a position previously returned by :meth:`mark`."""
+        """Move the cursor to a position returned by :meth:`mark`."""
         self.__index = mark
 
     def next(self) -> Token:

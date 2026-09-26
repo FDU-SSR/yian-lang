@@ -1,7 +1,7 @@
 # YIAN 编译器
 
 YIAN 是一门自研的静态类型编程语言，编译器用 Python 实现。
-完整流水线：`.an 源码 → Tokens → AST → HIR → CFG IR → LLVM IR → 可执行文件`。
+完整流水线：`.an 源码 → Tokens → AST → 去糖 AST → HIR → CFG IR → LLVM IR → 可执行文件`。
 
 ## 运行环境
 
@@ -116,7 +116,7 @@ python3 scripts/run_tests.py -q               # 只打印汇总
 ## For GitHub users
 
 YIAN is a statically-typed programming language with a compiler written in
-Python. Pipeline: `.an source → Tokens → AST → HIR → CFG IR → LLVM IR → exe`.
+Python. Pipeline: `.an source → Tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → exe`.
 
 ### Environment
 

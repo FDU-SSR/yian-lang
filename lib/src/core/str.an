@@ -444,7 +444,7 @@ impl Iterator<char> for CharIter {
             return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
         }
 
-        // Invalid leading byte: 与之前一致, 返回 None(该字节已被消费)。
+        // Invalid leading byte: 返回 None, 并消费该字节。
         self.byte_iter.ptr = p + 1;
         self.byte_iter.n = n - 1;
         return Option<char>.None;

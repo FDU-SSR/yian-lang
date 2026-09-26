@@ -1,4 +1,4 @@
-// nullptr is no longer a language literal; optional pointers use Option<T*>.
+// The language has no `nullptr` literal; optional pointers use Option<T*>.
 
 fn main() {
     let p: i32* = nullptr;

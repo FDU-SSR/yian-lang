@@ -727,8 +727,7 @@ def __mode_test(test: TestCase, mode: str) -> TestCase:
     The ordinary suite has one source and one expected result for both pointer
     representations. The retained ``raw_coerce_neg`` metadata is the one
     intentional exception: its raw variant expects a compile-time diagnostic.
-    Other legacy variants are ignored by the two-mode runner and are removed
-    from the repository as part of the suite migration.
+    Other compile variants are ignored by the two-mode runner.
     """
     if mode not in {"fat", "raw"}:
         raise ValueError(f"unsupported pointer mode: {mode}")

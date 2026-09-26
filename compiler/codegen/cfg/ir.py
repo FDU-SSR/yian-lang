@@ -14,17 +14,17 @@ from compiler.runtime_error import RuntimeErrorCode
 
 @dataclass
 class VarPtr:
-    """取局部变量槽地址,合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩。
+    """取局部变量槽地址,合成 4 字段胖指针 ⟨data=a_x, word=(e_f,k_f), index=0, size=1⟩。
 
-    data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(
-    函数入口实体化的寄存器值);index = 0;size = 1(取址总是指向单个元素
+    data = 槽地址 a_x;word 打包当前帧锁位置与键(函数入口实体化的寄存器值);
+    index = 0;size = 1(取址总是指向单个元素
     ——标量元素类型 T、数组元素类型 T[m])。
     raw 模式:无帧锁,frame_word/frame_key 均为 None(裸 8B 指针)。
     """
     result: Reg
     var_ref: VarRef
     frame_word: Value | None  # 当前帧的 word(帧进入时实体化);raw 模式为 None
-    frame_key: Value | None   # 兼容字段:帧键, B6 起不再进指针(保留占位)
+    frame_key: Value | None   # 保留的兼容输入字段;胖指针身份合并编码在 frame_word 中
     raw: bool = False         # 惰性左值路径:裸取址(未取址左值)仅返回栈地址,不合成胖值
 
 
@@ -86,7 +86,7 @@ class Malloc:
 
     胖指针语义(CFG 层):分配「锁头 + 负载」块,块头锁槽写键
     μ⟨e⟩ := k(k ← Gen(),堆键 MSB 1;锁槽 = 块首首字,BlockHeader);
-    返回 5 字段聚合 ⟨data=b+H, lock_ptr=e, key=k, index=0, size=n⟩(由 LLVM 层构造)。
+    返回 4 字段聚合 ⟨data=b+H, word=(e,k), index=0, size=n⟩(由 LLVM 层构造)。
     pointee 为 ZST 时保持快路径(undef,不写锁槽;key=None)。
     """
     result: Reg
@@ -174,7 +174,7 @@ class AcquireFrameLock:
 class CheckSafeAccess:
     """safe_access(p,1) = live(p) ∧ in_bounds(p,1) 前检。
 
-    Load/Store 插入点。live = 锁槽键比较(含 lock_ptr=0 短路为假);
+    Load/Store 插入点。live = 锁槽键比较(含 word=0 短路为假);
     in_bounds = 0 ≤ index ∧ index+1 ≤ size。LLVM 层 发射。
 
     ``live=False``:指针的锁槽已知恒等于其键(函数帧内取址的指针,帧锁槽只在
@@ -223,9 +223,9 @@ class CheckSliceNonEmpty:
 class CheckRefAccess:
     """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers)。
 
-    引用恒指向单个元素、无算术/比较/delete(3 字段 ⟨data,lock_ptr,key⟩,
+    引用恒指向单个元素、无算术/比较/delete(2 字段 ⟨data,word⟩,
     无 index/size),越界无概念——访问只需 live = 锁槽键比较(
-    含 lock_ptr=0 短路为假)。T& Load/Store/FieldPtr 插入点。
+    含 word=0 短路为假)。T& Load/Store/FieldPtr 插入点。
     """
     ptr: Value
 
@@ -255,8 +255,8 @@ class CheckElementAccess:
     """
     base: Value
     offset: Value
-    ptr: Value  # elem:ElementPtr 结果,承载派生后 index/size/lock_ptr/key
-    live: bool = True  # 同上:帧内指针的时序项恒真时不再发射
+    ptr: Value  # elem:ElementPtr 结果,承载派生后 index/size/word
+    live: bool = True  # 帧内指针的 live 谓词恒真时设为 False,省略该项检查
 
 
 @dataclass
@@ -308,8 +308,7 @@ class CheckRequest:
     """检查请求标记：下降只发标记，`passes/insert_checks.py` 决定最终形态。
 
     语义上下文（单看 IR 恢复不出的数组长度、视图边界、折算前提、切片源跨度等）
-    放进 `operands`/`extra`；插入 pass 就地把它物化为具体检查节点，后续优化才有机会
-    在其上做合并/提升。
+    放进 `operands`/`extra`；插入 pass 将标记物化为具体检查节点，并执行合并/提升。
     """
 
     kind: str
@@ -333,7 +332,7 @@ class CheckPtrCmp:
     """序比较前提:data 相等。
 
     跨对象序比较报告安全错误（由 LLVM 层发射）。相等比较 按 (data, index)
-    二元组、无此前提,不插入本节点。指针比较本身不访问内存，因此不检查
+    二元组,无需该检查。指针比较本身不访问内存，因此不检查
     allocation live 状态。
     """
     lhs: Value
@@ -355,11 +354,11 @@ class PtrCmp:
 
 @dataclass
 class CheckDelete:
-    """Delete 四前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
+    """Delete 前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
 
-    四项 = is_heap 纯位判定(不读锁槽)+ live 锁槽键比较(
-    含 null 短路)+ is_raw 两分量:data = lock_ptr + H 与 index = 0(
-    纯字段检查)。双释放 / 栈指针释放 / 带偏移释放 / null 释放均报告安全错误。LLVM 层发射。
+    is_heap 根据 word 的锁表下标判定;live 比较锁表项中的键;is_raw 检查 data
+    是否与锁表项记录的分配锚一致且 index = 0。双释放、栈指针释放、带偏移释放和
+    null 释放均报告安全错误。LLVM 层发射。
     """
     ptr: Value
 

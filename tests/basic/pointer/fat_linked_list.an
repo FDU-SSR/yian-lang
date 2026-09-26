@@ -1,7 +1,6 @@
 // Fat-pointer semantic composite: singly linked list
 // Builds a 3-node chain (1 -> 2 -> 3), walks it via next pointers,
 // then deletes every node.
-// (NULL 迁移:链尾 next 以 Option<Node*>.None 表达;遍历用 is_some/unwrap)
 //
 // Coverage: dyn allocation + struct field access through pointer +
 //           Option 空态判定(is_some)+ del (single-free path).

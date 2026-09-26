@@ -2,7 +2,6 @@
 // zero-sized is itself a ZST (size 0, 裁决 — ZST 保持 ZST).
 // All such pointer values are indistinguishable, so == / != always behave as
 // equality; arithmetic participates without trapping (erased at codegen).
-// (NULL 迁移:ZST 指针由 dyn 分配创建)
 //
 // Expected output: 0
 

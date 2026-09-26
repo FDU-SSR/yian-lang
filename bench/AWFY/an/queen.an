@@ -1,6 +1,6 @@
 // bench/AWFY/an/queen.an — N 皇后回溯 (shootout queens)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Queens.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Queens.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/queen.c (项目自写 C 参考)
 // 规模: 一个工作单元连续求解 8 皇后 10 次; 外层重复只重复该工作单元。
 //

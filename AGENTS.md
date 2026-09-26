@@ -33,10 +33,10 @@ Current options include:
 - `-O {0..3}`; for non-`ll` targets this controls the LLVM optimization pipeline, backend optimization, and executable linking. `-t ll` emits unoptimized LLVM IR.
 - `--profile`, `--dump`, `--log-spec`, `--log-file`, and `--packages`.
 - `--compiler-root PATH` (locate the standard library in a checkout) and `--raw-pointers`.
-- `--analyze` runs the analysis prefix only (lex → parse → resolve → type check) with no code generation or `build/` output; `--json` additionally prints one machine-readable diagnostic object on stdout.
+- `--analyze` runs lexical, syntax, and semantic analysis through compile-time conditional specialization and definite-assignment analysis, with no code generation or `build/` output; `--json` additionally prints one machine-readable diagnostic object on stdout.
 - `--format` re-emits the input sources with canonical whitespace (stdout by default), `-w/--write` rewrites them in place, and `--check` lists the files that differ and exits nonzero.
 
-`--dump` writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/`; code generation also writes `ir.ll`. The removed `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` options must not be used.
+`--dump` writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/`; code generation also writes `ir.ll`. `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` are not supported options.
 
 Executables default to `build/a.out`; LLVM bitcode and object outputs default to `build/<stem>.<ext>`, while assembly defaults to `<stem>.s` in the current directory. Pass `-o` whenever the output name matters.
 
@@ -60,14 +60,13 @@ lex
 → type finalization
 → type checking
 → compile-time conditional specialization
-→ closure lowering
 → definite-assignment analysis
 → CFG lowering
 → LLVM lowering
 → emission
 ```
 
-`comptime if` is type checked into HIR first. `ComptimeIfSpecializer` then evaluates its compile-time condition, keeps the selected branch, and removes unreachable definitions before CFG lowering. `IS_RAW_MODE` is a reserved compile-time configuration name; the compiler supplies its value for the active compilation configuration.
+`comptime if` is type checked into HIR first. `ComptimeIfSpecializer` then evaluates its compile-time condition, keeps the selected branch, and removes unreachable definitions before CFG lowering. Closure environments and calls are represented as ordinary aggregates and functions during CFG lowering. `IS_RAW_MODE` is a reserved compile-time configuration name; the compiler supplies its value for the active compilation configuration.
 
 ## Tests and checks
 
@@ -101,15 +100,15 @@ Test data lives under `tests/`; the runner and the other Python tooling live und
 ## Architecture
 
 - `compiler/frontend/` contains the hand-written lexer and recursive-descent parser. Expression and statement parsing is in `frontend/parse/parser_expr.py`; type syntax is in `parser_type.py`.
-- `compiler/analysis/passes/` contains desugaring, prelude injection, restricted-operation checking, global resolution, compile-time conditional specialization, type checking, closure lowering, and definite-assignment analysis.
-- `compiler/analysis/lowering/` lowers expressions and calls into HIR through `ExprChecker`, `CallDispatcher`, `OpBuilder`, and related helpers.
-- `compiler/analysis/ty/` contains type representations, unification, generic inference, trait implementation lookup, dereference lookup, and the shared `TypeCtx`.
-- `compiler/analysis/unit/` and `compiler/analysis/symbol/` contain HIR compilation units, `DefPoint`, and symbol contexts.
-- `compiler/codegen/cfg/` contains CFG IR and its builder/translator.
+- `compiler/analysis/passes/` contains desugaring, prelude injection, restricted-operation checking, global resolution, compile-time conditional specialization, type checking, and definite-assignment analysis.
+- `compiler/analysis/lowering/` lowers expressions, calls, and closure bodies into HIR through `ExprChecker`, `CallDispatcher`, `OpBuilder`, and related helpers.
+- `compiler/analysis/ty/` contains type representations, unification, generic inference, trait implementation lookup, dereference lookup, and intrinsic type identifiers. `TypeCtx` owns the type space and its semantic queries.
+- `compiler/analysis/state.py`, `facts/`, `resolution/`, `unit/`, and `symbol/` contain shared semantic state, recorded name facts, type resolution, callable bodies, HIR compilation units, `DefPoint`, and symbol contexts.
+- `compiler/codegen/cfg/` contains CFG IR and its builder/translator; closure environments and calls become ordinary CFG aggregates and functions during CFG lowering.
 - `compiler/codegen/llvm/` lowers CFG nodes with llvmlite and emits target files through `Emitter`.
 - `lib/` is the standard library written in YIAN.
 
-The shared language supports postfix reference types such as `T&`. In the common bare representation, a non-ZST `T&` has the same data-pointer ABI and size as `T*`; it does not provide borrow checking or lifetime inference. Concrete safety metadata and runtime checking mechanisms are implementation-specific and must not be inferred from this common ABI description.
+The shared language supports postfix reference types such as `T&`. For a concrete non-trait `T`, the common bare representation of non-ZST `T&` has the same data-pointer ABI and size as `T*`; it does not provide borrow checking or lifetime inference. When `T` is a trait, `T&` is a trait object with dynamic method dispatch. Concrete safety metadata and runtime checking mechanisms are implementation-specific and must not be inferred from the common ABI description.
 
 Assignment, argument passing, and return use shallow value copies. They do not invalidate the source or perform implicit cleanup. `Move`, `.move()`, the `bitcopy` builtin, `@BitCopy`, compiler-provided `Clone`, and simple-type assignment restrictions are absent. `Clone` and `Drop` remain explicit standard-library traits. Pointers do not implement `Clone`; method lookup auto-dereferences `ptr.clone()` and clones the pointed-to value.
 

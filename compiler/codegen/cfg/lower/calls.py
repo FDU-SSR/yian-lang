@@ -67,18 +67,15 @@ class CallsLowerer:
             return self.build_call(expr.method_id, arg_vals, expr.type_id)
 
         # non-static: pass receiver address as the first argument.
-        # 调用侧 receiver 折算:方法签名 receiver 是 T&(24B,分级指针),而调用侧实参
-        # 几乎全是 T*(40B 胖指针)——值变量(VarPtr)、指针变量(p.method() auto-deref
-        # 后)、field 派生均如此;唯一"天然 24B"的是方法体内 self.method()(T& deref,
-        # __resolve_deref_addr 返回 operand 值即 T&)。统一折算到 alloc_ref(pointee):
-        # __build_cast 的 LLVM T*→T& 分支做 40B→24B 收缩,已是 T& 时走 T&→T& identity。
+        # 方法签名中的 receiver 是 T&。fat 模式下 T* 为 24B、T& 为 16B；
+        # 转换会丢弃指针的 index/size 元数据，已经是 T& 的 receiver 保持不变。
         receiver_addr = self.__values.resolve_addr_fat(expr.receiver)
-        # 调用侧修复:调用侧 T* receiver 折算(T*→T&)前恢复 in_bounds 检查。
+        # T* receiver 折算(T*→T&)前发出 in_bounds 检查。
         # 折算删除 index/size 字段,方法体内 self 访问仅剩 CheckRefAccess(live),
         # one-past-end 指针(index==size, 良构)的 in_bounds 语义随之丢失。
-        # 折算前对胖 T* receiver 发检查请求(与 FieldPtr/解引用同一前提);是否为胖
+        # 折算前对 T* receiver 发检查请求(与 FieldPtr/解引用同一前提);是否为胖
         # 指针、是否与同块既有检查去重,由检查插入 pass 判定;RefType receiver
-        # (方法体内 self.method())天然 24B 引用、无越界概念,raw 模式无检查。
+        # (方法体内 self.method())天然为 16B fat 引用、无越界概念,raw 模式无检查。
         self.__state.emitter.emit(IR.CheckRequest(
             kind=IR.CHECK_REQUEST_RECEIVER_IN_BOUNDS, operands=[receiver_addr],
         ))

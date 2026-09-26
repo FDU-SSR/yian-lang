@@ -1,4 +1,4 @@
-// The removed @BitCopy annotation is rejected everywhere.
+// `@BitCopy` is not a defined attribute.
 //
 // Expected: compilation error
 

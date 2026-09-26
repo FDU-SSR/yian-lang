@@ -1,6 +1,6 @@
 // bench/AWFY/an/nbody.an — N 体引力模拟 (shootout nbody)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/NBody.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/NBody.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/nbody.c (项目自写 C 参考)
 // 规模: 每个工作单元执行 250000 步 advance, 最终能量为
 //       -0.1690859889909308。

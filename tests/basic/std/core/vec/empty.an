@@ -26,7 +26,7 @@ fn main() {
     assert p == p2: "empty vecs share the dangling pointer for u8";
 
     // ---- shrink_to_fit(0) 后 Drop 不 trap ----
-    // 旧缺陷:shrink 到空后 data 悬垂,随后 Drop 对已释放块 del → live trap
+    // Shrinking an empty Vec to zero capacity leaves no allocation to release.
     let v3: Vec<u8> = Vec<u8>.new();
     v3.push(1);
     v3.push(2);

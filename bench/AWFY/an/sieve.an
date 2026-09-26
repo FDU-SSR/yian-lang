@@ -1,6 +1,6 @@
 // bench/AWFY/an/sieve.an — 埃拉托斯特尼筛法 (shootout sieve)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Sieve.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Sieve.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/sieve.c (项目自写 C 参考)
 // 规模: 每个工作单元分配 SIEVE_SIZE=5000 的 flags, 断言 prime_count==669。
 //

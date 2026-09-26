@@ -189,8 +189,8 @@ class FatSafety:
     ) -> LLValue:
         """Allocate a fat-mode pool block and attach a fresh lock-table identity."""
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
-        # 元素数与元素大小都是编译期常量时, 直接传尺寸类号: 运行时不再按字节数查表.
-        # 运行时取不到类号 (请求大于最大类) 或元素数非常量时走通用入口.
+        # 元素数与元素大小都是编译期常量时, 直接传尺寸类号选择分配入口.
+        # 请求大于最大类或元素数非常量时走通用入口.
         if class_index is None:
             block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
         else:
@@ -346,7 +346,7 @@ class FatSafety:
         return LLValue(self.__type_ctx.u64_id, frame_word)
 
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
-        """μ⟨lock_ptr⟩ := value(SENTINEL / 3.7.1 帧锁写键)。
+        """Write ``value`` to the lock slot addressed by ``lock_ptr``.
 
         指针恒非空,锁槽恒可写(空容器持真实堆块)。
         """
@@ -356,8 +356,8 @@ class FatSafety:
     def set_frame_lock(self, e_f: IR.Value) -> None:
         """标记函数已取得帧锁:全部返回路径写 SENTINEL 并 pop。
 
-        帧 word 由 acquire_frame_lock 记在 __frame_lock_slot_name(槽地址)里;
-        这里只确认"已取得", 参数是帧 word(不是槽地址), 因此不再记录它。
+        acquire_frame_lock 将槽地址记在 __frame_lock_slot_name 中;
+        此方法只记录获取状态, 参数是帧 word 而非槽地址。
         """
         assert isinstance(e_f, IR.Reg), "帧锁必须为入口寄存器"
         self.__frame_lock_acquired = True
@@ -687,7 +687,7 @@ class FatSafety:
         e_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
         e_size = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
-        # live 部分:锁槽键比较,含 null 短路(帧内 elem 恒真时不再发射)
+        # live 部分:锁槽键比较,含 null 短路;帧内 elem 恒真时省略该项
         if live:
             ev_data = self.extract_fat_field(ptr, ABI.FAT_DATA).ir_val
             ev_word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val

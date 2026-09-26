@@ -1,6 +1,5 @@
 // typedef: explicit type arguments spelled with an alias share one instance.
-// Regression: `ident<Code>` and `ident<u64>` produced two function instances,
-// so the same function was monomorphized (and emitted) twice.
+// Equivalent type aliases and their target share a canonical function instance.
 // Expected output: (exit 0)
 
 typedef Code = u64;

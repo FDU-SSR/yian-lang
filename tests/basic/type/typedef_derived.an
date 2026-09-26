@@ -1,5 +1,5 @@
 // typedef: alias to a derived type (pointer / slice / array).
-// Exercises alias resolution at the sizeof / codegen consumption point (Bug B).
+// Type aliases preserve pointer, slice, and array layouts at use sites.
 // Expected output: (exit 0)
 
 typedef IntPtr = i32*;

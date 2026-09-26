@@ -10,13 +10,9 @@
 //       UnionFindNode.java 与 som/*.java 为 MIT (Copyright (c) 2001-2016 Stefan Marr /
 //       AWFY AUTHORS.md, licenses/LICENSE-MIT)。
 //
-// 本文件逐行对应上游 Java; 唯二与语言相关的差异:
-//   - 类层次: 上游 SimpleLoop 等是 final class (无子类), 这里用 struct; IdentitySet /
-//     IdentityDictionary / Vector 用指针数组 + 线性扫描 (Set 本就线性扫描) 表达。
-//   - findSet 的路径压缩按上游 AWFY 语义实现: `nodeList.forEach(iter -> iter.union(parent))`
-//     里的 `parent` 是接收者的 parent 字段 (不是找到的根!), 这里原样保留。
-//   另: BasicBlock.name 唯一, 故 IdentityDictionary<BasicBlock,Integer> number 落成
-//   按 name 索引的 int 数组 (与 .an 一致)。
+// 数据结构以 struct、指针数组与线性集合表示; BasicBlock.name 唯一, 因而 number 表按
+// name 索引。findSet 的路径压缩对 nodeList 中的每个节点执行 iter.union(parent);
+// parent 是该节点的 parent 字段。C 参考实现与 YIAN 实现使用相同更新规则。
 //
 // 官方断言值: innerIterations=1500 → 6102 5213。
 #include <limits.h>

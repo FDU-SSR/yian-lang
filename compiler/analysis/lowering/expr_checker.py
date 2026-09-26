@@ -211,9 +211,7 @@ class ExprChecker:
         if symbol is None:
             raise AnalysisError(f"Unknown identifier '{node.name}'", node.span)
 
-        # Every identifier that resolves is recorded: this is the referring side
-        # of navigation and hover, so no later pass has to guess
-        # which declaration a name stood for.
+        # Record the declaration at the identifier span for navigation and hover.
         match symbol.kind:
             case SymbolKind.Variable:
                 self.__ctx.names.record(node.span, symbol, symbol.type_id)

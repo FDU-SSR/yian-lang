@@ -35,7 +35,7 @@ class MemoryOps:
 
     def build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
         # CFG 层:Malloc 返回 4 字段聚合 ⟨data=b+H, word, index=0, size=n⟩(LLVM 层构造)。
-        # word 由 LLVM 层按块首地址与块头里的上一代算好(分配处 +1), 不再用全局堆键。
+        # word 由 LLVM 层根据块首地址和块头中的上一代生成(分配处 +1)。
         # pointee 为 ZST 时维持快路径(undef,不写块头);raw 模式无块头。
         key: IR.Value | None = None
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(type_id))

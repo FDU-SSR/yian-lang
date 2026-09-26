@@ -1,7 +1,6 @@
-// Tiered-pointer type system (基础路径): the T& reference type, the coerce chain
-// T*→T[]→T& (triggered by explicit annotations). `&x` still produces T*;
-// the downgrades are type-layer operations (value shaping lands in 表示层).
-// (NULL 三档兼容节已删除:NULL 字面量与 NullPtrType 已随迁移移除)
+// The T& reference type and the T*→T[]→T& conversion chain are triggered by
+// explicit type annotations. `&x` produces T*; conversion shapes the value in
+// the pointer representation layer.
 //
 // Expected output: 0
 

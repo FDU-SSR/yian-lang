@@ -177,7 +177,8 @@ yianc --analyze lib/src main.an
 yianc --analyze --json lib/src main.an
 ```
 
-只运行分析前缀（词法 → 语法 → 解析 → 类型检查），不生成代码，也不写 `build/`。
+运行完整语义分析：词法与语法分析、名称与类型解析、类型检查、编译期条件专门化和 definite-assignment
+检查；不运行 CFG/LLVM 代码生成，也不写 `build/`。
 `--json` 把诊断作为单个 JSON 对象写到 stdout（其余输出走 stderr）；退出码 `0` 表示成功，
 `1` 表示有诊断。`--json` 必须与 `--analyze` 一起使用。
 

@@ -1,6 +1,5 @@
 // typedef: impl written on an alias of a generic instance.
-// Regression: the impl registry keyed such an impl by the alias's instance id,
-// so a call through the target spelling missed it.
+// Trait method lookup finds an impl registered through an alias of a generic instance.
 // Expected output: (exit 0)
 
 struct Box<T> { pub v: T }

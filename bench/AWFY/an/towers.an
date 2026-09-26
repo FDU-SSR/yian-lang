@@ -1,6 +1,6 @@
 // bench/AWFY/an/towers.an — 汉诺塔指针栈模拟 (shootout towers)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Towers.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Towers.java (上游许可见 AWFY LICENSE.md)
 // 语义: 每个 benchmark 单元使用上游规模 disks=13, 断言 moves_done == 8191。
 //       main 通过外层重复完整单元, 为进程级计时提供稳定工作量。
 //

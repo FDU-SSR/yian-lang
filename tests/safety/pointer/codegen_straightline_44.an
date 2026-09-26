@@ -1,13 +1,5 @@
-// Regression for defect B: LLVM block-name runaway length.
-//
-// Each `t[i] = v` fat write inlines a guarded live check plus a safe-access
-// check, each splitting the current LLVM block.  When the split base name is
-// the (ever-growing) current block name, ~44 consecutive direct writes push a
-// single label past 1024 chars, and llvmlite's asm parser (parse_assembly)
-// truncates it — collapsing all subsequent blocks into one and failing
-// verification with "Terminator found in the middle of a basic block!".
-//
-// 48 straight-line direct writes exercise that threshold with margin.
+// Forty-eight consecutive checked pointer writes exercise LLVM lowering and
+// verify that the generated control-flow blocks remain valid.
 //
 // Expected output: 0
 

@@ -1,4 +1,4 @@
-// The removed Move trait cannot be implemented.
+// An impl cannot refer to an undefined `Move` trait.
 struct Value { n: i32 }
 
 impl Move for Value {

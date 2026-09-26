@@ -20,7 +20,7 @@ class LLTypeCtx:
         self.__type_ctx = type_ctx
         self.__module = module
         self.__unit_names = unit_names
-        # 诊断模式：raw_pointers 开启时指针按裸 8B 处理，不携带 5 字段元数据。
+        # 诊断模式：raw_pointers 开启时指针按裸 8B 处理，不携带胖指针元数据。
         self.__raw_pointers = raw_pointers
 
         self.__storage: dict[int, ir.Type] = {}
@@ -30,12 +30,12 @@ class LLTypeCtx:
         self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
-        # opaque pointer: 数据指针不再携带 pointee (LLVM 15+ 的唯一表示)。
-        # GEP/load 的显式类型由调用点给出 (见 builder.py), 因此指针构造不再需要
+        # Opaque pointer 不携带 pointee (LLVM 15+ 的唯一表示)。
+        # GEP/load 的显式类型由调用点给出 (见 emitters/memory.py 与 function/core.py), 因此指针构造无需
         # materialize pointee: 指针布局与 pointee 无关, 经指针回指自身的 struct/enum
         # 也不必在构造指针时补齐自己的 body。
         self.__ptr: ir.PointerType = ir.PointerType()  # type: ignore
-                # str = slice:3 字段 {data, word, size} 24B;
+        # str 与 slice 共用 3 字段布局 {data, word, size} 24B;
         # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
         if self.__raw_pointers:
             self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
@@ -290,7 +290,7 @@ class LLTypeCtx:
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
         # 载荷槽用 i32 而不是 i8: `[N x i8]` 会被 SROA/instcombine 拆成逐字节拷贝
         # (一份 72B 载荷 ~150 条指令, json 里一次 Vec::push 就这样), i32 槽则是
-        # 4 字节 move。槽总大小 4*ceil(pad/4) 与旧的 align_up(pad, 4) 相同, 枚举的
+        # 4 字节 move。槽总大小 4*ceil(pad/4) 等于 align_up(pad, 4), 枚举的
         # 尺寸/对齐(见 __stable_layout 的 EnumType 分支)不变; 载荷读写都先 bitcast
         # 到真实 payload 类型, 槽的元素类型不影响语义。
         slots = (pad + 3) // 4
@@ -301,13 +301,13 @@ class LLTypeCtx:
         # `void` is the only LLVM type legal in return position for a ZST.
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)
         # Zero-sized parameters carry no data and are dropped from the signature.
-        # Pointer params/returns lower to the 5-field fat pointer aggregate
+        # In fat mode, pointer params/returns lower to the 4-field aggregate.
         # pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
             # 接收者以 `T&` 值类型引用传递:receiver_type_id 是值类型,
-            # alloc_ref 包出 T& 后经 __handle_ref 自动得 24B 3 字段
-            # {data, lock_ptr, key}。调用侧负责完成 40B→24B 的表示折算。
+            # In fat mode, alloc_ref yields the 16B {data, word} representation.
+            # Raw mode uses a bare pointer. Fat T* to T& conversion drops index/size.
             ref_type_id = self.__type_ctx.alloc_ref(receiver_type_id)
             if not self.is_zst(ref_type_id):
                 params.insert(0, self.__get_raw_type(ref_type_id))

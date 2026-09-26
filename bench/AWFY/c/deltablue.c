@@ -5,9 +5,8 @@
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/DeltaBlue.java + deltablue/*.java
 //       (MIT, Copyright (c) 2001-2016 Stefan Marr; 源自 Mario Wolczko 的 Java/Smalltalk
 //        版本, 见 AWFY LICENSE.md)
-// 说明: 上游的约束类层次 (AbstractConstraint -> Unary/Binary -> Equality/Scale/Stay/Edit)
-//       在 .an 里是 tagged enum + match, 在 C 里等价为一个带 kind 标签的结构体 + switch;
-//       强度 Strength 用 arithmeticValue (int) 直接表示。
+// 说明: 约束分派由带 kind 标签的结构体与 switch 实现; 强度 Strength 由 arithmeticValue
+//       (int) 表示。
 // 工作单元: chainTest(12000) 与 projectionTest(12000), 结果由内部断言验证。
 // 用法: ./deltablue [重复次数] (默认 1)
 #include <stdbool.h>

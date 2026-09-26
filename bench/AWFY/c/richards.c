@@ -1,8 +1,7 @@
 // bench/AWFY/c/richards.c — 任务调度器模拟 (Richards) 的 C 参考实现
 //
 // 语义与 bench/AWFY/an/richards.an 对齐; C 与 YIAN 都执行一个独立工作单元,
-// 并在验证后释放该工作单元创建的对象。上游 Java 依赖 GC, 这里用登记表代替
-// 沿任务图递归释放, 因为任务和 packet 的 link/input 会形成环状引用。
+// 并在验证后释放该工作单元创建的对象。登记表统一记录对象, 避免沿任务/packet 的环状图递归释放。
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Richards.java + richards/*.java
 //       (MIT, Copyright (c) 2001-2016 Stefan Marr; 见仓库 LICENSE.md)
 // 期望值 (上游 Java Scheduler.start 的断言):

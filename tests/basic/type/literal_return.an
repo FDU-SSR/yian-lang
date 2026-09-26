@@ -1,5 +1,4 @@
-// Expression-bodied function returning a literal must be coerced to the
-// declared return type — regression test for impl-literal-return bug.
+// Expression-bodied functions coerce a returned literal to the declared type.
 //
 // Expected output: 0
 

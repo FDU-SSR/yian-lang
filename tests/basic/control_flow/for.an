@@ -3,7 +3,6 @@
 // Expected output: 0
 
 fn main() {
-    // TODO: lacking support for array initialization with a single value, e.g. [0; 1024]
     let arr: i32[1024] = [0;
         1024];
     for i in 0u64..1024 {

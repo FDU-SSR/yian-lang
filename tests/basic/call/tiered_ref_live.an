@@ -1,7 +1,4 @@
-// T& reference dereference and field access.
-//
-// This test is migrated from the SECL raw-compatible portion of
-// tests/fat/positive/tiered_ref_live.an.
+// T& references support dereference, field access, and access to slice elements.
 
 struct Point {
     x: i32,

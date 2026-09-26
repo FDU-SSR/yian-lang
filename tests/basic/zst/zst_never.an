@@ -1,6 +1,5 @@
-// never (!) is a zero-sized type. It can appear as an array element, tuple
-// element, parameter, and return type. It is already handled by is_zst and
-// codegen (maps to void), but was not covered by a dedicated test.
+// `!` is a zero-sized type and maps to void in code generation. It can appear
+// as an array or tuple element, parameter, and return type.
 //
 // Expected output: 0
 

@@ -10,12 +10,11 @@ Layout, mirroring the repository runner's conventions:
     <project>/tests/input/foo.args|.stdin     program arguments / standard input
 
 Each test is compiled in **package mode**: the test file is registered as a
-synthetic package rooted at ``<project>/tests`` whose entry is that file and
-whose dependencies are the root package plus the root package's direct
-dependencies.  A test therefore imports project code exactly the way project
-code imports it (``from <package>.<module> import ...``), while the visibility
-rule still holds: a transitive dependency is *not* visible to a test
-unless the root package declares it.
+synthetic package rooted at ``<project>/tests`` whose entry is that file. Its
+package map includes the root library interface when applicable, the root
+package's direct runtime dependencies, and its direct dev dependencies. A test
+imports project code with ``from <package>.<module> import ...``; transitive
+dependencies are visible only when the root package declares them directly.
 """
 
 from __future__ import annotations

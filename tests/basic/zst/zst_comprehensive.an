@@ -1,4 +1,4 @@
-// M7: Comprehensive integration test exercising the full ZST pipeline.
+// Integration coverage for zero-sized values across language and runtime paths.
 //
 // Expected output: 0
 

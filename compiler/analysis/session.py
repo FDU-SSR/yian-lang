@@ -47,9 +47,8 @@ from compiler.utils.log import format_ast_output
 
 TypeSizeFactory = Callable[[TypeCtx, Mapping[int, str], bool], Callable[[int], int]]
 
-#: The errors the analysis pipeline is expected to raise.  Anything else is a
-#: compiler bug: it is not swallowed here, so it stays visible while the analysis
-# layers above (such as the language server) decide what to do with it.
+#: The user-facing errors translated into diagnostics by the analysis pipeline.
+#: Other exception types propagate as internal errors.
 ANALYSIS_ERRORS = (CompilerError, LexError, ParseError, AnalysisError)
 
 
@@ -380,8 +379,8 @@ class AnalysisSession:
     ) -> AnalysisResult:
         """Attach the lexed tokens to a failed run.
 
-        The lexer succeeded even though a later stage did not, and those tokens
-        are what a degraded editor answer is built from.
+        Preserve tokens whenever analysis fails after lexing so editor queries
+        can build degraded responses from the available syntax.
         """
         result.tokens = tokens
         return result

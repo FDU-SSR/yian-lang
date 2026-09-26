@@ -1,6 +1,5 @@
 // typedef: a trait impl written on a struct alias is found through the struct.
-// Regression: the impl registry cached impls by the raw target type id, so an
-// impl registered under the alias id was invisible to the aliased type.
+// Trait method lookup finds an impl registered through a struct alias.
 // Expected output: (exit 0)
 
 typedef P = Vec2;

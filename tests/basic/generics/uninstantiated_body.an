@@ -1,5 +1,5 @@
-// An uninstantiated generic body is not type-checked: the language has no
-// parameter constraints, so `a + b` cannot be judged before instantiation (G21).
+// A generic body is type-checked when a concrete instance is generated; this
+// uninstantiated body does not constrain `T` to support addition.
 
 fn add<T>(a: T, b: T) -> T {
     return a + b

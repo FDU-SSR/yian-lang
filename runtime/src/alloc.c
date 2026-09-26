@@ -376,7 +376,7 @@ uint64_t __secl_pool_payload(const void *block) {
     return ((const LargeHeader *)region)->payload;
 }
 
-/* ── 锁表 (变体 B) ──
+/* ── 堆锁表项的分配与释放 ──
  *
  * 表项 = {key:u32 @0, anchor_lo32:u32 @4}. 帧段与字面量/环境槽由编译器/运行期直接使用;
  * 堆段由这里发放: 空闲表项把"下一空闲下标 + 1"写在自己的 anchor 字段, 链头是

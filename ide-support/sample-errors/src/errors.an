@@ -1,8 +1,6 @@
 // 故意写错的模块，供 IDE 诊断验收。
 //
-// 每个错误都放在**独立的顶层定义**里，这样"按顶层定义恢复"的多诊断策略
-// 能一次报出多条（见计划 §5.11 第三层）。当前编译器在第一个错误处中止，
-// 所以 P4 之前这里只会出现一条诊断，这是预期行为。
+// 各函数分别构造一种错误场景，供语言服务器诊断样例工程使用。
 from sample_errors.helper import Origin, add, double;
 from sample_errors.types import Meters;
 

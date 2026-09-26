@@ -12,7 +12,7 @@ fn main() {
     assert @sizeof<i32*[3]> == @sizeof<i32*> * 3: "ptr-array size"
 
     // Stack array of Option pointers; each element points to a heap-allocated
-    // scalar (None 表示空槽,NULL 已移除)。
+    // scalar, and None represents an empty slot.
     let arr: Option<i32*>[4] = [
         Option<i32*>.None, Option<i32*>.None, Option<i32*>.None, Option<i32*>.None]
     arr[0] = Option<i32*>.Some(dyn i32(1))

@@ -1,6 +1,5 @@
 // typedef: array elements spelled as an alias and as its target stay compatible.
-// Regression: infer_common_type compared element type ids directly, so
-// `[a, b]` with `a: Code` and `b: u64` was rejected as incompatible.
+// Array element type inference accepts an alias alongside its target type.
 // Expected output: (exit 0)
 
 typedef Code = u64;

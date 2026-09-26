@@ -1,5 +1,5 @@
-// T& deletion on a heap allocation, migrated from the SECL raw-compatible
-// portion of tests/fat/positive/del_ref_heap.an.
+// Deleting a T& that refers to the first element of a heap allocation releases
+// the complete allocation.
 
 fn main() {
     let p: i32* = dyn[1] 0i32;

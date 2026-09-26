@@ -1,5 +1,5 @@
 // typedef: generic alias — over pointer / generic struct / array (const generic).
-// Exercises generic-alias instantiation (Bug A): args must be substituted into the body.
+// Generic aliases substitute type and const arguments into their definitions.
 // Expected output: (exit 0)
 
 struct Box<T> { v: T }

@@ -15,30 +15,22 @@
 //       依次 change(src,17) / change(dst,1050) / change(scale,5) / change(offset,2000),
 //       断言 dst==1170、src==5、dests[i]==(i+1)*5+1000 再 (i+1)*5+2000。
 //
-// YIAN 侧适配 (逐条):
-//   - 无 trait object/动态分派: 上游抽象类层次
-//     AbstractConstraint -> UnaryConstraint/BinaryConstraint -> Equality/Scale/Stay/Edit
-//     改为 tagged enum Constraint { Equality {...}, Scale {...}, Stay {...}, Edit {...} }
-//     + match 分派。上游虚方法 isInput/isSatisfied/addToGraph/removeFromGraph/
-//     chooseMethod/execute/inputsDo/inputsHasOne/inputsKnown/markUnsatisfied/
-//     getOutput/recalculate 各成为 Constraint 上的一个方法, 分派到对应变体;
-//     Scale 的 addToGraph/removeFromGraph/inputs/recalculate 按上游覆写语义处理。
+// YIAN 实现结构:
+//   - Constraint 是带 Equality/Scale/Stay/Edit 变体的 tagged enum。约束方法按变体
+//     分派; Scale 的 addToGraph/removeFromGraph/inputs/recalculate 保持对应的约束规则。
 //   - Strength (Strength.java) 是 interned 常量对象, 上游只用 arithmeticValue 比较
 //     (sameAs/stronger/weaker/strongest/weakest), 且 sameAs(required) 也只看算术值;
-//     故这里用 i32 arithmeticValue 直接表示, 语义等价 (无对象身份依赖)。
-//   - 引用不能比较相等 (== 对 T& 报 E406): 约束带自增唯一 id (Planner.next_id),
-//     上游的 `c != determiningC` (addConstraintsConsumingTo/constraintsConsuming) 与
-//     `determinedBy == c` (Variable.removeConstraint) 改比 id; Variable 无需身份比较。
-//   - 上游 ForEachInterface/TestInterface 闭包 + forEach 改显式循环 (等价, 无闭包分配);
+//     Strength 因此由 i32 arithmeticValue 表示, 不依赖对象身份。
+//   - 约束有 Planner.next_id 分配的唯一 id; 对约束的身份判定比较 id。
+//   - 遍历通过显式循环实现, 不创建 ForEachInterface/TestInterface 闭包;
 //     inputsKnown 直接写成「该约束所有输入都已知」的布尔合取。
-//   - 上游 Vector.removeFirst 队列用「Vec + head 游标」表达 (语义与分配次数不变);
-//     unsatisfied 的 sort 手写稳定插入排序, 与 Java TimSort 在
+//   - 队列使用 Vec + head 游标; unsatisfied 的 sort 使用稳定插入排序, 与 Java TimSort 在
 //     「stronger ? -1 : 1」比较器下的稳定性一致 (等强度保持入队顺序)。
-//   - 无 GC: 每个测试结束时显式释放全部 Variable/Constraint (Java 靠 GC 回收);
-//     change() 内部的 EditConstraint 在 destroyConstraint 后 del。分配次数与上游一致
+//   - 每个测试结束时显式释放全部 Variable/Constraint; change() 内部的 EditConstraint
+//     在 destroyConstraint 后 del。分配次数与上游一致
 //     (chainTest: n+1 Variable, n Equality + 1 Stay + 1 Edit; projectionTest:
 //      2n+2 Variable, n Stay + n Scale + 4 Edit)。
-//   - 上游 Planner.propagateFrom 未被 chainTest/projectionTest 使用, 本移植省略。
+//   - Planner.propagateFrom 不在 chainTest/projectionTest 的工作单元调用路径上。
 //
 // 单一源: fat 与 raw 共用本文件; 约束/变量互相引用用 T&, 约束列表用 Vec<Constraint&>。
 // 规模: 每个工作单元执行 chainTest(12000) 与 projectionTest(12000) 各一次。
@@ -46,7 +38,7 @@
 from std.core.vec import Vec;
 
 // ── Direction (上游 deltablue/Direction.java) ──
-// 上游 direction 为 null 表示约束当前未被满足; 这里用第三个变体 Unset 表示 null。
+// Flow.Unset 表示约束当前没有满足的传播方向。
 enum Flow {
     Forward,
     Backward,

@@ -1,6 +1,6 @@
 // bench/AWFY/an/permute.an — 全排列递归交换 (shootout permute)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Permute.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Permute.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/permute.c (项目自写 C 参考)
 // 规模: n=6, 断言 count == 8660。
 //

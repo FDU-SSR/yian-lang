@@ -11,13 +11,11 @@
 //       画到体素图 (Vector2D → Motion 列表, 红黑树) 上, 同一体素内两两求
 //       线段球体相交 (Motion.findIntersection), 累计碰撞数。
 //
-// YIAN 侧适配 (与上游逐行对应, 仅以下写法差异):
-//   - 无 trait object/动态分派: 上游 Java 泛型红黑树 + Comparable 用「带标签键
-//     enum Key + 泛型 RBTree<V>」的单一实现表达; 键比较 key_compare 与上游
-//     CallSign.compareTo / Vector2D.compareTo 逐行对应。
-//   - 引用不可比较相等 (== 对 T& 报 E406): 节点带唯一 id (自增, 树内唯一),
-//     上游的 `x == y.left` / `y != z` 等身份判定改比 id, 语义等价。
-//   - 上游 ForEachInterface 闭包改为显式中序遍历 (等价, 无闭包分配)。
+// YIAN 实现结构:
+//   - 泛型红黑树通过带标签键 enum Key 与 RBTree<V> 表达; key_compare 实现
+//     CallSign / Vector2D 的排序规则。
+//   - 节点使用树内唯一递增 id 表示对象身份, 身份判断比较 id。
+//   - 遍历使用显式中序循环, 不创建遍历闭包。
 //   - sin/cos/sqrt 均使用 std.num.f64 的 LLVM 数学内建, 与 C 参考使用同一类系统原语。
 //     碰撞检测中的平方根对末位差异敏感, 因此两侧保持相同的数学调用路径。
 //     同一 discr 只开方一次 (上游 Java 写了两次 Math.sqrt, 等值)。
@@ -275,7 +273,7 @@ impl<V> RBTree<V> {
         return Option<V*>.Some(&node.unwrap().value);
     }
 
-    // 上游 put: 返回被覆盖的旧值 (无则 None)
+    // 键已存在时返回其旧值, 否则返回 None。
     pub fn put(key: Key&, value: V) -> Option<V> {
         let parent: Option<RBNode<V>&> = Option<RBNode<V>&>.None;
         let current: Option<RBNode<V>&> = self.root;
@@ -311,7 +309,7 @@ impl<V> RBTree<V> {
             },
         }
 
-        // 插入修复 (上游 put 的 while 循环)
+        // 插入后的红黑树重新平衡
         let root: RBNode<V>& = *self.root.unwrap();
         let x: RBNode<V>& = z;
         while x.id != root.id && x.parent.unwrap().red {

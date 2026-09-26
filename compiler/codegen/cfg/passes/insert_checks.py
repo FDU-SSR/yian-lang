@@ -110,7 +110,7 @@ class _CheckPlanner:
         # 义务已由合取检查承担（InBounds + live 并入）：弹出，避免失效点补发
         self.__field.pop(ptr.name)
         # SafeAccess(f) 的 live 项由合取检查承载（in_bounds(f,1) 恒真）：
-        # 登记 f 的 safe 去重键，同指针后续访问共享
+        # 登记 f 的 safe 去重键，使同指针访问共享检查
         self.__checked.add((ptr.name, "safe"))
         elem, base, offset = self.__elem[elem_name]
         if self.__dedup(self.__pair_key(base, offset, "eacc")):
@@ -121,9 +121,9 @@ class _CheckPlanner:
     def __invalidate(self) -> None:
         """失效：先补发挂起合并义务（CheckInBounds），再清空去重/合并表。
 
-        释放、锁槽写、任意函数副作用或块终结之前，已检查状态不再可靠；挂起义务
-        （派生链可对的 FieldPtr 跳过的 in_bounds(elem,1)）在此补发，保证 one-past-end
-        的 elem 取字段在任何逃逸（传参/返回/跨块）前报告安全错误。
+        释放、锁槽写、任意函数副作用或块终结会使缓存的检查结论失效；挂起义务
+        （派生链可对的 FieldPtr 跳过的 in_bounds(elem,1)）在这些操作前补发，保证
+        one-past-end 的 elem 取字段在逃逸（传参/返回/跨块）前报告安全错误。
         """
         if self.__field:
             for elem_name in dict.fromkeys(self.__field.values()):

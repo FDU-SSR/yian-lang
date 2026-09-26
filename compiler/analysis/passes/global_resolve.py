@@ -304,11 +304,11 @@ class GlobalResolve:
         return target
 
     def __warn_if_shadowed_directory(self, importer: str | None, first: str, span: SrcSpan) -> None:
-        """G13: the package-name segment always wins over a same-named directory.
+        """The package-name segment takes precedence over a same-named directory.
 
-        ``from dup.foo import x`` resolves to package ``dup``, so a local
-        ``src/dup/foo.an`` can never be imported. That is a consequence of the
-        rule rather than a defect, so it is reported as a warning, not an error.
+        For example, ``from dup.foo import x`` resolves ``dup`` as a package
+        name before considering a local ``src/dup`` directory. The resolver
+        reports that shadowing as a warning.
         """
         packages = self.__ctx.packages
         if packages is None or importer is None or importer == first:

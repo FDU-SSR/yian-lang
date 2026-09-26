@@ -84,19 +84,19 @@ ENV_KEY = 0
 LITERAL_WORD = (LITERAL_KEY << WORD_KEY_SHIFT) | LITERAL_LOCK_INDEX
 ENV_WORD = (ENV_KEY << WORD_KEY_SHIFT) | ENV_LOCK_INDEX
 
-# 5 字段胖指针字段下标（PointerType 映射为
+# 4 字段胖指针字段下标（PointerType 映射为
 # {data: ptr, word: u64, index: u32, size: u32} 24B 聚合）。
 FAT_DATA = 0
 FAT_WORD = 1
 FAT_INDEX = 2
 FAT_SIZE = 3
 
-# 4 字段 slice 字段下标：{data: ptr, word: u64, size: u64} 24B。
+# 3 字段 slice 字段下标：{data: ptr, word: u64, size: u64} 24B。
 SLICE_DATA = 0
 SLICE_WORD = 1
 SLICE_SIZE = 2
 
-# 3 字段引用字段下标：{data: ptr, word: u64} 16B。
+# 2 字段引用字段下标：{data: ptr, word: u64} 16B。
 REF_DATA = 0
 REF_WORD = 1
 
@@ -163,7 +163,7 @@ class FrameLockArena:
     """单线程稳定帧锁影子栈布局。
 
     槽位是进程生命期内固定地址的 ``u64`` 数组元素，仅由受信任的帧进入/退出协议读写。
-    活动帧按 LIFO 次序占用槽位；退出写 ``SENTINEL`` 后弹出，后续复用在任何用户步之前
+    活动帧按 LIFO 次序占用槽位；退出写 ``SENTINEL`` 后弹出，复用槽位在用户代码运行前
     写入新键。容量耗尽与键耗尽一样确定性失败，不回绕或退化到普通栈存储。
 
     2^20 个槽位保留 8 MiB 虚拟地址空间；页在访问时按需常驻，因此物理开销与峰值同时

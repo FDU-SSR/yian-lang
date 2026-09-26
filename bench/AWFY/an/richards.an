@@ -16,29 +16,24 @@
 //       idler 计数从 10000 减到 0 后 holdSelf 返回链尾的 null, schedule 结束。
 //       全程只分配 6 个 TCB + 4 个数据记录 + 8 个 Packet (与上游一致, 无逐帧分配)。
 //
-// YIAN 侧适配 (与上游逐行对应, 仅以下写法差异):
-//   - 无 trait object/动态分派: 上游 TaskControlBlock 持有的 ProcessFunction
-//     lambda 改为「带标签 enum TaskKind { Idle{record} / Worker{record} /
-//     Handler{record} / Device{record} } + match」; runTask 的 if 部分保留在
-//     Scheduler.run_task, 四个 lambda 的函数体分别落在 run_idle/run_worker/
-//     run_handler/run_device, 状态机与分支逐条对应。
-//   - TaskKind (类层次判别子) 放在 TaskControlBlock 首个字段: 语义与上游字段
-//     集合一致; 字段顺序不承载语义。
-//   - 上游 TaskControlBlock extends TaskState 继承的三个布尔量改为内嵌 TaskState
-//     值字段 (pending/waiting/holding), 方法 packetPending()/running()/
-//     isTaskHoldingOrWaiting()/isWaitingWithPacket() 逐条照搬。
-//   - 上游 addInputAndCheckPriority 用裸 setter setPacketPending(true) (只置
-//     pending, 不清 waiting/holding), 与 packetPending() 转移不同; 本实现保留
-//     这一区别 (只写 t.state.pending), 否则调度器永不到达链尾 idler。
+// YIAN 实现结构:
+//   - TaskControlBlock 的任务种类由带标签 enum TaskKind { Idle{record} /
+//     Worker{record} / Handler{record} / Device{record} } 表达, 并通过 match 分派。
+//     Scheduler.run_task 负责任务调度, run_idle/run_worker/run_handler/run_device 分别
+//     实现四类任务的状态转移。
+//   - TaskKind 位于 TaskControlBlock 首字段; 字段顺序不参与调度语义。
+//   - TaskControlBlock 内嵌 TaskState 值, 字段为 pending/waiting/holding;
+//     packetPending()/running()/isTaskHoldingOrWaiting()/isWaitingWithPacket() 读取状态。
+//   - addInputAndCheckPriority 只设置 pending, 不清 waiting/holding; packetPending()
+//     则执行完整状态转移。两种操作的差别参与调度状态机。
 //   - packet 的 int[DATA_SIZE] 用定长内联数组 i32[4] (两模式同为内联布局, 无
 //     跨模式类型分歧, 访问也无需切片)。单趟分配次数: taskTable 的 Vec 1 +
 //     TCB 6 + 数据记录 4 + Packet 8 = 19 次, 算法层面的四类对象 (TCB/记录/
 //     Packet) 次数与上游一致, 且整趟 run 只在启动时分配一次, 无逐帧分配。
 //   - 任务表 taskTable[NUM_TYPES] 用 Vec<Option<TaskControlBlock&>> (with_capacity,
 //     一次分配); 上游为 Java 数组。
-//   - 上游 ForEachInterface/闭包类用法本基准没有; 上游 4 个 lambda 是唯一的分派点。
-//   - 上游用引用相等判断 null (NO_WORK/NO_TASK == x), 本实现全部落在 Option 的
-//     is_none/is_some 上; 本基准没有需要「两引用判等」的身份判定, 故未加 id 字段。
+//   - 调度分派由 TaskKind 完成; 可选任务与包使用 Option 表达空值。
+//     调度器不需要比较两个非空引用的身份, 因此对象不带 id 字段。
 //   - 显式释放: 每趟把四类记录、TCB 与 Packet 登记在 Scheduler 中, 验证后按登记表
 //     统一释放; 不沿任务/packet 的环状引用递归释放, 因而每个对象只释放一次。
 //

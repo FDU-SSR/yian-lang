@@ -1,5 +1,5 @@
-// M8.4: HashSet<ZST> — ZST keys are all indistinguishable,
-// so there is at most one logical entry.
+// HashSet<ZST> treats all ZST keys as indistinguishable, so it stores at most
+// one logical entry.
 //
 // Expected output: 0
 

@@ -20,11 +20,11 @@ bench/
 ├── results/         生成物: <set>.{md,csv}、alloc.{md,csv}、partial.{md,csv}
 ├── bench_three_way.py 三态运行器 (C / raw / fat)
 ├── bench_allocator.py 分配器运行器 (fat / raw 两态)
-├── SUITES.md        来源/许可登记与候选套件调研
+├── SUITES.md        来源与许可登记
 └── README.md
 ```
 
-来源与许可登记见 `bench/SUITES.md`（含候选套件调研结论与引入判据）。
+当前评测来源与许可登记见 `bench/SUITES.md`。
 
 ## 集合
 
@@ -67,17 +67,17 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 
 | 基准 | 标记的规模量 | full | fast |
 | --- | --- | ---: | ---: |
-| AWFY/queen | `SOLVES` | 150 | 10 |
-| AWFY/sieve | `ITER`（SIEVE_SIZE 与素数断言不变） | 500 | 25 |
+| AWFY/queen | `ITER`（每轮 10 次 8 皇后求解） | 276923 | 65000 |
+| AWFY/sieve | `ITER`（每轮执行完整筛法） | 268657 | 59000 |
 | ALLOC/churn_single | `rounds` | 1000 | 100 |
 | ALLOC/churn_mixed | `rounds` | 20000 | 2000 |
 | ALLOC/grow_free | `cycles` | 40 | 8 |
 | ALLOC/grow_varied | `cycles` | 32 | 8 |
+| fatptr/call_abi | `CALLS`（每轮调用次数） | 4096 | 1024 |
 | fatptr/copy_struct | `ROUNDS` | 1024 | 128 |
 | fatptr/chase | `NODES` | 4000000 | 2000000 |
 
-其余基准（list、towers、binarytree、deltablue、json、richards、……）两档同规模，快速档通过
-"子集 + 上述 6 项缩规模"控制时长（storage 在 fast 档约 1.7 s）。标定一项的做法是给源加
+未列出的基准两档同规模，快速档通过代表性子集和这些规模覆盖控制时长。标定一项的做法是给源加
 `// bench-scale` 标记行、在 spec 里填 `scale.fast`；fast 档的量级口径是 fat 态每项 0.2–0.5 s，
 超过 1 s 的项按 full 规模运行。缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数
 最安全；若必须缩放问题规模，断言与权威值都要跟着写成规模的函数。
@@ -127,4 +127,4 @@ python3 bench/bench_allocator.py --scale fast --pin 4    # 快速档: 每态 3 �
    `specs/<name>.json`（`argv`、`check`、`tags`、可选 `scale`）；
 3. 在 `bench/README.md` 登记来源与规模对齐关系；三态跑通并确认 C 权威值。
 
-引入现成套件的调研结论（哪些能引、许可是什么、工作量如何）见 `bench/SUITES.md`。
+评测源的来源与许可见 `bench/SUITES.md`。

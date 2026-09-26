@@ -67,9 +67,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if args.log_file is not None:
-        # A file handler is for bug reports and for watching a long session;
-        # it never replaces stderr, so the extension's output channel still gets
-        # everything the user is used to.
+        # Keep stderr as the primary stream so the extension's output channel
+        # receives all messages alongside the optional file log.
         try:
             handlers.append(logging.FileHandler(args.log_file, encoding="utf-8"))
         except OSError as error:

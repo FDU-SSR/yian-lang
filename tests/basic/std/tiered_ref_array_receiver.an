@@ -1,7 +1,4 @@
-// T& receiver method-body array access.
-//
-// This test is migrated from the existing SECL T& receiver coverage.  The
-// assertions exercise only ordinary array methods and raw reference behavior.
+// T& receivers support array indexing, pointer access, slices, and chained methods.
 
 struct Holder {
     arr: i32[4],

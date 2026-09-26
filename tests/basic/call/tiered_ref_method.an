@@ -1,6 +1,5 @@
 // T& receiver method calls.
-// Reused from SECL's tests/fat/positive/tiered_ref_method.an; the test body
-// only exercises the raw reference semantics.
+// Reference receivers call value-type methods directly and support chaining.
 
 impl i32 {
     pub fn double() -> i32 {

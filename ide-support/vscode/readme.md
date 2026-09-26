@@ -40,12 +40,10 @@ YIAN（`.an`）的编辑器支持：声明式的语言注册与编辑体验、�
 引用高亮/重命名/代码操作都基于解析结果，因此**分析没跑到的代码不会被连带修改**；
 这也意味着重命名在"项目里存在未实例化的泛型体用到该名字"时会拒绝而不是只改一半。
 
-诊断分两条路径。**打字期间只跑编译器前端**（词法 → 语法 → 去糖），
-所以改完等 200ms 空闲后先出现的是词法/语法错误；**打开文件、保存、以及悬停/补全/跳转/引用/重命名
-这类语义请求**才跑完整前缀（词法 → 类型检查），跑完立刻把类型错误、成员错误一并发布。也就是说，
-边打字时 Problems 面板只反映前端能确定的错误，类型错误会在保存或下一次语义请求后回来——这是"不按键
-触发类型检查"的直接结果，换来的是打字反馈与项目规模基本无关。语义高亮同理：只有完整分析落地后才给
-颜色，中间返回空数组，由文本语法（TextMate）兜底。
+编辑事件重置两级分析定时器：空闲 200 ms 后运行词法、语法与去糖分析，空闲 600 ms 后运行完整前缀
+（包括名称解析与类型检查）。持续输入会重新开始计时。打开文件、保存或语义请求会立即请求完整分析。
+因此短暂停顿时 Problems 面板可先显示语法诊断，随后补上语义诊断；保存和语义请求也会保证当前文本有
+完整结果。语义高亮只读取当前修订的完整快照，分析期间返回空数组，由 TextMate 着色兜底。
 
 分析结果按**整个项目**计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此
 丢弃过期结果；文件修好、关闭或不再被分析时，该文档的诊断会被清空。分析不生成代码，也不调用
@@ -84,32 +82,28 @@ python3 -m lsp --version                    # 用同一个解释器确认入口�
 | --- | --- | --- |
 | `yian.languageServer.command` | `yian-lsp` | 服务器启动命令；多环境时填解释器的绝对路径 |
 | `yian.languageServer.args` | `[]` | 追加参数；配合上面的写法是 `["-m", "lsp"]`，也可加 `--compiler-root`（可用 `--help` 看全部） |
-| `yian.languageServer.logLevel` | `""` | 传给服务器的 `--log-level`（`DEBUG`/`INFO`/`WARNING`/`ERROR`）；空表示用服务器默认（`INFO`） |
+| `yian.languageServer.logLevel` | `""` | 传给服务器的 `--log-level`（`DEBUG`/`INFO`/`WARNING`/`ERROR`）；空时由 YIAN_LSP_LOG 决定，未设置则为 INFO |
 | `yian.languageServer.logFile` | `""` | 服务器额外写入的日志文件（`--log-file`），`${workspaceFolder}` 会被展开 |
 
 ### 版本匹配
 
-扩展与服务器从同一个仓库一起发布，版本号相同（当前 **0.7.0**：`package.json` 的 `version` 与
-`lsp/server.py` 的 `SERVER_VERSION` 一起改）。服务器在 `initialize` 里回 `serverInfo`，扩展比对不一致
-时会在输出通道记一条警告并弹提示——出现它说明启动服务器的那个解释器里的 `yian` 是旧安装，重新
-`pip install -e '.[lsp]'` 即可。能力以扩展版本为准：服务器更旧时新特性会失效（例如旧服务器不认
-`--log-file`）。
+扩展与服务器一起发布，版本号相同（当前为 **0.7.0**：package.json 中的 version 与
+lsp/server.py 中的 SERVER_VERSION）。服务器在 initialize 中回报 serverInfo；版本不一致时扩展
+在输出通道记录警告并显示提示。可在启动服务器的 Python 环境中执行
+pip install -e '.[lsp]'，或把扩展设置指向正确的环境。实际可用能力由所连接的服务器决定。
 
-分析模式由**工作区**决定，与之后打开哪个文件无关：
+分析模式由**工作区**决定，打开文档不会改变模式：
 
 - 工作区本身（或其上层）有 `package.anx` → **package 模式**：加载项目模型，分析该包的整个文件索引；
   日志里出现 `project <名字> at <路径>: N packages, M files` 与
-  `analysis #1 (startup, full): N files, D diagnostics in X ms`（声明索引是首次被查询时才构建的，
-  所以 `K declarations` 只在它已经建好之后的分析行里出现）。
+  `analysis #1 (startup, full): N files, K declarations, D diagnostics in X ms`。
 - 工作区不是 YIAN 包 → **standalone 模式**：只分析打开的文档加标准库，包名导入（如
   `from sample.geometry import …`）会报无法解析；日志里出现
-  `<工作区> is not a YIAN package; standalone mode` 与 `standalone mode: waiting for a document`，
-  之后每打开/关闭一个文档都会出现一条 `analysis #N (didOpen|didClose): …`。
+  `<工作区> is not a YIAN package; standalone mode` 与 `standalone mode: waiting for a document`；
+  打开文档后会执行完整分析。
 
-分析在「被分析的文件集合变化」时重跑（standalone 模式下打开/关闭文档就是这种变化，
-package 模式下只有打开包外文件才会）；纯文本修改只作废快照：打字路径重跑前端，完整前缀留给保存与
-语义请求（见上文"诊断的策略"）。DEBUG 日志里两条路径分别记为 `analysis #N (<事件>, syntax)` 与
-`analysis #N (<事件>, full)`，后者还会多一行声明数量。
+文件或文本变化会作废快照并调度语法与完整分析。完整分析在后台线程构建声明索引，因而成功完成时日志
+可同时包含声明数量；语法分析日志不包含该字段。分析时长随机器和输入项目变化。
 
 验证：
 
@@ -119,8 +113,8 @@ package 模式下只有打开包外文件才会）；纯文本修改只作废快
 4. 关闭窗口后 `yian-lsp` 进程退出（`pgrep -f yian-lsp` 无结果），不留孤儿进程
 
 服务器启动失败（命令不存在、缺少 `pygls`）会在输出通道里给出原因，并弹出一条提示。
-要人工验收诊断，可把工作区设为 `ide-support/sample-errors`（它每个错误都放在独立的顶层定义里）：
-打开 `src/errors.an` 应看到 **5 条**波浪线/Problems 条目，修好某一条后它立刻消失。
+诊断样例工程 ide-support/sample-errors 的 src/errors.an 为五种错误各提供一个独立函数。
+完整分析会为这些函数发布对应诊断；编辑后诊断随新的分析结果更新。
 
 示例工程 `ide-support/sample` 的语法覆盖：`types.an`（类型别名）、`geometry.an`（结构体、泛型结构体、
 方法、静态方法）、`shapes.an`（带载荷的枚举、`match`、泛型函数）、`measure.an`（trait、默认方法、
@@ -145,21 +139,20 @@ f-string、`dyn` 数组与 `del`）、`handles.an`（`T&` 引用、指针参数�
 标准库符号。把某条导入写坏（例如 `from sample.types import Meters, Nope;`）后，问题处会出现
 "Remove this import: …" 的快速修复，执行后只剩 `import Meters;`。
 
-要验收性能路径与发布项，把工作区设为 `ide-support/sample`，`yian.languageServer.logLevel`
+要检查分析路径与发布行为，把工作区设为 `ide-support/sample`，`yian.languageServer.logLevel`
 设为 `DEBUG`，然后：
 
-1. 打开 `src/main.an`：日志里出现一条 `analysis #N (didOpen, full): N files, D diagnostics in X ms`，
-   Problems 面板是完整诊断（示例工程为 0 条）；随后做一次悬停/大纲，下一次分析行里会多出
-   `K declarations`；
-2. 随便改动一个字符：日志里出现 `(didChange, syntax)`，耗时明显小于上一条；此时语义高亮会退回
-   TextMate 着色（不再返回 token）；
-3. `Ctrl+S`：出现 `(didSave, full)`，完整诊断与语义高亮一起回来；把某处类型写错（例如
+1. 打开 `src/main.an`：日志里出现完整分析行，包含文件数、声明数、诊断数与耗时；示例工程无诊断时
+   Problems 面板为空；
+2. 修改一个字符并暂停：约 200 ms 后可见语法分析日志；若继续空闲，约 600 ms 后会运行完整分析；
+   文本领先于完整快照期间，语义 token 返回空数组；
+3. `Ctrl+S` 会立即触发完整分析。把某处类型写错（例如
    `let n: i32 = "x";`）保存后应看到 `E4xx` 波浪线，改回后再保存消失；
-4. 把光标放到符号上悬停：日志里若出现 `(request, full)`，说明是语义请求触发的完整分析，之后继续
-   悬停只有 `reused`（快照已就绪）；
-5. 输出通道里能看到 `connected to yian-lsp 0.7.0`；把 `command` 指向一个**装有旧版 `yian`** 的解释器
-   会弹版本不匹配提示（指向完全没装 `yian` 的解释器则是 `could not start`），改回后恢复正常；
-6. 打开 `ide-support/sample-errors/src/errors.an` 应看到 **5 条**诊断。
+   改回并保存后，完整分析结果会清除该诊断；
+4. 在完整快照尚未生成时发起悬停等语义请求，服务器会为当前修订执行完整分析；快照就绪时，语义请求复用它，
+   不会再记一条分析日志；
+5. 输出通道里能看到 `connected to yian-lsp 0.7.0`；版本不匹配时会提示连接到的服务器版本；
+6. 打开 `ide-support/sample-errors/src/errors.an` 可查看五类错误对应的诊断。
 
 ## 构建
 
@@ -190,10 +183,10 @@ code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.7.0
 要在该窗口的终端里执行（本机 profile 名与 CLI 的 `--profile` 不一定一致，`--force` 重装最省事）。
 
 - 卸载扩展：`code --uninstall-extension yian.yian-language-support`。
-- 回滚扩展：重新安装上一版 VSIX 并加 `--force`；也可以 `git checkout <上一个提交>` 后重新
-  `vsce package` 得到旧版。
-- 回滚服务器：`git checkout <上一个提交> && scripts/install.sh --with-deps`——editable 安装跟着源码走，
-  回滚源码就等于回滚服务器；再用输出通道里的 `connected to yian-lsp <版本>` 核对。
+- 选择扩展版本：安装指定版本的 VSIX 并加 `--force`；也可以检出对应源码版本后运行
+  `vsce package` 构建安装包。
+- 选择服务器版本：检出目标源码版本并运行 `scripts/install.sh --with-deps`。editable 安装使用当前源码；
+  可在输出通道核对 `connected to yian-lsp <版本>`。
 - 兼容性：扩展要求 VS Code `^1.90.0`；服务器要求 Python ≥ 3.11 与 `pygls` ≥ 2.1，`llvmlite` 由基础
   依赖提供；扩展与服务器的版本必须同号（见上文"版本匹配"）。
 
@@ -209,32 +202,18 @@ YIAN Language Server）。要把日志留档或开到更详细：
 1. `yian.languageServer.logLevel` 设为 `DEBUG`（等价于在 `args` 里加 `--log-level DEBUG`）；
 2. `yian.languageServer.logFile` 设为例如 `${workspaceFolder}/build/yian-lsp.log`，日志同时写文件与
    输出通道；也可以直接用 `--log-file` 或环境变量 `YIAN_LSP_LOG_FILE`；
-3. `DEBUG` 会记录每次分析的文件数、耗时与声明数量（`analysis #N (didChange, syntax): … in X ms`），
-   也会记录 JSON-RPC 载荷——**其中含源码文本**，外发前自行删减。
+3. `DEBUG` 会记录 JSON-RPC 载荷，载荷包含源码文本；分析摘要在 `INFO` 级别输出。完整分析成功时摘要
+   可包含声明数量，语法分析摘要不包含该字段。外发日志前应检查源码内容。
 
 | 症状 | 原因 | 处理 |
 | --- | --- | --- |
 | 弹 `could not start '…'`，输出通道同名报错 | 命令不在 `PATH` 上，或那个解释器里没有 `pygls` | 按"安装"配好 `command`/`args`，在该解释器里 `pip install -e '.[lsp]'` |
-| 弹 `language server X does not match extension Y` | 启动服务器的解释器里 `yian` 是旧安装 | 在那个解释器里重新 `pip install -e '.[lsp]'` |
+| 弹 `language server X does not match extension Y` | 启动的解释器中安装的服务器版本与扩展版本不一致 | 在那个解释器里重新 `pip install -e '.[lsp]'` |
 | 完全没有诊断 | 服务器没连上，或当前文件不属于被分析的文件集合 | 输出通道里应有 `project … N files` 或 `standalone mode`；没有就先解决启动问题 |
 | 打字时类型错误消失 | 打字路径只跑前端 | 保存一次，或做一次悬停/补全；要确认可看 `(…, syntax)` 与 `(…, full)` 两类日志 |
 | 语义高亮没颜色 | 文本已改动、完整分析还没落地，或客户端关了语义高亮 | 保存一次；检查 `editor.semanticHighlighting.enabled` 与 `yian` 语言的 token 主题色 |
 | 跳转不到标准库 | 找不到 `lib/src` | 加 `--compiler-root <仓库根>`，或设 `YIAN_LIB` |
-| 服务器崩溃 | 编译器 bug | 输出通道里有 Python traceback；扩展只记录并提示，不会让 VS Code 崩溃，把日志附到 issue |
-
-## 性能
-
-在一台开发机上按 34 / 39 / 95 / 285 个文件（标准库 34 个文件，其余是生成的包）实测，热态、单次：
-
-| 路径 | 39 文件 | 95 文件 | 285 文件 |
-| --- | --- | --- | --- |
-| 打字（只前端） | 78 ms | 103 ms | 145 ms |
-| 首次打开（完整） | 132 ms | 263 ms | 582 ms |
-| 悬停（快照已就绪） | 10 ms | 13 ms | 20 ms |
-| 补全（快照已就绪） | 2 ms | 7 ms | 17 ms |
-
-常驻内存约 32–56 MB。打字反馈在 100 文件以内低于 100 ms，285 文件时约 145 ms；悬停与补全远低于
-100 ms。标准库只有 34 个文件，却占前端耗时的多数（约 60–76 ms）。
+| 服务器异常退出 | 服务器遇到未处理异常 | 输出通道里有 Python traceback；扩展只记录并提示，不会让 VS Code 崩溃，可把日志附到问题报告 |
 
 ## 代码片段
 
@@ -290,39 +269,21 @@ YIAN Language Server）。要把日志留档或开到更详细：
 已知近似：`Pair<Meters>` 的 `<` `>` 会按 `keyword.operator.yian` 高亮，而不是泛型括号。`<`/`>`
 同时是比较运算符，TextMate 无法可靠区分，真正的类型/函数/变量区分由语义 token 提供。
 
-## 变更日志
-
-| 版本 | 内容 |
-| --- | --- |
-| 0.1.0 | 重建扩展源码树：语言注册、TextMate 语法、注释/括号/缩进 |
-| 0.1.1 | 代码片段、折叠标记、scope 检查方法 |
-| 0.2.2 | 语言服务器客户端（stdio）、工作区/符号索引/快照、实时诊断 |
-| 0.3.0 | 跳转定义、悬停、文档符号（大纲） |
-| 0.4.0 | 补全、参数提示、语义高亮 |
-| 0.5.0 | 查找引用、文档高亮、重命名（含拒绝规则）、删除无效导入的快速修复 |
-| 0.6.0 | 打字只跑前端、`--log-file` 与日志级别设置、扩展/服务器版本匹配检查、安装与故障排查文档 |
-| 0.7.0 | 格式化（`textDocument/formatting`）、扩展与服务器版本同号 0.7.0 |
-
-版本号规则：扩展 `package.json` 的 `version` 与服务器 `lsp/server.py` 的 `SERVER_VERSION` 一起改，
-两处不一致时扩展会在输出通道里警告（见"版本匹配"）。
-
 ## 已知限制
 
 - 不提供：内联提示（inlay hints）、折叠范围、选择范围、文档链接、工作区符号搜索
   （`workspace/symbol`）、`declaration` / `typeDefinition` / `implementation`、模糊匹配补全、
-  snippet 补全、doc 注释补全、自动补 import。
-- 打字期间只运行编译器前端，因此 Problems 面板暂时只有词法/语法诊断，类型诊断在保存或下一次语义
-  请求后出现。
+  doc 注释补全、自动补 import。语言服务器不生成 snippet 项；静态代码片段由 VS Code 扩展提供。
+- 编辑后的语法分析与完整分析分别在 200 ms、600 ms 空闲后运行；保存或语义请求会立即请求完整分析。
 - 语义高亮在文本领先于分析时返回空数组，客户端保留文本语法着色。
 - 重命名在无法确认符号集合完整时拒绝执行（标准库符号、非法名字、分析没检查过的定义里用到该名字）。
 - 格式化只支持整文件：`editor.formatOnSaveMode` 需保持默认 `file`，设成 `modifications`（只格式化
   改动行）时不会格式化；行尾统一为 LF，CRLF 文件格式化后变成 LF。
 - 多根工作区只分析第一个工作区文件夹。
-- 服务器随扩展进程同步分析，打开很大的项目时第一次分析会阻塞请求。
+- 分析工作在单个后台 worker 上串行执行；大型项目分析期间，需要完整语义快照的请求会等待分析完成。
 
 ## 说明
 
-- 本扩展是 **重建** 的源码树，不继承仓库里那个已弃用的 `yian-language-support-0.0.10.vsix`。
 - 关键字、类型名与标点以 `compiler/frontend/lex/token.py` 的 `KeywordKind` / `PunctuatorKind`
   为准，改动词法后要同步 `syntaxes/yian.tmLanguage.json`。
 - TextMate 只是近似：真正的类型/函数/变量区分由语义 token 提供。

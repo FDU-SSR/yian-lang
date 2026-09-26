@@ -7,11 +7,11 @@
 
 本编译器的目标固定为 `x86_64-unknown-linux-gnu`, 常量与落盘位置:
 
-- `compiler/codegen/llvm/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
+- `compiler/codegen/llvm/base/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
   `apply_target(module)`;
-- `compiler/codegen/llvm/translator.py`(真正的模块)与 `compiler/main.py`
-  的 `__type_size_provider`(编译期 `@sizeof`/布局查询用的临时模块)都调用 `apply_target`;
-- `compiler/codegen/llvm/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
+- `compiler/codegen/llvm/pipeline/translator.py` 与 `compiler/target_layout.py` 的
+  `type_size_provider`(编译期布局查询用的临时模块)都调用 `apply_target`;
+- `compiler/codegen/llvm/pipeline/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
   data layout, 就用目标机的 `target_data` 补上。
 
 只写三元组而留空 data layout 会出错, 且**只在 `-O1` 及以上**出现: 空布局把 `i64` 当作
@@ -22,7 +22,7 @@ enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字�
 
 ## 目标机与代码模型
 
-`compiler/codegen/llvm/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
+`compiler/codegen/llvm/pipeline/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
 `create_target_machine(reloc="pic", codemodel="small", opt=<O>)`。code model 必须显式给出:
 llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端于是不采用 ±2 GiB 的 PC
 相对寻址, 把每个函数地址与全局地址都经 `movabs` 物化进寄存器, 内部调用被编译成
@@ -34,9 +34,9 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
 
 数据指针在 LLVM 层统一是 opaque pointer `ptr`, 不带 pointee; pointee 信息只存在于 llvmlite 的
 `ir` 层(`ir.PointerType(pointee)` 得到 `T*`)。本编译器只在**函数指针**上保留有型指针, 其余指针
-构造都返回 `LLTypeCtx.ptr_type`(`ir.PointerType()`), 见 `codegen/llvm/types.py`。
+构造都返回 `LLTypeCtx.ptr_type`(`ir.PointerType()`), 见 `codegen/llvm/base/types.py`。
 
-由此在 `codegen/llvm/builder.py` 里的约定:
+`FunctionCore` 与 memory emitter 按 opaque pointer 的约定构造指令:
 
 - `load` 显式给 `typ=...`(值类型), 否则 llvmlite 抛 `ValueError("Load lacks type.")`;
 - `gep` 的元素类型按"基指针是否 opaque"分派: opaque 必须显式给 `source_etype=...`, 否则抛
@@ -44,19 +44,19 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
   推导, 结果类型的 pointee 也是准的;
 - `store` 只在目标指针有型时校验值类型, opaque 目标不校验 (值类型由生成端保证);
 - 目标为 opaque、源为有型的 `bitcast` 不能走 `IRBuilder.bitcast`: llvmlite 认为有型指针与 opaque
-  指针相等, 会原样返回操作数, 值会留着旧的 pointee (`gep` 就会按旧 pointee 缩放下标)。`__bitcast`
-  在这种情况下直接构造 `CastInstr`, 保证值真正被重新定型; 其余情况沿用 llvmlite 的行为;
-- 函数指针保持有型 (`types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
+  指针相等, 会原样返回操作数, 结果仍带有源端 pointee 类型 (`gep` 会据此缩放下标)。`__bitcast`
+  位于 `function/core.py`, 在这种情况下直接构造 `CastInstr`, 保证值真正被重新定型; 其余情况沿用 llvmlite 的行为;
+- 函数指针保持有型 (`base/types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
   `Value.function_type` 从 callee 的 pointee 取签名, 间接调用需要带签名的指针类型。
 
 指针不携带 pointee, 因此"字节视图"(把 `T*` 当 `i8*` 用)不需要 `bitcast`: 值原样传递, 字节
 步进由使用点的 `source_etype=ir.IntType(8)` 给出(`free`/`memcpy` 等 intrinsic 的参数本来就是
-opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__bitcast`。
+opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitcast`。
 
 指针构造不为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
 只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好。
 
-发射文本由 `codegen/llvm/module.py` 关闭 llvmlite 的有型指针打印
+发射文本由 `codegen/llvm/base/module.py` 关闭 llvmlite 的有型指针打印
 (`ir.types.ir_layer_typed_pointers_enabled = False`), 因此模块里所有指针都是 `ptr`(`alloca`、
 全局变量也一样)。该开关只影响类型打印: llvmlite 侧的类型判定不变, 生成的机器码也不变
 (同一基准在开关两侧的目标文件逐字节相同)。`bitcast ptr to ptr` LLVM 22 接受(实测 `opt` 退出码 0)。
@@ -75,7 +75,7 @@ opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__
 - `linkonce`: 表示该符号可以在多个模块中定义, 但链接器会选择其中一个定义进行链接.
 - `append`: 用于全局变量, 表示该变量的定义会被追加到同名变量的末尾, 适用于数组等数据结构.
 
-本编译器的 `module.py::declare` 把每个非入口函数标为 `internal`; 程序入口发射为
+本编译器的 `base/module.py::LLModule.declare` 把每个非入口函数标为 `internal`; 程序入口发射为
 `__yian_main`, 保持 `external`, 由 C 运行时包装的 `main` 调用。整个程序编译进同一个 module、
 交付物是单个可执行文件, 因此 YIAN 函数不构成对外 ABI。名字以 `index.` 开头的索引/检查辅助
 另加 `alwaysinline`, 使其在胖指针表示下体量变大后仍能内联。
@@ -123,9 +123,9 @@ opaque 指针)。`builder.py` 里只保留真正改变 llvmlite 侧类型的 `__
 
 本编译器按事实登记这些标注, 不把它们当作优化手段:
 
-- `intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配、I/O 与随机数入口失败时
+- `base/intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配、I/O 与随机数入口失败时
   返回错误值而不抛异常; `_exit` 另加 `noreturn`。
-- `module.py` 声明的运行时入口 `__yian_runtime_fail` / `__yian_panic` 加 `cold`、`noreturn`、
+- `base/module.py` 声明的运行时入口 `__yian_runtime_fail` / `__yian_panic` 加 `cold`、`noreturn`、
   `nounwind`; 堆池与锁表入口 `__secl_pool_alloc` / `__secl_pool_alloc_class` /
   `__secl_pool_release` / `__secl_lock_bump_take` / `__secl_lock_release` 加 `nounwind`。
 - `llvm.memcpy.p0.p0.i64` 的两个指针实参加 `noalias`, `isvolatile` 实参加 `immarg`。
@@ -264,10 +264,12 @@ float c = a + b; // 在严格浮点模式下, c 的值不能被优化为 0.3f, �
 - `sin`, `cos`, `sqrt` 等数学函数
 - `llvm.expect` 用于提供分支预测信息
 
-本编译器(`compiler/codegen/llvm/intrinsics.py`)实际声明并使用的符号是: C 库的 `malloc`、
+本编译器(`compiler/codegen/llvm/base/intrinsics.py`)声明并使用 C 库的 `malloc`、`realloc`、
 `free`、`write`、`read`、`open`、`close`、`_exit`、`strlen`、`rand`, 以及 LLVM 内建
-`llvm.memcpy.p0.p0.i64` 与 `llvm.sqrt.f64`。`@memcpy` 与 `@sqrt` 分别下降为这两条内建,
-因此后端可以按已知长度内联展开复制, 并把平方根直接落到 `sqrtsd`。
+`llvm.memcpy.p0.p0.i64`、`llvm.memset.p0.i64`、`llvm.sqrt.f64`、`llvm.sin.f64` 和
+`llvm.cos.f64`。非单字节元素的重复填充使用按元素类型特化的
+`llvm.experimental.memset.pattern`；YIAN 的 `@memcpy`、`@sqrt`、`@sin` 和 `@cos` 分别
+下降到对应内建操作。
 
 ## 保护机制(Protection Mechanism)
 

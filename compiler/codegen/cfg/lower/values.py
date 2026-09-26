@@ -69,8 +69,8 @@ class ValueLowerer:
         """惰性左值路径:恒胖地址解析——显式 &x(AddrOf)与方法 self receiver。
 
         与 __resolve_addr(自然形态,裸变量→裸地址)不同:变量的地址一律合成
-        5 字段胖指针(首次取址惰性实体化帧锁),派生地址(field/array/deref)
-        沿胖基址传播,后续 Load/Store/FieldPtr/ElementPtr 检查全保留。
+        4 字段胖指针(首次取址惰性实体化帧锁),派生地址(field/array/deref)
+        沿胖基址传播,Load/Store/FieldPtr/ElementPtr 保留该表示及检查所需元数据。
         """
         # SliceAccess is value-shaped in HIR because ordinary indexing loads an
         # element.  When it is the operand of AddrOf, however, preserve the
@@ -119,8 +119,8 @@ class ValueLowerer:
         return self.__memory.build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def resolve_array_access_addr(self, expr: HIR.ArrayAccess, *, fat: bool = False) -> IR.Value:
-        # T[N] 元素地址:数组指针退化为 T* 后按元素索引(LLVM cast 数组退化
-        # 重锚定 data + size=N,等价旧 trait 路径的 bitcast<T*> + p + *index)。
+        # T[N] 元素地址:数组指针退化为 T* 后按元素索引;LLVM cast 数组退化时
+        # 以 data 为基址并设置 size=N。
         # 惰性左值路径:裸数组基址(普通数组变量)走裸位转换 + 编译期
         # 越界检查;胖基址(Deref 后)走原退化 + ElementPtr 良构检查。
         base_addr = self.resolve_addr_fat(expr.array) if fat else self.resolve_addr(expr.array)
@@ -139,11 +139,11 @@ class ValueLowerer:
 
         镜像 slice.an as_struct+ptr+index 链的净效应,但内联在调用点,消除
         emit_object 无优化时逐次全栈调用开销。实现:
-        1. 解析切片值(fat 4 字段 {data,lock,key,size} / raw 2 字段 {data,size});
-        2. 提取 data 字段(fat 下经 __slice_ptr_fat 合成 5 字段胖指针,携带切片
+        1. 解析切片值(fat 3 字段 {data,word,size} / raw 2 字段 {data,size});
+        2. 提取 data 字段(fat 下经 __slice_ptr_fat 合成 4 字段胖指针,携带切片
            真锁,锁继承语义与 as_struct 一致;raw 下为裸指针);
         3. __build_element_ptr → CheckElementArith + ElementPtr 得元素地址。
-        调用方后续 fieldptr/load/store 照常触发 CheckInBounds/CheckSafeAccess。
+        调用方的 fieldptr/load/store 触发 CheckInBounds/CheckSafeAccess。
         """
         slice_val = self.__resolver.resolve_val(expr.slice)
         index_val = self.__resolver.resolve_val(expr.index)
@@ -193,9 +193,9 @@ class ValueLowerer:
     # ------------------------------------------------------------------
 
     def build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
-        """取局部变量槽地址并合成 5 字段胖指针 ⟨a_x, e_f, k_f, 0, 1⟩。
+        """取局部变量槽地址并合成 4 字段胖指针 ⟨a_x, word(e_f,k_f), 0, 1⟩。
 
-        data = 槽地址 a_x;lock_ptr/key = 当前帧锁 ⟨e_f, k_f⟩(首次取址时惰性
+        data = 槽地址 a_x;word 打包当前帧锁位置与键(首次取址时惰性
         实体化于函数入口);index = 0;size = 1(取址总是指向单个元素,含数组取址)。
         LLVM 下降由 LLVM 层完成。惰性左值路径:显式 &x 与方法 receiver 专用。
         """
@@ -208,7 +208,7 @@ class ValueLowerer:
 
     def build_var_ptr_raw(self, var_ref: IR.VarRef) -> IR.Value:
         """惰性左值路径:裸取址——未取址左值(赋值/读取/字段派生基址)
-        仅返回栈槽地址,不合成 5 字段、不触发帧锁实体化(帧锁延迟到真正需要
+        仅返回栈槽地址,不合成胖指针、不触发帧锁实体化(帧锁延迟到真正需要
         胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
         """
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(var_ref.type_id))
@@ -298,13 +298,13 @@ class ValueLowerer:
 
     def build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
         # CFG 层:Cast 指针→指针语义 ——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
-        #   (5 字段结构重贴,LLVM 类型同为 {i8*,i8*,i64,i64,i64});涉及 ptr-to-ZST
+        #   (胖指针表示相同,LLVM 类型同为 {ptr,i64,i32,i32});涉及 ptr-to-ZST
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
         # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
         # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
         to_resolved = self.__state.session.type_ctx.resolve_aliases(to_type)
         if isinstance(self.__state.session.type_ctx[to_resolved], Type.PointerType):
-            _ch_block().debug(lambda: "cast ptr→ptr: identity (5 字段重贴) / ptr-to-ZST 例外 = undef")
+            _ch_block().debug(lambda: "cast ptr→ptr: identity (fat representation) / ptr-to-ZST 例外 = undef")
         raw = self.__state.pointers.is_raw(value)
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=to_type)
         cast = self.__state.emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result

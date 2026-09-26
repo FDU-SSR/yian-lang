@@ -179,7 +179,7 @@ class StmtLowerer:
         ptr = self.__resolver.resolve_val(stmt.target)
         # Delete 四前提 is_heap(p) ∧ live(p) ∧ is_raw(p) 与其后的检查状态失效由
         # 检查插入 pass 在 `IR.Delete` 处依目标形态决定；这里只发释放节点。
-        # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 lock_ptr 寻址)
+        # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 word 中的锁表索引寻址)
         self.__state.emitter.emit(IR.Delete(ptr))
         return self.__state.emitter.void_reg()
 

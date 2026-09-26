@@ -1,7 +1,5 @@
-// M5: Pointer-to-ZST — a pointer whose pointee is zero-sized (void, empty
-// struct, all-zst tuple, etc.) is itself a ZST. Operations on such pointers
-// are erased at codegen.
-// (NULL 迁移:ZST 指针由 dyn 分配创建,不再有 NULL 字面量)
+// A pointer to a zero-sized type is itself a ZST; its operations are erased
+// during code generation.
 //
 // Expected output: 0
 

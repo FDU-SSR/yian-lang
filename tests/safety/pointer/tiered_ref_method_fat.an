@@ -1,8 +1,4 @@
-// Tiered-pointer t: T& receiver method calls.
-// A live T& reference can directly call methods defined on the value type:
-// auto-deref must handle RefType receivers (previously RefType fell into the
-// Deref-trait path and assert-crashed on the missing trait impl). Covers a
-// direct method call on a T& variable and chained r.a().b() calls.
+// T& receivers call methods on the referenced value, including chained calls.
 //
 // Expected output: 0
 

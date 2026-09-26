@@ -1,6 +1,5 @@
-// tests/fat/positive/match_assign_option.an
-// match 结果可赋给 Option<T&>(构造语义) — match-assign-source 计划
-// Metis G1: 模式必须裸(Some(d)/None),构造位置才可限定前缀——解析器只支持裸模式
+// Match results can be assigned to Option<T&> fields.
+// Match patterns use bare variant names; constructors use qualified enum names.
 struct Node { val: i32, next: Option<Node&> }
 fn main() {
     let n0: Node& = dyn Node(0, Option<Node&>.None);
@@ -11,7 +10,7 @@ fn main() {
         Some(d) => { if n2.val >= d.val { Option<Node&>.None } else { Option<Node&>.Some(d) } },
         None => Option<Node&>.None,
     }
-    // Metis G6: Some 路径被实际执行——断言 n2.next 为 Some 且值流过
+    // Exercise the Some branch and verify that its payload reaches the field.
     assert n2.next.is_some(): "match assign some flows through";
     assert n2.next.unwrap().val == 0: "some payload preserved";
     del n0;

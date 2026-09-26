@@ -1,6 +1,5 @@
 // typedef: an alias imported from another unit, used in a trait impl and a call.
-// Regression: the speller (main) is walked before the definer (kinds), and the
-// impl registry cached by raw type id, so `describe` was not found.
+// An impl on an imported type alias is available through the aliased type.
 // Expected output: (exit 0)
 
 from aliasdemo.kinds import Code;

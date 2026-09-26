@@ -1,4 +1,4 @@
-// A definition that `main` never calls must still be type-checked (G21).
+// A non-generic definition is type-checked even when no call reaches it.
 //
 // Expected compilation error: Expected type 'i32' but got 'str'
 

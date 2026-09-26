@@ -1,6 +1,6 @@
 // bench/AWFY/an/storage.an — 递归数组树分配/释放 (shootout storage)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Storage.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Storage.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/storage.c (项目自写 C 参考)
 // 规模: depth=7、内部节点分支数为 4, 断言 count_arrays == 5461。
 //

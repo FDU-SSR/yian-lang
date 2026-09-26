@@ -3,7 +3,6 @@
 // 组合用例:链表构建/遍历/释放 + 栈数组指针算术与差、序比较,
 // 混合 dyn 分配、struct 字段访问、del。正确程序,
 // fat 与 raw 双模式都必须 exit 0。
-// (NULL 迁移:链表尾哨兵以 Option<Node*>.None 表达)
 //
 // Expected output: 0
 

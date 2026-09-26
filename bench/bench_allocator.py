@@ -20,7 +20,7 @@
   python3 bench/bench_allocator.py                       # 全部基准 (完全档)
   python3 bench/bench_allocator.py --scale fast          # 快速档
   python3 bench/bench_allocator.py --names churn_single --runs 5 --pin 4
-  python3 bench/bench_allocator.py --compiler-root /tmp/yian_old  # 换一份源码树编译
+  python3 bench/bench_allocator.py --compiler-root /tmp/yian-copy  # 指定源码树编译
 """
 
 from __future__ import annotations

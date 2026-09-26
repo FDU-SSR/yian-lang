@@ -1,4 +1,4 @@
-// M8.2: Slice / array iteration with ZST elements.
+// Slice and array iteration with ZST elements.
 // ZST element pointers never advance (size 0), so iterator termination
 // must be count-based, not pointer-range-based.
 //

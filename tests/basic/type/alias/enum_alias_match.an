@@ -1,7 +1,5 @@
 // typedef: `match` on an alias of an enum dispatches on the enum's variants.
-// Regression: the match strategy and the LLVM dispatch both classified the raw
-// scrutinee type, so an alias of an enum fell through to PartialEq lowering and
-// then emitted a block with no terminator (invalid IR).
+// Matching an enum through a type alias dispatches on the enum's variants.
 // Expected output: (exit 0)
 
 enum Shape { Dot, Sq { s: i32 } }

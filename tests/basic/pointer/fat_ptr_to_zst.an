@@ -1,6 +1,5 @@
-// Fat pointer: pointer-to-ZST stays a ZST (sizeof 0, comparable, arithmetic
-// is a no-op and must not trap).
-// (NULL 迁移:ZST 指针由 dyn 分配创建;不再有「ZST 指针 == NULL」比较)
+// A pointer to a zero-sized type remains a ZST; comparison and arithmetic do
+// not require a data stride.
 //
 // Expected output: 0
 

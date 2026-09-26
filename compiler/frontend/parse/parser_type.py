@@ -186,7 +186,8 @@ class TypeParser:
         Used for InstanceType generic args where the parser cannot distinguish
         type args from const args without type context. Literal values are
         parsed as ConstExpr; identifiers and type expressions are parsed as
-        ASTType (the resolver will disambiguate later).
+        ASTType, and the resolver resolves their names through the current
+        symbol context, including const-generic bindings.
         """
         token = self.__stream.peek()
         if isinstance(token, IntLiteral):

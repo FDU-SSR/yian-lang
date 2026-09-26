@@ -10,25 +10,21 @@
 // 算法: 逐字对应上游 JsonPureStringParser 的递归下降解析器 (1 字符前瞻 +
 //       capture 区间), 解析内嵌的 minified JSON 文档并验证根对象结构。
 //
-// YIAN 侧适配 (逐条):
+// YIAN 实现结构:
 //   1. 无 trait object/动态分派: 上游 JsonValue 的类层次 (JsonObject /
 //      JsonArray / JsonString / JsonNumber / JsonLiteral) 表达为一个 tagged
 //      enum JsonValue { Object / Array / Str / Num / Literal }, 分派用 match。
 //      JsonObject 保持上游的平行结构 names/values + HashIndexTable(32 槽)。
 //      子值使用独立分配的 JsonValue& 节点, 对象图与上游引用结构一致。
-//   2. 无 1 字符 String: 上游用 input.substring(index, index+1) 维护 current
-//      并逐字符分配; YIAN 侧改成对文档字节切片 (u8[]) 的 u8 前瞻 (等价;
-//      bench 下 @str_from_parts 等受限内建不可用)。capture 仍按上游区间语义。
-//   3. 无异常: 上游 throw expected(...)/ParseException 改为 assert false
-//      (解析错误立即终止; 合法输入下不可达)。
-//   4. 上游 forEach 闭包已无 (该基准无闭包); 循环全部显式。
+//   2. 解析器从文档字节切片 (u8[]) 读取 u8 前瞻, capture 使用起止区间。
+//   3. 解析错误通过 assert false 终止; benchmark 输入是合法 JSON。
+//   4. 遍历使用显式循环, 解析过程不创建遍历闭包。
 //   5. 字符串捕获: 无转义的串是内嵌文档的零拷贝 str 切片; 含转义的串按上游
 //      captureBuffer 语义拼进 String, 再寄存到 arena (String 缓冲) 以保证
 //      生命周期 —— 本文档不含任何反斜杠, 该路径不会执行。
 //   6. 数字: 上游 JsonNumber 保存原始文本, 本实现同样保存 str 原文; 工作单元
 //      只验证解析树, 不做 f64 解析/格式化。
-//   7. 上游 column 字段在 read() 中从不自增 (列号恒为 0), 本实现照抄该行为,
-//      仅保留字段以对齐结构 (错误路径不可达)。
+//   7. parser 的 column 字段保持为 0; 错误诊断由 assert 终止, 不读取该字段。
 //   8. 内嵌文档: 上游 Json.java 的 rapBenchmarkMinified 字符串逐字搬运 (Java
 //      字面量解码后重新按 YIAN 转义写回; 文档为纯 ASCII、无转义、无换行)。
 //

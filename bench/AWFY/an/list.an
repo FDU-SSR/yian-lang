@@ -1,6 +1,6 @@
 // bench/AWFY/an/list.an — 链表 tail 递归归约 (shootout list)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java (许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/list.c (项目自写 C 参考)
 // 规模: make_list 15/10/6, 断言 tail 结果长度 == 10。
 //
@@ -20,8 +20,7 @@ struct Element {
     next: Option<Element&>,
 }
 
-// 非破坏性复制 Option<Element&>(按位复制下 Option 值可直接传递,
-// 此辅助保留以最小化 diff; 经 match 解包重建与直接赋值等价)
+// 复制 Option<Element&> 的标签与引用值, 返回独立的 Option 值。
 fn opt_copy(src: Option<Element&>) -> Option<Element&> {
     return match src {
         Some(e) => Option<Element&>.Some(e),

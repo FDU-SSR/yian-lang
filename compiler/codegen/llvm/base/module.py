@@ -27,7 +27,7 @@ TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
 TARGET_DATA_LAYOUT = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
 # llvmlite 的 IR 层默认把指针打印成有型的 `T*` (兼容旧 IR)。本项目的指针类型已统一
-# 为 opaque pointer (见 types.py 与 builder.py), 因此关掉这套打印, 使发射的 IR 与
+# 为 opaque pointer (见 base/types.py 与 pipeline/builder.py), 因此关掉这套打印, 使发射的 IR 与
 # LLVM 的指针表示一致。该开关只影响类型打印: llvmlite 侧的指针判定与生成的机器码
 # 都不变。
 ir.types.ir_layer_typed_pointers_enabled = False  # type: ignore
@@ -180,13 +180,9 @@ class LLModule:
         if llvm_name != "__yian_main":
             # 事实登记: 整个程序编译进同一个 module、交付物是单个可执行文件, YIAN 函数
             # 不构成对外 ABI —— 除入口 (C 运行时的 main 包装要调它) 外都不需要对外可见。
-            # 副作用是 LLVM 拿得到全部定义 (IPSCCP/GlobalOpt/内联, 以及内联器对
-            # "内部符号且只有一个调用点"的加成), 方向随基准而变 (见提交信息);
-            # 将来若支持"多个 YIAN 目标文件互链", 这里要改成按导出面区分。
             ir_func.linkage = "internal"
         if llvm_name.startswith("index."):
-            # 索引/检查辅助强制内联: 变体 B 的胖指针让它变胖后掉出内联阈值,
-            # 每个元素会多一次跨函数调用(实测过的根因)。
+            # 索引/检查辅助强制内联,使元素访问路径不保留额外辅助函数调用。
             ir_func.attributes.add("alwaysinline")
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
@@ -419,7 +415,7 @@ class LLModule:
     # -- single-threaded stable frame-lock shadow stack --
 
     def get_lock_table(self) -> ir.GlobalVariable:
-        """Return the fixed-address lock-table declaration (变体 B)。
+        """Return the external lock-table declaration.
 
         表项 8 B = {key:u32, anchor_lo32:u32}; 下标区间自带 kind:
         [0, FRAME_LOCK_SLOTS) 帧影子栈槽, 接着两个字面量/环境常量槽, 其余由分配器发放。

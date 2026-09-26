@@ -1,13 +1,9 @@
 """Worklist-driven type checking — lowers AST function/method bodies to HIR.
 
-With ``recover=True`` the pass also collects errors instead of stopping at the
-first one: the granularity is the **top-level definition** (layer
-three).  A definition whose body fails is recorded as a diagnostic and skipped;
-the rest of the program is still checked, which is what turns "this file has one
-error" into "this file has five errors" in the Problems panel.  Recovery is for
-the analysis session (``--analyze`` and the language server); a build keeps the
-strict first-error behaviour, because code generation cannot proceed past a
-definition it could not type.
+With ``recover=True`` the pass records recoverable diagnostics and continues with
+independent top-level definitions. The analysis session used by ``--analyze`` and
+the language server enables recovery; build compilation stops at the first error,
+because code generation requires well-typed definitions.
 """
 
 from __future__ import annotations
@@ -32,8 +28,7 @@ def ch_tc():
 
 
 #: The errors a definition body may raise and still be recoverable from.
-#: Anything else (an assertion, a key error) is a compiler bug and must not be
-#: swallowed by recovery.
+#: Other exception types propagate without recovery.
 RECOVERABLE_ERRORS = (AnalysisError, CompilerError)
 
 
@@ -59,8 +54,8 @@ class TypeCheck:
 
         self.__worklist: list[DefPoint] = []
         self.__def_points: dict[int, DefPoint] = {}  # type_id -> DefPoint
-        # Two sets (G23): everything that gets type-checked, and the subset that
-        # is reachable from the program entry and therefore code-generated.
+        # The generated set is the subset of checked definitions reachable from
+        # the program entry and passed on to code generation.
         self.__generating = True
         self.__generated: set[int] = set()
         self.__entry_type_id: int | None = None
@@ -125,7 +120,7 @@ class TypeCheck:
         self.__errors.append(diagnostic)
 
     def __check_root_definitions(self) -> None:
-        """Seed every top-level definition of the root package (G18/G21).
+        """Seed every top-level definition in the root package.
 
         Dependencies (including the standard library) stay on demand: each
         package is checked by its own ``anx check``.  Definitions seeded here are
@@ -205,7 +200,7 @@ class TypeCheck:
 
         With a ``--packages`` root package the entry is exactly
         ``packages[root].entry``: a dependency may define its own
-        ``main`` without colliding with the program (G22). Without one, the
+        ``main`` without colliding with the program. Without one, the
         entry is the single ``main`` of the non-stdlib units.
         """
         if self.__ctx.packages is not None and self.__ctx.packages.root is not None:

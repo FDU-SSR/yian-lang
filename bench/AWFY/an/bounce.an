@@ -1,6 +1,6 @@
 // bench/AWFY/an/bounce.an — 球弹跳模拟 (shootout bounce)
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Bounce.java; 本文件为本仓库改写版 (上游许可见 AWFY LICENSE.md)
+// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Bounce.java (上游许可见 AWFY LICENSE.md)
 // 语义权威源: bench/AWFY/c/bounce.c (项目自写 C 参考)
 // 规模: 每个工作单元创建 100 个球并模拟 50 轮, 断言 bounces == 1331。
 //

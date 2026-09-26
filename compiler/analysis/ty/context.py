@@ -488,9 +488,7 @@ class TypeCtx(IntrinsicIds):
 
     def finalize(self) -> None:
         """
-        Final check and preparation of the type space before code generation.
-
-        1. Check self-referential types.
+        Check finalized type constraints and enable memoized type and impl queries.
         """
         self.__check_self_referential_types()
         self.__check_unsized_trait_values()

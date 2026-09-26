@@ -85,19 +85,19 @@ class ExprParser:
     def __parse_dyn_element(self) -> AST.Expr:
         """Parse the initializer of ``dyn[n] value``.
 
-        The removed type-directed form (``dyn[n] T`` / ``dyn[n] T*``) is not a
-        value. Plain type names already reach lowering and are diagnosed there;
-        a pointer/array type instead fails to parse (``T*`` looks like a
-        multiplication missing its right operand). When the expression parse
-        fails but a type parses cleanly up to the end of the element, report the
-        removed form instead of the raw syntax error.
+        ``dyn[n]`` takes a value initializer. Plain type names reach lowering and
+        are diagnosed there; a pointer/array type instead fails to parse
+        (``T*`` looks like multiplication without a right operand). When the
+        expression parse fails but a type parses cleanly to the end of the
+        element, report the unsupported type-directed form rather than the raw
+        syntax error.
         """
         mark = self.__stream.mark()
         try:
             return self.parse_expr()
         except ParseError:
             self.__stream.reset(mark)
-            if not self.__looks_like_removed_dyn_type():
+            if not self.__looks_like_unsupported_dyn_type():
                 raise
             raise ParseError(
                 "'dyn[n]' initializes every element from a value, not a type: "
@@ -105,8 +105,8 @@ class ExprParser:
                 self.__stream.peek().span,
             ) from None
 
-    def __looks_like_removed_dyn_type(self) -> bool:
-        """True when a type parses here and consumes the whole initializer."""
+    def __looks_like_unsupported_dyn_type(self) -> bool:
+        """True when an unsupported type-directed form consumes the initializer."""
         element_mark = self.__stream.mark()
         try:
             self.__type_parser.parse_type()
@@ -217,7 +217,7 @@ class ExprParser:
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LBracket):
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LBracket)
 
-                # [] — empty array literal (rejected later by type checker)
+                # [] — the type checker cannot infer an element type for an empty array literal.
                 next_tok = self.__stream.peek()
                 if isinstance(next_tok, Tok.Punctuator) and next_tok.kind == Tok.PunctuatorKind.RBracket:
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)

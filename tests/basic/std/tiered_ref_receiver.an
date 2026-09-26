@@ -1,5 +1,4 @@
 // T& receiver method-body coverage.
-// Reused from SECL's tests/std/tiered_ref_receiver.an.
 
 from std.core.option import Option;
 

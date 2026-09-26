@@ -1,7 +1,7 @@
 """The YIAN language server: protocol adapter over the analysis session.
 
-Scope: the process form, document synchronisation, the workspace
-snapshot, and published diagnostics. Navigation requests arrive in.
+Scope: process startup, document synchronisation, workspace snapshots,
+published diagnostics, and dispatch to analysis queries.
 
 Stdout is the JSON-RPC channel, so human-readable logs go to stderr. Handlers
 translate protocol values and ask the compiler's analysis queries for facts.
@@ -245,11 +245,10 @@ class YianLanguageServer(LanguageServer):
         self.__published = published
 
     def report_server_error(self, error: Exception, source: ServerErrors) -> None:
-        """Log a protocol-level failure instead of interrupting the user.
+        """Write unhandled protocol and request failures to the server log.
 
-        pygls would show a message box; a broken request is a server bug or a
-        malformed client message, and neither should take over the editor.  The
-        line ends up in the extension's output channel through stderr.
+        The extension receives this stderr output in its language-server
+        channel; the exception does not create a client message box.
         """
         _LOGGER.error("unhandled %s: %s", source.__name__, error, exc_info=error)
 
@@ -695,12 +694,11 @@ async def __file_context(
 def __document_changed(
     server: YianLanguageServer, event: str, uri: str, version: int | None
 ) -> None:
-    """Record a document event and arm the analysis timer.
+    """Record a document event and schedule the two analysis timers.
 
-    Every event invalidates the snapshot — the text changed, or the file set did
-    — and then arms one debounce timer, so a burst of keystrokes costs a single
-    analysis. Whatever changed is picked up by that
-    analysis; nothing here needs to know what it was.
+    The workspace invalidates its snapshots when the text or file set changes.
+    The coordinator schedules a syntax-only run after a short idle period and
+    a complete run after a longer idle period.
     """
     _LOGGER.info("textDocument/%s %s v%s", event, uri, version if version is not None else "-")
     server.schedule_analysis(event)

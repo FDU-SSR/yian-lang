@@ -13,29 +13,24 @@
 //       回边/非回边分流; 再从后往前对每个 header w 反向追回边源, 用 Union-Find 把
 //       SCC 折叠成 SimpleLoop 并挂进 LoopStructureGraph 树, 最后递归标注嵌套层级。
 //
-// YIAN 侧适配 (逐条; 除此之外与上游逐行对应):
-//   1. 类层次: 上游 SimpleLoop/BasicBlock/BasicBlockEdge/ControlFlowGraph/
-//      LoopStructureGraph/HavlakLoopFinder/LoopTesterApp 均为 final class (无子类、
-//      无动态分派), 故直接落成 struct; som.Vector/Set/IdentitySet 用 Vec<T> 表达
-//      (som.Set 本就是线性扫描的插入序集合)。
-//   2. 身份判定: 引用不可比较相等 (E406) → BasicBlock 以 name (CFG 内唯一) 为 id,
-//      SimpleLoop 以 counter (LoopStructureGraph 内唯一) 为 id; 上游
-//      IdentitySet.contains / `e == ydash` / 节点复用判定等改比 id, 语义等价。
-//   3. Union-Find: 上游 parent 是自引用指针 (initNode 中 parent=this); 这里 parent
-//      改用 nodes 数组下标 u64, 自指即 parent == 自身下标, 语义等价。
-//   4. findSet 路径压缩按 AWFY 原样保留: 上游 nodeList.forEach(iter -> iter.union(parent))
-//      里的 `parent` 是接收者的 parent 字段而非找到的根; 这是复现官方校验值的关键,
-//      不可"修正" (C 参考实现里同样保留)。
-//   5. 枚举: 上游 HavlakLoopFinder.BasicBlockClass 落成 YIAN enum BBClass (7 个无载荷
-//      变体); 枚举不支持 ==, 故 type[w] == BB_SELF / != BB_IRREDUCIBLE 改用
-//      bb_is_self / bb_is_irreducible 两个 match 辅助。
-//   6. 闭包: 上游 forEach (initAllNodes/doDFS/processEdges/stepD/stepE/
-//      setLoopAttributes/calculateNestingLevel*) 改为显式循环 (等价, 无闭包分配);
+// YIAN 实现结构:
+//   1. SimpleLoop/BasicBlock/BasicBlockEdge/ControlFlowGraph/LoopStructureGraph/
+//      HavlakLoopFinder/LoopTesterApp 使用 struct 表达; som.Vector/Set/IdentitySet
+//      使用 Vec<T> 表达 (som.Set 是线性扫描的插入序集合)。
+//   2. BasicBlock 用 CFG 内唯一的 name 标识, SimpleLoop 用 LoopStructureGraph 内
+//      唯一的 counter 标识; IdentitySet.contains、节点比较与复用判断均比较 id。
+//   3. Union-Find 的 parent 使用 nodes 数组下标 u64 表示, parent 等于自身下标时为根。
+//   4. findSet 路径压缩按 parent 字段执行 nodeList.forEach(iter -> iter.union(parent))
+//      对应的更新规则; C 参考实现使用相同规则, 输出校验值为 6102/5213。
+//   5. BBClass 是包含 7 个无载荷变体的 enum; 比较通过 bb_is_self /
+//      bb_is_irreducible 两个 match 辅助函数完成。
+//   6. initAllNodes/doDFS/processEdges/stepD/stepE/setLoopAttributes/
+//      calculateNestingLevel* 使用显式循环, 不创建 forEach 闭包;
 //      stepE 对 nonBackPreds[x.dfsNumber] 的迭代在 w == x.dfsNumber 会追加同一集合,
 //      YIAN 版重读长度, 与 Java Vector.forEach 的迭代语义一致。
 //   7. 字典: IdentityDictionary<BasicBlock,Integer> number (customHash()=BasicBlock.name)
 //      与 header/last/nodes 一致, 落成按 name 索引的数组 (CFG 节点名唯一)。
-//   8. 释放: 上游靠 GC; 这里每轮 benchmark 显式释放 finder 缓冲、LoopStructureGraph
+//   8. 每轮 benchmark 显式释放 finder 缓冲、LoopStructureGraph
 //      (含每个 SimpleLoop 的 basicBlocks/children) 与 ControlFlowGraph。
 //   9. 无受限内建 (@bitcast/@memcpy/@slice_from_parts/@str_from_parts); 本基准不需要
 //      sqrt/sin/cos, 故无自备数学。

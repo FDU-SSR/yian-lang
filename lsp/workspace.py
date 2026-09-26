@@ -7,7 +7,7 @@ snapshot those two imply.
 
 Nothing here talks LSP — positions and URIs are converted at the protocol
 boundary (:mod:`compiler.interop.positions`), so this module stays usable from a
-test or a future client.
+test and non-LSP callers.
 """
 
 from __future__ import annotations

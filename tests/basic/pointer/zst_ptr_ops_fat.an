@@ -1,6 +1,4 @@
-// Extended pointer-to-ZST operations: deref no-op, alloca, and through-struct
-// access.
-// (NULL 迁移:ZST 指针由 dyn 分配创建——指针恒非空后 ZST 指针值由分配产生)
+// Extended pointer-to-ZST operations: dereference, allocation, and struct access.
 //
 // Expected output: 0
 

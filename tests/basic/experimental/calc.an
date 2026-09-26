@@ -37,8 +37,7 @@ fn main() {
         let left_str: str = line[0u64..idx].trim()
         let right_str: str = line[(idx + 1u64)..line.len()].trim()
 
-        // The current numeric conversion API is the concrete u64.from()
-        // method.  The old Result-based parse match is no longer available.
+        // Parse numeric text through the u64.from() conversion method.
         let left_num: u64 = u64.from(&left_str);
         let right_num: u64 = u64.from(&right_str);
 

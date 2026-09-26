@@ -42,11 +42,7 @@ from compiler.error import CompilerError
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command line arguments.
-
-    Current behavior only accepts path arguments. Keep this function as the
-    single place for future CLI option extensions.
-    """
+    """Parse the compiler CLI options and interspersed input paths."""
     parser = argparse.ArgumentParser(
         prog="compiler/main.py",
         description="Yian compiler entrypoint.",
@@ -130,8 +126,8 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help=(
-            "Run the analysis prefix only (lex → parse → resolve → type check) and "
-            "report diagnostics; no code generation, no build/ output."
+            "Run analysis through type checking, comptime specialization, and definite-assignment "
+            "validation; report diagnostics without code generation or build/ output."
         ),
     )
     parser.add_argument(
@@ -191,12 +187,7 @@ __DOCUMENTS = DocumentStore()
 
 
 def __report_error(error: Exception, *, stage: Stage | None = None) -> NoReturn:
-    """Render one compiler error to stderr and unwind to ``main``.
-
-    Replaces the old traceback-to-stdout + ``sys.exit(-1)`` path: diagnostics go
-    to stderr and the process exit code is the CLI's usual success/failure, which
-    is what ``docs/grammar/16.runtime_errors.md`` asks for.
-    """
+    """Render a compiler diagnostic to stderr and unwind to ``main``."""
     diagnostic = diagnostic_from_error(error, stage=stage)
     path = diagnostic.span.path
     try:
@@ -208,7 +199,7 @@ def __report_error(error: Exception, *, stage: Stage | None = None) -> NoReturn:
 
 
 def __analyze(args: argparse.Namespace) -> int:
-    """Run the analysis prefix and report diagnostics; no codegen, no build/ output.
+    """Run full semantic analysis and report diagnostics; no codegen or build/ output.
 
     With ``--json`` the diagnostics are printed as one JSON object on stdout and
     nothing else is written there, so the output can be consumed by a tool.  The
@@ -243,9 +234,8 @@ def __analyze(args: argparse.Namespace) -> int:
 def __analyze_payload(result: object) -> dict[str, object]:
     """Build the ``--analyze --json`` payload.
 
-    Positions are LSP-shaped (0-based lines, UTF-16 characters, ``file://`` URIs)
-    because they are produced by the single conversion module, so the same payload
-    also serves the language server later on.
+    Positions use the shared LSP schema (0-based lines, UTF-16 characters,
+    ``file://`` URIs) produced by the common position-conversion module.
     """
     from compiler.analysis.session import AnalysisResult
 

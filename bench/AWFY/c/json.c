@@ -4,8 +4,7 @@
 // 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Json.java + json/*.java
 //       (MIT, Copyright (c) 2015 Stefan Marr; json/* 另含 EclipseSource MIT 头)
 //
-// 说明: 上游 JsonPureStringParser 在 Java String 上做 1 字符前瞻; 本 C 版与 .an 一致,
-//       改为在文档字节上做 u8/int 前瞻。JsonValue 类层次在本文件里用 tagged struct
+// 说明: 解析器在文档字节上做 u8/int 前瞻。JsonValue 类层次在本文件里用 tagged struct
 //       (kind + 各字段) 表达; JsonObject 保持上游的 names/values 平行数组 + 32 槽
 //       HashIndexTable。工作单元只验证根、head 和 operations 数量 156。
 #define _POSIX_C_SOURCE 200809L

@@ -1,6 +1,5 @@
-// Fat-pointer stack-dangle negative test (安全修复 fix)
-// make() returns &x (frame-lock ⟨e_f, k₁⟩); after return, frame-exit wrote
-// SENTINEL to e_f; accessing p later must safety error (live: slot=SENTINEL ≠ k₁).
+// A pointer returned to a local variable fails the liveness check after the
+// function frame exits.
 fn make() -> i32* { let x: i32 = 42; &x }
 fn main() {
     let p: i32* = make();

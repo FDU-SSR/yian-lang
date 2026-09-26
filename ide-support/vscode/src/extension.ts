@@ -8,7 +8,7 @@ import {
 } from 'vscode-languageclient/node';
 
 /**
- * The runtime half of the extension (plan §5.7, §5.10): a thin LSP client.
+ * The runtime half of the extension: a thin LSP client.
  *
  * Everything language-specific lives in the server; this file only decides how
  * to start it, which documents to send, and where its logs go. The server's
@@ -63,8 +63,8 @@ function expandWorkspaceFolder(value: string): string {
  * The extension and the server are released together from one repository, so a
  * mismatch means the interpreter that started the server has an older (or a
  * different) `yian` install — the usual cause is a second Python environment.
- * That is a warning with a fix, not an error: the features that do exist still
- * work (plan §6.1, §7 P8).
+ * That is a warning with a fix, not an error: features supported by the running
+ * server remain available.
  */
 function checkServerVersion(
     context: vscode.ExtensionContext,
@@ -148,9 +148,8 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     context.subscriptions.push(outputChannel);
 
-    // stdio transport (plan §5.10): the extension owns the process, and the
-    // server exits when the client closes its stdin, so closing the window does
-    // not leave an orphan behind.
+    // The extension owns the stdio process; closing the client closes its
+    // stdin and lets the server exit.
     const serverOptions: ServerOptions = {
         command,
         args,

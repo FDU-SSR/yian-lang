@@ -43,7 +43,7 @@ class DocumentStore:
         )
 
     def remove(self, path: Path) -> None:
-        """Drop a document; later reads fall back to disk."""
+        """Remove a document from the overlay so reads use the backing file."""
         self.__documents.pop(path.resolve(), None)
 
     def __contains__(self, path: Path) -> bool:

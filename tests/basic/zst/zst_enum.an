@@ -1,5 +1,4 @@
-// M6: Single-variant enum with ZST or no payload — the discriminant is
-// unnecessary and should be stripped, making the enum zero-sized.
+// A single-variant enum with no payload or a zero-sized payload is zero-sized.
 //
 // Expected output: 0
 

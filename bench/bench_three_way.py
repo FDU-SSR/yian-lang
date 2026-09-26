@@ -404,7 +404,7 @@ def spec_bin(spec: BenchSpec, state: str) -> Path:
 
 
 def compile_c(spec: BenchSpec) -> Path:
-    """编译 C 参考 (clang -O2 -lm); 失败即终止 (C 基线失效, 不做部分结果)。"""
+    """编译 C 参考 (clang -O2 -ffp-contract=off -lm); 失败即终止。"""
     binary = spec_bin(spec, "c")
     binary.parent.mkdir(parents=True, exist_ok=True)
     res = subprocess.run(
@@ -822,7 +822,7 @@ def main() -> int:
     parser.add_argument("--source", help="只测指定来源 (逗号分隔, 如 AWFY,BG)")
     parser.add_argument("--bench", dest="bench_keys",
                         help="只测指定基准 (SOURCE/name 或 name, 逗号分隔)")
-    parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # 旧名, 保留兼容
+    parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # 兼容选项别名
     parser.add_argument("--list-sets", action="store_true", help="列出集合与成员数后退出")
     parser.add_argument("--runs", type=int, default=None,
                         help="每态测量次数 (默认取集合的 runs)")

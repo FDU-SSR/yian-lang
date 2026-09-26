@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 class ClosureHelper:
     """TypeCheck helper for closures.
 
-    ``check_closure_expr`` allocates types (ClosureType, anonymous struct,
-    call-method), registers the closure AST body as a procedure so the
-    worklist picks it up later, and returns HIR.Closure.
+    ``check_closure_expr`` allocates the closure, environment-struct, and
+    call-method types, registers the closure AST body as a procedure, and
+    returns HIR.Closure.
     """
 
     closure_counter = 0

@@ -1,4 +1,5 @@
-// Stable frame-lock shadow-stack regression.
+// Nested calls use distinct frame-lock slots, preserving the parent's pointer
+// until the parent frame returns.
 //
 // Every active address-taking invocation must own a distinct arena slot.
 // Returning from the child pops only its slot, so the parent's pointer remains
