@@ -1,24 +1,15 @@
-"""In-process analysis session: the editor-facing half of the compiler pipeline.
+"""Shared source-to-HIR pipeline for builds, analysis-only runs, and the editor.
 
-The session runs the **analysis prefix** of the pipeline — lex, parse, desugar,
-prelude injection, restricted-operation check, global resolution, type
-finalization and type checking — and stops there.  CFG lowering, LLVM emission,
-clang and executable generation are deliberately not involved, so a file can be
-analyzed without producing a program.
-
-It is designed to live inside a long-running process (the language server): it
-takes text from a :class:`~compiler.analysis.documents.DocumentStore` rather than
-reading files directly, returns diagnostics instead of printing or exiting, and
-never writes to standard output.
-
-Error handling follows: an error aborts the analysis and is
-reported as a structured diagnostic.  "Keep going after an error" and multiple
-diagnostics per document are the next layer.
+Full analysis runs through compile-time specialization and definite assignment.
+It returns diagnostics and code-generation inputs without emitting files. The
+caller chooses strict failure or per-definition recovery; the editor can also
+request a syntax-only result while a document is being edited.
 """
 
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +27,8 @@ from compiler.analysis.index import DeclarationIndex, LazyIndex
 from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
+from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
+from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
 from compiler.analysis.passes.restricted_ops import check_restricted_ops
@@ -50,10 +43,12 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
+from compiler.target_layout import type_size_provider
+from compiler.utils.log import format_ast_output
 
 #: Bumped when analysis semantics change, so snapshot keys from an older
 # compiler never look reusable to a newer one.
-ANALYSIS_FORMAT = 1
+ANALYSIS_FORMAT = 2
 
 #: The errors the analysis pipeline is expected to raise.  Anything else is a
 #: compiler bug: it is not swallowed here, so it stays visible while the analysis
@@ -103,6 +98,8 @@ class AnalysisResult:
         default_factory=dict[Path, tuple[Token, ...]]
     )
     units: Mapping[int, UnitData] = field(default_factory=dict[int, UnitData])
+    programs: tuple[AST.Program, ...] = ()
+    ast_dump: str | None = None
     type_ctx: TypeCtx | None = None
     #: Every definition the checker ran — the entry-reachable ones *and* the
     #: root package's remaining definitions, which are checked but never
@@ -110,6 +107,11 @@ class AnalysisResult:
     #: `main` never calls, and rename has to know which bodies were actually
     # analysed before it can trust its reference set.
     def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
+    generated_def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
+    sem_ctx: SemCtx | None = None
+    entry_type_id: int | None = None
+    unit_names: Mapping[int, str] = field(default_factory=dict[int, str])
+    timings: Mapping[str, float] = field(default_factory=dict[str, float])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
     #: Declaration index over the units, or ``None`` when the run stopped.  It is
@@ -183,6 +185,9 @@ class AnalysisSession:
         documents: DocumentStore | None = None,
         require_entry: bool = False,
         syntax_only: bool = False,
+        entry_optional: bool = True,
+        recover: bool = True,
+        capture_ast_dump: bool = False,
     ) -> AnalysisResult:
         """Analyze *paths* and return diagnostics plus the resolved state.
 
@@ -191,30 +196,34 @@ class AnalysisSession:
         A missing path raises :class:`FileNotFoundError` — that is a caller
         mistake, not a diagnostic about a document.
 
-        With *syntax_only* the run stops after desugaring and reports only what
-        the front end can see. That is the cheap half of: the
-        editor publishes syntax diagnostics while typing (60–110 ms even for a
-        few hundred files) and pays for the full prefix only when a semantic
-        request or a save asks for it.
+        With *syntax_only* the run stops after desugaring. Full analysis also
+        validates compile-time conditions and definite assignment. ``recover``
+        controls whether independently checked definitions continue after an error.
         """
         store = documents if documents is not None else DocumentStore()
         src_files = collect_an_files(paths, overlay=store)
         sources = {path: self.__text(store, path) for path in src_files}
         key = self.__snapshot_key(sources, store)
+        timings: dict[str, float] = {}
 
+        started = time.perf_counter()
         tokens = self.__lex(src_files, sources)
         if isinstance(tokens, AnalysisResult):
             return self.__keyed(self.__mark_syntax(tokens, syntax_only), key, store)
+        timings["lex"] = time.perf_counter() - started
         # Kept for the stages that can still fail: a file the parser rejects has
         # no symbol table, but its tokens are what a degraded completion or
         # semantic pass works from.
         lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
+        started = time.perf_counter()
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
             return self.__keyed(
                 self.__mark_syntax(self.__with_tokens(programs, lexed), syntax_only), key, store
             )
+        timings["parse"] = time.perf_counter() - started
 
+        started = time.perf_counter()
         try:
             for program in programs:
                 Desugar(program).run()
@@ -227,6 +236,8 @@ class AnalysisSession:
                 key,
                 store,
             )
+        timings["desugar"] = time.perf_counter() - started
+        ast_dump = format_ast_output(src_files, programs) if capture_ast_dump else None
 
         if syntax_only:
             # Everything the front end can decide, and nothing that needs the
@@ -235,9 +246,12 @@ class AnalysisSession:
                 diagnostics=(),
                 sources=sources,
                 tokens=lexed,
+                programs=tuple(programs),
+                ast_dump=ast_dump,
                 versions=store.versions(),
                 key=key,
                 syntax_only=True,
+                timings=timings,
             )
 
         units: dict[int, UnitData] = {
@@ -254,54 +268,55 @@ class AnalysisSession:
             inject_prelude(units.values())
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
-                self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units), lexed), key, store
+                self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units, ast_dump=ast_dump), lexed), key, store
             )
 
+        started = time.perf_counter()
         try:
             check_restricted_ops(units.values())
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
                 self.__with_tokens(
-                    self.__failed(error, Stage.RESTRICTED_OPS, sources, units), lexed
+                    self.__failed(error, Stage.RESTRICTED_OPS, sources, units, ast_dump=ast_dump), lexed
                 ),
                 key,
                 store,
             )
+        timings["restricted_ops"] = time.perf_counter() - started
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
         ctx = SemCtx(type_ctx, self.__raw_pointers, units, self.__packages, source_trust.stdlib_root)
         resolver = GlobalResolve(ctx)
+        started = time.perf_counter()
         try:
             resolver.run()
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
                 self.__with_tokens(
-                    self.__failed(error, Stage.RESOLVE, sources, units, type_ctx), lexed
+                    self.__failed(error, Stage.RESOLVE, sources, units, type_ctx, ast_dump), lexed
                 ),
                 key,
                 store,
             )
+        timings["global_resolve"] = time.perf_counter() - started
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
             return self.__keyed(
                 self.__with_tokens(
-                    self.__failed(error, Stage.FINALIZE, sources, units, type_ctx), lexed
+                    self.__failed(error, Stage.FINALIZE, sources, units, type_ctx, ast_dump), lexed
                 ),
                 key,
                 store,
             )
 
-        # The session analyzes text, not a build: an entry-less or entry-broken
-        # file set is a normal editor state, and a file
-        # with several broken definitions reports all of them: recovery
-        # granularity is the top-level definition.
+        started = time.perf_counter()
         checker = TypeCheck(
             ctx,
             require_entry=require_entry,
-            entry_optional=True,
-            recover=True,
+            entry_optional=entry_optional,
+            recover=recover,
         )
         try:
             checker.run()
@@ -310,16 +325,60 @@ class AnalysisSession:
             # here is a failure before the worklist started (the program entry).
             return self.__keyed(
                 self.__with_tokens(
-                    self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx), lexed
+                    self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx, ast_dump), lexed
                 ),
                 key,
                 store,
             )
 
+        all_def_points = checker.export()
+        ctx.declare_def_points(all_def_points)
+        unit_names = self.__unit_names(units)
+        specializer = ComptimeIfSpecializer(
+            ctx, type_size_provider(type_ctx, unit_names, self.__raw_pointers)
+        )
+        try:
+            comptime_errors = specializer.run(recover=recover)
+        except ANALYSIS_ERRORS as error:
+            return self.__keyed(
+                self.__with_tokens(self.__failed(error, Stage.COMPTIME, sources, units, type_ctx, ast_dump), lexed),
+                key, store,
+            )
+        timings["type_check"] = time.perf_counter() - started
+
+        started = time.perf_counter()
+        definite_assignment = DefiniteAssignment(ctx)
+        try:
+            definite_assignment.run()
+        except ANALYSIS_ERRORS as error:
+            return self.__keyed(
+                self.__with_tokens(self.__failed(error, Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed),
+                key, store,
+            )
+        timings["definite_assignment"] = time.perf_counter() - started
+        assignment_errors = definite_assignment.export_errors()
+        if assignment_errors and not recover:
+            return self.__keyed(
+                self.__with_tokens(
+                    self.__failed(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
+                ),
+                key, store,
+            )
+
+        diagnostics = list(checker.export_diagnostics())
+        diagnostics.extend(diagnostic_from_error(error, stage=Stage.COMPTIME) for error in comptime_errors)
+        diagnostics.extend(
+            diagnostic_from_error(error, stage=Stage.DEFINITE_ASSIGNMENT) for error in assignment_errors
+        )
+        diagnostics.sort(key=lambda diagnostic: (
+            str(diagnostic.span.path), diagnostic.span.start.row, diagnostic.span.start.col, diagnostic.code
+        ))
+        generated = specializer.generated_definitions(checker.export_generated(), checker.entry_type_id)
+
         # A recovered error does not stop the index from being built, so a file
         # with one broken definition still answers navigation for the others.
-        # The index is handed over unbuilt: it is a projection of what this run
-        # already produced, and only an editor asks for it.
+        # The index is a projection of the facts already produced. A background
+        # editor worker materializes it before publishing its snapshot.
         index: DeclarationIndex = LazyIndex(
             units=units,
             type_ctx=type_ctx,
@@ -327,28 +386,47 @@ class AnalysisSession:
             packages=self.__packages,
         )
         return AnalysisResult(
-            diagnostics=checker.export_diagnostics(),
+            diagnostics=tuple(diagnostics),
             sources=sources,
             tokens=lexed,
             units=units,
+            programs=tuple(programs),
+            ast_dump=ast_dump,
             type_ctx=type_ctx,
-            def_points=checker.export(),
+            def_points=all_def_points,
+            generated_def_points=generated,
+            sem_ctx=ctx,
+            entry_type_id=checker.entry_type_id,
+            unit_names=unit_names,
             index=index,
             versions=store.versions(),
             key=key,
+            timings=timings,
         )
+
+    def __unit_names(self, units: Mapping[int, UnitData]) -> dict[int, str]:
+        names: dict[int, str] = {}
+        for unit_id, unit in units.items():
+            if self.__packages is None:
+                names[unit_id] = unit.path.stem
+                continue
+            package = self.__packages.package_of(unit.path)
+            if package is None:
+                names[unit_id] = unit.path.stem
+                continue
+            root = self.__packages.packages[package].source_root
+            try:
+                relative = unit.path.resolve().relative_to(root)
+            except ValueError:
+                names[unit_id] = unit.path.stem
+                continue
+            names[unit_id] = "_".join((package, *relative.parts[:-1], relative.stem))
+        return names
 
     def snapshot_key(
         self, paths: Sequence[Path], *, documents: DocumentStore | None = None
     ) -> tuple[object, ...]:
-        """The key :meth:`analyze` would produce for *paths* right now.
-
-        A caller that keeps the result of an earlier run compares this key to
-        ``result.key`` and reuses that result when they match, which is how the
-        language server avoids re-analyzing an unchanged project.
-        The key covers each input's text and editor version plus the compile
-        flags, so it never matches across an edit.
-        """
+        """Compute a content-derived key for callers without event revisions."""
         store = documents if documents is not None else DocumentStore()
         src_files = collect_an_files(paths, overlay=store)
         sources = {path: self.__text(store, path) for path in src_files}
@@ -437,6 +515,7 @@ class AnalysisSession:
         sources: Mapping[Path, str],
         units: Mapping[int, UnitData] | None = None,
         type_ctx: TypeCtx | None = None,
+        ast_dump: str | None = None,
     ) -> AnalysisResult:
         diagnostic = diagnostic_from_error(error, stage=stage)
         resolved_sources = dict(sources)
@@ -447,6 +526,8 @@ class AnalysisSession:
             diagnostics=(diagnostic,),
             sources=resolved_sources,
             units=units if units is not None else {},
+            programs=() if units is None else tuple(unit.program for unit in units.values()),
+            ast_dump=ast_dump,
             type_ctx=type_ctx,
             failed_stage=stage,
         )

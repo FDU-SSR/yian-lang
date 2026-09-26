@@ -3,28 +3,20 @@
 Scope: the process form, document synchronisation, the workspace
 snapshot, and published diagnostics. Navigation requests arrive in.
 
-Two rules shape this module:
+Stdout is the JSON-RPC channel, so human-readable logs go to stderr. Handlers
+translate protocol values and ask the compiler's analysis queries for facts.
 
-* **stdout is the JSON-RPC channel**, so the server only ever writes
-  to it through pygls.  Everything human-readable goes to the ``stderr`` logger.
-* **the protocol layer holds no language knowledge**: a handler's job
-  is to turn an LSP payload into a :class:`~lsp.workspace.Workspace` call and a
-  log line, nothing more.
-
-Analysis is *lazy and debounced* rather than per keystroke:
-a burst of edits arms one timer, and the analysis runs when typing pauses.  That
-is what keeps a half-typed `x.` or an unfinished string from painting the file
-red, and it is the reason a stale publish cannot happen — the timer coalesces
-changes, and every publish carries the document version it was computed from.
+Analysis and semantic queries run on one background worker. The protocol loop
+owns document versions and publishes only results from the current revision.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 from lsprotocol import types
 from pygls.exceptions import JsonRpcException
@@ -41,6 +33,7 @@ from compiler.analysis.refactor import (
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.completion import completion_list, signature_help
+from lsp.coordinator import AnalysisCoordinator
 from lsp.diagnostics import diagnostics_by_document
 from lsp.formatting import document_edits
 from lsp.refactor import (
@@ -71,25 +64,15 @@ SERVER_VERSION = "0.7.0"
 #: use) is exactly that.
 REQUEST_FAILED = -32803
 
-#: How long the server waits for typing to pause before analyzing.  The value is
-# the debounce half of; it is deliberately short enough to
-#: feel immediate and long enough to swallow a keystroke burst.
-DEBOUNCE_SECONDS = 0.2
-
 # Single underscore on purpose: `YianLanguageServer` mentions this module-level
 # private, and a double underscore inside that class body would be mangled to
 # `_YianLanguageServer__LOGGER` and fail at run time (AGENTS.md).
 _LOGGER = logging.getLogger(__name__)
+_QueryResult = TypeVar("_QueryResult")
 
 
 class YianLanguageServer(LanguageServer):
-    """One server process, serving one editor window.
-
-    Handlers run on a single worker thread (``max_workers=1``): analysis is
-    CPU-bound and the workspace is stateful, so requests are serialized in the
-    order the client sent them.  ``$/cancelRequest`` still works — pygls cancels
-    a request that has not started yet.
-    """
+    """One server process with event-loop-owned state and serialized compiler work."""
 
     def __init__(
         self,
@@ -110,72 +93,89 @@ class YianLanguageServer(LanguageServer):
             max_workers=max_workers,
         )
         self.model = Workspace(compiler_root=compiler_root, raw_pointers=raw_pointers)
-        self.__timer: asyncio.TimerHandle | None = None
+        self.analysis = AnalysisCoordinator(self.model, self.__analysis_completed)
         #: Documents the last analysis published diagnostics for.  Anything that
         #: drops out of the next round has to be cleared explicitly, or the
         #: Problems panel keeps entries for a file nobody analyzes any more.
         self.__published: set[Path] = set()
+        self.__project_published: set[Path] = set()
         #: Generation of the snapshot those diagnostics came from, so a full
         #: analysis triggered by a semantic request is published exactly once.
         self.__publish_generation = -1
+        self.__navigator_generation = -1
+        self.__navigator_cache: Navigator | None = None
 
-    # ── analysis scheduling (a and b) ────────────────────────
+    def navigator(self, snapshot: Snapshot) -> Navigator:
+        if self.__navigator_generation != snapshot.generation or self.__navigator_cache is None:
+            self.__navigator_cache = Navigator(snapshot.result, std_root=self.model.std_root)
+            self.__navigator_generation = snapshot.generation
+        return self.__navigator_cache
+
+    # ── analysis scheduling ────────────────────────
 
     def schedule_analysis(self, reason: str) -> None:
-        """Analyze once the editor goes quiet; the latest event in a burst wins.
-
-        This is the path a keystroke takes, so it asks for the *front end* only
-syntax diagnostics are what a reader can trust
-        mid-edit, and the full prefix runs when a save or a semantic request
-        needs it.
-        """
-        if self.__timer is not None:
-            self.__timer.cancel()
-        self.__timer = asyncio.get_running_loop().call_later(
-            DEBOUNCE_SECONDS, self.__analyze, reason, False
-        )
+        self.analysis.schedule_edit(reason)
 
     def analyze_now(self, reason: str) -> None:
-        """Analyze the whole prefix without waiting: a save is a deliberate act."""
-        self.__cancel_timer()
-        self.__analyze(reason, True)
+        self.analysis.schedule_full(reason)
 
     def cancel_analysis(self) -> None:
-        """Forget a scheduled analysis; the server is shutting down."""
-        self.__cancel_timer()
+        self.analysis.close()
 
-    def __cancel_timer(self) -> None:
-        if self.__timer is not None:
-            self.__timer.cancel()
-            self.__timer = None
+    def __analysis_completed(self, snapshot: Snapshot, reason: str, elapsed_ms: float) -> None:
+        self.notify_analysis(
+            snapshot, reason, "syntax" if snapshot.result.syntax_only else "full", elapsed_ms
+        )
 
-    def __analyze(self, reason: str, full: bool) -> None:
-        self.__timer = None
-        if not full:
-            cached = self.model.fresh_snapshot
-            if cached is not None:
-                # A save or a semantic request already analyzed exactly these
-                # inputs: reusing that beats running anything at all.
-                self.notify_analysis(cached, reason, "reused")
-                return
-        started = time.perf_counter()
-        try:
-            snapshot = self.model.snapshot if full else self.model.syntax_snapshot
-        except Exception as error:  # a compiler bug, not something the user typed
-            _LOGGER.error("analysis failed (%s): %s", reason, error, exc_info=error)
+    def reload_project(self, reason: str) -> None:
+        """Refresh project topology without blocking editor notifications."""
+        self.model.invalidate()
+        asyncio.create_task(self.__reload_project(reason))
+
+    async def __reload_project(self, reason: str) -> None:
+        start = self.model.workspace_root
+        if start is None:
+            self.analyze_now(reason)
             return
-        elapsed = (time.perf_counter() - started) * 1000
-        self.notify_analysis(snapshot, reason, "full" if full else "syntax", elapsed)
+        while True:
+            revision = self.model.revision
+            try:
+                root, result = await asyncio.to_thread(self.model.load_directory, start)
+            except Exception:
+                _LOGGER.exception("project reload failed (%s)", reason)
+                return
+            if revision == self.model.revision:
+                break
+        self.model.apply_directory(start, root, result)
+        self.publish_project_diagnostics()
+        self.analyze_now(reason)
+
+    def publish_project_diagnostics(self) -> None:
+        """Report project-loader failures on their manifest, including unopened files."""
+        by_path: dict[Path, list[types.Diagnostic]] = {}
+        for diagnostic in self.model.project_diagnostics:
+            path = diagnostic.path or (
+                self.model.project_root / "package.anx" if self.model.project_root is not None else None
+            )
+            if path is None:
+                continue
+            path = path.resolve()
+            position = types.Position(line=0, character=0)
+            by_path.setdefault(path, []).append(types.Diagnostic(
+                range=types.Range(start=position, end=position),
+                severity=types.DiagnosticSeverity.Error,
+                source="anx", code=diagnostic.code, message=diagnostic.message,
+            ))
+        for path in self.__project_published | set(by_path):
+            self.text_document_publish_diagnostics(types.PublishDiagnosticsParams(
+                uri=path_to_uri(path), diagnostics=by_path.get(path, []),
+            ))
+        self.__project_published = set(by_path)
 
     def notify_analysis(
         self, snapshot: Snapshot, reason: str, mode: str, elapsed_ms: float | None = None
     ) -> None:
-        """Log and publish *snapshot* once, whatever asked for it.
-
-        Called from the debounced path and from every semantic request (through
-        :func:`__snapshot`), so the Problems panel follows the newest analysis
-        instead of waiting for the next keystroke — and a snapshot that was
-        already published is not repeated.
+        """Log and publish one completed, current analysis snapshot.
 
         The declaration count is only logged when the index already exists: an
         analysis must not build it just to write a log line (see ``LazyIndex``).
@@ -271,7 +271,7 @@ def create_server(
 
 
 def __register_features(server: YianLanguageServer) -> None:
-    def initialize(ls: YianLanguageServer, params: types.InitializeParams) -> None:
+    async def initialize(ls: YianLanguageServer, params: types.InitializeParams) -> None:
         root = __workspace_root(params)
         if root is None:
             _LOGGER.info("no workspace folder; analyzing opened files only")
@@ -280,7 +280,8 @@ def __register_features(server: YianLanguageServer) -> None:
         # is (or lives inside) a package is analyzed in package mode, anything
         # else in standalone mode.  Which file the user happens to open later
         # does not switch modes.
-        result = ls.model.use_directory(root)
+        project_root, result = await asyncio.to_thread(ls.model.load_directory, root)
+        ls.model.apply_directory(root, project_root, result)
         if result is None:
             _LOGGER.info("%s is not a YIAN package; standalone mode", root)
             return
@@ -305,6 +306,7 @@ def __register_features(server: YianLanguageServer) -> None:
 
     def initialized(ls: YianLanguageServer, params: types.InitializedParams) -> None:
         __register_watchers(ls)
+        ls.publish_project_diagnostics()
         if ls.model.project_root is None:
             # Standalone mode: the file set is "opened documents + standard
             # library", which is empty right now, so there is nothing to analyze
@@ -320,9 +322,11 @@ def __register_features(server: YianLanguageServer) -> None:
         # Opening a file is deliberate, like saving one: run the whole prefix so
         # a freshly opened buffer starts with its type errors, hover and semantic
         # highlighting available, and only later keystrokes take the cheap path.
-        ls.model.invalidate()
         _LOGGER.info("textDocument/didOpen %s v%s", document.uri, document.version)
-        ls.analyze_now("didOpen")
+        if ls.model.project_root is None and ls.model.workspace_root is not None:
+            ls.reload_project("didOpen")
+        else:
+            ls.analyze_now("didOpen")
     server.feature(types.TEXT_DOCUMENT_DID_OPEN)(did_open)
 
     def did_change(ls: YianLanguageServer, params: types.DidChangeTextDocumentParams) -> None:
@@ -337,50 +341,47 @@ def __register_features(server: YianLanguageServer) -> None:
 
     # ── navigation ───────────────────────────────────────────────
 
-    def definition(
+    async def definition(
         ls: YianLanguageServer, params: types.DefinitionParams
     ) -> types.Location | None:
-        located = __located(ls, params.text_document.uri, params.position)
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        resolution = navigator.resolve(path, row, col)
-        if resolution is None or resolution.target is None:
-            return None
-        return location(resolution.target, navigator)
+        result, navigator, path, row, col = located
+        def __resolve() -> types.Location | None:
+            resolution = navigator.resolve(path, row, col)
+            return None if resolution is None or resolution.target is None else location(resolution.target, navigator)
+        return await __query(ls, result, __resolve)
     server.feature(types.TEXT_DOCUMENT_DEFINITION)(definition)
 
-    def hover_at(ls: YianLanguageServer, params: types.HoverParams) -> types.Hover | None:
-        located = __located(ls, params.text_document.uri, params.position)
+    async def hover_at(ls: YianLanguageServer, params: types.HoverParams) -> types.Hover | None:
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        result = __result_of(ls)
-        if result is None:
-            return None
-        resolution = navigator.resolve(path, row, col)
-        if resolution is None:
-            return None
+        result, navigator, path, row, col = located
         span = __span_of(result, path, params.position)
         if span is None:
             return None
-        return hover(resolution, navigator, span)
+        def __hover() -> types.Hover | None:
+            resolution = navigator.resolve(path, row, col)
+            return None if resolution is None else hover(resolution, navigator, span)
+        return await __query(ls, result, __hover)
     server.feature(types.TEXT_DOCUMENT_HOVER)(hover_at)
 
-    def symbols(
+    async def symbols(
         ls: YianLanguageServer, params: types.DocumentSymbolParams
     ) -> list[types.DocumentSymbol] | None:
-        snapshot = __snapshot(ls)
+        snapshot = await __snapshot(ls)
         if snapshot is None:
             return None
         path = uri_to_path(params.text_document.uri)
         navigator = __navigator(ls, snapshot)
-        return document_symbols(navigator.declarations_in(path), navigator)
+        return await __query(ls, snapshot.result, lambda: document_symbols(navigator.declarations_in(path), navigator))
     server.feature(types.TEXT_DOCUMENT_DOCUMENT_SYMBOL)(symbols)
 
     # ── semantic highlighting ──────────────────────────────
 
-    def semantic_tokens(
+    async def semantic_tokens(
         ls: YianLanguageServer, params: types.SemanticTokensParams
     ) -> types.SemanticTokens | None:
         # The client re-asks on every visible edit, so this feature reads the
@@ -393,16 +394,17 @@ def __register_features(server: YianLanguageServer) -> None:
             return types.SemanticTokens(data=[])
         navigator = __navigator(ls, snapshot)
         path = uri_to_path(params.text_document.uri)
-        classified = classify(navigator, path)
-        return types.SemanticTokens(data=encode(classified, navigator.text_of(path)))
+        revision = snapshot.revision
+        data = await ls.analysis.run_query(lambda: encode(classify(navigator, path), navigator.text_of(path)))
+        return types.SemanticTokens(data=data if revision == ls.model.revision else [])
     server.feature(types.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL, legend())(semantic_tokens)
 
     # ── completion and signature help ────────────────────────────
 
-    def completions(
+    async def completions(
         ls: YianLanguageServer, params: types.CompletionParams
     ) -> types.CompletionList | None:
-        analysis = __analysis(ls)
+        analysis = await __analysis(ls)
         if analysis is None:
             return None
         result, navigator = analysis
@@ -410,17 +412,18 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         path, row, col = located
-        candidates = complete(result, path, row, col, std_root=ls.model.std_root)
-        return completion_list(candidates, navigator)
+        return await __query(ls, result, lambda: completion_list(
+            complete(result, path, row, col, std_root=ls.model.std_root), navigator
+        ))
     server.feature(
         types.TEXT_DOCUMENT_COMPLETION,
         types.CompletionOptions(trigger_characters=[".", ":", "<"]),
     )(completions)
 
-    def signature(
+    async def signature(
         ls: YianLanguageServer, params: types.SignatureHelpParams
     ) -> types.SignatureHelp | None:
-        analysis = __analysis(ls)
+        analysis = await __analysis(ls)
         if analysis is None:
             return None
         result, _ = analysis
@@ -428,8 +431,10 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         path, row, col = located
-        info = signature_info(result, path, row, col, std_root=ls.model.std_root)
-        return None if info is None else signature_help(info)
+        def __signature() -> types.SignatureHelp | None:
+            info = signature_info(result, path, row, col, std_root=ls.model.std_root)
+            return None if info is None else signature_help(info)
+        return await __query(ls, result, __signature)
     server.feature(
         types.TEXT_DOCUMENT_SIGNATURE_HELP,
         types.SignatureHelpOptions(trigger_characters=["(", ","]),
@@ -450,51 +455,43 @@ def __register_features(server: YianLanguageServer) -> None:
 
     # ── references, rename and quick fixes ───────────────────────
 
-    def references(
+    async def references(
         ls: YianLanguageServer, params: types.ReferenceParams
     ) -> list[types.Location] | None:
-        located = __located(ls, params.text_document.uri, params.position)
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        result = __result_of(ls)
-        if result is None:
-            return None
-        found = find_references(
-            result,
-            path,
-            row,
-            col,
-            include_declaration=params.context.include_declaration,
-            std_root=ls.model.std_root,
-        )
-        return None if found is None else locations(found, navigator)
+        result, navigator, path, row, col = located
+        def __references() -> list[types.Location] | None:
+            found = find_references(
+                result, path, row, col,
+                include_declaration=params.context.include_declaration,
+                std_root=ls.model.std_root,
+            )
+            return None if found is None else locations(found, navigator)
+        return await __query(ls, result, __references)
     server.feature(types.TEXT_DOCUMENT_REFERENCES)(references)
 
-    def highlights(
+    async def highlights(
         ls: YianLanguageServer, params: types.DocumentHighlightParams
     ) -> list[types.DocumentHighlight] | None:
-        located = __located(ls, params.text_document.uri, params.position)
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        result = __result_of(ls)
-        if result is None:
-            return None
-        found = find_references(result, path, row, col, std_root=ls.model.std_root)
-        if found is None:
-            return None
-        # Only this file: highlighting is what the editor does around the caret.
-        same_file = ReferenceResult(
-            target=found.target,
-            sites=tuple(
-                site for site in found.sites if site.span.path.resolve() == path.resolve()
-            ),
-        )
-        return document_highlights(same_file, navigator)
+        result, navigator, path, row, col = located
+        def __highlights() -> list[types.DocumentHighlight] | None:
+            found = find_references(result, path, row, col, std_root=ls.model.std_root)
+            if found is None:
+                return None
+            same_file = ReferenceResult(
+                target=found.target,
+                sites=tuple(site for site in found.sites if site.span.path.resolve() == path.resolve()),
+            )
+            return document_highlights(same_file, navigator)
+        return await __query(ls, result, __highlights)
     server.feature(types.TEXT_DOCUMENT_DOCUMENT_HIGHLIGHT)(highlights)
 
-    def prepare_rename(
+    async def prepare_rename(
         ls: YianLanguageServer, params: types.PrepareRenameParams
     ) -> types.PrepareRenamePlaceholder | None:
         """Whether a rename is possible here, and what it would rename.
@@ -503,49 +500,47 @@ def __register_features(server: YianLanguageServer) -> None:
         name, so refusing here is how "not a symbol" becomes a clear message
         instead of an edit that does nothing.
         """
-        located = __located(ls, params.text_document.uri, params.position)
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        result = __result_of(ls)
-        if result is None:
-            return None
-        found = find_references(result, path, row, col, std_root=ls.model.std_root)
-        if found is None:
-            return None
-        return types.PrepareRenamePlaceholder(
-            range=to_range(found.target.span, navigator), placeholder=found.target.name
-        )
+        result, navigator, path, row, col = located
+        def __prepare() -> types.PrepareRenamePlaceholder | None:
+            found = find_references(result, path, row, col, std_root=ls.model.std_root)
+            if found is None:
+                return None
+            return types.PrepareRenamePlaceholder(
+                range=to_range(found.target.span, navigator), placeholder=found.target.name
+            )
+        return await __query(ls, result, __prepare)
     server.feature(types.TEXT_DOCUMENT_PREPARE_RENAME)(prepare_rename)
 
-    def rename(
+    async def rename(
         ls: YianLanguageServer, params: types.RenameParams
     ) -> types.WorkspaceEdit | None:
-        located = __located(ls, params.text_document.uri, params.position)
+        located = await __located(ls, params.text_document.uri, params.position)
         if located is None:
             return None
-        navigator, path, row, col = located
-        result = __result_of(ls)
-        if result is None:
-            return None
-        outcome = rename_symbol(
+        result, navigator, path, row, col = located
+        outcome = await __query(ls, result, lambda: rename_symbol(
             result, path, row, col, params.new_name, std_root=ls.model.std_root
-        )
+        ))
         if not outcome.ok:
             # A refused rename is a *request* failure with a readable reason, not
             # a server error: the client shows the message instead of applying a
             # partial edit (拒绝批量修改).
             raise JsonRpcException(outcome.refusal, code=REQUEST_FAILED)
-        return workspace_edit(outcome, navigator)
+        return await __query(ls, result, lambda: workspace_edit(outcome, navigator))
     server.feature(types.TEXT_DOCUMENT_RENAME)(rename)
 
-    def code_action(
+    async def code_action(
         ls: YianLanguageServer, params: types.CodeActionParams
     ) -> list[types.CodeAction]:
-        navigator, path, result = __file_context(ls, params.text_document.uri)
+        navigator, path, result = await __file_context(ls, params.text_document.uri)
         if navigator is None or path is None or result is None:
             return []
-        return code_actions(import_removals(result, navigator, path), navigator, path)
+        return await __query(ls, result, lambda: code_actions(
+            import_removals(result, navigator, path), navigator, path
+        ))
     server.feature(
         types.TEXT_DOCUMENT_CODE_ACTION,
         types.CodeActionOptions(code_action_kinds=[types.CodeActionKind.QuickFix]),
@@ -556,9 +551,12 @@ def __register_features(server: YianLanguageServer) -> None:
         # makes the client send the notification at all.  A save is a deliberate
         # pause, so the analysis does not wait for the debounce.
         uri = params.text_document.uri
-        ls.model.invalidate()
         _LOGGER.info("textDocument/didSave %s", uri)
-        ls.analyze_now("didSave")
+        if ls.model.workspace_root is not None:
+            ls.reload_project("didSave")
+        else:
+            ls.model.invalidate()
+            ls.analyze_now("didSave")
     server.feature(types.TEXT_DOCUMENT_DID_SAVE)(did_save)
 
     def did_close(ls: YianLanguageServer, params: types.DidCloseTextDocumentParams) -> None:
@@ -577,29 +575,36 @@ def __register_features(server: YianLanguageServer) -> None:
     server.feature(types.WORKSPACE_DID_CHANGE_WATCHED_FILES)(watched_files)
 
 
-def __snapshot(server: YianLanguageServer) -> Snapshot | None:
+async def __snapshot(server: YianLanguageServer) -> Snapshot | None:
     """The current full analysis, or ``None`` when the server cannot produce one.
 
     A semantic request is a reason to run the whole prefix,
     so whatever it produces also refreshes the diagnostics the editor shows.
     """
-    started = time.perf_counter()
-    try:
-        snapshot = server.model.snapshot
-    except Exception as error:  # a compiler bug, not something the user typed
-        _LOGGER.error("analysis failed (navigation): %s", error, exc_info=error)
-        return None
-    server.notify_analysis(
-        snapshot, "request", "full", (time.perf_counter() - started) * 1000
-    )
+    revision = server.model.revision
+    snapshot = await server.analysis.request_full()
+    if revision != server.model.revision:
+        raise JsonRpcException("document changed during analysis", code=-32801)
     return snapshot
 
 
+async def __query(
+    server: YianLanguageServer, expected: AnalysisResult, work: Callable[[], _QueryResult]
+) -> _QueryResult:
+    snapshot = server.model.fresh_snapshot
+    if snapshot is None or snapshot.result is not expected:
+        raise JsonRpcException("document changed before query", code=-32801)
+    result = await server.analysis.run_query(work)
+    if server.model.fresh_snapshot is not snapshot:
+        raise JsonRpcException("document changed during query", code=-32801)
+    return result
+
+
 def __navigator(server: YianLanguageServer, snapshot: Snapshot) -> Navigator:
-    return Navigator(snapshot.result, std_root=server.model.std_root)
+    return server.navigator(snapshot)
 
 
-def __analysis(
+async def __analysis(
     server: YianLanguageServer,
 ) -> tuple[AnalysisResult, Navigator] | None:
     """The current analysis and a navigator over it, or ``None``.
@@ -608,7 +613,7 @@ def __analysis(
     and the raw result is what completion and semantic tokens read their tables
     from.
     """
-    snapshot = __snapshot(server)
+    snapshot = await __snapshot(server)
     if snapshot is None:
         return None
     return snapshot.result, __navigator(server, snapshot)
@@ -647,11 +652,11 @@ def __span_of(result: AnalysisResult, path: Path, position: types.Position) -> S
     return SrcSpan(start, SrcPosition(row, column + 1, path))
 
 
-def __located(
+async def __located(
     server: YianLanguageServer, uri: str, position: types.Position
-) -> tuple[Navigator, Path, int, int] | None:
+) -> tuple[AnalysisResult, Navigator, Path, int, int] | None:
     """Navigator, path and compiler position for one client request."""
-    analysis = __analysis(server)
+    analysis = await __analysis(server)
     if analysis is None:
         return None
     result, navigator = analysis
@@ -659,23 +664,18 @@ def __located(
     if located is None:
         return None
     path, row, col = located
-    return navigator, path, row, col
+    return result, navigator, path, row, col
 
 
-def __file_context(
+async def __file_context(
     server: YianLanguageServer, uri: str
 ) -> tuple[Navigator | None, Path | None, AnalysisResult | None]:
     """Navigator, path and result for a request that is about a whole file."""
-    analysis = __analysis(server)
+    analysis = await __analysis(server)
     if analysis is None:
         return None, None, None
     result, navigator = analysis
     return navigator, uri_to_path(uri), result
-
-
-def __result_of(server: YianLanguageServer) -> AnalysisResult | None:
-    analysis = __analysis(server)
-    return None if analysis is None else analysis[0]
 
 
 def __document_changed(
@@ -688,7 +688,6 @@ def __document_changed(
     analysis. Whatever changed is picked up by that
     analysis; nothing here needs to know what it was.
     """
-    server.model.invalidate()
     _LOGGER.info("textDocument/%s %s v%s", event, uri, version if version is not None else "-")
     server.schedule_analysis(event)
 
@@ -710,12 +709,12 @@ def __watched_files_changed(
         _LOGGER.info(
             "workspace file %s %s", types.FileChangeType(event.type).name.lower(), path
         )
-        if path.name == "package.anx":
+        if path.name == "package.anx" or (
+            path.suffix == ".an" and event.type != types.FileChangeType.Changed
+        ):
             reload_needed = True
-    root = server.model.project_root
-    if reload_needed and root is not None:
-        server.model.use_project(root)
-        server.analyze_now("manifest change")
+    if reload_needed and server.model.workspace_root is not None:
+        server.reload_project("project file change")
         return
     server.model.invalidate()
     server.schedule_analysis("watched files")

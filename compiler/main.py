@@ -9,11 +9,8 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn, cast
-
-from llvmlite import ir
 
 from compiler.analysis.diagnostics import (
     Severity,
@@ -22,40 +19,25 @@ from compiler.analysis.diagnostics import (
     format_source_error,
 )
 from compiler.analysis.documents import Document, DocumentStore
-from compiler.analysis.error import AnalysisError
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.positions import path_to_uri, to_lsp_range
 from compiler.analysis.session import AnalysisSession, collect_an_files
 from compiler.analysis.lowering.sem_ctx import SemCtx
-from compiler.analysis.passes.definite_assignment import DefiniteAssignment
-from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.utils.log import CompilerLog
 from compiler.utils.log import (
-    format_ast_output, format_cfg_output,
+    format_cfg_output,
     format_hir_output, format_token_output,
 )
-from compiler.analysis.passes.desugar import Desugar
-from compiler.analysis.passes.global_resolve import GlobalResolve
-from compiler.analysis.passes.prelude import inject_prelude
-from compiler.analysis.passes.restricted_ops import check_restricted_ops
-from compiler.analysis.source_provenance import build_source_trust, resolve_stdlib_root
 from compiler.format import format_text
-from compiler.analysis.passes.type_check import TypeCheck
 from compiler.analysis.ty.context import TypeCtx
-from compiler.analysis.unit.unit_data import UnitData
 from compiler.codegen.cfg import ir as CFG_IR
 from compiler.codegen.cfg.pipeline import CfgPipeline
 from compiler.codegen.error import CodegenError
 from compiler.codegen.llvm.pipeline.emit import Emitter
-from compiler.codegen.llvm.base.module import LLModule, apply_target
+from compiler.codegen.llvm.base.module import LLModule
 from compiler.codegen.llvm.pipeline.translator import LLTranslator
-from compiler.codegen.llvm.base.types import LLTypeCtx
 from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
 from compiler.error import CompilerError
-from compiler.frontend.lex.lexer import Lexer, LexError
-from compiler.frontend.lex.token import Token
-from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.parser import ParseError, Parser
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
@@ -302,40 +284,6 @@ def __cfg(ctx: SemCtx) -> dict[int, CFG_IR.Function]:
         __report_error(error, stage=Stage.CODEGEN)
 
 
-def __build_unit_names(unit_datas: dict[int, UnitData], packages: PackageMap | None) -> dict[int, str]:
-    """Build a mapping from unit_id to a unique name string for LLVM type mangling.
-
-    A unit inside a package is named ``<package>_<module path>``, which is
-    deterministic and collision-free across packages; files outside every
-    source root keep their file stem.
-    """
-    names: dict[int, str] = {}
-    for unit_id, unit_data in unit_datas.items():
-        names[unit_id] = __unit_name(unit_data, packages)
-    return names
-
-
-def __unit_name(unit_data: UnitData, packages: PackageMap | None) -> str:
-    if packages is None:
-        return unit_data.path.stem
-    package = packages.package_of(unit_data.path)
-    if package is None:
-        return unit_data.path.stem
-    source_root = packages.packages[package].source_root
-    try:
-        relative = unit_data.path.resolve().relative_to(source_root)
-    except ValueError:
-        return unit_data.path.stem
-    return "_".join((package, *relative.parts[:-1], relative.stem))
-
-
-def __type_size_provider(type_ctx: TypeCtx, unit_names: dict[int, str], raw_pointers: bool) -> Callable[[int], int]:
-    module = ir.Module(name="yian.comptime.layout")
-    apply_target(module)
-    ll_type_ctx = LLTypeCtx(type_ctx, module, unit_names, raw_pointers)
-    return ll_type_ctx.get_type_size
-
-
 def __llvm_codegen(
     cfg_functions: dict[int, CFG_IR.Function],
     type_ctx: TypeCtx,
@@ -442,41 +390,6 @@ def __merge_runtime_object(obj_path: Path, output_path: Path) -> None:
     merged_path.replace(output_path)
 
 
-def __lex(src_files: list[Path]) -> list[list[Token]]:
-    token_lists: list[list[Token]] = []
-    for src_file in src_files:
-        lexer = Lexer(src_file, text=__DOCUMENTS.text(src_file))
-
-        try:
-            lexer.lex()
-        except LexError as error:
-            __report_error(error, stage=Stage.LEX)
-
-        token_lists.append(lexer.export())
-    return token_lists
-
-
-def __parse(token_lists: list[list[Token]]) -> list[AST.Program]:
-    programs: list[AST.Program] = []
-    for tokens in token_lists:
-        parser = Parser(tokens)
-
-        try:
-            program = parser.parse()
-        except ParseError as error:
-            __report_error(error, stage=Stage.PARSE)
-
-        programs.append(program)
-    return programs
-
-
-def __desugar(programs: list[AST.Program]) -> list[AST.Program]:
-    for program in programs:
-        desugarer = Desugar(program)
-        desugarer.run()
-    return programs
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: report diagnostics on stderr and never exit mid-pass."""
 
@@ -547,44 +460,6 @@ def __run(argv: list[str] | None = None) -> int:
     timings: dict[str, float] = {}
     t0 = time.perf_counter() if args.profile else 0.0
 
-    # extract .an files from input paths; keep the text so diagnostics do not
-    # have to read the files again
-    src_files = collect_an_files(args.paths)
-    for src_file in src_files:
-        __DOCUMENTS.add(Document(path=src_file, text=src_file.read_text()))
-
-    # lex all source files
-    lex_start = time.perf_counter() if args.profile else 0.0
-    token_lists: list[list[Token]] = __lex(src_files)
-    ch_main.debug(f"lexed {sum(len(tl) for tl in token_lists)} tokens from {len(src_files)} file(s)")
-    Path("build").mkdir(parents=True, exist_ok=True)
-    if args.dump:
-        (Path("build") / "tokens.txt").write_text(format_token_output(src_files, token_lists), encoding="utf-8")
-    if args.profile:
-        timings["lex"] = time.perf_counter() - lex_start
-
-    # parse all token lists into ASTs
-    parse_start = time.perf_counter() if args.profile else 0.0
-    programs: list[AST.Program] = __parse(token_lists)
-    ch_main.debug(f"parsed {sum(len(p.items) for p in programs)} top-level items")
-    if args.profile:
-        timings["parse"] = time.perf_counter() - parse_start
-
-    # desugar ASTs
-    desugar_start = time.perf_counter() if args.profile else 0.0
-    programs = __desugar(programs)
-    ch_main.debug("desugaring complete")
-    if args.profile:
-        timings["desugar"] = time.perf_counter() - desugar_start
-
-    if args.dump:
-        (Path("build") / "ast.txt").write_text(format_ast_output(src_files, programs), encoding="utf-8")
-
-    unit_datas = {
-        i: UnitData(program=program, path=src_file, unit_id=i)
-        for i, (program, src_file) in enumerate(zip(programs, src_files))
-    }
-
     packages: PackageMap | None = None
     if args.packages:
         try:
@@ -592,13 +467,10 @@ def __run(argv: list[str] | None = None) -> int:
         except CompilerError as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
-    # Package mode names the standard library itself; otherwise the root is
-    # configured explicitly (--compiler-root / YIAN_LIB / YIAN_ROOT).
-    trust_root = (
-        packages.packages["std"].source_root
-        if packages is not None
-        else resolve_stdlib_root(args.compiler_root)
+    session = AnalysisSession(
+        compiler_root=args.compiler_root, packages=packages, raw_pointers=args.raw_pointers
     )
+    trust_root = session.std_root
     if not trust_root.is_dir():
         print(
             f"error: standard library source root {trust_root} does not exist.\n"
@@ -608,81 +480,39 @@ def __run(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    source_trust = build_source_trust(trust_root)
-    for unit in unit_datas.values():
-        unit.is_stdlib = source_trust.is_stdlib(unit.path)
-        unit.allows_restricted_ops = source_trust.allows_restricted_ops(unit.path)
-
-    # inject prelude imports into non-stdlib files
-    inject_prelude(unit_datas.values())
-
-    # Keep pointer-forging and raw ABI primitives inside the trusted stdlib.
-    restricted_start = time.perf_counter() if args.profile else 0.0
-    try:
-        check_restricted_ops(unit_datas.values())
-    except AnalysisError as error:
-        __report_error(error, stage=Stage.RESTRICTED_OPS)
-    if args.profile:
-        timings["restricted_ops"] = time.perf_counter() - restricted_start
-
-    type_ctx = TypeCtx(raw_pointers=args.raw_pointers)
-    # 中端各段共享的上下文：session 资源 + 产物表 + 每 def 事实
-    ctx = SemCtx(type_ctx, args.raw_pointers, unit_datas, packages, source_trust.stdlib_root)
-
-    resolve_start = time.perf_counter() if args.profile else 0.0
-    global_resolver = GlobalResolve(ctx)
-    try:
-        global_resolver.run()
-    except AnalysisError as error:
-        __report_error(error, stage=Stage.RESOLVE)
-    ch_main.debug(f"global resolve complete — {len(unit_datas)} units")
-    if args.profile:
-        timings["global_resolve"] = time.perf_counter() - resolve_start
-
-    # Run final checks on the type space (e.g. self-referential type detection)
-    try:
-        type_ctx.finalize()
-    except AnalysisError as error:
-        __report_error(error, stage=Stage.FINALIZE)
-    except CompilerError as error:
-        print(f"error: {error}", file=sys.stderr)
+    analysis = session.analyze(
+        args.paths,
+        require_entry=args.target != "none",
+        entry_optional=False,
+        recover=False,
+        capture_ast_dump=args.dump,
+    )
+    if args.dump:
+        Path("build").mkdir(parents=True, exist_ok=True)
+        if analysis.tokens:
+            token_files = list(analysis.tokens)
+            token_lists = [list(analysis.tokens[path]) for path in token_files]
+            (Path("build") / "tokens.txt").write_text(
+                format_token_output(token_files, token_lists), encoding="utf-8"
+            )
+        if analysis.ast_dump is not None:
+            (Path("build") / "ast.txt").write_text(
+                analysis.ast_dump, encoding="utf-8",
+            )
+    if not analysis.ok():
+        print(analysis.formatted(), file=sys.stderr)
         return 1
-
-    type_check_start = time.perf_counter() if args.profile else 0.0
-    # The program entry comes from the package map; a `lib` root has none, which
-    # is only acceptable for analysis-only runs. Code generation always consumes
-    # the entry-reachable subset (G23).
-    type_checker = TypeCheck(ctx, require_entry=args.target != "none")
-    try:
-        type_checker.run()
-    except AnalysisError as error:
-        __report_error(error, stage=Stage.TYPE_CHECK)
-    except CompilerError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    ctx.declare_def_points(type_checker.export_generated())
-
-    # --- Compile-time conditional specialization ---
-    unit_names = __build_unit_names(unit_datas, packages)
-    type_size = __type_size_provider(type_ctx, unit_names, args.raw_pointers)
-    try:
-        ComptimeIfSpecializer(ctx, type_size).run()
-    except AnalysisError as error:
-        __report_error(error, stage=Stage.COMPTIME)
-
-    ch_main.debug(f"type-checked {len(ctx.def_points)} definitions")
+    for path, source in analysis.sources.items():
+        __DOCUMENTS.add(Document(path=path, text=source))
+    ctx = analysis.sem_ctx
+    type_ctx = analysis.type_ctx
+    assert ctx is not None and type_ctx is not None
+    src_files = list(analysis.sources)
+    unit_names = dict(analysis.unit_names)
+    ctx.declare_def_points(dict(analysis.generated_def_points))
+    ch_main.debug(f"type-checked {len(analysis.def_points)} definitions")
     if args.profile:
-        timings["type_check"] = time.perf_counter() - type_check_start
-
-    # --- Definite Assignment Analysis ---
-    da_start = time.perf_counter() if args.profile else 0.0
-    da_pass = DefiniteAssignment(ctx)
-    da_pass.run()
-    da_errors = da_pass.export_errors()
-    if da_errors:
-        __report_error(da_errors[0], stage=Stage.DEFINITE_ASSIGNMENT)
-    if args.profile:
-        timings["definite_assignment"] = time.perf_counter() - da_start
+        timings.update(analysis.timings)
 
     # HIR → CFG IR pass
     cfg_start = time.perf_counter() if args.profile else 0.0
@@ -707,7 +537,7 @@ def __run(argv: list[str] | None = None) -> int:
             type_ctx,
             unit_names,
             raw_pointers=args.raw_pointers,
-            entry_type_id=type_checker.entry_type_id,
+            entry_type_id=analysis.entry_type_id,
         )
         if args.profile:
             timings["llvm_codegen"] = time.perf_counter() - llvm_start

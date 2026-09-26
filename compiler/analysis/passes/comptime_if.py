@@ -10,6 +10,7 @@ from compiler.analysis.error import AnalysisError
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
+from compiler.analysis.unit.def_point import DefPoint
 from compiler.builtins import BuiltinKind
 
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -28,14 +29,45 @@ class ComptimeIfSpecializer:
         self.__edges: dict[int, set[int]] = {}
         self.__current_def_type_id = -1
 
-    def run(self) -> None:
+    def run(self, *, recover: bool = False) -> tuple[AnalysisError, ...]:
+        errors: list[AnalysisError] = []
         for def_point in list(self.__ctx.def_points.values()):
             if def_point.body is None:
                 continue
             self.__current_def_type_id = def_point.type_id
-            def_point.body = self.__rewrite_block(def_point.body)
+            try:
+                def_point.body = self.__rewrite_block(def_point.body)
+            except AnalysisError as error:
+                if not recover:
+                    raise
+                errors.append(error)
+                def_point.body = None
+        return tuple(errors)
 
-        self.__prune_unreachable_definitions()
+    def generated_definitions(self, candidates: dict[int, DefPoint], entry_type_id: int | None) -> dict[int, DefPoint]:
+        """Select the specialized procedures reachable from the actual entry."""
+        if entry_type_id is None:
+            return {}
+        key_by_type: dict[int, int] = {}
+        for key, def_point in candidates.items():
+            key_by_type[key] = key
+            key_by_type[def_point.type_id] = key
+
+        entry_key = key_by_type.get(entry_type_id)
+        if entry_key is None:
+            return {}
+        reachable: set[int] = set()
+        pending = [entry_key]
+        while pending:
+            key = pending.pop()
+            if key in reachable:
+                continue
+            reachable.add(key)
+            for referenced_type in self.__edges.get(candidates[key].type_id, set()):
+                referenced_key = key_by_type.get(referenced_type)
+                if referenced_key is not None and referenced_key not in reachable:
+                    pending.append(referenced_key)
+        return {key: def_point for key, def_point in candidates.items() if key in reachable}
 
     def __rewrite_block(self, block: HIR.Block) -> HIR.Block:
         block.stmts = [self.__rewrite_expr(stmt) for stmt in block.stmts]
@@ -155,37 +187,6 @@ class ComptimeIfSpecializer:
         ty = self.__ctx.type_ctx[resolved]
         if isinstance(ty, (Type.FunctionType, Type.MethodType, Type.ClosureType)):
             self.__edges.setdefault(self.__current_def_type_id, set()).add(type_id)
-
-    def __prune_unreachable_definitions(self) -> None:
-        old_def_points = dict(self.__ctx.def_points)
-        key_by_type: dict[int, int] = {}
-        for key, def_point in old_def_points.items():
-            key_by_type[key] = key
-            key_by_type[def_point.type_id] = key
-
-        roots: list[int] = []
-        for key, def_point in old_def_points.items():
-            ty = self.__ctx.type_ctx[def_point.type_id]
-            if isinstance(ty, Type.FunctionType) and ty.custom_def.name == "main":
-                roots.append(key)
-
-        reachable: set[int] = set()
-        pending = roots.copy()
-        while pending:
-            key = pending.pop()
-            if key in reachable:
-                continue
-            reachable.add(key)
-            def_point = old_def_points[key]
-            for referenced_type in self.__edges.get(def_point.type_id, set()):
-                referenced_key = key_by_type.get(referenced_type)
-                if referenced_key is not None and referenced_key not in reachable:
-                    pending.append(referenced_key)
-
-        self.__ctx.def_points.clear()
-        for key, def_point in old_def_points.items():
-            if key in reachable:
-                self.__ctx.def_points[key] = def_point
 
     def __evaluate(self, expr: HIR.Expr) -> CompileTimeResult:
         match expr:

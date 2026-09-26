@@ -29,15 +29,10 @@ __all__ = ["Snapshot", "Workspace"]
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One immutable analysis of the workspace.
-
-    A snapshot is replaced, never patched: the analysis passes rewrite their
-    units in place, so a new run always starts from the current text (
-    ). ``generation`` counts snapshots in this process and is what makes a
-    stale result recognisable to a caller that held on to one.
-    """
+    """A completed analysis tied to one workspace input revision."""
 
     generation: int
+    revision: int
     #: Project root, or ``None`` when the workspace is a standalone source file.
     project_root: Path | None
     project: Project | None
@@ -57,12 +52,10 @@ class Snapshot:
 
 
 class Workspace:
-    """Documents plus project model plus the latest analysis snapshot.
+    """Event-loop-owned documents, project model, revision, and completed snapshots.
 
-    The workspace is *not* thread-safe: it is owned by the language server's
-    single-threaded request loop. Analysis runs only when
-    :meth:`snapshot` is called, and reuses the previous run while the inputs are
-    unchanged, so repeated requests on an idle editor cost one key computation.
+    The analysis worker receives captured inputs and never mutates this object.
+    Snapshot lookup compares revision numbers without reading source files.
     """
 
     def __init__(self, *, compiler_root: Path | None = None, raw_pointers: bool = False) -> None:
@@ -71,7 +64,9 @@ class Workspace:
         self.__std_root = resolve_stdlib_root(compiler_root)
         self.__documents = DocumentStore()
         self.__project_root: Path | None = None
+        self.__workspace_root: Path | None = None
         self.__project: Project | None = None
+        self.__project_diagnostics: tuple[AnxDiagnostic, ...] = ()
         self.__packages: PackageMap | None = None
         self.__session = AnalysisSession(
             compiler_root=compiler_root, packages=None, raw_pointers=raw_pointers
@@ -79,6 +74,15 @@ class Workspace:
         self.__snapshot: Snapshot | None = None
         self.__syntax: Snapshot | None = None
         self.__generation = 0
+        self.__revision = 0
+
+    @property
+    def revision(self) -> int:
+        return self.__revision
+
+    @property
+    def workspace_root(self) -> Path | None:
+        return self.__workspace_root
 
     # ── documents ──────────────────────────────────────────────────────────────
 
@@ -90,18 +94,19 @@ class Workspace:
     def open(self, path: Path, text: str, version: int | None = None) -> None:
         """Record an opened or saved document."""
         self.__documents.add(Document(path=path, text=text, version=version))
+        self.invalidate()
 
     def change(self, path: Path, text: str, version: int | None = None) -> None:
         """Record new text for an open document.
 
-        The client sends whole documents (``textDocumentSync = Full``, plan
-        ), so this is the same operation as:meth:`open`.
+        The client sends whole documents, so this is the same operation as ``open``.
         """
         self.open(path, text, version)
 
     def close(self, path: Path) -> None:
         """Forget a closed document; reads fall back to the file on disk."""
         self.__documents.remove(path)
+        self.invalidate()
 
     def is_open(self, path: Path) -> bool:
         """True when *path* currently has an in-memory version."""
@@ -113,6 +118,10 @@ class Workspace:
     def project(self) -> Project | None:
         """The loaded project, or ``None`` in standalone mode."""
         return self.__project
+
+    @property
+    def project_diagnostics(self) -> tuple[AnxDiagnostic, ...]:
+        return self.__project_diagnostics
 
     @property
     def project_root(self) -> Path | None:
@@ -132,15 +141,48 @@ class Workspace:
         which case the workspace falls back to analyzing the open documents
         against the standard library.
         """
+        root, result = self.load_directory(start)
+        self.apply_directory(start, root, result)
+        return result
+
+    def load_directory(self, start: Path) -> tuple[Path | None, LoadResult | None]:
+        """Read project topology without changing workspace state."""
         root = discover(start)
+        if root is None:
+            return None, None
+        try:
+            result = load(root, std_root=self.__std_root)
+        except CycleError as error:
+            result = LoadResult(
+                None, (AnxDiagnostic(AX_DEPENDENCY_CYCLE, str(error), root / MANIFEST_NAME),)
+            )
+        return root, result
+
+    def apply_directory(self, start: Path, root: Path | None, result: LoadResult | None) -> None:
+        """Install a discovery result on the protocol event loop."""
+        self.__workspace_root = start.resolve()
         if root is None:
             self.__project_root = None
             self.__project = None
+            self.__project_diagnostics = ()
             self.__packages = None
             self.__session = self.__make_session(None)
             self.invalidate()
-            return None
-        return self.use_project(root)
+            return
+        assert result is not None
+        self.apply_project(root, result)
+
+    def apply_project(self, root: Path, result: LoadResult) -> None:
+        """Install a project model loaded outside the protocol event loop."""
+        self.__project_root = root.resolve()
+        self.__project = result.project
+        self.__project_diagnostics = result.diagnostics
+        self.__packages = None if result.project is None else PackageMap.from_document(
+            result.project.compiler_package_map(),
+            source=str(result.project.packages[result.project.root_package].manifest_path),
+        )
+        self.__session = self.__make_session(self.__packages)
+        self.invalidate()
 
     def use_project(self, root: Path) -> LoadResult:
         """Load the project at *root* and analyze against its package map.
@@ -149,23 +191,13 @@ class Workspace:
         as an exception rather than a load result; it becomes a diagnostic here
         because a language server may not crash on a broken project.
         """
-        self.__project_root = root.resolve()
         try:
             result = load(root, std_root=self.__std_root)
         except CycleError as error:
             result = LoadResult(
                 None, (AnxDiagnostic(AX_DEPENDENCY_CYCLE, str(error), root / MANIFEST_NAME),)
             )
-        self.__project = result.project
-        if result.project is None:
-            self.__packages = None
-        else:
-            self.__packages = PackageMap.from_document(
-                result.project.compiler_package_map(),
-                source=str(result.project.packages[result.project.root_package].manifest_path),
-            )
-        self.__session = self.__make_session(self.__packages)
-        self.invalidate()
+        self.apply_project(root, result)
         return result
 
     def files(self) -> tuple[Path, ...]:
@@ -192,22 +224,6 @@ class Workspace:
     # ── analysis ──────────────────────────────────────────────────────────────
 
     @property
-    def snapshot(self) -> Snapshot:
-        """The full analysis, reusing the previous one while inputs match."""
-        return self.__snapshot_now(syntax_only=False)
-
-    @property
-    def syntax_snapshot(self) -> Snapshot:
-        """The front-end-only analysis, cached like the full one.
-
-        Plan: while text is changing the editor only needs the
-        diagnostics lexing, parsing and desugaring can decide.  At a few hundred
-        files that is ~70-110 ms against ~200-470 ms for the full prefix, and it
-        is honest — it reports what it actually ran, never a stale type error.
-        """
-        return self.__snapshot_now(syntax_only=True)
-
-    @property
     def fresh_snapshot(self) -> Snapshot | None:
         """The cached *full* snapshot while it still matches the inputs.
 
@@ -218,29 +234,34 @@ class Workspace:
         """
         return self.__cached(syntax_only=False)
 
+    @property
+    def fresh_syntax_snapshot(self) -> Snapshot | None:
+        return self.__cached(syntax_only=True)
+
     def invalidate(self) -> None:
-        """Drop the cached snapshots; the next request re-analyzes."""
+        """Advance the input revision and discard completed snapshots."""
+        self.__revision += 1
         self.__snapshot = None
         self.__syntax = None
 
-    def __snapshot_now(self, *, syntax_only: bool) -> Snapshot:
-        cached = self.__cached(syntax_only=syntax_only)
-        if cached is not None:
-            return cached
+    def capture(self) -> tuple[tuple[Path, ...], tuple[Document, ...], AnalysisSession]:
+        """Capture editor-owned inputs before handing analysis to a worker."""
+        return self.files(), tuple(self.__documents), self.__session
 
-        files = self.files()
-        result = self.__session.analyze(
-            files, documents=self.__documents, syntax_only=syntax_only
-        )
+    def accept(self, revision: int, files: tuple[Path, ...], result: AnalysisResult) -> Snapshot | None:
+        """Accept a worker result only if its inputs are still current."""
+        if revision != self.__revision:
+            return None
         self.__generation += 1
         snapshot = Snapshot(
             generation=self.__generation,
+            revision=revision,
             project_root=self.__project_root,
             project=self.__project,
             files=files,
             result=result,
         )
-        if syntax_only:
+        if result.syntax_only:
             self.__syntax = snapshot
         else:
             self.__snapshot = snapshot
@@ -251,9 +272,7 @@ class Workspace:
         cached = self.__syntax if syntax_only else self.__snapshot
         if cached is None:
             return None
-        files = self.files()
-        key = self.__session.snapshot_key(files, documents=self.__documents)
-        if cached.result.key == key and cached.files == files:
+        if cached.revision == self.__revision:
             return cached
         return None
 
