@@ -6,8 +6,7 @@ from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.parse.parser_type import TypeParser
-from compiler.frontend.parse.stream import (SEP_COMMA, SEP_PIPE,
-                                            TERM_FAT_ARROW, TERM_RANGLE,
+from compiler.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
                                             TERM_RBRACE, TERM_RBRACKET,
                                             TERM_RPAREN, TokenStream)
 
@@ -670,11 +669,16 @@ class ExprParser:
     # match-arm / pattern helpers
     # ------------------------------------------------------------------
 
-    def __parse_match_arm(self) -> tuple[AST.Pattern, AST.Block]:
+    def __parse_match_arm(self) -> AST.MatchArm:
         token = self.__stream.peek()
         if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
             self.__stream.advance()
         pattern = self.__parse_pattern()
+        guard: AST.Expr | None = None
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.If:
+            self.__stream.advance()
+            guard = self.parse_expr()
         self.__stream.consume_punctuator(Tok.PunctuatorKind.FatArrow)
         # 如果 arm 体以 '{' 开头，解析为 block；否则解析为裸表达式并包装为 block
         token = self.__stream.peek()
@@ -686,34 +690,180 @@ class ExprParser:
         token = self.__stream.peek()
         if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
             self.__stream.advance()
-        return pattern, block
+        return AST.MatchArm(span=pattern.span, pattern=pattern, guard=guard, body=block)
 
     def __parse_pattern(self) -> AST.Pattern:
+        first = self.__parse_pattern_or()
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Comma:
+            if not isinstance(first, AST.LiteralPattern):
+                raise ParseError("Comma-separated alternatives require literals", token.span)
+            alternatives: list[AST.Pattern] = [first]
+            while self.__at_pattern_punct(Tok.PunctuatorKind.Comma):
+                self.__stream.advance()
+                alternative = self.__parse_pattern_atom()
+                if not isinstance(alternative, AST.LiteralPattern) or type(alternative.literal) is not type(first.literal):
+                    raise ParseError("Comma-separated alternatives must use the same literal kind", alternative.span)
+                alternatives.append(alternative)
+            return AST.OrPattern(span=first.span + alternatives[-1].span, alternatives=alternatives)
+        return first
+
+    def __parse_pattern_or(self) -> AST.Pattern:
+        first = self.__parse_pattern_at()
+        alternatives = [first]
+        while self.__at_pattern_punct(Tok.PunctuatorKind.Pipe):
+            self.__stream.advance()
+            alternatives.append(self.__parse_pattern_at())
+        if len(alternatives) == 1:
+            return first
+        return AST.OrPattern(span=first.span + alternatives[-1].span, alternatives=alternatives)
+
+    def __parse_pattern_at(self) -> AST.Pattern:
+        token = self.__stream.peek()
+        following = self.__stream.peek_nth(1)
+        if isinstance(token, Tok.Identifier) and isinstance(following, Tok.Punctuator) and following.kind == Tok.PunctuatorKind.At:
+            name = self.__stream.consume_identifier()
+            self.__stream.advance()
+            inner = self.__parse_pattern_at()
+            return AST.BindPattern(span=name.span + inner.span, name=name, inner=inner)
+        return self.__parse_pattern_atom()
+
+    def __parse_pattern_atom(self) -> AST.Pattern:
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.Underscore:
+            self.__stream.advance()
+            return AST.WildcardPattern(span=token.span)
+        if isinstance(token, Tok.Keyword) and token.kind in (Tok.KeywordKind.True_, Tok.KeywordKind.False_):
+            self.__stream.advance()
+            literal = Tok.BoolLiteral(raw=token.kind.value, span=token.span, value=token.kind == Tok.KeywordKind.True_)
+            return AST.LiteralPattern(span=token.span, literal=literal)
+        if isinstance(token, (Tok.IntLiteral, Tok.CharLiteral, Tok.StrLiteral)) or (
+            isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Minus
+        ):
+            literal = self.__parse_pattern_literal()
+            next_token = self.__stream.peek()
+            if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.DotDot:
+                if not isinstance(literal, (Tok.IntLiteral, Tok.CharLiteral)):
+                    raise ParseError("Range endpoints must be integer or character literals", next_token.span)
+                self.__stream.advance()
+                upper = self.__parse_pattern_literal()
+                if not isinstance(upper, type(literal)):
+                    raise ParseError("Range endpoints must have the same literal kind", upper.span)
+                return AST.RangePattern(span=literal.span + upper.span, lower=literal, upper=upper)
+            return AST.LiteralPattern(span=literal.span, literal=literal)
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LBracket:
+            self.__stream.advance()
+            prefix: list[AST.Pattern] = []
+            suffix: list[AST.Pattern] = []
+            rest = False
+            while not self.__at_pattern_punct(Tok.PunctuatorKind.RBracket):
+                item = self.__stream.peek()
+                if isinstance(item, Tok.Punctuator) and item.kind == Tok.PunctuatorKind.DotDot:
+                    if rest:
+                        raise ParseError("Only one '..' is allowed in a sequence pattern", item.span)
+                    self.__stream.advance()
+                    rest = True
+                else:
+                    (suffix if rest else prefix).append(self.__parse_pattern_or())
+                item = self.__stream.peek()
+                if isinstance(item, Tok.Punctuator) and item.kind == Tok.PunctuatorKind.Comma:
+                    self.__stream.advance()
+                else:
+                    break
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.RBracket)
+            return AST.SequencePattern(span=token.span, prefix=prefix, suffix=suffix, rest=rest)
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.LParen:
+            self.__stream.advance()
+            if self.__at_pattern_punct(Tok.PunctuatorKind.RParen):
+                self.__stream.advance()
+                return AST.TuplePattern(span=token.span, elements=[])
+            first = self.__parse_pattern_or()
+            if self.__at_pattern_punct(Tok.PunctuatorKind.RParen):
+                self.__stream.advance()
+                return first
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.Comma)
+            elements = [first]
+            while not self.__at_pattern_punct(Tok.PunctuatorKind.RParen):
+                elements.append(self.__parse_pattern_or())
+                if not self.__at_pattern_punct(Tok.PunctuatorKind.Comma):
+                    break
+                self.__stream.advance()
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+            return AST.TuplePattern(span=token.span, elements=elements)
+        if isinstance(token, (Tok.Identifier, Tok.Keyword)):
+            return self.__parse_named_pattern()
+        raise ParseError(f"Unexpected token '{token}' in pattern", token.span)
+
+    def __parse_pattern_literal(self) -> Tok.IntLiteral | Tok.CharLiteral | Tok.StrLiteral:
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.Minus:
+            return self.__parse_int_pattern_value()
+        if isinstance(token, (Tok.IntLiteral, Tok.CharLiteral, Tok.StrLiteral)):
+            self.__stream.advance()
+            return token
+        raise ParseError("Expected literal in pattern", token.span)
+
+    def __parse_named_pattern(self) -> AST.Pattern:
+        mark = self.__stream.mark()
+        first_token = self.__stream.peek()
+        qualifier = self.__type_parser.parse_type()
         next_token = self.__stream.peek()
-        match next_token:
-            case Tok.IntLiteral():
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
-                return AST.IntPattern(span=values[0].span, values=values)
-            case Tok.Punctuator(kind=Tok.PunctuatorKind.Minus):
-                values = self.__stream.consume_separated(self.__parse_int_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
-                return AST.IntPattern(span=values[0].span, values=values)
-            case Tok.CharLiteral():
-                values = self.__stream.consume_separated(self.__parse_char_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
-                return AST.CharPattern(span=values[0].span, values=values)
-            case Tok.StrLiteral():
-                values = self.__stream.consume_separated(self.__parse_str_pattern_value, SEP_COMMA, TERM_FAT_ARROW)
-                return AST.StrPattern(span=values[0].span, values=values)
-            case Tok.Identifier():
-                next_next_token = self.__stream.peek_nth(1)
-                if isinstance(next_next_token, Tok.Punctuator) and next_next_token.kind == Tok.PunctuatorKind.LParen:
-                    return self.__parse_enum_payload_pattern()
-                variants = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_PIPE, TERM_FAT_ARROW)
-                return AST.EnumPattern(span=variants[0].span, variants=variants)
-            case Tok.Keyword(kind=Tok.KeywordKind.Underscore):
-                span = self.__stream.consume_keyword(Tok.KeywordKind.Underscore).span
-                return AST.WildcardPattern(span=span)
-            case _:
-                raise ParseError(f"Unexpected token '{next_token}' in pattern", next_token.span)
+        if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Dot:
+            self.__stream.advance()
+            name = self.__stream.consume_identifier()
+        elif isinstance(qualifier, ASTTy.InstanceType) and isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.LParen:
+            assert isinstance(first_token, Tok.Identifier)
+            name = AST.Identifier(span=first_token.span, name=first_token.name)
+        else:
+            self.__stream.reset(mark)
+            qualifier = None
+            name = self.__stream.consume_identifier()
+        next_token = self.__stream.peek()
+        if not isinstance(next_token, Tok.Punctuator) or next_token.kind != Tok.PunctuatorKind.LParen:
+            if qualifier is not None:
+                return AST.ConstructPattern(span=name.span, name=name, qualifier=qualifier, positional=None, named=None)
+            return AST.NamePattern(span=name.span, name=name)
+        self.__stream.advance()
+        positional: list[AST.Pattern] = []
+        named: list[AST.FieldPattern] | None = None
+        rest = False
+        while not self.__at_pattern_punct(Tok.PunctuatorKind.RParen):
+            item = self.__stream.peek()
+            following = self.__stream.peek_nth(1)
+            if isinstance(item, Tok.Punctuator) and item.kind == Tok.PunctuatorKind.DotDot:
+                if rest:
+                    raise ParseError("Only one '..' is allowed in a field pattern", item.span)
+                self.__stream.advance()
+                rest = True
+                if self.__at_pattern_punct(Tok.PunctuatorKind.Comma):
+                    self.__stream.advance()
+                if not self.__at_pattern_punct(Tok.PunctuatorKind.RParen):
+                    raise ParseError("'..' must be the last field", item.span)
+                break
+            elif isinstance(item, (Tok.Identifier, Tok.Keyword)) and isinstance(following, Tok.Punctuator) and following.kind == Tok.PunctuatorKind.Equal:
+                if positional:
+                    raise ParseError("Cannot mix positional and named fields", item.span)
+                if named is None:
+                    named = []
+                field = self.__stream.consume_identifier()
+                self.__stream.advance()
+                subpattern = self.__parse_pattern_or()
+                named.append(AST.FieldPattern(span=field.span, name=field, pattern=subpattern))
+            else:
+                if named is not None or rest:
+                    raise ParseError("Cannot mix positional and named fields", item.span)
+                positional.append(self.__parse_pattern_or())
+            next_token = self.__stream.peek()
+            if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Comma:
+                self.__stream.advance()
+            else:
+                break
+        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+        return AST.ConstructPattern(span=name.span, name=name, qualifier=qualifier, positional=None if named is not None or rest else positional, named=named, rest=rest)
+
+    def __at_pattern_punct(self, kind: Tok.PunctuatorKind) -> bool:
+        token = self.__stream.peek()
+        return isinstance(token, Tok.Punctuator) and token.kind == kind
 
     def __parse_int_pattern_value(self) -> Tok.IntLiteral:
         token = self.__stream.peek()
@@ -728,24 +878,3 @@ class ExprParser:
                 return Tok.IntLiteral(span=token.span + next_token.span, raw="-" + next_token.raw, value=-next_token.value, suffix=next_token.suffix)
             raise ParseError(f"Expected integer literal after '-' in pattern but got '{next_token}'", token.span)
         raise ParseError(f"Expected integer literal or '-' in pattern but got '{token}'", token.span)
-
-    def __parse_char_pattern_value(self) -> Tok.CharLiteral:
-        token = self.__stream.peek()
-        if isinstance(token, Tok.CharLiteral):
-            self.__stream.advance()
-            return token
-        raise ParseError(f"Expected character literal in pattern but got '{token}'", token.span)
-
-    def __parse_str_pattern_value(self) -> Tok.StrLiteral:
-        token = self.__stream.peek()
-        if isinstance(token, Tok.StrLiteral):
-            self.__stream.advance()
-            return token
-        raise ParseError(f"Expected string literal in pattern but got '{token}'", token.span)
-
-    def __parse_enum_payload_pattern(self) -> AST.PayloadPattern:
-        variant_token = self.__stream.consume_identifier()
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        fields = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_COMMA, TERM_RPAREN)
-        self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
-        return AST.PayloadPattern(span=variant_token.span, variant=variant_token, fields=fields)

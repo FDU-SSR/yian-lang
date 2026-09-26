@@ -1,7 +1,6 @@
-// Test match on &enum creates reference bindings instead of copies
+// Matching an enum reference binds references to its payload fields.
 //
-// When matching on a pointer to an enum, payload field bindings
-// should be pointers (&T) to the original fields, not copies.
+// Payload field bindings refer to the original fields, not copies.
 
 enum E {
     A { n: i32 },
@@ -11,11 +10,10 @@ enum E {
 fn main() {
     let e: E = E.A(42);
 
-    // match on &e: bindings should be &i32, &i64 (pointers)
     match &e {
         A(n) => {
-            // n has type &i32, so *n dereferences the pointer
-            assert *n == 42;
+            let field: i32& = n;
+            assert *field == 42;
         },
         B(n) => {
             assert false;

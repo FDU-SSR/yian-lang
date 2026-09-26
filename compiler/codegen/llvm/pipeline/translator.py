@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from llvmlite import ir
 
-from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.pipeline.builder import LLBuilder
@@ -212,6 +211,14 @@ class LLTranslator:
             case IR.ExtractValue():
                 value = builder.aggregates.extract_value(self.__resolve(builder, stmt.base), stmt.field_index)
                 self.__bind_result(stmt.result, value)
+            case IR.EnumIsVariant():
+                value = builder.aggregates.enum_is_variant(self.__resolve(builder, stmt.address), stmt.variant)
+                self.__bind_result(stmt.result, value)
+            case IR.EnumPayloadFieldPtr():
+                value = builder.aggregates.enum_payload_field_ptr(
+                    self.__resolve(builder, stmt.address), stmt.payload_type, stmt.field_index,
+                )
+                self.__bind_result(stmt.result, value)
             case IR.Delete():
                 builder.allocation.delete(self.__resolve(builder, stmt.ptr))
             case IR.GenKey():
@@ -370,130 +377,5 @@ class LLTranslator:
                 builder.flow.runtime_fail(code)
             case IR.ProcessExit(code=code):
                 builder.system.process_exit(self.__resolve(builder, code))
-            case IR.Match():
-                self.__emit_match(builder, terminator)
-
-    # ------------------------------------------------------------------
-    # match
-    # ------------------------------------------------------------------
-
-    def __emit_match(self, builder: LLBuilder, t: IR.Match) -> None:
-        matched = self.__resolve(builder, t.value)
-        # Dispatch on the type the scrutinee stands for: an alias of an enum has
-        # to switch on the same discriminant as the enum itself.
-        matched_type = self.__type_ctx[
-            self.__type_ctx.resolve_aliases(t.value.type_id)
-        ]
-        default_label = t.default.label if t.default else ""
-
-        is_enum_ref = t.is_ref
-        inner_type = matched_type
-        if is_enum_ref:
-            assert isinstance(matched_type, (Type.PointerType, Type.RefType))
-            inner_type = self.__type_ctx[
-                self.__type_ctx.resolve_aliases(matched_type.pointee_type)
-            ]
-
-        if isinstance(inner_type, (Type.IntType, Type.CharType, Type.BoolType)):
-            cases = [(self.__resolve(builder, arm.pattern.value), arm.body.label)
-                     for arm in t.arms
-                     if isinstance(arm.pattern, (IR.IntPattern, IR.CharPattern))]
-            builder.flow.switch(
-                matched.ir_val,
-                [(case.ir_val, label) for case, label in cases],
-                default_label,
-            )
-
-        elif isinstance(inner_type, Type.EnumType):
-            if self.__ll_type_ctx.is_niche_enum(inner_type.type_id):
-                self.__emit_niche_match(builder, t, matched, is_enum_ref, default_label)
-                return
-
-            if is_enum_ref:
-                # matched is a pointer to the enum (&E). Load it to extract discriminant.
-                enum_val = builder.memory.load(matched)
-                disc = builder.aggregates.extract_value(enum_val, 0)
-            else:
-                disc = builder.aggregates.extract_value(matched, 0)
-
-            cases = [(builder.i32(arm.pattern.variant.discriminant), arm.body.label)
-                     for arm in t.arms
-                     if isinstance(arm.pattern, IR.EnumPattern)]
-
-            if not is_enum_ref:
-                # Alloca the matched value so unpack_enum_payload can GEP on a pointer.
-                # Must happen before switch terminates the block.
-                matched_ptr = builder.memory.alloca(matched.type_id)
-                builder.memory.store(matched, matched_ptr)
-            else:
-                # Ref mode: matched IS already a pointer to the enum; no copy needed.
-                matched_ptr = matched
-
-            builder.flow.switch(
-                disc.ir_val,
-                [(case.ir_val, label) for case, label in cases],
-                default_label,
-            )
-
-            # Save position: switch terminates this block, unpack must go into arm blocks.
-            saved_label = builder.current_block_label
-
-            for arm in t.arms:
-                if isinstance(arm.pattern, IR.EnumPattern) and arm.pattern.fields \
-                        and arm.pattern.variant.payload_type is not None:
-                    field_pairs = [(i, f.symbol_id) for i, f in enumerate(arm.pattern.fields)]
-                    builder.position_at(arm.body.label, where=BuilderPosition.First)
-                    if is_enum_ref:
-                        builder.aggregates.unpack_enum_payload_ref(
-                            matched_ptr, arm.pattern.variant.payload_type, field_pairs)
-                    else:
-                        builder.aggregates.unpack_enum_payload(
-                            matched_ptr, arm.pattern.variant.payload_type, field_pairs)
-
-            # Restore builder to original block so __build can continue correctly.
-            builder.position_at(saved_label)
-
-    def __emit_niche_match(
-        self, builder: LLBuilder, t: IR.Match, matched: LLValue,
-        is_enum_ref: bool, default_label: str,
-    ) -> None:
-        if is_enum_ref:
-            enum_value = builder.memory.load(matched)
-            matched_ptr = matched
-        else:
-            enum_value = matched
-            matched_ptr = builder.memory.alloca(matched.type_id)
-            builder.memory.store(matched, matched_ptr)
-
-        zero_label, nonzero_label = default_label, default_label
-        for arm in t.arms:
-            if not isinstance(arm.pattern, IR.EnumPattern):
-                continue
-            if arm.pattern.variant.payload_type is None:
-                zero_label = arm.body.label
-            else:
-                nonzero_label = arm.body.label
-
-        zero = builder.aggregates.is_all_zero(enum_value)
-        builder.flow.cond_branch_optional(
-            zero.ir_val,
-            zero_label,
-            nonzero_label,
-            "match.niche.zero",
-            "match.niche.nonzero",
-        )
-        saved_label = builder.current_block_label
-
-        for arm in t.arms:
-            if isinstance(arm.pattern, IR.EnumPattern) and arm.pattern.fields \
-                    and arm.pattern.variant.payload_type is not None:
-                field_pairs = [(i, f.symbol_id) for i, f in enumerate(arm.pattern.fields)]
-                builder.position_at(arm.body.label, where=BuilderPosition.First)
-                if is_enum_ref:
-                    builder.aggregates.unpack_enum_payload_ref(
-                        matched_ptr, arm.pattern.variant.payload_type, field_pairs)
-                else:
-                    builder.aggregates.unpack_enum_payload(
-                        matched_ptr, arm.pattern.variant.payload_type, field_pairs)
-
-        builder.position_at(saved_label)
+            case IR.Unreachable():
+                builder.flow.builder.unreachable()

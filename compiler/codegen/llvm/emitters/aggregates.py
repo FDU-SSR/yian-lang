@@ -173,94 +173,50 @@ class AggregateEmitter:
             self.__memory.store(field, LLValue(self.__type_ctx.alloc_pointer(payload_type_fields[index].type_id), field_ptr))  # type: ignore
         return self.__memory.load(enum_ptr)
 
-    def unpack_enum_payload(
-        self, matched: LLValue, payload_type_id: int, fields: list[tuple[int, int]],
-    ) -> None:
-        payload_type = self.__type_ctx[payload_type_id]
-        assert isinstance(payload_type, Type.StructType)
-        matched_type = self.__type_ctx[matched.type_id]
-        enum_type_id = matched_type.pointee_type \
-            if isinstance(matched_type, (Type.PointerType, Type.RefType)) else matched.type_id
-        base_ptr = self.__address(matched, enum_type_id)
+    def enum_is_variant(self, address: LLValue, variant: Type.EnumVariant) -> LLValue:
+        enum_value = self.__memory.load(address)
+        if self.__ll_type_ctx.is_niche_enum(enum_value.type_id):
+            zero = self.is_all_zero(enum_value)
+            if variant.payload_type is None:
+                return zero
+            return LLValue(self.__type_ctx.bool_id, self.__builder.not_(zero.ir_val))  # type: ignore
+        discriminant = self.extract_value(enum_value, 0)
+        result = self.__builder.icmp_unsigned("==", discriminant.ir_val, self.__i32(variant.discriminant))  # type: ignore
+        return LLValue(self.__type_ctx.bool_id, result)
 
+    def enum_payload_field_ptr(
+        self, address: LLValue, payload_type_id: int, field_index: int,
+    ) -> LLValue:
+        address_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(address.type_id)]
+        assert isinstance(address_ty, (Type.PointerType, Type.RefType))
+        enum_type_id = self.__type_ctx.resolve_aliases(address_ty.pointee_type)
+        fields = self.__type_ctx.get_struct_fields(payload_type_id)
+        field_type_id = fields[field_index].type_id
+        result_type_id = self.__type_ctx.alloc_pointer(field_type_id)
+        if self.__ll_type_ctx.is_zst(field_type_id):
+            return self.__core.ir.undef(result_type_id)
+        base = self.__pointers.fat_addr(address, enum_type_id)
         if self.__ll_type_ctx.is_niche_enum(enum_type_id):
-            payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
-            for field_index, symbol_id in fields:
-                if field_index == 0:
-                    field_type_id = payload_fields[field_index].type_id
-                    field_ptr = LLValue(self.__type_ctx.alloc_pointer(field_type_id), base_ptr.ir_val)  # type: ignore
-                    field_value = self.__memory.load(field_ptr)
-                    self.__memory.store(field_value, self.__core.context.func.get_var_ptr(symbol_id))
-            return
-        if self.__type_ctx.is_zst(payload_type_id):
-            return
-
-        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
-        enum_ll = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
-        payload_ll = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type
-        payload = self.__builder.gep(
-            base_ptr.ir_val, [self.__i32(0), self.__i32(1)],
-            inbounds=True, source_etype=enum_ll,
-        )  # type: ignore
-        for field_index, symbol_id in fields:
-            if field_index >= len(payload_fields):
-                break
-            field_type_id = payload_fields[field_index].type_id
-            field_ptr = self.__builder.gep(
-                payload,
-                [self.__i32(0), self.__i32(field_index)],
-                inbounds=True,
-                source_etype=payload_ll,
+            assert field_index == 0
+            field_addr = base.ir_val
+        else:
+            enum_ll = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
+            payload_ll = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type
+            payload_addr = self.__builder.gep(
+                base.ir_val, [self.__i32(0), self.__i32(1)],
+                inbounds=True, source_etype=enum_ll,
             )  # type: ignore
-            field_value = self.__memory.load(
-                LLValue(self.__type_ctx.alloc_pointer(field_type_id), field_ptr)  # type: ignore
-            )
-            self.__memory.store(field_value, self.__core.context.func.get_var_ptr(symbol_id))
-
-    def unpack_enum_payload_ref(
-        self, matched: LLValue, payload_type_id: int, fields: list[tuple[int, int]],
-    ) -> None:
-        payload_type = self.__type_ctx[payload_type_id]
-        assert isinstance(payload_type, Type.StructType)
-        matched_type = self.__type_ctx[matched.type_id]
-        enum_type_id = matched_type.pointee_type \
-            if isinstance(matched_type, (Type.PointerType, Type.RefType)) else matched.type_id
-        base_ptr = self.__address(matched, enum_type_id)
-        payload_fields = self.__type_ctx.get_struct_fields(payload_type_id)
-
-        if self.__ll_type_ctx.is_niche_enum(enum_type_id):
-            for field_index, symbol_id in fields:
-                if field_index == 0:
-                    field_type_id = payload_fields[field_index].type_id
-                    field_ptr = LLValue(self.__type_ctx.alloc_pointer(field_type_id), base_ptr.ir_val)  # type: ignore
-                    self.__memory.store(
-                        self.__pointers.promote_fat(field_ptr),
-                        self.__core.context.func.get_var_ptr(symbol_id),
-                    )
-            return
-        if self.__type_ctx.is_zst(payload_type_id):
-            return
-
-        enum_ll = self.__ll_type_ctx.get_ll_type(enum_type_id).ir_type
-        payload_ll = self.__ll_type_ctx.get_ll_type(payload_type_id).ir_type
-        payload = self.__builder.gep(
-            base_ptr.ir_val, [self.__i32(0), self.__i32(1)],
-            inbounds=True, source_etype=enum_ll,
-        )  # type: ignore
-        for field_index, symbol_id in fields:
-            if field_index >= len(payload_fields):
-                break
-            field_type_id = payload_fields[field_index].type_id
-            field_ptr = self.__builder.gep(
-                payload,
-                [self.__i32(0), self.__i32(field_index)],
-                inbounds=True,
-                source_etype=payload_ll,
+            field_addr = self.__builder.gep(
+                payload_addr, [self.__i32(0), self.__i32(field_index)],
+                inbounds=True, source_etype=payload_ll,
             )  # type: ignore
-            field_value = self.__pointers.promote_fat(
-                LLValue(self.__type_ctx.alloc_pointer(field_type_id), field_ptr)  # type: ignore
-            )
-            self.__memory.store(field_value, self.__core.context.func.get_var_ptr(symbol_id))
+        pointer = LLValue(result_type_id, field_addr)  # type: ignore
+        if not self.__pointers.is_fat(address):
+            return self.__pointers.promote_fat(pointer)
+        word = self.__pointers.extract_fat_field(address, ABI.FAT_WORD)
+        return self.__pointers.build_fat(
+            pointer, word, self.__u64(0), self.__u64(1), result_type_id,
+        )
 
     def is_all_zero(self, value: LLValue) -> LLValue:
         """Compare each scalar field of a niche payload with its zero value."""
@@ -275,11 +231,6 @@ class AggregateEmitter:
             assert result is not None
             return LLValue(self.__type_ctx.bool_id, result)
         return LLValue(self.__type_ctx.bool_id, self.__is_field_zero(value.ir_val))
-
-    def __address(self, value: LLValue, pointee_type_id: int) -> LLValue:
-        if self.__pointers.is_fat(value):
-            return self.__pointers.fat_addr(value, pointee_type_id)
-        return value
 
     def __slice_size(self, fields: list[LLValue], index: int) -> LLValue:
         for field in fields[index + 1:]:

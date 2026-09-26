@@ -557,16 +557,18 @@ class OpBuilder:
         if struct_field is None:
             raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
 
-        if struct_field.access_mode == Type.AccessMode.Private:
-            if not self.__can_access_private_field(struct_ty):
-                raise AnalysisError(
-                    f"Field '{field_name}' of struct '{self.__type_ctx.get_name(receiver.type_id)}' "
-                    f"is private and cannot be accessed from unit {self.__ctx.unit_id} "
-                    f"unless inside an impl for that struct",
-                    span,
-                )
+        self.check_field_visible(struct_ty, struct_field, span)
 
         return HIR.FieldAccess(span, receiver, struct_field, struct_field.type_id, is_place=receiver.is_place)
+
+    def check_field_visible(self, struct_ty: Type.StructType, field: Type.StructField, span: SrcSpan) -> None:
+        if field.access_mode == Type.AccessMode.Private and not self.__can_access_private_field(struct_ty):
+            raise AnalysisError(
+                f"Field '{field.name}' of struct '{self.__type_ctx.get_name(struct_ty.type_id)}' "
+                f"is private and cannot be accessed from unit {self.__ctx.unit_id} "
+                f"unless inside an impl for that struct",
+                span,
+            )
 
     def __can_access_private_field(self, struct_ty: Type.StructType) -> bool:
         """Check whether the current def context allows private field access to *struct_ty*."""

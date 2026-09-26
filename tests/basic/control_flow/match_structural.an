@@ -1,0 +1,123 @@
+from std.core.vec import Vec;
+
+struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+struct Marker {}
+
+enum Color {
+    Red,
+    Blue,
+}
+
+fn main() {
+    let point = Point(0, 7);
+    let coordinate: i32 = match point {
+        Point(x = 0, y = y) => y,
+        Point(..) => -1,
+    };
+    assert coordinate == 7;
+
+    let alternate = Point(1, 8);
+    let common_binding: i32 = match alternate {
+        Point(x = 0, y = n) | Point(x = 1, y = n) => n,
+        _ => 0,
+    };
+    assert common_binding == 8;
+
+    let color: Option<Color> = Option<Color>.Some(Color.Red);
+    let nested: i32 = match color {
+        Some(Color.Red) => 1,
+        Some(Color.Blue) => 2,
+        None => 0,
+    };
+    assert nested == 1;
+
+    let wrapped: i32 = match color {
+        whole @ Some(inner) if nested == 1 => match inner { Red => 10, Blue => 0 },
+        _ => 0,
+    };
+    assert wrapped == 10;
+
+    let pair = (true, 4i32);
+    let tuple_value: i32 = match pair {
+        (true, 2..5) => 1,
+        (true, _) => 2,
+        (false, _) => 3,
+    };
+    assert tuple_value == 1;
+
+    let lower_case: bool = match 'c' {
+        'a'..'z' => true,
+        _ => false,
+    };
+    assert lower_case;
+
+    let values = [3i32, 4, 5];
+    let array_value: i32 = match values {
+        [3, middle, 5] => middle,
+        [_, _, _] => 0,
+    };
+    assert array_value == 4;
+
+    let view: i32[] = values[0u64..3];
+    let slice_value: i32 = match view {
+        [] => 0,
+        [first, .., last] => first + last,
+        [_, ..] => -1,
+    };
+    assert slice_value == 8;
+    let length_category: i32 = match view {
+        [] => 0,
+        [_, ..] => 1,
+    };
+    assert length_category == 1;
+
+    let empty = Vec<i32>.new();
+    let private_ignored: bool = match empty {
+        Vec<i32>(..) => true,
+    };
+    assert private_ignored;
+
+    let point_reference: Point& = &point;
+    let field_reference: i32& = match point_reference {
+        Point(y = field, ..) => field,
+    };
+    assert *field_reference == 7;
+
+    let nested_point: Option<Point> = Option<Point>.Some(point);
+    let nested_reference: Option<Point>& = &nested_point;
+    match nested_reference {
+        Some(Point(y = field, ..)) => {
+            let nested_field_reference: i32& = field;
+            assert *nested_field_reference == 7;
+        },
+        None => assert false,
+    }
+
+    let array_reference: i32[3]& = &values;
+    let element_reference: i32& = match array_reference {
+        [_, element, _] => element,
+    };
+    assert *element_reference == 4;
+
+    let slice_reference: i32[]& = &view;
+    match slice_reference {
+        [first, ..] => {
+            let first_reference: i32& = first;
+            assert *first_reference == 3;
+        },
+        _ => {},
+    }
+
+    let marker = Marker();
+    let marker_match = match &marker {
+        bound @ _ => {
+            let marker_reference: Marker& = bound;
+            true
+        },
+    };
+    assert marker_match;
+}

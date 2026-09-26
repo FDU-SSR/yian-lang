@@ -22,7 +22,10 @@ fn main() {
     assert value_match == 43: "value match";
 
     let ref_match: i32 = match &some {
-        Some(value) => (*value)[0],
+        Some(value) => {
+            let pointer_reference: i32*& = value;
+            (*pointer_reference)[0]
+        },
         None => -1,
     };
     assert ref_match == 42: "reference match";

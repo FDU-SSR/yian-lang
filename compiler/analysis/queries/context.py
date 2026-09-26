@@ -18,6 +18,7 @@ class QueryContext:
                 type_ctx=result.type_ctx,
                 import_edges=result.import_edges,
                 packages=result.packages,
+                def_points=result.def_points,
             )
 
 

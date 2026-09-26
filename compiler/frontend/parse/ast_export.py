@@ -266,14 +266,16 @@ def __export_match(stmt: AST.Match, guides: list[bool], is_last: bool) -> str:
     res += __export_expr_child("Value", stmt.expr, guides, is_last, False)
     child_guides = guides + [not is_last]
     res += __line(child_guides, True, "Arms:")
-    res += __export_items_with_handler(stmt.arms, child_guides + [False], lambda arm, g, last: __export_stmt_match_arm(arm[0], arm[1], g, last))
+    res += __export_items_with_handler(stmt.arms, child_guides + [False], lambda arm, g, last: __export_stmt_match_arm(arm, g, last))
     return res
 
 
-def __export_stmt_match_arm(pattern: AST.Pattern, arm_block: AST.Block, guides: list[bool], is_last: bool) -> str:
-    res = __line(guides, is_last, f"Arm: {pattern}")
+def __export_stmt_match_arm(arm: AST.MatchArm, guides: list[bool], is_last: bool) -> str:
+    res = __line(guides, is_last, f"Arm: {arm.pattern}")
     guides.append(not is_last)
-    res += __export_block(arm_block, guides)
+    if arm.guard is not None:
+        res += __export_expr_child("Guard", arm.guard, guides, is_last, False)
+    res += __export_block(arm.body, guides)
     guides.pop()
     return res
 

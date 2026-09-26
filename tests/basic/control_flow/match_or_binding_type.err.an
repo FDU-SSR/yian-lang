@@ -1,0 +1,12 @@
+enum Value {
+    Number { value: i32 },
+    Flag { value: bool },
+}
+
+fn main() {
+    let value = Value.Number(1);
+    let result: i32 = match value {
+        Number(x) | Flag(x) => 1,
+        _ => 0,
+    };
+}

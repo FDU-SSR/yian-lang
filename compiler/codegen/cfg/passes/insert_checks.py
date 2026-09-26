@@ -225,6 +225,8 @@ class _CheckPlanner:
                 return
             case IR.Load(ptr=ptr):
                 self.__plan_access(ptr, resolve_aliases=True)
+            case IR.EnumIsVariant(address=ptr):
+                self.__plan_access(ptr, resolve_aliases=True)
             case IR.Store(ptr=ptr):
                 self.__plan_access(ptr, resolve_aliases=False)
             case IR.ElementPtr(result=reg, base=base, offset=offset):
@@ -234,7 +236,7 @@ class _CheckPlanner:
                 if self.__prov.is_fat_pointer(base):
                     self.__elem[reg.name] = (reg, base, offset)
                 return
-            case IR.FieldPtr(result=reg, base=base):
+            case IR.FieldPtr(result=reg, base=base) | IR.EnumPayloadFieldPtr(result=reg, address=base):
                 merged_elem_name = self.__plan_field_ptr(base)
                 self.__out.append(stmt)
                 self.__prov.observe(stmt)

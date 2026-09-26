@@ -30,23 +30,23 @@ impl<T> T[] {
     }
 
     // Get element at index
-    pub fn get(index: u64) -> Option<T*> {
+    pub fn get(index: u64) -> Option<T&> {
         if index >= self.len() {
-            return Option<T*>.None;
+            return Option<T&>.None;
         }
         let ptr = self.as_struct().ptr + index;
-        Option<T*>.Some(ptr)
+        Option<T&>.Some(ptr)
     }
 
     // Get first element of the slice
-    pub fn first() -> Option<T*> {
+    pub fn first() -> Option<T&> {
         self.get(0)
     }
 
     // Get last element of the slice
-    pub fn last() -> Option<T*> {
+    pub fn last() -> Option<T&> {
         if self.len() == 0 {
-            return Option<T*>.None;
+            return Option<T&>.None;
         }
         self.get(self.len() - 1)
     }
@@ -98,25 +98,25 @@ impl<T> RevSliceIter<T> {
     }
 }
 
-impl<T> Iterator<T*> for SliceIter<T> {
-    fn next() -> Option<T*> {
+impl<T> Iterator<T&> for SliceIter<T> {
+    fn next() -> Option<T&> {
         if self.n == 0 {
-            return Option<T*>.None;
+            return Option<T&>.None;
         }
         let current = self.ptr;
         self.ptr += 1
         self.n -= 1
-        Option<T*>.Some(current)
+        Option<T&>.Some(current)
     }
 }
 
-impl<T> Iterator<T*> for RevSliceIter<T> {
-    pub fn next() -> Option<T*> {
+impl<T> Iterator<T&> for RevSliceIter<T> {
+    pub fn next() -> Option<T&> {
         if self.n == 0 {
-            return Option<T*>.None
+            return Option<T&>.None
         }
         self.n -= 1
-        Option<T*>.Some(self.ptr + self.n)
+        Option<T&>.Some(self.ptr + self.n)
     }
 }
 
@@ -144,8 +144,11 @@ impl<T> PartialEq<T[]> for T[] {
     }
 }
 
-impl<T> Index<u64, T*> for T[] {
-    fn index(index: u64&) -> T* {
+impl<T> Index<u64, T&> for T[] {
+    fn index(index: u64&) -> T& {
+        if *index >= self.len() {
+            @runtime_fail("S001");
+        }
         self.ptr() + *index
     }
 }

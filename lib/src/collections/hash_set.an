@@ -33,11 +33,11 @@ impl<T> HashSet<T> {
         true
     }
 
-    pub fn contains(value: T*) -> bool {
+    pub fn contains(value: T&) -> bool {
         self.map.contains(value)
     }
 
-    pub fn remove(value: T*) -> bool {
+    pub fn remove(value: T&) -> bool {
         self.map.remove(value)
     }
 

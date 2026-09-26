@@ -264,7 +264,7 @@ impl Deref<str> for String {
 // =============================================================================
 
 impl From<str> for String {
-    static pub fn from(value: str*) -> Self {
+    static pub fn from(value: str&) -> Self {
         // 一次分配 + 一次 @memcpy, 不再走 `Vec::from(slice)` 的逐元素 clone+push;
         // 语义上同样只复制缓冲区本身。
         let bytes = value.as_slice();

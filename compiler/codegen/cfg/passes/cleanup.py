@@ -36,12 +36,7 @@ def _eliminate_dead_code(func: IR.Function) -> None:
             case IR.CondBr():
                 worklist.append(term.then_block)
                 worklist.append(term.else_block)
-            case IR.Match():
-                for arm in term.arms:
-                    worklist.append(arm.body)
-                if term.default is not None:
-                    worklist.append(term.default)
-            case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
+            case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit() | IR.Unreachable():
                 pass
 
     # ── filter blocks ──
@@ -84,11 +79,8 @@ def _sort_blocks_rpo(func: IR.Function) -> None:
                 case IR.CondBr(then_block=then, else_block=else_):
                     succs.append(then)
                     succs.append(else_)
-                case IR.Match(arms=arms, default=default):
-                    for arm in arms:
-                        succs.append(arm.body)
-                    if default is not None:
-                        succs.append(default)
+                case IR.Unreachable():
+                    pass
                 case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
                     pass
         successors[id(block)] = succs

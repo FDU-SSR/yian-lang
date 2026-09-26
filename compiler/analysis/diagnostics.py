@@ -1,9 +1,9 @@
 """Structured compiler diagnostics.
 
 Source-level diagnostics carry a code, a severity, a message and a source span.
-A code is ``E`` plus one group digit and two digits: ``E1xx`` lexical, ``E2xx``
+Error codes use ``E`` plus one group digit and two digits: ``E1xx`` lexical, ``E2xx``
 syntax, ``E3xx`` names/imports/visibility, ``E4xx`` types, ``E5xx`` other
-compile-time checks.  One code stands for one diagnostic *condition* (not one
+compile-time checks. Warnings use ``W`` followed by three digits. One code stands for one diagnostic *condition* (not one
 message text), and a shipped code is never renumbered or reused.
 
 Every compiler error path funnels through :func:`diagnostic_from_error`, so the
@@ -47,6 +47,7 @@ class Stage(Enum):
     FINALIZE = "finalize"
     TYPE_CHECK = "type_check"
     COMPTIME = "comptime"
+    MATCH_COVERAGE = "match_coverage"
     DEFINITE_ASSIGNMENT = "definite_assignment"
     CODEGEN = "codegen"
 
@@ -98,7 +99,9 @@ E499_TYPE = "E499"
 E501_RESTRICTED_OPERATION = "E501"
 E502_DEFINITE_ASSIGNMENT = "E502"
 E503_COMPTIME_CONDITION = "E503"
+E504_NONEXHAUSTIVE_MATCH = "E504"
 E599_INTERNAL = "E599"
+W501_UNREACHABLE_PATTERN = "W501"
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,8 @@ def __analysis_code(message: str, stage: Stage | None) -> str:
         return E502_DEFINITE_ASSIGNMENT
     if stage is Stage.COMPTIME:
         return E503_COMPTIME_CONDITION
+    if stage is Stage.MATCH_COVERAGE:
+        return E504_NONEXHAUSTIVE_MATCH
     if stage is Stage.CODEGEN:
         return E599_INTERNAL
     if stage is Stage.FINALIZE:

@@ -1,7 +1,6 @@
-// Test mutation through match &enum reference bindings
+// Matching an enum reference permits mutation through payload references.
 //
-// When matching on &enum, the reference bindings should allow
-// mutation of the original value through dereference.
+// Payload field references refer to the original value.
 
 enum E {
     A { n: i32 },
@@ -11,10 +10,11 @@ enum E {
 fn main() {
     let e: E = E.A(42);
 
-    // Mutate through the reference binding
+    // The binding refers to the original payload field.
     match &e {
         A(n) => {
-            *n = 99;
+            let field: i32& = n;
+            *field = 99;
         },
         _ => {
             assert false;

@@ -123,6 +123,12 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.EnumIsVariant(result=result, address=address, variant=variant):
+            return f"%{result.name} = enum_is_variant {__dump_value(address)}, {variant.name}"
+
+        case IR.EnumPayloadFieldPtr(result=result, address=address, field_index=index):
+            return f"%{result.name} = enum_payload_field_ptr {__dump_value(address)}[{index}]"
+
         case IR.Delete(ptr=ptr):
             return f"delete {__dump_value(ptr)}"
 
@@ -349,12 +355,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
                 f" {then_block.label}, {else_block.label}"
             )
 
-        case IR.Match(value=value, arms=arms, default=default):
-            arm_strs = [__dump_match_arm(arm) for arm in arms]
-            if default is not None:
-                arm_strs.append(f"default: {default.label}")
-            return f"match {__dump_value(value)} {{{', '.join(arm_strs)}}}"
-
         case IR.Panic(message=message):
             return f"panic {__dump_value(message)}"
 
@@ -364,26 +364,8 @@ def __dump_terminator(term: IR.Terminator) -> str:
         case IR.ProcessExit(code=code):
             return f"process_exit {__dump_value(code)}"
 
-
-def __dump_match_arm(arm: IR.MatchArm) -> str:
-    pattern_str = __dump_pattern(arm.pattern)
-    return f"{pattern_str} => {arm.body.label}"
-
-
-# pylint: disable=too-many-return-statements
-def __dump_pattern(pattern: IR.Pattern) -> str:
-    match pattern:
-        case IR.IntPattern(value=value):
-            return str(value.value)
-
-        case IR.CharPattern(value=value):
-            return repr(value.value)
-
-        case IR.EnumPattern(variant=variant, fields=fields):
-            if fields is not None:
-                field_strs = [f.name for f in fields]
-                return f"{variant.name}({', '.join(field_strs)})"
-            return variant.name
+        case IR.Unreachable():
+            return "unreachable"
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ class ExprLowerer:
         self.__scalar = ScalarOps(state, self.__memory, self.__values)
         self.__calls = CallsLowerer(state, self.__values, self)
         self.__sys = SysLowerer(state, self)
-        self.__stmts = StmtLowerer(state, self)
+        self.__stmts = StmtLowerer(state, self, self.__values, self.__memory)
         self.__builtin_handlers: dict[BuiltinKind, Callable[[HIR.Builtin], IR.Value]] = {
             BuiltinKind.SizeOf: self.__resolve_size_of,
             BuiltinKind.Undef: self.__resolve_undef,

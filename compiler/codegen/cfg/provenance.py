@@ -90,7 +90,7 @@ class PointerFacts:
                 self.__mark_raw(reg)
             case IR.Cast(result=reg, value=value):
                 self.__inherit(reg, value)
-            case IR.FieldPtr(result=reg, base=base):
+            case IR.FieldPtr(result=reg, base=base) | IR.EnumPayloadFieldPtr(result=reg, address=base):
                 if self.is_raw(base):
                     self.__mark_raw(reg)
                 else:

@@ -367,13 +367,22 @@ class DefiniteAssignment:
         state = self.__check_expr(expr.value, state)
 
         arm_states: list[DAState] = []
+        next_state = state
         for arm in expr.arms:
-            arm_state = self.__share(state)
-            if (arm.pattern is not None
-                    and isinstance(arm.pattern, HIR.EnumPattern)
-                    and arm.pattern.unpack_fields is not None):
-                for sym_id in arm.pattern.unpack_fields:
-                    arm_state = self.__set(arm_state, self.__whole(sym_id), VarState.VALID)
+            arm_state = self.__share(next_state)
+            for sym_id in self.__pattern_bindings(arm.pattern):
+                arm_state = self.__set(arm_state, self.__whole(sym_id), VarState.VALID)
+            has_condition = False
+            for literal in self.__pattern_conditions(arm.pattern):
+                assert literal.condition_symbol is not None
+                assert literal.condition is not None
+                has_condition = True
+                arm_state = self.__set(arm_state, self.__whole(literal.condition_symbol), VarState.VALID)
+                arm_state = self.__check_expr(literal.condition, arm_state)
+            if arm.guard is not None:
+                arm_state = self.__check_expr(arm.guard, arm_state)
+            if arm.guard is not None or has_condition:
+                next_state = self.__merge_states(next_state, arm_state)
             arm_state = self.__check_expr(arm.body, arm_state)
             if arm.body.type_id != TypeCtx.never_id:
                 arm_states.append(arm_state)
@@ -385,6 +394,42 @@ class DefiniteAssignment:
         for arm_state in arm_states[1:]:
             merged = self.__merge_states(merged, arm_state)
         return merged
+
+    def __pattern_bindings(self, pattern: HIR.Pattern) -> set[int]:
+        match pattern:
+            case HIR.BindPattern():
+                return {pattern.symbol_id} | self.__pattern_bindings(pattern.inner)
+            case HIR.OrPattern():
+                return self.__pattern_bindings(pattern.alternatives[0])
+            case HIR.EnumPattern() if pattern.fields is not None:
+                return {symbol for _, sub in pattern.fields for symbol in self.__pattern_bindings(sub)}
+            case HIR.StructPattern():
+                return {symbol for _, sub in pattern.fields for symbol in self.__pattern_bindings(sub)}
+            case HIR.TuplePattern():
+                return {symbol for sub in pattern.elements for symbol in self.__pattern_bindings(sub)}
+            case HIR.SequencePattern():
+                return {symbol for sub in pattern.prefix + pattern.suffix for symbol in self.__pattern_bindings(sub)}
+            case _:
+                return set()
+
+    def __pattern_conditions(self, pattern: HIR.Pattern) -> list[HIR.LiteralPattern]:
+        match pattern:
+            case HIR.LiteralPattern() if pattern.condition is not None:
+                return [pattern]
+            case HIR.BindPattern():
+                return self.__pattern_conditions(pattern.inner)
+            case HIR.OrPattern():
+                return [literal for sub in pattern.alternatives for literal in self.__pattern_conditions(sub)]
+            case HIR.EnumPattern() if pattern.fields is not None:
+                return [literal for _, sub in pattern.fields for literal in self.__pattern_conditions(sub)]
+            case HIR.StructPattern():
+                return [literal for _, sub in pattern.fields for literal in self.__pattern_conditions(sub)]
+            case HIR.TuplePattern():
+                return [literal for sub in pattern.elements for literal in self.__pattern_conditions(sub)]
+            case HIR.SequencePattern():
+                return [literal for sub in pattern.prefix + pattern.suffix for literal in self.__pattern_conditions(sub)]
+            case _:
+                return []
 
     # ==================================================================
     # expression-specific handlers

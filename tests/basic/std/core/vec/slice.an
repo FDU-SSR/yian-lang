@@ -23,18 +23,18 @@ fn main() {
 
     // ---- get (via slice auto-deref) ----
 
-    let g0: Option<i32*> = v.get(0);
+    let g0: Option<i32&> = v.get(0);
     assert g0.is_some(): "get(0) should be Some";
-    let g2: Option<i32*> = v.get(2);
+    let g2: Option<i32&> = v.get(2);
     assert g2.is_some(): "get(2) should be Some";
-    let g_out: Option<i32*> = v.get(10);
+    let g_out: Option<i32&> = v.get(10);
     assert g_out.is_none(): "get out of bounds should return None";
 
     // ---- first / last (via slice auto-deref) ----
 
-    let f: Option<i32*> = v.first();
+    let f: Option<i32&> = v.first();
     assert f.is_some(): "first should be Some";
-    let l: Option<i32*> = v.last();
+    let l: Option<i32&> = v.last();
     assert l.is_some(): "last should be Some";
 
     // ---- index operator ----

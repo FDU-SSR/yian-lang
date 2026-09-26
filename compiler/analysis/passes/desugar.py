@@ -66,29 +66,86 @@ class Desugar:
             case AST.Block():
                 processor(stmt)
             case AST.If():
+                self.__recurse_blocks(stmt.condition, processor)
                 processor(stmt.then_branch)
-                for _, elif_branch in stmt.elif_branches:
+                for condition, elif_branch in stmt.elif_branches:
+                    self.__recurse_blocks(condition, processor)
                     processor(elif_branch)
                 if stmt.else_branch is not None:
                     processor(stmt.else_branch)
             case AST.ComptimeIf():
+                self.__recurse_blocks(stmt.condition, processor)
                 processor(stmt.then_branch)
                 processor(stmt.else_branch)
             case AST.For():
+                self.__recurse_blocks(stmt.iterable, processor)
                 processor(stmt.body)
             case AST.While():
+                self.__recurse_blocks(stmt.condition, processor)
                 processor(stmt.body)
             case AST.Loop():
                 processor(stmt.body)
             case AST.Match():
-                for _, arm_block in stmt.arms:
-                    processor(arm_block)
+                for arm in stmt.arms:
+                    processor(arm.body)
+                self.__recurse_blocks(stmt.expr, processor)
+                for arm in stmt.arms:
+                    if arm.guard is not None:
+                        self.__recurse_blocks(arm.guard, processor)
+            case AST.VarDecl() if stmt.init_expr is not None:
+                self.__recurse_blocks(stmt.init_expr, processor)
+            case AST.Return() if stmt.expr is not None:
+                self.__recurse_blocks(stmt.expr, processor)
+            case AST.Break() if stmt.expr is not None:
+                self.__recurse_blocks(stmt.expr, processor)
+            case AST.Binary():
+                self.__recurse_blocks(stmt.left, processor)
+                self.__recurse_blocks(stmt.right, processor)
+            case AST.Unary():
+                self.__recurse_blocks(stmt.operand, processor)
+            case AST.Call():
+                self.__recurse_blocks(stmt.callee, processor)
+                for argument in stmt.args:
+                    self.__recurse_blocks(argument.value, processor)
+            case AST.MethodCall():
+                self.__recurse_blocks(stmt.receiver, processor)
+                for argument in stmt.args:
+                    self.__recurse_blocks(argument.value, processor)
+            case AST.Builtin():
+                for argument in stmt.args:
+                    self.__recurse_blocks(argument.value, processor)
+            case AST.FieldAccess():
+                self.__recurse_blocks(stmt.receiver, processor)
+            case AST.DynValue():
+                self.__recurse_blocks(stmt.value, processor)
+            case AST.DynBuffer():
+                self.__recurse_blocks(stmt.size, processor)
+                self.__recurse_blocks(stmt.element, processor)
+            case AST.Tuple():
+                for value in stmt.elements:
+                    self.__recurse_blocks(value, processor)
+            case AST.Array():
+                for value in stmt.elements:
+                    self.__recurse_blocks(value, processor)
+            case AST.ArrayRepeat():
+                self.__recurse_blocks(stmt.element, processor)
+                self.__recurse_blocks(stmt.count, processor)
             case AST.Semi():
                 # A trailing semicolon wraps the statement; recurse through it
                 # so nested control flow is still desugared.
                 self.__recurse_blocks(stmt.expr, processor)
             case AST.Defer():
                 self.__recurse_blocks(stmt.action, processor)
+            case AST.Assert():
+                self.__recurse_blocks(stmt.condition, processor)
+                if stmt.message is not None:
+                    self.__recurse_blocks(stmt.message, processor)
+            case AST.Delete():
+                self.__recurse_blocks(stmt.target, processor)
+            case AST.ClosureExpr():
+                for capture in stmt.captures:
+                    self.__recurse_blocks(capture.expr, processor)
+                processor(stmt.body)
             case _:
                 return
 
@@ -213,20 +270,26 @@ class Desugar:
             generics=[],
             args=[],
         )
-        some_arm = (
-            AST.PayloadPattern(
+        some_arm = AST.MatchArm(
+            span=stmt.var_name.span,
+            pattern=AST.ConstructPattern(
                 span=stmt.var_name.span,
-                variant=AST.Identifier(span=stmt.var_name.span, name="Some"),
-                fields=[stmt.var_name],
+                name=AST.Identifier(span=stmt.var_name.span, name="Some"),
+                qualifier=None,
+                positional=[AST.NamePattern(span=stmt.var_name.span, name=stmt.var_name)],
+                named=None,
             ),
-            stmt.body,
+            guard=None,
+            body=stmt.body,
         )
-        none_arm = (
-            AST.EnumPattern(
+        none_arm = AST.MatchArm(
+            span=stmt.span,
+            pattern=AST.NamePattern(
                 span=stmt.span,
-                variants=[AST.Identifier(span=stmt.span, name="None")],
+                name=AST.Identifier(span=stmt.span, name="None"),
             ),
-            AST.Block(span=stmt.span, stmts=[AST.Break(span=stmt.span)]),
+            guard=None,
+            body=AST.Block(span=stmt.span, stmts=[AST.Break(span=stmt.span)]),
         )
 
         return AST.Block(
@@ -328,8 +391,10 @@ class Desugar:
                 expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
             case AST.Match():
                 expr.expr = visitor(expr.expr)
-                for _, branch in expr.arms:
-                    branch.stmts = [visitor(stmt) for stmt in branch.stmts]
+                for arm in expr.arms:
+                    if arm.guard is not None:
+                        arm.guard = visitor(arm.guard)
+                    arm.body.stmts = [visitor(stmt) for stmt in arm.body.stmts]
             case AST.Assert():
                 expr.condition = visitor(expr.condition)
                 if expr.message is not None:
@@ -393,6 +458,9 @@ class Desugar:
                 stmt.condition = expr_visitor(stmt.condition)
             case AST.Match():
                 stmt.expr = expr_visitor(stmt.expr)
+                for arm in stmt.arms:
+                    if arm.guard is not None:
+                        arm.guard = expr_visitor(arm.guard)
             case AST.Assert():
                 stmt.condition = expr_visitor(stmt.condition)
                 if stmt.message is not None:

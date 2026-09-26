@@ -111,6 +111,9 @@ class ComptimeIfSpecializer:
             case HIR.Match():
                 expr.value = self.__rewrite_expr(expr.value)
                 for arm in expr.arms:
+                    self.__rewrite_pattern(arm.pattern)
+                    if arm.guard is not None:
+                        arm.guard = self.__rewrite_expr(arm.guard)
                     arm.body = self.__rewrite_block(arm.body)
             case HIR.Builtin():
                 expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
@@ -183,6 +186,30 @@ class ComptimeIfSpecializer:
             case _:
                 pass
         return expr
+
+    def __rewrite_pattern(self, pattern: HIR.Pattern) -> None:
+        match pattern:
+            case HIR.LiteralPattern() if pattern.condition is not None:
+                pattern.condition = self.__rewrite_expr(pattern.condition)
+            case HIR.BindPattern():
+                self.__rewrite_pattern(pattern.inner)
+            case HIR.OrPattern():
+                for alternative in pattern.alternatives:
+                    self.__rewrite_pattern(alternative)
+            case HIR.EnumPattern() if pattern.fields is not None:
+                for _, sub in pattern.fields:
+                    self.__rewrite_pattern(sub)
+            case HIR.StructPattern():
+                for _, sub in pattern.fields:
+                    self.__rewrite_pattern(sub)
+            case HIR.TuplePattern():
+                for sub in pattern.elements:
+                    self.__rewrite_pattern(sub)
+            case HIR.SequencePattern():
+                for sub in pattern.prefix + pattern.suffix:
+                    self.__rewrite_pattern(sub)
+            case _:
+                pass
 
     def __record_procedure(self, type_id: int) -> None:
         resolved = self.__type_ctx.resolve_aliases(type_id)

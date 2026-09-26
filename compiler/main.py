@@ -495,6 +495,8 @@ def __run(argv: list[str] | None = None) -> int:
     if not analysis.ok():
         print(analysis.formatted(), file=sys.stderr)
         return 1
+    if analysis.diagnostics:
+        print(analysis.formatted(), file=sys.stderr)
     for path, source in analysis.sources.items():
         __DOCUMENTS.add(Document(path=path, text=source))
     type_ctx = analysis.type_ctx

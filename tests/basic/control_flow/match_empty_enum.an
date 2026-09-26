@@ -1,0 +1,7 @@
+enum Empty {}
+
+fn absurd(value: Empty) -> i32 {
+    return match value {};
+}
+
+fn main() {}

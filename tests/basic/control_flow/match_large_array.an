@@ -1,0 +1,8 @@
+fn main() {
+    let values = [1u8; 1024];
+    let first_is_one = match values {
+        [1, ..] => true,
+        _ => false,
+    };
+    assert first_is_one;
+}

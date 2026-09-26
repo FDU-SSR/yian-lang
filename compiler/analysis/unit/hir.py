@@ -117,13 +117,7 @@ class Let:
 
 @dataclass
 class Match:
-    """
-    Low-level match covering:
-
-    1. Integer patterns (integer types, char via ord)
-    2. Char patterns
-    3. Enum patterns — C-like (no payload) or with payload unpacking
-    """
+    """Ordered, expression-valued structural pattern match."""
 
     span: SrcSpan
     value: Expr
@@ -136,31 +130,85 @@ class Match:
 @dataclass
 class MatchArm:
     span: SrcSpan
-    pattern: Pattern | None  # None means the default/wildcard case
+    pattern: Pattern
+    guard: Expr | None
     body: Block
-
-
-@dataclass
-class IntPattern:
-    span: SrcSpan
-    value: int
-    type_id: int  # type_id of the matched integer
-
-
-@dataclass
-class CharPattern:
-    span: SrcSpan
-    value: str
 
 
 @dataclass
 class EnumPattern:
     span: SrcSpan
     variant: Type.EnumVariant
-    unpack_fields: list[int] | None  # symbol ids of unpacked variables, None means not unpacking
+    type_id: int
+    fields: list[tuple[int, Pattern]] | None
 
 
-Pattern: TypeAlias = IntPattern | CharPattern | EnumPattern
+@dataclass
+class WildcardPattern:
+    span: SrcSpan
+    type_id: int
+
+
+@dataclass
+class LiteralPattern:
+    span: SrcSpan
+    type_id: int
+    value: int | str | bool
+    condition: Expr | None = None
+    condition_symbol: int | None = None
+
+
+@dataclass
+class RangePattern:
+    span: SrcSpan
+    type_id: int
+    lower: int
+    upper: int
+
+
+@dataclass
+class BindPattern:
+    span: SrcSpan
+    type_id: int
+    symbol_id: int
+    inner: Pattern
+
+
+@dataclass
+class OrPattern:
+    span: SrcSpan
+    type_id: int
+    alternatives: list[Pattern]
+
+
+@dataclass
+class StructPattern:
+    span: SrcSpan
+    type_id: int
+    fields: list[tuple[int, Pattern]]
+
+
+@dataclass
+class TuplePattern:
+    span: SrcSpan
+    type_id: int
+    elements: list[Pattern]
+
+
+@dataclass
+class SequencePattern:
+    span: SrcSpan
+    type_id: int
+    prefix: list[Pattern]
+    suffix: list[Pattern]
+    rest: bool
+
+
+Pattern: TypeAlias = (
+    EnumPattern | WildcardPattern
+    | LiteralPattern | RangePattern | BindPattern | OrPattern
+    | StructPattern | TuplePattern | SequencePattern
+)
 
 
 @dataclass

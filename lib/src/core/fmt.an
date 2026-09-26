@@ -5,7 +5,7 @@ pub trait ToString {
     fn to_string() -> String;
 }
 
-fn append_unsigned_digits(out: String*, value: u64) {
+fn append_unsigned_digits(out: String&, value: u64) {
     // 十进制位从低到高写入栈上缓冲, 再通过一次 push_str 追加到字符串。
     let buf: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let pos: u64 = 20;

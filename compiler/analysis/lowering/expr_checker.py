@@ -16,7 +16,7 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
+from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
 
 # Lazy channel accessors — called at runtime, after CompilerLog is initialised.
@@ -698,28 +698,33 @@ class ExprChecker:
 
     def lower_match(self, stmt: AST.Match) -> HIR.Expr:
         assert self.__ctx.symbol_ctx is not None
-
         value_expr = self.value(stmt.expr)
         value_expr.type_id = self.__ctx.type_ctx.default_literals(value_expr.type_id)
-        # Pick the strategy from the type the scrutinee stands for, so an alias
-        # of an enum matches like the enum itself.
-        value_type = self.__ctx.type_ctx[
-            self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
-        ]
-
-        is_ref = False
-        inner_type = value_type
-        if isinstance(value_type, (Type.PointerType, Type.RefType)):
-            pointee_type = self.__ctx.type_ctx[
-                self.__ctx.type_ctx.resolve_aliases(value_type.pointee_type)
-            ]
-            if isinstance(pointee_type, (Type.IntType, Type.CharType, Type.EnumType)):
-                is_ref = True
-                inner_type = pointee_type
-
-        if isinstance(inner_type, (Type.IntType, Type.CharType, Type.EnumType)):
-            return self.__lower_match(stmt, value_expr, is_ref=is_ref)
-        return self.__lower_match_with_partial_eq(stmt, value_expr)
+        value_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)]
+        if isinstance(value_type, Type.PointerType):
+            if not isinstance(value_expr, HIR.Unary) or value_expr.op != UnaryOperator.AddrOf:
+                raise AnalysisError("match does not accept pointer scrutinees; use '&value' or a reference", stmt.expr.span)
+            value_expr = self.coerce(value_expr, self.__ctx.type_ctx.alloc_ref(value_type.pointee_type))
+            value_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)]
+        is_ref = isinstance(value_type, Type.RefType)
+        matched_type_id = value_type.pointee_type if is_ref else value_expr.type_id
+        root_enum = isinstance(self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(matched_type_id)], Type.EnumType)
+        arms: list[HIR.MatchArm] = []
+        body_types: list[int] = []
+        for arm in stmt.arms:
+            self.__ctx.enter_scope()
+            try:
+                bindings: dict[str, int] = {}
+                pattern = self.__check_pattern(arm.pattern, matched_type_id, root_enum, is_ref, bindings, set(), False)
+                guard = self.coerce(self.value(arm.guard), TypeCtx.bool_id) if arm.guard is not None else None
+                body = self.check_block(arm.body)
+                arms.append(HIR.MatchArm(span=arm.span, pattern=pattern, guard=guard, body=body))
+                body_types.append(body.type_id)
+            finally:
+                self.__ctx.exit_scope()
+        match_type_id = self.__ctx.type_ctx.merge_types(body_types, stmt.span) if body_types else TypeCtx.never_id
+        match_type_id = self.__ctx.type_ctx.default_literals(match_type_id)
+        return HIR.Match(span=stmt.span, value=value_expr, arms=arms, type_id=match_type_id, is_place=False, is_ref=is_ref)
 
     def lower_return(self, stmt: AST.Return) -> HIR.Return:
         assert self.__ctx.symbol_ctx is not None
@@ -806,147 +811,184 @@ class ExprChecker:
         self.__ctx.push_local(symbol_id)
         return symbol_id
 
-    def __lower_match(self, stmt: AST.Match, value_expr: HIR.Expr, is_ref: bool = False) -> HIR.Match:
-        assert self.__ctx.symbol_ctx is not None
-
-        # Variant matching is a nominal construct: the match is about the enum's
-        # variants, so record the enum the scrutinee stands for even when the
-        # source spelled an alias (`typedef S = Shape`).
-        enum_type_id = self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
-        if is_ref:
-            value_type = self.__ctx.type_ctx[enum_type_id]
-            assert isinstance(value_type, (Type.PointerType, Type.RefType))
-            enum_type_id = self.__ctx.type_ctx.resolve_aliases(value_type.pointee_type)
-
-        arms: list[HIR.MatchArm] = []
-        arm_body_types: list[int] = []
-
-        for pat, arm_block in stmt.arms:
-            match pat:
-                case AST.IntPattern():
-                    body = self.check_block(arm_block)
-                    arm_body_types.append(body.type_id)
-                    for lit in pat.values:
-                        pattern: HIR.Pattern | None = HIR.IntPattern(pat.span, lit.value, enum_type_id)
-                        arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
-                case AST.CharPattern():
-                    body = self.check_block(arm_block)
-                    arm_body_types.append(body.type_id)
-                    for lit in pat.values:
-                        pattern = HIR.CharPattern(pat.span, lit.value)
-                        arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
-                case AST.EnumPattern():
-                    body = self.check_block(arm_block)
-                    arm_body_types.append(body.type_id)
-                    for ident in pat.variants:
-                        variant = self.__resolve_enum_variant(ident, enum_type_id)
-                        pattern = HIR.EnumPattern(pat.span, variant, None)
-                        arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
-                case AST.PayloadPattern():
-                    variant = self.__resolve_enum_variant(pat.variant, enum_type_id)
-                    if variant.payload_type is None:
-                        raise AnalysisError(f"Variant '{pat.variant.name}' has no payload to bind", pat.span)
-                    payload_ty = self.__ctx.type_ctx[variant.payload_type]
-                    assert isinstance(payload_ty, Type.StructType)
-                    field_types = [f.type_id for f in self.__ctx.type_ctx.get_struct_fields(payload_ty.type_id)]
-                    if len(pat.fields) != len(field_types):
-                        raise AnalysisError(
-                            f"Pattern for variant '{pat.variant.name}' binds {len(pat.fields)} names but variant payload has {len(field_types)} fields",
-                            pat.span,
-                        )
-                    self.__ctx.enter_scope()
-                    try:
-                        unpack_fields: list[int] = []
-                        for ident, ftype in zip(pat.fields, field_types):
-                            binding_type = self.__ctx.type_ctx.alloc_pointer(ftype) if is_ref else ftype
-                            sym_id = self.__declare_local_symbol(ident, binding_type)
-                            unpack_fields.append(sym_id)
-                        body = self.check_block(arm_block)
-                        arm_body_types.append(body.type_id)
-                        pattern = HIR.EnumPattern(pat.span, variant, unpack_fields)
-                        arms.append(HIR.MatchArm(span=pat.span, pattern=pattern, body=body))
-                    finally:
-                        self.__ctx.exit_scope()
-                case AST.WildcardPattern():
-                    body = self.check_block(arm_block)
-                    arm_body_types.append(body.type_id)
-                    arms.append(HIR.MatchArm(span=pat.span, pattern=None, body=body))
-                case _:
-                    raise AnalysisError(f"Unsupported pattern type {type(pat).__name__}", pat.span)
-
-        match_type_id = self.__ctx.type_ctx.merge_types(arm_body_types, stmt.span)
-        match_type_id = self.__ctx.type_ctx.default_literals(match_type_id)
-        return HIR.Match(span=stmt.span, value=value_expr, arms=arms, type_id=match_type_id, is_place=False, is_ref=is_ref)
-
-    def __resolve_enum_variant(self, ident: AST.Identifier, enum_type_id: int) -> Type.EnumVariant:
-        enum_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(enum_type_id)]
-        assert isinstance(enum_ty, Type.EnumType)
-        variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)
-        if variant is None:
-            raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-        self.__ctx.names.record(ident.span, variant)
-        return variant
-
-    def __lower_match_with_partial_eq(self, stmt: AST.Match, value_expr: HIR.Expr) -> HIR.Block:
-        cond_and_blocks: list[tuple[HIR.Expr, HIR.Block]] = []
-        default_block: HIR.Block | None = None
-
-        for pat, arm_block in stmt.arms:
-            if isinstance(pat, AST.WildcardPattern):
-                default_block = self.check_block(arm_block)
-                continue
-
-            cond_expr = self.__pattern_to_eq_cond(pat, value_expr)
-            body = self.check_block(arm_block)
-            cond_and_blocks.append((cond_expr, body))
-
-        # Build nested if-chain from cond/block pairs
-        current_else = default_block
-        for cond, block in reversed(cond_and_blocks):
-            current_else = HIR.Block(
-                span=cond.span, stmts=[
-                    HIR.If(span=cond.span, cond=cond, then_branch=block,
-                           else_branch=current_else, type_id=TypeCtx.void_id, is_place=False)
-                ], type_id=TypeCtx.void_id, is_place=False)
-        return current_else if current_else is not None else HIR.Block(
-            span=stmt.span, stmts=[], type_id=TypeCtx.void_id, is_place=False)
-
-    def __pattern_to_eq_cond(self, pat: AST.Pattern, value_expr: HIR.Expr) -> HIR.Expr:
-        conds: list[HIR.Expr] = []
-
+    def __check_pattern(
+        self, pat: AST.Pattern, type_id: int, root_enum: bool, by_ref: bool,
+        bindings: dict[str, int], seen: set[str], reuse: bool,
+    ) -> HIR.Pattern:
+        ctx = self.__ctx.type_ctx
+        ty = ctx[ctx.resolve_aliases(type_id)]
         match pat:
-            case AST.IntPattern():
-                for lit in pat.values:
-                    rhs = HIR.IntLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    conds.append(self.call_eq(value_expr, rhs))
-            case AST.CharPattern():
-                for lit in pat.values:
-                    rhs = HIR.CharLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    conds.append(self.call_eq(value_expr, rhs))
-            case AST.StrPattern():
-                for lit in pat.values:
-                    rhs = HIR.StrLiteral(span=lit.span, value=lit.value, type_id=value_expr.type_id, is_place=False)
-                    conds.append(self.call_eq(value_expr, rhs))
-            case AST.EnumPattern():
-                enum_ty = self.__ctx.type_ctx[
-                    self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)
-                ]
-                assert isinstance(enum_ty, Type.EnumType)
-                for ident in pat.variants:
-                    variant = enum_ty.get_variant_by_name(ident.name, self.__ctx.type_ctx)
-                    if variant is None:
-                        raise AnalysisError(f"Unknown enum variant '{ident.name}'", ident.span)
-                    rhs = HIR.VariantConstruct(span=ident.span, enum_id=value_expr.type_id, variant=variant, args=None, type_id=value_expr.type_id, is_place=False)
-                    conds.append(self.call_eq(value_expr, rhs))
-            case AST.PayloadPattern():
-                raise AnalysisError("Payload patterns are not supported by PartialEq-based lowering", pat.span)
+            case AST.WildcardPattern():
+                return HIR.WildcardPattern(pat.span, type_id)
+            case AST.NamePattern():
+                if root_enum:
+                    return self.__check_variant(pat.span, pat.name, None, None, False, type_id, by_ref, bindings, seen, reuse)
+                return self.__bind_pattern(pat.name, HIR.WildcardPattern(pat.span, type_id), type_id, by_ref, bindings, seen, reuse)
+            case AST.BindPattern():
+                inner = self.__check_pattern(pat.inner, type_id, root_enum, by_ref, bindings, seen, reuse)
+                return self.__bind_pattern(pat.name, inner, type_id, by_ref, bindings, seen, reuse)
+            case AST.OrPattern():
+                original = set(seen)
+                first_seen = set(seen)
+                alternatives = [self.__check_pattern(pat.alternatives[0], type_id, root_enum, by_ref, bindings, first_seen, reuse)]
+                expected = first_seen - original
+                for alternative in pat.alternatives[1:]:
+                    branch_seen = set(original)
+                    alternatives.append(self.__check_pattern(alternative, type_id, root_enum, by_ref, bindings, branch_seen, True))
+                    if branch_seen - original != expected:
+                        raise AnalysisError("OR alternatives must bind the same names", alternative.span)
+                seen.update(expected)
+                return HIR.OrPattern(pat.span, type_id, alternatives)
+            case AST.LiteralPattern():
+                return self.__check_literal_pattern(pat, type_id)
+            case AST.RangePattern():
+                if not isinstance(ty, (Type.IntType, Type.CharType)):
+                    raise AnalysisError("Range pattern requires an integer or char", pat.span)
+                lower = self.__pattern_endpoint(pat.lower, type_id)
+                upper = self.__pattern_endpoint(pat.upper, type_id)
+                if lower > upper:
+                    raise AnalysisError("Range lower bound exceeds upper bound", pat.span)
+                return HIR.RangePattern(pat.span, type_id, lower, upper)
+            case AST.ConstructPattern():
+                if isinstance(ty, Type.EnumType):
+                    if pat.qualifier is not None and not ctx.is_same_type(self.__ctx.resolve_type(pat.qualifier), type_id):
+                        raise AnalysisError("Enum pattern qualifier does not match the scrutinee type", pat.span)
+                    return self.__check_variant(pat.span, pat.name, pat.positional, pat.named, pat.rest, type_id, by_ref, bindings, seen, reuse)
+                if isinstance(ty, Type.StructType):
+                    named_type = pat.qualifier if pat.qualifier is not None else ASTTy.NamedType(span=pat.name.span, name=pat.name)
+                    if not ctx.is_same_type(self.__ctx.resolve_type(named_type), type_id):
+                        raise AnalysisError("Struct pattern type does not match the scrutinee type", pat.span)
+                    if pat.positional is not None and pat.positional:
+                        raise AnalysisError("Struct patterns use named fields", pat.span)
+                    fields = self.__check_named_fields(pat.named or [], ty, pat.rest, by_ref, bindings, seen, reuse, pat.span)
+                    return HIR.StructPattern(pat.span, type_id, fields)
+                raise AnalysisError("Constructor pattern requires a struct or enum", pat.span)
+            case AST.TuplePattern():
+                if not isinstance(ty, Type.TupleType) or len(ty.element_types) != len(pat.elements):
+                    raise AnalysisError("Tuple pattern has the wrong type or arity", pat.span)
+                elements = [self.__check_pattern(sub, sub_type, False, by_ref, bindings, seen, reuse)
+                            for sub, sub_type in zip(pat.elements, ty.element_types)]
+                return HIR.TuplePattern(pat.span, type_id, elements)
+            case AST.SequencePattern():
+                if not isinstance(ty, (Type.ArrayType, Type.SliceType)):
+                    raise AnalysisError("Sequence pattern requires an array or slice", pat.span)
+                element_type = ty.element_type
+                prefix = [self.__check_pattern(sub, element_type, False, by_ref, bindings, seen, reuse) for sub in pat.prefix]
+                suffix = [self.__check_pattern(sub, element_type, False, by_ref, bindings, seen, reuse) for sub in pat.suffix]
+                return HIR.SequencePattern(pat.span, type_id, prefix, suffix, pat.rest)
             case _:
-                raise AnalysisError(f"Pattern type {type(pat).__name__} not supported by PartialEq lowering", pat.span)
+                raise AnalysisError(f"Unsupported pattern type {type(pat).__name__}", pat.span)
 
-        if len(conds) == 0:
-            return HIR.BoolLiteral(span=pat.span, value=False, type_id=TypeCtx.bool_id, is_place=False)
+    def __bind_pattern(
+        self, name: AST.Identifier, inner: HIR.Pattern, type_id: int, by_ref: bool,
+        bindings: dict[str, int], seen: set[str], reuse: bool,
+    ) -> HIR.BindPattern:
+        if name.name in seen:
+            raise AnalysisError(f"Duplicate pattern binding '{name.name}'", name.span)
+        seen.add(name.name)
+        binding_type = self.__ctx.type_ctx.alloc_ref(type_id) if by_ref else type_id
+        if reuse:
+            symbol_id = bindings.get(name.name)
+            if symbol_id is None or self.__ctx.symbol_ctx is None or not self.__ctx.type_ctx.is_same_type(self.__ctx.symbol_ctx.get(symbol_id).type_id, binding_type):
+                raise AnalysisError(f"OR binding '{name.name}' has a different type or mode", name.span)
+        else:
+            symbol_id = self.__declare_local_symbol(name, binding_type)
+            bindings[name.name] = symbol_id
+        return HIR.BindPattern(name.span, type_id, symbol_id, inner)
 
-        expr = conds[0]
-        for c in conds[1:]:
-            expr = HIR.Binary(span=expr.span, op=BinaryOperator.LogicalOr, left=expr, right=c, type_id=TypeCtx.bool_id, is_place=False)
-        return expr
+    def __check_literal_pattern(self, pat: AST.LiteralPattern, type_id: int) -> HIR.LiteralPattern:
+        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        literal = pat.literal
+        if isinstance(literal, Tok.IntLiteral):
+            self.__check_integer_literal(literal, type_id)
+            return HIR.LiteralPattern(pat.span, type_id, literal.value)
+        if isinstance(literal, Tok.CharLiteral) and isinstance(ty, Type.CharType):
+            return HIR.LiteralPattern(pat.span, type_id, literal.value)
+        if isinstance(literal, Tok.BoolLiteral) and isinstance(ty, Type.BoolType):
+            return HIR.LiteralPattern(pat.span, type_id, literal.value)
+        if isinstance(literal, Tok.StrLiteral) and isinstance(ty, Type.StrType):
+            hidden = AST.Identifier(span=pat.span, name=f"$match_condition_{id(pat)}")
+            symbol_id = self.__declare_local_symbol(hidden, type_id)
+            value = HIR.Var(span=pat.span, symbol_id=symbol_id, type_id=type_id, is_place=True)
+            expected = HIR.StrLiteral(span=pat.span, value=literal.value, type_id=type_id, is_place=False)
+            condition = self.call_eq(value, expected)
+            return HIR.LiteralPattern(pat.span, type_id, literal.value, condition, symbol_id)
+        raise AnalysisError("Literal pattern does not match the scrutinee type", pat.span)
+
+    def __check_integer_value(self, value: int, ty: Type.Ty, span: SrcSpan) -> None:
+        if not isinstance(ty, Type.IntType):
+            raise AnalysisError("Integer pattern requires an integer", span)
+        bits = ty.size * 8
+        minimum = -(1 << (bits - 1)) if ty.signed else 0
+        maximum = (1 << (bits - 1)) - 1 if ty.signed else (1 << bits) - 1
+        if not minimum <= value <= maximum:
+            raise AnalysisError("Integer pattern is outside the scrutinee type's range", span)
+
+    def __check_integer_literal(self, literal: Tok.IntLiteral, type_id: int) -> None:
+        ctx = self.__ctx.type_ctx
+        if literal.suffix is not None:
+            intrinsic = Type.IntrinsicType.from_str(literal.suffix)
+            if intrinsic is None:
+                raise AnalysisError(f"Unknown intrinsic type suffix '{literal.suffix}'", literal.span)
+            if not ctx.is_same_type(TypeCtx.intrinsic_type(intrinsic), type_id):
+                raise AnalysisError("Integer pattern suffix does not match the scrutinee type", literal.span)
+        self.__check_integer_value(literal.value, ctx[ctx.resolve_aliases(type_id)], literal.span)
+
+    def __pattern_endpoint(self, literal: Tok.IntLiteral | Tok.CharLiteral, type_id: int) -> int:
+        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        if isinstance(literal, Tok.IntLiteral):
+            self.__check_integer_literal(literal, type_id)
+            return literal.value
+        if not isinstance(ty, Type.CharType):
+            raise AnalysisError("Character range requires a char scrutinee", literal.span)
+        return ord(literal.value)
+
+    def __check_variant(
+        self, span: SrcSpan, name: AST.Identifier, positional: list[AST.Pattern] | None,
+        named: list[AST.FieldPattern] | None, rest: bool, type_id: int, by_ref: bool,
+        bindings: dict[str, int], seen: set[str], reuse: bool,
+    ) -> HIR.EnumPattern:
+        ctx = self.__ctx.type_ctx
+        enum_ty = ctx[ctx.resolve_aliases(type_id)]
+        assert isinstance(enum_ty, Type.EnumType)
+        variant = enum_ty.get_variant_by_name(name.name, ctx)
+        if variant is None:
+            raise AnalysisError(f"Unknown enum variant '{name.name}'", name.span)
+        self.__ctx.names.record(name.span, variant)
+        if positional is None and named is None and not rest:
+            return HIR.EnumPattern(span, variant, type_id, None)
+        if variant.payload_type is None:
+            raise AnalysisError(f"Variant '{name.name}' has no payload", span)
+        payload = ctx[ctx.resolve_aliases(variant.payload_type)]
+        assert isinstance(payload, Type.StructType)
+        fields = payload.get_fields(ctx)
+        if positional is not None:
+            if len(positional) != len(fields):
+                raise AnalysisError("Positional payload pattern has the wrong arity", span)
+            checked: list[tuple[int, HIR.Pattern]] = []
+            for sub, field in zip(positional, fields):
+                self.__op_builder.check_field_visible(payload, field, sub.span)
+                checked.append((field.index, self.__check_pattern(sub, field.type_id, False, by_ref, bindings, seen, reuse)))
+            return HIR.EnumPattern(span, variant, type_id, checked)
+        checked = self.__check_named_fields(named or [], payload, rest, by_ref, bindings, seen, reuse, span)
+        return HIR.EnumPattern(span, variant, type_id, checked)
+
+    def __check_named_fields(
+        self, fields: list[AST.FieldPattern], ty: Type.StructType, rest: bool,
+        by_ref: bool, bindings: dict[str, int], seen: set[str], reuse: bool, span: SrcSpan,
+    ) -> list[tuple[int, HIR.Pattern]]:
+        all_fields = ty.get_fields(self.__ctx.type_ctx)
+        used: set[str] = set()
+        checked: list[tuple[int, HIR.Pattern]] = []
+        for entry in fields:
+            if entry.name.name in used:
+                raise AnalysisError(f"Duplicate field '{entry.name.name}' in pattern", entry.span)
+            used.add(entry.name.name)
+            field = ty.get_field_by_name(entry.name.name, self.__ctx.type_ctx)
+            if field is None:
+                raise AnalysisError(f"Unknown field '{entry.name.name}' in pattern", entry.span)
+            self.__op_builder.check_field_visible(ty, field, entry.span)
+            checked.append((field.index, self.__check_pattern(entry.pattern, field.type_id, False, by_ref, bindings, seen, reuse)))
+        if not rest and len(used) != len(all_fields):
+            raise AnalysisError("Field pattern must list every field or end with '..'", span)
+        return checked

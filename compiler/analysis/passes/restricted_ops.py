@@ -140,8 +140,10 @@ class RestrictedOpsChecker:
                 self.__scan_block(expr.body)
             case AST.Match():
                 self.__scan_expr(expr.expr)
-                for _, arm_block in expr.arms:
-                    self.__scan_block(arm_block)
+                for arm in expr.arms:
+                    if arm.guard is not None:
+                        self.__scan_expr(arm.guard)
+                    self.__scan_block(arm.body)
             case AST.Return():
                 if expr.expr is not None:
                     self.__scan_expr(expr.expr)

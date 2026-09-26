@@ -218,16 +218,9 @@ def __export_loop(stmt: HIR.Loop, guides: list[bool], is_last: bool, type_ctx: T
 
 
 def __export_match_arm(arm: HIR.MatchArm, guides: list[bool], is_last: bool, type_ctx: TypeCtx | None) -> str:
-    if arm.pattern is None:
-        header = "NewMatchArm: _"
-    elif isinstance(arm.pattern, HIR.IntPattern):
-        header = f"NewMatchArm: int={arm.pattern.value} type_id={arm.pattern.type_id}"
-    elif isinstance(arm.pattern, HIR.CharPattern):
-        header = f"NewMatchArm: char={arm.pattern.value!r}"
-    else:
-        unpacked = arm.pattern.unpack_fields if arm.pattern.unpack_fields is not None else []
-        header = f"NewMatchArm: variant={arm.pattern.variant.name} unpack_fields={unpacked}"
-    res = __line(guides, is_last, header)
+    res = __line(guides, is_last, f"MatchArm: pattern={arm.pattern!r}")
+    if arm.guard is not None:
+        res += __export_expr_child("Guard", arm.guard, guides, is_last, False, type_ctx)
     res += __export_block_child("Body", arm.body, guides, is_last, True, type_ctx)
     return res
 

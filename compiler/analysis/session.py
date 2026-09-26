@@ -28,6 +28,7 @@ from compiler.analysis.state import SemanticState
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
 from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
+from compiler.analysis.passes.match_coverage import MatchCoverage
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.global_resolve import GlobalResolve
 from compiler.analysis.passes.prelude import inject_prelude
@@ -311,6 +312,14 @@ class AnalysisSession:
             )
         timings["type_check"] = time.perf_counter() - started
 
+        coverage = MatchCoverage(all_def_points, type_ctx)
+        try:
+            coverage_errors = coverage.run(recover=recover)
+        except ANALYSIS_ERRORS as error:
+            return self.__with_tokens(
+                self.__failed(error, Stage.MATCH_COVERAGE, sources, units, type_ctx, ast_dump), lexed
+            )
+
         started = time.perf_counter()
         definite_assignment = DefiniteAssignment(all_def_points, type_ctx)
         try:
@@ -328,6 +337,8 @@ class AnalysisSession:
 
         diagnostics = list(checker.export_diagnostics())
         diagnostics.extend(diagnostic_from_error(error, stage=Stage.COMPTIME) for error in comptime_errors)
+        diagnostics.extend(diagnostic_from_error(error, stage=Stage.MATCH_COVERAGE) for error in coverage_errors)
+        diagnostics.extend(coverage.warnings())
         diagnostics.extend(
             diagnostic_from_error(error, stage=Stage.DEFINITE_ASSIGNMENT) for error in assignment_errors
         )

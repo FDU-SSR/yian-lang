@@ -4,12 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
 from compiler.codegen.cfg import ir as IR
 from compiler.codegen.cfg.lower.resolver import ExprResolver
+from compiler.codegen.cfg.lower.values import ValueLowerer
+from compiler.codegen.cfg.lower.memory import MemoryOps
 from compiler.codegen.cfg.lower.state import FunctionState
 from compiler.codegen.error import CodegenError
 from compiler.runtime_error import parse_runtime_error_code
+from compiler.frontend.parse.operator import BinaryOperator
 
 
 @dataclass
@@ -26,9 +30,11 @@ class LoopCtx:
 class StmtLowerer:
     """语句/控制流下降器：持有循环栈与 defer 作用域栈。"""
 
-    def __init__(self, state: FunctionState, resolver: ExprResolver) -> None:
+    def __init__(self, state: FunctionState, resolver: ExprResolver, values: ValueLowerer, memory: MemoryOps) -> None:
         self.__state = state
         self.__resolver = resolver
+        self.__values = values
+        self.__memory = memory
         self.__loops: list[LoopCtx] = []
         self.__defer_scopes: list[list[HIR.Expr]] = []
 
@@ -184,50 +190,31 @@ class StmtLowerer:
         return self.__state.emitter.void_reg()
 
     def translate_match(self, stmt: HIR.Match) -> IR.Value:
-        """Unified lowering for NewMatch covering integer, char, and enum patterns."""
-        val = self.__resolver.resolve_val(stmt.value)
-
+        """Test arms in source order against one materialized scrutinee."""
+        value = self.__resolver.resolve_val(stmt.value)
+        address = value if stmt.is_ref else self.__values.build_alloca(value, fat=False)
         merge_block = self.__state.emitter.new_block("match.merge")
-        default_block = None
-
-        arms: list[IR.MatchArm] = []
+        incoming: list[tuple[IR.Block, IR.Value]] = []
         for arm in stmt.arms:
-            if arm.pattern is None:
-                default_block = self.__state.emitter.new_block("match.default")
-                continue
-
-            pattern = self.hir_pattern_to_ir(arm.pattern)
-            block = self.__state.emitter.new_block("match.arm")
-            arms.append(IR.MatchArm(pattern=pattern, body=block))
-
-        self.__state.emitter.terminate(IR.Match(value=val, arms=arms, default=default_block, is_ref=stmt.is_ref))
-
-        # Translate arm bodies and collect values for phi (if expression-typed)
-        arm_values: list[tuple[IR.Block, IR.Value]] = []
-        index = 0
-        for arm in stmt.arms:
-            if arm.pattern is None:
-                assert default_block is not None
-                current_block = default_block
-            else:
-                current_block = arms[index].body
-                index += 1
-
-            self.__state.emitter.position(current_block)
-            arm_val = self.translate_block(arm.body)
+            next_block = self.__state.emitter.new_block("match.next")
+            self.__emit_pattern(arm.pattern, address, next_block, stmt.is_ref)
+            if arm.guard is not None:
+                guard = self.__resolver.resolve_val(arm.guard)
+                body_block = self.__state.emitter.new_block("match.body")
+                if self.__state.emitter.current_block.terminator is None:
+                    self.__state.emitter.terminate(IR.CondBr(guard, body_block, next_block))
+                self.__state.emitter.position(body_block)
+            result = self.translate_block(arm.body)
             if self.__state.emitter.current_block.terminator is None:
                 self.__state.emitter.terminate(IR.Br(merge_block))
-                arm_values.append((self.__state.emitter.current_block, arm_val))
-
+                incoming.append((self.__state.emitter.current_block, result))
+            self.__state.emitter.position(next_block)
+        self.__state.emitter.terminate(IR.Unreachable())
         self.__state.emitter.position(merge_block)
-
-        if not arm_values:
-            # All arms diverge — no phi needed.
-            if stmt.type_id == TypeCtx.void_id:
-                return self.__state.emitter.void_reg()
+        if not incoming:
+            self.__state.emitter.terminate(IR.Unreachable())
             return self.__state.emitter.never_reg()
-
-        phi = self.__state.emitter.emit_phi(arm_values)
+        phi = self.__state.emitter.emit_phi(incoming)
         phi.type_id = stmt.type_id
         return phi
 
@@ -267,23 +254,126 @@ class StmtLowerer:
     # Match helpers
     # ------------------------------------------------------------------
 
-    def hir_pattern_to_ir(self, pattern: HIR.Pattern) -> IR.Pattern:
-        """Convert a HIR Pattern to (discriminant, IR.Pattern)."""
-        if isinstance(pattern, HIR.IntPattern):
-            return IR.IntPattern(
-                value=IR.IntLiteral(value=pattern.value, type_id=pattern.type_id)
-            )
-        if isinstance(pattern, HIR.CharPattern):
-            return IR.CharPattern(
-                value=IR.CharLiteral(value=pattern.value, type_id=TypeCtx.char_id)
-            )
-        fields = None
-        if pattern.unpack_fields is not None:
-            fields = [self.__state.emitter.func.local_vars[field] for field in pattern.unpack_fields]
-        return IR.EnumPattern(
-            variant=pattern.variant,
-            fields=fields
-        )
+    def __branch_on(self, condition: IR.Value, failure: IR.Block) -> None:
+        success = self.__state.emitter.new_block("match.test.ok")
+        self.__state.emitter.terminate(IR.CondBr(condition, success, failure))
+        self.__state.emitter.position(success)
+
+    def __compare(self, op: BinaryOperator, left: IR.Value, right: IR.Value) -> IR.Value:
+        result = IR.Reg(self.__state.emitter.new_name(), TypeCtx.bool_id)
+        return self.__state.emitter.emit(IR.Binary(result, op, left, right)).result
+
+    def __store_pattern_binding(self, symbol_id: int, value: IR.Value) -> None:
+        var_ref = self.__state.emitter.func.local_vars[symbol_id]
+        ptr = self.__values.build_var_ptr_raw(var_ref)
+        self.__memory.build_store(value, ptr)
+
+    def __emit_pattern(
+        self, pattern: HIR.Pattern, address: IR.Value, failure: IR.Block, by_ref: bool,
+    ) -> None:
+        ctx = self.__state.session.type_ctx
+        match pattern:
+            case HIR.WildcardPattern():
+                return
+            case HIR.BindPattern():
+                self.__emit_pattern(pattern.inner, address, failure, by_ref)
+                bound = self.__values.build_cast(address, ctx.alloc_ref(pattern.type_id)) if by_ref else self.__memory.build_load(address)
+                self.__store_pattern_binding(pattern.symbol_id, bound)
+            case HIR.OrPattern():
+                done = self.__state.emitter.new_block("match.or.done")
+                for alternative in pattern.alternatives:
+                    next_alt = self.__state.emitter.new_block("match.or.next")
+                    self.__emit_pattern(alternative, address, next_alt, by_ref)
+                    self.__state.emitter.terminate(IR.Br(done))
+                    self.__state.emitter.position(next_alt)
+                self.__state.emitter.terminate(IR.Br(failure))
+                self.__state.emitter.position(done)
+            case HIR.LiteralPattern():
+                value = self.__memory.build_load(address)
+                if pattern.condition is not None:
+                    assert pattern.condition_symbol is not None
+                    self.__store_pattern_binding(pattern.condition_symbol, value)
+                    condition = self.__resolver.resolve_val(pattern.condition)
+                elif isinstance(pattern.value, bool):
+                    condition = self.__compare(BinaryOperator.Eq, value, IR.BoolLiteral(pattern.value, TypeCtx.bool_id))
+                elif isinstance(pattern.value, int):
+                    condition = self.__compare(BinaryOperator.Eq, value, IR.IntLiteral(pattern.value, pattern.type_id))
+                else:
+                    condition = self.__compare(BinaryOperator.Eq, value, IR.CharLiteral(pattern.value, TypeCtx.char_id))
+                self.__branch_on(condition, failure)
+            case HIR.RangePattern():
+                value = self.__memory.build_load(address)
+                ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+                lower: IR.Value = IR.CharLiteral(chr(pattern.lower), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.lower, pattern.type_id)
+                upper: IR.Value = IR.CharLiteral(chr(pattern.upper), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.upper, pattern.type_id)
+                self.__branch_on(self.__compare(BinaryOperator.Geq, value, lower), failure)
+                self.__branch_on(self.__compare(BinaryOperator.Lt, self.__memory.build_load(address), upper), failure)
+            case HIR.EnumPattern():
+                is_variant = IR.Reg(self.__state.emitter.new_name(), TypeCtx.bool_id)
+                condition = self.__state.emitter.emit(IR.EnumIsVariant(is_variant, address, pattern.variant)).result
+                self.__branch_on(condition, failure)
+                if pattern.fields is not None:
+                    assert pattern.variant.payload_type is not None
+                    fields = ctx.get_struct_fields(pattern.variant.payload_type)
+                    for index, sub in pattern.fields:
+                        ptr_type = ctx.alloc_pointer(fields[index].type_id)
+                        ptr = IR.Reg(self.__state.emitter.new_name(), ptr_type)
+                        field_addr = self.__state.emitter.emit(IR.EnumPayloadFieldPtr(
+                            ptr, address, pattern.variant.payload_type, index,
+                        )).result
+                        self.__emit_pattern(sub, field_addr, failure, by_ref)
+            case HIR.StructPattern():
+                fields = ctx.get_struct_fields(pattern.type_id)
+                for index, sub in pattern.fields:
+                    field_addr = self.__memory.build_field_ptr(address, index, fields[index].type_id)
+                    self.__emit_pattern(sub, field_addr, failure, by_ref)
+            case HIR.TuplePattern():
+                ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+                assert isinstance(ty, Type.TupleType)
+                for index, sub in enumerate(pattern.elements):
+                    field_addr = self.__memory.build_field_ptr(address, index, ty.element_types[index])
+                    self.__emit_pattern(sub, field_addr, failure, by_ref)
+            case HIR.SequencePattern():
+                self.__emit_sequence_pattern(pattern, address, failure, by_ref)
+
+    def __emit_sequence_pattern(
+        self, pattern: HIR.SequencePattern, address: IR.Value, failure: IR.Block, by_ref: bool,
+    ) -> None:
+        ctx = self.__state.session.type_ctx
+        ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+        assert isinstance(ty, (Type.ArrayType, Type.SliceType))
+        needed = len(pattern.prefix) + len(pattern.suffix)
+        elem_ptr_type = ctx.alloc_pointer(ty.element_type)
+        if isinstance(ty, Type.ArrayType):
+            length = ctx.try_extract_array_length(pattern.type_id)
+            if length is None:
+                raise CodegenError("Array pattern length must be concrete", pattern.span)
+            if (length < needed) or (not pattern.rest and length != needed):
+                self.__state.emitter.terminate(IR.Br(failure))
+                self.__state.emitter.position(self.__state.emitter.new_block("match.array.impossible"))
+                return
+            base = self.__values.build_cast(address, ctx.alloc_pointer(pattern.type_id)) if isinstance(ctx[ctx.resolve_aliases(address.type_id)], Type.RefType) else address
+            data = self.__values.build_cast(base, elem_ptr_type)
+            length_value: IR.Value = IR.IntLiteral(length, TypeCtx.u64_id)
+        else:
+            slice_value = self.__memory.build_load(address)
+            length_value = self.__memory.build_extract_value(slice_value, 3, TypeCtx.u64_id)
+            data = self.__memory.build_extract_value(slice_value, 0, elem_ptr_type)
+            comparison = BinaryOperator.Geq if pattern.rest else BinaryOperator.Eq
+            self.__branch_on(self.__compare(comparison, length_value, IR.IntLiteral(needed, TypeCtx.u64_id)), failure)
+        for index, sub in enumerate(pattern.prefix):
+            field_addr = self.__memory.build_element_ptr(data, IR.IntLiteral(index, TypeCtx.u64_id), elem_ptr_type)
+            self.__emit_pattern(sub, field_addr, failure, by_ref)
+        for index, sub in enumerate(pattern.suffix):
+            offset = self.__compare_offset(length_value, len(pattern.suffix) - index)
+            field_addr = self.__memory.build_element_ptr(data, offset, elem_ptr_type)
+            self.__emit_pattern(sub, field_addr, failure, by_ref)
+
+    def __compare_offset(self, length: IR.Value, subtract: int) -> IR.Value:
+        result = IR.Reg(self.__state.emitter.new_name(), TypeCtx.u64_id)
+        return self.__state.emitter.emit(IR.Binary(
+            result, BinaryOperator.Sub, length, IR.IntLiteral(subtract, TypeCtx.u64_id),
+        )).result
 
     # ------------------------------------------------------------------
     # expression lowering: resolve_val (value) / __resolve_addr (address)

@@ -131,6 +131,23 @@ class ExtractValue:
 
 
 @dataclass
+class EnumIsVariant:
+    """Test a tagged or niche enum value through its address."""
+    result: Reg
+    address: Value
+    variant: EnumVariant
+
+
+@dataclass
+class EnumPayloadFieldPtr:
+    """Address one field of the selected enum payload."""
+    result: Reg
+    address: Value
+    payload_type: int
+    field_index: int
+
+
+@dataclass
 class Delete:
     """Delete a pointer"""
     ptr: Value
@@ -554,7 +571,7 @@ class Phi:
 Stmt: TypeAlias = (
     VarPtr | FieldPtr | ElementPtr | PtrDiff | Alloca | Malloc | Realloc
     | Load | Store
-    | Binary | Unary | ExtractValue | Delete
+    | Binary | Unary | ExtractValue | EnumIsVariant | EnumPayloadFieldPtr | Delete
     | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
@@ -597,15 +614,6 @@ class CondBr:
 
 
 @dataclass
-class Match:
-    """Match statement"""
-    value: Value  # must be integer/char/enum
-    arms: list[MatchArm]
-    default: Block | None
-    is_ref: bool = False
-
-
-@dataclass
 class Panic:
     """Panic statement"""
     message: Value  # must be `str` type
@@ -623,7 +631,12 @@ class ProcessExit:
     code: Value
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Match | Panic | RuntimeFail | ProcessExit
+@dataclass
+class Unreachable:
+    """A statically exhaustive match has no fallthrough value."""
+
+
+Terminator: TypeAlias = Ret | Br | CondBr | Panic | RuntimeFail | ProcessExit | Unreachable
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures
@@ -692,40 +705,6 @@ class StringLiteral:
 Literal: TypeAlias = IntLiteral | FloatLiteral | BoolLiteral | CharLiteral | StringLiteral
 
 Value: TypeAlias = Literal | Reg
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class MatchArm:
-    """Match arm"""
-    pattern: Pattern
-    body: Block
-
-
-@dataclass
-class IntPattern:
-    """Integer pattern"""
-    value: IntLiteral
-
-
-@dataclass
-class CharPattern:
-    """Char pattern"""
-    value: CharLiteral
-
-
-@dataclass
-class EnumPattern:
-    """Enum pattern"""
-    variant: EnumVariant
-    fields: list[VarRef] | None  # None = no payload
-
-
-Pattern: TypeAlias = IntPattern | CharPattern | EnumPattern
-
 
 # ---------------------------------------------------------------------------
 # Top Level

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from compiler.frontend.lex.position import SrcPosition
     from compiler.frontend.lex.token import CharLiteral, IntLiteral
     from compiler.frontend.lex.token import Literal as LexLiteral
-    from compiler.frontend.lex.token import StrLiteral
 
 
 @dataclass
@@ -379,11 +378,19 @@ class Loop:
 class Match:
     span: SrcSpan
     expr: Expr
-    arms: list[tuple[Pattern, Block]]
+    arms: list[MatchArm]
 
     def __repr__(self) -> str:
-        arms_str = " | ".join(f"{pat} => {{ ... }}" for pat, _ in self.arms)
+        arms_str = " | ".join(f"{arm.pattern} => {{ ... }}" for arm in self.arms)
         return f"match {self.expr} {{ {arms_str} }}"
+
+
+@dataclass
+class MatchArm:
+    span: SrcSpan
+    pattern: Pattern
+    guard: Expr | None
+    body: Block
 
 
 @dataclass
@@ -434,62 +441,74 @@ class Delete:
 
 
 @dataclass
-class IntPattern:
-    span: SrcSpan
-    values: list[IntLiteral]
-
-    def __repr__(self) -> str:
-        values_str = " | ".join(str(value) for value in self.values)
-        return f"{values_str}"
-
-
-@dataclass
-class CharPattern:
-    span: SrcSpan
-    values: list[CharLiteral]
-
-    def __repr__(self) -> str:
-        values_str = " | ".join(str(value) for value in self.values)
-        return f"{values_str}"
-
-
-@dataclass
-class StrPattern:
-    span: SrcSpan
-    values: list[StrLiteral]
-
-    def __repr__(self) -> str:
-        values_str = " | ".join(str(value) for value in self.values)
-        return f"{values_str}"
-
-
-@dataclass
-class EnumPattern:
-    span: SrcSpan
-    variants: list[Identifier]
-
-    def __repr__(self) -> str:
-        variants_str = " | ".join(variant.name for variant in self.variants)
-        return f"{variants_str}"
-
-
-@dataclass
-class PayloadPattern:
-    span: SrcSpan
-    variant: Identifier
-    fields: list[Identifier]
-
-    def __repr__(self) -> str:
-        fields_str = ", ".join(field.name for field in self.fields)
-        return f"{self.variant.name}({fields_str})"
-
-
-@dataclass
 class WildcardPattern:
     span: SrcSpan
 
     def __repr__(self) -> str:
         return "_"
+
+
+@dataclass
+class LiteralPattern:
+    span: SrcSpan
+    literal: LexLiteral
+
+
+@dataclass
+class RangePattern:
+    span: SrcSpan
+    lower: IntLiteral | CharLiteral
+    upper: IntLiteral | CharLiteral
+
+
+@dataclass
+class NamePattern:
+    span: SrcSpan
+    name: Identifier
+
+
+@dataclass
+class BindPattern:
+    span: SrcSpan
+    name: Identifier
+    inner: Pattern
+
+
+@dataclass
+class OrPattern:
+    span: SrcSpan
+    alternatives: list[Pattern]
+
+
+@dataclass
+class FieldPattern:
+    span: SrcSpan
+    name: Identifier
+    pattern: Pattern
+
+
+@dataclass
+class ConstructPattern:
+    span: SrcSpan
+    name: Identifier
+    qualifier: ASTType | None
+    positional: list[Pattern] | None
+    named: list[FieldPattern] | None
+    rest: bool = False
+
+
+@dataclass
+class TuplePattern:
+    span: SrcSpan
+    elements: list[Pattern]
+
+
+@dataclass
+class SequencePattern:
+    span: SrcSpan
+    prefix: list[Pattern]
+    suffix: list[Pattern]
+    rest: bool
 
 
 @dataclass
@@ -720,8 +739,7 @@ Expr: TypeAlias = (
 )
 
 Pattern: TypeAlias = (
-    IntPattern | CharPattern | EnumPattern
-    | StrPattern
-    | PayloadPattern
-    | WildcardPattern
+    WildcardPattern
+    | LiteralPattern | RangePattern | NamePattern | BindPattern
+    | OrPattern | ConstructPattern | TuplePattern | SequencePattern
 )

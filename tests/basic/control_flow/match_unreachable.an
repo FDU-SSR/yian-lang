@@ -1,0 +1,9 @@
+fn main() {
+    let value = true;
+    let result: i32 = match value {
+        true => 1,
+        true => 2,
+        false => 3,
+    };
+    assert result == 1;
+}

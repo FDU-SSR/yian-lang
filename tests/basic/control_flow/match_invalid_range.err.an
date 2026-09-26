@@ -1,0 +1,7 @@
+fn main() {
+    let n = 3i32;
+    let value: i32 = match n {
+        5..3 => 1,
+        _ => 0,
+    };
+}

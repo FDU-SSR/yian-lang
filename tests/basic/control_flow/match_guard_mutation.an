@@ -1,0 +1,25 @@
+enum State {
+    A { n: i32 },
+    B { n: i32 },
+}
+
+fn change(state: State*) -> bool {
+    *state = State.B(9);
+    return false;
+}
+
+fn main() {
+    let state = State.A(1);
+    let reference: State& = &state;
+    let result: i32 = match reference {
+        A(n) if change(&state) => *n,
+        whole @ B(n) => {
+            let whole_ref: State& = whole;
+            let field_ref: i32& = n;
+            assert *field_ref == 9;
+            *field_ref
+        },
+        _ => -1,
+    };
+    assert result == 9;
+}

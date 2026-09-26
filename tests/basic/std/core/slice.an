@@ -17,19 +17,19 @@ fn main() {
     assert *p == 2: "ptr should point to first element";
 
     // Test getting elements from the slice
-    let elem0: Option<i32*> = slice.get(0);
+    let elem0: Option<i32&> = slice.get(0);
     assert elem0.is_some(): "get(0) should be Some";
-    let elem1: Option<i32*> = slice.get(3); // Out of bounds
+    let elem1: Option<i32&> = slice.get(3); // Out of bounds
     assert elem1.is_none(): "Expected out of bounds access to return None";
 
-    // Direct indexing via Index<u64, T*>
+    // Direct indexing via Index<u64, T&>
     assert slice[0] == 2: "slice[0] should be 2";
     assert slice[2] == 4: "slice[2] should be 4";
 
     // Test first and last elements
-    let first: Option<i32*> = slice.first();
+    let first: Option<i32&> = slice.first();
     assert first.is_some(): "first should be Some";
-    let last: Option<i32*> = slice.last();
+    let last: Option<i32&> = slice.last();
     assert last.is_some(): "last should be Some";
 
     // Empty slice edge cases
