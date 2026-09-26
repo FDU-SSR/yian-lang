@@ -20,7 +20,7 @@ from compiler.analysis.diagnostics import (
 )
 from compiler.analysis.documents import Document, DocumentStore
 from compiler.analysis.package_map import PackageMap
-from compiler.analysis.positions import path_to_uri, to_lsp_range
+from compiler.interop.positions import path_to_uri, to_lsp_range
 from compiler.analysis.session import AnalysisSession, collect_an_files
 from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.utils.log import CompilerLog
@@ -37,6 +37,7 @@ from compiler.codegen.llvm.pipeline.emit import Emitter
 from compiler.codegen.llvm.base.module import LLModule
 from compiler.codegen.llvm.pipeline.translator import LLTranslator
 from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
+from compiler.target_layout import type_size_provider
 from compiler.error import CompilerError
 
 
@@ -227,6 +228,7 @@ def __analyze(args: argparse.Namespace) -> int:
         compiler_root=args.compiler_root,
         packages=packages,
         raw_pointers=args.raw_pointers,
+        type_size_factory=type_size_provider,
     )
     result = session.analyze(args.paths, require_entry=False)
 
@@ -468,7 +470,8 @@ def __run(argv: list[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr)
             return 1
     session = AnalysisSession(
-        compiler_root=args.compiler_root, packages=packages, raw_pointers=args.raw_pointers
+        compiler_root=args.compiler_root, packages=packages, raw_pointers=args.raw_pointers,
+        type_size_factory=type_size_provider,
     )
     trust_root = session.std_root
     if not trust_root.is_dir():

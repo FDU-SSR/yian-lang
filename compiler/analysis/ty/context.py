@@ -327,7 +327,7 @@ class TypeCtx:
         answer.  A zero-width or synthesized span is skipped — nothing can point
         at it.
         """
-        if span.start.row == 0 and span.start.col == 0 and span.end.row == 0 and span.end.col == 0:
+        if span.is_synthetic():
             return
         key = (str(span.path), span.start.row, span.start.col)
         if key in self.__name_ref_keys:

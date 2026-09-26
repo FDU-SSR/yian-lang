@@ -4,6 +4,8 @@ from pathlib import Path
 
 
 class SrcPosition:
+    """A zero-based source position measured in Unicode code points."""
+
     def __init__(self, row: int, col: int, path: Path):
         self.row = row
         self.col = col
@@ -31,20 +33,25 @@ class SrcSpan:
 
     @staticmethod
     def empty() -> SrcSpan:
-        return SrcSpan(SrcPosition(0, 0, Path("")), SrcPosition(0, 0, Path("")))
+        return SrcSpan(SrcPosition(-1, -1, Path("")), SrcPosition(-1, -1, Path("")))
+
+    def is_synthetic(self) -> bool:
+        """Whether this span has no position in source text."""
+        return self.start.row < 0 or self.start.col < 0
 
     def __iadd__(self, other: SrcSpan) -> SrcSpan:
         """Extend this span to cover *other* as well (mutates in place)."""
-        self.start = SrcPosition(
-            min(self.start.row, other.start.row),
-            min(self.start.col, other.start.col),
-            self.start.path,
-        )
-        self.end = SrcPosition(
-            max(self.end.row, other.end.row),
-            max(self.end.col, other.end.col),
-            self.end.path,
-        )
+        if other.is_synthetic():
+            return self
+        if self.is_synthetic():
+            self.start = other.start.clone()
+            self.end = other.end.clone()
+            self.path = other.path
+            return self
+        if (other.start.row, other.start.col) < (self.start.row, self.start.col):
+            self.start = other.start.clone()
+        if (other.end.row, other.end.col) > (self.end.row, self.end.col):
+            self.end = other.end.clone()
         return self
 
     def __add__(self, other: SrcSpan) -> SrcSpan:

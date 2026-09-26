@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from compiler.analysis.session import AnalysisSession
+from compiler.target_layout import type_size_provider
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +25,10 @@ class SharedAnalysisTests(unittest.TestCase):
             ):
                 with self.subTest(name=name, raw=raw):
                     source = ROOT / "tests" / "basic" / "error" / name
-                    result = AnalysisSession(compiler_root=ROOT, raw_pointers=raw).analyze((STDLIB, source))
+                    result = AnalysisSession(
+                        compiler_root=ROOT, raw_pointers=raw,
+                        type_size_factory=type_size_provider,
+                    ).analyze((STDLIB, source))
                     self.assertIn(code, {diagnostic.code for diagnostic in result.diagnostics})
                     command = [sys.executable, "-m", "compiler.main", "-t", "none"]
                     if raw:
@@ -43,7 +47,9 @@ class SharedAnalysisTests(unittest.TestCase):
                 "fn unused() { let value: i32; value; }\nfn main() {}\n",
                 encoding="utf-8",
             )
-            result = AnalysisSession(compiler_root=ROOT).analyze((STDLIB, source))
+            result = AnalysisSession(
+                compiler_root=ROOT, type_size_factory=type_size_provider,
+            ).analyze((STDLIB, source))
             self.assertIn("E502", {diagnostic.code for diagnostic in result.diagnostics})
             process = subprocess.run(
                 [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],
@@ -55,7 +61,9 @@ class SharedAnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "library.an"
             source.write_text("fn helper() {}\n", encoding="utf-8")
-            result = AnalysisSession(compiler_root=ROOT).analyze((STDLIB, source))
+            result = AnalysisSession(
+                compiler_root=ROOT, type_size_factory=type_size_provider,
+            ).analyze((STDLIB, source))
             self.assertTrue(result.ok())
             process = subprocess.run(
                 [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],
@@ -72,7 +80,9 @@ class SharedAnalysisTests(unittest.TestCase):
                 "fn main() {}\n",
                 encoding="utf-8",
             )
-            result = AnalysisSession(compiler_root=ROOT).analyze((STDLIB, source))
+            result = AnalysisSession(
+                compiler_root=ROOT, type_size_factory=type_size_provider,
+            ).analyze((STDLIB, source))
             self.assertIn("E503", {diagnostic.code for diagnostic in result.diagnostics})
             process = subprocess.run(
                 [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],

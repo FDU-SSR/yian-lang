@@ -14,7 +14,7 @@ declaration side that navigation resolves *to*.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -81,8 +81,8 @@ class Declaration:
 class DeclarationIndex(Protocol):
     """What a caller may ask a declaration index, however it was produced.
 
-    Analysis hands out an index that is built on the first question
-    (:class:`LazyIndex`); :class:`Index` is that same index once it exists.  Both
+    Query processing uses an index built on the first question
+    (:class:`LazyIndex`); :class:`Index` is that same index once it exists. Both
     satisfy this surface, so a caller never needs to know which one it holds.
     """
 
@@ -147,8 +147,7 @@ class Index:
         """Files that import *path* directly.
 
         This is the invalidation unit the snapshot layer needs: after a file
-        changes, these are the files whose analysis can change because of it
-.
+        changes, these are the files whose analysis can change because of it.
         """
         target = path.resolve()
         return tuple(sorted(source for source, targets in self.imports.items() if target in targets))
@@ -158,12 +157,8 @@ class LazyIndex:
     """A declaration index that is built the first time anything reads it.
 
     The index is a *projection* of facts the run already holds — the units'
-    symbol tables, the type space, the resolver's import edges — so building it
-    is not extra analysis, and only an editor ever reads it.  Building it inside
-    :meth:`AnalysisSession.analyze` charged every caller for work most of them
-    never use: ``yianc --analyze`` never looks at the index at all, and an editor
-    save that no query follows does not either (7 / 17 / 59 ms at 39 / 95 / 285
-    files).  The projection happens on the first question instead.
+    symbol tables, the type space, the resolver's import edges. It belongs to
+    query processing; command-line analysis does not materialize it.
     """
 
     def __init__(
@@ -171,7 +166,7 @@ class LazyIndex:
         *,
         units: Mapping[int, UnitData],
         type_ctx: TypeCtx | None,
-        import_edges: Callable[[], Mapping[int, tuple[int, ...]] | None],
+        import_edges: Mapping[int, tuple[int, ...]],
         packages: PackageMap | None,
     ) -> None:
         self.__units = units
@@ -214,7 +209,7 @@ class LazyIndex:
         built = self.__index
         if built is None:
             built = build_index(
-                self.__units, self.__type_ctx, self.__import_edges(), self.__packages
+                self.__units, self.__type_ctx, self.__import_edges, self.__packages
             )
             self.__index = built
         return built
@@ -710,16 +705,10 @@ def __declared_type_label(var_type: ASTTy.ConstExpr | ASTType | None) -> str | N
 def __is_real_span(span: SrcSpan) -> bool:
     """True when *span* points at real source text.
 
-    The prelude injector marks the imports it synthesizes with a zero-width span
-    at (0, 0) (``prelude.__make_span``); those live in the AST but not in the
+    The prelude injector marks its imports with a synthetic span; they live in the AST but not in the
     file, so they must not become navigation targets.
     """
-    return not (
-        span.start.row == 0
-        and span.start.col == 0
-        and span.end.row == 0
-        and span.end.col == 0
-    )
+    return not span.is_synthetic()
 
 
 __all__ = ["Declaration", "DeclarationKind", "Index", "build_index"]

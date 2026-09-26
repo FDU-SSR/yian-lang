@@ -1,7 +1,7 @@
 """Rendering the analyzed answer as LSP navigation payloads.
 
 The compiler side answers "what does this position resolve to" once
-(:class:`~compiler.analysis.navigation.Navigator`); this module renders that one
+(:class:`~compiler.analysis.queries.navigation.Navigator`); this module renders that one
 answer in the shapes the client asks for — a `Location`, a `Hover`, and a
 `DocumentSymbol` tree — so definition and hover can never disagree about what a
 position means.
@@ -13,9 +13,9 @@ from pathlib import Path
 
 from lsprotocol import types
 
-from compiler.analysis.index import Declaration, DeclarationKind
-from compiler.analysis.navigation import Navigator, Resolution, Target
-from compiler.analysis.positions import path_to_uri, to_lsp_range
+from compiler.analysis.queries.index import Declaration, DeclarationKind
+from compiler.analysis.queries.navigation import Navigator, Resolution, Target
+from compiler.interop.positions import path_to_uri, to_lsp_range
 from compiler.frontend.lex.position import SrcSpan
 
 __all__ = ["document_symbols", "hover", "location"]

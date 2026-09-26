@@ -21,9 +21,9 @@ from pathlib import Path
 
 from lsprotocol import types
 
-from compiler.analysis.index import Declaration, DeclarationKind
-from compiler.analysis.navigation import Navigator, Target
-from compiler.analysis.positions import utf16_length
+from compiler.analysis.queries.index import Declaration, DeclarationKind
+from compiler.analysis.queries.navigation import Navigator, Target
+from compiler.interop.positions import utf16_length
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcSpan
 
@@ -189,9 +189,9 @@ def encode(tokens: tuple[SemanticToken, ...], text: str) -> list[int]:
     for token in sorted(tokens, key=lambda item: (item.span.start.row, item.span.start.col)):
         row = token.span.start.row
         line_text = lines[row] if 0 <= row < len(lines) else ""
-        start = max(0, token.span.start.col - 1)
+        start = max(0, token.span.start.col)
         if token.span.end.row == row:
-            length = utf16_length(line_text[start : max(start, token.span.end.col - 1)])
+            length = utf16_length(line_text[start : max(start, token.span.end.col)])
         else:
             # A name never spans lines; clamp rather than emit a wrong range.
             length = utf16_length(line_text[start:])

@@ -31,11 +31,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from compiler.analysis.index import Declaration, DeclarationKind
-from compiler.analysis.session import AnalysisResult
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.index import Declaration, DeclarationKind
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.view import AnalysisView
+from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcSpan
 
@@ -75,13 +75,12 @@ class Resolution:
 class Navigator:
     """Editor queries over one analyzed result.
 
-    The navigator holds references only: it is created per request, so it stays
-    valid exactly as long as the snapshot it was built from (a stale
-    snapshot is not something to query, it is something to replace).
+    The navigator holds references only and remains valid while its analysis
+    snapshot remains current.
     """
 
-    def __init__(self, result: AnalysisResult, *, std_root: Path | None = None) -> None:
-        self.__view = AnalysisView(result)
+    def __init__(self, context: QueryContext, *, std_root: Path | None = None) -> None:
+        self.__view = AnalysisView(context)
         self.__std_root = std_root
 
     @property
@@ -137,7 +136,7 @@ class Navigator:
     def resolve(self, path: Path, row: int, col: int) -> Resolution | None:
         """Resolve the position ``(row, col)`` in *path*.
 
-        *row* is 0-based and *col* is 1-based in code points, i.e. the compiler's
+        *row* and *col* are 0-based, with columns counted in code points: the compiler's
         own position model: the LSP layer converts at its boundary.
         """
         target: Target | None = None
@@ -208,8 +207,7 @@ class Navigator:
         """Turn a declaration into a target, following imports to their source.
 
         A position on an import names the imported thing, not the import
-        statement, so it resolves to the declaration it came from (
-        导入符号).
+        statement, so it resolves to the declaration it came from.
         """
         if declaration.kind is DeclarationKind.IMPORT:
             imported = self.__imported_target(path, declaration.name)
@@ -398,12 +396,7 @@ class Navigator:
     @staticmethod
     def __real(span: SrcSpan) -> bool:
         """True when *span* points at real source text (synthesized spans do not)."""
-        return not (
-            span.start.row == 0
-            and span.start.col == 0
-            and span.end.row == 0
-            and span.end.col == 0
-        )
+        return not span.is_synthetic()
 
     @staticmethod
     def __contains(span: SrcSpan, row: int, col: int) -> bool:

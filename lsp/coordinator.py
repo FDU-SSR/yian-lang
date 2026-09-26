@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import TypeVar
 
 from compiler.analysis.documents import Document, DocumentStore
-from compiler.analysis.session import AnalysisResult, AnalysisSession
-from lsp.workspace import Snapshot, Workspace
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.session import AnalysisSession
+from lsp.workspace import AnalysisPayload, Snapshot, Workspace
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,17 +22,19 @@ _Result = TypeVar("_Result")
 
 def _analyze(
     files: tuple[Path, ...], documents: tuple[Document, ...], session: AnalysisSession, full: bool
-) -> AnalysisResult:
+) -> AnalysisPayload:
     overlay = DocumentStore(documents)
     frozen = DocumentStore(
         Document(path=path, text=overlay.text(path), version=overlay.version(path))
         for path in files
     )
     result = session.analyze(files, documents=frozen, syntax_only=not full)
-    if full and result.index is not None:
+    queries = QueryContext(result)
+    if full and queries.index is not None:
         # The first navigation request must not materialize the index on the protocol loop.
-        _ = result.index.declarations
-    return result
+        _ = queries.index.declarations
+    versions = {document.path.resolve(): document.version for document in documents}
+    return AnalysisPayload(result, queries, versions)
 
 
 class AnalysisCoordinator:

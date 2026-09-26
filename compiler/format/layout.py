@@ -655,12 +655,12 @@ def _region(text: str, start: SrcPosition, end: SrcPosition) -> str:
     """The source between two positions (single underscore: module-level private
     the class body above calls, so it must not be mangled)."""
     lines = text.splitlines(keepends=True)
-    start_column = max(0, start.col - 1)
+    start_column = max(0, start.col)
     if start.row == end.row:
-        return lines[start.row][start_column : end.col - 1] if start.row < len(lines) else ""
+        return lines[start.row][start_column : end.col] if start.row < len(lines) else ""
     pieces = [lines[start.row][start_column:]]
     pieces.extend(lines[start.row + 1 : end.row])
-    pieces.append(lines[end.row][: end.col - 1] if end.row < len(lines) else "")
+    pieces.append(lines[end.row][: end.col] if end.row < len(lines) else "")
     return "".join(pieces)
 
 

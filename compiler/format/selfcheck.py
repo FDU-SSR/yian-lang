@@ -191,7 +191,7 @@ def __spacing(formatted: str, path: Path) -> list[Problem]:
         previous, token = tokens[index - 1], tokens[index]
         if previous.span.end.row != token.span.start.row:
             continue
-        between = lines[previous.span.end.row][previous.span.end.col - 1 : token.span.start.col - 1]
+        between = lines[previous.span.end.row][previous.span.end.col : token.span.start.col]
         if between.strip():
             continue  # a comment or something else sits in between
         hug: bool | None = None

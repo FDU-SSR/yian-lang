@@ -22,16 +22,17 @@ from lsprotocol import types
 from pygls.exceptions import JsonRpcException
 from pygls.lsp.server import LanguageServer
 
-from compiler.analysis.navigation import Navigator
+from compiler.analysis.queries.navigation import Navigator
 from compiler.analysis.session import AnalysisResult
-from compiler.analysis.completion import complete, signature_help as signature_info
-from compiler.analysis.refactor import (
+from compiler.analysis.queries.completion import complete, signature_help as signature_info
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.refactor import (
     ReferenceResult,
     find_references,
     rename as rename_symbol,
 )
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
-from compiler.analysis.positions import path_to_uri, to_compiler_column, uri_to_path
+from compiler.interop.positions import path_to_uri, to_compiler_column, uri_to_path
 from lsp.completion import completion_list, signature_help
 from lsp.coordinator import AnalysisCoordinator
 from lsp.diagnostics import diagnostics_by_document
@@ -107,7 +108,7 @@ class YianLanguageServer(LanguageServer):
 
     def navigator(self, snapshot: Snapshot) -> Navigator:
         if self.__navigator_generation != snapshot.generation or self.__navigator_cache is None:
-            self.__navigator_cache = Navigator(snapshot.result, std_root=self.model.std_root)
+            self.__navigator_cache = Navigator(snapshot.queries, std_root=self.model.std_root)
             self.__navigator_generation = snapshot.generation
         return self.__navigator_cache
 
@@ -234,7 +235,7 @@ class YianLanguageServer(LanguageServer):
                 types.PublishDiagnosticsParams(
                     uri=path_to_uri(path),
                     diagnostics=by_path.get(path, []),
-                    version=snapshot.result.versions.get(path, document.version),
+                    version=snapshot.versions.get(path, document.version),
                 )
             )
         for path in self.__published - published:
@@ -412,8 +413,9 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         path, row, col = located
+        context = __context(ls, result)
         return await __query(ls, result, lambda: completion_list(
-            complete(result, path, row, col, std_root=ls.model.std_root), navigator
+            complete(context, path, row, col, std_root=ls.model.std_root), navigator
         ))
     server.feature(
         types.TEXT_DOCUMENT_COMPLETION,
@@ -431,8 +433,9 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         path, row, col = located
+        context = __context(ls, result)
         def __signature() -> types.SignatureHelp | None:
-            info = signature_info(result, path, row, col, std_root=ls.model.std_root)
+            info = signature_info(context, path, row, col, std_root=ls.model.std_root)
             return None if info is None else signature_help(info)
         return await __query(ls, result, __signature)
     server.feature(
@@ -462,9 +465,10 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         result, navigator, path, row, col = located
+        context = __context(ls, result)
         def __references() -> list[types.Location] | None:
             found = find_references(
-                result, path, row, col,
+                context, path, row, col,
                 include_declaration=params.context.include_declaration,
                 std_root=ls.model.std_root,
             )
@@ -479,8 +483,9 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         result, navigator, path, row, col = located
+        context = __context(ls, result)
         def __highlights() -> list[types.DocumentHighlight] | None:
-            found = find_references(result, path, row, col, std_root=ls.model.std_root)
+            found = find_references(context, path, row, col, std_root=ls.model.std_root)
             if found is None:
                 return None
             same_file = ReferenceResult(
@@ -504,8 +509,9 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         result, navigator, path, row, col = located
+        context = __context(ls, result)
         def __prepare() -> types.PrepareRenamePlaceholder | None:
-            found = find_references(result, path, row, col, std_root=ls.model.std_root)
+            found = find_references(context, path, row, col, std_root=ls.model.std_root)
             if found is None:
                 return None
             return types.PrepareRenamePlaceholder(
@@ -521,8 +527,9 @@ def __register_features(server: YianLanguageServer) -> None:
         if located is None:
             return None
         result, navigator, path, row, col = located
+        context = __context(ls, result)
         outcome = await __query(ls, result, lambda: rename_symbol(
-            result, path, row, col, params.new_name, std_root=ls.model.std_root
+            context, path, row, col, params.new_name, std_root=ls.model.std_root
         ))
         if not outcome.ok:
             # A refused rename is a *request* failure with a readable reason, not
@@ -600,6 +607,13 @@ async def __query(
     return result
 
 
+def __context(server: YianLanguageServer, result: AnalysisResult) -> QueryContext:
+    snapshot = server.model.fresh_snapshot
+    if snapshot is None or snapshot.result is not result:
+        raise JsonRpcException("document changed before query", code=-32801)
+    return snapshot.queries
+
+
 def __navigator(server: YianLanguageServer, snapshot: Snapshot) -> Navigator:
     return server.navigator(snapshot)
 
@@ -625,7 +639,7 @@ def __compiler_position(
     """The document path and the compiler position for a client position.
 
     The client speaks 0-based lines and UTF-16 characters; the analysis speaks
-    0-based rows and 1-based code points, so the conversion happens
+    0-based rows and columns counted in code points, so the conversion happens
     here, at the boundary, and only for a document the analysis actually read.
     """
     path = uri_to_path(uri)

@@ -271,7 +271,7 @@ def format_source_error(diagnostic: Diagnostic, text: str) -> str:
 
     lines = [
         f"{diagnostic.severity.value}[{diagnostic.code}]: {diagnostic.message}",
-        f"--> {span.path}:{start_row + 1}:{start_col}",
+        f"--> {span.path}:{max(1, start_row + 1)}:{max(1, start_col + 1)}",
     ]
 
     source_lines = text.splitlines()
@@ -281,15 +281,15 @@ def format_source_error(diagnostic: Diagnostic, text: str) -> str:
         if start_row == end_row:
             marker_width = max(1, end_col - start_col)
         else:
-            marker_width = max(1, len(source_line) - start_col + 1)
-        lines.append("    " + " " * (start_col - 1) + "^" * marker_width)
+            marker_width = max(1, len(source_line) - start_col)
+        lines.append("    " + " " * start_col + "^" * marker_width)
     return "\n".join(lines)
 
 
 def diagnostic_payload(diagnostic: Diagnostic, *, range_payload: dict[str, object]) -> dict[str, object]:
     """Build the JSON payload for one diagnostic.
 
-    ``range_payload`` comes from :func:`compiler.analysis.positions.to_lsp_range`;
+    ``range_payload`` comes from :func:`compiler.interop.positions.to_lsp_range`;
     keeping the conversion outside keeps this module free of position maths.
     """
     return {

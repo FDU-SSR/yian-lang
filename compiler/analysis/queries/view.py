@@ -2,15 +2,13 @@
 
 The compiler computes a great deal — symbol tables, a type space, recorded name
 resolutions, a declaration index, the spans the parser kept — and an editor needs
-to *read* those facts, not to run any analysis of its own.  This module is the one
-place where that reading happens: ``TypeCtx`` and the declaration index appear
-here and nowhere else in the query layer, so every other module depends on
-questions about the program rather than on how the compiler stores it (
-).
+to *read* those facts, not to run any analysis of its own. This view exposes
+semantic facts to navigation and completion without giving either query direct
+access to compiler storage details.
 
 Two rules make the surface trustworthy:
 
-* **nothing here mutates anything** — a view only reads the frozen result it was
+* **nothing here mutates anything** — a view only reads the completed result it was
   built over, so it is exactly as valid as the snapshot that produced it;
 * **every answer is a fact, not a guess** — a type that is not registered, a name
   that was not resolved or a span the parser never saw returns ``None`` (or an
@@ -25,11 +23,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from compiler.analysis.index import (
+from compiler.analysis.queries.index import (
     Declaration,
     DeclarationIndex,
 )
-from compiler.analysis.session import AnalysisResult
+from compiler.analysis.queries.context import QueryContext
 from compiler.analysis.symbol.symbol import Symbol
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
@@ -50,10 +48,11 @@ class AnalysisView:
     snapshot is not something to query, it is something to replace).
     """
 
-    def __init__(self, result: AnalysisResult) -> None:
+    def __init__(self, context: QueryContext) -> None:
+        result = context.result
         self.__result = result
         self.__type_ctx: TypeCtx | None = result.type_ctx
-        self.__index: DeclarationIndex | None = result.index
+        self.__index: DeclarationIndex | None = context.index
         # Position → what is there, built once per view: a request may ask about
         # many positions (semantic tokens, completion), and each answer is then a
         # dictionary lookup rather than a scan of every reference.
@@ -73,10 +72,6 @@ class AnalysisView:
     def tokens_of(self, path: Path) -> tuple[Tok.Token, ...]:
         """The lexed tokens of *path*, empty when the file was not analyzed."""
         return self.__result.tokens.get(path.resolve(), ())
-
-    def document_version(self, path: Path) -> int | None:
-        """The editor version the analysis read *path* at, when known."""
-        return self.__result.versions.get(path.resolve())
 
     # ── declarations ──────────────────────────────────────────────────────────
 

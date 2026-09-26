@@ -13,7 +13,7 @@ from pathlib import Path
 
 from lsprotocol import types
 
-from compiler.analysis.positions import utf16_length
+from compiler.interop.positions import utf16_length
 from compiler.format import format_text
 
 __all__ = ["document_edits", "document_range"]

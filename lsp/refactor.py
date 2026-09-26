@@ -1,8 +1,8 @@
 """References, rename and quick fixes as protocol payloads.
 
 The compiler side decides which spans a symbol occupies
-(:mod:`compiler.analysis.refactor`) and where every import statement begins and
-ends (:class:`~compiler.analysis.view.AnalysisView`); this module turns that into
+(:mod:`compiler.analysis.queries.refactor`) and where every import statement begins and
+ends (:class:`~compiler.analysis.queries.view.AnalysisView`); this module turns that into
 a `Location` list, a `DocumentHighlight` list, a `WorkspaceEdit`, and
 `CodeAction`s — and gives a refusal a message the user can read instead of an edit
 nobody asked for.
@@ -22,9 +22,9 @@ from pathlib import Path
 from lsprotocol import types
 
 from compiler.analysis.diagnostics import Diagnostic
-from compiler.analysis.navigation import Navigator
-from compiler.analysis.positions import path_to_uri, to_lsp_range
-from compiler.analysis.refactor import ReferenceResult, RenameResult
+from compiler.analysis.queries.navigation import Navigator
+from compiler.interop.positions import path_to_uri, to_lsp_range
+from compiler.analysis.queries.refactor import ReferenceResult, RenameResult
 from compiler.analysis.session import AnalysisResult
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
@@ -306,7 +306,7 @@ def __before(position: SrcSpan, reference: SrcSpan) -> bool:
 
 
 def __is_real(span: SrcSpan) -> bool:
-    return not (span.start.row == 0 and span.start.col == 0 and span.end.row == 0 and span.end.col == 0)
+    return not span.is_synthetic()
 
 
 def __contains(span: SrcSpan, inner: SrcSpan) -> bool:

@@ -38,7 +38,7 @@ class CharStream:
         self.__source = path.read_text() if text is None else text
         self.__src_len = len(self.__source)
         self.__index = 0
-        self.pos = SrcPosition(0, 1, path)
+        self.pos = SrcPosition(0, 0, path)
 
     def at_end(self) -> bool:
         return self.__index >= self.__src_len
@@ -51,7 +51,7 @@ class CharStream:
 
         if ch == "\n":
             self.pos.row += 1
-            self.pos.col = 1
+            self.pos.col = 0
         else:
             self.pos.col += 1
 
@@ -63,7 +63,7 @@ class CharStream:
 
         if self.__source[self.__index] == "\n":
             self.pos.row += 1
-            self.pos.col = 1
+            self.pos.col = 0
         else:
             self.pos.col += 1
 
@@ -75,7 +75,7 @@ class CharStream:
                 raise StopIteration("End of source code reached")
             if self.__source[self.__index] == "\n":
                 self.pos.row += 1
-                self.pos.col = 1
+                self.pos.col = 0
             else:
                 self.pos.col += 1
             self.__index += 1
@@ -97,7 +97,7 @@ class CharStream:
         for ch in expected:
             if ch == "\n":
                 self.pos.row += 1
-                self.pos.col = 1
+                self.pos.col = 0
             else:
                 self.pos.col += 1
         self.__index += elen
@@ -114,7 +114,7 @@ class CharStream:
         while idx < end and src[idx].isspace():
             if src[idx] == "\n":
                 self.pos.row += 1
-                self.pos.col = 1
+                self.pos.col = 0
             else:
                 self.pos.col += 1
             idx += 1
@@ -131,7 +131,7 @@ class CharStream:
         if idx < end:
             idx += 1  # consume the newline
         self.pos.row += 1
-        self.pos.col = 1
+        self.pos.col = 0
         self.__index = idx
 
     def peek_nth(self, n: int) -> str | None:
@@ -149,7 +149,7 @@ class CharStream:
         while idx + 1 < end and not (src[idx] == "*" and src[idx + 1] == "/"):
             if src[idx] == "\n":
                 self.pos.row += 1
-                self.pos.col = 1
+                self.pos.col = 0
             else:
                 self.pos.col += 1
             idx += 1

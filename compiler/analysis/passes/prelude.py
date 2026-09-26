@@ -37,14 +37,13 @@ def __make_identifier(name: str, span: SrcSpan) -> AST.Identifier:
 
 
 def __make_span(path: Path) -> SrcSpan:
-    """Create a zero-width span pointing at the given file.
+    """Create a synthetic span associated with the given file.
 
-    Uses (0, 0) position — the prelude imports are compiler-generated
-    and have no corresponding source location. Using the target file's
-    path ensures that error messages point somewhere meaningful if a
-    prelude import ever fails to resolve.
+    The prelude imports are compiler-generated and have no source location.
+    The target file's path keeps any associated error message attributable
+    to a source file.
     """
-    pos = SrcPosition(0, 0, path)
+    pos = SrcPosition(-1, -1, path)
     return SrcSpan(pos, pos)
 
 

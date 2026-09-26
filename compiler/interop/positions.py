@@ -1,8 +1,8 @@
-"""Conversion between compiler positions and editor (LSP) positions.
+"""Conversion between compiler positions and UTF-16 protocol positions.
 
 This is the **only** module allowed to know both coordinate systems.
 The compiler keeps its own representation — ``SrcPosition(row, col, path)`` with a
-0-based row, a 1-based column counted in code points, and a ``Path`` — and it is
+0-based row and column counted in code points, and a ``Path`` — and it is
 not modified.  Editors speak LSP: 0-based lines, 0-based characters counted in
 UTF-16 code units, and ``file://`` URIs.
 
@@ -26,16 +26,16 @@ def utf16_length(text: str) -> int:
 def to_lsp_position(row: int, line_text: str, col: int) -> dict[str, int]:
     """Convert a compiler position to a 0-based line with a UTF-16 character.
 
-    *row* is already 0-based and is passed through; *col* is 1-based and counted
-    in code points, so *line_text* is needed to convert it.
+    *row* is passed through; *col* is 0-based and counted in code points,
+    so *line_text* is needed to convert it.
     """
-    code_point_index = max(0, col - 1)
+    code_point_index = max(0, col)
     character = utf16_length(line_text[:code_point_index])
-    return {"line": row, "character": character}
+    return {"line": max(0, row), "character": character}
 
 
 def to_compiler_column(line_text: str, character: int) -> int:
-    """Convert a 0-based UTF-16 *character* to a 1-based code-point column.
+    """Convert a 0-based UTF-16 *character* to a 0-based code-point column.
 
     The inverse of :func:`to_lsp_position`, and the reason it needs the line's
     text: UTF-16 units and code points part ways after the first non-BMP
@@ -45,9 +45,9 @@ def to_compiler_column(line_text: str, character: int) -> int:
     units = 0
     for index, code_point in enumerate(line_text):
         if units >= character:
-            return index + 1
+            return index
         units += 2 if ord(code_point) > 0xFFFF else 1
-    return len(line_text) + 1
+    return len(line_text)
 
 
 def to_lsp_range(span: SrcSpan, text: str) -> dict[str, dict[str, int]]:

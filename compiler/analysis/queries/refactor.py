@@ -1,4 +1,4 @@
-"""Finding, renaming and quick-fixing code.
+"""Symbol references and rename facts.
 
 Everything here is based on **symbol identity**, never on the text: a reference is
 a name the analysis resolved to a particular declaration, so two same-named
@@ -7,9 +7,8 @@ That is also why a rename can refuse: when the analysis cannot account for every
 use of the name, editing some of them would leave the program half-renamed, and
 refusing is the safe answer (无法确认符号身份时拒绝批量修改).
 
-Formatting is deliberately absent — see the project readme for the evaluation;
-the short version is that the AST keeps no comment or whitespace trivia, so a
-formatter would need a separate token-preserving pass.
+Protocol edits and quick fixes are rendered by the client adapter, using the
+spans produced here.
 """
 
 from __future__ import annotations
@@ -17,9 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from compiler.analysis.navigation import Navigator, Target
-from compiler.analysis.session import AnalysisResult
-from compiler.analysis.view import AnalysisView
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.navigation import Navigator, Target
+from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcSpan
 
@@ -73,7 +72,7 @@ class RenameResult:
 
 
 def find_references(
-    result: AnalysisResult,
+    context: QueryContext,
     path: Path,
     row: int,
     col: int,
@@ -86,7 +85,7 @@ def find_references(
     A reference counts when it resolved to the *same declaration* as the position
     does, which is symbol identity: a local `x` and a global `x` never mix.
     """
-    return __references_at(Navigator(result, std_root=std_root), path, row, col, include_declaration)
+    return __references_at(Navigator(context, std_root=std_root), path, row, col, include_declaration)
 
 
 def __references_at(
@@ -112,7 +111,7 @@ def __references_at(
 
 
 def rename(
-    result: AnalysisResult,
+    context: QueryContext,
     path: Path,
     row: int,
     col: int,
@@ -130,7 +129,7 @@ def rename(
     """
     if not __is_identifier(new_name):
         return RenameResult(refusal=f"'{new_name}' is not a valid identifier")
-    navigator = Navigator(result, std_root=std_root)
+    navigator = Navigator(context, std_root=std_root)
     references = __references_at(navigator, path, row, col, include_declaration=True)
     if references is None:
         return RenameResult(refusal="nothing to rename here")
@@ -139,7 +138,7 @@ def rename(
         return RenameResult(
             refusal=f"'{target.name}' is declared in the standard library", target=target
         )
-    unchecked = __unchecked_name_uses(result, target)
+    unchecked = __unchecked_name_uses(context, target)
     if unchecked:
         where = unchecked[0]
         return RenameResult(
@@ -161,14 +160,14 @@ def rename(
     return RenameResult(edits=tuple(edits), target=target)
 
 
-def __unchecked_name_uses(result: AnalysisResult, target: Target) -> tuple[SrcSpan, ...]:
+def __unchecked_name_uses(context: QueryContext, target: Target) -> tuple[SrcSpan, ...]:
     """Names spelled like *target* inside definitions the analysis never checked.
 
     A generic body that is never instantiated is not type checked, so no
     reference was recorded inside it.  If such a body names the symbol, a rename
     cannot be trusted to be complete, and the caller refuses.
     """
-    view = AnalysisView(result)
+    view = AnalysisView(context)
     if not view.has_types:
         return ()
     checked = set(view.def_points())
@@ -201,7 +200,7 @@ def __name_at(view: AnalysisView, span: SrcSpan) -> str | None:
     if not 0 <= span.start.row < len(lines):
         return None
     line = lines[span.start.row]
-    return line[span.start.col - 1 : span.end.col - 1]
+    return line[span.start.col : span.end.col]
 
 
 def __contains(span: SrcSpan, inner: SrcSpan) -> bool:

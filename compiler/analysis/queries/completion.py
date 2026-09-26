@@ -17,12 +17,12 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from compiler.analysis.index import Declaration, DeclarationKind
-from compiler.analysis.navigation import Navigator
-from compiler.analysis.session import AnalysisResult
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.index import Declaration, DeclarationKind
+from compiler.analysis.queries.navigation import Navigator
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
-from compiler.analysis.view import AnalysisView
+from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcPosition, SrcSpan
 
@@ -177,13 +177,13 @@ PRIMITIVE_TYPE_NAMES = (
 
 
 def complete(
-    result: AnalysisResult, path: Path, row: int, col: int, *, std_root: Path | None = None
+    context: QueryContext, path: Path, row: int, col: int, *, std_root: Path | None = None
 ) -> CompletionResult:
     """Candidates for the position ``(row, col)`` in *path*.
 
-    *row* is 0-based and *col* is 1-based in code points (the compiler's model).
+    *row* and *col* are 0-based; columns count code points.
     """
-    navigator = Navigator(result, std_root=std_root)
+    navigator = Navigator(context, std_root=std_root)
     text = navigator.text_of(path)
     tokens = navigator.tokens_of(path)
     prefix, prefix_span = __prefix_at(path, text, row, col)
@@ -193,14 +193,14 @@ def complete(
         # better answer than nothing while the user is mid-expression, as long as
         # nothing is claimed about what they mean (降级结果).
         return CompletionResult(items=__lexical_items(tokens, prefix), span=prefix_span)
-    context = __context_at(path, tokens, row, col)
-    if context == __CONTEXT_MEMBER:
+    completion_context = __context_at(path, tokens, row, col)
+    if completion_context == __CONTEXT_MEMBER:
         items = __member_items(navigator, path, row, col)
-    elif context == __CONTEXT_TYPE:
+    elif completion_context == __CONTEXT_TYPE:
         items = __type_items(navigator, path)
-    elif context == __CONTEXT_IMPORT_PATH:
+    elif completion_context == __CONTEXT_IMPORT_PATH:
         items = __import_path_items(navigator)
-    elif context == __CONTEXT_IMPORT_NAME:
+    elif completion_context == __CONTEXT_IMPORT_NAME:
         items = __import_name_items(navigator, path, row, col)
     else:
         items = __value_items(navigator, path, row, col)
@@ -231,10 +231,10 @@ def __lexical_items(
 
 
 def signature_help(
-    result: AnalysisResult, path: Path, row: int, col: int, *, std_root: Path | None = None
+    context: QueryContext, path: Path, row: int, col: int, *, std_root: Path | None = None
 ) -> SignatureInfo | None:
     """Signature help for the call the position is inside, if any."""
-    navigator = Navigator(result, std_root=std_root)
+    navigator = Navigator(context, std_root=std_root)
     tokens = navigator.tokens_of(path)
     call = __call_at(path, tokens, row, col)
     if call is None:
@@ -260,14 +260,14 @@ def __prefix_at(
 ) -> tuple[str, SrcSpan | None]:
     """The identifier ending at the caret, and the span it replaces."""
     line = __line(text, row)
-    index = min(max(col - 1, 0), len(line))
+    index = min(max(col, 0), len(line))
     start = index
     while start > 0 and __identifier_char(line[start - 1]):
         start -= 1
     prefix = line[start:index]
     if not prefix:
         return "", None
-    return prefix, SrcSpan(__position(path, row, start + 1), __position(path, row, index + 1))
+    return prefix, SrcSpan(__position(path, row, start), __position(path, row, index))
 
 
 def __receiver_type(reference: Type.NameRef) -> tuple[int | None, bool]:

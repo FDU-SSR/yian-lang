@@ -71,18 +71,17 @@ def gaps_in(text: str, tokens: Sequence[Token]) -> tuple[Gap, ...]:
 def __gap(lines: Sequence[str], path: Path, start: SrcPosition, end: SrcPosition | None) -> Gap:
     """The trivia between two positions, comment by comment.
 
-    Columns are tracked 0-based inside the gap and converted to the compiler's
-    1-based convention only when a comment's span is built.
+    Columns and comment spans both use 0-based code-point offsets.
     """
     piece = _slice(lines, start, end)
     if not piece:
         return Gap()
     comments: list[Comment] = []
-    row, col = start.row, start.col - 1
+    row, col = start.row, start.col
     # A comment shares its line with the previous token unless the gap starts at
     # the beginning of a line (the file start) — a newline inside the gap resets
     # this below.
-    only_space = start.col <= 1
+    only_space = start.col == 0
     newlines_since_item = 0
     index = 0
     while index < len(piece):
@@ -152,11 +151,11 @@ def _comment_span(path: Path, row: int, col: int, body: str) -> SrcSpan:
     """
     rows = body.count("\n")
     if rows:
-        # The column after the last character of the closing line, 1-based.
-        end = SrcPosition(row + rows, len(body.rsplit("\n", 1)[-1]) + 1, path)
+        # The column after the last character of the closing line.
+        end = SrcPosition(row + rows, len(body.rsplit("\n", 1)[-1]), path)
     else:
-        end = SrcPosition(row, col + 1 + len(body), path)
-    return SrcSpan(SrcPosition(row, col + 1, path), end)
+        end = SrcPosition(row, col + len(body), path)
+    return SrcSpan(SrcPosition(row, col, path), end)
 
 
 def _slice(lines: Sequence[str], start: SrcPosition, end: SrcPosition | None) -> str:
@@ -168,12 +167,11 @@ def _slice(lines: Sequence[str], start: SrcPosition, end: SrcPosition | None) ->
     if start.row >= len(lines):
         return ""
     if end is None or end.row >= len(lines):
-        return lines[start.row][max(0, start.col - 1) :] + "".join(lines[start.row + 1 :])
-    # A column of 0 marks the start of the file; everything else is 1-based.
-    start_column = max(0, start.col - 1)
+        return lines[start.row][max(0, start.col) :] + "".join(lines[start.row + 1 :])
+    start_column = max(0, start.col)
     if start.row == end.row:
-        return lines[start.row][start_column : end.col - 1]
+        return lines[start.row][start_column : end.col]
     pieces = [lines[start.row][start_column:]]
     pieces.extend(lines[start.row + 1 : end.row])
-    pieces.append(lines[end.row][: end.col - 1])
+    pieces.append(lines[end.row][: end.col])
     return "".join(pieces)

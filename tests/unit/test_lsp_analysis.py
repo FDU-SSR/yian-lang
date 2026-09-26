@@ -12,10 +12,11 @@ from unittest.mock import patch
 from pygls.exceptions import JsonRpcException
 
 from compiler.analysis.documents import Document
+from compiler.analysis.queries.context import QueryContext
 from compiler.analysis.session import AnalysisResult
 from lsp.coordinator import AnalysisCoordinator
 from lsp.server import __query as query_snapshot, create_server
-from lsp.workspace import Workspace
+from lsp.workspace import AnalysisPayload, Workspace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +40,9 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         server = create_server(compiler_root=ROOT)
         source = ROOT / "tests" / "basic" / "array" / "access.an"
         result = AnalysisResult(sources={source: "fn main() {}"})
-        snapshot = server.model.accept(server.model.revision, (source,), result)
+        snapshot = server.model.accept(
+            server.model.revision, (source,), AnalysisPayload(result, QueryContext(result), {})
+        )
         self.assertIsNotNone(snapshot)
         started = threading.Event()
         release = threading.Event()

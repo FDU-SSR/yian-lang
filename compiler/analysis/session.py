@@ -8,9 +8,8 @@ request a syntax-only result while a document is being edited.
 
 from __future__ import annotations
 
-import hashlib
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,7 +22,6 @@ from compiler.analysis.diagnostics import (
 )
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
-from compiler.analysis.index import DeclarationIndex, LazyIndex
 from compiler.analysis.lowering.sem_ctx import SemCtx
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
@@ -43,16 +41,13 @@ from compiler.frontend.lex.token import Token
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
-from compiler.target_layout import type_size_provider
 from compiler.utils.log import format_ast_output
 
-#: Bumped when analysis semantics change, so snapshot keys from an older
-# compiler never look reusable to a newer one.
-ANALYSIS_FORMAT = 2
+TypeSizeFactory = Callable[[TypeCtx, Mapping[int, str], bool], Callable[[int], int]]
 
 #: The errors the analysis pipeline is expected to raise.  Anything else is a
 #: compiler bug: it is not swallowed here, so it stays visible while the analysis
-# layers above (the language server, in ) decide what to do with it.
+# layers above (such as the language server) decide what to do with it.
 ANALYSIS_ERRORS = (CompilerError, LexError, ParseError, AnalysisError)
 
 
@@ -114,16 +109,10 @@ class AnalysisResult:
     timings: Mapping[str, float] = field(default_factory=dict[str, float])
     #: The stage that stopped the run, or ``None`` when it completed.
     failed_stage: Stage | None = None
-    #: Declaration index over the units, or ``None`` when the run stopped.  It is
-    #: built on the first question, not during the run (see
-    #: :class:`~compiler.analysis.index.LazyIndex`).
-    index: DeclarationIndex | None = None
-    #: Editor version of each analyzed document (``None`` when unknown).
-    versions: Mapping[Path, int | None] = field(default_factory=dict[Path, int | None])
-    #: Snapshot key: every input's hash and version plus the compile flags.  A
-    #: result is only reusable when this matches, which is what keeps stale
-    # definitions or diagnostics from surviving an edit.
-    key: tuple[object, ...] = ()
+    #: Resolved import edges and package context for protocol-neutral queries.
+    #: ``None`` means analysis stopped before these facts were complete.
+    import_edges: Mapping[int, tuple[int, ...]] | None = None
+    packages: PackageMap | None = None
     #: True when the run stopped after desugaring: its diagnostics are the
     # front end's, and it carries no names, types or index.
     syntax_only: bool = False
@@ -156,6 +145,7 @@ class AnalysisSession:
         compiler_root: Path | None = None,
         packages: PackageMap | None = None,
         raw_pointers: bool = False,
+        type_size_factory: TypeSizeFactory,
     ) -> None:
         """Configure one session.
 
@@ -167,6 +157,7 @@ class AnalysisSession:
         """
         self.__packages = packages
         self.__raw_pointers = raw_pointers
+        self.__type_size_factory = type_size_factory
         self.__std_root = (
             packages.packages["std"].source_root
             if packages is not None
@@ -203,13 +194,12 @@ class AnalysisSession:
         store = documents if documents is not None else DocumentStore()
         src_files = collect_an_files(paths, overlay=store)
         sources = {path: self.__text(store, path) for path in src_files}
-        key = self.__snapshot_key(sources, store)
         timings: dict[str, float] = {}
 
         started = time.perf_counter()
         tokens = self.__lex(src_files, sources)
         if isinstance(tokens, AnalysisResult):
-            return self.__keyed(self.__mark_syntax(tokens, syntax_only), key, store)
+            return self.__mark_syntax(tokens, syntax_only)
         timings["lex"] = time.perf_counter() - started
         # Kept for the stages that can still fail: a file the parser rejects has
         # no symbol table, but its tokens are what a degraded completion or
@@ -218,9 +208,7 @@ class AnalysisSession:
         started = time.perf_counter()
         programs = self.__parse(tokens, sources)
         if isinstance(programs, AnalysisResult):
-            return self.__keyed(
-                self.__mark_syntax(self.__with_tokens(programs, lexed), syntax_only), key, store
-            )
+            return self.__mark_syntax(self.__with_tokens(programs, lexed), syntax_only)
         timings["parse"] = time.perf_counter() - started
 
         started = time.perf_counter()
@@ -228,13 +216,9 @@ class AnalysisSession:
             for program in programs:
                 Desugar(program).run()
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__mark_syntax(
-                    self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed),
-                    syntax_only,
-                ),
-                key,
-                store,
+            return self.__mark_syntax(
+                self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed),
+                syntax_only,
             )
         timings["desugar"] = time.perf_counter() - started
         ast_dump = format_ast_output(src_files, programs) if capture_ast_dump else None
@@ -248,8 +232,6 @@ class AnalysisSession:
                 tokens=lexed,
                 programs=tuple(programs),
                 ast_dump=ast_dump,
-                versions=store.versions(),
-                key=key,
                 syntax_only=True,
                 timings=timings,
             )
@@ -267,20 +249,14 @@ class AnalysisSession:
         try:
             inject_prelude(units.values())
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units, ast_dump=ast_dump), lexed), key, store
-            )
+            return self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units, ast_dump=ast_dump), lexed)
 
         started = time.perf_counter()
         try:
             check_restricted_ops(units.values())
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(
-                    self.__failed(error, Stage.RESTRICTED_OPS, sources, units, ast_dump=ast_dump), lexed
-                ),
-                key,
-                store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.RESTRICTED_OPS, sources, units, ast_dump=ast_dump), lexed
             )
         timings["restricted_ops"] = time.perf_counter() - started
 
@@ -291,24 +267,16 @@ class AnalysisSession:
         try:
             resolver.run()
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(
-                    self.__failed(error, Stage.RESOLVE, sources, units, type_ctx, ast_dump), lexed
-                ),
-                key,
-                store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.RESOLVE, sources, units, type_ctx, ast_dump), lexed
             )
         timings["global_resolve"] = time.perf_counter() - started
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(
-                    self.__failed(error, Stage.FINALIZE, sources, units, type_ctx, ast_dump), lexed
-                ),
-                key,
-                store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.FINALIZE, sources, units, type_ctx, ast_dump), lexed
             )
 
         started = time.perf_counter()
@@ -323,26 +291,21 @@ class AnalysisSession:
         except ANALYSIS_ERRORS as error:
             # Everything recoverable was collected by the checker; what reaches
             # here is a failure before the worklist started (the program entry).
-            return self.__keyed(
-                self.__with_tokens(
-                    self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx, ast_dump), lexed
-                ),
-                key,
-                store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx, ast_dump), lexed
             )
 
         all_def_points = checker.export()
         ctx.declare_def_points(all_def_points)
         unit_names = self.__unit_names(units)
         specializer = ComptimeIfSpecializer(
-            ctx, type_size_provider(type_ctx, unit_names, self.__raw_pointers)
+            ctx, self.__type_size_factory(type_ctx, unit_names, self.__raw_pointers)
         )
         try:
             comptime_errors = specializer.run(recover=recover)
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(self.__failed(error, Stage.COMPTIME, sources, units, type_ctx, ast_dump), lexed),
-                key, store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.COMPTIME, sources, units, type_ctx, ast_dump), lexed
             )
         timings["type_check"] = time.perf_counter() - started
 
@@ -351,18 +314,14 @@ class AnalysisSession:
         try:
             definite_assignment.run()
         except ANALYSIS_ERRORS as error:
-            return self.__keyed(
-                self.__with_tokens(self.__failed(error, Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed),
-                key, store,
+            return self.__with_tokens(
+                self.__failed(error, Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
             )
         timings["definite_assignment"] = time.perf_counter() - started
         assignment_errors = definite_assignment.export_errors()
         if assignment_errors and not recover:
-            return self.__keyed(
-                self.__with_tokens(
-                    self.__failed(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
-                ),
-                key, store,
+            return self.__with_tokens(
+                self.__failed(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
             )
 
         diagnostics = list(checker.export_diagnostics())
@@ -375,16 +334,6 @@ class AnalysisSession:
         ))
         generated = specializer.generated_definitions(checker.export_generated(), checker.entry_type_id)
 
-        # A recovered error does not stop the index from being built, so a file
-        # with one broken definition still answers navigation for the others.
-        # The index is a projection of the facts already produced. A background
-        # editor worker materializes it before publishing its snapshot.
-        index: DeclarationIndex = LazyIndex(
-            units=units,
-            type_ctx=type_ctx,
-            import_edges=resolver.import_edges,
-            packages=self.__packages,
-        )
         return AnalysisResult(
             diagnostics=tuple(diagnostics),
             sources=sources,
@@ -398,9 +347,8 @@ class AnalysisSession:
             sem_ctx=ctx,
             entry_type_id=checker.entry_type_id,
             unit_names=unit_names,
-            index=index,
-            versions=store.versions(),
-            key=key,
+            import_edges=resolver.import_edges(),
+            packages=self.__packages,
             timings=timings,
         )
 
@@ -423,15 +371,6 @@ class AnalysisSession:
             names[unit_id] = "_".join((package, *relative.parts[:-1], relative.stem))
         return names
 
-    def snapshot_key(
-        self, paths: Sequence[Path], *, documents: DocumentStore | None = None
-    ) -> tuple[object, ...]:
-        """Compute a content-derived key for callers without event revisions."""
-        store = documents if documents is not None else DocumentStore()
-        src_files = collect_an_files(paths, overlay=store)
-        sources = {path: self.__text(store, path) for path in src_files}
-        return self.__snapshot_key(sources, store)
-
     def __with_tokens(
         self, result: AnalysisResult, tokens: Mapping[Path, tuple[Token, ...]]
     ) -> AnalysisResult:
@@ -441,30 +380,6 @@ class AnalysisSession:
         are what a degraded editor answer is built from.
         """
         result.tokens = tokens
-        return result
-
-    def __snapshot_key(self, sources: Mapping[Path, str], store: DocumentStore) -> tuple[object, ...]:
-        """Key a snapshot by its inputs: text hashes, versions, and compile flags."""
-        entries = tuple(
-            sorted(
-                (str(path), hashlib.sha256(text.encode("utf-8")).hexdigest(), store.version(path))
-                for path, text in sources.items()
-            )
-        )
-        return (ANALYSIS_FORMAT, entries, self.__raw_pointers)
-
-    def __keyed(
-        self, result: AnalysisResult, key: tuple[object, ...], store: DocumentStore
-    ) -> AnalysisResult:
-        """Attach the snapshot key to a failed run.
-
-        A run that stopped at a diagnostic is still a complete description of its
-        inputs, so it is keyed like a successful one: the editor reuses it while
-        the text is unchanged instead of re-analyzing a broken file on every
-        request.
-        """
-        result.key = key
-        result.versions = store.versions()
         return result
 
     # ── pipeline stages ────────────────────────────────────────────────────────

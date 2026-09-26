@@ -3,7 +3,7 @@
 The conversion is deliberately narrow: the compiler's
 :class:`~compiler.analysis.diagnostics.Diagnostic` already carries everything the
 editor needs (code, severity, message, span), so this module only maps it onto
-the protocol shape and hands the span to :func:`~compiler.analysis.positions.to_lsp_range`,
+the protocol shape and hands the span to :func:`~compiler.interop.positions.to_lsp_range`,
 the single place that knows the two position models differ.
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 from lsprotocol import types
 
 from compiler.analysis.diagnostics import Diagnostic, Severity
-from compiler.analysis.positions import to_lsp_range
+from compiler.interop.positions import to_lsp_range
 
 __all__ = ["SOURCE_NAME", "diagnostics_by_document", "to_lsp_diagnostic"]
 

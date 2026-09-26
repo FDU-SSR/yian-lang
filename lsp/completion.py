@@ -1,7 +1,7 @@
 """Completion and signature help as the protocol wants them.
 
 The compiler side decides what the candidates are
-(:mod:`compiler.analysis.completion`); this module turns them into protocol
+(:mod:`compiler.analysis.queries.completion`); this module turns them into protocol
 items — kinds, snippet text, and the range the client replaces — and the
 signature payload for the call being written.
 """
@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from lsprotocol import types
 
-from compiler.analysis.completion import (
+from compiler.analysis.queries.completion import (
     Completion,
     CompletionKind,
     CompletionResult,
     SignatureInfo,
 )
-from compiler.analysis.navigation import Navigator
-from compiler.analysis.positions import to_lsp_range
+from compiler.analysis.queries.navigation import Navigator
+from compiler.interop.positions import to_lsp_range
 from compiler.frontend.lex.position import SrcSpan
 
 __all__ = ["completion_list", "signature_help"]

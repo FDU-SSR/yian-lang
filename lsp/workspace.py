@@ -6,25 +6,36 @@ as an overlay over disk, the project model produced by ``anx``, and the analysis
 snapshot those two imply.
 
 Nothing here talks LSP — positions and URIs are converted at the protocol
-boundary (:mod:`compiler.analysis.positions`), so this module stays usable from a
+boundary (:mod:`compiler.interop.positions`), so this module stays usable from a
 test or a future client.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from anx.diagnostics import AX_DEPENDENCY_CYCLE, Diagnostic as AnxDiagnostic
 from anx.project import MANIFEST_NAME, CycleError, LoadResult, Project, discover, load
 from compiler.analysis.documents import Document, DocumentStore
-from compiler.analysis.index import Declaration, DeclarationIndex
 from compiler.analysis.package_map import PackageMap
+from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.index import Declaration, DeclarationIndex
 from compiler.analysis.session import AnalysisResult, AnalysisSession
 from compiler.analysis.source_provenance import resolve_stdlib_root
+from compiler.target_layout import type_size_provider
 
-__all__ = ["Snapshot", "Workspace"]
+__all__ = ["AnalysisPayload", "Snapshot", "Workspace"]
+
+
+@dataclass(frozen=True)
+class AnalysisPayload:
+    """Worker-owned analysis data captured for one workspace revision."""
+
+    result: AnalysisResult
+    queries: QueryContext
+    versions: Mapping[Path, int | None]
 
 
 @dataclass(frozen=True)
@@ -39,15 +50,17 @@ class Snapshot:
     #: The files this snapshot analyzed, in the order the compiler numbered them.
     files: tuple[Path, ...]
     result: AnalysisResult
+    queries: QueryContext
+    versions: Mapping[Path, int | None]
 
     @property
     def index(self) -> DeclarationIndex | None:
         """The declaration index, or ``None`` when the run stopped early."""
-        return self.result.index
+        return self.queries.index
 
     def declarations_in(self, path: Path) -> tuple[Declaration, ...]:
         """Declarations made in *path*, empty when there is no index."""
-        index = self.result.index
+        index = self.queries.index
         return () if index is None else index.in_file(path)
 
 
@@ -69,7 +82,8 @@ class Workspace:
         self.__project_diagnostics: tuple[AnxDiagnostic, ...] = ()
         self.__packages: PackageMap | None = None
         self.__session = AnalysisSession(
-            compiler_root=compiler_root, packages=None, raw_pointers=raw_pointers
+            compiler_root=compiler_root, packages=None, raw_pointers=raw_pointers,
+            type_size_factory=type_size_provider,
         )
         self.__snapshot: Snapshot | None = None
         self.__syntax: Snapshot | None = None
@@ -248,7 +262,7 @@ class Workspace:
         """Capture editor-owned inputs before handing analysis to a worker."""
         return self.files(), tuple(self.__documents), self.__session
 
-    def accept(self, revision: int, files: tuple[Path, ...], result: AnalysisResult) -> Snapshot | None:
+    def accept(self, revision: int, files: tuple[Path, ...], payload: AnalysisPayload) -> Snapshot | None:
         """Accept a worker result only if its inputs are still current."""
         if revision != self.__revision:
             return None
@@ -259,9 +273,11 @@ class Workspace:
             project_root=self.__project_root,
             project=self.__project,
             files=files,
-            result=result,
+            result=payload.result,
+            queries=payload.queries,
+            versions=payload.versions,
         )
-        if result.syntax_only:
+        if payload.result.syntax_only:
             self.__syntax = snapshot
         else:
             self.__snapshot = snapshot
@@ -283,6 +299,7 @@ class Workspace:
             compiler_root=self.__compiler_root,
             packages=packages,
             raw_pointers=self.__raw_pointers,
+            type_size_factory=type_size_provider,
         )
 
     def __standalone_files(self) -> Iterator[Path]:

@@ -3,13 +3,13 @@
 The editor holds unsaved buffers, so analysis must not read files from disk for
 the documents it was handed.  :class:`DocumentStore` keeps the overlay and falls
 back to disk for everything else (the standard library, dependencies the editor
-has not opened).  A document's identity is its path; the version is the editor's
-document version and is part of the snapshot key.
+has not opened). A document's identity is its path; its version belongs to the
+editor's snapshot metadata.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +28,7 @@ class DocumentStore:
 
     ``text()`` prefers the overlay and only touches disk when the document was
     not provided, which is what lets an analysis session run entirely on unsaved
-    text.  ``versions()`` exposes the version numbers for snapshot keys.
+    text.
     """
 
     def __init__(self, documents: Iterable[Document] = ()) -> None:
@@ -66,10 +66,5 @@ class DocumentStore:
         """Return the editor's version for *path*, or ``None`` when unknown."""
         document = self.__documents.get(path.resolve())
         return document.version if document is not None else None
-
-    def versions(self) -> Mapping[Path, int | None]:
-        """Return every overlay document's version, for snapshot keys."""
-        return {path: document.version for path, document in self.__documents.items()}
-
 
 __all__ = ["Document", "DocumentStore"]
