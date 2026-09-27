@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from compiler.frontend.lex.position import SrcSpan
     from compiler.frontend.lex.token import Token
     from compiler.frontend.parse.ast import Identifier
+    from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 
 
 @dataclass
@@ -29,7 +30,32 @@ class GenericConstExpr:
         return self.name.name
 
 
-ConstExpr: TypeAlias = LiteralConstExpr | GenericConstExpr
+@dataclass
+class UnaryConstExpr:
+    """Unary integer operation in a concrete type-level expression."""
+
+    span: SrcSpan
+    op: UnaryOperator
+    operand: ConstExpr
+
+    def __repr__(self) -> str:
+        return f"({self.op}{self.operand})"
+
+
+@dataclass
+class BinaryConstExpr:
+    """Binary integer operation in a concrete type-level expression."""
+
+    span: SrcSpan
+    op: BinaryOperator
+    left: ConstExpr
+    right: ConstExpr
+
+    def __repr__(self) -> str:
+        return f"({self.left} {self.op} {self.right})"
+
+
+ConstExpr: TypeAlias = LiteralConstExpr | GenericConstExpr | UnaryConstExpr | BinaryConstExpr
 
 
 @dataclass
@@ -113,6 +139,8 @@ class ArrayType:
                 return f"{self.element_type}[{lit}]"
             case GenericConstExpr(name=name):
                 return f"{self.element_type}[{name.name}]"
+            case _:
+                return f"{self.element_type}[{self.size}]"
 
 
 @dataclass

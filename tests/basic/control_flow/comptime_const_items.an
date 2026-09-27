@@ -1,0 +1,38 @@
+from std.core.io import print;
+
+const CAPACITY: u64 = BASE + 2u64;
+const ENABLED: bool = CAPACITY == 42u64;
+const SCALE: f32 = 1.5f32 + 0.25f32;
+const ROUNDED: f32 = 0.1 + 0.2;
+const LETTER: char = 'A';
+const MESSAGE: str = "constant\n";
+const WORD_SIZE: u64 = @sizeof<u64>;
+const RAW_BUILD: bool = IS_RAW_MODE;
+const BASE: u64 = 40u64;
+
+fn value<const N: u64>() -> u64 {
+    N
+}
+
+fn flag<const ENABLED: bool>() -> bool {
+    ENABLED
+}
+
+fn main() {
+    assert ENABLED: "forward constant reference";
+    assert SCALE == 1.75f32: "float constant arithmetic";
+    assert ROUNDED == 0.3f32: "float arithmetic rounds to source width";
+    assert LETTER == 'A': "char constant";
+    assert WORD_SIZE == 8u64: "sizeof in constant initializer";
+    assert RAW_BUILD == IS_RAW_MODE: "configuration in constant initializer";
+    assert @sizeof<u8[CAPACITY + 1]> == 43u64: "constant array length expression";
+    assert value<CAPACITY + 1>() == 43u64: "constant generic argument expression";
+    assert flag<ENABLED>(): "boolean constant generic argument";
+    let selected: i32 = comptime if ENABLED {
+        7
+    } else {
+        0
+    };
+    assert selected == 7: "constant reference in comptime if";
+    print(MESSAGE);
+}

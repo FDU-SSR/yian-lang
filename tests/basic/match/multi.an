@@ -6,7 +6,6 @@
 // vowel
 // digit
 // small
-// vowel
 // option_a
 
 from std.core.io import print;

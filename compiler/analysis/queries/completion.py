@@ -49,6 +49,7 @@ class CompletionKind(Enum):
     ENUM = "enum"
     TRAIT = "trait"
     ALIAS = "alias"
+    CONSTANT = "constant"
     VARIABLE = "variable"
     PARAMETER = "parameter"
     MODULE = "module"
@@ -139,6 +140,7 @@ KIND_OF_DECLARATION = {
     DeclarationKind.ENUM: CompletionKind.ENUM,
     DeclarationKind.TRAIT: CompletionKind.TRAIT,
     DeclarationKind.ALIAS: CompletionKind.ALIAS,
+    DeclarationKind.CONSTANT: CompletionKind.CONSTANT,
     DeclarationKind.VARIABLE: CompletionKind.VARIABLE,
     DeclarationKind.PARAMETER: CompletionKind.PARAMETER,
 }
@@ -151,6 +153,7 @@ IMPORTABLE_KINDS = frozenset(
         DeclarationKind.ENUM,
         DeclarationKind.TRAIT,
         DeclarationKind.ALIAS,
+        DeclarationKind.CONSTANT,
     }
 )
 
@@ -583,6 +586,7 @@ def __from_symbol(view: AnalysisView, symbol: Symbol) -> Completion:
             kind = {
                 SymbolKind.Function: CompletionKind.FUNCTION,
                 SymbolKind.Type: CompletionKind.STRUCT,
+                SymbolKind.Constant: CompletionKind.CONSTANT,
             }.get(symbol.kind, CompletionKind.VARIABLE)
             return Completion(
                 label=symbol.name, kind=kind, detail=view.type_name(symbol.type_id)

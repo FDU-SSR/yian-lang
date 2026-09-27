@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from compiler.analysis.const_eval import ConstantExpressionEvaluator, ConstantValue
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.facts.names import NameReferences
-from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.unit import hir as HIR
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import IntLiteral
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
@@ -18,9 +22,18 @@ if TYPE_CHECKING:
 
 
 class TypeResolver:
-    def __init__(self, type_ctx: TypeCtx, names: NameReferences):
+    def __init__(
+        self,
+        type_ctx: TypeCtx,
+        names: NameReferences,
+        constant_value: Callable[[Symbol], tuple[ConstantValue, int]],
+    ):
         self.__ctx = type_ctx
         self.__names = names
+        self.__constant_value = constant_value
+        self.__const_eval = ConstantExpressionEvaluator(
+            type_ctx, False, lambda _type_id: 0, "type-level constant expression"
+        )
 
     INT_MAPPING = {
         (True, 1): 14,
@@ -52,6 +65,10 @@ class TypeResolver:
         """
         return self.__resolve(ty, symbol_ctx)
 
+    def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
+        """Resolve a type-level integer expression to its constant type ID."""
+        return self.__resolve_const_expr(const_expr, symbol_ctx)
+
     def __resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
         """Resolve *ty* without collapsing its top-level alias.
 
@@ -79,6 +96,11 @@ class TypeResolver:
             case ASTTy.ArrayType(element_type=element_type, size=size):
                 element_type_id = self.resolve(element_type, symbol_ctx)
                 size_id = self.__resolve_const_expr(size, symbol_ctx)
+                length_ty = self.__ctx[size_id]
+                if isinstance(length_ty, Type.LiteralValueType) and (
+                    type(length_ty.value) is not int or length_ty.value < 0
+                ):
+                    raise AnalysisError("array length must be a non-negative integer", size.span)
                 return self.__ctx.alloc_array(element_type_id, size_id)
             case ASTTy.TupleType(element_types=element_types):
                 element_type_ids = [self.resolve(et, symbol_ctx) for et in element_types]
@@ -150,21 +172,128 @@ class TypeResolver:
 
     def __resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         match const_expr:
-            case LiteralConstExpr(literal=IntLiteral(value=v)):
-                return self.__ctx.alloc_literal_value(v, self.__ctx.u64_id)
+            case LiteralConstExpr(literal=IntLiteral(value=value, suffix=suffix)):
+                value_type = self.__integer_literal_type(suffix, self.__ctx.u64_id, const_expr.span)
+                return self.__ctx.alloc_literal_value(value, value_type)
             case GenericConstExpr(name=name):
                 symbol = symbol_ctx.lookup(name.name)
                 if symbol is None:
                     raise AnalysisError(f"Undefined const generic '{name.name}'", const_expr.span)
+                if symbol.kind == SymbolKind.Constant:
+                    value, value_type = self.__constant_value(symbol)
+                    self.__names.record(name.span, symbol, value_type)
+                    value_ty = self.__ctx[self.__ctx.resolve_aliases(value_type)]
+                    if type(value) is int and isinstance(value_ty, Type.IntType):
+                        return self.__ctx.alloc_literal_value(value, value_type)
+                    if type(value) is bool and isinstance(value_ty, Type.BoolType):
+                        return self.__ctx.alloc_literal_value(value, value_type)
+                    raise AnalysisError(
+                        f"'{name.name}' cannot be used as a compile-time generic argument",
+                        const_expr.span,
+                    )
                 if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
                     raise AnalysisError(f"'{name.name}' is not a compile-time constant", const_expr.span)
+                self.__names.record(name.span, symbol, symbol.type_id)
                 return symbol.type_id
+            case ASTTy.UnaryConstExpr() | ASTTy.BinaryConstExpr():
+                value, type_id = self.__evaluate_const_tree(const_expr, symbol_ctx)
+                if value is None:
+                    raise AnalysisError(
+                        "arithmetic on an unresolved const generic is not supported",
+                        const_expr.span,
+                    )
+                assert type(value) is int
+                if isinstance(self.__ctx[type_id], Type.IntLiteralType):
+                    type_id = self.__ctx.i64_id if value < 0 else self.__ctx.u64_id
+                return self.__ctx.alloc_literal_value(value, type_id)
             case _:
                 raise AnalysisError(f"Unsupported const expression: {const_expr}", const_expr.span)
 
     def __resolve_generic_arg(self, arg: ASTType | ConstExpr, symbol_ctx: SymbolCtx) -> int:
         match arg:
-            case LiteralConstExpr() | GenericConstExpr():
+            case LiteralConstExpr() | GenericConstExpr() | ASTTy.UnaryConstExpr() | ASTTy.BinaryConstExpr():
                 return self.__resolve_const_expr(arg, symbol_ctx)
+            case ASTTy.NamedType(name=name):
+                symbol = symbol_ctx.lookup(name.name)
+                if symbol is not None and symbol.kind == SymbolKind.Constant:
+                    return self.__resolve_const_expr(
+                        ASTTy.GenericConstExpr(span=name.span, name=name), symbol_ctx
+                    )
+                return self.resolve(arg, symbol_ctx)
             case _:
                 return self.resolve(arg, symbol_ctx)
+
+    def __evaluate_const_tree(self, expr: ConstExpr, symbol_ctx: SymbolCtx) -> tuple[int | None, int]:
+        """Evaluate one concrete integer subtree; preserve direct generic values."""
+        match expr:
+            case LiteralConstExpr(literal=IntLiteral(value=value, suffix=suffix)):
+                value_type = self.__integer_literal_type(
+                    suffix, self.__ctx.int_literal_id, expr.span
+                )
+                return value, value_type
+            case LiteralConstExpr():
+                raise AnalysisError("type-level constants must be integer literals", expr.span)
+            case GenericConstExpr(name=name):
+                symbol = symbol_ctx.lookup(name.name)
+                if symbol is None:
+                    raise AnalysisError(f"Undefined const generic '{name.name}'", expr.span)
+                if symbol.kind == SymbolKind.Constant:
+                    value, value_type = self.__constant_value(symbol)
+                    self.__names.record(name.span, symbol, value_type)
+                    if type(value) is not int or not self.__is_integer_type(value_type):
+                        raise AnalysisError(
+                            f"'{name.name}' is not an integer compile-time constant", expr.span
+                        )
+                    return value, value_type
+                if symbol.kind == SymbolKind.ConstGeneric:
+                    self.__names.record(name.span, symbol, symbol.type_id)
+                    return None, symbol.type_id
+                if symbol.kind == SymbolKind.Type:
+                    self.__names.record(name.span, symbol, symbol.type_id)
+                    ty = self.__ctx[self.__ctx.resolve_aliases(symbol.type_id)]
+                    if isinstance(ty, Type.LiteralValueType) and type(ty.value) is int:
+                        return ty.value, ty.value_type
+                raise AnalysisError(f"'{name.name}' is not a compile-time integer", expr.span)
+            case ASTTy.UnaryConstExpr(op=op, operand=operand):
+                value, type_id = self.__evaluate_const_tree(operand, symbol_ctx)
+                if value is None:
+                    return None, type_id
+                inner = HIR.IntLiteral(span=operand.span, value=value, type_id=type_id, is_place=False)
+                expression = HIR.Unary(
+                    span=expr.span, op=op, operand=inner, type_id=type_id, is_place=False
+                )
+                result, result_type = self.__const_eval.evaluate(expression)
+                assert type(result) is int
+                return result, result_type
+            case ASTTy.BinaryConstExpr(op=op, left=left, right=right):
+                left_value, left_type = self.__evaluate_const_tree(left, symbol_ctx)
+                right_value, right_type = self.__evaluate_const_tree(right, symbol_ctx)
+                if left_value is None or right_value is None:
+                    return None, left_type
+                result_type = self.__ctx.merge_types([left_type, right_type], expr.span)
+                expression = HIR.Binary(
+                    span=expr.span,
+                    op=op,
+                    left=HIR.IntLiteral(span=left.span, value=left_value, type_id=result_type, is_place=False),
+                    right=HIR.IntLiteral(span=right.span, value=right_value, type_id=result_type, is_place=False),
+                    type_id=result_type,
+                    is_place=False,
+                )
+                result, result_type = self.__const_eval.evaluate(expression)
+                assert type(result) is int
+                return result, result_type
+        raise AnalysisError(f"Unsupported const expression: {expr}", expr.span)
+
+    def __is_integer_type(self, type_id: int) -> bool:
+        return isinstance(self.__ctx[self.__ctx.resolve_aliases(type_id)], Type.IntType)
+
+    def __integer_literal_type(self, suffix: str | None, default: int, span: SrcSpan) -> int:
+        if suffix is None:
+            return default
+        intrinsic = Type.IntrinsicType.from_str(suffix)
+        if intrinsic is None:
+            raise AnalysisError(f"Unknown integer suffix '{suffix}'", span)
+        type_id = self.__ctx.intrinsic_type(intrinsic)
+        if not self.__is_integer_type(type_id):
+            raise AnalysisError(f"Suffix '{suffix}' is not an integer type", span)
+        return type_id

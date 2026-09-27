@@ -52,6 +52,8 @@ class GlobalResolve:
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
 
+        self.__ctx.evaluate_constants()
+
         for source_id, target_id in self.__ctx.type_ctx.check_impls():
             self.__ctx.procedures.copy(source_id, target_id)
 
@@ -123,6 +125,21 @@ class GlobalResolve:
                     assert isinstance(ty, Type.FunctionType)
                     ty.custom_def.generics = generics.copy()
                     ty.generic_args = generics.copy()
+
+                case AST.ConstDef(name=name, attrs=attrs):
+                    symbol_attrs = self.__convert_attrs(attrs)
+                    symbol_id = unit.symbol_ctx.add_symbol(
+                        name.name,
+                        SymbolKind.Constant,
+                        self.__ctx.type_ctx.error_id,
+                        symbol_attrs,
+                        name.span,
+                    )
+                    if symbol_id is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol.const_origin = (unit.unit_id, symbol_id)
+                    self.__ctx.register_constant(unit.unit_id, symbol_id, item)
 
                 case AST.StructDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
@@ -220,7 +237,13 @@ class GlobalResolve:
 
             imported_name = item.alias.name if item.alias is not None else item.target.name
             import_span = item.alias.span if item.alias is not None else item.target.span
-            unit.symbol_ctx.add_symbol(imported_name, target_symbol.kind, target_symbol.type_id, span=import_span)
+            unit.symbol_ctx.add_symbol(
+                imported_name,
+                target_symbol.kind,
+                target_symbol.type_id,
+                span=import_span,
+                const_origin=target_symbol.const_origin,
+            )
             # The written name is a resolved reference of its own, in both forms:
             # for `import A` it is the name that is bound, and for `import A as B`
             # the original spelling of `A` appears nowhere else in the file.  An
@@ -329,23 +352,28 @@ class GlobalResolve:
     def __resolve_definitions(self, unit: UnitData) -> None:
         """Resolves all definitions in the unit and updates the symbol context and type context with the resolved types."""
         for item in unit.items():
+            if not isinstance(item, AST.Alias):
+                continue
+            try:
+                self.__resolve_alias(unit, item)
+            except AnalysisError:
+                pass
+
+        for item in unit.items():
             match item:
-                case AST.Alias():
-                    # Already produced if something needed it earlier; producing it
-                    # here covers aliases nothing refers to.  A cycle is reported
-                    # where the alias is used, not here.
-                    try:
-                        self.__resolve_alias(unit, item)
-                    except AnalysisError:
-                        pass
-                case AST.FuncDef():
-                    self.__resolve_func_decl(unit, item)
                 case AST.StructDef():
                     self.__resolve_struct_def(unit, item)
                 case AST.EnumDef():
                     self.__resolve_enum_def(unit, item)
                 case AST.TraitDef():
                     self.__resolve_trait_def(unit, item)
+                case _:
+                    pass
+
+        for item in unit.items():
+            match item:
+                case AST.FuncDef():
+                    self.__resolve_func_decl(unit, item)
                 case AST.Impl():
                     self.__resolve_impl(unit, item)
                 case _:

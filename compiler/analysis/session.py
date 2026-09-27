@@ -264,7 +264,16 @@ class AnalysisSession:
         timings["restricted_ops"] = time.perf_counter() - started
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
-        semantic = SemanticState(type_ctx, self.__raw_pointers, units, self.__packages, source_trust.stdlib_root)
+        unit_names = self.__unit_names(units)
+        type_size = self.__type_size_factory(type_ctx, unit_names, self.__raw_pointers)
+        semantic = SemanticState(
+            type_ctx,
+            self.__raw_pointers,
+            units,
+            self.__packages,
+            source_trust.stdlib_root,
+            type_size,
+        )
         resolver = GlobalResolve(semantic)
         started = time.perf_counter()
         try:
@@ -299,10 +308,8 @@ class AnalysisSession:
             )
 
         all_def_points = checker.export()
-        unit_names = self.__unit_names(units)
         specializer = ComptimeIfSpecializer(
-            all_def_points, type_ctx, self.__raw_pointers,
-            self.__type_size_factory(type_ctx, unit_names, self.__raw_pointers)
+            all_def_points, type_ctx, self.__raw_pointers, type_size
         )
         try:
             comptime_errors = specializer.run(recover=recover)

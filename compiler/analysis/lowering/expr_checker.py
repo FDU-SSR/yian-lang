@@ -16,7 +16,8 @@ from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
-from compiler.frontend.parse.ast_type import GenericConstExpr, LiteralConstExpr
+from compiler.frontend.parse.ast_type import (BinaryConstExpr, GenericConstExpr,
+                                              LiteralConstExpr, UnaryConstExpr)
 from compiler.frontend.parse.operator import UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -190,21 +191,25 @@ class ExprChecker:
     def resolve_generic_arg(self, arg: AST.ASTType | AST.ConstExpr) -> int:
         """Resolve a generic argument — either a type or a const expression — to a TypeId."""
         match arg:
-            case LiteralConstExpr() | GenericConstExpr():
+            case LiteralConstExpr() | GenericConstExpr() | UnaryConstExpr() | BinaryConstExpr():
                 return self.__resolve_const_expr(arg)
+            case ASTTy.NamedType(name=name):
+                assert self.__ctx.symbol_ctx is not None
+                symbol = self.__ctx.symbol_ctx.lookup(name.name)
+                if symbol is not None and symbol.kind == SymbolKind.Constant:
+                    return self.__ctx.resolve_const_expr(
+                        ASTTy.GenericConstExpr(span=name.span, name=name), self.__ctx.symbol_ctx
+                    )
+                return self.__ctx.resolve_type(arg)
             case _:
                 return self.__ctx.resolve_type(arg)
 
     def __resolve_const_expr(self, const_expr: AST.ConstExpr) -> int:
         """Resolve a ConstExpr to a TypeId."""
         match const_expr:
-            case LiteralConstExpr(literal=Tok.IntLiteral(value=v)):
-                return self.__ctx.type_ctx.alloc_literal_value(v, self.__ctx.type_ctx.u64_id)
-            case GenericConstExpr(name=name):
+            case LiteralConstExpr() | GenericConstExpr() | UnaryConstExpr() | BinaryConstExpr():
                 assert self.__ctx.symbol_ctx is not None
-                symbol = self.__ctx.symbol_ctx.lookup(name.name)
-                assert symbol is not None, f"Undefined const generic '{name.name}'"
-                return symbol.type_id
+                return self.__ctx.resolve_const_expr(const_expr, self.__ctx.symbol_ctx)
             case _:
                 raise AnalysisError("Unsupported const expression", const_expr.span)
 
@@ -220,6 +225,26 @@ class ExprChecker:
             case SymbolKind.Variable:
                 self.__ctx.names.record(node.span, symbol, symbol.type_id, synthetic=node.synthetic)
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
+            case SymbolKind.Constant:
+                value, type_id = self.__ctx.constant_value(symbol)
+                self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
+                resolved_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+                if isinstance(resolved_type, Type.IntType):
+                    assert type(value) is int
+                    return HIR.IntLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
+                if isinstance(resolved_type, Type.FloatType):
+                    assert type(value) is float
+                    return HIR.FloatLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
+                if isinstance(resolved_type, Type.BoolType):
+                    assert type(value) is bool
+                    return HIR.BoolLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
+                if isinstance(resolved_type, Type.CharType):
+                    assert type(value) is str
+                    return HIR.CharLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
+                if isinstance(resolved_type, Type.StrType):
+                    assert type(value) is str
+                    return HIR.StrLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
+                raise AnalysisError("constant value has an unsupported type", node.span)
             case SymbolKind.Function:
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
                     raise AnalysisError(
@@ -234,8 +259,11 @@ class ExprChecker:
                 type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
                 ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
-                    assert isinstance(ty.value, int)
                     self.__ctx.names.record(node.span, symbol, ty.value_type, synthetic=node.synthetic)
+                    if type(ty.value) is bool:
+                        return HIR.BoolLiteral(
+                            span=node.span, value=ty.value, type_id=ty.value_type, is_place=False
+                        )
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
                 self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
                 return HIR.Ty(span=node.span, type_id=type_id, is_place=False)

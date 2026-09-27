@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
+from compiler.frontend.parse.ast_type import (ASTType, BinaryConstExpr, ConstExpr,
                                               GenericConstExpr,
-                                              LiteralConstExpr)
+                                              LiteralConstExpr, UnaryConstExpr)
 from compiler.utils.tree_format import TreeFormatter
 
 
@@ -30,7 +30,7 @@ class AstTreeFormatter(TreeFormatter):
         res = ""
         for idx, value in enumerate(types):
             match value:
-                case LiteralConstExpr() | GenericConstExpr():
+                case LiteralConstExpr() | GenericConstExpr() | UnaryConstExpr() | BinaryConstExpr():
                     res += self.render_line(guides, idx == len(types) - 1, f"ConstExpr: {value}")
                 case _:
                     res += self.render_line(guides, idx == len(types) - 1, f"Type: {value}")
@@ -60,6 +60,8 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_import(item, guides, is_last)
             case AST.Alias():
                 return self.__export_alias(item, guides, is_last)
+            case AST.ConstDef():
+                return self.__export_const_def(item, guides, is_last)
             case AST.FuncDef():
                 return self.__export_func_def(item, guides, is_last)
             case AST.StructDef():
@@ -76,6 +78,12 @@ class AstTreeFormatter(TreeFormatter):
 
     def __export_alias(self, item: AST.Alias, guides: list[bool], is_last: bool) -> str:
         return self.render_line(guides, is_last, f"Alias: {item}")
+
+    def __export_const_def(self, item: AST.ConstDef, guides: list[bool], is_last: bool) -> str:
+        header = f"ConstDef: {self.__format_attrs(item.attrs)}const {item.name.name}: {item.const_type}"
+        res = self.render_line(guides, is_last, header)
+        res += self.__export_expr_child("Value", item.value, guides, is_last, True)
+        return res
 
     def __export_func_def(self, item: AST.FuncDef, guides: list[bool], is_last: bool) -> str:
         header = (

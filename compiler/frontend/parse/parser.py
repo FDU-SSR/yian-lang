@@ -56,8 +56,10 @@ class Parser:
                     items.append(self.__parse_trait(attrs=attrs))
                 case Keyword(KeywordKind.Fn, _):
                     items.append(self.__parse_func_def(attrs=attrs))
+                case Keyword(KeywordKind.Const, _):
+                    items.append(self.__parse_const_def(attrs=attrs))
                 case _:
-                    raise ParseError(f"Expected a declaration keyword (fn, struct, enum, trait, impl, typedef, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+                    raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
             if items:
                 ch_parse().trace(lambda: f"parsed {type(items[-1]).__name__}")
 
@@ -164,6 +166,22 @@ class Parser:
         )
         self.__stream.consume_punctuator(PunctuatorKind.RAngle)
         return params
+
+    def __parse_const_def(self, attrs: list[AST.Attr]) -> AST.ConstDef:
+        keyword = self.__stream.consume_keyword(KeywordKind.Const)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+        const_type = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Equal)
+        value = self.__expr_parser.parse_expr()
+        end = self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.ConstDef(
+            span=keyword.span + end.span,
+            attrs=attrs,
+            name=AST.Identifier(span=name.span, name=name.name),
+            const_type=const_type,
+            value=value,
+        )
 
     def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:
         self.__stream.consume_keyword(KeywordKind.Typedef)

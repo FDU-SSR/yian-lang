@@ -374,6 +374,8 @@ class Navigator:
         match kind:
             case SymbolKind.Function:
                 return DeclarationKind.FUNCTION
+            case SymbolKind.Constant:
+                return DeclarationKind.CONSTANT
             case SymbolKind.Type:
                 return DeclarationKind.STRUCT
             case _:

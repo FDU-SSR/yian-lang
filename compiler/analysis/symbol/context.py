@@ -96,7 +96,8 @@ class SymbolCtx:
 
     def add_symbol(self, name: str, kind: SymbolKind, type_id: int,
                    attributes: set[SymbolAttribute] = set(),
-                   span: SrcSpan | None = None) -> int | None:
+                   span: SrcSpan | None = None,
+                   const_origin: tuple[int, int] | None = None) -> int | None:
         """
         Adds a new symbol to the current scope and returns its symbol ID.
 
@@ -110,7 +111,15 @@ class SymbolCtx:
         self.__ensure_scope_owned()
         symbol_id = self.__next_symbol_id()
         self.__current_scope.symbols[name] = symbol_id
-        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=attributes, span=span)
+        symbol = Symbol(
+            symbol_id=symbol_id,
+            name=name,
+            kind=kind,
+            type_id=type_id,
+            attributes=attributes,
+            span=span,
+            const_origin=const_origin,
+        )
         self.__all_symbols[symbol_id] = symbol
 
         # add a pub symbol to global scope will be exported
@@ -130,7 +139,10 @@ class SymbolCtx:
         self.__ensure_all_owned()
         self.__ensure_scope_owned()
         self.__current_scope.symbols[name] = symbol_id
-        symbol = Symbol(symbol_id=symbol_id, name=name, kind=kind, type_id=type_id, attributes=set(), span=span)
+        symbol = Symbol(
+            symbol_id=symbol_id, name=name, kind=kind, type_id=type_id,
+            attributes=set(), span=span,
+        )
         self.__all_symbols[symbol_id] = symbol
         self.__next_id_holder[0] = max(self.__next_id_holder[0], symbol_id + 1)
         return True

@@ -10,6 +10,7 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as Ty
 from compiler.frontend.parse.ast_type import ASTType
 from compiler.frontend.parse.error import ParseError
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
                                             TERM_RPAREN, TokenStream)
 
@@ -162,23 +163,59 @@ class TypeParser:
             self.__stream.consume_punctuator(PunctuatorKind.RBracket)
             return Ty.SliceType(span=base.span, element_type=base)
 
-        # fixed-size array — size is a ConstExpr (literal or generic ref)
+        # fixed-size array — size is a compile-time integer expression
         size = self.__parse_const_expr()
         self.__stream.consume_punctuator(PunctuatorKind.RBracket)
         return Ty.ArrayType(span=base.span, element_type=base, size=size)
 
     def __parse_const_expr(self) -> Ty.ConstExpr:
-        """Parses a compile-time constant: integer literal or identifier reference."""
+        """Parse an integer expression used as a type-level value."""
+        return self.__parse_const_expr_bp(1)
+
+    def __parse_const_expr_bp(self, min_bp: int) -> Ty.ConstExpr:
         token = self.__stream.peek()
-        if isinstance(token, (Identifier, Keyword)):
-            # generic const reference, e.g., T[N]
-            name = self.__stream.consume_identifier()
-            return Ty.GenericConstExpr(span=name.span, name=name)
-        # literal, e.g., T[10]
-        if isinstance(token, IntLiteral):
+        unary = UnaryOperator.try_from_token(token)
+        if unary in (UnaryOperator.Neg, UnaryOperator.BitNot):
             self.__stream.advance()
-            return Ty.LiteralConstExpr(span=token.span, literal=token)
-        raise ParseError(f"Expected constant expression (integer literal or identifier) but got '{token}'", token.span)
+            operand = self.__parse_const_expr_bp(unary.rbp)
+            lhs: Ty.ConstExpr = Ty.UnaryConstExpr(
+                span=token.span + operand.span,
+                op=unary,
+                operand=operand,
+            )
+        elif isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
+            self.__stream.advance()
+            lhs = self.__parse_const_expr_bp(1)
+            self.__stream.consume_punctuator(PunctuatorKind.RParen)
+        elif isinstance(token, IntLiteral):
+            self.__stream.advance()
+            lhs = Ty.LiteralConstExpr(span=token.span, literal=token)
+        elif isinstance(token, (Identifier, Keyword)):
+            name = self.__stream.consume_identifier()
+            lhs = Ty.GenericConstExpr(span=name.span, name=name)
+        else:
+            raise ParseError(f"Expected integer constant expression but got '{token}'", token.span)
+
+        allowed = {
+            BinaryOperator.Add,
+            BinaryOperator.Sub,
+            BinaryOperator.Mul,
+            BinaryOperator.Div,
+            BinaryOperator.Mod,
+            BinaryOperator.BitAnd,
+            BinaryOperator.BitOr,
+            BinaryOperator.BitXor,
+            BinaryOperator.Shl,
+            BinaryOperator.Shr,
+        }
+        while True:
+            op = BinaryOperator.try_from_token(self.__stream.peek())
+            if op not in allowed or op.lbp < min_bp:
+                break
+            self.__stream.advance()
+            rhs = self.__parse_const_expr_bp(op.rbp)
+            lhs = Ty.BinaryConstExpr(span=lhs.span + rhs.span, op=op, left=lhs, right=rhs)
+        return lhs
 
     def parse_generic_arg(self) -> ASTType | Ty.ConstExpr:
         """Parses a generic argument — either a type or a constant expression.
@@ -191,6 +228,30 @@ class TypeParser:
         """
         token = self.__stream.peek()
         if isinstance(token, IntLiteral):
-            self.__stream.advance()
-            return Ty.LiteralConstExpr(span=token.span, literal=token)
-        return self.parse_type()
+            return self.__parse_const_expr()
+        unary = UnaryOperator.try_from_token(token)
+        if unary in (UnaryOperator.Neg, UnaryOperator.BitNot):
+            return self.__parse_const_expr()
+
+        mark = self.__stream.mark()
+        try:
+            parsed_type = self.parse_type()
+        except ParseError:
+            self.__stream.reset(mark)
+            return self.__parse_const_expr()
+        op = BinaryOperator.try_from_token(self.__stream.peek())
+        if op in {
+            BinaryOperator.Add,
+            BinaryOperator.Sub,
+            BinaryOperator.Mul,
+            BinaryOperator.Div,
+            BinaryOperator.Mod,
+            BinaryOperator.BitAnd,
+            BinaryOperator.BitOr,
+            BinaryOperator.BitXor,
+            BinaryOperator.Shl,
+            BinaryOperator.Shr,
+        }:
+            self.__stream.reset(mark)
+            return self.__parse_const_expr()
+        return parsed_type

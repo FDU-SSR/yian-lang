@@ -10,7 +10,7 @@ from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.state import SemanticState
 from compiler.analysis.symbol.context import SymbolCtx
-from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
@@ -18,7 +18,7 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
-from compiler.frontend.parse.ast_type import ASTType
+from compiler.frontend.parse.ast_type import ASTType, ConstExpr
 
 
 @dataclass
@@ -95,6 +95,12 @@ class DefinitionState:
 
     def resolve_type_in(self, ast_type: ASTType, symbol_ctx: SymbolCtx) -> int:
         return self.__semantic.resolve_type_in(ast_type, symbol_ctx)
+
+    def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
+        return self.__semantic.resolve_const_expr(const_expr, symbol_ctx)
+
+    def constant_value(self, symbol: Symbol) -> tuple[int | bool | float | str, int]:
+        return self.__semantic.constant_value(symbol)
 
     @property
     def unit_id(self) -> int:

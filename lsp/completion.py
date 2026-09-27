@@ -31,6 +31,7 @@ KIND_OF_ITEM = {
     CompletionKind.ENUM: types.CompletionItemKind.Enum,
     CompletionKind.TRAIT: types.CompletionItemKind.Interface,
     CompletionKind.ALIAS: types.CompletionItemKind.Class,
+    CompletionKind.CONSTANT: types.CompletionItemKind.Constant,
     CompletionKind.VARIABLE: types.CompletionItemKind.Variable,
     CompletionKind.PARAMETER: types.CompletionItemKind.Variable,
     CompletionKind.MODULE: types.CompletionItemKind.Module,

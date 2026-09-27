@@ -31,6 +31,8 @@ class AstVisitor:
                                 if isinstance(param, AST.PatternParam):
                                     self.visit_pattern(param.pattern)
                             self.visit_expr(method.body)
+                case AST.ConstDef():
+                    self.visit_expr(item.value)
                 case AST.Import() | AST.Alias() | AST.StructDef() | AST.EnumDef():
                     pass
 

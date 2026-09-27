@@ -38,6 +38,7 @@ class DeclarationKind(Enum):
     MODULE = "module"
     IMPORT = "import"
     FUNCTION = "function"
+    CONSTANT = "constant"
     METHOD = "method"
     STRUCT = "struct"
     ENUM = "enum"
@@ -334,6 +335,13 @@ def __unit_declarations(
                 declarations.extend(__variables(body, path, module, name.name, pattern_bindings))
             case AST.Alias(name=name, attrs=attrs):
                 declarations.append(__declaration(unit, type_ctx, name.name, DeclarationKind.ALIAS, path, name.span, module, attrs=attrs))
+            case AST.ConstDef(name=name, attrs=attrs):
+                declarations.append(
+                    __declaration(
+                        unit, type_ctx, name.name, DeclarationKind.CONSTANT, path, name.span,
+                        module, attrs=attrs,
+                    )
+                )
             case AST.StructDef(name=name, attrs=attrs):
                 declarations.append(__declaration(unit, type_ctx, name.name, DeclarationKind.STRUCT, path, name.span, module, attrs=attrs))
                 declarations.extend(__fields(unit, type_ctx, name.name, path, module))

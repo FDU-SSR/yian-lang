@@ -1,0 +1,4 @@
+const FIRST: u64 = SECOND + 1u64;
+const SECOND: u64 = FIRST + 1u64;
+
+fn main() {}

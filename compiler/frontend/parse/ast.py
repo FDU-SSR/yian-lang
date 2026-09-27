@@ -157,6 +157,21 @@ class FuncDef:
 
 
 @dataclass
+class ConstDef:
+    """A scalar compile-time constant with an explicit type."""
+
+    span: SrcSpan
+    attrs: list[Attr]
+    name: Identifier
+    const_type: ASTType
+    value: Expr
+
+    def __repr__(self) -> str:
+        attrs_str = " ".join(str(attr) for attr in self.attrs)
+        return f"{attrs_str} const {self.name.name}: {self.const_type} = {self.value}"
+
+
+@dataclass
 class FieldInfo:
     span: SrcSpan
     attrs: list[Attr]
@@ -720,6 +735,7 @@ class Literal:
 ProgramItem: TypeAlias = (
     Import
     | Alias
+    | ConstDef
     | FuncDef
     | StructDef | EnumDef | TraitDef
     | Impl
