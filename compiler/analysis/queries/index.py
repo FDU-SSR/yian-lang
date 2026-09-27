@@ -29,6 +29,7 @@ from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import ASTType
+from compiler.frontend.parse.ast_traversal import AstVisitor
 
 
 class DeclarationKind(Enum):
@@ -522,186 +523,67 @@ def __variables(
     type checker already reconstructs from its symbol table when a position has
     to be resolved.
     """
-    declarations: list[Declaration] = []
-    __walk_block(body, path, module, container, declarations, pattern_bindings)
-    return declarations
+    visitor = __LocalDeclarationVisitor(path, module, container, pattern_bindings)
+    visitor.visit_expr(body)
+    return visitor.declarations
 
 
-def __walk_block(
-    block: AST.Block, path: Path, module: str, container: str, out: list[Declaration],
-    pattern_bindings: set[tuple[Path, int, int]],
-) -> None:
-    for statement in block.stmts:
-        __walk_statement(statement, path, module, container, out, pattern_bindings)
+class __LocalDeclarationVisitor(AstVisitor):
+    def __init__(
+        self, path: Path, module: str, container: str,
+        pattern_bindings: set[tuple[Path, int, int]],
+    ) -> None:
+        self.__path = path
+        self.__module = module
+        self.__container = container
+        self.__pattern_bindings = pattern_bindings
+        self.__structural = False
+        self.declarations: list[Declaration] = []
 
+    def __add(self, name: AST.Identifier, var_type: ASTType | None = None) -> None:
+        self.declarations.append(_variable(name, var_type, self.__path, self.__module, self.__container))
 
-def __walk_statement(
-    statement: AST.Expr, path: Path, module: str, container: str, out: list[Declaration],
-    pattern_bindings: set[tuple[Path, int, int]],
-) -> None:
-    match statement:
-        case AST.Block(stmts=stmts):
-            for inner in stmts:
-                __walk_statement(inner, path, module, container, out, pattern_bindings)
-        case AST.VarDecl(name=name, var_type=var_type, init_expr=init_expr):
-            out.append(__variable(name, var_type, path, module, container))
-            if init_expr is not None:
-                __walk_expression(init_expr, path, module, container, out, pattern_bindings)
-        case AST.For(var_name=var_name, iterable=iterable, body=body):
-            out.append(__variable(var_name, None, path, module, container))
-            __walk_expression(iterable, path, module, container, out, pattern_bindings)
-            __walk_block(body, path, module, container, out, pattern_bindings)
-        case AST.If(
-            condition=condition,
-            then_branch=then_branch,
-            elif_branches=elif_branches,
-            else_branch=else_branch,
-        ):
-            __walk_expression(condition, path, module, container, out, pattern_bindings)
-            __walk_block(then_branch, path, module, container, out, pattern_bindings)
-            for branch_condition, branch in elif_branches:
-                __walk_expression(branch_condition, path, module, container, out, pattern_bindings)
-                __walk_block(branch, path, module, container, out, pattern_bindings)
-            if else_branch is not None:
-                __walk_block(else_branch, path, module, container, out, pattern_bindings)
-        case AST.ComptimeIf(condition=condition, then_branch=then_branch, else_branch=else_branch):
-            __walk_expression(condition, path, module, container, out, pattern_bindings)
-            __walk_block(then_branch, path, module, container, out, pattern_bindings)
-            __walk_block(else_branch, path, module, container, out, pattern_bindings)
-        case AST.While(condition=condition, body=body):
-            __walk_expression(condition, path, module, container, out, pattern_bindings)
-            __walk_block(body, path, module, container, out, pattern_bindings)
-        case AST.Loop(body=body):
-            __walk_block(body, path, module, container, out, pattern_bindings)
-        case AST.Match(expr=expr, arms=arms):
-            __walk_expression(expr, path, module, container, out, pattern_bindings)
-            for arm in arms:
-                __walk_pattern(arm.pattern, path, module, container, out, pattern_bindings, structural=False)
-                if arm.guard is not None:
-                    __walk_expression(arm.guard, path, module, container, out, pattern_bindings)
-                __walk_block(arm.body, path, module, container, out, pattern_bindings)
-        case AST.Semi(expr=inner):
-            # Every statement in a block is wrapped in `Semi`, and the wrapper
-            # hides what it wraps: re-dispatch so `let`, `for` and friends inside
-            # it are still seen as statements rather than as bare expressions.
-            __walk_statement(inner, path, module, container, out, pattern_bindings)
-        case AST.Return(expr=value):
-            if value is not None:
-                __walk_expression(value, path, module, container, out, pattern_bindings)
-        case AST.Break(expr=value):
-            if value is not None:
-                __walk_expression(value, path, module, container, out, pattern_bindings)
-        case AST.Defer(action=action):
-            __walk_statement(action, path, module, container, out, pattern_bindings)
-        case AST.Assert(condition=condition, message=message):
-            __walk_expression(condition, path, module, container, out, pattern_bindings)
-            if message is not None:
-                __walk_expression(message, path, module, container, out, pattern_bindings)
-        case AST.Delete(target=target):
-            __walk_expression(target, path, module, container, out, pattern_bindings)
-        case _:
-            __walk_expression(statement, path, module, container, out, pattern_bindings)
+    def enter_expr(self, expr: AST.Expr) -> bool:
+        if isinstance(expr, AST.VarDecl):
+            self.__add(expr.name, expr.var_type)
+        elif isinstance(expr, AST.For):
+            self.__add(expr.var_name)
+        return True
 
-
-def __walk_pattern(
-    pattern: AST.Pattern, path: Path, module: str, container: str, out: list[Declaration],
-    pattern_bindings: set[tuple[Path, int, int]], *, structural: bool,
-) -> None:
-    if isinstance(pattern, AST.NamePattern):
-        span = pattern.name.span
-        if structural or (span.path, span.start.row, span.start.col) in pattern_bindings:
-            out.append(__variable(pattern.name, None, path, module, container))
-        return
-    if isinstance(pattern, AST.BindPattern):
-        out.append(__variable(pattern.name, None, path, module, container))
-        __walk_pattern(pattern.inner, path, module, container, out, pattern_bindings, structural=structural)
-    elif isinstance(pattern, AST.OrPattern):
-        if pattern.alternatives:
-            __walk_pattern(pattern.alternatives[0], path, module, container, out, pattern_bindings, structural=structural)
-    elif isinstance(pattern, AST.ConstructPattern):
-        for child in pattern.positional or []:
-            __walk_pattern(child, path, module, container, out, pattern_bindings, structural=True)
-        for field in pattern.named or []:
-            __walk_pattern(field.pattern, path, module, container, out, pattern_bindings, structural=True)
-    elif isinstance(pattern, AST.TuplePattern):
-        for child in pattern.elements:
-            __walk_pattern(child, path, module, container, out, pattern_bindings, structural=True)
-    elif isinstance(pattern, AST.SequencePattern):
-        for child in pattern.prefix + pattern.suffix:
-            __walk_pattern(child, path, module, container, out, pattern_bindings, structural=True)
-
-
-def __walk_expression(
-    expr: AST.Expr, path: Path, module: str, container: str, out: list[Declaration],
-    pattern_bindings: set[tuple[Path, int, int]],
-) -> None:
-    """Enter closures, which are the only expressions that bind names."""
-    match expr:
-        case (
-            AST.Semi()
-            | AST.Return()
-            | AST.Break()
-            | AST.Defer()
-            | AST.Assert()
-            | AST.Delete()
-            | AST.VarDecl()
-            | AST.For()
-            | AST.While()
-            | AST.Loop()
-            | AST.If()
-            | AST.ComptimeIf()
-            | AST.Match()
-            | AST.Block()
-        ):
-            # `If`, `Match` and `VarDecl` are both expressions and statements;
-            # going through the statement walk keeps their bodies reachable.
-            __walk_statement(expr, path, module, container, out, pattern_bindings)
-        case AST.ClosureExpr(captures=captures, params=params, body=body):
-            for capture in captures:
-                out.append(__variable(capture.name, None, path, module, container))
-                __walk_expression(capture.expr, path, module, container, out, pattern_bindings)
-            for param in params:
-                out.append(__variable(param.name, param.var_type, path, module, container))
-            __walk_block(body, path, module, container, out, pattern_bindings)
-        case AST.Call(callee=callee, args=args):
-            __walk_expression(callee, path, module, container, out, pattern_bindings)
-            __walk_arguments(args, path, module, container, out, pattern_bindings)
-        case AST.Builtin(args=args):
-            __walk_arguments(args, path, module, container, out, pattern_bindings)
-        case AST.MethodCall(receiver=receiver, args=args):
-            __walk_expression(receiver, path, module, container, out, pattern_bindings)
-            __walk_arguments(args, path, module, container, out, pattern_bindings)
-        case AST.Binary(left=left, right=right):
-            __walk_expression(left, path, module, container, out, pattern_bindings)
-            __walk_expression(right, path, module, container, out, pattern_bindings)
-        case AST.Unary(operand=operand):
-            __walk_expression(operand, path, module, container, out, pattern_bindings)
-        case AST.FieldAccess(receiver=receiver):
-            __walk_expression(receiver, path, module, container, out, pattern_bindings)
-        case AST.Tuple(elements=elements) | AST.Array(elements=elements):
-            for element in elements:
-                __walk_expression(element, path, module, container, out, pattern_bindings)
-        case AST.ArrayRepeat(element=element, count=count):
-            __walk_expression(element, path, module, container, out, pattern_bindings)
-            __walk_expression(count, path, module, container, out, pattern_bindings)
-        case AST.DynValue(value=value):
-            __walk_expression(value, path, module, container, out, pattern_bindings)
-        case AST.DynBuffer(size=size, element=element):
-            __walk_expression(size, path, module, container, out, pattern_bindings)
-            __walk_expression(element, path, module, container, out, pattern_bindings)
-        case _:
+    def visit_expr(self, expr: AST.Expr) -> None:
+        if isinstance(expr, AST.ClosureExpr):
+            for capture in expr.captures:
+                self.__add(capture.name)
+                self.visit_expr(capture.expr)
+            for param in expr.params:
+                self.__add(param.name, param.var_type)
+            self.visit_expr(expr.body)
             return
+        super().visit_expr(expr)
+
+    def visit_pattern(self, pattern: AST.Pattern) -> None:
+        if isinstance(pattern, AST.NamePattern):
+            span = pattern.name.span
+            if self.__structural or (span.path, span.start.row, span.start.col) in self.__pattern_bindings:
+                self.__add(pattern.name)
+        elif isinstance(pattern, AST.BindPattern):
+            self.__add(pattern.name)
+            super().visit_pattern(pattern)
+        elif isinstance(pattern, AST.OrPattern):
+            if pattern.alternatives:
+                self.visit_pattern(pattern.alternatives[0])
+        elif isinstance(pattern, (AST.ConstructPattern, AST.TuplePattern, AST.SequencePattern)):
+            structural = self.__structural
+            self.__structural = True
+            try:
+                super().visit_pattern(pattern)
+            finally:
+                self.__structural = structural
+        else:
+            super().visit_pattern(pattern)
 
 
-def __walk_arguments(
-    args: list[AST.Arg], path: Path, module: str, container: str, out: list[Declaration],
-    pattern_bindings: set[tuple[Path, int, int]],
-) -> None:
-    for arg in args:
-        __walk_expression(arg.value, path, module, container, out, pattern_bindings)
-
-
-def __variable(
+def _variable(
     name: AST.Identifier, var_type: ASTType | None, path: Path, module: str, container: str
 ) -> Declaration:
     return Declaration(

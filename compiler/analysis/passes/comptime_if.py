@@ -10,6 +10,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
+from compiler.analysis.unit.hir_traversal import HirRewriter
 from compiler.builtins import BuiltinKind
 
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -19,7 +20,7 @@ CompileTimeValue = int | bool
 CompileTimeResult = tuple[CompileTimeValue, int]
 
 
-class ComptimeIfSpecializer:
+class ComptimeIfSpecializer(HirRewriter):
     """Evaluate ``comptime if`` nodes and remove the unselected HIR branch."""
 
     def __init__(self, def_points: Mapping[int, DefPoint], type_ctx: TypeCtx,
@@ -38,7 +39,7 @@ class ComptimeIfSpecializer:
                 continue
             self.__current_def_type_id = def_point.type_id
             try:
-                def_point.body = self.__rewrite_block(def_point.body)
+                def_point.body = self.rewrite_block(def_point.body)
             except AnalysisError as error:
                 if not recover:
                     raise
@@ -71,145 +72,43 @@ class ComptimeIfSpecializer:
                     pending.append(referenced_key)
         return {key: def_point for key, def_point in candidates.items() if key in reachable}
 
-    def __rewrite_block(self, block: HIR.Block) -> HIR.Block:
-        block.stmts = [self.__rewrite_expr(stmt) for stmt in block.stmts]
-        return block
+    def rewrite_expr(self, expr: HIR.Expr) -> HIR.Expr:
+        if isinstance(expr, HIR.ComptimeIf):
+            condition = self.rewrite_expr(expr.cond)
+            value, _ = self.__evaluate(condition)
+            if type(value) is not bool:
+                self.__not_evaluable(expr.cond, "condition is not bool")
+            branch = expr.then_branch if value else expr.else_branch
+            return self.rewrite_block(branch)
+        if isinstance(expr, HIR.CompileConfig):
+            if expr.name != "IS_RAW_MODE":
+                self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
+            return HIR.BoolLiteral(
+                span=expr.span,
+                value=self.__raw_pointers,
+                type_id=TypeCtx.bool_id,
+                is_place=False,
+            )
 
-    def __rewrite_expr(self, expr: HIR.Expr) -> HIR.Expr:
-        match expr:
-            case HIR.ComptimeIf():
-                condition = self.__rewrite_expr(expr.cond)
-                value, _ = self.__evaluate(condition)
-                if type(value) is not bool:
-                    self.__not_evaluable(expr.cond, "condition is not bool")
-                branch = expr.then_branch if value else expr.else_branch
-                return self.__rewrite_block(branch)
-            case HIR.CompileConfig():
-                if expr.name != "IS_RAW_MODE":
-                    self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
-                return HIR.BoolLiteral(
-                    span=expr.span,
-                    value=self.__raw_pointers,
-                    type_id=TypeCtx.bool_id,
-                    is_place=False,
-                )
-            case HIR.Block():
-                return self.__rewrite_block(expr)
-            case HIR.Return(value=value) if value is not None:
-                expr.value = self.__rewrite_expr(value)
-            case HIR.Break(value=value) if value is not None:
-                expr.value = self.__rewrite_expr(value)
-            case HIR.Defer():
-                expr.action = self.__rewrite_expr(expr.action)
-            case HIR.If():
-                expr.cond = self.__rewrite_expr(expr.cond)
-                expr.then_branch = self.__rewrite_block(expr.then_branch)
-                if expr.else_branch is not None:
-                    expr.else_branch = self.__rewrite_block(expr.else_branch)
-            case HIR.Loop():
-                expr.body = self.__rewrite_block(expr.body)
-            case HIR.Match():
-                expr.value = self.__rewrite_expr(expr.value)
-                for arm in expr.arms:
-                    self.__rewrite_pattern(arm.pattern)
-                    if arm.guard is not None:
-                        arm.guard = self.__rewrite_expr(arm.guard)
-                    arm.body = self.__rewrite_block(arm.body)
-            case HIR.Builtin():
-                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
-            case HIR.Delete():
-                expr.target = self.__rewrite_expr(expr.target)
-            case HIR.Semi():
-                expr.expr = self.__rewrite_expr(expr.expr)
-            case HIR.Let() if expr.init is not None:
-                expr.init = self.__rewrite_expr(expr.init)
-            case HIR.Binary():
-                expr.left = self.__rewrite_expr(expr.left)
-                expr.right = self.__rewrite_expr(expr.right)
-            case HIR.Unary():
-                expr.operand = self.__rewrite_expr(expr.operand)
-            case HIR.Call():
-                self.__record_procedure(expr.func)
-                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
-            case HIR.StructConstruct():
-                expr.field_values = {name: self.__rewrite_expr(value) for name, value in expr.field_values.items()}
-            case HIR.Invoke():
-                expr.callable = self.__rewrite_expr(expr.callable)
-                self.__record_procedure(expr.callable.type_id)
-                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
-            case HIR.Cast():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.BitCast():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.TraitObjectCoerce():
-                expr.value = self.__rewrite_expr(expr.value)
-                for method_id in expr.method_ids:
-                    self.__record_procedure(method_id)
-            case HIR.MethodCall():
-                self.__record_procedure(expr.method_id)
-                expr.receiver = self.__rewrite_expr(expr.receiver)
-                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
-            case HIR.TraitObjectMethodCall():
-                expr.receiver = self.__rewrite_expr(expr.receiver)
-                expr.args = [self.__rewrite_expr(arg) for arg in expr.args]
-            case HIR.VariantConstruct(args=args) if args is not None:
-                expr.args = {name: self.__rewrite_expr(value) for name, value in args.items()}
-            case HIR.FieldAccess():
-                expr.receiver = self.__rewrite_expr(expr.receiver)
-            case HIR.TupleAccess():
-                expr.receiver = self.__rewrite_expr(expr.receiver)
-            case HIR.ArrayAccess():
-                expr.array = self.__rewrite_expr(expr.array)
-                expr.index = self.__rewrite_expr(expr.index)
-            case HIR.SliceAccess():
-                expr.slice = self.__rewrite_expr(expr.slice)
-                expr.index = self.__rewrite_expr(expr.index)
-            case HIR.DynValue():
-                expr.value = self.__rewrite_expr(expr.value)
-            case HIR.DynBuffer():
-                expr.length = self.__rewrite_expr(expr.length)
-                if expr.element is not None:
-                    expr.element = self.__rewrite_expr(expr.element)
-            case HIR.Tuple():
-                expr.field_values = [self.__rewrite_expr(value) for value in expr.field_values]
-            case HIR.Array():
-                expr.elements = [self.__rewrite_expr(value) for value in expr.elements]
-            case HIR.ArrayRepeat():
-                expr.element = self.__rewrite_expr(expr.element)
-            case HIR.Ty():
-                self.__record_procedure(expr.type_id)
-            case HIR.Closure():
-                self.__record_procedure(expr.type_id)
-                expr.captures = {name: self.__rewrite_expr(value) for name, value in expr.captures.items()}
-            case HIR.Var():
-                self.__record_procedure(expr.type_id)
-            case _:
-                pass
-        return expr
+        if isinstance(expr, HIR.Call):
+            self.__record_procedure(expr.func)
+        elif isinstance(expr, HIR.MethodCall):
+            self.__record_procedure(expr.method_id)
+        elif isinstance(expr, HIR.TraitObjectCoerce):
+            for method_id in expr.method_ids:
+                self.__record_procedure(method_id)
+        elif isinstance(expr, (HIR.Ty, HIR.Closure, HIR.Var)):
+            self.__record_procedure(expr.type_id)
 
-    def __rewrite_pattern(self, pattern: HIR.Pattern) -> None:
-        match pattern:
-            case HIR.LiteralPattern() if pattern.condition is not None:
-                pattern.condition = self.__rewrite_expr(pattern.condition)
-            case HIR.BindPattern():
-                self.__rewrite_pattern(pattern.inner)
-            case HIR.OrPattern():
-                for alternative in pattern.alternatives:
-                    self.__rewrite_pattern(alternative)
-            case HIR.EnumPattern() if pattern.fields is not None:
-                for _, sub in pattern.fields:
-                    self.__rewrite_pattern(sub)
-            case HIR.StructPattern():
-                for _, sub in pattern.fields:
-                    self.__rewrite_pattern(sub)
-            case HIR.TuplePattern():
-                for sub in pattern.elements:
-                    self.__rewrite_pattern(sub)
-            case HIR.SequencePattern():
-                for sub in pattern.prefix + pattern.suffix:
-                    self.__rewrite_pattern(sub)
-            case _:
-                pass
+        return super().rewrite_expr(expr)
+
+    def rewrite_children(self, expr: HIR.Expr) -> None:
+        if isinstance(expr, HIR.Invoke):
+            expr.callable = self.rewrite_expr(expr.callable)
+            self.__record_procedure(expr.callable.type_id)
+            expr.args = [self.rewrite_expr(arg) for arg in expr.args]
+            return
+        super().rewrite_children(expr)
 
     def __record_procedure(self, type_id: int) -> None:
         resolved = self.__type_ctx.resolve_aliases(type_id)

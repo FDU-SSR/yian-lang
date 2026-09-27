@@ -11,8 +11,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from compiler.analysis.error import AnalysisError
-from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
+from compiler.frontend.parse.ast_traversal import AstVisitor
 from compiler.analysis.unit.unit_data import UnitData
 
 
@@ -45,138 +45,18 @@ RESTRICTED_BUILTINS = frozenset(
     }
 )
 
-class RestrictedOpsChecker:
-    def __init__(self) -> None:
-        self.__error: AnalysisError | None = None
-
-    def check(self, program: AST.Program) -> None:
-        for item in program.items:
-            match item:
-                case AST.FuncDef():
-                    self.__scan_block(item.body)
-                case AST.Impl():
-                    for method in item.items:
-                        self.__scan_block(method.body)
-                case _:
-                    pass
-
-    def __report(self, span: SrcSpan, name: str) -> None:
-        if self.__error is None:
-            self.__error = AnalysisError(
-                f"restricted operation '{name}' is only allowed in the standard library",
-                span,
+class RestrictedOpsChecker(AstVisitor):
+    def enter_expr(self, expr: AST.Expr) -> bool:
+        if isinstance(expr, AST.Builtin) and expr.kind in RESTRICTED_BUILTINS:
+            raise AnalysisError(
+                f"restricted operation '{expr.kind.spelling}' is only allowed in the standard library",
+                expr.span,
             )
-
-    def __scan_block(self, block: AST.Block) -> None:
-        if self.__error is not None:
-            return
-        for stmt in block.stmts:
-            self.__scan_expr(stmt)
-            if self.__error is not None:
-                return
-
-    def __scan_expr(self, expr: AST.Expr) -> None:
-        if self.__error is not None:
-            return
-        match expr:
-            case AST.Builtin():
-                if expr.kind in RESTRICTED_BUILTINS:
-                    self.__report(expr.span, expr.kind.spelling)
-                for arg in expr.args:
-                    self.__scan_expr(arg.value)
-            case AST.Call():
-                self.__scan_expr(expr.callee)
-                for arg in expr.args:
-                    self.__scan_expr(arg.value)
-            case AST.MethodCall():
-                self.__scan_expr(expr.receiver)
-                for arg in expr.args:
-                    self.__scan_expr(arg.value)
-            case AST.Binary():
-                self.__scan_expr(expr.left)
-                self.__scan_expr(expr.right)
-            case AST.Unary():
-                self.__scan_expr(expr.operand)
-            case AST.FieldAccess():
-                self.__scan_expr(expr.receiver)
-            case AST.DynValue():
-                self.__scan_expr(expr.value)
-            case AST.DynBuffer():
-                self.__scan_expr(expr.size)
-                self.__scan_expr(expr.element)
-            case AST.Tuple():
-                for element in expr.elements:
-                    self.__scan_expr(element)
-            case AST.Array():
-                for element in expr.elements:
-                    self.__scan_expr(element)
-            case AST.ArrayRepeat():
-                self.__scan_expr(expr.element)
-                self.__scan_expr(expr.count)
-            case AST.Block():
-                self.__scan_block(expr)
-            case AST.VarDecl():
-                if expr.init_expr is not None:
-                    self.__scan_expr(expr.init_expr)
-            case AST.If():
-                self.__scan_expr(expr.condition)
-                self.__scan_block(expr.then_branch)
-                for cond, branch in expr.elif_branches:
-                    self.__scan_expr(cond)
-                    self.__scan_block(branch)
-                if expr.else_branch is not None:
-                    self.__scan_block(expr.else_branch)
-            case AST.ComptimeIf():
-                self.__scan_expr(expr.condition)
-                self.__scan_block(expr.then_branch)
-                self.__scan_block(expr.else_branch)
-            case AST.For():
-                self.__scan_expr(expr.iterable)
-                self.__scan_block(expr.body)
-            case AST.While():
-                self.__scan_expr(expr.condition)
-                self.__scan_block(expr.body)
-            case AST.Loop():
-                self.__scan_block(expr.body)
-            case AST.Match():
-                self.__scan_expr(expr.expr)
-                for arm in expr.arms:
-                    if arm.guard is not None:
-                        self.__scan_expr(arm.guard)
-                    self.__scan_block(arm.body)
-            case AST.Return():
-                if expr.expr is not None:
-                    self.__scan_expr(expr.expr)
-            case AST.Break():
-                if expr.expr is not None:
-                    self.__scan_expr(expr.expr)
-            case AST.Defer():
-                self.__scan_expr(expr.action)
-            case AST.Assert():
-                self.__scan_expr(expr.condition)
-                if expr.message is not None:
-                    self.__scan_expr(expr.message)
-            case AST.Delete():
-                self.__scan_expr(expr.target)
-            case AST.Semi():
-                self.__scan_expr(expr.expr)
-            case AST.ClosureExpr():
-                self.__scan_block(expr.body)
-            case _:
-                pass
-
-    def take_error(self) -> AnalysisError | None:
-        return self.__error
+        return True
 
 
 def check_restricted_ops(units: Iterable[UnitData]) -> None:
     """Reject restricted builtins outside trusted source roots."""
     for unit in units:
-        if unit.allows_restricted_ops:
-            continue
-        program = unit.program
-        checker = RestrictedOpsChecker()
-        checker.check(program)
-        error = checker.take_error()
-        if error is not None:
-            raise error
+        if not unit.allows_restricted_ops:
+            RestrictedOpsChecker().visit_program(unit.program)

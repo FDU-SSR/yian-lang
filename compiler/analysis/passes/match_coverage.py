@@ -11,6 +11,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
+from compiler.analysis.unit.hir_traversal import HirPatternVisitor, HirVisitor
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,17 @@ class _Constructor:
     positions: tuple[int, ...] = ()
 
 
-class MatchCoverage:
+class _OpaquePatternVisitor(HirPatternVisitor):
+    def __init__(self) -> None:
+        self.found = False
+
+    def enter_pattern(self, pattern: HIR.Pattern) -> bool:
+        if isinstance(pattern, HIR.LiteralPattern) and pattern.condition is not None:
+            self.found = True
+        return not self.found
+
+
+class MatchCoverage(HirVisitor):
     """Check matches after compile-time branches have been selected."""
 
     def __init__(self, def_points: Mapping[int, DefPoint], type_ctx: TypeCtx) -> None:
@@ -36,7 +47,7 @@ class MatchCoverage:
             if definition.body is None:
                 continue
             try:
-                self.__visit(definition.body)
+                self.visit_expr(definition.body)
             except AnalysisError as error:
                 if not recover:
                     raise
@@ -45,6 +56,11 @@ class MatchCoverage:
 
     def warnings(self) -> tuple[Diagnostic, ...]:
         return tuple(self.__warnings)
+
+    def enter_expr(self, expr: HIR.Expr) -> bool:
+        if isinstance(expr, HIR.Match):
+            self.__check_match(expr)
+        return True
 
     def __check_match(self, expr: HIR.Match) -> None:
         value_type = self.__ctx[self.__ctx.resolve_aliases(expr.value.type_id)]
@@ -94,23 +110,9 @@ class MatchCoverage:
         )
 
     def __opaque(self, pattern: HIR.Pattern) -> bool:
-        match pattern:
-            case HIR.LiteralPattern() if pattern.condition is not None:
-                return True
-            case HIR.BindPattern():
-                return self.__opaque(pattern.inner)
-            case HIR.OrPattern():
-                return any(self.__opaque(sub) for sub in pattern.alternatives)
-            case HIR.EnumPattern() if pattern.fields is not None:
-                return any(self.__opaque(sub) for _, sub in pattern.fields)
-            case HIR.StructPattern():
-                return any(self.__opaque(sub) for _, sub in pattern.fields)
-            case HIR.TuplePattern():
-                return any(self.__opaque(sub) for sub in pattern.elements)
-            case HIR.SequencePattern():
-                return any(self.__opaque(sub) for sub in pattern.prefix + pattern.suffix)
-            case _:
-                return False
+        visitor = _OpaquePatternVisitor()
+        visitor.visit_pattern(pattern)
+        return visitor.found
 
     def __useful(
         self, rows: list[list[HIR.Pattern]], query: list[HIR.Pattern], types: list[int],
@@ -294,107 +296,3 @@ class MatchCoverage:
                 result[slots[length - len(pattern.suffix) + index]] = sub
             return result
         return None
-
-    def __visit_pattern(self, pattern: HIR.Pattern) -> None:
-        match pattern:
-            case HIR.LiteralPattern() if pattern.condition is not None:
-                self.__visit(pattern.condition)
-            case HIR.BindPattern():
-                self.__visit_pattern(pattern.inner)
-            case HIR.OrPattern():
-                for sub in pattern.alternatives:
-                    self.__visit_pattern(sub)
-            case HIR.EnumPattern() if pattern.fields is not None:
-                for _, sub in pattern.fields:
-                    self.__visit_pattern(sub)
-            case HIR.StructPattern():
-                for _, sub in pattern.fields:
-                    self.__visit_pattern(sub)
-            case HIR.TuplePattern():
-                for sub in pattern.elements:
-                    self.__visit_pattern(sub)
-            case HIR.SequencePattern():
-                for sub in pattern.prefix + pattern.suffix:
-                    self.__visit_pattern(sub)
-            case _:
-                pass
-
-    def __visit(self, expr: HIR.Expr) -> None:
-        match expr:
-            case HIR.Match():
-                self.__check_match(expr)
-                self.__visit(expr.value)
-                for arm in expr.arms:
-                    self.__visit_pattern(arm.pattern)
-                    if arm.guard is not None:
-                        self.__visit(arm.guard)
-                    self.__visit(arm.body)
-            case HIR.Block():
-                for sub in expr.stmts:
-                    self.__visit(sub)
-            case HIR.If():
-                self.__visit(expr.cond)
-                self.__visit(expr.then_branch)
-                if expr.else_branch is not None:
-                    self.__visit(expr.else_branch)
-            case HIR.Loop():
-                self.__visit(expr.body)
-            case HIR.Return() if expr.value is not None:
-                self.__visit(expr.value)
-            case HIR.Break() if expr.value is not None:
-                self.__visit(expr.value)
-            case HIR.Defer():
-                self.__visit(expr.action)
-            case HIR.Semi():
-                self.__visit(expr.expr)
-            case HIR.Let() if expr.init is not None:
-                self.__visit(expr.init)
-            case HIR.Binary():
-                self.__visit(expr.left)
-                self.__visit(expr.right)
-            case HIR.Unary():
-                self.__visit(expr.operand)
-            case HIR.Call() | HIR.Builtin() | HIR.MethodCall() | HIR.TraitObjectMethodCall():
-                if isinstance(expr, (HIR.MethodCall, HIR.TraitObjectMethodCall)):
-                    self.__visit(expr.receiver)
-                for arg in expr.args:
-                    self.__visit(arg)
-            case HIR.Invoke():
-                self.__visit(expr.callable)
-                for arg in expr.args:
-                    self.__visit(arg)
-            case HIR.Cast() | HIR.BitCast() | HIR.TraitObjectCoerce() | HIR.DynValue():
-                self.__visit(expr.value)
-            case HIR.Delete():
-                self.__visit(expr.target)
-            case HIR.StructConstruct():
-                for sub in expr.field_values.values():
-                    self.__visit(sub)
-            case HIR.VariantConstruct() if expr.args is not None:
-                for sub in expr.args.values():
-                    self.__visit(sub)
-            case HIR.FieldAccess() | HIR.TupleAccess():
-                self.__visit(expr.receiver)
-            case HIR.ArrayAccess():
-                self.__visit(expr.array)
-                self.__visit(expr.index)
-            case HIR.SliceAccess():
-                self.__visit(expr.slice)
-                self.__visit(expr.index)
-            case HIR.DynBuffer():
-                self.__visit(expr.length)
-                if expr.element is not None:
-                    self.__visit(expr.element)
-            case HIR.Tuple():
-                for sub in expr.field_values:
-                    self.__visit(sub)
-            case HIR.Array():
-                for sub in expr.elements:
-                    self.__visit(sub)
-            case HIR.ArrayRepeat():
-                self.__visit(expr.element)
-            case HIR.Closure():
-                for sub in expr.captures.values():
-                    self.__visit(sub)
-            case _:
-                pass

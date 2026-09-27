@@ -18,6 +18,7 @@ from typing import Callable
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
+from compiler.frontend.parse.ast_traversal import AstRewriter, AstVisitor
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -26,128 +27,62 @@ def ch_desugar():
     return CompilerLog.get("desugar")
 
 
+class _BlockPassVisitor(AstVisitor):
+    def __init__(self, processor: Callable[[AST.Block], None]) -> None:
+        self.__processor = processor
+
+    def leave_expr(self, expr: AST.Expr) -> None:
+        if isinstance(expr, AST.Block):
+            self.__processor(expr)
+
+
+class _ExprDesugarRewriter(AstRewriter):
+    def rewrite_expr(self, expr: AST.Expr) -> AST.Expr:
+        super().rewrite_expr(expr)
+        if isinstance(expr, AST.Binary):
+            if expr.op == BinaryOperator.Range:
+                return AST.Call(
+                    span=expr.span,
+                    callee=AST.Identifier(span=expr.span, name="Range"),
+                    args=[
+                        AST.Arg(span=expr.left.span, name=None, value=expr.left),
+                        AST.Arg(span=expr.right.span, name=None, value=expr.right),
+                    ],
+                )
+            if expr.op == BinaryOperator.In:
+                return AST.MethodCall(
+                    span=expr.span,
+                    receiver=expr.right,
+                    method_name=AST.Identifier(span=expr.span, name="contains"),
+                    generics=[],
+                    args=[AST.Arg(span=expr.left.span, name=None, value=expr.left)],
+                )
+        return expr
+
+
 class Desugar:
     def __init__(self, program: AST.Program):
         self.__program = program
 
     def run(self) -> None:
-        """Apply desugaring in two passes (down from six).
-
-        Pass 1 — control-flow lowering: for, while, assert, elif chains.
-        Pass 2 — expression rewriting: range (a..b), member test (x in y).
-
-        Each pass walks the entire AST once, applying all transformations
-        that share the same traversal pattern.
-        """
+        """Lower control flow, then rewrite range and membership expressions."""
         for item in self.__program.items:
             match item:
                 case AST.FuncDef():
-                    self.__process_control_flow(item.body)
-                    self.__process_expr_rewrite(item.body)
+                    self.__desugar_body(item.body)
                 case AST.Impl():
                     for method in item.items:
-                        self.__process_control_flow(method.body)
-                        self.__process_expr_rewrite(method.body)
+                        self.__desugar_body(method.body)
                 case AST.TraitDef():
                     for trait_item in item.items:
                         if isinstance(trait_item, AST.MethodDef):
-                            self.__process_control_flow(trait_item.body)
-                            self.__process_expr_rewrite(trait_item.body)
+                            self.__desugar_body(trait_item.body)
                 case _:
                     continue
 
-    # ------------------------------------------------------------------
-    # shared traversal helpers
-    # ------------------------------------------------------------------
-
-    def __recurse_blocks(self, stmt: AST.Expr, processor: Callable[[AST.Block], None]) -> None:
-        """Apply *processor* to every nested block inside *stmt*."""
-        match stmt:
-            case AST.Block():
-                processor(stmt)
-            case AST.If():
-                self.__recurse_blocks(stmt.condition, processor)
-                processor(stmt.then_branch)
-                for condition, elif_branch in stmt.elif_branches:
-                    self.__recurse_blocks(condition, processor)
-                    processor(elif_branch)
-                if stmt.else_branch is not None:
-                    processor(stmt.else_branch)
-            case AST.ComptimeIf():
-                self.__recurse_blocks(stmt.condition, processor)
-                processor(stmt.then_branch)
-                processor(stmt.else_branch)
-            case AST.For():
-                self.__recurse_blocks(stmt.iterable, processor)
-                processor(stmt.body)
-            case AST.While():
-                self.__recurse_blocks(stmt.condition, processor)
-                processor(stmt.body)
-            case AST.Loop():
-                processor(stmt.body)
-            case AST.Match():
-                for arm in stmt.arms:
-                    processor(arm.body)
-                self.__recurse_blocks(stmt.expr, processor)
-                for arm in stmt.arms:
-                    if arm.guard is not None:
-                        self.__recurse_blocks(arm.guard, processor)
-            case AST.VarDecl() if stmt.init_expr is not None:
-                self.__recurse_blocks(stmt.init_expr, processor)
-            case AST.Return() if stmt.expr is not None:
-                self.__recurse_blocks(stmt.expr, processor)
-            case AST.Break() if stmt.expr is not None:
-                self.__recurse_blocks(stmt.expr, processor)
-            case AST.Binary():
-                self.__recurse_blocks(stmt.left, processor)
-                self.__recurse_blocks(stmt.right, processor)
-            case AST.Unary():
-                self.__recurse_blocks(stmt.operand, processor)
-            case AST.Call():
-                self.__recurse_blocks(stmt.callee, processor)
-                for argument in stmt.args:
-                    self.__recurse_blocks(argument.value, processor)
-            case AST.MethodCall():
-                self.__recurse_blocks(stmt.receiver, processor)
-                for argument in stmt.args:
-                    self.__recurse_blocks(argument.value, processor)
-            case AST.Builtin():
-                for argument in stmt.args:
-                    self.__recurse_blocks(argument.value, processor)
-            case AST.FieldAccess():
-                self.__recurse_blocks(stmt.receiver, processor)
-            case AST.DynValue():
-                self.__recurse_blocks(stmt.value, processor)
-            case AST.DynBuffer():
-                self.__recurse_blocks(stmt.size, processor)
-                self.__recurse_blocks(stmt.element, processor)
-            case AST.Tuple():
-                for value in stmt.elements:
-                    self.__recurse_blocks(value, processor)
-            case AST.Array():
-                for value in stmt.elements:
-                    self.__recurse_blocks(value, processor)
-            case AST.ArrayRepeat():
-                self.__recurse_blocks(stmt.element, processor)
-                self.__recurse_blocks(stmt.count, processor)
-            case AST.Semi():
-                # A trailing semicolon wraps the statement; recurse through it
-                # so nested control flow is still desugared.
-                self.__recurse_blocks(stmt.expr, processor)
-            case AST.Defer():
-                self.__recurse_blocks(stmt.action, processor)
-            case AST.Assert():
-                self.__recurse_blocks(stmt.condition, processor)
-                if stmt.message is not None:
-                    self.__recurse_blocks(stmt.message, processor)
-            case AST.Delete():
-                self.__recurse_blocks(stmt.target, processor)
-            case AST.ClosureExpr():
-                for capture in stmt.captures:
-                    self.__recurse_blocks(capture.expr, processor)
-                processor(stmt.body)
-            case _:
-                return
+    def __desugar_body(self, body: AST.Block) -> None:
+        _BlockPassVisitor(self.__process_control_flow).visit_expr(body)
+        _BlockPassVisitor(self.__process_expr_rewrite).visit_expr(body)
 
     # ------------------------------------------------------------------
     # Pass 1 — control-flow lowering
@@ -158,8 +93,6 @@ class Desugar:
         desugared_stmts: list[AST.Expr] = []
 
         for stmt in block.stmts:
-            self.__recurse_blocks(stmt, self.__process_control_flow)
-
             # Unwrap Semi to check for desugar-able constructs inside
             inner = stmt.expr if isinstance(stmt, AST.Semi) else stmt
             semi = isinstance(stmt, AST.Semi)
@@ -198,16 +131,11 @@ class Desugar:
 
     def __process_expr_rewrite(self, block: AST.Block) -> None:
         """Desugar range expressions and member tests in a single traversal."""
+        rewriter = _ExprDesugarRewriter()
         for stmt in block.stmts:
-            self.__recurse_blocks(stmt, self.__process_expr_rewrite)
             # Unwrap Semi to apply expression rewriting to the inner expression
             target = stmt.expr if isinstance(stmt, AST.Semi) else stmt
-            self.__rewrite_exprs_in_stmt(target)
-
-    def __rewrite_exprs_in_stmt(self, stmt: AST.Expr) -> None:
-        """Apply both range and member-test desugaring to all expressions in a statement."""
-        self.__apply_expr_visitor(stmt, self.__desugar_range)
-        self.__apply_expr_visitor(stmt, self.__desugar_member_test)
+            rewriter.rewrite_statement_expressions(target)
 
     def __desugar_assert(self, stmt: AST.Assert) -> AST.If:
         message = stmt.message
@@ -326,180 +254,3 @@ class Desugar:
             elif_branches=[],
             else_branch=current_else,
         )
-
-    def __desugar_range(self, expr: AST.Expr) -> AST.Expr:
-        """Recursively walk an expression tree and desugar any Binary(Range) nodes."""
-        self.__walk_expr_children(expr, self.__desugar_range)
-
-        if isinstance(expr, AST.Binary) and expr.op == BinaryOperator.Range:
-            return AST.Call(
-                span=expr.span,
-                callee=AST.Identifier(span=expr.span, name="Range"),
-                args=[
-                    AST.Arg(span=expr.left.span, name=None, value=expr.left),
-                    AST.Arg(span=expr.right.span, name=None, value=expr.right),
-                ],
-            )
-        return expr
-
-    def __desugar_member_test(self, expr: AST.Expr) -> AST.Expr:
-        """Recursively walk an expression tree and desugar Binary(In) nodes to .contains() calls."""
-        self.__walk_expr_children(expr, self.__desugar_member_test)
-
-        if isinstance(expr, AST.Binary) and expr.op == BinaryOperator.In:
-            return AST.MethodCall(
-                span=expr.span,
-                receiver=expr.right,
-                method_name=AST.Identifier(span=expr.span, name="contains"),
-                generics=[],
-                args=[AST.Arg(span=expr.left.span, name=None, value=expr.left)],
-            )
-        return expr
-
-    def __walk_expr_children(self, expr: AST.Expr, visitor: Callable[[AST.Expr], AST.Expr]) -> None:
-        """Walk the immediate sub-expressions of an expression and apply the visitor to each."""
-        match expr:
-            case AST.Block():
-                expr.stmts = [visitor(stmt) for stmt in expr.stmts]
-            case AST.Semi():
-                expr.expr = visitor(expr.expr)
-            case AST.VarDecl() if expr.init_expr is not None:
-                expr.init_expr = visitor(expr.init_expr)
-            case AST.Return() if expr.expr is not None:
-                expr.expr = visitor(expr.expr)
-            case AST.Break() if expr.expr is not None:
-                expr.expr = visitor(expr.expr)
-            case AST.If():
-                expr.condition = visitor(expr.condition)
-                expr.elif_branches = [(visitor(cond), branch) for cond, branch in expr.elif_branches]
-                expr.then_branch.stmts = [visitor(stmt) for stmt in expr.then_branch.stmts]
-                for _, branch in expr.elif_branches:
-                    branch.stmts = [visitor(stmt) for stmt in branch.stmts]
-                if expr.else_branch is not None:
-                    expr.else_branch.stmts = [visitor(stmt) for stmt in expr.else_branch.stmts]
-            case AST.ComptimeIf():
-                expr.condition = visitor(expr.condition)
-                expr.then_branch.stmts = [visitor(stmt) for stmt in expr.then_branch.stmts]
-                expr.else_branch.stmts = [visitor(stmt) for stmt in expr.else_branch.stmts]
-            case AST.For():
-                expr.iterable = visitor(expr.iterable)
-                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
-            case AST.While():
-                expr.condition = visitor(expr.condition)
-                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
-            case AST.Loop():
-                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
-            case AST.Match():
-                expr.expr = visitor(expr.expr)
-                for arm in expr.arms:
-                    if arm.guard is not None:
-                        arm.guard = visitor(arm.guard)
-                    arm.body.stmts = [visitor(stmt) for stmt in arm.body.stmts]
-            case AST.Assert():
-                expr.condition = visitor(expr.condition)
-                if expr.message is not None:
-                    expr.message = visitor(expr.message)
-            case AST.Delete():
-                expr.target = visitor(expr.target)
-            case AST.Defer():
-                expr.action = visitor(expr.action)
-            case AST.ClosureExpr():
-                for capture in expr.captures:
-                    capture.expr = visitor(capture.expr)
-                expr.body.stmts = [visitor(stmt) for stmt in expr.body.stmts]
-            case AST.Binary():
-                expr.left = visitor(expr.left)
-                expr.right = visitor(expr.right)
-            case AST.Unary():
-                expr.operand = visitor(expr.operand)
-            case AST.Call():
-                expr.callee = visitor(expr.callee)
-                for arg in expr.args:
-                    arg.value = visitor(arg.value)
-            case AST.Builtin():
-                for arg in expr.args:
-                    arg.value = visitor(arg.value)
-            case AST.MethodCall():
-                expr.receiver = visitor(expr.receiver)
-                for arg in expr.args:
-                    arg.value = visitor(arg.value)
-            case AST.FieldAccess():
-                expr.receiver = visitor(expr.receiver)
-            case AST.DynValue():
-                expr.value = visitor(expr.value)
-            case AST.DynBuffer():
-                expr.size = visitor(expr.size)
-                expr.element = visitor(expr.element)
-            case AST.Tuple():
-                expr.elements = [visitor(e) for e in expr.elements]
-            case AST.Array():
-                expr.elements = [visitor(e) for e in expr.elements]
-            case AST.ArrayRepeat():
-                expr.element = visitor(expr.element)
-                expr.count = visitor(expr.count)
-            case _:
-                pass
-
-    def __apply_expr_visitor(self, stmt: AST.Expr, expr_visitor: Callable[[AST.Expr], AST.Expr]) -> None:
-        """Apply expr_visitor to all expression fields within a statement."""
-        match stmt:
-            case AST.VarDecl(init_expr=expr) if expr is not None:
-                stmt.init_expr = expr_visitor(expr)
-            case AST.Return(expr=expr) if expr is not None:
-                stmt.expr = expr_visitor(expr)
-            case AST.If():
-                stmt.condition = expr_visitor(stmt.condition)
-                for i in range(len(stmt.elif_branches)):
-                    cond, body = stmt.elif_branches[i]
-                    stmt.elif_branches[i] = (expr_visitor(cond), body)
-            case AST.ComptimeIf():
-                stmt.condition = expr_visitor(stmt.condition)
-            case AST.While():
-                stmt.condition = expr_visitor(stmt.condition)
-            case AST.Match():
-                stmt.expr = expr_visitor(stmt.expr)
-                for arm in stmt.arms:
-                    if arm.guard is not None:
-                        arm.guard = expr_visitor(arm.guard)
-            case AST.Assert():
-                stmt.condition = expr_visitor(stmt.condition)
-                if stmt.message is not None:
-                    stmt.message = expr_visitor(stmt.message)
-            case AST.Delete():
-                stmt.target = expr_visitor(stmt.target)
-            case AST.For():
-                stmt.iterable = expr_visitor(stmt.iterable)
-            case AST.Binary():
-                stmt.left = expr_visitor(stmt.left)
-                stmt.right = expr_visitor(stmt.right)
-            case AST.Unary():
-                stmt.operand = expr_visitor(stmt.operand)
-            case AST.Call():
-                stmt.callee = expr_visitor(stmt.callee)
-                for arg in stmt.args:
-                    arg.value = expr_visitor(arg.value)
-            case AST.Builtin():
-                for arg in stmt.args:
-                    arg.value = expr_visitor(arg.value)
-            case AST.MethodCall():
-                stmt.receiver = expr_visitor(stmt.receiver)
-                for arg in stmt.args:
-                    arg.value = expr_visitor(arg.value)
-            case AST.FieldAccess():
-                stmt.receiver = expr_visitor(stmt.receiver)
-            case AST.Tuple():
-                stmt.elements = [expr_visitor(e) for e in stmt.elements]
-            case AST.Array():
-                stmt.elements = [expr_visitor(e) for e in stmt.elements]
-            case AST.ArrayRepeat():
-                stmt.element = expr_visitor(stmt.element)
-                stmt.count = expr_visitor(stmt.count)
-            case AST.DynValue():
-                stmt.value = expr_visitor(stmt.value)
-            case AST.DynBuffer():
-                stmt.size = expr_visitor(stmt.size)
-                stmt.element = expr_visitor(stmt.element)
-            case AST.Defer():
-                stmt.action = expr_visitor(stmt.action)
-            case _:
-                pass
