@@ -24,12 +24,10 @@ class ConstantExpressionEvaluator:
     def __init__(
         self,
         type_ctx: TypeCtx,
-        raw_pointers: bool,
         type_size: Callable[[int], int],
         error_context: str,
     ) -> None:
         self.__type_ctx = type_ctx
-        self.__raw_pointers = raw_pointers
         self.__type_size = type_size
         self.__error_context = error_context
 
@@ -48,10 +46,6 @@ class ConstantExpressionEvaluator:
                 if isinstance(ty, Type.LiteralValueType):
                     return ty.value, ty.value_type
                 self.__not_evaluable(expr, "constant generic is not instantiated")
-            case HIR.CompileConfig():
-                if expr.name == "IS_RAW_MODE":
-                    return self.__raw_pointers, TypeCtx.bool_id
-                self.__not_evaluable(expr, f"unknown compile configuration '{expr.name}'")
             case HIR.Builtin(kind=BuiltinKind.SizeOf):
                 return self.__type_size(expr.type_args[0]), expr.type_id
             case HIR.Builtin():
@@ -64,12 +58,6 @@ class ConstantExpressionEvaluator:
                 return self.__evaluate_unary(expr.op, value, expr)
             case HIR.Binary():
                 return self.__evaluate_binary(expr)
-            case HIR.ComptimeIf():
-                condition, _ = self.evaluate(expr.cond)
-                if type(condition) is not bool:
-                    self.__not_evaluable(expr.cond, "condition is not bool")
-                branch = expr.then_branch if condition else expr.else_branch
-                return self.__evaluate_block(branch)
             case HIR.Block():
                 return self.__evaluate_block(expr)
             case _:

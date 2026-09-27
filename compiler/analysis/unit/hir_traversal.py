@@ -43,10 +43,6 @@ class HirVisitor:
                 self.visit_expr(expr.then_branch)
                 if expr.else_branch is not None:
                     self.visit_expr(expr.else_branch)
-            case HIR.ComptimeIf():
-                self.visit_expr(expr.cond)
-                self.visit_expr(expr.then_branch)
-                self.visit_expr(expr.else_branch)
             case HIR.Loop():
                 self.visit_expr(expr.body)
             case HIR.Defer():
@@ -119,7 +115,7 @@ class HirVisitor:
                 for capture in expr.captures.values():
                     self.visit_expr(capture)
             case (
-                HIR.Continue() | HIR.CompileConfig() | HIR.Var() | HIR.IntLiteral()
+                HIR.Continue() | HIR.Var() | HIR.IntLiteral()
                 | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral()
                 | HIR.BoolLiteral() | HIR.Ty()
             ):
@@ -194,10 +190,6 @@ class HirRewriter:
                 expr.then_branch = self.rewrite_block(expr.then_branch)
                 if expr.else_branch is not None:
                     expr.else_branch = self.rewrite_block(expr.else_branch)
-            case HIR.ComptimeIf():
-                expr.cond = self.rewrite_expr(expr.cond)
-                expr.then_branch = self.rewrite_block(expr.then_branch)
-                expr.else_branch = self.rewrite_block(expr.else_branch)
             case HIR.Loop():
                 expr.body = self.rewrite_block(expr.body)
             case HIR.Defer():
@@ -262,7 +254,7 @@ class HirRewriter:
             case HIR.Closure():
                 expr.captures = {name: self.rewrite_expr(value) for name, value in expr.captures.items()}
             case (
-                HIR.Continue() | HIR.CompileConfig() | HIR.Var() | HIR.IntLiteral()
+                HIR.Continue() | HIR.Var() | HIR.IntLiteral()
                 | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.StrLiteral()
                 | HIR.BoolLiteral() | HIR.Ty()
             ):

@@ -82,8 +82,6 @@ class ExprLowerer:
                 return self.__stmts.translate_block(expr)
             case HIR.If():
                 return self.__stmts.translate_if(expr)
-            case HIR.ComptimeIf() | HIR.CompileConfig():
-                raise CodegenError("compile-time conditional was not specialized before CFG lowering", expr.span)
             case HIR.Loop():
                 return self.__stmts.translate_loop(expr)
             case HIR.Match():

@@ -1,6 +1,7 @@
 """Shared source-to-HIR pipeline for builds, analysis-only runs, and the editor.
 
-Full analysis runs through compile-time specialization and definite assignment.
+Full analysis selects compile-time branches during type checking, then runs
+definite-assignment analysis.
 It returns diagnostics and code-generation inputs without emitting files. The
 caller chooses strict failure or per-definition recovery; the editor can also
 request a syntax-only result while a document is being edited.
@@ -27,7 +28,6 @@ from compiler.analysis.lowering.state import DefinitionState
 from compiler.analysis.state import SemanticState
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.passes.desugar import Desugar
-from compiler.analysis.passes.comptime_if import ComptimeIfSpecializer
 from compiler.analysis.passes.match_coverage import MatchCoverage
 from compiler.analysis.passes.definite_assignment import DefiniteAssignment
 from compiler.analysis.passes.global_resolve import GlobalResolve
@@ -308,15 +308,6 @@ class AnalysisSession:
             )
 
         all_def_points = checker.export()
-        specializer = ComptimeIfSpecializer(
-            all_def_points, type_ctx, self.__raw_pointers, type_size
-        )
-        try:
-            comptime_errors = specializer.run(recover=recover)
-        except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.COMPTIME, sources, units, type_ctx, ast_dump), lexed
-            )
         timings["type_check"] = time.perf_counter() - started
 
         coverage = MatchCoverage(all_def_points, type_ctx)
@@ -343,7 +334,6 @@ class AnalysisSession:
             )
 
         diagnostics = list(checker.export_diagnostics())
-        diagnostics.extend(diagnostic_from_error(error, stage=Stage.COMPTIME) for error in comptime_errors)
         diagnostics.extend(diagnostic_from_error(error, stage=Stage.MATCH_COVERAGE) for error in coverage_errors)
         diagnostics.extend(coverage.warnings())
         diagnostics.extend(
@@ -352,7 +342,7 @@ class AnalysisSession:
         diagnostics.sort(key=lambda diagnostic: (
             str(diagnostic.span.path), diagnostic.span.start.row, diagnostic.span.start.col, diagnostic.code
         ))
-        generated = specializer.generated_definitions(checker.export_generated(), checker.entry_type_id)
+        generated = checker.export_generated()
 
         return AnalysisResult(
             diagnostics=tuple(diagnostics),

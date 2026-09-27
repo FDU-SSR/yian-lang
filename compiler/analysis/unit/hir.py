@@ -40,24 +40,6 @@ class If:
 
 
 @dataclass
-class ComptimeIf:
-    span: SrcSpan
-    cond: Expr
-    then_branch: Block
-    else_branch: Block
-    type_id: int
-    is_place: bool
-
-
-@dataclass
-class CompileConfig:
-    span: SrcSpan
-    name: str
-    type_id: int
-    is_place: bool
-
-
-@dataclass
 class Loop:
     span: SrcSpan
     body: Block
@@ -538,10 +520,10 @@ Expr: TypeAlias = (
     | ArrayAccess | SliceAccess
     | DynValue | DynBuffer | Builtin
     | Tuple | Array | ArrayRepeat
-    | Var | Literal | Ty | CompileConfig | Closure
+    | Var | Literal | Ty | Closure
     | Block
     | Return | Break | Continue | Defer
-    | If | ComptimeIf | Loop
+    | If | Loop
     | Delete
     | Match
     | Semi

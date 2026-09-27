@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, ComptimeConditionError
 from compiler.frontend.lex.lexer import LexError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse.error import ParseError
@@ -46,7 +46,6 @@ class Stage(Enum):
     RESOLVE = "resolve"
     FINALIZE = "finalize"
     TYPE_CHECK = "type_check"
-    COMPTIME = "comptime"
     MATCH_COVERAGE = "match_coverage"
     DEFINITE_ASSIGNMENT = "definite_assignment"
     CODEGEN = "codegen"
@@ -161,6 +160,8 @@ def diagnostic_from_error(
         code = __lexical_code(message)
     elif isinstance(error, ParseError):
         code = __syntax_code(message)
+    elif isinstance(error, ComptimeConditionError):
+        code = E503_COMPTIME_CONDITION
     elif isinstance(error, AnalysisError):
         code = __analysis_code(message, stage)
     else:
@@ -247,8 +248,6 @@ def __analysis_code(message: str, stage: Stage | None) -> str:
         return E501_RESTRICTED_OPERATION
     if stage is Stage.DEFINITE_ASSIGNMENT:
         return E502_DEFINITE_ASSIGNMENT
-    if stage is Stage.COMPTIME:
-        return E503_COMPTIME_CONDITION
     if stage is Stage.MATCH_COVERAGE:
         return E504_NONEXHAUSTIVE_MATCH
     if stage is Stage.CODEGEN:

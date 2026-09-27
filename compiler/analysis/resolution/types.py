@@ -32,7 +32,7 @@ class TypeResolver:
         self.__names = names
         self.__constant_value = constant_value
         self.__const_eval = ConstantExpressionEvaluator(
-            type_ctx, False, lambda _type_id: 0, "type-level constant expression"
+            type_ctx, lambda _type_id: 0, "type-level constant expression"
         )
 
     INT_MAPPING = {

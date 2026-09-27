@@ -6,7 +6,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from compiler.analysis.const_eval import ConstantExpressionEvaluator, ConstantValue
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, ComptimeConditionError
 from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.resolution.types import TypeResolver
@@ -16,6 +16,7 @@ from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.analysis.symbol.symbol import Symbol
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse.ast_type import ASTType, ConstExpr
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.lex.position import SrcSpan
@@ -67,6 +68,23 @@ class SemanticState:
         """Evaluate each declared constant, including declarations not referenced elsewhere."""
         for origin in self.__constant_defs:
             self.__evaluate_constant(origin)
+
+    def evaluate_comptime_condition(self, expr: HIR.Expr) -> bool:
+        """Evaluate one typed condition before checking either branch body."""
+        if self.__type_size is None:
+            raise ComptimeConditionError("comptime if condition evaluation failed: target layout unavailable", expr.span)
+        evaluator = ConstantExpressionEvaluator(
+            self.type_ctx, self.__type_size, "comptime if condition"
+        )
+        try:
+            value, _ = evaluator.evaluate(expr)
+        except AnalysisError as error:
+            raise ComptimeConditionError(str(error), error.span) from error
+        if type(value) is not bool:
+            raise ComptimeConditionError(
+                "comptime if condition is not compile-time evaluable: condition is not bool", expr.span
+            )
+        return value
 
     def __evaluate_constant(self, origin: tuple[int, int]) -> tuple[ConstantValue, int]:
         cached = self.__constant_values.get(origin)
@@ -128,7 +146,6 @@ class SemanticState:
                 raise AnalysisError("constant evaluation has no target layout", definition.value.span)
             evaluator = ConstantExpressionEvaluator(
                 self.type_ctx,
-                self.raw_pointers,
                 self.__type_size,
                 "constant initializer",
             )

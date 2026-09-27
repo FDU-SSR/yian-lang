@@ -66,8 +66,6 @@ class HirTreeFormatter(TreeFormatter):
                 return self.__export_return(expr, guides, is_last)
             case HIR.If():
                 return self.__export_if(expr, guides, is_last)
-            case HIR.ComptimeIf():
-                return self.__export_comptime_if(expr, guides, is_last)
             case HIR.Loop():
                 return self.__export_loop(expr, guides, is_last)
             case HIR.Break():
@@ -102,8 +100,6 @@ class HirTreeFormatter(TreeFormatter):
                 if expr.else_branch is not None:
                     res += self.__export_block_child("Else", expr.else_branch, guides, is_last, True)
                 return res
-            case HIR.CompileConfig():
-                return self.render_line(guides, is_last, f"CompileConfig: {expr.name} type={self.__format_type(expr.type_id)} span={self.__format_span(expr.span)}")
             # --- pure expressions ---
             case HIR.Binary():
                 return self.__export_binary(expr, guides, is_last)
@@ -315,13 +311,6 @@ class HirTreeFormatter(TreeFormatter):
         )
         for index, arg in enumerate(expr.args):
             res += self.__export_expr_child(f"Arg {index}", arg, guides, is_last, index == len(expr.args) - 1)
-        return res
-
-    def __export_comptime_if(self, expr: HIR.ComptimeIf, guides: list[bool], is_last: bool) -> str:
-        res = self.render_line(guides, is_last, f"ComptimeIf: type={self.__format_type(expr.type_id)} span={self.__format_span(expr.span)}")
-        res += self.__export_expr_child("Condition", expr.cond, guides, is_last, False)
-        res += self.__export_block_child("Then", expr.then_branch, guides, is_last, False)
-        res += self.__export_block_child("Else", expr.else_branch, guides, is_last, True)
         return res
 
     def __export_tuple(self, expr: HIR.Tuple, guides: list[bool], is_last: bool) -> str:

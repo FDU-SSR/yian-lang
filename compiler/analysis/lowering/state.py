@@ -15,6 +15,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.analysis.ty.context import TypeCtx
+from compiler.analysis.unit import hir as HIR
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
@@ -101,6 +102,9 @@ class DefinitionState:
 
     def constant_value(self, symbol: Symbol) -> tuple[int | bool | float | str, int]:
         return self.__semantic.constant_value(symbol)
+
+    def evaluate_comptime_condition(self, expr: HIR.Expr) -> bool:
+        return self.__semantic.evaluate_comptime_condition(expr)
 
     @property
     def unit_id(self) -> int:
