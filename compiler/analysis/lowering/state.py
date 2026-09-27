@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
 
+from compiler.analysis.error import AnalysisError
 from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.state import SemanticState
 from compiler.analysis.symbol.context import SymbolCtx
+from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
@@ -191,6 +193,16 @@ class DefinitionState:
     # locals
     def push_local(self, symbol_id: int) -> None:
         self.__locals.append(symbol_id)
+
+    def declare_local(self, name: AST.Identifier, type_id: int) -> int:
+        symbol_ctx = self.symbol_ctx
+        if symbol_ctx is None:
+            raise CompilerError("Cannot declare a local outside a definition")
+        symbol_id = symbol_ctx.add_symbol(name.name, SymbolKind.Variable, type_id, span=name.span)
+        if symbol_id is None:
+            raise AnalysisError(f"Variable '{name.name}' is already defined in the current scope", name.span)
+        self.push_local(symbol_id)
+        return symbol_id
 
     # loop stack
     def push_loop(self, frame: LoopFrame) -> None:
