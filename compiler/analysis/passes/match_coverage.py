@@ -12,6 +12,7 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.hir_traversal import HirVisitor
+from compiler.frontend.lex.position import SrcSpan
 
 
 class MatchCoverage(HirVisitor):
@@ -42,11 +43,36 @@ class MatchCoverage(HirVisitor):
     def enter_expr(self, expr: HIR.Expr) -> bool:
         if isinstance(expr, HIR.Match):
             self.__check_match(expr)
+        elif isinstance(expr, HIR.PatternLet):
+            self.__check_pattern_let(expr)
         return True
+
+    def __warn(self, message: str, span: SrcSpan) -> None:
+        self.__warnings.append(Diagnostic(
+            code=W501_UNREACHABLE_PATTERN,
+            severity=Severity.WARNING,
+            message=message,
+            span=span,
+        ))
+
+    def __check_pattern_let(self, expr: HIR.PatternLet) -> None:
+        if not self.__queries.is_irrefutable(expr.pattern, expr.value.type_id):
+            if expr.else_branch is None:
+                location = "parameter" if expr.is_parameter else "let"
+                raise AnalysisError(f"{location} pattern may fail; add an else block", expr.pattern.span)
+        elif expr.else_branch is not None:
+            self.__warn("unreachable else block for an irrefutable pattern", expr.else_branch.span)
 
     def __check_match(self, expr: HIR.Match) -> None:
         value_type = self.__ctx[self.__ctx.resolve_aliases(expr.value.type_id)]
         type_id = value_type.pointee_type if expr.is_ref and isinstance(value_type, Type.RefType) else expr.value.type_id
+        for arm in expr.arms:
+            if arm.origin is HIR.MatchArmOrigin.FOR_ITEM:
+                if not isinstance(arm.pattern, HIR.EnumPattern) or not arm.pattern.fields:
+                    raise AnalysisError("Invalid iterator item pattern", arm.span)
+                item_pattern = arm.pattern.fields[0][1]
+                if not self.__queries.is_irrefutable(item_pattern, item_pattern.type_id):
+                    raise AnalysisError("for element pattern may fail", item_pattern.span)
         needs_fallback = any(
             arm.guard is not None or self.__queries.contains_opaque(arm.pattern) for arm in expr.arms
         )
@@ -60,15 +86,17 @@ class MatchCoverage(HirVisitor):
         side_effect_seen = False
         unconditional_catchall = False
         for arm in expr.arms:
-            if unconditional_catchall or (
-                not side_effect_seen and self.__queries.witness(rows, arm.pattern, type_id) is None
+            if arm.origin is HIR.MatchArmOrigin.CONDITION:
+                if not self.__queries.can_match(arm.pattern, type_id):
+                    self.__warn("pattern condition cannot match", arm.pattern.span)
+                elif self.__queries.is_irrefutable(arm.pattern, type_id):
+                    self.__warn("irrefutable pattern condition", arm.pattern.span)
+            elif arm.origin is HIR.MatchArmOrigin.USER and (
+                unconditional_catchall or (
+                    not side_effect_seen and self.__queries.witness(rows, arm.pattern, type_id) is None
+                )
             ):
-                self.__warnings.append(Diagnostic(
-                    code=W501_UNREACHABLE_PATTERN,
-                    severity=Severity.WARNING,
-                    message="unreachable match arm",
-                    span=arm.span,
-                ))
+                self.__warn("unreachable match arm", arm.span)
             if self.__is_fallback(arm):
                 unconditional_catchall = True
             if arm.guard is not None or self.__queries.contains_opaque(arm.pattern):

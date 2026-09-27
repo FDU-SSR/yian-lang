@@ -1,0 +1,6 @@
+fn main() {
+    let Some(value) = Option<i32>.None else {
+        value;
+        return;
+    };
+}

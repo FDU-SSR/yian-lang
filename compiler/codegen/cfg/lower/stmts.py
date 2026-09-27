@@ -250,6 +250,20 @@ class StmtLowerer:
             self.__resolver.resolve_val(stmt.init)
         return self.__state.emitter.void_reg()
 
+    def translate_pattern_let(self, stmt: HIR.PatternLet) -> IR.Value:
+        value = self.__resolver.resolve_val(stmt.value)
+        address = self.__values.build_alloca(value, fat=False)
+        failure = self.__state.emitter.new_block("pattern.let.fail")
+        self.__emit_pattern(stmt.pattern, address, failure, False)
+        success = self.__state.emitter.current_block
+        self.__state.emitter.position(failure)
+        if stmt.else_branch is not None:
+            self.translate_block(stmt.else_branch)
+        if self.__state.emitter.current_block.terminator is None:
+            self.__state.emitter.terminate(IR.Unreachable())
+        self.__state.emitter.position(success)
+        return self.__state.emitter.void_reg()
+
     # ------------------------------------------------------------------
     # Match helpers
     # ------------------------------------------------------------------
@@ -279,6 +293,8 @@ class StmtLowerer:
                 self.__emit_pattern(pattern.inner, address, failure, by_ref)
                 bound = self.__values.build_cast(address, ctx.alloc_ref(pattern.type_id)) if by_ref else self.__memory.build_load(address)
                 self.__store_pattern_binding(pattern.symbol_id, bound)
+            case HIR.RefPattern():
+                self.__emit_pattern(pattern.inner, self.__memory.build_load(address), failure, True)
             case HIR.OrPattern():
                 done = self.__state.emitter.new_block("match.or.done")
                 for alternative in pattern.alternatives:

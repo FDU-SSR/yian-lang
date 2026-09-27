@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 class Identifier:
     span: SrcSpan
     name: str
+    synthetic: bool = False
 
     def __repr__(self) -> str:
         return self.name
@@ -113,6 +114,16 @@ class VarInfo:
         return f"{self.name.name}: {self.var_type}"
 
 
+@dataclass
+class PatternParam:
+    span: SrcSpan
+    pattern: Pattern
+    var_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"{self.pattern}: {self.var_type}"
+
+
 class AttrKind(Enum):
     Pub = "pub"
     Static = "static"
@@ -133,7 +144,7 @@ class FuncDef:
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
-    params: list[VarInfo]
+    params: list[VarInfo | PatternParam]
     ret_type: ASTType | None
     body: Block
 
@@ -245,7 +256,7 @@ class MethodDecl:
     attrs: list[Attr]
     name: Identifier
     generics: list[GenericParam]
-    params: list[VarInfo]
+    params: list[VarInfo | PatternParam]
     ret_type: ASTType | None
 
     def __repr__(self) -> str:
@@ -263,6 +274,7 @@ class Block:
     #: Position just past the closing ``}``, recorded by the parser.  ``None``
     #: for a block the compiler synthesized (desugaring), which no source owns.
     end: SrcPosition | None = None
+    parameter_bindings: list[PatternLet] = field(default_factory=lambda: [])
 
     def full_span(self) -> SrcSpan | None:
         """The block's extent: opening brace through matching closing brace.
@@ -301,6 +313,23 @@ class VarDecl:
 
 
 @dataclass
+class PatternLet:
+    span: SrcSpan
+    pattern: Pattern
+    var_type: ASTType
+    init_expr: Expr
+    else_branch: Block | None = None
+    is_parameter: bool = False
+
+
+@dataclass
+class LetCondition:
+    span: SrcSpan
+    pattern: Pattern
+    value: Expr
+
+
+@dataclass
 class Return:
     span: SrcSpan
     expr: Expr | None
@@ -313,9 +342,9 @@ class Return:
 @dataclass
 class If:
     span: SrcSpan
-    condition: Expr
+    condition: Expr | LetCondition
     then_branch: Block
-    elif_branches: list[tuple[Expr, Block]]
+    elif_branches: list[tuple[Expr | LetCondition, Block]]
     else_branch: Block | None
 
     def __repr__(self) -> str:
@@ -347,18 +376,18 @@ class CompileConfig:
 @dataclass
 class For:
     span: SrcSpan
-    var_name: Identifier
+    pattern: Pattern
     iterable: Expr
     body: Block
 
     def __repr__(self) -> str:
-        return f"for {self.var_name.name} in {self.iterable} {{ ... }}"
+        return f"for {self.pattern} in {self.iterable} {{ ... }}"
 
 
 @dataclass
 class While:
     span: SrcSpan
-    condition: Expr
+    condition: Expr | LetCondition
     body: Block
 
     def __repr__(self) -> str:
@@ -385,12 +414,20 @@ class Match:
         return f"match {self.expr} {{ {arms_str} }}"
 
 
+class MatchArmOrigin(Enum):
+    USER = "user"
+    CONDITION = "condition"
+    FOR_ITEM = "for_item"
+    SYNTHETIC = "synthetic"
+
+
 @dataclass
 class MatchArm:
     span: SrcSpan
     pattern: Pattern
     guard: Expr | None
     body: Block
+    origin: MatchArmOrigin = MatchArmOrigin.USER
 
 
 @dataclass
@@ -712,7 +749,7 @@ class ClosureExpr:
 
     span: SrcSpan
     captures: list[CaptureItem]
-    params: list[VarInfo]
+    params: list[VarInfo | PatternParam]
     return_type: ASTType | None      # None 表示返回 void
     body: Block
 
@@ -730,7 +767,7 @@ Expr: TypeAlias = (
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat
     | Block
-    | VarDecl
+    | VarDecl | PatternLet
     | If | ComptimeIf | For | While | Loop | Match
     | Return | Break | Continue | Defer | Assert
     | Delete

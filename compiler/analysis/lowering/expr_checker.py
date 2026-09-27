@@ -74,6 +74,8 @@ class ExprChecker:
                 return self.lower_delete(expr)
             case AST.VarDecl():
                 return self.lower_var_decl(expr)
+            case AST.PatternLet():
+                return self.lower_pattern_let(expr)
             case AST.Semi():
                 return self.lower_semi(expr)
             case AST.For() | AST.While() | AST.Assert():
@@ -143,11 +145,11 @@ class ExprChecker:
         match result:
             case HIR.MethodCall(method_id=method_id, type_id=type_id):
                 # The method itself, not the receiver's type.
-                self.__ctx.names.record(node.method_name.span, method_id, type_id)
+                self.__ctx.names.record(node.method_name.span, method_id, type_id, synthetic=node.method_name.synthetic)
             case HIR.TraitObjectMethodCall(method_id=method_id, type_id=type_id):
-                self.__ctx.names.record(node.method_name.span, method_id, type_id)
+                self.__ctx.names.record(node.method_name.span, method_id, type_id, synthetic=node.method_name.synthetic)
             case HIR.VariantConstruct(variant=variant, type_id=type_id):
-                self.__ctx.names.record(node.method_name.span, variant, type_id)
+                self.__ctx.names.record(node.method_name.span, variant, type_id, synthetic=node.method_name.synthetic)
             case _:
                 pass
         return result
@@ -216,7 +218,7 @@ class ExprChecker:
         # Record the declaration at the identifier span for navigation and hover.
         match symbol.kind:
             case SymbolKind.Variable:
-                self.__ctx.names.record(node.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.span, symbol, symbol.type_id, synthetic=node.synthetic)
                 return HIR.Var(span=node.span, symbol_id=symbol.symbol_id, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Function:
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
@@ -225,7 +227,7 @@ class ExprChecker:
                         f"a function variable must bind a concrete function",
                         node.span,
                     )
-                self.__ctx.names.record(node.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.span, symbol, symbol.type_id, synthetic=node.synthetic)
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
@@ -233,9 +235,9 @@ class ExprChecker:
                 ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     assert isinstance(ty.value, int)
-                    self.__ctx.names.record(node.span, symbol, ty.value_type)
+                    self.__ctx.names.record(node.span, symbol, ty.value_type, synthetic=node.synthetic)
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
-                self.__ctx.names.record(node.span, symbol, type_id)
+                self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
                 return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
@@ -639,6 +641,41 @@ class ExprChecker:
 
         return HIR.Let(span=stmt.span, init=init_hir, type_id=TypeCtx.void_id, is_place=False, symbol_id=symbol_id)
 
+    def lower_pattern_let(self, stmt: AST.PatternLet) -> HIR.Expr:
+        if isinstance(stmt.var_type, ASTTy.DeducedType):
+            value = self.value(stmt.init_expr)
+            value = self.coerce(value, self.__ctx.type_ctx.default_literals(value.type_id))
+        else:
+            type_id = self.__ctx.resolve_type(stmt.var_type)
+            value = self.coerce(self.value(stmt.init_expr), type_id)
+
+        value_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        if isinstance(stmt.var_type, ASTTy.DeducedType) and isinstance(value_ty, Type.PointerType) and self.__pattern_tests_value(stmt.pattern):
+            if not isinstance(value, HIR.Unary) or value.op != UnaryOperator.AddrOf:
+                raise AnalysisError("Pointer values cannot be destructured; use '&place'", stmt.pattern.span)
+            value = self.coerce(value, self.__ctx.type_ctx.alloc_ref(value_ty.pointee_type))
+
+        else_block = self.check_block(stmt.else_branch) if stmt.else_branch is not None else None
+        if else_block is not None and else_block.type_id != TypeCtx.never_id:
+            raise AnalysisError("The else block of a pattern declaration must diverge", else_block.span)
+
+        pattern = self.__pattern_checker.check(
+            stmt.pattern, value.type_id, root_mode=PatternRoot.BINDING, by_ref=False,
+        )
+        if isinstance(pattern, HIR.WildcardPattern) and else_block is None:
+            return HIR.Semi(stmt.span, value, TypeCtx.void_id, False)
+        return HIR.PatternLet(stmt.span, value, pattern, else_block, TypeCtx.void_id, False, stmt.is_parameter)
+
+    def __pattern_tests_value(self, pattern: AST.Pattern) -> bool:
+        if isinstance(pattern, AST.BindPattern):
+            return self.__pattern_tests_value(pattern.inner)
+        if isinstance(pattern, AST.OrPattern):
+            return any(self.__pattern_tests_value(alt) for alt in pattern.alternatives)
+        return isinstance(pattern, (
+            AST.LiteralPattern, AST.RangePattern, AST.ConstructPattern,
+            AST.TuplePattern, AST.SequencePattern,
+        ))
+
     def lower_semi(self, stmt: AST.Semi) -> HIR.Expr:
         expr = self.value(stmt.expr)
         # Divergent expressions (return/break/continue/panic) should not be
@@ -652,6 +689,8 @@ class ExprChecker:
 
         if stmt.elif_branches:
             raise AnalysisError("Unexpected elif branches after desugaring", stmt.span)
+        if isinstance(stmt.condition, AST.LetCondition):
+            raise AnalysisError("Unexpected let condition after desugaring", stmt.condition.span)
 
         cond_expr = self.coerce(self.value(stmt.condition), TypeCtx.bool_id)
         then_block = self.check_block(stmt.then_branch)
@@ -720,7 +759,10 @@ class ExprChecker:
                 )
                 guard = self.coerce(self.value(arm.guard), TypeCtx.bool_id) if arm.guard is not None else None
                 body = self.check_block(arm.body)
-                arms.append(HIR.MatchArm(span=arm.span, pattern=pattern, guard=guard, body=body))
+                arms.append(HIR.MatchArm(
+                    span=arm.span, pattern=pattern, guard=guard, body=body,
+                    origin=HIR.MatchArmOrigin(arm.origin.value),
+                ))
                 body_types.append(body.type_id)
             finally:
                 self.__ctx.exit_scope()

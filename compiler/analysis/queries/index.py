@@ -477,7 +477,7 @@ def __variants(
 
 
 def __parameters(
-    params: list[AST.VarInfo], path: Path, container: str, module: str
+    params: list[AST.VarInfo | AST.PatternParam], path: Path, container: str, module: str
 ) -> list[Declaration]:
     return [
         Declaration(
@@ -489,6 +489,7 @@ def __parameters(
             module=module,
         )
         for param in params
+        if isinstance(param, AST.VarInfo) and not param.name.synthetic
     ]
 
 
@@ -538,25 +539,55 @@ class __LocalDeclarationVisitor(AstVisitor):
         self.__container = container
         self.__pattern_bindings = pattern_bindings
         self.__structural = False
+        self.__binding_kind = DeclarationKind.VARIABLE
         self.declarations: list[Declaration] = []
 
     def __add(self, name: AST.Identifier, var_type: ASTType | None = None) -> None:
-        self.declarations.append(_variable(name, var_type, self.__path, self.__module, self.__container))
+        if not name.synthetic:
+            self.declarations.append(_variable(
+                name, var_type, self.__path, self.__module, self.__container, self.__binding_kind,
+            ))
 
     def enter_expr(self, expr: AST.Expr) -> bool:
         if isinstance(expr, AST.VarDecl):
             self.__add(expr.name, expr.var_type)
-        elif isinstance(expr, AST.For):
-            self.__add(expr.var_name)
         return True
 
     def visit_expr(self, expr: AST.Expr) -> None:
+        if isinstance(expr, AST.For):
+            previous_structural = self.__structural
+            self.__structural = True
+            try:
+                self.visit_pattern(expr.pattern)
+            finally:
+                self.__structural = previous_structural
+            self.visit_expr(expr.iterable)
+            self.visit_expr(expr.body)
+            return
+        if isinstance(expr, AST.PatternLet):
+            previous_kind = self.__binding_kind
+            previous_structural = self.__structural
+            self.__binding_kind = DeclarationKind.PARAMETER if expr.is_parameter else DeclarationKind.VARIABLE
+            self.__structural = True
+            try:
+                self.visit_pattern(expr.pattern)
+            finally:
+                self.__binding_kind = previous_kind
+                self.__structural = previous_structural
+            self.visit_expr(expr.init_expr)
+            if expr.else_branch is not None:
+                self.visit_expr(expr.else_branch)
+            return
         if isinstance(expr, AST.ClosureExpr):
             for capture in expr.captures:
                 self.__add(capture.name)
                 self.visit_expr(capture.expr)
+            previous_kind = self.__binding_kind
+            self.__binding_kind = DeclarationKind.PARAMETER
             for param in expr.params:
-                self.__add(param.name, param.var_type)
+                if isinstance(param, AST.VarInfo):
+                    self.__add(param.name, param.var_type)
+            self.__binding_kind = previous_kind
             self.visit_expr(expr.body)
             return
         super().visit_expr(expr)
@@ -584,11 +615,12 @@ class __LocalDeclarationVisitor(AstVisitor):
 
 
 def _variable(
-    name: AST.Identifier, var_type: ASTType | None, path: Path, module: str, container: str
+    name: AST.Identifier, var_type: ASTType | None, path: Path, module: str, container: str,
+    kind: DeclarationKind = DeclarationKind.VARIABLE,
 ) -> Declaration:
     return Declaration(
         name=name.name,
-        kind=DeclarationKind.VARIABLE,
+        kind=kind,
         path=path,
         span=name.span,
         container=container,

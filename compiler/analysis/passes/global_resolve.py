@@ -390,14 +390,14 @@ class GlobalResolve:
         # resolve generics, parameters and return type
         self.__enter_generic_scope(unit, func_def.generics, ty.custom_def.generics)
 
-        parameters = [
-            Type.Parameter(
+        parameters: list[Type.Parameter] = []
+        for param in func_def.params:
+            assert isinstance(param, AST.VarInfo)
+            parameters.append(Type.Parameter(
                 name=param.name.name,
                 type_id=self.__ctx.resolve_type_in(param.var_type, unit.symbol_ctx),
-                span=param.name.span,
-            )
-            for param in func_def.params
-        ]
+                span=None if param.name.synthetic else param.name.span,
+            ))
         if func_def.ret_type is None:
             ret_type_id = self.__ctx.type_ctx.void_id
         else:
@@ -569,14 +569,14 @@ class GlobalResolve:
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, g_id, span=name.span)
             generics.append(g_id)
 
-        parameters = [
-            Type.Parameter(
+        parameters: list[Type.Parameter] = []
+        for param in decl.params:
+            assert isinstance(param, AST.VarInfo)
+            parameters.append(Type.Parameter(
                 name=param.name.name,
                 type_id=self.__ctx.resolve_type_in(param.var_type, unit.symbol_ctx),
-                span=param.name.span,
-            )
-            for param in decl.params
-        ]
+                span=None if param.name.synthetic else param.name.span,
+            ))
         if decl.ret_type is None:
             ret_type_id = self.__ctx.type_ctx.void_id
         else:

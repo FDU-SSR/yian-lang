@@ -1,0 +1,11 @@
+struct Node {
+    pub value: i32,
+    pub next: Option<Node&>,
+}
+
+fn main() {
+    let node: Node& = dyn Node(1, Option<Node&>.None);
+    let found = if let Node(value = 1, ..) = node { true } else { false };
+    assert found;
+    del node;
+}

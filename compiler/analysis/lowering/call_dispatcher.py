@@ -113,7 +113,7 @@ class CallDispatcher:
                 # A generic function is called through its symbol, not by
                 # evaluating the callee as a value, so the reference is recorded
                 # here: navigation, hover and signature help all need it.
-                self.__ctx.names.record(node.callee.span, symbol, symbol.type_id)
+                self.__ctx.names.record(node.callee.span, symbol, symbol.type_id, synthetic=node.callee.synthetic)
                 return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
 
         callee = self.__expr.value(node.callee)

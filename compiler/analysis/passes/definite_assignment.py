@@ -242,6 +242,8 @@ class DefiniteAssignment:
         # -- declarations -------------------------------------------------
         if isinstance(expr, HIR.Let):
             return self.__check_let(expr, state)
+        if isinstance(expr, HIR.PatternLet):
+            return self.__check_pattern_let(expr, state)
 
         # -- operators ----------------------------------------------------
         if isinstance(expr, HIR.Binary):
@@ -440,6 +442,21 @@ class DefiniteAssignment:
             state = self.__set(state, self.__whole(sym_id), VarState.INVALID)
         return state
 
+    def __check_pattern_let(self, expr: HIR.PatternLet, state: DAState) -> DAState:
+        state = self.__check_expr(expr.value, state)
+        facts = _PatternFactsVisitor()
+        facts.visit_pattern(expr.pattern)
+        for literal in facts.conditions:
+            assert literal.condition_symbol is not None
+            assert literal.condition is not None
+            state = self.__set(state, self.__whole(literal.condition_symbol), VarState.VALID)
+            state = self.__check_expr(literal.condition, state)
+        if expr.else_branch is not None:
+            self.__check_expr(expr.else_branch, self.__share(state))
+        for symbol_id in facts.bindings:
+            state = self.__set(state, self.__whole(symbol_id), VarState.VALID)
+        return state
+
     def __check_binary(self, expr: HIR.Binary, state: DAState) -> DAState:
         op = expr.op
 
@@ -518,6 +535,8 @@ class DefiniteAssignment:
         # -- state-changing ------------------------------------------------
         if isinstance(expr, HIR.Let):
             return self.__check_let(expr, state)
+        if isinstance(expr, HIR.PatternLet):
+            return self.__check_pattern_let(expr, state)
 
         if isinstance(expr, HIR.Binary):
             if expr.op == BinaryOperator.Assign:

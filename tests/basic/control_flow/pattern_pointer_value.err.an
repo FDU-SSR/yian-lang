@@ -1,0 +1,10 @@
+struct Pair {
+    pub left: i32,
+    pub right: i32,
+}
+
+fn main() {
+    let pair = Pair(1, 2);
+    let pointer = &pair;
+    let Pair(left = left, ..) = pointer;
+}

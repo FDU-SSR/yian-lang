@@ -58,6 +58,11 @@ class HirVisitor:
             case HIR.Let():
                 if expr.init is not None:
                     self.visit_expr(expr.init)
+            case HIR.PatternLet():
+                self.visit_expr(expr.value)
+                self.visit_pattern(expr.pattern)
+                if expr.else_branch is not None:
+                    self.visit_expr(expr.else_branch)
             case HIR.Match():
                 self.visit_expr(expr.value)
                 for arm in expr.arms:
@@ -130,7 +135,7 @@ class HirVisitor:
             case HIR.LiteralPattern():
                 if pattern.condition is not None:
                     self.visit_pattern_condition(pattern.condition)
-            case HIR.BindPattern():
+            case HIR.BindPattern() | HIR.RefPattern():
                 self.visit_pattern(pattern.inner)
             case HIR.OrPattern():
                 for alternative in pattern.alternatives:
@@ -204,6 +209,11 @@ class HirRewriter:
             case HIR.Let():
                 if expr.init is not None:
                     expr.init = self.rewrite_expr(expr.init)
+            case HIR.PatternLet():
+                expr.value = self.rewrite_expr(expr.value)
+                expr.pattern = self.rewrite_pattern(expr.pattern)
+                if expr.else_branch is not None:
+                    expr.else_branch = self.rewrite_block(expr.else_branch)
             case HIR.Match():
                 expr.value = self.rewrite_expr(expr.value)
                 for arm in expr.arms:
@@ -270,7 +280,7 @@ class HirRewriter:
             case HIR.LiteralPattern():
                 if pattern.condition is not None:
                     pattern.condition = self.rewrite_expr(pattern.condition)
-            case HIR.BindPattern():
+            case HIR.BindPattern() | HIR.RefPattern():
                 pattern.inner = self.rewrite_pattern(pattern.inner)
             case HIR.OrPattern():
                 pattern.alternatives = [self.rewrite_pattern(child) for child in pattern.alternatives]

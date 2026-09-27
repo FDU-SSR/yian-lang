@@ -39,6 +39,15 @@ class AstTreeFormatter(TreeFormatter):
     def __export_expr_child(self, label: str, child: AST.Expr, guides: list[bool], parent_is_last: bool, is_last: bool) -> str:
         return self.render_child(label, child, guides, parent_is_last, is_last, self.__export_expr)
 
+    def __export_condition_child(
+        self, condition: AST.Expr | AST.LetCondition, guides: list[bool], parent_is_last: bool, is_last: bool,
+    ) -> str:
+        if isinstance(condition, AST.LetCondition):
+            res = self.render_line(guides, is_last, f"Condition: let {condition.pattern}")
+            res += self.__export_expr_child("Value", condition.value, guides + [not is_last], parent_is_last, True)
+            return res
+        return self.__export_expr_child("Condition", condition, guides, parent_is_last, is_last)
+
     def __export_block_child(self, label: str, child: AST.Block, guides: list[bool], parent_is_last: bool, is_last: bool) -> str:
         return self.render_child(
             label, child, guides, parent_is_last, is_last,
@@ -150,6 +159,13 @@ class AstTreeFormatter(TreeFormatter):
             res += self.__export_expr_child("Init", stmt.init_expr, guides, is_last, True)
         return res
 
+    def __export_pattern_let(self, stmt: AST.PatternLet, guides: list[bool], is_last: bool) -> str:
+        res = self.render_line(guides, is_last, f"PatternLet: {stmt.pattern}")
+        res += self.__export_expr_child("Init", stmt.init_expr, guides, is_last, stmt.else_branch is None)
+        if stmt.else_branch is not None:
+            res += self.__export_block_child("Else", stmt.else_branch, guides, is_last, True)
+        return res
+
     def __export_return(self, stmt: AST.Return, guides: list[bool], is_last: bool) -> str:
         res = self.render_line(guides, is_last, "Return")
         if stmt.expr is not None:
@@ -158,7 +174,7 @@ class AstTreeFormatter(TreeFormatter):
 
     def __export_if(self, stmt: AST.If, guides: list[bool], is_last: bool) -> str:
         res = self.render_line(guides, is_last, "If")
-        res += self.__export_expr_child("Condition", stmt.condition, guides, is_last, False)
+        res += self.__export_condition_child(stmt.condition, guides, is_last, False)
         has_else = stmt.else_branch is not None
         has_elif = len(stmt.elif_branches) > 0
         res += self.__export_block_child("Then", stmt.then_branch, guides, is_last, not has_elif and not has_else)
@@ -179,9 +195,9 @@ class AstTreeFormatter(TreeFormatter):
     def __export_compile_config(self, expr: AST.CompileConfig, guides: list[bool], is_last: bool) -> str:
         return self.render_line(guides, is_last, f"CompileConfig: {expr.name}")
 
-    def __export_stmt_if_elif(self, condition: AST.Expr, body: AST.Block, guides: list[bool], is_last: bool) -> str:
+    def __export_stmt_if_elif(self, condition: AST.Expr | AST.LetCondition, body: AST.Block, guides: list[bool], is_last: bool) -> str:
         res = self.render_line(guides, is_last, "Elif:")
-        res += self.__export_expr_child("Condition", condition, guides, is_last, False)
+        res += self.__export_condition_child(condition, guides, is_last, False)
         res += self.__export_block_child("Body", body, guides, is_last, True)
         return res
 
@@ -192,14 +208,14 @@ class AstTreeFormatter(TreeFormatter):
         return res
 
     def __export_for(self, stmt: AST.For, guides: list[bool], is_last: bool) -> str:
-        res = self.render_line(guides, is_last, f"For: {stmt.var_name.name}")
+        res = self.render_line(guides, is_last, f"For: {stmt.pattern}")
         res += self.__export_expr_child("Iterable", stmt.iterable, guides, is_last, False)
         res += self.__export_block_child("Body", stmt.body, guides, is_last, True)
         return res
 
     def __export_while(self, stmt: AST.While, guides: list[bool], is_last: bool) -> str:
         res = self.render_line(guides, is_last, "While")
-        res += self.__export_expr_child("Condition", stmt.condition, guides, is_last, False)
+        res += self.__export_condition_child(stmt.condition, guides, is_last, False)
         res += self.__export_block_child("Body", stmt.body, guides, is_last, True)
         return res
 
@@ -256,7 +272,7 @@ class AstTreeFormatter(TreeFormatter):
         return res
 
     def __export_block(self, block: AST.Block, guides: list[bool]) -> str:
-        return self.render_items(block.stmts, guides, self.__export_stmt_expr)
+        return self.render_items([*block.parameter_bindings, *block.stmts], guides, self.__export_stmt_expr)
 
     def __export_expr(self, expr: AST.Expr, guides: list[bool], is_last: bool) -> str:
         match expr:
@@ -298,6 +314,8 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_match(expr, guides, is_last)
             case AST.VarDecl():
                 return self.__export_var_decl(expr, guides, is_last)
+            case AST.PatternLet():
+                return self.__export_pattern_let(expr, guides, is_last)
             case AST.Return():
                 return self.__export_return(expr, guides, is_last)
             case AST.Break():

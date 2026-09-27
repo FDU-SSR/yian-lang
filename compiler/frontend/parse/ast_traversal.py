@@ -14,13 +14,22 @@ class AstVisitor:
         for item in program.items:
             match item:
                 case AST.FuncDef():
+                    for param in item.params:
+                        if isinstance(param, AST.PatternParam):
+                            self.visit_pattern(param.pattern)
                     self.visit_expr(item.body)
                 case AST.Impl():
                     for method in item.items:
+                        for param in method.decl.params:
+                            if isinstance(param, AST.PatternParam):
+                                self.visit_pattern(param.pattern)
                         self.visit_expr(method.body)
                 case AST.TraitDef():
                     for method in item.items:
                         if isinstance(method, AST.MethodDef):
+                            for param in method.decl.params:
+                                if isinstance(param, AST.PatternParam):
+                                    self.visit_pattern(param.pattern)
                             self.visit_expr(method.body)
                 case AST.Import() | AST.Alias() | AST.StructDef() | AST.EnumDef():
                     pass
@@ -44,6 +53,8 @@ class AstVisitor:
             return
         match expr:
             case AST.Block():
+                for binding in expr.parameter_bindings:
+                    self.visit_expr(binding)
                 for stmt in expr.stmts:
                     self.visit_expr(stmt)
             case AST.Semi():
@@ -51,14 +62,19 @@ class AstVisitor:
             case AST.VarDecl():
                 if expr.init_expr is not None:
                     self.visit_expr(expr.init_expr)
+            case AST.PatternLet():
+                self.visit_expr(expr.init_expr)
+                self.visit_pattern(expr.pattern)
+                if expr.else_branch is not None:
+                    self.visit_expr(expr.else_branch)
             case AST.Return() | AST.Break():
                 if expr.expr is not None:
                     self.visit_expr(expr.expr)
             case AST.If():
-                self.visit_expr(expr.condition)
+                self.visit_condition(expr.condition)
                 self.visit_expr(expr.then_branch)
                 for condition, branch in expr.elif_branches:
-                    self.visit_expr(condition)
+                    self.visit_condition(condition)
                     self.visit_expr(branch)
                 if expr.else_branch is not None:
                     self.visit_expr(expr.else_branch)
@@ -68,9 +84,10 @@ class AstVisitor:
                 self.visit_expr(expr.else_branch)
             case AST.For():
                 self.visit_expr(expr.iterable)
+                self.visit_pattern(expr.pattern)
                 self.visit_expr(expr.body)
             case AST.While():
-                self.visit_expr(expr.condition)
+                self.visit_condition(expr.condition)
                 self.visit_expr(expr.body)
             case AST.Loop():
                 self.visit_expr(expr.body)
@@ -92,6 +109,9 @@ class AstVisitor:
             case AST.ClosureExpr():
                 for capture in expr.captures:
                     self.visit_expr(capture.expr)
+                for param in expr.params:
+                    if isinstance(param, AST.PatternParam):
+                        self.visit_pattern(param.pattern)
                 self.visit_expr(expr.body)
             case AST.Binary():
                 self.visit_expr(expr.left)
@@ -127,6 +147,13 @@ class AstVisitor:
             case _:
                 assert_never(expr)
         self.leave_expr(expr)
+
+    def visit_condition(self, condition: AST.Expr | AST.LetCondition) -> None:
+        if isinstance(condition, AST.LetCondition):
+            self.visit_pattern(condition.pattern)
+            self.visit_expr(condition.value)
+        else:
+            self.visit_expr(condition)
 
     def visit_pattern(self, pattern: AST.Pattern) -> None:
         if not self.enter_pattern(pattern):
@@ -170,21 +197,34 @@ class AstRewriter:
             raise TypeError("an AST block must remain a block")
         return rewritten
 
+    def rewrite_condition(self, condition: AST.Expr | AST.LetCondition) -> AST.Expr | AST.LetCondition:
+        if isinstance(condition, AST.LetCondition):
+            condition.pattern = self.rewrite_pattern(condition.pattern)
+            condition.value = self.rewrite_expr(condition.value)
+            return condition
+        return self.rewrite_expr(condition)
+
     def rewrite_statement_expressions(self, stmt: AST.Expr) -> None:
         """Rewrite expression fields of a statement without replacing its root."""
         match stmt:
             case AST.VarDecl():
                 if stmt.init_expr is not None:
                     stmt.init_expr = self.rewrite_expr(stmt.init_expr)
+            case AST.PatternLet():
+                stmt.init_expr = self.rewrite_expr(stmt.init_expr)
+                if stmt.else_branch is not None:
+                    stmt.else_branch = self.rewrite_block(stmt.else_branch)
             case AST.Return():
                 if stmt.expr is not None:
                     stmt.expr = self.rewrite_expr(stmt.expr)
             case AST.If():
-                stmt.condition = self.rewrite_expr(stmt.condition)
+                stmt.condition = self.rewrite_condition(stmt.condition)
                 stmt.elif_branches = [
-                    (self.rewrite_expr(cond), branch) for cond, branch in stmt.elif_branches
+                    (self.rewrite_condition(cond), branch) for cond, branch in stmt.elif_branches
                 ]
-            case AST.ComptimeIf() | AST.While() | AST.Assert():
+            case AST.While():
+                stmt.condition = self.rewrite_condition(stmt.condition)
+            case AST.ComptimeIf() | AST.Assert():
                 stmt.condition = self.rewrite_expr(stmt.condition)
                 if isinstance(stmt, AST.Assert) and stmt.message is not None:
                     stmt.message = self.rewrite_expr(stmt.message)
@@ -197,6 +237,7 @@ class AstRewriter:
                 stmt.target = self.rewrite_expr(stmt.target)
             case AST.For():
                 stmt.iterable = self.rewrite_expr(stmt.iterable)
+                stmt.pattern = self.rewrite_pattern(stmt.pattern)
             case AST.Binary():
                 stmt.left = self.rewrite_expr(stmt.left)
                 stmt.right = self.rewrite_expr(stmt.right)
@@ -234,20 +275,27 @@ class AstRewriter:
         """Rewrite immediate children; subclasses decide whether to replace the root."""
         match expr:
             case AST.Block():
+                for binding in expr.parameter_bindings:
+                    self.rewrite_children(binding)
                 expr.stmts = [self.rewrite_expr(stmt) for stmt in expr.stmts]
             case AST.Semi():
                 expr.expr = self.rewrite_expr(expr.expr)
             case AST.VarDecl():
                 if expr.init_expr is not None:
                     expr.init_expr = self.rewrite_expr(expr.init_expr)
+            case AST.PatternLet():
+                expr.init_expr = self.rewrite_expr(expr.init_expr)
+                expr.pattern = self.rewrite_pattern(expr.pattern)
+                if expr.else_branch is not None:
+                    expr.else_branch = self.rewrite_block(expr.else_branch)
             case AST.Return() | AST.Break():
                 if expr.expr is not None:
                     expr.expr = self.rewrite_expr(expr.expr)
             case AST.If():
-                expr.condition = self.rewrite_expr(expr.condition)
+                expr.condition = self.rewrite_condition(expr.condition)
                 expr.then_branch = self.rewrite_block(expr.then_branch)
                 expr.elif_branches = [
-                    (self.rewrite_expr(condition), self.rewrite_block(branch))
+                    (self.rewrite_condition(condition), self.rewrite_block(branch))
                     for condition, branch in expr.elif_branches
                 ]
                 if expr.else_branch is not None:
@@ -258,9 +306,10 @@ class AstRewriter:
                 expr.else_branch = self.rewrite_block(expr.else_branch)
             case AST.For():
                 expr.iterable = self.rewrite_expr(expr.iterable)
+                expr.pattern = self.rewrite_pattern(expr.pattern)
                 expr.body = self.rewrite_block(expr.body)
             case AST.While():
-                expr.condition = self.rewrite_expr(expr.condition)
+                expr.condition = self.rewrite_condition(expr.condition)
                 expr.body = self.rewrite_block(expr.body)
             case AST.Loop():
                 expr.body = self.rewrite_block(expr.body)
@@ -282,6 +331,9 @@ class AstRewriter:
             case AST.ClosureExpr():
                 for capture in expr.captures:
                     capture.expr = self.rewrite_expr(capture.expr)
+                for param in expr.params:
+                    if isinstance(param, AST.PatternParam):
+                        param.pattern = self.rewrite_pattern(param.pattern)
                 expr.body = self.rewrite_block(expr.body)
             case AST.Binary():
                 expr.left = self.rewrite_expr(expr.left)

@@ -46,6 +46,14 @@ class PatternChecker:
     ) -> HIR.Pattern:
         ctx = self.__ctx.type_ctx
         ty = ctx[ctx.resolve_aliases(type_id)]
+        if isinstance(ty, Type.RefType) and isinstance(pat, (
+            AST.LiteralPattern, AST.RangePattern, AST.ConstructPattern,
+            AST.TuplePattern, AST.SequencePattern,
+        )):
+            inner = self.__check_pattern(
+                pat, ty.pointee_type, False, True, bindings, seen, reuse,
+            )
+            return HIR.RefPattern(pat.span, type_id, inner)
         match pat:
             case AST.WildcardPattern():
                 return HIR.WildcardPattern(pat.span, type_id)
@@ -183,7 +191,7 @@ class PatternChecker:
         variant = enum_ty.get_variant_by_name(name.name, ctx)
         if variant is None:
             raise AnalysisError(f"Unknown enum variant '{name.name}'", name.span)
-        self.__ctx.names.record(name.span, variant)
+        self.__ctx.names.record(name.span, variant, synthetic=name.synthetic)
         if positional is None and named is None and not rest:
             return HIR.EnumPattern(span, variant, type_id, None)
         if variant.payload_type is None:

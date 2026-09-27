@@ -26,8 +26,8 @@ class NameReferences:
         self.__items: list[NameRef] = []
         self.__keys: set[tuple[str, int, int]] = set()
 
-    def record(self, span: SrcSpan, target: NameTarget, expression_type: int | None = None) -> None:
-        if span.is_synthetic():
+    def record(self, span: SrcSpan, target: NameTarget, expression_type: int | None = None, *, synthetic: bool = False) -> None:
+        if synthetic or span.is_synthetic():
             return
         key = (str(span.path), span.start.row, span.start.col)
         if key in self.__keys:

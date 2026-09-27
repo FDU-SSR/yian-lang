@@ -58,13 +58,19 @@ class PatternCoverageQueries:
 
     def __useful(
         self, rows: list[list[HIR.Pattern]], query: list[HIR.Pattern], types: list[int],
+        seen_uncovered: frozenset[int] = frozenset(),
     ) -> list[str] | None:
         skipped = 0
         while query and isinstance(query[0], HIR.WildcardPattern) and all(
             isinstance(row[0], HIR.WildcardPattern) for row in rows
         ):
             ty = self.__ctx[self.__ctx.resolve_aliases(types[0])]
-            if not isinstance(ty, (Type.BoolType, Type.CharType, Type.IntType, Type.FloatType, Type.StrType, Type.PointerType)):
+            # A wildcard column covered by every row cannot affect usefulness,
+            # even when its type contains recursive references.
+            if not rows and not isinstance(ty, (
+                Type.BoolType, Type.CharType, Type.IntType, Type.FloatType,
+                Type.StrType, Type.PointerType,
+            )):
                 break
             rows = [row[1:] for row in rows]
             query = query[1:]
@@ -73,12 +79,20 @@ class PatternCoverageQueries:
         if not query:
             return ["_"] * skipped if not rows else None
         head = query[0]
+        if not rows and isinstance(head, HIR.WildcardPattern):
+            type_id = self.__ctx.resolve_aliases(types[0])
+            if type_id in seen_uncovered:
+                # A repeated wildcard column adds no finite structural
+                # constraint; sibling columns may still be uninhabited.
+                found = self.__useful(rows, query[1:], types[1:], seen_uncovered)
+                return ["_"] * (skipped + 1) + found if found is not None else None
+            seen_uncovered = seen_uncovered | {type_id}
         if isinstance(head, HIR.BindPattern):
-            found = self.__useful(rows, [head.inner] + query[1:], types)
+            found = self.__useful(rows, [head.inner] + query[1:], types, seen_uncovered)
             return ["_"] * skipped + found if found is not None else None
         if isinstance(head, HIR.OrPattern):
             for alternative in head.alternatives:
-                found = self.__useful(rows, [alternative] + query[1:], types)
+                found = self.__useful(rows, [alternative] + query[1:], types, seen_uncovered)
                 if found is not None:
                     return ["_"] * skipped + found
             return None
@@ -98,11 +112,12 @@ class PatternCoverageQueries:
                 projected_rows,
                 projected_query + query[1:],
                 list(constructor.fields) + types[1:],
+                seen_uncovered,
             )
             if found is not None:
                 child_count = len(constructor.fields)
                 children = found[:child_count]
-                if constructor.kind in ("tuple", "struct", "enum", "array", "slice") and child_count:
+                if constructor.kind in ("tuple", "struct", "enum", "array", "slice", "ref") and child_count:
                     label = f"{constructor.label}({', '.join(children)})"
                 else:
                     label = constructor.label
@@ -122,6 +137,10 @@ class PatternCoverageQueries:
     def __constructors(self, type_id: int, patterns: list[HIR.Pattern]) -> list[_Constructor]:
         ctx = self.__ctx
         ty = ctx[ctx.resolve_aliases(type_id)]
+        if isinstance(ty, Type.NeverType):
+            return []
+        if isinstance(ty, Type.RefType):
+            return [_Constructor("ref", None, (ty.pointee_type,), "ref")]
         if isinstance(ty, Type.EnumType):
             result: list[_Constructor] = []
             for variant in ty.get_variants(ctx):
@@ -196,6 +215,8 @@ class PatternCoverageQueries:
     ) -> list[HIR.Pattern] | None:
         if isinstance(pattern, HIR.BindPattern):
             return self.__specialize(pattern.inner, constructor, query=query)
+        if isinstance(pattern, HIR.RefPattern):
+            return [pattern.inner] if constructor.kind == "ref" else None
         if isinstance(pattern, HIR.WildcardPattern):
             return [HIR.WildcardPattern(pattern.span, type_id) for type_id in constructor.fields]
         if isinstance(pattern, HIR.LiteralPattern):

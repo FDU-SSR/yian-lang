@@ -1,0 +1,7 @@
+fn unwrap(Some(value): Option<i32>) -> i32 {
+    value
+}
+
+fn main() {
+    unwrap(Option<i32>.Some(1));
+}

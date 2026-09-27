@@ -1,0 +1,102 @@
+struct Pair {
+    pub left: i32,
+    pub right: i32,
+}
+
+impl Pair {
+    fn shifted((left, right): (i32, i32)) -> i32 {
+        self.left + self.right + left + right
+    }
+}
+
+trait PairSum {
+    fn sum_pair((left, right): (i32, i32)) -> i32 {
+        left + right
+    }
+}
+
+impl PairSum for Pair {}
+
+fn add_pair((left, right): (i32, i32)) -> i32 {
+    left + right
+}
+
+fn first<T>((left, _): (T, T)) -> T {
+    left
+}
+
+fn extract(value: Option<i32>) -> i32 {
+    let Some(number) = value else { return -1; };
+    number
+}
+
+fn choose(value: (i32, i32)) -> i32 {
+    let (number, 1) | (number, 2) = value else { return -1; };
+    number
+}
+
+fn main() {
+    let (a, b) = (2i32, 3i32);
+    assert a + b == 5;
+    assert add_pair((a, b)) == 5;
+    assert first((a, b)) == 2;
+
+    let pair = Pair(4, 6);
+    assert pair.shifted((1i32, 2i32)) == 13;
+    assert pair.sum_pair((3i32, 4i32)) == 7;
+    let Pair(left = left, right = right) = pair;
+    assert left + right == 10;
+
+    let Some(value) = Option<i32>.Some(7) else { @panic("missing value"); };
+    assert value == 7;
+    assert extract(Option<i32>.Some(12)) == 12;
+    assert extract(Option<i32>.None) == -1;
+    assert choose((3i32, 1i32)) == 3;
+    assert choose((4i32, 2i32)) == 4;
+    assert choose((5i32, 3i32)) == -1;
+
+    let [head, ..] = [7i32, 8i32, 9i32];
+    assert head == 7;
+
+    let branch = if false { 0i32 }
+                 elif let Some(found) = Option<i32>.Some(8) { found }
+                 else { -1 };
+    assert branch == 8;
+    if let Some(found) = Option<i32>.Some(8) {
+        assert found == 8;
+    }
+
+    let current = Option<i32>.Some(9);
+    let total = 0i32;
+    while let Some(item) = current {
+        total += item;
+        current = Option<i32>.None;
+    }
+    assert total == 9;
+
+    for (x, y) in [(1i32, 2i32), (3i32, 4i32)] {
+        total += *x + *y;
+    }
+    assert total == 19;
+
+    let number = 5i32;
+    let referenced = Option<i32&>.Some(&number);
+    let nested = match referenced { Some(5) => true, _ => false };
+    assert nested;
+    let Some(5) = referenced else { @panic("wrong nested value"); };
+    let range_match = if let Some(4..6) = referenced { true } else { false };
+    assert range_match;
+
+    let ref_pair = Option<Pair&>.Some(&pair);
+    let seen = if let Some(Pair(left = field, ..)) = ref_pair { *field } else { 0i32 };
+    assert seen == 4;
+
+    let whole @ Pair(left = first, ..) = &pair;
+    let _: Pair& = whole;
+    assert *first == 4;
+    let from_pointer = if let Pair(right = right_ref, ..) = &pair { *right_ref } else { 0i32 };
+    assert from_pointer == 6;
+
+    let closure = || ((x, y): (i32, i32)) -> i32 { x + y };
+    assert closure((5i32, 6i32)) == 11;
+}

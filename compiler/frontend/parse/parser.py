@@ -266,7 +266,7 @@ class Parser:
         name = self.__stream.consume_identifier()
         generics = self.__parse_generics()
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
+        params = self.__stream.consume_separated(self.__parse_callable_param, SEP_COMMA, TERM_RPAREN)
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
         token = self.__stream.peek()
@@ -319,12 +319,23 @@ class Parser:
 
         return AST.VarInfo(span=name.span, name=name, var_type=var_type)
 
+    def __parse_callable_param(self) -> AST.VarInfo | AST.PatternParam:
+        pattern = self.__expr_parser.parse_binding_pattern()
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+        var_type = self.__parse_type()
+        if isinstance(pattern, AST.NamePattern):
+            return AST.VarInfo(span=pattern.span, name=pattern.name, var_type=var_type)
+        return AST.PatternParam(span=pattern.span, pattern=pattern, var_type=var_type)
+
     def __parse_trait_item(self) -> AST.TraitItem:
         decl = self.__parse_method_decl()
 
         token = self.__stream.peek()
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
             return self.__parse_method_def(decl=decl)
+        for param in decl.params:
+            if isinstance(param, AST.PatternParam):
+                raise ParseError("Parameter patterns require a method body", param.span)
         # method declaration without body ends with semicolon
         self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
         return decl
@@ -336,7 +347,7 @@ class Parser:
         generics = self.__parse_generics()
 
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
-        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
+        params = self.__stream.consume_separated(self.__parse_callable_param, SEP_COMMA, TERM_RPAREN)
         self.__stream.consume_punctuator(PunctuatorKind.RParen)
 
         token = self.__stream.peek()

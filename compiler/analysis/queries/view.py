@@ -321,7 +321,8 @@ class AnalysisView:
         if not isinstance(resolved, (Type.FunctionType, Type.MethodType)):
             return ()
         return tuple(
-            (parameter.name, self.__type_ctx.get_name(parameter.type_id))
+            ("_" if parameter.name.startswith("%arg_") else parameter.name,
+             self.__type_ctx.get_name(parameter.type_id))
             for parameter in resolved.parameters(self.__type_ctx)
         )
 

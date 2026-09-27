@@ -1,15 +1,4 @@
-"""
-Desugar ASTs by desugaring syntactic sugar into more fundamental constructs.
-
-Rules:
-
-- for item in iterable { body } => { iter = iterable.into_iter(); loop { match iter.next() { Some(item) { body }, None { break } } } }
-- while cond { body } => loop { if not cond { break } body }
-- assert => if + panic
-- if cond { body } elif cond2 { body2 } else { body3 } => nested ifs
-- range expressions (a..b) => Range(a, b)
-- member test (x in y) => y.contains(x)
-"""
+"""Normalize parameter patterns and lower surface control flow into core AST nodes."""
 from __future__ import annotations
 
 
@@ -27,13 +16,24 @@ def ch_desugar():
     return CompilerLog.get("desugar")
 
 
-class _BlockPassVisitor(AstVisitor):
-    def __init__(self, processor: Callable[[AST.Block], None]) -> None:
-        self.__processor = processor
+class _ClosureParamNormalizer(AstVisitor):
+    def __init__(self, normalize: Callable[[list[AST.VarInfo | AST.PatternParam], AST.Block], list[AST.VarInfo | AST.PatternParam]]) -> None:
+        self.__normalize = normalize
 
-    def leave_expr(self, expr: AST.Expr) -> None:
-        if isinstance(expr, AST.Block):
-            self.__processor(expr)
+    def enter_expr(self, expr: AST.Expr) -> bool:
+        if isinstance(expr, AST.ClosureExpr):
+            expr.params = self.__normalize(expr.params, expr.body)
+        return True
+
+
+class _ControlFlowRewriter(AstRewriter):
+    def __init__(self, transform: Callable[[AST.Expr], AST.Expr]) -> None:
+        self.__transform = transform
+
+    def rewrite_expr(self, expr: AST.Expr) -> AST.Expr:
+        super().rewrite_expr(expr)
+        transformed = self.__transform(expr)
+        return expr if transformed is expr else self.rewrite_expr(transformed)
 
 
 class _ExprDesugarRewriter(AstRewriter):
@@ -65,77 +65,61 @@ class Desugar:
         self.__program = program
 
     def run(self) -> None:
-        """Lower control flow, then rewrite range and membership expressions."""
+        """Normalize callable parameters and lower control-flow syntax."""
         for item in self.__program.items:
             match item:
                 case AST.FuncDef():
+                    item.params = self.__normalize_params(item.params, item.body)
                     self.__desugar_body(item.body)
                 case AST.Impl():
                     for method in item.items:
+                        method.decl.params = self.__normalize_params(method.decl.params, method.body)
                         self.__desugar_body(method.body)
                 case AST.TraitDef():
                     for trait_item in item.items:
                         if isinstance(trait_item, AST.MethodDef):
+                            trait_item.decl.params = self.__normalize_params(trait_item.decl.params, trait_item.body)
                             self.__desugar_body(trait_item.body)
                 case _:
                     continue
 
     def __desugar_body(self, body: AST.Block) -> None:
-        _BlockPassVisitor(self.__process_control_flow).visit_expr(body)
-        _BlockPassVisitor(self.__process_expr_rewrite).visit_expr(body)
+        _ClosureParamNormalizer(self.__normalize_params).visit_expr(body)
+        _ControlFlowRewriter(self.__transform_control_flow).rewrite_block(body)
+        _ExprDesugarRewriter().rewrite_block(body)
+
+    def __normalize_params(
+        self, params: list[AST.VarInfo | AST.PatternParam], body: AST.Block,
+    ) -> list[AST.VarInfo | AST.PatternParam]:
+        normalized: list[AST.VarInfo | AST.PatternParam] = []
+        for index, param in enumerate(params):
+            if isinstance(param, AST.VarInfo):
+                normalized.append(param)
+                continue
+            hidden = AST.Identifier(span=param.span, name=f"%arg_{index}", synthetic=True)
+            normalized.append(AST.VarInfo(param.span, hidden, param.var_type))
+            body.parameter_bindings.append(AST.PatternLet(
+                span=param.span, pattern=param.pattern,
+                var_type=param.var_type, init_expr=hidden, is_parameter=True,
+            ))
+        return normalized
 
     # ------------------------------------------------------------------
-    # Pass 1 — control-flow lowering
+    # Control-flow lowering
     # ------------------------------------------------------------------
 
-    def __process_control_flow(self, block: AST.Block) -> None:
-        """Lower for, while, assert, and elif chains in a single traversal."""
-        desugared_stmts: list[AST.Expr] = []
-
-        for stmt in block.stmts:
-            # Unwrap Semi to check for desugar-able constructs inside
-            inner = stmt.expr if isinstance(stmt, AST.Semi) else stmt
-            semi = isinstance(stmt, AST.Semi)
-            desugared: AST.Expr | None = None
-
-            if isinstance(inner, AST.For):
-                desugared = self.__desugar_for(inner)
-            elif isinstance(inner, AST.While):
-                desugared = self.__desugar_while(inner)
-            elif isinstance(inner, AST.Assert):
-                desugared = self.__desugar_assert(inner)
-            elif isinstance(inner, AST.If) and inner.elif_branches:
-                desugared = self.__desugar_if_chain(inner)
-            elif isinstance(inner, AST.Defer):
-                action = inner.action
-                if isinstance(action, AST.For):
-                    inner.action = self.__desugar_for(action)
-                elif isinstance(action, AST.While):
-                    inner.action = self.__desugar_while(action)
-                elif isinstance(action, AST.Assert):
-                    inner.action = self.__desugar_assert(action)
-                elif isinstance(action, AST.If) and action.elif_branches:
-                    inner.action = self.__desugar_if_chain(action)
-
-            if desugared is not None:
-                ch_desugar().trace(lambda: f"desugar {type(inner).__name__}")
-                desugared_stmts.append(AST.Semi(span=stmt.span, expr=desugared) if semi else desugared)
-            else:
-                desugared_stmts.append(stmt)
-
-        block.stmts = desugared_stmts
-
-    # ------------------------------------------------------------------
-    # Pass 2 — expression rewriting
-    # ------------------------------------------------------------------
-
-    def __process_expr_rewrite(self, block: AST.Block) -> None:
-        """Desugar range expressions and member tests in a single traversal."""
-        rewriter = _ExprDesugarRewriter()
-        for stmt in block.stmts:
-            # Unwrap Semi to apply expression rewriting to the inner expression
-            target = stmt.expr if isinstance(stmt, AST.Semi) else stmt
-            rewriter.rewrite_statement_expressions(target)
+    def __transform_control_flow(self, expr: AST.Expr) -> AST.Expr:
+        if isinstance(expr, AST.If) and expr.elif_branches:
+            return self.__desugar_if_chain(expr)
+        if isinstance(expr, AST.If) and isinstance(expr.condition, AST.LetCondition):
+            return self.__desugar_if_let(expr)
+        if isinstance(expr, AST.While):
+            return self.__desugar_while(expr)
+        if isinstance(expr, AST.For):
+            return self.__desugar_for(expr)
+        if isinstance(expr, AST.Assert):
+            return self.__desugar_assert(expr)
+        return expr
 
     def __desugar_assert(self, stmt: AST.Assert) -> AST.If:
         message = stmt.message
@@ -162,6 +146,17 @@ class Desugar:
         )
 
     def __desugar_while(self, stmt: AST.While) -> AST.Loop:
+        if isinstance(stmt.condition, AST.LetCondition):
+            condition = stmt.condition
+            matched = AST.Match(
+                span=condition.span, expr=condition.value,
+                arms=[
+                    AST.MatchArm(condition.pattern.span, condition.pattern, None, stmt.body, AST.MatchArmOrigin.CONDITION),
+                    AST.MatchArm(stmt.span, AST.WildcardPattern(stmt.span), None,
+                                 AST.Block(stmt.span, [AST.Break(stmt.span)]), AST.MatchArmOrigin.SYNTHETIC),
+                ],
+            )
+            return AST.Loop(stmt.span, AST.Block(stmt.body.span, [matched]))
         break_if = AST.If(
             span=stmt.span,
             condition=AST.Unary(span=stmt.condition.span, op=UnaryOperator.LogicalNot, operand=stmt.condition),
@@ -175,12 +170,25 @@ class Desugar:
             body=AST.Block(span=stmt.body.span, stmts=[break_if, stmt.body]),
         )
 
+    def __desugar_if_let(self, stmt: AST.If) -> AST.Match:
+        condition = stmt.condition
+        assert isinstance(condition, AST.LetCondition)
+        fallback = stmt.else_branch or AST.Block(stmt.span, [])
+        return AST.Match(
+            span=stmt.span, expr=condition.value,
+            arms=[
+                AST.MatchArm(condition.pattern.span, condition.pattern, None, stmt.then_branch, AST.MatchArmOrigin.CONDITION),
+                AST.MatchArm(fallback.span, AST.WildcardPattern(fallback.span), None,
+                             fallback, AST.MatchArmOrigin.SYNTHETIC),
+            ],
+        )
+
     def __desugar_for(self, stmt: AST.For) -> AST.Block:
-        iter_name = AST.Identifier(span=stmt.span, name="%iter")
+        iter_name = AST.Identifier(span=stmt.span, name="%iter", synthetic=True)
         iter_init = AST.MethodCall(
             span=stmt.iterable.span,
             receiver=stmt.iterable,
-            method_name=AST.Identifier(span=stmt.iterable.span, name="into_iter"),
+            method_name=AST.Identifier(span=stmt.iterable.span, name="into_iter", synthetic=True),
             generics=[],
             args=[],
         )
@@ -193,31 +201,33 @@ class Desugar:
 
         next_call = AST.MethodCall(
             span=stmt.span,
-            receiver=AST.Identifier(span=stmt.span, name=iter_name.name),
-            method_name=AST.Identifier(span=stmt.span, name="next"),
+            receiver=AST.Identifier(span=stmt.span, name=iter_name.name, synthetic=True),
+            method_name=AST.Identifier(span=stmt.span, name="next", synthetic=True),
             generics=[],
             args=[],
         )
         some_arm = AST.MatchArm(
-            span=stmt.var_name.span,
+            span=stmt.pattern.span,
             pattern=AST.ConstructPattern(
-                span=stmt.var_name.span,
-                name=AST.Identifier(span=stmt.var_name.span, name="Some"),
+                span=stmt.pattern.span,
+                name=AST.Identifier(span=stmt.pattern.span, name="Some", synthetic=True),
                 qualifier=None,
-                positional=[AST.NamePattern(span=stmt.var_name.span, name=stmt.var_name)],
+                positional=[stmt.pattern],
                 named=None,
             ),
             guard=None,
             body=stmt.body,
+            origin=AST.MatchArmOrigin.FOR_ITEM,
         )
         none_arm = AST.MatchArm(
             span=stmt.span,
             pattern=AST.NamePattern(
                 span=stmt.span,
-                name=AST.Identifier(span=stmt.span, name="None"),
+                name=AST.Identifier(span=stmt.span, name="None", synthetic=True),
             ),
             guard=None,
             body=AST.Block(span=stmt.span, stmts=[AST.Break(span=stmt.span)]),
+            origin=AST.MatchArmOrigin.SYNTHETIC,
         )
 
         return AST.Block(

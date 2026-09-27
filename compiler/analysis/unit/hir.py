@@ -4,6 +4,7 @@ AST with semantic information, used for type checking and code generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TypeAlias
 
 from compiler.analysis.ty import ty as Type
@@ -116,6 +117,17 @@ class Let:
 
 
 @dataclass
+class PatternLet:
+    span: SrcSpan
+    value: Expr
+    pattern: Pattern
+    else_branch: Block | None
+    type_id: int
+    is_place: bool
+    is_parameter: bool = False
+
+
+@dataclass
 class Match:
     """Ordered, expression-valued structural pattern match."""
 
@@ -127,12 +139,20 @@ class Match:
     is_ref: bool = False
 
 
+class MatchArmOrigin(Enum):
+    USER = "user"
+    CONDITION = "condition"
+    FOR_ITEM = "for_item"
+    SYNTHETIC = "synthetic"
+
+
 @dataclass
 class MatchArm:
     span: SrcSpan
     pattern: Pattern
     guard: Expr | None
     body: Block
+    origin: MatchArmOrigin = MatchArmOrigin.USER
 
 
 @dataclass
@@ -175,6 +195,13 @@ class BindPattern:
 
 
 @dataclass
+class RefPattern:
+    span: SrcSpan
+    type_id: int
+    inner: Pattern
+
+
+@dataclass
 class OrPattern:
     span: SrcSpan
     type_id: int
@@ -206,7 +233,7 @@ class SequencePattern:
 
 Pattern: TypeAlias = (
     EnumPattern | WildcardPattern
-    | LiteralPattern | RangePattern | BindPattern | OrPattern
+    | LiteralPattern | RangePattern | BindPattern | RefPattern | OrPattern
     | StructPattern | TuplePattern | SequencePattern
 )
 
@@ -519,4 +546,5 @@ Expr: TypeAlias = (
     | Match
     | Semi
     | Let
+    | PatternLet
 )

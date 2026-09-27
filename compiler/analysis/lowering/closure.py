@@ -39,8 +39,12 @@ class ClosureHelper:
         # --- parameter types ---
         parameters: list[Type.Parameter] = []
         for param in node.params:
+            assert isinstance(param, AST.VarInfo)
             param_type_id = self.__ctx.resolve_type(param.var_type)
-            parameters.append(Type.Parameter(name=param.name.name, type_id=param_type_id))
+            parameters.append(Type.Parameter(
+                name=param.name.name, type_id=param_type_id,
+                span=None if param.name.synthetic else param.name.span,
+            ))
 
         # --- return type ---
         if node.return_type is not None:

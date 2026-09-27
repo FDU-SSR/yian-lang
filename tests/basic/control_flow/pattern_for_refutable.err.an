@@ -1,0 +1,5 @@
+fn main() {
+    for Some(value) in [Option<i32>.Some(1)] {
+        assert *value == 1;
+    }
+}

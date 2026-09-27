@@ -332,7 +332,7 @@ class TypeCheck:
 
         self.__current_params = list(self.__ctx.locals)
 
-        body = self.__expr_helper.check_block(def_point.ast_body)
+        body = self.__check_body_with_parameter_patterns(def_point.ast_body)
         return_type_id = func_ty.return_type(self.__ctx.type_ctx)
         self.__coerce_expression_body_tail(body, return_type_id)
         return body
@@ -378,7 +378,7 @@ class TypeCheck:
 
         self.__current_params = list(self.__ctx.locals)
 
-        body = self.__expr_helper.check_block(def_point.ast_body)
+        body = self.__check_body_with_parameter_patterns(def_point.ast_body)
         return_type_id = method_ty.return_type(self.__ctx.type_ctx)
         self.__coerce_expression_body_tail(body, return_type_id)
         return body
@@ -416,9 +416,15 @@ class TypeCheck:
 
         self.__current_params = list(self.__ctx.locals)
 
-        body = self.__expr_helper.check_block(def_point.ast_body)
+        body = self.__check_body_with_parameter_patterns(def_point.ast_body)
         return_type_id = closure_ty.return_type
         self.__coerce_expression_body_tail(body, return_type_id)
+        return body
+
+    def __check_body_with_parameter_patterns(self, ast_body: AST.Block) -> HIR.Block:
+        bindings = [self.__expr_helper.lower_pattern_let(binding) for binding in ast_body.parameter_bindings]
+        body = self.__expr_helper.check_block(ast_body)
+        body.stmts[:0] = bindings
         return body
 
     def __coerce_expression_body_tail(self, body: HIR.Block, return_type_id: int) -> None:

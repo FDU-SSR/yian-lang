@@ -96,6 +96,12 @@ class HirTreeFormatter(TreeFormatter):
                 if expr.init is not None:
                     res += self.__export_expr_child("Init", expr.init, guides, is_last, True)
                 return res
+            case HIR.PatternLet():
+                res = self.render_line(guides, is_last, f"PatternLet: pattern={expr.pattern!r} span={self.__format_span(expr.span)}")
+                res += self.__export_expr_child("Value", expr.value, guides, is_last, expr.else_branch is None)
+                if expr.else_branch is not None:
+                    res += self.__export_block_child("Else", expr.else_branch, guides, is_last, True)
+                return res
             case HIR.CompileConfig():
                 return self.render_line(guides, is_last, f"CompileConfig: {expr.name} type={self.__format_type(expr.type_id)} span={self.__format_span(expr.span)}")
             # --- pure expressions ---

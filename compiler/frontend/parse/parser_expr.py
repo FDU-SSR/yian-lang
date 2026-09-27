@@ -353,18 +353,17 @@ class ExprParser:
 
         # --- parameter list ---
         self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
-        params: list[AST.VarInfo] = []
+        params: list[AST.VarInfo | AST.PatternParam] = []
         param_next = self.__stream.peek()
         if not (isinstance(param_next, Tok.Punctuator) and param_next.kind == Tok.PunctuatorKind.RParen):
             while True:
-                param_name = self.__stream.consume_identifier()
+                param_pattern = self.parse_binding_pattern()
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
                 param_type = self.__type_parser.parse_type()
-                params.append(AST.VarInfo(
-                    span=param_name.span,
-                    name=param_name,
-                    var_type=param_type,
-                ))
+                if isinstance(param_pattern, AST.NamePattern):
+                    params.append(AST.VarInfo(param_pattern.span, param_pattern.name, param_type))
+                else:
+                    params.append(AST.PatternParam(param_pattern.span, param_pattern, param_type))
 
                 p_next = self.__stream.peek()
                 if isinstance(p_next, Tok.Punctuator) and p_next.kind == Tok.PunctuatorKind.Comma:
@@ -549,15 +548,15 @@ class ExprParser:
 
     def __parse_if(self) -> AST.If:
         span = self.__stream.consume_keyword(Tok.KeywordKind.If).span
-        condition = self.parse_expr()
+        condition = self.__parse_condition()
         then_branch = self.parse_block()
 
-        elif_branches: list[tuple[AST.Expr, AST.Block]] = []
+        elif_branches: list[tuple[AST.Expr | AST.LetCondition, AST.Block]] = []
         while True:
             next_token = self.__stream.peek()
             if isinstance(next_token, Tok.Keyword) and next_token.kind == Tok.KeywordKind.Elif:
                 self.__stream.consume_keyword(Tok.KeywordKind.Elif)
-                elif_condition = self.parse_expr()
+                elif_condition = self.__parse_condition()
                 elif_block = self.parse_block()
                 elif_branches.append((elif_condition, elif_block))
             else:
@@ -570,6 +569,15 @@ class ExprParser:
             else_branch = self.parse_block()
 
         return AST.If(span=span, condition=condition, then_branch=then_branch, elif_branches=elif_branches, else_branch=else_branch)
+
+    def __parse_condition(self) -> AST.Expr | AST.LetCondition:
+        token = self.__stream.peek()
+        if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.Let:
+            span = self.__stream.consume_keyword(Tok.KeywordKind.Let).span
+            pattern = self.parse_binding_pattern()
+            self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
+            return AST.LetCondition(span=span, pattern=pattern, value=self.parse_expr())
+        return self.parse_expr()
 
     def __parse_comptime_if(self) -> AST.ComptimeIf:
         span = self.__stream.consume_keyword(Tok.KeywordKind.Comptime).span
@@ -587,15 +595,15 @@ class ExprParser:
 
     def __parse_for(self) -> AST.For:
         span = self.__stream.consume_keyword(Tok.KeywordKind.For).span
-        var_name = self.__stream.consume_identifier()
+        pattern = self.parse_binding_pattern()
         self.__stream.consume_keyword(Tok.KeywordKind.In)
         iterable = self.parse_expr()
         body = self.parse_block()
-        return AST.For(span=span, var_name=var_name, iterable=iterable, body=body)
+        return AST.For(span=span, pattern=pattern, iterable=iterable, body=body)
 
     def __parse_while(self) -> AST.While:
         span = self.__stream.consume_keyword(Tok.KeywordKind.While).span
-        condition = self.parse_expr()
+        condition = self.__parse_condition()
         body = self.parse_block()
         return AST.While(span=span, condition=condition, body=body)
 
@@ -640,13 +648,12 @@ class ExprParser:
         target = self.parse_expr()
         return AST.Delete(span=span, target=target)
 
-    def __parse_var_decl(self) -> AST.VarDecl:
-        self.__stream.consume_keyword(Tok.KeywordKind.Let)
-        var_name = self.__stream.consume_identifier()
+    def __parse_var_decl(self) -> AST.VarDecl | AST.PatternLet:
+        let_span = self.__stream.consume_keyword(Tok.KeywordKind.Let).span
+        pattern = self.parse_binding_pattern()
 
         next_token = self.__stream.peek()
         if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Colon:
-            # Explicit type annotation: let x: Type [= expr]
             self.__stream.consume_punctuator(Tok.PunctuatorKind.Colon)
             var_type = self.__type_parser.parse_type()
             next_token = self.__stream.peek()
@@ -656,14 +663,25 @@ class ExprParser:
             else:
                 init_expr = None
         elif isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Equal:
-            # Type inference: let x = expr
             self.__stream.consume_punctuator(Tok.PunctuatorKind.Equal)
-            var_type = ASTTy.DeducedType(span=var_name.span)
+            var_type = ASTTy.DeducedType(span=pattern.span)
             init_expr = self.parse_expr()
         else:
-            raise ParseError("Expected ':' or '=' after variable name", next_token.span)
+            raise ParseError("Expected ':' or '=' after let pattern", next_token.span)
 
-        return AST.VarDecl(span=var_name.span, name=var_name, var_type=var_type, init_expr=init_expr)
+        else_branch = None
+        next_token = self.__stream.peek()
+        if isinstance(next_token, Tok.Keyword) and next_token.kind == Tok.KeywordKind.Else:
+            self.__stream.advance()
+            else_branch = self.parse_block()
+        if isinstance(pattern, AST.NamePattern) and else_branch is None:
+            return AST.VarDecl(span=pattern.span, name=pattern.name, var_type=var_type, init_expr=init_expr)
+        if init_expr is None:
+            raise ParseError("A destructuring let requires an initializer", pattern.span)
+        return AST.PatternLet(let_span, pattern, var_type, init_expr, else_branch)
+
+    def parse_binding_pattern(self) -> AST.Pattern:
+        return self.__parse_pattern_or()
 
     # ------------------------------------------------------------------
     # match-arm / pattern helpers
@@ -806,9 +824,13 @@ class ExprParser:
     def __parse_named_pattern(self) -> AST.Pattern:
         mark = self.__stream.mark()
         first_token = self.__stream.peek()
-        qualifier = self.__type_parser.parse_type()
+        try:
+            qualifier = self.__type_parser.parse_type()
+        except ParseError:
+            self.__stream.reset(mark)
+            qualifier = None
         next_token = self.__stream.peek()
-        if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Dot:
+        if qualifier is not None and isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.Dot:
             self.__stream.advance()
             name = self.__stream.consume_identifier()
         elif isinstance(qualifier, ASTTy.InstanceType) and isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.LParen:

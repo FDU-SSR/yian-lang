@@ -102,6 +102,8 @@ class ExprLowerer:
                 return self.__stmts.translate_semi(expr)
             case HIR.Let():
                 return self.__stmts.translate_let(expr)
+            case HIR.PatternLet():
+                return self.__stmts.translate_pattern_let(expr)
             # --- original expressions ---
             case HIR.Binary():
                 return self.resolve_binary(expr)
