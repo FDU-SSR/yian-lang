@@ -1,7 +1,10 @@
-// Test match statement with multi-value patterns
-// Int/Char patterns use comma separators; Enum patterns use | separator
+// Test single- and multi-value patterns across Int, Char, and Enum.
+// Int/Char patterns use comma separators; Enum patterns use | separator.
 //
 // Expected output:
+// b matched
+// vowel
+// digit
 // small
 // vowel
 // option_a
@@ -26,6 +29,7 @@ fn test_int(x: i32) -> str {
 fn test_char(c: char) -> str {
     match c {
         'a', 'e', 'i', 'o', 'u' => { return "vowel\n"; },
+        'A', 'E', 'I', 'O', 'U' => { return "VOWEL\n"; },
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => { return "digit\n"; },
         _ => { return "consonant\n"; },
     }
@@ -39,18 +43,28 @@ fn test_enum(c: Color) -> str {
 }
 
 fn main() {
+    let b: char = 'b';
+    match b {
+        'a' => { @panic("Matched a"); },
+        'b' => { print("b matched\n"); },
+        'c', 'd' => { @panic("Matched c || d"); },
+        _ => { @panic("Matched default case"); },
+    }
+
     assert test_int(2) == "small\n": "multi int pattern failed";
     assert test_int(20) == "medium\n": "multi int pattern failed";
     assert test_int(99) == "other\n": "multi int default failed";
 
     assert test_char('a') == "vowel\n": "multi char pattern failed";
+    assert test_char('E') == "VOWEL\n": "uppercase vowel classification failed";
     assert test_char('z') == "consonant\n": "consonant failed";
     assert test_char('5') == "digit\n": "digit failed";
 
     assert test_enum(Color.Red) == "option_a\n": "multi enum pattern failed";
     assert test_enum(Color.Green) == "option_b\n": "multi enum pattern failed";
 
-    print(test_int(2));
     print(test_char('a'));
+    print(test_char('7'));
+    print(test_int(2));
     print(test_enum(Color.Red));
 }
