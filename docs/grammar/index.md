@@ -1,6 +1,6 @@
 # Yian 语言参考
 
-本文档完整描述 Yian 编程语言的语法和语义。每个章节包含语法规则、来自 `tests/` 的可编译代码示例，以及常见陷阱。
+本文档描述 Yian 编程语言的语法和语义，包含规则、示例和常见陷阱。
 
 ## 目录
 
@@ -23,10 +23,11 @@
 | [14](14.standard_library.md) | 标准库        | `Option`、`Result`、`Vec`、`String`、`Iterator` 等                  |
 | [15](15.assign_semantics.md) | 赋值与显式内存管理 | 按位复制、显式 `Clone`、`del` 与 `Drop`、容器别名                 |
 | [16](16.runtime_errors.md)   | 运行时错误与安全终止 | fail-stop、安全错误编号、诊断格式与进程退出约定                 |
+| [17](17.ffi.md)              | C ABI FFI      | FFI 权限、C 类型、外部声明、封送操作与资源边界                    |
 
 ## 约定
 
-- 所有代码示例均可通过 `yianc lib/src <file>` 编译
+- 完整程序示例可通过 `yianc lib/src <file>` 编译；使用 FFI 的独立程序还需 `--allow-ffi`，包项目则按清单授予权限
 - 示例标注 `-- 来源: tests/...` 指明出处
 - 错误示例标注 `-- 期望: 编译错误`
 - 语法规则使用代码块表示

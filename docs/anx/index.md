@@ -8,6 +8,7 @@
 - anx 自己的内部实现见[开发手册 · anx 部分](../manual/index.md)（20–25 章：
   项目模型、清单与诊断、依赖图与包图契约、CLI、测试运行器）
 - 编译器的命令行与 `--packages` 契约见[编译脚本文档](../compile_script.md) 2.6 节
+- FFI 包的权限与 LLVM 原生依赖见[项目与清单](01.project.md)；语言操作见[FFI 参考](../grammar/17.ffi.md)
 
 ## 目录
 

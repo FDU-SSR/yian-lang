@@ -116,17 +116,20 @@ yianc --packages pkg.json files...
       "sourceRoot": "/path/to/app/src",
       "kind": "bin",
       "entry": "/path/to/app/src/main.an",
-      "dependencies": ["mathlib"]
+      "dependencies": ["mathlib"],
+      "ffi": false
     },
     "mathlib": {
       "sourceRoot": "/path/to/lib/src",
       "kind": "lib",
-      "dependencies": []
+      "dependencies": [],
+      "ffi": false
     },
     "std": {
       "sourceRoot": "/path/to/yian/lib/src",
       "kind": "lib",
-      "dependencies": []
+      "dependencies": [],
+      "ffi": false
     }
   }
 }
@@ -135,6 +138,7 @@ yianc --packages pkg.json files...
 - `format`：契约版本，只接受 `2`；其它取值直接报错，不回退猜测。
 - `root`：本次构建的根包规范名，程序入口取 `packages[root].entry`；省略时退回 Standalone 的入口查找（非标准库文件中唯一的 `main`）。
 - `packages`：包规范名 → 该包的全部信息。`sourceRoot` 是源码根；`kind` 取 `"bin"`/`"lib"`/`"hybrid"`；`entry` 只有 `"bin"`/`"hybrid"` 才有；`dependencies` 是**直接**依赖的规范名列表。`std` 必须存在。
+- 每个包的 `ffi` 是布尔值，只对该包源码生效；未写时按 `false` 处理。有 `[native.llvm]` 的包另带 `nativeLLVM`，包含 LLVM 主版本 `22`、组件数组和相对包根的 C shim 路径数组。编译器会重新校验这些字段。
 - 包 `P` 的可见集合 = `{P} ∪ packages[P].dependencies ∪ {"std"}`；导入第一段不在集合内报「未声明依赖」，完全不在 `packages` 中报「未知包」。
 - 导入方所属的包由「文件落在哪个 `sourceRoot` 之下」确定，命中多个时取最长前缀。
 - 导入路径必须解析到一个存在的 `.an` 文件（`from pkg import x` 中的 `pkg` 是目录，会报错），且任何包的 `entry` 都不可被导入。
@@ -193,6 +197,16 @@ yianc --format --check src      # 只报告需要格式化的文件
 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。无法格式化的文件被跳过并在
 stderr 打印 `skip <path>: cannot be formatted`。`--check` 列出需要格式化的文件，有差异时
 退出 `1`。`anx fmt` 是同一格式化器在项目上的入口。
+
+### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
+
+```bash
+yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
+```
+
+`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们不会自动执行在 `-t ll`、`-t bc` 或 `-t asm` 输出上；`-t obj` 保留待最终链接的外部符号。编译器会拒绝非法库名。
+
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim；`-t obj` 将 shim 和 YIAN 运行时合入可重定位目标文件，但仍需由最终链接器解析 LLVM 符号。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
 
 ## 3. 日志与调试输出
 

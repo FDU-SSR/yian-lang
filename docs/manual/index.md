@@ -8,6 +8,7 @@
 - **分析接口与语言服务器**（26–27）：编辑器复用的分析会话与位置/引用模型，以及 `lsp/` 的
   协议服务、调度与分发。
 - **格式化器**（28）：源码排版的规则、注释与空行的恢复、五条不变式与三个入口。
+- **FFI**（29）：C ABI 声明与封送的编译路径、包权限和原生链接。
 
 ## 目录 · 编译器
 
@@ -51,5 +52,6 @@
 | [26](26.analysis_interface.md) | 分析接口 | `compiler/analysis/`：语义分析会话、位置模型、声明索引、导航/补全/语义/重命名 |
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `compiler/format/`、`lsp/formatting.py` |
+| [29](29.ffi.md) | FFI 编译与链接 | `compiler/analysis/`、`compiler/codegen/llvm/emitters/ffi.py`、`compiler/native_link.py` |
 
 > 用户视角的用法见 [anx 用户指南](../anx/index.md)。
