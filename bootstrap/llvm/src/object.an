@@ -1,0 +1,331 @@
+from std.core.result import Result;
+from std.core.vec import Vec;
+from llvm.ir import IrSession, IrType, IrValue, IrBlock;
+from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
+from llvm.ir import new_session, close_session, abi_size_of, abi_alignment_of;
+from llvm.ir import void_type, int_type, float_type, double_type, pointer_type;
+from llvm.ir import array_type, struct_type, named_struct_type, set_struct_body, function_type;
+from llvm.ir import const_int, const_signed_int, const_int_words, const_real, const_null;
+from llvm.ir import undef_value, const_bytes, const_array, const_struct;
+from llvm.ir import add_function, function_param, append_block, add_global;
+from llvm.ir import set_initializer, set_global_constant, set_internal_linkage, set_private_linkage;
+from llvm.ir import set_alignment, set_volatile, add_function_attribute, add_parameter_attribute;
+from llvm.ir import position_at_end, build_ret, build_ret_void, build_br, build_cond_br;
+from llvm.ir import build_switch, add_switch_case, build_unreachable, build_phi, add_incoming;
+from llvm.ir import build_call, build_select, build_alloca, build_load, build_store;
+from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, build_insert_value;
+from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
+from llvm.ir import verify_module, module_ir, module_bitcode, module_object;
+
+// Module 独占 LLVM 资源的释放责任。浅复制不会复制资源，调用方只关闭一次。
+pub struct Module {
+    session: IrSession,
+}
+
+// Builder、Function 和 Global 是 Module 的非拥有视图。
+// 同一 Module 创建的 Builder 视图共享一个插入位置。
+pub struct Builder {
+    session: IrSession,
+}
+
+pub struct Function {
+    session: IrSession,
+    value: IrValue,
+}
+
+pub struct Global {
+    session: IrSession,
+    value: IrValue,
+}
+
+impl Module {
+    static pub ffi fn new(name: str, optimization_level: u8) -> Self {
+        return Self(session=new_session(name, optimization_level));
+    }
+
+    pub ffi fn close() {
+        close_session(&self.session);
+    }
+
+    pub ffi fn builder() -> Builder {
+        return Builder(session=self.session);
+    }
+
+    pub ffi fn abi_size(ty: IrType) -> u64 {
+        return abi_size_of(&self.session, ty);
+    }
+
+    pub ffi fn abi_alignment(ty: IrType) -> u32 {
+        return abi_alignment_of(&self.session, ty);
+    }
+
+    pub ffi fn void_type() -> IrType {
+        return void_type(&self.session);
+    }
+
+    pub ffi fn int_type(bits: u32) -> IrType {
+        return int_type(&self.session, bits);
+    }
+
+    pub ffi fn float_type() -> IrType {
+        return float_type(&self.session);
+    }
+
+    pub ffi fn double_type() -> IrType {
+        return double_type(&self.session);
+    }
+
+    pub ffi fn pointer_type(address_space: u32) -> IrType {
+        return pointer_type(&self.session, address_space);
+    }
+
+    pub ffi fn array_type(element: IrType, length: u64) -> IrType {
+        return array_type(&self.session, element, length);
+    }
+
+    pub ffi fn struct_type(fields: IrType[], packed: bool) -> IrType {
+        return struct_type(&self.session, fields, packed);
+    }
+
+    pub ffi fn named_struct_type(name: str) -> IrType {
+        return named_struct_type(&self.session, name);
+    }
+
+    pub ffi fn set_struct_body(ty: IrType, fields: IrType[], packed: bool) {
+        set_struct_body(&self.session, ty, fields, packed);
+    }
+
+    pub ffi fn function_type(result: IrType, params: IrType[]) -> IrType {
+        return function_type(&self.session, result, params);
+    }
+
+    pub ffi fn const_int(ty: IrType, value: u64) -> IrValue {
+        return const_int(&self.session, ty, value);
+    }
+
+    pub ffi fn const_signed_int(ty: IrType, bits: u64) -> IrValue {
+        return const_signed_int(&self.session, ty, bits);
+    }
+
+    pub ffi fn const_int_words(ty: IrType, words: u64[]) -> IrValue {
+        return const_int_words(&self.session, ty, words);
+    }
+
+    pub ffi fn const_real(ty: IrType, value: f64) -> IrValue {
+        return const_real(&self.session, ty, value);
+    }
+
+    pub ffi fn const_null(ty: IrType) -> IrValue {
+        return const_null(&self.session, ty);
+    }
+
+    pub ffi fn undef_value(ty: IrType) -> IrValue {
+        return undef_value(&self.session, ty);
+    }
+
+    pub ffi fn const_bytes(bytes: u8[], null_terminate: bool) -> IrValue {
+        return const_bytes(&self.session, bytes, null_terminate);
+    }
+
+    pub ffi fn const_array(element: IrType, values: IrValue[]) -> IrValue {
+        return const_array(&self.session, element, values);
+    }
+
+    pub ffi fn const_struct(values: IrValue[], packed: bool) -> IrValue {
+        return const_struct(&self.session, values, packed);
+    }
+
+    pub ffi fn add_function(name: str, signature: IrType) -> Function {
+        return Function(session=self.session, value=add_function(&self.session, name, signature));
+    }
+
+    pub ffi fn add_global(name: str, ty: IrType) -> Global {
+        return Global(session=self.session, value=add_global(&self.session, name, ty));
+    }
+
+    pub ffi fn verify() -> Result<bool, Vec<u8>> {
+        return verify_module(&self.session);
+    }
+
+    pub ffi fn ir() -> Vec<u8> {
+        return module_ir(&self.session);
+    }
+
+    pub ffi fn bitcode() -> Vec<u8> {
+        return module_bitcode(&self.session);
+    }
+
+    pub ffi fn object() -> Result<Vec<u8>, Vec<u8>> {
+        return module_object(&self.session);
+    }
+}
+
+impl Function {
+    pub fn value() -> IrValue {
+        return self.value;
+    }
+
+    pub ffi fn param(index: u32) -> IrValue {
+        return function_param(&self.session, self.value, index);
+    }
+
+    pub ffi fn append_block(name: str) -> IrBlock {
+        return append_block(&self.session, self.value, name);
+    }
+
+    pub ffi fn add_attribute(name: str) {
+        add_function_attribute(&self.session, self.value, name);
+    }
+
+    pub ffi fn add_parameter_attribute(parameter: u32, name: str) {
+        add_parameter_attribute(&self.session, self.value, parameter, name);
+    }
+
+    pub ffi fn set_internal_linkage() {
+        set_internal_linkage(&self.session, self.value);
+    }
+}
+
+impl Global {
+    pub fn value() -> IrValue {
+        return self.value;
+    }
+
+    pub ffi fn set_initializer(value: IrValue) {
+        set_initializer(&self.session, self.value, value);
+    }
+
+    pub ffi fn set_constant(is_constant: bool) {
+        set_global_constant(&self.session, self.value, is_constant);
+    }
+
+    pub ffi fn set_internal_linkage() {
+        set_internal_linkage(&self.session, self.value);
+    }
+
+    pub ffi fn set_private_linkage() {
+        set_private_linkage(&self.session, self.value);
+    }
+
+    pub ffi fn set_alignment(alignment: u32) {
+        set_alignment(&self.session, self.value, alignment);
+    }
+}
+
+impl Builder {
+    pub ffi fn position_at_end(block: IrBlock) {
+        position_at_end(&self.session, block);
+    }
+
+    pub ffi fn ret(value: IrValue) -> IrValue {
+        return build_ret(&self.session, value);
+    }
+
+    pub ffi fn ret_void() -> IrValue {
+        return build_ret_void(&self.session);
+    }
+
+    pub ffi fn br(destination: IrBlock) -> IrValue {
+        return build_br(&self.session, destination);
+    }
+
+    pub ffi fn cond_br(condition: IrValue, yes: IrBlock, no: IrBlock) -> IrValue {
+        return build_cond_br(&self.session, condition, yes, no);
+    }
+
+    pub ffi fn switch(value: IrValue, otherwise: IrBlock, cases: u32) -> IrValue {
+        return build_switch(&self.session, value, otherwise, cases);
+    }
+
+    pub ffi fn add_switch_case(instruction: IrValue, constant: IrValue, destination: IrBlock) {
+        add_switch_case(&self.session, instruction, constant, destination);
+    }
+
+    pub ffi fn unreachable() -> IrValue {
+        return build_unreachable(&self.session);
+    }
+
+    pub ffi fn phi(ty: IrType, name: str) -> IrValue {
+        return build_phi(&self.session, ty, name);
+    }
+
+    pub ffi fn add_incoming(phi: IrValue, values: IrValue[], blocks: IrBlock[]) {
+        add_incoming(&self.session, phi, values, blocks);
+    }
+
+    pub ffi fn call(signature: IrType, callee: IrValue, args: IrValue[], name: str) -> IrValue {
+        return build_call(&self.session, signature, callee, args, name);
+    }
+
+    pub ffi fn select(condition: IrValue, yes: IrValue, no: IrValue, name: str) -> IrValue {
+        return build_select(&self.session, condition, yes, no, name);
+    }
+
+    pub ffi fn alloca(ty: IrType, name: str) -> IrValue {
+        return build_alloca(&self.session, ty, name);
+    }
+
+    pub ffi fn load(ty: IrType, pointer: IrValue, name: str) -> IrValue {
+        return build_load(&self.session, ty, pointer, name);
+    }
+
+    pub ffi fn store(value: IrValue, pointer: IrValue) -> IrValue {
+        return build_store(&self.session, value, pointer);
+    }
+
+    pub ffi fn memset(pointer: IrValue, byte: IrValue, length: IrValue, alignment: u32) -> IrValue {
+        return build_memset(&self.session, pointer, byte, length, alignment);
+    }
+
+    pub ffi fn memcpy(target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
+        return build_memcpy(&self.session, target, target_alignment, source, source_alignment, length);
+    }
+
+    pub ffi fn gep(ty: IrType, pointer: IrValue, indices: IrValue[], in_bounds: bool, name: str) -> IrValue {
+        return build_gep(&self.session, ty, pointer, indices, in_bounds, name);
+    }
+
+    pub ffi fn extract_value(aggregate: IrValue, index: u32, name: str) -> IrValue {
+        return build_extract_value(&self.session, aggregate, index, name);
+    }
+
+    pub ffi fn insert_value(aggregate: IrValue, value: IrValue, index: u32, name: str) -> IrValue {
+        return build_insert_value(&self.session, aggregate, value, index, name);
+    }
+
+    pub ffi fn binary(op: BinaryOp, left: IrValue, right: IrValue, name: str) -> IrValue {
+        return build_binary(&self.session, op, left, right, name);
+    }
+
+    pub ffi fn neg(value: IrValue, name: str) -> IrValue {
+        return build_neg(&self.session, value, name);
+    }
+
+    pub ffi fn fneg(value: IrValue, name: str) -> IrValue {
+        return build_fneg(&self.session, value, name);
+    }
+
+    pub ffi fn not(value: IrValue, name: str) -> IrValue {
+        return build_not(&self.session, value, name);
+    }
+
+    pub ffi fn icmp(predicate: IntCompare, left: IrValue, right: IrValue, name: str) -> IrValue {
+        return build_icmp(&self.session, predicate, left, right, name);
+    }
+
+    pub ffi fn fcmp(predicate: RealCompare, left: IrValue, right: IrValue, name: str) -> IrValue {
+        return build_fcmp(&self.session, predicate, left, right, name);
+    }
+
+    pub ffi fn cast(op: CastOp, value: IrValue, ty: IrType, name: str) -> IrValue {
+        return build_cast(&self.session, op, value, ty, name);
+    }
+
+    pub ffi fn set_volatile(memory_instruction: IrValue, is_volatile: bool) {
+        set_volatile(&self.session, memory_instruction, is_volatile);
+    }
+
+    pub ffi fn set_alignment(value: IrValue, alignment: u32) {
+        set_alignment(&self.session, value, alignment);
+    }
+}

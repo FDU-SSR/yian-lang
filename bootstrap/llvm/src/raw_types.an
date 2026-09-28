@@ -1,0 +1,14 @@
+// LLVM C 句柄只对受信 FFI 实现可见。
+pub(ffi) opaque type LLVMOpaqueContext;
+pub(ffi) opaque type LLVMOpaqueModule;
+pub(ffi) opaque type LLVMOpaqueBuilder;
+pub(ffi) opaque type LLVMOpaqueType;
+pub(ffi) opaque type LLVMOpaqueValue;
+pub(ffi) opaque type LLVMOpaqueBasicBlock;
+pub(ffi) opaque type LLVMOpaqueMemoryBuffer;
+pub(ffi) opaque type LLVMOpaqueTarget;
+pub(ffi) opaque type LLVMOpaqueTargetMachine;
+pub(ffi) opaque type LLVMOpaqueTargetData;
+pub(ffi) opaque type LLVMOpaquePassBuilderOptions;
+pub(ffi) opaque type LLVMOpaqueError;
+pub(ffi) opaque type LLVMOpaqueAttribute;

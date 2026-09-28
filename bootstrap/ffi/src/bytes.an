@@ -1,0 +1,40 @@
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+
+// 复制已知长度的 C 字节；调用方保证非空范围可读。
+pub(ffi) ffi fn copy_c_bytes(source: cptr<u8>, length: u64) -> Vec<u8> {
+    let output = Vec<u8>.with_capacity(length);
+    let index: u64 = 0;
+    while index < length {
+        output.push(0u8);
+        index += 1;
+    }
+    if length != 0u64 {
+        @ffi_copy_from(output.as_slice(), source, length);
+    }
+    return output;
+}
+
+// 空指针返回空字节序列；第二个返回值表示读取上限内未遇到 NUL。
+pub(ffi) ffi fn copy_c_string(source: cptr<c_char>, limit: u64) -> (Vec<u8>, bool) {
+    let output = Vec<u8>.new();
+    if source == @ffi_null<c_char>() {
+        return (output, false);
+    }
+
+    let byte = Vec<u8>.new();
+    defer byte.drop();
+    byte.push(0u8);
+    let data = @ffi_ptr_cast<u8>(source);
+    let offset: u64 = 0;
+    while offset < limit {
+        @ffi_copy_from(byte.as_slice(), data + offset, 1u64);
+        let current = byte.as_slice()[0];
+        if current == 0u8 {
+            return (output, false);
+        }
+        output.push(current);
+        offset += 1;
+    }
+    return (output, true);
+}

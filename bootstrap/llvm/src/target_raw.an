@@ -1,0 +1,24 @@
+from llvm.raw_types import LLVMOpaqueModule, LLVMOpaqueMemoryBuffer, LLVMOpaqueType;
+from llvm.raw_types import LLVMOpaqueTarget, LLVMOpaqueTargetMachine, LLVMOpaqueTargetData;
+from llvm.raw_types import LLVMOpaquePassBuilderOptions, LLVMOpaqueError;
+
+// 导入的 C 声明仍只允许在 FFI 函数中直接调用。
+pub(ffi) extern "C" {
+    fn YIANLLVMInitializeNativeTarget() -> c_int;
+    fn LLVMGetDefaultTargetTriple() -> cptr<c_char>;
+    fn LLVMGetTargetFromTriple(triple: cptr<c_char>, target: cptr<cptr<LLVMOpaqueTarget>>, message: cptr<cptr<c_char>>) -> c_int;
+    fn LLVMCreateTargetMachine(target: cptr<LLVMOpaqueTarget>, triple: cptr<c_char>, cpu: cptr<c_char>, features: cptr<c_char>, level: c_int, reloc: c_int, code_model: c_int) -> cptr<LLVMOpaqueTargetMachine>;
+    fn LLVMDisposeTargetMachine(machine: cptr<LLVMOpaqueTargetMachine>);
+    fn LLVMCreateTargetDataLayout(machine: cptr<LLVMOpaqueTargetMachine>) -> cptr<LLVMOpaqueTargetData>;
+    fn LLVMSetModuleDataLayout(module: cptr<LLVMOpaqueModule>, layout: cptr<LLVMOpaqueTargetData>);
+    fn LLVMDisposeTargetData(layout: cptr<LLVMOpaqueTargetData>);
+    fn LLVMABISizeOfType(layout: cptr<LLVMOpaqueTargetData>, ty: cptr<LLVMOpaqueType>) -> u64;
+    fn LLVMABIAlignmentOfType(layout: cptr<LLVMOpaqueTargetData>, ty: cptr<LLVMOpaqueType>) -> c_uint;
+    fn LLVMSetTarget(module: cptr<LLVMOpaqueModule>, triple: cptr<c_char>);
+    fn LLVMCreatePassBuilderOptions() -> cptr<LLVMOpaquePassBuilderOptions>;
+    fn LLVMDisposePassBuilderOptions(options: cptr<LLVMOpaquePassBuilderOptions>);
+    fn LLVMRunPasses(module: cptr<LLVMOpaqueModule>, passes: cptr<c_char>, machine: cptr<LLVMOpaqueTargetMachine>, options: cptr<LLVMOpaquePassBuilderOptions>) -> cptr<LLVMOpaqueError>;
+    fn LLVMGetErrorMessage(error: cptr<LLVMOpaqueError>) -> cptr<c_char>;
+    fn LLVMDisposeErrorMessage(message: cptr<c_char>);
+    fn LLVMTargetMachineEmitToMemoryBuffer(machine: cptr<LLVMOpaqueTargetMachine>, module: cptr<LLVMOpaqueModule>, file_type: c_int, message: cptr<cptr<c_char>>, buffer: cptr<cptr<LLVMOpaqueMemoryBuffer>>) -> c_int;
+}

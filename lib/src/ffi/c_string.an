@@ -1,0 +1,19 @@
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// 构造独立的 NUL 结尾字节缓冲区；错误值是输入中的第一个 NUL 字节位置。
+pub fn c_string_bytes(value: str) -> Result<Vec<u8>, u64> {
+    let input = value.as_slice();
+    let index: u64 = 0;
+    while index < input.len() {
+        if input[index] == 0u8 {
+            return Result<Vec<u8>, u64>.Err(msg=index);
+        }
+        index += 1;
+    }
+
+    let output = Vec<u8>.with_capacity(input.len() + 1u64);
+    output.extend_from_slice(input);
+    output.push(0u8);
+    return Result<Vec<u8>, u64>.Ok(val=output);
+}

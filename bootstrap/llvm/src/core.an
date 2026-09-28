@@ -1,0 +1,51 @@
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from llvm.ir import IrType;
+from llvm.object import Module;
+
+extern "C" {
+    fn LLVMGetVersion(major: cptr<c_uint>, minor: cptr<c_uint>, patch: cptr<c_uint>);
+}
+
+pub ffi fn llvm_version() -> (u32, u32, u32) {
+    let major: c_uint = c_uint(0);
+    let minor: c_uint = c_uint(0);
+    let patch: c_uint = c_uint(0);
+    LLVMGetVersion(@ffi_addr(&major), @ffi_addr(&minor), @ffi_addr(&patch));
+    return (u32(major), u32(minor), u32(patch));
+}
+
+pub ffi fn empty_module_ir(name: str) -> Vec<u8> {
+    let module = Module.new(name, 0u8);
+    defer module.close();
+    return module.ir();
+}
+
+ffi fn build_identity(module: Module&) {
+    let i64_type = module.int_type(64u32);
+    let params = Vec<IrType>.new();
+    defer params.drop();
+    params.push(i64_type);
+    let signature = module.function_type(i64_type, params.as_slice());
+    let function = module.add_function("identity", signature);
+    let block = function.append_block("entry");
+    let builder = module.builder();
+    builder.position_at_end(block);
+    builder.ret(function.param(0u32));
+}
+
+// 结构化接口创建模块，返回独立的 LLVM IR 字节副本。
+pub ffi fn identity_module_ir(name: str) -> Vec<u8> {
+    let module = Module.new(name, 0u8);
+    defer module.close();
+    build_identity(&module);
+    return module.ir();
+}
+
+pub ffi fn identity_module_object(name: str, optimization_level: u8) -> Result<Vec<u8>, Vec<u8>> {
+    let module = Module.new(name, optimization_level);
+    defer module.close();
+    build_identity(&module);
+    return module.object();
+}

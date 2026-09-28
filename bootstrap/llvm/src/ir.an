@@ -1,0 +1,959 @@
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.ffi.c_string import c_string_bytes;
+from ffi.bytes import copy_c_bytes, copy_c_string;
+from llvm.raw_types import LLVMOpaqueContext, LLVMOpaqueModule, LLVMOpaqueBuilder;
+from llvm.raw_types import LLVMOpaqueType, LLVMOpaqueValue, LLVMOpaqueBasicBlock;
+from llvm.raw_types import LLVMOpaqueMemoryBuffer, LLVMOpaqueTarget, LLVMOpaqueTargetMachine;
+from llvm.raw_types import LLVMOpaqueTargetData, LLVMOpaquePassBuilderOptions, LLVMOpaqueError;
+from llvm.raw_types import LLVMOpaqueAttribute;
+from llvm.target_raw import YIANLLVMInitializeNativeTarget, LLVMGetDefaultTargetTriple;
+from llvm.target_raw import LLVMGetTargetFromTriple, LLVMCreateTargetMachine, LLVMDisposeTargetMachine;
+from llvm.target_raw import LLVMCreateTargetDataLayout, LLVMSetModuleDataLayout, LLVMDisposeTargetData;
+from llvm.target_raw import LLVMABISizeOfType, LLVMABIAlignmentOfType;
+from llvm.target_raw import LLVMSetTarget, LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions;
+from llvm.target_raw import LLVMRunPasses, LLVMGetErrorMessage, LLVMDisposeErrorMessage;
+from llvm.target_raw import LLVMTargetMachineEmitToMemoryBuffer;
+
+// 句柄只供受信 FFI 代码使用。复制句柄不复制 LLVM 资源；session 必须覆盖所有子句柄的使用期。
+pub struct IrSession {
+    context: cptr<LLVMOpaqueContext>,
+    module: cptr<LLVMOpaqueModule>,
+    builder: cptr<LLVMOpaqueBuilder>,
+    target_machine: cptr<LLVMOpaqueTargetMachine>,
+    target_layout: cptr<LLVMOpaqueTargetData>,
+    target_triple: cptr<c_char>,
+    optimization_level: u8,
+}
+
+pub struct IrType {
+    native: cptr<LLVMOpaqueType>,
+    owner: cptr<LLVMOpaqueModule>,
+}
+
+pub struct IrValue {
+    native: cptr<LLVMOpaqueValue>,
+    owner: cptr<LLVMOpaqueModule>,
+}
+
+pub struct IrBlock {
+    native: cptr<LLVMOpaqueBasicBlock>,
+    owner: cptr<LLVMOpaqueModule>,
+}
+
+pub enum IntCompare {
+    Eq, Ne, Ugt, Uge, Ult, Ule, Sgt, Sge, Slt, Sle,
+}
+
+pub enum RealCompare {
+    Oeq, Ogt, Oge, Olt, Ole, One, Ord, Uno,
+}
+
+pub enum BinaryOp {
+    Add, Sub, Mul, Udiv, Sdiv, Urem, Srem,
+    Fadd, Fsub, Fmul, Fdiv, Frem,
+    Shl, Lshr, Ashr, And, Or, Xor,
+}
+
+pub enum CastOp {
+    Trunc, Zext, Sext, Fptrunc, Fpext, Fptoui, Fptosi,
+    Uitofp, Sitofp, Ptrtoint, Inttoptr, Bitcast,
+}
+
+extern "C" {
+    fn LLVMContextCreate() -> cptr<LLVMOpaqueContext>;
+    fn LLVMContextDispose(context: cptr<LLVMOpaqueContext>);
+    fn LLVMModuleCreateWithNameInContext(name: cptr<c_char>, context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueModule>;
+    fn LLVMDisposeModule(module: cptr<LLVMOpaqueModule>);
+    fn LLVMCreateBuilderInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueBuilder>;
+    fn LLVMDisposeBuilder(builder: cptr<LLVMOpaqueBuilder>);
+    fn LLVMPositionBuilderAtEnd(builder: cptr<LLVMOpaqueBuilder>, block: cptr<LLVMOpaqueBasicBlock>);
+    fn LLVMPrintModuleToString(module: cptr<LLVMOpaqueModule>) -> cptr<c_char>;
+    fn LLVMDisposeMessage(message: cptr<c_char>);
+    fn LLVMVerifyModule(module: cptr<LLVMOpaqueModule>, action: c_int, message: cptr<cptr<c_char>>) -> c_int;
+
+    fn LLVMVoidTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
+    fn LLVMIntTypeInContext(context: cptr<LLVMOpaqueContext>, bits: c_uint) -> cptr<LLVMOpaqueType>;
+    fn LLVMFloatTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
+    fn LLVMDoubleTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
+    fn LLVMPointerTypeInContext(context: cptr<LLVMOpaqueContext>, address_space: c_uint) -> cptr<LLVMOpaqueType>;
+    fn LLVMArrayType2(element: cptr<LLVMOpaqueType>, length: u64) -> cptr<LLVMOpaqueType>;
+    fn LLVMStructTypeInContext(context: cptr<LLVMOpaqueContext>, fields: cptr<cptr<LLVMOpaqueType>>, count: c_uint, packed: c_int) -> cptr<LLVMOpaqueType>;
+    fn LLVMStructCreateNamed(context: cptr<LLVMOpaqueContext>, name: cptr<c_char>) -> cptr<LLVMOpaqueType>;
+    fn LLVMStructSetBody(ty: cptr<LLVMOpaqueType>, fields: cptr<cptr<LLVMOpaqueType>>, count: c_uint, packed: c_int);
+    fn LLVMFunctionType(result: cptr<LLVMOpaqueType>, params: cptr<cptr<LLVMOpaqueType>>, count: c_uint, var_arg: c_int) -> cptr<LLVMOpaqueType>;
+
+    fn LLVMConstInt(ty: cptr<LLVMOpaqueType>, value: u64, sign_extend: c_int) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstIntOfArbitraryPrecision(ty: cptr<LLVMOpaqueType>, count: c_uint, words: cptr<u64>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstReal(ty: cptr<LLVMOpaqueType>, value: f64) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstNull(ty: cptr<LLVMOpaqueType>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMGetUndef(ty: cptr<LLVMOpaqueType>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstStringInContext2(context: cptr<LLVMOpaqueContext>, data: cptr<c_char>, length: c_size, dont_null_terminate: c_int) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstArray2(ty: cptr<LLVMOpaqueType>, values: cptr<cptr<LLVMOpaqueValue>>, count: u64) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstStructInContext(context: cptr<LLVMOpaqueContext>, values: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, packed: c_int) -> cptr<LLVMOpaqueValue>;
+
+    fn LLVMAddFunction(module: cptr<LLVMOpaqueModule>, name: cptr<c_char>, ty: cptr<LLVMOpaqueType>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMGetParam(function: cptr<LLVMOpaqueValue>, index: c_uint) -> cptr<LLVMOpaqueValue>;
+    fn LLVMAppendBasicBlockInContext(context: cptr<LLVMOpaqueContext>, function: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueBasicBlock>;
+    fn LLVMAddGlobal(module: cptr<LLVMOpaqueModule>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMSetInitializer(global: cptr<LLVMOpaqueValue>, value: cptr<LLVMOpaqueValue>);
+    fn LLVMSetGlobalConstant(global: cptr<LLVMOpaqueValue>, is_constant: c_int);
+    fn LLVMSetLinkage(value: cptr<LLVMOpaqueValue>, linkage: c_int);
+    fn LLVMSetAlignment(value: cptr<LLVMOpaqueValue>, alignment: c_uint);
+    fn LLVMSetVolatile(instruction: cptr<LLVMOpaqueValue>, is_volatile: c_int);
+    fn LLVMGetEnumAttributeKindForName(name: cptr<c_char>, length: c_size) -> c_uint;
+    fn LLVMCreateEnumAttribute(context: cptr<LLVMOpaqueContext>, kind: c_uint, value: u64) -> cptr<LLVMOpaqueAttribute>;
+    fn LLVMAddAttributeAtIndex(function: cptr<LLVMOpaqueValue>, index: c_uint, attribute: cptr<LLVMOpaqueAttribute>);
+
+    fn LLVMBuildRet(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildRetVoid(builder: cptr<LLVMOpaqueBuilder>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildBr(builder: cptr<LLVMOpaqueBuilder>, block: cptr<LLVMOpaqueBasicBlock>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildCondBr(builder: cptr<LLVMOpaqueBuilder>, condition: cptr<LLVMOpaqueValue>, yes: cptr<LLVMOpaqueBasicBlock>, no: cptr<LLVMOpaqueBasicBlock>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSwitch(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, otherwise: cptr<LLVMOpaqueBasicBlock>, cases: c_uint) -> cptr<LLVMOpaqueValue>;
+    fn LLVMAddCase(instruction: cptr<LLVMOpaqueValue>, value: cptr<LLVMOpaqueValue>, destination: cptr<LLVMOpaqueBasicBlock>);
+    fn LLVMBuildUnreachable(builder: cptr<LLVMOpaqueBuilder>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildPhi(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMAddIncoming(phi: cptr<LLVMOpaqueValue>, values: cptr<cptr<LLVMOpaqueValue>>, blocks: cptr<cptr<LLVMOpaqueBasicBlock>>, count: c_uint);
+    fn LLVMBuildCall2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, function: cptr<LLVMOpaqueValue>, args: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSelect(builder: cptr<LLVMOpaqueBuilder>, condition: cptr<LLVMOpaqueValue>, yes: cptr<LLVMOpaqueValue>, no: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+
+    fn LLVMBuildAlloca(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildLoad2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, pointer: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildStore(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, pointer: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildMemSet(builder: cptr<LLVMOpaqueBuilder>, pointer: cptr<LLVMOpaqueValue>, byte: cptr<LLVMOpaqueValue>, length: cptr<LLVMOpaqueValue>, alignment: c_uint) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildMemCpy(builder: cptr<LLVMOpaqueBuilder>, target: cptr<LLVMOpaqueValue>, target_alignment: c_uint, source: cptr<LLVMOpaqueValue>, source_alignment: c_uint, length: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildGEP2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, pointer: cptr<LLVMOpaqueValue>, indices: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildInBoundsGEP2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, pointer: cptr<LLVMOpaqueValue>, indices: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildExtractValue(builder: cptr<LLVMOpaqueBuilder>, aggregate: cptr<LLVMOpaqueValue>, index: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildInsertValue(builder: cptr<LLVMOpaqueBuilder>, aggregate: cptr<LLVMOpaqueValue>, value: cptr<LLVMOpaqueValue>, index: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+
+    fn LLVMBuildAdd(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSub(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildMul(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildUDiv(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSDiv(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildURem(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSRem(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFAdd(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFSub(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFMul(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFDiv(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFRem(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildShl(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildLShr(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildAShr(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildAnd(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildOr(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildXor(builder: cptr<LLVMOpaqueBuilder>, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildNeg(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFNeg(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildNot(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildICmp(builder: cptr<LLVMOpaqueBuilder>, predicate: c_int, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFCmp(builder: cptr<LLVMOpaqueBuilder>, predicate: c_int, left: cptr<LLVMOpaqueValue>, right: cptr<LLVMOpaqueValue>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+
+    fn LLVMBuildTrunc(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildZExt(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSExt(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFPTrunc(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFPExt(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFPToUI(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildFPToSI(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildUIToFP(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildSIToFP(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildPtrToInt(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildIntToPtr(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildBitCast(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+
+    fn LLVMGetBufferStart(buffer: cptr<LLVMOpaqueMemoryBuffer>) -> cptr<c_char>;
+    fn LLVMGetBufferSize(buffer: cptr<LLVMOpaqueMemoryBuffer>) -> c_size;
+    fn LLVMDisposeMemoryBuffer(buffer: cptr<LLVMOpaqueMemoryBuffer>);
+    fn LLVMWriteBitcodeToMemoryBuffer(module: cptr<LLVMOpaqueModule>) -> cptr<LLVMOpaqueMemoryBuffer>;
+}
+
+ffi fn checked_c_string(value: str) -> Vec<u8> {
+    return match c_string_bytes(value) {
+        Ok(bytes) => bytes,
+        Err(_) => @panic("LLVM name contains NUL"),
+    };
+}
+
+ffi fn checked_count(length: u64) -> c_uint {
+    let count = c_uint(length);
+    if u64(count) != length {
+        @panic("LLVM array length exceeds C unsigned");
+    }
+    return count;
+}
+
+ffi fn c_bool(value: bool) -> c_int {
+    return if value { c_int(1) } else { c_int(0) };
+}
+
+ffi fn checked_session(session: IrSession&) {
+    if session.module == @ffi_null<LLVMOpaqueModule>() {
+        @panic("LLVM session is closed");
+    }
+}
+
+ffi fn checked_type(session: IrSession&, ty: IrType) -> cptr<LLVMOpaqueType> {
+    checked_session(session);
+    if ty.owner != session.module {
+        @panic("LLVM type belongs to another module");
+    }
+    return ty.native;
+}
+
+ffi fn checked_value(session: IrSession&, value: IrValue) -> cptr<LLVMOpaqueValue> {
+    checked_session(session);
+    if value.owner != session.module {
+        @panic("LLVM value belongs to another module");
+    }
+    return value.native;
+}
+
+ffi fn checked_block(session: IrSession&, block: IrBlock) -> cptr<LLVMOpaqueBasicBlock> {
+    checked_session(session);
+    if block.owner != session.module {
+        @panic("LLVM block belongs to another module");
+    }
+    return block.native;
+}
+
+ffi fn wrap_type(session: IrSession&, native: cptr<LLVMOpaqueType>) -> IrType {
+    if native == @ffi_null<LLVMOpaqueType>() {
+        @panic("LLVM returned a null type");
+    }
+    return IrType(native=native, owner=session.module);
+}
+
+ffi fn wrap_value(session: IrSession&, native: cptr<LLVMOpaqueValue>) -> IrValue {
+    if native == @ffi_null<LLVMOpaqueValue>() {
+        @panic("LLVM returned a null value");
+    }
+    return IrValue(native=native, owner=session.module);
+}
+
+pub(ffi) ffi fn new_session(name: str, optimization_level: u8) -> IrSession {
+    if optimization_level > 3u8 {
+        @panic("LLVM optimization level must be 0 through 3");
+    }
+    if YIANLLVMInitializeNativeTarget() != c_int(0) {
+        @panic("LLVM native target is unavailable");
+    }
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    let triple = LLVMGetDefaultTargetTriple();
+    if triple == @ffi_null<c_char>() {
+        @panic("LLVM host target triple is unavailable");
+    }
+    let target = @ffi_null<LLVMOpaqueTarget>();
+    let target_message = @ffi_null<c_char>();
+    let target_status = LLVMGetTargetFromTriple(triple, @ffi_addr(&target), @ffi_addr(&target_message));
+    if target_message != @ffi_null<c_char>() {
+        LLVMDisposeMessage(target_message);
+    }
+    if target_status != c_int(0) || target == @ffi_null<LLVMOpaqueTarget>() {
+        LLVMDisposeMessage(triple);
+        @panic("LLVM host target lookup failed");
+    }
+    let cpu = checked_c_string("generic");
+    defer cpu.drop();
+    let features = checked_c_string("");
+    defer features.drop();
+    let (cpu_data, _) = @ffi_parts(cpu.as_slice());
+    let (features_data, _) = @ffi_parts(features.as_slice());
+    // LLVM 22 的 LLVMCodeGenOptLevel、LLVMRelocPIC 和 LLVMCodeModelSmall 枚举值。
+    let machine = LLVMCreateTargetMachine(
+        target, triple, @ffi_ptr_cast<c_char>(cpu_data), @ffi_ptr_cast<c_char>(features_data),
+        c_int(optimization_level), c_int(2), c_int(3)
+    );
+    if machine == @ffi_null<LLVMOpaqueTargetMachine>() {
+        LLVMDisposeMessage(triple);
+        @panic("LLVM target machine creation failed");
+    }
+    let layout = LLVMCreateTargetDataLayout(machine);
+    if layout == @ffi_null<LLVMOpaqueTargetData>() {
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        @panic("LLVM target data layout creation failed");
+    }
+    let context = LLVMContextCreate();
+    if context == @ffi_null<LLVMOpaqueContext>() {
+        LLVMDisposeTargetData(layout);
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        @panic("LLVM context creation failed");
+    }
+    let module = LLVMModuleCreateWithNameInContext(@ffi_ptr_cast<c_char>(name_data), context);
+    if module == @ffi_null<LLVMOpaqueModule>() {
+        LLVMContextDispose(context);
+        LLVMDisposeTargetData(layout);
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        @panic("LLVM module creation failed");
+    }
+    LLVMSetTarget(module, triple);
+    LLVMSetModuleDataLayout(module, layout);
+    let builder = LLVMCreateBuilderInContext(context);
+    if builder == @ffi_null<LLVMOpaqueBuilder>() {
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        LLVMDisposeTargetData(layout);
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        @panic("LLVM builder creation failed");
+    }
+    return IrSession(
+        context=context, module=module, builder=builder,
+        target_machine=machine, target_layout=layout,
+        target_triple=triple, optimization_level=optimization_level
+    );
+}
+
+pub(ffi) ffi fn close_session(session: IrSession&) {
+    checked_session(session);
+    LLVMDisposeBuilder(session.builder);
+    LLVMDisposeModule(session.module);
+    LLVMContextDispose(session.context);
+    LLVMDisposeTargetData(session.target_layout);
+    LLVMDisposeTargetMachine(session.target_machine);
+    LLVMDisposeMessage(session.target_triple);
+    session.builder = @ffi_null<LLVMOpaqueBuilder>();
+    session.module = @ffi_null<LLVMOpaqueModule>();
+    session.context = @ffi_null<LLVMOpaqueContext>();
+    session.target_machine = @ffi_null<LLVMOpaqueTargetMachine>();
+    session.target_layout = @ffi_null<LLVMOpaqueTargetData>();
+    session.target_triple = @ffi_null<c_char>();
+}
+
+pub(ffi) ffi fn abi_size_of(session: IrSession&, ty: IrType) -> u64 {
+    let native_type = checked_type(session, ty);
+    return LLVMABISizeOfType(session.target_layout, native_type);
+}
+
+pub(ffi) ffi fn abi_alignment_of(session: IrSession&, ty: IrType) -> u32 {
+    let native_type = checked_type(session, ty);
+    return u32(LLVMABIAlignmentOfType(session.target_layout, native_type));
+}
+
+pub(ffi) ffi fn void_type(session: IrSession&) -> IrType {
+    checked_session(session);
+    return wrap_type(session, LLVMVoidTypeInContext(session.context));
+}
+
+pub(ffi) ffi fn int_type(session: IrSession&, bits: u32) -> IrType {
+    checked_session(session);
+    if bits == 0u32 {
+        @panic("LLVM integer width must be positive");
+    }
+    return wrap_type(session, LLVMIntTypeInContext(session.context, c_uint(bits)));
+}
+
+pub(ffi) ffi fn float_type(session: IrSession&) -> IrType {
+    checked_session(session);
+    return wrap_type(session, LLVMFloatTypeInContext(session.context));
+}
+
+pub(ffi) ffi fn double_type(session: IrSession&) -> IrType {
+    checked_session(session);
+    return wrap_type(session, LLVMDoubleTypeInContext(session.context));
+}
+
+pub(ffi) ffi fn pointer_type(session: IrSession&, address_space: u32) -> IrType {
+    checked_session(session);
+    return wrap_type(session, LLVMPointerTypeInContext(session.context, c_uint(address_space)));
+}
+
+pub(ffi) ffi fn array_type(session: IrSession&, element: IrType, length: u64) -> IrType {
+    return wrap_type(session, LLVMArrayType2(checked_type(session, element), length));
+}
+
+pub(ffi) ffi fn struct_type(session: IrSession&, fields: IrType[], packed: bool) -> IrType {
+    checked_session(session);
+    let native = Vec<cptr<LLVMOpaqueType>>.new();
+    defer native.drop();
+    let index: u64 = 0;
+    while index < fields.len() {
+        native.push(checked_type(session, fields[index]));
+        index += 1;
+    }
+    let (data, length) = @ffi_parts(native.as_slice());
+    return wrap_type(session, LLVMStructTypeInContext(session.context, data, checked_count(length), c_bool(packed)));
+}
+
+pub(ffi) ffi fn named_struct_type(session: IrSession&, name: str) -> IrType {
+    checked_session(session);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_type(session, LLVMStructCreateNamed(session.context, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn set_struct_body(session: IrSession&, ty: IrType, fields: IrType[], packed: bool) {
+    let native_type = checked_type(session, ty);
+    let native_fields = Vec<cptr<LLVMOpaqueType>>.new();
+    defer native_fields.drop();
+    let index: u64 = 0;
+    while index < fields.len() {
+        native_fields.push(checked_type(session, fields[index]));
+        index += 1;
+    }
+    let (data, length) = @ffi_parts(native_fields.as_slice());
+    LLVMStructSetBody(native_type, data, checked_count(length), c_bool(packed));
+}
+
+pub(ffi) ffi fn function_type(session: IrSession&, result: IrType, params: IrType[]) -> IrType {
+    let return_type = checked_type(session, result);
+    let native = Vec<cptr<LLVMOpaqueType>>.new();
+    defer native.drop();
+    let index: u64 = 0;
+    while index < params.len() {
+        native.push(checked_type(session, params[index]));
+        index += 1;
+    }
+    let (data, length) = @ffi_parts(native.as_slice());
+    return wrap_type(session, LLVMFunctionType(return_type, data, checked_count(length), c_int(0)));
+}
+
+pub(ffi) ffi fn const_int(session: IrSession&, ty: IrType, value: u64) -> IrValue {
+    return wrap_value(session, LLVMConstInt(checked_type(session, ty), value, c_int(0)));
+}
+
+pub(ffi) ffi fn const_signed_int(session: IrSession&, ty: IrType, bits: u64) -> IrValue {
+    return wrap_value(session, LLVMConstInt(checked_type(session, ty), bits, c_int(1)));
+}
+
+// words 以低 64 位字在前的顺序表示任意宽度整数。
+pub(ffi) ffi fn const_int_words(session: IrSession&, ty: IrType, words: u64[]) -> IrValue {
+    let native_type = checked_type(session, ty);
+    if words.len() == 0u64 {
+        @panic("LLVM arbitrary precision constant has no words");
+    }
+    let (data, count) = @ffi_parts(words);
+    return wrap_value(session, LLVMConstIntOfArbitraryPrecision(native_type, checked_count(count), data));
+}
+
+pub(ffi) ffi fn const_real(session: IrSession&, ty: IrType, value: f64) -> IrValue {
+    return wrap_value(session, LLVMConstReal(checked_type(session, ty), value));
+}
+
+pub(ffi) ffi fn const_null(session: IrSession&, ty: IrType) -> IrValue {
+    return wrap_value(session, LLVMConstNull(checked_type(session, ty)));
+}
+
+pub(ffi) ffi fn undef_value(session: IrSession&, ty: IrType) -> IrValue {
+    return wrap_value(session, LLVMGetUndef(checked_type(session, ty)));
+}
+
+pub(ffi) ffi fn const_bytes(session: IrSession&, bytes: u8[], null_terminate: bool) -> IrValue {
+    checked_session(session);
+    let (data, length) = @ffi_parts(bytes);
+    let c_length = c_size(length);
+    if u64(c_length) != length {
+        @panic("LLVM string length exceeds C size_t");
+    }
+    return wrap_value(session, LLVMConstStringInContext2(session.context, @ffi_ptr_cast<c_char>(data), c_length, c_bool(!null_terminate)));
+}
+
+pub(ffi) ffi fn const_array(session: IrSession&, element: IrType, values: IrValue[]) -> IrValue {
+    let element_type = checked_type(session, element);
+    let native = Vec<cptr<LLVMOpaqueValue>>.new();
+    defer native.drop();
+    let index: u64 = 0;
+    while index < values.len() {
+        native.push(checked_value(session, values[index]));
+        index += 1;
+    }
+    let (data, length) = @ffi_parts(native.as_slice());
+    return wrap_value(session, LLVMConstArray2(element_type, data, length));
+}
+
+pub(ffi) ffi fn const_struct(session: IrSession&, values: IrValue[], packed: bool) -> IrValue {
+    checked_session(session);
+    let native = Vec<cptr<LLVMOpaqueValue>>.new();
+    defer native.drop();
+    let index: u64 = 0;
+    while index < values.len() {
+        native.push(checked_value(session, values[index]));
+        index += 1;
+    }
+    let (data, length) = @ffi_parts(native.as_slice());
+    return wrap_value(session, LLVMConstStructInContext(session.context, data, checked_count(length), c_bool(packed)));
+}
+
+pub(ffi) ffi fn add_function(session: IrSession&, name: str, ty: IrType) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMAddFunction(session.module, @ffi_ptr_cast<c_char>(data), native_type));
+}
+
+pub(ffi) ffi fn function_param(session: IrSession&, function: IrValue, index: u32) -> IrValue {
+    return wrap_value(session, LLVMGetParam(checked_value(session, function), c_uint(index)));
+}
+
+pub(ffi) ffi fn append_block(session: IrSession&, function: IrValue, name: str) -> IrBlock {
+    let native_function = checked_value(session, function);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    let block = LLVMAppendBasicBlockInContext(session.context, native_function, @ffi_ptr_cast<c_char>(data));
+    if block == @ffi_null<LLVMOpaqueBasicBlock>() {
+        @panic("LLVM basic block creation failed");
+    }
+    return IrBlock(native=block, owner=session.module);
+}
+
+pub(ffi) ffi fn position_at_end(session: IrSession&, block: IrBlock) {
+    LLVMPositionBuilderAtEnd(session.builder, checked_block(session, block));
+}
+
+pub(ffi) ffi fn add_global(session: IrSession&, name: str, ty: IrType) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMAddGlobal(session.module, native_type, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn set_initializer(session: IrSession&, global: IrValue, value: IrValue) {
+    LLVMSetInitializer(checked_value(session, global), checked_value(session, value));
+}
+
+pub(ffi) ffi fn set_global_constant(session: IrSession&, global: IrValue, is_constant: bool) {
+    LLVMSetGlobalConstant(checked_value(session, global), c_bool(is_constant));
+}
+
+pub(ffi) ffi fn set_internal_linkage(session: IrSession&, value: IrValue) {
+    LLVMSetLinkage(checked_value(session, value), c_int(8));
+}
+
+pub(ffi) ffi fn set_private_linkage(session: IrSession&, value: IrValue) {
+    LLVMSetLinkage(checked_value(session, value), c_int(9));
+}
+
+pub(ffi) ffi fn set_alignment(session: IrSession&, value: IrValue, alignment: u32) {
+    LLVMSetAlignment(checked_value(session, value), c_uint(alignment));
+}
+
+pub(ffi) ffi fn set_volatile(session: IrSession&, memory_instruction: IrValue, is_volatile: bool) {
+    LLVMSetVolatile(checked_value(session, memory_instruction), c_bool(is_volatile));
+}
+
+ffi fn add_enum_attribute(session: IrSession&, function: IrValue, index: u32, name: str) {
+    let native_function = checked_value(session, function);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, length) = @ffi_parts(c_name.as_slice());
+    let c_length = c_size(length - 1u64);
+    if u64(c_length) != length - 1u64 {
+        @panic("LLVM attribute name exceeds C size_t");
+    }
+    let kind = LLVMGetEnumAttributeKindForName(@ffi_ptr_cast<c_char>(data), c_length);
+    if kind == c_uint(0) {
+        @panic("unknown LLVM enum attribute");
+    }
+    let attribute = LLVMCreateEnumAttribute(session.context, kind, 0u64);
+    if attribute == @ffi_null<LLVMOpaqueAttribute>() {
+        @panic("LLVM attribute creation failed");
+    }
+    LLVMAddAttributeAtIndex(native_function, c_uint(index), attribute);
+}
+
+pub(ffi) ffi fn add_function_attribute(session: IrSession&, function: IrValue, name: str) {
+    add_enum_attribute(session, function, 4294967295u32, name);
+}
+
+pub(ffi) ffi fn add_parameter_attribute(session: IrSession&, function: IrValue, parameter: u32, name: str) {
+    if parameter == 4294967295u32 {
+        @panic("LLVM parameter index exceeds the attribute range");
+    }
+    add_enum_attribute(session, function, parameter + 1u32, name);
+}
+
+pub(ffi) ffi fn build_ret(session: IrSession&, value: IrValue) -> IrValue {
+    return wrap_value(session, LLVMBuildRet(session.builder, checked_value(session, value)));
+}
+
+pub(ffi) ffi fn build_ret_void(session: IrSession&) -> IrValue {
+    checked_session(session);
+    return wrap_value(session, LLVMBuildRetVoid(session.builder));
+}
+
+pub(ffi) ffi fn build_br(session: IrSession&, destination: IrBlock) -> IrValue {
+    return wrap_value(session, LLVMBuildBr(session.builder, checked_block(session, destination)));
+}
+
+pub(ffi) ffi fn build_cond_br(session: IrSession&, condition: IrValue, yes: IrBlock, no: IrBlock) -> IrValue {
+    let native_condition = checked_value(session, condition);
+    let native_yes = checked_block(session, yes);
+    let native_no = checked_block(session, no);
+    return wrap_value(session, LLVMBuildCondBr(session.builder, native_condition, native_yes, native_no));
+}
+
+pub(ffi) ffi fn build_switch(session: IrSession&, value: IrValue, otherwise: IrBlock, cases: u32) -> IrValue {
+    let native_value = checked_value(session, value);
+    let native_otherwise = checked_block(session, otherwise);
+    return wrap_value(session, LLVMBuildSwitch(session.builder, native_value, native_otherwise, c_uint(cases)));
+}
+
+pub(ffi) ffi fn add_switch_case(session: IrSession&, instruction: IrValue, constant: IrValue, destination: IrBlock) {
+    let native_instruction = checked_value(session, instruction);
+    let native_constant = checked_value(session, constant);
+    let native_destination = checked_block(session, destination);
+    LLVMAddCase(native_instruction, native_constant, native_destination);
+}
+
+pub(ffi) ffi fn build_unreachable(session: IrSession&) -> IrValue {
+    checked_session(session);
+    return wrap_value(session, LLVMBuildUnreachable(session.builder));
+}
+
+pub(ffi) ffi fn build_phi(session: IrSession&, ty: IrType, name: str) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildPhi(session.builder, native_type, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn add_incoming(session: IrSession&, phi: IrValue, values: IrValue[], blocks: IrBlock[]) {
+    let native_phi = checked_value(session, phi);
+    if values.len() != blocks.len() {
+        @panic("LLVM phi incoming counts differ");
+    }
+    let native_values = Vec<cptr<LLVMOpaqueValue>>.new();
+    defer native_values.drop();
+    let native_blocks = Vec<cptr<LLVMOpaqueBasicBlock>>.new();
+    defer native_blocks.drop();
+    let index: u64 = 0;
+    while index < values.len() {
+        native_values.push(checked_value(session, values[index]));
+        native_blocks.push(checked_block(session, blocks[index]));
+        index += 1;
+    }
+    let (value_data, length) = @ffi_parts(native_values.as_slice());
+    let (block_data, _) = @ffi_parts(native_blocks.as_slice());
+    LLVMAddIncoming(native_phi, value_data, block_data, checked_count(length));
+}
+
+pub(ffi) ffi fn build_call(session: IrSession&, signature: IrType, function: IrValue, args: IrValue[], name: str) -> IrValue {
+    let native_signature = checked_type(session, signature);
+    let native_function = checked_value(session, function);
+    let native_args = Vec<cptr<LLVMOpaqueValue>>.new();
+    defer native_args.drop();
+    let index: u64 = 0;
+    while index < args.len() {
+        native_args.push(checked_value(session, args[index]));
+        index += 1;
+    }
+    let (args_data, length) = @ffi_parts(native_args.as_slice());
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildCall2(session.builder, native_signature, native_function, args_data, checked_count(length), @ffi_ptr_cast<c_char>(name_data)));
+}
+
+pub(ffi) ffi fn build_select(session: IrSession&, condition: IrValue, yes: IrValue, no: IrValue, name: str) -> IrValue {
+    let native_condition = checked_value(session, condition);
+    let native_yes = checked_value(session, yes);
+    let native_no = checked_value(session, no);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildSelect(session.builder, native_condition, native_yes, native_no, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_alloca(session: IrSession&, ty: IrType, name: str) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildAlloca(session.builder, native_type, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_load(session: IrSession&, ty: IrType, pointer: IrValue, name: str) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let native_pointer = checked_value(session, pointer);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildLoad2(session.builder, native_type, native_pointer, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_store(session: IrSession&, value: IrValue, pointer: IrValue) -> IrValue {
+    let native_value = checked_value(session, value);
+    let native_pointer = checked_value(session, pointer);
+    return wrap_value(session, LLVMBuildStore(session.builder, native_value, native_pointer));
+}
+
+pub(ffi) ffi fn build_memset(session: IrSession&, pointer: IrValue, byte: IrValue, length: IrValue, alignment: u32) -> IrValue {
+    let native_pointer = checked_value(session, pointer);
+    let native_byte = checked_value(session, byte);
+    let native_length = checked_value(session, length);
+    return wrap_value(session, LLVMBuildMemSet(session.builder, native_pointer, native_byte, native_length, c_uint(alignment)));
+}
+
+pub(ffi) ffi fn build_memcpy(session: IrSession&, target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
+    let native_target = checked_value(session, target);
+    let native_source = checked_value(session, source);
+    let native_length = checked_value(session, length);
+    return wrap_value(session, LLVMBuildMemCpy(session.builder, native_target, c_uint(target_alignment), native_source, c_uint(source_alignment), native_length));
+}
+
+pub(ffi) ffi fn build_gep(session: IrSession&, ty: IrType, pointer: IrValue, indices: IrValue[], in_bounds: bool, name: str) -> IrValue {
+    let native_type = checked_type(session, ty);
+    let native_pointer = checked_value(session, pointer);
+    let native_indices = Vec<cptr<LLVMOpaqueValue>>.new();
+    defer native_indices.drop();
+    let index: u64 = 0;
+    while index < indices.len() {
+        native_indices.push(checked_value(session, indices[index]));
+        index += 1;
+    }
+    let (indices_data, length) = @ffi_parts(native_indices.as_slice());
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    let result = if in_bounds {
+        LLVMBuildInBoundsGEP2(session.builder, native_type, native_pointer, indices_data, checked_count(length), @ffi_ptr_cast<c_char>(name_data))
+    } else {
+        LLVMBuildGEP2(session.builder, native_type, native_pointer, indices_data, checked_count(length), @ffi_ptr_cast<c_char>(name_data))
+    };
+    return wrap_value(session, result);
+}
+
+pub(ffi) ffi fn build_extract_value(session: IrSession&, aggregate: IrValue, index: u32, name: str) -> IrValue {
+    let native_aggregate = checked_value(session, aggregate);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildExtractValue(session.builder, native_aggregate, c_uint(index), @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_insert_value(session: IrSession&, aggregate: IrValue, value: IrValue, index: u32, name: str) -> IrValue {
+    let native_aggregate = checked_value(session, aggregate);
+    let native_value = checked_value(session, value);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildInsertValue(session.builder, native_aggregate, native_value, c_uint(index), @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_binary(session: IrSession&, op: BinaryOp, left: IrValue, right: IrValue, name: str) -> IrValue {
+    let native_left = checked_value(session, left);
+    let native_right = checked_value(session, right);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    let c_data = @ffi_ptr_cast<c_char>(data);
+    let result = match op {
+        BinaryOp.Add => LLVMBuildAdd(session.builder, native_left, native_right, c_data),
+        BinaryOp.Sub => LLVMBuildSub(session.builder, native_left, native_right, c_data),
+        BinaryOp.Mul => LLVMBuildMul(session.builder, native_left, native_right, c_data),
+        BinaryOp.Udiv => LLVMBuildUDiv(session.builder, native_left, native_right, c_data),
+        BinaryOp.Sdiv => LLVMBuildSDiv(session.builder, native_left, native_right, c_data),
+        BinaryOp.Urem => LLVMBuildURem(session.builder, native_left, native_right, c_data),
+        BinaryOp.Srem => LLVMBuildSRem(session.builder, native_left, native_right, c_data),
+        BinaryOp.Fadd => LLVMBuildFAdd(session.builder, native_left, native_right, c_data),
+        BinaryOp.Fsub => LLVMBuildFSub(session.builder, native_left, native_right, c_data),
+        BinaryOp.Fmul => LLVMBuildFMul(session.builder, native_left, native_right, c_data),
+        BinaryOp.Fdiv => LLVMBuildFDiv(session.builder, native_left, native_right, c_data),
+        BinaryOp.Frem => LLVMBuildFRem(session.builder, native_left, native_right, c_data),
+        BinaryOp.Shl => LLVMBuildShl(session.builder, native_left, native_right, c_data),
+        BinaryOp.Lshr => LLVMBuildLShr(session.builder, native_left, native_right, c_data),
+        BinaryOp.Ashr => LLVMBuildAShr(session.builder, native_left, native_right, c_data),
+        BinaryOp.And => LLVMBuildAnd(session.builder, native_left, native_right, c_data),
+        BinaryOp.Or => LLVMBuildOr(session.builder, native_left, native_right, c_data),
+        BinaryOp.Xor => LLVMBuildXor(session.builder, native_left, native_right, c_data),
+    };
+    return wrap_value(session, result);
+}
+
+pub(ffi) ffi fn build_neg(session: IrSession&, value: IrValue, name: str) -> IrValue {
+    let native_value = checked_value(session, value);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildNeg(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_fneg(session: IrSession&, value: IrValue, name: str) -> IrValue {
+    let native_value = checked_value(session, value);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildFNeg(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_not(session: IrSession&, value: IrValue, name: str) -> IrValue {
+    let native_value = checked_value(session, value);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildNot(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_icmp(session: IrSession&, predicate: IntCompare, left: IrValue, right: IrValue, name: str) -> IrValue {
+    let native_left = checked_value(session, left);
+    let native_right = checked_value(session, right);
+    let code = match predicate {
+        IntCompare.Eq => 32, IntCompare.Ne => 33,
+        IntCompare.Ugt => 34, IntCompare.Uge => 35,
+        IntCompare.Ult => 36, IntCompare.Ule => 37,
+        IntCompare.Sgt => 38, IntCompare.Sge => 39,
+        IntCompare.Slt => 40, IntCompare.Sle => 41,
+    };
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildICmp(session.builder, c_int(code), native_left, native_right, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_fcmp(session: IrSession&, predicate: RealCompare, left: IrValue, right: IrValue, name: str) -> IrValue {
+    let native_left = checked_value(session, left);
+    let native_right = checked_value(session, right);
+    let code = match predicate {
+        RealCompare.Oeq => 1, RealCompare.Ogt => 2,
+        RealCompare.Oge => 3, RealCompare.Olt => 4,
+        RealCompare.Ole => 5, RealCompare.One => 6,
+        RealCompare.Ord => 7, RealCompare.Uno => 8,
+    };
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    return wrap_value(session, LLVMBuildFCmp(session.builder, c_int(code), native_left, native_right, @ffi_ptr_cast<c_char>(data)));
+}
+
+pub(ffi) ffi fn build_cast(session: IrSession&, op: CastOp, value: IrValue, ty: IrType, name: str) -> IrValue {
+    let native_value = checked_value(session, value);
+    let native_type = checked_type(session, ty);
+    let c_name = checked_c_string(name);
+    defer c_name.drop();
+    let (data, _) = @ffi_parts(c_name.as_slice());
+    let c_data = @ffi_ptr_cast<c_char>(data);
+    let result = match op {
+        CastOp.Trunc => LLVMBuildTrunc(session.builder, native_value, native_type, c_data),
+        CastOp.Zext => LLVMBuildZExt(session.builder, native_value, native_type, c_data),
+        CastOp.Sext => LLVMBuildSExt(session.builder, native_value, native_type, c_data),
+        CastOp.Fptrunc => LLVMBuildFPTrunc(session.builder, native_value, native_type, c_data),
+        CastOp.Fpext => LLVMBuildFPExt(session.builder, native_value, native_type, c_data),
+        CastOp.Fptoui => LLVMBuildFPToUI(session.builder, native_value, native_type, c_data),
+        CastOp.Fptosi => LLVMBuildFPToSI(session.builder, native_value, native_type, c_data),
+        CastOp.Uitofp => LLVMBuildUIToFP(session.builder, native_value, native_type, c_data),
+        CastOp.Sitofp => LLVMBuildSIToFP(session.builder, native_value, native_type, c_data),
+        CastOp.Ptrtoint => LLVMBuildPtrToInt(session.builder, native_value, native_type, c_data),
+        CastOp.Inttoptr => LLVMBuildIntToPtr(session.builder, native_value, native_type, c_data),
+        CastOp.Bitcast => LLVMBuildBitCast(session.builder, native_value, native_type, c_data),
+    };
+    return wrap_value(session, result);
+}
+
+ffi fn copy_llvm_message(message: cptr<c_char>) -> Vec<u8> {
+    if message == @ffi_null<c_char>() {
+        return Vec<u8>.new();
+    }
+    let (bytes, truncated) = copy_c_string(message, 1073741824u64);
+    if truncated {
+        @panic("LLVM diagnostic exceeds the copy limit");
+    }
+    return bytes;
+}
+
+pub(ffi) ffi fn verify_module(session: IrSession&) -> Result<bool, Vec<u8>> {
+    checked_session(session);
+    let message = @ffi_null<c_char>();
+    let status = LLVMVerifyModule(session.module, c_int(2), @ffi_addr(&message));
+    if status != c_int(0) {
+        let error = copy_llvm_message(message);
+        if message != @ffi_null<c_char>() {
+            LLVMDisposeMessage(message);
+        }
+        return Result<bool, Vec<u8>>.Err(msg=error);
+    }
+    if message != @ffi_null<c_char>() {
+        LLVMDisposeMessage(message);
+    }
+    return Result<bool, Vec<u8>>.Ok(val=true);
+}
+
+pub(ffi) ffi fn module_ir(session: IrSession&) -> Vec<u8> {
+    checked_session(session);
+    let message = LLVMPrintModuleToString(session.module);
+    if message == @ffi_null<c_char>() {
+        @panic("LLVM module printing failed");
+    }
+    defer LLVMDisposeMessage(message);
+    return copy_llvm_message(message);
+}
+
+pub(ffi) ffi fn module_bitcode(session: IrSession&) -> Vec<u8> {
+    checked_session(session);
+    let buffer = LLVMWriteBitcodeToMemoryBuffer(session.module);
+    if buffer == @ffi_null<LLVMOpaqueMemoryBuffer>() {
+        @panic("LLVM bitcode emission failed");
+    }
+    defer LLVMDisposeMemoryBuffer(buffer);
+    return copy_c_bytes(@ffi_ptr_cast<u8>(LLVMGetBufferStart(buffer)), u64(LLVMGetBufferSize(buffer)));
+}
+
+pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
+    checked_session(session);
+    if session.optimization_level != 0u8 {
+        let pipeline = match session.optimization_level {
+            1u8 => checked_c_string("default<O1>"),
+            2u8 => checked_c_string("default<O2>"),
+            _ => checked_c_string("default<O3>"),
+        };
+        defer pipeline.drop();
+        let (pipeline_data, _) = @ffi_parts(pipeline.as_slice());
+        let options = LLVMCreatePassBuilderOptions();
+        if options == @ffi_null<LLVMOpaquePassBuilderOptions>() {
+            @panic("LLVM pass builder creation failed");
+        }
+        defer LLVMDisposePassBuilderOptions(options);
+        let error = LLVMRunPasses(session.module, @ffi_ptr_cast<c_char>(pipeline_data), session.target_machine, options);
+        if error != @ffi_null<LLVMOpaqueError>() {
+            let message = LLVMGetErrorMessage(error);
+            let bytes = copy_llvm_message(message);
+            if message != @ffi_null<c_char>() {
+                LLVMDisposeErrorMessage(message);
+            }
+            return Result<Vec<u8>, Vec<u8>>.Err(msg=bytes);
+        }
+    }
+
+    let verification = verify_module(session);
+    match verification {
+        Ok(_) => {},
+        Err(message) => return Result<Vec<u8>, Vec<u8>>.Err(msg=message),
+    }
+
+    let output = @ffi_null<LLVMOpaqueMemoryBuffer>();
+    let emit_message = @ffi_null<c_char>();
+    let emit_status = LLVMTargetMachineEmitToMemoryBuffer(
+        session.target_machine, session.module, c_int(1), @ffi_addr(&emit_message), @ffi_addr(&output)
+    );
+    if emit_status != c_int(0) {
+        let error = copy_llvm_message(emit_message);
+        if emit_message != @ffi_null<c_char>() {
+            LLVMDisposeMessage(emit_message);
+        }
+        if output != @ffi_null<LLVMOpaqueMemoryBuffer>() {
+            LLVMDisposeMemoryBuffer(output);
+        }
+        return Result<Vec<u8>, Vec<u8>>.Err(msg=error);
+    }
+    if emit_message != @ffi_null<c_char>() {
+        LLVMDisposeMessage(emit_message);
+    }
+    if output == @ffi_null<LLVMOpaqueMemoryBuffer>() {
+        @panic("LLVM object emission returned no buffer");
+    }
+    defer LLVMDisposeMemoryBuffer(output);
+    let bytes = copy_c_bytes(@ffi_ptr_cast<u8>(LLVMGetBufferStart(output)), u64(LLVMGetBufferSize(output)));
+    return Result<Vec<u8>, Vec<u8>>.Ok(val=bytes);
+}
