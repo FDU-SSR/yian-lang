@@ -3,6 +3,7 @@ from std.core.string import String;
 from std.core.result import Result;
 from std.core.drop import Drop;
 from std.core.range import Range;
+from std.ffi.c_string import c_string_bytes;
 
 // =====================================================================
 // File open flags (Linux x86_64)
@@ -102,7 +103,14 @@ impl File {
             Append => 1089,
             ReadWrite => 66,
         };
-        let fd: i32 = @open(path, flags);
+        let c_path = match c_string_bytes(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Result<File, IoError>.Err(
+                msg=IoError.new(IoErrorKind.InvalidInput, "file path contains NUL")
+            ),
+        };
+        defer c_path.drop();
+        let fd: i32 = @open(str.from_slice_unchecked(c_path.as_slice()), flags);
         if fd < 0 {
             return Result<File, IoError>.Err(msg=IoError.not_found("cannot open file"));
         }
