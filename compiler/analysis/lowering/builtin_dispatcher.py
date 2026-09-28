@@ -52,6 +52,7 @@ class BuiltinDispatcher:
             BuiltinKind.StrGetLen: _BuiltinSpec(0, 1, self.__lower_str_get_len),
             BuiltinKind.SysRead: _BuiltinSpec(0, 2, self.__lower_sys_read),
             BuiltinKind.SysWrite: _BuiltinSpec(0, 2, self.__lower_sys_write),
+            BuiltinKind.SysWriteBytes: _BuiltinSpec(0, 2, self.__lower_sys_write_bytes),
             BuiltinKind.Open: _BuiltinSpec(0, 2, self.__lower_open),
             BuiltinKind.Close: _BuiltinSpec(0, 1, self.__lower_close),
             BuiltinKind.Sqrt: _BuiltinSpec(0, 1, self.__lower_sqrt),
@@ -267,6 +268,11 @@ class BuiltinDispatcher:
         fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
         buf = self.__coerced_arg(node, 1, self.__ctx.type_ctx.str_id)
         return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.void_id)
+
+    def __lower_sys_write_bytes(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
+        buf = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
+        return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.i64_id)
 
     def __lower_open(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         path = self.__coerced_arg(node, 0, self.__ctx.type_ctx.str_id)

@@ -46,6 +46,12 @@ class SystemEmitter:
             [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
         )
 
+    def sys_write_bytes(self, fd: LLValue, buf: LLValue) -> LLValue:
+        return self.__core.ir.call_intrinsic(
+            IntrinsicKind.Write,
+            [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
+        )
+
     def sys_read(self, fd: LLValue, buf: LLValue) -> LLValue:
         buf_ptr = self.__extract_value_raw(buf, 0)
         buf_len = self.__slice_len_field(buf)

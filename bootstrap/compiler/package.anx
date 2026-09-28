@@ -1,0 +1,7 @@
+[package]
+name = "bootstrap_compiler"
+kind = "bin"
+version = "0.1.0"
+
+[dependencies]
+llvm = { path = "../llvm" }

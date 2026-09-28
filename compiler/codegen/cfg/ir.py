@@ -485,6 +485,13 @@ class SysWrite:
 
 
 @dataclass
+class SysWriteBytes:
+    result: Reg
+    fd: Value
+    buf: Value
+
+
+@dataclass
 class MemCopy:
     """Byte-level memory copy — ``@memcpy(dest, src, count)``."""
     dest: Value
@@ -606,7 +613,7 @@ Stmt: TypeAlias = (
     | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
+    | SysWrite | SysWriteBytes | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
     | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast | FfiCopy
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty

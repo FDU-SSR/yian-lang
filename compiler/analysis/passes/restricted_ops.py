@@ -20,6 +20,7 @@ RESTRICTED_BUILTINS = frozenset(
     {
         AST.BuiltinKind.SysRead,
         AST.BuiltinKind.SysWrite,
+        AST.BuiltinKind.SysWriteBytes,
         AST.BuiltinKind.Open,
         AST.BuiltinKind.Close,
         AST.BuiltinKind.Sqrt,

@@ -69,7 +69,7 @@ class IntrinsicManager:
         IntrinsicKind.Malloc: IntrinsicSpec(_pointer_type(), (_int_type(64),), "malloc", None),
         IntrinsicKind.Realloc: IntrinsicSpec(_pointer_type(), (_pointer_type(), _int_type(64)), "realloc", None),
         IntrinsicKind.Free: IntrinsicSpec(_void_type(), (_pointer_type(),), "free", TypeCtx.void_id),
-        IntrinsicKind.Write: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "write", TypeCtx.u64_id),
+        IntrinsicKind.Write: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "write", TypeCtx.i64_id),
         IntrinsicKind.Read: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "read", TypeCtx.u64_id),
         IntrinsicKind.Open: IntrinsicSpec(_int_type(32), (_pointer_type(), _int_type(32), _int_type(32)), "open", TypeCtx.i32_id),
         IntrinsicKind.Close: IntrinsicSpec(_int_type(32), (_int_type(32),), "close", TypeCtx.i32_id),

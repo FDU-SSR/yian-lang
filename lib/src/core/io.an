@@ -80,6 +80,41 @@ pub enum OpenMode {
     ReadWrite,
 }
 
+// Linux write(2) accepts at most 0x7ffff000 bytes per call.
+const WRITE_CHUNK_MAX: u64 = 2147479552u64;
+
+fn write_bytes_once(fd: i32, data: u8[]) -> Result<u64, IoError> {
+    if data.len() == 0 {
+        return Result<u64, IoError>.Ok(val=0u64);
+    }
+    let count = data.len();
+    if count > WRITE_CHUNK_MAX {
+        count = WRITE_CHUNK_MAX;
+    }
+    let written = @sys_write_bytes(fd, data[0u64..count]);
+    if written < 0 {
+        return Result<u64, IoError>.Err(msg=IoError.other("write failed"));
+    }
+    return Result<u64, IoError>.Ok(val=u64(written));
+}
+
+fn write_bytes_all_fd(fd: i32, data: u8[]) -> Result<u64, IoError> {
+    let offset: u64 = 0;
+    while offset < data.len() {
+        let count = data.len() - offset;
+        if count > WRITE_CHUNK_MAX {
+            count = WRITE_CHUNK_MAX;
+        }
+        let end = offset + count;
+        let written = @sys_write_bytes(fd, data[offset..end]);
+        if written <= 0 {
+            return Result<u64, IoError>.Err(msg=IoError.other("write failed"));
+        }
+        offset += u64(written);
+    }
+    return Result<u64, IoError>.Ok(val=offset);
+}
+
 // =====================================================================
 // File — owning file handle
 // =====================================================================
@@ -152,15 +187,25 @@ impl File {
     // Write a str to the file. Returns the number of bytes written.
     pub fn write(data: str) -> Result<u64, IoError> {
         self.assert_open();
-        @sys_write(self.fd, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_once(self.fd, data.as_slice())
     }
 
     // Write the entire str to the file.
     pub fn write_all(data: str) -> Result<u64, IoError> {
         self.assert_open();
-        @sys_write(self.fd, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_all_fd(self.fd, data.as_slice())
+    }
+
+    // Write bytes without interpreting them as UTF-8.
+    pub fn write_bytes(data: u8[]) -> Result<u64, IoError> {
+        self.assert_open();
+        write_bytes_once(self.fd, data)
+    }
+
+    // Write all bytes, including arbitrary binary data.
+    pub fn write_bytes_all(data: u8[]) -> Result<u64, IoError> {
+        self.assert_open();
+        write_bytes_all_fd(self.fd, data)
     }
 
     // Close the file descriptor explicitly.
@@ -259,13 +304,11 @@ pub struct Stdout {}
 
 impl Stdout {
     pub static fn write(data: str) -> Result<u64, IoError> {
-        @sys_write(1, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_once(1, data.as_slice())
     }
 
     pub static fn write_all(data: str) -> Result<u64, IoError> {
-        @sys_write(1, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_all_fd(1, data.as_slice())
     }
 
     // no-op for unbuffered output; reserved for future buffering
@@ -276,13 +319,11 @@ pub struct Stderr {}
 
 impl Stderr {
     pub static fn write(data: str) -> Result<u64, IoError> {
-        @sys_write(2, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_once(2, data.as_slice())
     }
 
     pub static fn write_all(data: str) -> Result<u64, IoError> {
-        @sys_write(2, data);
-        Result<u64, IoError>.Ok(val=data.as_slice().len())
+        write_bytes_all_fd(2, data.as_slice())
     }
 
     pub static fn flush() {}

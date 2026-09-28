@@ -276,6 +276,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         ):
             return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
 
+        case IR.SysWriteBytes(result=result, fd=fd, buf=buf):
+            return f"%{result.name} = sys_write_bytes {__dump_value(fd)} {__dump_value(buf)}"
+
         case IR.MemCopy(
             dest=dest,
             src=src,

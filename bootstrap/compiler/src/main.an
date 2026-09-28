@@ -1,0 +1,48 @@
+from std.core.drop import Drop;
+from std.core.env import args;
+from std.core.io import File, OpenMode;
+from std.core.vec import Vec;
+from llvm.ir import IrType;
+from llvm.object import Module;
+
+fn main() {
+    let arguments = args();
+    if arguments.len() != 2u64 {
+        @panic("expected one object output path");
+    }
+
+    let module = Module.new("bootstrap_stage0", 0u8);
+    defer module.close();
+    let parameters = Vec<IrType>.new();
+    defer parameters.drop();
+    let signature = module.function_type(module.void_type(), parameters.as_slice());
+    let entry = module.add_function("__yian_main", signature);
+    let block = entry.append_block("entry");
+    let builder = module.builder();
+    builder.position_at_end(block);
+    builder.ret_void();
+
+    if module.verify().is_err() {
+        @panic("LLVM module verification failed");
+    }
+    let object = match module.object() {
+        Ok(bytes) => bytes,
+        Err(_) => @panic("LLVM object emission failed"),
+    };
+    defer object.drop();
+
+    let file = File.open(arguments[1u64].as_str(), OpenMode.Write).unwrap();
+    if file.write_bytes_all(object.as_slice()).is_err() {
+        @panic("object write failed");
+    }
+    if file.close().is_err() {
+        @panic("object close failed");
+    }
+
+    let index: u64 = 0;
+    while index < arguments.len() {
+        arguments[index].drop();
+        index += 1;
+    }
+    arguments.drop();
+}

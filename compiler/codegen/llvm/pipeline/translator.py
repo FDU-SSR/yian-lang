@@ -319,6 +319,11 @@ class LLTranslator:
                 self.__bind_result(stmt.result, value)
             case IR.SysWrite():
                 builder.system.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
+            case IR.SysWriteBytes():
+                self.__bind_result(
+                    stmt.result,
+                    builder.system.sys_write_bytes(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)),
+                )
             case IR.MemCopy():
                 builder.memory.mem_copy(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.src), self.__resolve(builder, stmt.count))
             case IR.FfiAddr():

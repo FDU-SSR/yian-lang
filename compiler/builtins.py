@@ -24,6 +24,7 @@ class BuiltinKind(Enum):
     StrGetLen = "str_get_len"
     SysRead = "sys_read"
     SysWrite = "sys_write"
+    SysWriteBytes = "sys_write_bytes"
     Open = "open"
     Close = "close"
     Sqrt = "sqrt"
