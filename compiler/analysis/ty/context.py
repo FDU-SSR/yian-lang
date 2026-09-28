@@ -60,6 +60,58 @@ class TypeCtx(IntrinsicIds):
     def __getitem__(self, type_id: int) -> Type.Ty:
         return self.__space[type_id]
 
+    def contains_ffi_type(self, type_id: int) -> bool:
+        """Whether a signature exposes a C-only type rather than an opaque YIAN wrapper."""
+        ty = self[self.resolve_aliases(type_id)]
+        if isinstance(ty, (Type.CScalarType, Type.CPtrType, Type.OpaqueType)):
+            return True
+        if isinstance(ty, (Type.PointerType, Type.RefType)):
+            return self.contains_ffi_type(ty.pointee_type)
+        if isinstance(ty, (Type.ArrayType, Type.SliceType)):
+            return self.contains_ffi_type(ty.element_type)
+        if isinstance(ty, Type.TupleType):
+            return any(self.contains_ffi_type(item) for item in ty.element_types)
+        if isinstance(ty, Type.FunctionPointerType):
+            return any(self.contains_ffi_type(item) for item in ty.parameter_types) \
+                or self.contains_ffi_type(ty.return_type)
+        if isinstance(ty, (Type.StructType, Type.EnumType)):
+            return any(self.contains_ffi_type(item) for item in ty.generic_args)
+        return False
+
+    def contains_bare_opaque(self, type_id: int) -> bool:
+        """Opaque C declarations have no value representation outside cptr<T>."""
+        ty = self[self.resolve_aliases(type_id)]
+        if isinstance(ty, Type.OpaqueType):
+            return True
+        if isinstance(ty, Type.CPtrType):
+            return False
+        if isinstance(ty, (Type.PointerType, Type.RefType)):
+            return self.contains_bare_opaque(ty.pointee_type)
+        if isinstance(ty, (Type.ArrayType, Type.SliceType)):
+            return self.contains_bare_opaque(ty.element_type)
+        if isinstance(ty, Type.TupleType):
+            return any(self.contains_bare_opaque(item) for item in ty.element_types)
+        if isinstance(ty, Type.FunctionPointerType):
+            return any(self.contains_bare_opaque(item) for item in ty.parameter_types) \
+                or self.contains_bare_opaque(ty.return_type)
+        if isinstance(ty, (Type.StructType, Type.EnumType)):
+            return any(self.contains_bare_opaque(item) for item in ty.generic_args)
+        return False
+
+    def is_c_abi_type(self, type_id: int, *, result: bool = False) -> bool:
+        """Validate one scalar or native pointer in an extern C declaration."""
+        ty = self[self.resolve_aliases(type_id)]
+        if result and isinstance(ty, Type.VoidType):
+            return True
+        if isinstance(ty, Type.CPtrType):
+            pointee = self[self.resolve_aliases(ty.pointee_type)]
+            return isinstance(pointee, (Type.IntType, Type.OpaqueType)) \
+                or isinstance(pointee, Type.FloatType) and pointee.size in (4, 8) \
+                or isinstance(pointee, Type.CPtrType) and self.is_c_abi_type(ty.pointee_type)
+        if isinstance(ty, Type.IntType):
+            return True
+        return isinstance(ty, Type.FloatType) and ty.size in (4, 8)
+
     def items(self):
         return self.__space.items()
 
@@ -158,6 +210,12 @@ class TypeCtx(IntrinsicIds):
 
     def alloc_pointer(self, pointee_type: int) -> int:
         return self.__space.alloc_pointer(pointee_type)
+
+    def alloc_cptr(self, pointee_type: int) -> int:
+        return self.__space.alloc_cptr(pointee_type)
+
+    def alloc_opaque(self, name: str, span: SrcSpan) -> int:
+        return self.__space.alloc_opaque(name, span)
 
     def alloc_ref(self, pointee_type: int) -> int:
         resolved = self.resolve_aliases(pointee_type)

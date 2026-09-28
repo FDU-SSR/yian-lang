@@ -20,6 +20,7 @@ from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.ast_type import ASTType, ConstExpr
+from compiler.frontend.parse import ast_type as ASTTy
 
 
 @dataclass
@@ -77,6 +78,17 @@ class DefinitionState:
     @property
     def raw_pointers(self) -> bool:
         return self.__semantic.raw_pointers
+
+    @property
+    def ffi_allowed(self) -> bool:
+        if self.__current is None:
+            return False
+        ty = self.type_ctx[self.__current.def_type_id]
+        if isinstance(ty, Type.FunctionType):
+            return ty.custom_def.is_ffi
+        if isinstance(ty, Type.MethodType):
+            return ty.custom_def.is_ffi
+        return False
 
     @property
     def unit_datas(self) -> dict[int, UnitData]:
@@ -228,9 +240,40 @@ class DefinitionState:
         type_id = self.resolve_type_in(ast_type, self.__current.symbol_ctx)
         resolved_type_id = self.type_ctx.resolve_aliases(type_id)
         resolved_ty = self.type_ctx[resolved_type_id]
+        if not self.ffi_allowed and self.__uses_c_type_syntax(ast_type):
+            raise AnalysisError("C ABI types require an ffi fn", ast_type.span)
         if isinstance(resolved_ty, Type.TraitObjectType):
             self.type_ctx.check_trait_object_safe(resolved_ty.trait_type_id, ast_type.span)
         return type_id
+
+    def __uses_c_type_syntax(self, ast_type: ASTType) -> bool:
+        match ast_type:
+            case ASTTy.CScalarType() | ASTTy.CPtrType():
+                return True
+            case ASTTy.PointerType(pointee_type=inner) | ASTTy.RefType(pointee_type=inner) \
+                    | ASTTy.SliceType(element_type=inner) | ASTTy.ArrayType(element_type=inner):
+                return self.__uses_c_type_syntax(inner)
+            case ASTTy.TupleType(element_types=elements):
+                return any(self.__uses_c_type_syntax(item) for item in elements)
+            case ASTTy.FunctionType(param_types=parameters, return_type=result):
+                return any(self.__uses_c_type_syntax(item) for item in parameters) \
+                    or self.__uses_c_type_syntax(result)
+            case ASTTy.NamedType(name=name):
+                assert self.__current is not None
+                symbol = self.__current.symbol_ctx.lookup(name.name)
+                return symbol is not None and isinstance(self.type_ctx[symbol.type_id], Type.AliasType) \
+                    and self.type_ctx.contains_ffi_type(symbol.type_id)
+            case ASTTy.InstanceType(generic_args=arguments):
+                return any(
+                    self.__uses_c_type_syntax(item)
+                    for item in arguments
+                    if not isinstance(item, (
+                        ASTTy.LiteralConstExpr, ASTTy.GenericConstExpr,
+                        ASTTy.UnaryConstExpr, ASTTy.BinaryConstExpr,
+                    ))
+                )
+            case _:
+                return False
 
     # ----------------- reachable def reporting API -----------------
     def set_def_reporter(self, reporter: Callable[[int], None]) -> None:

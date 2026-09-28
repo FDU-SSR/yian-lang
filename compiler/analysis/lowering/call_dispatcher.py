@@ -109,6 +109,13 @@ class CallDispatcher:
         if isinstance(node.callee, AST.Identifier):
             assert self.__ctx.symbol_ctx is not None
             symbol = self.__ctx.symbol_ctx.lookup(node.callee.name)
+            if symbol is not None and symbol.kind == SymbolKind.Function:
+                function_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(symbol.type_id)]
+                if isinstance(function_ty, Type.FunctionType) and function_ty.custom_def.is_extern:
+                    if not self.__ctx.ffi_allowed:
+                        raise AnalysisError("extern C function calls require an ffi fn", node.span)
+                    self.__ctx.names.record(node.callee.span, symbol, symbol.type_id, synthetic=node.callee.synthetic)
+                    return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
             if symbol is not None and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
                 # A generic function is called through its symbol, not by
                 # evaluating the callee as a value, so the reference is recorded
@@ -156,6 +163,13 @@ class CallDispatcher:
         if not isinstance(func_ty, Type.FunctionType):
             raise AnalysisError(f"'{func_name}' is not a function", span)
 
+        if not self.__ctx.ffi_allowed and (
+            func_ty.custom_def.ffi_only
+            or any(self.__ctx.type_ctx.contains_ffi_type(item.type_id) for item in func_ty.custom_def.parameters)
+            or self.__ctx.type_ctx.contains_ffi_type(func_ty.custom_def.return_type)
+        ):
+            raise AnalysisError("FFI-only function requires an ffi fn", span)
+
         parameters = func_ty.parameters(self.__ctx.type_ctx)
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
@@ -167,7 +181,8 @@ class CallDispatcher:
             inference.instantiate(func_type_id)
         )
         # report reachable instantiated function to the semantic context
-        self.__ctx.report_def(instantiated_func_id)
+        if not func_ty.custom_def.is_extern:
+            self.__ctx.report_def(instantiated_func_id)
 
         instantiated_func_ty = self.__ctx.type_ctx[instantiated_func_id]
         assert isinstance(instantiated_func_ty, Type.FunctionType)
@@ -269,6 +284,12 @@ class CallDispatcher:
         """
         method_type = self.__ctx.type_ctx[lookup.method_id]
         assert isinstance(method_type, Type.MethodType)
+        if not self.__ctx.ffi_allowed and (
+            method_type.custom_def.ffi_only
+            or any(self.__ctx.type_ctx.contains_ffi_type(item.type_id) for item in method_type.custom_def.parameters)
+            or self.__ctx.type_ctx.contains_ffi_type(method_type.custom_def.return_type)
+        ):
+            raise AnalysisError("FFI-only method requires an ffi fn", span)
         parameters = method_type.parameters(self.__ctx.type_ctx)
         expected_type_ids = [method_type.receiver_type(self.__ctx.type_ctx)] + [param.type_id for param in parameters]
 

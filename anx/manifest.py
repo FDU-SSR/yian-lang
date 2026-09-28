@@ -46,6 +46,13 @@ class DependencySpec:
 
 
 @dataclass(frozen=True)
+class NativeLLVM:
+    major: int
+    components: tuple[str, ...]
+    sources: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class Manifest:
     name: str
     kind: str  # "bin" | "lib" | "hybrid"; validated against KINDS
@@ -56,6 +63,8 @@ class Manifest:
     #: dev-dependencies): project code cannot import them and a normal build
     #: does not compile them.
     dev_dependencies: tuple[DependencySpec, ...]
+    ffi: bool = False
+    native_llvm: NativeLLVM | None = None
 
 
 def __as_table(value: object) -> dict[str, object] | None:
@@ -158,6 +167,54 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
     dev_dependencies, dev_diagnostics = __read_dependencies(data, path, "dev-dependencies")
     diagnostics.extend(dev_diagnostics)
 
+    ffi_value = table.get("ffi", False)
+    if not isinstance(ffi_value, bool):
+        diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[package].ffi must be a boolean", path))
+        ffi_value = False
+
+    native_llvm: NativeLLVM | None = None
+    native_table = __as_table(data.get("native", {}))
+    if native_table is None:
+        diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[native] must be a table", path))
+    elif any(key != "llvm" for key in native_table):
+        diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "Only [native.llvm] is supported", path))
+    elif "llvm" in native_table:
+        llvm_table = __as_table(native_table["llvm"])
+        if llvm_table is None:
+            diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[native.llvm] must be a table", path))
+        else:
+            if set(llvm_table) - {"major", "components", "sources"}:
+                diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "Unknown [native.llvm] field", path))
+            major = llvm_table.get("major")
+            components = llvm_table.get("components")
+            sources = llvm_table.get("sources", [])
+            valid_components = isinstance(components, list) and len(cast("list[object]", components)) > 0 and all(
+                isinstance(item, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", item)
+                for item in cast("list[object]", components)
+            )
+            valid_sources = isinstance(sources, list) and all(
+                isinstance(item, str) and item.endswith(".c")
+                and not Path(item).is_absolute()
+                and ".." not in Path(item).parts
+                and (path.parent / item).resolve().is_relative_to(path.parent.resolve())
+                and (path.parent / item).is_file()
+                for item in cast("list[object]", sources)
+            )
+            if not ffi_value:
+                diagnostics.append(Diagnostic(AX_BAD_MANIFEST, "[native.llvm] requires [package].ffi = true", path))
+            if isinstance(major, int) and not isinstance(major, bool) and major == 22 \
+                    and valid_components and valid_sources:
+                native_llvm = NativeLLVM(
+                    major, tuple(cast("list[str]", components)),
+                    tuple((path.parent / item).resolve() for item in cast("list[str]", sources)),
+                )
+            else:
+                diagnostics.append(Diagnostic(
+                    AX_BAD_MANIFEST,
+                    "[native.llvm] requires major = 22, component names, and in-package .c sources",
+                    path,
+                ))
+
     if not name_ok or not kind_ok:
         return None, sort_diagnostics(diagnostics)
 
@@ -168,6 +225,8 @@ def read_manifest(path: Path) -> tuple[Manifest | None, tuple[Diagnostic, ...]]:
         version=version,
         dependencies=dependencies,
         dev_dependencies=dev_dependencies,
+        ffi=ffi_value,
+        native_llvm=native_llvm,
     )
     return manifest, sort_diagnostics(diagnostics)
 

@@ -17,6 +17,7 @@ class TypeSpace:
         self.__next_id = 500
 
         self.__pointer_cache: dict[int, int] = {}
+        self.__cptr_cache: dict[int, int] = {}
         self.__ref_cache: dict[int, int] = {}
         self.__trait_object_cache: dict[int, int] = {}
         self.__slice_cache: dict[int, int] = {}
@@ -73,6 +74,10 @@ class TypeSpace:
 
         self.__force_add_type(Type.IntLiteralType(type_id=self.__ctx.int_literal_id))
         self.__force_add_type(Type.FloatLiteralType(type_id=self.__ctx.float_literal_id))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_int_id, size=4, signed=True, c_name="c_int"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_uint_id, size=4, signed=False, c_name="c_uint"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_size_id, size=8, signed=False, c_name="c_size"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_char_id, size=1, signed=True, c_name="c_char"))
 
     def __add_type(self, ty: Type.Ty) -> int:
         if ty.type_id == -1:
@@ -115,6 +120,14 @@ class TypeSpace:
         pointer_ty_id = self.__add_type(pointer_ty)
         self.__pointer_cache[pointee_type] = pointer_ty_id
         return pointer_ty_id
+
+    def alloc_cptr(self, pointee_type: int) -> int:
+        if pointee_type not in self.__cptr_cache:
+            self.__cptr_cache[pointee_type] = self.__add_type(Type.CPtrType(type_id=-1, pointee_type=pointee_type))
+        return self.__cptr_cache[pointee_type]
+
+    def alloc_opaque(self, name: str, span: SrcSpan) -> int:
+        return self.__add_type(Type.OpaqueType(type_id=-1, name=name, span=span))
 
     def alloc_ref(self, pointee_type: int) -> int:
         if pointee_type in self.__ref_cache:

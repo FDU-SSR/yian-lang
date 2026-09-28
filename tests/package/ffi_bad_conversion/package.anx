@@ -1,0 +1,4 @@
+[package]
+name = "ffi_bad_conversion_test"
+kind = "bin"
+ffi = true

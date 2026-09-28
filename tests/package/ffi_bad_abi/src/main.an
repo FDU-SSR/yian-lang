@@ -1,0 +1,5 @@
+extern "C" {
+    fn invalid(value: str);
+}
+
+fn main() {}

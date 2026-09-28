@@ -16,6 +16,7 @@ class SymbolKind(Enum):
 
 class SymbolAttribute(Enum):
     Public = "public"
+    FfiPublic = "ffi-public"
 
 
 @dataclass

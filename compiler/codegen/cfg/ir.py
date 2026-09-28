@@ -493,6 +493,37 @@ class MemCopy:
 
 
 @dataclass
+class FfiAddr:
+    result: Reg
+    reference: Value
+
+
+@dataclass
+class FfiParts:
+    result: Reg
+    view: Value
+
+
+@dataclass
+class FfiNull:
+    result: Reg
+
+
+@dataclass
+class FfiPtrCast:
+    result: Reg
+    pointer: Value
+
+
+@dataclass
+class FfiCopy:
+    destination: Value
+    source: Value
+    count: Value
+    from_c: bool
+
+
+@dataclass
 class MemSetPattern:
     """Repeat a typed value over a freshly allocated element buffer."""
     dest: Value
@@ -576,7 +607,7 @@ Stmt: TypeAlias = (
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
     | SysWrite | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
-    | MemCopy | MemSetPattern
+    | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast | FfiCopy
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete

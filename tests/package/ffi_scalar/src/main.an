@@ -1,0 +1,47 @@
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+
+typedef Bytes = u8[];
+
+extern "C" {
+    fn abs(value: c_int) -> c_int;
+    fn strlen(value: cptr<c_char>) -> c_size;
+}
+
+ffi fn test_native() {
+    assert i32(abs(c_int(-7))) == 7: "C scalar call failed";
+
+    let empty = Vec<u8>.new();
+    let (_, empty_size) = @ffi_parts(empty.as_slice());
+    assert empty_size == 0u64: "empty slice length failed";
+    empty.drop();
+
+    let input = Vec<u8>.new();
+    input.push(65u8);
+    input.push(66u8);
+    input.push(0u8);
+    let (data, size) = @ffi_parts(input.as_slice());
+    assert size == 3u64: "incorrect slice length";
+    assert u64(strlen(@ffi_ptr_cast<c_char>(data))) == 2u64: "C pointer call failed";
+
+    let output = Vec<u8>.new();
+    output.push(0u8);
+    output.push(0u8);
+    let output_view: Bytes = output.as_slice();
+    let (_, output_size) = @ffi_parts(output_view);
+    assert output_size == 2u64: "aliased slice length failed";
+    @ffi_copy_from(output_view, data, 2u64);
+    assert output[0] == 65u8 && output[1] == 66u8: "C byte copy failed";
+    output[0] = 67u8;
+    output[1] = 68u8;
+    @ffi_copy_to(data, output.as_slice(), 2u64);
+    assert input[0] == 67u8 && input[1] == 68u8: "YIAN byte copy failed";
+    @ffi_copy_from(output.as_slice(), @ffi_null<u8>(), 0u64);
+    @ffi_copy_to(@ffi_null<u8>(), output.as_slice(), 0u64);
+    output.drop();
+    input.drop();
+}
+
+fn main() {
+    test_native();
+}

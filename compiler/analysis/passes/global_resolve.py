@@ -44,6 +44,8 @@ class GlobalResolve:
 
     def run(self) -> None:
         for unit in self.__ctx.unit_datas.values():
+            self.__check_ffi_declarations(unit)
+        for unit in self.__ctx.unit_datas.values():
             self.__collect_symbols(unit)
 
         for unit in self.__ctx.unit_datas.values():
@@ -84,14 +86,51 @@ class GlobalResolve:
             match attr.kind:
                 case AST.AttrKind.Pub:
                     res.add(SymbolAttribute.Public)
+                case AST.AttrKind.PubFfi:
+                    res.add(SymbolAttribute.FfiPublic)
                 case _:
                     continue
         return res
+
+    def __check_ffi_declarations(self, unit: UnitData) -> None:
+        for item in unit.items():
+            match item:
+                case AST.FuncDef() | AST.Alias() | AST.ConstDef() | AST.StructDef() | AST.EnumDef() | AST.TraitDef() | AST.OpaqueTypeDef() | AST.ExternBlock():
+                    attrs = item.attrs
+                case _:
+                    attrs = []
+            if len({attr.kind for attr in attrs}) != len(attrs):
+                raise AnalysisError("Duplicate declaration modifier", item.span)
+            if any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.PubFfi) for attr in attrs) and not unit.allows_ffi:
+                raise AnalysisError("FFI requires package ffi = true or --allow-ffi", item.span)
+            if isinstance(item, (AST.ExternBlock, AST.OpaqueTypeDef)) and not unit.allows_ffi:
+                raise AnalysisError("FFI declaration requires package ffi = true or --allow-ffi", item.span)
+            if AST.AttrKind.PubFfi in {attr.kind for attr in attrs} and AST.AttrKind.Pub in {attr.kind for attr in attrs}:
+                raise AnalysisError("Use either pub or pub(ffi)", item.span)
+            if isinstance(item, AST.FuncDef):
+                if AST.AttrKind.Static in {attr.kind for attr in attrs}:
+                    raise AnalysisError("Top-level function cannot be static", item.span)
+                if AST.AttrKind.PubFfi in {attr.kind for attr in attrs} and AST.AttrKind.Ffi not in {attr.kind for attr in attrs}:
+                    raise AnalysisError("pub(ffi) function must be ffi fn", item.span)
+            elif isinstance(item, (AST.ExternBlock, AST.OpaqueTypeDef)):
+                if any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.Static, AST.AttrKind.Pub) for attr in attrs):
+                    raise AnalysisError("Invalid modifier on FFI declaration", item.span)
+            elif any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.PubFfi) for attr in attrs):
+                raise AnalysisError("FFI modifier is only valid on functions or FFI declarations", item.span)
 
     def __collect_symbols(self, unit: UnitData) -> None:
         """Collects all global symbols in the unit."""
         for item in unit.items():
             match item:
+                case AST.OpaqueTypeDef(name=name, attrs=attrs, span=span):
+                    type_id = self.__ctx.type_ctx.alloc_opaque(name.name, span)
+                    if unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, self.__convert_attrs(attrs), name.span) is None:
+                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                case AST.ExternBlock(functions=functions, attrs=attrs):
+                    for function in functions:
+                        type_id = self.__ctx.type_ctx.alloc_function(function.name.name, function.span)
+                        if unit.symbol_ctx.add_symbol(function.name.name, SymbolKind.Function, type_id, self.__convert_attrs(attrs), function.name.span) is None:
+                            raise AnalysisError(f"Duplicate symbol name: {function.name.name}", function.name.span)
                 case AST.Alias(name=name, attrs=attrs, span=span):
                     # alloc in type space
                     type_id = self.__ctx.type_ctx.alloc_alias(name.name, span)
@@ -234,6 +273,8 @@ class GlobalResolve:
                 raise AnalysisError(f"Symbol '{item.target.name}' is not found in the imported unit", item.target.span)
             if target_symbol.kind == SymbolKind.Variable:
                 raise AnalysisError(f"Cannot import variable '{item.target.name}'", item.target.span)
+            if SymbolAttribute.FfiPublic in target_symbol.attributes and not unit.allows_ffi:
+                raise AnalysisError(f"Symbol '{item.target.name}' requires FFI permission", item.target.span)
 
             imported_name = item.alias.name if item.alias is not None else item.target.name
             import_span = item.alias.span if item.alias is not None else item.target.span
@@ -372,6 +413,9 @@ class GlobalResolve:
 
         for item in unit.items():
             match item:
+                case AST.ExternBlock():
+                    for function in item.functions:
+                        self.__resolve_extern_decl(unit, function)
                 case AST.FuncDef():
                     self.__resolve_func_decl(unit, item)
                 case AST.Impl():
@@ -435,9 +479,48 @@ class GlobalResolve:
         # update the function symbol with the resolved type
         ty.custom_def.parameters = parameters
         ty.custom_def.return_type = ret_type_id
+        self.__check_sized_signature(parameters, ret_type_id, func_def.span)
+        ty.custom_def.is_ffi = any(attr.kind == AST.AttrKind.Ffi for attr in func_def.attrs)
+        ty.custom_def.ffi_only = any(attr.kind == AST.AttrKind.PubFfi for attr in func_def.attrs)
+        public = any(attr.kind == AST.AttrKind.Pub for attr in func_def.attrs)
+        if not ty.custom_def.is_ffi or public:
+            self.__check_yian_signature(parameters, ret_type_id, func_def.span)
 
         # Keep the resolved body associated with its callable definition.
         self.__ctx.procedures.register(ty.type_id, func_def.body, unit.unit_id)
+
+    def __resolve_extern_decl(self, unit: UnitData, decl: AST.ExternFuncDecl) -> None:
+        symbol = unit.symbol_ctx.lookup(decl.name.name)
+        assert symbol is not None
+        ty = self.__ctx.type_ctx[symbol.type_id]
+        assert isinstance(ty, Type.FunctionType)
+        ty.custom_def.parameters = [
+            Type.Parameter(name=param.name.name,
+                           type_id=self.__ctx.resolve_type_in(param.var_type, unit.symbol_ctx),
+                           span=param.name.span)
+            for param in decl.params
+        ]
+        ty.custom_def.return_type = (
+            self.__ctx.type_ctx.void_id if decl.ret_type is None
+            else self.__ctx.resolve_type_in(decl.ret_type, unit.symbol_ctx)
+        )
+        self.__check_sized_signature(ty.custom_def.parameters, ty.custom_def.return_type, decl.span)
+        for parameter in ty.custom_def.parameters:
+            if not self.__ctx.type_ctx.is_c_abi_type(parameter.type_id):
+                raise AnalysisError("extern C parameters require C ABI scalar or cptr<T>", decl.span)
+        if not self.__ctx.type_ctx.is_c_abi_type(ty.custom_def.return_type, result=True):
+            raise AnalysisError("extern C return type requires C ABI scalar, cptr<T>, or void", decl.span)
+        ty.custom_def.is_extern = True
+
+    def __check_yian_signature(self, parameters: list[Type.Parameter], result: int, span: SrcSpan) -> None:
+        if any(self.__ctx.type_ctx.contains_ffi_type(item.type_id) for item in parameters) \
+                or self.__ctx.type_ctx.contains_ffi_type(result):
+            raise AnalysisError("C ABI types require a private or pub(ffi) ffi fn signature", span)
+
+    def __check_sized_signature(self, parameters: list[Type.Parameter], result: int, span: SrcSpan) -> None:
+        if any(self.__ctx.type_ctx.contains_bare_opaque(item.type_id) for item in parameters) \
+                or self.__ctx.type_ctx.contains_bare_opaque(result):
+            raise AnalysisError("opaque C type must be used through cptr<T>", span)
 
     def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: list[int]) -> None:
         """进入泛型作用域，注册类型泛型和常量泛型符号。"""
@@ -460,8 +543,18 @@ class GlobalResolve:
 
         fields: list[Type.StructField] = []
         for index, field in enumerate(struct_def.fields):
+            field_modifiers = [attr.kind for attr in field.attrs]
+            if len(set(field_modifiers)) != len(field_modifiers) or any(
+                kind != AST.AttrKind.Pub for kind in field_modifiers
+            ):
+                raise AnalysisError("Invalid struct field modifier", field.span)
             field_type_id = self.__ctx.resolve_type_in(field.field_type, unit.symbol_ctx)
+            if self.__ctx.type_ctx.contains_bare_opaque(field_type_id):
+                raise AnalysisError("opaque C type must be used through cptr<T>", field.span)
             is_pub = any(attr.kind == AST.AttrKind.Pub for attr in field.attrs)
+            if is_pub and any(attr.kind == AST.AttrKind.Pub for attr in struct_def.attrs) \
+                    and self.__ctx.type_ctx.contains_ffi_type(field_type_id):
+                raise AnalysisError("Public struct field cannot expose a C ABI type", field.span)
             fields.append(Type.StructField(
                 name=field.name.name,
                 type_id=field_type_id,
@@ -489,6 +582,12 @@ class GlobalResolve:
             if len(variant.fields) > 0:
                 field_names = [field.name.name for field in variant.fields]
                 field_types = [self.__ctx.resolve_type_in(field.var_type, unit.symbol_ctx) for field in variant.fields]
+                if any(self.__ctx.type_ctx.contains_bare_opaque(field_type) for field_type in field_types):
+                    raise AnalysisError("opaque C type must be used through cptr<T>", variant.span)
+                if any(attr.kind == AST.AttrKind.Pub for attr in enum_def.attrs) and any(
+                    self.__ctx.type_ctx.contains_ffi_type(field_type) for field_type in field_types
+                ):
+                    raise AnalysisError("Public enum variant cannot expose a C ABI type", variant.span)
                 # The payload's fields are written in the variant declaration, so
                 # their name spans are real source positions.
                 field_spans = [field.name.span for field in variant.fields]
@@ -573,6 +672,16 @@ class GlobalResolve:
         unit.symbol_ctx.exit_scope()
 
     def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: list[int], receiver_type_id: int, is_header: bool) -> int:
+        if len({attr.kind for attr in decl.attrs}) != len(decl.attrs):
+            raise AnalysisError("Duplicate method modifier", decl.span)
+        if AST.AttrKind.Pub in {attr.kind for attr in decl.attrs} and AST.AttrKind.PubFfi in {attr.kind for attr in decl.attrs}:
+            raise AnalysisError("Use either pub or pub(ffi)", decl.span)
+        if AST.AttrKind.PubFfi in {attr.kind for attr in decl.attrs} and AST.AttrKind.Ffi not in {attr.kind for attr in decl.attrs}:
+            raise AnalysisError("pub(ffi) method must be ffi fn", decl.span)
+        if any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.PubFfi) for attr in decl.attrs) and not unit.allows_ffi:
+            raise AnalysisError("FFI method requires package ffi = true or --allow-ffi", decl.span)
+        if is_header and any(attr.kind == AST.AttrKind.Ffi for attr in decl.attrs):
+            raise AnalysisError("FFI method requires a body", decl.span)
         # alloc in type space
         type_id = self.__ctx.type_ctx.alloc_method(decl.name.name, span=decl.span)
 
@@ -618,8 +727,13 @@ class GlobalResolve:
         ty.custom_def.receiver_type = receiver_type_id
         ty.custom_def.parameters = parameters
         ty.custom_def.return_type = ret_type_id
+        self.__check_sized_signature(parameters, ret_type_id, decl.span)
         ty.custom_def.is_static = any(attr.kind == AST.AttrKind.Static for attr in decl.attrs)
         ty.custom_def.is_header = is_header
+        ty.custom_def.is_ffi = any(attr.kind == AST.AttrKind.Ffi for attr in decl.attrs)
+        ty.custom_def.ffi_only = any(attr.kind == AST.AttrKind.PubFfi for attr in decl.attrs)
+        if not ty.custom_def.is_ffi or any(attr.kind == AST.AttrKind.Pub for attr in decl.attrs):
+            self.__check_yian_signature(parameters, ret_type_id, decl.span)
         ty.generic_args = generics.copy()
 
         return type_id

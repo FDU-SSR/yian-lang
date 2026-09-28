@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import NoReturn, cast
@@ -39,6 +40,7 @@ from compiler.codegen.llvm.pipeline.translator import LLTranslator
 from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
 from compiler.target_layout import type_size_provider
 from compiler.error import CompilerError
+from compiler.native_link import NativeLink
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
@@ -111,6 +113,8 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Package map JSON file (enables package-mode import resolution).",
     )
+    parser.add_argument("--link-lib", action="append", default=[], metavar="NAME")
+    parser.add_argument("--link-search", action="append", default=[], type=Path, metavar="DIR")
     parser.add_argument(
         "--compiler-root",
         type=Path,
@@ -171,6 +175,8 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
         ),
     )
+    parser.add_argument("--allow-ffi", action="store_true", default=False,
+                        help="Allow FFI declarations and operations in standalone sources.")
     # Intermixed parsing keeps "paths … options … paths" valid; a plain
     # parse_args() would reject a positional that follows an option.
     return parser.parse_intermixed_args(argv)
@@ -219,6 +225,7 @@ def __analyze(args: argparse.Namespace) -> int:
         compiler_root=args.compiler_root,
         packages=packages,
         raw_pointers=args.raw_pointers,
+        allow_ffi=args.allow_ffi,
         type_size_factory=type_size_provider,
     )
     result = session.analyze(args.paths, require_entry=False)
@@ -341,45 +348,58 @@ def __select_linker() -> str:
     return linker
 
 
-def __link_exe(obj_path: Path, output_path: Path, opt_level: int, profile: bool = False) -> None:
+def __link_exe(
+    obj_path: Path, output_path: Path, opt_level: int, native: NativeLink,
+    libraries: list[str], search_paths: list[Path], profile: bool = False,
+) -> None:
     """Link a .o file plus the runtime library to a native executable via clang."""
     linker = __select_linker()
+    native.verify_linker(linker)
     if profile:
         version = subprocess.run([linker, "--version"], capture_output=True, text=True, check=False)
         first_line = version.stdout.splitlines()[0] if version.stdout else "version unknown"
         print(f"  linker: {linker} ({first_line})", file=sys.stderr)
 
     runtime_archive = ensure_archive()
-    cmd = [linker, str(obj_path), str(runtime_archive), "-lm", "-o", str(output_path), f"-O{opt_level}"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        print(f"error: linker failed:\n{proc.stderr}", file=sys.stderr)
-        sys.exit(proc.returncode)
+    with tempfile.TemporaryDirectory(prefix="yian-native-", dir=output_path.parent) as temp:
+        shim_objects = native.compile_shims(linker, Path(temp))
+        cmd = [
+            linker, str(obj_path), *map(str, shim_objects), str(runtime_archive),
+            *native.llvm_flags(), *(f"-L{path}" for path in search_paths),
+            *(f"-l{name}" for name in libraries), "-lm", "-o", str(output_path),
+            f"-O{opt_level}",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            print(f"error: linker failed:\n{proc.stderr}", file=sys.stderr)
+            sys.exit(proc.returncode)
 
     # Remove intermediate .o file
     if obj_path.exists():
         obj_path.unlink()
 
 
-def __merge_runtime_object(obj_path: Path, output_path: Path) -> None:
+def __merge_runtime_object(obj_path: Path, output_path: Path, native: NativeLink) -> None:
     """Merge the user object with the runtime object into one relocatable object.
 
     ``-t obj`` 的产物保持单文件自包含：用户对象与运行时对象用 ``clang -r`` 合并，
     链接阶段与普通对象一样使用。
     """
     linker = __select_linker()
+    native.verify_linker(linker)
     runtime_object = ensure_object()
-    merged_path = obj_path.with_suffix(".merged.o")
-    proc = subprocess.run(
-        [linker, "-r", "-nostdlib", str(obj_path), str(runtime_object), "-o", str(merged_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        print(f"error: merging the runtime object failed:\n{proc.stderr}", file=sys.stderr)
-        sys.exit(proc.returncode)
-    merged_path.replace(output_path)
+    with tempfile.TemporaryDirectory(prefix="yian-native-", dir=output_path.parent) as temp:
+        shim_objects = native.compile_shims(linker, Path(temp))
+        merged_path = Path(temp) / "merged.o"
+        proc = subprocess.run(
+            [linker, "-r", "-nostdlib", str(obj_path), str(runtime_object),
+             *map(str, shim_objects), "-o", str(merged_path)],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            print(f"error: merging the runtime object failed:\n{proc.stderr}", file=sys.stderr)
+            sys.exit(proc.returncode)
+        merged_path.replace(output_path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -459,8 +479,15 @@ def __run(argv: list[str] | None = None) -> int:
         except CompilerError as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
+    for library in args.link_lib:
+        if not library or library.startswith("-") or any(
+            not (char.isalnum() or char in "_+.-") for char in library
+        ):
+            print(f"error: invalid --link-lib name {library!r}", file=sys.stderr)
+            return 1
     session = AnalysisSession(
         compiler_root=args.compiler_root, packages=packages, raw_pointers=args.raw_pointers,
+        allow_ffi=args.allow_ffi,
         type_size_factory=type_size_provider,
     )
     trust_root = session.std_root
@@ -523,6 +550,11 @@ def __run(argv: list[str] | None = None) -> int:
     # Derive output path and run codegen (skip only when --target none)
     if args.target != "none":
         output_path = __derive_output(args, src_files)
+        try:
+            native = NativeLink(packages)
+        except CompilerError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
 
         # CFG → LLVM IR pass
         llvm_start = time.perf_counter() if args.profile else 0.0
@@ -550,12 +582,15 @@ def __run(argv: list[str] | None = None) -> int:
             if args.target in ("ll", "bc", "obj", "asm"):
                 emitted = Path(emitter.emit_module(llvm_module, str(out_dir), args.target, stem, opt_level=args.O))
                 if args.target == "obj":
-                    __merge_runtime_object(emitted, output_path)
+                    __merge_runtime_object(emitted, output_path, native)
             elif args.target == "exe":
                 obj_path = out_dir / (stem + ".o")
                 emitter.emit_module(llvm_module, str(out_dir), "obj", stem, opt_level=args.O)
-                __link_exe(obj_path, output_path, args.O, profile=args.profile)
-        except RuntimeBuildError as exc:
+                __link_exe(
+                    obj_path, output_path, args.O, native, args.link_lib, args.link_search,
+                    profile=args.profile,
+                )
+        except (RuntimeBuildError, CompilerError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
         if args.profile:

@@ -9,6 +9,7 @@ from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
 from compiler.builtins import BuiltinKind
 from compiler.error import CompilerError
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex import token as Tok
 from compiler.frontend.parse import ast as AST
 from compiler.runtime_error import parse_runtime_error_code
@@ -59,6 +60,12 @@ class BuiltinDispatcher:
             BuiltinKind.Argc: _BuiltinSpec(0, 0, self.__lower_argc),
             BuiltinKind.ArgBytes: _BuiltinSpec(0, 1, self.__lower_arg_bytes),
             BuiltinKind.Exit: _BuiltinSpec(0, 1, self.__lower_exit),
+            BuiltinKind.FfiAddr: _BuiltinSpec(0, 1, self.__lower_ffi_addr),
+            BuiltinKind.FfiParts: _BuiltinSpec(0, 1, self.__lower_ffi_parts),
+            BuiltinKind.FfiNull: _BuiltinSpec(1, 0, self.__lower_ffi_null),
+            BuiltinKind.FfiPtrCast: _BuiltinSpec(1, 1, self.__lower_ffi_ptr_cast),
+            BuiltinKind.FfiCopyFrom: _BuiltinSpec(0, 3, self.__lower_ffi_copy_from),
+            BuiltinKind.FfiCopyTo: _BuiltinSpec(0, 3, self.__lower_ffi_copy_to),
         }
 
     def handle(self, node: AST.Builtin) -> HIR.Builtin:
@@ -66,6 +73,10 @@ class BuiltinDispatcher:
         spec = self.__builtin_specs.get(node.kind)
         if spec is None:
             raise CompilerError(f"Unregistered builtin instruction '{node.kind.spelling}'")
+        if node.kind in (BuiltinKind.FfiAddr, BuiltinKind.FfiParts, BuiltinKind.FfiNull,
+                         BuiltinKind.FfiPtrCast, BuiltinKind.FfiCopyFrom, BuiltinKind.FfiCopyTo):
+            if not self.__ctx.ffi_allowed:
+                raise AnalysisError(f"'{node.kind.spelling}' requires an ffi fn", node.span)
         if len(node.type_args) != spec.type_arg_count:
             type_arg_label = "type argument" if spec.type_arg_count == 1 else "type arguments"
             raise AnalysisError(
@@ -92,6 +103,61 @@ class BuiltinDispatcher:
 
     def __coerced_arg(self, node: AST.Builtin, index: int, type_id: int) -> HIR.Expr:
         return self.__expr.coerce(self.__arg(node, index), type_id)
+
+    def __ffi_element(self, type_id: int, span: SrcSpan, *, incomplete: bool = False) -> None:
+        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        if isinstance(ty, Type.OpaqueType) and incomplete:
+            return
+        if not self.__ctx.type_ctx.is_c_abi_type(type_id):
+            raise AnalysisError("FFI pointer element must have a C-compatible type", span)
+
+    def __lower_ffi_addr(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        value = self.__arg(node, 0)
+        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        if isinstance(ty, Type.PointerType):
+            value = self.__expr.coerce(value, self.__ctx.type_ctx.alloc_ref(ty.pointee_type))
+            ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        if not isinstance(ty, Type.RefType):
+            raise AnalysisError("@ffi_addr expects a reference", node.span)
+        self.__ffi_element(ty.pointee_type, node.span)
+        return self.__builtin(node, types, [value], self.__ctx.type_ctx.alloc_cptr(ty.pointee_type))
+
+    def __lower_ffi_parts(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        value = self.__arg(node, 0)
+        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        if isinstance(ty, Type.SliceType):
+            element = ty.element_type
+            self.__ffi_element(element, node.span)
+        elif isinstance(ty, Type.StrType):
+            element = self.__ctx.type_ctx.u8_id
+        else:
+            raise AnalysisError("@ffi_parts expects a slice or str", node.span)
+        result = self.__ctx.type_ctx.alloc_tuple([self.__ctx.type_ctx.alloc_cptr(element), self.__ctx.type_ctx.u64_id])
+        return self.__builtin(node, types, [value], result)
+
+    def __lower_ffi_null(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        self.__ffi_element(types[0], node.span, incomplete=True)
+        return self.__builtin(node, types, [], self.__ctx.type_ctx.alloc_cptr(types[0]))
+
+    def __lower_ffi_ptr_cast(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        value = self.__arg(node, 0)
+        source = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        if not isinstance(source, Type.CPtrType):
+            raise AnalysisError("@ffi_ptr_cast expects cptr<T>", node.span)
+        self.__ffi_element(types[0], node.span, incomplete=True)
+        return self.__builtin(node, types, [value], self.__ctx.type_ctx.alloc_cptr(types[0]))
+
+    def __lower_ffi_copy_from(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        target = self.__coerced_arg(node, 0, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
+        source = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_cptr(self.__ctx.type_ctx.u8_id))
+        length = self.__coerced_arg(node, 2, self.__ctx.type_ctx.u64_id)
+        return self.__builtin(node, types, [target, source, length], self.__ctx.type_ctx.void_id)
+
+    def __lower_ffi_copy_to(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
+        target = self.__coerced_arg(node, 0, self.__ctx.type_ctx.alloc_cptr(self.__ctx.type_ctx.u8_id))
+        source = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
+        length = self.__coerced_arg(node, 2, self.__ctx.type_ctx.u64_id)
+        return self.__builtin(node, types, [target, source, length], self.__ctx.type_ctx.void_id)
 
     def __lower_size_of(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         return self.__builtin(node, types, [], self.__ctx.type_ctx.u64_id)

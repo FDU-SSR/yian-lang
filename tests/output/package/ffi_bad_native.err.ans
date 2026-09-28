@@ -1,0 +1,1 @@
+[native.llvm] requires major = 22, component names, and in-package .c sources

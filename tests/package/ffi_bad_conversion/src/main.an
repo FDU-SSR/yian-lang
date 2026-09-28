@@ -1,0 +1,4 @@
+ffi fn main() {
+    let native: cptr<u8> = @ffi_null<u8>();
+    let managed: u8* = native;
+}

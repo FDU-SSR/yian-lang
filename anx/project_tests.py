@@ -137,6 +137,7 @@ def __test_package_map(project: Project, test: ProjectTest) -> dict[str, object]
         "sourceRoot": str(tests_dir.resolve()),
         "kind": "bin",
         "entry": str(test.source.resolve()),
+        "ffi": root_package.ffi,
         # Cargo's model: integration tests link the package's *library* (so a
         # bin-only root has no library interface to import), plus the package's
         # dependencies and its dev-dependencies.

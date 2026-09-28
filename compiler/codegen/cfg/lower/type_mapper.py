@@ -48,6 +48,8 @@ class CfgTypeMapper:
                 result = self.lower(struct_type_id)
             case Type.PointerType(pointee_type=pointee_type):
                 result = self.__type_ctx.alloc_pointer(self.lower(pointee_type))
+            case Type.CPtrType(pointee_type=pointee_type):
+                result = self.__type_ctx.alloc_cptr(self.lower(pointee_type))
             case Type.RefType(pointee_type=pointee_type):
                 result = self.__type_ctx.alloc_ref(self.lower(pointee_type))
             case Type.TraitObjectType(trait_type_id=trait_type_id):

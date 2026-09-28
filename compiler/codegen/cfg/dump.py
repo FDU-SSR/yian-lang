@@ -286,6 +286,18 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.MemSetPattern(dest=dest, value=value, count=count):
             return f"mem_set_pattern {__dump_value(dest)}, {__dump_value(value)}, {__dump_value(count)}"
 
+        case IR.FfiAddr(result=result, reference=reference):
+            return f"%{result.name} = ffi_addr {__dump_value(reference)}"
+        case IR.FfiParts(result=result, view=view):
+            return f"%{result.name} = ffi_parts {__dump_value(view)}"
+        case IR.FfiNull(result=result):
+            return f"%{result.name} = ffi_null"
+        case IR.FfiPtrCast(result=result, pointer=pointer):
+            return f"%{result.name} = ffi_ptr_cast {__dump_value(pointer)}"
+        case IR.FfiCopy(destination=destination, source=source, count=count, from_c=from_c):
+            direction = "from" if from_c else "to"
+            return f"ffi_copy_{direction} {__dump_value(destination)}, {__dump_value(source)}, {__dump_value(count)}"
+
         case IR.SysRead(
             result=result,
             fd=fd,

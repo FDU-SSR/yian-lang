@@ -289,6 +289,10 @@ class ValueEmitter:
         if isinstance(lhs.type, ir.types._BaseFloatType):  # type: ignore
             return getattr(self.__builder, self.FLOAT_ARITH_OPS[op])(lhs, rhs)
         ty = self.__type_ctx[type_id]
+        if isinstance(ty, Type.CPtrType):
+            offset = rhs if op == BinaryOperator.Add else self.__builder.neg(rhs)  # type: ignore
+            element = self.__ll_type_ctx.get_ll_type(ty.pointee_type).ir_type
+            return self.__builder.gep(lhs, [offset], inbounds=False, source_etype=element)  # type: ignore
         if isinstance(ty, Type.IntType) and not ty.signed:
             if op == BinaryOperator.Div:
                 return self.__builder.udiv(lhs, rhs)  # type: ignore

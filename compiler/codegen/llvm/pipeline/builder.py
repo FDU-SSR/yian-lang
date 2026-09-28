@@ -12,6 +12,7 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.codegen.llvm.pointer.allocation import AllocationEmitter
 from compiler.codegen.llvm.emitters.aggregates import AggregateEmitter
 from compiler.codegen.llvm.emitters.calls import CallEmitter
+from compiler.codegen.llvm.emitters.ffi import FfiEmitter
 from compiler.codegen.llvm.pointer.safety import FatSafety
 from compiler.codegen.llvm.function.core import BuilderPosition, FunctionCore, FunctionFlow
 from compiler.codegen.llvm.emitters.memory import MemoryEmitter
@@ -51,6 +52,7 @@ class LLBuilder:
         self.__values = ValueEmitter(self.__core, self.__pointers, self.__safety)
         self.__calls = CallEmitter(self.__core, self.__pointers, self.__safety)
         self.__system = SystemEmitter(self.__core, self.__pointers)
+        self.__ffi = FfiEmitter(self.__core, self.__pointers, self.__safety)
 
     @property
     def flow(self) -> FunctionFlow:
@@ -91,6 +93,10 @@ class LLBuilder:
     @property
     def system(self) -> SystemEmitter:
         return self.__system
+
+    @property
+    def ffi(self) -> FfiEmitter:
+        return self.__ffi
 
     def i32(self, value: int) -> LLValue:
         return LLValue(self.__type_ctx.u32_id, ir.Constant(ir.IntType(32), value))  # type: ignore

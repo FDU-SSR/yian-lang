@@ -22,6 +22,10 @@ class IntrinsicIds:
     int_literal_id: int = 25
     float_literal_id: int = 26
     error_id: int = 27
+    c_int_id: int = 28
+    c_uint_id: int = 29
+    c_size_id: int = 30
+    c_char_id: int = 31
 
     add_id: int = 50
     sub_id: int = 51

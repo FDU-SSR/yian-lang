@@ -148,6 +148,7 @@ class AnalysisSession:
         compiler_root: Path | None = None,
         packages: PackageMap | None = None,
         raw_pointers: bool = False,
+        allow_ffi: bool = False,
         type_size_factory: TypeSizeFactory,
     ) -> None:
         """Configure one session.
@@ -160,6 +161,7 @@ class AnalysisSession:
         """
         self.__packages = packages
         self.__raw_pointers = raw_pointers
+        self.__allow_ffi = allow_ffi
         self.__type_size_factory = type_size_factory
         self.__std_root = (
             packages.packages["std"].source_root
@@ -248,6 +250,13 @@ class AnalysisSession:
         for unit in units.values():
             unit.is_stdlib = source_trust.is_stdlib(unit.path)
             unit.allows_restricted_ops = source_trust.allows_restricted_ops(unit.path)
+            package_name = self.__packages.package_of(unit.path) if self.__packages is not None else None
+            unit.allows_ffi = (
+                self.__packages.packages[package_name].ffi
+                if package_name is not None and self.__packages is not None
+                else self.__allow_ffi
+            )
+            unit.symbol_ctx.allows_ffi = unit.allows_ffi
 
         try:
             inject_prelude(units.values())

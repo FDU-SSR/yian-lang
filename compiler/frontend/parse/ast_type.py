@@ -70,6 +70,24 @@ class IntType:
 
 
 @dataclass
+class CScalarType:
+    span: SrcSpan
+    name: str
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+@dataclass
+class CPtrType:
+    span: SrcSpan
+    pointee_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"cptr<{self.pointee_type}>"
+
+
+@dataclass
 class FloatType:
     span: SrcSpan
     width: int  # in bytes
@@ -220,7 +238,7 @@ class DeducedType:
 
 
 ASTType: TypeAlias = (
-    IntType | FloatType | BoolType | StrType | CharType | VoidType | NeverType
+    IntType | CScalarType | CPtrType | FloatType | BoolType | StrType | CharType | VoidType | NeverType
     | ArrayType | TupleType | PointerType | RefType | SliceType
     | NamedType
     | InstanceType

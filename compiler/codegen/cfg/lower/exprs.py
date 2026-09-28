@@ -64,6 +64,12 @@ class ExprLowerer:
             BuiltinKind.Argc: self.__resolve_argc,
             BuiltinKind.ArgBytes: self.__resolve_arg_bytes,
             BuiltinKind.Exit: self.__resolve_exit,
+            BuiltinKind.FfiAddr: self.__resolve_ffi_addr,
+            BuiltinKind.FfiParts: self.__resolve_ffi_parts,
+            BuiltinKind.FfiNull: self.__resolve_ffi_null,
+            BuiltinKind.FfiPtrCast: self.__resolve_ffi_ptr_cast,
+            BuiltinKind.FfiCopyFrom: self.__resolve_ffi_copy_from,
+            BuiltinKind.FfiCopyTo: self.__resolve_ffi_copy_to,
         }
 
     @property
@@ -359,6 +365,35 @@ class ExprLowerer:
 
     def __resolve_mem_copy(self, expr: HIR.Builtin) -> IR.Value:
         return self.__sys.resolve_mem_copy(expr)
+
+    def __ffi_result(self, type_id: int) -> IR.Reg:
+        return IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
+
+    def __resolve_ffi_addr(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiAddr(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_parts(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiParts(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_null(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiNull(result)).result
+
+    def __resolve_ffi_ptr_cast(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiPtrCast(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_copy_from(self, expr: HIR.Builtin) -> IR.Value:
+        args = [self.resolve_val(arg) for arg in expr.args]
+        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], True))
+        return self.__state.emitter.void_reg()
+
+    def __resolve_ffi_copy_to(self, expr: HIR.Builtin) -> IR.Value:
+        args = [self.resolve_val(arg) for arg in expr.args]
+        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], False))
+        return self.__state.emitter.void_reg()
 
     def __resolve_slice_from_parts(self, expr: HIR.Builtin) -> IR.Value:
         aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)

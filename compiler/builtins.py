@@ -32,6 +32,12 @@ class BuiltinKind(Enum):
     Argc = "argc"
     ArgBytes = "arg_bytes"
     Exit = "exit"
+    FfiAddr = "ffi_addr"
+    FfiParts = "ffi_parts"
+    FfiNull = "ffi_null"
+    FfiPtrCast = "ffi_ptr_cast"
+    FfiCopyFrom = "ffi_copy_from"
+    FfiCopyTo = "ffi_copy_to"
 
     @property
     def spelling(self) -> str:

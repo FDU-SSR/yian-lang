@@ -64,6 +64,11 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_const_def(item, guides, is_last)
             case AST.FuncDef():
                 return self.__export_func_def(item, guides, is_last)
+            case AST.OpaqueTypeDef(name=name):
+                return self.render_line(guides, is_last, f"Opaque type: {name.name}")
+            case AST.ExternBlock(abi=abi, functions=functions):
+                signatures = ", ".join(function.name.name for function in functions)
+                return self.render_line(guides, is_last, f"Extern {abi}: {signatures}")
             case AST.StructDef():
                 return self.__export_struct_def(item, guides, is_last)
             case AST.EnumDef():

@@ -202,6 +202,7 @@ class LLTypeCtx:
             case Type.IntType():     result = self.__handle_int(ty_def)
             case Type.FloatType():   result = self.__handle_float(ty_def)
             case Type.PointerType(): result = self.__handle_pointer(ty_def)
+            case Type.CPtrType():   result = self.__ptr
             case Type.RefType():     result = self.__handle_ref(ty_def)
             case Type.TraitObjectType(): result = self.__trait_object
             case Type.SliceType():   result = self.__handle_slice(ty_def)

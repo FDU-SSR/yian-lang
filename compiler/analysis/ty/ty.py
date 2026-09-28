@@ -71,6 +71,11 @@ class IntType:
 
 
 @dataclass
+class CScalarType(IntType):
+    c_name: str
+
+
+@dataclass
 class FloatType:
     type_id: int
     size: int
@@ -131,6 +136,19 @@ class TupleType:
 class PointerType:
     type_id: int
     pointee_type: int
+
+
+@dataclass
+class CPtrType:
+    type_id: int
+    pointee_type: int
+
+
+@dataclass
+class OpaqueType:
+    type_id: int
+    name: str
+    span: SrcSpan
 
 
 @dataclass
@@ -284,6 +302,9 @@ class FunctionDef:
     generics: list[int] = field(default_factory=list[int])
     parameters: list[Parameter] = field(default_factory=list[Parameter])
     return_type: int = -1
+    is_ffi: bool = False
+    is_extern: bool = False
+    ffi_only: bool = False
 
 
 @dataclass
@@ -323,6 +344,8 @@ class MethodDef:
     return_type: int = -1
     is_static: bool = False
     is_header: bool = True
+    is_ffi: bool = False
+    ffi_only: bool = False
 
 
 @dataclass
@@ -413,7 +436,7 @@ BasicType: TypeAlias = (
 )
 
 DerivedType: TypeAlias = (
-    ArrayType | TupleType | PointerType | RefType | TraitObjectType | SliceType | FunctionPointerType
+    ArrayType | TupleType | PointerType | CPtrType | OpaqueType | RefType | TraitObjectType | SliceType | FunctionPointerType
 )
 
 

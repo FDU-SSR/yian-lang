@@ -1,0 +1,26 @@
+from std.core.drop import Drop;
+from llvm.core import llvm_version, identity_module_ir, identity_module_object;
+from llvm.object import Module;
+
+fn main() {
+    let (major, _, _) = llvm_version();
+    assert major == 22u32: "wrong LLVM version";
+
+    let ir = identity_module_ir("identity");
+    assert ir.len() > 0u64: "empty LLVM IR";
+    ir.drop();
+
+    let module = Module.new("bitcode", 0u8);
+    assert module.verify().is_ok(): "module verification failed";
+    let bitcode = module.bitcode();
+    assert bitcode.len() > 4u64: "empty bitcode";
+    bitcode.drop();
+    module.close();
+
+    let object = identity_module_object("identity", 0u8);
+    assert object.is_ok(): "object emission failed";
+    let bytes = object.unwrap();
+    assert bytes.len() > 4u64: "empty object";
+    assert bytes[0] == 127u8 && bytes[1] == 69u8 && bytes[2] == 76u8 && bytes[3] == 70u8: "not ELF";
+    bytes.drop();
+}

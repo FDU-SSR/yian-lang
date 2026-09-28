@@ -218,6 +218,14 @@ class ExprChecker:
 
         symbol = self.__ctx.symbol_ctx.lookup(node.name)
         if symbol is None:
+            c_types = {
+                "c_int": self.__ctx.type_ctx.c_int_id,
+                "c_uint": self.__ctx.type_ctx.c_uint_id,
+                "c_size": self.__ctx.type_ctx.c_size_id,
+                "c_char": self.__ctx.type_ctx.c_char_id,
+            }
+            if node.name in c_types and self.__ctx.ffi_allowed:
+                return HIR.Ty(span=node.span, type_id=c_types[node.name], is_place=False)
             raise AnalysisError(f"Unknown identifier '{node.name}'", node.span)
 
         # Record the declaration at the identifier span for navigation and hover.
@@ -246,6 +254,9 @@ class ExprChecker:
                     return HIR.StrLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
                 raise AnalysisError("constant value has an unsupported type", node.span)
             case SymbolKind.Function:
+                function_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(symbol.type_id)]
+                if isinstance(function_ty, Type.FunctionType) and function_ty.custom_def.is_extern:
+                    raise AnalysisError("extern C function cannot be used as a value", node.span)
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
                     raise AnalysisError(
                         f"cannot use generic function '{node.name}' as a value; "

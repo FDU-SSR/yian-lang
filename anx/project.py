@@ -38,6 +38,7 @@ from anx.manifest import DEFAULT_ENTRY
 from anx.manifest import MANIFEST_NAME
 from anx.manifest import DependencySpec
 from anx.manifest import Manifest
+from anx.manifest import NativeLLVM
 from anx.manifest import read_manifest
 
 STD_PACKAGE = "std"
@@ -93,6 +94,8 @@ class Package:
     entry: Path | None  # BIN/HYBRID entry file; None for LIB
     dependencies: tuple[Dependency, ...]  # sorted by name
     dev_dependencies: tuple[Dependency, ...] = ()  # visible only to `anx test`
+    ffi: bool = False
+    native_llvm: NativeLLVM | None = None
 
 
 @dataclass(frozen=True)
@@ -225,9 +228,16 @@ class Project:
                 "sourceRoot": str(package.source_root),
                 "kind": package.kind.value,
                 "dependencies": [dependency.name for dependency in package.dependencies],
+                "ffi": package.ffi,
             }
             if package.entry is not None:
                 spec["entry"] = str(package.entry)
+            if package.native_llvm is not None:
+                spec["nativeLLVM"] = {
+                    "major": package.native_llvm.major,
+                    "components": list(package.native_llvm.components),
+                    "sources": [str(source.relative_to(package.root)) for source in package.native_llvm.sources],
+                }
             packages[name] = spec
         return packages
 
@@ -568,6 +578,8 @@ def __build_package(
             source_root=source_root,
             entry=entry,
             dependencies=(),
+            ffi=manifest.ffi,
+            native_llvm=manifest.native_llvm,
         ),
         (),
     )

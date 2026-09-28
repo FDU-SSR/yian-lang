@@ -93,6 +93,8 @@ class TypeParser:
             return Ty.FunctionType(span=token.span, param_types=param_types, return_type=return_type)
 
         if isinstance(token, Identifier):
+            if token.name in ("c_int", "c_uint", "c_size", "c_char"):
+                return Ty.CScalarType(span=token.span, name=token.name)
             return Ty.NamedType(span=token.span, name=AST.Identifier(span=token.span, name=token.name))
 
         if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LParen:
@@ -135,6 +137,11 @@ class TypeParser:
             TERM_RANGLE,
         )
         self.__stream.consume_punctuator(PunctuatorKind.RAngle)
+
+        if isinstance(base, Ty.NamedType) and base.name.name == "cptr":
+            if len(generic_args) != 1 or isinstance(generic_args[0], (Ty.LiteralConstExpr, Ty.GenericConstExpr, Ty.UnaryConstExpr, Ty.BinaryConstExpr)):
+                raise ParseError("cptr requires exactly one type argument", base.span)
+            return Ty.CPtrType(span=base.span, pointee_type=generic_args[0])
 
         return Ty.InstanceType(span=base.span, base=base, generic_args=generic_args)
 

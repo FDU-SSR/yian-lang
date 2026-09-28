@@ -27,6 +27,7 @@ class Scope:
 
 class SymbolCtx:
     def __init__(self):
+        self.allows_ffi = False
         self.__all_symbols: dict[int, Symbol] = {}  # symbol_id -> Symbol
         self.__next_id_holder: list[int] = [0]
         self.__current_scope = Scope(symbols={}, parent=None)
@@ -123,7 +124,7 @@ class SymbolCtx:
         self.__all_symbols[symbol_id] = symbol
 
         # add a pub symbol to global scope will be exported
-        if SymbolAttribute.Public in attributes and self.__current_scope.parent is None:
+        if (SymbolAttribute.Public in attributes or SymbolAttribute.FfiPublic in attributes) and self.__current_scope.parent is None:
             self.__ensure_exportable_owned()
             self.__exportable_symbols[name] = symbol_id
 
@@ -188,6 +189,7 @@ class SymbolCtx:
     def clone(self) -> SymbolCtx:
         """Clone the context using copy-on-write symbol dictionaries."""
         new_ctx = SymbolCtx()
+        new_ctx.allows_ffi = self.allows_ffi
         new_ctx.__all_symbols = self.__all_symbols
         new_ctx.__next_id_holder = self.__next_id_holder
         new_ctx.__current_scope = self.__current_scope.clone_shared()

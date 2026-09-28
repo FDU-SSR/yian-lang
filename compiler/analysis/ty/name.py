@@ -31,6 +31,8 @@ class TypeFormatter:
                 name = "char"
             case Type.StrType():
                 name = "str"
+            case Type.CScalarType(c_name=c_name):
+                name = c_name
             case Type.IntType(size=size, signed=signed):
                 prefix = "i" if signed else "u"
                 name = f"{prefix}{size * 8}"
@@ -43,6 +45,10 @@ class TypeFormatter:
             case Type.PointerType(pointee_type=pointee_type):
                 pointee_name = self.get_name(pointee_type)
                 name = f"{pointee_name}*"
+            case Type.CPtrType(pointee_type=pointee_type):
+                name = f"cptr<{self.get_name(pointee_type)}>"
+            case Type.OpaqueType(name=opaque_name):
+                name = opaque_name
             case Type.RefType(pointee_type=pointee_type):
                 pointee_name = self.get_name(pointee_type)
                 name = f"{pointee_name}&"

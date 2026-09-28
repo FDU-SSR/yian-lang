@@ -8,6 +8,7 @@ error rather than a guess.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,13 @@ KINDS = ("bin", "lib", "hybrid")
 
 
 @dataclass(frozen=True)
+class NativeLLVM:
+    major: int
+    components: tuple[str, ...]
+    sources: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class PackageSpec:
     """One package as described by the ``packages`` table."""
 
@@ -35,6 +43,8 @@ class PackageSpec:
     kind: str
     entry: Path | None  # None for "lib"
     dependencies: tuple[str, ...]  # direct dependencies, by canonical name
+    ffi: bool = False
+    native_llvm: NativeLLVM | None = None
 
 
 @dataclass(frozen=True)
@@ -165,12 +175,56 @@ def _parse_spec(name: str, spec: dict[str, object]) -> PackageSpec:
             raise CompilerError(f"--packages entry '{name}' has a non-string dependency")
         dependencies.append(dependency)
 
+    ffi = spec.get("ffi", False)
+    if not isinstance(ffi, bool):
+        raise CompilerError(f"--packages entry '{name}' has a non-boolean 'ffi'")
+
+    native_llvm: NativeLLVM | None = None
+    native_value = spec.get("nativeLLVM")
+    if native_value is not None:
+        native = _as_table(native_value)
+        if native is None:
+            raise CompilerError(f"--packages entry '{name}' has invalid nativeLLVM")
+        major = native.get("major")
+        components_value = native.get("components")
+        sources_value = native.get("sources")
+        if set(native) - {"major", "components", "sources"}:
+            raise CompilerError(f"--packages entry '{name}' has unknown nativeLLVM field")
+        if major != 22 or isinstance(major, bool) or not isinstance(components_value, list) \
+                or not isinstance(sources_value, list):
+            raise CompilerError(f"--packages entry '{name}' has invalid nativeLLVM")
+        components: list[str] = []
+        for value in cast("list[object]", components_value):
+            if not isinstance(value, str) or re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", value) is None:
+                raise CompilerError(f"--packages entry '{name}' has invalid LLVM component")
+            components.append(value)
+        if not components:
+            raise CompilerError(f"--packages entry '{name}' needs LLVM components")
+        package_root = Path(source_root).resolve().parent
+        sources: list[Path] = []
+        for value in cast("list[object]", sources_value):
+            if not isinstance(value, str) or not value or Path(value).suffix != ".c":
+                raise CompilerError(f"--packages entry '{name}' has invalid native source")
+            source = Path(value)
+            if source.is_absolute() or ".." in source.parts \
+                    or not (package_root / source).resolve().is_relative_to(package_root):
+                raise CompilerError(f"--packages entry '{name}' has native source outside package")
+            resolved = (package_root / source).resolve()
+            if not resolved.is_file():
+                raise CompilerError(f"--packages entry '{name}' has missing native source {source}")
+            sources.append(resolved)
+        if not ffi:
+            raise CompilerError(f"--packages entry '{name}' needs ffi permission for nativeLLVM")
+        native_llvm = NativeLLVM(22, tuple(components), tuple(sources))
+
     return PackageSpec(
         name=name,
         source_root=Path(source_root).resolve(),
         kind=kind,
         entry=entry,
         dependencies=tuple(dependencies),
+        ffi=ffi,
+        native_llvm=native_llvm,
     )
 
 

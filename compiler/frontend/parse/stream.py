@@ -86,7 +86,17 @@ class TokenStream:
             match self.peek():
                 case Tok.Keyword(kind=Tok.KeywordKind.Pub, span=span):
                     self.advance()
-                    attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Pub))
+                    next_token = self.peek()
+                    if isinstance(next_token, Tok.Punctuator) and next_token.kind == Tok.PunctuatorKind.LParen:
+                        self.advance()
+                        self.consume_keyword(Tok.KeywordKind.Ffi)
+                        self.consume_punctuator(Tok.PunctuatorKind.RParen)
+                        attrs.append(AST.Attr(span=span, kind=AST.AttrKind.PubFfi))
+                    else:
+                        attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Pub))
+                case Tok.Keyword(kind=Tok.KeywordKind.Ffi, span=span):
+                    self.advance()
+                    attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Ffi))
                 case Tok.Keyword(kind=Tok.KeywordKind.Static, span=span):
                     self.advance()
                     attrs.append(AST.Attr(span=span, kind=AST.AttrKind.Static))

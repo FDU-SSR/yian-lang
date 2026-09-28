@@ -81,6 +81,19 @@ class TypeResolver:
         match ty:
             case ASTTy.IntType(signed=signed, width=width):
                 return self.INT_MAPPING[(signed, width)]
+            case ASTTy.CScalarType(name=name):
+                if not symbol_ctx.allows_ffi:
+                    raise AnalysisError("C ABI types require FFI permission", ty.span)
+                return {
+                    "c_int": self.__ctx.c_int_id,
+                    "c_uint": self.__ctx.c_uint_id,
+                    "c_size": self.__ctx.c_size_id,
+                    "c_char": self.__ctx.c_char_id,
+                }[name]
+            case ASTTy.CPtrType(pointee_type=pointee_type):
+                if not symbol_ctx.allows_ffi:
+                    raise AnalysisError("cptr<T> requires FFI permission", ty.span)
+                return self.__ctx.alloc_cptr(self.resolve(pointee_type, symbol_ctx))
             case ASTTy.FloatType(width=width):
                 return self.FLOAT_MAPPING[width]
             case ASTTy.BoolType():

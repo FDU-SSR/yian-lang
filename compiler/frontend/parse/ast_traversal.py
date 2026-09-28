@@ -33,7 +33,7 @@ class AstVisitor:
                             self.visit_expr(method.body)
                 case AST.ConstDef():
                     self.visit_expr(item.value)
-                case AST.Import() | AST.Alias() | AST.StructDef() | AST.EnumDef():
+                case AST.Import() | AST.Alias() | AST.StructDef() | AST.EnumDef() | AST.OpaqueTypeDef() | AST.ExternBlock():
                     pass
 
     def enter_expr(self, expr: AST.Expr) -> bool:

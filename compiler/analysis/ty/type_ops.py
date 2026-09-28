@@ -29,6 +29,8 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
         case Type.PointerType(pointee_type=pointee_type):
             instantiated_pointee = instantiate(ctx, pointee_type, substs)
             return ctx.alloc_pointer(instantiated_pointee)
+        case Type.CPtrType(pointee_type=pointee_type):
+            return ctx.alloc_cptr(instantiate(ctx, pointee_type, substs))
         case Type.RefType(pointee_type=pointee_type):
             instantiated_pointee = instantiate(ctx, pointee_type, substs)
             return ctx.alloc_ref(instantiated_pointee)
@@ -157,6 +159,8 @@ def same(ctx: TypeCtx, left: int, right: int) -> bool:
     match (left_ty, right_ty):
         case (Type.PointerType(), Type.PointerType()):
             return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
+        case (Type.CPtrType(), Type.CPtrType()):
+            return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
         case (Type.RefType(), Type.RefType()):
             return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
         case (Type.TraitObjectType(), Type.TraitObjectType()):
@@ -251,6 +255,8 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
             return ctx.f64_id
         case Type.PointerType(pointee_type=pointee_type):
             return ctx.alloc_pointer(default_literals(ctx, pointee_type))
+        case Type.CPtrType(pointee_type=pointee_type):
+            return ctx.alloc_cptr(default_literals(ctx, pointee_type))
         case Type.RefType(pointee_type=pointee_type):
             return ctx.alloc_ref(default_literals(ctx, pointee_type))
         case Type.TraitObjectType():
@@ -312,6 +318,8 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
             case Type.LiteralValueType():
                 return False
             case Type.PointerType(pointee_type=pointee_type):
+                return __contains(pointee_type)
+            case Type.CPtrType(pointee_type=pointee_type):
                 return __contains(pointee_type)
             case Type.RefType(pointee_type=pointee_type):
                 return __contains(pointee_type)

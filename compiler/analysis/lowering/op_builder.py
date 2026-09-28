@@ -260,7 +260,13 @@ class OpBuilder:
         pointer_operand: HIR.Expr | None = None
         offset_operand: HIR.Expr | None = None
 
-        if isinstance(left_ty, Type.PointerType):
+        if isinstance(left_ty, Type.CPtrType) and self.__ctx.ffi_allowed:
+            pointer_operand = left_hir
+            offset_operand = right_hir
+        elif isinstance(right_ty, Type.CPtrType) and self.__ctx.ffi_allowed:
+            pointer_operand = right_hir
+            offset_operand = left_hir
+        elif isinstance(left_ty, Type.PointerType):
             pointer_operand = left_hir
             offset_operand = right_hir
         elif isinstance(right_ty, Type.PointerType):
@@ -268,6 +274,9 @@ class OpBuilder:
             offset_operand = left_hir
 
         if pointer_operand is not None and offset_operand is not None and self.__type_ctx.is_integer_type(offset_operand.type_id):
+            pointer_type = self.__type_ctx[self.__type_ctx.resolve_aliases(pointer_operand.type_id)]
+            if isinstance(pointer_type, Type.CPtrType) and not self.__type_ctx.is_c_abi_type(pointer_type.pointee_type):
+                raise AnalysisError("C pointer arithmetic requires a complete C ABI element type", span)
             offset_value = self.__evaluator.coerce(offset_operand, TypeCtx.u64_id)
             return HIR.Binary(
                 span=span,
@@ -296,6 +305,12 @@ class OpBuilder:
 
         left_ty = self.__type_ctx[left_hir.type_id]
         right_ty = self.__type_ctx[right_hir.type_id]
+
+        if isinstance(left_ty, Type.CPtrType) and self.__ctx.ffi_allowed and self.__type_ctx.is_integer_type(right_hir.type_id):
+            if not self.__type_ctx.is_c_abi_type(left_ty.pointee_type):
+                raise AnalysisError("C pointer arithmetic requires a complete C ABI element type", span)
+            offset = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            return HIR.Binary(span, BinaryOperator.Sub, left_hir, offset, left_hir.type_id, is_place=False)
 
         if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
             if left_hir.type_id != right_hir.type_id:
@@ -558,6 +573,9 @@ class OpBuilder:
             raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
 
         self.check_field_visible(struct_ty, struct_field, span)
+        field_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(struct_field.type_id)]
+        if not self.__ctx.ffi_allowed and isinstance(field_ty, (Type.CScalarType, Type.CPtrType, Type.OpaqueType)):
+            raise AnalysisError("C ABI field access requires an ffi fn", span)
 
         return HIR.FieldAccess(span, receiver, struct_field, struct_field.type_id, is_place=receiver.is_place)
 
@@ -637,6 +655,10 @@ class OpBuilder:
             if isinstance(left_ty, Type.PointerType) and isinstance(right_ty, Type.PointerType):
                 if left_ty.pointee_type == right_ty.pointee_type:
                     return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
+            if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq) and self.__ctx.ffi_allowed \
+                    and isinstance(left_ty, Type.CPtrType) and isinstance(right_ty, Type.CPtrType) \
+                    and self.__type_ctx.is_same_type(left_hir.type_id, right_hir.type_id):
+                return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
             # 引用只支持 == / != (身份比较: 比较所指对象的有效地址); 序比较对引用无意义。
             if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq) \
                     and isinstance(left_ty, Type.RefType) and isinstance(right_ty, Type.RefType):

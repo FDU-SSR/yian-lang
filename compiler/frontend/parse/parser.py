@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
-from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator,
+from compiler.frontend.lex.token import (Keyword, KeywordKind, Punctuator, StrLiteral,
                                          PunctuatorKind, Token)
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
@@ -44,6 +44,10 @@ class Parser:
                     items.extend(self.__parse_import())
                 case Keyword(KeywordKind.Typedef, _):
                     items.append(self.__parse_alias(attrs=attrs))
+                case Keyword(KeywordKind.Opaque, _):
+                    items.append(self.__parse_opaque_type(attrs))
+                case Keyword(KeywordKind.Extern, _):
+                    items.append(self.__parse_extern_block(attrs))
                 case Keyword(KeywordKind.Impl, _):
                     if attrs:
                         raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
@@ -59,7 +63,7 @@ class Parser:
                 case Keyword(KeywordKind.Const, _):
                     items.append(self.__parse_const_def(attrs=attrs))
                 case _:
-                    raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+                    raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
             if items:
                 ch_parse().trace(lambda: f"parsed {type(items[-1]).__name__}")
 
@@ -67,6 +71,37 @@ class Parser:
             span=SrcSpan.combine_all([item.span for item in items]),
             items=items
         )
+
+    def __parse_opaque_type(self, attrs: list[AST.Attr]) -> AST.OpaqueTypeDef:
+        start = self.__stream.consume_keyword(KeywordKind.Opaque)
+        self.__stream.consume_keyword(KeywordKind.Type)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.OpaqueTypeDef(span=start.span, attrs=attrs, name=name)
+
+    def __parse_extern_block(self, attrs: list[AST.Attr]) -> AST.ExternBlock:
+        start = self.__stream.consume_keyword(KeywordKind.Extern)
+        abi = self.__stream.next()
+        if not isinstance(abi, StrLiteral) or abi.value != "C":
+            raise ParseError('Only extern "C" is supported', abi.span)
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        functions = self.__stream.consume_until(self.__parse_extern_function, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+        return AST.ExternBlock(span=start.span, attrs=attrs, abi=abi.value, functions=functions)
+
+    def __parse_extern_function(self) -> AST.ExternFuncDecl:
+        self.__stream.consume_keyword(KeywordKind.Fn)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+        ret_type = None
+        next_token = self.__stream.peek()
+        if isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Arrow:
+            self.__stream.advance()
+            ret_type = self.__parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.ExternFuncDecl(span=name.span, name=name, params=params, ret_type=ret_type)
 
     def __parse_import(self) -> list[AST.Import]:
         result: list[AST.Import] = []

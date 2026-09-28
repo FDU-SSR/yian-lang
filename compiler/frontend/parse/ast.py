@@ -126,6 +126,8 @@ class PatternParam:
 
 class AttrKind(Enum):
     Pub = "pub"
+    PubFfi = "pub(ffi)"
+    Ffi = "ffi"
     Static = "static"
 
 
@@ -154,6 +156,29 @@ class FuncDef:
         params_str = ", ".join(str(param) for param in self.params)
         ret_type_str = f" -> {self.ret_type}" if self.ret_type else ""
         return f"{attrs_str} {self.name.name}{generics_str}({params_str}){ret_type_str}"
+
+
+@dataclass
+class OpaqueTypeDef:
+    span: SrcSpan
+    attrs: list[Attr]
+    name: Identifier
+
+
+@dataclass
+class ExternFuncDecl:
+    span: SrcSpan
+    name: Identifier
+    params: list[VarInfo]
+    ret_type: ASTType | None
+
+
+@dataclass
+class ExternBlock:
+    span: SrcSpan
+    attrs: list[Attr]
+    abi: str
+    functions: list[ExternFuncDecl]
 
 
 @dataclass
@@ -737,6 +762,7 @@ ProgramItem: TypeAlias = (
     | Alias
     | ConstDef
     | FuncDef
+    | OpaqueTypeDef | ExternBlock
     | StructDef | EnumDef | TraitDef
     | Impl
 )

@@ -189,7 +189,16 @@ class LLModule:
         return func
 
     def get_func(self, type_id: int) -> LLFunction:
-        return self.__functions[type_id]
+        found = self.__functions.get(type_id)
+        if found is not None:
+            return found
+        ty = self.__type_ctx[type_id]
+        if not isinstance(ty, Type.FunctionType) or not ty.custom_def.is_extern:
+            raise KeyError(type_id)
+        signature = self.__ll_type_ctx.get_ll_func_type(type_id)
+        declared = LLFunction(ir.Function(self.__module, signature, name=ty.custom_def.name))
+        self.__functions[type_id] = declared
+        return declared
 
     def get_trait_vtable(self, concrete_type_id: int, trait_type_id: int) -> ir.GlobalVariable:
         """Return the read-only vtable for one concrete type/trait instance."""
