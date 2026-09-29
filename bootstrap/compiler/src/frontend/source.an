@@ -10,7 +10,6 @@ from std.core.vec import Vec;
 pub struct Position {
     pub row: u64,
     pub column: u64,
-    pub byte: u64,
 }
 
 pub struct Span {
@@ -21,9 +20,15 @@ pub struct Span {
 impl Span {
     pub fn join(other: Span) -> Span {
         let start = self.start;
-        if other.start.byte < start.byte { start = other.start; }
+        if other.start.row < start.row ||
+            (other.start.row == start.row && other.start.column < start.column) {
+            start = other.start;
+        }
         let end = self.end;
-        if other.end.byte > end.byte { end = other.end; }
+        if other.end.row > end.row ||
+            (other.end.row == end.row && other.end.column > end.column) {
+            end = other.end;
+        }
         return Span(start=start, end=end);
     }
 }

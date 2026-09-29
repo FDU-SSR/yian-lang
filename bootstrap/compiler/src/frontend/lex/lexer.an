@@ -5,10 +5,9 @@ from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, Punctu
 from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.iter import Iterator;
-from std.core.ops import Index;
-from std.core.range import Range;
+from std.core.iter import Iterator, IteratorExt, Peekable;
 from std.core.result import Result;
+from std.core.str import CharIter;
 from std.core.string import String;
 from std.core.vec import Vec;
 
@@ -69,8 +68,7 @@ fn hex_digit(code: u32) -> i32 {
 }
 
 pub struct Lexer {
-    source: str,
-    offset: u64,
+    cursor: Peekable<CharIter, char>,
     row: u64,
     column: u64,
     tokens: Vec<Token>,
@@ -78,50 +76,37 @@ pub struct Lexer {
 
 impl Lexer {
     static pub fn new(source: str) -> Self {
-        return Self(source=source, offset=0u64, row=0u64, column=0u64, tokens=Vec<Token>.new());
+        return Self(cursor=source.chars().peekable(),
+            row=0u64, column=0u64, tokens=Vec<Token>.new());
     }
 
     fn position() -> Position {
-        return Position(row=self.row, column=self.column, byte=self.offset);
+        return Position(row=self.row, column=self.column);
     }
 
-    fn at_end() -> bool { return self.offset >= self.source.as_slice().len(); }
-
-    fn peek_byte(ahead: u64) -> u8 {
-        let bytes = self.source.as_slice();
-        if self.offset + ahead >= bytes.len() { return 0u8; }
-        return bytes[self.offset + ahead];
-    }
-
-    fn width() -> u64 {
-        let byte = self.peek_byte(0u64);
-        if byte < 128u8 { return 1u64; }
-        if byte < 224u8 { return 2u64; }
-        if byte < 240u8 { return 3u64; }
-        return 4u64;
-    }
+    fn at_end() -> bool { return self.cursor.peek().is_none(); }
 
     fn peek() -> u32 {
-        if self.at_end() { return 0xffffffffu32; }
-        let first = u32(self.peek_byte(0u64));
-        if first < 128u32 { return first; }
-        if first < 224u32 {
-            return ((first & 31u32) << 6u32) | (u32(self.peek_byte(1u64)) & 63u32);
+        match self.cursor.peek() {
+            Some(value) => u32(*value),
+            None => 0xffffffffu32,
         }
-        if first < 240u32 {
-            return ((first & 15u32) << 12u32) |
-            ((u32(self.peek_byte(1u64)) & 63u32) << 6u32) |
-            (u32(self.peek_byte(2u64)) & 63u32);
+    }
+
+    fn peek_next() -> u32 {
+        match self.cursor.peek_next() {
+            Some(value) => u32(*value),
+            None => 0xffffffffu32,
         }
-        return ((first & 7u32) << 18u32) |
-        ((u32(self.peek_byte(1u64)) & 63u32) << 12u32) |
-        ((u32(self.peek_byte(2u64)) & 63u32) << 6u32) |
-        (u32(self.peek_byte(3u64)) & 63u32);
+    }
+
+    fn has_pair(first: char, second: char) -> bool {
+        return self.peek() == u32(first) && self.peek_next() == u32(second);
     }
 
     fn advance() -> u32 {
-        let code = self.peek();
-        self.offset += self.width();
+        let current = self.cursor.next();
+        let code = u32(*current.unwrap());
         if code == 10u32 {
             self.row += 1u64;
             self.column = 0u64;
@@ -129,10 +114,6 @@ impl Lexer {
             self.column += 1u64;
         }
         return code;
-    }
-
-    fn slice(start: u64, end: u64) -> str {
-        return str.from_slice_unchecked(self.source.as_slice()[start..end]);
     }
 
     fn token(payload: TokenPayload, start: Position) -> Token {
@@ -160,7 +141,7 @@ impl Lexer {
                 self.advance();
                 continue;
             }
-            if self.peek_byte(0u64) == b'/' && self.peek_byte(1u64) == b'/' {
+            if self.has_pair('/', '/') {
                 skipped = true;
                 self.advance();
                 self.advance();
@@ -168,7 +149,7 @@ impl Lexer {
                 if !self.at_end() { self.advance(); } else { self.row += 1u64; self.column = 0u64; }
                 continue;
             }
-            if self.peek_byte(0u64) == b'/' && self.peek_byte(1u64) == b'*' {
+            if self.has_pair('/', '*') {
                 skipped = true;
                 self.advance();
                 self.advance();
@@ -177,7 +158,7 @@ impl Lexer {
                         let at = self.position();
                         return Result<bool, LexError>.Err(msg=self.fail("Unterminated block comment", at));
                     }
-                    if self.peek_byte(0u64) == b'*' && self.peek_byte(1u64) == b'/' {
+                    if self.has_pair('*', '/') {
                         self.advance();
                         self.advance();
                         break;
@@ -312,7 +293,7 @@ impl Lexer {
                     if self.at_end() {
                         return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string expression", self.position()));
                     }
-                    if self.peek_byte(0u64) == b'f' && self.peek_byte(1u64) == b'"' {
+                    if self.has_pair('f', '"') {
                         let nested = self.fstring();
                         if nested.is_err() { return nested; }
                         continue;
@@ -376,50 +357,59 @@ impl Lexer {
             return self.quoted(start, 39u32, true);
         }
         if ident_start(code) {
-            while !self.at_end() && ident_part(self.peek()) { self.advance(); }
-            let raw = self.slice(start.byte, self.offset);
-            match KeywordKind.from_text(raw) {
-                Some(kind) => return Result<Token, LexError>.Ok(val=self.token(
-                    TokenPayload.Keyword(value=kind), start)),
+            let raw = String.new();
+            raw.push(char(code));
+            while !self.at_end() && ident_part(self.peek()) { raw.push(char(self.advance())); }
+            match KeywordKind.from_text(raw.as_str()) {
+                Some(kind) => {
+                    raw.drop();
+                    return Result<Token, LexError>.Ok(val=self.token(
+                        TokenPayload.Keyword(value=kind), start));
+                },
                 None => {},
             }
             return Result<Token, LexError>.Ok(val=self.token(
-                TokenPayload.Identifier(value=String.from(&raw)), start));
+                TokenPayload.Identifier(value=raw), start));
         }
         if code >= 48u32 && code <= 57u32 {
-            while !self.at_end() && number_part(self.peek()) { self.advance(); }
-            if self.peek_byte(0u64) == b'.' &&
-            self.peek_byte(1u64) >= b'0' && self.peek_byte(1u64) <= b'9' {
-                self.advance();
-                self.advance();
-                while !self.at_end() && number_part(self.peek()) { self.advance(); }
+            let raw = String.new();
+            raw.push(char(code));
+            while !self.at_end() && number_part(self.peek()) { raw.push(char(self.advance())); }
+            if self.peek() == u32('.') &&
+            self.peek_next() >= u32('0') && self.peek_next() <= u32('9') {
+                raw.push(char(self.advance()));
+                raw.push(char(self.advance()));
+                while !self.at_end() && number_part(self.peek()) { raw.push(char(self.advance())); }
             }
-            let raw = self.slice(start.byte, self.offset);
-            if is_float_literal(raw) {
-                let parsed = match parse_float(raw) {
+            if is_float_literal(raw.as_str()) {
+                let parsed = match parse_float(raw.as_str()) {
                     Ok(value) => value,
                     Err(message) => {
                         let problem = self.fail(message.as_str(), start);
                         message.drop();
+                        raw.drop();
                         return Result<Token, LexError>.Err(msg=problem);
                     },
                 };
                 let suffix = *FloatSuffix.from_text(parsed.suffix()).unwrap();
                 let token = self.float_token(start, parsed.value(), suffix);
                 parsed.drop();
+                raw.drop();
                 return Result<Token, LexError>.Ok(val=token);
             }
-            let parsed = match parse_integer(raw) {
+            let parsed = match parse_integer(raw.as_str()) {
                 Ok(value) => value,
                 Err(message) => {
                     let problem = self.fail(message.as_str(), start);
                     message.drop();
+                    raw.drop();
                     return Result<Token, LexError>.Err(msg=problem);
                 },
             };
             let suffix = *IntSuffix.from_text(parsed.suffix()).unwrap();
             let token = self.integer_token(start, parsed.value(), suffix);
             parsed.drop();
+            raw.drop();
             return Result<Token, LexError>.Ok(val=token);
         }
 
@@ -429,16 +419,24 @@ impl Lexer {
             let kind = *PunctuatorKind.from_text(label).unwrap();
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
         }
+        let raw = String.new();
+        raw.push(char(code));
         while !self.at_end() && self.peek() < 128u32 {
-            let candidate = self.slice(start.byte, self.offset + 1u64);
-            if !punctuator(candidate) { break; }
+            raw.push(char(self.peek()));
+            if !punctuator(raw.as_str()) {
+                raw.pop();
+                break;
+            }
             self.advance();
         }
-        let raw = self.slice(start.byte, self.offset);
-        if !punctuator(raw) {
-            return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start));
-        }
-        let kind = *PunctuatorKind.from_text(raw).unwrap();
+        let kind = match PunctuatorKind.from_text(raw.as_str()) {
+            Some(value) => value,
+            None => {
+                raw.drop();
+                return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start));
+            },
+        };
+        raw.drop();
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
     }
 
@@ -448,7 +446,7 @@ impl Lexer {
                 Ok(value) => value,
                 Err(problem) => { self.drop(); return Result<Vec<Token>, LexError>.Err(msg=problem); },
             };
-            if self.peek_byte(0u64) == b'f' && self.peek_byte(1u64) == b'"' {
+            if self.has_pair('f', '"') {
                 let result = self.fstring();
                 match result {
                     Ok(_) => continue,

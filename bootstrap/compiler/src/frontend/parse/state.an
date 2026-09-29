@@ -65,7 +65,7 @@ pub struct Parser {
 
 impl Parser {
     static pub fn new(tokens: Vec<Token>&) -> Self {
-        let zero = Position(row=0u64, column=0u64, byte=0u64);
+        let zero = Position(row=0u64, column=0u64);
         return Self(tokens=tokens, index=0u64, arena=AstArena.new(), failed=false,
             problem=ParseError(message=String.new(), span=Span(start=zero, end=zero)));
     }
