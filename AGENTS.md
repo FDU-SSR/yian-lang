@@ -13,6 +13,7 @@ The supported development environment is Linux with Python 3.11 or newer (`anx` 
 - Preserve unrelated local changes. Inspect the worktree before editing or committing.
 - Use `apply_patch` for local file edits when practical.
 - Do not add tests, assertions, expected outputs, or test runners unless the user explicitly requests them.
+- The bootstrap compiler needs the core compilation functionality, not strict behavioral equivalence with the Python compiler. Presentation details such as token and AST output or diagnostic formatting may differ.
 
 ## Compiler CLI
 

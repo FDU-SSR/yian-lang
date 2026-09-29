@@ -130,65 +130,67 @@ impl KeywordKind {
     }
 
     static pub fn from_text(text: str) -> Option<Self> {
-        if text == "import" { return Option<Self>.Some(val=Self.Import); }
-        if text == "from" { return Option<Self>.Some(val=Self.From); }
-        if text == "as" { return Option<Self>.Some(val=Self.As); }
-        if text == "let" { return Option<Self>.Some(val=Self.Let); }
-        if text == "typedef" { return Option<Self>.Some(val=Self.Typedef); }
-        if text == "struct" { return Option<Self>.Some(val=Self.Struct); }
-        if text == "enum" { return Option<Self>.Some(val=Self.Enum); }
-        if text == "trait" { return Option<Self>.Some(val=Self.Trait); }
-        if text == "impl" { return Option<Self>.Some(val=Self.Impl); }
-        if text == "fn" { return Option<Self>.Some(val=Self.Fn); }
-        if text == "dyn" { return Option<Self>.Some(val=Self.Dyn); }
-        if text == "pub" { return Option<Self>.Some(val=Self.Pub); }
-        if text == "ffi" { return Option<Self>.Some(val=Self.Ffi); }
-        if text == "extern" { return Option<Self>.Some(val=Self.Extern); }
-        if text == "opaque" { return Option<Self>.Some(val=Self.Opaque); }
-        if text == "type" { return Option<Self>.Some(val=Self.Type); }
-        if text == "static" { return Option<Self>.Some(val=Self.Static); }
-        if text == "const" { return Option<Self>.Some(val=Self.Const); }
-        if text == "comptime" { return Option<Self>.Some(val=Self.Comptime); }
-        if text == "inline" { return Option<Self>.Some(val=Self.Inline); }
-        if text == "intrinsic" { return Option<Self>.Some(val=Self.Intrinsic); }
-        if text == "if" { return Option<Self>.Some(val=Self.If); }
-        if text == "elif" { return Option<Self>.Some(val=Self.Elif); }
-        if text == "else" { return Option<Self>.Some(val=Self.Else); }
-        if text == "match" { return Option<Self>.Some(val=Self.Match); }
-        if text == "for" { return Option<Self>.Some(val=Self.For); }
-        if text == "while" { return Option<Self>.Some(val=Self.While); }
-        if text == "loop" { return Option<Self>.Some(val=Self.Loop); }
-        if text == "break" { return Option<Self>.Some(val=Self.Break); }
-        if text == "continue" { return Option<Self>.Some(val=Self.Continue); }
-        if text == "return" { return Option<Self>.Some(val=Self.Return); }
-        if text == "defer" { return Option<Self>.Some(val=Self.Defer); }
-        if text == "assert" { return Option<Self>.Some(val=Self.Assert); }
-        if text == "in" { return Option<Self>.Some(val=Self.In); }
-        if text == "typeof" { return Option<Self>.Some(val=Self.Typeof); }
-        if text == "del" { return Option<Self>.Some(val=Self.Del); }
-        if text == "true" { return Option<Self>.Some(val=Self.True_); }
-        if text == "false" { return Option<Self>.Some(val=Self.False_); }
-        if text == "IS_RAW_MODE" { return Option<Self>.Some(val=Self.IsRawMode); }
-        if text == "_" { return Option<Self>.Some(val=Self.Underscore); }
-        if text == "void" { return Option<Self>.Some(val=Self.Void); }
-        if text == "bool" { return Option<Self>.Some(val=Self.Bool); }
-        if text == "char" { return Option<Self>.Some(val=Self.Char); }
-        if text == "str" { return Option<Self>.Some(val=Self.Str); }
-        if text == "i8" { return Option<Self>.Some(val=Self.I8); }
-        if text == "i16" { return Option<Self>.Some(val=Self.I16); }
-        if text == "i32" { return Option<Self>.Some(val=Self.I32); }
-        if text == "i64" { return Option<Self>.Some(val=Self.I64); }
-        if text == "u8" { return Option<Self>.Some(val=Self.U8); }
-        if text == "u16" { return Option<Self>.Some(val=Self.U16); }
-        if text == "u32" { return Option<Self>.Some(val=Self.U32); }
-        if text == "u64" { return Option<Self>.Some(val=Self.U64); }
-        if text == "f16" { return Option<Self>.Some(val=Self.F16); }
-        if text == "f32" { return Option<Self>.Some(val=Self.F32); }
-        if text == "f64" { return Option<Self>.Some(val=Self.F64); }
-        if text == "int" { return Option<Self>.Some(val=Self.Int); }
-        if text == "uint" { return Option<Self>.Some(val=Self.Uint); }
-        if text == "float" { return Option<Self>.Some(val=Self.Float); }
-        return Option<Self>.None;
+        return match text {
+            "import" => Option<Self>.Some(val=Self.Import),
+            "from" => Option<Self>.Some(val=Self.From),
+            "as" => Option<Self>.Some(val=Self.As),
+            "let" => Option<Self>.Some(val=Self.Let),
+            "typedef" => Option<Self>.Some(val=Self.Typedef),
+            "struct" => Option<Self>.Some(val=Self.Struct),
+            "enum" => Option<Self>.Some(val=Self.Enum),
+            "trait" => Option<Self>.Some(val=Self.Trait),
+            "impl" => Option<Self>.Some(val=Self.Impl),
+            "fn" => Option<Self>.Some(val=Self.Fn),
+            "dyn" => Option<Self>.Some(val=Self.Dyn),
+            "pub" => Option<Self>.Some(val=Self.Pub),
+            "ffi" => Option<Self>.Some(val=Self.Ffi),
+            "extern" => Option<Self>.Some(val=Self.Extern),
+            "opaque" => Option<Self>.Some(val=Self.Opaque),
+            "type" => Option<Self>.Some(val=Self.Type),
+            "static" => Option<Self>.Some(val=Self.Static),
+            "const" => Option<Self>.Some(val=Self.Const),
+            "comptime" => Option<Self>.Some(val=Self.Comptime),
+            "inline" => Option<Self>.Some(val=Self.Inline),
+            "intrinsic" => Option<Self>.Some(val=Self.Intrinsic),
+            "if" => Option<Self>.Some(val=Self.If),
+            "elif" => Option<Self>.Some(val=Self.Elif),
+            "else" => Option<Self>.Some(val=Self.Else),
+            "match" => Option<Self>.Some(val=Self.Match),
+            "for" => Option<Self>.Some(val=Self.For),
+            "while" => Option<Self>.Some(val=Self.While),
+            "loop" => Option<Self>.Some(val=Self.Loop),
+            "break" => Option<Self>.Some(val=Self.Break),
+            "continue" => Option<Self>.Some(val=Self.Continue),
+            "return" => Option<Self>.Some(val=Self.Return),
+            "defer" => Option<Self>.Some(val=Self.Defer),
+            "assert" => Option<Self>.Some(val=Self.Assert),
+            "in" => Option<Self>.Some(val=Self.In),
+            "typeof" => Option<Self>.Some(val=Self.Typeof),
+            "del" => Option<Self>.Some(val=Self.Del),
+            "true" => Option<Self>.Some(val=Self.True_),
+            "false" => Option<Self>.Some(val=Self.False_),
+            "IS_RAW_MODE" => Option<Self>.Some(val=Self.IsRawMode),
+            "_" => Option<Self>.Some(val=Self.Underscore),
+            "void" => Option<Self>.Some(val=Self.Void),
+            "bool" => Option<Self>.Some(val=Self.Bool),
+            "char" => Option<Self>.Some(val=Self.Char),
+            "str" => Option<Self>.Some(val=Self.Str),
+            "i8" => Option<Self>.Some(val=Self.I8),
+            "i16" => Option<Self>.Some(val=Self.I16),
+            "i32" => Option<Self>.Some(val=Self.I32),
+            "i64" => Option<Self>.Some(val=Self.I64),
+            "u8" => Option<Self>.Some(val=Self.U8),
+            "u16" => Option<Self>.Some(val=Self.U16),
+            "u32" => Option<Self>.Some(val=Self.U32),
+            "u64" => Option<Self>.Some(val=Self.U64),
+            "f16" => Option<Self>.Some(val=Self.F16),
+            "f32" => Option<Self>.Some(val=Self.F32),
+            "f64" => Option<Self>.Some(val=Self.F64),
+            "int" => Option<Self>.Some(val=Self.Int),
+            "uint" => Option<Self>.Some(val=Self.Uint),
+            "float" => Option<Self>.Some(val=Self.Float),
+            _ => Option<Self>.None,
+        };
     }
 }
 
@@ -351,55 +353,57 @@ impl PunctuatorKind {
     }
 
     static pub fn from_text(text: str) -> Option<Self> {
-        if text == "(" { return Option<Self>.Some(val=Self.LParen); }
-        if text == ")" { return Option<Self>.Some(val=Self.RParen); }
-        if text == "{" { return Option<Self>.Some(val=Self.LBrace); }
-        if text == "}" { return Option<Self>.Some(val=Self.RBrace); }
-        if text == "[" { return Option<Self>.Some(val=Self.LBracket); }
-        if text == "]" { return Option<Self>.Some(val=Self.RBracket); }
-        if text == "," { return Option<Self>.Some(val=Self.Comma); }
-        if text == ":" { return Option<Self>.Some(val=Self.Colon); }
-        if text == ";" { return Option<Self>.Some(val=Self.Semicolon); }
-        if text == "." { return Option<Self>.Some(val=Self.Dot); }
-        if text == "->" { return Option<Self>.Some(val=Self.Arrow); }
-        if text == "=>" { return Option<Self>.Some(val=Self.FatArrow); }
-        if text == "+" { return Option<Self>.Some(val=Self.Plus); }
-        if text == "-" { return Option<Self>.Some(val=Self.Minus); }
-        if text == "*" { return Option<Self>.Some(val=Self.Star); }
-        if text == "/" { return Option<Self>.Some(val=Self.Slash); }
-        if text == "%" { return Option<Self>.Some(val=Self.Percent); }
-        if text == "^" { return Option<Self>.Some(val=Self.Caret); }
-        if text == "&" { return Option<Self>.Some(val=Self.Ampersand); }
-        if text == "&&" { return Option<Self>.Some(val=Self.AmpersandAmpersand); }
-        if text == "|" { return Option<Self>.Some(val=Self.Pipe); }
-        if text == "||" { return Option<Self>.Some(val=Self.PipePipe); }
-        if text == "~" { return Option<Self>.Some(val=Self.Tilde); }
-        if text == "!" { return Option<Self>.Some(val=Self.Exclamation); }
-        if text == "=" { return Option<Self>.Some(val=Self.Equal); }
-        if text == "<" { return Option<Self>.Some(val=Self.Less); }
-        if text == ">" { return Option<Self>.Some(val=Self.Greater); }
-        if text == "<angle>" { return Option<Self>.Some(val=Self.LAngle); }
-        if text == ">angle>" { return Option<Self>.Some(val=Self.RAngle); }
-        if text == "+=" { return Option<Self>.Some(val=Self.PlusEqual); }
-        if text == "-=" { return Option<Self>.Some(val=Self.MinusEqual); }
-        if text == "*=" { return Option<Self>.Some(val=Self.StarEqual); }
-        if text == "/=" { return Option<Self>.Some(val=Self.SlashEqual); }
-        if text == "%=" { return Option<Self>.Some(val=Self.PercentEqual); }
-        if text == "^=" { return Option<Self>.Some(val=Self.CaretEqual); }
-        if text == "&=" { return Option<Self>.Some(val=Self.AmpersandEqual); }
-        if text == "|=" { return Option<Self>.Some(val=Self.PipeEqual); }
-        if text == "==" { return Option<Self>.Some(val=Self.EqualEqual); }
-        if text == "!=" { return Option<Self>.Some(val=Self.NotEqual); }
-        if text == "<=" { return Option<Self>.Some(val=Self.LessEqual); }
-        if text == ">=" { return Option<Self>.Some(val=Self.GreaterEqual); }
-        if text == "<<" { return Option<Self>.Some(val=Self.LessLess); }
-        if text == "<<=" { return Option<Self>.Some(val=Self.LessLessEqual); }
-        if text == ">>" { return Option<Self>.Some(val=Self.GreaterGreater); }
-        if text == ">>=" { return Option<Self>.Some(val=Self.GreaterGreaterEqual); }
-        if text == ".." { return Option<Self>.Some(val=Self.DotDot); }
-        if text == "@" { return Option<Self>.Some(val=Self.At); }
-        if text == "<eof>" { return Option<Self>.Some(val=Self.EOF); }
-        return Option<Self>.None;
+        return match text {
+            "(" => Option<Self>.Some(val=Self.LParen),
+            ")" => Option<Self>.Some(val=Self.RParen),
+            "{" => Option<Self>.Some(val=Self.LBrace),
+            "}" => Option<Self>.Some(val=Self.RBrace),
+            "[" => Option<Self>.Some(val=Self.LBracket),
+            "]" => Option<Self>.Some(val=Self.RBracket),
+            "," => Option<Self>.Some(val=Self.Comma),
+            ":" => Option<Self>.Some(val=Self.Colon),
+            ";" => Option<Self>.Some(val=Self.Semicolon),
+            "." => Option<Self>.Some(val=Self.Dot),
+            "->" => Option<Self>.Some(val=Self.Arrow),
+            "=>" => Option<Self>.Some(val=Self.FatArrow),
+            "+" => Option<Self>.Some(val=Self.Plus),
+            "-" => Option<Self>.Some(val=Self.Minus),
+            "*" => Option<Self>.Some(val=Self.Star),
+            "/" => Option<Self>.Some(val=Self.Slash),
+            "%" => Option<Self>.Some(val=Self.Percent),
+            "^" => Option<Self>.Some(val=Self.Caret),
+            "&" => Option<Self>.Some(val=Self.Ampersand),
+            "&&" => Option<Self>.Some(val=Self.AmpersandAmpersand),
+            "|" => Option<Self>.Some(val=Self.Pipe),
+            "||" => Option<Self>.Some(val=Self.PipePipe),
+            "~" => Option<Self>.Some(val=Self.Tilde),
+            "!" => Option<Self>.Some(val=Self.Exclamation),
+            "=" => Option<Self>.Some(val=Self.Equal),
+            "<" => Option<Self>.Some(val=Self.Less),
+            ">" => Option<Self>.Some(val=Self.Greater),
+            "<angle>" => Option<Self>.Some(val=Self.LAngle),
+            ">angle>" => Option<Self>.Some(val=Self.RAngle),
+            "+=" => Option<Self>.Some(val=Self.PlusEqual),
+            "-=" => Option<Self>.Some(val=Self.MinusEqual),
+            "*=" => Option<Self>.Some(val=Self.StarEqual),
+            "/=" => Option<Self>.Some(val=Self.SlashEqual),
+            "%=" => Option<Self>.Some(val=Self.PercentEqual),
+            "^=" => Option<Self>.Some(val=Self.CaretEqual),
+            "&=" => Option<Self>.Some(val=Self.AmpersandEqual),
+            "|=" => Option<Self>.Some(val=Self.PipeEqual),
+            "==" => Option<Self>.Some(val=Self.EqualEqual),
+            "!=" => Option<Self>.Some(val=Self.NotEqual),
+            "<=" => Option<Self>.Some(val=Self.LessEqual),
+            ">=" => Option<Self>.Some(val=Self.GreaterEqual),
+            "<<" => Option<Self>.Some(val=Self.LessLess),
+            "<<=" => Option<Self>.Some(val=Self.LessLessEqual),
+            ">>" => Option<Self>.Some(val=Self.GreaterGreater),
+            ">>=" => Option<Self>.Some(val=Self.GreaterGreaterEqual),
+            ".." => Option<Self>.Some(val=Self.DotDot),
+            "@" => Option<Self>.Some(val=Self.At),
+            "<eof>" => Option<Self>.Some(val=Self.EOF),
+            _ => Option<Self>.None,
+        };
     }
 }
 
@@ -435,18 +439,20 @@ impl IntSuffix {
     }
 
     static pub fn from_text(text: str) -> Option<Self> {
-        if text == "" { return Option<Self>.Some(val=Self.Unsuffixed); }
-        if text == "i8" { return Option<Self>.Some(val=Self.I8); }
-        if text == "i16" { return Option<Self>.Some(val=Self.I16); }
-        if text == "i32" { return Option<Self>.Some(val=Self.I32); }
-        if text == "i64" { return Option<Self>.Some(val=Self.I64); }
-        if text == "u8" { return Option<Self>.Some(val=Self.U8); }
-        if text == "u16" { return Option<Self>.Some(val=Self.U16); }
-        if text == "u32" { return Option<Self>.Some(val=Self.U32); }
-        if text == "u64" { return Option<Self>.Some(val=Self.U64); }
-        if text == "int" { return Option<Self>.Some(val=Self.Int); }
-        if text == "uint" { return Option<Self>.Some(val=Self.Uint); }
-        return Option<Self>.None;
+        return match text {
+            "" => Option<Self>.Some(val=Self.Unsuffixed),
+            "i8" => Option<Self>.Some(val=Self.I8),
+            "i16" => Option<Self>.Some(val=Self.I16),
+            "i32" => Option<Self>.Some(val=Self.I32),
+            "i64" => Option<Self>.Some(val=Self.I64),
+            "u8" => Option<Self>.Some(val=Self.U8),
+            "u16" => Option<Self>.Some(val=Self.U16),
+            "u32" => Option<Self>.Some(val=Self.U32),
+            "u64" => Option<Self>.Some(val=Self.U64),
+            "int" => Option<Self>.Some(val=Self.Int),
+            "uint" => Option<Self>.Some(val=Self.Uint),
+            _ => Option<Self>.None,
+        };
     }
 }
 
@@ -470,12 +476,14 @@ impl FloatSuffix {
     }
 
     static pub fn from_text(text: str) -> Option<Self> {
-        if text == "" { return Option<Self>.Some(val=Self.Unsuffixed); }
-        if text == "f16" { return Option<Self>.Some(val=Self.F16); }
-        if text == "f32" { return Option<Self>.Some(val=Self.F32); }
-        if text == "f64" { return Option<Self>.Some(val=Self.F64); }
-        if text == "float" { return Option<Self>.Some(val=Self.Float); }
-        return Option<Self>.None;
+        return match text {
+            "" => Option<Self>.Some(val=Self.Unsuffixed),
+            "f16" => Option<Self>.Some(val=Self.F16),
+            "f32" => Option<Self>.Some(val=Self.F32),
+            "f64" => Option<Self>.Some(val=Self.F64),
+            "float" => Option<Self>.Some(val=Self.Float),
+            _ => Option<Self>.None,
+        };
     }
 }
 
@@ -499,21 +507,20 @@ impl Drop for TokenPayload {
     pub fn drop() {
         match self {
             Identifier(value) | Character(value) | StringLiteral(value) |
-                FStrLiteral(value) => value.drop(),
+            FStrLiteral(value) => value.drop(),
             _ => {},
         }
     }
 }
 
 pub struct Token {
-    raw: String,
     payload: TokenPayload,
     span: Span,
 }
 
 impl Token {
-    static pub fn new(raw: String, payload: TokenPayload, span: Span) -> Self {
-        return Self(raw=raw, payload=payload, span=span);
+    static pub fn new(payload: TokenPayload, span: Span) -> Self {
+        return Self(payload=payload, span=span);
     }
 
     pub fn kind() -> TokenPayload& { return &self.payload; }
@@ -523,16 +530,19 @@ impl Token {
     pub fn is_punctuator() -> bool {
         match self.payload { Punctuator(_) => true, _ => false }
     }
-    pub fn raw() -> str { return self.raw.as_str(); }
     pub fn value() -> str {
         match self.payload {
             Keyword(value) => value.spelling(),
             Punctuator(value) => value.spelling(),
             Identifier(value) | Character(value) | StringLiteral(value) |
-                FStrLiteral(value) => value.as_str(),
-            FStrExprBegin | FStrExprEnd | FStrEnd => "",
+            FStrLiteral(value) => value.as_str(),
+            Integer(_, _) => "<integer>",
+            Float(_, _) => "<float>",
+            FStrStart => "f\"",
+            FStrExprBegin => "{",
+            FStrExprEnd => "}",
+            FStrEnd => "\"",
             EndOfFile => "<eof>",
-            _ => self.raw.as_str(),
         }
     }
     pub fn suffix() -> str {
@@ -589,7 +599,6 @@ impl Token {
 
 impl Drop for Token {
     pub fn drop() {
-        self.raw.drop();
         self.payload.drop();
     }
 }

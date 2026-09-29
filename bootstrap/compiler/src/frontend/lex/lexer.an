@@ -32,7 +32,7 @@ fn punctuator(word: str) -> bool {
 
 fn ident_start(code: u32) -> bool {
     return code == 95u32 || (code >= 65u32 && code <= 90u32) ||
-        (code >= 97u32 && code <= 122u32);
+    (code >= 97u32 && code <= 122u32);
 }
 
 fn ident_part(code: u32) -> bool {
@@ -41,12 +41,12 @@ fn ident_part(code: u32) -> bool {
 
 fn number_part(code: u32) -> bool {
     return (code >= 48u32 && code <= 57u32) || code == 95u32 ||
-        code == 43u32 || code == 45u32 ||
-        (code >= 97u32 && code <= 102u32) ||
-        (code >= 65u32 && code <= 70u32) ||
-        code == 120u32 || code == 88u32 || code == 98u32 || code == 66u32 ||
-        code == 111u32 || code == 79u32 || code == 112u32 || code == 80u32 ||
-        code == 105u32 || code == 117u32;
+    code == 43u32 || code == 45u32 ||
+    (code >= 97u32 && code <= 102u32) ||
+    (code >= 65u32 && code <= 70u32) ||
+    code == 120u32 || code == 88u32 || code == 98u32 || code == 66u32 ||
+    code == 111u32 || code == 79u32 || code == 112u32 || code == 80u32 ||
+    code == 105u32 || code == 117u32;
 }
 
 fn whitespace(code: u32) -> bool {
@@ -54,11 +54,11 @@ fn whitespace(code: u32) -> bool {
         return true;
     }
     if code == 0x85u32 || code == 0xA0u32 || code == 0x1680u32 ||
-        code == 0x202Fu32 || code == 0x205Fu32 || code == 0x3000u32 {
+    code == 0x202Fu32 || code == 0x205Fu32 || code == 0x3000u32 {
         return true;
     }
     return (code >= 0x2000u32 && code <= 0x200Au32) ||
-        (code >= 0x2028u32 && code <= 0x2029u32);
+    (code >= 0x2028u32 && code <= 0x2029u32);
 }
 
 fn hex_digit(code: u32) -> i32 {
@@ -110,13 +110,13 @@ impl Lexer {
         }
         if first < 240u32 {
             return ((first & 15u32) << 12u32) |
-                ((u32(self.peek_byte(1u64)) & 63u32) << 6u32) |
-                (u32(self.peek_byte(2u64)) & 63u32);
+            ((u32(self.peek_byte(1u64)) & 63u32) << 6u32) |
+            (u32(self.peek_byte(2u64)) & 63u32);
         }
         return ((first & 7u32) << 18u32) |
-            ((u32(self.peek_byte(1u64)) & 63u32) << 12u32) |
-            ((u32(self.peek_byte(2u64)) & 63u32) << 6u32) |
-            (u32(self.peek_byte(3u64)) & 63u32);
+        ((u32(self.peek_byte(1u64)) & 63u32) << 12u32) |
+        ((u32(self.peek_byte(2u64)) & 63u32) << 6u32) |
+        (u32(self.peek_byte(3u64)) & 63u32);
     }
 
     fn advance() -> u32 {
@@ -136,8 +136,7 @@ impl Lexer {
     }
 
     fn token(payload: TokenPayload, start: Position) -> Token {
-        return Token.new(String.from(&self.slice(start.byte, self.offset)),
-            payload, Span(start=start, end=self.position()));
+        return Token.new(payload, Span(start=start, end=self.position()));
     }
 
     fn integer_token(start: Position, value: u64, suffix: IntSuffix) -> Token {
@@ -163,22 +162,24 @@ impl Lexer {
             }
             if self.peek_byte(0u64) == b'/' && self.peek_byte(1u64) == b'/' {
                 skipped = true;
-                self.advance(); self.advance();
+                self.advance();
+                self.advance();
                 while !self.at_end() && self.peek() != 10u32 { self.advance(); }
-                if !self.at_end() { self.advance(); }
-                else { self.row += 1u64; self.column = 0u64; }
+                if !self.at_end() { self.advance(); } else { self.row += 1u64; self.column = 0u64; }
                 continue;
             }
             if self.peek_byte(0u64) == b'/' && self.peek_byte(1u64) == b'*' {
                 skipped = true;
-                self.advance(); self.advance();
+                self.advance();
+                self.advance();
                 loop {
                     if self.at_end() {
                         let at = self.position();
                         return Result<bool, LexError>.Err(msg=self.fail("Unterminated block comment", at));
                     }
                     if self.peek_byte(0u64) == b'*' && self.peek_byte(1u64) == b'/' {
-                        self.advance(); self.advance();
+                        self.advance();
+                        self.advance();
                         break;
                     }
                     self.advance();
@@ -231,7 +232,7 @@ impl Lexer {
                 self.advance();
             }
             if self.at_end() || code > 0x10ffffu32 ||
-                (code >= 0xd800u32 && code <= 0xdfffu32) {
+            (code >= 0xd800u32 && code <= 0xdfffu32) {
                 return Result<char, LexError>.Err(msg=self.fail("invalid Unicode escape", start));
             }
             self.advance();
@@ -281,19 +282,19 @@ impl Lexer {
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Character(value=decoded), start));
     }
 
-    fn marker(payload: TokenPayload, position: Position, raw: str) -> Token {
-        return Token.new(String.from(&raw), payload,
-            Span(start=position, end=position));
+    fn marker(payload: TokenPayload, position: Position) -> Token {
+        return Token.new(payload, Span(start=position, end=position));
     }
 
     fn fstring() -> Result<bool, LexError> {
         let start = self.position();
-        self.advance(); self.advance();
+        self.advance();
+        self.advance();
         self.tokens.push(self.token(TokenPayload.FStrStart, start));
         while !self.at_end() {
             if self.peek() == 34u32 {
                 self.advance();
-                self.tokens.push(self.marker(TokenPayload.FStrEnd, self.position(), "\""));
+                self.tokens.push(self.marker(TokenPayload.FStrEnd, self.position()));
                 return Result<bool, LexError>.Ok(val=true);
             }
             if self.peek() == 125u32 {
@@ -301,7 +302,7 @@ impl Lexer {
             }
             if self.peek() == 123u32 {
                 self.advance();
-                self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position(), "{"));
+                self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position()));
                 let depth: u64 = 1u64;
                 loop {
                     let skipped = match self.skip_ignored() {
@@ -351,16 +352,7 @@ impl Lexer {
                     return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string escape", self.position()));
                 }
                 let escaped = self.advance();
-                if escaped == 110u32 { literal.push('\n'); }
-                elif escaped == 116u32 { literal.push('\t'); }
-                elif escaped == 114u32 { literal.push('\r'); }
-                elif escaped == 48u32 { literal.push('\0'); }
-                elif escaped == 92u32 { literal.push('\\'); }
-                elif escaped == 39u32 { literal.push('\''); }
-                elif escaped == 34u32 { literal.push('"'); }
-                elif escaped == 123u32 { literal.push('{'); }
-                elif escaped == 125u32 { literal.push('}'); }
-                else { literal.push('\\'); literal.push(char(escaped)); }
+                if escaped == 110u32 { literal.push('\n'); } elif escaped == 116u32 { literal.push('\t'); } elif escaped == 114u32 { literal.push('\r'); } elif escaped == 48u32 { literal.push('\0'); } elif escaped == 92u32 { literal.push('\\'); } elif escaped == 39u32 { literal.push('\''); } elif escaped == 34u32 { literal.push('"'); } elif escaped == 123u32 { literal.push('{'); } elif escaped == 125u32 { literal.push('}'); } else { literal.push('\\'); literal.push(char(escaped)); }
             }
             if literal.len() != 0u64 {
                 self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
@@ -397,8 +389,9 @@ impl Lexer {
         if code >= 48u32 && code <= 57u32 {
             while !self.at_end() && number_part(self.peek()) { self.advance(); }
             if self.peek_byte(0u64) == b'.' &&
-                self.peek_byte(1u64) >= b'0' && self.peek_byte(1u64) <= b'9' {
-                self.advance(); self.advance();
+            self.peek_byte(1u64) >= b'0' && self.peek_byte(1u64) <= b'9' {
+                self.advance();
+                self.advance();
                 while !self.at_end() && number_part(self.peek()) { self.advance(); }
             }
             let raw = self.slice(start.byte, self.offset);

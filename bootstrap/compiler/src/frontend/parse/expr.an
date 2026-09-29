@@ -37,7 +37,6 @@ fn literal_expr(parser: Parser&) -> NodeId {
         return NodeId.invalid();
     }
     let literal = parser.alloc(tag, span);
-    parser.text(literal, AstFieldName.Raw, token.raw());
     if tag == AstTag.FloatLiteral { parser.floating(literal, AstFieldName.Value, token.float_value()); }
     elif tag == AstTag.IntLiteral { parser.integer(literal, AstFieldName.Value, token.integer_value(), false); }
     else { parser.text(literal, AstFieldName.Value, token.value()); }
@@ -166,7 +165,6 @@ fn parse_primary(parser: Parser&) -> NodeId {
     if parser.at_punct(PunctuatorKind.Pipe) || parser.at_punct(PunctuatorKind.PipePipe) { return parse_closure(parser); }
     if parser.at_keyword(KeywordKind.True_) || parser.at_keyword(KeywordKind.False_) {
         let literal = parser.alloc(AstTag.BoolLiteral, span);
-        parser.text(literal, AstFieldName.Raw, token.value());
         parser.flag(literal, AstFieldName.Value, parser.at_keyword(KeywordKind.True_));
         parser.advance();
         let node = parser.alloc(AstTag.Literal, span);
@@ -692,7 +690,6 @@ fn parse_fstring(parser: Parser&) -> NodeId {
         match token.kind() {
             FStrLiteral(_) => {
                 let literal = parser.alloc(AstTag.StrLiteral, token.span());
-                parser.text(literal, AstFieldName.Raw, token.value());
                 parser.text(literal, AstFieldName.Value, token.value());
                 let expression = parser.alloc(AstTag.Literal, token.span());
                 parser.child(expression, AstFieldName.Literal, literal);

@@ -114,40 +114,42 @@ impl BuiltinKind {
     }
 
     static pub fn from_text(text: str) -> Option<Self> {
-        if text == "sizeof" { return Option<Self>.Some(val=Self.SizeOf); }
-        if text == "undef" { return Option<Self>.Some(val=Self.Undef); }
-        if text == "dangling" { return Option<Self>.Some(val=Self.Dangling); }
-        if text == "bitcast" { return Option<Self>.Some(val=Self.BitCast); }
-        if text == "alloc" { return Option<Self>.Some(val=Self.Alloc); }
-        if text == "realloc" { return Option<Self>.Some(val=Self.Realloc); }
-        if text == "panic" { return Option<Self>.Some(val=Self.Panic); }
-        if text == "runtime_fail" { return Option<Self>.Some(val=Self.RuntimeFail); }
-        if text == "assume_init" { return Option<Self>.Some(val=Self.AssumeInit); }
-        if text == "memcpy" { return Option<Self>.Some(val=Self.MemCopy); }
-        if text == "slice_from_parts" { return Option<Self>.Some(val=Self.SliceFromParts); }
-        if text == "slice_get_ptr" { return Option<Self>.Some(val=Self.SliceGetPtr); }
-        if text == "slice_get_len" { return Option<Self>.Some(val=Self.SliceGetLen); }
-        if text == "str_from_parts" { return Option<Self>.Some(val=Self.StrFromParts); }
-        if text == "str_get_ptr" { return Option<Self>.Some(val=Self.StrGetPtr); }
-        if text == "str_get_len" { return Option<Self>.Some(val=Self.StrGetLen); }
-        if text == "sys_read" { return Option<Self>.Some(val=Self.SysRead); }
-        if text == "sys_read_bytes" { return Option<Self>.Some(val=Self.SysReadBytes); }
-        if text == "sys_write" { return Option<Self>.Some(val=Self.SysWrite); }
-        if text == "sys_write_bytes" { return Option<Self>.Some(val=Self.SysWriteBytes); }
-        if text == "open" { return Option<Self>.Some(val=Self.Open); }
-        if text == "close" { return Option<Self>.Some(val=Self.Close); }
-        if text == "sqrt" { return Option<Self>.Some(val=Self.Sqrt); }
-        if text == "sin" { return Option<Self>.Some(val=Self.Sin); }
-        if text == "cos" { return Option<Self>.Some(val=Self.Cos); }
-        if text == "argc" { return Option<Self>.Some(val=Self.Argc); }
-        if text == "arg_bytes" { return Option<Self>.Some(val=Self.ArgBytes); }
-        if text == "exit" { return Option<Self>.Some(val=Self.Exit); }
-        if text == "ffi_addr" { return Option<Self>.Some(val=Self.FfiAddr); }
-        if text == "ffi_parts" { return Option<Self>.Some(val=Self.FfiParts); }
-        if text == "ffi_null" { return Option<Self>.Some(val=Self.FfiNull); }
-        if text == "ffi_ptr_cast" { return Option<Self>.Some(val=Self.FfiPtrCast); }
-        if text == "ffi_copy_from" { return Option<Self>.Some(val=Self.FfiCopyFrom); }
-        if text == "ffi_copy_to" { return Option<Self>.Some(val=Self.FfiCopyTo); }
-        return Option<Self>.None;
+        return match text {
+            "sizeof" => Option<Self>.Some(val=Self.SizeOf),
+            "undef" => Option<Self>.Some(val=Self.Undef),
+            "dangling" => Option<Self>.Some(val=Self.Dangling),
+            "bitcast" => Option<Self>.Some(val=Self.BitCast),
+            "alloc" => Option<Self>.Some(val=Self.Alloc),
+            "realloc" => Option<Self>.Some(val=Self.Realloc),
+            "panic" => Option<Self>.Some(val=Self.Panic),
+            "runtime_fail" => Option<Self>.Some(val=Self.RuntimeFail),
+            "assume_init" => Option<Self>.Some(val=Self.AssumeInit),
+            "memcpy" => Option<Self>.Some(val=Self.MemCopy),
+            "slice_from_parts" => Option<Self>.Some(val=Self.SliceFromParts),
+            "slice_get_ptr" => Option<Self>.Some(val=Self.SliceGetPtr),
+            "slice_get_len" => Option<Self>.Some(val=Self.SliceGetLen),
+            "str_from_parts" => Option<Self>.Some(val=Self.StrFromParts),
+            "str_get_ptr" => Option<Self>.Some(val=Self.StrGetPtr),
+            "str_get_len" => Option<Self>.Some(val=Self.StrGetLen),
+            "sys_read" => Option<Self>.Some(val=Self.SysRead),
+            "sys_read_bytes" => Option<Self>.Some(val=Self.SysReadBytes),
+            "sys_write" => Option<Self>.Some(val=Self.SysWrite),
+            "sys_write_bytes" => Option<Self>.Some(val=Self.SysWriteBytes),
+            "open" => Option<Self>.Some(val=Self.Open),
+            "close" => Option<Self>.Some(val=Self.Close),
+            "sqrt" => Option<Self>.Some(val=Self.Sqrt),
+            "sin" => Option<Self>.Some(val=Self.Sin),
+            "cos" => Option<Self>.Some(val=Self.Cos),
+            "argc" => Option<Self>.Some(val=Self.Argc),
+            "arg_bytes" => Option<Self>.Some(val=Self.ArgBytes),
+            "exit" => Option<Self>.Some(val=Self.Exit),
+            "ffi_addr" => Option<Self>.Some(val=Self.FfiAddr),
+            "ffi_parts" => Option<Self>.Some(val=Self.FfiParts),
+            "ffi_null" => Option<Self>.Some(val=Self.FfiNull),
+            "ffi_ptr_cast" => Option<Self>.Some(val=Self.FfiPtrCast),
+            "ffi_copy_from" => Option<Self>.Some(val=Self.FfiCopyFrom),
+            "ffi_copy_to" => Option<Self>.Some(val=Self.FfiCopyTo),
+            _ => Option<Self>.None,
+        };
     }
 }

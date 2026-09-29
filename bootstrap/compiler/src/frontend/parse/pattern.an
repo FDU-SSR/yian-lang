@@ -7,7 +7,6 @@ from compiler.frontend.source import Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
-from std.core.string import String;
 from std.core.vec import Vec;
 
 fn literal_token(parser: Parser&) -> NodeId {
@@ -26,7 +25,6 @@ fn literal_token(parser: Parser&) -> NodeId {
     }
     let span = token.span();
     let node = parser.alloc(tag, span);
-    parser.text(node, AstFieldName.Raw, token.raw());
     if tag == AstTag.IntLiteral {
         parser.integer(node, AstFieldName.Value, token.integer_value(), false);
         parser.text(node, AstFieldName.Suffix, token.suffix());
@@ -45,10 +43,6 @@ fn pattern_literal(parser: Parser&) -> NodeId {
         }
         let token = parser.peek();
         let node = parser.alloc(AstTag.IntLiteral, minus.join(token.span()));
-        let raw = String.from(&"-");
-        raw.push_str(token.raw());
-        parser.text(node, AstFieldName.Raw, raw.as_str());
-        raw.drop();
         parser.integer(node, AstFieldName.Value, token.integer_value(), true);
         parser.text(node, AstFieldName.Suffix, token.suffix());
         parser.advance();
@@ -67,7 +61,6 @@ fn pattern_atom(parser: Parser&) -> NodeId {
     }
     if parser.at_keyword(KeywordKind.True_) || parser.at_keyword(KeywordKind.False_) {
         let literal = parser.alloc(AstTag.BoolLiteral, span);
-        parser.text(literal, AstFieldName.Raw, token.value());
         parser.flag(literal, AstFieldName.Value, parser.at_keyword(KeywordKind.True_));
         parser.advance();
         let node = parser.alloc(AstTag.LiteralPattern, span);

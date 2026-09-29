@@ -281,15 +281,10 @@ fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
         let message = tree.node(id).child_field(AstFieldName.Message);
         if !message.is_valid() {
             let value = assertion_message(path, span);
-            let raw = String.from(&"\"");
-            raw.push_str(value.as_str());
-            raw.push('"');
             let literal = tree.alloc(AstTag.StrLiteral, span);
-            tree.text(literal, AstFieldName.Raw, raw.as_str());
             tree.text(literal, AstFieldName.Value, value.as_str());
             message = tree.alloc(AstTag.Literal, span);
             tree.child(message, AstFieldName.Literal, literal);
-            raw.drop();
             value.drop();
         }
         let arg = tree.alloc(AstTag.Arg, tree.node(message).span());

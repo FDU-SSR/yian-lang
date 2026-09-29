@@ -4,11 +4,11 @@ from compiler.frontend.parse.ast import AstValue, NodeId;
 from compiler.frontend.parse.state import AstTree;
 from compiler.frontend.source import Span;
 from std.core.drop import Drop;
+from std.core.fmt import ToString;
 from std.core.iter import IntoIterator, Iterator;
 from std.core.ops import Index;
 from std.core.string import String;
 from std.core.vec import Vec;
-from std.num.f64 import to_bits;
 
 fn token_kind(token: Token&) -> str {
     match token.kind() {
@@ -88,8 +88,6 @@ pub fn parse_code(message: str) -> str {
 fn append_token(output: String&, token: Token&) {
     output.push_str("{\"kind\":");
     append_string(output, token_kind(token));
-    output.push_str(",\"raw\":");
-    append_string(output, token.raw());
     output.push_str(",\"value\":");
     match token.kind() {
         Integer(_, _) => {
@@ -97,20 +95,15 @@ fn append_token(output: String&, token: Token&) {
             append_string(output, value.as_str());
             value.drop();
         },
-        Float(_, _) => append_string(output, ""),
+        Float(_, _) => {
+            let value = token.float_value().to_string();
+            append_string(output, value.as_str());
+            value.drop();
+        },
         _ => append_string(output, token.value()),
     }
     output.push_str(",\"suffix\":");
     append_string(output, token.suffix());
-    output.push_str(",\"bits\":");
-    match token.kind() {
-        Float(_, _) => {
-            let bits = to_bits(token.float_value()).to_string_radix(10u64);
-            append_string(output, bits.as_str());
-            bits.drop();
-        },
-        _ => append_string(output, "0"),
-    }
     output.push(',');
     append_span(output, token.span());
     output.push('}');
@@ -175,9 +168,7 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
         if index != 0u64 { output.push(','); }
         let field = &fields[index];
         output.push('[');
-        if node.tag() == AstTag.FloatLiteral && field.name() == AstFieldName.Value {
-            append_string(output, "bits");
-        } else { append_string(output, field.name().name()); }
+        append_string(output, field.name().name());
         output.push(',');
         match field.value() {
             Missing => output.push_str("null"),
@@ -193,9 +184,9 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
                 digits.drop();
             },
             Float(value) => {
-                let bits = to_bits(*value).to_string_radix(10u64);
-                append_string(output, bits.as_str());
-                bits.drop();
+                let display = (*value).to_string();
+                append_string(output, display.as_str());
+                display.drop();
             },
             BinaryOp(value) => append_string(output, value.spelling()),
             UnaryOp(value) => append_string(output, value.spelling()),
