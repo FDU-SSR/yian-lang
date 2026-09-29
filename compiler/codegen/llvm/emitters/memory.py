@@ -143,9 +143,9 @@ class MemoryEmitter:
             element_ll = self.__ll_type_ctx.get_ll_type(base_def.pointee_type).ir_type  # type: ignore[union-attr]
             address = self.__pointers.fat_addr(base, base_def.pointee_type)  # type: ignore[union-attr]
             idx_values = [self.i32(index) for index in indices]
-            source = element_ll if address.ir_val.type.is_opaque else None  # type: ignore
+            opaque_address = self.__core.ir.bitcast(address.ir_val, self.__ll_type_ctx.ptr_type)  # type: ignore
             field_addr = self.__builder.gep(
-                address.ir_val, idx_values, inbounds=True, source_etype=source
+                opaque_address, idx_values, inbounds=True, source_etype=element_ll
             )  # type: ignore
             field_ptr = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), field_addr)  # type: ignore
             if isinstance(base_def, Type.PointerType):
@@ -166,8 +166,11 @@ class MemoryEmitter:
                 field_ptr, word, self.__u64(0), self.__u64(1), result_type_id
             )
         idx_values = [self.i32(index) for index in indices]
-        source = source_ll if base.ir_val.type.is_opaque else None  # type: ignore
-        value = self.__builder.gep(base.ir_val, idx_values, inbounds=True, source_etype=source)  # type: ignore
+        # Opaque the base first: source_etype controls GEP offset calculation,
+        # while llvmlite otherwise preserves the base's stale typed pointer on
+        # the result, which can corrupt subsequent field accesses.
+        opaque_base = self.__core.ir.bitcast(base.ir_val, self.__ll_type_ctx.ptr_type)  # type: ignore
+        value = self.__builder.gep(opaque_base, idx_values, inbounds=True, source_etype=source_ll)  # type: ignore
         return LLValue(result_type_id, value)
 
     def mem_copy(self, dest: LLValue, src: LLValue, count: LLValue) -> None:

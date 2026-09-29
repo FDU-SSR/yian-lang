@@ -828,7 +828,12 @@ class TypeCtx(IntrinsicIds):
                 except AnalysisError:
                     continue
 
-                if not self.__impl_registry.check_conditions(impl, impl_substs):
+                if impl.trait is not None and self.contains_generic(self.instantiate(impl.trait, impl_substs)):
+                    conditioned_substs = self.__impl_registry.infer_condition_substs(impl, impl_substs, receiver_span)
+                    if conditioned_substs is None:
+                        continue
+                    impl_substs = conditioned_substs
+                elif not self.__impl_registry.check_conditions(impl, impl_substs):
                     continue
 
                 method_id = impl.methods[method_name]
@@ -837,7 +842,7 @@ class TypeCtx(IntrinsicIds):
                 assert isinstance(instantiated_method_ty, Type.MethodType)
 
                 if generic_args is not None and len(generic_args) > 0:
-                    method_generics = instantiated_method_ty.custom_def.generics
+                    method_generics = self.__declared_method_generics(impl, method_name, instantiated_method_ty)
                     if len(generic_args) > len(method_generics):
                         continue
                     explicit_generics = method_generics[len(method_generics) - len(generic_args):]
@@ -879,6 +884,21 @@ class TypeCtx(IntrinsicIds):
         if self.__memoize_enabled:
             self.__method_lookup_cache[cache_key] = result
         return result
+
+    def __declared_method_generics(self, impl: Impl, method_name: str, method_ty: Type.MethodType) -> list[int]:
+        """Return method-owned generics without enclosing trait or impl parameters."""
+        generics = method_ty.custom_def.generics
+        if impl.trait is not None:
+            trait_ty = self[impl.trait]
+            assert isinstance(trait_ty, Type.TraitType)
+            trait_method_id = self.get_trait_methods(impl.trait).get(method_name)
+            if trait_method_id is not None:
+                trait_method_ty = self[trait_method_id]
+                assert isinstance(trait_method_ty, Type.MethodType)
+                template_generics = trait_method_ty.custom_def.generics
+                if generics[:len(template_generics)] == template_generics:
+                    return template_generics[len(trait_ty.custom_def.generics):]
+        return generics[len(impl.generics):]
 
     def __trait_object_method_lookup(
         self,

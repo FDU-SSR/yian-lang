@@ -50,9 +50,9 @@ class PointerOps:
             return self.__pointers.insert_field_value(base, new_index, ABI.FAT_INDEX)
         element_type_id = ptr_type.pointee_type
         element_ll = self.__ll_type_ctx.get_ll_type(element_type_id).ir_type
-        source = element_ll if base.ir_val.type.is_opaque else None  # type: ignore
+        opaque_base = self.__core.ir.bitcast(base.ir_val, self.__ll_type_ctx.ptr_type)  # type: ignore
         result = self.__builder.gep(
-            base.ir_val, [offset.ir_val], inbounds=False, source_etype=source
+            opaque_base, [offset.ir_val], inbounds=False, source_etype=element_ll
         )  # type: ignore
         return LLValue(base.type_id, result)
 

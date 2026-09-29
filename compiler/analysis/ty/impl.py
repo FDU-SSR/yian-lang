@@ -125,6 +125,58 @@ class ImplRegistry:
                     return False
         return True
 
+    def infer_condition_substs(self, impl: Impl, substs: dict[int, int], span: SrcSpan) -> dict[int, int] | None:
+        """Resolve generic arguments supplied by concrete trait-bound implementations."""
+        if not impl.conditions:
+            return substs
+        inferred = dict(substs)
+        for generic_id, required_traits in impl.conditions.items():
+            concrete_type_id = self.__ctx.instantiate(generic_id, inferred)
+            if self.__ctx.contains_generic(concrete_type_id):
+                return None
+            for trait_id in required_traits:
+                required_trait_id = self.__ctx.instantiate(trait_id, inferred)
+                if not self.__ctx.contains_generic(required_trait_id):
+                    if not self.has_impl(concrete_type_id, required_trait_id):
+                        return None
+                    continue
+
+                matches: list[dict[int, int]] = []
+                for candidate in self.iter_candidate_impls(concrete_type_id):
+                    if candidate.trait is None:
+                        continue
+                    candidate_inference = GenericInference(self.__ctx, span)
+                    try:
+                        candidate_inference.constrain(candidate.target, concrete_type_id)
+                        candidate_substs = candidate_inference.substitutions()
+                        concrete_trait_id = self.__ctx.instantiate(candidate.trait, candidate_substs)
+                        if self.__ctx.contains_generic(concrete_trait_id):
+                            continue
+                        bound_inference = GenericInference(self.__ctx, span)
+                        bound_inference.constrain(required_trait_id, concrete_trait_id)
+                        bound_substs = bound_inference.substitutions()
+                    except AnalysisError:
+                        continue
+                    if not self.has_impl(concrete_type_id, concrete_trait_id):
+                        continue
+                    merged = dict(inferred)
+                    if any(key in merged and not self.__ctx.is_same_type(merged[key], value)
+                           for key, value in bound_substs.items()):
+                        continue
+                    merged.update(bound_substs)
+                    if merged not in matches:
+                        matches.append(merged)
+
+                if len(matches) != 1:
+                    if len(matches) > 1:
+                        raise AnalysisError("Ambiguous trait-bound type inference", span)
+                    return None
+                inferred = matches[0]
+
+        if not self.check_conditions(impl, inferred):
+            return None
+        return inferred
+
     def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None, fresh: bool = False) -> bool:
         """Check whether *type_id* implements *trait_id*.
 

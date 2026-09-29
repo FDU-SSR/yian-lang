@@ -16,3 +16,143 @@ impl<T, U> IntoIterator<T> for T if T: Iterator<U> {
         *self
     }
 }
+
+// Two-item lookahead. Cached items remain owned by the caller and can be
+// recovered with take_buffered() when iteration ends before they are consumed.
+pub struct Peekable<I, T> {
+    iter: I,
+    first: Option<T>,
+    second: Option<T>,
+}
+
+impl<I, T> Peekable<I, T> if I: Iterator<T> {
+    static pub fn new(iter: I) -> Self {
+        Self(iter=iter, first=Option<T>.None, second=Option<T>.None)
+    }
+
+    pub fn peek() -> Option<T&> {
+        if self.first.is_none() {
+            self.first = self.iter.next();
+        }
+        match &self.first {
+            Some(value) => Option<T&>.Some(value),
+            None => Option<T&>.None,
+        }
+    }
+
+    pub fn peek_next() -> Option<T&> {
+        if self.peek().is_none() {
+            return Option<T&>.None;
+        }
+        if self.second.is_none() {
+            self.second = self.iter.next();
+        }
+        match &self.second {
+            Some(value) => Option<T&>.Some(value),
+            None => Option<T&>.None,
+        }
+    }
+
+    pub fn take_buffered() -> (Option<T>, Option<T>) {
+        (self.first.take(), self.second.take())
+    }
+}
+
+impl<I, T> Iterator<T> for Peekable<I, T> if I: Iterator<T> {
+    fn next() -> Option<T> {
+        if self.first.is_some() {
+            let value = self.first.take();
+            self.first = self.second.take();
+            return value;
+        }
+        self.iter.next()
+    }
+}
+
+pub struct Map<I, T, U, F> {
+    iter: I,
+    f: F,
+}
+
+impl<I, T, U, F> Iterator<U> for Map<I, T, U, F> if I: Iterator<T> {
+    fn next() -> Option<U> {
+        match self.iter.next() {
+            Some(value) => Option<U>.Some((self.f)(value)),
+            None => Option<U>.None,
+        }
+    }
+}
+
+pub struct Enumerate<I, T> {
+    iter: I,
+    index: u64,
+}
+
+impl<I, T> Iterator<(u64, T)> for Enumerate<I, T> if I: Iterator<T> {
+    fn next() -> Option<(u64, T)> {
+        match self.iter.next() {
+            Some(value) => {
+                let index = self.index;
+                self.index += 1u64;
+                Option<(u64, T)>.Some((index, value))
+            },
+            None => Option<(u64, T)>.None,
+        }
+    }
+}
+
+pub struct Take<I, T> {
+    iter: I,
+    remaining: u64,
+}
+
+impl<I, T> Iterator<T> for Take<I, T> if I: Iterator<T> {
+    fn next() -> Option<T> {
+        if self.remaining == 0u64 {
+            return Option<T>.None;
+        }
+        match self.iter.next() {
+            Some(value) => {
+                self.remaining -= 1u64;
+                Option<T>.Some(value)
+            },
+            None => Option<T>.None,
+        }
+    }
+}
+
+pub trait IteratorExt<T> {
+    fn peekable() -> Peekable<Self, T>;
+    fn map<F, U>(f: F) -> Map<Self, T, U, F>;
+    fn enumerate() -> Enumerate<Self, T>;
+    fn take(count: u64) -> Take<Self, T>;
+    fn fold<A, F>(initial: A, f: F) -> A;
+}
+
+impl<I, T> IteratorExt<T> for I if I: Iterator<T> {
+    fn peekable() -> Peekable<I, T> {
+        Peekable<I, T>.new(*self)
+    }
+
+    fn map<F, U>(f: F) -> Map<I, T, U, F> {
+        Map<I, T, U, F>(iter=*self, f=f)
+    }
+
+    fn enumerate() -> Enumerate<I, T> {
+        Enumerate<I, T>(iter=*self, index=0u64)
+    }
+
+    fn take(count: u64) -> Take<I, T> {
+        Take<I, T>(iter=*self, remaining=count)
+    }
+
+    fn fold<A, F>(initial: A, f: F) -> A {
+        let result = initial;
+        loop {
+            match self.next() {
+                Some(value) => { result = f(result, value); },
+                None => return result,
+            }
+        }
+    }
+}
