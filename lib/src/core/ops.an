@@ -119,16 +119,6 @@ pub enum Ordering {
     Greater,
 }
 
-impl PartialEq<Ordering> for Ordering {
-    fn eq(rhs: Ordering&) -> bool {
-        match *self {
-            Less => match *rhs { Less => true, _ => false },
-            Equal => match *rhs { Equal => true, _ => false },
-            Greater => match *rhs { Greater => true, _ => false },
-        }
-    }
-}
-
 pub trait PartialOrd<Rhs> {
     fn partial_cmp(rhs: Rhs&) -> Ordering;
 

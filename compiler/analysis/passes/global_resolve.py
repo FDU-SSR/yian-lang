@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from compiler.analysis.state import SemanticState
 from compiler.analysis.error import AnalysisError
+from compiler.analysis.resolution.enum_equality import build_unit_enum_equality_body
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -602,6 +603,25 @@ class GlobalResolve:
 
         # update the enum symbol with the resolved type
         ty.custom_def.variants = variants
+        if all(variant.payload_type is None for variant in variants):
+            self.__register_unit_enum_equality(unit, symbol.type_id, ty)
+
+    def __register_unit_enum_equality(self, unit: UnitData, enum_type_id: int, enum_type: Type.EnumType) -> None:
+        types = self.__ctx.type_ctx
+        trait_id = types.alloc_instance(types.partial_eq_id, [enum_type_id])
+        impl = types.register_impl(enum_type.custom_def.span, enum_type.custom_def.generics.copy(),
+                                   enum_type_id, trait_id, automatic=True)
+        method_id = types.alloc_method("eq", enum_type.custom_def.span)
+        method = types[method_id]
+        assert isinstance(method, Type.MethodType)
+        method.custom_def.generics = enum_type.custom_def.generics.copy()
+        method.generic_args = enum_type.custom_def.generics.copy()
+        method.custom_def.receiver_type = enum_type_id
+        method.custom_def.parameters = [Type.Parameter("other", types.alloc_ref(enum_type_id))]
+        method.custom_def.return_type = types.bool_id
+        method.custom_def.is_header = False
+        impl.methods["eq"] = method_id
+        self.__ctx.procedures.register(method_id, build_unit_enum_equality_body(enum_type), unit.unit_id)
 
     def __resolve_trait_def(self, unit: UnitData, trait_def: AST.TraitDef) -> None:
         symbol = unit.symbol_ctx.lookup(trait_def.name.name)

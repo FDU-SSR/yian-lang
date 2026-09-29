@@ -22,6 +22,8 @@ class Impl:
     trait: int | None
     methods: dict[str, int] = field(default_factory=dict[str, int])
     conditions: dict[int, list[int]] = field(default_factory=dict[int, list[int]])  # generic_type_id -> [required_trait_type_id, ...]
+    # Automatic implementations are fallback candidates when no explicit impl matches.
+    automatic: bool = False
 
 
 class ImplRegistry:
@@ -45,8 +47,8 @@ class ImplRegistry:
         """Enable has_impl memoization after impl registration is complete."""
         self.__memoize_enabled = True
 
-    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
-        impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {})
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None, *, automatic: bool = False) -> Impl:
+        impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {}, automatic=automatic)
         self.__impls.append(impl)
         return impl
 
@@ -180,29 +182,46 @@ class ImplRegistry:
             return False
         visited.add(key)
 
-        # Check exact match
-        for impl in self.__trait_impl_cache.get(self.__ctx.canonical(type_id), []):
-            if impl.trait == trait_id:
-                return self.check_conditions(impl, {}, visited)
-
-        # Check generic impls
-        for impl in self.__trait_generic_impl_cache:
-            if impl.trait is None:
-                continue
-            impl_trait = self.__ctx[impl.trait]
-            target_trait = self.__ctx[trait_id]
-            if not (isinstance(impl_trait, Type.TraitType) and isinstance(target_trait, Type.TraitType) and impl_trait.custom_def is target_trait.custom_def):
-                continue
-            inference = GenericInference(self.__ctx, SrcSpan.empty())
-            try:
-                inference.constrain(impl.target, type_id)
-                substs = inference.substitutions()
-            except AnalysisError:
-                continue
-            if self.check_conditions(impl, substs, visited):
-                return True
+        exact = self.__trait_impl_cache.get(type_id, [])
+        generic = self.__trait_generic_impl_cache
+        target_trait = self.__ctx[trait_id]
+        for automatic in (False, True):
+            for impl in exact:
+                if impl.automatic == automatic and impl.trait == trait_id and self.check_conditions(impl, {}, visited):
+                    return True
+            for impl in generic:
+                if impl.automatic != automatic or impl.trait is None:
+                    continue
+                impl_trait = self.__ctx[impl.trait]
+                if not (isinstance(impl_trait, Type.TraitType) and isinstance(target_trait, Type.TraitType)
+                        and impl_trait.custom_def is target_trait.custom_def):
+                    continue
+                inference = GenericInference(self.__ctx, SrcSpan.empty())
+                try:
+                    inference.constrain(impl.target, type_id)
+                    substs = inference.substitutions()
+                except AnalysisError:
+                    continue
+                if automatic and not self.__ctx.contains_generic(trait_id):
+                    resolved_trait = self.__ctx.instantiate(impl.trait, substs)
+                    if not self.__ctx.is_same_type(resolved_trait, trait_id):
+                        continue
+                if self.check_conditions(impl, substs, visited):
+                    return True
 
         return False
+
+    def __matches_trait(self, impl: Impl, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
+        if impl.trait is None:
+            return False
+        inference = GenericInference(self.__ctx, SrcSpan.empty())
+        try:
+            inference.constrain(impl.target, type_id)
+            inference.constrain(impl.trait, trait_id)
+            substs = inference.substitutions()
+        except AnalysisError:
+            return False
+        return self.check_conditions(impl, substs, visited)
 
     def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
         """Given a Deref impl and substitutions, return the return type of deref()."""
@@ -445,11 +464,25 @@ class ImplRegistry:
     def iter_candidate_impls(self, type_id: int) -> list[Impl]:
         """Return the impls that could potentially match the given type_id.
 
-        Returns exact matches plus all generic impls. Downstream
-        GenericInference.constrain in method_lookup performs the actual
-        matching/filtering.
+        Explicit exact and generic impls remain candidates for method lookup.
+        An automatic impl is omitted when a matching explicit trait impl has
+        satisfied conditions; method lookup checks each remaining signature.
         """
         type_id = self.__ctx.canonical(type_id)
         exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
         generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
-        return exact + generic
+        candidates = exact + generic
+        explicit = [impl for impl in candidates if not impl.automatic]
+        automatic: list[Impl] = []
+        for impl in candidates:
+            if not impl.automatic or impl.trait is None:
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                trait_id = self.__ctx.instantiate(impl.trait, inference.substitutions())
+            except AnalysisError:
+                continue
+            if not any(self.__matches_trait(other, type_id, trait_id) for other in explicit):
+                automatic.append(impl)
+        return explicit + automatic

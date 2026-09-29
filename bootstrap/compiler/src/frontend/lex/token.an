@@ -1,7 +1,6 @@
 from compiler.frontend.source import Span;
 from std.core.drop import Drop;
 from std.core.option import Option;
-from std.core.ops import PartialEq;
 from std.core.string import String;
 from std.core.vec import Vec;
 
@@ -65,72 +64,6 @@ pub enum KeywordKind {
     Uint,
     Float,
 }
-
-impl PartialEq<KeywordKind> for KeywordKind {
-    fn eq(other: KeywordKind&) -> bool {
-        match *self {
-            Import => match *other { Import => true, _ => false },
-            From => match *other { From => true, _ => false },
-            As => match *other { As => true, _ => false },
-            Let => match *other { Let => true, _ => false },
-            Typedef => match *other { Typedef => true, _ => false },
-            Struct => match *other { Struct => true, _ => false },
-            Enum => match *other { Enum => true, _ => false },
-            Trait => match *other { Trait => true, _ => false },
-            Impl => match *other { Impl => true, _ => false },
-            Fn => match *other { Fn => true, _ => false },
-            Dyn => match *other { Dyn => true, _ => false },
-            Pub => match *other { Pub => true, _ => false },
-            Ffi => match *other { Ffi => true, _ => false },
-            Extern => match *other { Extern => true, _ => false },
-            Opaque => match *other { Opaque => true, _ => false },
-            Type => match *other { Type => true, _ => false },
-            Static => match *other { Static => true, _ => false },
-            Const => match *other { Const => true, _ => false },
-            Comptime => match *other { Comptime => true, _ => false },
-            Inline => match *other { Inline => true, _ => false },
-            Intrinsic => match *other { Intrinsic => true, _ => false },
-            If => match *other { If => true, _ => false },
-            Elif => match *other { Elif => true, _ => false },
-            Else => match *other { Else => true, _ => false },
-            Match => match *other { Match => true, _ => false },
-            For => match *other { For => true, _ => false },
-            While => match *other { While => true, _ => false },
-            Loop => match *other { Loop => true, _ => false },
-            Break => match *other { Break => true, _ => false },
-            Continue => match *other { Continue => true, _ => false },
-            Return => match *other { Return => true, _ => false },
-            Defer => match *other { Defer => true, _ => false },
-            Assert => match *other { Assert => true, _ => false },
-            In => match *other { In => true, _ => false },
-            Typeof => match *other { Typeof => true, _ => false },
-            Del => match *other { Del => true, _ => false },
-            True_ => match *other { True_ => true, _ => false },
-            False_ => match *other { False_ => true, _ => false },
-            IsRawMode => match *other { IsRawMode => true, _ => false },
-            Underscore => match *other { Underscore => true, _ => false },
-            Void => match *other { Void => true, _ => false },
-            Bool => match *other { Bool => true, _ => false },
-            Char => match *other { Char => true, _ => false },
-            Str => match *other { Str => true, _ => false },
-            I8 => match *other { I8 => true, _ => false },
-            I16 => match *other { I16 => true, _ => false },
-            I32 => match *other { I32 => true, _ => false },
-            I64 => match *other { I64 => true, _ => false },
-            U8 => match *other { U8 => true, _ => false },
-            U16 => match *other { U16 => true, _ => false },
-            U32 => match *other { U32 => true, _ => false },
-            U64 => match *other { U64 => true, _ => false },
-            F16 => match *other { F16 => true, _ => false },
-            F32 => match *other { F32 => true, _ => false },
-            F64 => match *other { F64 => true, _ => false },
-            Int => match *other { Int => true, _ => false },
-            Uint => match *other { Uint => true, _ => false },
-            Float => match *other { Float => true, _ => false },
-        }
-    }
-}
-
 
 impl KeywordKind {
     pub fn spelling() -> str {
@@ -467,61 +400,6 @@ impl PunctuatorKind {
         if text == "@" { return Option<Self>.Some(val=Self.At); }
         if text == "<eof>" { return Option<Self>.Some(val=Self.EOF); }
         return Option<Self>.None;
-    }
-}
-
-impl PartialEq<PunctuatorKind> for PunctuatorKind {
-    fn eq(other: PunctuatorKind&) -> bool {
-        match *self {
-            LParen => match *other { LParen => true, _ => false },
-            RParen => match *other { RParen => true, _ => false },
-            LBrace => match *other { LBrace => true, _ => false },
-            RBrace => match *other { RBrace => true, _ => false },
-            LBracket => match *other { LBracket => true, _ => false },
-            RBracket => match *other { RBracket => true, _ => false },
-            Comma => match *other { Comma => true, _ => false },
-            Colon => match *other { Colon => true, _ => false },
-            Semicolon => match *other { Semicolon => true, _ => false },
-            Dot => match *other { Dot => true, _ => false },
-            Arrow => match *other { Arrow => true, _ => false },
-            FatArrow => match *other { FatArrow => true, _ => false },
-            Plus => match *other { Plus => true, _ => false },
-            Minus => match *other { Minus => true, _ => false },
-            Star => match *other { Star => true, _ => false },
-            Slash => match *other { Slash => true, _ => false },
-            Percent => match *other { Percent => true, _ => false },
-            Caret => match *other { Caret => true, _ => false },
-            Ampersand => match *other { Ampersand => true, _ => false },
-            AmpersandAmpersand => match *other { AmpersandAmpersand => true, _ => false },
-            Pipe => match *other { Pipe => true, _ => false },
-            PipePipe => match *other { PipePipe => true, _ => false },
-            Tilde => match *other { Tilde => true, _ => false },
-            Exclamation => match *other { Exclamation => true, _ => false },
-            Equal => match *other { Equal => true, _ => false },
-            Less => match *other { Less => true, _ => false },
-            Greater => match *other { Greater => true, _ => false },
-            LAngle => match *other { LAngle => true, _ => false },
-            RAngle => match *other { RAngle => true, _ => false },
-            PlusEqual => match *other { PlusEqual => true, _ => false },
-            MinusEqual => match *other { MinusEqual => true, _ => false },
-            StarEqual => match *other { StarEqual => true, _ => false },
-            SlashEqual => match *other { SlashEqual => true, _ => false },
-            PercentEqual => match *other { PercentEqual => true, _ => false },
-            CaretEqual => match *other { CaretEqual => true, _ => false },
-            AmpersandEqual => match *other { AmpersandEqual => true, _ => false },
-            PipeEqual => match *other { PipeEqual => true, _ => false },
-            EqualEqual => match *other { EqualEqual => true, _ => false },
-            NotEqual => match *other { NotEqual => true, _ => false },
-            LessEqual => match *other { LessEqual => true, _ => false },
-            GreaterEqual => match *other { GreaterEqual => true, _ => false },
-            LessLess => match *other { LessLess => true, _ => false },
-            LessLessEqual => match *other { LessLessEqual => true, _ => false },
-            GreaterGreater => match *other { GreaterGreater => true, _ => false },
-            GreaterGreaterEqual => match *other { GreaterGreaterEqual => true, _ => false },
-            DotDot => match *other { DotDot => true, _ => false },
-            At => match *other { At => true, _ => false },
-            EOF => match *other { EOF => true, _ => false },
-        }
     }
 }
 

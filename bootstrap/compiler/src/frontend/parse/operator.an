@@ -1,6 +1,5 @@
 from std.core.option import Option;
 from compiler.frontend.lex.token import Token, PunctuatorKind;
-from std.core.ops import PartialEq;
 
 pub enum BinaryOperator {
     Add,
@@ -196,45 +195,6 @@ impl BinaryOperator {
     }
 }
 
-impl PartialEq<BinaryOperator> for BinaryOperator {
-    fn eq(other: BinaryOperator&) -> bool {
-        match *self {
-            Add => match *other { Add => true, _ => false },
-            Sub => match *other { Sub => true, _ => false },
-            Mul => match *other { Mul => true, _ => false },
-            Div => match *other { Div => true, _ => false },
-            Mod => match *other { Mod => true, _ => false },
-            BitAnd => match *other { BitAnd => true, _ => false },
-            BitOr => match *other { BitOr => true, _ => false },
-            BitXor => match *other { BitXor => true, _ => false },
-            Shl => match *other { Shl => true, _ => false },
-            Shr => match *other { Shr => true, _ => false },
-            Eq => match *other { Eq => true, _ => false },
-            Neq => match *other { Neq => true, _ => false },
-            Lt => match *other { Lt => true, _ => false },
-            Gt => match *other { Gt => true, _ => false },
-            Leq => match *other { Leq => true, _ => false },
-            Geq => match *other { Geq => true, _ => false },
-            LogicalAnd => match *other { LogicalAnd => true, _ => false },
-            LogicalOr => match *other { LogicalOr => true, _ => false },
-            Assign => match *other { Assign => true, _ => false },
-            AddAssign => match *other { AddAssign => true, _ => false },
-            SubAssign => match *other { SubAssign => true, _ => false },
-            MulAssign => match *other { MulAssign => true, _ => false },
-            DivAssign => match *other { DivAssign => true, _ => false },
-            ModAssign => match *other { ModAssign => true, _ => false },
-            BitAndAssign => match *other { BitAndAssign => true, _ => false },
-            BitOrAssign => match *other { BitOrAssign => true, _ => false },
-            BitXorAssign => match *other { BitXorAssign => true, _ => false },
-            ShlAssign => match *other { ShlAssign => true, _ => false },
-            ShrAssign => match *other { ShrAssign => true, _ => false },
-            Index => match *other { Index => true, _ => false },
-            In => match *other { In => true, _ => false },
-            Range => match *other { Range => true, _ => false },
-        }
-    }
-}
-
 pub enum UnaryOperator {
     Neg,
     BitNot,
@@ -271,16 +231,4 @@ impl UnaryOperator {
         }
     }
 
-}
-
-impl PartialEq<UnaryOperator> for UnaryOperator {
-    fn eq(other: UnaryOperator&) -> bool {
-        match *self {
-            Neg => match *other { Neg => true, _ => false },
-            BitNot => match *other { BitNot => true, _ => false },
-            LogicalNot => match *other { LogicalNot => true, _ => false },
-            Deref => match *other { Deref => true, _ => false },
-            AddrOf => match *other { AddrOf => true, _ => false },
-        }
-    }
 }

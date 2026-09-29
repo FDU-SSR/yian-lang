@@ -711,8 +711,8 @@ class TypeCtx(IntrinsicIds):
             else:
                 return type_id
 
-    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None) -> Impl:
-        return self.__impl_registry.register_impl(span, generics, target, trait, conditions)
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None, *, automatic: bool = False) -> Impl:
+        return self.__impl_registry.register_impl(span, generics, target, trait, conditions, automatic=automatic)
 
     def check_impls(self) -> tuple[tuple[int, int], ...]:
         """

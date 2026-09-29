@@ -1,7 +1,7 @@
 from std.core.drop import Drop;
 from std.core.io import IoError, IoErrorKind;
 from std.core.option import Option;
-from std.core.ops import Index, PartialEq;
+from std.core.ops import Index;
 from std.core.range import Range;
 from std.core.result import Result;
 from std.core.string import String;
@@ -24,17 +24,6 @@ pub enum DirEntryKind {
     Directory,
     Link,
     Other,
-}
-
-impl PartialEq<DirEntryKind> for DirEntryKind {
-    fn eq(other: DirEntryKind&) -> bool {
-        match *self {
-            File => match *other { File => true, _ => false },
-            Directory => match *other { Directory => true, _ => false },
-            Link => match *other { Link => true, _ => false },
-            Other => match *other { Other => true, _ => false },
-        }
-    }
 }
 
 pub struct DirEntry {
