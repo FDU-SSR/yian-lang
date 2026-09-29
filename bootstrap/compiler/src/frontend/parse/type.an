@@ -230,7 +230,7 @@ fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
         parser.advance();
         let operand = const_expr_bp(parser, 13);
         if parser.failed() { return NodeId.invalid(); }
-        lhs = parser.alloc(AstTag.UnaryConstExpr, span.join(parser.node(operand).span()));
+        lhs = parser.alloc(AstTag.UnaryConstExpr, span + parser.node(operand).span());
         parser.unary_op(lhs, op);
         parser.child(lhs, AstFieldName.Operand, operand);
     } elif parser.at_punct(PunctuatorKind.LParen) {
@@ -261,7 +261,7 @@ fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
         parser.advance();
         let rhs = const_expr_bp(parser, lbp + 1);
         if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.BinaryConstExpr, parser.node(lhs).span().join(parser.node(rhs).span()));
+        let node = parser.alloc(AstTag.BinaryConstExpr, parser.node(lhs).span() + parser.node(rhs).span());
         parser.binary_op(node, op);
         parser.child(node, AstFieldName.Left, lhs);
         parser.child(node, AstFieldName.Right, rhs);

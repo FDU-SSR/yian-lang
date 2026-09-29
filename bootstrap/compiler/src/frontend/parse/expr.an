@@ -61,7 +61,7 @@ fn parse_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
         let rbp = op.rbp();
         let rhs = parse_expr_bp(parser, rbp);
         if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.Binary, parser.node(lhs).span().join(parser.node(rhs).span()));
+        let node = parser.alloc(AstTag.Binary, parser.node(lhs).span() + parser.node(rhs).span());
         parser.binary_op(node, op);
         parser.child(node, AstFieldName.Left, lhs);
         parser.child(node, AstFieldName.Right, rhs);
@@ -269,7 +269,7 @@ fn parse_arg(parser: Parser&) -> NodeId {
     let value = parse_expr(parser);
     if parser.failed() { return NodeId.invalid(); }
     let span = parser.node(value).span();
-    if name.is_valid() { span = parser.node(name).span().join(span); }
+    if name.is_valid() { span = parser.node(name).span() + span; }
     let node = parser.alloc(AstTag.Arg, span);
     if name.is_valid() { parser.child(node, AstFieldName.Name, name); }
     else { parser.missing(node, AstFieldName.Name); }
@@ -296,7 +296,7 @@ fn parse_postfix(parser: Parser&, initial: NodeId) -> NodeId {
             let open = parser.peek().span();
             let args = parse_args(parser);
             if parser.failed() { args.drop(); return NodeId.invalid(); }
-            let node = parser.alloc(AstTag.Call, parser.node(expr).span().join(open));
+            let node = parser.alloc(AstTag.Call, parser.node(expr).span() + open);
             parser.child(node, AstFieldName.Callee, expr);
             parser.children(node, AstFieldName.Args, args);
             expr = node;
@@ -403,7 +403,7 @@ fn parse_builtin(parser: Parser&) -> NodeId {
         end = parser.take_punct(PunctuatorKind.RParen);
     }
     if parser.failed() { types.drop(); args.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.Builtin, at.join(end));
+    let node = parser.alloc(AstTag.Builtin, at + end);
     parser.builtin_kind(node, *kind.unwrap());
     parser.children(node, AstFieldName.TypeArgs, types);
     parser.children(node, AstFieldName.Args, args);
@@ -752,7 +752,7 @@ fn parse_closure(parser: Parser&) -> NodeId {
                 parser.take_punct(PunctuatorKind.Equal);
                 let value = parse_expr_bp(parser, 5);
                 if parser.failed() { break; }
-                let item = parser.alloc(AstTag.CaptureItem, parser.node(name).span().join(parser.node(value).span()));
+                let item = parser.alloc(AstTag.CaptureItem, parser.node(name).span() + parser.node(value).span());
                 parser.child(item, AstFieldName.Name, name);
                 parser.child(item, AstFieldName.Expr, value);
                 captures.push(item);
@@ -791,7 +791,7 @@ fn parse_closure(parser: Parser&) -> NodeId {
     }
     let body = parse_block(parser);
     if parser.failed() { captures.drop(); params.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ClosureExpr, start.join(parser.node(body).span()));
+    let node = parser.alloc(AstTag.ClosureExpr, start + parser.node(body).span());
     parser.children(node, AstFieldName.Captures, captures);
     parser.children(node, AstFieldName.Params, params);
     if result_type.is_valid() { parser.child(node, AstFieldName.ReturnType, result_type); }

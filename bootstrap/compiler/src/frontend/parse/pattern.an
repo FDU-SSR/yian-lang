@@ -42,7 +42,7 @@ fn pattern_literal(parser: Parser&) -> NodeId {
             return NodeId.invalid();
         }
         let token = parser.peek();
-        let node = parser.alloc(AstTag.IntLiteral, minus.join(token.span()));
+        let node = parser.alloc(AstTag.IntLiteral, minus + token.span());
         parser.integer(node, AstFieldName.Value, token.integer_value(), true);
         parser.text(node, AstFieldName.Suffix, token.suffix());
         parser.advance();
@@ -90,7 +90,7 @@ fn pattern_atom(parser: Parser&) -> NodeId {
                 parser.error("Range endpoints must have the same literal kind", parser.node(upper).span());
                 return NodeId.invalid();
             }
-            let node = parser.alloc(AstTag.RangePattern, literal_span.join(parser.node(upper).span()));
+            let node = parser.alloc(AstTag.RangePattern, literal_span + parser.node(upper).span());
             parser.child(node, AstFieldName.Lower, literal);
             parser.child(node, AstFieldName.Upper, upper);
             return node;
@@ -266,7 +266,7 @@ fn pattern_at(parser: Parser&) -> NodeId {
         parser.advance();
         let inner = pattern_at(parser);
         if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.BindPattern, parser.node(name).span().join(parser.node(inner).span()));
+        let node = parser.alloc(AstTag.BindPattern, parser.node(name).span() + parser.node(inner).span());
         parser.child(node, AstFieldName.Name, name);
         parser.child(node, AstFieldName.Inner, inner);
         return node;
@@ -284,7 +284,7 @@ fn pattern_or(parser: Parser&) -> NodeId {
         alternatives.push(pattern_at(parser));
     }
     if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
-    let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
+    let span = parser.node(first).span() + parser.node(alternatives[alternatives.len() - 1u64]).span();
     let node = parser.alloc(AstTag.OrPattern, span);
     parser.children(node, AstFieldName.Alternatives, alternatives);
     return node;
@@ -315,7 +315,7 @@ pub fn parse_match_pattern(parser: Parser&) -> NodeId {
         alternatives.push(next);
     }
     if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
-    let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
+    let span = parser.node(first).span() + parser.node(alternatives[alternatives.len() - 1u64]).span();
     let node = parser.alloc(AstTag.OrPattern, span);
     parser.children(node, AstFieldName.Alternatives, alternatives);
     return node;

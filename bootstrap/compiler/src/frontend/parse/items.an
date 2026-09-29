@@ -123,7 +123,7 @@ fn generics(parser: Parser&) -> Vec<NodeId> {
             parser.take_punct(PunctuatorKind.Colon);
             let type = parse_type(parser);
             if parser.failed() { break; }
-            let node = parser.alloc(AstTag.ConstGenericParam, start.join(parser.node(type).span()));
+            let node = parser.alloc(AstTag.ConstGenericParam, start + parser.node(type).span());
             parser.child(node, AstFieldName.Name, name);
             parser.child(node, AstFieldName.ValueType, type);
             params.push(node);
@@ -235,7 +235,7 @@ pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> {
         span = parser.node(items[0u64]).span();
         let index: u64 = 1u64;
         while index < items.len() {
-            span = span.join(parser.node(items[index]).span());
+            span += parser.node(items[index]).span();
             index += 1u64;
         }
     }
@@ -324,7 +324,7 @@ fn parse_const(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
     let value = parse_expr(parser);
     let end = parser.take_punct(PunctuatorKind.Semicolon);
     if parser.failed() { attributes.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ConstDef, span.join(end));
+    let node = parser.alloc(AstTag.ConstDef, span + end);
     parser.children(node, AstFieldName.Attrs, attributes);
     parser.child(node, AstFieldName.Name, name);
     parser.child(node, AstFieldName.ConstType, type);

@@ -2,7 +2,7 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fs import Directory, DirEntry, DirEntryKind;
 from std.core.io import File, OpenMode;
-from std.core.ops import Index;
+from std.core.ops import Add, AddAssign, Index;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
@@ -17,8 +17,8 @@ pub struct Span {
     pub end: Position,
 }
 
-impl Span {
-    pub fn join(other: Span) -> Span {
+impl Add<Span, Span> for Span {
+    pub fn add(other: Span) -> Span {
         let start = self.start;
         if other.start.row < start.row ||
             (other.start.row == start.row && other.start.column < start.column) {
@@ -30,6 +30,15 @@ impl Span {
             end = other.end;
         }
         return Span(start=start, end=end);
+    }
+}
+
+impl AddAssign<Span, Span> for Span {
+    pub fn add_assign(other: Span) -> Span {
+        let merged = *self + other;
+        self.start = merged.start;
+        self.end = merged.end;
+        return *self;
     }
 }
 
