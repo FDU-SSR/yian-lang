@@ -1,0 +1,726 @@
+from compiler.frontend.source import Span;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.ops import PartialEq;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum KeywordKind {
+    Import,
+    From,
+    As,
+    Let,
+    Typedef,
+    Struct,
+    Enum,
+    Trait,
+    Impl,
+    Fn,
+    Dyn,
+    Pub,
+    Ffi,
+    Extern,
+    Opaque,
+    Type,
+    Static,
+    Const,
+    Comptime,
+    Inline,
+    Intrinsic,
+    If,
+    Elif,
+    Else,
+    Match,
+    For,
+    While,
+    Loop,
+    Break,
+    Continue,
+    Return,
+    Defer,
+    Assert,
+    In,
+    Typeof,
+    Del,
+    True_,
+    False_,
+    IsRawMode,
+    Underscore,
+    Void,
+    Bool,
+    Char,
+    Str,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F16,
+    F32,
+    F64,
+    Int,
+    Uint,
+    Float,
+}
+
+impl PartialEq<KeywordKind> for KeywordKind {
+    fn eq(other: KeywordKind&) -> bool {
+        match *self {
+            Import => match *other { Import => true, _ => false },
+            From => match *other { From => true, _ => false },
+            As => match *other { As => true, _ => false },
+            Let => match *other { Let => true, _ => false },
+            Typedef => match *other { Typedef => true, _ => false },
+            Struct => match *other { Struct => true, _ => false },
+            Enum => match *other { Enum => true, _ => false },
+            Trait => match *other { Trait => true, _ => false },
+            Impl => match *other { Impl => true, _ => false },
+            Fn => match *other { Fn => true, _ => false },
+            Dyn => match *other { Dyn => true, _ => false },
+            Pub => match *other { Pub => true, _ => false },
+            Ffi => match *other { Ffi => true, _ => false },
+            Extern => match *other { Extern => true, _ => false },
+            Opaque => match *other { Opaque => true, _ => false },
+            Type => match *other { Type => true, _ => false },
+            Static => match *other { Static => true, _ => false },
+            Const => match *other { Const => true, _ => false },
+            Comptime => match *other { Comptime => true, _ => false },
+            Inline => match *other { Inline => true, _ => false },
+            Intrinsic => match *other { Intrinsic => true, _ => false },
+            If => match *other { If => true, _ => false },
+            Elif => match *other { Elif => true, _ => false },
+            Else => match *other { Else => true, _ => false },
+            Match => match *other { Match => true, _ => false },
+            For => match *other { For => true, _ => false },
+            While => match *other { While => true, _ => false },
+            Loop => match *other { Loop => true, _ => false },
+            Break => match *other { Break => true, _ => false },
+            Continue => match *other { Continue => true, _ => false },
+            Return => match *other { Return => true, _ => false },
+            Defer => match *other { Defer => true, _ => false },
+            Assert => match *other { Assert => true, _ => false },
+            In => match *other { In => true, _ => false },
+            Typeof => match *other { Typeof => true, _ => false },
+            Del => match *other { Del => true, _ => false },
+            True_ => match *other { True_ => true, _ => false },
+            False_ => match *other { False_ => true, _ => false },
+            IsRawMode => match *other { IsRawMode => true, _ => false },
+            Underscore => match *other { Underscore => true, _ => false },
+            Void => match *other { Void => true, _ => false },
+            Bool => match *other { Bool => true, _ => false },
+            Char => match *other { Char => true, _ => false },
+            Str => match *other { Str => true, _ => false },
+            I8 => match *other { I8 => true, _ => false },
+            I16 => match *other { I16 => true, _ => false },
+            I32 => match *other { I32 => true, _ => false },
+            I64 => match *other { I64 => true, _ => false },
+            U8 => match *other { U8 => true, _ => false },
+            U16 => match *other { U16 => true, _ => false },
+            U32 => match *other { U32 => true, _ => false },
+            U64 => match *other { U64 => true, _ => false },
+            F16 => match *other { F16 => true, _ => false },
+            F32 => match *other { F32 => true, _ => false },
+            F64 => match *other { F64 => true, _ => false },
+            Int => match *other { Int => true, _ => false },
+            Uint => match *other { Uint => true, _ => false },
+            Float => match *other { Float => true, _ => false },
+        }
+    }
+}
+
+
+impl KeywordKind {
+    pub fn spelling() -> str {
+        match self {
+            Import => "import",
+            From => "from",
+            As => "as",
+            Let => "let",
+            Typedef => "typedef",
+            Struct => "struct",
+            Enum => "enum",
+            Trait => "trait",
+            Impl => "impl",
+            Fn => "fn",
+            Dyn => "dyn",
+            Pub => "pub",
+            Ffi => "ffi",
+            Extern => "extern",
+            Opaque => "opaque",
+            Type => "type",
+            Static => "static",
+            Const => "const",
+            Comptime => "comptime",
+            Inline => "inline",
+            Intrinsic => "intrinsic",
+            If => "if",
+            Elif => "elif",
+            Else => "else",
+            Match => "match",
+            For => "for",
+            While => "while",
+            Loop => "loop",
+            Break => "break",
+            Continue => "continue",
+            Return => "return",
+            Defer => "defer",
+            Assert => "assert",
+            In => "in",
+            Typeof => "typeof",
+            Del => "del",
+            True_ => "true",
+            False_ => "false",
+            IsRawMode => "IS_RAW_MODE",
+            Underscore => "_",
+            Void => "void",
+            Bool => "bool",
+            Char => "char",
+            Str => "str",
+            I8 => "i8",
+            I16 => "i16",
+            I32 => "i32",
+            I64 => "i64",
+            U8 => "u8",
+            U16 => "u16",
+            U32 => "u32",
+            U64 => "u64",
+            F16 => "f16",
+            F32 => "f32",
+            F64 => "f64",
+            Int => "int",
+            Uint => "uint",
+            Float => "float",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        if text == "import" { return Option<Self>.Some(val=Self.Import); }
+        if text == "from" { return Option<Self>.Some(val=Self.From); }
+        if text == "as" { return Option<Self>.Some(val=Self.As); }
+        if text == "let" { return Option<Self>.Some(val=Self.Let); }
+        if text == "typedef" { return Option<Self>.Some(val=Self.Typedef); }
+        if text == "struct" { return Option<Self>.Some(val=Self.Struct); }
+        if text == "enum" { return Option<Self>.Some(val=Self.Enum); }
+        if text == "trait" { return Option<Self>.Some(val=Self.Trait); }
+        if text == "impl" { return Option<Self>.Some(val=Self.Impl); }
+        if text == "fn" { return Option<Self>.Some(val=Self.Fn); }
+        if text == "dyn" { return Option<Self>.Some(val=Self.Dyn); }
+        if text == "pub" { return Option<Self>.Some(val=Self.Pub); }
+        if text == "ffi" { return Option<Self>.Some(val=Self.Ffi); }
+        if text == "extern" { return Option<Self>.Some(val=Self.Extern); }
+        if text == "opaque" { return Option<Self>.Some(val=Self.Opaque); }
+        if text == "type" { return Option<Self>.Some(val=Self.Type); }
+        if text == "static" { return Option<Self>.Some(val=Self.Static); }
+        if text == "const" { return Option<Self>.Some(val=Self.Const); }
+        if text == "comptime" { return Option<Self>.Some(val=Self.Comptime); }
+        if text == "inline" { return Option<Self>.Some(val=Self.Inline); }
+        if text == "intrinsic" { return Option<Self>.Some(val=Self.Intrinsic); }
+        if text == "if" { return Option<Self>.Some(val=Self.If); }
+        if text == "elif" { return Option<Self>.Some(val=Self.Elif); }
+        if text == "else" { return Option<Self>.Some(val=Self.Else); }
+        if text == "match" { return Option<Self>.Some(val=Self.Match); }
+        if text == "for" { return Option<Self>.Some(val=Self.For); }
+        if text == "while" { return Option<Self>.Some(val=Self.While); }
+        if text == "loop" { return Option<Self>.Some(val=Self.Loop); }
+        if text == "break" { return Option<Self>.Some(val=Self.Break); }
+        if text == "continue" { return Option<Self>.Some(val=Self.Continue); }
+        if text == "return" { return Option<Self>.Some(val=Self.Return); }
+        if text == "defer" { return Option<Self>.Some(val=Self.Defer); }
+        if text == "assert" { return Option<Self>.Some(val=Self.Assert); }
+        if text == "in" { return Option<Self>.Some(val=Self.In); }
+        if text == "typeof" { return Option<Self>.Some(val=Self.Typeof); }
+        if text == "del" { return Option<Self>.Some(val=Self.Del); }
+        if text == "true" { return Option<Self>.Some(val=Self.True_); }
+        if text == "false" { return Option<Self>.Some(val=Self.False_); }
+        if text == "IS_RAW_MODE" { return Option<Self>.Some(val=Self.IsRawMode); }
+        if text == "_" { return Option<Self>.Some(val=Self.Underscore); }
+        if text == "void" { return Option<Self>.Some(val=Self.Void); }
+        if text == "bool" { return Option<Self>.Some(val=Self.Bool); }
+        if text == "char" { return Option<Self>.Some(val=Self.Char); }
+        if text == "str" { return Option<Self>.Some(val=Self.Str); }
+        if text == "i8" { return Option<Self>.Some(val=Self.I8); }
+        if text == "i16" { return Option<Self>.Some(val=Self.I16); }
+        if text == "i32" { return Option<Self>.Some(val=Self.I32); }
+        if text == "i64" { return Option<Self>.Some(val=Self.I64); }
+        if text == "u8" { return Option<Self>.Some(val=Self.U8); }
+        if text == "u16" { return Option<Self>.Some(val=Self.U16); }
+        if text == "u32" { return Option<Self>.Some(val=Self.U32); }
+        if text == "u64" { return Option<Self>.Some(val=Self.U64); }
+        if text == "f16" { return Option<Self>.Some(val=Self.F16); }
+        if text == "f32" { return Option<Self>.Some(val=Self.F32); }
+        if text == "f64" { return Option<Self>.Some(val=Self.F64); }
+        if text == "int" { return Option<Self>.Some(val=Self.Int); }
+        if text == "uint" { return Option<Self>.Some(val=Self.Uint); }
+        if text == "float" { return Option<Self>.Some(val=Self.Float); }
+        return Option<Self>.None;
+    }
+}
+
+pub enum PunctuatorKind {
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Colon,
+    Semicolon,
+    Dot,
+    Arrow,
+    FatArrow,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Caret,
+    Ampersand,
+    AmpersandAmpersand,
+    Pipe,
+    PipePipe,
+    Tilde,
+    Exclamation,
+    Equal,
+    Less,
+    Greater,
+    LAngle,
+    RAngle,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
+    CaretEqual,
+    AmpersandEqual,
+    PipeEqual,
+    EqualEqual,
+    NotEqual,
+    LessEqual,
+    GreaterEqual,
+    LessLess,
+    LessLessEqual,
+    GreaterGreater,
+    GreaterGreaterEqual,
+    DotDot,
+    At,
+    EOF,
+}
+
+impl PunctuatorKind {
+    pub fn name() -> str {
+        match self {
+            LParen => "LParen",
+            RParen => "RParen",
+            LBrace => "LBrace",
+            RBrace => "RBrace",
+            LBracket => "LBracket",
+            RBracket => "RBracket",
+            Comma => "Comma",
+            Colon => "Colon",
+            Semicolon => "Semicolon",
+            Dot => "Dot",
+            Arrow => "Arrow",
+            FatArrow => "FatArrow",
+            Plus => "Plus",
+            Minus => "Minus",
+            Star => "Star",
+            Slash => "Slash",
+            Percent => "Percent",
+            Caret => "Caret",
+            Ampersand => "Ampersand",
+            AmpersandAmpersand => "AmpersandAmpersand",
+            Pipe => "Pipe",
+            PipePipe => "PipePipe",
+            Tilde => "Tilde",
+            Exclamation => "Exclamation",
+            Equal => "Equal",
+            Less => "Less",
+            Greater => "Greater",
+            LAngle => "LAngle",
+            RAngle => "RAngle",
+            PlusEqual => "PlusEqual",
+            MinusEqual => "MinusEqual",
+            StarEqual => "StarEqual",
+            SlashEqual => "SlashEqual",
+            PercentEqual => "PercentEqual",
+            CaretEqual => "CaretEqual",
+            AmpersandEqual => "AmpersandEqual",
+            PipeEqual => "PipeEqual",
+            EqualEqual => "EqualEqual",
+            NotEqual => "NotEqual",
+            LessEqual => "LessEqual",
+            GreaterEqual => "GreaterEqual",
+            LessLess => "LessLess",
+            LessLessEqual => "LessLessEqual",
+            GreaterGreater => "GreaterGreater",
+            GreaterGreaterEqual => "GreaterGreaterEqual",
+            DotDot => "DotDot",
+            At => "At",
+            EOF => "EOF",
+        }
+    }
+
+    pub fn spelling() -> str {
+        match self {
+            LParen => "(",
+            RParen => ")",
+            LBrace => "{",
+            RBrace => "}",
+            LBracket => "[",
+            RBracket => "]",
+            Comma => ",",
+            Colon => ":",
+            Semicolon => ";",
+            Dot => ".",
+            Arrow => "->",
+            FatArrow => "=>",
+            Plus => "+",
+            Minus => "-",
+            Star => "*",
+            Slash => "/",
+            Percent => "%",
+            Caret => "^",
+            Ampersand => "&",
+            AmpersandAmpersand => "&&",
+            Pipe => "|",
+            PipePipe => "||",
+            Tilde => "~",
+            Exclamation => "!",
+            Equal => "=",
+            Less => "<",
+            Greater => ">",
+            LAngle => "<angle>",
+            RAngle => ">angle>",
+            PlusEqual => "+=",
+            MinusEqual => "-=",
+            StarEqual => "*=",
+            SlashEqual => "/=",
+            PercentEqual => "%=",
+            CaretEqual => "^=",
+            AmpersandEqual => "&=",
+            PipeEqual => "|=",
+            EqualEqual => "==",
+            NotEqual => "!=",
+            LessEqual => "<=",
+            GreaterEqual => ">=",
+            LessLess => "<<",
+            LessLessEqual => "<<=",
+            GreaterGreater => ">>",
+            GreaterGreaterEqual => ">>=",
+            DotDot => "..",
+            At => "@",
+            EOF => "<eof>",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        if text == "(" { return Option<Self>.Some(val=Self.LParen); }
+        if text == ")" { return Option<Self>.Some(val=Self.RParen); }
+        if text == "{" { return Option<Self>.Some(val=Self.LBrace); }
+        if text == "}" { return Option<Self>.Some(val=Self.RBrace); }
+        if text == "[" { return Option<Self>.Some(val=Self.LBracket); }
+        if text == "]" { return Option<Self>.Some(val=Self.RBracket); }
+        if text == "," { return Option<Self>.Some(val=Self.Comma); }
+        if text == ":" { return Option<Self>.Some(val=Self.Colon); }
+        if text == ";" { return Option<Self>.Some(val=Self.Semicolon); }
+        if text == "." { return Option<Self>.Some(val=Self.Dot); }
+        if text == "->" { return Option<Self>.Some(val=Self.Arrow); }
+        if text == "=>" { return Option<Self>.Some(val=Self.FatArrow); }
+        if text == "+" { return Option<Self>.Some(val=Self.Plus); }
+        if text == "-" { return Option<Self>.Some(val=Self.Minus); }
+        if text == "*" { return Option<Self>.Some(val=Self.Star); }
+        if text == "/" { return Option<Self>.Some(val=Self.Slash); }
+        if text == "%" { return Option<Self>.Some(val=Self.Percent); }
+        if text == "^" { return Option<Self>.Some(val=Self.Caret); }
+        if text == "&" { return Option<Self>.Some(val=Self.Ampersand); }
+        if text == "&&" { return Option<Self>.Some(val=Self.AmpersandAmpersand); }
+        if text == "|" { return Option<Self>.Some(val=Self.Pipe); }
+        if text == "||" { return Option<Self>.Some(val=Self.PipePipe); }
+        if text == "~" { return Option<Self>.Some(val=Self.Tilde); }
+        if text == "!" { return Option<Self>.Some(val=Self.Exclamation); }
+        if text == "=" { return Option<Self>.Some(val=Self.Equal); }
+        if text == "<" { return Option<Self>.Some(val=Self.Less); }
+        if text == ">" { return Option<Self>.Some(val=Self.Greater); }
+        if text == "<angle>" { return Option<Self>.Some(val=Self.LAngle); }
+        if text == ">angle>" { return Option<Self>.Some(val=Self.RAngle); }
+        if text == "+=" { return Option<Self>.Some(val=Self.PlusEqual); }
+        if text == "-=" { return Option<Self>.Some(val=Self.MinusEqual); }
+        if text == "*=" { return Option<Self>.Some(val=Self.StarEqual); }
+        if text == "/=" { return Option<Self>.Some(val=Self.SlashEqual); }
+        if text == "%=" { return Option<Self>.Some(val=Self.PercentEqual); }
+        if text == "^=" { return Option<Self>.Some(val=Self.CaretEqual); }
+        if text == "&=" { return Option<Self>.Some(val=Self.AmpersandEqual); }
+        if text == "|=" { return Option<Self>.Some(val=Self.PipeEqual); }
+        if text == "==" { return Option<Self>.Some(val=Self.EqualEqual); }
+        if text == "!=" { return Option<Self>.Some(val=Self.NotEqual); }
+        if text == "<=" { return Option<Self>.Some(val=Self.LessEqual); }
+        if text == ">=" { return Option<Self>.Some(val=Self.GreaterEqual); }
+        if text == "<<" { return Option<Self>.Some(val=Self.LessLess); }
+        if text == "<<=" { return Option<Self>.Some(val=Self.LessLessEqual); }
+        if text == ">>" { return Option<Self>.Some(val=Self.GreaterGreater); }
+        if text == ">>=" { return Option<Self>.Some(val=Self.GreaterGreaterEqual); }
+        if text == ".." { return Option<Self>.Some(val=Self.DotDot); }
+        if text == "@" { return Option<Self>.Some(val=Self.At); }
+        if text == "<eof>" { return Option<Self>.Some(val=Self.EOF); }
+        return Option<Self>.None;
+    }
+}
+
+impl PartialEq<PunctuatorKind> for PunctuatorKind {
+    fn eq(other: PunctuatorKind&) -> bool {
+        match *self {
+            LParen => match *other { LParen => true, _ => false },
+            RParen => match *other { RParen => true, _ => false },
+            LBrace => match *other { LBrace => true, _ => false },
+            RBrace => match *other { RBrace => true, _ => false },
+            LBracket => match *other { LBracket => true, _ => false },
+            RBracket => match *other { RBracket => true, _ => false },
+            Comma => match *other { Comma => true, _ => false },
+            Colon => match *other { Colon => true, _ => false },
+            Semicolon => match *other { Semicolon => true, _ => false },
+            Dot => match *other { Dot => true, _ => false },
+            Arrow => match *other { Arrow => true, _ => false },
+            FatArrow => match *other { FatArrow => true, _ => false },
+            Plus => match *other { Plus => true, _ => false },
+            Minus => match *other { Minus => true, _ => false },
+            Star => match *other { Star => true, _ => false },
+            Slash => match *other { Slash => true, _ => false },
+            Percent => match *other { Percent => true, _ => false },
+            Caret => match *other { Caret => true, _ => false },
+            Ampersand => match *other { Ampersand => true, _ => false },
+            AmpersandAmpersand => match *other { AmpersandAmpersand => true, _ => false },
+            Pipe => match *other { Pipe => true, _ => false },
+            PipePipe => match *other { PipePipe => true, _ => false },
+            Tilde => match *other { Tilde => true, _ => false },
+            Exclamation => match *other { Exclamation => true, _ => false },
+            Equal => match *other { Equal => true, _ => false },
+            Less => match *other { Less => true, _ => false },
+            Greater => match *other { Greater => true, _ => false },
+            LAngle => match *other { LAngle => true, _ => false },
+            RAngle => match *other { RAngle => true, _ => false },
+            PlusEqual => match *other { PlusEqual => true, _ => false },
+            MinusEqual => match *other { MinusEqual => true, _ => false },
+            StarEqual => match *other { StarEqual => true, _ => false },
+            SlashEqual => match *other { SlashEqual => true, _ => false },
+            PercentEqual => match *other { PercentEqual => true, _ => false },
+            CaretEqual => match *other { CaretEqual => true, _ => false },
+            AmpersandEqual => match *other { AmpersandEqual => true, _ => false },
+            PipeEqual => match *other { PipeEqual => true, _ => false },
+            EqualEqual => match *other { EqualEqual => true, _ => false },
+            NotEqual => match *other { NotEqual => true, _ => false },
+            LessEqual => match *other { LessEqual => true, _ => false },
+            GreaterEqual => match *other { GreaterEqual => true, _ => false },
+            LessLess => match *other { LessLess => true, _ => false },
+            LessLessEqual => match *other { LessLessEqual => true, _ => false },
+            GreaterGreater => match *other { GreaterGreater => true, _ => false },
+            GreaterGreaterEqual => match *other { GreaterGreaterEqual => true, _ => false },
+            DotDot => match *other { DotDot => true, _ => false },
+            At => match *other { At => true, _ => false },
+            EOF => match *other { EOF => true, _ => false },
+        }
+    }
+}
+
+pub enum IntSuffix {
+    Unsuffixed,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    Int,
+    Uint,
+}
+
+impl IntSuffix {
+    pub fn spelling() -> str {
+        match self {
+            Unsuffixed => "",
+            I8 => "i8",
+            I16 => "i16",
+            I32 => "i32",
+            I64 => "i64",
+            U8 => "u8",
+            U16 => "u16",
+            U32 => "u32",
+            U64 => "u64",
+            Int => "int",
+            Uint => "uint",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        if text == "" { return Option<Self>.Some(val=Self.Unsuffixed); }
+        if text == "i8" { return Option<Self>.Some(val=Self.I8); }
+        if text == "i16" { return Option<Self>.Some(val=Self.I16); }
+        if text == "i32" { return Option<Self>.Some(val=Self.I32); }
+        if text == "i64" { return Option<Self>.Some(val=Self.I64); }
+        if text == "u8" { return Option<Self>.Some(val=Self.U8); }
+        if text == "u16" { return Option<Self>.Some(val=Self.U16); }
+        if text == "u32" { return Option<Self>.Some(val=Self.U32); }
+        if text == "u64" { return Option<Self>.Some(val=Self.U64); }
+        if text == "int" { return Option<Self>.Some(val=Self.Int); }
+        if text == "uint" { return Option<Self>.Some(val=Self.Uint); }
+        return Option<Self>.None;
+    }
+}
+
+pub enum FloatSuffix {
+    Unsuffixed,
+    F16,
+    F32,
+    F64,
+    Float,
+}
+
+impl FloatSuffix {
+    pub fn spelling() -> str {
+        match self {
+            Unsuffixed => "",
+            F16 => "f16",
+            F32 => "f32",
+            F64 => "f64",
+            Float => "float",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        if text == "" { return Option<Self>.Some(val=Self.Unsuffixed); }
+        if text == "f16" { return Option<Self>.Some(val=Self.F16); }
+        if text == "f32" { return Option<Self>.Some(val=Self.F32); }
+        if text == "f64" { return Option<Self>.Some(val=Self.F64); }
+        if text == "float" { return Option<Self>.Some(val=Self.Float); }
+        return Option<Self>.None;
+    }
+}
+
+pub enum TokenPayload {
+    Keyword { value: KeywordKind },
+    Identifier { value: String },
+    Punctuator { value: PunctuatorKind },
+    Integer { value: u64, suffix: IntSuffix },
+    Float { value: f64, suffix: FloatSuffix },
+    Character { value: String },
+    StringLiteral { value: String },
+    FStrStart,
+    FStrLiteral { value: String },
+    FStrExprBegin,
+    FStrExprEnd,
+    FStrEnd,
+    EndOfFile,
+}
+
+impl Drop for TokenPayload {
+    pub fn drop() {
+        match self {
+            Identifier(value) | Character(value) | StringLiteral(value) |
+                FStrLiteral(value) => value.drop(),
+            _ => {},
+        }
+    }
+}
+
+pub struct Token {
+    raw: String,
+    payload: TokenPayload,
+    span: Span,
+}
+
+impl Token {
+    static pub fn new(raw: String, payload: TokenPayload, span: Span) -> Self {
+        return Self(raw=raw, payload=payload, span=span);
+    }
+
+    pub fn kind() -> TokenPayload& { return &self.payload; }
+    pub fn is_keyword_token() -> bool {
+        match self.payload { Keyword(_) => true, _ => false }
+    }
+    pub fn is_punctuator() -> bool {
+        match self.payload { Punctuator(_) => true, _ => false }
+    }
+    pub fn raw() -> str { return self.raw.as_str(); }
+    pub fn value() -> str {
+        match self.payload {
+            Keyword(value) => value.spelling(),
+            Punctuator(value) => value.spelling(),
+            Identifier(value) | Character(value) | StringLiteral(value) |
+                FStrLiteral(value) => value.as_str(),
+            FStrExprBegin | FStrExprEnd | FStrEnd => "",
+            EndOfFile => "<eof>",
+            _ => self.raw.as_str(),
+        }
+    }
+    pub fn suffix() -> str {
+        match self.payload {
+            Integer(_, suffix) => suffix.spelling(),
+            Float(_, suffix) => suffix.spelling(),
+            _ => "",
+        }
+    }
+    pub fn integer_value() -> u64 {
+        match self.payload {
+            Integer(value, _) => return value,
+            _ => @panic("token is not an integer literal"),
+        }
+    }
+    pub fn float_value() -> f64 {
+        match self.payload {
+            Float(value, _) => return value,
+            _ => @panic("token is not a float literal"),
+        }
+    }
+    pub fn span() -> Span { return self.span; }
+    pub fn is_eof() -> bool {
+        match self.payload {
+            EndOfFile => true,
+            _ => false,
+        }
+    }
+    pub fn is_keyword(word: KeywordKind) -> bool {
+        match self.payload {
+            Keyword(value) => value == word,
+            _ => false,
+        }
+    }
+    pub fn is_punct(word: PunctuatorKind) -> bool {
+        match self.payload {
+            Punctuator(value) => value == word,
+            _ => false,
+        }
+    }
+    pub fn is_identifier() -> bool {
+        match self.payload {
+            Identifier => true,
+            _ => false,
+        }
+    }
+    pub fn is_integer() -> bool {
+        match self.payload {
+            Integer => true,
+            _ => false,
+        }
+    }
+}
+
+impl Drop for Token {
+    pub fn drop() {
+        self.raw.drop();
+        self.payload.drop();
+    }
+}
+
+pub fn drop_tokens(tokens: Vec<Token>&) {
+    let index: u64 = 0u64;
+    while index < tokens.len() {
+        tokens[index].drop();
+        index += 1u64;
+    }
+    tokens.drop();
+}

@@ -1,3 +1,5 @@
+from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
+from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
 from compiler.frontend.parse.ast import NodeId;
 from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.type import parse_type;
@@ -10,30 +12,31 @@ from std.core.vec import Vec;
 
 fn literal_token(parser: Parser&) -> NodeId {
     let token = parser.peek();
-    let tag = "";
+    let tag = AstTag.IntLiteral;
+    let recognized = true;
     match token.kind() {
-        Integer => { tag = "IntLiteral"; },
-        Character => { tag = "CharLiteral"; },
-        StringLiteral => { tag = "StrLiteral"; },
-        _ => {},
+        Integer(_, _) => { tag = AstTag.IntLiteral; },
+        Character(_) => { tag = AstTag.CharLiteral; },
+        StringLiteral(_) => { tag = AstTag.StrLiteral; },
+        _ => { recognized = false; },
     }
-    if tag == "" {
+    if !recognized {
         parser.error("Expected literal in pattern", token.span());
         return NodeId.invalid();
     }
     let span = token.span();
     let node = parser.alloc(tag, span);
-    parser.text(node, "raw", token.raw());
-    if tag == "IntLiteral" {
-        parser.integer(node, "value", token.integer_value(), false);
-        parser.text(node, "suffix", token.suffix());
-    } else { parser.text(node, "value", token.value()); }
+    parser.text(node, AstFieldName.Raw, token.raw());
+    if tag == AstTag.IntLiteral {
+        parser.integer(node, AstFieldName.Value, token.integer_value(), false);
+        parser.text(node, AstFieldName.Suffix, token.suffix());
+    } else { parser.text(node, AstFieldName.Value, token.value()); }
     parser.advance();
     return node;
 }
 
 fn pattern_literal(parser: Parser&) -> NodeId {
-    if parser.at_punct("-") {
+    if parser.at_punct(PunctuatorKind.Minus) {
         let minus = parser.peek().span();
         parser.advance();
         if !parser.peek().is_integer() {
@@ -41,13 +44,13 @@ fn pattern_literal(parser: Parser&) -> NodeId {
             return NodeId.invalid();
         }
         let token = parser.peek();
-        let node = parser.alloc("IntLiteral", minus.join(token.span()));
+        let node = parser.alloc(AstTag.IntLiteral, minus.join(token.span()));
         let raw = String.from(&"-");
         raw.push_str(token.raw());
-        parser.text(node, "raw", raw.as_str());
+        parser.text(node, AstFieldName.Raw, raw.as_str());
         raw.drop();
-        parser.integer(node, "value", token.integer_value(), true);
-        parser.text(node, "suffix", token.suffix());
+        parser.integer(node, AstFieldName.Value, token.integer_value(), true);
+        parser.text(node, AstFieldName.Suffix, token.suffix());
         parser.advance();
         return node;
     }
@@ -58,32 +61,32 @@ fn pattern_atom(parser: Parser&) -> NodeId {
     if parser.failed() { return NodeId.invalid(); }
     let token = parser.peek();
     let span = token.span();
-    if parser.at_keyword("_") {
+    if parser.at_keyword(KeywordKind.Underscore) {
         parser.advance();
-        return parser.alloc("WildcardPattern", span);
+        return parser.alloc(AstTag.WildcardPattern, span);
     }
-    if parser.at_keyword("true") || parser.at_keyword("false") {
-        let literal = parser.alloc("BoolLiteral", span);
-        parser.text(literal, "raw", token.value());
-        parser.flag(literal, "value", parser.at_keyword("true"));
+    if parser.at_keyword(KeywordKind.True_) || parser.at_keyword(KeywordKind.False_) {
+        let literal = parser.alloc(AstTag.BoolLiteral, span);
+        parser.text(literal, AstFieldName.Raw, token.value());
+        parser.flag(literal, AstFieldName.Value, parser.at_keyword(KeywordKind.True_));
         parser.advance();
-        let node = parser.alloc("LiteralPattern", span);
-        parser.child(node, "literal", literal);
+        let node = parser.alloc(AstTag.LiteralPattern, span);
+        parser.child(node, AstFieldName.Literal, literal);
         return node;
     }
-    let is_literal = token.is_integer() || token.is_punct("-");
+    let is_literal = token.is_integer() || token.is_punct(PunctuatorKind.Minus);
     match token.kind() {
-        Character => { is_literal = true; },
-        StringLiteral => { is_literal = true; },
+        Character(_) => { is_literal = true; },
+        StringLiteral(_) => { is_literal = true; },
         _ => {},
     }
     if is_literal {
         let literal = pattern_literal(parser);
         if parser.failed() { return NodeId.invalid(); }
         let literal_span = parser.node(literal).span();
-        if parser.at_punct("..") {
+        if parser.at_punct(PunctuatorKind.DotDot) {
             let tag = parser.node(literal).tag();
-            if tag != "IntLiteral" && tag != "CharLiteral" {
+            if tag != AstTag.IntLiteral && tag != AstTag.CharLiteral {
                 parser.error("Range endpoints must be integer or character literals", parser.peek().span());
                 return NodeId.invalid();
             }
@@ -94,22 +97,22 @@ fn pattern_atom(parser: Parser&) -> NodeId {
                 parser.error("Range endpoints must have the same literal kind", parser.node(upper).span());
                 return NodeId.invalid();
             }
-            let node = parser.alloc("RangePattern", literal_span.join(parser.node(upper).span()));
-            parser.child(node, "lower", literal);
-            parser.child(node, "upper", upper);
+            let node = parser.alloc(AstTag.RangePattern, literal_span.join(parser.node(upper).span()));
+            parser.child(node, AstFieldName.Lower, literal);
+            parser.child(node, AstFieldName.Upper, upper);
             return node;
         }
-        let node = parser.alloc("LiteralPattern", literal_span);
-        parser.child(node, "literal", literal);
+        let node = parser.alloc(AstTag.LiteralPattern, literal_span);
+        parser.child(node, AstFieldName.Literal, literal);
         return node;
     }
-    if parser.at_punct("[") {
+    if parser.at_punct(PunctuatorKind.LBracket) {
         parser.advance();
         let prefix = Vec<NodeId>.new();
         let suffix = Vec<NodeId>.new();
         let rest = false;
-        while !parser.failed() && !parser.at_punct("]") {
-            if parser.at_punct("..") {
+        while !parser.failed() && !parser.at_punct(PunctuatorKind.RBracket) {
+            if parser.at_punct(PunctuatorKind.DotDot) {
                 if rest {
                     parser.error("Only one '..' is allowed in a sequence pattern", parser.peek().span());
                     break;
@@ -121,41 +124,41 @@ fn pattern_atom(parser: Parser&) -> NodeId {
                 if rest { suffix.push(item); }
                 else { prefix.push(item); }
             }
-            if parser.at_punct(",") { parser.advance(); }
+            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
             else { break; }
         }
-        parser.take_punct("]");
+        parser.take_punct(PunctuatorKind.RBracket);
         if parser.failed() { prefix.drop(); suffix.drop(); return NodeId.invalid(); }
-        let node = parser.alloc("SequencePattern", span);
-        parser.children(node, "prefix", prefix);
-        parser.children(node, "suffix", suffix);
-        parser.flag(node, "rest", rest);
+        let node = parser.alloc(AstTag.SequencePattern, span);
+        parser.children(node, AstFieldName.Prefix, prefix);
+        parser.children(node, AstFieldName.Suffix, suffix);
+        parser.flag(node, AstFieldName.Rest, rest);
         return node;
     }
-    if parser.at_punct("(") {
+    if parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
         let members = Vec<NodeId>.new();
-        if parser.at_punct(")") {
+        if parser.at_punct(PunctuatorKind.RParen) {
             parser.advance();
-            let node = parser.alloc("TuplePattern", span);
-            parser.children(node, "elements", members);
+            let node = parser.alloc(AstTag.TuplePattern, span);
+            parser.children(node, AstFieldName.Elements, members);
             return node;
         }
         let first = pattern_or(parser);
-        if parser.at_punct(")") {
+        if parser.at_punct(PunctuatorKind.RParen) {
             parser.advance(); members.drop(); return first;
         }
-        parser.take_punct(",");
+        parser.take_punct(PunctuatorKind.Comma);
         members.push(first);
-        while !parser.failed() && !parser.at_punct(")") {
+        while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
             members.push(pattern_or(parser));
-            if parser.at_punct(",") { parser.advance(); }
+            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
             else { break; }
         }
-        parser.take_punct(")");
+        parser.take_punct(PunctuatorKind.RParen);
         if parser.failed() { members.drop(); return NodeId.invalid(); }
-        let node = parser.alloc("TuplePattern", span);
-        parser.children(node, "elements", members);
+        let node = parser.alloc(AstTag.TuplePattern, span);
+        parser.children(node, AstFieldName.Elements, members);
         return node;
     }
     if token.is_identifier() || parser.keyword_token() {
@@ -175,13 +178,13 @@ fn named_pattern(parser: Parser&) -> NodeId {
         qualifier = NodeId.invalid();
     }
     let name = NodeId.invalid();
-    if qualifier.is_valid() && parser.at_punct(".") {
+    if qualifier.is_valid() && parser.at_punct(PunctuatorKind.Dot) {
         parser.advance();
         name = parser.identifier();
-    } elif qualifier.is_valid() && parser.node(qualifier).tag() == "InstanceType" && parser.at_punct("(") {
-        name = parser.alloc("Identifier", first.span());
-        parser.text(name, "name", first.value());
-        parser.flag(name, "synthetic", false);
+    } elif qualifier.is_valid() && parser.node(qualifier).tag() == AstTag.InstanceType && parser.at_punct(PunctuatorKind.LParen) {
+        name = parser.alloc(AstTag.Identifier, first.span());
+        parser.text(name, AstFieldName.Name, first.value());
+        parser.flag(name, AstFieldName.Synthetic, false);
     } else {
         parser.reset(mark);
         qualifier = NodeId.invalid();
@@ -189,18 +192,18 @@ fn named_pattern(parser: Parser&) -> NodeId {
     }
     if parser.failed() { return NodeId.invalid(); }
     let span = parser.node(name).span();
-    if !parser.at_punct("(") {
+    if !parser.at_punct(PunctuatorKind.LParen) {
         if qualifier.is_valid() {
-            let node = parser.alloc("ConstructPattern", span);
-            parser.child(node, "name", name);
-            parser.child(node, "qualifier", qualifier);
-            parser.missing(node, "positional");
-            parser.missing(node, "named");
-            parser.flag(node, "rest", false);
+            let node = parser.alloc(AstTag.ConstructPattern, span);
+            parser.child(node, AstFieldName.Name, name);
+            parser.child(node, AstFieldName.Qualifier, qualifier);
+            parser.missing(node, AstFieldName.Positional);
+            parser.missing(node, AstFieldName.Named);
+            parser.flag(node, AstFieldName.Rest, false);
             return node;
         }
-        let node = parser.alloc("NamePattern", span);
-        parser.child(node, "name", name);
+        let node = parser.alloc(AstTag.NamePattern, span);
+        parser.child(node, AstFieldName.Name, name);
         return node;
     }
     parser.advance();
@@ -208,20 +211,20 @@ fn named_pattern(parser: Parser&) -> NodeId {
     let named = Vec<NodeId>.new();
     let has_named = false;
     let rest = false;
-    while !parser.failed() && !parser.at_punct(")") {
+    while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
         let item = parser.peek();
-        if parser.at_punct("..") {
+        if parser.at_punct(PunctuatorKind.DotDot) {
             if rest {
                 parser.error("Only one '..' is allowed in a field pattern", item.span());
                 break;
             }
             parser.advance();
             rest = true;
-            if parser.at_punct(",") { parser.advance(); }
-            if !parser.at_punct(")") { parser.error("'..' must be the last field", item.span()); }
+            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
+            if !parser.at_punct(PunctuatorKind.RParen) { parser.error("'..' must be the last field", item.span()); }
             break;
         }
-        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1u64).is_punct("=") {
+        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1u64).is_punct(PunctuatorKind.Equal) {
             if positional.len() != 0u64 {
                 parser.error("Cannot mix positional and named fields", item.span());
                 break;
@@ -231,9 +234,9 @@ fn named_pattern(parser: Parser&) -> NodeId {
             parser.advance();
             let value = pattern_or(parser);
             if parser.failed() { break; }
-            let node = parser.alloc("FieldPattern", parser.node(field).span());
-            parser.child(node, "name", field);
-            parser.child(node, "pattern", value);
+            let node = parser.alloc(AstTag.FieldPattern, parser.node(field).span());
+            parser.child(node, AstFieldName.Name, field);
+            parser.child(node, AstFieldName.Pattern, value);
             named.push(node);
         } else {
             if has_named || rest {
@@ -242,37 +245,37 @@ fn named_pattern(parser: Parser&) -> NodeId {
             }
             positional.push(pattern_or(parser));
         }
-        if parser.at_punct(",") { parser.advance(); }
+        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
         else { break; }
     }
-    parser.take_punct(")");
+    parser.take_punct(PunctuatorKind.RParen);
     if parser.failed() { positional.drop(); named.drop(); return NodeId.invalid(); }
-    let node = parser.alloc("ConstructPattern", span);
-    parser.child(node, "name", name);
-    if qualifier.is_valid() { parser.child(node, "qualifier", qualifier); }
-    else { parser.missing(node, "qualifier"); }
+    let node = parser.alloc(AstTag.ConstructPattern, span);
+    parser.child(node, AstFieldName.Name, name);
+    if qualifier.is_valid() { parser.child(node, AstFieldName.Qualifier, qualifier); }
+    else { parser.missing(node, AstFieldName.Qualifier); }
     if has_named || rest {
-        parser.missing(node, "positional");
+        parser.missing(node, AstFieldName.Positional);
     } else {
-        parser.children(node, "positional", positional);
+        parser.children(node, AstFieldName.Positional, positional);
     }
-    if has_named { parser.children(node, "named", named); }
-    else { parser.missing(node, "named"); }
-    parser.flag(node, "rest", rest);
+    if has_named { parser.children(node, AstFieldName.Named, named); }
+    else { parser.missing(node, AstFieldName.Named); }
+    parser.flag(node, AstFieldName.Rest, rest);
     if has_named || rest { positional.drop(); }
     if !has_named { named.drop(); }
     return node;
 }
 
 fn pattern_at(parser: Parser&) -> NodeId {
-    if parser.peek().is_identifier() && parser.peek_at(1u64).is_punct("@") {
+    if parser.peek().is_identifier() && parser.peek_at(1u64).is_punct(PunctuatorKind.At) {
         let name = parser.identifier();
         parser.advance();
         let inner = pattern_at(parser);
         if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc("BindPattern", parser.node(name).span().join(parser.node(inner).span()));
-        parser.child(node, "name", name);
-        parser.child(node, "inner", inner);
+        let node = parser.alloc(AstTag.BindPattern, parser.node(name).span().join(parser.node(inner).span()));
+        parser.child(node, AstFieldName.Name, name);
+        parser.child(node, AstFieldName.Inner, inner);
         return node;
     }
     return pattern_atom(parser);
@@ -280,17 +283,17 @@ fn pattern_at(parser: Parser&) -> NodeId {
 
 fn pattern_or(parser: Parser&) -> NodeId {
     let first = pattern_at(parser);
-    if parser.failed() || !parser.at_punct("|") { return first; }
+    if parser.failed() || !parser.at_punct(PunctuatorKind.Pipe) { return first; }
     let alternatives = Vec<NodeId>.new();
     alternatives.push(first);
-    while !parser.failed() && parser.at_punct("|") {
+    while !parser.failed() && parser.at_punct(PunctuatorKind.Pipe) {
         parser.advance();
         alternatives.push(pattern_at(parser));
     }
     if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
     let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
-    let node = parser.alloc("OrPattern", span);
-    parser.children(node, "alternatives", alternatives);
+    let node = parser.alloc(AstTag.OrPattern, span);
+    parser.children(node, AstFieldName.Alternatives, alternatives);
     return node;
 }
 
@@ -298,21 +301,21 @@ pub fn parse_binding_pattern(parser: Parser&) -> NodeId { return pattern_or(pars
 
 pub fn parse_match_pattern(parser: Parser&) -> NodeId {
     let first = pattern_or(parser);
-    if parser.failed() || !parser.at_punct(",") { return first; }
-    if parser.node(first).tag() != "LiteralPattern" {
+    if parser.failed() || !parser.at_punct(PunctuatorKind.Comma) { return first; }
+    if parser.node(first).tag() != AstTag.LiteralPattern {
         parser.error("Comma-separated alternatives require literals", parser.peek().span());
         return NodeId.invalid();
     }
-    let literal = parser.node(first).child_field("literal");
+    let literal = parser.node(first).child_field(AstFieldName.Literal);
     let kind = parser.node(literal).tag();
     let alternatives = Vec<NodeId>.new();
     alternatives.push(first);
-    while !parser.failed() && parser.at_punct(",") {
+    while !parser.failed() && parser.at_punct(PunctuatorKind.Comma) {
         parser.advance();
         let next = pattern_atom(parser);
         if parser.failed() { break; }
-        if parser.node(next).tag() != "LiteralPattern" ||
-            parser.node(parser.node(next).child_field("literal")).tag() != kind {
+        if parser.node(next).tag() != AstTag.LiteralPattern ||
+            parser.node(parser.node(next).child_field(AstFieldName.Literal)).tag() != kind {
             parser.error("Comma-separated alternatives must use the same literal kind", parser.node(next).span());
             break;
         }
@@ -320,7 +323,7 @@ pub fn parse_match_pattern(parser: Parser&) -> NodeId {
     }
     if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
     let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
-    let node = parser.alloc("OrPattern", span);
-    parser.children(node, "alternatives", alternatives);
+    let node = parser.alloc(AstTag.OrPattern, span);
+    parser.children(node, AstFieldName.Alternatives, alternatives);
     return node;
 }

@@ -1,4 +1,5 @@
-from compiler.frontend.lex.lexer import Token, TokenKind;
+from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
+from compiler.frontend.lex.token import Token;
 from compiler.frontend.parse.ast import AstValue, NodeId;
 from compiler.frontend.parse.state import AstTree;
 from compiler.frontend.source import Span;
@@ -11,16 +12,15 @@ from std.num.f64 import to_bits;
 
 fn token_kind(token: Token&) -> str {
     match token.kind() {
-        Keyword => "Keyword",
-        Identifier => "Identifier",
-        Punctuator => "Punctuator",
-        Integer => "Integer",
-        Float => "Float",
-        Character => "Character",
-        StringLiteral => "StringLiteral",
-        Boolean => "Boolean",
+        Keyword(_) => "Keyword",
+        Identifier(_) => "Identifier",
+        Punctuator(_) => "Punctuator",
+        Integer(_, _) => "Integer",
+        Float(_, _) => "Float",
+        Character(_) => "Character",
+        StringLiteral(_) => "StringLiteral",
         FStrStart => "FStrStart",
-        FStrLiteral => "FStrLiteral",
+        FStrLiteral(_) => "FStrLiteral",
         FStrExprBegin => "FStrExprBegin",
         FStrExprEnd => "FStrExprEnd",
         FStrEnd => "FStrEnd",
@@ -92,19 +92,19 @@ fn append_token(output: String&, token: Token&) {
     append_string(output, token.raw());
     output.push_str(",\"value\":");
     match token.kind() {
-        Integer => {
+        Integer(_, _) => {
             let value = token.integer_value().to_string_radix(10u64);
             append_string(output, value.as_str());
             value.drop();
         },
-        Float => append_string(output, ""),
+        Float(_, _) => append_string(output, ""),
         _ => append_string(output, token.value()),
     }
     output.push_str(",\"suffix\":");
     append_string(output, token.suffix());
     output.push_str(",\"bits\":");
     match token.kind() {
-        Float => {
+        Float(_, _) => {
             let bits = to_bits(token.float_value()).to_string_radix(10u64);
             append_string(output, bits.as_str());
             bits.drop();
@@ -131,22 +131,22 @@ pub fn append_token_file(output: String&, path: str, tokens: Vec<Token>&) {
 
 pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
     let node = tree.node(id);
-    if node.tag() == "ElifBranch" {
+    if node.tag() == AstTag.ElifBranch {
         output.push('[');
-        append_ast_node(output, tree, node.child_field("condition"));
+        append_ast_node(output, tree, node.child_field(AstFieldName.Condition));
         output.push(',');
-        append_ast_node(output, tree, node.child_field("body"));
+        append_ast_node(output, tree, node.child_field(AstFieldName.Body));
         output.push(']');
         return;
     }
-    if node.tag() == "ImplCondition" {
+    if node.tag() == AstTag.ImplCondition {
         output.push('[');
-        append_ast_node(output, tree, node.child_field("name"));
+        append_ast_node(output, tree, node.child_field(AstFieldName.Name));
         output.push_str(",[");
         let condition_fields = node.fields();
         let condition_index: u64 = 0u64;
         while condition_index < condition_fields.len() {
-            if condition_fields[condition_index].name() == "traits" {
+            if condition_fields[condition_index].name() == AstFieldName.Traits {
                 match condition_fields[condition_index].value() {
                     Children(values) => {
                         let trait_index: u64 = 0u64;
@@ -165,7 +165,7 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
         return;
     }
     output.push_str("{\"tag\":");
-    append_string(output, node.tag());
+    append_string(output, node.tag().name());
     output.push(',');
     append_span(output, node.span());
     output.push_str(",\"fields\":[");
@@ -175,9 +175,9 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
         if index != 0u64 { output.push(','); }
         let field = &fields[index];
         output.push('[');
-        if node.tag() == "FloatLiteral" && field.name() == "value" {
+        if node.tag() == AstTag.FloatLiteral && field.name() == AstFieldName.Value {
             append_string(output, "bits");
-        } else { append_string(output, field.name()); }
+        } else { append_string(output, field.name().name()); }
         output.push(',');
         match field.value() {
             Missing => output.push_str("null"),
@@ -197,6 +197,11 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
                 append_string(output, bits.as_str());
                 bits.drop();
             },
+            BinaryOp(value) => append_string(output, value.spelling()),
+            UnaryOp(value) => append_string(output, value.spelling()),
+            AttrKind(value) => append_string(output, value.spelling()),
+            BuiltinKind(value) => append_string(output, value.spelling()),
+            ArmOrigin(value) => append_string(output, value.spelling()),
             Flag(value) => {
                 if *value { output.push_str("true"); }
                 else { output.push_str("false"); }

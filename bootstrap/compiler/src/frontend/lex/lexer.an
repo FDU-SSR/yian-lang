@@ -1,6 +1,7 @@
 from compiler.frontend.lex.number import is_float_literal;
 from compiler.frontend.lex.integer import parse_integer;
 from compiler.frontend.lex.floating import parse_float;
+from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, IntSuffix, FloatSuffix;
 from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
@@ -10,109 +11,6 @@ from std.core.range import Range;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
-
-pub enum TokenKind {
-    Keyword,
-    Identifier,
-    Punctuator,
-    Integer,
-    Float,
-    Character,
-    StringLiteral,
-    Boolean,
-    FStrStart,
-    FStrLiteral,
-    FStrExprBegin,
-    FStrExprEnd,
-    FStrEnd,
-    EndOfFile,
-}
-
-pub enum TokenPayload {
-    Text { value: String },
-    Integer { value: u64 },
-    Float { value: f64 },
-}
-
-impl Drop for TokenPayload {
-    pub fn drop() {
-        match self {
-            Text(value) => value.drop(),
-            _ => {},
-        }
-    }
-}
-
-pub struct Token {
-    kind: TokenKind,
-    raw: String,
-    payload: TokenPayload,
-    suffix: String,
-    span: Span,
-}
-
-impl Token {
-    pub fn kind() -> TokenKind { return self.kind; }
-    pub fn raw() -> str { return self.raw.as_str(); }
-    pub fn value() -> str {
-        match self.payload {
-            Text(value) => return value.as_str(),
-            _ => return self.raw.as_str(),
-        }
-    }
-    pub fn suffix() -> str { return self.suffix.as_str(); }
-    pub fn integer_value() -> u64 {
-        match self.payload {
-            Integer(value) => return value,
-            _ => @panic("token is not an integer literal"),
-        }
-    }
-    pub fn float_value() -> f64 {
-        match self.payload {
-            Float(value) => return value,
-            _ => @panic("token is not a float literal"),
-        }
-    }
-    pub fn span() -> Span { return self.span; }
-    pub fn is_eof() -> bool {
-        match self.kind {
-            EndOfFile => true,
-            _ => false,
-        }
-    }
-    pub fn is_keyword(word: str) -> bool {
-        match self.kind {
-            Keyword => self.value() == word,
-            _ => false,
-        }
-    }
-    pub fn is_punct(word: str) -> bool {
-        match self.kind {
-            Punctuator => self.value() == word,
-            _ => false,
-        }
-    }
-    pub fn is_identifier() -> bool {
-        match self.kind {
-            Identifier => true,
-            _ => false,
-        }
-    }
-    pub fn is_integer() -> bool {
-        match self.kind {
-            Integer => true,
-            _ => false,
-        }
-    }
-}
-
-impl Drop for Token {
-    pub fn drop() {
-        self.raw.drop();
-        self.payload.drop();
-        self.suffix.drop();
-    }
-}
 
 pub struct LexError {
     message: String,
@@ -128,37 +26,8 @@ impl Drop for LexError {
     pub fn drop() { self.message.drop(); }
 }
 
-fn keyword(word: str) -> bool {
-    return word == "import" || word == "from" || word == "as" || word == "let" ||
-        word == "typedef" || word == "struct" || word == "enum" || word == "trait" ||
-        word == "impl" || word == "fn" || word == "dyn" || word == "pub" ||
-        word == "ffi" || word == "extern" || word == "opaque" || word == "type" ||
-        word == "static" || word == "const" || word == "comptime" || word == "inline" ||
-        word == "intrinsic" || word == "if" || word == "elif" || word == "else" ||
-        word == "match" || word == "for" || word == "while" || word == "loop" ||
-        word == "break" || word == "continue" || word == "return" || word == "defer" ||
-        word == "assert" || word == "in" || word == "typeof" || word == "del" ||
-        word == "true" || word == "false" || word == "IS_RAW_MODE" || word == "_" ||
-        word == "void" || word == "bool" || word == "char" || word == "str" ||
-        word == "i8" || word == "i16" || word == "i32" || word == "i64" ||
-        word == "u8" || word == "u16" || word == "u32" || word == "u64" ||
-        word == "f16" || word == "f32" || word == "f64" || word == "int" ||
-        word == "uint" || word == "float";
-}
-
 fn punctuator(word: str) -> bool {
-    return word == "(" || word == ")" || word == "{" || word == "}" ||
-        word == "[" || word == "]" || word == "," || word == ":" ||
-        word == ";" || word == "." || word == "->" || word == "=>" ||
-        word == "+" || word == "-" || word == "*" || word == "/" ||
-        word == "%" || word == "^" || word == "&" || word == "&&" ||
-        word == "|" || word == "||" || word == "~" || word == "!" ||
-        word == "=" || word == "<" || word == ">" || word == "+=" ||
-        word == "-=" || word == "*=" || word == "/=" || word == "%=" ||
-        word == "^=" || word == "&=" || word == "|=" || word == "==" ||
-        word == "!=" || word == "<=" || word == ">=" || word == "<<" ||
-        word == "<<=" || word == ">>" || word == ">>=" || word == ".." ||
-        word == "@";
+    return PunctuatorKind.from_text(word).is_some();
 }
 
 fn ident_start(code: u32) -> bool {
@@ -266,22 +135,17 @@ impl Lexer {
         return str.from_slice_unchecked(self.source.as_slice()[start..end]);
     }
 
-    fn token(kind: TokenKind, start: Position, value: String, suffix: String) -> Token {
-        return Token(kind=kind, raw=String.from(&self.slice(start.byte, self.offset)),
-            payload=TokenPayload.Text(value=value), suffix=suffix,
-            span=Span(start=start, end=self.position()));
+    fn token(payload: TokenPayload, start: Position) -> Token {
+        return Token.new(String.from(&self.slice(start.byte, self.offset)),
+            payload, Span(start=start, end=self.position()));
     }
 
-    fn integer_token(start: Position, value: u64, suffix: String) -> Token {
-        return Token(kind=TokenKind.Integer, raw=String.from(&self.slice(start.byte, self.offset)),
-            payload=TokenPayload.Integer(value=value), suffix=suffix,
-            span=Span(start=start, end=self.position()));
+    fn integer_token(start: Position, value: u64, suffix: IntSuffix) -> Token {
+        return self.token(TokenPayload.Integer(value=value, suffix=suffix), start);
     }
 
-    fn float_token(start: Position, value: f64, suffix: String) -> Token {
-        return Token(kind=TokenKind.Float, raw=String.from(&self.slice(start.byte, self.offset)),
-            payload=TokenPayload.Float(value=value), suffix=suffix,
-            span=Span(start=start, end=self.position()));
+    fn float_token(start: Position, value: f64, suffix: FloatSuffix) -> Token {
+        return self.token(TokenPayload.Float(value=value, suffix=suffix), start);
     }
 
     fn fail(message: str, start: Position) -> LexError {
@@ -398,7 +262,7 @@ impl Lexer {
         }
         self.advance();
         if quote == 34u32 {
-            return Result<Token, LexError>.Ok(val=self.token(TokenKind.StringLiteral, start, decoded, String.new()));
+            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
         }
         if count != 1u64 {
             decoded.drop();
@@ -412,25 +276,24 @@ impl Lexer {
                 return Result<Token, LexError>.Err(msg=self.fail("byte literal exceeds 255", start));
             }
             return Result<Token, LexError>.Ok(val=self.integer_token(start,
-                u64(code), String.from(&"u8")));
+                u64(code), IntSuffix.U8));
         }
-        return Result<Token, LexError>.Ok(val=self.token(TokenKind.Character, start, decoded, String.new()));
+        return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Character(value=decoded), start));
     }
 
-    fn marker(kind: TokenKind, position: Position, raw: str, value: str) -> Token {
-        return Token(kind=kind, raw=String.from(&raw),
-            payload=TokenPayload.Text(value=String.from(&value)),
-            suffix=String.new(), span=Span(start=position, end=position));
+    fn marker(payload: TokenPayload, position: Position, raw: str) -> Token {
+        return Token.new(String.from(&raw), payload,
+            Span(start=position, end=position));
     }
 
     fn fstring() -> Result<bool, LexError> {
         let start = self.position();
         self.advance(); self.advance();
-        self.tokens.push(self.token(TokenKind.FStrStart, start, String.from(&"f\""), String.new()));
+        self.tokens.push(self.token(TokenPayload.FStrStart, start));
         while !self.at_end() {
             if self.peek() == 34u32 {
                 self.advance();
-                self.tokens.push(self.marker(TokenKind.FStrEnd, self.position(), "\"", ""));
+                self.tokens.push(self.marker(TokenPayload.FStrEnd, self.position(), "\""));
                 return Result<bool, LexError>.Ok(val=true);
             }
             if self.peek() == 125u32 {
@@ -438,7 +301,7 @@ impl Lexer {
             }
             if self.peek() == 123u32 {
                 self.advance();
-                self.tokens.push(self.marker(TokenKind.FStrExprBegin, self.position(), "{", ""));
+                self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position(), "{"));
                 let depth: u64 = 1u64;
                 loop {
                     let skipped = match self.skip_ignored() {
@@ -456,7 +319,7 @@ impl Lexer {
                     if self.peek() == 125u32 && depth == 1u64 {
                         let brace_start = self.position();
                         self.advance();
-                        self.tokens.push(self.token(TokenKind.FStrExprEnd, brace_start, String.new(), String.new()));
+                        self.tokens.push(self.token(TokenPayload.FStrExprEnd, brace_start));
                         break;
                     }
                     let current = self.peek();
@@ -500,7 +363,7 @@ impl Lexer {
                 else { literal.push('\\'); literal.push(char(escaped)); }
             }
             if literal.len() != 0u64 {
-                self.tokens.push(self.token(TokenKind.FStrLiteral, segment_start, literal, String.new()));
+                self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
             } else {
                 literal.drop();
             }
@@ -511,7 +374,7 @@ impl Lexer {
     fn one(previous_whitespace: bool) -> Result<Token, LexError> {
         let start = self.position();
         if self.at_end() {
-            return Result<Token, LexError>.Ok(val=self.token(TokenKind.EndOfFile, start, String.from(&"<eof>"), String.new()));
+            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.EndOfFile, start));
         }
         let code = self.advance();
         if code == 34u32 { return self.quoted(start, code, false); }
@@ -523,10 +386,13 @@ impl Lexer {
         if ident_start(code) {
             while !self.at_end() && ident_part(self.peek()) { self.advance(); }
             let raw = self.slice(start.byte, self.offset);
-            if keyword(raw) {
-                return Result<Token, LexError>.Ok(val=self.token(TokenKind.Keyword, start, String.from(&raw), String.new()));
+            match KeywordKind.from_text(raw) {
+                Some(kind) => return Result<Token, LexError>.Ok(val=self.token(
+                    TokenPayload.Keyword(value=kind), start)),
+                None => {},
             }
-            return Result<Token, LexError>.Ok(val=self.token(TokenKind.Identifier, start, String.from(&raw), String.new()));
+            return Result<Token, LexError>.Ok(val=self.token(
+                TokenPayload.Identifier(value=String.from(&raw)), start));
         }
         if code >= 48u32 && code <= 57u32 {
             while !self.at_end() && number_part(self.peek()) { self.advance(); }
@@ -545,7 +411,8 @@ impl Lexer {
                         return Result<Token, LexError>.Err(msg=problem);
                     },
                 };
-                let token = self.float_token(start, parsed.value(), String.from(&parsed.suffix()));
+                let suffix = *FloatSuffix.from_text(parsed.suffix()).unwrap();
+                let token = self.float_token(start, parsed.value(), suffix);
                 parsed.drop();
                 return Result<Token, LexError>.Ok(val=token);
             }
@@ -557,7 +424,8 @@ impl Lexer {
                     return Result<Token, LexError>.Err(msg=problem);
                 },
             };
-            let token = self.integer_token(start, parsed.value(), String.from(&parsed.suffix()));
+            let suffix = *IntSuffix.from_text(parsed.suffix()).unwrap();
+            let token = self.integer_token(start, parsed.value(), suffix);
             parsed.drop();
             return Result<Token, LexError>.Ok(val=token);
         }
@@ -565,8 +433,8 @@ impl Lexer {
         if (code == 60u32 || code == 62u32) && !previous_whitespace {
             let label = "<angle>";
             if code == 62u32 { label = ">angle>"; }
-            return Result<Token, LexError>.Ok(val=self.token(TokenKind.Punctuator, start,
-                String.from(&label), String.new()));
+            let kind = *PunctuatorKind.from_text(label).unwrap();
+            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
         }
         while !self.at_end() && self.peek() < 128u32 {
             let candidate = self.slice(start.byte, self.offset + 1u64);
@@ -577,8 +445,8 @@ impl Lexer {
         if !punctuator(raw) {
             return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start));
         }
-        return Result<Token, LexError>.Ok(val=self.token(TokenKind.Punctuator, start,
-            String.from(&raw), String.new()));
+        let kind = *PunctuatorKind.from_text(raw).unwrap();
+        return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
     }
 
     pub fn run() -> Result<Vec<Token>, LexError> {
@@ -607,15 +475,6 @@ impl Lexer {
             }
         }
     }
-}
-
-pub fn drop_tokens(tokens: Vec<Token>&) {
-    let index: u64 = 0u64;
-    while index < tokens.len() {
-        tokens[index].drop();
-        index += 1u64;
-    }
-    tokens.drop();
 }
 
 impl Drop for Lexer {

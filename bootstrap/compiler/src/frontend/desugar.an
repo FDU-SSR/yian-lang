@@ -1,3 +1,6 @@
+from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator;
+from compiler.frontend.parse.ast_atoms import BuiltinKind, MatchArmOrigin;
 from compiler.frontend.parse.ast import AstValue, NodeId;
 from compiler.frontend.parse.state import AstTree;
 from compiler.frontend.source import Span;
@@ -7,23 +10,23 @@ from std.core.string import String;
 from std.core.vec import Vec;
 
 fn identifier(tree: AstTree&, span: Span, name: str, synthetic: bool) -> NodeId {
-    let id = tree.alloc("Identifier", span);
-    tree.text(id, "name", name);
-    tree.flag(id, "synthetic", synthetic);
+    let id = tree.alloc(AstTag.Identifier, span);
+    tree.text(id, AstFieldName.Name, name);
+    tree.flag(id, AstFieldName.Synthetic, synthetic);
     return id;
 }
 
 fn block(tree: AstTree&, span: Span, statements: Vec<NodeId>) -> NodeId {
-    let id = tree.alloc("Block", span);
-    tree.children(id, "stmts", statements);
-    tree.missing(id, "end");
-    tree.children(id, "parameter_bindings", Vec<NodeId>.new());
+    let id = tree.alloc(AstTag.Block, span);
+    tree.children(id, AstFieldName.Stmts, statements);
+    tree.missing(id, AstFieldName.End);
+    tree.children(id, AstFieldName.ParameterBindings, Vec<NodeId>.new());
     return id;
 }
 
 fn break_expr(tree: AstTree&, span: Span) -> NodeId {
-    let id = tree.alloc("Break", span);
-    tree.missing(id, "expr");
+    let id = tree.alloc(AstTag.Break, span);
+    tree.missing(id, AstFieldName.Expr);
     return id;
 }
 
@@ -34,52 +37,52 @@ fn break_block(tree: AstTree&, span: Span) -> NodeId {
 }
 
 fn unary_not(tree: AstTree&, expression: NodeId) -> NodeId {
-    let id = tree.alloc("Unary", tree.node(expression).span());
-    tree.text(id, "op", "!");
-    tree.child(id, "operand", expression);
+    let id = tree.alloc(AstTag.Unary, tree.node(expression).span());
+    tree.unary_op(id, UnaryOperator.LogicalNot);
+    tree.child(id, AstFieldName.Operand, expression);
     return id;
 }
 
 fn if_expr(tree: AstTree&, span: Span, condition: NodeId, yes: NodeId, no: NodeId) -> NodeId {
-    let id = tree.alloc("If", span);
-    tree.child(id, "condition", condition);
-    tree.child(id, "then_branch", yes);
-    tree.children(id, "elif_branches", Vec<NodeId>.new());
-    if no.is_valid() { tree.child(id, "else_branch", no); }
-    else { tree.missing(id, "else_branch"); }
+    let id = tree.alloc(AstTag.If, span);
+    tree.child(id, AstFieldName.Condition, condition);
+    tree.child(id, AstFieldName.ThenBranch, yes);
+    tree.children(id, AstFieldName.ElifBranches, Vec<NodeId>.new());
+    if no.is_valid() { tree.child(id, AstFieldName.ElseBranch, no); }
+    else { tree.missing(id, AstFieldName.ElseBranch); }
     return id;
 }
 
 fn loop_expr(tree: AstTree&, span: Span, body: NodeId) -> NodeId {
-    let id = tree.alloc("Loop", span);
-    tree.child(id, "body", body);
+    let id = tree.alloc(AstTag.Loop, span);
+    tree.child(id, AstFieldName.Body, body);
     return id;
 }
 
-fn arm(tree: AstTree&, span: Span, pattern: NodeId, body: NodeId, origin: str) -> NodeId {
-    let id = tree.alloc("MatchArm", span);
-    tree.child(id, "pattern", pattern);
-    tree.missing(id, "guard");
-    tree.child(id, "body", body);
-    tree.text(id, "origin", origin);
+fn arm(tree: AstTree&, span: Span, pattern: NodeId, body: NodeId, origin: MatchArmOrigin) -> NodeId {
+    let id = tree.alloc(AstTag.MatchArm, span);
+    tree.child(id, AstFieldName.Pattern, pattern);
+    tree.missing(id, AstFieldName.Guard);
+    tree.child(id, AstFieldName.Body, body);
+    tree.arm_origin(id, origin);
     return id;
 }
 
 fn match_expr(tree: AstTree&, span: Span, value: NodeId, arms: Vec<NodeId>) -> NodeId {
-    let id = tree.alloc("Match", span);
-    tree.child(id, "expr", value);
-    tree.children(id, "arms", arms);
+    let id = tree.alloc(AstTag.Match, span);
+    tree.child(id, AstFieldName.Expr, value);
+    tree.children(id, AstFieldName.Arms, arms);
     return id;
 }
 
-fn wildcard(tree: AstTree&, span: Span) -> NodeId { return tree.alloc("WildcardPattern", span); }
+fn wildcard(tree: AstTree&, span: Span) -> NodeId { return tree.alloc(AstTag.WildcardPattern, span); }
 
 fn method_call(tree: AstTree&, span: Span, receiver: NodeId, name: str) -> NodeId {
-    let id = tree.alloc("MethodCall", span);
-    tree.child(id, "receiver", receiver);
-    tree.child(id, "method_name", identifier(tree, span, name, true));
-    tree.children(id, "generics", Vec<NodeId>.new());
-    tree.children(id, "args", Vec<NodeId>.new());
+    let id = tree.alloc(AstTag.MethodCall, span);
+    tree.child(id, AstFieldName.Receiver, receiver);
+    tree.child(id, AstFieldName.MethodName, identifier(tree, span, name, true));
+    tree.children(id, AstFieldName.Generics, Vec<NodeId>.new());
+    tree.children(id, AstFieldName.Args, Vec<NodeId>.new());
     return id;
 }
 
@@ -108,13 +111,13 @@ fn normalize_params(tree: AstTree&, owner: NodeId, body_id: NodeId) {
     let fields = tree.node(owner).fields();
     let field_index: u64 = 0u64;
     while field_index < fields.len() {
-        if fields[field_index].name() == "params" {
+        if fields[field_index].name() == AstFieldName.Params {
             match fields[field_index].value() {
                 Children(params) => {
                     let index: u64 = 0u64;
                     while index < params.len() {
                         let parameter = params[index];
-                        if tree.node(parameter).tag() == "PatternParam" {
+                        if tree.node(parameter).tag() == AstTag.PatternParam {
                             let span = tree.node(parameter).span();
                             let label = String.from(&"%arg_");
                             let number = index.to_string_radix(10u64);
@@ -122,19 +125,19 @@ fn normalize_params(tree: AstTree&, owner: NodeId, body_id: NodeId) {
                             number.drop();
                             let hidden = identifier(tree, span, label.as_str(), true);
                             label.drop();
-                            let pattern = tree.node(parameter).child_field("pattern");
-                            let type_id = tree.node(parameter).child_field("var_type");
-                            let info = tree.alloc("VarInfo", span);
-                            tree.child(info, "name", hidden);
-                            tree.child(info, "var_type", type_id);
+                            let pattern = tree.node(parameter).child_field(AstFieldName.Pattern);
+                            let type_id = tree.node(parameter).child_field(AstFieldName.VarType);
+                            let info = tree.alloc(AstTag.VarInfo, span);
+                            tree.child(info, AstFieldName.Name, hidden);
+                            tree.child(info, AstFieldName.VarType, type_id);
                             params[index] = info;
-                            let binding = tree.alloc("PatternLet", span);
-                            tree.child(binding, "pattern", pattern);
-                            tree.child(binding, "var_type", type_id);
-                            tree.child(binding, "init_expr", hidden);
-                            tree.missing(binding, "else_branch");
-                            tree.flag(binding, "is_parameter", true);
-                            tree.node(body_id).push_child("parameter_bindings", binding);
+                            let binding = tree.alloc(AstTag.PatternLet, span);
+                            tree.child(binding, AstFieldName.Pattern, pattern);
+                            tree.child(binding, AstFieldName.VarType, type_id);
+                            tree.child(binding, AstFieldName.InitExpr, hidden);
+                            tree.missing(binding, AstFieldName.ElseBranch);
+                            tree.flag(binding, AstFieldName.IsParameter, true);
+                            tree.node(body_id).push_child(AstFieldName.ParameterBindings, binding);
                         }
                         index += 1u64;
                     }
@@ -148,10 +151,10 @@ fn normalize_params(tree: AstTree&, owner: NodeId, body_id: NodeId) {
 
 fn normalize_walk(tree: AstTree&, id: NodeId) {
     let tag = tree.node(id).tag();
-    if tag == "FuncDef" || tag == "ClosureExpr" {
-        normalize_params(tree, id, tree.node(id).child_field("body"));
-    } elif tag == "MethodDef" {
-        normalize_params(tree, tree.node(id).child_field("decl"), tree.node(id).child_field("body"));
+    if tag == AstTag.FuncDef || tag == AstTag.ClosureExpr {
+        normalize_params(tree, id, tree.node(id).child_field(AstFieldName.Body));
+    } elif tag == AstTag.MethodDef {
+        normalize_params(tree, tree.node(id).child_field(AstFieldName.Decl), tree.node(id).child_field(AstFieldName.Body));
     }
     let fields = tree.node(id).fields();
     let index: u64 = 0u64;
@@ -174,21 +177,21 @@ fn normalize_walk(tree: AstTree&, id: NodeId) {
 fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
     let tag = tree.node(id).tag();
     let span = tree.node(id).span();
-    if tag == "If" {
+    if tag == AstTag.If {
         let branches = tree.node(id).fields();
         let index: u64 = 0u64;
         while index < branches.len() {
-            if branches[index].name() == "elif_branches" {
+            if branches[index].name() == AstFieldName.ElifBranches {
                 match branches[index].value() {
                     Children(values) => {
                         if values.len() > 0u64 {
-                            let fallback = tree.node(id).child_field("else_branch");
+                            let fallback = tree.node(id).child_field(AstFieldName.ElseBranch);
                             let next = values.len();
                             while next > 0u64 {
                                 next -= 1u64;
                                 let branch = values[next];
-                                let condition = tree.node(branch).child_field("condition");
-                                let body = tree.node(branch).child_field("body");
+                                let condition = tree.node(branch).child_field(AstFieldName.Condition);
+                                let body = tree.node(branch).child_field(AstFieldName.Body);
                                 let body_span = tree.node(body).span();
                                 let nested = if_expr(tree, body_span, condition, body, fallback);
                                 let statements = Vec<NodeId>.new();
@@ -196,8 +199,8 @@ fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
                                 fallback = block(tree, body_span, statements);
                             }
                             return rewrite_control(tree, if_expr(tree, span,
-                                tree.node(id).child_field("condition"),
-                                tree.node(id).child_field("then_branch"), fallback), path);
+                                tree.node(id).child_field(AstFieldName.Condition),
+                                tree.node(id).child_field(AstFieldName.ThenBranch), fallback), path);
                         }
                     },
                     _ => {},
@@ -205,30 +208,30 @@ fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
             }
             index += 1u64;
         }
-        let condition = tree.node(id).child_field("condition");
-        if tree.node(condition).tag() == "LetCondition" {
-            let fallback = tree.node(id).child_field("else_branch");
+        let condition = tree.node(id).child_field(AstFieldName.Condition);
+        if tree.node(condition).tag() == AstTag.LetCondition {
+            let fallback = tree.node(id).child_field(AstFieldName.ElseBranch);
             if !fallback.is_valid() { fallback = block(tree, span, Vec<NodeId>.new()); }
-            let pattern = tree.node(condition).child_field("pattern");
+            let pattern = tree.node(condition).child_field(AstFieldName.Pattern);
             let arms = Vec<NodeId>.new();
             arms.push(arm(tree, tree.node(pattern).span(), pattern,
-                tree.node(id).child_field("then_branch"), "condition"));
+                tree.node(id).child_field(AstFieldName.ThenBranch), MatchArmOrigin.Condition));
             let fallback_span = tree.node(fallback).span();
-            arms.push(arm(tree, fallback_span, wildcard(tree, fallback_span), fallback, "synthetic"));
-            return match_expr(tree, span, tree.node(condition).child_field("value"), arms);
+            arms.push(arm(tree, fallback_span, wildcard(tree, fallback_span), fallback, MatchArmOrigin.Synthetic));
+            return match_expr(tree, span, tree.node(condition).child_field(AstFieldName.Value), arms);
         }
-    } elif tag == "While" {
-        let condition = tree.node(id).child_field("condition");
-        let body = tree.node(id).child_field("body");
+    } elif tag == AstTag.While {
+        let condition = tree.node(id).child_field(AstFieldName.Condition);
+        let body = tree.node(id).child_field(AstFieldName.Body);
         let body_span = tree.node(body).span();
-        if tree.node(condition).tag() == "LetCondition" {
-            let pattern = tree.node(condition).child_field("pattern");
+        if tree.node(condition).tag() == AstTag.LetCondition {
+            let pattern = tree.node(condition).child_field(AstFieldName.Pattern);
             let arms = Vec<NodeId>.new();
-            arms.push(arm(tree, tree.node(pattern).span(), pattern, body, "condition"));
-            arms.push(arm(tree, span, wildcard(tree, span), break_block(tree, span), "synthetic"));
+            arms.push(arm(tree, tree.node(pattern).span(), pattern, body, MatchArmOrigin.Condition));
+            arms.push(arm(tree, span, wildcard(tree, span), break_block(tree, span), MatchArmOrigin.Synthetic));
             let statements = Vec<NodeId>.new();
             statements.push(match_expr(tree, tree.node(condition).span(),
-                tree.node(condition).child_field("value"), arms));
+                tree.node(condition).child_field(AstFieldName.Value), arms));
             return loop_expr(tree, span, block(tree, body_span, statements));
         }
         let break_if = if_expr(tree, span, unary_not(tree, condition), break_block(tree, span), NodeId.invalid());
@@ -236,36 +239,36 @@ fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
         statements.push(break_if);
         statements.push(body);
         return loop_expr(tree, span, block(tree, body_span, statements));
-    } elif tag == "For" {
-        let pattern = tree.node(id).child_field("pattern");
-        let iterable = tree.node(id).child_field("iterable");
-        let body = tree.node(id).child_field("body");
+    } elif tag == AstTag.For {
+        let pattern = tree.node(id).child_field(AstFieldName.Pattern);
+        let iterable = tree.node(id).child_field(AstFieldName.Iterable);
+        let body = tree.node(id).child_field(AstFieldName.Body);
         let iterable_span = tree.node(iterable).span();
         let pattern_span = tree.node(pattern).span();
         let body_span = tree.node(body).span();
         let iter_name = identifier(tree, span, "%iter", true);
         let iter_init = method_call(tree, iterable_span, iterable, "into_iter");
-        let iter_type = tree.alloc("DeducedType", span);
-        let iter_decl = tree.alloc("VarDecl", span);
-        tree.child(iter_decl, "name", iter_name);
-        tree.child(iter_decl, "var_type", iter_type);
-        tree.child(iter_decl, "init_expr", iter_init);
+        let iter_type = tree.alloc(AstTag.DeducedType, span);
+        let iter_decl = tree.alloc(AstTag.VarDecl, span);
+        tree.child(iter_decl, AstFieldName.Name, iter_name);
+        tree.child(iter_decl, AstFieldName.VarType, iter_type);
+        tree.child(iter_decl, AstFieldName.InitExpr, iter_init);
 
         let next_receiver = identifier(tree, span, "%iter", true);
         let next_call = method_call(tree, span, next_receiver, "next");
-        let some_pattern = tree.alloc("ConstructPattern", pattern_span);
-        tree.child(some_pattern, "name", identifier(tree, pattern_span, "Some", true));
-        tree.missing(some_pattern, "qualifier");
+        let some_pattern = tree.alloc(AstTag.ConstructPattern, pattern_span);
+        tree.child(some_pattern, AstFieldName.Name, identifier(tree, pattern_span, "Some", true));
+        tree.missing(some_pattern, AstFieldName.Qualifier);
         let positional = Vec<NodeId>.new();
         positional.push(pattern);
-        tree.children(some_pattern, "positional", positional);
-        tree.missing(some_pattern, "named");
-        tree.flag(some_pattern, "rest", false);
-        let none_pattern = tree.alloc("NamePattern", span);
-        tree.child(none_pattern, "name", identifier(tree, span, "None", true));
+        tree.children(some_pattern, AstFieldName.Positional, positional);
+        tree.missing(some_pattern, AstFieldName.Named);
+        tree.flag(some_pattern, AstFieldName.Rest, false);
+        let none_pattern = tree.alloc(AstTag.NamePattern, span);
+        tree.child(none_pattern, AstFieldName.Name, identifier(tree, span, "None", true));
         let arms = Vec<NodeId>.new();
-        arms.push(arm(tree, pattern_span, some_pattern, body, "for_item"));
-        arms.push(arm(tree, span, none_pattern, break_block(tree, span), "synthetic"));
+        arms.push(arm(tree, pattern_span, some_pattern, body, MatchArmOrigin.ForItem));
+        arms.push(arm(tree, span, none_pattern, break_block(tree, span), MatchArmOrigin.Synthetic));
         let inner_statements = Vec<NodeId>.new();
         inner_statements.push(match_expr(tree, span, next_call, arms));
         let loop_body = block(tree, body_span, inner_statements);
@@ -273,31 +276,31 @@ fn control_transform(tree: AstTree&, id: NodeId, path: str) -> NodeId {
         outer_statements.push(iter_decl);
         outer_statements.push(loop_expr(tree, span, loop_body));
         return block(tree, span, outer_statements);
-    } elif tag == "Assert" {
-        let condition = tree.node(id).child_field("condition");
-        let message = tree.node(id).child_field("message");
+    } elif tag == AstTag.Assert {
+        let condition = tree.node(id).child_field(AstFieldName.Condition);
+        let message = tree.node(id).child_field(AstFieldName.Message);
         if !message.is_valid() {
             let value = assertion_message(path, span);
             let raw = String.from(&"\"");
             raw.push_str(value.as_str());
             raw.push('"');
-            let literal = tree.alloc("StrLiteral", span);
-            tree.text(literal, "raw", raw.as_str());
-            tree.text(literal, "value", value.as_str());
-            message = tree.alloc("Literal", span);
-            tree.child(message, "literal", literal);
+            let literal = tree.alloc(AstTag.StrLiteral, span);
+            tree.text(literal, AstFieldName.Raw, raw.as_str());
+            tree.text(literal, AstFieldName.Value, value.as_str());
+            message = tree.alloc(AstTag.Literal, span);
+            tree.child(message, AstFieldName.Literal, literal);
             raw.drop();
             value.drop();
         }
-        let arg = tree.alloc("Arg", tree.node(message).span());
-        tree.missing(arg, "name");
-        tree.child(arg, "value", message);
+        let arg = tree.alloc(AstTag.Arg, tree.node(message).span());
+        tree.missing(arg, AstFieldName.Name);
+        tree.child(arg, AstFieldName.Value, message);
         let args = Vec<NodeId>.new();
         args.push(arg);
-        let panic_call = tree.alloc("Builtin", span);
-        tree.text(panic_call, "kind", "panic");
-        tree.children(panic_call, "type_args", Vec<NodeId>.new());
-        tree.children(panic_call, "args", args);
+        let panic_call = tree.alloc(AstTag.Builtin, span);
+        tree.builtin_kind(panic_call, BuiltinKind.Panic);
+        tree.children(panic_call, AstFieldName.TypeArgs, Vec<NodeId>.new());
+        tree.children(panic_call, AstFieldName.Args, args);
         let statements = Vec<NodeId>.new();
         statements.push(panic_call);
         return if_expr(tree, span, unary_not(tree, condition), block(tree, span, statements), NodeId.invalid());
@@ -326,9 +329,9 @@ fn rewrite_control(tree: AstTree&, id: NodeId, path: str) -> NodeId {
 }
 
 fn arg(tree: AstTree&, value: NodeId) -> NodeId {
-    let id = tree.alloc("Arg", tree.node(value).span());
-    tree.missing(id, "name");
-    tree.child(id, "value", value);
+    let id = tree.alloc(AstTag.Arg, tree.node(value).span());
+    tree.missing(id, AstFieldName.Name);
+    tree.child(id, AstFieldName.Value, value);
     return id;
 }
 
@@ -349,23 +352,23 @@ fn rewrite_expr(tree: AstTree&, id: NodeId) -> NodeId {
         }
         index += 1u64;
     }
-    if tree.node(id).tag() != "Binary" { return id; }
-    let op = tree.node(id).text_field("op");
+    if tree.node(id).tag() != AstTag.Binary { return id; }
+    let op = tree.node(id).binary_op_field();
     let span = tree.node(id).span();
-    let left = tree.node(id).child_field("left");
-    let right = tree.node(id).child_field("right");
-    if op == ".." {
+    let left = tree.node(id).child_field(AstFieldName.Left);
+    let right = tree.node(id).child_field(AstFieldName.Right);
+    if op == BinaryOperator.Range {
         let args = Vec<NodeId>.new();
         args.push(arg(tree, left));
         args.push(arg(tree, right));
-        let call = tree.alloc("Call", span);
-        tree.child(call, "callee", identifier(tree, span, "Range", false));
-        tree.children(call, "args", args);
+        let call = tree.alloc(AstTag.Call, span);
+        tree.child(call, AstFieldName.Callee, identifier(tree, span, "Range", false));
+        tree.children(call, AstFieldName.Args, args);
         return call;
     }
-    if op == "in" {
+    if op == BinaryOperator.In {
         let call = method_call(tree, span, right, "contains");
-        tree.node(call).push_child("args", arg(tree, left));
+        tree.node(call).push_child(AstFieldName.Args, arg(tree, left));
         return call;
     }
     return id;

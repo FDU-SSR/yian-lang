@@ -1,4 +1,7 @@
 from compiler.frontend.source import Position, Span;
+from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
+from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator;
+from compiler.frontend.parse.ast_atoms import AttrKind, BuiltinKind, MatchArmOrigin;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
@@ -21,6 +24,11 @@ pub enum AstValue {
     Text { value: String },
     Integer { value: u64, negative: bool },
     Float { value: f64 },
+    BinaryOp { value: BinaryOperator },
+    UnaryOp { value: UnaryOperator },
+    AttrKind { value: AttrKind },
+    BuiltinKind { value: BuiltinKind },
+    ArmOrigin { value: MatchArmOrigin },
     Flag { value: bool },
     Location { value: Position },
     Child { value: NodeId },
@@ -28,12 +36,12 @@ pub enum AstValue {
 }
 
 pub struct AstField {
-    name: str,
+    name: AstFieldName,
     value: AstValue,
 }
 
 impl AstField {
-    pub fn name() -> str { return self.name; }
+    pub fn name() -> AstFieldName { return self.name; }
     pub fn value() -> AstValue& { return &self.value; }
 }
 
@@ -48,16 +56,16 @@ impl Drop for AstField {
 }
 
 pub struct AstNode {
-    tag: str,
+    tag: AstTag,
     span: Span,
     fields: Vec<AstField>,
 }
 
 impl AstNode {
-    pub fn tag() -> str { return self.tag; }
+    pub fn tag() -> AstTag { return self.tag; }
     pub fn span() -> Span { return self.span; }
     pub fn fields() -> AstField[] { return self.fields.as_slice(); }
-    pub fn text_field(name: str) -> str {
+    pub fn text_field(name: AstFieldName) -> str {
         let index: u64 = 0u64;
         while index < self.fields.len() {
             let field = &self.fields[index];
@@ -72,7 +80,7 @@ impl AstNode {
         return "";
     }
 
-    pub fn child_field(name: str) -> NodeId {
+    pub fn child_field(name: AstFieldName) -> NodeId {
         let index: u64 = 0u64;
         while index < self.fields.len() {
             let field = &self.fields[index];
@@ -87,7 +95,21 @@ impl AstNode {
         return NodeId.invalid();
     }
 
-    pub fn push_child(name: str, child: NodeId) {
+    pub fn binary_op_field() -> BinaryOperator {
+        let index: u64 = 0u64;
+        while index < self.fields.len() {
+            if self.fields[index].name() == AstFieldName.Op {
+                match self.fields[index].value() {
+                    BinaryOp(value) => return *value,
+                    _ => {},
+                }
+            }
+            index += 1u64;
+        }
+        @panic("AST node has no binary operator");
+    }
+
+    pub fn push_child(name: AstFieldName, child: NodeId) {
         let index: u64 = 0u64;
         while index < self.fields.len() {
             if self.fields[index].name() == name {
@@ -123,7 +145,7 @@ impl AstArena {
 
     pub fn len() -> u64 { return self.nodes.len(); }
 
-    pub fn alloc(tag: str, span: Span) -> NodeId {
+    pub fn alloc(tag: AstTag, span: Span) -> NodeId {
         let id = NodeId(value=self.nodes.len());
         self.nodes.push(AstNode(tag=tag, span=span, fields=Vec<AstField>.new()));
         return id;
@@ -131,49 +153,79 @@ impl AstArena {
 
     pub fn node(id: NodeId) -> AstNode& { return &self.nodes[id.index()]; }
 
-    pub fn text(id: NodeId, name: str, value: str) {
+    pub fn text(id: NodeId, name: AstFieldName, value: str) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Text(value=String.from(&value))
         ));
     }
 
-    pub fn integer(id: NodeId, name: str, value: u64, negative: bool) {
+    pub fn integer(id: NodeId, name: AstFieldName, value: u64, negative: bool) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Integer(value=value, negative=negative)
         ));
     }
 
-    pub fn floating(id: NodeId, name: str, value: f64) {
+    pub fn floating(id: NodeId, name: AstFieldName, value: f64) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Float(value=value)
         ));
     }
 
-    pub fn flag(id: NodeId, name: str, value: bool) {
+    pub fn binary_op(id: NodeId, value: BinaryOperator) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=AstFieldName.Op, value=AstValue.BinaryOp(value=value)
+        ));
+    }
+
+    pub fn unary_op(id: NodeId, value: UnaryOperator) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=AstFieldName.Op, value=AstValue.UnaryOp(value=value)
+        ));
+    }
+
+    pub fn attr_kind(id: NodeId, value: AttrKind) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=AstFieldName.Kind, value=AstValue.AttrKind(value=value)
+        ));
+    }
+
+    pub fn builtin_kind(id: NodeId, value: BuiltinKind) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=AstFieldName.Kind, value=AstValue.BuiltinKind(value=value)
+        ));
+    }
+
+    pub fn arm_origin(id: NodeId, value: MatchArmOrigin) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=AstFieldName.Origin, value=AstValue.ArmOrigin(value=value)
+        ));
+    }
+
+    pub fn flag(id: NodeId, name: AstFieldName, value: bool) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Flag(value=value)
         ));
     }
 
-    pub fn location(id: NodeId, name: str, value: Position) {
+    pub fn location(id: NodeId, name: AstFieldName, value: Position) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Location(value=value)
         ));
     }
 
-    pub fn child(id: NodeId, name: str, value: NodeId) {
+    pub fn child(id: NodeId, name: AstFieldName, value: NodeId) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Child(value=value)
         ));
     }
 
-    pub fn children(id: NodeId, name: str, values: Vec<NodeId>) {
+    pub fn children(id: NodeId, name: AstFieldName, values: Vec<NodeId>) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Children(value=values)
         ));
     }
 
-    pub fn missing(id: NodeId, name: str) {
+    pub fn missing(id: NodeId, name: AstFieldName) {
         self.nodes[id.index()].fields.push(AstField(name=name, value=AstValue.Missing));
     }
 }

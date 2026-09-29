@@ -1,0 +1,286 @@
+from std.core.option import Option;
+from compiler.frontend.lex.token import Token, PunctuatorKind;
+from std.core.ops import PartialEq;
+
+pub enum BinaryOperator {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+    LogicalAnd,
+    LogicalOr,
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
+    Index,
+    In,
+    Range,
+}
+
+impl BinaryOperator {
+    static pub fn from_punct(kind: PunctuatorKind) -> Option<Self> {
+        match kind {
+            Plus => Option<Self>.Some(val=Self.Add),
+            Minus => Option<Self>.Some(val=Self.Sub),
+            Star => Option<Self>.Some(val=Self.Mul),
+            Slash => Option<Self>.Some(val=Self.Div),
+            Percent => Option<Self>.Some(val=Self.Mod),
+            Ampersand => Option<Self>.Some(val=Self.BitAnd),
+            Pipe => Option<Self>.Some(val=Self.BitOr),
+            Caret => Option<Self>.Some(val=Self.BitXor),
+            LessLess => Option<Self>.Some(val=Self.Shl),
+            EqualEqual => Option<Self>.Some(val=Self.Eq),
+            NotEqual => Option<Self>.Some(val=Self.Neq),
+            Less => Option<Self>.Some(val=Self.Lt),
+            Greater => Option<Self>.Some(val=Self.Gt),
+            GreaterGreater => Option<Self>.Some(val=Self.Shr),
+            GreaterGreaterEqual => Option<Self>.Some(val=Self.ShrAssign),
+            LessEqual => Option<Self>.Some(val=Self.Leq),
+            GreaterEqual => Option<Self>.Some(val=Self.Geq),
+            AmpersandAmpersand => Option<Self>.Some(val=Self.LogicalAnd),
+            PipePipe => Option<Self>.Some(val=Self.LogicalOr),
+            Equal => Option<Self>.Some(val=Self.Assign),
+            PlusEqual => Option<Self>.Some(val=Self.AddAssign),
+            MinusEqual => Option<Self>.Some(val=Self.SubAssign),
+            StarEqual => Option<Self>.Some(val=Self.MulAssign),
+            SlashEqual => Option<Self>.Some(val=Self.DivAssign),
+            PercentEqual => Option<Self>.Some(val=Self.ModAssign),
+            AmpersandEqual => Option<Self>.Some(val=Self.BitAndAssign),
+            PipeEqual => Option<Self>.Some(val=Self.BitOrAssign),
+            CaretEqual => Option<Self>.Some(val=Self.BitXorAssign),
+            LessLessEqual => Option<Self>.Some(val=Self.ShlAssign),
+            DotDot => Option<Self>.Some(val=Self.Range),
+            _ => Option<Self>.None,
+        }
+    }
+
+    static pub fn from_token(token: Token&) -> Option<Self> {
+        match token.kind() {
+            Punctuator(kind) => Self.from_punct(*kind),
+            Keyword(kind) => match kind {
+                In => Option<Self>.Some(val=Self.In),
+                _ => Option<Self>.None,
+            },
+            _ => Option<Self>.None,
+        }
+    }
+    pub fn spelling() -> str {
+        match self {
+            Add => "+",
+            Sub => "-",
+            Mul => "*",
+            Div => "/",
+            Mod => "%",
+            BitAnd => "&",
+            BitOr => "|",
+            BitXor => "^",
+            Shl => "<<",
+            Shr => ">>",
+            Eq => "==",
+            Neq => "!=",
+            Lt => "<",
+            Gt => ">",
+            Leq => "<=",
+            Geq => ">=",
+            LogicalAnd => "&&",
+            LogicalOr => "||",
+            Assign => "=",
+            AddAssign => "+=",
+            SubAssign => "-=",
+            MulAssign => "*=",
+            DivAssign => "/=",
+            ModAssign => "%=",
+            BitAndAssign => "&=",
+            BitOrAssign => "|=",
+            BitXorAssign => "^=",
+            ShlAssign => "<<=",
+            ShrAssign => ">>=",
+            Index => "[]",
+            In => "in",
+            Range => "..",
+        }
+    }
+
+    pub fn lbp() -> i32 {
+        match self {
+            Add => 10,
+            Sub => 10,
+            Mul => 11,
+            Div => 11,
+            Mod => 11,
+            BitAnd => 6,
+            BitOr => 4,
+            BitXor => 5,
+            Shl => 9,
+            Shr => 9,
+            Eq => 7,
+            Neq => 7,
+            Lt => 8,
+            Gt => 8,
+            Leq => 8,
+            Geq => 8,
+            LogicalAnd => 3,
+            LogicalOr => 2,
+            Assign => 1,
+            AddAssign => 1,
+            SubAssign => 1,
+            MulAssign => 1,
+            DivAssign => 1,
+            ModAssign => 1,
+            BitAndAssign => 1,
+            BitOrAssign => 1,
+            BitXorAssign => 1,
+            ShlAssign => 1,
+            ShrAssign => 1,
+            Index => 999,
+            In => 999,
+            Range => 999,
+        }
+    }
+
+    pub fn rbp() -> i32 {
+        match self {
+            Add => 11,
+            Sub => 11,
+            Mul => 12,
+            Div => 12,
+            Mod => 12,
+            BitAnd => 7,
+            BitOr => 5,
+            BitXor => 6,
+            Shl => 10,
+            Shr => 10,
+            Eq => 8,
+            Neq => 8,
+            Lt => 9,
+            Gt => 9,
+            Leq => 9,
+            Geq => 9,
+            LogicalAnd => 4,
+            LogicalOr => 3,
+            Assign => 1,
+            AddAssign => 1,
+            SubAssign => 1,
+            MulAssign => 1,
+            DivAssign => 1,
+            ModAssign => 1,
+            BitAndAssign => 1,
+            BitOrAssign => 1,
+            BitXorAssign => 1,
+            ShlAssign => 1,
+            ShrAssign => 1,
+            Index => 999,
+            In => 999,
+            Range => 999,
+        }
+    }
+}
+
+impl PartialEq<BinaryOperator> for BinaryOperator {
+    fn eq(other: BinaryOperator&) -> bool {
+        match *self {
+            Add => match *other { Add => true, _ => false },
+            Sub => match *other { Sub => true, _ => false },
+            Mul => match *other { Mul => true, _ => false },
+            Div => match *other { Div => true, _ => false },
+            Mod => match *other { Mod => true, _ => false },
+            BitAnd => match *other { BitAnd => true, _ => false },
+            BitOr => match *other { BitOr => true, _ => false },
+            BitXor => match *other { BitXor => true, _ => false },
+            Shl => match *other { Shl => true, _ => false },
+            Shr => match *other { Shr => true, _ => false },
+            Eq => match *other { Eq => true, _ => false },
+            Neq => match *other { Neq => true, _ => false },
+            Lt => match *other { Lt => true, _ => false },
+            Gt => match *other { Gt => true, _ => false },
+            Leq => match *other { Leq => true, _ => false },
+            Geq => match *other { Geq => true, _ => false },
+            LogicalAnd => match *other { LogicalAnd => true, _ => false },
+            LogicalOr => match *other { LogicalOr => true, _ => false },
+            Assign => match *other { Assign => true, _ => false },
+            AddAssign => match *other { AddAssign => true, _ => false },
+            SubAssign => match *other { SubAssign => true, _ => false },
+            MulAssign => match *other { MulAssign => true, _ => false },
+            DivAssign => match *other { DivAssign => true, _ => false },
+            ModAssign => match *other { ModAssign => true, _ => false },
+            BitAndAssign => match *other { BitAndAssign => true, _ => false },
+            BitOrAssign => match *other { BitOrAssign => true, _ => false },
+            BitXorAssign => match *other { BitXorAssign => true, _ => false },
+            ShlAssign => match *other { ShlAssign => true, _ => false },
+            ShrAssign => match *other { ShrAssign => true, _ => false },
+            Index => match *other { Index => true, _ => false },
+            In => match *other { In => true, _ => false },
+            Range => match *other { Range => true, _ => false },
+        }
+    }
+}
+
+pub enum UnaryOperator {
+    Neg,
+    BitNot,
+    LogicalNot,
+    Deref,
+    AddrOf,
+}
+
+impl UnaryOperator {
+    static pub fn from_punct(kind: PunctuatorKind) -> Option<Self> {
+        match kind {
+            Minus => Option<Self>.Some(val=Self.Neg),
+            Tilde => Option<Self>.Some(val=Self.BitNot),
+            Exclamation => Option<Self>.Some(val=Self.LogicalNot),
+            Star => Option<Self>.Some(val=Self.Deref),
+            Ampersand => Option<Self>.Some(val=Self.AddrOf),
+            _ => Option<Self>.None,
+        }
+    }
+
+    static pub fn from_token(token: Token&) -> Option<Self> {
+        match token.kind() {
+            Punctuator(kind) => Self.from_punct(*kind),
+            _ => Option<Self>.None,
+        }
+    }
+    pub fn spelling() -> str {
+        match self {
+            Neg => "-",
+            BitNot => "~",
+            LogicalNot => "!",
+            Deref => "*",
+            AddrOf => "&",
+        }
+    }
+
+}
+
+impl PartialEq<UnaryOperator> for UnaryOperator {
+    fn eq(other: UnaryOperator&) -> bool {
+        match *self {
+            Neg => match *other { Neg => true, _ => false },
+            BitNot => match *other { BitNot => true, _ => false },
+            LogicalNot => match *other { LogicalNot => true, _ => false },
+            Deref => match *other { Deref => true, _ => false },
+            AddrOf => match *other { AddrOf => true, _ => false },
+        }
+    }
+}

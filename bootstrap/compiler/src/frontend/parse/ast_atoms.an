@@ -1,0 +1,153 @@
+from std.core.option import Option;
+
+pub enum AttrKind {
+    Pub,
+    PubFfi,
+    Ffi,
+    Static,
+}
+
+impl AttrKind {
+    pub fn spelling() -> str {
+        match self {
+            Pub => "pub",
+            PubFfi => "pub(ffi)",
+            Ffi => "ffi",
+            Static => "static",
+        }
+    }
+}
+
+pub enum MatchArmOrigin {
+    User,
+    Condition,
+    ForItem,
+    Synthetic,
+}
+
+impl MatchArmOrigin {
+    pub fn spelling() -> str {
+        match self {
+            User => "user",
+            Condition => "condition",
+            ForItem => "for_item",
+            Synthetic => "synthetic",
+        }
+    }
+}
+
+pub enum BuiltinKind {
+    SizeOf,
+    Undef,
+    Dangling,
+    BitCast,
+    Alloc,
+    Realloc,
+    Panic,
+    RuntimeFail,
+    AssumeInit,
+    MemCopy,
+    SliceFromParts,
+    SliceGetPtr,
+    SliceGetLen,
+    StrFromParts,
+    StrGetPtr,
+    StrGetLen,
+    SysRead,
+    SysReadBytes,
+    SysWrite,
+    SysWriteBytes,
+    Open,
+    Close,
+    Sqrt,
+    Sin,
+    Cos,
+    Argc,
+    ArgBytes,
+    Exit,
+    FfiAddr,
+    FfiParts,
+    FfiNull,
+    FfiPtrCast,
+    FfiCopyFrom,
+    FfiCopyTo,
+}
+
+impl BuiltinKind {
+    pub fn spelling() -> str {
+        match self {
+            SizeOf => "sizeof",
+            Undef => "undef",
+            Dangling => "dangling",
+            BitCast => "bitcast",
+            Alloc => "alloc",
+            Realloc => "realloc",
+            Panic => "panic",
+            RuntimeFail => "runtime_fail",
+            AssumeInit => "assume_init",
+            MemCopy => "memcpy",
+            SliceFromParts => "slice_from_parts",
+            SliceGetPtr => "slice_get_ptr",
+            SliceGetLen => "slice_get_len",
+            StrFromParts => "str_from_parts",
+            StrGetPtr => "str_get_ptr",
+            StrGetLen => "str_get_len",
+            SysRead => "sys_read",
+            SysReadBytes => "sys_read_bytes",
+            SysWrite => "sys_write",
+            SysWriteBytes => "sys_write_bytes",
+            Open => "open",
+            Close => "close",
+            Sqrt => "sqrt",
+            Sin => "sin",
+            Cos => "cos",
+            Argc => "argc",
+            ArgBytes => "arg_bytes",
+            Exit => "exit",
+            FfiAddr => "ffi_addr",
+            FfiParts => "ffi_parts",
+            FfiNull => "ffi_null",
+            FfiPtrCast => "ffi_ptr_cast",
+            FfiCopyFrom => "ffi_copy_from",
+            FfiCopyTo => "ffi_copy_to",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        if text == "sizeof" { return Option<Self>.Some(val=Self.SizeOf); }
+        if text == "undef" { return Option<Self>.Some(val=Self.Undef); }
+        if text == "dangling" { return Option<Self>.Some(val=Self.Dangling); }
+        if text == "bitcast" { return Option<Self>.Some(val=Self.BitCast); }
+        if text == "alloc" { return Option<Self>.Some(val=Self.Alloc); }
+        if text == "realloc" { return Option<Self>.Some(val=Self.Realloc); }
+        if text == "panic" { return Option<Self>.Some(val=Self.Panic); }
+        if text == "runtime_fail" { return Option<Self>.Some(val=Self.RuntimeFail); }
+        if text == "assume_init" { return Option<Self>.Some(val=Self.AssumeInit); }
+        if text == "memcpy" { return Option<Self>.Some(val=Self.MemCopy); }
+        if text == "slice_from_parts" { return Option<Self>.Some(val=Self.SliceFromParts); }
+        if text == "slice_get_ptr" { return Option<Self>.Some(val=Self.SliceGetPtr); }
+        if text == "slice_get_len" { return Option<Self>.Some(val=Self.SliceGetLen); }
+        if text == "str_from_parts" { return Option<Self>.Some(val=Self.StrFromParts); }
+        if text == "str_get_ptr" { return Option<Self>.Some(val=Self.StrGetPtr); }
+        if text == "str_get_len" { return Option<Self>.Some(val=Self.StrGetLen); }
+        if text == "sys_read" { return Option<Self>.Some(val=Self.SysRead); }
+        if text == "sys_read_bytes" { return Option<Self>.Some(val=Self.SysReadBytes); }
+        if text == "sys_write" { return Option<Self>.Some(val=Self.SysWrite); }
+        if text == "sys_write_bytes" { return Option<Self>.Some(val=Self.SysWriteBytes); }
+        if text == "open" { return Option<Self>.Some(val=Self.Open); }
+        if text == "close" { return Option<Self>.Some(val=Self.Close); }
+        if text == "sqrt" { return Option<Self>.Some(val=Self.Sqrt); }
+        if text == "sin" { return Option<Self>.Some(val=Self.Sin); }
+        if text == "cos" { return Option<Self>.Some(val=Self.Cos); }
+        if text == "argc" { return Option<Self>.Some(val=Self.Argc); }
+        if text == "arg_bytes" { return Option<Self>.Some(val=Self.ArgBytes); }
+        if text == "exit" { return Option<Self>.Some(val=Self.Exit); }
+        if text == "ffi_addr" { return Option<Self>.Some(val=Self.FfiAddr); }
+        if text == "ffi_parts" { return Option<Self>.Some(val=Self.FfiParts); }
+        if text == "ffi_null" { return Option<Self>.Some(val=Self.FfiNull); }
+        if text == "ffi_ptr_cast" { return Option<Self>.Some(val=Self.FfiPtrCast); }
+        if text == "ffi_copy_from" { return Option<Self>.Some(val=Self.FfiCopyFrom); }
+        if text == "ffi_copy_to" { return Option<Self>.Some(val=Self.FfiCopyTo); }
+        return Option<Self>.None;
+    }
+}
