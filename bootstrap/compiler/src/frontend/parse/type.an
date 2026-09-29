@@ -233,7 +233,7 @@ fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
     } elif token.is_integer() {
         let literal = parser.alloc("IntLiteral", span);
         parser.text(literal, "raw", token.raw());
-        parser.text(literal, "value", token.value());
+        parser.integer(literal, "value", token.integer_value(), false);
         parser.text(literal, "suffix", token.suffix());
         parser.advance();
         lhs = parser.alloc("LiteralConstExpr", span);

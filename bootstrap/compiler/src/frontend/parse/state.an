@@ -33,6 +33,10 @@ impl AstTree {
     pub fn len() -> u64 { return self.arena.len(); }
     pub fn alloc(tag: str, span: Span) -> NodeId { return self.arena.alloc(tag, span); }
     pub fn text(id: NodeId, name: str, value: str) { self.arena.text(id, name, value); }
+    pub fn integer(id: NodeId, name: str, value: u64, negative: bool) {
+        self.arena.integer(id, name, value, negative);
+    }
+    pub fn floating(id: NodeId, name: str, value: f64) { self.arena.floating(id, name, value); }
     pub fn flag(id: NodeId, name: str, value: bool) { self.arena.flag(id, name, value); }
     pub fn child(id: NodeId, name: str, value: NodeId) { self.arena.child(id, name, value); }
     pub fn children(id: NodeId, name: str, values: Vec<NodeId>) { self.arena.children(id, name, values); }
@@ -213,6 +217,10 @@ impl Parser {
     pub fn alloc(tag: str, span: Span) -> NodeId { return self.arena.alloc(tag, span); }
     pub fn node(id: NodeId) -> AstNode& { return self.arena.node(id); }
     pub fn text(id: NodeId, name: str, value: str) { self.arena.text(id, name, value); }
+    pub fn integer(id: NodeId, name: str, value: u64, negative: bool) {
+        self.arena.integer(id, name, value, negative);
+    }
+    pub fn floating(id: NodeId, name: str, value: f64) { self.arena.floating(id, name, value); }
     pub fn flag(id: NodeId, name: str, value: bool) { self.arena.flag(id, name, value); }
     pub fn location(id: NodeId, name: str, value: Position) { self.arena.location(id, name, value); }
     pub fn child(id: NodeId, name: str, value: NodeId) { self.arena.child(id, name, value); }

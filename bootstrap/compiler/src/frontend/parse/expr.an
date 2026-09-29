@@ -51,11 +51,9 @@ fn literal_expr(parser: Parser&) -> NodeId {
     }
     let literal = parser.alloc(tag, span);
     parser.text(literal, "raw", token.raw());
-    if tag == "FloatLiteral" {
-        let bits = token.bits().to_string_radix(10u64);
-        parser.text(literal, "bits", bits.as_str());
-        bits.drop();
-    } else { parser.text(literal, "value", token.value()); }
+    if tag == "FloatLiteral" { parser.floating(literal, "value", token.float_value()); }
+    elif tag == "IntLiteral" { parser.integer(literal, "value", token.integer_value(), false); }
+    else { parser.text(literal, "value", token.value()); }
     if tag == "IntLiteral" || tag == "FloatLiteral" { parser.text(literal, "suffix", token.suffix()); }
     parser.advance();
     let node = parser.alloc("Literal", span);

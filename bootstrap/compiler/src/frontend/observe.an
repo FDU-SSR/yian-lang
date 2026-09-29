@@ -7,6 +7,7 @@ from std.core.iter import IntoIterator, Iterator;
 from std.core.ops import Index;
 from std.core.string import String;
 from std.core.vec import Vec;
+from std.num.f64 import to_bits;
 
 fn token_kind(token: Token&) -> str {
     match token.kind() {
@@ -90,13 +91,26 @@ fn append_token(output: String&, token: Token&) {
     output.push_str(",\"raw\":");
     append_string(output, token.raw());
     output.push_str(",\"value\":");
-    append_string(output, token.value());
+    match token.kind() {
+        Integer => {
+            let value = token.integer_value().to_string_radix(10u64);
+            append_string(output, value.as_str());
+            value.drop();
+        },
+        Float => append_string(output, ""),
+        _ => append_string(output, token.value()),
+    }
     output.push_str(",\"suffix\":");
     append_string(output, token.suffix());
     output.push_str(",\"bits\":");
-    let bits = token.bits().to_string_radix(10u64);
-    append_string(output, bits.as_str());
-    bits.drop();
+    match token.kind() {
+        Float => {
+            let bits = to_bits(token.float_value()).to_string_radix(10u64);
+            append_string(output, bits.as_str());
+            bits.drop();
+        },
+        _ => append_string(output, "0"),
+    }
     output.push(',');
     append_span(output, token.span());
     output.push('}');
@@ -161,11 +175,28 @@ pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
         if index != 0u64 { output.push(','); }
         let field = &fields[index];
         output.push('[');
-        append_string(output, field.name());
+        if node.tag() == "FloatLiteral" && field.name() == "value" {
+            append_string(output, "bits");
+        } else { append_string(output, field.name()); }
         output.push(',');
         match field.value() {
             Missing => output.push_str("null"),
             Text(value) => append_string(output, value.as_str()),
+            Integer(value, negative) => {
+                let digits = value.to_string_radix(10u64);
+                if *negative && *value != 0u64 {
+                    let signed = String.from(&"-");
+                    signed.push_str(digits.as_str());
+                    append_string(output, signed.as_str());
+                    signed.drop();
+                } else { append_string(output, digits.as_str()); }
+                digits.drop();
+            },
+            Float(value) => {
+                let bits = to_bits(*value).to_string_radix(10u64);
+                append_string(output, bits.as_str());
+                bits.drop();
+            },
             Flag(value) => {
                 if *value { output.push_str("true"); }
                 else { output.push_str("false"); }

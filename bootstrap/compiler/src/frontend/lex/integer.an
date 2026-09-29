@@ -1,0 +1,103 @@
+from compiler.frontend.lex.number import digit, literal_base, prefix_len;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.string import String;
+
+pub struct IntegerValue {
+    value: u64,
+    suffix: String,
+}
+
+impl IntegerValue {
+    pub fn value() -> u64 { return self.value; }
+    pub fn suffix() -> str { return self.suffix.as_str(); }
+}
+
+impl Drop for IntegerValue {
+    pub fn drop() { self.suffix.drop(); }
+}
+
+fn error(message: str) -> Result<IntegerValue, String> {
+    return Result<IntegerValue, String>.Err(msg=String.from(&message));
+}
+
+fn suffix_max(suffix: str) -> u64 {
+    if suffix == "i8" { return 127u64; }
+    if suffix == "i16" { return 32767u64; }
+    if suffix == "i32" || suffix == "int" { return 2147483647u64; }
+    if suffix == "i64" { return 9223372036854775807u64; }
+    if suffix == "u8" { return 255u64; }
+    if suffix == "u16" { return 65535u64; }
+    if suffix == "u32" || suffix == "uint" { return 4294967295u64; }
+    return u64.max();
+}
+
+pub fn parse_integer(raw: str) -> Result<IntegerValue, String> {
+    let base = literal_base(raw);
+    let body_start = prefix_len(raw);
+    let bytes = raw.as_slice();
+    let body_end = bytes.len();
+    let suffix = String.new();
+    if raw.ends_with("i8") { suffix.push_str("i8"); body_end -= 2u64; }
+    elif raw.ends_with("i16") { suffix.push_str("i16"); body_end -= 3u64; }
+    elif raw.ends_with("i32") { suffix.push_str("i32"); body_end -= 3u64; }
+    elif raw.ends_with("i64") { suffix.push_str("i64"); body_end -= 3u64; }
+    elif raw.ends_with("u8") { suffix.push_str("u8"); body_end -= 2u64; }
+    elif raw.ends_with("u16") { suffix.push_str("u16"); body_end -= 3u64; }
+    elif raw.ends_with("u32") { suffix.push_str("u32"); body_end -= 3u64; }
+    elif raw.ends_with("u64") { suffix.push_str("u64"); body_end -= 3u64; }
+    elif raw.ends_with("int") { suffix.push_str("int"); body_end -= 3u64; }
+    elif raw.ends_with("uint") { suffix.push_str("uint"); body_end -= 4u64; }
+    if body_end <= body_start {
+        suffix.drop();
+        return error("missing numeric digits");
+    }
+
+    let digits: u64 = 0u64;
+    let position = body_start;
+    while position < body_end {
+        let current = bytes[position];
+        position += 1u64;
+        if current == b'_' { continue; }
+        let parsed = digit(current);
+        if parsed < 0 || u32(parsed) >= base {
+            suffix.drop();
+            return error("invalid numeric digit");
+        }
+        digits += 1u64;
+    }
+    if digits == 0u64 {
+        suffix.drop();
+        return error("missing numeric digits");
+    }
+    let value: u64 = 0u64;
+    let overflow = false;
+    position = body_start;
+    while position < body_end {
+        let current = bytes[position];
+        position += 1u64;
+        if current == b'_' { continue; }
+        let parsed = u64(digit(current));
+        if value > (u64.max() - parsed) / u64(base) {
+            overflow = true;
+            break;
+        }
+        value = value * u64(base) + parsed;
+    }
+    if overflow || (suffix.len() != 0u64 && value > suffix_max(suffix.as_str())) {
+        let digits_text = String.new();
+        let index = body_start;
+        while index < body_end {
+            if bytes[index] != b'_' { digits_text.push(char(bytes[index])); }
+            index += 1u64;
+        }
+        let message = String.from(&"Integer literal ");
+        message.push_str(digits_text.as_str());
+        message.push_str(" exceeds maximum value for type ");
+        if suffix.len() == 0u64 { message.push_str("u64"); }
+        else { message.push_str(suffix.as_str()); }
+        digits_text.drop(); suffix.drop();
+        return Result<IntegerValue, String>.Err(msg=message);
+    }
+    return Result<IntegerValue, String>.Ok(val=IntegerValue(value=value, suffix=suffix));
+}

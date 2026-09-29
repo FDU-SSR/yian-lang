@@ -19,6 +19,8 @@ impl NodeId {
 pub enum AstValue {
     Missing,
     Text { value: String },
+    Integer { value: u64, negative: bool },
+    Float { value: f64 },
     Flag { value: bool },
     Location { value: Position },
     Child { value: NodeId },
@@ -132,6 +134,18 @@ impl AstArena {
     pub fn text(id: NodeId, name: str, value: str) {
         self.nodes[id.index()].fields.push(AstField(
             name=name, value=AstValue.Text(value=String.from(&value))
+        ));
+    }
+
+    pub fn integer(id: NodeId, name: str, value: u64, negative: bool) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=name, value=AstValue.Integer(value=value, negative=negative)
+        ));
+    }
+
+    pub fn floating(id: NodeId, name: str, value: f64) {
+        self.nodes[id.index()].fields.push(AstField(
+            name=name, value=AstValue.Float(value=value)
         ));
     }
 

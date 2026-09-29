@@ -429,6 +429,9 @@ def parse_integer_value(raw: str) -> tuple[int, str | None]:
         if value > max_value:
             raise ValueError(f"Integer literal {raw} exceeds maximum value for type {suffix}")
 
+    if value > INT_SUFFIXES["u64"]:
+        raise ValueError(f"Integer literal {raw} exceeds maximum value for type u64")
+
     return value, suffix
 
 

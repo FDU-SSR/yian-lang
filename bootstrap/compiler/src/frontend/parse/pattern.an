@@ -8,7 +8,7 @@ from std.core.ops import Index;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-fn literal_token(parser: Parser&, negative: bool) -> NodeId {
+fn literal_token(parser: Parser&) -> NodeId {
     let token = parser.peek();
     let tag = "";
     match token.kind() {
@@ -23,19 +23,11 @@ fn literal_token(parser: Parser&, negative: bool) -> NodeId {
     }
     let span = token.span();
     let node = parser.alloc(tag, span);
-    if negative {
-        let value = String.from(&"-");
-        value.push_str(token.value());
-        let raw = String.from(&"-");
-        raw.push_str(token.raw());
-        parser.text(node, "raw", raw.as_str());
-        parser.text(node, "value", value.as_str());
-        raw.drop(); value.drop();
-    } else {
-        parser.text(node, "raw", token.raw());
-        parser.text(node, "value", token.value());
-    }
-    if tag == "IntLiteral" { parser.text(node, "suffix", token.suffix()); }
+    parser.text(node, "raw", token.raw());
+    if tag == "IntLiteral" {
+        parser.integer(node, "value", token.integer_value(), false);
+        parser.text(node, "suffix", token.suffix());
+    } else { parser.text(node, "value", token.value()); }
     parser.advance();
     return node;
 }
@@ -48,14 +40,18 @@ fn pattern_literal(parser: Parser&) -> NodeId {
             parser.error("Expected integer literal after '-' in pattern", minus);
             return NodeId.invalid();
         }
-        let literal = literal_token(parser, true);
-        let node = parser.alloc("IntLiteral", minus.join(parser.node(literal).span()));
-        parser.text(node, "raw", parser.node(literal).text_field("raw"));
-        parser.text(node, "value", parser.node(literal).text_field("value"));
-        parser.text(node, "suffix", parser.node(literal).text_field("suffix"));
+        let token = parser.peek();
+        let node = parser.alloc("IntLiteral", minus.join(token.span()));
+        let raw = String.from(&"-");
+        raw.push_str(token.raw());
+        parser.text(node, "raw", raw.as_str());
+        raw.drop();
+        parser.integer(node, "value", token.integer_value(), true);
+        parser.text(node, "suffix", token.suffix());
+        parser.advance();
         return node;
     }
-    return literal_token(parser, false);
+    return literal_token(parser);
 }
 
 fn pattern_atom(parser: Parser&) -> NodeId {

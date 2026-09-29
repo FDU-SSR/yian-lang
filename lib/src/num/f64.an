@@ -61,6 +61,18 @@ impl From<str> for f64 {
     }
 }
 
+pub fn from_bits(bits: u64) -> f64 {
+    let value: f64 = 0.0;
+    @memcpy(&value, &bits, 8u64);
+    return value;
+}
+
+pub fn to_bits(value: f64) -> u64 {
+    let bits: u64 = 0u64;
+    @memcpy(&bits, &value, 8u64);
+    return bits;
+}
+
 pub fn sqrt(value: f64) -> f64 {
     return @sqrt(value);
 }
