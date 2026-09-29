@@ -254,7 +254,7 @@ class AnalysisSession:
             unit.allows_ffi = (
                 self.__packages.packages[package_name].ffi
                 if package_name is not None and self.__packages is not None
-                else self.__allow_ffi
+                else unit.is_stdlib or self.__allow_ffi
             )
             unit.symbol_ctx.allows_ffi = unit.allows_ffi
 

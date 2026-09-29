@@ -1,0 +1,235 @@
+from compiler.frontend.parse.ast import AstArena, AstNode, NodeId;
+from compiler.frontend.lex.lexer import Token;
+from compiler.frontend.source import Position, Span;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub struct ParseError {
+    message: String,
+    span: Span,
+}
+
+impl ParseError {
+    pub fn message() -> str { return self.message.as_str(); }
+    pub fn span() -> Span { return self.span; }
+}
+
+impl Drop for ParseError {
+    pub fn drop() { self.message.drop(); }
+}
+
+pub struct AstTree {
+    arena: AstArena,
+    root: NodeId,
+}
+
+impl AstTree {
+    pub fn root() -> NodeId { return self.root; }
+    pub fn node(id: NodeId) -> AstNode& { return self.arena.node(id); }
+    pub fn len() -> u64 { return self.arena.len(); }
+    pub fn alloc(tag: str, span: Span) -> NodeId { return self.arena.alloc(tag, span); }
+    pub fn text(id: NodeId, name: str, value: str) { self.arena.text(id, name, value); }
+    pub fn flag(id: NodeId, name: str, value: bool) { self.arena.flag(id, name, value); }
+    pub fn child(id: NodeId, name: str, value: NodeId) { self.arena.child(id, name, value); }
+    pub fn children(id: NodeId, name: str, values: Vec<NodeId>) { self.arena.children(id, name, values); }
+    pub fn missing(id: NodeId, name: str) { self.arena.missing(id, name); }
+}
+
+impl Drop for AstTree {
+    pub fn drop() { self.arena.drop(); }
+}
+
+fn punctuator_name(symbol: str) -> str {
+    if symbol == "(" { return "LParen"; }
+    if symbol == ")" { return "RParen"; }
+    if symbol == "{" { return "LBrace"; }
+    if symbol == "}" { return "RBrace"; }
+    if symbol == "[" { return "LBracket"; }
+    if symbol == "]" { return "RBracket"; }
+    if symbol == "," { return "Comma"; }
+    if symbol == ":" { return "Colon"; }
+    if symbol == ";" { return "Semicolon"; }
+    if symbol == "." { return "Dot"; }
+    if symbol == "->" { return "Arrow"; }
+    if symbol == "=>" { return "FatArrow"; }
+    if symbol == "+" { return "Plus"; }
+    if symbol == "-" { return "Minus"; }
+    if symbol == "*" { return "Star"; }
+    if symbol == "/" { return "Slash"; }
+    if symbol == "%" { return "Percent"; }
+    if symbol == "^" { return "Caret"; }
+    if symbol == "&" { return "Ampersand"; }
+    if symbol == "&&" { return "AmpersandAmpersand"; }
+    if symbol == "|" { return "Pipe"; }
+    if symbol == "||" { return "PipePipe"; }
+    if symbol == "~" { return "Tilde"; }
+    if symbol == "!" { return "Exclamation"; }
+    if symbol == "=" { return "Equal"; }
+    if symbol == "<" { return "Less"; }
+    if symbol == ">" { return "Greater"; }
+    if symbol == "<angle>" { return "LAngle"; }
+    if symbol == ">angle>" { return "RAngle"; }
+    if symbol == "+=" { return "PlusEqual"; }
+    if symbol == "-=" { return "MinusEqual"; }
+    if symbol == "*=" { return "StarEqual"; }
+    if symbol == "/=" { return "SlashEqual"; }
+    if symbol == "%=" { return "PercentEqual"; }
+    if symbol == "^=" { return "CaretEqual"; }
+    if symbol == "&=" { return "AmpersandEqual"; }
+    if symbol == "|=" { return "PipeEqual"; }
+    if symbol == "==" { return "EqualEqual"; }
+    if symbol == "!=" { return "NotEqual"; }
+    if symbol == "<=" { return "LessEqual"; }
+    if symbol == ">=" { return "GreaterEqual"; }
+    if symbol == "<<" { return "LessLess"; }
+    if symbol == "<<=" { return "LessLessEqual"; }
+    if symbol == ">>" { return "GreaterGreater"; }
+    if symbol == ">>=" { return "GreaterGreaterEqual"; }
+    if symbol == ".." { return "DotDot"; }
+    if symbol == "@" { return "At"; }
+    return "EOF";
+}
+
+pub struct Parser {
+    tokens: Vec<Token>&,
+    index: u64,
+    arena: AstArena,
+    failed: bool,
+    problem: ParseError,
+}
+
+impl Parser {
+    static pub fn new(tokens: Vec<Token>&) -> Self {
+        let zero = Position(row=0u64, column=0u64, byte=0u64);
+        return Self(tokens=tokens, index=0u64, arena=AstArena.new(), failed=false,
+            problem=ParseError(message=String.new(), span=Span(start=zero, end=zero)));
+    }
+
+    pub fn peek() -> Token& { return &self.tokens[self.index]; }
+
+    pub fn peek_at(ahead: u64) -> Token& {
+        let position = self.index + ahead;
+        if position >= self.tokens.len() { return &self.tokens[self.tokens.len() - 1u64]; }
+        return &self.tokens[position];
+    }
+
+    pub fn at_end() -> bool { return self.peek().is_eof(); }
+    pub fn failed() -> bool { return self.failed; }
+    pub fn mark() -> u64 { return self.index; }
+    pub fn reset(mark: u64) { self.index = mark; }
+
+    pub fn clear_error() {
+        if self.failed {
+            self.problem.drop();
+            self.problem.message = String.new();
+            self.failed = false;
+        }
+    }
+
+    pub fn error(message: str, span: Span) {
+        if self.failed { return; }
+        self.failed = true;
+        self.problem.message.drop();
+        self.problem.message = String.from(&message);
+        self.problem.span = span;
+    }
+
+    pub fn advance() {
+        if self.failed { return; }
+        if self.at_end() {
+            self.error("End of token stream reached", self.peek().span());
+            return;
+        }
+        self.index += 1u64;
+    }
+
+    pub fn at_punct(symbol: str) -> bool { return self.peek().is_punct(symbol); }
+    pub fn at_keyword(word: str) -> bool { return self.peek().is_keyword(word); }
+
+    pub fn take_punct(symbol: str) -> Span {
+        let span = self.peek().span();
+        if !self.failed {
+            if self.at_punct(symbol) { self.index += 1u64; }
+            else {
+                let message = String.from(&"Expected punctuator 'PunctuatorKind.");
+                message.push_str(punctuator_name(symbol));
+                message.push_str("' but got '");
+                message.push_str(self.peek().value());
+                message.push('\'');
+                self.error(message.as_str(), span);
+                message.drop();
+            }
+        }
+        return span;
+    }
+
+    pub fn take_keyword(word: str) -> Span {
+        let span = self.peek().span();
+        if !self.failed {
+            if self.at_keyword(word) { self.index += 1u64; }
+            else { self.error("Expected keyword", span); }
+        }
+        return span;
+    }
+
+    pub fn identifier() -> NodeId {
+        if self.failed { return NodeId.invalid(); }
+        let token = self.peek();
+        if token.is_keyword("IS_RAW_MODE") {
+            self.error("'IS_RAW_MODE' is a reserved compile-time configuration", token.span());
+            return NodeId.invalid();
+        }
+        if token.is_keyword("defer") {
+            self.error("'defer' is a reserved keyword", token.span());
+            return NodeId.invalid();
+        }
+        let accepted = token.is_identifier();
+        if !accepted {
+            let reserved = token.is_keyword("true") || token.is_keyword("false") ||
+                token.is_keyword("fn") || token.is_keyword("struct") || token.is_keyword("u64") ||
+                token.is_keyword("Self") || token.is_keyword("void");
+            // Keywords other than the two reserved configuration words can be names.
+            if !reserved && !self.keyword_token() {
+                self.error("Expected identifier or keyword", token.span());
+                return NodeId.invalid();
+            }
+        }
+        let id = self.arena.alloc("Identifier", token.span());
+        self.arena.text(id, "name", token.value());
+        self.arena.flag(id, "synthetic", false);
+        self.advance();
+        return id;
+    }
+
+    pub fn keyword_token() -> bool {
+        let token = self.peek();
+        return token.is_keyword(token.value());
+    }
+
+    pub fn alloc(tag: str, span: Span) -> NodeId { return self.arena.alloc(tag, span); }
+    pub fn node(id: NodeId) -> AstNode& { return self.arena.node(id); }
+    pub fn text(id: NodeId, name: str, value: str) { self.arena.text(id, name, value); }
+    pub fn flag(id: NodeId, name: str, value: bool) { self.arena.flag(id, name, value); }
+    pub fn location(id: NodeId, name: str, value: Position) { self.arena.location(id, name, value); }
+    pub fn child(id: NodeId, name: str, value: NodeId) { self.arena.child(id, name, value); }
+    pub fn children(id: NodeId, name: str, values: Vec<NodeId>) { self.arena.children(id, name, values); }
+    pub fn missing(id: NodeId, name: str) { self.arena.missing(id, name); }
+
+    pub fn finish(root: NodeId) -> Result<AstTree, ParseError> {
+        if self.failed {
+            self.arena.drop();
+            let problem = self.problem;
+            self.problem.message = String.new();
+            return Result<AstTree, ParseError>.Err(msg=problem);
+        }
+        self.problem.drop();
+        self.problem.message = String.new();
+        let arena = self.arena;
+        self.arena = AstArena.new();
+        return Result<AstTree, ParseError>.Ok(val=AstTree(arena=arena, root=root));
+    }
+}

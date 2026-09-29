@@ -21,6 +21,17 @@ class SysLowerer:
         buf = self.__resolver.resolve_val(expr.args[1])
         return self.build_sys_read(fd, buf)
 
+    def resolve_sys_read_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        fd = self.__resolver.resolve_val(expr.args[0])
+        buf = self.__resolver.resolve_val(expr.args[1])
+        if self.__state.pointers.is_fat_view(buf):
+            self.__state.emitter.emit(IR.CheckRequest(
+                kind=IR.CHECK_REQUEST_VIEW, operands=[buf],
+                live=not self.__state.pointers.is_frame_locked(buf),
+            ))
+        result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.i64_id)
+        return self.__state.emitter.emit(IR.SysReadBytes(result=result, fd=fd, buf=buf)).result
+
     def resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
         fd = self.__resolver.resolve_val(expr.args[0])
         buf = self.__resolver.resolve_val(expr.args[1])

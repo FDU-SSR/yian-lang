@@ -546,6 +546,13 @@ class SysRead:
 
 
 @dataclass
+class SysReadBytes:
+    result: Reg
+    fd: Value
+    buf: Value
+
+
+@dataclass
 class Open:
     result: Reg
     path: Value
@@ -613,7 +620,7 @@ Stmt: TypeAlias = (
     | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysWriteBytes | SysRead | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
+    | SysWrite | SysWriteBytes | SysRead | SysReadBytes | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
     | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast | FfiCopy
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty

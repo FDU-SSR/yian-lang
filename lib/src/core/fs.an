@@ -1,0 +1,172 @@
+from std.core.drop import Drop;
+from std.core.io import IoError, IoErrorKind;
+from std.core.option import Option;
+from std.core.ops import Index, PartialEq;
+from std.core.range import Range;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.ffi.c_string import c_string_bytes;
+
+// The private representation follows the Linux x86-64 LP64 dirent64 ABI.
+opaque type DirHandle;
+opaque type Dirent;
+
+extern "C" {
+    fn opendir(path: cptr<c_char>) -> cptr<DirHandle>;
+    fn readdir64(directory: cptr<DirHandle>) -> cptr<Dirent>;
+    fn closedir(directory: cptr<DirHandle>) -> c_int;
+    fn __errno_location() -> cptr<c_int>;
+}
+
+pub enum DirEntryKind {
+    File,
+    Directory,
+    Link,
+    Other,
+}
+
+impl PartialEq<DirEntryKind> for DirEntryKind {
+    fn eq(other: DirEntryKind&) -> bool {
+        match *self {
+            File => match *other { File => true, _ => false },
+            Directory => match *other { Directory => true, _ => false },
+            Link => match *other { Link => true, _ => false },
+            Other => match *other { Other => true, _ => false },
+        }
+    }
+}
+
+pub struct DirEntry {
+    name: String,
+    kind: DirEntryKind,
+}
+
+impl DirEntry {
+    pub fn name() -> str {
+        return self.name.as_str();
+    }
+
+    pub fn kind() -> DirEntryKind {
+        return self.kind;
+    }
+}
+
+impl Drop for DirEntry {
+    pub fn drop() {
+        self.name.drop();
+    }
+}
+
+pub struct Directory {
+    handle: cptr<DirHandle>,
+}
+
+impl Directory {
+    static pub ffi fn open(path: str) -> Result<Self, IoError> {
+        let c_path = match c_string_bytes(path) {
+            Ok(value) => value,
+            Err(_) => return Result<Self, IoError>.Err(
+                msg=IoError.new(IoErrorKind.InvalidInput, "directory path contains NUL")
+            ),
+        };
+        defer c_path.drop();
+        let (path_data, _) = @ffi_parts(c_path.as_slice());
+        let handle = opendir(@ffi_ptr_cast<c_char>(path_data));
+        if handle == @ffi_null<DirHandle>() {
+            return Result<Self, IoError>.Err(msg=IoError.other("cannot open directory"));
+        }
+        return Result<Self, IoError>.Ok(val=Self(handle=handle));
+    }
+
+    // A returned entry owns its name and remains valid after the next read.
+    pub ffi fn next() -> Result<Option<DirEntry>, IoError> {
+        if self.handle == @ffi_null<DirHandle>() {
+            return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("directory is closed"));
+        }
+        loop {
+            let zero: u8[4] = [0u8, 0u8, 0u8, 0u8];
+            @ffi_copy_to(@ffi_ptr_cast<u8>(__errno_location()), zero.as_slice(), 4u64);
+            let record = readdir64(self.handle);
+            if record == @ffi_null<Dirent>() {
+                let error: u8[4];
+                @assume_init(error);
+                @ffi_copy_from(error.as_slice(), @ffi_ptr_cast<u8>(__errno_location()), 4u64);
+                if error[0] != 0u8 || error[1] != 0u8 || error[2] != 0u8 || error[3] != 0u8 {
+                    return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("directory read failed"));
+                }
+                return Result<Option<DirEntry>, IoError>.Ok(val=Option<DirEntry>.None);
+            }
+
+            let header: u8[19];
+            @assume_init(header);
+            let raw = @ffi_ptr_cast<u8>(record);
+            @ffi_copy_from(header.as_slice(), raw, 19u64);
+            let record_length = u64(header[16]) | (u64(header[17]) << 8);
+            if record_length < 20u64 {
+                return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("invalid directory entry"));
+            }
+
+            let bytes = Vec<u8>.new();
+            let name_capacity = record_length - 19u64;
+            let index: u64 = 0;
+            while index < name_capacity {
+                bytes.push(0u8);
+                index += 1u64;
+            }
+            @ffi_copy_from(bytes.as_slice(), raw + 19u64, name_capacity);
+            let length: u64 = 0u64;
+            while length < name_capacity && bytes[length] != 0u8 {
+                length += 1u64;
+            }
+            if length == name_capacity {
+                bytes.drop();
+                return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("unterminated directory entry"));
+            }
+            if (length == 1u64 && bytes[0] == b'.') ||
+                (length == 2u64 && bytes[0] == b'.' && bytes[1] == b'.') {
+                bytes.drop();
+                continue;
+            }
+            let name = match str.from_slice(bytes.as_slice()[0u64..length]) {
+                Some(value) => value,
+                None => {
+                    bytes.drop();
+                    return Result<Option<DirEntry>, IoError>.Err(
+                        msg=IoError.new(IoErrorKind.InvalidInput, "directory entry is not valid UTF-8")
+                    );
+                },
+            };
+            let owned_name = String.from(&name);
+            bytes.drop();
+            let kind = match header[18] {
+                4u8 => DirEntryKind.Directory,
+                8u8 => DirEntryKind.File,
+                10u8 => DirEntryKind.Link,
+                _ => DirEntryKind.Other,
+            };
+            return Result<Option<DirEntry>, IoError>.Ok(
+                val=Option<DirEntry>.Some(DirEntry(name=owned_name, kind=kind))
+            );
+        }
+    }
+
+    pub ffi fn close() -> Result<i32, IoError> {
+        if self.handle == @ffi_null<DirHandle>() {
+            return Result<i32, IoError>.Ok(val=0);
+        }
+        let handle = self.handle;
+        self.handle = @ffi_null<DirHandle>();
+        let result = closedir(handle);
+        if result < 0 {
+            return Result<i32, IoError>.Err(msg=IoError.other("directory close failed"));
+        }
+        return Result<i32, IoError>.Ok(val=i32(result));
+    }
+}
+
+impl Drop for Directory {
+    pub fn drop() {
+        self.close();
+    }
+}

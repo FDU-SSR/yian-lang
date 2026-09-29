@@ -1,0 +1,330 @@
+from compiler.frontend.parse.ast import NodeId;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.type import parse_type;
+from compiler.frontend.source import Span;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn literal_token(parser: Parser&, negative: bool) -> NodeId {
+    let token = parser.peek();
+    let tag = "";
+    match token.kind() {
+        Integer => { tag = "IntLiteral"; },
+        Character => { tag = "CharLiteral"; },
+        StringLiteral => { tag = "StrLiteral"; },
+        _ => {},
+    }
+    if tag == "" {
+        parser.error("Expected literal in pattern", token.span());
+        return NodeId.invalid();
+    }
+    let span = token.span();
+    let node = parser.alloc(tag, span);
+    if negative {
+        let value = String.from(&"-");
+        value.push_str(token.value());
+        let raw = String.from(&"-");
+        raw.push_str(token.raw());
+        parser.text(node, "raw", raw.as_str());
+        parser.text(node, "value", value.as_str());
+        raw.drop(); value.drop();
+    } else {
+        parser.text(node, "raw", token.raw());
+        parser.text(node, "value", token.value());
+    }
+    if tag == "IntLiteral" { parser.text(node, "suffix", token.suffix()); }
+    parser.advance();
+    return node;
+}
+
+fn pattern_literal(parser: Parser&) -> NodeId {
+    if parser.at_punct("-") {
+        let minus = parser.peek().span();
+        parser.advance();
+        if !parser.peek().is_integer() {
+            parser.error("Expected integer literal after '-' in pattern", minus);
+            return NodeId.invalid();
+        }
+        let literal = literal_token(parser, true);
+        let node = parser.alloc("IntLiteral", minus.join(parser.node(literal).span()));
+        parser.text(node, "raw", parser.node(literal).text_field("raw"));
+        parser.text(node, "value", parser.node(literal).text_field("value"));
+        parser.text(node, "suffix", parser.node(literal).text_field("suffix"));
+        return node;
+    }
+    return literal_token(parser, false);
+}
+
+fn pattern_atom(parser: Parser&) -> NodeId {
+    if parser.failed() { return NodeId.invalid(); }
+    let token = parser.peek();
+    let span = token.span();
+    if parser.at_keyword("_") {
+        parser.advance();
+        return parser.alloc("WildcardPattern", span);
+    }
+    if parser.at_keyword("true") || parser.at_keyword("false") {
+        let literal = parser.alloc("BoolLiteral", span);
+        parser.text(literal, "raw", token.value());
+        parser.flag(literal, "value", parser.at_keyword("true"));
+        parser.advance();
+        let node = parser.alloc("LiteralPattern", span);
+        parser.child(node, "literal", literal);
+        return node;
+    }
+    let is_literal = token.is_integer() || token.is_punct("-");
+    match token.kind() {
+        Character => { is_literal = true; },
+        StringLiteral => { is_literal = true; },
+        _ => {},
+    }
+    if is_literal {
+        let literal = pattern_literal(parser);
+        if parser.failed() { return NodeId.invalid(); }
+        let literal_span = parser.node(literal).span();
+        if parser.at_punct("..") {
+            let tag = parser.node(literal).tag();
+            if tag != "IntLiteral" && tag != "CharLiteral" {
+                parser.error("Range endpoints must be integer or character literals", parser.peek().span());
+                return NodeId.invalid();
+            }
+            parser.advance();
+            let upper = pattern_literal(parser);
+            if parser.failed() { return NodeId.invalid(); }
+            if parser.node(upper).tag() != tag {
+                parser.error("Range endpoints must have the same literal kind", parser.node(upper).span());
+                return NodeId.invalid();
+            }
+            let node = parser.alloc("RangePattern", literal_span.join(parser.node(upper).span()));
+            parser.child(node, "lower", literal);
+            parser.child(node, "upper", upper);
+            return node;
+        }
+        let node = parser.alloc("LiteralPattern", literal_span);
+        parser.child(node, "literal", literal);
+        return node;
+    }
+    if parser.at_punct("[") {
+        parser.advance();
+        let prefix = Vec<NodeId>.new();
+        let suffix = Vec<NodeId>.new();
+        let rest = false;
+        while !parser.failed() && !parser.at_punct("]") {
+            if parser.at_punct("..") {
+                if rest {
+                    parser.error("Only one '..' is allowed in a sequence pattern", parser.peek().span());
+                    break;
+                }
+                parser.advance();
+                rest = true;
+            } else {
+                let item = pattern_or(parser);
+                if rest { suffix.push(item); }
+                else { prefix.push(item); }
+            }
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        parser.take_punct("]");
+        if parser.failed() { prefix.drop(); suffix.drop(); return NodeId.invalid(); }
+        let node = parser.alloc("SequencePattern", span);
+        parser.children(node, "prefix", prefix);
+        parser.children(node, "suffix", suffix);
+        parser.flag(node, "rest", rest);
+        return node;
+    }
+    if parser.at_punct("(") {
+        parser.advance();
+        let members = Vec<NodeId>.new();
+        if parser.at_punct(")") {
+            parser.advance();
+            let node = parser.alloc("TuplePattern", span);
+            parser.children(node, "elements", members);
+            return node;
+        }
+        let first = pattern_or(parser);
+        if parser.at_punct(")") {
+            parser.advance(); members.drop(); return first;
+        }
+        parser.take_punct(",");
+        members.push(first);
+        while !parser.failed() && !parser.at_punct(")") {
+            members.push(pattern_or(parser));
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        parser.take_punct(")");
+        if parser.failed() { members.drop(); return NodeId.invalid(); }
+        let node = parser.alloc("TuplePattern", span);
+        parser.children(node, "elements", members);
+        return node;
+    }
+    if token.is_identifier() || parser.keyword_token() {
+        return named_pattern(parser);
+    }
+    parser.error("Unexpected token in pattern", span);
+    return NodeId.invalid();
+}
+
+fn named_pattern(parser: Parser&) -> NodeId {
+    let mark = parser.mark();
+    let first = parser.peek();
+    let qualifier = parse_type(parser);
+    if parser.failed() {
+        parser.clear_error();
+        parser.reset(mark);
+        qualifier = NodeId.invalid();
+    }
+    let name = NodeId.invalid();
+    if qualifier.is_valid() && parser.at_punct(".") {
+        parser.advance();
+        name = parser.identifier();
+    } elif qualifier.is_valid() && parser.node(qualifier).tag() == "InstanceType" && parser.at_punct("(") {
+        name = parser.alloc("Identifier", first.span());
+        parser.text(name, "name", first.value());
+        parser.flag(name, "synthetic", false);
+    } else {
+        parser.reset(mark);
+        qualifier = NodeId.invalid();
+        name = parser.identifier();
+    }
+    if parser.failed() { return NodeId.invalid(); }
+    let span = parser.node(name).span();
+    if !parser.at_punct("(") {
+        if qualifier.is_valid() {
+            let node = parser.alloc("ConstructPattern", span);
+            parser.child(node, "name", name);
+            parser.child(node, "qualifier", qualifier);
+            parser.missing(node, "positional");
+            parser.missing(node, "named");
+            parser.flag(node, "rest", false);
+            return node;
+        }
+        let node = parser.alloc("NamePattern", span);
+        parser.child(node, "name", name);
+        return node;
+    }
+    parser.advance();
+    let positional = Vec<NodeId>.new();
+    let named = Vec<NodeId>.new();
+    let has_named = false;
+    let rest = false;
+    while !parser.failed() && !parser.at_punct(")") {
+        let item = parser.peek();
+        if parser.at_punct("..") {
+            if rest {
+                parser.error("Only one '..' is allowed in a field pattern", item.span());
+                break;
+            }
+            parser.advance();
+            rest = true;
+            if parser.at_punct(",") { parser.advance(); }
+            if !parser.at_punct(")") { parser.error("'..' must be the last field", item.span()); }
+            break;
+        }
+        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1u64).is_punct("=") {
+            if positional.len() != 0u64 {
+                parser.error("Cannot mix positional and named fields", item.span());
+                break;
+            }
+            has_named = true;
+            let field = parser.identifier();
+            parser.advance();
+            let value = pattern_or(parser);
+            if parser.failed() { break; }
+            let node = parser.alloc("FieldPattern", parser.node(field).span());
+            parser.child(node, "name", field);
+            parser.child(node, "pattern", value);
+            named.push(node);
+        } else {
+            if has_named || rest {
+                parser.error("Cannot mix positional and named fields", item.span());
+                break;
+            }
+            positional.push(pattern_or(parser));
+        }
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct(")");
+    if parser.failed() { positional.drop(); named.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("ConstructPattern", span);
+    parser.child(node, "name", name);
+    if qualifier.is_valid() { parser.child(node, "qualifier", qualifier); }
+    else { parser.missing(node, "qualifier"); }
+    if has_named || rest {
+        parser.missing(node, "positional");
+    } else {
+        parser.children(node, "positional", positional);
+    }
+    if has_named { parser.children(node, "named", named); }
+    else { parser.missing(node, "named"); }
+    parser.flag(node, "rest", rest);
+    if has_named || rest { positional.drop(); }
+    if !has_named { named.drop(); }
+    return node;
+}
+
+fn pattern_at(parser: Parser&) -> NodeId {
+    if parser.peek().is_identifier() && parser.peek_at(1u64).is_punct("@") {
+        let name = parser.identifier();
+        parser.advance();
+        let inner = pattern_at(parser);
+        if parser.failed() { return NodeId.invalid(); }
+        let node = parser.alloc("BindPattern", parser.node(name).span().join(parser.node(inner).span()));
+        parser.child(node, "name", name);
+        parser.child(node, "inner", inner);
+        return node;
+    }
+    return pattern_atom(parser);
+}
+
+fn pattern_or(parser: Parser&) -> NodeId {
+    let first = pattern_at(parser);
+    if parser.failed() || !parser.at_punct("|") { return first; }
+    let alternatives = Vec<NodeId>.new();
+    alternatives.push(first);
+    while !parser.failed() && parser.at_punct("|") {
+        parser.advance();
+        alternatives.push(pattern_at(parser));
+    }
+    if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
+    let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
+    let node = parser.alloc("OrPattern", span);
+    parser.children(node, "alternatives", alternatives);
+    return node;
+}
+
+pub fn parse_binding_pattern(parser: Parser&) -> NodeId { return pattern_or(parser); }
+
+pub fn parse_match_pattern(parser: Parser&) -> NodeId {
+    let first = pattern_or(parser);
+    if parser.failed() || !parser.at_punct(",") { return first; }
+    if parser.node(first).tag() != "LiteralPattern" {
+        parser.error("Comma-separated alternatives require literals", parser.peek().span());
+        return NodeId.invalid();
+    }
+    let literal = parser.node(first).child_field("literal");
+    let kind = parser.node(literal).tag();
+    let alternatives = Vec<NodeId>.new();
+    alternatives.push(first);
+    while !parser.failed() && parser.at_punct(",") {
+        parser.advance();
+        let next = pattern_atom(parser);
+        if parser.failed() { break; }
+        if parser.node(next).tag() != "LiteralPattern" ||
+            parser.node(parser.node(next).child_field("literal")).tag() != kind {
+            parser.error("Comma-separated alternatives must use the same literal kind", parser.node(next).span());
+            break;
+        }
+        alternatives.push(next);
+    }
+    if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
+    let span = parser.node(first).span().join(parser.node(alternatives[alternatives.len() - 1u64]).span());
+    let node = parser.alloc("OrPattern", span);
+    parser.children(node, "alternatives", alternatives);
+    return node;
+}

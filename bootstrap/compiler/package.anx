@@ -1,5 +1,5 @@
 [package]
-name = "bootstrap_compiler"
+name = "compiler"
 kind = "bin"
 version = "0.1.0"
 

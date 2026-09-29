@@ -55,6 +55,7 @@ class ExprLowerer:
             BuiltinKind.StrGetPtr: self.__resolve_str_get_ptr,
             BuiltinKind.StrGetLen: self.__resolve_str_get_len,
             BuiltinKind.SysRead: self.__resolve_sys_read,
+            BuiltinKind.SysReadBytes: self.__resolve_sys_read_bytes,
             BuiltinKind.SysWrite: self.__resolve_sys_write,
             BuiltinKind.SysWriteBytes: self.__resolve_sys_write_bytes,
             BuiltinKind.Open: self.__resolve_open,
@@ -422,6 +423,9 @@ class ExprLowerer:
 
     def __resolve_sys_read(self, expr: HIR.Builtin) -> IR.Value:
         return self.__sys.resolve_sys_read(expr)
+
+    def __resolve_sys_read_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sys_read_bytes(expr)
 
     def __resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
         return self.__sys.resolve_sys_write(expr)

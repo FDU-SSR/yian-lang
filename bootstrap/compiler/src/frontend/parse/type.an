@@ -1,0 +1,285 @@
+from compiler.frontend.parse.ast import NodeId;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.source import Span;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn primitive(parser: Parser&, name: str, span: Span) -> NodeId {
+    let tag = "IntType";
+    let width = "4";
+    let signed = true;
+    if name == "i8" || name == "u8" { width = "1"; }
+    elif name == "i16" || name == "u16" { width = "2"; }
+    elif name == "i64" || name == "u64" { width = "8"; }
+    if name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "uint" {
+        signed = false;
+    }
+    if name == "f16" || name == "f32" || name == "f64" || name == "float" {
+        tag = "FloatType";
+        if name == "f16" { width = "2"; }
+        elif name == "f32" { width = "4"; }
+        else { width = "8"; }
+    } elif name == "bool" { tag = "BoolType"; }
+    elif name == "str" { tag = "StrType"; }
+    elif name == "char" { tag = "CharType"; }
+    elif name == "void" { tag = "VoidType"; }
+    let node = parser.alloc(tag, span);
+    if tag == "IntType" {
+        parser.flag(node, "signed", signed);
+        parser.text(node, "width", width);
+    } elif tag == "FloatType" {
+        parser.text(node, "width", width);
+    }
+    return node;
+}
+
+fn is_primitive(name: str) -> bool {
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" ||
+        name == "u8" || name == "u16" || name == "u32" || name == "u64" ||
+        name == "int" || name == "uint" || name == "f16" || name == "f32" ||
+        name == "f64" || name == "float" || name == "bool" || name == "str" ||
+        name == "char" || name == "void";
+}
+
+fn parse_type_base(parser: Parser&) -> NodeId {
+    if parser.failed() { return NodeId.invalid(); }
+    let token = parser.peek();
+    let span = token.span();
+    let spelling = token.value();
+    if token.is_keyword(spelling) && is_primitive(spelling) {
+        parser.advance();
+        return primitive(parser, spelling, span);
+    }
+    if parser.at_punct("!") {
+        parser.advance();
+        return parser.alloc("NeverType", span);
+    }
+    if parser.at_keyword("fn") {
+        parser.advance();
+        parser.take_punct("(");
+        let params = Vec<NodeId>.new();
+        while !parser.failed() && !parser.at_punct(")") {
+            let param = parse_type(parser);
+            if parser.failed() { break; }
+            params.push(param);
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        parser.take_punct(")");
+        let result = NodeId.invalid();
+        if parser.at_punct("->") {
+            parser.advance();
+            result = parse_type(parser);
+        } else { result = parser.alloc("VoidType", span); }
+        if parser.failed() { params.drop(); return NodeId.invalid(); }
+        let node = parser.alloc("FunctionType", span);
+        parser.children(node, "param_types", params);
+        parser.child(node, "return_type", result);
+        return node;
+    }
+    if token.is_identifier() {
+        let name = parser.identifier();
+        if parser.failed() { return NodeId.invalid(); }
+        if spelling == "c_int" || spelling == "c_uint" || spelling == "c_size" || spelling == "c_char" {
+            let node = parser.alloc("CScalarType", span);
+            parser.text(node, "name", spelling);
+            return node;
+        }
+        let node = parser.alloc("NamedType", span);
+        parser.child(node, "name", name);
+        return node;
+    }
+    if parser.at_punct("(") {
+        parser.advance();
+        let members = Vec<NodeId>.new();
+        if parser.at_punct(")") {
+            parser.advance();
+            let node = parser.alloc("TupleType", span);
+            parser.children(node, "element_types", members);
+            return node;
+        }
+        let first = parse_type(parser);
+        if parser.at_punct(")") {
+            parser.advance();
+            members.drop();
+            return first;
+        }
+        parser.take_punct(",");
+        if parser.failed() { members.drop(); return NodeId.invalid(); }
+        members.push(first);
+        while !parser.failed() && !parser.at_punct(")") {
+            members.push(parse_type(parser));
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        parser.take_punct(")");
+        if parser.failed() { members.drop(); return NodeId.invalid(); }
+        let node = parser.alloc("TupleType", span);
+        parser.children(node, "element_types", members);
+        return node;
+    }
+    parser.error("Expected type", span);
+    return NodeId.invalid();
+}
+
+pub fn parse_type(parser: Parser&) -> NodeId {
+    let base = parse_type_base(parser);
+    while !parser.failed() {
+        let span = parser.node(base).span();
+        if parser.at_punct("<angle>") {
+            parser.advance();
+            let args = Vec<NodeId>.new();
+            while !parser.failed() && !parser.at_punct(">angle>") {
+                args.push(parse_generic_arg(parser));
+                if parser.at_punct(",") { parser.advance(); }
+                else { break; }
+            }
+            parser.take_punct(">angle>");
+            if parser.failed() { args.drop(); return NodeId.invalid(); }
+            let name = "";
+            if parser.node(base).tag() == "NamedType" {
+                let ident = parser.node(base).child_field("name");
+                name = parser.node(ident).text_field("name");
+            }
+            if name == "cptr" {
+                if args.len() != 1u64 {
+                    parser.error("cptr requires exactly one type argument", span);
+                    args.drop();
+                    return NodeId.invalid();
+                }
+                let arg_tag = parser.node(args[0u64]).tag();
+                if arg_tag == "LiteralConstExpr" || arg_tag == "GenericConstExpr" ||
+                    arg_tag == "UnaryConstExpr" || arg_tag == "BinaryConstExpr" {
+                    parser.error("cptr requires exactly one type argument", span);
+                    args.drop();
+                    return NodeId.invalid();
+                }
+                let node = parser.alloc("CPtrType", span);
+                parser.child(node, "pointee_type", args[0u64]);
+                args.drop();
+                base = node;
+            } else {
+                let node = parser.alloc("InstanceType", span);
+                parser.child(node, "base", base);
+                parser.children(node, "generic_args", args);
+                base = node;
+            }
+            continue;
+        }
+        if parser.at_punct("*") {
+            parser.advance();
+            let node = parser.alloc("PointerType", span);
+            parser.child(node, "pointee_type", base);
+            base = node;
+            continue;
+        }
+        if parser.at_punct("&") {
+            parser.advance();
+            let node = parser.alloc("RefType", span);
+            parser.child(node, "pointee_type", base);
+            base = node;
+            continue;
+        }
+        if parser.at_punct("[") {
+            parser.advance();
+            if parser.at_punct("]") {
+                parser.advance();
+                let node = parser.alloc("SliceType", span);
+                parser.child(node, "element_type", base);
+                base = node;
+            } else {
+                let size = parse_const_expr(parser);
+                parser.take_punct("]");
+                if parser.failed() { return NodeId.invalid(); }
+                let node = parser.alloc("ArrayType", span);
+                parser.child(node, "element_type", base);
+                parser.child(node, "size", size);
+                base = node;
+            }
+            continue;
+        }
+        break;
+    }
+    return base;
+}
+
+fn const_binding(symbol: str) -> i32 {
+    if symbol == "|" { return 4; }
+    if symbol == "^" { return 5; }
+    if symbol == "&" { return 6; }
+    if symbol == "<<" || symbol == ">>" { return 9; }
+    if symbol == "+" || symbol == "-" { return 10; }
+    if symbol == "*" || symbol == "/" || symbol == "%" { return 11; }
+    return 0;
+}
+
+fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
+    if parser.failed() { return NodeId.invalid(); }
+    let token = parser.peek();
+    let span = token.span();
+    let lhs = NodeId.invalid();
+    if parser.at_punct("-") || parser.at_punct("~") {
+        let op = token.value();
+        parser.advance();
+        let operand = const_expr_bp(parser, 13);
+        if parser.failed() { return NodeId.invalid(); }
+        lhs = parser.alloc("UnaryConstExpr", span.join(parser.node(operand).span()));
+        parser.text(lhs, "op", op);
+        parser.child(lhs, "operand", operand);
+    } elif parser.at_punct("(") {
+        parser.advance();
+        lhs = const_expr_bp(parser, 1);
+        parser.take_punct(")");
+    } elif token.is_integer() {
+        let literal = parser.alloc("IntLiteral", span);
+        parser.text(literal, "raw", token.raw());
+        parser.text(literal, "value", token.value());
+        parser.text(literal, "suffix", token.suffix());
+        parser.advance();
+        lhs = parser.alloc("LiteralConstExpr", span);
+        parser.child(lhs, "literal", literal);
+    } elif token.is_identifier() || parser.keyword_token() {
+        let ident = parser.identifier();
+        if parser.failed() { return NodeId.invalid(); }
+        lhs = parser.alloc("GenericConstExpr", span);
+        parser.child(lhs, "name", ident);
+    } else {
+        parser.error("Expected integer constant expression", span);
+        return NodeId.invalid();
+    }
+    while !parser.failed() {
+        let op = parser.peek().value();
+        let lbp = const_binding(op);
+        if lbp == 0 || lbp < min_bp { break; }
+        parser.advance();
+        let rhs = const_expr_bp(parser, lbp + 1);
+        if parser.failed() { return NodeId.invalid(); }
+        let node = parser.alloc("BinaryConstExpr", parser.node(lhs).span().join(parser.node(rhs).span()));
+        parser.text(node, "op", op);
+        parser.child(node, "left", lhs);
+        parser.child(node, "right", rhs);
+        lhs = node;
+    }
+    return lhs;
+}
+
+pub fn parse_const_expr(parser: Parser&) -> NodeId { return const_expr_bp(parser, 1); }
+
+pub fn parse_generic_arg(parser: Parser&) -> NodeId {
+    let token = parser.peek();
+    if token.is_integer() || token.is_punct("-") || token.is_punct("~") {
+        return parse_const_expr(parser);
+    }
+    let mark = parser.mark();
+    let ty = parse_type(parser);
+    if parser.failed() {
+        parser.clear_error();
+        parser.reset(mark);
+        return parse_const_expr(parser);
+    }
+    if const_binding(parser.peek().value()) != 0 {
+        parser.reset(mark);
+        return parse_const_expr(parser);
+    }
+    return ty;
+}

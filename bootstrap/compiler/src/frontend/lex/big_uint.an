@@ -1,0 +1,218 @@
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// Unsigned integers with little-endian base-2^32 limbs.
+pub struct BigUInt {
+    limbs: Vec<u32>,
+}
+
+impl BigUInt {
+    static pub fn zero() -> Self {
+        return Self(limbs=Vec<u32>.new());
+    }
+
+    static pub fn from_u64(value: u64) -> Self {
+        let result = Self.zero();
+        if value != 0u64 {
+            result.limbs.push(u32(value));
+            if value >> 32u64 != 0u64 {
+                result.limbs.push(u32(value >> 32u64));
+            }
+        }
+        return result;
+    }
+
+    pub fn copy() -> Self {
+        let result = Self.zero();
+        result.limbs.extend_from_slice(self.limbs.as_slice());
+        return result;
+    }
+
+    pub fn is_zero() -> bool {
+        return self.limbs.len() == 0u64;
+    }
+
+    pub fn len() -> u64 {
+        return self.limbs.len();
+    }
+
+    fn trim() {
+        while self.limbs.len() != 0u64 && self.limbs[self.limbs.len() - 1u64] == 0u32 {
+            self.limbs.pop();
+        }
+    }
+
+    pub fn compare(other: Self&) -> i32 {
+        if self.len() < other.len() {
+            return -1;
+        }
+        if self.len() > other.len() {
+            return 1;
+        }
+        let index = self.len();
+        while index != 0u64 {
+            index -= 1u64;
+            if self.limbs[index] < other.limbs[index] {
+                return -1;
+            }
+            if self.limbs[index] > other.limbs[index] {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    pub fn mul_small(factor: u32) {
+        if factor == 0u32 {
+            self.limbs.clear();
+            return;
+        }
+        let carry: u64 = 0u64;
+        let index: u64 = 0u64;
+        while index < self.len() {
+            let value = u64(self.limbs[index]) * u64(factor) + carry;
+            self.limbs[index] = u32(value);
+            carry = value >> 32u64;
+            index += 1u64;
+        }
+        if carry != 0u64 {
+            self.limbs.push(u32(carry));
+        }
+    }
+
+    pub fn add_small(value: u32) {
+        let carry: u64 = u64(value);
+        let index: u64 = 0u64;
+        while carry != 0u64 && index < self.len() {
+            let sum = u64(self.limbs[index]) + carry;
+            self.limbs[index] = u32(sum);
+            carry = sum >> 32u64;
+            index += 1u64;
+        }
+        if carry != 0u64 {
+            self.limbs.push(u32(carry));
+        }
+    }
+
+    pub fn sub(other: Self&) {
+        let borrow: u64 = 0u64;
+        let index: u64 = 0u64;
+        while index < self.len() {
+            let rhs: u64 = borrow;
+            if index < other.len() {
+                rhs += u64(other.limbs[index]);
+            }
+            let lhs = u64(self.limbs[index]);
+            if lhs < rhs {
+                self.limbs[index] = u32((1u64 << 32u64) + lhs - rhs);
+                borrow = 1u64;
+            } else {
+                self.limbs[index] = u32(lhs - rhs);
+                borrow = 0u64;
+            }
+            index += 1u64;
+        }
+        self.trim();
+    }
+
+    pub fn shifted(bits: u64) -> Self {
+        if self.is_zero() {
+            return Self.zero();
+        }
+        let result = Self.zero();
+        let words = bits / 32u64;
+        let remainder = bits % 32u64;
+        let index: u64 = 0u64;
+        while index < words {
+            result.limbs.push(0u32);
+            index += 1u64;
+        }
+        let carry: u64 = 0u64;
+        index = 0u64;
+        while index < self.len() {
+            let shifted = (u64(self.limbs[index]) << remainder) | carry;
+            result.limbs.push(u32(shifted));
+            carry = shifted >> 32u64;
+            index += 1u64;
+        }
+        if carry != 0u64 {
+            result.limbs.push(u32(carry));
+        }
+        return result;
+    }
+
+    pub fn bit_length() -> u64 {
+        if self.is_zero() {
+            return 0u64;
+        }
+        let top = self.limbs[self.len() - 1u64];
+        let bits: u64 = 0u64;
+        while top != 0u32 {
+            top >>= 1u32;
+            bits += 1u64;
+        }
+        return (self.len() - 1u64) * 32u64 + bits;
+    }
+
+    pub fn to_u64() -> u64 {
+        if self.len() > 2u64 {
+            @panic("BigUInt does not fit in u64");
+        }
+        let value: u64 = 0u64;
+        if self.len() >= 1u64 {
+            value = u64(self.limbs[0u64]);
+        }
+        if self.len() == 2u64 {
+            value |= u64(self.limbs[1u64]) << 32u64;
+        }
+        return value;
+    }
+
+    pub fn div_small(divisor: u32) -> u32 {
+        let remainder: u64 = 0u64;
+        let index = self.len();
+        while index != 0u64 {
+            index -= 1u64;
+            let value = (remainder << 32u64) | u64(self.limbs[index]);
+            self.limbs[index] = u32(value / u64(divisor));
+            remainder = value % u64(divisor);
+        }
+        self.trim();
+        return u32(remainder);
+    }
+
+    pub fn decimal() -> String {
+        if self.is_zero() {
+            return String.from(&"0");
+        }
+        let copy = self.copy();
+        defer copy.drop();
+        let groups = Vec<u32>.new();
+        defer groups.drop();
+        while !copy.is_zero() {
+            groups.push(copy.div_small(1000000000u32));
+        }
+        let result = u64(groups[groups.len() - 1u64]).to_string_radix(10u64);
+        let index = groups.len() - 1u64;
+        while index != 0u64 {
+            index -= 1u64;
+            let group = u64(groups[index]).to_string_radix(10u64);
+            let padding = 9u64 - group.len();
+            while padding != 0u64 {
+                result.push('0');
+                padding -= 1u64;
+            }
+            result.push_str(group.as_str());
+            group.drop();
+        }
+        return result;
+    }
+}
+
+impl Drop for BigUInt {
+    pub fn drop() {
+        self.limbs.drop();
+    }
+}

@@ -1,0 +1,830 @@
+from compiler.frontend.parse.ast import NodeId;
+from compiler.frontend.parse.pattern import parse_binding_pattern, parse_match_pattern;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.type import parse_generic_arg, parse_type;
+from compiler.frontend.source import Span;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn binary_lbp(symbol: str) -> i32 {
+    if symbol == "=" || symbol == "+=" || symbol == "-=" || symbol == "*=" ||
+        symbol == "/=" || symbol == "%=" || symbol == "&=" || symbol == "|=" ||
+        symbol == "^=" || symbol == "<<=" || symbol == ">>=" { return 1; }
+    if symbol == "||" { return 2; }
+    if symbol == "&&" { return 3; }
+    if symbol == "|" { return 4; }
+    if symbol == "^" { return 5; }
+    if symbol == "&" { return 6; }
+    if symbol == "==" || symbol == "!=" { return 7; }
+    if symbol == "<" || symbol == ">" || symbol == "<=" || symbol == ">=" { return 8; }
+    if symbol == "<<" || symbol == ">>" { return 9; }
+    if symbol == "+" || symbol == "-" { return 10; }
+    if symbol == "*" || symbol == "/" || symbol == "%" { return 11; }
+    if symbol == "in" || symbol == ".." { return 999; }
+    return 0;
+}
+
+fn identifier_named(parser: Parser&, span: Span, name: str) -> NodeId {
+    let id = parser.alloc("Identifier", span);
+    parser.text(id, "name", name);
+    parser.flag(id, "synthetic", false);
+    return id;
+}
+
+fn literal_expr(parser: Parser&) -> NodeId {
+    let token = parser.peek();
+    let span = token.span();
+    let tag = "";
+    match token.kind() {
+        Integer => { tag = "IntLiteral"; },
+        Float => { tag = "FloatLiteral"; },
+        Character => { tag = "CharLiteral"; },
+        StringLiteral => { tag = "StrLiteral"; },
+        _ => {},
+    }
+    if tag == "" {
+        parser.error("Expected literal", span);
+        return NodeId.invalid();
+    }
+    let literal = parser.alloc(tag, span);
+    parser.text(literal, "raw", token.raw());
+    if tag == "FloatLiteral" {
+        let bits = token.bits().to_string_radix(10u64);
+        parser.text(literal, "bits", bits.as_str());
+        bits.drop();
+    } else { parser.text(literal, "value", token.value()); }
+    if tag == "IntLiteral" || tag == "FloatLiteral" { parser.text(literal, "suffix", token.suffix()); }
+    parser.advance();
+    let node = parser.alloc("Literal", span);
+    parser.child(node, "literal", literal);
+    return node;
+}
+
+fn parse_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
+    let lhs = parse_prefix(parser);
+    while !parser.failed() {
+        let token = parser.peek();
+        let symbol = token.value();
+        let lbp = binary_lbp(symbol);
+        let is_operator = token.is_punct(symbol) || token.is_keyword("in");
+        if !is_operator || lbp == 0 || lbp < min_bp { break; }
+        parser.advance();
+        let rbp = lbp + 1;
+        if lbp == 1 { rbp = 1; }
+        let rhs = parse_expr_bp(parser, rbp);
+        if parser.failed() { return NodeId.invalid(); }
+        let node = parser.alloc("Binary", parser.node(lhs).span().join(parser.node(rhs).span()));
+        parser.text(node, "op", symbol);
+        parser.child(node, "left", lhs);
+        parser.child(node, "right", rhs);
+        lhs = node;
+    }
+    return lhs;
+}
+
+pub fn parse_expr(parser: Parser&) -> NodeId { return parse_expr_bp(parser, 1); }
+
+fn parse_prefix(parser: Parser&) -> NodeId {
+    if parser.failed() { return NodeId.invalid(); }
+    let token = parser.peek();
+    let symbol = token.value();
+    if token.is_punct("-") || token.is_punct("~") || token.is_punct("!") ||
+        token.is_punct("*") || token.is_punct("&") {
+        parser.advance();
+        let rbp = 13;
+        if symbol == "*" || symbol == "&" { rbp = 14; }
+        let operand = parse_expr_bp(parser, rbp);
+        if parser.failed() { return NodeId.invalid(); }
+        let node = parser.alloc("Unary", parser.node(operand).span());
+        parser.text(node, "op", symbol);
+        parser.child(node, "operand", operand);
+        return node;
+    }
+    if parser.at_keyword("dyn") { return parse_dyn(parser); }
+    let base = parse_primary(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    return parse_postfix(parser, base);
+}
+
+fn parse_dyn(parser: Parser&) -> NodeId {
+    parser.take_keyword("dyn");
+    let span = parser.peek().span();
+    if parser.at_punct("[") {
+        let bracket_span = parser.peek().span();
+        parser.advance();
+        let count = parse_expr(parser);
+        parser.take_punct("]");
+        let initializer_start = parser.mark();
+        let initializer_span = parser.peek().span();
+        let value = parse_expr(parser);
+        if parser.failed() {
+            parser.clear_error();
+            parser.reset(initializer_start);
+            parse_type(parser);
+            if !parser.failed() && (parser.at_punct(";") || parser.at_punct(")") ||
+                parser.at_punct(",") || parser.at_punct("]") || parser.at_punct("}") ||
+                parser.at_end()) {
+                parser.error("'dyn[n]' initializes every element from a value, not a type: write 'dyn[n] <initial value>'", initializer_span);
+            } else {
+                parser.clear_error();
+                parser.reset(initializer_start);
+                parse_expr(parser);
+            }
+            return NodeId.invalid();
+        }
+        let node = parser.alloc("DynBuffer", bracket_span);
+        parser.child(node, "size", count);
+        parser.child(node, "element", value);
+        return node;
+    }
+    let value = parse_expr(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("DynValue", span);
+    parser.child(node, "value", value);
+    return node;
+}
+
+fn parse_primary(parser: Parser&) -> NodeId {
+    if parser.failed() { return NodeId.invalid(); }
+    let token = parser.peek();
+    let span = token.span();
+    if parser.at_punct("{") { return parse_block(parser); }
+    if parser.at_keyword("return") { return parse_return(parser); }
+    if parser.at_keyword("if") { return parse_if(parser); }
+    if parser.at_keyword("comptime") { return parse_comptime_if(parser); }
+    if parser.at_keyword("IS_RAW_MODE") {
+        parser.advance();
+        let node = parser.alloc("CompileConfig", span);
+        parser.text(node, "name", "IS_RAW_MODE");
+        return node;
+    }
+    if parser.at_keyword("for") { return parse_for(parser); }
+    if parser.at_keyword("while") { return parse_while(parser); }
+    if parser.at_keyword("loop") { return parse_loop(parser); }
+    if parser.at_keyword("match") { return parse_match(parser); }
+    if parser.at_keyword("break") { return parse_break(parser); }
+    if parser.at_keyword("continue") {
+        parser.advance();
+        return parser.alloc("Continue", span);
+    }
+    if parser.at_keyword("defer") {
+        parser.error("'defer' is only allowed as a statement", span);
+        return NodeId.invalid();
+    }
+    if parser.at_keyword("assert") { return parse_assert(parser); }
+    if parser.at_keyword("del") { return parse_delete(parser); }
+    if parser.at_keyword("let") { return parse_let(parser); }
+    if parser.at_punct("|") || parser.at_punct("||") { return parse_closure(parser); }
+    if parser.at_keyword("true") || parser.at_keyword("false") {
+        let literal = parser.alloc("BoolLiteral", span);
+        parser.text(literal, "raw", token.value());
+        parser.flag(literal, "value", parser.at_keyword("true"));
+        parser.advance();
+        let node = parser.alloc("Literal", span);
+        parser.child(node, "literal", literal);
+        return node;
+    }
+    if parser.at_punct("@") { return parse_builtin(parser); }
+    match token.kind() {
+        Integer | Float | Character | StringLiteral => return literal_expr(parser),
+        FStrStart => return parse_fstring(parser),
+        _ => {},
+    }
+    if token.is_identifier() || parser.keyword_token() {
+        let name = parser.identifier();
+        if parser.failed() { return NodeId.invalid(); }
+        if parser.at_punct("<angle>") {
+            parser.advance();
+            let generics = Vec<NodeId>.new();
+            while !parser.failed() && !parser.at_punct(">angle>") {
+                generics.push(parse_generic_arg(parser));
+                if parser.at_punct(",") { parser.advance(); }
+                else { break; }
+            }
+            parser.take_punct(">angle>");
+            if parser.failed() { generics.drop(); return NodeId.invalid(); }
+            let node = parser.alloc("TypeItem", parser.node(name).span());
+            parser.child(node, "name", name);
+            parser.children(node, "generics", generics);
+            return node;
+        }
+        return name;
+    }
+    if parser.at_punct("(") {
+        parser.advance();
+        let first = parse_expr(parser);
+        if parser.failed() { return NodeId.invalid(); }
+        if parser.at_punct(",") {
+            parser.advance();
+            let members = Vec<NodeId>.new();
+            members.push(first);
+            while !parser.failed() && !parser.at_punct(")") {
+                members.push(parse_expr(parser));
+                if parser.at_punct(",") { parser.advance(); }
+                else { break; }
+            }
+            parser.take_punct(")");
+            if parser.failed() { members.drop(); return NodeId.invalid(); }
+            let node = parser.alloc("Tuple", span);
+            parser.children(node, "elements", members);
+            return node;
+        }
+        parser.take_punct(")");
+        return first;
+    }
+    if parser.at_punct("[") {
+        parser.advance();
+        let members = Vec<NodeId>.new();
+        if parser.at_punct("]") {
+            parser.advance();
+            let node = parser.alloc("Array", span);
+            parser.children(node, "elements", members);
+            return node;
+        }
+        let first = parse_expr(parser);
+        if parser.at_punct(";") {
+            parser.advance();
+            let count = parse_expr(parser);
+            parser.take_punct("]");
+            members.drop();
+            if parser.failed() { return NodeId.invalid(); }
+            let node = parser.alloc("ArrayRepeat", span);
+            parser.child(node, "element", first);
+            parser.child(node, "count", count);
+            return node;
+        }
+        members.push(first);
+        if parser.at_punct(",") {
+            parser.advance();
+            while !parser.failed() && !parser.at_punct("]") {
+                members.push(parse_expr(parser));
+                if parser.at_punct(",") { parser.advance(); }
+                else { break; }
+            }
+        }
+        parser.take_punct("]");
+        if parser.failed() { members.drop(); return NodeId.invalid(); }
+        let node = parser.alloc("Array", span);
+        parser.children(node, "elements", members);
+        return node;
+    }
+    if token.is_eof() { parser.error("Unexpected end of file while parsing expression", span); }
+    else { parser.error("Unexpected token while parsing expression", span); }
+    return NodeId.invalid();
+}
+
+fn parse_arg(parser: Parser&) -> NodeId {
+    let name = NodeId.invalid();
+    if parser.peek().is_identifier() && parser.peek_at(1u64).is_punct("=") {
+        name = parser.identifier();
+        parser.advance();
+    }
+    let value = parse_expr(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let span = parser.node(value).span();
+    if name.is_valid() { span = parser.node(name).span().join(span); }
+    let node = parser.alloc("Arg", span);
+    if name.is_valid() { parser.child(node, "name", name); }
+    else { parser.missing(node, "name"); }
+    parser.child(node, "value", value);
+    return node;
+}
+
+fn parse_args(parser: Parser&) -> Vec<NodeId> {
+    parser.take_punct("(");
+    let args = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct(")") {
+        args.push(parse_arg(parser));
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct(")");
+    return args;
+}
+
+fn parse_postfix(parser: Parser&, initial: NodeId) -> NodeId {
+    let expr = initial;
+    while !parser.failed() {
+        if parser.at_punct("(") {
+            let open = parser.peek().span();
+            let args = parse_args(parser);
+            if parser.failed() { args.drop(); return NodeId.invalid(); }
+            let node = parser.alloc("Call", parser.node(expr).span().join(open));
+            parser.child(node, "callee", expr);
+            parser.children(node, "args", args);
+            expr = node;
+            continue;
+        }
+        if parser.at_punct(".") {
+            parser.advance();
+            let name = parser.identifier();
+            if parser.failed() { return NodeId.invalid(); }
+            let generics = Vec<NodeId>.new();
+            if parser.at_punct("<angle>") {
+                parser.advance();
+                while !parser.failed() && !parser.at_punct(">angle>") {
+                    generics.push(parse_type(parser));
+                    if parser.at_punct(",") { parser.advance(); }
+                    else { break; }
+                }
+                parser.take_punct(">angle>");
+                parser.take_punct("(");
+                let args = Vec<NodeId>.new();
+                while !parser.failed() && !parser.at_punct(")") {
+                    args.push(parse_arg(parser));
+                    if parser.at_punct(",") { parser.advance(); }
+                    else { break; }
+                }
+                parser.take_punct(")");
+                if parser.failed() { generics.drop(); args.drop(); return NodeId.invalid(); }
+                let node = parser.alloc("MethodCall", parser.node(expr).span());
+                parser.child(node, "receiver", expr);
+                parser.child(node, "method_name", name);
+                parser.children(node, "generics", generics);
+                parser.children(node, "args", args);
+                expr = node;
+                continue;
+            }
+            if parser.at_punct("(") {
+                let args = parse_args(parser);
+                if parser.failed() { args.drop(); generics.drop(); return NodeId.invalid(); }
+                let node = parser.alloc("MethodCall", parser.node(expr).span());
+                parser.child(node, "receiver", expr);
+                parser.child(node, "method_name", name);
+                parser.children(node, "generics", generics);
+                parser.children(node, "args", args);
+                expr = node;
+                continue;
+            }
+            generics.drop();
+            let node = parser.alloc("FieldAccess", parser.node(expr).span());
+            parser.child(node, "receiver", expr);
+            parser.child(node, "field_name", name);
+            expr = node;
+            continue;
+        }
+        if parser.at_punct("[") {
+            parser.advance();
+            let index = parse_expr(parser);
+            parser.take_punct("]");
+            if parser.failed() { return NodeId.invalid(); }
+            let node = parser.alloc("Binary", parser.node(expr).span());
+            parser.text(node, "op", "[]");
+            parser.child(node, "left", expr);
+            parser.child(node, "right", index);
+            expr = node;
+            continue;
+        }
+        return expr;
+    }
+    return NodeId.invalid();
+}
+
+fn builtin_known(name: str) -> bool {
+    return name == "sizeof" || name == "undef" || name == "dangling" || name == "bitcast" ||
+        name == "alloc" || name == "realloc" || name == "panic" || name == "runtime_fail" ||
+        name == "assume_init" || name == "memcpy" || name == "slice_from_parts" ||
+        name == "slice_get_ptr" || name == "slice_get_len" || name == "str_from_parts" ||
+        name == "str_get_ptr" || name == "str_get_len" || name == "sys_read" ||
+        name == "sys_read_bytes" || name == "sys_write" || name == "sys_write_bytes" ||
+        name == "open" || name == "close" || name == "sqrt" || name == "sin" ||
+        name == "cos" || name == "argc" || name == "arg_bytes" || name == "exit" ||
+        name == "ffi_addr" || name == "ffi_parts" || name == "ffi_null" ||
+        name == "ffi_ptr_cast" || name == "ffi_copy_from" || name == "ffi_copy_to";
+}
+
+fn parse_builtin(parser: Parser&) -> NodeId {
+    let at = parser.take_punct("@");
+    let name = parser.identifier();
+    if parser.failed() { return NodeId.invalid(); }
+    let spelling = parser.node(name).text_field("name");
+    if !builtin_known(spelling) {
+        let message = String.from(&"unknown builtin '");
+        message.push_str(spelling);
+        message.push_str("' (expected '@name')");
+        parser.error(message.as_str(), parser.node(name).span());
+        message.drop();
+        return NodeId.invalid();
+    }
+    let types = Vec<NodeId>.new();
+    let args = Vec<NodeId>.new();
+    let end = parser.node(name).span();
+    if parser.at_punct("<angle>") {
+        parser.advance();
+        while !parser.failed() && !parser.at_punct(">angle>") {
+            types.push(parse_type(parser));
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        end = parser.take_punct(">angle>");
+    }
+    if parser.at_punct("(") {
+        parser.advance();
+        while !parser.failed() && !parser.at_punct(")") {
+            args.push(parse_arg(parser));
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        end = parser.take_punct(")");
+    }
+    if parser.failed() { types.drop(); args.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("Builtin", at.join(end));
+    parser.text(node, "kind", spelling);
+    parser.children(node, "type_args", types);
+    parser.children(node, "args", args);
+    return node;
+}
+
+pub fn parse_block(parser: Parser&) -> NodeId {
+    let open = parser.take_punct("{");
+    let statements = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        let statement = NodeId.invalid();
+        if parser.at_keyword("defer") {
+            let span = parser.take_keyword("defer");
+            let action = parse_expr(parser);
+            parser.take_punct(";");
+            if parser.failed() { break; }
+            statement = parser.alloc("Defer", span);
+            parser.child(statement, "action", action);
+        } else {
+            statement = parse_expr(parser);
+            if parser.failed() { break; }
+            if parser.at_punct(";") {
+                parser.advance();
+                let semi = parser.alloc("Semi", parser.node(statement).span());
+                parser.child(semi, "expr", statement);
+                statement = semi;
+            }
+        }
+        if parser.failed() { break; }
+        statements.push(statement);
+    }
+    let close = parser.take_punct("}");
+    if parser.failed() { statements.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("Block", open);
+    parser.children(node, "stmts", statements);
+    parser.location(node, "end", close.end);
+    parser.children(node, "parameter_bindings", Vec<NodeId>.new());
+    return node;
+}
+
+fn parse_return(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("return");
+    let value = NodeId.invalid();
+    if !parser.at_punct(";") { value = parse_expr(parser); }
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("Return", span);
+    if value.is_valid() { parser.child(node, "expr", value); }
+    else { parser.missing(node, "expr"); }
+    return node;
+}
+
+fn parse_condition(parser: Parser&) -> NodeId {
+    if !parser.at_keyword("let") { return parse_expr(parser); }
+    let span = parser.take_keyword("let");
+    let pattern = parse_binding_pattern(parser);
+    parser.take_punct("=");
+    let value = parse_expr(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("LetCondition", span);
+    parser.child(node, "pattern", pattern);
+    parser.child(node, "value", value);
+    return node;
+}
+
+fn parse_if(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("if");
+    let condition = parse_condition(parser);
+    let then_branch = parse_block(parser);
+    let elif_branches = Vec<NodeId>.new();
+    while !parser.failed() && parser.at_keyword("elif") {
+        let elif_span = parser.take_keyword("elif");
+        let next_condition = parse_condition(parser);
+        let next_body = parse_block(parser);
+        if parser.failed() { break; }
+        let pair = parser.alloc("ElifBranch", elif_span);
+        parser.child(pair, "condition", next_condition);
+        parser.child(pair, "body", next_body);
+        elif_branches.push(pair);
+    }
+    let else_branch = NodeId.invalid();
+    if parser.at_keyword("else") {
+        parser.advance();
+        else_branch = parse_block(parser);
+    }
+    if parser.failed() { elif_branches.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("If", span);
+    parser.child(node, "condition", condition);
+    parser.child(node, "then_branch", then_branch);
+    parser.children(node, "elif_branches", elif_branches);
+    if else_branch.is_valid() { parser.child(node, "else_branch", else_branch); }
+    else { parser.missing(node, "else_branch"); }
+    return node;
+}
+
+fn parse_comptime_if(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("comptime");
+    parser.take_keyword("if");
+    let condition = parse_expr(parser);
+    let then_branch = parse_block(parser);
+    parser.take_keyword("else");
+    let else_branch = parse_block(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("ComptimeIf", span);
+    parser.child(node, "condition", condition);
+    parser.child(node, "then_branch", then_branch);
+    parser.child(node, "else_branch", else_branch);
+    return node;
+}
+
+fn parse_for(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("for");
+    let pattern = parse_binding_pattern(parser);
+    parser.take_keyword("in");
+    let iterable = parse_expr(parser);
+    let body = parse_block(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("For", span);
+    parser.child(node, "pattern", pattern);
+    parser.child(node, "iterable", iterable);
+    parser.child(node, "body", body);
+    return node;
+}
+
+fn parse_while(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("while");
+    let condition = parse_condition(parser);
+    let body = parse_block(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("While", span);
+    parser.child(node, "condition", condition);
+    parser.child(node, "body", body);
+    return node;
+}
+
+fn parse_loop(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("loop");
+    let body = parse_block(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("Loop", span);
+    parser.child(node, "body", body);
+    return node;
+}
+
+fn parse_match_arm(parser: Parser&) -> NodeId {
+    if parser.at_punct(",") { parser.advance(); }
+    let pattern = parse_match_pattern(parser);
+    let guard = NodeId.invalid();
+    if parser.at_keyword("if") {
+        parser.advance();
+        guard = parse_expr(parser);
+    }
+    parser.take_punct("=>");
+    let body = NodeId.invalid();
+    if parser.at_punct("{") { body = parse_block(parser); }
+    else {
+        let value = parse_expr(parser);
+        if !parser.failed() {
+            body = parser.alloc("Block", parser.node(value).span());
+            let statements = Vec<NodeId>.new();
+            statements.push(value);
+            parser.children(body, "stmts", statements);
+            parser.missing(body, "end");
+            parser.children(body, "parameter_bindings", Vec<NodeId>.new());
+        }
+    }
+    if parser.at_punct(",") { parser.advance(); }
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("MatchArm", parser.node(pattern).span());
+    parser.child(node, "pattern", pattern);
+    if guard.is_valid() { parser.child(node, "guard", guard); }
+    else { parser.missing(node, "guard"); }
+    parser.child(node, "body", body);
+    parser.text(node, "origin", "user");
+    return node;
+}
+
+fn parse_match(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("match");
+    let value = parse_expr(parser);
+    parser.take_punct("{");
+    let arms = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        arms.push(parse_match_arm(parser));
+    }
+    parser.take_punct("}");
+    if parser.failed() { arms.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("Match", span);
+    parser.child(node, "expr", value);
+    parser.children(node, "arms", arms);
+    return node;
+}
+
+fn parse_break(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("break");
+    let value = NodeId.invalid();
+    if !parser.at_punct(";") && !parser.at_punct("}") { value = parse_expr(parser); }
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("Break", span);
+    if value.is_valid() { parser.child(node, "expr", value); }
+    else { parser.missing(node, "expr"); }
+    return node;
+}
+
+fn parse_assert(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("assert");
+    let condition = parse_expr(parser);
+    let message = NodeId.invalid();
+    if parser.at_punct(":") {
+        parser.advance();
+        message = parse_expr(parser);
+    }
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("Assert", span);
+    parser.child(node, "condition", condition);
+    if message.is_valid() { parser.child(node, "message", message); }
+    else { parser.missing(node, "message"); }
+    return node;
+}
+
+fn parse_delete(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("del");
+    let value = parse_expr(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("Delete", span);
+    parser.child(node, "target", value);
+    return node;
+}
+
+fn parse_let(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("let");
+    let pattern = parse_binding_pattern(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let type = NodeId.invalid();
+    let initializer = NodeId.invalid();
+    if parser.at_punct(":") {
+        parser.advance();
+        type = parse_type(parser);
+        if parser.at_punct("=") {
+            parser.advance();
+            initializer = parse_expr(parser);
+        }
+    } elif parser.at_punct("=") {
+        parser.advance();
+        type = parser.alloc("DeducedType", parser.node(pattern).span());
+        initializer = parse_expr(parser);
+    } else {
+        parser.error("Expected ':' or '=' after let pattern", parser.peek().span());
+        return NodeId.invalid();
+    }
+    let else_branch = NodeId.invalid();
+    if parser.at_keyword("else") {
+        parser.advance();
+        else_branch = parse_block(parser);
+    }
+    if parser.failed() { return NodeId.invalid(); }
+    if parser.node(pattern).tag() == "NamePattern" && !else_branch.is_valid() {
+        let node = parser.alloc("VarDecl", parser.node(pattern).span());
+        parser.child(node, "name", parser.node(pattern).child_field("name"));
+        parser.child(node, "var_type", type);
+        if initializer.is_valid() { parser.child(node, "init_expr", initializer); }
+        else { parser.missing(node, "init_expr"); }
+        return node;
+    }
+    if !initializer.is_valid() {
+        parser.error("A destructuring let requires an initializer", parser.node(pattern).span());
+        return NodeId.invalid();
+    }
+    let node = parser.alloc("PatternLet", span);
+    parser.child(node, "pattern", pattern);
+    parser.child(node, "var_type", type);
+    parser.child(node, "init_expr", initializer);
+    if else_branch.is_valid() { parser.child(node, "else_branch", else_branch); }
+    else { parser.missing(node, "else_branch"); }
+    parser.flag(node, "is_parameter", false);
+    return node;
+}
+
+fn parse_fstring(parser: Parser&) -> NodeId {
+    let span = parser.peek().span();
+    parser.advance();
+    let segments = Vec<NodeId>.new();
+    while !parser.failed() {
+        let token = parser.peek();
+        match token.kind() {
+            FStrLiteral => {
+                let literal = parser.alloc("StrLiteral", token.span());
+                parser.text(literal, "raw", token.value());
+                parser.text(literal, "value", token.value());
+                let expression = parser.alloc("Literal", token.span());
+                parser.child(expression, "literal", literal);
+                segments.push(expression);
+                parser.advance();
+            },
+            FStrExprBegin => {
+                parser.advance();
+                let expression = parse_expr(parser);
+                if parser.failed() { break; }
+                parser.advance();
+                let method = parser.alloc("MethodCall", parser.node(expression).span());
+                parser.child(method, "receiver", expression);
+                parser.child(method, "method_name", identifier_named(parser, parser.node(expression).span(), "to_string"));
+                parser.children(method, "generics", Vec<NodeId>.new());
+                parser.children(method, "args", Vec<NodeId>.new());
+                segments.push(method);
+            },
+            FStrEnd => { parser.advance(); break; },
+            _ => {
+                parser.error("Unexpected token in f-string", token.span());
+                break;
+            },
+        }
+    }
+    if parser.failed() { segments.drop(); return NodeId.invalid(); }
+    let type_item = parser.alloc("TypeItem", span);
+    parser.child(type_item, "name", identifier_named(parser, span, "String"));
+    parser.children(type_item, "generics", Vec<NodeId>.new());
+    let result = parser.alloc("MethodCall", span);
+    parser.child(result, "receiver", type_item);
+    parser.child(result, "method_name", identifier_named(parser, span, "new"));
+    parser.children(result, "generics", Vec<NodeId>.new());
+    parser.children(result, "args", Vec<NodeId>.new());
+    let index: u64 = 0u64;
+    while index < segments.len() {
+        let binary = parser.alloc("Binary", span);
+        parser.text(binary, "op", "+");
+        parser.child(binary, "left", result);
+        parser.child(binary, "right", segments[index]);
+        result = binary;
+        index += 1u64;
+    }
+    segments.drop();
+    return result;
+}
+
+fn parse_closure(parser: Parser&) -> NodeId {
+    let start = parser.peek().span();
+    let captures = Vec<NodeId>.new();
+    if parser.at_punct("||") {
+        parser.advance();
+    } else {
+        parser.take_punct("|");
+        if parser.at_punct("|") {
+            parser.advance();
+        } else {
+            loop {
+                let name = parser.identifier();
+                parser.take_punct("=");
+                let value = parse_expr_bp(parser, 5);
+                if parser.failed() { break; }
+                let item = parser.alloc("CaptureItem", parser.node(name).span().join(parser.node(value).span()));
+                parser.child(item, "name", name);
+                parser.child(item, "expr", value);
+                captures.push(item);
+                if parser.at_punct(",") { parser.advance(); }
+                else { break; }
+            }
+            parser.take_punct("|");
+        }
+    }
+    parser.take_punct("(");
+    let params = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct(")") {
+        let pattern = parse_binding_pattern(parser);
+        parser.take_punct(":");
+        let type = parse_type(parser);
+        if parser.failed() { break; }
+        let node = NodeId.invalid();
+        if parser.node(pattern).tag() == "NamePattern" {
+            node = parser.alloc("VarInfo", parser.node(pattern).span());
+            parser.child(node, "name", parser.node(pattern).child_field("name"));
+            parser.child(node, "var_type", type);
+        } else {
+            node = parser.alloc("PatternParam", parser.node(pattern).span());
+            parser.child(node, "pattern", pattern);
+            parser.child(node, "var_type", type);
+        }
+        params.push(node);
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct(")");
+    let result_type = NodeId.invalid();
+    if parser.at_punct("->") {
+        parser.advance();
+        result_type = parse_type(parser);
+    }
+    let body = parse_block(parser);
+    if parser.failed() { captures.drop(); params.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("ClosureExpr", start.join(parser.node(body).span()));
+    parser.children(node, "captures", captures);
+    parser.children(node, "params", params);
+    if result_type.is_valid() { parser.child(node, "return_type", result_type); }
+    else { parser.missing(node, "return_type"); }
+    parser.child(node, "body", body);
+    return node;
+}

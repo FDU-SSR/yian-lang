@@ -1,0 +1,196 @@
+from compiler.frontend.lex.lexer import Token, TokenKind;
+from compiler.frontend.parse.ast import AstValue, NodeId;
+from compiler.frontend.parse.state import AstTree;
+from compiler.frontend.source import Span;
+from std.core.drop import Drop;
+from std.core.iter import IntoIterator, Iterator;
+from std.core.ops import Index;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn token_kind(token: Token&) -> str {
+    match token.kind() {
+        Keyword => "Keyword",
+        Identifier => "Identifier",
+        Punctuator => "Punctuator",
+        Integer => "Integer",
+        Float => "Float",
+        Character => "Character",
+        StringLiteral => "StringLiteral",
+        Boolean => "Boolean",
+        FStrStart => "FStrStart",
+        FStrLiteral => "FStrLiteral",
+        FStrExprBegin => "FStrExprBegin",
+        FStrExprEnd => "FStrExprEnd",
+        FStrEnd => "FStrEnd",
+        EndOfFile => "EndOfFile",
+    }
+}
+
+fn append_u64(output: String&, value: u64) {
+    let digits = value.to_string_radix(10u64);
+    output.push_str(digits.as_str());
+    digits.drop();
+}
+
+pub fn append_string(output: String&, value: str) {
+    output.push('"');
+    for ch in value.chars() {
+        let code = u32(ch);
+        if ch == '"' { output.push_str("\\\""); }
+        elif ch == '\\' { output.push_str("\\\\"); }
+        elif ch == '\n' { output.push_str("\\n"); }
+        elif ch == '\r' { output.push_str("\\r"); }
+        elif ch == '\t' { output.push_str("\\t"); }
+        elif code < 32u32 {
+            let hex: str = "0123456789abcdef";
+            let digits = hex.as_slice();
+            output.push_str("\\u00");
+            output.push(char(digits[u64(code >> 4u32)]));
+            output.push(char(digits[u64(code & 15u32)]));
+        } else { output.push(ch); }
+    }
+    output.push('"');
+}
+
+pub fn append_span(output: String&, span: Span) {
+    output.push_str("\"start\":[");
+    append_u64(output, span.start.row);
+    output.push(',');
+    append_u64(output, span.start.column);
+    output.push_str("],\"end\":[");
+    append_u64(output, span.end.row);
+    output.push(',');
+    append_u64(output, span.end.column);
+    output.push(']');
+}
+
+pub fn lex_code(message: str) -> str {
+    if message.contains("Unterminated block comment") { return "E101"; }
+    if message.contains("Unterminated string literal") ||
+        message.contains("Unterminated character literal") ||
+        message.contains("Unterminated byte literal") { return "E105"; }
+    if message.contains("f-string") { return "E102"; }
+    if message.contains("unterminated") && message.contains("escape") { return "E103"; }
+    return "E199";
+}
+
+pub fn parse_code(message: str) -> str {
+    if message.starts_with("End of token stream reached") || message.contains("end of file") ||
+        message.contains("<eof>") { return "E201"; }
+    if message.starts_with("Expected") { return "E202"; }
+    if message.starts_with("Unexpected") { return "E203"; }
+    if message.contains("reserved") { return "E204"; }
+    return "E299";
+}
+
+fn append_token(output: String&, token: Token&) {
+    output.push_str("{\"kind\":");
+    append_string(output, token_kind(token));
+    output.push_str(",\"raw\":");
+    append_string(output, token.raw());
+    output.push_str(",\"value\":");
+    append_string(output, token.value());
+    output.push_str(",\"suffix\":");
+    append_string(output, token.suffix());
+    output.push_str(",\"bits\":");
+    let bits = token.bits().to_string_radix(10u64);
+    append_string(output, bits.as_str());
+    bits.drop();
+    output.push(',');
+    append_span(output, token.span());
+    output.push('}');
+}
+
+pub fn append_token_file(output: String&, path: str, tokens: Vec<Token>&) {
+    output.push_str("{\"path\":");
+    append_string(output, path);
+    output.push_str(",\"tokens\":[");
+    let index: u64 = 0u64;
+    while index < tokens.len() {
+        if index != 0u64 { output.push(','); }
+        append_token(output, &tokens[index]);
+        index += 1u64;
+    }
+    output.push_str("]}");
+}
+
+pub fn append_ast_node(output: String&, tree: AstTree&, id: NodeId) {
+    let node = tree.node(id);
+    if node.tag() == "ElifBranch" {
+        output.push('[');
+        append_ast_node(output, tree, node.child_field("condition"));
+        output.push(',');
+        append_ast_node(output, tree, node.child_field("body"));
+        output.push(']');
+        return;
+    }
+    if node.tag() == "ImplCondition" {
+        output.push('[');
+        append_ast_node(output, tree, node.child_field("name"));
+        output.push_str(",[");
+        let condition_fields = node.fields();
+        let condition_index: u64 = 0u64;
+        while condition_index < condition_fields.len() {
+            if condition_fields[condition_index].name() == "traits" {
+                match condition_fields[condition_index].value() {
+                    Children(values) => {
+                        let trait_index: u64 = 0u64;
+                        while trait_index < values.len() {
+                            if trait_index != 0u64 { output.push(','); }
+                            append_ast_node(output, tree, values[trait_index]);
+                            trait_index += 1u64;
+                        }
+                    },
+                    _ => {},
+                }
+            }
+            condition_index += 1u64;
+        }
+        output.push_str("]]");
+        return;
+    }
+    output.push_str("{\"tag\":");
+    append_string(output, node.tag());
+    output.push(',');
+    append_span(output, node.span());
+    output.push_str(",\"fields\":[");
+    let fields = node.fields();
+    let index: u64 = 0u64;
+    while index < fields.len() {
+        if index != 0u64 { output.push(','); }
+        let field = &fields[index];
+        output.push('[');
+        append_string(output, field.name());
+        output.push(',');
+        match field.value() {
+            Missing => output.push_str("null"),
+            Text(value) => append_string(output, value.as_str()),
+            Flag(value) => {
+                if *value { output.push_str("true"); }
+                else { output.push_str("false"); }
+            },
+            Location(value) => {
+                output.push('[');
+                append_u64(output, value.row);
+                output.push(',');
+                append_u64(output, value.column);
+                output.push(']');
+            },
+            Child(value) => append_ast_node(output, tree, *value),
+            Children(values) => {
+                output.push('[');
+                let child_index: u64 = 0u64;
+                while child_index < values.len() {
+                    if child_index != 0u64 { output.push(','); }
+                    append_ast_node(output, tree, values[child_index]);
+                    child_index += 1u64;
+                }
+                output.push(']');
+            },
+        }
+        output.push(']');
+        index += 1u64;
+    }
+    output.push_str("]}");
+}

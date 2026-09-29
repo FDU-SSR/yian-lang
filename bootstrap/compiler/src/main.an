@@ -1,14 +1,140 @@
 from std.core.drop import Drop;
-from std.core.env import args;
-from std.core.io import File, OpenMode;
+from std.core.env import args, exit;
+from std.core.io import File, OpenMode, Stdout;
+from std.core.string import String;
 from std.core.vec import Vec;
 from llvm.ir import IrType;
 from llvm.object import Module;
+from compiler.frontend.source import SourceManager, collect_sources;
+from compiler.frontend.lex.lexer import Lexer, drop_tokens;
+from compiler.frontend.observe import append_string, append_span, append_token_file, append_ast_node, lex_code, parse_code;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+
+fn release_arguments(arguments: Vec<String>&) {
+    let index: u64 = 0u64;
+    while index < arguments.len() {
+        arguments[index].drop();
+        index += 1u64;
+    }
+    arguments.drop();
+}
+
+fn release_paths(paths: Vec<String>&) {
+    let index: u64 = 0u64;
+    while index < paths.len() {
+        paths[index].drop();
+        index += 1u64;
+    }
+    paths.drop();
+}
+
+fn frontend(arguments: Vec<String>&) -> bool {
+    let phase = arguments[2u64].as_str();
+    let roots = Vec<String>.new();
+    defer roots.drop();
+    let index: u64 = 3u64;
+    while index < arguments.len() {
+        roots.push(arguments[index]);
+        index += 1u64;
+    }
+    let paths = match collect_sources(&roots) {
+        Ok(value) => value,
+        Err(_) => { Stdout.write_all("{\"version\":1,\"files\":[],\"diagnostic\":{\"stage\":\"io\"}}\n"); return false; },
+    };
+    defer release_paths(&paths);
+    let sources = SourceManager.new();
+    defer sources.drop();
+    let output = String.from(&"{\"version\":1,\"phase\":");
+    append_string(&output, phase);
+    output.push_str(",\"files\":[");
+    defer output.drop();
+    index = 0u64;
+    while index < paths.len() {
+        let id = match sources.load(paths[index].as_str()) {
+            Ok(value) => value,
+            Err(_) => {
+                output.push_str("],\"diagnostic\":{\"stage\":\"io\",\"path\":");
+                append_string(&output, paths[index].as_str());
+                output.push_str("}}\n");
+                Stdout.write_all(output.as_str());
+                return false;
+            },
+        };
+        let source = sources.file(id);
+        let lexer = Lexer.new(source.text());
+        let tokens = match lexer.run() {
+            Ok(value) => value,
+            Err(problem) => {
+                output.push_str("],\"diagnostic\":{\"stage\":\"lex\",\"path\":");
+                append_string(&output, source.path());
+                output.push_str(",\"code\":");
+                append_string(&output, lex_code(problem.message()));
+                output.push_str(",\"severity\":\"error\"");
+                output.push_str(",\"message\":");
+                append_string(&output, problem.message());
+                output.push(',');
+                append_span(&output, problem.span());
+                output.push_str("}}\n");
+                Stdout.write_all(output.as_str());
+                problem.drop();
+                return false;
+            },
+        };
+        if phase == "tokens" {
+            if index != 0u64 { output.push(','); }
+            append_token_file(&output, source.path(), &tokens);
+        } else {
+            let parser = Parser.new(&tokens);
+            let tree = match parse_program(&parser) {
+                Ok(value) => value,
+                Err(problem) => {
+                    output.push_str("],\"diagnostic\":{\"stage\":\"parse\",\"path\":");
+                    append_string(&output, source.path());
+                    output.push_str(",\"code\":");
+                    append_string(&output, parse_code(problem.message()));
+                    output.push_str(",\"severity\":\"error\"");
+                    output.push_str(",\"message\":");
+                    append_string(&output, problem.message());
+                    output.push(',');
+                    append_span(&output, problem.span());
+                    output.push_str("}}\n");
+                    Stdout.write_all(output.as_str());
+                    problem.drop();
+                    drop_tokens(&tokens);
+                    return false;
+                },
+            };
+            if phase == "desugared" { desugar(&tree, source.path()); }
+            if index != 0u64 { output.push(','); }
+            output.push_str("{\"path\":");
+            append_string(&output, source.path());
+            output.push_str(",\"ast\":");
+            append_ast_node(&output, &tree, tree.root());
+            output.push('}');
+            tree.drop();
+        }
+        drop_tokens(&tokens);
+        index += 1u64;
+    }
+    output.push_str("],\"diagnostic\":null}\n");
+    Stdout.write_all(output.as_str());
+    return true;
+}
 
 fn main() {
     let arguments = args();
+    if arguments.len() >= 4u64 && arguments[1u64].as_str() == "--frontend-json" &&
+        (arguments[2u64].as_str() == "tokens" || arguments[2u64].as_str() == "ast" ||
+         arguments[2u64].as_str() == "desugared") {
+        let success = frontend(&arguments);
+        release_arguments(&arguments);
+        if !success { exit(1i32); }
+        return;
+    }
     if arguments.len() != 2u64 {
-        @panic("expected one object output path");
+        @panic("expected one object output path or --frontend-json {tokens,ast,desugared} INPUT...");
     }
 
     let module = Module.new("bootstrap_stage0", 0u8);
@@ -39,10 +165,5 @@ fn main() {
         @panic("object close failed");
     }
 
-    let index: u64 = 0;
-    while index < arguments.len() {
-        arguments[index].drop();
-        index += 1;
-    }
-    arguments.drop();
+    release_arguments(&arguments);
 }

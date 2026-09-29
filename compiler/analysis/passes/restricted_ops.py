@@ -19,6 +19,7 @@ from compiler.analysis.unit.unit_data import UnitData
 RESTRICTED_BUILTINS = frozenset(
     {
         AST.BuiltinKind.SysRead,
+        AST.BuiltinKind.SysReadBytes,
         AST.BuiltinKind.SysWrite,
         AST.BuiltinKind.SysWriteBytes,
         AST.BuiltinKind.Open,

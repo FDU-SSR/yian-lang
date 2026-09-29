@@ -302,7 +302,7 @@ class Lexer:
                 return Tok.FloatLiteral(tok_str, span, value, suffix)
             value, suffix = Tok.parse_integer_value(tok_str)
             return Tok.IntLiteral(tok_str, span, value, suffix)
-        except ValueError as exc:
+        except (ValueError, OverflowError) as exc:
             raise LexError(str(exc), span) from exc
 
     def __lex_string(self, start_pos: SrcPosition) -> Token:

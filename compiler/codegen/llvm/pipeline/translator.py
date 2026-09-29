@@ -343,6 +343,11 @@ class LLTranslator:
                     self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)
                 )
                 self.__bind_result(stmt.result, value)
+            case IR.SysReadBytes():
+                self.__bind_result(
+                    stmt.result,
+                    builder.system.sys_read_bytes(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)),
+                )
             case IR.Open():
                 value = builder.system.open(
                     self.__resolve(builder, stmt.path), self.__resolve(builder, stmt.flags)

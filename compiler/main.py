@@ -29,6 +29,7 @@ from compiler.utils.log import (
     format_hir_output, format_token_output,
 )
 from compiler.format import format_text
+from compiler.frontend.observe import observe_ast, observe_tokens
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.codegen.cfg import ir as CFG_IR
@@ -133,6 +134,10 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "Run analysis through type checking, comptime specialization, and definite-assignment "
             "validation; report diagnostics without code generation or build/ output."
         ),
+    )
+    parser.add_argument(
+        "--frontend-json", choices=["tokens", "ast", "desugared"], default=None,
+        help="Print a versioned frontend snapshot without semantic analysis.",
     )
     parser.add_argument(
         "--json",
@@ -452,6 +457,15 @@ def __format(args: argparse.Namespace) -> int:
 
 def __run(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
+
+    if args.frontend_json is not None:
+        files = collect_an_files(args.paths)
+        if args.frontend_json == "tokens":
+            status, result = observe_tokens(files)
+        else:
+            status, result = observe_ast(files, desugared=args.frontend_json == "desugared")
+        print(result)
+        return status
 
     if args.json and not args.analyze:
         print("error: --json requires --analyze", file=sys.stderr)

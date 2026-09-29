@@ -23,6 +23,7 @@ class BuiltinKind(Enum):
     StrGetPtr = "str_get_ptr"
     StrGetLen = "str_get_len"
     SysRead = "sys_read"
+    SysReadBytes = "sys_read_bytes"
     SysWrite = "sys_write"
     SysWriteBytes = "sys_write_bytes"
     Open = "open"

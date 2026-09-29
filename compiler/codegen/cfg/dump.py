@@ -312,6 +312,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 f"  [{__type_str(result.type_id)}]"
             )
 
+        case IR.SysReadBytes(result=result, fd=fd, buf=buf):
+            return f"%{result.name} = sys_read_bytes {__dump_value(fd)}, {__dump_value(buf)}"
+
         case IR.Open(result=result, path=path, flags=flags):
             return (
                 f"%{result.name} = open {__dump_value(path)}, {__dump_value(flags)}"

@@ -1,0 +1,554 @@
+from compiler.frontend.parse.ast import AstValue, NodeId;
+from compiler.frontend.parse.expr import parse_block, parse_expr;
+from compiler.frontend.parse.pattern import parse_binding_pattern;
+from compiler.frontend.parse.state import AstTree, ParseError, Parser;
+from compiler.frontend.parse.type import parse_type;
+from compiler.frontend.source import Span;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn attrs(parser: Parser&) -> Vec<NodeId> {
+    let values = Vec<NodeId>.new();
+    while !parser.failed() {
+        let token = parser.peek();
+        let span = token.span();
+        let kind = "";
+        if parser.at_keyword("pub") {
+            parser.advance();
+            kind = "pub";
+            if parser.at_punct("(") {
+                parser.advance();
+                parser.take_keyword("ffi");
+                parser.take_punct(")");
+                kind = "pub(ffi)";
+            }
+        } elif parser.at_keyword("ffi") {
+            parser.advance();
+            kind = "ffi";
+        } elif parser.at_keyword("static") {
+            parser.advance();
+            kind = "static";
+        } else { break; }
+        if parser.failed() { break; }
+        let node = parser.alloc("Attr", span);
+        parser.text(node, "kind", kind);
+        values.push(node);
+    }
+    return values;
+}
+
+fn parse_import(parser: Parser&, items: Vec<NodeId>&) {
+    let start = parser.peek().span();
+    if parser.at_keyword("import") {
+        parser.advance();
+        let paths = Vec<NodeId>.new();
+        paths.push(parser.identifier());
+        while !parser.failed() && parser.at_punct(".") {
+            parser.advance();
+            paths.push(parser.identifier());
+        }
+        if parser.failed() || paths.len() == 0u64 { paths.drop(); return; }
+        let popped = paths.pop();
+        let target = *popped.unwrap();
+        let alias = NodeId.invalid();
+        if parser.at_keyword("as") { parser.advance(); alias = parser.identifier(); }
+        let end = parser.node(target).span();
+        if alias.is_valid() { end = parser.node(alias).span(); }
+        if parser.at_punct(";") || parser.at_punct(",") { end = parser.peek().span(); parser.advance(); }
+        let node = parser.alloc("Import", start);
+        parser.children(node, "paths", paths);
+        parser.child(node, "target", target);
+        if alias.is_valid() { parser.child(node, "alias", alias); }
+        else { parser.missing(node, "alias"); }
+        parser.location(node, "end", end.end);
+        items.push(node);
+        return;
+    }
+
+    parser.take_keyword("from");
+    let paths = Vec<NodeId>.new();
+    paths.push(parser.identifier());
+    while !parser.failed() && parser.at_punct(".") {
+        parser.advance();
+        paths.push(parser.identifier());
+    }
+    parser.take_keyword("import");
+    let targets = Vec<NodeId>.new();
+    let aliases = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct(";") && !parser.at_end() {
+        targets.push(parser.identifier());
+        let alias = NodeId.invalid();
+        if parser.at_keyword("as") { parser.advance(); alias = parser.identifier(); }
+        aliases.push(alias);
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    if parser.failed() || targets.len() == 0u64 {
+        paths.drop(); targets.drop(); aliases.drop(); return;
+    }
+    let last = targets[targets.len() - 1u64];
+    if aliases[aliases.len() - 1u64].is_valid() { last = aliases[aliases.len() - 1u64]; }
+    let end = parser.node(last).span();
+    if parser.at_punct(";") { end = parser.peek().span(); parser.advance(); }
+    let index: u64 = 0u64;
+    while index < targets.len() {
+        let node = parser.alloc("Import", start);
+        let copied_paths = Vec<NodeId>.new();
+        copied_paths.extend_from_slice(paths.as_slice());
+        parser.children(node, "paths", copied_paths);
+        parser.child(node, "target", targets[index]);
+        if aliases[index].is_valid() { parser.child(node, "alias", aliases[index]); }
+        else { parser.missing(node, "alias"); }
+        parser.location(node, "end", end.end);
+        items.push(node);
+        index += 1u64;
+    }
+    paths.drop(); targets.drop(); aliases.drop();
+}
+
+fn generics(parser: Parser&) -> Vec<NodeId> {
+    let params = Vec<NodeId>.new();
+    if !parser.at_punct("<angle>") { return params; }
+    parser.advance();
+    while !parser.failed() && !parser.at_punct(">angle>") {
+        if parser.at_keyword("const") {
+            let start = parser.take_keyword("const");
+            let name = parser.identifier();
+            parser.take_punct(":");
+            let type = parse_type(parser);
+            if parser.failed() { break; }
+            let node = parser.alloc("ConstGenericParam", start.join(parser.node(type).span()));
+            parser.child(node, "name", name);
+            parser.child(node, "value_type", type);
+            params.push(node);
+        } else {
+            let name = parser.identifier();
+            if parser.failed() { break; }
+            let node = parser.alloc("TypeGenericParam", parser.node(name).span());
+            parser.child(node, "name", name);
+            params.push(node);
+        }
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct(">angle>");
+    return params;
+}
+
+fn var_info(parser: Parser&) -> NodeId {
+    let name = parser.identifier();
+    parser.take_punct(":");
+    let type = parse_type(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("VarInfo", parser.node(name).span());
+    parser.child(node, "name", name);
+    parser.child(node, "var_type", type);
+    return node;
+}
+
+fn callable_param(parser: Parser&) -> NodeId {
+    let pattern = parse_binding_pattern(parser);
+    parser.take_punct(":");
+    let type = parse_type(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = NodeId.invalid();
+    if parser.node(pattern).tag() == "NamePattern" {
+        node = parser.alloc("VarInfo", parser.node(pattern).span());
+        parser.child(node, "name", parser.node(pattern).child_field("name"));
+        parser.child(node, "var_type", type);
+    } else {
+        node = parser.alloc("PatternParam", parser.node(pattern).span());
+        parser.child(node, "pattern", pattern);
+        parser.child(node, "var_type", type);
+    }
+    return node;
+}
+
+fn params(parser: Parser&, patterns: bool) -> Vec<NodeId> {
+    parser.take_punct("(");
+    let values = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct(")") {
+        let value = NodeId.invalid();
+        if patterns { value = callable_param(parser); }
+        else { value = var_info(parser); }
+        if parser.failed() { break; }
+        values.push(value);
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct(")");
+    return values;
+}
+
+fn return_type(parser: Parser&) -> NodeId {
+    if !parser.at_punct("->") { return NodeId.invalid(); }
+    parser.advance();
+    return parse_type(parser);
+}
+
+pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> {
+    let items = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_end() {
+        let attributes = attrs(parser);
+        if parser.failed() { attributes.drop(); break; }
+        if parser.at_keyword("import") || parser.at_keyword("from") {
+            if attributes.len() != 0u64 {
+                parser.error("Attributes are not allowed on import statements", parser.node(attributes[0u64]).span());
+            } else { parse_import(parser, &items); }
+            attributes.drop();
+            continue;
+        }
+        let item = NodeId.invalid();
+        if parser.at_keyword("typedef") { item = parse_alias(parser, attributes); }
+        elif parser.at_keyword("opaque") { item = parse_opaque(parser, attributes); }
+        elif parser.at_keyword("extern") { item = parse_extern(parser, attributes); }
+        elif parser.at_keyword("impl") {
+            if attributes.len() != 0u64 {
+                parser.error("Attributes are not allowed on impl blocks", parser.node(attributes[0u64]).span());
+            } else { item = parse_impl(parser); }
+            attributes.drop();
+        }
+        elif parser.at_keyword("struct") { item = parse_struct(parser, attributes); }
+        elif parser.at_keyword("enum") { item = parse_enum(parser, attributes); }
+        elif parser.at_keyword("trait") { item = parse_trait(parser, attributes); }
+        elif parser.at_keyword("fn") { item = parse_func(parser, attributes); }
+        elif parser.at_keyword("const") { item = parse_const(parser, attributes); }
+        else {
+            attributes.drop();
+            let message = String.from(&"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '");
+            message.push_str(parser.peek().value());
+            message.push('\'');
+            parser.error(message.as_str(), parser.peek().span());
+            message.drop();
+        }
+        if parser.failed() { break; }
+        items.push(item);
+    }
+    let span = parser.peek().span();
+    if items.len() != 0u64 {
+        span = parser.node(items[0u64]).span();
+        let index: u64 = 1u64;
+        while index < items.len() {
+            span = span.join(parser.node(items[index]).span());
+            index += 1u64;
+        }
+    }
+    let root = parser.alloc("Program", span);
+    parser.children(root, "items", items);
+    return parser.finish(root);
+}
+
+fn parse_alias(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    parser.take_keyword("typedef");
+    let name = parser.identifier();
+    let params = generics(parser);
+    parser.take_punct("=");
+    let target = parse_type(parser);
+    parser.take_punct(";");
+    if parser.failed() { attributes.drop(); params.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("Alias", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", params);
+    parser.child(node, "target", target);
+    return node;
+}
+
+fn parse_opaque(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    let span = parser.take_keyword("opaque");
+    parser.take_keyword("type");
+    let name = parser.identifier();
+    parser.take_punct(";");
+    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("OpaqueTypeDef", span);
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    return node;
+}
+
+fn extern_function(parser: Parser&) -> NodeId {
+    parser.take_keyword("fn");
+    let name = parser.identifier();
+    let arguments = params(parser, false);
+    let result = return_type(parser);
+    parser.take_punct(";");
+    if parser.failed() { arguments.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("ExternFuncDecl", parser.node(name).span());
+    parser.child(node, "name", name);
+    parser.children(node, "params", arguments);
+    if result.is_valid() { parser.child(node, "ret_type", result); }
+    else { parser.missing(node, "ret_type"); }
+    return node;
+}
+
+fn parse_extern(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    let span = parser.take_keyword("extern");
+    let abi = parser.peek();
+    let accepted = false;
+    match abi.kind() {
+        StringLiteral => { accepted = abi.value() == "C"; },
+        _ => {},
+    }
+    if !accepted {
+        parser.error("Only extern C is supported", abi.span());
+        attributes.drop();
+        return NodeId.invalid();
+    }
+    parser.advance();
+    parser.take_punct("{");
+    let functions = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        functions.push(extern_function(parser));
+    }
+    parser.take_punct("}");
+    if parser.failed() { attributes.drop(); functions.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("ExternBlock", span);
+    parser.children(node, "attrs", attributes);
+    parser.text(node, "abi", "C");
+    parser.children(node, "functions", functions);
+    return node;
+}
+
+fn parse_const(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    let span = parser.take_keyword("const");
+    let name = parser.identifier();
+    parser.take_punct(":");
+    let type = parse_type(parser);
+    parser.take_punct("=");
+    let value = parse_expr(parser);
+    let end = parser.take_punct(";");
+    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("ConstDef", span.join(end));
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.child(node, "const_type", type);
+    parser.child(node, "value", value);
+    return node;
+}
+
+fn field_info(parser: Parser&) -> NodeId {
+    let attributes = attrs(parser);
+    let name = parser.identifier();
+    parser.take_punct(":");
+    let type = parse_type(parser);
+    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("FieldInfo", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.child(node, "field_type", type);
+    return node;
+}
+
+fn parse_struct(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    parser.take_keyword("struct");
+    let name = parser.identifier();
+    let params = generics(parser);
+    parser.take_punct("{");
+    let fields = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        fields.push(field_info(parser));
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct("}");
+    if parser.failed() { attributes.drop(); params.drop(); fields.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("StructDef", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", params);
+    parser.children(node, "fields", fields);
+    return node;
+}
+
+fn variant_info(parser: Parser&) -> NodeId {
+    let name = parser.identifier();
+    let fields = Vec<NodeId>.new();
+    if parser.at_punct("{") {
+        parser.advance();
+        while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+            fields.push(var_info(parser));
+            if parser.at_punct(",") { parser.advance(); }
+            else { break; }
+        }
+        parser.take_punct("}");
+    }
+    if parser.failed() { fields.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("VariantInfo", parser.node(name).span());
+    parser.child(node, "name", name);
+    parser.children(node, "fields", fields);
+    return node;
+}
+
+fn parse_enum(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    parser.take_keyword("enum");
+    let name = parser.identifier();
+    let params = generics(parser);
+    parser.take_punct("{");
+    let variants = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        variants.push(variant_info(parser));
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    parser.take_punct("}");
+    if parser.failed() { attributes.drop(); params.drop(); variants.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("EnumDef", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", params);
+    parser.children(node, "variants", variants);
+    return node;
+}
+
+fn method_decl(parser: Parser&) -> NodeId {
+    let attributes = attrs(parser);
+    parser.take_keyword("fn");
+    let name = parser.identifier();
+    let generic_params = generics(parser);
+    let arguments = params(parser, true);
+    let result = return_type(parser);
+    if parser.failed() { attributes.drop(); generic_params.drop(); arguments.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("MethodDecl", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", generic_params);
+    parser.children(node, "params", arguments);
+    if result.is_valid() { parser.child(node, "ret_type", result); }
+    else { parser.missing(node, "ret_type"); }
+    return node;
+}
+
+fn method_def(parser: Parser&, declaration: NodeId) -> NodeId {
+    let decl = declaration;
+    if !decl.is_valid() { decl = method_decl(parser); }
+    let body = parse_block(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    let node = parser.alloc("MethodDef", parser.node(decl).span());
+    parser.child(node, "decl", decl);
+    parser.child(node, "body", body);
+    return node;
+}
+
+fn trait_item(parser: Parser&) -> NodeId {
+    let decl = method_decl(parser);
+    if parser.failed() { return NodeId.invalid(); }
+    if parser.at_punct("{") { return method_def(parser, decl); }
+    let fields = parser.node(decl).fields();
+    let field_index: u64 = 0u64;
+    while field_index < fields.len() {
+        if fields[field_index].name() == "params" {
+            match fields[field_index].value() {
+                Children(values) => {
+                    let index: u64 = 0u64;
+                    while index < values.len() {
+                        if parser.node(values[index]).tag() == "PatternParam" {
+                            parser.error("Parameter patterns require a method body", parser.node(values[index]).span());
+                            return NodeId.invalid();
+                        }
+                        index += 1u64;
+                    }
+                },
+                _ => {},
+            }
+        }
+        field_index += 1u64;
+    }
+    parser.take_punct(";");
+    return decl;
+}
+
+fn parse_trait(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    parser.take_keyword("trait");
+    let name = parser.identifier();
+    let generic_params = generics(parser);
+    parser.take_punct("{");
+    let items = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        items.push(trait_item(parser));
+    }
+    parser.take_punct("}");
+    if parser.failed() { attributes.drop(); generic_params.drop(); items.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("TraitDef", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", generic_params);
+    parser.children(node, "items", items);
+    return node;
+}
+
+fn impl_conditions(parser: Parser&) -> Vec<NodeId> {
+    let conditions = Vec<NodeId>.new();
+    loop {
+        let name = parser.identifier();
+        parser.take_punct(":");
+        let traits = Vec<NodeId>.new();
+        traits.push(parse_type(parser));
+        while !parser.failed() && parser.at_punct("+") {
+            parser.advance();
+            traits.push(parse_type(parser));
+        }
+        if parser.failed() { traits.drop(); break; }
+        let condition = parser.alloc("ImplCondition", parser.node(name).span());
+        parser.child(condition, "name", name);
+        parser.children(condition, "traits", traits);
+        conditions.push(condition);
+        if parser.at_punct(",") { parser.advance(); }
+        else { break; }
+    }
+    return conditions;
+}
+
+fn parse_impl(parser: Parser&) -> NodeId {
+    let span = parser.take_keyword("impl");
+    let generic_params = generics(parser);
+    let first = parse_type(parser);
+    let trait = NodeId.invalid();
+    let target = first;
+    if parser.at_keyword("for") {
+        parser.advance();
+        trait = first;
+        target = parse_type(parser);
+    }
+    let conditions = Vec<NodeId>.new();
+    if parser.at_keyword("if") {
+        parser.advance();
+        conditions = impl_conditions(parser);
+    }
+    parser.take_punct("{");
+    let items = Vec<NodeId>.new();
+    while !parser.failed() && !parser.at_punct("}") && !parser.at_end() {
+        items.push(method_def(parser, NodeId.invalid()));
+    }
+    parser.take_punct("}");
+    if parser.failed() { generic_params.drop(); conditions.drop(); items.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("Impl", span);
+    parser.children(node, "generics", generic_params);
+    parser.child(node, "target", target);
+    if trait.is_valid() { parser.child(node, "trait", trait); }
+    else { parser.missing(node, "trait"); }
+    parser.children(node, "items", items);
+    parser.children(node, "conditions", conditions);
+    return node;
+}
+
+fn parse_func(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+    parser.take_keyword("fn");
+    let name = parser.identifier();
+    let generic_params = generics(parser);
+    let arguments = params(parser, true);
+    let result = return_type(parser);
+    let body = parse_block(parser);
+    if parser.failed() { attributes.drop(); generic_params.drop(); arguments.drop(); return NodeId.invalid(); }
+    let node = parser.alloc("FuncDef", parser.node(name).span());
+    parser.children(node, "attrs", attributes);
+    parser.child(node, "name", name);
+    parser.children(node, "generics", generic_params);
+    parser.children(node, "params", arguments);
+    if result.is_valid() { parser.child(node, "ret_type", result); }
+    else { parser.missing(node, "ret_type"); }
+    parser.child(node, "body", body);
+    return node;
+}

@@ -65,6 +65,12 @@ class SystemEmitter:
             value = self.__core.ir.insert_value(value, bytes_read, 2)
         return value
 
+    def sys_read_bytes(self, fd: LLValue, buf: LLValue) -> LLValue:
+        return self.__core.ir.call_intrinsic(
+            IntrinsicKind.Read,
+            [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
+        )
+
     def open(self, path: LLValue, flags: LLValue) -> LLValue:
         mode = LLValue(self.__type_ctx.u32_id, ir.Constant(ir.IntType(32), 420))  # type: ignore
         return self.__core.ir.call_intrinsic(

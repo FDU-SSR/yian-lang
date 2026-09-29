@@ -162,25 +162,47 @@ impl File {
     // Returns the number of bytes read. 0 means EOF.
     pub fn read(buf: u8[]) -> Result<u64, IoError> {
         self.assert_open();
-        let s: str = @sys_read(self.fd, buf);
-        Result<u64, IoError>.Ok(val=s.as_slice().len())
+        let count: i64 = @sys_read_bytes(self.fd, buf);
+        if count < 0 {
+            return Result<u64, IoError>.Err(msg=IoError.other("read failed"));
+        }
+        Result<u64, IoError>.Ok(val=u64(count))
     }
 
-    // Read the entire remaining content into a String.
-    pub fn read_to_string() -> Result<String, IoError> {
+    // Read all remaining bytes without interpreting their encoding.
+    pub fn read_to_bytes() -> Result<Vec<u8>, IoError> {
         self.assert_open();
-        let result = String.new();
+        let result = Vec<u8>.new();
         let buf: u8[4096];
         @assume_init(buf);
         loop {
-            let s: str = @sys_read(self.fd, buf.as_slice());
-            let data = s.as_slice();
-            let n = data.len();
-            if n == 0 {
+            let count: i64 = @sys_read_bytes(self.fd, buf.as_slice());
+            if count < 0 {
+                result.drop();
+                return Result<Vec<u8>, IoError>.Err(msg=IoError.other("read failed"));
+            }
+            if count == 0 {
                 break;
             }
-            result.push_str(s);
+            result.extend_from_slice(buf.as_slice()[0u64..u64(count)]);
         }
+        Result<Vec<u8>, IoError>.Ok(val=result)
+    }
+
+    // Validate UTF-8 after reading the entire stream, including split sequences.
+    pub fn read_to_string() -> Result<String, IoError> {
+        let data = match self.read_to_bytes() {
+            Ok(value) => value,
+            Err(error) => return Result<String, IoError>.Err(msg=error),
+        };
+        defer data.drop();
+        let content = match str.from_slice(data.as_slice()) {
+            Some(value) => value,
+            None => return Result<String, IoError>.Err(
+                msg=IoError.new(IoErrorKind.InvalidInput, "file is not valid UTF-8")
+            ),
+        };
+        let result = String.from(&content);
         Result<String, IoError>.Ok(val=result)
     }
 

@@ -453,6 +453,7 @@ def load(root: Path, *, std_root: Path | None = None) -> LoadResult:
         source_root=std_src,
         entry=None,
         dependencies=(),
+        ffi=True,
     )
 
     diagnostics.extend(__nested_source_root_diagnostics(built))
