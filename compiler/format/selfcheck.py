@@ -166,6 +166,7 @@ _HUGS = (
     Tok.PunctuatorKind.LAngle,
     # The never type takes an array suffix: `![4]`.
     Tok.PunctuatorKind.Exclamation,
+    Tok.PunctuatorKind.Question,
     Tok.PunctuatorKind.RParen,
     Tok.PunctuatorKind.RBracket,
     Tok.PunctuatorKind.RBrace,
@@ -247,6 +248,7 @@ def __operator_uses(tokens: list[Tok.Token]) -> tuple[frozenset[int], frozenset[
         Tok.PunctuatorKind.RBracket,
         Tok.PunctuatorKind.RBrace,
         Tok.PunctuatorKind.RAngle,
+        Tok.PunctuatorKind.Question,
     )
     type_tail = (
         Tok.PunctuatorKind.Comma,

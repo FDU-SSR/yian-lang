@@ -675,6 +675,39 @@ class MethodCall:
 
 
 @dataclass
+class ArgumentType:
+    """The type of an already checked call argument."""
+
+    index: int
+
+
+@dataclass
+class CallableReturnType:
+    """The resolved return type of the enclosing callable."""
+
+
+TypeSource: TypeAlias = ASTType | ArgumentType | CallableReturnType
+
+
+@dataclass
+class TraitCall:
+    """A trait-qualified static call with explicit or inferred type sources."""
+
+    span: SrcSpan
+    trait: Expr
+    self_type: TypeSource
+    trait_args: list[TypeSource | None]
+    method_name: Identifier
+    args: list[Arg]
+
+
+@dataclass
+class TryExpr:
+    span: SrcSpan
+    operand: Expr
+
+
+@dataclass
 class FieldAccess:
     span: SrcSpan
     receiver: Expr
@@ -804,7 +837,7 @@ class ClosureExpr:
 
 Expr: TypeAlias = (
     Binary | Unary | FieldAccess
-    | Call | Builtin | MethodCall
+    | Call | Builtin | MethodCall | TraitCall | TryExpr
     | DynValue | DynBuffer
     | TypeItem | Identifier | Literal
     | Tuple | Array | ArrayRepeat

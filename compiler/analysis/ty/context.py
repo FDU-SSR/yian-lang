@@ -900,6 +900,90 @@ class TypeCtx(IntrinsicIds):
                     return template_generics[len(trait_ty.custom_def.generics):]
         return generics[len(impl.generics):]
 
+    def trait_method_lookup(
+        self, self_type_id: int, trait_type_id: int, trait_args: list[int | None],
+        method_name: str, generic_args: list[int], arg_type_ids: list[int], span: SrcSpan,
+    ) -> LookupResult:
+        """Select a static method by trait identity and exact Self type.
+
+        Missing trait arguments are inferred from the selected implementation,
+        independently of the expected result type of the surrounding expression.
+        """
+        self_type_id = self.canonical(self_type_id)
+        trait_ty = self[self.resolve_aliases(trait_type_id)]
+        if not isinstance(trait_ty, Type.TraitType):
+            raise AnalysisError("trait-qualified call requires a trait", span)
+        if len(trait_args) != len(trait_ty.custom_def.generics):
+            raise AnalysisError("trait-qualified call requires all trait arguments", span)
+        declared_id = self.get_trait_methods(trait_ty.type_id).get(method_name)
+        if declared_id is None:
+            raise AnalysisError(f"Unknown trait method '{method_name}'", span)
+        declared = self[declared_id]
+        assert isinstance(declared, Type.MethodType)
+        if not declared.is_static:
+            raise AnalysisError("trait-qualified calls require a static method", span)
+
+        candidates: list[LookupResult] = []
+        incomplete = False
+        for impl in self.__impl_registry.iter_candidate_impls(self_type_id):
+            if impl.trait is None:
+                continue
+            impl_trait = self[impl.trait]
+            if not isinstance(impl_trait, Type.TraitType) or impl_trait.custom_def is not trait_ty.custom_def:
+                continue
+            method_id = impl.methods[method_name]
+            method_ty = self[method_id]
+            assert isinstance(method_ty, Type.MethodType)
+            method_generics = self.__declared_method_generics(impl, method_name, method_ty)
+            if len(generic_args) > len(method_generics):
+                continue
+            parameters = self.get_params(method_id)
+            if len(parameters) != len(arg_type_ids):
+                continue
+
+            inference = GenericInference(self, span)
+            try:
+                inference.constrain(impl.target, self_type_id)
+                for pattern, actual in zip(impl_trait.generic_args, trait_args):
+                    if actual is not None:
+                        inference.constrain(pattern, actual)
+                for pattern, actual in zip(method_generics, generic_args):
+                    inference.constrain(pattern, actual)
+                substs = inference.substitutions()
+                argument_inference = GenericInference(self, span)
+                for parameter, actual in zip(parameters, arg_type_ids):
+                    argument_inference.constrain(self.instantiate(parameter.type_id, substs), actual)
+                substs |= argument_inference.substitutions()
+            except AnalysisError:
+                continue
+
+            # Concrete call constraints precede condition inference so a known
+            # source type cannot become ambiguous among unrelated conversions.
+            conditioned = self.__impl_registry.infer_condition_substs(impl, substs, span)
+            if conditioned is None:
+                continue
+            resolved_target = self.canonical(self.instantiate(impl.target, conditioned))
+            if resolved_target != self_type_id:
+                continue
+            resolved_trait = self.instantiate(impl.trait, conditioned)
+            final_method_id = self.canonical(self.instantiate(method_id, conditioned))
+            if self.contains_generic(resolved_trait) or self.contains_generic(final_method_id):
+                incomplete = True
+                continue
+            candidates.append(LookupResult(method_id=final_method_id, deref_count=0, impl=impl))
+
+        explicit = [candidate for candidate in candidates if not candidate.impl.automatic]
+        if explicit:
+            candidates = explicit
+        description = f"trait '{trait_ty.custom_def.name}' for type '{self.get_name(self_type_id)}'"
+        if len(candidates) > 1:
+            raise AnalysisError(f"Ambiguous implementation of {description}", span)
+        if not candidates:
+            if incomplete:
+                raise AnalysisError(f"cannot infer trait call types for {description}", span)
+            raise AnalysisError(f"No matching implementation of {description} for '{method_name}'", span)
+        return candidates[0]
+
     def __trait_object_method_lookup(
         self,
         receiver_span: SrcSpan,

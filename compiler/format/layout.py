@@ -91,6 +91,7 @@ _HUG_BEFORE = frozenset(
         Tok.PunctuatorKind.RBracket,
         Tok.PunctuatorKind.Dot,
         Tok.PunctuatorKind.Colon,
+        Tok.PunctuatorKind.Question,
     }
 )
 
@@ -129,6 +130,7 @@ _CLOSERS = frozenset(
         Tok.PunctuatorKind.RBracket,
         Tok.PunctuatorKind.RBrace,
         Tok.PunctuatorKind.RAngle,
+        Tok.PunctuatorKind.Question,
     }
 )
 
@@ -199,6 +201,7 @@ def _hugs_bracket(previous: Token, *, postfix: bool) -> bool:
     return _is(
         previous,
         Tok.PunctuatorKind.Exclamation,
+        Tok.PunctuatorKind.Question,
         Tok.PunctuatorKind.RParen,
         Tok.PunctuatorKind.RBracket,
         Tok.PunctuatorKind.RBrace,
@@ -357,6 +360,7 @@ class _Layout:
                     Tok.PunctuatorKind.LParen,
                     Tok.PunctuatorKind.LBracket,
                     Tok.PunctuatorKind.Dot,
+                    Tok.PunctuatorKind.Question,
                 )
             )
         if _is(previous, *_HUG_AFTER):

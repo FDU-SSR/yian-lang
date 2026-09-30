@@ -1,0 +1,3 @@
+fn main() {
+    Option<i32>.Some(1)?;
+}

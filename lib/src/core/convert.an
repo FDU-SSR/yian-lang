@@ -5,3 +5,9 @@ pub trait From<Src> {
 pub trait Into<Dst> {
     fn into() -> Dst;
 }
+
+impl<T> From<T> for T {
+    pub static fn from(value: T&) -> Self {
+        *value
+    }
+}

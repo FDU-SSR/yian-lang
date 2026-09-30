@@ -1,0 +1,49 @@
+from std.core.convert import From;
+
+struct Error {
+    pub code: i32,
+}
+
+impl From<i32> for Error {
+    pub static fn from(value: i32&) -> Self {
+        Error(*value + 100)
+    }
+}
+
+impl From<bool> for Error {
+    pub static fn from(value: bool&) -> Self {
+        Error(200)
+    }
+}
+
+impl Error {
+    pub static fn from(value: i32&) -> Self {
+        Error(999)
+    }
+}
+
+fn source(ok: bool) -> Result<i32, i32> {
+    if ok { Result<i32, i32>.Ok(7) } else { Result<i32, i32>.Err(3) }
+}
+
+fn same(ok: bool) -> Result<bool, i32> {
+    let value = source(ok)?;
+    Result<bool, i32>.Ok(value == 7)
+}
+
+fn converted(ok: bool) -> Result<i32, Error> {
+    Result<i32, Error>.Ok(source(ok)? + 1)
+}
+
+fn main() {
+    assert *same(true).unwrap();
+    assert *same(false).unwrap_err() == 3;
+    assert *converted(true).unwrap() == 8;
+    assert converted(false).unwrap_err().code == 103;
+    let original = source(true);
+    let copy = |original = original| () -> Result<i32, i32> {
+        Result<i32, i32>.Ok(original?)
+    };
+    assert *copy().unwrap() == 7;
+    assert *original.unwrap() == 7;
+}

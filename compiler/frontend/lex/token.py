@@ -156,6 +156,7 @@ class PunctuatorKind(Enum):
     GreaterGreaterEqual = ">>="
     DotDot = ".."
     At = "@"
+    Question = "?"
     EOF = "<eof>"
 
     @classmethod

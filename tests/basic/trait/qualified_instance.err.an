@@ -1,0 +1,13 @@
+trait Instance {
+    fn value() -> i32;
+}
+
+struct Item {}
+
+impl Instance for Item {
+    fn value() -> i32 { 1 }
+}
+
+fn main() {
+    Instance.value<Item>();
+}

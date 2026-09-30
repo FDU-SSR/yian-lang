@@ -79,7 +79,7 @@ class ExprChecker:
                 return self.lower_pattern_let(expr)
             case AST.Semi():
                 return self.lower_semi(expr)
-            case AST.For() | AST.While() | AST.Assert():
+            case AST.For() | AST.While() | AST.Assert() | AST.TryExpr():
                 raise AnalysisError(f"Unexpected statement type {type(expr).__name__} after desugaring", expr.span)
             # --- original expression types ---
             case AST.Binary():
@@ -94,6 +94,8 @@ class ExprChecker:
                 return self.__builtin_dispatcher.handle(expr)
             case AST.MethodCall():
                 return self.__handle_method_call(expr)
+            case AST.TraitCall():
+                return self.__call_dispatcher.handle_trait_call(expr)
             case AST.DynValue():
                 return self.__handle_dyn_value(expr)
             case AST.DynBuffer():

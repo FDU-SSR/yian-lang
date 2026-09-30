@@ -1,0 +1,33 @@
+typedef Outcome<T> = Result<T, i32>;
+
+fn identity<T>(value: Outcome<T>) -> Outcome<T> {
+    Outcome<T>.Ok(value?)
+}
+
+fn unused<T>(value: T) -> T {
+    value?
+}
+
+fn selected() -> Outcome<i32> {
+    comptime if IS_RAW_MODE {
+        Outcome<i32>.Ok(*Option<i32>.Some(1).unwrap())
+    } else {
+        Outcome<i32>.Ok(Outcome<i32>.Ok(1)?)
+    }
+}
+
+fn unselected() -> Outcome<i32> {
+    comptime if true {
+        Outcome<i32>.Ok(Outcome<i32>.Ok(2)?)
+    } else {
+        Outcome<i32>.Ok(Option<i32>.None?)
+    }
+}
+
+fn main() {
+    assert *identity(Outcome<i32>.Ok(7)).unwrap() == 7;
+    assert *identity(Outcome<bool>.Ok(true)).unwrap();
+    assert *identity(Outcome<i32>.Err(3)).unwrap_err() == 3;
+    assert *selected().unwrap() == 1;
+    assert *unselected().unwrap() == 2;
+}

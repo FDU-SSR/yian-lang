@@ -1,0 +1,8 @@
+from std.core.convert import From;
+
+struct Item {}
+
+fn main() {
+    let value: i32 = 1;
+    From<i32>.from<Item>(&value);
+}

@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Callable
 
 from compiler.frontend.lex import token as Tok
+from compiler.frontend.lex.position import SrcPosition, SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_traversal import AstRewriter, AstVisitor
+from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator
 from compiler.utils.log import CompilerLog
 
@@ -60,9 +62,88 @@ class _ExprDesugarRewriter(AstRewriter):
         return expr
 
 
+class _TryRewriter(AstRewriter):
+    """Expand propagation into trait-qualified calls and ordinary control flow."""
+
+    def __init__(self) -> None:
+        self.__in_callable = False
+        self.__next_binding = 0
+        self.imports: list[AST.Import] = []
+
+    def rewrite_callable(self, body: AST.Block) -> None:
+        previous = self.__in_callable
+        self.__in_callable = True
+        try:
+            self.rewrite_block(body)
+        finally:
+            self.__in_callable = previous
+
+    def rewrite_expr(self, expr: AST.Expr) -> AST.Expr:
+        if isinstance(expr, AST.ClosureExpr):
+            for capture in expr.captures:
+                capture.expr = self.rewrite_expr(capture.expr)
+            self.rewrite_callable(expr.body)
+            return expr
+        super().rewrite_expr(expr)
+        if not isinstance(expr, AST.TryExpr):
+            return expr
+        if not self.__in_callable:
+            raise ParseError("'?' is only allowed inside a function, method or closure", expr.span)
+        if not self.imports:
+            position = SrcPosition(-1, -1, expr.span.path)
+            import_span = SrcSpan(position, position)
+            for target, alias in (("Try", "%try_trait"), ("FromResidual", "%from_residual_trait")):
+                self.imports.append(AST.Import(
+                    span=import_span,
+                    paths=[AST.Identifier(import_span, part, synthetic=True) for part in ("std", "core", "try")],
+                    target=AST.Identifier(import_span, target, synthetic=True),
+                    alias=AST.Identifier(import_span, alias, synthetic=True),
+                ))
+
+        index = self.__next_binding
+        self.__next_binding += 1
+        value = AST.Identifier(expr.span, f"%try_value_{index}", synthetic=True)
+        residual = AST.Identifier(expr.span, f"%try_residual_{index}", synthetic=True)
+        reference = AST.Identifier(expr.span, f"%try_reference_{index}", synthetic=True)
+        borrowed = isinstance(expr.operand, AST.Unary) and expr.operand.op == UnaryOperator.AddrOf
+        branch = AST.TraitCall(
+            span=expr.span, trait=AST.Identifier(expr.span, "%try_trait", synthetic=True),
+            self_type=AST.ArgumentType(0), trait_args=[None, None],
+            method_name=AST.Identifier(expr.span, "branch", synthetic=True),
+            args=[AST.Arg(expr.span, None, reference if borrowed else expr.operand)],
+        )
+        conversion = AST.TraitCall(
+            span=expr.span, trait=AST.Identifier(expr.span, "%from_residual_trait", synthetic=True),
+            self_type=AST.CallableReturnType(), trait_args=[AST.ArgumentType(0)],
+            method_name=AST.Identifier(expr.span, "from_residual", synthetic=True),
+            args=[AST.Arg(expr.span, None, residual)],
+        )
+        arms: list[AST.MatchArm] = []
+        for variant, binding, result in (
+            ("Continue", value, value),
+            ("Break", residual, AST.Return(expr.span, conversion)),
+        ):
+            arms.append(AST.MatchArm(
+                span=expr.span,
+                pattern=AST.ConstructPattern(
+                    span=expr.span, name=AST.Identifier(expr.span, variant, synthetic=True),
+                    qualifier=None, positional=[AST.NamePattern(expr.span, binding)], named=None,
+                ),
+                guard=None, body=AST.Block(expr.span, [result]), origin=AST.MatchArmOrigin.SYNTHETIC,
+            ))
+        expanded = AST.Match(expr.span, branch, arms)
+        if not borrowed:
+            return expanded
+        return AST.Match(expr.span, expr.operand, [AST.MatchArm(
+            span=expr.span, pattern=AST.BindPattern(expr.span, reference, AST.WildcardPattern(expr.span)),
+            guard=None, body=AST.Block(expr.span, [expanded]), origin=AST.MatchArmOrigin.SYNTHETIC,
+        )])
+
+
 class Desugar:
     def __init__(self, program: AST.Program):
         self.__program = program
+        self.__try_rewriter = _TryRewriter()
 
     def run(self) -> None:
         """Normalize callable parameters and lower control-flow syntax."""
@@ -80,13 +161,17 @@ class Desugar:
                         if isinstance(trait_item, AST.MethodDef):
                             trait_item.decl.params = self.__normalize_params(trait_item.decl.params, trait_item.body)
                             self.__desugar_body(trait_item.body)
+                case AST.ConstDef():
+                    item.value = self.__try_rewriter.rewrite_expr(item.value)
                 case _:
                     continue
+        self.__program.items = self.__try_rewriter.imports + self.__program.items
 
     def __desugar_body(self, body: AST.Block) -> None:
         _ClosureParamNormalizer(self.__normalize_params).visit_expr(body)
         _ControlFlowRewriter(self.__transform_control_flow).rewrite_block(body)
         _ExprDesugarRewriter().rewrite_block(body)
+        self.__try_rewriter.rewrite_callable(body)
 
     def __normalize_params(
         self, params: list[AST.VarInfo | AST.PatternParam], body: AST.Block,

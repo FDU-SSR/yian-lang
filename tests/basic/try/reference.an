@@ -1,0 +1,43 @@
+struct Error {
+    pub code: i32,
+}
+
+fn result_ref(value: Result<i32, i32>&) -> Result<i32&, i32> {
+    Result<i32&, i32>.Ok(value?)
+}
+
+fn option_ref(value: Option<i32>&) -> Option<i32&> {
+    Option<i32&>.Some(value?)
+}
+
+fn copied_error(value: Result<i32, Error>&) -> Result<i32&, Error> {
+    Result<i32&, Error>.Ok(value?)
+}
+
+fn address(value: Result<i32, i32>&) -> Result<i32, i32> {
+    let result = (&*value)?;
+    *result += 1;
+    Result<i32, i32>.Ok(*result)
+}
+
+fn main() {
+    let result = Result<i32, i32>.Ok(10);
+    let output = result_ref(&result);
+    **output.unwrap() = 20;
+    assert *result.unwrap() == 20;
+    assert *address(&result).unwrap() == 21;
+    let failed = Result<i32, i32>.Err(4);
+    assert *result_ref(&failed).unwrap_err() == 4;
+
+    let option = Option<i32>.Some(30);
+    let reference = option_ref(&option);
+    **reference.unwrap() = 40;
+    assert *option.unwrap() == 40;
+    let none = Option<i32>.None;
+    assert option_ref(&none).is_none();
+
+    let error = Result<i32, Error>.Err(Error(7));
+    let snapshot = copied_error(&error);
+    error.unwrap_err().code = 99;
+    assert snapshot.unwrap_err().code == 7;
+}

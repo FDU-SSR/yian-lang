@@ -71,7 +71,7 @@ EXTRA_SOURCES: dict[str, list[str]] = {
 }
 
 # Directories (relative to SOURCE_DIR) whose .an files are compiled together.
-MULTI_FILE_DIRS: set[str] = set()
+MULTI_FILE_DIRS: set[str] = {"try/cross_module", "trait/qualified_private"}
 
 
 # ---------------------------------------------------------------------------

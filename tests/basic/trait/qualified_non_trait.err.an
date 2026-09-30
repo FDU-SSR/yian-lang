@@ -1,0 +1,9 @@
+struct Item {}
+
+impl Item {
+    static fn value() -> i32 { 1 }
+}
+
+fn main() {
+    Item.value<Item>();
+}

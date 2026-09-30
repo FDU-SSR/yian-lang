@@ -1,0 +1,12 @@
+from api import Source as Input, Outcome as Output, convert;
+
+fn run(value: Input) -> Output {
+    Output(value? + 1, false)
+}
+
+fn main() {
+    assert convert(Input(7, false)).value == 7;
+    assert convert(Input(3, true)).failed;
+    assert run(Input(7, false)).value == 8;
+    assert run(Input(3, true)).failed;
+}

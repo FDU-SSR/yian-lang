@@ -1,0 +1,36 @@
+from std.core.convert import From;
+
+trait Factory<T> {
+    static fn create(value: T) -> Self;
+
+    static fn echo<U>(value: U) -> U {
+        value
+    }
+}
+
+struct Product {
+    pub value: i32,
+}
+
+impl Factory<i32> for Product {
+    static fn create(value: i32) -> Self {
+        Product(value)
+    }
+}
+
+impl Product {
+    static fn create(value: i32) -> Self {
+        Product(value + 100)
+    }
+}
+
+typedef ProductAlias = Product;
+
+fn main() {
+    let product = Factory<i32>.create<ProductAlias>(7);
+    assert product.value == 7;
+    assert Factory<i32>.echo<Product, u64>(12) == 12;
+    assert Factory<i32>.echo<Product>(true);
+    let value: i32 = 23;
+    assert From<i32>.from<i32>(&value) == 23;
+}

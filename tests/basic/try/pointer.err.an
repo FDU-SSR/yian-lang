@@ -1,0 +1,8 @@
+fn run(value: Option<i32>*) -> Option<i32> {
+    Option<i32>.Some(value?)
+}
+
+fn main() {
+    let value = Option<i32>.Some(1);
+    run(&value);
+}

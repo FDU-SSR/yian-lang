@@ -118,7 +118,7 @@ class AstVisitor:
             case AST.Binary():
                 self.visit_expr(expr.left)
                 self.visit_expr(expr.right)
-            case AST.Unary():
+            case AST.Unary() | AST.TryExpr():
                 self.visit_expr(expr.operand)
             case AST.Call():
                 self.visit_expr(expr.callee)
@@ -129,6 +129,10 @@ class AstVisitor:
                     self.visit_expr(arg.value)
             case AST.MethodCall():
                 self.visit_expr(expr.receiver)
+                for arg in expr.args:
+                    self.visit_expr(arg.value)
+            case AST.TraitCall():
+                self.visit_expr(expr.trait)
                 for arg in expr.args:
                     self.visit_expr(arg.value)
             case AST.FieldAccess():
@@ -243,7 +247,7 @@ class AstRewriter:
             case AST.Binary():
                 stmt.left = self.rewrite_expr(stmt.left)
                 stmt.right = self.rewrite_expr(stmt.right)
-            case AST.Unary():
+            case AST.Unary() | AST.TryExpr():
                 stmt.operand = self.rewrite_expr(stmt.operand)
             case AST.Call():
                 stmt.callee = self.rewrite_expr(stmt.callee)
@@ -254,6 +258,10 @@ class AstRewriter:
                     arg.value = self.rewrite_expr(arg.value)
             case AST.MethodCall():
                 stmt.receiver = self.rewrite_expr(stmt.receiver)
+                for arg in stmt.args:
+                    arg.value = self.rewrite_expr(arg.value)
+            case AST.TraitCall():
+                stmt.trait = self.rewrite_expr(stmt.trait)
                 for arg in stmt.args:
                     arg.value = self.rewrite_expr(arg.value)
             case AST.FieldAccess():
@@ -340,7 +348,7 @@ class AstRewriter:
             case AST.Binary():
                 expr.left = self.rewrite_expr(expr.left)
                 expr.right = self.rewrite_expr(expr.right)
-            case AST.Unary():
+            case AST.Unary() | AST.TryExpr():
                 expr.operand = self.rewrite_expr(expr.operand)
             case AST.Call():
                 expr.callee = self.rewrite_expr(expr.callee)
@@ -351,6 +359,10 @@ class AstRewriter:
                     arg.value = self.rewrite_expr(arg.value)
             case AST.MethodCall():
                 expr.receiver = self.rewrite_expr(expr.receiver)
+                for arg in expr.args:
+                    arg.value = self.rewrite_expr(arg.value)
+            case AST.TraitCall():
+                expr.trait = self.rewrite_expr(expr.trait)
                 for arg in expr.args:
                     arg.value = self.rewrite_expr(arg.value)
             case AST.FieldAccess():

@@ -1,0 +1,31 @@
+from std.core.try import Try, TryBranch, FromResidual;
+
+pub struct Source {
+    pub value: i32,
+    pub failed: bool,
+}
+
+pub struct Outcome {
+    pub value: i32,
+    pub failed: bool,
+}
+
+impl Try<i32, bool> for Source {
+    static fn branch(value: Self) -> TryBranch<i32, bool> {
+        if value.failed {
+            TryBranch<i32, bool>.Break(true)
+        } else {
+            TryBranch<i32, bool>.Continue(value.value)
+        }
+    }
+}
+
+impl FromResidual<bool> for Outcome {
+    static fn from_residual(residual: bool) -> Self {
+        Outcome(0, residual)
+    }
+}
+
+pub fn convert(value: Source) -> Outcome {
+    Outcome(value?, false)
+}

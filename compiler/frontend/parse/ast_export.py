@@ -353,6 +353,15 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_closure_expr(expr, guides, is_last)
             case AST.CompileConfig():
                 return self.__export_compile_config(expr, guides, is_last)
+            case AST.TryExpr():
+                res = self.render_line(guides, is_last, "TryExpr")
+                return res + self.__export_expr_child("Operand", expr.operand, guides, is_last, True)
+            case AST.TraitCall():
+                res = self.render_line(guides, is_last, f"TraitCall: {expr.method_name.name}, Self={expr.self_type}, Args={expr.trait_args}")
+                res += self.__export_expr_child("Trait", expr.trait, guides, is_last, not expr.args)
+                for index, arg in enumerate(expr.args):
+                    res += self.__export_expr_child("Argument", arg.value, guides, is_last, index == len(expr.args) - 1)
+                return res
 
     def __export_closure_expr(self, expr: AST.ClosureExpr, guides: list[bool], is_last: bool) -> str:
         captures_str = ", ".join(repr(c) for c in expr.captures)

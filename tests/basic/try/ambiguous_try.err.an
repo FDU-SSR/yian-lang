@@ -1,0 +1,23 @@
+from std.core.try import Try, TryBranch, OptionResidual;
+
+struct Source {}
+
+impl Try<i32, OptionResidual> for Source {
+    static fn branch(value: Self) -> TryBranch<i32, OptionResidual> {
+        TryBranch<i32, OptionResidual>.Continue(1)
+    }
+}
+
+impl Try<bool, OptionResidual> for Source {
+    static fn branch(value: Self) -> TryBranch<bool, OptionResidual> {
+        TryBranch<bool, OptionResidual>.Continue(true)
+    }
+}
+
+fn run() -> Option<i32> {
+    Option<i32>.Some(Source()?)
+}
+
+fn main() {
+    run();
+}

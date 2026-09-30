@@ -396,6 +396,9 @@ class ExprParser:
         while True:
             token = self.__stream.peek()
             match token:
+                case Tok.Punctuator(kind=Tok.PunctuatorKind.Question):
+                    self.__stream.advance()
+                    expr = AST.TryExpr(span=expr.span + token.span, operand=expr)
                 case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                     # function call
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)

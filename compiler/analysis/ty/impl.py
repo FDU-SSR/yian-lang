@@ -251,6 +251,8 @@ class ImplRegistry:
                 inference = GenericInference(self.__ctx, SrcSpan.empty())
                 try:
                     inference.constrain(impl.target, type_id)
+                    if not self.__ctx.contains_generic(trait_id):
+                        inference.constrain(impl.trait, trait_id)
                     substs = inference.substitutions()
                 except AnalysisError:
                     continue

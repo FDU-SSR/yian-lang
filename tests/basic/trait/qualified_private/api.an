@@ -1,0 +1,3 @@
+trait Hidden {
+    static fn value() -> i32;
+}

@@ -155,6 +155,39 @@ class CallDispatcher:
 
         return self.__handle_instance_method_call(node, receiver)
 
+    def handle_trait_call(self, node: AST.TraitCall) -> HIR.MethodCall:
+        trait = self.__expr.value(node.trait)
+        if not isinstance(trait, HIR.Ty):
+            raise AnalysisError("trait-qualified call requires a trait", node.span)
+        args = self.__resolve_positional_args(node.args, "trait-qualified call")
+        self_type = self.__resolve_type_source(node.self_type, args, node.span)
+        trait_args = [
+            self.__resolve_type_source(source, args, node.span) if source is not None else None
+            for source in node.trait_args
+        ]
+        return self.__build_trait_call(node.span, trait.type_id, self_type, trait_args, node.method_name.name, [], args)
+
+    def __resolve_type_source(self, source: AST.TypeSource, args: list[HIR.Expr], span: SrcSpan) -> int:
+        if isinstance(source, AST.ArgumentType):
+            return self.__ctx.type_ctx.default_literals(args[source.index].type_id)
+        if isinstance(source, AST.CallableReturnType):
+            return_type = self.__ctx.current_return_type()
+            if return_type is None:
+                raise AnalysisError("call requires an enclosing function or method", span)
+            return return_type
+        return self.__ctx.resolve_type(source)
+
+    def __build_trait_call(
+        self, span: SrcSpan, trait_type: int, self_type: int, trait_args: list[int | None],
+        method_name: str, generic_args: list[int], args: list[HIR.Expr],
+    ) -> HIR.MethodCall:
+        lookup = self.__ctx.type_ctx.trait_method_lookup(
+            self_type, trait_type, trait_args, method_name, generic_args,
+            [arg.type_id for arg in args], span,
+        )
+        receiver = HIR.Ty(span=span, type_id=self_type, is_place=False)
+        return self.build_method_call(span, receiver, lookup, args, "trait-qualified call")
+
     def __handle_function_call(self, span: SrcSpan, func_type_id: int, func_name: str, args: list[AST.Arg]) -> HIR.Expr:
         if self.__has_named_arg(args):
             raise AnalysisError(f"named arguments are not supported for function call '{func_name}'", span)
@@ -257,6 +290,16 @@ class CallDispatcher:
 
     def __handle_static_or_variant_method_call(self, node: AST.MethodCall, receiver: HIR.Ty) -> HIR.Expr:
         ty = self.__ctx.type_ctx[receiver.type_id]
+
+        if isinstance(ty, Type.TraitType):
+            if not node.generics:
+                raise AnalysisError("trait-qualified static call requires an explicit Self type", node.span)
+            args = self.__resolve_positional_args(node.args, "trait-qualified call")
+            return self.__build_trait_call(
+                node.span, receiver.type_id, self.__ctx.resolve_type(node.generics[0]),
+                list(ty.generic_args), node.method_name.name,
+                [self.__ctx.resolve_type(generic) for generic in node.generics[1:]], args,
+            )
 
         if isinstance(ty, Type.EnumType):
             variant = ty.get_variant_by_name(node.method_name.name, self.__ctx.type_ctx)

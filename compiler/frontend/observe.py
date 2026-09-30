@@ -63,6 +63,7 @@ AstInput: TypeAlias = (
     | AST.Attr | AST.VarInfo | AST.PatternParam | AST.FieldInfo | AST.VariantInfo
     | AST.MethodDecl | AST.MethodDef | AST.MatchArm | AST.Arg | AST.CaptureItem
     | AST.FieldPattern | AST.LetCondition | AST.ExternFuncDecl | ASTTy.ConstExpr
+    | AST.ArgumentType | AST.CallableReturnType
     | Tok.Token | SrcPosition | SrcSpan | Enum | str | int | float | bool | None
     | list["AstInput"] | tuple["AstInput", ...]
 )
@@ -168,6 +169,10 @@ def observe_tokens(paths: list[Path]) -> tuple[int, str]:
 
 
 def __ast_value(value: AstInput) -> JsonValue:
+    if isinstance(value, AST.ArgumentType):
+        return {"node": "ArgumentType", "index": str(value.index)}
+    if isinstance(value, AST.CallableReturnType):
+        return {"node": "CallableReturnType"}
     if value is None or isinstance(value, (str, bool)):
         return value
     if isinstance(value, int):

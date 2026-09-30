@@ -1,0 +1,6 @@
+from std.core.convert import From;
+
+fn main() {
+    let value: i32 = 1;
+    From<i32>.from(&value);
+}
