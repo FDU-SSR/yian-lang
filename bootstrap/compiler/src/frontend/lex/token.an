@@ -515,7 +515,7 @@ impl Drop for TokenPayload {
 
 pub struct Token {
     payload: TokenPayload,
-    span: Span,
+    pub span: Span,
 }
 
 impl Token {
@@ -564,7 +564,6 @@ impl Token {
             _ => @panic("token is not a float literal"),
         }
     }
-    pub fn span() -> Span { return self.span; }
     pub fn is_eof() -> bool {
         match self.payload {
             EndOfFile => true,

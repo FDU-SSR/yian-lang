@@ -17,7 +17,7 @@ fn attrs(parser: Parser&) -> Vec<NodeId> {
     let values = Vec<NodeId>.new();
     while !parser.failed() {
         let token = parser.peek();
-        let span = token.span();
+        let span = token.span;
         let kind = AttrKind.Pub;
         if parser.at_keyword(KeywordKind.Pub) {
             parser.advance();
@@ -44,7 +44,7 @@ fn attrs(parser: Parser&) -> Vec<NodeId> {
 }
 
 fn parse_import(parser: Parser&, items: Vec<NodeId>&) {
-    let start = parser.peek().span();
+    let start = parser.peek().span;
     if parser.at_keyword(KeywordKind.Import) {
         parser.advance();
         let paths = Vec<NodeId>.new();
@@ -60,7 +60,7 @@ fn parse_import(parser: Parser&, items: Vec<NodeId>&) {
         if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); }
         let end = parser.node(target).span();
         if alias.is_valid() { end = parser.node(alias).span(); }
-        if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) { end = parser.peek().span(); parser.advance(); }
+        if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) { end = parser.peek().span; parser.advance(); }
         let node = parser.alloc(AstTag.Import, start);
         parser.children(node, AstFieldName.Paths, paths);
         parser.child(node, AstFieldName.Target, target);
@@ -95,7 +95,7 @@ fn parse_import(parser: Parser&, items: Vec<NodeId>&) {
     let last = targets[targets.len() - 1u64];
     if aliases[aliases.len() - 1u64].is_valid() { last = aliases[aliases.len() - 1u64]; }
     let end = parser.node(last).span();
-    if parser.at_punct(PunctuatorKind.Semicolon) { end = parser.peek().span(); parser.advance(); }
+    if parser.at_punct(PunctuatorKind.Semicolon) { end = parser.peek().span; parser.advance(); }
     let index: u64 = 0u64;
     while index < targets.len() {
         let node = parser.alloc(AstTag.Import, start);
@@ -224,13 +224,13 @@ pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> {
             let message = String.from(&"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '");
             message.push_str(parser.peek().value());
             message.push('\'');
-            parser.error(message.as_str(), parser.peek().span());
+            parser.error(message.as_str(), parser.peek().span);
             message.drop();
         }
         if parser.failed() { break; }
         items.push(item);
     }
-    let span = parser.peek().span();
+    let span = parser.peek().span;
     if items.len() != 0u64 {
         span = parser.node(items[0u64]).span();
         let index: u64 = 1u64;
@@ -296,7 +296,7 @@ fn parse_extern(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
         _ => {},
     }
     if !accepted {
-        parser.error("Only extern C is supported", abi.span());
+        parser.error("Only extern C is supported", abi.span);
         attributes.drop();
         return NodeId.invalid();
     }

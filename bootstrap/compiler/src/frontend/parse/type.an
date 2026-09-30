@@ -49,7 +49,7 @@ fn is_primitive(name: KeywordKind) -> bool {
 fn parse_type_base(parser: Parser&) -> NodeId {
     if parser.failed() { return NodeId.invalid(); }
     let token = parser.peek();
-    let span = token.span();
+    let span = token.span;
     let spelling = token.value();
     match token.kind() {
         Keyword(kind) => {
@@ -223,7 +223,7 @@ fn const_binding(op: BinaryOperator) -> i32 {
 fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
     if parser.failed() { return NodeId.invalid(); }
     let token = parser.peek();
-    let span = token.span();
+    let span = token.span;
     let lhs = NodeId.invalid();
     if parser.at_punct(PunctuatorKind.Minus) || parser.at_punct(PunctuatorKind.Tilde) {
         let op = *UnaryOperator.from_token(token).unwrap();

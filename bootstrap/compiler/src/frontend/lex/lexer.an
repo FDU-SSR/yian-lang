@@ -1,6 +1,4 @@
 from compiler.frontend.lex.number import is_float_literal;
-from compiler.frontend.lex.integer import parse_integer;
-from compiler.frontend.lex.floating import parse_float;
 from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, IntSuffix, FloatSuffix;
 from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
@@ -10,6 +8,7 @@ from std.core.result import Result;
 from std.core.str import CharIter;
 from std.core.string import String;
 from std.core.vec import Vec;
+from std.num.parse_error import ParseNumberError;
 
 pub struct LexError {
     message: String,
@@ -38,14 +37,73 @@ fn ident_part(code: u32) -> bool {
     return ident_start(code) || (code >= 48u32 && code <= 57u32);
 }
 
-fn number_part(code: u32) -> bool {
-    return (code >= 48u32 && code <= 57u32) || code == 95u32 ||
-    code == 43u32 || code == 45u32 ||
-    (code >= 97u32 && code <= 102u32) ||
-    (code >= 65u32 && code <= 70u32) ||
-    code == 120u32 || code == 88u32 || code == 98u32 || code == 66u32 ||
-    code == 111u32 || code == 79u32 || code == 112u32 || code == 80u32 ||
-    code == 105u32 || code == 117u32;
+fn number_part(raw: str, code: u32) -> bool {
+    if code == u32('+') || code == u32('-') {
+        let bytes = raw.as_slice();
+        let last = bytes[bytes.len() - 1u64];
+        if last == b'p' || last == b'P' { return true; }
+        return (last == b'e' || last == b'E') &&
+            !raw.starts_with("0x") && !raw.starts_with("0X");
+    }
+    return (code >= u32('0') && code <= u32('9')) || code == u32('_') ||
+        (code >= u32('a') && code <= u32('z')) ||
+        (code >= u32('A') && code <= u32('Z'));
+}
+
+fn integer_suffix(raw: str) -> IntSuffix {
+    if raw.ends_with("i8") { return IntSuffix.I8; }
+    if raw.ends_with("i16") { return IntSuffix.I16; }
+    if raw.ends_with("i32") { return IntSuffix.I32; }
+    if raw.ends_with("i64") { return IntSuffix.I64; }
+    if raw.ends_with("u8") { return IntSuffix.U8; }
+    if raw.ends_with("u16") { return IntSuffix.U16; }
+    if raw.ends_with("u32") { return IntSuffix.U32; }
+    if raw.ends_with("u64") { return IntSuffix.U64; }
+    if raw.ends_with("uint") { return IntSuffix.Uint; }
+    if raw.ends_with("int") { return IntSuffix.Int; }
+    return IntSuffix.Unsuffixed;
+}
+
+fn float_suffix(raw: str) -> FloatSuffix {
+    if raw.ends_with("f16") { return FloatSuffix.F16; }
+    if raw.ends_with("f32") { return FloatSuffix.F32; }
+    if raw.ends_with("f64") { return FloatSuffix.F64; }
+    if raw.ends_with("float") { return FloatSuffix.Float; }
+    return FloatSuffix.Unsuffixed;
+}
+
+fn numeric_body(raw: str, suffix: str) -> str {
+    let end = raw.as_slice().len() - suffix.as_slice().len();
+    if suffix.as_slice().len() != 0u64 && end != 0u64 && raw.as_slice()[end - 1u64] == b'_' {
+        end -= 1u64;
+    }
+    return str.from_slice_unchecked(raw.as_slice()[0u64..end]);
+}
+
+fn suffix_max(suffix: IntSuffix) -> u64 {
+    return match suffix {
+        I8 => 127u64,
+        I16 => 32767u64,
+        I32 | Int => 2147483647u64,
+        I64 => 9223372036854775807u64,
+        U8 => 255u64,
+        U16 => 65535u64,
+        U32 | Uint => 4294967295u64,
+        U64 | Unsuffixed => u64.max(),
+    };
+}
+
+fn number_error_message(problem: ParseNumberError) -> str {
+    return match problem {
+        Empty => "empty numeric literal",
+        MissingDigits => "missing numeric digits",
+        InvalidDigit => "invalid numeric digit",
+        InvalidSeparator => "invalid numeric separator",
+        InvalidFormat => "invalid numeric format",
+        InvalidExponent => "invalid numeric exponent",
+        UnsupportedRadix => "unsupported floating-point radix",
+        Overflow => "numeric literal exceeds its representation range",
+    };
 }
 
 fn whitespace(code: u32) -> bool {
@@ -374,41 +432,46 @@ impl Lexer {
         if code >= 48u32 && code <= 57u32 {
             let raw = String.new();
             raw.push(char(code));
-            while !self.at_end() && number_part(self.peek()) { raw.push(char(self.advance())); }
+            while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
             if self.peek() == u32('.') &&
             self.peek_next() >= u32('0') && self.peek_next() <= u32('9') {
                 raw.push(char(self.advance()));
                 raw.push(char(self.advance()));
-                while !self.at_end() && number_part(self.peek()) { raw.push(char(self.advance())); }
+                while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
             }
             if is_float_literal(raw.as_str()) {
-                let parsed = match parse_float(raw.as_str()) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        let problem = self.fail(message.as_str(), start);
-                        message.drop();
+                let suffix = float_suffix(raw.as_str());
+                let body = numeric_body(raw.as_str(), suffix.spelling());
+                let value = match f64.parse(body) {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        let problem = self.fail(number_error_message(error), start);
                         raw.drop();
                         return Result<Token, LexError>.Err(msg=problem);
                     },
                 };
-                let suffix = *FloatSuffix.from_text(parsed.suffix()).unwrap();
-                let token = self.float_token(start, parsed.value(), suffix);
-                parsed.drop();
+                let token = self.float_token(start, value, suffix);
                 raw.drop();
                 return Result<Token, LexError>.Ok(val=token);
             }
-            let parsed = match parse_integer(raw.as_str()) {
-                Ok(value) => value,
-                Err(message) => {
-                    let problem = self.fail(message.as_str(), start);
-                    message.drop();
+            let suffix = integer_suffix(raw.as_str());
+            let body = numeric_body(raw.as_str(), suffix.spelling());
+            let value = match u64.parse(body) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    let problem = self.fail(number_error_message(error), start);
                     raw.drop();
                     return Result<Token, LexError>.Err(msg=problem);
                 },
             };
-            let suffix = *IntSuffix.from_text(parsed.suffix()).unwrap();
-            let token = self.integer_token(start, parsed.value(), suffix);
-            parsed.drop();
+            if value > suffix_max(suffix) {
+                let message = String.from(&"Integer literal exceeds maximum value for type ");
+                message.push_str(suffix.spelling());
+                let problem = self.fail(message.as_str(), start);
+                message.drop(); raw.drop();
+                return Result<Token, LexError>.Err(msg=problem);
+            }
+            let token = self.integer_token(start, value, suffix);
             raw.drop();
             return Result<Token, LexError>.Ok(val=token);
         }

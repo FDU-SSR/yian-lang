@@ -22,7 +22,7 @@ fn identifier_named(parser: Parser&, span: Span, name: str) -> NodeId {
 
 fn literal_expr(parser: Parser&) -> NodeId {
     let token = parser.peek();
-    let span = token.span();
+    let span = token.span;
     let tag = AstTag.IntLiteral;
     let recognized = true;
     match token.kind() {
@@ -96,14 +96,14 @@ fn parse_prefix(parser: Parser&) -> NodeId {
 
 fn parse_dyn(parser: Parser&) -> NodeId {
     parser.take_keyword(KeywordKind.Dyn);
-    let span = parser.peek().span();
+    let span = parser.peek().span;
     if parser.at_punct(PunctuatorKind.LBracket) {
-        let bracket_span = parser.peek().span();
+        let bracket_span = parser.peek().span;
         parser.advance();
         let count = parse_expr(parser);
         parser.take_punct(PunctuatorKind.RBracket);
         let initializer_start = parser.mark();
-        let initializer_span = parser.peek().span();
+        let initializer_span = parser.peek().span;
         let value = parse_expr(parser);
         if parser.failed() {
             parser.clear_error();
@@ -135,7 +135,7 @@ fn parse_dyn(parser: Parser&) -> NodeId {
 fn parse_primary(parser: Parser&) -> NodeId {
     if parser.failed() { return NodeId.invalid(); }
     let token = parser.peek();
-    let span = token.span();
+    let span = token.span;
     if parser.at_punct(PunctuatorKind.LBrace) { return parse_block(parser); }
     if parser.at_keyword(KeywordKind.Return) { return parse_return(parser); }
     if parser.at_keyword(KeywordKind.If) { return parse_if(parser); }
@@ -293,7 +293,7 @@ fn parse_postfix(parser: Parser&, initial: NodeId) -> NodeId {
     let expr = initial;
     while !parser.failed() {
         if parser.at_punct(PunctuatorKind.LParen) {
-            let open = parser.peek().span();
+            let open = parser.peek().span;
             let args = parse_args(parser);
             if parser.failed() { args.drop(); return NodeId.invalid(); }
             let node = parser.alloc(AstTag.Call, parser.node(expr).span() + open);
@@ -650,7 +650,7 @@ fn parse_let(parser: Parser&) -> NodeId {
         type = parser.alloc(AstTag.DeducedType, parser.node(pattern).span());
         initializer = parse_expr(parser);
     } else {
-        parser.error("Expected ':' or '=' after let pattern", parser.peek().span());
+        parser.error("Expected ':' or '=' after let pattern", parser.peek().span);
         return NodeId.invalid();
     }
     let else_branch = NodeId.invalid();
@@ -682,16 +682,16 @@ fn parse_let(parser: Parser&) -> NodeId {
 }
 
 fn parse_fstring(parser: Parser&) -> NodeId {
-    let span = parser.peek().span();
+    let span = parser.peek().span;
     parser.advance();
     let segments = Vec<NodeId>.new();
     while !parser.failed() {
         let token = parser.peek();
         match token.kind() {
             FStrLiteral(_) => {
-                let literal = parser.alloc(AstTag.StrLiteral, token.span());
+                let literal = parser.alloc(AstTag.StrLiteral, token.span);
                 parser.text(literal, AstFieldName.Value, token.value());
-                let expression = parser.alloc(AstTag.Literal, token.span());
+                let expression = parser.alloc(AstTag.Literal, token.span);
                 parser.child(expression, AstFieldName.Literal, literal);
                 segments.push(expression);
                 parser.advance();
@@ -710,7 +710,7 @@ fn parse_fstring(parser: Parser&) -> NodeId {
             },
             FStrEnd => { parser.advance(); break; },
             _ => {
-                parser.error("Unexpected token in f-string", token.span());
+                parser.error("Unexpected token in f-string", token.span);
                 break;
             },
         }
@@ -738,7 +738,7 @@ fn parse_fstring(parser: Parser&) -> NodeId {
 }
 
 fn parse_closure(parser: Parser&) -> NodeId {
-    let start = parser.peek().span();
+    let start = parser.peek().span;
     let captures = Vec<NodeId>.new();
     if parser.at_punct(PunctuatorKind.PipePipe) {
         parser.advance();

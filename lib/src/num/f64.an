@@ -1,5 +1,380 @@
 from std.core.hash import Murmur3Hasher, Hash;
 from std.core.convert import From;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.num.parse_error import ParseNumberError;
+
+struct ParsedFloat {
+    mantissa: u64,
+    exponent: i64,
+    radix: u32,
+    retained: u64,
+    end: u64,
+    truncated: bool,
+}
+
+fn parse_float_digit(byte: u8) -> i32 {
+    if byte >= b'0' && byte <= b'9' { return i32(byte - b'0'); }
+    if byte >= b'a' && byte <= b'f' { return i32(byte - b'a') + 10i32; }
+    if byte >= b'A' && byte <= b'F' { return i32(byte - b'A') + 10i32; }
+    return -1i32;
+}
+
+fn parse_float_exponent(bytes: u8[], start: u64) -> Result<i64, ParseNumberError> {
+    let position = start;
+    let negative = false;
+    if position < bytes.len() && (bytes[position] == b'+' || bytes[position] == b'-') {
+        negative = bytes[position] == b'-';
+        position += 1u64;
+    }
+    if position == bytes.len() {
+        return Result<i64, ParseNumberError>.Err(msg=ParseNumberError.InvalidExponent);
+    }
+    // The limit exceeds every decimal-point displacement of this input.
+    let limit = i64(bytes.len()) * 4i64 + 4096i64;
+    let value: i64 = 0i64;
+    let previous_digit = false;
+    while position < bytes.len() {
+        let current = bytes[position];
+        if current == b'_' {
+            if !previous_digit || position + 1u64 == bytes.len() ||
+                bytes[position + 1u64] < b'0' || bytes[position + 1u64] > b'9' {
+                return Result<i64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+            }
+            previous_digit = false;
+            position += 1u64;
+            continue;
+        }
+        if current < b'0' || current > b'9' {
+            return Result<i64, ParseNumberError>.Err(msg=ParseNumberError.InvalidExponent);
+        }
+        let digit = i64(current - b'0');
+        if value > (limit - digit) / 10i64 { value = limit; }
+        else { value = value * 10i64 + digit; }
+        previous_digit = true;
+        position += 1u64;
+    }
+    if negative { value = -value; }
+    return Result<i64, ParseNumberError>.Ok(val=value);
+}
+
+fn read_float(bytes: u8[]) -> Result<ParsedFloat, ParseNumberError> {
+    let length = bytes.len();
+    if length == 0u64 {
+        return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.Empty);
+    }
+    let radix: u32 = 10u32;
+    let position: u64 = 0u64;
+    let capacity: u64 = 19u64;
+    if length >= 2u64 && bytes[0u64] == b'0' {
+        if bytes[1u64] == b'b' || bytes[1u64] == b'B' ||
+            bytes[1u64] == b'o' || bytes[1u64] == b'O' {
+            return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.UnsupportedRadix);
+        }
+        if bytes[1u64] == b'x' || bytes[1u64] == b'X' {
+            radix = 16u32;
+            position = 2u64;
+            capacity = 15u64;
+        }
+    }
+    if position == length {
+        return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
+    }
+
+    let mantissa: u64 = 0u64;
+    let retained: u64 = 0u64;
+    let significant: u64 = 0u64;
+    let fractional: u64 = 0u64;
+    let any_digit = false;
+    let saw_dot = false;
+    let previous_digit = false;
+    let truncated = false;
+    let exponent: i64 = 0i64;
+    while position < length {
+        let current = bytes[position];
+        if current == b'.' {
+            if saw_dot {
+                return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.InvalidFormat);
+            }
+            saw_dot = true;
+            previous_digit = false;
+            position += 1u64;
+            continue;
+        }
+        if (radix == 10u32 && (current == b'e' || current == b'E')) ||
+            (radix == 16u32 && (current == b'p' || current == b'P')) {
+            if !any_digit {
+                return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
+            }
+            exponent = match parse_float_exponent(bytes, position + 1u64) {
+                Ok(value) => value,
+                Err(problem) => return Result<ParsedFloat, ParseNumberError>.Err(msg=problem),
+            };
+            break;
+        }
+        if current == b'_' {
+            let next: i32 = -1i32;
+            if position + 1u64 < length { next = parse_float_digit(bytes[position + 1u64]); }
+            if !previous_digit || next < 0i32 || u32(next) >= radix {
+                return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+            }
+            previous_digit = false;
+            position += 1u64;
+            continue;
+        }
+        let digit = parse_float_digit(current);
+        if digit < 0i32 || u32(digit) >= radix {
+            return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.InvalidDigit);
+        }
+        any_digit = true;
+        previous_digit = true;
+        if saw_dot { fractional += 1u64; }
+        if digit != 0i32 || significant != 0u64 {
+            significant += 1u64;
+            if retained < capacity {
+                mantissa = mantissa * u64(radix) + u64(digit);
+                retained += 1u64;
+            } elif digit != 0i32 {
+                truncated = true;
+            }
+        }
+        position += 1u64;
+    }
+    if !any_digit {
+        return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
+    }
+    let displacement = i64(significant - retained) - i64(fractional);
+    if radix == 16u32 { exponent += displacement * 4i64; }
+    else { exponent += displacement; }
+    return Result<ParsedFloat, ParseNumberError>.Ok(val=ParsedFloat(
+        mantissa=mantissa, exponent=exponent, radix=radix,
+        retained=retained, end=position, truncated=truncated));
+}
+
+fn decimal_fast(mantissa: u64, exponent: i64) -> Option<f64> {
+    while mantissa != 0u64 && mantissa % 10u64 == 0u64 {
+        mantissa /= 10u64;
+        exponent += 1i64;
+    }
+    // Clinger's fast path rounds only once: both operands are exact in binary64.
+    if mantissa > (1u64 << 53u64) || exponent < -22i64 || exponent > 22i64 {
+        return Option<f64>.None;
+    }
+    let powers: f64[23] = [
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+        1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+        1e19, 1e20, 1e21, 1e22,
+    ];
+    if exponent < 0i64 {
+        return Option<f64>.Some(val=f64(mantissa) / powers[u64(-exponent)]);
+    }
+    return Option<f64>.Some(val=f64(mantissa) * powers[u64(exponent)]);
+}
+
+// Simple Decimal Conversion uses bounded digit storage and u64 shift windows.
+// Binary64 rounding boundaries need at most 768 significant decimal digits.
+struct FloatDecimal {
+    digits: u8[800],
+    count: u64,
+    point: i64,
+    truncated: bool,
+}
+
+impl FloatDecimal {
+    static fn read(bytes: u8[], end: u64, point: i64) -> Self {
+        let result = Self(digits=@undef<u8[800]>(), count=0u64, point=point, truncated=false);
+        let started = false;
+        let position: u64 = 0u64;
+        while position < end {
+            let current = bytes[position];
+            position += 1u64;
+            if current == b'.' || current == b'_' { continue; }
+            let digit = current - b'0';
+            if !started && digit == 0u8 { continue; }
+            started = true;
+            if result.count < 800u64 {
+                result.digits[result.count] = digit;
+                result.count += 1u64;
+            } elif digit != 0u8 {
+                result.truncated = true;
+            }
+        }
+        result.trim();
+        return result;
+    }
+
+    fn trim() {
+        while self.count != 0u64 && self.digits[self.count - 1u64] == 0u8 {
+            self.count -= 1u64;
+        }
+    }
+
+    fn right_shift(bits: u64) {
+        let count = self.count;
+        let read: u64 = 0u64;
+        let window: u64 = 0u64;
+        while window >> bits == 0u64 {
+            if read < count { window = window * 10u64 + u64(self.digits[read]); }
+            elif window != 0u64 { window *= 10u64; }
+            else { self.count = 0u64; self.point = 0i64; return; }
+            read += 1u64;
+        }
+        self.point -= i64(read - 1u64);
+        let mask = (1u64 << bits) - 1u64;
+        let write: u64 = 0u64;
+        loop {
+            let digit = u8(window >> bits);
+            if write < 800u64 { self.digits[write] = digit; }
+            elif digit != 0u8 { self.truncated = true; }
+            write += 1u64;
+            window &= mask;
+            if read < count {
+                window = window * 10u64 + u64(self.digits[read]);
+                read += 1u64;
+            } elif window != 0u64 {
+                window *= 10u64;
+            } else {
+                break;
+            }
+        }
+        self.count = write;
+        if self.count > 800u64 { self.count = 800u64; }
+        self.trim();
+    }
+
+    fn left_shift(bits: u64) {
+        // A shift of at most 27 bits adds at most nine decimal digits.
+        let output: u8[809] = @undef<u8[809]>();
+        let read = self.count;
+        let write: u64 = 809u64;
+        let carry: u64 = 0u64;
+        while read != 0u64 {
+            read -= 1u64;
+            let window = (u64(self.digits[read]) << bits) + carry;
+            write -= 1u64;
+            output[write] = u8(window % 10u64);
+            carry = window / 10u64;
+        }
+        while carry != 0u64 {
+            write -= 1u64;
+            output[write] = u8(carry % 10u64);
+            carry /= 10u64;
+        }
+        let length = 809u64 - write;
+        self.point += i64(length) - i64(self.count);
+        let index: u64 = 0u64;
+        while index < length {
+            let digit = output[write + index];
+            if index < 800u64 { self.digits[index] = digit; }
+            elif digit != 0u8 { self.truncated = true; }
+            index += 1u64;
+        }
+        self.count = length;
+        if self.count > 800u64 { self.count = 800u64; }
+        self.trim();
+    }
+
+    fn shift(bits: i64) {
+        while bits > 0i64 {
+            let chunk: i64 = 27i64;
+            if bits < chunk { chunk = bits; }
+            self.left_shift(u64(chunk));
+            bits -= chunk;
+        }
+        while bits < 0i64 {
+            let chunk: i64 = 27i64;
+            if -bits < chunk { chunk = -bits; }
+            self.right_shift(u64(chunk));
+            bits += chunk;
+        }
+    }
+
+    fn rounded_integer() -> u64 {
+        if self.point < 0i64 { return 0u64; }
+        let integer_digits = u64(self.point);
+        let value: u64 = 0u64;
+        let index: u64 = 0u64;
+        while index < integer_digits {
+            value *= 10u64;
+            if index < self.count { value += u64(self.digits[index]); }
+            index += 1u64;
+        }
+        if integer_digits < self.count {
+            let digit = self.digits[integer_digits];
+            if digit > 5u8 || (digit == 5u8 &&
+                (integer_digits + 1u64 < self.count || self.truncated || (value & 1u64) != 0u64)) {
+                value += 1u64;
+            }
+        }
+        return value;
+    }
+
+    fn to_bits() -> u64 {
+        if self.point > 310i64 { return 0x7ff0000000000000u64; }
+        if self.point < -330i64 { return 0u64; }
+        let shifts: u64[9] = [1u64, 3u64, 6u64, 9u64, 13u64, 16u64, 19u64, 23u64, 26u64];
+        let exponent: i64 = 0i64;
+        while self.point > 0i64 {
+            let bits: u64 = 27u64;
+            if self.point < 9i64 { bits = shifts[u64(self.point)]; }
+            self.right_shift(bits);
+            exponent += i64(bits);
+        }
+        while self.point < 0i64 || self.digits[0u64] < 5u8 {
+            let bits: u64 = 27u64;
+            if -self.point < 9i64 { bits = shifts[u64(-self.point)]; }
+            self.left_shift(bits);
+            exponent -= i64(bits);
+        }
+        exponent -= 1i64;
+        if exponent < -1022i64 {
+            self.shift(exponent + 1022i64);
+            exponent = -1022i64;
+        }
+        if exponent > 1023i64 { return 0x7ff0000000000000u64; }
+        self.shift(53i64);
+        let mantissa = self.rounded_integer();
+        if mantissa == (1u64 << 53u64) {
+            mantissa >>= 1u64;
+            exponent += 1i64;
+            if exponent > 1023i64 { return 0x7ff0000000000000u64; }
+        }
+        if mantissa < (1u64 << 52u64) { return mantissa; }
+        return (u64(exponent + 1023i64) << 52u64) | (mantissa & ((1u64 << 52u64) - 1u64));
+    }
+}
+
+fn hex_bits(mantissa: u64, exponent: i64, truncated: bool) -> u64 {
+    exponent += 52i64;
+    // Keep a guard bit and a sticky bit below the 53-bit significand.
+    while mantissa >> 54u64 == 0u64 {
+        mantissa <<= 1u64;
+        exponent -= 1i64;
+    }
+    if truncated { mantissa |= 1u64; }
+    while mantissa >> 55u64 != 0u64 {
+        mantissa = (mantissa >> 1u64) | (mantissa & 1u64);
+        exponent += 1i64;
+    }
+    while mantissa > 1u64 && exponent < -1024i64 {
+        mantissa = (mantissa >> 1u64) | (mantissa & 1u64);
+        exponent += 1i64;
+    }
+    let rounding = mantissa & 3u64;
+    mantissa >>= 2u64;
+    rounding |= mantissa & 1u64;
+    exponent += 2i64;
+    if rounding == 3u64 {
+        mantissa += 1u64;
+        if mantissa == (1u64 << 53u64) {
+            mantissa >>= 1u64;
+            exponent += 1i64;
+        }
+    }
+    if mantissa < (1u64 << 52u64) { return mantissa; }
+    if exponent > 1023i64 { return 0x7ff0000000000000u64; }
+    return (u64(exponent + 1023i64) << 52u64) | (mantissa & ((1u64 << 52u64) - 1u64));
+}
 
 impl Hash<Murmur3Hasher> for f64 {
     fn hash(hasher: Murmur3Hasher) {
@@ -10,54 +385,40 @@ impl Hash<Murmur3Hasher> for f64 {
     }
 }
 
+impl f64 {
+    static pub fn parse(text: str) -> Result<f64, ParseNumberError> {
+        let bytes = text.as_slice();
+        let parsed = match read_float(bytes) {
+            Ok(value) => value,
+            Err(problem) => return Result<f64, ParseNumberError>.Err(msg=problem),
+        };
+        if parsed.mantissa == 0u64 { return Result<f64, ParseNumberError>.Ok(val=0.0f64); }
+        let bits: u64 = 0u64;
+        if parsed.radix == 16u32 {
+            bits = hex_bits(parsed.mantissa, parsed.exponent, parsed.truncated);
+        } else {
+            if !parsed.truncated {
+                match decimal_fast(parsed.mantissa, parsed.exponent) {
+                    Some(value) => return Result<f64, ParseNumberError>.Ok(val=value),
+                    None => {},
+                }
+            }
+            let decimal = FloatDecimal.read(bytes, parsed.end, parsed.exponent + i64(parsed.retained));
+            bits = decimal.to_bits();
+        }
+        if bits == 0x7ff0000000000000u64 {
+            return Result<f64, ParseNumberError>.Err(msg=ParseNumberError.Overflow);
+        }
+        return Result<f64, ParseNumberError>.Ok(val=from_bits(bits));
+    }
+}
+
 impl From<str> for f64 {
     pub static fn from(value: str&) -> Self {
-        let bytes = value.as_slice();
-        let len = bytes.len();
-        if len == 0 {
-            @panic("invalid f64: empty string");
-        }
-
-        let seen_dot: bool = false;
-        let has_int_digit: bool = false;
-        let has_frac_digit: bool = false;
-
-        let int_part: u64 = 0;
-        let frac_part: f64 = 0.0;
-        let divisor: f64 = 1.0;
-
-        let i: u64 = 0;
-        while i < len {
-            let b = bytes[i];
-            if b == b'.' {
-                if seen_dot {
-                    @panic("invalid f64: multiple dots");
-                }
-                seen_dot = true;
-            } elif b >= b'0' && b <= b'9' {
-                let digit = b - b'0';
-                if !seen_dot {
-                    has_int_digit = true;
-                    int_part = int_part * 10 + u64(digit);
-                } else {
-                    has_frac_digit = true;
-                    divisor *= 10.0;
-                    frac_part += f64(digit) / divisor;
-                }
-            } else {
-                @panic("invalid f64: contains illegal character");
-            }
-            i += 1;
-        }
-
-        if !seen_dot {
-            @panic("invalid f64: missing dot");
-        }
-        if !has_int_digit || !has_frac_digit {
-            @panic("invalid f64: malformed decimal");
-        }
-
-        f64(int_part) + frac_part
+        return match f64.parse(*value) {
+            Ok(parsed) => parsed,
+            Err(_) => @panic("invalid f64 string"),
+        };
     }
 }
 

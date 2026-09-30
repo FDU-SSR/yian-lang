@@ -1,12 +1,71 @@
 from std.core.range import Range;
 from std.core.hash import Murmur3Hasher, Hash;
 from std.core.convert import From, Into;
+from std.core.result import Result;
 from std.core.string import String;
+from std.num.parse_error import ParseNumberError;
+
+fn parse_digit(byte: u8) -> i32 {
+    if byte >= b'0' && byte <= b'9' { return i32(byte - b'0'); }
+    if byte >= b'a' && byte <= b'f' { return i32(byte - b'a') + 10i32; }
+    if byte >= b'A' && byte <= b'F' { return i32(byte - b'A') + 10i32; }
+    return -1i32;
+}
 
 impl u64 {
     /// 类型级常量: u64 的最大值。写成 static 是为了能按 `u64.max()` 调用。
     static pub fn max() -> u64 {
         0xFFFF_FFFF_FFFF_FFFFu64
+    }
+
+    static pub fn parse(text: str) -> Result<u64, ParseNumberError> {
+        let bytes = text.as_slice();
+        let length = bytes.len();
+        if length == 0u64 {
+            return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.Empty);
+        }
+
+        let base: u64 = 10u64;
+        let start: u64 = 0u64;
+        if length >= 2u64 && bytes[0u64] == b'0' {
+            if bytes[1u64] == b'b' || bytes[1u64] == b'B' { base = 2u64; start = 2u64; }
+            elif bytes[1u64] == b'o' || bytes[1u64] == b'O' { base = 8u64; start = 2u64; }
+            elif bytes[1u64] == b'x' || bytes[1u64] == b'X' { base = 16u64; start = 2u64; }
+        }
+        if start == length {
+            return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
+        }
+
+        let value: u64 = 0u64;
+        let position = start;
+        let previous_digit = false;
+        while position < length {
+            let current = bytes[position];
+            if current == b'_' {
+                if !previous_digit || position + 1u64 == length {
+                    return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+                }
+                let next = parse_digit(bytes[position + 1u64]);
+                if next < 0i32 || u64(next) >= base {
+                    return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+                }
+                previous_digit = false;
+                position += 1u64;
+                continue;
+            }
+            let digit = parse_digit(current);
+            if digit < 0i32 || u64(digit) >= base {
+                return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidDigit);
+            }
+            let part = u64(digit);
+            if value > (u64.max() - part) / base {
+                return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.Overflow);
+            }
+            value = value * base + part;
+            previous_digit = true;
+            position += 1u64;
+        }
+        return Result<u64, ParseNumberError>.Ok(val=value);
     }
 
     pub fn rotate_left(n: u64) {
@@ -83,29 +142,9 @@ impl Hash<Murmur3Hasher> for u64 {
 
 impl From<str> for u64 {
     pub static fn from(value: str&) -> Self {
-        let bytes = value.as_slice();
-        let len = bytes.len();
-        if len == 0 {
-            @panic("invalid u64: empty string");
-        }
-
-        let out: u64 = 0;
-        let max_u64: u64 = 18446744073709551615u64;
-        let i: u64 = 0;
-        while i < len {
-            let b = bytes[i];
-            if b < b'0' || b > b'9' {
-                @panic("invalid u64: contains non-digit");
-            }
-
-            let digit = u64(b - b'0');
-            if out > (max_u64 - digit) / 10 {
-                @panic("invalid u64: overflow");
-            }
-            out = out * 10 + digit;
-            i += 1
-        }
-
-        out
+        return match u64.parse(*value) {
+            Ok(parsed) => parsed,
+            Err(_) => @panic("invalid u64 string"),
+        };
     }
 }
