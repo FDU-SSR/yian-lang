@@ -107,12 +107,6 @@ class TypeFormatter:
                 else:
                     generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
                     name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
-            case Type.AliasType(custom_def=custom_def, generic_args=generic_args):
-                if len(generic_args) == 0:
-                    name = custom_def.name
-                else:
-                    generic_arg_names = [self.get_name(arg_id) for arg_id in generic_args]
-                    name = f"{custom_def.name}<{', '.join(generic_arg_names)}>"
             case Type.ClosureType(parameters=params, return_type=ret, captured_vars=captures):
                 param_names = [f"{p.name}: {self.get_name(p.type_id)}" for p in params]
                 ret_name = self.get_name(ret)

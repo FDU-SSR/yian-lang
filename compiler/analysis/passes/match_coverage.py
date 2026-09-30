@@ -64,7 +64,7 @@ class MatchCoverage(HirVisitor):
             self.__warn("unreachable else block for an irrefutable pattern", expr.else_branch.span)
 
     def __check_match(self, expr: HIR.Match) -> None:
-        value_type = self.__ctx[self.__ctx.resolve_aliases(expr.value.type_id)]
+        value_type = self.__ctx[expr.value.type_id]
         type_id = value_type.pointee_type if expr.is_ref and isinstance(value_type, Type.RefType) else expr.value.type_id
         for arm in expr.arms:
             if arm.origin is HIR.MatchArmOrigin.FOR_ITEM:

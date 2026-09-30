@@ -10,11 +10,12 @@ from compiler.analysis.error import AnalysisError, ComptimeConditionError
 from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.resolution.types import TypeResolver
+from compiler.analysis.resolution.aliases import AliasRegistry
 from compiler.analysis.symbol.context import SymbolCtx
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
-from compiler.analysis.symbol.symbol import Symbol
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
 from compiler.frontend.parse.ast_type import ASTType, ConstExpr
@@ -43,7 +44,8 @@ class SemanticState:
         self.__constant_stack: list[tuple[int, int]] = []
         self.procedures = ProcedureRegistry(type_ctx)
         self.names = NameReferences()
-        self.__type_resolver = TypeResolver(type_ctx, self.names, self.constant_value)
+        self.aliases = AliasRegistry(type_ctx, self.resolve_type_in)
+        self.__type_resolver = TypeResolver(type_ctx, self.names, self.constant_value, self.aliases)
 
     def resolve_type_in(self, ast_type: ASTType, symbol_ctx: SymbolCtx) -> int:
         return self.__type_resolver.resolve(ast_type, symbol_ctx)
@@ -51,11 +53,9 @@ class SemanticState:
     def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         return self.__type_resolver.resolve_const_expr(const_expr, symbol_ctx)
 
-    def register_alias(self, type_id: int, definition: AST.Alias, symbol_ctx: SymbolCtx) -> None:
-        self.__type_resolver.register_alias(type_id, definition, symbol_ctx)
-
-    def resolve_alias(self, type_id: int) -> None:
-        self.__type_resolver.resolve_alias(type_id)
+    def resolve_type_symbol(self, symbol: Symbol | AliasSymbol, arguments: list[int] | None = None,
+                            span: SrcSpan | None = None) -> int:
+        return self.__type_resolver.resolve_symbol(symbol, arguments, span)
 
     def register_constant(self, unit_id: int, symbol_id: int, definition: AST.ConstDef) -> None:
         self.__constant_defs[(unit_id, symbol_id)] = definition
@@ -113,13 +113,15 @@ class SemanticState:
             unit_id, symbol_id = origin
             unit = self.unit_datas[unit_id]
             symbol = unit.symbol_ctx.get(symbol_id)
+            if isinstance(symbol, AliasSymbol):
+                raise AnalysisError("constant declaration resolved to an alias", definition.name.span)
             type_id = self.resolve_type_in(definition.const_type, unit.symbol_ctx)
             symbol.type_id = type_id
             for candidate_unit in self.unit_datas.values():
                 for _candidate_id, candidate in candidate_unit.symbol_ctx.items():
-                    if candidate.const_origin == origin:
+                    if isinstance(candidate, Symbol) and candidate.const_origin == origin:
                         candidate.type_id = type_id
-            resolved_type = self.type_ctx[self.type_ctx.resolve_aliases(type_id)]
+            resolved_type = self.type_ctx[type_id]
             if not isinstance(
                 resolved_type,
                 (Type.IntType, Type.FloatType, Type.BoolType, Type.CharType, Type.StrType),

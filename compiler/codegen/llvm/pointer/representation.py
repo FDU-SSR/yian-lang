@@ -37,7 +37,7 @@ class PointerRepresentation:
     def is_fat(self, value: LLValue) -> bool:
         if self.__raw_pointers:
             return False
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(value.type_id)]
+        ty = self.__type_ctx[value.type_id]
         return (
             isinstance(ty, (Type.PointerType, Type.SliceType, Type.StrType, Type.RefType))
             and isinstance(value.ir_val.type, ir.LiteralStructType)  # type: ignore
@@ -47,7 +47,7 @@ class PointerRepresentation:
     def is_fat_type(self, type_id: int) -> bool:
         if self.__raw_pointers:
             return False
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        ty = self.__type_ctx[type_id]
         if isinstance(ty, Type.PointerType):
             return not self.__type_ctx.is_zst(ty.pointee_type)
         return isinstance(ty, (Type.SliceType, Type.StrType, Type.RefType))
@@ -97,7 +97,7 @@ class PointerRepresentation:
         size: LLValue,
         type_id: int,
     ) -> LLValue:
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        ty = self.__type_ctx[type_id]
         value = self.__core.ir.undef(type_id)
         value = self.__core.ir.insert_value(value, data, ABI.FAT_DATA)
         value = self.__core.ir.insert_value(value, word, ABI.FAT_WORD)
@@ -134,7 +134,7 @@ class PointerRepresentation:
         if self.is_fat(value):
             data = self.extract_fat_field(value, ABI.FAT_DATA).ir_val
             pointee_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
-            ty = self.__type_ctx[self.__type_ctx.resolve_aliases(value.type_id)]
+            ty = self.__type_ctx[value.type_id]
             if isinstance(ty, Type.RefType):
                 addr = data
             else:

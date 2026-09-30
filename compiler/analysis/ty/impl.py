@@ -83,7 +83,7 @@ class ImplRegistry:
             )
 
         # 1) Non-generic trait impls that match the exact target type
-        for impl in self.__trait_impl_cache[self.__ctx.canonical(type_id)]:
+        for impl in self.__trait_impl_cache[type_id]:
             if is_deref_impl(impl):
                 return self.__resolve_deref_target(impl, {})
 
@@ -187,7 +187,7 @@ class ImplRegistry:
         if visited is None:
             visited = set()
             fresh = True
-        key = (self.__ctx.canonical(type_id), trait_id)
+        key = (type_id, trait_id)
         if fresh and self.__memoize_enabled:
             cached = self.__has_impl_cache.get(key)
             if cached is not None:
@@ -199,8 +199,6 @@ class ImplRegistry:
 
     def find_trait_impl(self, type_id: int, trait_id: int) -> tuple[Impl, dict[int, int]] | None:
         """Return the unique impl matching a fully concrete type and trait."""
-        type_id = self.__ctx.canonical(type_id)
-        trait_id = self.__ctx.canonical(trait_id)
         trait_ty = self.__ctx[trait_id]
         if not isinstance(trait_ty, Type.TraitType):
             return None
@@ -228,7 +226,6 @@ class ImplRegistry:
 
     def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]]) -> bool:
         """Evaluate a has_impl query without consulting or updating its cache."""
-        type_id = self.__ctx.canonical(type_id)
         key = (type_id, trait_id)
         if key in visited:
             return False
@@ -330,9 +327,9 @@ class ImplRegistry:
         if self.__ctx.is_same_type(type_from_trait, type_from_impl):
             return True
 
-        trait_type_def = self.__ctx[self.__ctx.resolve_aliases(trait_type)]
-        trait_side_ty = self.__ctx[self.__ctx.resolve_aliases(type_from_trait)]
-        impl_side_ty = self.__ctx[self.__ctx.resolve_aliases(type_from_impl)]
+        trait_type_def = self.__ctx[trait_type]
+        trait_side_ty = self.__ctx[type_from_trait]
+        impl_side_ty = self.__ctx[type_from_impl]
 
         if isinstance(trait_side_ty, Type.SelfType):
             self_trait_ty = self.__ctx[trait_side_ty.trait_type_id]
@@ -389,7 +386,7 @@ class ImplRegistry:
 
         trait_receiver_type = self.__ctx.get_receiver_type(trait_method)
         trait_receiver_ty = self.__ctx[trait_receiver_type]
-        trait_type_ty = self.__ctx[self.__ctx.resolve_aliases(trait_type)]
+        trait_type_ty = self.__ctx[trait_type]
         if not isinstance(trait_receiver_ty, Type.SelfType) or not isinstance(trait_type_ty, Type.TraitType):
             return False
         self_trait_ty = self.__ctx[trait_receiver_ty.trait_type_id]
@@ -423,13 +420,16 @@ class ImplRegistry:
         method_ty.custom_def = deepcopy(trait_method_ty.custom_def)
         old_self = trait_method_ty.custom_def.receiver_type
 
-        method_ty.custom_def.generics = trait_method_ty.custom_def.generics + impl.generics
+        generics = (*trait_method_ty.custom_def.generics, *impl.generics)
         method_ty.custom_def.receiver_type = target_type
         method_ty.custom_def.return_type = self.__subst_trait_self(method_ty.custom_def.return_type, old_self, target_type)
         for param in method_ty.custom_def.parameters:
             param.type_id = self.__subst_trait_self(param.type_id, old_self, target_type)
 
-        method_ty.generic_args = trait_method_ty.generic_args + impl.generics
+        self.__ctx.bind_template(
+            method_type_id, generics,
+            (*trait_method_ty.generic_args, *impl.generics),
+        )
 
         self.__procedure_copies.append((trait_method_id, method_type_id))
 
@@ -452,7 +452,7 @@ class ImplRegistry:
             return self.__ctx.alloc_tuple([self.__subst_trait_self(et, old_self, new_target) for et in ty.element_types])
         if isinstance(ty, Type.FunctionPointerType):
             return self.__ctx.alloc_function_pointer([self.__subst_trait_self(pt, old_self, new_target) for pt in ty.parameter_types], self.__subst_trait_self(ty.return_type, old_self, new_target))
-        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType, Type.AliasType)):
+        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType)):
             if ty.generic_args:
                 return self.__ctx.alloc_instance(type_id, [self.__subst_trait_self(ga, old_self, new_target) for ga in ty.generic_args])
             return type_id
@@ -463,16 +463,10 @@ class ImplRegistry:
         Cache the implementations for faster lookup.
         """
         for impl in self.__impls:
-            # `typedef` is transparent, so `impl Trait for Alias` and
-            # `impl Trait for Target` are the same impl.  The caches below are
-            # keyed by type id, and the two spellings have different ids, so key
-            # them by the canonical id — otherwise a lookup with the other
-            # spelling would miss the impl.  (`impl.target` itself stays as
-            # written, so diagnostics keep the spelling the program used.)
             if impl.trait is None and len(impl.generics) == 0:
-                self.__impl_cache[self.__ctx.canonical(impl.target)].append(impl)
+                self.__impl_cache[impl.target].append(impl)
             elif impl.trait is not None and len(impl.generics) == 0:
-                self.__trait_impl_cache[self.__ctx.canonical(impl.target)].append(impl)
+                self.__trait_impl_cache[impl.target].append(impl)
             elif impl.trait is None and len(impl.generics) > 0:
                 self.__generic_impl_cache.append(impl)
             elif impl.trait is not None and len(impl.generics) > 0:
@@ -489,7 +483,7 @@ class ImplRegistry:
         deliberately does not run for every candidate.
         """
         methods: dict[str, int] = {}
-        receiver = self.__ctx.canonical(type_id)
+        receiver = type_id
         for impl in self.iter_candidate_impls(type_id):
             if not self.__covers(impl, receiver):
                 continue
@@ -499,7 +493,7 @@ class ImplRegistry:
 
     def __covers(self, impl: Impl, receiver: int) -> bool:
         """Whether *impl* could be the impl of *receiver* at all."""
-        target = self.__ctx.canonical(impl.target)
+        target = impl.target
         target_ty = self.__ctx[target]
         receiver_ty = self.__ctx[receiver]
         if isinstance(target_ty, Type.GenericType):
@@ -522,7 +516,6 @@ class ImplRegistry:
         An automatic impl is omitted when a matching explicit trait impl has
         satisfied conditions; method lookup checks each remaining signature.
         """
-        type_id = self.__ctx.canonical(type_id)
         exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
         generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
         candidates = exact + generic

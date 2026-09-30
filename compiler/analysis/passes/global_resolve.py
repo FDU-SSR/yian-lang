@@ -6,6 +6,7 @@ This is the first pass of the analysis phase.
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,7 +14,7 @@ from compiler.analysis.state import SemanticState
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.resolution.enum_equality import build_unit_enum_equality_body
 from compiler.analysis.source_provenance import default_stdlib_root
-from compiler.analysis.symbol.symbol import SymbolAttribute, SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, SymbolAttribute, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
@@ -33,6 +34,7 @@ class GlobalResolve:
         self.__stdlib_root = (ctx.stdlib_root or default_stdlib_root()).resolve()
 
         self.__strict_pkg = ctx.packages is not None
+        self.__const_annotations: list[tuple[UnitData, list[AST.GenericParam], list[int]]] = []
 
         # Resolution is the only place that knows how an import actually
         # resolved, so record the edges here for the declaration index.
@@ -49,13 +51,28 @@ class GlobalResolve:
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_imports(unit)
 
-        # Alias bodies can be demanded by references in any imported module.
+        # Alias scopes contain all declarations and imported name bindings.
         for unit in self.__ctx.unit_datas.values():
             for item in unit.items():
                 if isinstance(item, AST.Alias):
                     symbol = unit.symbol_ctx.lookup(item.name.name)
-                    if symbol is not None:
-                        self.__ctx.register_alias(symbol.type_id, item, unit.symbol_ctx)
+                    if isinstance(symbol, AliasSymbol):
+                        self.__ctx.aliases.bind_scope(symbol.alias_id, unit.symbol_ctx)
+
+        for unit, parameters, generic_ids in self.__const_annotations:
+            scope = unit.symbol_ctx.clone()
+            scope.enter_scope()
+            for parameter, generic_id in zip(parameters, generic_ids):
+                kind = SymbolKind.ConstGeneric if isinstance(parameter, AST.ConstGenericParam) else SymbolKind.Type
+                if scope.add_symbol(parameter.name.name, kind, generic_id, span=parameter.name.span) is None:
+                    raise AnalysisError(f"Duplicate generic parameter: {parameter.name.name}", parameter.name.span)
+            for parameter, generic_id in zip(parameters, generic_ids):
+                if isinstance(parameter, AST.ConstGenericParam):
+                    generic = self.__ctx.type_ctx[generic_id]
+                    assert isinstance(generic, Type.ConstGenericType)
+                    generic.value_type = self.__ctx.resolve_type_in(parameter.value_type, scope)
+            scope.exit_scope()
+        self.__ctx.aliases.resolve_all()
 
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
@@ -138,21 +155,11 @@ class GlobalResolve:
                         if unit.symbol_ctx.add_symbol(function.name.name, SymbolKind.Function, type_id, self.__convert_attrs(attrs), function.name.span) is None:
                             raise AnalysisError(f"Duplicate symbol name: {function.name.name}", function.name.span)
                 case AST.Alias(name=name, attrs=attrs, span=span):
-                    # alloc in type space
-                    type_id = self.__ctx.type_ctx.alloc_alias(name.name, span)
-
-                    # alloc in symbol space
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
+                    generics = self.__alloc_generics(unit, item.generics)
+                    alias_id = self.__ctx.aliases.declare(item, generics)
+                    symbol_id = unit.symbol_ctx.add_alias(name.name, alias_id, self.__convert_attrs(attrs), name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
-
-                    generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__ctx.type_ctx[symbol.type_id]
-                    assert isinstance(ty, Type.AliasType)
-                    ty.custom_def.generics = generics.copy()
-                    ty.generic_args = generics.copy()
 
                 case AST.FuncDef(name=name, attrs=attrs, span=span):
                     # alloc in type space
@@ -163,13 +170,12 @@ class GlobalResolve:
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol = unit.symbol_ctx.get_typed(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.FunctionType)
-                    ty.custom_def.generics = generics.copy()
-                    ty.generic_args = generics.copy()
+                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
 
                 case AST.ConstDef(name=name, attrs=attrs):
                     symbol_attrs = self.__convert_attrs(attrs)
@@ -182,7 +188,7 @@ class GlobalResolve:
                     )
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol = unit.symbol_ctx.get_typed(symbol_id)
                     symbol.const_origin = (unit.unit_id, symbol_id)
                     self.__ctx.register_constant(unit.unit_id, symbol_id, item)
 
@@ -195,13 +201,12 @@ class GlobalResolve:
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol = unit.symbol_ctx.get_typed(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.StructType)
-                    ty.custom_def.generics = generics.copy()
-                    ty.generic_args = generics.copy()
+                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
                     ty.custom_def.unit_id = unit.unit_id
 
                 case AST.EnumDef(name=name, attrs=attrs, span=span):
@@ -213,13 +218,12 @@ class GlobalResolve:
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol = unit.symbol_ctx.get_typed(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.EnumType)
-                    ty.custom_def.generics = generics.copy()
-                    ty.generic_args = generics.copy()
+                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
                     ty.custom_def.unit_id = unit.unit_id
 
                 case AST.TraitDef(name=name, attrs=attrs, span=span):
@@ -231,13 +235,12 @@ class GlobalResolve:
                     symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
                     if symbol_id is None:
                         raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get(symbol_id)
+                    symbol = unit.symbol_ctx.get_typed(symbol_id)
 
                     generics = self.__alloc_generics(unit, item.generics)
                     ty = self.__ctx.type_ctx[symbol.type_id]
                     assert isinstance(ty, Type.TraitType)
-                    ty.custom_def.generics = generics.copy()
-                    ty.generic_args = generics.copy()
+                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
 
                 case _:
                     # other items are ignored in this pass
@@ -255,9 +258,11 @@ class GlobalResolve:
             match param:
                 case AST.TypeGenericParam(name=name):
                     generics.append(self.__ctx.type_ctx.alloc_generic(name.name))
-                case AST.ConstGenericParam(name=name, value_type=vty):
-                    vt_id = self.__ctx.resolve_type_in(vty, unit.symbol_ctx)
-                    generics.append(self.__ctx.type_ctx.alloc_const_generic(name.name, vt_id))
+                case AST.ConstGenericParam(name=name):
+                    generic_id = self.__ctx.type_ctx.alloc_const_generic(name.name, -1)
+                    generics.append(generic_id)
+        if any(isinstance(param, AST.ConstGenericParam) for param in item_generics):
+            self.__const_annotations.append((unit, item_generics, generics))
         return generics
 
     def __resolve_imports(self, unit: UnitData) -> None:
@@ -284,18 +289,20 @@ class GlobalResolve:
 
             imported_name = item.alias.name if item.alias is not None else item.target.name
             import_span = item.alias.span if item.alias is not None else item.target.span
-            unit.symbol_ctx.add_symbol(
-                imported_name,
-                target_symbol.kind,
-                target_symbol.type_id,
-                span=import_span,
-                const_origin=target_symbol.const_origin,
-            )
+            if isinstance(target_symbol, AliasSymbol):
+                unit.symbol_ctx.add_alias(imported_name, target_symbol.alias_id, set(), import_span)
+                target_type = None
+            else:
+                unit.symbol_ctx.add_symbol(
+                    imported_name, target_symbol.kind, target_symbol.type_id,
+                    span=import_span, const_origin=target_symbol.const_origin,
+                )
+                target_type = target_symbol.type_id
             # The written name is a resolved reference of its own, in both forms:
             # for `import A` it is the name that is bound, and for `import A as B`
             # the original spelling of `A` appears nowhere else in the file.  An
             # editor needs it to rename `A` without leaving the import behind.
-            self.__ctx.names.record(item.target.span, target_symbol, target_symbol.type_id)
+            self.__ctx.names.record(item.target.span, target_symbol, target_type)
             self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
@@ -431,21 +438,13 @@ class GlobalResolve:
                     pass
 
     def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
-        """Produce one alias body.
-
-        The body is stored on the declaration, not substituted into the users: a
-        declaration keeps the alias's own type id, so it does not matter whether
-        the alias is declared before or after the code that names it.
-        """
+        """Validate the declaration's transparent target template."""
         symbol = unit.symbol_ctx.lookup(alias.name.name)
-        assert symbol is not None
-        ty = self.__ctx.type_ctx[symbol.type_id]
-        assert isinstance(ty, Type.AliasType)
-
-        self.__ctx.resolve_alias(symbol.type_id)
+        assert isinstance(symbol, AliasSymbol)
+        self.__ctx.aliases.template(symbol.alias_id)
 
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
-        symbol = unit.symbol_ctx.lookup(func_def.name.name)
+        symbol = unit.symbol_ctx.lookup_typed(func_def.name.name)
         assert symbol is not None
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.FunctionType)
@@ -481,7 +480,7 @@ class GlobalResolve:
         self.__ctx.procedures.register(ty.type_id, func_def.body, unit.unit_id)
 
     def __resolve_extern_decl(self, unit: UnitData, decl: AST.ExternFuncDecl) -> None:
-        symbol = unit.symbol_ctx.lookup(decl.name.name)
+        symbol = unit.symbol_ctx.lookup_typed(decl.name.name)
         assert symbol is not None
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.FunctionType)
@@ -513,7 +512,7 @@ class GlobalResolve:
                 or self.__ctx.type_ctx.contains_bare_opaque(result):
             raise AnalysisError("opaque C type must be used through cptr<T>", span)
 
-    def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: list[int]) -> None:
+    def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: Sequence[int]) -> None:
         """进入泛型作用域，注册类型泛型和常量泛型符号。"""
         unit.symbol_ctx.enter_scope()
         for param, ty_id in zip(ast_generics, ty_generic_ids):
@@ -524,7 +523,7 @@ class GlobalResolve:
                     unit.symbol_ctx.add_symbol(name.name, SymbolKind.ConstGeneric, ty_id, span=name.span)
 
     def __resolve_struct_def(self, unit: UnitData, struct_def: AST.StructDef) -> None:
-        symbol = unit.symbol_ctx.lookup(struct_def.name.name)
+        symbol = unit.symbol_ctx.lookup_typed(struct_def.name.name)
         assert symbol is not None
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.StructType)
@@ -559,7 +558,7 @@ class GlobalResolve:
         ty.custom_def.fields = fields
 
     def __resolve_enum_def(self, unit: UnitData, enum_def: AST.EnumDef) -> None:
-        symbol = unit.symbol_ctx.lookup(enum_def.name.name)
+        symbol = unit.symbol_ctx.lookup_typed(enum_def.name.name)
         assert symbol is not None
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.EnumType)
@@ -599,13 +598,12 @@ class GlobalResolve:
     def __register_unit_enum_equality(self, unit: UnitData, enum_type_id: int, enum_type: Type.EnumType) -> None:
         types = self.__ctx.type_ctx
         trait_id = types.alloc_instance(types.partial_eq_id, [enum_type_id])
-        impl = types.register_impl(enum_type.custom_def.span, enum_type.custom_def.generics.copy(),
+        impl = types.register_impl(enum_type.custom_def.span, list(enum_type.custom_def.generics),
                                    enum_type_id, trait_id, automatic=True)
         method_id = types.alloc_method("eq", enum_type.custom_def.span)
         method = types[method_id]
         assert isinstance(method, Type.MethodType)
-        method.custom_def.generics = enum_type.custom_def.generics.copy()
-        method.generic_args = enum_type.custom_def.generics.copy()
+        self.__ctx.type_ctx.bind_template(method_id, enum_type.custom_def.generics)
         method.custom_def.receiver_type = enum_type_id
         method.custom_def.parameters = [Type.Parameter("other", types.alloc_ref(enum_type_id))]
         method.custom_def.return_type = types.bool_id
@@ -614,7 +612,7 @@ class GlobalResolve:
         self.__ctx.procedures.register(method_id, build_unit_enum_equality_body(enum_type), unit.unit_id)
 
     def __resolve_trait_def(self, unit: UnitData, trait_def: AST.TraitDef) -> None:
-        symbol = unit.symbol_ctx.lookup(trait_def.name.name)
+        symbol = unit.symbol_ctx.lookup_typed(trait_def.name.name)
         assert symbol is not None
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.TraitType)
@@ -664,7 +662,7 @@ class GlobalResolve:
 
         conditions: dict[int, list[int]] = {}
         for param_name, trait_types in impl.conditions:
-            symbol = unit.symbol_ctx.lookup(param_name.name)
+            symbol = unit.symbol_ctx.lookup_typed(param_name.name)
             assert symbol is not None, f"condition parameter '{param_name.name}' not found"
             generic_id = symbol.type_id
             conditions[generic_id] = [self.__ctx.resolve_type_in(tt, unit.symbol_ctx) for tt in trait_types]
@@ -681,7 +679,7 @@ class GlobalResolve:
 
         unit.symbol_ctx.exit_scope()
 
-    def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: list[int], receiver_type_id: int, is_header: bool) -> int:
+    def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: Sequence[int], receiver_type_id: int, is_header: bool) -> int:
         if len({attr.kind for attr in decl.attrs}) != len(decl.attrs):
             raise AnalysisError("Duplicate method modifier", decl.span)
         if AST.AttrKind.Pub in {attr.kind for attr in decl.attrs} and AST.AttrKind.PubFfi in {attr.kind for attr in decl.attrs}:
@@ -700,7 +698,7 @@ class GlobalResolve:
         symbol_id = unit.symbol_ctx.add_symbol(decl.name.name, SymbolKind.Function, type_id, symbol_attrs, decl.name.span)
         if symbol_id is None:
             raise AnalysisError(f"Duplicate method name: {decl.name.name}", decl.name.span)
-        symbol = unit.symbol_ctx.get(symbol_id)
+        symbol = unit.symbol_ctx.get_typed(symbol_id)
 
         # resolve generics, parameters and return type
         unit.symbol_ctx.enter_scope()
@@ -733,7 +731,6 @@ class GlobalResolve:
         # update the method symbol with the resolved type
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.MethodType)
-        ty.custom_def.generics = generics.copy()
         ty.custom_def.receiver_type = receiver_type_id
         ty.custom_def.parameters = parameters
         ty.custom_def.return_type = ret_type_id
@@ -744,6 +741,6 @@ class GlobalResolve:
         ty.custom_def.ffi_only = any(attr.kind == AST.AttrKind.PubFfi for attr in decl.attrs)
         if not ty.custom_def.is_ffi or any(attr.kind == AST.AttrKind.Pub for attr in decl.attrs):
             self.__check_yian_signature(parameters, ret_type_id, decl.span)
-        ty.generic_args = generics.copy()
+        self.__ctx.type_ctx.bind_template(type_id, generics)
 
         return type_id

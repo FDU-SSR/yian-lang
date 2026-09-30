@@ -34,7 +34,7 @@ from pathlib import Path
 from compiler.analysis.queries.context import QueryContext
 from compiler.analysis.facts.names import NameRef, NameTarget
 from compiler.analysis.queries.index import Declaration, DeclarationKind
-from compiler.analysis.symbol.symbol import Symbol, SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
@@ -214,6 +214,10 @@ class Navigator:
             imported = self.__imported_target(path, declaration.name)
             if imported is not None:
                 return imported
+        if declaration.kind is DeclarationKind.ALIAS:
+            symbol = self.__view.symbol_named_in(path, declaration.name)
+            if isinstance(symbol, AliasSymbol):
+                return self.target_of(symbol)
         return self.__target_from_declaration(declaration, self.__is_stdlib(declaration.path))
 
     def __imported_target(self, path: Path, name: str) -> Target | None:
@@ -226,6 +230,17 @@ class Navigator:
         """The declaration a recorded resolution points at."""
         if isinstance(target, int):
             return self.__target_of_type(target)
+        if isinstance(target, AliasSymbol):
+            info = self.__view.alias_info(target)
+            if info is None:
+                return None
+            return Target(
+                name=info.definition.name.name, kind=DeclarationKind.ALIAS,
+                span=info.definition.name.span,
+                type_name=self.__name(info.template),
+                signature=self.__view.alias_signature(target),
+                stdlib=self.__is_stdlib(info.definition.span.path),
+            )
         if isinstance(target, Symbol):
             return self.__target_of_symbol(target)
         if isinstance(target, Type.StructField):
@@ -273,8 +288,6 @@ class Navigator:
                 return self.__target_of_def(custom_def.name, DeclarationKind.TRAIT, custom_def.span)
             case Type.SelfType(trait_type_id=trait_type_id):
                 return self.__target_of_type(trait_type_id)
-            case Type.AliasType(custom_def=custom_def):
-                return self.__target_of_def(custom_def.name, DeclarationKind.ALIAS, custom_def.span)
             case Type.FunctionType(custom_def=custom_def):
                 return self.__target_of_def(
                     custom_def.name,

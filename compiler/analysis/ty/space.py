@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from compiler.analysis.ty import ty as Type
@@ -25,6 +26,7 @@ class TypeSpace:
         self.__tuple_cache: dict[tuple[int, ...], int] = {}
         self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}
         self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}
+        self.__initialized_definitions: set[int] = set()
         self.__literal_cache: dict[tuple[int | bool, int], int] = {}
         self.__self_type_cache: dict[int, int] = {}
 
@@ -166,30 +168,26 @@ class TypeSpace:
         self.__array_cache[key] = array_ty_id
         return array_ty_id
 
-    def alloc_tuple(self, element_types: list[int]) -> int:
+    def alloc_tuple(self, element_types: Sequence[int]) -> int:
         key = tuple(element_types)
         if key in self.__tuple_cache:
             return self.__tuple_cache[key]
 
-        tuple_ty = Type.TupleType(type_id=-1, element_types=element_types)
+        tuple_ty = Type.TupleType(type_id=-1, element_types=key)
         tuple_ty_id = self.__add_type(tuple_ty)
         self.__tuple_cache[key] = tuple_ty_id
         return tuple_ty_id
 
-    def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
+    def alloc_function_pointer(self, param_types: Sequence[int], return_type: int) -> int:
         key = (tuple(param_types), return_type)
         if key in self.__function_pointer_cache:
             return self.__function_pointer_cache[key]
 
-        function_pointer_ty = Type.FunctionPointerType(type_id=-1, parameter_types=param_types, return_type=return_type)
+        function_pointer_ty = Type.FunctionPointerType(type_id=-1, parameter_types=key[0], return_type=return_type)
         function_pointer_ty_id = self.__add_type(function_pointer_ty)
         self.__function_pointer_cache[key] = function_pointer_ty_id
         return function_pointer_ty_id
 
-    def alloc_alias(self, name: str, span: SrcSpan) -> int:
-        alias_def = Type.AliasDef(name=name, span=span)
-        alias_ty = Type.AliasType(type_id=-1, custom_def=alias_def)
-        return self.__add_type(alias_ty)
 
     def alloc_struct(self, name: str, span: SrcSpan) -> int:
         struct_def = Type.StructDef(name=name, span=span)
@@ -200,19 +198,20 @@ class TypeSpace:
 
         return self.__add_type(struct_ty)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: Sequence[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
         if len(field_names) != len(field_types):
             raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
 
         struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}", span=span)
-        struct_def.generics = generics.copy()
         for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
             # `field_spans` keeps the written name of fields that came from an
             # enum variant's payload declaration, so an editor can jump to them.
             field_span = None if field_spans is None else field_spans[index]
             struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index, span=field_span))
-        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generics.copy())
-        return self.__add_type(struct_ty)
+        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
+        type_id = self.__add_type(struct_ty)
+        self.bind_template(type_id, generics)
+        return type_id
 
     def alloc_enum(self, name: str, span: SrcSpan) -> int:
         enum_def = Type.EnumDef(name=name, span=span)
@@ -288,12 +287,29 @@ class TypeSpace:
     def alloc_range(self, type_id: int) -> int:
         return self.alloc_instance(self.__ctx.Range_id, [type_id])
 
-    def alloc_instance(self, type_id: int, generic_args: list[int]) -> int:
+    def bind_template(self, type_id: int, generics: Sequence[int], arguments: Sequence[int] | None = None) -> None:
+        """Register a declaration's identity once its parameter binders exist."""
         ty = self.__space[type_id]
+        if not isinstance(ty, Type.CustomType):
+            raise CompilerError("only named declarations have generic parameters")
+        definition_id = id(ty.custom_def)
+        if definition_id in self.__initialized_definitions:
+            raise CompilerError("generic declaration identity is already registered")
+        args = tuple(generics if arguments is None else arguments)
+        if len(args) != len(generics):
+            raise CompilerError("generic declaration argument count mismatch")
+        ty.custom_def.generics = tuple(generics)
+        ty.generic_args = args
+        self.__initialized_definitions.add(definition_id)
+        self.__instance_cache[(definition_id, args)] = type_id
+
+    def alloc_instance(self, type_id: int, generic_args: Sequence[int]) -> int:
+        ty = self.__space[type_id]
+        args = tuple(generic_args)
 
         if not isinstance(ty, Type.CustomType):
             raise ValueError(f"Type ID {type_id} is not a custom type and cannot be instantiated")
-        if len(ty.generic_args) != len(generic_args):
+        if len(ty.custom_def.generics) != len(args):
             raise ValueError(f"Generic argument count mismatch for type ID {type_id}")
 
         if len(ty.custom_def.generics) == 0:
@@ -301,34 +317,21 @@ class TypeSpace:
                 raise ValueError(f"Type ID {type_id} is not generic and cannot be instantiated with generic arguments")
             return type_id
 
-        key = (id(ty.custom_def), tuple(generic_args))
+        key = (id(ty.custom_def), args)
         if key in self.__instance_cache:
             return self.__instance_cache[key]
 
-        # Reuse an existing matching instance before creating a new one and
-        # repair the cache entry, even if its original cache key is stale.
-        for existing_id, existing in self.__space.items():
-            if (
-                isinstance(existing, Type.CustomType)
-                and existing.custom_def is ty.custom_def
-                and existing.generic_args == generic_args
-            ):
-                self.__instance_cache[key] = existing_id
-                return existing_id
-
         match ty:
             case Type.StructType(custom_def=struct_def):
-                instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=generic_args)
+                instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=args)
             case Type.EnumType(custom_def=enum_def):
-                instance_ty = Type.EnumType(type_id=-1, custom_def=enum_def, generic_args=generic_args)
+                instance_ty = Type.EnumType(type_id=-1, custom_def=enum_def, generic_args=args)
             case Type.TraitType(custom_def=trait_def):
-                instance_ty = Type.TraitType(type_id=-1, custom_def=trait_def, generic_args=generic_args)
+                instance_ty = Type.TraitType(type_id=-1, custom_def=trait_def, generic_args=args)
             case Type.MethodType(custom_def=method_def):
-                instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=generic_args)
+                instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=args)
             case Type.FunctionType(custom_def=function_def):
-                instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=generic_args)
-            case Type.AliasType(custom_def=alias_def):
-                instance_ty = Type.AliasType(type_id=-1, custom_def=alias_def, generic_args=generic_args)
+                instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=args)
 
         instance_ty_id = self.__add_type(instance_ty)
         self.__instance_cache[key] = instance_ty_id

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.lowering.expr_evaluator import ExprEvaluator
-from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import LookupResult
 from compiler.analysis.ty.generic_inference import GenericInference
@@ -74,7 +75,7 @@ class CallDispatcher:
                     receiver = deref_call
 
         if lookup.dynamic:
-            receiver_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(receiver.type_id)]
+            receiver_ty = self.__ctx.type_ctx[receiver.type_id]
             assert isinstance(receiver_ty, Type.TraitObjectType)
             method_ty = self.__ctx.type_ctx[lookup.method_id]
             assert isinstance(method_ty, Type.MethodType)
@@ -109,14 +110,14 @@ class CallDispatcher:
         if isinstance(node.callee, AST.Identifier):
             assert self.__ctx.symbol_ctx is not None
             symbol = self.__ctx.symbol_ctx.lookup(node.callee.name)
-            if symbol is not None and symbol.kind == SymbolKind.Function:
-                function_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(symbol.type_id)]
+            if isinstance(symbol, Symbol) and symbol.kind == SymbolKind.Function:
+                function_ty = self.__ctx.type_ctx[symbol.type_id]
                 if isinstance(function_ty, Type.FunctionType) and function_ty.custom_def.is_extern:
                     if not self.__ctx.ffi_allowed:
                         raise AnalysisError("extern C function calls require an ffi fn", node.span)
                     self.__ctx.names.record(node.callee.span, symbol, symbol.type_id, synthetic=node.callee.synthetic)
                     return self.__handle_function_call(node.span, symbol.type_id, node.callee.name, node.args)
-            if symbol is not None and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
+            if isinstance(symbol, Symbol) and symbol.kind == SymbolKind.Function and self.__ctx.type_ctx.contains_generic(symbol.type_id):
                 # A generic function is called through its symbol, not by
                 # evaluating the callee as a value, so the reference is recorded
                 # here: navigation, hover and signature help all need it.
@@ -126,7 +127,7 @@ class CallDispatcher:
         callee = self.__expr.value(node.callee)
         if isinstance(callee, HIR.Ty):
             return self.__handle_type_call(node.span, callee, node.args)
-        resolved = self.__ctx.type_ctx.resolve_aliases(callee.type_id)
+        resolved = callee.type_id
         ty = self.__ctx.type_ctx[resolved]
         if isinstance(ty, Type.FunctionType):
             params = ty.parameters(self.__ctx.type_ctx)
@@ -138,7 +139,7 @@ class CallDispatcher:
 
         raise AnalysisError("expression is not callable", node.span)
 
-    def __emit_concrete_call(self, span: SrcSpan, callee: HIR.Expr, args: list[AST.Arg], param_types: list[int], return_type: int, report_id: int | None) -> HIR.Expr:
+    def __emit_concrete_call(self, span: SrcSpan, callee: HIR.Expr, args: list[AST.Arg], param_types: Sequence[int], return_type: int, report_id: int | None) -> HIR.Expr:
         if self.__has_named_arg(args):
             raise AnalysisError("named arguments are not supported for callable values", span)
         if len(param_types) != len(args):
@@ -207,12 +208,7 @@ class CallDispatcher:
         expected_type_ids = [param.type_id for param in parameters]
         coerced_args, inference = self.__infer_arguments(span, expected_type_ids, args, f"function call '{func_name}'")
 
-        # Canonicalize the instance id so one function monomorphizes once, even
-        # when the arguments were spelled with a transparent alias
-        # (`f(Box<Code>)` and `f(Box<u64>)` are the same instantiation).
-        instantiated_func_id = self.__ctx.type_ctx.canonical(
-            inference.instantiate(func_type_id)
-        )
+        instantiated_func_id = inference.instantiate(func_type_id)
         # report reachable instantiated function to the semantic context
         if not func_ty.custom_def.is_extern:
             self.__ctx.report_def(instantiated_func_id)

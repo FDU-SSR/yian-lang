@@ -24,6 +24,8 @@ from compiler.analysis.diagnostics import (
 from compiler.analysis.documents import DocumentStore
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.facts.names import NameRef
+from compiler.analysis.resolution.aliases import AliasInfo
+from compiler.analysis.symbol.symbol import AliasDefId
 from compiler.analysis.lowering.state import DefinitionState
 from compiler.analysis.state import SemanticState
 from compiler.analysis.package_map import PackageMap
@@ -107,6 +109,7 @@ class AnalysisResult:
     generated_def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     procedures: tuple[tuple[int, AST.Block, int], ...] = ()
     name_refs: tuple[NameRef, ...] = ()
+    aliases: Mapping[AliasDefId, AliasInfo] = field(default_factory=dict[AliasDefId, AliasInfo])
     entry_type_id: int | None = None
     unit_names: Mapping[int, str] = field(default_factory=dict[int, str])
     timings: Mapping[str, float] = field(default_factory=dict[str, float])
@@ -284,21 +287,26 @@ class AnalysisSession:
             type_size,
         )
         resolver = GlobalResolve(semantic)
+
+        def __semantic_failure(error: Exception, stage: Stage) -> AnalysisResult:
+            result = self.__with_tokens(
+                self.__failed(error, stage, sources, units, type_ctx, ast_dump), lexed
+            )
+            result.aliases = semantic.aliases.snapshot()
+            result.name_refs = semantic.names.entries()
+            return result
+
         started = time.perf_counter()
         try:
             resolver.run()
         except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.RESOLVE, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(error, Stage.RESOLVE)
         timings["global_resolve"] = time.perf_counter() - started
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.FINALIZE, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(error, Stage.FINALIZE)
 
         started = time.perf_counter()
         checker = TypeCheck(
@@ -312,9 +320,7 @@ class AnalysisSession:
         except ANALYSIS_ERRORS as error:
             # Everything recoverable was collected by the checker; what reaches
             # here is a failure before the worklist started (the program entry).
-            return self.__with_tokens(
-                self.__failed(error, Stage.TYPE_CHECK, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(error, Stage.TYPE_CHECK)
 
         all_def_points = checker.export()
         timings["type_check"] = time.perf_counter() - started
@@ -323,24 +329,18 @@ class AnalysisSession:
         try:
             coverage_errors = coverage.run(recover=recover)
         except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.MATCH_COVERAGE, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(error, Stage.MATCH_COVERAGE)
 
         started = time.perf_counter()
         definite_assignment = DefiniteAssignment(all_def_points, type_ctx)
         try:
             definite_assignment.run()
         except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(error, Stage.DEFINITE_ASSIGNMENT)
         timings["definite_assignment"] = time.perf_counter() - started
         assignment_errors = definite_assignment.export_errors()
         if assignment_errors and not recover:
-            return self.__with_tokens(
-                self.__failed(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT, sources, units, type_ctx, ast_dump), lexed
-            )
+            return __semantic_failure(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT)
 
         diagnostics = list(checker.export_diagnostics())
         diagnostics.extend(diagnostic_from_error(error, stage=Stage.MATCH_COVERAGE) for error in coverage_errors)
@@ -365,6 +365,7 @@ class AnalysisSession:
             generated_def_points=generated,
             procedures=semantic.procedures.entries(),
             name_refs=semantic.names.entries(),
+            aliases=semantic.aliases.snapshot(),
             entry_type_id=checker.entry_type_id,
             unit_names=unit_names,
             import_edges=resolver.import_edges(),

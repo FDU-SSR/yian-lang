@@ -62,7 +62,7 @@ class TypeCtx(IntrinsicIds):
 
     def contains_ffi_type(self, type_id: int) -> bool:
         """Whether a signature exposes a C-only type rather than an opaque YIAN wrapper."""
-        ty = self[self.resolve_aliases(type_id)]
+        ty = self[type_id]
         if isinstance(ty, (Type.CScalarType, Type.CPtrType, Type.OpaqueType)):
             return True
         if isinstance(ty, (Type.PointerType, Type.RefType)):
@@ -80,7 +80,7 @@ class TypeCtx(IntrinsicIds):
 
     def contains_bare_opaque(self, type_id: int) -> bool:
         """Opaque C declarations have no value representation outside cptr<T>."""
-        ty = self[self.resolve_aliases(type_id)]
+        ty = self[type_id]
         if isinstance(ty, Type.OpaqueType):
             return True
         if isinstance(ty, Type.CPtrType):
@@ -100,11 +100,11 @@ class TypeCtx(IntrinsicIds):
 
     def is_c_abi_type(self, type_id: int, *, result: bool = False) -> bool:
         """Validate one scalar or native pointer in an extern C declaration."""
-        ty = self[self.resolve_aliases(type_id)]
+        ty = self[type_id]
         if result and isinstance(ty, Type.VoidType):
             return True
         if isinstance(ty, Type.CPtrType):
-            pointee = self[self.resolve_aliases(ty.pointee_type)]
+            pointee = self[ty.pointee_type]
             return isinstance(pointee, (Type.IntType, Type.OpaqueType)) \
                 or isinstance(pointee, Type.FloatType) and pointee.size in (4, 8) \
                 or isinstance(pointee, Type.CPtrType) and self.is_c_abi_type(ty.pointee_type)
@@ -201,7 +201,7 @@ class TypeCtx(IntrinsicIds):
         return self.__space.alloc_literal_value(value, value_type)
 
     def try_extract_array_length(self, array_type_id: int) -> int | None:
-        arr_ty = self[self.resolve_aliases(array_type_id)]
+        arr_ty = self[array_type_id]
         assert isinstance(arr_ty, Type.ArrayType)
         length_ty = self[arr_ty.length]
         if isinstance(length_ty, Type.LiteralValueType):
@@ -218,16 +218,14 @@ class TypeCtx(IntrinsicIds):
         return self.__space.alloc_opaque(name, span)
 
     def alloc_ref(self, pointee_type: int) -> int:
-        resolved = self.resolve_aliases(pointee_type)
-        if isinstance(self[resolved], Type.TraitType):
-            return self.alloc_trait_object(resolved)
+        if isinstance(self[pointee_type], Type.TraitType):
+            return self.alloc_trait_object(pointee_type)
         return self.__space.alloc_ref(pointee_type)
 
     def alloc_trait_object(self, trait_type_id: int) -> int:
-        canonical_trait = self.canonical(trait_type_id)
-        if not isinstance(self[canonical_trait], Type.TraitType):
+        if not isinstance(self[trait_type_id], Type.TraitType):
             raise CompilerError(f"{self.get_name(trait_type_id)} is not a trait type")
-        return self.__space.alloc_trait_object(canonical_trait)
+        return self.__space.alloc_trait_object(trait_type_id)
 
     def alloc_slice(self, element_type: int) -> int:
         return self.__space.alloc_slice(element_type)
@@ -235,10 +233,10 @@ class TypeCtx(IntrinsicIds):
     def alloc_array(self, element_type: int, length: int) -> int:
         return self.__space.alloc_array(element_type, length)
 
-    def alloc_tuple(self, element_types: list[int]) -> int:
+    def alloc_tuple(self, element_types: Sequence[int]) -> int:
         return self.__space.alloc_tuple(element_types)
 
-    def alloc_function_pointer(self, param_types: list[int], return_type: int) -> int:
+    def alloc_function_pointer(self, param_types: Sequence[int], return_type: int) -> int:
         return self.__space.alloc_function_pointer(param_types, return_type)
 
     def try_builtin_ctor(self, name: str, arg_ids: list[int]) -> int | None:
@@ -260,13 +258,11 @@ class TypeCtx(IntrinsicIds):
             return self.alloc_function_pointer(params_ty.element_types, arg_ids[1])
         return None
 
-    def alloc_alias(self, name: str, span: SrcSpan) -> int:
-        return self.__space.alloc_alias(name, span)
 
     def alloc_struct(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_struct(name, span)
 
-    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: list[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: Sequence[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
         return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics, span, field_spans)
 
     def alloc_enum(self, name: str, span: SrcSpan) -> int:
@@ -287,7 +283,10 @@ class TypeCtx(IntrinsicIds):
     def alloc_range(self, type_id: int) -> int:
         return self.__space.alloc_range(type_id)
 
-    def alloc_instance(self, type_id: int, generic_args: list[int]) -> int:
+    def bind_template(self, type_id: int, generics: Sequence[int], arguments: Sequence[int] | None = None) -> None:
+        self.__space.bind_template(type_id, generics, arguments)
+
+    def alloc_instance(self, type_id: int, generic_args: Sequence[int]) -> int:
         return self.__space.alloc_instance(type_id, generic_args)
 
     def instantiate(self, type_id: int, substs: dict[int, int]) -> int:
@@ -322,12 +321,9 @@ class TypeCtx(IntrinsicIds):
             return tuple(self.get_trait_methods(ty.trait_type_id).items())
         return self.__impl_registry.methods_of(type_id)
 
-    def canonical(self, type_id: int) -> int:
-        """Id of the type after resolving aliases at every level (see type_ops.canonical)."""
-        return type_ops.canonical(self, type_id)
 
     def is_same_type(self, left: int, right: int) -> bool:
-        """Whether two type ids name the same type, seeing through aliases."""
+        """Compare type identity, accepting the error type during recovery."""
         return type_ops.same(self, left, right)
 
     def is_zst(self, type_id: int) -> bool:
@@ -336,7 +332,6 @@ class TypeCtx(IntrinsicIds):
         See ``type_ops.is_zst`` for the recursive definition. Results are
         cached by resolved type_id in ``__zst_cache``.
         """
-        type_id = self.resolve_aliases(type_id)
         cached = self.__zst_cache.get(type_id)
         if cached is not None:
             return cached
@@ -364,18 +359,13 @@ class TypeCtx(IntrinsicIds):
         if type_id in self.__span_cache:
             return self.__span_cache[type_id]
         ty = self[type_id]
-        assert isinstance(ty, (Type.AliasType, Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType))
+        assert isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType))
         span = ty.custom_def.span
         self.__span_cache[type_id] = span
         return span
 
     def get_struct_fields(self, type_id: int) -> list[Type.StructField]:
-        """Return the fields of a struct type, with caching.
-
-        Reads the fields of the type the id stands for, so an alias of a struct
-        answers like the struct (and shares its cache entry).
-        """
-        type_id = self.resolve_aliases(type_id)
+        """Return the instantiated fields of a struct type, with caching."""
         if type_id in self.__fields_cache:
             return self.__fields_cache[type_id]
         ty = self[type_id]
@@ -395,12 +385,7 @@ class TypeCtx(IntrinsicIds):
         return None
 
     def get_enum_variants(self, type_id: int) -> list[Type.EnumVariant]:
-        """Return the variants of an enum type, with caching.
-
-        Reads the variants of the type the id stands for, so an alias of an enum
-        answers like the enum (and shares its cache entry).
-        """
-        type_id = self.resolve_aliases(type_id)
+        """Return the instantiated variants of an enum type, with caching."""
         if type_id in self.__variants_cache:
             return self.__variants_cache[type_id]
         ty = self[type_id]
@@ -417,12 +402,7 @@ class TypeCtx(IntrinsicIds):
         return None
 
     def get_params(self, type_id: int) -> list[Type.Parameter]:
-        """Return the parameters of a function or method type, with caching.
-
-        Reads the parameters of the type the id stands for, so an alias of a
-        function type answers like the function type.
-        """
-        type_id = self.resolve_aliases(type_id)
+        """Return the instantiated parameters of a function or method, with caching."""
         if type_id in self.__params_cache:
             return self.__params_cache[type_id]
         ty = self[type_id]
@@ -475,8 +455,7 @@ class TypeCtx(IntrinsicIds):
 
     def check_trait_object_safe(self, trait_type_id: int, span: SrcSpan) -> None:
         """Validate the trait restrictions required by its dynamic method table."""
-        resolved = self.resolve_aliases(trait_type_id)
-        trait_ty = self[resolved]
+        trait_ty = self[trait_type_id]
         if not isinstance(trait_ty, Type.TraitType):
             raise AnalysisError(f"'{self.get_name(trait_type_id)}' is not a trait", span)
         if len(trait_ty.generic_args) != len(trait_ty.custom_def.generics):
@@ -486,7 +465,6 @@ class TypeCtx(IntrinsicIds):
             )
 
         def contains_self(type_id: int, seen: set[int]) -> bool:
-            type_id = self.resolve_aliases(type_id)
             if type_id in seen:
                 return False
             seen.add(type_id)
@@ -512,7 +490,7 @@ class TypeCtx(IntrinsicIds):
                 return any(contains_self(item, seen) for item in ty.generic_args)
             return False
 
-        for method_name, method_id in self.get_trait_methods(resolved).items():
+        for method_name, method_id in self.get_trait_methods(trait_type_id).items():
             method_ty = self[method_id]
             assert isinstance(method_ty, Type.MethodType)
             if method_ty.custom_def.is_static:
@@ -559,7 +537,6 @@ class TypeCtx(IntrinsicIds):
     def __check_unsized_trait_values(self) -> None:
         """Reject trait markers in runtime value positions; only Trait& is sized."""
         def contains_unsized_trait(type_id: int, visiting: set[int]) -> bool:
-            type_id = self.resolve_aliases(type_id)
             if type_id in visiting:
                 return False
             visiting.add(type_id)
@@ -683,33 +660,6 @@ class TypeCtx(IntrinsicIds):
 
         return True
 
-    def resolve_aliases(self, type_id: int) -> int:
-        """Follow alias chains to the first non-alias concrete type.
-
-        For a generic alias instance (e.g. ``Ptr<i32>`` where
-        ``typedef Ptr<T> = T*``), the alias's generic arguments are
-        substituted into the aliased body before continuing.
-        """
-        visited: set[int] = set()
-        while True:
-            if type_id in visited:
-                raise CompilerError(f"Circular type alias detected: {self.get_name(type_id)}")
-            visited.add(type_id)
-            ty = self[type_id]
-            if isinstance(ty, Type.AliasType):
-                body = ty.custom_def.aliased_type
-                # A body of -1 means this alias was never reached by GlobalResolve:
-                # a cyclic declaration, or a use before the pass that fills bodies.
-                if body == -1:
-                    raise CompilerError(
-                        f"Type alias '{self.get_name(type_id)}' has no resolved body"
-                    )
-                if ty.custom_def.generics:
-                    substs = dict(zip(ty.custom_def.generics, ty.generic_args))
-                    body = self.instantiate(body, substs)
-                type_id = body
-            else:
-                return type_id
 
     def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None, *, automatic: bool = False) -> Impl:
         return self.__impl_registry.register_impl(span, generics, target, trait, conditions, automatic=automatic)
@@ -766,7 +716,7 @@ class TypeCtx(IntrinsicIds):
         matching method implementations at each level. Returns the first match
         with the fewest dereferences.
         """
-        receiver_type = self.resolve_aliases(receiver_type_id)
+        receiver_type = receiver_type_id
         cache_key = (receiver_type, method_name, tuple(generic_args or ()), tuple(arg_type_ids))
         if self.__memoize_enabled:
             cache = self.__method_lookup_cache
@@ -864,13 +814,7 @@ class TypeCtx(IntrinsicIds):
                     continue
 
                 final_substs = impl_substs | arg_substs
-                # Canonicalize the instance id: `Box<Code>` and `Box<u64>` are one
-                # type written two ways, and a method instance is monomorphized by
-                # its type id, so without this the same method would be checked
-                # and emitted twice.
-                final_method_id = self.canonical(
-                    self.instantiate(instantiated_method_id, final_substs)
-                )
+                final_method_id = self.instantiate(instantiated_method_id, final_substs)
                 candidates.append(LookupResult(method_id=final_method_id, deref_count=deref_count, impl=impl))
 
             if len(candidates) == 1:
@@ -885,7 +829,7 @@ class TypeCtx(IntrinsicIds):
             self.__method_lookup_cache[cache_key] = result
         return result
 
-    def __declared_method_generics(self, impl: Impl, method_name: str, method_ty: Type.MethodType) -> list[int]:
+    def __declared_method_generics(self, impl: Impl, method_name: str, method_ty: Type.MethodType) -> Sequence[int]:
         """Return method-owned generics without enclosing trait or impl parameters."""
         generics = method_ty.custom_def.generics
         if impl.trait is not None:
@@ -909,8 +853,7 @@ class TypeCtx(IntrinsicIds):
         Missing trait arguments are inferred from the selected implementation,
         independently of the expected result type of the surrounding expression.
         """
-        self_type_id = self.canonical(self_type_id)
-        trait_ty = self[self.resolve_aliases(trait_type_id)]
+        trait_ty = self[trait_type_id]
         if not isinstance(trait_ty, Type.TraitType):
             raise AnalysisError("trait-qualified call requires a trait", span)
         if len(trait_args) != len(trait_ty.custom_def.generics):
@@ -962,11 +905,11 @@ class TypeCtx(IntrinsicIds):
             conditioned = self.__impl_registry.infer_condition_substs(impl, substs, span)
             if conditioned is None:
                 continue
-            resolved_target = self.canonical(self.instantiate(impl.target, conditioned))
+            resolved_target = self.instantiate(impl.target, conditioned)
             if resolved_target != self_type_id:
                 continue
             resolved_trait = self.instantiate(impl.trait, conditioned)
-            final_method_id = self.canonical(self.instantiate(method_id, conditioned))
+            final_method_id = self.instantiate(method_id, conditioned)
             if self.contains_generic(resolved_trait) or self.contains_generic(final_method_id):
                 incomplete = True
                 continue
@@ -995,7 +938,7 @@ class TypeCtx(IntrinsicIds):
     ) -> LookupResult | None:
         if generic_args:
             return None
-        trait_ty = self[self.resolve_aliases(trait_type_id)]
+        trait_ty = self[trait_type_id]
         assert isinstance(trait_ty, Type.TraitType)
         methods = self.get_trait_methods(trait_type_id)
         method_id = methods.get(method_name)
@@ -1015,7 +958,7 @@ class TypeCtx(IntrinsicIds):
         try:
             for parameter, arg_type_id in zip(parameters, arg_type_ids):
                 inference.constrain(parameter.type_id, arg_type_id)
-            method_id = self.canonical(inference.instantiate(method_id))
+            method_id = inference.instantiate(method_id)
         except AnalysisError:
             return None
         synthetic_impl = Impl(

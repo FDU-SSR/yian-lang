@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from compiler.analysis.unit import hir as HIR
+from compiler.analysis.symbol.symbol import AliasSymbol
 from compiler.frontend.lex.position import SrcSpan
 from compiler.utils.tree_format import TreeFormatter
 
@@ -374,7 +375,8 @@ class HirTreeFormatter(TreeFormatter):
         for idx, (symbol_id, symbol) in enumerate(symbol_items):
             is_last = idx == len(symbol_items) - 1
             attrs = "[" + ", ".join(attr.value for attr in sorted(symbol.attributes, key=lambda attr: attr.value)) + "]"
-            res += self.render_line([], is_last, f"Symbol: id={symbol_id} name={symbol.name} kind={symbol.kind.value} type={symbol.type_id} attrs={attrs}")
+            identity = f"alias={symbol.alias_id.value}" if isinstance(symbol, AliasSymbol) else f"type={symbol.type_id}"
+            res += self.render_line([], is_last, f"Symbol: id={symbol_id} name={symbol.name} kind={symbol.kind.value} {identity} attrs={attrs}")
         return res
 
     def export_hir_bundle(self, unit_datas: Mapping[int, UnitData], def_points: Mapping[int, DefPoint]) -> str:

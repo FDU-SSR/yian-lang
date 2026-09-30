@@ -37,12 +37,6 @@ class GenericInference:
             expected_type_id: The type shape we want the actual type to satisfy.
             actual_type_id: The concrete type observed at the call site.
         """
-        # A declaration keeps the alias's own type id (an alias is a type in its
-        # own right, not a substitution), so look through aliases before matching.
-        # Generic parameters are exempt: they are the bindings being solved.
-        if not isinstance(self.__type_ctx[expected_type_id], (Type.GenericType, Type.ConstGenericType)):
-            expected_type_id = self.__type_ctx.resolve_aliases(expected_type_id)
-        actual_type_id = self.__type_ctx.resolve_aliases(actual_type_id)
         expected_ty = self.__type_ctx[expected_type_id]
 
         if isinstance(expected_ty, (Type.GenericType, Type.ConstGenericType)):
@@ -306,10 +300,6 @@ class GenericInference:
                     return type_id
                 return self.__type_ctx.alloc_instance(type_id, [self.__resolve_type(arg_type, resolving) for arg_type in generic_args])
             case Type.FunctionType(generic_args=generic_args):
-                if len(generic_args) == 0:
-                    return type_id
-                return self.__type_ctx.alloc_instance(type_id, [self.__resolve_type(arg_type, resolving) for arg_type in generic_args])
-            case Type.AliasType(generic_args=generic_args):
                 if len(generic_args) == 0:
                     return type_id
                 return self.__type_ctx.alloc_instance(type_id, [self.__resolve_type(arg_type, resolving) for arg_type in generic_args])

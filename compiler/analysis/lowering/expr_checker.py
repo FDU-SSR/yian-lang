@@ -8,7 +8,7 @@ from compiler.analysis.lowering.closure import ClosureHelper
 from compiler.analysis.lowering.op_builder import OpBuilder
 from compiler.analysis.lowering.pattern_checker import PatternChecker, PatternRoot
 from compiler.analysis.lowering.state import LoopFrame, DefinitionState
-from compiler.analysis.symbol.symbol import SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit import hir as HIR
@@ -174,16 +174,14 @@ class ExprChecker:
             return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
 
         symbol = self.__ctx.symbol_ctx.lookup(node.name.name)
-        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function):
+        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Function, SymbolKind.Alias):
             raise AnalysisError(f"Unknown type '{node.name.name}'", node.name.span)
 
         # A type written in an expression (`Point.new(...)`, `Pair<Meters>.of(...)`)
         # is a reference like any other: recording it is what lets navigation,
         # hover and member completion know what the receiver is.
-        self.__ctx.names.record(node.name.span, symbol, symbol.type_id)
-
-        type_id = self.__ctx.type_ctx.alloc_instance(symbol.type_id, generic_arg_ids)
-        type_id = self.__ctx.type_ctx.resolve_aliases(type_id)
+        type_id = self.__ctx.resolve_type_symbol(symbol, generic_arg_ids, node.span)
+        self.__ctx.names.record(node.name.span, symbol, type_id)
 
         if symbol.kind == SymbolKind.Function:
             self.__ctx.report_def(type_id)
@@ -198,7 +196,7 @@ class ExprChecker:
             case ASTTy.NamedType(name=name):
                 assert self.__ctx.symbol_ctx is not None
                 symbol = self.__ctx.symbol_ctx.lookup(name.name)
-                if symbol is not None and symbol.kind == SymbolKind.Constant:
+                if isinstance(symbol, Symbol) and symbol.kind == SymbolKind.Constant:
                     return self.__ctx.resolve_const_expr(
                         ASTTy.GenericConstExpr(span=name.span, name=name), self.__ctx.symbol_ctx
                     )
@@ -230,6 +228,11 @@ class ExprChecker:
                 return HIR.Ty(span=node.span, type_id=c_types[node.name], is_place=False)
             raise AnalysisError(f"Unknown identifier '{node.name}'", node.span)
 
+        if isinstance(symbol, AliasSymbol):
+            type_id = self.__ctx.resolve_type_symbol(symbol, span=node.span)
+            self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
+            return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
+
         # Record the declaration at the identifier span for navigation and hover.
         match symbol.kind:
             case SymbolKind.Variable:
@@ -238,7 +241,7 @@ class ExprChecker:
             case SymbolKind.Constant:
                 value, type_id = self.__ctx.constant_value(symbol)
                 self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
-                resolved_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+                resolved_type = self.__ctx.type_ctx[type_id]
                 if isinstance(resolved_type, Type.IntType):
                     assert type(value) is int
                     return HIR.IntLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
@@ -256,7 +259,7 @@ class ExprChecker:
                     return HIR.StrLiteral(span=node.span, value=value, type_id=type_id, is_place=False)
                 raise AnalysisError("constant value has an unsupported type", node.span)
             case SymbolKind.Function:
-                function_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(symbol.type_id)]
+                function_ty = self.__ctx.type_ctx[symbol.type_id]
                 if isinstance(function_ty, Type.FunctionType) and function_ty.custom_def.is_extern:
                     raise AnalysisError("extern C function cannot be used as a value", node.span)
                 if self.__ctx.type_ctx.contains_generic(symbol.type_id):
@@ -269,7 +272,7 @@ class ExprChecker:
                 self.__ctx.report_def(symbol.type_id)
                 return HIR.Ty(span=node.span, type_id=symbol.type_id, is_place=True)
             case SymbolKind.Type | SymbolKind.ConstGeneric:
-                type_id = self.__ctx.type_ctx.resolve_aliases(symbol.type_id)
+                type_id = symbol.type_id
                 ty = self.__ctx.type_ctx[type_id]
                 if isinstance(ty, Type.LiteralValueType):
                     self.__ctx.names.record(node.span, symbol, ty.value_type, synthetic=node.synthetic)
@@ -280,6 +283,8 @@ class ExprChecker:
                     return HIR.IntLiteral(span=node.span, value=ty.value, type_id=ty.value_type, is_place=False)
                 self.__ctx.names.record(node.span, symbol, type_id, synthetic=node.synthetic)
                 return HIR.Ty(span=node.span, type_id=type_id, is_place=False)
+            case SymbolKind.Alias:
+                raise AnalysisError("alias declaration requires an alias symbol", node.span)
 
     def __handle_literal(self, node: AST.Literal) -> HIR.Expr:
         literal = node.literal
@@ -361,12 +366,6 @@ class ExprChecker:
             "array repeat count must be a compile-time constant", span)
 
     def coerce(self, expr: HIR.Expr, expected: int) -> HIR.Expr:
-        # A declaration keeps the alias's own type id, so an alias and the type it
-        # stands for are two ids for one type: compare (and reshape) in resolved
-        # space.  The node keeps the annotated id, i.e. `expected`.
-        expected_resolved = self.__ctx.type_ctx.resolve_aliases(expected)
-        expr_resolved = self.__ctx.type_ctx.resolve_aliases(expr.type_id)
-
         if self.__ctx.type_ctx.is_same_type(expr.type_id, expected):
             return expr
         ch_coerce().trace(lambda: f"coerce {self.__ctx.type_ctx.get_name(expr.type_id)} -> {self.__ctx.type_ctx.get_name(expected)}")
@@ -375,8 +374,8 @@ class ExprChecker:
         if expr.type_id == TypeCtx.never_id:
             return expr
 
-        expected_ty = self.__ctx.type_ctx[expected_resolved]
-        expr_ty = self.__ctx.type_ctx[expr_resolved]
+        expected_ty = self.__ctx.type_ctx[expected]
+        expr_ty = self.__ctx.type_ctx[expr.type_id]
 
         if isinstance(expected_ty, Type.TraitObjectType):
             trait_type_id = expected_ty.trait_type_id
@@ -388,8 +387,7 @@ class ExprChecker:
                     expr.span,
                 )
             concrete_type_id = expr_ty.pointee_type
-            concrete_resolved = self.__ctx.type_ctx.resolve_aliases(concrete_type_id)
-            if isinstance(self.__ctx.type_ctx[concrete_resolved], Type.TraitObjectType):
+            if isinstance(self.__ctx.type_ctx[concrete_type_id], Type.TraitObjectType):
                 raise AnalysisError("trait-object upcasts are not supported", expr.span)
             if isinstance(expr, HIR.Unary) and expr.op == UnaryOperator.AddrOf and not expr.operand.is_place:
                 raise AnalysisError("cannot create a trait object from a temporary value", expr.span)
@@ -401,7 +399,7 @@ class ExprChecker:
                     expr.span,
                 )
             impl, substitutions = impl_match
-            trait_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(trait_type_id)]
+            trait_ty = self.__ctx.type_ctx[trait_type_id]
             assert isinstance(trait_ty, Type.TraitType)
             method_ids: list[int] = []
             for method_name, trait_method_id in self.__ctx.type_ctx.get_trait_methods(trait_type_id).items():
@@ -410,9 +408,7 @@ class ExprChecker:
                 if trait_method_ty.custom_def.is_static:
                     continue
                 impl_method_id = impl.methods[method_name]
-                concrete_method_id = self.__ctx.type_ctx.canonical(
-                    self.__ctx.type_ctx.instantiate(impl_method_id, substitutions)
-                )
+                concrete_method_id = self.__ctx.type_ctx.instantiate(impl_method_id, substitutions)
                 method_ids.append(concrete_method_id)
                 self.__ctx.report_def(concrete_method_id)
             return HIR.TraitObjectCoerce(
@@ -430,7 +426,7 @@ class ExprChecker:
         if (
             isinstance(expected_ty, Type.PointerType)
             and isinstance(expr_ty, Type.ArrayType)
-            and expected_resolved == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type)
+            and expected == self.__ctx.type_ctx.alloc_pointer(expr_ty.element_type)
         ):
             addr = HIR.Unary(
                 span=expr.span,
@@ -450,7 +446,7 @@ class ExprChecker:
         # Re-anchor T[N]* -> T* without copying the array.
         if isinstance(expected_ty, Type.PointerType) and isinstance(expr_ty, Type.PointerType):
             pointee_ty = self.__ctx.type_ctx[expr_ty.pointee_type]
-            if isinstance(pointee_ty, Type.ArrayType) and expected_resolved == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
+            if isinstance(pointee_ty, Type.ArrayType) and expected == self.__ctx.type_ctx.alloc_pointer(pointee_ty.element_type):
                 return HIR.BitCast(
                     span=expr.span,
                     value=expr,
@@ -463,7 +459,7 @@ class ExprChecker:
         # explicit annotation downgrades along T* → T[] → T&. The value-level
         # representation (dropping index/size fields) is codegen's job — here we
         # relabel via BitCast and let codegen re-shape the value.
-        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected_resolved == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
+        if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.SliceType) and expected == self.__ctx.type_ctx.alloc_slice(expr_ty.pointee_type):
             # Raw pointer mode: a bare `T*` carries no length, so downgrading it
             # to `T[]` would fabricate a size out of thin air. Reject it and ask
             # the user to materialize the slice explicitly.
@@ -482,10 +478,9 @@ class ExprChecker:
                 and isinstance(expr, HIR.Unary) and expr.op == UnaryOperator.AddrOf:
             expr.operand = self.coerce(expr.operand, expected_ty.pointee_type)
             expr.type_id = self.__ctx.type_ctx.alloc_pointer(expected_ty.pointee_type)
-            expr_resolved = self.__ctx.type_ctx.resolve_aliases(expr.type_id)
-            expr_ty = self.__ctx.type_ctx[expr_resolved]
+            expr_ty = self.__ctx.type_ctx[expr.type_id]
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
-                and expected_resolved == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
+                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.pointee_type):
             return HIR.BitCast(
                 span=expr.span,
                 value=expr,
@@ -495,7 +490,7 @@ class ExprChecker:
             )
 
         if isinstance(expr_ty, Type.SliceType) and isinstance(expected_ty, Type.RefType) \
-                and expected_resolved == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
+                and expected == self.__ctx.type_ctx.alloc_ref(expr_ty.element_type):
             return HIR.BitCast(
                 span=expr.span,
                 value=expr,
@@ -668,7 +663,7 @@ class ExprChecker:
             init_expr = self.coerce(init_expr, var_type_id)
         else:
             var_type_id = self.__ctx.resolve_type(stmt.var_type)
-            resolved_var_type = self.__ctx.type_ctx.resolve_aliases(var_type_id)
+            resolved_var_type = var_type_id
             if isinstance(self.__ctx.type_ctx[resolved_var_type], Type.TraitType):
                 raise AnalysisError("trait types are unsized; use 'Trait&' for a trait object", stmt.span)
             init_expr = self.coerce(self.value(stmt.init_expr), var_type_id) if stmt.init_expr is not None else None
@@ -690,7 +685,7 @@ class ExprChecker:
             type_id = self.__ctx.resolve_type(stmt.var_type)
             value = self.coerce(self.value(stmt.init_expr), type_id)
 
-        value_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        value_ty = self.__ctx.type_ctx[value.type_id]
         if isinstance(stmt.var_type, ASTTy.DeducedType) and isinstance(value_ty, Type.PointerType) and self.__pattern_tests_value(stmt.pattern):
             if not isinstance(value, HIR.Unary) or value.op != UnaryOperator.AddrOf:
                 raise AnalysisError("Pointer values cannot be destructured; use '&place'", stmt.pattern.span)
@@ -771,12 +766,12 @@ class ExprChecker:
         assert self.__ctx.symbol_ctx is not None
         value_expr = self.value(stmt.expr)
         value_expr.type_id = self.__ctx.type_ctx.default_literals(value_expr.type_id)
-        value_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)]
+        value_type = self.__ctx.type_ctx[value_expr.type_id]
         if isinstance(value_type, Type.PointerType):
             if not isinstance(value_expr, HIR.Unary) or value_expr.op != UnaryOperator.AddrOf:
                 raise AnalysisError("match does not accept pointer scrutinees; use '&value' or a reference", stmt.expr.span)
             value_expr = self.coerce(value_expr, self.__ctx.type_ctx.alloc_ref(value_type.pointee_type))
-            value_type = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value_expr.type_id)]
+            value_type = self.__ctx.type_ctx[value_expr.type_id]
         is_ref = isinstance(value_type, Type.RefType)
         matched_type_id = value_type.pointee_type if is_ref else value_expr.type_id
         arms: list[HIR.MatchArm] = []

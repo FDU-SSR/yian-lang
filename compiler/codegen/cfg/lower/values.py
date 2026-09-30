@@ -271,7 +271,7 @@ class ValueLowerer:
     def resolve_trait_object_coerce(self, expr: HIR.TraitObjectCoerce) -> IR.Value:
         value = self.__resolver.resolve_val(expr.value)
         source_ty = self.__state.session.type_ctx[
-            self.__state.session.type_ctx.resolve_aliases(value.type_id)
+            value.type_id
         ]
         reference_type_id = self.__state.session.type_ctx.alloc_ref(expr.concrete_type_id)
         if isinstance(source_ty, Type.PointerType):
@@ -302,7 +302,7 @@ class ValueLowerer:
         #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
         # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
         # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
-        to_resolved = self.__state.session.type_ctx.resolve_aliases(to_type)
+        to_resolved = to_type
         if isinstance(self.__state.session.type_ctx[to_resolved], Type.PointerType):
             _ch_block().debug(lambda: "cast ptr→ptr: identity (fat representation) / ptr-to-ZST 例外 = undef")
         raw = self.__state.pointers.is_raw(value)
@@ -320,8 +320,8 @@ class ValueLowerer:
             source_expr = expr.value
             target_type_id = expr.target_type
         value = self.__resolver.resolve_val(source_expr)
-        source_type = self.__state.session.type_ctx[self.__state.session.type_ctx.resolve_aliases(value.type_id)]
-        target_type = self.__state.session.type_ctx[self.__state.session.type_ctx.resolve_aliases(target_type_id)]
+        source_type = self.__state.session.type_ctx[value.type_id]
+        target_type = self.__state.session.type_ctx[target_type_id]
         if not self.__state.session.raw_pointers:
             if isinstance(source_type, Type.PointerType) and isinstance(target_type, Type.RefType):
                 # T& drops index/size, so the source must denote a real element

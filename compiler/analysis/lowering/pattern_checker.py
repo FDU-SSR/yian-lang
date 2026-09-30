@@ -36,7 +36,7 @@ class PatternChecker:
     def check(
         self, pattern: AST.Pattern, type_id: int, *, root_mode: PatternRoot, by_ref: bool,
     ) -> HIR.Pattern:
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        ty = self.__ctx.type_ctx[type_id]
         root_enum = root_mode is PatternRoot.TEST and isinstance(ty, Type.EnumType)
         return self.__check_pattern(pattern, type_id, root_enum, by_ref, {}, set(), False)
 
@@ -45,7 +45,7 @@ class PatternChecker:
         bindings: dict[str, int], seen: set[str], reuse: bool,
     ) -> HIR.Pattern:
         ctx = self.__ctx.type_ctx
-        ty = ctx[ctx.resolve_aliases(type_id)]
+        ty = ctx[type_id]
         if isinstance(ty, Type.RefType) and isinstance(pat, (
             AST.LiteralPattern, AST.RangePattern, AST.ConstructPattern,
             AST.TuplePattern, AST.SequencePattern,
@@ -126,7 +126,7 @@ class PatternChecker:
         binding_type = self.__ctx.type_ctx.alloc_ref(type_id) if by_ref else type_id
         if reuse:
             symbol_id = bindings.get(name.name)
-            if symbol_id is None or self.__ctx.symbol_ctx is None or not self.__ctx.type_ctx.is_same_type(self.__ctx.symbol_ctx.get(symbol_id).type_id, binding_type):
+            if symbol_id is None or self.__ctx.symbol_ctx is None or not self.__ctx.type_ctx.is_same_type(self.__ctx.symbol_ctx.get_typed(symbol_id).type_id, binding_type):
                 raise AnalysisError(f"OR binding '{name.name}' has a different type or mode", name.span)
         else:
             symbol_id = self.__ctx.declare_local(name, binding_type)
@@ -134,7 +134,7 @@ class PatternChecker:
         return HIR.BindPattern(name.span, type_id, symbol_id, inner)
 
     def __check_literal_pattern(self, pat: AST.LiteralPattern, type_id: int) -> HIR.LiteralPattern:
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        ty = self.__ctx.type_ctx[type_id]
         literal = pat.literal
         if isinstance(literal, Tok.IntLiteral):
             self.__check_integer_literal(literal, type_id)
@@ -169,10 +169,10 @@ class PatternChecker:
                 raise AnalysisError(f"Unknown intrinsic type suffix '{literal.suffix}'", literal.span)
             if not ctx.is_same_type(TypeCtx.intrinsic_type(intrinsic), type_id):
                 raise AnalysisError("Integer pattern suffix does not match the scrutinee type", literal.span)
-        self.__check_integer_value(literal.value, ctx[ctx.resolve_aliases(type_id)], literal.span)
+        self.__check_integer_value(literal.value, ctx[type_id], literal.span)
 
     def __pattern_endpoint(self, literal: Tok.IntLiteral | Tok.CharLiteral, type_id: int) -> int:
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        ty = self.__ctx.type_ctx[type_id]
         if isinstance(literal, Tok.IntLiteral):
             self.__check_integer_literal(literal, type_id)
             return literal.value
@@ -186,7 +186,7 @@ class PatternChecker:
         bindings: dict[str, int], seen: set[str], reuse: bool,
     ) -> HIR.EnumPattern:
         ctx = self.__ctx.type_ctx
-        enum_ty = ctx[ctx.resolve_aliases(type_id)]
+        enum_ty = ctx[type_id]
         assert isinstance(enum_ty, Type.EnumType)
         variant = enum_ty.get_variant_by_name(name.name, ctx)
         if variant is None:
@@ -196,7 +196,7 @@ class PatternChecker:
             return HIR.EnumPattern(span, variant, type_id, None)
         if variant.payload_type is None:
             raise AnalysisError(f"Variant '{name.name}' has no payload", span)
-        payload = ctx[ctx.resolve_aliases(variant.payload_type)]
+        payload = ctx[variant.payload_type]
         assert isinstance(payload, Type.StructType)
         fields = payload.get_fields(ctx)
         if positional is not None:

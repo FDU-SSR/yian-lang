@@ -1,0 +1,4 @@
+typedef A<T> = B<T*>;
+typedef B<T> = A<T[]>;
+
+fn main() {}

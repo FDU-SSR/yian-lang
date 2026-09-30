@@ -319,7 +319,7 @@ class StmtLowerer:
                 self.__branch_on(condition, failure)
             case HIR.RangePattern():
                 value = self.__memory.build_load(address)
-                ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+                ty = ctx[pattern.type_id]
                 lower: IR.Value = IR.CharLiteral(chr(pattern.lower), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.lower, pattern.type_id)
                 upper: IR.Value = IR.CharLiteral(chr(pattern.upper), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.upper, pattern.type_id)
                 self.__branch_on(self.__compare(BinaryOperator.Geq, value, lower), failure)
@@ -344,7 +344,7 @@ class StmtLowerer:
                     field_addr = self.__memory.build_field_ptr(address, index, fields[index].type_id)
                     self.__emit_pattern(sub, field_addr, failure, by_ref)
             case HIR.TuplePattern():
-                ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+                ty = ctx[pattern.type_id]
                 assert isinstance(ty, Type.TupleType)
                 for index, sub in enumerate(pattern.elements):
                     field_addr = self.__memory.build_field_ptr(address, index, ty.element_types[index])
@@ -356,7 +356,7 @@ class StmtLowerer:
         self, pattern: HIR.SequencePattern, address: IR.Value, failure: IR.Block, by_ref: bool,
     ) -> None:
         ctx = self.__state.session.type_ctx
-        ty = ctx[ctx.resolve_aliases(pattern.type_id)]
+        ty = ctx[pattern.type_id]
         assert isinstance(ty, (Type.ArrayType, Type.SliceType))
         needed = len(pattern.prefix) + len(pattern.suffix)
         elem_ptr_type = ctx.alloc_pointer(ty.element_type)
@@ -368,7 +368,7 @@ class StmtLowerer:
                 self.__state.emitter.terminate(IR.Br(failure))
                 self.__state.emitter.position(self.__state.emitter.new_block("match.array.impossible"))
                 return
-            base = self.__values.build_cast(address, ctx.alloc_pointer(pattern.type_id)) if isinstance(ctx[ctx.resolve_aliases(address.type_id)], Type.RefType) else address
+            base = self.__values.build_cast(address, ctx.alloc_pointer(pattern.type_id)) if isinstance(ctx[address.type_id], Type.RefType) else address
             data = self.__values.build_cast(base, elem_ptr_type)
             length_value: IR.Value = IR.IntLiteral(length, TypeCtx.u64_id)
         else:

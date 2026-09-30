@@ -819,7 +819,7 @@ class DefiniteAssignment:
         # Zero-sized variables carry no runtime data — they are vacuously
         # always initialized, so a use is never "before assignment".
         assert self.__symbol_ctx is not None
-        sym = self.__symbol_ctx.get(sym_id)
+        sym = self.__symbol_ctx.get_typed(sym_id)
         if self.__type_ctx.is_zst(sym.type_id):
             return
 
@@ -845,7 +845,7 @@ class DefiniteAssignment:
     def __var_name(self, sym_id: int) -> str:
         """Best-effort variable name for error messages."""
         if self.__symbol_ctx is not None:
-            sym = self.__symbol_ctx.get(sym_id)
+            sym = self.__symbol_ctx.get_typed(sym_id)
             return sym.name
         return f"<{sym_id}>"
 

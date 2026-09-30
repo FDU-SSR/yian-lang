@@ -83,10 +83,10 @@ class MemoryEmitter:
 
     def load(self, ptr: LLValue) -> LLValue:
         ptr_type = self.__type_ctx[
-            self.__type_ctx.resolve_aliases(ptr.type_id)
+            ptr.type_id
         ]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
-        pointee_type_id = self.__type_ctx.resolve_aliases(ptr_type.pointee_type)
+        pointee_type_id = ptr_type.pointee_type
         if self.__ll_type_ctx.is_zst(pointee_type_id):
             return self.__core.ir.undef(pointee_type_id)
         address = self.__pointers.fat_addr(ptr, pointee_type_id).ir_val if self.__pointers.is_fat(ptr) else ptr.ir_val
@@ -104,17 +104,17 @@ class MemoryEmitter:
         self.__store_memory_value(value, address)
 
     def gep(self, base: LLValue, indices: list[int]) -> LLValue:
-        base_type = self.__type_ctx[self.__type_ctx.resolve_aliases(base.type_id)]
+        base_type = self.__type_ctx[base.type_id]
         if isinstance(base_type, (Type.PointerType, Type.RefType)):
-            pointee_type_id = self.__type_ctx.resolve_aliases(base_type.pointee_type)
+            pointee_type_id = base_type.pointee_type
         else:
-            pointee_type_id = self.__type_ctx.resolve_aliases(base.type_id)
+            pointee_type_id = base.type_id
         if self.__ll_type_ctx.is_zst(pointee_type_id):
             return self.__core.ir.undef(self.__type_ctx.alloc_pointer(pointee_type_id))
 
         source_ll = self.__ll_type_ctx.get_ll_type(pointee_type_id).ir_type
         for idx in indices[1:]:
-            ty = self.__type_ctx[self.__type_ctx.resolve_aliases(pointee_type_id)]
+            ty = self.__type_ctx[pointee_type_id]
             if isinstance(ty, Type.StructType):
                 fields = self.__type_ctx.get_struct_fields(ty.type_id)
                 pointee_type_id = fields[idx].type_id
@@ -211,12 +211,12 @@ class MemoryEmitter:
         )
 
     def __pointee_type_id(self, pointer_type_id: int) -> int:
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(pointer_type_id)]
+        ty = self.__type_ctx[pointer_type_id]
         assert isinstance(ty, Type.PointerType), type(ty).__name__
         return ty.pointee_type
 
     def __is_bool_type(self, type_id: int) -> bool:
-        resolved = self.__type_ctx.resolve_aliases(type_id)
+        resolved = type_id
         return isinstance(self.__type_ctx[resolved], Type.BoolType)
 
     def __load_memory_value(self, type_id: int, address: ir.Value) -> ir.Value:

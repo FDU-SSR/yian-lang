@@ -22,6 +22,7 @@ from typing import Protocol
 
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.ty import ty as Type
+from compiler.analysis.symbol.symbol import AliasSymbol
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
@@ -420,7 +421,7 @@ def __declaration(
     type_name = None
     if type_ctx is not None:
         symbol = unit.symbol_ctx.lookup_global(name)
-        if symbol is not None:
+        if symbol is not None and not isinstance(symbol, AliasSymbol):
             type_name = type_ctx.get_name(symbol.type_id)
     return Declaration(
         name=name,
@@ -441,7 +442,7 @@ def __fields(
     if type_ctx is None:
         return []
     symbol = unit.symbol_ctx.lookup_global(container)
-    if symbol is None:
+    if symbol is None or isinstance(symbol, AliasSymbol):
         return []
     return [
         Declaration(
@@ -465,7 +466,7 @@ def __variants(
     if type_ctx is None:
         return []
     symbol = unit.symbol_ctx.lookup_global(container)
-    if symbol is None:
+    if symbol is None or isinstance(symbol, AliasSymbol):
         return []
     declarations: list[Declaration] = []
     for variant in type_ctx.get_enum_variants(symbol.type_id):

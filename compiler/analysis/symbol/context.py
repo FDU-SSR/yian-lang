@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from compiler.analysis.symbol.symbol import Symbol, SymbolAttribute, SymbolKind
+from compiler.analysis.symbol.symbol import AliasDefId, AliasSymbol, Symbol, SymbolAttribute, SymbolKind
 from compiler.analysis.ty.intrinsics import IntrinsicIds
 from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
@@ -28,7 +28,7 @@ class Scope:
 class SymbolCtx:
     def __init__(self):
         self.allows_ffi = False
-        self.__all_symbols: dict[int, Symbol] = {}  # symbol_id -> Symbol
+        self.__all_symbols: dict[int, Symbol | AliasSymbol] = {}
         self.__next_id_holder: list[int] = [0]
         self.__current_scope = Scope(symbols={}, parent=None)
 
@@ -148,14 +148,38 @@ class SymbolCtx:
         self.__next_id_holder[0] = max(self.__next_id_holder[0], symbol_id + 1)
         return True
 
-    def get(self, symbol_id: int) -> Symbol:
+    def add_alias(self, name: str, alias_id: AliasDefId,
+                  attributes: set[SymbolAttribute], span: SrcSpan | None) -> int | None:
+        if name in self.__current_scope.symbols:
+            return None
+        self.__ensure_all_owned()
+        self.__ensure_scope_owned()
+        symbol_id = self.__next_symbol_id()
+        self.__current_scope.symbols[name] = symbol_id
+        self.__all_symbols[symbol_id] = AliasSymbol(symbol_id, name, alias_id, attributes, span)
+        if (SymbolAttribute.Public in attributes or SymbolAttribute.FfiPublic in attributes) and self.__current_scope.parent is None:
+            self.__ensure_exportable_owned()
+            self.__exportable_symbols[name] = symbol_id
+        return symbol_id
+
+    def get(self, symbol_id: int) -> Symbol | AliasSymbol:
         """Gets a symbol by its ID."""
         return self.__all_symbols[symbol_id]
+
+    def get_typed(self, symbol_id: int) -> Symbol:
+        symbol = self.get(symbol_id)
+        if isinstance(symbol, AliasSymbol):
+            raise CompilerError("a value or nominal declaration cannot be an alias symbol")
+        return symbol
+
+    def lookup_typed(self, name: str) -> Symbol | None:
+        symbol = self.lookup(name)
+        return symbol if isinstance(symbol, Symbol) else None
 
     def items(self):
         return self.__all_symbols.items()
 
-    def lookup(self, name: str) -> Symbol | None:
+    def lookup(self, name: str) -> Symbol | AliasSymbol | None:
         """Looks up a symbol by name in the current scope and its parents."""
         scope = self.__current_scope
         while scope is not None:
@@ -164,14 +188,14 @@ class SymbolCtx:
             scope = scope.parent
         return None  # Symbol not found
 
-    def lookup_exportable(self, name: str) -> Symbol | None:
+    def lookup_exportable(self, name: str) -> Symbol | AliasSymbol | None:
         """Looks up an exportable symbol by name."""
         symbol_id = self.__exportable_symbols.get(name)
         if symbol_id is not None:
             return self.__all_symbols[symbol_id]
         return None
 
-    def lookup_global(self, name: str) -> Symbol | None:
+    def lookup_global(self, name: str) -> Symbol | AliasSymbol | None:
         """Looks up a name in the unit's top-level scope only.
 
         Unlike :meth:`lookup_exportable`, this also finds symbols that were

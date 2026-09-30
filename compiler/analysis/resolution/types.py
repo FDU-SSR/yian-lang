@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 from compiler.analysis.const_eval import ConstantExpressionEvaluator, ConstantValue
 from compiler.analysis.error import AnalysisError
 from compiler.analysis.facts.names import NameReferences
-from compiler.analysis.symbol.symbol import Symbol, SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
+from compiler.analysis.resolution.aliases import AliasRegistry
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
-from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import IntLiteral
-from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
                                               GenericConstExpr,
@@ -29,12 +28,12 @@ class TypeResolver:
         type_ctx: TypeCtx,
         names: NameReferences,
         constant_value: Callable[[Symbol], tuple[ConstantValue, int]],
+        aliases: AliasRegistry,
     ):
         self.__ctx = type_ctx
         self.__names = names
         self.__constant_value = constant_value
-        self.__aliases: dict[int, tuple[AST.Alias, SymbolCtx]] = {}
-        self.__filling_aliases: set[int] = set()
+        self.__aliases = aliases
         self.__const_eval = ConstantExpressionEvaluator(
             type_ctx, lambda _type_id: 0, "type-level constant expression"
         )
@@ -57,66 +56,30 @@ class TypeResolver:
     }
 
     def resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
-        """
-        Resolve an ASTType to a type ID in the type context.
-
-        This is used during type checking to convert the types written in the
-        source code (AST) to the internal type representation. A name that refers
-        to an alias retains the alias's own type ID. Its body is resolved in the
-        definition scope on demand, independently of declaration order.
-        Consumers inspect the underlying type with :meth:`TypeCtx.resolve_aliases`.
-        """
+        """Resolve source syntax to a semantic type, expanding transparent aliases."""
         return self.__resolve(ty, symbol_ctx)
 
     def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         """Resolve a type-level integer expression to its constant type ID."""
         return self.__resolve_const_expr(const_expr, symbol_ctx)
 
-    def register_alias(self, type_id: int, definition: AST.Alias, symbol_ctx: SymbolCtx) -> None:
-        """Retain a definition scope for demand-driven alias body resolution."""
-        ty = self.__ctx[type_id]
-        if not isinstance(ty, Type.AliasType):
-            raise CompilerError("alias registration requires an alias type")
-        self.__aliases[id(ty.custom_def)] = definition, symbol_ctx.clone()
-
-    def resolve_alias(self, type_id: int) -> None:
-        """Fill an alias body before a consumer inspects its concrete kind."""
-        ty = self.__ctx[type_id]
-        if not isinstance(ty, Type.AliasType) or ty.custom_def.aliased_type != -1:
-            return
-        key = id(ty.custom_def)
-        entry = self.__aliases.get(key)
-        if entry is None:
-            return
-        definition, symbol_ctx = entry
-        if key in self.__filling_aliases:
-            raise AnalysisError(f"Circular type alias: {definition.name.name}", definition.span)
-        self.__filling_aliases.add(key)
-        symbol_ctx.enter_scope()
-        try:
-            for parameter, generic_id in zip(definition.generics, ty.custom_def.generics):
-                kind = (
-                    SymbolKind.ConstGeneric
-                    if isinstance(parameter, AST.ConstGenericParam)
-                    else SymbolKind.Type
-                )
-                symbol_ctx.add_symbol(
-                    parameter.name.name, kind, generic_id, span=parameter.name.span
-                )
-            ty.custom_def.aliased_type = self.resolve(definition.target, symbol_ctx)
-        finally:
-            symbol_ctx.exit_scope()
-            self.__filling_aliases.discard(key)
+    def resolve_symbol(self, symbol: Symbol | AliasSymbol, arguments: list[int] | None = None,
+                       span: SrcSpan | None = None) -> int:
+        """Apply declaration parameters before producing a semantic type ID."""
+        use_span = span or symbol.span or SrcSpan.empty()
+        if isinstance(symbol, AliasSymbol):
+            if arguments is None:
+                return self.__aliases.template(symbol.alias_id)
+            return self.__aliases.apply(symbol.alias_id, arguments, use_span)
+        if arguments is None:
+            return symbol.type_id
+        ty = self.__ctx[symbol.type_id]
+        if not isinstance(ty, Type.CustomType) or len(arguments) != len(ty.custom_def.generics):
+            raise AnalysisError("Generic argument count mismatch", use_span)
+        return self.__ctx.alloc_instance(symbol.type_id, arguments)
 
     def __resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
-        """Resolve *ty* without collapsing its top-level alias.
-
-        Sub-components are resolved through the public :meth:`resolve`. A
-        NamedType/InstanceType that names an alias is returned uncollapsed, both
-        so a generic alias (``typedef Ptr<T> = T*``) can be instantiated with its
-        arguments before its body is substituted, and so the alias keeps its own
-        identity where it is used.
-        """
+        """Resolve each type constructor from its semantic components."""
         match ty:
             case ASTTy.IntType(signed=signed, width=width):
                 return self.INT_MAPPING[(signed, width)]
@@ -171,13 +134,14 @@ class TypeResolver:
                 symbol = symbol_ctx.lookup(name.name)
                 if symbol is None:
                     raise AnalysisError(f"Undefined type: {name}", ty.span)
-                if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric):
+                if symbol.kind not in (SymbolKind.Type, SymbolKind.ConstGeneric, SymbolKind.Alias):
                     raise AnalysisError(f"{name} is not a type", ty.span)
                 # Record the name as written: editors navigate and hover type
                 # annotations, which no HIR expression represents.
-                self.__names.record(name.span, symbol.type_id)
-                self.resolve_alias(symbol.type_id)
-                return symbol.type_id
+                type_id = self.resolve_symbol(symbol, span=name.span)
+                self.__check_alias_access(symbol, symbol_ctx, name.span)
+                self.__names.record(name.span, symbol, type_id)
+                return type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
                 # Hardcoded type constructors (Tuple / Fn) are not
                 # registered symbols — intercept by name first.
@@ -185,6 +149,12 @@ class TypeResolver:
                 if isinstance(base, ASTTy.NamedType):
                     type_id = self.__ctx.try_builtin_ctor(base.name.name, arg_ids)
                     if type_id is not None:
+                        return type_id
+                    symbol = symbol_ctx.lookup(base.name.name)
+                    if symbol is not None and symbol.kind in (SymbolKind.Type, SymbolKind.Alias):
+                        type_id = self.resolve_symbol(symbol, arg_ids, ty.span)
+                        self.__check_alias_access(symbol, symbol_ctx, ty.span)
+                        self.__names.record(base.name.span, symbol, type_id)
                         return type_id
                 base_type_id = self.__resolve(base, symbol_ctx)
                 return self.__ctx.alloc_instance(base_type_id, arg_ids)
@@ -194,6 +164,11 @@ class TypeResolver:
                 return self.__ctx.alloc_function_pointer(param_type_ids, return_type_id)
             case ASTTy.DeducedType():
                 raise AnalysisError("Cannot resolve deduced type '_'", ty.span)
+
+    def __check_alias_access(self, symbol: Symbol | AliasSymbol, scope: SymbolCtx, span: SrcSpan) -> None:
+        if isinstance(symbol, AliasSymbol) and not scope.allows_ffi \
+                and self.__ctx.contains_ffi_type(self.__aliases.template(symbol.alias_id)):
+            raise AnalysisError("C ABI types require FFI permission", span)
 
     def __check_trait_ref_arguments(
         self,
@@ -205,19 +180,18 @@ class TypeResolver:
         if not isinstance(ast_type, ASTTy.NamedType):
             return
         symbol = symbol_ctx.lookup(ast_type.name.name)
-        if symbol is None or symbol.kind is not SymbolKind.Type:
+        if symbol is None or symbol.kind not in (SymbolKind.Type, SymbolKind.Alias):
             return
-        declared_ty = self.__ctx[symbol.type_id]
-        if isinstance(declared_ty, Type.AliasType) and declared_ty.custom_def.generics \
-                and declared_ty.generic_args == declared_ty.custom_def.generics:
+        if isinstance(self.__ctx[type_id], Type.TraitType) \
+                and isinstance(symbol, AliasSymbol) and self.__aliases.generics(symbol.alias_id):
             raise AnalysisError(
                 f"trait object type '{self.__ctx.get_name(type_id)}' requires all generic arguments",
                 ast_type.span,
             )
-        trait_type_id = self.__ctx.resolve_aliases(type_id)
+        trait_type_id = type_id
         trait_ty = self.__ctx[trait_type_id]
         if isinstance(trait_ty, Type.TraitType) and trait_ty.custom_def.generics \
-                and trait_ty.generic_args == trait_ty.custom_def.generics:
+                and trait_ty.generic_args == tuple(trait_ty.custom_def.generics):
             raise AnalysisError(
                 f"trait object type '{self.__ctx.get_name(trait_type_id)}' requires all generic arguments",
                 ast_type.span,
@@ -232,10 +206,12 @@ class TypeResolver:
                 symbol = symbol_ctx.lookup(name.name)
                 if symbol is None:
                     raise AnalysisError(f"Undefined const generic '{name.name}'", const_expr.span)
+                if isinstance(symbol, AliasSymbol):
+                    raise AnalysisError(f"'{name.name}' is not a compile-time constant", const_expr.span)
                 if symbol.kind == SymbolKind.Constant:
                     value, value_type = self.__constant_value(symbol)
                     self.__names.record(name.span, symbol, value_type)
-                    value_ty = self.__ctx[self.__ctx.resolve_aliases(value_type)]
+                    value_ty = self.__ctx[value_type]
                     if type(value) is int and isinstance(value_ty, Type.IntType):
                         return self.__ctx.alloc_literal_value(value, value_type)
                     if type(value) is bool and isinstance(value_ty, Type.BoolType):
@@ -268,7 +244,7 @@ class TypeResolver:
                 return self.__resolve_const_expr(arg, symbol_ctx)
             case ASTTy.NamedType(name=name):
                 symbol = symbol_ctx.lookup(name.name)
-                if symbol is not None and symbol.kind == SymbolKind.Constant:
+                if isinstance(symbol, Symbol) and symbol.kind == SymbolKind.Constant:
                     return self.__resolve_const_expr(
                         ASTTy.GenericConstExpr(span=name.span, name=name), symbol_ctx
                     )
@@ -290,6 +266,8 @@ class TypeResolver:
                 symbol = symbol_ctx.lookup(name.name)
                 if symbol is None:
                     raise AnalysisError(f"Undefined const generic '{name.name}'", expr.span)
+                if isinstance(symbol, AliasSymbol):
+                    raise AnalysisError(f"'{name.name}' is not a compile-time integer", expr.span)
                 if symbol.kind == SymbolKind.Constant:
                     value, value_type = self.__constant_value(symbol)
                     self.__names.record(name.span, symbol, value_type)
@@ -303,7 +281,7 @@ class TypeResolver:
                     return None, symbol.type_id
                 if symbol.kind == SymbolKind.Type:
                     self.__names.record(name.span, symbol, symbol.type_id)
-                    ty = self.__ctx[self.__ctx.resolve_aliases(symbol.type_id)]
+                    ty = self.__ctx[symbol.type_id]
                     if isinstance(ty, Type.LiteralValueType) and type(ty.value) is int:
                         return ty.value, ty.value_type
                 raise AnalysisError(f"'{name.name}' is not a compile-time integer", expr.span)
@@ -338,7 +316,7 @@ class TypeResolver:
         raise AnalysisError(f"Unsupported const expression: {expr}", expr.span)
 
     def __is_integer_type(self, type_id: int) -> bool:
-        return isinstance(self.__ctx[self.__ctx.resolve_aliases(type_id)], Type.IntType)
+        return isinstance(self.__ctx[type_id], Type.IntType)
 
     def __integer_literal_type(self, suffix: str | None, default: int, span: SrcSpan) -> int:
         if suffix is None:

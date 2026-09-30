@@ -1,0 +1,37 @@
+struct Pair<A, B> { pub first: A, pub second: B }
+
+typedef Reverse<A, B> = Pair<B, A>;
+typedef Twice<T> = Pair<T, T>;
+typedef First<A, B> = A;
+typedef Chain<A, B> = Reverse<B, A>;
+typedef Count = u64;
+typedef Array<T, const N: Count> = T[N];
+
+enum Choice<T> { Empty, Value { value: T } }
+typedef AliasChoice<T> = Choice<T>;
+
+impl<A, B> Pair<A, B> {
+    pub static fn of(first: A, second: B) -> Pair<A, B> {
+        Pair<A, B>(first, second)
+    }
+}
+
+fn identity<T>(value: T) -> T { value }
+
+fn main() {
+    let swapped: Pair<u64, i32> = Reverse<i32, u64>.of(7u64, 8i32);
+    assert swapped.first == 7u64 && swapped.second == 8i32;
+    let chain: Pair<i32, u64> = Chain<i32, u64>(9i32, 10u64);
+    assert identity<Chain<i32, u64>>(chain).first == 9i32;
+    let repeated: Pair<i32, i32> = Twice<i32>(11, 12);
+    assert repeated.second == 12;
+    let scalar: First<i32, u64> = 13;
+    assert scalar == 13;
+    let array: Array<i32, 3> = [1, 2, 3];
+    assert array[2] == 3;
+    let option: Choice<i32> = AliasChoice<i32>.Value(14);
+    match option {
+        AliasChoice<i32>.Value(value) => { assert value == 14; },
+        AliasChoice<i32>.Empty => { assert false; },
+    }
+}

@@ -64,7 +64,7 @@ class PatternCoverageQueries:
         while query and isinstance(query[0], HIR.WildcardPattern) and all(
             isinstance(row[0], HIR.WildcardPattern) for row in rows
         ):
-            ty = self.__ctx[self.__ctx.resolve_aliases(types[0])]
+            ty = self.__ctx[types[0]]
             # A wildcard column covered by every row cannot affect usefulness,
             # even when its type contains recursive references.
             if not rows and not isinstance(ty, (
@@ -80,7 +80,7 @@ class PatternCoverageQueries:
             return ["_"] * skipped if not rows else None
         head = query[0]
         if not rows and isinstance(head, HIR.WildcardPattern):
-            type_id = self.__ctx.resolve_aliases(types[0])
+            type_id = types[0]
             if type_id in seen_uncovered:
                 # A repeated wildcard column adds no finite structural
                 # constraint; sibling columns may still be uninhabited.
@@ -136,7 +136,7 @@ class PatternCoverageQueries:
 
     def __constructors(self, type_id: int, patterns: list[HIR.Pattern]) -> list[_Constructor]:
         ctx = self.__ctx
-        ty = ctx[ctx.resolve_aliases(type_id)]
+        ty = ctx[type_id]
         if isinstance(ty, Type.NeverType):
             return []
         if isinstance(ty, Type.RefType):

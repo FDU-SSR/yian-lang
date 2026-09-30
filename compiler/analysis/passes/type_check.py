@@ -140,7 +140,7 @@ class TypeCheck:
             if isinstance(procedure_ty, Type.MethodType):
                 receiver_type_id = procedure_ty.receiver_type(self.__ctx.type_ctx)
                 receiver_ty = self.__ctx.type_ctx[
-                    self.__ctx.type_ctx.resolve_aliases(receiver_type_id)
+                    receiver_type_id
                 ]
                 if isinstance(receiver_ty, Type.SelfType):
                     continue
@@ -262,7 +262,7 @@ class TypeCheck:
     def __register_main(self, unit: UnitData, item: AST.FuncDef) -> None:
         if item.generics:
             raise AnalysisError("The 'main' function cannot have generics", item.span)
-        symbol = unit.symbol_ctx.lookup("main")
+        symbol = unit.symbol_ctx.lookup_typed("main")
         assert symbol is not None
 
         main_ty = self.__ctx.type_ctx[symbol.type_id]

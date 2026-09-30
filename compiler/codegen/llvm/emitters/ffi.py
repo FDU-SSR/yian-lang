@@ -22,7 +22,7 @@ class FfiEmitter:
 
     def addr(self, reference: LLValue, result_type: int) -> LLValue:
         type_ctx = self.__core.context.type_ctx
-        ty = type_ctx[type_ctx.resolve_aliases(reference.type_id)]
+        ty = type_ctx[reference.type_id]
         assert isinstance(ty, Type.RefType)
         self.__safety.check_ref_access(reference)
         address = self.__pointers.fat_addr(reference, ty.pointee_type)
@@ -34,7 +34,7 @@ class FfiEmitter:
         length = self.__view_length(view)
         result = self.__core.ir.undef(result_type)
         type_ctx = self.__core.context.type_ctx
-        element_type = type_ctx[type_ctx.resolve_aliases(view.type_id)]
+        element_type = type_ctx[view.type_id]
         pointee = element_type.element_type if isinstance(element_type, Type.SliceType) else type_ctx.u8_id
         result = self.__core.ir.insert_value(result, LLValue(type_ctx.alloc_cptr(pointee), data), 0)
         return self.__core.ir.insert_value(result, LLValue(type_ctx.u64_id, length), 1)
@@ -71,6 +71,5 @@ class FfiEmitter:
         return self.__core.flow.builder.extract_value(view.ir_val, index)  # type: ignore
 
     def __check_view(self, view: LLValue) -> None:
-        type_ctx = self.__core.context.type_ctx
-        resolved = type_ctx.resolve_aliases(view.type_id)
+        resolved = view.type_id
         self.__safety.check_view_access(LLValue(resolved, view.ir_val))

@@ -1,0 +1,7 @@
+pub typedef Count = u64;
+typedef Scalar = i32;
+pub typedef Value = Scalar;
+pub typedef Array<T, const N: Count> = T[N];
+
+pub struct Link { pub value: Value, pub next: Option<Node*> }
+pub typedef Node = Link;

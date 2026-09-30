@@ -129,7 +129,7 @@ class ArrayType:
 @dataclass
 class TupleType:
     type_id: int
-    element_types: list[int]
+    element_types: tuple[int, ...]
 
 
 @dataclass
@@ -186,7 +186,7 @@ class StructField:
 class StructDef:
     name: str
     span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
+    generics: tuple[int, ...] = ()
     fields: list[StructField] = field(default_factory=list[StructField])
     unit_id: int = -1
 
@@ -195,7 +195,7 @@ class StructDef:
 class StructType:
     type_id: int
     custom_def: StructDef
-    generic_args: list[int] = field(default_factory=list[int])
+    generic_args: tuple[int, ...] = ()
 
     @property
     def unit_id(self) -> int:
@@ -241,7 +241,7 @@ class EnumVariant:
 class EnumDef:
     name: str
     span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
+    generics: tuple[int, ...] = ()
     variants: list[EnumVariant] = field(default_factory=list[EnumVariant])
     unit_id: int = -1
 
@@ -250,7 +250,7 @@ class EnumDef:
 class EnumType:
     type_id: int
     custom_def: EnumDef
-    generic_args: list[int] = field(default_factory=list[int])
+    generic_args: tuple[int, ...] = ()
 
     @property
     def unit_id(self) -> int:
@@ -299,7 +299,7 @@ class Parameter:
 class FunctionDef:
     name: str
     span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
+    generics: tuple[int, ...] = ()
     parameters: list[Parameter] = field(default_factory=list[Parameter])
     return_type: int = -1
     is_ffi: bool = False
@@ -311,7 +311,7 @@ class FunctionDef:
 class FunctionType:
     type_id: int
     custom_def: FunctionDef
-    generic_args: list[int] = field(default_factory=list[int])
+    generic_args: tuple[int, ...] = ()
 
     def return_type(self, context: TypeCtx) -> int:
         substs = dict(zip(self.custom_def.generics, self.generic_args))
@@ -338,7 +338,7 @@ class FunctionType:
 class MethodDef:
     name: str
     span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
+    generics: tuple[int, ...] = ()
     receiver_type: int = -1
     parameters: list[Parameter] = field(default_factory=list[Parameter])
     return_type: int = -1
@@ -352,7 +352,7 @@ class MethodDef:
 class MethodType:
     type_id: int
     custom_def: MethodDef
-    generic_args: list[int] = field(default_factory=list[int])
+    generic_args: tuple[int, ...] = ()
 
     @property
     def is_static(self) -> bool:
@@ -382,7 +382,7 @@ class MethodType:
 class TraitDef:
     name: str
     span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
+    generics: tuple[int, ...] = ()
     methods: dict[str, int] = field(default_factory=dict[str, int])  # method name -> method type id
 
 
@@ -390,7 +390,7 @@ class TraitDef:
 class TraitType:
     type_id: int
     custom_def: TraitDef
-    generic_args: list[int] = field(default_factory=list[int])
+    generic_args: tuple[int, ...] = ()
 
     def get_methods(self, context: TypeCtx) -> dict[str, int]:
         substs = dict(zip(self.custom_def.generics, self.generic_args))
@@ -410,23 +410,12 @@ class TraitType:
 @dataclass
 class FunctionPointerType:
     type_id: int
-    parameter_types: list[int]
+    parameter_types: tuple[int, ...]
     return_type: int
 
 
-@dataclass
-class AliasDef:
-    name: str
-    span: SrcSpan
-    generics: list[int] = field(default_factory=list[int])
-    aliased_type: int = -1
 
 
-@dataclass
-class AliasType:
-    type_id: int
-    custom_def: AliasDef
-    generic_args: list[int] = field(default_factory=list[int])
 
 
 BasicType: TypeAlias = (
@@ -459,7 +448,7 @@ class ClosureType:
 
 CustomType: TypeAlias = (
     StructType | EnumType | TraitType
-    | MethodType | FunctionType | AliasType
+    | MethodType | FunctionType
 )
 
 Ty: TypeAlias = BasicType | DerivedType | CustomType | ClosureType | GenericType | SelfType | ConstGenericType | LiteralValueType

@@ -137,10 +137,10 @@ class _CheckPlanner:
     # 各规则的决定（与下降期逐条等价）
     # ------------------------------------------------------------------
 
-    def __plan_access(self, ptr: IR.Value, *, resolve_aliases: bool) -> None:
+    def __plan_access(self, ptr: IR.Value) -> None:
         """R4/R5：Load/Store 的访问前检（T& 只查 live；胖指针查 safe_access 或合取）。"""
         type_ctx = self.__ctx.type_ctx
-        type_id = type_ctx.resolve_aliases(ptr.type_id) if resolve_aliases else ptr.type_id
+        type_id = ptr.type_id
         ptr_type = type_ctx[type_id]
         frame_locked = self.__prov.is_frame_locked(ptr) or self.__prov.is_live_known(ptr)
         live_covered = frame_locked or self.__dedup(self.__live_key(ptr))
@@ -223,12 +223,8 @@ class _CheckPlanner:
             case IR.CheckRequest():
                 self.__plan_marker(stmt)
                 return
-            case IR.Load(ptr=ptr):
-                self.__plan_access(ptr, resolve_aliases=True)
-            case IR.EnumIsVariant(address=ptr):
-                self.__plan_access(ptr, resolve_aliases=True)
-            case IR.Store(ptr=ptr):
-                self.__plan_access(ptr, resolve_aliases=False)
+            case IR.Load(ptr=ptr) | IR.EnumIsVariant(address=ptr) | IR.Store(ptr=ptr):
+                self.__plan_access(ptr)
             case IR.ElementPtr(result=reg, base=base, offset=offset):
                 self.__plan_element_ptr(base, offset)
                 self.__out.append(stmt)

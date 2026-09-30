@@ -187,19 +187,17 @@ class OpBuilder:
 
     def build_field_access(self, span: SrcSpan, receiver: AST.Expr, field_name: str) -> HIR.Expr:
         receiver_hir = self.__evaluator.value(receiver)
-        # An alias is a type of its own: `typedef Point = Vec2` must still allow
-        # `point.x`, so look through aliases before reading the receiver's shape.
-        receiver_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver_hir.type_id)]
+        receiver_ty = self.__type_ctx[receiver_hir.type_id]
 
         # auto-deref: only handle PointerType, NOT the Deref trait
         while isinstance(receiver_ty, (Type.PointerType, Type.RefType)):
             receiver_hir = HIR.Unary(span, UnaryOperator.Deref, receiver_hir, receiver_ty.pointee_type, is_place=True)
-            receiver_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver_ty.pointee_type)]
+            receiver_ty = self.__type_ctx[receiver_ty.pointee_type]
 
         if isinstance(receiver_ty, Type.StructType):
             return self.__build_field_access(span, receiver_hir, field_name)
         if isinstance(receiver_hir, HIR.Ty) and isinstance(receiver_ty, Type.EnumType):
-            return self.__build_variant_construct(span, self.__type_ctx.resolve_aliases(receiver_hir.type_id), field_name)
+            return self.__build_variant_construct(span, receiver_hir.type_id, field_name)
 
         raise AnalysisError("field access is only supported on struct instances and enum types", span)
 
@@ -217,7 +215,7 @@ class OpBuilder:
         if isinstance(element_hir, HIR.Ty):
             # A type name in initializer position means "allocate uninitialized".
             # ZSTs have exactly one value, so they are always initialized.
-            element_type_id = self.__type_ctx.resolve_aliases(element_hir.type_id)
+            element_type_id = element_hir.type_id
             if not self.__type_ctx.is_zst(element_type_id):
                 raise AnalysisError(
                     "uninitialized heap allocation is written '@alloc<T>(n)' and is only "
@@ -274,7 +272,7 @@ class OpBuilder:
             offset_operand = left_hir
 
         if pointer_operand is not None and offset_operand is not None and self.__type_ctx.is_integer_type(offset_operand.type_id):
-            pointer_type = self.__type_ctx[self.__type_ctx.resolve_aliases(pointer_operand.type_id)]
+            pointer_type = self.__type_ctx[pointer_operand.type_id]
             if isinstance(pointer_type, Type.CPtrType) and not self.__type_ctx.is_c_abi_type(pointer_type.pointee_type):
                 raise AnalysisError("C pointer arithmetic requires a complete C ABI element type", span)
             offset_value = self.__evaluator.coerce(offset_operand, TypeCtx.u64_id)
@@ -466,14 +464,14 @@ class OpBuilder:
         left_hir = self.__evaluator.value(left)
         right_hir = self.__evaluator.value(right)
 
-        left_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(left_hir.type_id)]
+        left_ty = self.__type_ctx[left_hir.type_id]
 
         # auto-deref (与字段访问同规则): `r[i]` 索引的是引用所指对象——数组走
         # ArrayAccess、切片走 SliceAccess、指针走 T* 的 Index 实现。指针自身不在这里
         # 解引用: `p[i]` 由 T* 的 Index 实现与随后的 lvalue 化 deref 处理。
         while isinstance(left_ty, Type.RefType):
             left_hir = HIR.Unary(span, UnaryOperator.Deref, left_hir, left_ty.pointee_type, is_place=True)
-            left_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(left_ty.pointee_type)]
+            left_ty = self.__type_ctx[left_ty.pointee_type]
 
         # Tuple indexing
         if isinstance(left_ty, Type.TupleType):
@@ -528,7 +526,7 @@ class OpBuilder:
     def __build_deref(self, span: SrcSpan, operand: AST.Expr) -> HIR.Expr:
         operand_hir = self.__evaluator.value(operand)
 
-        operand_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(operand_hir.type_id)]
+        operand_ty = self.__type_ctx[operand_hir.type_id]
         if isinstance(operand_ty, (Type.PointerType, Type.RefType)):
             return HIR.Unary(span, UnaryOperator.Deref, operand_hir, operand_ty.pointee_type, is_place=True)
 
@@ -557,7 +555,7 @@ class OpBuilder:
 
         # `&*r`(r 是引用)按设计等同于 `r`: 直接折叠, 类型保持 `T&`(引用不降级成 `T*`)。
         if isinstance(operand_hir, HIR.Unary) and operand_hir.op == UnaryOperator.Deref:
-            inner_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(operand_hir.operand.type_id)]
+            inner_ty = self.__type_ctx[operand_hir.operand.type_id]
             if isinstance(inner_ty, Type.RefType):
                 return operand_hir.operand
         # rvalue addr-of is allowed — CFG builder will alloca a stack temporary
@@ -565,7 +563,7 @@ class OpBuilder:
         return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, ptr_type_id, is_place=False)
 
     def __build_field_access(self, span: SrcSpan, receiver: HIR.Expr, field_name: str) -> HIR.Expr:
-        struct_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(receiver.type_id)]
+        struct_ty = self.__type_ctx[receiver.type_id]
         assert isinstance(struct_ty, Type.StructType)
 
         struct_field = struct_ty.get_field_by_name(field_name, self.__type_ctx)
@@ -573,7 +571,7 @@ class OpBuilder:
             raise AnalysisError(f"Struct '{self.__type_ctx.get_name(receiver.type_id)}' has no field named '{field_name}'.", span)
 
         self.check_field_visible(struct_ty, struct_field, span)
-        field_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(struct_field.type_id)]
+        field_ty = self.__type_ctx[struct_field.type_id]
         if not self.__ctx.ffi_allowed and isinstance(field_ty, (Type.CScalarType, Type.CPtrType, Type.OpaqueType)):
             raise AnalysisError("C ABI field access requires an ffi fn", span)
 
@@ -747,9 +745,7 @@ class OpBuilder:
         return overloaded_expr
 
     def __get_operand_type(self, type_id: int, allowed_operand_types: set[OperandType]) -> OperandType:
-        # `typedef Meter = u64` must still add like a u64: classify the type the
-        # alias stands for, not the alias itself.
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        ty = self.__type_ctx[type_id]
         if isinstance(ty, (Type.IntType, Type.IntLiteralType)) and OperandType.Integer in allowed_operand_types:
             return OperandType.Integer
         if isinstance(ty, (Type.FloatType, Type.FloatLiteralType)) and OperandType.Float in allowed_operand_types:

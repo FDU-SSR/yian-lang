@@ -10,7 +10,7 @@ from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.package_map import PackageMap
 from compiler.analysis.state import SemanticState
 from compiler.analysis.symbol.context import SymbolCtx
-from compiler.analysis.symbol.symbol import Symbol, SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit.procedures import ProcedureRegistry
 from compiler.analysis.unit.unit_data import UnitData
@@ -238,15 +238,27 @@ class DefinitionState:
         """Resolve a type in the current definition and validate object types."""
         assert self.__current is not None
         type_id = self.resolve_type_in(ast_type, self.__current.symbol_ctx)
-        resolved_type_id = self.type_ctx.resolve_aliases(type_id)
-        resolved_ty = self.type_ctx[resolved_type_id]
+        resolved_ty = self.type_ctx[type_id]
         if not self.ffi_allowed and self.__uses_c_type_syntax(ast_type):
             raise AnalysisError("C ABI types require an ffi fn", ast_type.span)
         if isinstance(resolved_ty, Type.TraitObjectType):
             self.type_ctx.check_trait_object_safe(resolved_ty.trait_type_id, ast_type.span)
         return type_id
 
+    def resolve_type_symbol(self, symbol: Symbol | AliasSymbol, arguments: list[int] | None = None,
+                            span: SrcSpan | None = None) -> int:
+        type_id = self.__semantic.resolve_type_symbol(symbol, arguments, span)
+        if not self.ffi_allowed and isinstance(symbol, AliasSymbol) \
+                and self.type_ctx.contains_ffi_type(self.__semantic.resolve_type_symbol(symbol)):
+            raise AnalysisError("C ABI types require an ffi fn", span or symbol.span or SrcSpan.empty())
+        return type_id
+
     def __uses_c_type_syntax(self, ast_type: ASTType) -> bool:
+        """C types explicitly named in a definition require FFI privileges.
+
+        Concrete generic bindings retain their definition's permissions; a
+        parameter instantiated with a C scalar is not itself C type syntax.
+        """
         match ast_type:
             case ASTTy.CScalarType() | ASTTy.CPtrType():
                 return True
@@ -261,12 +273,12 @@ class DefinitionState:
             case ASTTy.NamedType(name=name):
                 assert self.__current is not None
                 symbol = self.__current.symbol_ctx.lookup(name.name)
-                return symbol is not None and isinstance(self.type_ctx[symbol.type_id], Type.AliasType) \
-                    and self.type_ctx.contains_ffi_type(symbol.type_id)
-            case ASTTy.InstanceType(generic_args=arguments):
-                return any(
-                    self.__uses_c_type_syntax(item)
-                    for item in arguments
+                return isinstance(symbol, AliasSymbol) and self.type_ctx.contains_ffi_type(
+                    self.__semantic.resolve_type_symbol(symbol)
+                )
+            case ASTTy.InstanceType(base=base, generic_args=arguments):
+                return self.__uses_c_type_syntax(base) or any(
+                    self.__uses_c_type_syntax(item) for item in arguments
                     if not isinstance(item, (
                         ASTTy.LiteralConstExpr, ASTTy.GenericConstExpr,
                         ASTTy.UnaryConstExpr, ASTTy.BinaryConstExpr,

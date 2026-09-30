@@ -109,8 +109,8 @@ class ConstantExpressionEvaluator:
             return right, TypeCtx.bool_id
 
         if expr.op in (BinaryOperator.Eq, BinaryOperator.Neq):
-            left_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(left_type)]
-            right_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(right_type)]
+            left_ty = self.__type_ctx[left_type]
+            right_ty = self.__type_ctx[right_type]
             valid = (
                 isinstance(left_ty, Type.BoolType) and isinstance(right_ty, Type.BoolType)
                 or isinstance(left_ty, Type.IntType) and isinstance(right_ty, Type.IntType)
@@ -209,8 +209,8 @@ class ConstantExpressionEvaluator:
     def __cast_value(
         self, value: ConstantValue, target_type: int, expr: HIR.Cast,
     ) -> tuple[ConstantValue, int]:
-        target = self.__type_ctx[self.__type_ctx.resolve_aliases(target_type)]
-        source = self.__type_ctx[self.__type_ctx.resolve_aliases(expr.value.type_id)]
+        target = self.__type_ctx[target_type]
+        source = self.__type_ctx[expr.value.type_id]
         if isinstance(target, Type.IntType):
             if type(value) is int:
                 result = value
@@ -256,7 +256,7 @@ class ConstantExpressionEvaluator:
         self.__not_evaluable(expr, "cast is not compile-time evaluable")
 
     def __normalize_integer(self, value: int, type_id: int) -> int:
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        ty = self.__type_ctx[type_id]
         if isinstance(ty, Type.LiteralValueType):
             return self.__normalize_integer(value, ty.value_type)
         if not isinstance(ty, Type.IntType):
@@ -269,7 +269,7 @@ class ConstantExpressionEvaluator:
         return normalized
 
     def __round_float(self, value: float, type_id: int) -> float:
-        ty = self.__type_ctx[self.__type_ctx.resolve_aliases(type_id)]
+        ty = self.__type_ctx[type_id]
         if isinstance(ty, Type.FloatLiteralType):
             return value
         if not isinstance(ty, Type.FloatType):

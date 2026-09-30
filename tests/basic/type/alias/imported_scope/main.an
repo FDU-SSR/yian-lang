@@ -1,0 +1,11 @@
+from types import Array as Buffer, Count, Value, Node;
+
+typedef Scalar = u64;
+struct Wrapped<const N: Count> { pub data: Buffer<Value, N> }
+
+fn main() {
+    let wrapped = Wrapped<3>([1i32, 2i32, 3i32]);
+    assert wrapped.data[2] == 3i32;
+    let node = Node(4i32, Option<Node*>.None);
+    assert node.value == 4i32;
+}

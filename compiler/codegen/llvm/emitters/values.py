@@ -80,8 +80,7 @@ class ValueEmitter:
         return LLValue(operand.type_id, value)  # type: ignore
 
     def cast(self, value: LLValue, to_type: int, raw: bool = False) -> LLValue:
-        value_type_id = self.__type_ctx.resolve_aliases(value.type_id)
-        to_type = self.__type_ctx.resolve_aliases(to_type)
+        value_type_id = value.type_id
         src = self.__type_ctx[value_type_id]
         dst = self.__type_ctx[to_type]
         dest_ll_type = self.__ll_type_ctx.get_ll_type(to_type).ir_type

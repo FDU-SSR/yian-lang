@@ -21,7 +21,7 @@ from compiler.analysis.queries.context import QueryContext
 from compiler.analysis.facts.names import NameRef, NameTarget
 from compiler.analysis.queries.index import Declaration, DeclarationKind
 from compiler.analysis.queries.navigation import Navigator
-from compiler.analysis.symbol.symbol import Symbol, SymbolKind
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
@@ -277,17 +277,18 @@ def __prefix_at(
 def __receiver_type(reference: NameRef) -> tuple[int | None, bool]:
     """The receiver's type, and whether the access is static.
 
-    A name recorded as a *type* (the resolver records written type names with the
-    type id as their target) is being used statically: `Pair<Meters>.of` reaches
-    the static methods, not the fields of a value.  Everything else is a value
-    whose type the recorded reference already carries.
+    A reference to a type declaration is static: `Pair<Meters>.of` reaches
+    static methods, not fields. The recorded expression type includes applied
+    generic arguments even when the declaration is a transparent alias.
     """
     target = reference.target
     if isinstance(target, int):
         return target, True
+    if isinstance(target, AliasSymbol):
+        return reference.expression_type, True
     if isinstance(target, Symbol):
         if target.kind is SymbolKind.Type:
-            return target.type_id, True
+            return reference.expression_type or target.type_id, True
         return reference.expression_type, False
     return reference.expression_type, False
 
@@ -467,13 +468,13 @@ def __member_items(
     type_id, static = __receiver_type(reference)
     if type_id is None:
         return ()
-    resolved = view.canonical_type(type_id)
+    resolved = type_id
     if not static:
         # Field access auto-dereferences a pointer or reference; completion has
         # to follow the same path or `p.` on a `T*` would offer nothing.
         dereferenced = view.deref_type(resolved)
         if dereferenced is not None:
-            resolved = view.canonical_type(dereferenced)
+            resolved = dereferenced
     items: dict[str, Completion] = {}
     resolved_ty = view.type_of(resolved)
     if isinstance(resolved_ty, Type.StructType) and not static:
@@ -536,11 +537,13 @@ def __import_name_items(
     target = view.module_file(dotted)
     if target is None:
         return ()
-    return tuple(
-        __from_declaration(declaration)
-        for declaration in view.declarations_in(target)
-        if declaration.public and declaration.kind in IMPORTABLE_KINDS
-    )
+    items: list[Completion] = []
+    for declaration in view.declarations_in(target):
+        if not declaration.public or declaration.kind not in IMPORTABLE_KINDS:
+            continue
+        symbol = view.symbol_named_in(target, declaration.name)
+        items.append(__from_declaration(declaration) if symbol is None else __from_symbol(view, symbol))
+    return tuple(items)
 
 
 def __dotted_path(statement: list[Tok.Token]) -> str | None:
@@ -568,13 +571,15 @@ def __from_declaration(declaration: Declaration) -> Completion:
     )
 
 
-def __from_symbol(view: AnalysisView, symbol: Symbol) -> Completion:
+def __from_symbol(view: AnalysisView, symbol: Symbol | AliasSymbol) -> Completion:
     """A symbol's candidate entry, with its kind refined by its type."""
+    if isinstance(symbol, AliasSymbol):
+        return Completion(label=symbol.name, kind=CompletionKind.ALIAS, detail=view.alias_signature(symbol))
     resolved = view.type_of(symbol.type_id)
     if resolved is None:
         return Completion(label=symbol.name, kind=CompletionKind.VARIABLE)
     match resolved:
-        case Type.StructType() | Type.EnumType() | Type.TraitType() | Type.AliasType():
+        case Type.StructType() | Type.EnumType() | Type.TraitType():
             return Completion(
                 label=symbol.name,
                 kind=KIND_BY_TYPE[type(resolved).__name__],
@@ -597,7 +602,6 @@ KIND_BY_TYPE = {
     "StructType": CompletionKind.STRUCT,
     "EnumType": CompletionKind.ENUM,
     "TraitType": CompletionKind.TRAIT,
-    "AliasType": CompletionKind.ALIAS,
 }
 
 

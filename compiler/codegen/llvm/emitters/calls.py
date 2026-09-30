@@ -132,7 +132,7 @@ class CallEmitter:
         trait_methods = self.__type_ctx.get_trait_methods(trait_type_id)
         slot_count = 0
         for method_id in trait_methods.values():
-            method_type = self.__type_ctx[self.__type_ctx.resolve_aliases(method_id)]
+            method_type = self.__type_ctx[method_id]
             if isinstance(method_type, Type.MethodType) and not method_type.custom_def.is_static:
                 slot_count += 1
         table_type = ir.ArrayType(self.__ll_type_ctx.ptr_type, slot_count)  # type: ignore

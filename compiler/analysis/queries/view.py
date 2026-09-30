@@ -29,7 +29,8 @@ from compiler.analysis.queries.index import (
 )
 from compiler.analysis.queries.context import QueryContext
 from compiler.analysis.facts.names import NameRef
-from compiler.analysis.symbol.symbol import Symbol
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol
+from compiler.analysis.resolution.aliases import AliasInfo
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
@@ -189,7 +190,7 @@ class AnalysisView:
         """
         return self.__index is not None or self.unit_of(path) is not None
 
-    def symbols_in(self, path: Path) -> tuple[Symbol, ...]:
+    def symbols_in(self, path: Path) -> tuple[Symbol | AliasSymbol, ...]:
         """Symbols declared in *path*: its own declarations and its imports.
 
         The unit's symbol table is the authoritative "what names exist in this
@@ -207,10 +208,26 @@ class AnalysisView:
             if symbol.span is not None and symbol.span.path.resolve() == path.resolve()
         )
 
-    def symbol_named_in(self, path: Path, name: str) -> Symbol | None:
+    def symbol_named_in(self, path: Path, name: str) -> Symbol | AliasSymbol | None:
         """The global symbol *name* refers to in *path*, if the file declares it."""
         unit = self.unit_of(path)
         return None if unit is None else unit.symbol_ctx.lookup_global(name)
+
+    def alias_info(self, symbol: AliasSymbol) -> AliasInfo | None:
+        return self.__result.aliases.get(symbol.alias_id)
+
+    def alias_signature(self, symbol: AliasSymbol) -> str | None:
+        info = self.alias_info(symbol)
+        if info is None:
+            return None
+        definition = info.definition
+        parameters = ", ".join(
+            f"const {parameter.name.name}: {parameter.value_type}"
+            if isinstance(parameter, AST.ConstGenericParam) else parameter.name.name
+            for parameter in definition.generics
+        )
+        suffix = f"<{parameters}>" if parameters else ""
+        return f"typedef {definition.name.name}{suffix} = {definition.target};"
 
     def def_points(self) -> Mapping[int, DefPoint]:
         """Every definition the type checker ran."""
@@ -255,11 +272,6 @@ class AnalysisView:
             return None
         return self.__type_ctx.get_name(type_id)
 
-    def canonical_type(self, type_id: int) -> int:
-        """*type_id* with every transparent alias resolved."""
-        if self.__type_ctx is None:
-            return type_id
-        return self.__type_ctx.resolve_aliases(type_id)
 
     def deref_type(self, type_id: int) -> int | None:
         """The type a pointer or reference points at, when it does."""
@@ -268,22 +280,20 @@ class AnalysisView:
         return self.__type_ctx.try_deref(type_id)
 
     def fields_of(self, type_id: int) -> tuple[Type.StructField, ...]:
-        """The fields of a struct type (an alias answers like its target)."""
+        """The instantiated fields of a struct type."""
         if self.__type_ctx is None:
             return ()
-        resolved = self.canonical_type(type_id)
-        if not isinstance(self.type_of(resolved), Type.StructType):
+        if not isinstance(self.type_of(type_id), Type.StructType):
             return ()
-        return tuple(self.__type_ctx.get_struct_fields(resolved))
+        return tuple(self.__type_ctx.get_struct_fields(type_id))
 
     def variants_of(self, type_id: int) -> tuple[Type.EnumVariant, ...]:
-        """The variants of an enum type (an alias answers like its target)."""
+        """The instantiated variants of an enum type."""
         if self.__type_ctx is None:
             return ()
-        resolved = self.canonical_type(type_id)
-        if not isinstance(self.type_of(resolved), Type.EnumType):
+        if not isinstance(self.type_of(type_id), Type.EnumType):
             return ()
-        return tuple(self.__type_ctx.get_enum_variants(resolved))
+        return tuple(self.__type_ctx.get_enum_variants(type_id))
 
     def methods_of(self, type_id: int) -> tuple[tuple[str, int], ...]:
         """Methods whose receiver can be this type, as ``(name, type id)``.
@@ -295,7 +305,7 @@ class AnalysisView:
         """
         if self.__type_ctx is None:
             return ()
-        return tuple(self.__type_ctx.methods_of(self.canonical_type(type_id)))
+        return tuple(self.__type_ctx.methods_of(type_id))
 
     def is_static_callable(self, type_id: int) -> bool:
         """True when the callable is a static method (no receiver argument)."""

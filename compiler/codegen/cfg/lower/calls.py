@@ -28,7 +28,7 @@ class CallsLowerer:
         return result
 
     def resolve_invoke(self, expr: HIR.Invoke) -> IR.Value:
-        resolved = self.__state.session.type_ctx.resolve_aliases(expr.callable.type_id)
+        resolved = expr.callable.type_id
         callable_type = self.__state.session.type_ctx[resolved]
         if isinstance(callable_type, Type.ClosureType):
             receiver_addr = self.__values.resolve_addr_fat(expr.callable)
@@ -103,7 +103,7 @@ class CallsLowerer:
         (pointee 即接收者值类型);方法体内 self.method() 已是 T&。两者 pointee
         都是值类型,统一 alloc_ref;LLVM cast 按 src/dst 分派收缩或 identity。
         """
-        resolved = self.__state.session.type_ctx.resolve_aliases(receiver_addr.type_id)
+        resolved = receiver_addr.type_id
         addr_ty = self.__state.session.type_ctx[resolved]
         if isinstance(addr_ty, (Type.PointerType, Type.RefType)):
             return self.__state.session.type_ctx.alloc_ref(addr_ty.pointee_type)

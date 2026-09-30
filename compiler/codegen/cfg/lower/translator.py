@@ -61,7 +61,7 @@ class FunctionBuilder:
             self.__closure_struct_type_id = self.__closure_type.struct_type_id
             self.__closure_receiver_ref_type_id = ctx.type_ctx.alloc_ref(self.__closure_struct_type_id)
             for captured in self.__closure_type.captured_vars:
-                symbol = dp.symbol_ctx.lookup(captured.name)
+                symbol = dp.symbol_ctx.lookup_typed(captured.name)
                 field = ctx.type_ctx.get_struct_field_by_name(self.__closure_struct_type_id, captured.name)
                 if symbol is None or field is None:
                     raise ValueError(f"Missing closure capture '{captured.name}' in CFG function")
@@ -112,7 +112,7 @@ class FunctionBuilder:
         for local_id in dp.locals:
             if local_id in self.__captured_symbol_ids:
                 continue
-            symbol = dp.symbol_ctx.get(local_id)
+            symbol = dp.symbol_ctx.get_typed(local_id)
             self.__emitter.func.local_vars[local_id] = IR.VarRef(symbol.name, local_id, symbol.type_id)
 
         # ── translate the body ──

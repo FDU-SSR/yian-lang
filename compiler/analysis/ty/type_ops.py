@@ -23,7 +23,7 @@ def instantiate(ctx: TypeCtx, type_id: int, substs: dict[int, int]) -> int:
             return type_id
         case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) \
                 | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) \
-                | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
+                | Type.FunctionType(generic_args=generic_args):
             instantiated_args = [instantiate(ctx, arg_id, substs) for arg_id in generic_args]
             return ctx.alloc_instance(type_id, instantiated_args)
         case Type.PointerType(pointee_type=pointee_type):
@@ -80,8 +80,8 @@ def __gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span
     if left_type_id == right_type_id:
         return left_type_id
 
-    left_ty = ctx[ctx.resolve_aliases(left_type_id)]
-    right_ty = ctx[ctx.resolve_aliases(right_type_id)]
+    left_ty = ctx[left_type_id]
+    right_ty = ctx[right_type_id]
 
     if isinstance(left_ty, Type.IntLiteralType):
         if isinstance(right_ty, Type.IntLiteralType):
@@ -116,97 +116,15 @@ def __gcd_literal_type(ctx: TypeCtx, left_type_id: int, right_type_id: int, span
     raise AnalysisError(f"array elements must have a compatible type, got [{left_name}, {right_name}]", span)
 
 
-def canonical(ctx: TypeCtx, type_id: int) -> int:
-    """Return the id of the type *type_id* names, with aliases resolved everywhere.
-
-    ``typedef`` is transparent, so ``Option<i32, ErrorCode>`` and
-    ``Option<i32, u64>`` are one type written two ways.  Arguments are resolved
-    and the instance is re-interned, so both spellings end up with one id and
-    codegen emits one LLVM type.  Only call this once GlobalResolve has filled
-    every alias body: resolving a nested alias needs it.
-    """
-    type_id = ctx.resolve_aliases(type_id)
-    ty = ctx[type_id]
-    if isinstance(ty, Type.CustomType) and ty.generic_args:
-        args = [canonical(ctx, arg) for arg in ty.generic_args]
-        if args != list(ty.generic_args):
-            return ctx.alloc_instance(type_id, args)
-    return type_id
 
 
 def same(ctx: TypeCtx, left: int, right: int) -> bool:
-    """Structural type equality that sees through aliases at every level.
-
-    Two ids can name one type: an alias keeps its own id, and a generic argument
-    may be written as an alias (``Result<i32, ErrorCode>``) while the other side
-    spells the target (``Result<i32, u64>``).  Comparing ids alone would call
-    those different, so compare the shapes instead, resolving aliases as we
-    descend.
-    """
-    # The error type is a poison value, not a type: anything compared against it
-    # matches, so the one error that produced it does not turn into a mismatch at
-    # every use site.
-    if left == ctx.error_id or right == ctx.error_id:
-        return True
-
-    left = ctx.resolve_aliases(left)
-    right = ctx.resolve_aliases(right)
-    if left == right:
-        return True
-
-    left_ty = ctx[left]
-    right_ty = ctx[right]
-    match (left_ty, right_ty):
-        case (Type.PointerType(), Type.PointerType()):
-            return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
-        case (Type.CPtrType(), Type.CPtrType()):
-            return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
-        case (Type.RefType(), Type.RefType()):
-            return same(ctx, left_ty.pointee_type, right_ty.pointee_type)
-        case (Type.TraitObjectType(), Type.TraitObjectType()):
-            return same(ctx, left_ty.trait_type_id, right_ty.trait_type_id)
-        case (Type.SliceType(), Type.SliceType()):
-            return same(ctx, left_ty.element_type, right_ty.element_type)
-        case (Type.ArrayType(), Type.ArrayType()):
-            return same(ctx, left_ty.element_type, right_ty.element_type) and same(
-                ctx, left_ty.length, right_ty.length
-            )
-        case (Type.TupleType(), Type.TupleType()):
-            return len(left_ty.element_types) == len(right_ty.element_types) and all(
-                same(ctx, left_element, right_element)
-                for left_element, right_element in zip(
-                    left_ty.element_types, right_ty.element_types
-                )
-            )
-        case (Type.FunctionPointerType(), Type.FunctionPointerType()):
-            return len(left_ty.parameter_types) == len(
-                right_ty.parameter_types
-            ) and all(
-                same(ctx, left_param, right_param)
-                for left_param, right_param in zip(
-                    left_ty.parameter_types, right_ty.parameter_types
-                )
-            ) and same(ctx, left_ty.return_type, right_ty.return_type)
-        case _:
-            pass
-
-    # `CustomType` is a union alias, not a class, so it cannot be a match arm.
-    # Named types are identical only when they come from one declaration;
-    # instances of it are identical when their arguments are.
-    if isinstance(left_ty, Type.CustomType) and isinstance(right_ty, Type.CustomType):
-        if id(left_ty.custom_def) != id(right_ty.custom_def):
-            return False
-        return len(left_ty.generic_args) == len(right_ty.generic_args) and all(
-            same(ctx, left_arg, right_arg)
-            for left_arg, right_arg in zip(left_ty.generic_args, right_ty.generic_args)
-        )
-    return False
+    """Compare semantic identity, preserving error-recovery compatibility."""
+    return left == right or left == ctx.error_id or right == ctx.error_id
 
 
 def is_literal_type(ctx: TypeCtx, type_id: int) -> bool:
-    # `typedef Index = 3`-style aliases aside, an alias may still stand for a
-    # literal-typed array/tuple, so classify what the id names.
-    ty = ctx[ctx.resolve_aliases(type_id)]
+    ty = ctx[type_id]
     match ty:
         case Type.IntLiteralType() | Type.FloatLiteralType():
             return True
@@ -219,34 +137,22 @@ def is_literal_type(ctx: TypeCtx, type_id: int) -> bool:
 
 
 def is_numeric_type(ctx: TypeCtx, type_id: int, include_literals: bool = True) -> bool:
-    ty = ctx[ctx.resolve_aliases(type_id)]
+    ty = ctx[type_id]
     if include_literals:
         return isinstance(ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType))
     return isinstance(ty, (Type.IntType, Type.FloatType))
 
 
 def is_integer_type(ctx: TypeCtx, type_id: int, include_literals: bool = True) -> bool:
-    ty = ctx[ctx.resolve_aliases(type_id)]
+    ty = ctx[type_id]
     if include_literals:
         return isinstance(ty, (Type.IntType, Type.IntLiteralType))
     return isinstance(ty, Type.IntType)
 
 
 def default_literals(ctx: TypeCtx, type_id: int) -> int:
-    """Replace unresolved literal types with their default concrete types.
-
-    The lookup sees through aliases (an alias of a literal type defaults like the
-    literal), but a type that is *not* a literal is returned as it came in, so an
-    alias keeps the spelling the program wrote.
-    """
-    resolved = ctx.resolve_aliases(type_id)
-    if resolved == type_id:
-        ty = ctx[type_id]
-    else:
-        default = default_literals(ctx, resolved)
-        # Only replace when the resolved type actually defaulted to something
-        # else; otherwise keep the alias.
-        return type_id if default == resolved else default
+    """Replace unresolved literal types with their default concrete types."""
+    ty = ctx[type_id]
 
     match ty:
         case Type.IntLiteralType():
@@ -294,10 +200,6 @@ def default_literals(ctx: TypeCtx, type_id: int) -> int:
             if len(generic_args) == 0:
                 return type_id
             return ctx.alloc_instance(type_id, [default_literals(ctx, arg_type) for arg_type in generic_args])
-        case Type.AliasType(generic_args=generic_args):
-            if len(generic_args) == 0:
-                return type_id
-            return ctx.alloc_instance(type_id, [default_literals(ctx, arg_type) for arg_type in generic_args])
         case _:
             return type_id
 
@@ -307,7 +209,6 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
     visiting: set[int] = set()
 
     def __contains(tid: int) -> bool:
-        tid = ctx.resolve_aliases(tid)
         if tid in visiting:
             return False
         visiting.add(tid)
@@ -333,7 +234,7 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
                 return any(__contains(element_type) for element_type in element_types)
             case Type.FunctionPointerType(parameter_types=parameter_types, return_type=return_type):
                 return any(__contains(parameter_type) for parameter_type in parameter_types) or __contains(return_type)
-            case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args) | Type.AliasType(generic_args=generic_args):
+            case Type.StructType(generic_args=generic_args) | Type.EnumType(generic_args=generic_args) | Type.TraitType(generic_args=generic_args) | Type.MethodType(generic_args=generic_args) | Type.FunctionType(generic_args=generic_args):
                 if len(ty.custom_def.generics) > 0 and len(generic_args) == 0:
                     return True
                 return any(__contains(arg_type) for arg_type in generic_args)
@@ -344,12 +245,12 @@ def contains_generic(ctx: TypeCtx, type_id: int) -> bool:
 
 
 def is_int_literal_type(ctx: TypeCtx, type_id: int) -> bool:
-    ty = ctx[ctx.resolve_aliases(type_id)]
+    ty = ctx[type_id]
     return isinstance(ty, Type.IntLiteralType)
 
 
 def is_float_literal_type(ctx: TypeCtx, type_id: int) -> bool:
-    ty = ctx[ctx.resolve_aliases(type_id)]
+    ty = ctx[type_id]
     return isinstance(ty, Type.FloatLiteralType)
 
 
@@ -379,7 +280,6 @@ def is_zst(ctx: TypeCtx, type_id: int) -> bool:
     visiting: set[int] = set()
 
     def work(tid: int) -> bool:
-        tid = ctx.resolve_aliases(tid)
         if tid in visiting:
             return False
         visiting.add(tid)
@@ -437,19 +337,6 @@ def __merge_two(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
     """Merge exactly two types (never already filtered out by caller)."""
     if left_type_id == right_type_id:
         return left_type_id
-
-    # An alias and the type it stands for are the same type, and a merged result
-    # should keep the spelling the program used: merge in resolved space, then
-    # re-attach the alias if the result is one of the two sides.
-    left_resolved = ctx.resolve_aliases(left_type_id)
-    right_resolved = ctx.resolve_aliases(right_type_id)
-    if left_resolved != left_type_id or right_resolved != right_type_id:
-        merged = __merge_two(ctx, left_resolved, right_resolved, span)
-        if merged == left_resolved:
-            return left_type_id
-        if merged == right_resolved:
-            return right_type_id
-        return merged
 
     left_ty = ctx[left_type_id]
     right_ty = ctx[right_type_id]
@@ -533,7 +420,7 @@ def __merge_two(ctx: TypeCtx, left_type_id: int, right_type_id: int, span: SrcSp
 
 
 def __merge_int_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
-    other_ty = ctx[ctx.resolve_aliases(other_type_id)]
+    other_ty = ctx[other_type_id]
     if isinstance(other_ty, (Type.IntType, Type.FloatType, Type.IntLiteralType, Type.FloatLiteralType)):
         return other_type_id
     raise AnalysisError(
@@ -543,7 +430,7 @@ def __merge_int_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, 
 
 
 def __merge_float_literal(ctx: TypeCtx, literal_type_id: int, other_type_id: int, span: SrcSpan) -> int:
-    other_ty = ctx[ctx.resolve_aliases(other_type_id)]
+    other_ty = ctx[other_type_id]
     if isinstance(other_ty, (Type.FloatType, Type.FloatLiteralType)):
         return other_type_id
     if isinstance(other_ty, Type.IntLiteralType):

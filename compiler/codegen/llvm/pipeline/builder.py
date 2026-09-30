@@ -114,7 +114,7 @@ class LLBuilder:
     def dangling_value(self, type_id: int) -> LLValue:
         """Create the non-dereferenceable sentinel value for a typed dangling pointer."""
         pointer_type = self.__type_ctx[
-            self.__type_ctx.resolve_aliases(type_id)
+            type_id
         ]
         if not isinstance(pointer_type, Type.PointerType):
             raise ValueError(f"not a pointer type: {type(pointer_type).__name__}")

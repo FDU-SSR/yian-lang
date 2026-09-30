@@ -202,8 +202,6 @@ class LLModule:
 
     def get_trait_vtable(self, concrete_type_id: int, trait_type_id: int) -> ir.GlobalVariable:
         """Return the read-only vtable for one concrete type/trait instance."""
-        concrete_type_id = self.__type_ctx.canonical(concrete_type_id)
-        trait_type_id = self.__type_ctx.canonical(trait_type_id)
         key = (concrete_type_id, trait_type_id)
         cached = self.__trait_vtables.get(key)
         if cached is not None:
@@ -226,9 +224,7 @@ class LLModule:
             if trait_method_ty.custom_def.is_static:
                 continue
             impl_method_id = impl.methods[name]
-            concrete_method_id = self.__type_ctx.canonical(
-                self.__type_ctx.instantiate(impl_method_id, substitutions)
-            )
+            concrete_method_id = self.__type_ctx.instantiate(impl_method_id, substitutions)
             thunks.append(self.__get_or_create_trait_thunk(
                 concrete_type_id,
                 trait_type_id,

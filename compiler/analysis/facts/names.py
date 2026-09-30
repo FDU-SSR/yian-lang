@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from compiler.analysis.symbol.symbol import Symbol
+from compiler.analysis.symbol.symbol import AliasSymbol, Symbol
 from compiler.analysis.ty import ty as Type
 from compiler.frontend.lex.position import SrcSpan
 
-NameTarget: TypeAlias = Symbol | Type.StructField | Type.EnumVariant | int
+NameTarget: TypeAlias = Symbol | AliasSymbol | Type.StructField | Type.EnumVariant | int
 
 
 @dataclass(frozen=True)

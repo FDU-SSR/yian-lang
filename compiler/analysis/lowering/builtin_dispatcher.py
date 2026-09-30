@@ -107,7 +107,7 @@ class BuiltinDispatcher:
         return self.__expr.coerce(self.__arg(node, index), type_id)
 
     def __ffi_element(self, type_id: int, span: SrcSpan, *, incomplete: bool = False) -> None:
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(type_id)]
+        ty = self.__ctx.type_ctx[type_id]
         if isinstance(ty, Type.OpaqueType) and incomplete:
             return
         if not self.__ctx.type_ctx.is_c_abi_type(type_id):
@@ -115,10 +115,10 @@ class BuiltinDispatcher:
 
     def __lower_ffi_addr(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        ty = self.__ctx.type_ctx[value.type_id]
         if isinstance(ty, Type.PointerType):
             value = self.__expr.coerce(value, self.__ctx.type_ctx.alloc_ref(ty.pointee_type))
-            ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+            ty = self.__ctx.type_ctx[value.type_id]
         if not isinstance(ty, Type.RefType):
             raise AnalysisError("@ffi_addr expects a reference", node.span)
         self.__ffi_element(ty.pointee_type, node.span)
@@ -126,7 +126,7 @@ class BuiltinDispatcher:
 
     def __lower_ffi_parts(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        ty = self.__ctx.type_ctx[value.type_id]
         if isinstance(ty, Type.SliceType):
             element = ty.element_type
             self.__ffi_element(element, node.span)
@@ -143,7 +143,7 @@ class BuiltinDispatcher:
 
     def __lower_ffi_ptr_cast(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        source = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        source = self.__ctx.type_ctx[value.type_id]
         if not isinstance(source, Type.CPtrType):
             raise AnalysisError("@ffi_ptr_cast expects cptr<T>", node.span)
         self.__ffi_element(types[0], node.span, incomplete=True)
@@ -173,8 +173,8 @@ class BuiltinDispatcher:
 
     def __lower_bit_cast(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        source = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
-        target = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(types[0])]
+        source = self.__ctx.type_ctx[value.type_id]
+        target = self.__ctx.type_ctx[types[0]]
         if not isinstance(source, (Type.PointerType, Type.RefType)):
             raise AnalysisError(f"'@bitcast' expects a pointer expression, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         if not isinstance(target, Type.PointerType):
@@ -187,7 +187,7 @@ class BuiltinDispatcher:
 
     def __lower_realloc(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         pointer = self.__arg(node, 0)
-        pointer_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(pointer.type_id)]
+        pointer_ty = self.__ctx.type_ctx[pointer.type_id]
         expected = self.__ctx.type_ctx.alloc_pointer(types[0])
         if not isinstance(pointer_ty, Type.PointerType) or not self.__ctx.type_ctx.is_same_type(pointer_ty.pointee_type, types[0]):
             raise AnalysisError(
@@ -217,14 +217,14 @@ class BuiltinDispatcher:
     def __lower_mem_copy(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         dest, src = self.__arg(node, 0), self.__arg(node, 1)
         for name, value in (("dest", dest), ("src", src)):
-            if not isinstance(self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)], Type.PointerType):
+            if not isinstance(self.__ctx.type_ctx[value.type_id], Type.PointerType):
                 raise AnalysisError(f"'@memcpy' {name} must be a pointer, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         count = self.__coerced_arg(node, 2, self.__ctx.type_ctx.u64_id)
         return self.__builtin(node, types, [dest, src, count], self.__ctx.type_ctx.void_id)
 
     def __lower_slice_from_parts(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         ptr = self.__arg(node, 0)
-        ptr_ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(ptr.type_id)]
+        ptr_ty = self.__ctx.type_ctx[ptr.type_id]
         if not isinstance(ptr_ty, Type.PointerType):
             raise AnalysisError(f"'@slice_from_parts' expects a pointer as its first argument, got '{self.__ctx.type_ctx.get_name(ptr.type_id)}'", node.span)
         size = self.__coerced_arg(node, 1, self.__ctx.type_ctx.u64_id)
@@ -232,14 +232,14 @@ class BuiltinDispatcher:
 
     def __lower_slice_get_ptr(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        ty = self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)]
+        ty = self.__ctx.type_ctx[value.type_id]
         if not isinstance(ty, Type.SliceType):
             raise AnalysisError(f"'@slice_get_ptr' expects a slice argument, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.alloc_pointer(ty.element_type))
 
     def __lower_slice_get_len(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        if not isinstance(self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)], Type.SliceType):
+        if not isinstance(self.__ctx.type_ctx[value.type_id], Type.SliceType):
             raise AnalysisError(f"'@slice_get_len' expects a slice argument, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.u64_id)
 
@@ -250,13 +250,13 @@ class BuiltinDispatcher:
 
     def __lower_str_get_ptr(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        if not isinstance(self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)], Type.StrType):
+        if not isinstance(self.__ctx.type_ctx[value.type_id], Type.StrType):
             raise AnalysisError(f"'@str_get_ptr' expects a 'str' argument, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.alloc_pointer(self.__ctx.type_ctx.u8_id))
 
     def __lower_str_get_len(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         value = self.__arg(node, 0)
-        if not isinstance(self.__ctx.type_ctx[self.__ctx.type_ctx.resolve_aliases(value.type_id)], Type.StrType):
+        if not isinstance(self.__ctx.type_ctx[value.type_id], Type.StrType):
             raise AnalysisError(f"'@str_get_len' expects a 'str' argument, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.u64_id)
 

@@ -187,9 +187,9 @@ class AggregateEmitter:
     def enum_payload_field_ptr(
         self, address: LLValue, payload_type_id: int, field_index: int,
     ) -> LLValue:
-        address_ty = self.__type_ctx[self.__type_ctx.resolve_aliases(address.type_id)]
+        address_ty = self.__type_ctx[address.type_id]
         assert isinstance(address_ty, (Type.PointerType, Type.RefType))
-        enum_type_id = self.__type_ctx.resolve_aliases(address_ty.pointee_type)
+        enum_type_id = address_ty.pointee_type
         fields = self.__type_ctx.get_struct_fields(payload_type_id)
         field_type_id = fields[field_index].type_id
         result_type_id = self.__type_ctx.alloc_pointer(field_type_id)

@@ -22,7 +22,7 @@ class MemoryOps:
         self.__state = state
 
     def build_load(self, ptr: IR.Value) -> IR.Value:
-        ptr_type = self.__state.session.type_ctx[self.__state.session.type_ctx.resolve_aliases(ptr.type_id)]
+        ptr_type = self.__state.session.type_ctx[ptr.type_id]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
         # 访问前检由检查插入 pass 依 IR 重建（T& 只查 live；胖指针查
         # safe_access(p,1) 或 ElementArith∧InBounds∧live 合取）。

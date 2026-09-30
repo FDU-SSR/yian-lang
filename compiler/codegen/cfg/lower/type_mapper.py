@@ -70,8 +70,6 @@ class CfgTypeMapper:
                 result = self.__lower_generic_instance(type_id, ty)
             case Type.FunctionType() | Type.MethodType():
                 result = self.__lower_callable(type_id, ty)
-            case Type.AliasType():
-                result = self.__lower_alias(type_id, ty)
             case _:
                 result = type_id
 
@@ -125,7 +123,7 @@ class CfgTypeMapper:
     def __lower_struct(self, type_id: int, ty: Type.StructType) -> int:
         mapped_args = [self.lower(arg) for arg in ty.generic_args]
         if type_id not in self.__closure_env_ids:
-            if mapped_args == ty.generic_args:
+            if tuple(mapped_args) == ty.generic_args:
                 return type_id
             return self.__type_ctx.alloc_instance(type_id, mapped_args)
 
@@ -139,7 +137,7 @@ class CfgTypeMapper:
             )
             for field in ty.custom_def.fields
         ]
-        if mapped_args == ty.generic_args and all(
+        if tuple(mapped_args) == ty.generic_args and all(
             new.type_id == old.type_id
             for new, old in zip(mapped_fields, ty.custom_def.fields)
         ):
@@ -151,15 +149,14 @@ class CfgTypeMapper:
         lowered_id = self.__type_ctx.alloc_struct(f"{ty.custom_def.name}::cfg", ty.custom_def.span)
         lowered_ty = self.__type_ctx[lowered_id]
         assert isinstance(lowered_ty, Type.StructType)
-        lowered_ty.custom_def.generics = ty.custom_def.generics.copy()
         lowered_ty.custom_def.unit_id = ty.custom_def.unit_id
         lowered_ty.custom_def.fields = mapped_fields
-        lowered_ty.generic_args = mapped_args
+        self.__type_ctx.bind_template(lowered_id, ty.custom_def.generics, mapped_args)
         return lowered_id
 
     def __lower_generic_instance(self, type_id: int, ty: Type.EnumType | Type.TraitType) -> int:
         mapped_args = [self.lower(arg) for arg in ty.generic_args]
-        if mapped_args == ty.generic_args:
+        if tuple(mapped_args) == ty.generic_args:
             return type_id
         return self.__type_ctx.alloc_instance(type_id, mapped_args)
 
@@ -206,7 +203,7 @@ class CfgTypeMapper:
             )
 
         if not signature_changed:
-            if mapped_args == ty.generic_args:
+            if tuple(mapped_args) == ty.generic_args:
                 return type_id
             return self.__type_ctx.alloc_instance(type_id, mapped_args)
 
@@ -217,36 +214,25 @@ class CfgTypeMapper:
                 lowered_base = self.__type_ctx.alloc_function(custom_def.name, custom_def.span)
                 lowered_def_type = self.__type_ctx[lowered_base]
                 assert isinstance(lowered_def_type, Type.FunctionType)
-                lowered_def_type.custom_def.generics = custom_def.generics.copy()
                 lowered_def_type.custom_def.parameters = mapped_parameters
                 lowered_def_type.custom_def.return_type = mapped_return
-                lowered_def_type.generic_args = ty.generic_args.copy()
+                self.__type_ctx.bind_template(lowered_base, custom_def.generics, ty.generic_args)
             else:
                 assert mapped_receiver is not None
                 assert isinstance(custom_def, Type.MethodDef)
                 lowered_base = self.__type_ctx.alloc_method(custom_def.name, custom_def.span)
                 lowered_def_type = self.__type_ctx[lowered_base]
                 assert isinstance(lowered_def_type, Type.MethodType)
-                lowered_def_type.custom_def.generics = custom_def.generics.copy()
                 lowered_def_type.custom_def.receiver_type = mapped_receiver
                 lowered_def_type.custom_def.parameters = mapped_parameters
                 lowered_def_type.custom_def.return_type = mapped_return
                 lowered_def_type.custom_def.is_static = custom_def.is_static
                 lowered_def_type.custom_def.is_header = custom_def.is_header
-                lowered_def_type.generic_args = ty.generic_args.copy()
+                self.__type_ctx.bind_template(lowered_base, custom_def.generics, ty.generic_args)
             self.__custom_base_cache[cache_key] = lowered_base
 
         lowered_base_ty = self.__type_ctx[lowered_base]
         assert isinstance(lowered_base_ty, Type.CustomType)
-        if mapped_args == lowered_base_ty.generic_args:
+        if tuple(mapped_args) == lowered_base_ty.generic_args:
             return lowered_base
         return self.__type_ctx.alloc_instance(lowered_base, mapped_args)
-
-    def __lower_alias(self, type_id: int, ty: Type.AliasType) -> int:
-        mapped_args = [self.lower(arg) for arg in ty.generic_args]
-        if mapped_args == ty.generic_args:
-            return type_id
-        # The aliased definition is instantiated by TypeCtx from the mapped
-        # generic arguments. Keeping its recursive structure intact also avoids
-        # expanding recursive aliases while building the CFG view.
-        return self.__type_ctx.alloc_instance(type_id, mapped_args)

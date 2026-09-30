@@ -3,6 +3,7 @@ Yian type → LLVM IR type mapping.
 """
 
 from __future__ import annotations
+from collections.abc import Sequence
 from typing import cast
 
 from llvmlite import ir
@@ -111,7 +112,6 @@ class LLTypeCtx:
         return alignment
 
     def is_niche_enum(self, type_id: int) -> bool:
-        type_id = self.__type_ctx.resolve_aliases(type_id)
         variants = self.__type_ctx.get_enum_variants(type_id)
         if len(variants) != 2:
             return False
@@ -176,10 +176,6 @@ class LLTypeCtx:
         return f"{unit_name}.{type_def.custom_def.name}.{type_id}"
 
     def __get_raw_type(self, type_id: int) -> ir.Type:
-        # An alias is a type of its own; codegen needs the type it stands for.
-        # `canonical` also folds alias arguments, so two spellings of one type
-        # (`Option<i32, ErrorCode>` / `Option<i32, u64>`) share one LLVM type.
-        type_id = self.__type_ctx.canonical(type_id)
         if type_id in self.__storage:
             return self.__storage[type_id]
 
@@ -297,7 +293,7 @@ class LLTypeCtx:
         slots = (pad + 3) // 4
         identified.set_body(self.__i32, ir.ArrayType(self.__i32, slots))  # type: ignore
 
-    def __build_function_type(self, ret_type_id: int, param_type_ids: list[int], receiver_type_id: int | None = None) -> ir.FunctionType:
+    def __build_function_type(self, ret_type_id: int, param_type_ids: Sequence[int], receiver_type_id: int | None = None) -> ir.FunctionType:
         # A zero-sized return type lowers to `void` (nothing is returned);
         # `void` is the only LLVM type legal in return position for a ZST.
         ret = self.__void if self.is_zst(ret_type_id) else self.__get_raw_type(ret_type_id)

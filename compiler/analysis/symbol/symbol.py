@@ -12,11 +12,27 @@ class SymbolKind(Enum):
     Function = "function"
     Type = "type"
     ConstGeneric = "const_generic"
+    Alias = "alias"
 
 
 class SymbolAttribute(Enum):
     Public = "public"
     FfiPublic = "ffi-public"
+
+
+@dataclass(frozen=True)
+class AliasDefId:
+    value: int
+
+
+@dataclass
+class AliasSymbol:
+    symbol_id: int
+    name: str
+    alias_id: AliasDefId
+    attributes: set[SymbolAttribute]
+    span: SrcSpan | None = None
+    kind: SymbolKind = SymbolKind.Alias
 
 
 @dataclass
