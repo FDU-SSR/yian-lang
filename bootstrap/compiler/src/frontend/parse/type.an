@@ -1,293 +1,203 @@
-from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
-from compiler.frontend.parse.operator import BinaryOperator, UnaryOperator;
+from compiler.frontend.ast.node import TypeSyntax, TypeData, ConstExpr, ConstExprData, GenericArgument;
+from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
-from compiler.frontend.parse.ast import NodeId;
-from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.literal import parse_literal;
+from compiler.frontend.parse.state import Parser, take_vec;
 from compiler.frontend.source import Span;
+from std.core.drop import Drop;
 from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.convert import From;
+from std.core.string import String;
 from std.core.vec import Vec;
 
-fn primitive(parser: Parser&, name: KeywordKind, span: Span) -> NodeId {
-    let tag = AstTag.IntType;
-    let width = 4u64;
-    let signed = true;
-    if name == KeywordKind.I8 || name == KeywordKind.U8 { width = 1u64; }
-    elif name == KeywordKind.I16 || name == KeywordKind.U16 { width = 2u64; }
-    elif name == KeywordKind.I64 || name == KeywordKind.U64 { width = 8u64; }
-    if name == KeywordKind.U8 || name == KeywordKind.U16 || name == KeywordKind.U32 ||
-        name == KeywordKind.U64 || name == KeywordKind.Uint {
-        signed = false;
-    }
-    if name == KeywordKind.F16 || name == KeywordKind.F32 || name == KeywordKind.F64 ||
-        name == KeywordKind.Float {
-        tag = AstTag.FloatType;
-        if name == KeywordKind.F16 { width = 2u64; }
-        elif name == KeywordKind.F32 { width = 4u64; }
-        else { width = 8u64; }
-    } elif name == KeywordKind.Bool { tag = AstTag.BoolType; }
-    elif name == KeywordKind.Str { tag = AstTag.StrType; }
-    elif name == KeywordKind.Char { tag = AstTag.CharType; }
-    elif name == KeywordKind.Void { tag = AstTag.VoidType; }
-    let node = parser.alloc(tag, span);
-    if tag == AstTag.IntType {
-        parser.flag(node, AstFieldName.Signed, signed);
-        parser.integer(node, AstFieldName.Width, width, false);
-    } elif tag == AstTag.FloatType {
-        parser.integer(node, AstFieldName.Width, width, false);
-    }
-    return node;
-}
-
-fn is_primitive(name: KeywordKind) -> bool {
+fn primitive(name: KeywordKind) -> Option<TypeData> {
     match name {
-        I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | Int | Uint |
-            F16 | F32 | F64 | Float | Bool | Str | Char | Void => true,
-        _ => false,
+        I8 => Option<TypeData>.Some(val=TypeData.IntType(signed=true, width=1)),
+        I16 => Option<TypeData>.Some(val=TypeData.IntType(signed=true, width=2)),
+        I32 | Int => Option<TypeData>.Some(val=TypeData.IntType(signed=true, width=4)),
+        I64 => Option<TypeData>.Some(val=TypeData.IntType(signed=true, width=8)),
+        U8 => Option<TypeData>.Some(val=TypeData.IntType(signed=false, width=1)),
+        U16 => Option<TypeData>.Some(val=TypeData.IntType(signed=false, width=2)),
+        U32 => Option<TypeData>.Some(val=TypeData.IntType(signed=false, width=4)),
+        U64 => Option<TypeData>.Some(val=TypeData.IntType(signed=false, width=8)),
+        Uint => Option<TypeData>.Some(val=TypeData.IntType(signed=false, width=4)),
+        F16 => Option<TypeData>.Some(val=TypeData.FloatType(width=2)),
+        F32 => Option<TypeData>.Some(val=TypeData.FloatType(width=4)),
+        F64 | Float => Option<TypeData>.Some(val=TypeData.FloatType(width=8)),
+        Bool => Option<TypeData>.Some(val=TypeData.BoolType),
+        Str => Option<TypeData>.Some(val=TypeData.StrType),
+        Char => Option<TypeData>.Some(val=TypeData.CharType),
+        Void => Option<TypeData>.Some(val=TypeData.VoidType),
+        _ => Option<TypeData>.None,
     }
 }
 
-fn parse_type_base(parser: Parser&) -> NodeId {
-    if parser.failed() { return NodeId.invalid(); }
+fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
+    parser.ready()?;
     let token = parser.peek();
     let span = token.span;
-    let spelling = token.value();
     match token.kind() {
-        Keyword(kind) => {
-            if is_primitive(*kind) {
-                parser.advance();
-                return primitive(parser, *kind, span);
-            }
+        Keyword(kind) => match primitive(*kind) {
+            Some(data) => { parser.advance(); return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span)); },
+            None => {},
         },
         _ => {},
     }
     if parser.at_punct(PunctuatorKind.Exclamation) {
         parser.advance();
-        return parser.alloc(AstTag.NeverType, span);
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.NeverType, span));
     }
     if parser.at_keyword(KeywordKind.Fn) {
         parser.advance();
         parser.take_punct(PunctuatorKind.LParen);
-        let params = Vec<NodeId>.new();
+        let params = Vec<TypeSyntax&>.new();
+        defer params.drop();
         while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-            let param = parse_type(parser);
-            if parser.failed() { break; }
-            params.push(param);
-            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-            else { break; }
+            params.push(parse_type(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            parser.advance();
         }
         parser.take_punct(PunctuatorKind.RParen);
-        let result = NodeId.invalid();
-        if parser.at_punct(PunctuatorKind.Arrow) {
+        parser.ready()?;
+        let result = if parser.at_punct(PunctuatorKind.Arrow) {
             parser.advance();
-            result = parse_type(parser);
-        } else { result = parser.alloc(AstTag.VoidType, span); }
-        if parser.failed() { params.drop(); return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.FunctionType, span);
-        parser.children(node, AstFieldName.ParamTypes, params);
-        parser.child(node, AstFieldName.ReturnType, result);
-        return node;
+            parse_type(parser)?
+        } else { parser.arena.alloc_type_syntax(TypeData.VoidType, span) };
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(
+            TypeData.FunctionType(param_types=take_vec<TypeSyntax&>(&params), return_type=result), span));
     }
     if token.is_identifier() {
-        let name = parser.identifier();
-        if parser.failed() { return NodeId.invalid(); }
-        if spelling == "c_int" || spelling == "c_uint" || spelling == "c_size" || spelling == "c_char" {
-            let node = parser.alloc(AstTag.CScalarType, span);
-            parser.text(node, AstFieldName.Name, spelling);
-            return node;
-        }
-        let node = parser.alloc(AstTag.NamedType, span);
-        parser.child(node, AstFieldName.Name, name);
-        return node;
+        let name = parser.identifier()?;
+        let spelling = name.data.name.as_str();
+        let data = if spelling == "c_int" || spelling == "c_uint" || spelling == "c_size" || spelling == "c_char" {
+            TypeData.CScalarType(name=String.from(&spelling))
+        } else { TypeData.NamedType(name=name) };
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span));
     }
     if parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
-        let members = Vec<NodeId>.new();
+        let members = Vec<TypeSyntax&>.new();
+        defer members.drop();
         if parser.at_punct(PunctuatorKind.RParen) {
             parser.advance();
-            let node = parser.alloc(AstTag.TupleType, span);
-            parser.children(node, AstFieldName.ElementTypes, members);
-            return node;
+        } else {
+            let first = parse_type(parser)?;
+            if parser.at_punct(PunctuatorKind.RParen) { parser.advance(); return Option<TypeSyntax&>.Some(val=first); }
+            parser.take_punct(PunctuatorKind.Comma);
+            parser.ready()?;
+            members.push(first);
+            while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+                members.push(parse_type(parser)?);
+                if !parser.at_punct(PunctuatorKind.Comma) { break; }
+                parser.advance();
+            }
+            parser.take_punct(PunctuatorKind.RParen);
+            parser.ready()?;
         }
-        let first = parse_type(parser);
-        if parser.at_punct(PunctuatorKind.RParen) {
-            parser.advance();
-            members.drop();
-            return first;
-        }
-        parser.take_punct(PunctuatorKind.Comma);
-        if parser.failed() { members.drop(); return NodeId.invalid(); }
-        members.push(first);
-        while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-            members.push(parse_type(parser));
-            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-            else { break; }
-        }
-        parser.take_punct(PunctuatorKind.RParen);
-        if parser.failed() { members.drop(); return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.TupleType, span);
-        parser.children(node, AstFieldName.ElementTypes, members);
-        return node;
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=take_vec<TypeSyntax&>(&members)), span));
     }
     parser.error("Expected type", span);
-    return NodeId.invalid();
+    Option<TypeSyntax&>.None
 }
 
-pub fn parse_type(parser: Parser&) -> NodeId {
-    let base = parse_type_base(parser);
-    while !parser.failed() {
-        let span = parser.node(base).span();
+pub fn parse_type(parser: Parser&) -> Option<TypeSyntax&> {
+    let base = type_base(parser)?;
+    loop {
+        let span = base.span;
         if parser.at_punct(PunctuatorKind.LAngle) {
             parser.advance();
-            let args = Vec<NodeId>.new();
+            let args = Vec<GenericArgument>.new();
+            defer args.drop();
             while !parser.failed() && !parser.at_punct(PunctuatorKind.RAngle) {
-                args.push(parse_generic_arg(parser));
-                if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-                else { break; }
+                args.push(parse_generic_arg(parser)?);
+                if !parser.at_punct(PunctuatorKind.Comma) { break; }
+                parser.advance();
             }
             parser.take_punct(PunctuatorKind.RAngle);
-            if parser.failed() { args.drop(); return NodeId.invalid(); }
-            let name = "";
-            if parser.node(base).tag() == AstTag.NamedType {
-                let ident = parser.node(base).child_field(AstFieldName.Name);
-                name = parser.node(ident).text_field(AstFieldName.Name);
-            }
-            if name == "cptr" {
-                if args.len() != 1u64 {
-                    parser.error("cptr requires exactly one type argument", span);
-                    args.drop();
-                    return NodeId.invalid();
-                }
-                let arg_tag = parser.node(args[0u64]).tag();
-                if arg_tag == AstTag.LiteralConstExpr || arg_tag == AstTag.GenericConstExpr ||
-                    arg_tag == AstTag.UnaryConstExpr || arg_tag == AstTag.BinaryConstExpr {
-                    parser.error("cptr requires exactly one type argument", span);
-                    args.drop();
-                    return NodeId.invalid();
-                }
-                let node = parser.alloc(AstTag.CPtrType, span);
-                parser.child(node, AstFieldName.PointeeType, args[0u64]);
-                args.drop();
-                base = node;
-            } else {
-                let node = parser.alloc(AstTag.InstanceType, span);
-                parser.child(node, AstFieldName.Base, base);
-                parser.children(node, AstFieldName.GenericArgs, args);
-                base = node;
-            }
-            continue;
-        }
-        if parser.at_punct(PunctuatorKind.Star) {
+            parser.ready()?;
+            let cptr = match &base.data { NamedType(name) => name.data.name.as_str() == "cptr", _ => false };
+            if cptr {
+                if args.len() != 1 { parser.error("cptr requires exactly one type argument", span); return Option<TypeSyntax&>.None; }
+                let pointee = match &args[0u64] {
+                    Type(value) => *value,
+                    Constant(_) => { parser.error("cptr requires exactly one type argument", span); return Option<TypeSyntax&>.None; },
+                };
+                base = parser.arena.alloc_type_syntax(TypeData.CPtrType(pointee_type=pointee), span);
+            } else { base = parser.arena.alloc_type_syntax(TypeData.InstanceType(base=base, generic_args=take_vec<GenericArgument>(&args)), span); }
+        } elif parser.at_punct(PunctuatorKind.Star) {
             parser.advance();
-            let node = parser.alloc(AstTag.PointerType, span);
-            parser.child(node, AstFieldName.PointeeType, base);
-            base = node;
-            continue;
-        }
-        if parser.at_punct(PunctuatorKind.Ampersand) {
+            base = parser.arena.alloc_type_syntax(TypeData.PointerType(pointee_type=base), span);
+        } elif parser.at_punct(PunctuatorKind.Ampersand) {
             parser.advance();
-            let node = parser.alloc(AstTag.RefType, span);
-            parser.child(node, AstFieldName.PointeeType, base);
-            base = node;
-            continue;
-        }
-        if parser.at_punct(PunctuatorKind.LBracket) {
+            base = parser.arena.alloc_type_syntax(TypeData.RefType(pointee_type=base), span);
+        } elif parser.at_punct(PunctuatorKind.LBracket) {
             parser.advance();
             if parser.at_punct(PunctuatorKind.RBracket) {
                 parser.advance();
-                let node = parser.alloc(AstTag.SliceType, span);
-                parser.child(node, AstFieldName.ElementType, base);
-                base = node;
+                base = parser.arena.alloc_type_syntax(TypeData.SliceType(element_type=base), span);
             } else {
-                let size = parse_const_expr(parser);
+                let size = parse_const_expr(parser)?;
                 parser.take_punct(PunctuatorKind.RBracket);
-                if parser.failed() { return NodeId.invalid(); }
-                let node = parser.alloc(AstTag.ArrayType, span);
-                parser.child(node, AstFieldName.ElementType, base);
-                parser.child(node, AstFieldName.Size, size);
-                base = node;
+                parser.ready()?;
+                base = parser.arena.alloc_type_syntax(TypeData.ArrayType(element_type=base, size=size), span);
             }
-            continue;
-        }
-        break;
+        } else { break; }
     }
-    return base;
+    Option<TypeSyntax&>.Some(val=base)
 }
 
 fn const_binding(op: BinaryOperator) -> i32 {
-    match op {
-        BitOr | BitXor | BitAnd | Shl | Shr | Add | Sub | Mul | Div | Mod => op.lbp(),
-        _ => 0,
-    }
+    match op { BitOr | BitXor | BitAnd | Shl | Shr | Add | Sub | Mul | Div | Mod => op.lbp(), _ => 0 }
 }
-
-fn const_expr_bp(parser: Parser&, min_bp: i32) -> NodeId {
-    if parser.failed() { return NodeId.invalid(); }
-    let token = parser.peek();
-    let span = token.span;
-    let lhs = NodeId.invalid();
-    if parser.at_punct(PunctuatorKind.Minus) || parser.at_punct(PunctuatorKind.Tilde) {
-        let op = *UnaryOperator.from_token(token).unwrap();
+fn const_expr_bp(parser: Parser&, min_bp: i32) -> Option<ConstExpr&> {
+    parser.ready()?;
+    let span = parser.peek().span;
+    let lhs = if parser.at_punct(PunctuatorKind.Minus) || parser.at_punct(PunctuatorKind.Tilde) {
+        let op = *UnaryOperator.from_token(parser.peek()).unwrap();
         parser.advance();
-        let operand = const_expr_bp(parser, 13);
-        if parser.failed() { return NodeId.invalid(); }
-        lhs = parser.alloc(AstTag.UnaryConstExpr, span + parser.node(operand).span());
-        parser.unary_op(lhs, op);
-        parser.child(lhs, AstFieldName.Operand, operand);
+        let operand = const_expr_bp(parser, 13)?;
+        parser.arena.alloc_const_expr(ConstExprData.UnaryConstExpr(op=op, operand=operand), span + operand.span)
     } elif parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
-        lhs = const_expr_bp(parser, 1);
+        let inner = const_expr_bp(parser, 1)?;
         parser.take_punct(PunctuatorKind.RParen);
-    } elif token.is_integer() {
-        let literal = parser.alloc(AstTag.IntLiteral, span);
-        parser.integer(literal, AstFieldName.Value, token.integer_value(), false);
-        parser.text(literal, AstFieldName.Suffix, token.suffix());
-        parser.advance();
-        lhs = parser.alloc(AstTag.LiteralConstExpr, span);
-        parser.child(lhs, AstFieldName.Literal, literal);
-    } elif token.is_identifier() || parser.keyword_token() {
-        let ident = parser.identifier();
-        if parser.failed() { return NodeId.invalid(); }
-        lhs = parser.alloc(AstTag.GenericConstExpr, span);
-        parser.child(lhs, AstFieldName.Name, ident);
-    } else {
-        parser.error("Expected integer constant expression", span);
-        return NodeId.invalid();
-    }
-    while !parser.failed() {
+        parser.ready()?;
+        inner
+    } elif parser.peek().is_integer() {
+        let literal = parse_literal(parser)?;
+        let integer = match literal { Integer(value) => value, _ => return Option<ConstExpr&>.None };
+        parser.arena.alloc_const_expr(ConstExprData.LiteralConstExpr(literal=integer), span)
+    } elif parser.peek().is_identifier() || parser.keyword_token() {
+        let name = parser.identifier()?;
+        parser.arena.alloc_const_expr(ConstExprData.GenericConstExpr(name=name), span)
+    } else { parser.error("Expected integer constant expression", span); return Option<ConstExpr&>.None; };
+    loop {
         let candidate = BinaryOperator.from_token(parser.peek());
         let lbp = match candidate { Some(op) => const_binding(op), None => 0 };
         if lbp == 0 || lbp < min_bp { break; }
         let op = *candidate.unwrap();
         parser.advance();
-        let rhs = const_expr_bp(parser, lbp + 1);
-        if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.BinaryConstExpr, parser.node(lhs).span() + parser.node(rhs).span());
-        parser.binary_op(node, op);
-        parser.child(node, AstFieldName.Left, lhs);
-        parser.child(node, AstFieldName.Right, rhs);
-        lhs = node;
+        let rhs = const_expr_bp(parser, lbp + 1)?;
+        lhs = parser.arena.alloc_const_expr(ConstExprData.BinaryConstExpr(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
     }
-    return lhs;
+    Option<ConstExpr&>.Some(val=lhs)
 }
-
-pub fn parse_const_expr(parser: Parser&) -> NodeId { return const_expr_bp(parser, 1); }
-
-pub fn parse_generic_arg(parser: Parser&) -> NodeId {
+pub fn parse_const_expr(parser: Parser&) -> Option<ConstExpr&> { const_expr_bp(parser, 1) }
+pub fn parse_generic_arg(parser: Parser&) -> Option<GenericArgument> {
     let token = parser.peek();
     if token.is_integer() || token.is_punct(PunctuatorKind.Minus) || token.is_punct(PunctuatorKind.Tilde) {
-        return parse_const_expr(parser);
+        return Option<GenericArgument>.Some(val=GenericArgument.Constant(value=parse_const_expr(parser)?));
     }
     let mark = parser.mark();
     let ty = parse_type(parser);
-    if parser.failed() {
-        parser.clear_error();
-        parser.reset(mark);
-        return parse_const_expr(parser);
+    if ty.is_some() {
+        let candidate = BinaryOperator.from_token(parser.peek());
+        if candidate.is_none() || const_binding(*candidate.unwrap()) == 0 {
+            return Option<GenericArgument>.Some(val=GenericArgument.Type(value=*ty.unwrap()));
+        }
     }
-    let candidate = BinaryOperator.from_token(parser.peek());
-    if candidate.is_some() && const_binding(*candidate.unwrap()) != 0 {
-        parser.reset(mark);
-        return parse_const_expr(parser);
-    }
-    return ty;
+    parser.clear_error();
+    parser.reset(mark);
+    Option<GenericArgument>.Some(val=GenericArgument.Constant(value=parse_const_expr(parser)?))
 }

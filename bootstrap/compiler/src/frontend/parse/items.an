@@ -1,557 +1,325 @@
-from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
-from compiler.frontend.parse.ast_atoms import AttrKind;
+from compiler.frontend.ast.arena import AstTree;
+from compiler.frontend.ast.node import Item, ItemData, Program, ProgramData, Attr, AttrData, Identifier, GenericParam, Parameter, TypeSyntax, MethodDecl, MethodDeclData, MethodDef, MethodDefData, TraitMember, ExternFuncDecl, ExternFuncDeclData, FieldInfo, FieldInfoData, VariantInfo, VariantInfoData, VarInfo, ImplCondition, ImplConditionData;
+from compiler.frontend.ast.atoms import AttrKind;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
-from compiler.frontend.parse.ast import AstValue, NodeId;
 from compiler.frontend.parse.expr import parse_block, parse_expr;
-from compiler.frontend.parse.pattern import parse_binding_pattern;
-from compiler.frontend.parse.state import AstTree, ParseError, Parser;
+from compiler.frontend.parse.parameters import parse_generics, parse_parameters, parse_named_parameters, parse_return_type, parse_var_info;
+from compiler.frontend.parse.state import Parser, ParseError, take_vec;
 from compiler.frontend.parse.type import parse_type;
-from compiler.frontend.source import Span;
+from compiler.frontend.source import Span, Position;
+from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
+from std.core.option import Option;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-fn attrs(parser: Parser&) -> Vec<NodeId> {
-    let values = Vec<NodeId>.new();
-    while !parser.failed() {
-        let token = parser.peek();
-        let span = token.span;
-        let kind = AttrKind.Pub;
-        if parser.at_keyword(KeywordKind.Pub) {
+fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {
+    let values = Vec<Attr&>.new();
+    defer values.drop();
+    loop {
+        let span = parser.peek().span;
+        let kind = if parser.at_keyword(KeywordKind.Pub) {
             parser.advance();
-            kind = AttrKind.Pub;
             if parser.at_punct(PunctuatorKind.LParen) {
                 parser.advance();
                 parser.take_keyword(KeywordKind.Ffi);
                 parser.take_punct(PunctuatorKind.RParen);
-                kind = AttrKind.PubFfi;
-            }
-        } elif parser.at_keyword(KeywordKind.Ffi) {
-            parser.advance();
-            kind = AttrKind.Ffi;
-        } elif parser.at_keyword(KeywordKind.Static) {
-            parser.advance();
-            kind = AttrKind.Static;
-        } else { break; }
-        if parser.failed() { break; }
-        let node = parser.alloc(AstTag.Attr, span);
-        parser.attr_kind(node, kind);
-        values.push(node);
+                parser.ready()?;
+                AttrKind.PubFfi
+            } else { AttrKind.Pub }
+        } elif parser.at_keyword(KeywordKind.Ffi) { parser.advance(); AttrKind.Ffi } elif parser.at_keyword(KeywordKind.Static) { parser.advance(); AttrKind.Static } else { break; };
+        values.push(parser.arena.alloc_attr(AttrData(kind=kind), span));
     }
-    return values;
+    Option<Vec<Attr&>>.Some(val=take_vec<Attr&>(&values))
 }
-
-fn parse_import(parser: Parser&, items: Vec<NodeId>&) {
-    let start = parser.peek().span;
-    if parser.at_keyword(KeywordKind.Import) {
-        parser.advance();
-        let paths = Vec<NodeId>.new();
-        paths.push(parser.identifier());
-        while !parser.failed() && parser.at_punct(PunctuatorKind.Dot) {
-            parser.advance();
-            paths.push(parser.identifier());
-        }
-        if parser.failed() || paths.len() == 0u64 { paths.drop(); return; }
-        let popped = paths.pop();
-        let target = *popped.unwrap();
-        let alias = NodeId.invalid();
-        if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); }
-        let end = parser.node(target).span();
-        if alias.is_valid() { end = parser.node(alias).span(); }
+fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
+    let span = parser.peek().span;
+    let direct = parser.at_keyword(KeywordKind.Import);
+    parser.advance();
+    let paths = Vec<Identifier&>.new();
+    defer paths.drop();
+    paths.push(parser.identifier()?);
+    while parser.at_punct(PunctuatorKind.Dot) { parser.advance(); paths.push(parser.identifier()?); }
+    if direct {
+        let target = *paths.pop().unwrap();
+        let alias = Option<Identifier&>.None;
+        if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); parser.ready()?; }
+        let end = match alias { Some(value) => value.span, None => target.span };
         if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) { end = parser.peek().span; parser.advance(); }
-        let node = parser.alloc(AstTag.Import, start);
-        parser.children(node, AstFieldName.Paths, paths);
-        parser.child(node, AstFieldName.Target, target);
-        if alias.is_valid() { parser.child(node, AstFieldName.Alias, alias); }
-        else { parser.missing(node, AstFieldName.Alias); }
-        parser.location(node, AstFieldName.End, end.end);
-        items.push(node);
-        return;
-    }
-
-    parser.take_keyword(KeywordKind.From);
-    let paths = Vec<NodeId>.new();
-    paths.push(parser.identifier());
-    while !parser.failed() && parser.at_punct(PunctuatorKind.Dot) {
-        parser.advance();
-        paths.push(parser.identifier());
-    }
-    parser.take_keyword(KeywordKind.Import);
-    let targets = Vec<NodeId>.new();
-    let aliases = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.Semicolon) && !parser.at_end() {
-        targets.push(parser.identifier());
-        let alias = NodeId.invalid();
-        if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); }
-        aliases.push(alias);
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
-    }
-    if parser.failed() || targets.len() == 0u64 {
-        paths.drop(); targets.drop(); aliases.drop(); return;
-    }
-    let last = targets[targets.len() - 1u64];
-    if aliases[aliases.len() - 1u64].is_valid() { last = aliases[aliases.len() - 1u64]; }
-    let end = parser.node(last).span();
-    if parser.at_punct(PunctuatorKind.Semicolon) { end = parser.peek().span; parser.advance(); }
-    let index: u64 = 0u64;
-    while index < targets.len() {
-        let node = parser.alloc(AstTag.Import, start);
-        let copied_paths = Vec<NodeId>.new();
-        copied_paths.extend_from_slice(paths.as_slice());
-        parser.children(node, AstFieldName.Paths, copied_paths);
-        parser.child(node, AstFieldName.Target, targets[index]);
-        if aliases[index].is_valid() { parser.child(node, AstFieldName.Alias, aliases[index]); }
-        else { parser.missing(node, AstFieldName.Alias); }
-        parser.location(node, AstFieldName.End, end.end);
-        items.push(node);
-        index += 1u64;
-    }
-    paths.drop(); targets.drop(); aliases.drop();
-}
-
-fn generics(parser: Parser&) -> Vec<NodeId> {
-    let params = Vec<NodeId>.new();
-    if !parser.at_punct(PunctuatorKind.LAngle) { return params; }
-    parser.advance();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RAngle) {
-        if parser.at_keyword(KeywordKind.Const) {
-            let start = parser.take_keyword(KeywordKind.Const);
-            let name = parser.identifier();
-            parser.take_punct(PunctuatorKind.Colon);
-            let type = parse_type(parser);
-            if parser.failed() { break; }
-            let node = parser.alloc(AstTag.ConstGenericParam, start + parser.node(type).span());
-            parser.child(node, AstFieldName.Name, name);
-            parser.child(node, AstFieldName.ValueType, type);
-            params.push(node);
-        } else {
-            let name = parser.identifier();
-            if parser.failed() { break; }
-            let node = parser.alloc(AstTag.TypeGenericParam, parser.node(name).span());
-            parser.child(node, AstFieldName.Name, name);
-            params.push(node);
-        }
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
-    }
-    parser.take_punct(PunctuatorKind.RAngle);
-    return params;
-}
-
-fn var_info(parser: Parser&) -> NodeId {
-    let name = parser.identifier();
-    parser.take_punct(PunctuatorKind.Colon);
-    let type = parse_type(parser);
-    if parser.failed() { return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.VarInfo, parser.node(name).span());
-    parser.child(node, AstFieldName.Name, name);
-    parser.child(node, AstFieldName.VarType, type);
-    return node;
-}
-
-fn callable_param(parser: Parser&) -> NodeId {
-    let pattern = parse_binding_pattern(parser);
-    parser.take_punct(PunctuatorKind.Colon);
-    let type = parse_type(parser);
-    if parser.failed() { return NodeId.invalid(); }
-    let node = NodeId.invalid();
-    if parser.node(pattern).tag() == AstTag.NamePattern {
-        node = parser.alloc(AstTag.VarInfo, parser.node(pattern).span());
-        parser.child(node, AstFieldName.Name, parser.node(pattern).child_field(AstFieldName.Name));
-        parser.child(node, AstFieldName.VarType, type);
+        items.push(parser.arena.alloc_item(ItemData.Import(paths=take_vec<Identifier&>(&paths), target=target, alias=alias, end=Option<Position>.Some(val=end.end)), span));
     } else {
-        node = parser.alloc(AstTag.PatternParam, parser.node(pattern).span());
-        parser.child(node, AstFieldName.Pattern, pattern);
-        parser.child(node, AstFieldName.VarType, type);
+        parser.take_keyword(KeywordKind.Import);
+        parser.ready()?;
+        let targets = Vec<Identifier&>.new();
+        defer targets.drop();
+        let aliases = Vec<Option<Identifier&>>.new();
+        defer aliases.drop();
+        loop {
+            targets.push(parser.identifier()?);
+            let alias = Option<Identifier&>.None;
+            if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); parser.ready()?; }
+            aliases.push(alias);
+            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            parser.advance();
+        }
+        let last = targets.len() - 1;
+        let end = match &aliases[last] { Some(value) => value.span, None => targets[last].span };
+        if parser.at_punct(PunctuatorKind.Semicolon) { end = parser.peek().span; parser.advance(); }
+        let i: u64 = 0;
+        while i < targets.len() {
+            let copied = Vec<Identifier&>.new();
+            copied.extend_from_slice(paths.as_slice());
+            items.push(parser.arena.alloc_item(ItemData.Import(paths=copied, target=targets[i], alias=aliases[i], end=Option<Position>.Some(val=end.end)), span));
+            i += 1;
+        }
     }
-    return node;
+    Option<bool>.Some(val=true)
 }
-
-fn params(parser: Parser&, patterns: bool) -> Vec<NodeId> {
-    parser.take_punct(PunctuatorKind.LParen);
-    let values = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-        let value = NodeId.invalid();
-        if patterns { value = callable_param(parser); }
-        else { value = var_info(parser); }
-        if parser.failed() { break; }
-        values.push(value);
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
-    }
-    parser.take_punct(PunctuatorKind.RParen);
-    return values;
-}
-
-fn return_type(parser: Parser&) -> NodeId {
-    if !parser.at_punct(PunctuatorKind.Arrow) { return NodeId.invalid(); }
-    parser.advance();
-    return parse_type(parser);
-}
-
-pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> {
-    let items = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_end() {
-        let attributes = attrs(parser);
-        if parser.failed() { attributes.drop(); break; }
+fn program(parser: Parser&) -> Option<Program&> {
+    let items = Vec<Item&>.new();
+    defer items.drop();
+    while !parser.at_end() {
+        let attrs = attributes(parser)?;
+        defer attrs.drop();
         if parser.at_keyword(KeywordKind.Import) || parser.at_keyword(KeywordKind.From) {
-            if attributes.len() != 0u64 {
-                parser.error("Attributes are not allowed on import statements", parser.node(attributes[0u64]).span());
-            } else { parse_import(parser, &items); }
-            attributes.drop();
+            if attrs.len() != 0 { parser.error("Attributes are not allowed on import statements", attrs[0u64].span); return Option<Program&>.None; }
+            imports(parser, &items)?;
             continue;
         }
-        let item = NodeId.invalid();
-        if parser.at_keyword(KeywordKind.Typedef) { item = parse_alias(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Opaque) { item = parse_opaque(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Extern) { item = parse_extern(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Impl) {
-            if attributes.len() != 0u64 {
-                parser.error("Attributes are not allowed on impl blocks", parser.node(attributes[0u64]).span());
-            } else { item = parse_impl(parser); }
-            attributes.drop();
-        }
-        elif parser.at_keyword(KeywordKind.Struct) { item = parse_struct(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Enum) { item = parse_enum(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Trait) { item = parse_trait(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Fn) { item = parse_func(parser, attributes); }
-        elif parser.at_keyword(KeywordKind.Const) { item = parse_const(parser, attributes); }
-        else {
-            attributes.drop();
+        let item = if parser.at_keyword(KeywordKind.Typedef) { alias_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Opaque) { opaque_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Extern) { extern_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Struct) { struct_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Enum) { enum_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Trait) { trait_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Fn) { function_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Const) { const_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Impl) {
+            if attrs.len() != 0 { parser.error("Attributes are not allowed on impl blocks", attrs[0u64].span); return Option<Program&>.None; }
+            impl_item(parser)?
+        } else {
             let message = String.from(&"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '");
+            defer message.drop();
             message.push_str(parser.peek().value());
             message.push('\'');
             parser.error(message.as_str(), parser.peek().span);
-            message.drop();
-        }
-        if parser.failed() { break; }
+            return Option<Program&>.None;
+        };
         items.push(item);
     }
     let span = parser.peek().span;
-    if items.len() != 0u64 {
-        span = parser.node(items[0u64]).span();
-        let index: u64 = 1u64;
-        while index < items.len() {
-            span += parser.node(items[index]).span();
-            index += 1u64;
-        }
-    }
-    let root = parser.alloc(AstTag.Program, span);
-    parser.children(root, AstFieldName.Items, items);
-    return parser.finish(root);
+    if items.len() != 0 { span = items[0u64].span; let i: u64 = 1; while i < items.len() { span += items[i].span; i += 1; } }
+    Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=take_vec<Item&>(&items)), span))
 }
-
-fn parse_alias(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
-    parser.take_keyword(KeywordKind.Typedef);
-    let name = parser.identifier();
-    let params = generics(parser);
+pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> { parser.finish(program(parser)) }
+fn alias_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
     parser.take_punct(PunctuatorKind.Equal);
-    let target = parse_type(parser);
+    parser.ready()?;
+    let target = parse_type(parser)?;
     parser.take_punct(PunctuatorKind.Semicolon);
-    if parser.failed() { attributes.drop(); params.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.Alias, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, params);
-    parser.child(node, AstFieldName.Target, target);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Alias(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), target=target), name.span))
 }
-
-fn parse_opaque(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+fn opaque_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Opaque);
     parser.take_keyword(KeywordKind.Type);
-    let name = parser.identifier();
+    parser.ready()?;
+    let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Semicolon);
-    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.OpaqueTypeDef, span);
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.OpaqueTypeDef(attrs=take_vec(attrs), name=name), span))
 }
-
-fn extern_function(parser: Parser&) -> NodeId {
+fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.take_keyword(KeywordKind.Fn);
-    let name = parser.identifier();
-    let arguments = params(parser, false);
-    let result = return_type(parser);
+    parser.ready()?;
+    let name = parser.identifier()?;
+    let params = parse_named_parameters(parser)?;
+    defer params.drop();
+    let ret = parse_return_type(parser);
+    parser.ready()?;
     parser.take_punct(PunctuatorKind.Semicolon);
-    if parser.failed() { arguments.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ExternFuncDecl, parser.node(name).span());
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Params, arguments);
-    if result.is_valid() { parser.child(node, AstFieldName.RetType, result); }
-    else { parser.missing(node, AstFieldName.RetType); }
-    return node;
+    parser.ready()?;
+    Option<ExternFuncDecl&>.Some(val=parser.arena.alloc_extern_func_decl(ExternFuncDeclData(name=name, params=take_vec<VarInfo&>(&params), ret_type=ret), name.span))
 }
-
-fn parse_extern(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+fn extern_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Extern);
-    let abi = parser.peek();
-    let accepted = false;
-    match abi.kind() {
-        StringLiteral => { accepted = abi.value() == "C"; },
-        _ => {},
-    }
-    if !accepted {
-        parser.error("Only extern C is supported", abi.span);
-        attributes.drop();
-        return NodeId.invalid();
-    }
+    let token = parser.peek();
+    let accepted = match token.kind() { StringLiteral => token.value() == "C", _ => false };
+    if !accepted { parser.error("Only extern C is supported", token.span); return Option<Item&>.None; }
     parser.advance();
     parser.take_punct(PunctuatorKind.LBrace);
-    let functions = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        functions.push(extern_function(parser));
-    }
+    parser.ready()?;
+    let functions = Vec<ExternFuncDecl&>.new();
+    defer functions.drop();
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { functions.push(extern_function(parser)?); }
     parser.take_punct(PunctuatorKind.RBrace);
-    if parser.failed() { attributes.drop(); functions.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ExternBlock, span);
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.text(node, AstFieldName.Abi, "C");
-    parser.children(node, AstFieldName.Functions, functions);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=take_vec(attrs), abi=String.from(&"C"), functions=take_vec<ExternFuncDecl&>(&functions)), span))
 }
-
-fn parse_const(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
+fn const_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Const);
-    let name = parser.identifier();
+    let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Colon);
-    let type = parse_type(parser);
+    parser.ready()?;
+    let ty = parse_type(parser)?;
     parser.take_punct(PunctuatorKind.Equal);
-    let value = parse_expr(parser);
+    parser.ready()?;
+    let value = parse_expr(parser)?;
     let end = parser.take_punct(PunctuatorKind.Semicolon);
-    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ConstDef, span + end);
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.child(node, AstFieldName.ConstType, type);
-    parser.child(node, AstFieldName.Value, value);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ConstDef(attrs=take_vec(attrs), name=name, const_type=ty, value=value), span + end))
 }
-
-fn field_info(parser: Parser&) -> NodeId {
-    let attributes = attrs(parser);
-    let name = parser.identifier();
+fn field_info(parser: Parser&) -> Option<FieldInfo&> {
+    let attrs = attributes(parser)?;
+    defer attrs.drop();
+    let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Colon);
-    let type = parse_type(parser);
-    if parser.failed() { attributes.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.FieldInfo, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.child(node, AstFieldName.FieldType, type);
-    return node;
+    parser.ready()?;
+    let ty = parse_type(parser)?;
+    Option<FieldInfo&>.Some(val=parser.arena.alloc_field_info(FieldInfoData(attrs=take_vec<Attr&>(&attrs), name=name, field_type=ty), name.span))
 }
-
-fn parse_struct(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
-    parser.take_keyword(KeywordKind.Struct);
-    let name = parser.identifier();
-    let params = generics(parser);
+fn struct_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
-    let fields = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        fields.push(field_info(parser));
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
+    parser.ready()?;
+    let fields = Vec<FieldInfo&>.new();
+    defer fields.drop();
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        fields.push(field_info(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
     }
     parser.take_punct(PunctuatorKind.RBrace);
-    if parser.failed() { attributes.drop(); params.drop(); fields.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.StructDef, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, params);
-    parser.children(node, AstFieldName.Fields, fields);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.StructDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), fields=take_vec<FieldInfo&>(&fields)), name.span))
 }
-
-fn variant_info(parser: Parser&) -> NodeId {
-    let name = parser.identifier();
-    let fields = Vec<NodeId>.new();
+fn variant_info(parser: Parser&) -> Option<VariantInfo&> {
+    let name = parser.identifier()?;
+    let fields = Vec<VarInfo&>.new();
+    defer fields.drop();
     if parser.at_punct(PunctuatorKind.LBrace) {
         parser.advance();
-        while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-            fields.push(var_info(parser));
-            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-            else { break; }
+        while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+            fields.push(parse_var_info(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            parser.advance();
         }
         parser.take_punct(PunctuatorKind.RBrace);
+        parser.ready()?;
     }
-    if parser.failed() { fields.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.VariantInfo, parser.node(name).span());
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Fields, fields);
-    return node;
+    Option<VariantInfo&>.Some(val=parser.arena.alloc_variant_info(VariantInfoData(name=name, fields=take_vec<VarInfo&>(&fields)), name.span))
 }
-
-fn parse_enum(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
-    parser.take_keyword(KeywordKind.Enum);
-    let name = parser.identifier();
-    let params = generics(parser);
+fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
-    let variants = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        variants.push(variant_info(parser));
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
+    parser.ready()?;
+    let variants = Vec<VariantInfo&>.new();
+    defer variants.drop();
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        variants.push(variant_info(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
     }
     parser.take_punct(PunctuatorKind.RBrace);
-    if parser.failed() { attributes.drop(); params.drop(); variants.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.EnumDef, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, params);
-    parser.children(node, AstFieldName.Variants, variants);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.EnumDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), variants=take_vec<VariantInfo&>(&variants)), name.span))
 }
-
-fn method_decl(parser: Parser&) -> NodeId {
-    let attributes = attrs(parser);
+fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
+    let attrs = attributes(parser)?;
+    defer attrs.drop();
     parser.take_keyword(KeywordKind.Fn);
-    let name = parser.identifier();
-    let generic_params = generics(parser);
-    let arguments = params(parser, true);
-    let result = return_type(parser);
-    if parser.failed() { attributes.drop(); generic_params.drop(); arguments.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.MethodDecl, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, generic_params);
-    parser.children(node, AstFieldName.Params, arguments);
-    if result.is_valid() { parser.child(node, AstFieldName.RetType, result); }
-    else { parser.missing(node, AstFieldName.RetType); }
-    return node;
+    parser.ready()?;
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
+    let params = parse_parameters(parser)?;
+    defer params.drop();
+    let ret = parse_return_type(parser);
+    parser.ready()?;
+    Option<MethodDecl&>.Some(val=parser.arena.alloc_method_decl(MethodDeclData(attrs=take_vec<Attr&>(&attrs), name=name, generics=take_vec<GenericParam>(&generics), params=take_vec<Parameter>(&params), ret_type=ret), name.span))
 }
-
-fn method_def(parser: Parser&, declaration: NodeId) -> NodeId {
-    let decl = declaration;
-    if !decl.is_valid() { decl = method_decl(parser); }
-    let body = parse_block(parser);
-    if parser.failed() { return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.MethodDef, parser.node(decl).span());
-    parser.child(node, AstFieldName.Decl, decl);
-    parser.child(node, AstFieldName.Body, body);
-    return node;
+fn method_def(parser: Parser&, decl: MethodDecl&) -> Option<MethodDef&> {
+    let body = parse_block(parser)?;
+    Option<MethodDef&>.Some(val=parser.arena.alloc_method_def(MethodDefData(decl=decl, body=body), decl.span))
 }
-
-fn trait_item(parser: Parser&) -> NodeId {
-    let decl = method_decl(parser);
-    if parser.failed() { return NodeId.invalid(); }
-    if parser.at_punct(PunctuatorKind.LBrace) { return method_def(parser, decl); }
-    let fields = parser.node(decl).fields();
-    let field_index: u64 = 0u64;
-    while field_index < fields.len() {
-        if fields[field_index].name() == AstFieldName.Params {
-            match fields[field_index].value() {
-                Children(values) => {
-                    let index: u64 = 0u64;
-                    while index < values.len() {
-                        if parser.node(values[index]).tag() == AstTag.PatternParam {
-                            parser.error("Parameter patterns require a method body", parser.node(values[index]).span());
-                            return NodeId.invalid();
-                        }
-                        index += 1u64;
-                    }
-                },
-                _ => {},
-            }
+fn trait_member(parser: Parser&) -> Option<TraitMember> {
+    let decl = method_decl(parser)?;
+    if parser.at_punct(PunctuatorKind.LBrace) { return Option<TraitMember>.Some(val=TraitMember.Definition(value=method_def(parser, decl)?)); }
+    let i: u64 = 0;
+    while i < decl.data.params.len() {
+        match &decl.data.params[i] {
+            Pattern(value) => { parser.error("Parameter patterns require a method body", value.span); return Option<TraitMember>.None; },
+            Named(_) => {},
         }
-        field_index += 1u64;
+        i += 1;
     }
     parser.take_punct(PunctuatorKind.Semicolon);
-    return decl;
+    parser.ready()?;
+    Option<TraitMember>.Some(val=TraitMember.Declaration(value=decl))
 }
-
-fn parse_trait(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
-    parser.take_keyword(KeywordKind.Trait);
-    let name = parser.identifier();
-    let generic_params = generics(parser);
+fn trait_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
-    let items = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        items.push(trait_item(parser));
-    }
+    parser.ready()?;
+    let members = Vec<TraitMember>.new();
+    defer members.drop();
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { members.push(trait_member(parser)?); }
     parser.take_punct(PunctuatorKind.RBrace);
-    if parser.failed() { attributes.drop(); generic_params.drop(); items.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.TraitDef, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, generic_params);
-    parser.children(node, AstFieldName.Items, items);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.TraitDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), items=take_vec<TraitMember>(&members)), name.span))
 }
-
-fn impl_conditions(parser: Parser&) -> Vec<NodeId> {
-    let conditions = Vec<NodeId>.new();
+fn impl_conditions(parser: Parser&) -> Option<Vec<ImplCondition&>> {
+    let conditions = Vec<ImplCondition&>.new();
+    defer conditions.drop();
     loop {
-        let name = parser.identifier();
+        let name = parser.identifier()?;
         parser.take_punct(PunctuatorKind.Colon);
-        let traits = Vec<NodeId>.new();
-        traits.push(parse_type(parser));
-        while !parser.failed() && parser.at_punct(PunctuatorKind.Plus) {
-            parser.advance();
-            traits.push(parse_type(parser));
-        }
-        if parser.failed() { traits.drop(); break; }
-        let condition = parser.alloc(AstTag.ImplCondition, parser.node(name).span());
-        parser.child(condition, AstFieldName.Name, name);
-        parser.children(condition, AstFieldName.Traits, traits);
-        conditions.push(condition);
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
+        parser.ready()?;
+        let traits = Vec<TypeSyntax&>.new();
+        defer traits.drop();
+        traits.push(parse_type(parser)?);
+        while parser.at_punct(PunctuatorKind.Plus) { parser.advance(); traits.push(parse_type(parser)?); }
+        conditions.push(parser.arena.alloc_impl_condition(ImplConditionData(name=name, traits=take_vec<TypeSyntax&>(&traits)), name.span));
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
     }
-    return conditions;
+    Option<Vec<ImplCondition&>>.Some(val=take_vec<ImplCondition&>(&conditions))
 }
-
-fn parse_impl(parser: Parser&) -> NodeId {
+fn impl_item(parser: Parser&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Impl);
-    let generic_params = generics(parser);
-    let first = parse_type(parser);
-    let trait = NodeId.invalid();
-    let target = first;
-    if parser.at_keyword(KeywordKind.For) {
-        parser.advance();
-        trait = first;
-        target = parse_type(parser);
-    }
-    let conditions = Vec<NodeId>.new();
-    if parser.at_keyword(KeywordKind.If) {
-        parser.advance();
-        conditions = impl_conditions(parser);
-    }
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
+    let target = parse_type(parser)?;
+    let trait = Option<TypeSyntax&>.None;
+    if parser.at_keyword(KeywordKind.For) { parser.advance(); trait = Option<TypeSyntax&>.Some(val=target); target = parse_type(parser)?; }
+    let conditions = Vec<ImplCondition&>.new();
+    defer conditions.drop();
+    if parser.at_keyword(KeywordKind.If) { parser.advance(); conditions = impl_conditions(parser)?; }
     parser.take_punct(PunctuatorKind.LBrace);
-    let items = Vec<NodeId>.new();
-    while !parser.failed() && !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        items.push(method_def(parser, NodeId.invalid()));
-    }
+    parser.ready()?;
+    let methods = Vec<MethodDef&>.new();
+    defer methods.drop();
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { methods.push(method_def(parser, method_decl(parser)?)?); }
     parser.take_punct(PunctuatorKind.RBrace);
-    if parser.failed() { generic_params.drop(); conditions.drop(); items.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.Impl, span);
-    parser.children(node, AstFieldName.Generics, generic_params);
-    parser.child(node, AstFieldName.Target, target);
-    if trait.is_valid() { parser.child(node, AstFieldName.Trait, trait); }
-    else { parser.missing(node, AstFieldName.Trait); }
-    parser.children(node, AstFieldName.Items, items);
-    parser.children(node, AstFieldName.Conditions, conditions);
-    return node;
+    parser.ready()?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Impl(generics=take_vec<GenericParam>(&generics), target=target, trait_type=trait, items=take_vec<MethodDef&>(&methods), conditions=take_vec<ImplCondition&>(&conditions)), span))
 }
-
-fn parse_func(parser: Parser&, attributes: Vec<NodeId>) -> NodeId {
-    parser.take_keyword(KeywordKind.Fn);
-    let name = parser.identifier();
-    let generic_params = generics(parser);
-    let arguments = params(parser, true);
-    let result = return_type(parser);
-    let body = parse_block(parser);
-    if parser.failed() { attributes.drop(); generic_params.drop(); arguments.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.FuncDef, parser.node(name).span());
-    parser.children(node, AstFieldName.Attrs, attributes);
-    parser.child(node, AstFieldName.Name, name);
-    parser.children(node, AstFieldName.Generics, generic_params);
-    parser.children(node, AstFieldName.Params, arguments);
-    if result.is_valid() { parser.child(node, AstFieldName.RetType, result); }
-    else { parser.missing(node, AstFieldName.RetType); }
-    parser.child(node, AstFieldName.Body, body);
-    return node;
+fn function_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = parse_generics(parser)?;
+    defer generics.drop();
+    let params = parse_parameters(parser)?;
+    defer params.drop();
+    let ret = parse_return_type(parser);
+    parser.ready()?;
+    let body = parse_block(parser)?;
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.FuncDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), params=take_vec<Parameter>(&params), ret_type=ret, body=body), name.span))
 }

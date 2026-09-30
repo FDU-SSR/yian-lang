@@ -51,6 +51,12 @@ class SemanticState:
     def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         return self.__type_resolver.resolve_const_expr(const_expr, symbol_ctx)
 
+    def register_alias(self, type_id: int, definition: AST.Alias, symbol_ctx: SymbolCtx) -> None:
+        self.__type_resolver.register_alias(type_id, definition, symbol_ctx)
+
+    def resolve_alias(self, type_id: int) -> None:
+        self.__type_resolver.resolve_alias(type_id)
+
     def register_constant(self, unit_id: int, symbol_id: int, definition: AST.ConstDef) -> None:
         self.__constant_defs[(unit_id, symbol_id)] = definition
 

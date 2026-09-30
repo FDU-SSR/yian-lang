@@ -1,0 +1,1545 @@
+from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, LiteralRef, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from compiler.frontend.source import Span;
+from compiler.frontend.json import append_string, append_span, append_u64;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.ops import Index;
+from std.core.string import String;
+
+pub struct AstFormatter { output: String& }
+impl AstFormatter {
+    static pub fn new(output: String&) -> Self { Self(output=output) }
+    fn node_start(tag: str, span: Span) {
+        self.output.push_str("{\"tag\":");
+        append_string(self.output, tag);
+        self.output.push(',');
+        append_span(self.output, span);
+        self.output.push_str(",\"fields\":{");
+    }
+    fn append_field_name(name: str, comma: bool) {
+        if comma { self.output.push(','); }
+        append_string(self.output, name);
+        self.output.push(':');
+    }
+
+    fn append_identifier(node: Identifier&) {
+        self.node_start("Identifier", node.span);
+        self.append_field_name("name", false);
+        append_string(self.output, (node.data.name).as_str());
+        self.append_field_name("synthetic", true);
+        self.output.push_str(if node.data.synthetic { "true" } else { "false" });
+        self.output.push_str("}}");
+    }
+
+    fn append_int_literal(node: IntLiteral&) {
+        self.node_start("IntLiteral", node.span);
+        self.append_field_name("value", false);
+        append_u64(self.output, node.data.value);
+        self.append_field_name("negative", true);
+        self.output.push_str(if node.data.negative { "true" } else { "false" });
+        self.append_field_name("suffix", true);
+        append_string(self.output, (node.data.suffix).spelling());
+        self.output.push_str("}}");
+    }
+
+    fn append_float_literal(node: FloatLiteral&) {
+        self.node_start("FloatLiteral", node.span);
+        self.append_field_name("value", false);
+        { let text = (node.data.value).to_string(); append_string(self.output, text.as_str()); text.drop(); }
+        self.append_field_name("suffix", true);
+        append_string(self.output, (node.data.suffix).spelling());
+        self.output.push_str("}}");
+    }
+
+    fn append_char_literal(node: CharLiteral&) {
+        self.node_start("CharLiteral", node.span);
+        self.append_field_name("value", false);
+        append_string(self.output, (node.data.value).as_str());
+        self.output.push_str("}}");
+    }
+
+    fn append_str_literal(node: StrLiteral&) {
+        self.node_start("StrLiteral", node.span);
+        self.append_field_name("value", false);
+        append_string(self.output, (node.data.value).as_str());
+        self.output.push_str("}}");
+    }
+
+    fn append_bool_literal(node: BoolLiteral&) {
+        self.node_start("BoolLiteral", node.span);
+        self.append_field_name("value", false);
+        self.output.push_str(if node.data.value { "true" } else { "false" });
+        self.output.push_str("}}");
+    }
+
+    pub fn append_program(node: Program&) {
+        self.node_start("Program", node.span);
+        self.append_field_name("items", false);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.items).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_item((node.data.items)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_block(node: Block&) {
+        self.node_start("Block", node.span);
+        self.append_field_name("stmts", false);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.stmts).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_expr((node.data.stmts)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("end", true);
+        match &(node.data.end) {
+            Some(value) => {
+                self.output.push('[');
+                append_u64(self.output, (*value).row);
+                self.output.push(',');
+                append_u64(self.output, (*value).column);
+                self.output.push(']');
+            },
+            None => self.output.push_str("null"),
+        }
+        self.append_field_name("parameter_bindings", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.parameter_bindings).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_pattern_let((node.data.parameter_bindings)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_argument(node: Argument&) {
+        self.node_start("Argument", node.span);
+        self.append_field_name("name", false);
+        match &(node.data.name) {
+            Some(value) => {
+                self.append_identifier(*value);
+            },
+            None => self.output.push_str("null"),
+        }
+        self.append_field_name("value", true);
+        self.append_expr(node.data.value);
+        self.output.push_str("}}");
+    }
+
+    fn append_var_info(node: VarInfo&) {
+        self.node_start("VarInfo", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("var_type", true);
+        self.append_type_syntax(node.data.var_type);
+        self.output.push_str("}}");
+    }
+
+    fn append_pattern_param(node: PatternParam&) {
+        self.node_start("PatternParam", node.span);
+        self.append_field_name("pattern", false);
+        self.append_pattern(node.data.pattern);
+        self.append_field_name("var_type", true);
+        self.append_type_syntax(node.data.var_type);
+        self.output.push_str("}}");
+    }
+
+    fn append_pattern_let(node: PatternLet&) {
+        self.node_start("PatternLet", node.span);
+        self.append_field_name("pattern", false);
+        self.append_pattern(node.data.pattern);
+        self.append_field_name("var_type", true);
+        self.append_type_syntax(node.data.var_type);
+        self.append_field_name("init_expr", true);
+        self.append_expr(node.data.init_expr);
+        self.append_field_name("else_branch", true);
+        match &(node.data.else_branch) {
+            Some(value) => {
+                self.append_block(*value);
+            },
+            None => self.output.push_str("null"),
+        }
+        self.append_field_name("is_parameter", true);
+        self.output.push_str(if node.data.is_parameter { "true" } else { "false" });
+        self.output.push_str("}}");
+    }
+
+    fn append_let_condition(node: LetCondition&) {
+        self.node_start("LetCondition", node.span);
+        self.append_field_name("pattern", false);
+        self.append_pattern(node.data.pattern);
+        self.append_field_name("value", true);
+        self.append_expr(node.data.value);
+        self.output.push_str("}}");
+    }
+
+    fn append_elif_branch(node: ElifBranch&) {
+        self.node_start("ElifBranch", node.span);
+        self.append_field_name("condition", false);
+        self.append_condition(&(node.data.condition));
+        self.append_field_name("body", true);
+        self.append_block(node.data.body);
+        self.output.push_str("}}");
+    }
+
+    fn append_match_arm(node: MatchArm&) {
+        self.node_start("MatchArm", node.span);
+        self.append_field_name("pattern", false);
+        self.append_pattern(node.data.pattern);
+        self.append_field_name("guard", true);
+        match &(node.data.guard) {
+            Some(value) => {
+                self.append_expr(*value);
+            },
+            None => self.output.push_str("null"),
+        }
+        self.append_field_name("body", true);
+        self.append_block(node.data.body);
+        self.append_field_name("origin", true);
+        append_string(self.output, (node.data.origin).spelling());
+        self.output.push_str("}}");
+    }
+
+    fn append_attr(node: Attr&) {
+        self.node_start("Attr", node.span);
+        self.append_field_name("kind", false);
+        append_string(self.output, (node.data.kind).spelling());
+        self.output.push_str("}}");
+    }
+
+    fn append_type_generic_param(node: TypeGenericParam&) {
+        self.node_start("TypeGenericParam", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.output.push_str("}}");
+    }
+
+    fn append_const_generic_param(node: ConstGenericParam&) {
+        self.node_start("ConstGenericParam", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("const_type", true);
+        self.append_type_syntax(node.data.const_type);
+        self.output.push_str("}}");
+    }
+
+    fn append_field_info(node: FieldInfo&) {
+        self.node_start("FieldInfo", node.span);
+        self.append_field_name("attrs", false);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.attrs).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_attr((node.data.attrs)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("name", true);
+        self.append_identifier(node.data.name);
+        self.append_field_name("field_type", true);
+        self.append_type_syntax(node.data.field_type);
+        self.output.push_str("}}");
+    }
+
+    fn append_variant_info(node: VariantInfo&) {
+        self.node_start("VariantInfo", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("fields", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.fields).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_var_info((node.data.fields)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_method_decl(node: MethodDecl&) {
+        self.node_start("MethodDecl", node.span);
+        self.append_field_name("attrs", false);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.attrs).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_attr((node.data.attrs)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("name", true);
+        self.append_identifier(node.data.name);
+        self.append_field_name("generics", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.generics).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_generic_param(&((node.data.generics)[index]));
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("params", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.params).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_parameter(&((node.data.params)[index]));
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("ret_type", true);
+        match &(node.data.ret_type) {
+            Some(value) => {
+                self.append_type_syntax(*value);
+            },
+            None => self.output.push_str("null"),
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_method_def(node: MethodDef&) {
+        self.node_start("MethodDef", node.span);
+        self.append_field_name("decl", false);
+        self.append_method_decl(node.data.decl);
+        self.append_field_name("body", true);
+        self.append_block(node.data.body);
+        self.output.push_str("}}");
+    }
+
+    fn append_extern_func_decl(node: ExternFuncDecl&) {
+        self.node_start("ExternFuncDecl", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("params", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.params).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_var_info((node.data.params)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.append_field_name("ret_type", true);
+        match &(node.data.ret_type) {
+            Some(value) => {
+                self.append_type_syntax(*value);
+            },
+            None => self.output.push_str("null"),
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_impl_condition(node: ImplCondition&) {
+        self.node_start("ImplCondition", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("traits", true);
+        {
+            self.output.push('[');
+            let index: u64 = 0;
+            while index < (node.data.traits).len() {
+                if index != 0 { self.output.push(','); }
+                self.append_type_syntax((node.data.traits)[index]);
+                index += 1;
+            }
+            self.output.push(']');
+        }
+        self.output.push_str("}}");
+    }
+
+    fn append_capture_item(node: CaptureItem&) {
+        self.node_start("CaptureItem", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("expr", true);
+        self.append_expr(node.data.expr);
+        self.output.push_str("}}");
+    }
+
+    fn append_field_pattern(node: FieldPattern&) {
+        self.node_start("FieldPattern", node.span);
+        self.append_field_name("name", false);
+        self.append_identifier(node.data.name);
+        self.append_field_name("pattern", true);
+        self.append_pattern(node.data.pattern);
+        self.output.push_str("}}");
+    }
+
+    fn append_expr(node: Expr&) {
+        match &node.data {
+            Identifier(name) => {
+                self.node_start("Identifier", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.output.push_str("}}");
+            },
+            Literal(literal) => {
+                self.node_start("Literal", node.span);
+                self.append_field_name("literal", false);
+                self.append_literal_ref(&(*literal));
+                self.output.push_str("}}");
+            },
+            Binary(op, left, right) => {
+                self.node_start("Binary", node.span);
+                self.append_field_name("op", false);
+                append_string(self.output, (*op).spelling());
+                self.append_field_name("left", true);
+                self.append_expr(*left);
+                self.append_field_name("right", true);
+                self.append_expr(*right);
+                self.output.push_str("}}");
+            },
+            Unary(op, operand) => {
+                self.node_start("Unary", node.span);
+                self.append_field_name("op", false);
+                append_string(self.output, (*op).spelling());
+                self.append_field_name("operand", true);
+                self.append_expr(*operand);
+                self.output.push_str("}}");
+            },
+            TryExpr(operand) => {
+                self.node_start("TryExpr", node.span);
+                self.append_field_name("operand", false);
+                self.append_expr(*operand);
+                self.output.push_str("}}");
+            },
+            Call(callee, args) => {
+                self.node_start("Call", node.span);
+                self.append_field_name("callee", false);
+                self.append_expr(*callee);
+                self.append_field_name("args", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*args).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_argument((*args)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            MethodCall(receiver, method_name, generics, args) => {
+                self.node_start("MethodCall", node.span);
+                self.append_field_name("receiver", false);
+                self.append_expr(*receiver);
+                self.append_field_name("method_name", true);
+                self.append_identifier(*method_name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_type_syntax((*generics)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("args", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*args).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_argument((*args)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            FieldAccess(receiver, field_name) => {
+                self.node_start("FieldAccess", node.span);
+                self.append_field_name("receiver", false);
+                self.append_expr(*receiver);
+                self.append_field_name("field_name", true);
+                self.append_identifier(*field_name);
+                self.output.push_str("}}");
+            },
+            Builtin(kind, type_args, args) => {
+                self.node_start("Builtin", node.span);
+                self.append_field_name("kind", false);
+                append_string(self.output, (*kind).spelling());
+                self.append_field_name("type_args", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*type_args).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_type_syntax((*type_args)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("args", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*args).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_argument((*args)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            TypeItem(name, generics) => {
+                self.node_start("TypeItem", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_argument(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            Block(block) => {
+                self.node_start("Block", node.span);
+                self.append_field_name("block", false);
+                self.append_block(*block);
+                self.output.push_str("}}");
+            },
+            Tuple(elements) => {
+                self.node_start("Tuple", node.span);
+                self.append_field_name("elements", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*elements).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_expr((*elements)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            Array(elements) => {
+                self.node_start("Array", node.span);
+                self.append_field_name("elements", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*elements).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_expr((*elements)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            ArrayRepeat(element, count) => {
+                self.node_start("ArrayRepeat", node.span);
+                self.append_field_name("element", false);
+                self.append_expr(*element);
+                self.append_field_name("count", true);
+                self.append_expr(*count);
+                self.output.push_str("}}");
+            },
+            DynValue(value) => {
+                self.node_start("DynValue", node.span);
+                self.append_field_name("value", false);
+                self.append_expr(*value);
+                self.output.push_str("}}");
+            },
+            DynBuffer(size, element) => {
+                self.node_start("DynBuffer", node.span);
+                self.append_field_name("size", false);
+                self.append_expr(*size);
+                self.append_field_name("element", true);
+                self.append_expr(*element);
+                self.output.push_str("}}");
+            },
+            VarDecl(name, var_type, init_expr) => {
+                self.node_start("VarDecl", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.append_field_name("var_type", true);
+                self.append_type_syntax(*var_type);
+                self.append_field_name("init_expr", true);
+                match &(*init_expr) {
+                    Some(value) => {
+                        self.append_expr(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            PatternLet(binding) => {
+                self.node_start("PatternLet", node.span);
+                self.append_field_name("binding", false);
+                self.append_pattern_let(*binding);
+                self.output.push_str("}}");
+            },
+            If(condition, then_branch, elif_branches, else_branch) => {
+                self.node_start("If", node.span);
+                self.append_field_name("condition", false);
+                self.append_condition(&(*condition));
+                self.append_field_name("then_branch", true);
+                self.append_block(*then_branch);
+                self.append_field_name("elif_branches", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*elif_branches).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_elif_branch((*elif_branches)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("else_branch", true);
+                match &(*else_branch) {
+                    Some(value) => {
+                        self.append_block(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            ComptimeIf(condition, then_branch, else_branch) => {
+                self.node_start("ComptimeIf", node.span);
+                self.append_field_name("condition", false);
+                self.append_expr(*condition);
+                self.append_field_name("then_branch", true);
+                self.append_block(*then_branch);
+                self.append_field_name("else_branch", true);
+                self.append_block(*else_branch);
+                self.output.push_str("}}");
+            },
+            For(pattern, iterable, body) => {
+                self.node_start("For", node.span);
+                self.append_field_name("pattern", false);
+                self.append_pattern(*pattern);
+                self.append_field_name("iterable", true);
+                self.append_expr(*iterable);
+                self.append_field_name("body", true);
+                self.append_block(*body);
+                self.output.push_str("}}");
+            },
+            While(condition, body) => {
+                self.node_start("While", node.span);
+                self.append_field_name("condition", false);
+                self.append_condition(&(*condition));
+                self.append_field_name("body", true);
+                self.append_block(*body);
+                self.output.push_str("}}");
+            },
+            Loop(body) => {
+                self.node_start("Loop", node.span);
+                self.append_field_name("body", false);
+                self.append_block(*body);
+                self.output.push_str("}}");
+            },
+            Match(expr, arms) => {
+                self.node_start("Match", node.span);
+                self.append_field_name("expr", false);
+                self.append_expr(*expr);
+                self.append_field_name("arms", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*arms).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_match_arm((*arms)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            Return(expr) => {
+                self.node_start("Return", node.span);
+                self.append_field_name("expr", false);
+                match &(*expr) {
+                    Some(value) => {
+                        self.append_expr(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            Break(expr) => {
+                self.node_start("Break", node.span);
+                self.append_field_name("expr", false);
+                match &(*expr) {
+                    Some(value) => {
+                        self.append_expr(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            Continue => {
+                self.node_start("Continue", node.span);
+                self.output.push_str("}}");
+            },
+            Defer(action) => {
+                self.node_start("Defer", node.span);
+                self.append_field_name("action", false);
+                self.append_expr(*action);
+                self.output.push_str("}}");
+            },
+            Assert(condition, message) => {
+                self.node_start("Assert", node.span);
+                self.append_field_name("condition", false);
+                self.append_expr(*condition);
+                self.append_field_name("message", true);
+                match &(*message) {
+                    Some(value) => {
+                        self.append_expr(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            Delete(target) => {
+                self.node_start("Delete", node.span);
+                self.append_field_name("target", false);
+                self.append_expr(*target);
+                self.output.push_str("}}");
+            },
+            Semi(expr) => {
+                self.node_start("Semi", node.span);
+                self.append_field_name("expr", false);
+                self.append_expr(*expr);
+                self.output.push_str("}}");
+            },
+            ClosureExpr(captures, params, return_type, body) => {
+                self.node_start("ClosureExpr", node.span);
+                self.append_field_name("captures", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*captures).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_capture_item((*captures)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("params", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*params).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_parameter(&((*params)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("return_type", true);
+                match &(*return_type) {
+                    Some(value) => {
+                        self.append_type_syntax(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.append_field_name("body", true);
+                self.append_block(*body);
+                self.output.push_str("}}");
+            },
+            CompileConfig(name) => {
+                self.node_start("CompileConfig", node.span);
+                self.append_field_name("name", false);
+                append_string(self.output, (*name).as_str());
+                self.output.push_str("}}");
+            },
+        }
+    }
+
+    fn append_type_syntax(node: TypeSyntax&) {
+        match &node.data {
+            IntType(signed, width) => {
+                self.node_start("IntType", node.span);
+                self.append_field_name("signed", false);
+                self.output.push_str(if *signed { "true" } else { "false" });
+                self.append_field_name("width", true);
+                append_u64(self.output, *width);
+                self.output.push_str("}}");
+            },
+            FloatType(width) => {
+                self.node_start("FloatType", node.span);
+                self.append_field_name("width", false);
+                append_u64(self.output, *width);
+                self.output.push_str("}}");
+            },
+            BoolType => {
+                self.node_start("BoolType", node.span);
+                self.output.push_str("}}");
+            },
+            StrType => {
+                self.node_start("StrType", node.span);
+                self.output.push_str("}}");
+            },
+            CharType => {
+                self.node_start("CharType", node.span);
+                self.output.push_str("}}");
+            },
+            VoidType => {
+                self.node_start("VoidType", node.span);
+                self.output.push_str("}}");
+            },
+            NeverType => {
+                self.node_start("NeverType", node.span);
+                self.output.push_str("}}");
+            },
+            DeducedType => {
+                self.node_start("DeducedType", node.span);
+                self.output.push_str("}}");
+            },
+            CScalarType(name) => {
+                self.node_start("CScalarType", node.span);
+                self.append_field_name("name", false);
+                append_string(self.output, (*name).as_str());
+                self.output.push_str("}}");
+            },
+            CPtrType(pointee_type) => {
+                self.node_start("CPtrType", node.span);
+                self.append_field_name("pointee_type", false);
+                self.append_type_syntax(*pointee_type);
+                self.output.push_str("}}");
+            },
+            NamedType(name) => {
+                self.node_start("NamedType", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.output.push_str("}}");
+            },
+            ArrayType(element_type, size) => {
+                self.node_start("ArrayType", node.span);
+                self.append_field_name("element_type", false);
+                self.append_type_syntax(*element_type);
+                self.append_field_name("size", true);
+                self.append_const_expr(*size);
+                self.output.push_str("}}");
+            },
+            TupleType(element_types) => {
+                self.node_start("TupleType", node.span);
+                self.append_field_name("element_types", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*element_types).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_type_syntax((*element_types)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            PointerType(pointee_type) => {
+                self.node_start("PointerType", node.span);
+                self.append_field_name("pointee_type", false);
+                self.append_type_syntax(*pointee_type);
+                self.output.push_str("}}");
+            },
+            RefType(pointee_type) => {
+                self.node_start("RefType", node.span);
+                self.append_field_name("pointee_type", false);
+                self.append_type_syntax(*pointee_type);
+                self.output.push_str("}}");
+            },
+            SliceType(element_type) => {
+                self.node_start("SliceType", node.span);
+                self.append_field_name("element_type", false);
+                self.append_type_syntax(*element_type);
+                self.output.push_str("}}");
+            },
+            InstanceType(base, generic_args) => {
+                self.node_start("InstanceType", node.span);
+                self.append_field_name("base", false);
+                self.append_type_syntax(*base);
+                self.append_field_name("generic_args", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generic_args).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_argument(&((*generic_args)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            FunctionType(param_types, return_type) => {
+                self.node_start("FunctionType", node.span);
+                self.append_field_name("param_types", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*param_types).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_type_syntax((*param_types)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("return_type", true);
+                self.append_type_syntax(*return_type);
+                self.output.push_str("}}");
+            },
+        }
+    }
+
+    fn append_const_expr(node: ConstExpr&) {
+        match &node.data {
+            LiteralConstExpr(literal) => {
+                self.node_start("LiteralConstExpr", node.span);
+                self.append_field_name("literal", false);
+                self.append_int_literal(*literal);
+                self.output.push_str("}}");
+            },
+            GenericConstExpr(name) => {
+                self.node_start("GenericConstExpr", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.output.push_str("}}");
+            },
+            UnaryConstExpr(op, operand) => {
+                self.node_start("UnaryConstExpr", node.span);
+                self.append_field_name("op", false);
+                append_string(self.output, (*op).spelling());
+                self.append_field_name("operand", true);
+                self.append_const_expr(*operand);
+                self.output.push_str("}}");
+            },
+            BinaryConstExpr(op, left, right) => {
+                self.node_start("BinaryConstExpr", node.span);
+                self.append_field_name("op", false);
+                append_string(self.output, (*op).spelling());
+                self.append_field_name("left", true);
+                self.append_const_expr(*left);
+                self.append_field_name("right", true);
+                self.append_const_expr(*right);
+                self.output.push_str("}}");
+            },
+        }
+    }
+
+    fn append_pattern(node: Pattern&) {
+        match &node.data {
+            WildcardPattern => {
+                self.node_start("WildcardPattern", node.span);
+                self.output.push_str("}}");
+            },
+            LiteralPattern(literal) => {
+                self.node_start("LiteralPattern", node.span);
+                self.append_field_name("literal", false);
+                self.append_literal_ref(&(*literal));
+                self.output.push_str("}}");
+            },
+            RangePattern(bounds) => {
+                self.node_start("RangePattern", node.span);
+                self.append_field_name("bounds", false);
+                self.append_range_bounds(&(*bounds));
+                self.output.push_str("}}");
+            },
+            NamePattern(name) => {
+                self.node_start("NamePattern", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.output.push_str("}}");
+            },
+            BindPattern(name, inner) => {
+                self.node_start("BindPattern", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.append_field_name("inner", true);
+                self.append_pattern(*inner);
+                self.output.push_str("}}");
+            },
+            OrPattern(alternatives) => {
+                self.node_start("OrPattern", node.span);
+                self.append_field_name("alternatives", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*alternatives).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_pattern((*alternatives)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            ConstructPattern(name, qualifier, arguments, rest) => {
+                self.node_start("ConstructPattern", node.span);
+                self.append_field_name("name", false);
+                self.append_identifier(*name);
+                self.append_field_name("qualifier", true);
+                match &(*qualifier) {
+                    Some(value) => {
+                        self.append_type_syntax(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.append_field_name("arguments", true);
+                self.append_pattern_arguments(&(*arguments));
+                self.append_field_name("rest", true);
+                self.output.push_str(if *rest { "true" } else { "false" });
+                self.output.push_str("}}");
+            },
+            TuplePattern(elements) => {
+                self.node_start("TuplePattern", node.span);
+                self.append_field_name("elements", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*elements).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_pattern((*elements)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            SequencePattern(prefix, suffix, rest) => {
+                self.node_start("SequencePattern", node.span);
+                self.append_field_name("prefix", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*prefix).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_pattern((*prefix)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("suffix", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*suffix).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_pattern((*suffix)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("rest", true);
+                self.output.push_str(if *rest { "true" } else { "false" });
+                self.output.push_str("}}");
+            },
+        }
+    }
+
+    fn append_item(node: Item&) {
+        match &node.data {
+            Import(paths, target, alias, end) => {
+                self.node_start("Import", node.span);
+                self.append_field_name("paths", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*paths).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_identifier((*paths)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("target", true);
+                self.append_identifier(*target);
+                self.append_field_name("alias", true);
+                match &(*alias) {
+                    Some(value) => {
+                        self.append_identifier(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.append_field_name("end", true);
+                match &(*end) {
+                    Some(value) => {
+                        self.output.push('[');
+                        append_u64(self.output, (*value).row);
+                        self.output.push(',');
+                        append_u64(self.output, (*value).column);
+                        self.output.push(']');
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.output.push_str("}}");
+            },
+            Alias(attrs, name, generics, target) => {
+                self.node_start("Alias", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("target", true);
+                self.append_type_syntax(*target);
+                self.output.push_str("}}");
+            },
+            FuncDef(attrs, name, generics, params, ret_type, body) => {
+                self.node_start("FuncDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("params", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*params).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_parameter(&((*params)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("ret_type", true);
+                match &(*ret_type) {
+                    Some(value) => {
+                        self.append_type_syntax(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.append_field_name("body", true);
+                self.append_block(*body);
+                self.output.push_str("}}");
+            },
+            ConstDef(attrs, name, const_type, value) => {
+                self.node_start("ConstDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("const_type", true);
+                self.append_type_syntax(*const_type);
+                self.append_field_name("value", true);
+                self.append_expr(*value);
+                self.output.push_str("}}");
+            },
+            OpaqueTypeDef(attrs, name) => {
+                self.node_start("OpaqueTypeDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.output.push_str("}}");
+            },
+            ExternBlock(attrs, abi, functions) => {
+                self.node_start("ExternBlock", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("abi", true);
+                append_string(self.output, (*abi).as_str());
+                self.append_field_name("functions", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*functions).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_extern_func_decl((*functions)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            StructDef(attrs, name, generics, fields) => {
+                self.node_start("StructDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("fields", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*fields).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_field_info((*fields)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            EnumDef(attrs, name, generics, variants) => {
+                self.node_start("EnumDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("variants", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*variants).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_variant_info((*variants)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            TraitDef(attrs, name, generics, items) => {
+                self.node_start("TraitDef", node.span);
+                self.append_field_name("attrs", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*attrs).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_attr((*attrs)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("name", true);
+                self.append_identifier(*name);
+                self.append_field_name("generics", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("items", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*items).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_trait_member(&((*items)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+            Impl(generics, target, trait_type, items, conditions) => {
+                self.node_start("Impl", node.span);
+                self.append_field_name("generics", false);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*generics).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_generic_param(&((*generics)[index]));
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("target", true);
+                self.append_type_syntax(*target);
+                self.append_field_name("trait_type", true);
+                match &(*trait_type) {
+                    Some(value) => {
+                        self.append_type_syntax(*value);
+                    },
+                    None => self.output.push_str("null"),
+                }
+                self.append_field_name("items", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*items).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_method_def((*items)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.append_field_name("conditions", true);
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*conditions).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_impl_condition((*conditions)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+                self.output.push_str("}}");
+            },
+        }
+    }
+
+    fn append_literal_ref(node: LiteralRef&) {
+        match node {
+            Integer(value) => {
+                self.append_int_literal(*value);
+            },
+            Float(value) => {
+                self.append_float_literal(*value);
+            },
+            Character(value) => {
+                self.append_char_literal(*value);
+            },
+            StringLiteral(value) => {
+                self.append_str_literal(*value);
+            },
+            Boolean(value) => {
+                self.append_bool_literal(*value);
+            },
+        }
+    }
+
+    fn append_range_bounds(node: RangeBounds&) {
+        match node {
+            Integer(lower, upper) => {
+                self.output.push('{');
+                self.append_field_name("lower", false);
+                self.append_int_literal(*lower);
+                self.append_field_name("upper", true);
+                self.append_int_literal(*upper);
+                self.output.push('}');
+            },
+            Character(lower, upper) => {
+                self.output.push('{');
+                self.append_field_name("lower", false);
+                self.append_char_literal(*lower);
+                self.append_field_name("upper", true);
+                self.append_char_literal(*upper);
+                self.output.push('}');
+            },
+        }
+    }
+
+    fn append_condition(node: Condition&) {
+        match node {
+            Expression(value) => {
+                self.append_expr(*value);
+            },
+            Let(value) => {
+                self.append_let_condition(*value);
+            },
+        }
+    }
+
+    fn append_generic_argument(node: GenericArgument&) {
+        match node {
+            Type(value) => {
+                self.append_type_syntax(*value);
+            },
+            Constant(value) => {
+                self.append_const_expr(*value);
+            },
+        }
+    }
+
+    fn append_generic_param(node: GenericParam&) {
+        match node {
+            Type(value) => {
+                self.append_type_generic_param(*value);
+            },
+            Constant(value) => {
+                self.append_const_generic_param(*value);
+            },
+        }
+    }
+
+    fn append_parameter(node: Parameter&) {
+        match node {
+            Named(value) => {
+                self.append_var_info(*value);
+            },
+            Pattern(value) => {
+                self.append_pattern_param(*value);
+            },
+        }
+    }
+
+    fn append_trait_member(node: TraitMember&) {
+        match node {
+            Declaration(value) => {
+                self.append_method_decl(*value);
+            },
+            Definition(value) => {
+                self.append_method_def(*value);
+            },
+        }
+    }
+
+    fn append_pattern_arguments(node: PatternArguments&) {
+        match node {
+            None => {
+                self.output.push_str("null");
+            },
+            Positional(values) => {
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*values).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_pattern((*values)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+            },
+            Named(values) => {
+                {
+                    self.output.push('[');
+                    let index: u64 = 0;
+                    while index < (*values).len() {
+                        if index != 0 { self.output.push(','); }
+                        self.append_field_pattern((*values)[index]);
+                        index += 1;
+                    }
+                    self.output.push(']');
+                }
+            },
+        }
+    }
+}

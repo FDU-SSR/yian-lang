@@ -1,322 +1,215 @@
-from compiler.frontend.parse.ast_kinds import AstTag, AstFieldName;
+from compiler.frontend.ast.node import Pattern, PatternData, LiteralRef, RangeBounds, PatternArguments, FieldPattern, FieldPatternData, Identifier, TypeSyntax;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
-from compiler.frontend.parse.ast import NodeId;
-from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.literal import parse_literal;
+from compiler.frontend.parse.state import Parser, take_vec;
 from compiler.frontend.parse.type import parse_type;
-from compiler.frontend.source import Span;
-from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
+from std.core.option import Option;
 from std.core.vec import Vec;
 
-fn literal_token(parser: Parser&) -> NodeId {
-    let token = parser.peek();
-    let tag = AstTag.IntLiteral;
-    let recognized = true;
-    match token.kind() {
-        Integer(_, _) => { tag = AstTag.IntLiteral; },
-        Character(_) => { tag = AstTag.CharLiteral; },
-        StringLiteral(_) => { tag = AstTag.StrLiteral; },
-        _ => { recognized = false; },
-    }
-    if !recognized {
-        parser.error("Expected literal in pattern", token.span);
-        return NodeId.invalid();
-    }
-    let span = token.span;
-    let node = parser.alloc(tag, span);
-    if tag == AstTag.IntLiteral {
-        parser.integer(node, AstFieldName.Value, token.integer_value(), false);
-        parser.text(node, AstFieldName.Suffix, token.suffix());
-    } else { parser.text(node, AstFieldName.Value, token.value()); }
-    parser.advance();
-    return node;
-}
-
-fn pattern_literal(parser: Parser&) -> NodeId {
+fn pattern_literal(parser: Parser&) -> Option<LiteralRef> {
     if parser.at_punct(PunctuatorKind.Minus) {
-        let minus = parser.peek().span;
-        parser.advance();
+        let minus = parser.take_punct(PunctuatorKind.Minus);
         if !parser.peek().is_integer() {
             parser.error("Expected integer literal after '-' in pattern", minus);
-            return NodeId.invalid();
+            return Option<LiteralRef>.None;
         }
-        let token = parser.peek();
-        let node = parser.alloc(AstTag.IntLiteral, minus + token.span);
-        parser.integer(node, AstFieldName.Value, token.integer_value(), true);
-        parser.text(node, AstFieldName.Suffix, token.suffix());
-        parser.advance();
-        return node;
+        let literal = parse_literal(parser)?;
+        match &literal {
+            Integer(value) => { value.data.negative = true; value.span = minus + value.span; },
+            _ => {},
+        }
+        return Option<LiteralRef>.Some(val=literal);
     }
-    return literal_token(parser);
+    let literal = parse_literal(parser)?;
+    match literal {
+        Float(_) => { parser.error("Expected literal in pattern", literal.span()); Option<LiteralRef>.None },
+        _ => Option<LiteralRef>.Some(val=literal),
+    }
 }
 
-fn pattern_atom(parser: Parser&) -> NodeId {
-    if parser.failed() { return NodeId.invalid(); }
+fn range_bounds(parser: Parser&, lower: LiteralRef, upper: LiteralRef) -> Option<RangeBounds> {
+    match lower {
+        Integer(a) => match upper { Integer(b) => return Option<RangeBounds>.Some(val=RangeBounds.Integer(lower=a, upper=b)), _ => {} },
+        Character(a) => match upper { Character(b) => return Option<RangeBounds>.Some(val=RangeBounds.Character(lower=a, upper=b)), _ => {} },
+        _ => {},
+    }
+    parser.error("Range endpoints must have the same literal kind", upper.span());
+    Option<RangeBounds>.None
+}
+
+fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
+    parser.ready()?;
     let token = parser.peek();
     let span = token.span;
     if parser.at_keyword(KeywordKind.Underscore) {
         parser.advance();
-        return parser.alloc(AstTag.WildcardPattern, span);
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.WildcardPattern, span));
     }
-    if parser.at_keyword(KeywordKind.True_) || parser.at_keyword(KeywordKind.False_) {
-        let literal = parser.alloc(AstTag.BoolLiteral, span);
-        parser.flag(literal, AstFieldName.Value, parser.at_keyword(KeywordKind.True_));
-        parser.advance();
-        let node = parser.alloc(AstTag.LiteralPattern, span);
-        parser.child(node, AstFieldName.Literal, literal);
-        return node;
-    }
-    let is_literal = token.is_integer() || token.is_punct(PunctuatorKind.Minus);
-    match token.kind() {
-        Character(_) => { is_literal = true; },
-        StringLiteral(_) => { is_literal = true; },
-        _ => {},
-    }
+    let is_literal = match token.kind() {
+        Integer | Character | StringLiteral => true,
+        Keyword(kind) => *kind == KeywordKind.True_ || *kind == KeywordKind.False_,
+        _ => parser.at_punct(PunctuatorKind.Minus),
+    };
     if is_literal {
-        let literal = pattern_literal(parser);
-        if parser.failed() { return NodeId.invalid(); }
-        let literal_span = parser.node(literal).span();
+        let lower = pattern_literal(parser)?;
+        let span = lower.span();
         if parser.at_punct(PunctuatorKind.DotDot) {
-            let tag = parser.node(literal).tag();
-            if tag != AstTag.IntLiteral && tag != AstTag.CharLiteral {
-                parser.error("Range endpoints must be integer or character literals", parser.peek().span);
-                return NodeId.invalid();
-            }
+            let valid = match lower { Integer | Character => true, _ => false };
+            if !valid { parser.error("Range endpoints must be integer or character literals", parser.peek().span); return Option<Pattern&>.None; }
             parser.advance();
-            let upper = pattern_literal(parser);
-            if parser.failed() { return NodeId.invalid(); }
-            if parser.node(upper).tag() != tag {
-                parser.error("Range endpoints must have the same literal kind", parser.node(upper).span());
-                return NodeId.invalid();
-            }
-            let node = parser.alloc(AstTag.RangePattern, literal_span + parser.node(upper).span());
-            parser.child(node, AstFieldName.Lower, literal);
-            parser.child(node, AstFieldName.Upper, upper);
-            return node;
+            let upper = pattern_literal(parser)?;
+            let bounds = range_bounds(parser, lower, upper)?;
+            return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.RangePattern(bounds=bounds), span + upper.span()));
         }
-        let node = parser.alloc(AstTag.LiteralPattern, literal_span);
-        parser.child(node, AstFieldName.Literal, literal);
-        return node;
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.LiteralPattern(literal=lower), span));
     }
     if parser.at_punct(PunctuatorKind.LBracket) {
         parser.advance();
-        let prefix = Vec<NodeId>.new();
-        let suffix = Vec<NodeId>.new();
+        let prefix = Vec<Pattern&>.new();
+        defer prefix.drop();
+        let suffix = Vec<Pattern&>.new();
+        defer suffix.drop();
         let rest = false;
         while !parser.failed() && !parser.at_punct(PunctuatorKind.RBracket) {
             if parser.at_punct(PunctuatorKind.DotDot) {
-                if rest {
-                    parser.error("Only one '..' is allowed in a sequence pattern", parser.peek().span);
-                    break;
-                }
+                if rest { parser.error("Only one '..' is allowed in a sequence pattern", parser.peek().span); return Option<Pattern&>.None; }
                 parser.advance();
                 rest = true;
             } else {
-                let item = pattern_or(parser);
-                if rest { suffix.push(item); }
-                else { prefix.push(item); }
+                let item = pattern_or(parser)?;
+                if rest { suffix.push(item); } else { prefix.push(item); }
             }
-            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-            else { break; }
+            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            parser.advance();
         }
         parser.take_punct(PunctuatorKind.RBracket);
-        if parser.failed() { prefix.drop(); suffix.drop(); return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.SequencePattern, span);
-        parser.children(node, AstFieldName.Prefix, prefix);
-        parser.children(node, AstFieldName.Suffix, suffix);
-        parser.flag(node, AstFieldName.Rest, rest);
-        return node;
+        parser.ready()?;
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
+            PatternData.SequencePattern(prefix=take_vec<Pattern&>(&prefix), suffix=take_vec<Pattern&>(&suffix), rest=rest), span));
     }
     if parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
-        let members = Vec<NodeId>.new();
-        if parser.at_punct(PunctuatorKind.RParen) {
-            parser.advance();
-            let node = parser.alloc(AstTag.TuplePattern, span);
-            parser.children(node, AstFieldName.Elements, members);
-            return node;
-        }
-        let first = pattern_or(parser);
-        if parser.at_punct(PunctuatorKind.RParen) {
-            parser.advance(); members.drop(); return first;
-        }
-        parser.take_punct(PunctuatorKind.Comma);
-        members.push(first);
-        while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-            members.push(pattern_or(parser));
-            if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-            else { break; }
+        let members = Vec<Pattern&>.new();
+        defer members.drop();
+        if !parser.at_punct(PunctuatorKind.RParen) {
+            let first = pattern_or(parser)?;
+            if parser.at_punct(PunctuatorKind.RParen) { parser.advance(); return Option<Pattern&>.Some(val=first); }
+            parser.take_punct(PunctuatorKind.Comma);
+            parser.ready()?;
+            members.push(first);
+            while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+                members.push(pattern_or(parser)?);
+                if !parser.at_punct(PunctuatorKind.Comma) { break; }
+                parser.advance();
+            }
         }
         parser.take_punct(PunctuatorKind.RParen);
-        if parser.failed() { members.drop(); return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.TuplePattern, span);
-        parser.children(node, AstFieldName.Elements, members);
-        return node;
+        parser.ready()?;
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.TuplePattern(elements=take_vec<Pattern&>(&members)), span));
     }
-    if token.is_identifier() || parser.keyword_token() {
-        return named_pattern(parser);
-    }
+    if token.is_identifier() || parser.keyword_token() { return named_pattern(parser); }
     parser.error("Unexpected token in pattern", span);
-    return NodeId.invalid();
+    Option<Pattern&>.None
 }
 
-fn named_pattern(parser: Parser&) -> NodeId {
+fn named_pattern(parser: Parser&) -> Option<Pattern&> {
     let mark = parser.mark();
     let first = parser.peek();
     let qualifier = parse_type(parser);
-    if parser.failed() {
-        parser.clear_error();
-        parser.reset(mark);
-        qualifier = NodeId.invalid();
-    }
-    let name = NodeId.invalid();
-    if qualifier.is_valid() && parser.at_punct(PunctuatorKind.Dot) {
+    if qualifier.is_none() { parser.clear_error(); parser.reset(mark); }
+    let instantiated = match qualifier { Some(value) => match &value.data { InstanceType => true, _ => false }, None => false };
+    let name = if qualifier.is_some() && parser.at_punct(PunctuatorKind.Dot) {
         parser.advance();
-        name = parser.identifier();
-    } elif qualifier.is_valid() && parser.node(qualifier).tag() == AstTag.InstanceType && parser.at_punct(PunctuatorKind.LParen) {
-        name = parser.alloc(AstTag.Identifier, first.span);
-        parser.text(name, AstFieldName.Name, first.value());
-        parser.flag(name, AstFieldName.Synthetic, false);
+        parser.identifier()?
+    } elif instantiated && parser.at_punct(PunctuatorKind.LParen) {
+        parser.named_identifier(first.span, first.value(), false)
     } else {
         parser.reset(mark);
-        qualifier = NodeId.invalid();
-        name = parser.identifier();
-    }
-    if parser.failed() { return NodeId.invalid(); }
-    let span = parser.node(name).span();
+        qualifier = Option<TypeSyntax&>.None;
+        parser.identifier()?
+    };
     if !parser.at_punct(PunctuatorKind.LParen) {
-        if qualifier.is_valid() {
-            let node = parser.alloc(AstTag.ConstructPattern, span);
-            parser.child(node, AstFieldName.Name, name);
-            parser.child(node, AstFieldName.Qualifier, qualifier);
-            parser.missing(node, AstFieldName.Positional);
-            parser.missing(node, AstFieldName.Named);
-            parser.flag(node, AstFieldName.Rest, false);
-            return node;
-        }
-        let node = parser.alloc(AstTag.NamePattern, span);
-        parser.child(node, AstFieldName.Name, name);
-        return node;
+        let data = if qualifier.is_some() {
+            PatternData.ConstructPattern(name=name, qualifier=qualifier, arguments=PatternArguments.None, rest=false)
+        } else { PatternData.NamePattern(name=name) };
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(data, name.span));
     }
     parser.advance();
-    let positional = Vec<NodeId>.new();
-    let named = Vec<NodeId>.new();
+    let positional = Vec<Pattern&>.new();
+    defer positional.drop();
+    let named = Vec<FieldPattern&>.new();
+    defer named.drop();
     let has_named = false;
     let rest = false;
     while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
         let item = parser.peek();
         if parser.at_punct(PunctuatorKind.DotDot) {
-            if rest {
-                parser.error("Only one '..' is allowed in a field pattern", item.span);
-                break;
-            }
+            if rest { parser.error("Only one '..' is allowed in a field pattern", item.span); return Option<Pattern&>.None; }
             parser.advance();
             rest = true;
             if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
             if !parser.at_punct(PunctuatorKind.RParen) { parser.error("'..' must be the last field", item.span); }
             break;
         }
-        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1u64).is_punct(PunctuatorKind.Equal) {
-            if positional.len() != 0u64 {
-                parser.error("Cannot mix positional and named fields", item.span);
-                break;
-            }
+        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1).is_punct(PunctuatorKind.Equal) {
+            if positional.len() != 0 { parser.error("Cannot mix positional and named fields", item.span); return Option<Pattern&>.None; }
             has_named = true;
-            let field = parser.identifier();
+            let field = parser.identifier()?;
             parser.advance();
-            let value = pattern_or(parser);
-            if parser.failed() { break; }
-            let node = parser.alloc(AstTag.FieldPattern, parser.node(field).span());
-            parser.child(node, AstFieldName.Name, field);
-            parser.child(node, AstFieldName.Pattern, value);
-            named.push(node);
+            let pattern = pattern_or(parser)?;
+            named.push(parser.arena.alloc_field_pattern(FieldPatternData(name=field, pattern=pattern), field.span));
         } else {
-            if has_named || rest {
-                parser.error("Cannot mix positional and named fields", item.span);
-                break;
-            }
-            positional.push(pattern_or(parser));
+            if has_named || rest { parser.error("Cannot mix positional and named fields", item.span); return Option<Pattern&>.None; }
+            positional.push(pattern_or(parser)?);
         }
-        if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
-        else { break; }
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
     }
     parser.take_punct(PunctuatorKind.RParen);
-    if parser.failed() { positional.drop(); named.drop(); return NodeId.invalid(); }
-    let node = parser.alloc(AstTag.ConstructPattern, span);
-    parser.child(node, AstFieldName.Name, name);
-    if qualifier.is_valid() { parser.child(node, AstFieldName.Qualifier, qualifier); }
-    else { parser.missing(node, AstFieldName.Qualifier); }
-    if has_named || rest {
-        parser.missing(node, AstFieldName.Positional);
-    } else {
-        parser.children(node, AstFieldName.Positional, positional);
-    }
-    if has_named { parser.children(node, AstFieldName.Named, named); }
-    else { parser.missing(node, AstFieldName.Named); }
-    parser.flag(node, AstFieldName.Rest, rest);
-    if has_named || rest { positional.drop(); }
-    if !has_named { named.drop(); }
-    return node;
+    parser.ready()?;
+    let arguments = if has_named { PatternArguments.Named(values=take_vec<FieldPattern&>(&named)) } elif rest { PatternArguments.None } else { PatternArguments.Positional(values=take_vec<Pattern&>(&positional)) };
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
+        PatternData.ConstructPattern(name=name, qualifier=qualifier, arguments=arguments, rest=rest), name.span))
 }
-
-fn pattern_at(parser: Parser&) -> NodeId {
-    if parser.peek().is_identifier() && parser.peek_at(1u64).is_punct(PunctuatorKind.At) {
-        let name = parser.identifier();
+fn pattern_at(parser: Parser&) -> Option<Pattern&> {
+    if parser.peek().is_identifier() && parser.peek_at(1).is_punct(PunctuatorKind.At) {
+        let name = parser.identifier()?;
         parser.advance();
-        let inner = pattern_at(parser);
-        if parser.failed() { return NodeId.invalid(); }
-        let node = parser.alloc(AstTag.BindPattern, parser.node(name).span() + parser.node(inner).span());
-        parser.child(node, AstFieldName.Name, name);
-        parser.child(node, AstFieldName.Inner, inner);
-        return node;
+        let inner = pattern_at(parser)?;
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.BindPattern(name=name, inner=inner), name.span + inner.span));
     }
-    return pattern_atom(parser);
+    pattern_atom(parser)
 }
-
-fn pattern_or(parser: Parser&) -> NodeId {
-    let first = pattern_at(parser);
-    if parser.failed() || !parser.at_punct(PunctuatorKind.Pipe) { return first; }
-    let alternatives = Vec<NodeId>.new();
+fn pattern_or(parser: Parser&) -> Option<Pattern&> {
+    let first = pattern_at(parser)?;
+    if !parser.at_punct(PunctuatorKind.Pipe) { return Option<Pattern&>.Some(val=first); }
+    let alternatives = Vec<Pattern&>.new();
+    defer alternatives.drop();
     alternatives.push(first);
-    while !parser.failed() && parser.at_punct(PunctuatorKind.Pipe) {
-        parser.advance();
-        alternatives.push(pattern_at(parser));
-    }
-    if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
-    let span = parser.node(first).span() + parser.node(alternatives[alternatives.len() - 1u64]).span();
-    let node = parser.alloc(AstTag.OrPattern, span);
-    parser.children(node, AstFieldName.Alternatives, alternatives);
-    return node;
+    while parser.at_punct(PunctuatorKind.Pipe) { parser.advance(); alternatives.push(pattern_at(parser)?); }
+    let span = first.span + alternatives[alternatives.len() - 1].span;
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=take_vec<Pattern&>(&alternatives)), span))
 }
-
-pub fn parse_binding_pattern(parser: Parser&) -> NodeId { return pattern_or(parser); }
-
-pub fn parse_match_pattern(parser: Parser&) -> NodeId {
-    let first = pattern_or(parser);
-    if parser.failed() || !parser.at_punct(PunctuatorKind.Comma) { return first; }
-    if parser.node(first).tag() != AstTag.LiteralPattern {
-        parser.error("Comma-separated alternatives require literals", parser.peek().span);
-        return NodeId.invalid();
-    }
-    let literal = parser.node(first).child_field(AstFieldName.Literal);
-    let kind = parser.node(literal).tag();
-    let alternatives = Vec<NodeId>.new();
+pub fn parse_binding_pattern(parser: Parser&) -> Option<Pattern&> { pattern_or(parser) }
+pub fn parse_match_pattern(parser: Parser&) -> Option<Pattern&> {
+    let first = pattern_or(parser)?;
+    if !parser.at_punct(PunctuatorKind.Comma) { return Option<Pattern&>.Some(val=first); }
+    let kind = match &first.data {
+        LiteralPattern(literal) => literal.kind(),
+        _ => { parser.error("Comma-separated alternatives require literals", parser.peek().span); return Option<Pattern&>.None; },
+    };
+    let alternatives = Vec<Pattern&>.new();
+    defer alternatives.drop();
     alternatives.push(first);
-    while !parser.failed() && parser.at_punct(PunctuatorKind.Comma) {
+    while parser.at_punct(PunctuatorKind.Comma) {
         parser.advance();
-        let next = pattern_atom(parser);
-        if parser.failed() { break; }
-        if parser.node(next).tag() != AstTag.LiteralPattern ||
-            parser.node(parser.node(next).child_field(AstFieldName.Literal)).tag() != kind {
-            parser.error("Comma-separated alternatives must use the same literal kind", parser.node(next).span());
-            break;
-        }
+        let next = pattern_atom(parser)?;
+        let valid = match &next.data { LiteralPattern(literal) => literal.kind() == kind, _ => false };
+        if !valid { parser.error("Comma-separated alternatives must use the same literal kind", next.span); return Option<Pattern&>.None; }
         alternatives.push(next);
     }
-    if parser.failed() { alternatives.drop(); return NodeId.invalid(); }
-    let span = parser.node(first).span() + parser.node(alternatives[alternatives.len() - 1u64]).span();
-    let node = parser.alloc(AstTag.OrPattern, span);
-    parser.children(node, AstFieldName.Alternatives, alternatives);
-    return node;
+    let span = first.span + alternatives[alternatives.len() - 1].span;
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=take_vec<Pattern&>(&alternatives)), span))
 }

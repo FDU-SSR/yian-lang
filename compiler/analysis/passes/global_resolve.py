@@ -34,9 +34,6 @@ class GlobalResolve:
 
         self.__strict_pkg = ctx.packages is not None
 
-        # Guards alias bodies that are being produced right now, see
-        # __resolve_alias: a body that reaches its own alias is a cycle.
-        self.__filling_aliases: set[int] = set()
         # Resolution is the only place that knows how an import actually
         # resolved, so record the edges here for the declaration index.
         self.__import_edges: dict[int, list[int]] = {}
@@ -51,6 +48,14 @@ class GlobalResolve:
 
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_imports(unit)
+
+        # Alias bodies can be demanded by references in any imported module.
+        for unit in self.__ctx.unit_datas.values():
+            for item in unit.items():
+                if isinstance(item, AST.Alias):
+                    symbol = unit.symbol_ctx.lookup(item.name.name)
+                    if symbol is not None:
+                        self.__ctx.register_alias(symbol.type_id, item, unit.symbol_ctx)
 
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
@@ -437,22 +442,7 @@ class GlobalResolve:
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.AliasType)
 
-        if ty.type_id in self.__filling_aliases:
-            raise AnalysisError(f"Circular type alias: {alias.name.name}", alias.span)
-        self.__filling_aliases.add(ty.type_id)
-        try:
-            # resolve generics and aliased type
-            self.__enter_generic_scope(unit, alias.generics, ty.custom_def.generics)
-
-            try:
-                aliased_type_id = self.__ctx.resolve_type_in(alias.target, unit.symbol_ctx)
-            finally:
-                unit.symbol_ctx.exit_scope()
-
-            # update the alias symbol with the resolved type
-            ty.custom_def.aliased_type = aliased_type_id
-        finally:
-            self.__filling_aliases.discard(ty.type_id)
+        self.__ctx.resolve_alias(symbol.type_id)
 
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup(func_def.name.name)

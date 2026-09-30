@@ -1,0 +1,386 @@
+from compiler.frontend.source import Position, Span;
+from compiler.frontend.lex.token import IntSuffix, FloatSuffix;
+from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from compiler.frontend.ast.atoms import AttrKind, BuiltinKind, MatchArmOrigin;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// References between nodes are non-owning; their arena owns every allocation.
+pub struct Node<D> { pub data: D, pub span: Span }
+impl<D> Drop for Node<D> if D: Drop {
+    pub fn drop() { self.data.drop(); }
+}
+
+pub typedef Identifier = Node<IdentifierData>;
+pub typedef IntLiteral = Node<IntLiteralData>;
+pub typedef FloatLiteral = Node<FloatLiteralData>;
+pub typedef CharLiteral = Node<CharLiteralData>;
+pub typedef StrLiteral = Node<StrLiteralData>;
+pub typedef BoolLiteral = Node<BoolLiteralData>;
+pub typedef Program = Node<ProgramData>;
+pub typedef Block = Node<BlockData>;
+pub typedef Argument = Node<ArgumentData>;
+pub typedef VarInfo = Node<VarInfoData>;
+pub typedef PatternParam = Node<PatternParamData>;
+pub typedef PatternLet = Node<PatternLetData>;
+pub typedef LetCondition = Node<LetConditionData>;
+pub typedef ElifBranch = Node<ElifBranchData>;
+pub typedef MatchArm = Node<MatchArmData>;
+pub typedef Attr = Node<AttrData>;
+pub typedef TypeGenericParam = Node<TypeGenericParamData>;
+pub typedef ConstGenericParam = Node<ConstGenericParamData>;
+pub typedef FieldInfo = Node<FieldInfoData>;
+pub typedef VariantInfo = Node<VariantInfoData>;
+pub typedef MethodDecl = Node<MethodDeclData>;
+pub typedef MethodDef = Node<MethodDefData>;
+pub typedef ExternFuncDecl = Node<ExternFuncDeclData>;
+pub typedef ImplCondition = Node<ImplConditionData>;
+pub typedef CaptureItem = Node<CaptureItemData>;
+pub typedef FieldPattern = Node<FieldPatternData>;
+pub typedef Expr = Node<ExprData>;
+pub typedef TypeSyntax = Node<TypeData>;
+pub typedef ConstExpr = Node<ConstExprData>;
+pub typedef Pattern = Node<PatternData>;
+pub typedef Item = Node<ItemData>;
+
+pub enum LiteralKind { Integer, Float, Character, StringLiteral, Boolean }
+
+pub enum LiteralRef {
+    Integer { value: IntLiteral& },
+    Float { value: FloatLiteral& },
+    Character { value: CharLiteral& },
+    StringLiteral { value: StrLiteral& },
+    Boolean { value: BoolLiteral& },
+}
+
+pub enum RangeBounds {
+    Integer { lower: IntLiteral&, upper: IntLiteral& },
+    Character { lower: CharLiteral&, upper: CharLiteral& },
+}
+
+pub enum Condition {
+    Expression { value: Expr& },
+    Let { value: LetCondition& },
+}
+
+pub enum GenericArgument {
+    Type { value: TypeSyntax& },
+    Constant { value: ConstExpr& },
+}
+
+pub enum GenericParam {
+    Type { value: TypeGenericParam& },
+    Constant { value: ConstGenericParam& },
+}
+
+pub enum Parameter {
+    Named { value: VarInfo& },
+    Pattern { value: PatternParam& },
+}
+
+pub enum TraitMember {
+    Declaration { value: MethodDecl& },
+    Definition { value: MethodDef& },
+}
+
+pub enum PatternArguments {
+    None,
+    Positional { values: Vec<Pattern&> },
+    Named { values: Vec<FieldPattern&> },
+}
+
+impl LiteralRef {
+    pub fn kind() -> LiteralKind {
+        match self {
+            Integer => LiteralKind.Integer, Float => LiteralKind.Float,
+            Character => LiteralKind.Character, StringLiteral => LiteralKind.StringLiteral, Boolean => LiteralKind.Boolean
+        }
+    }
+    pub fn span() -> Span {
+        match self {
+            Integer(value) => value.span, Float(value) => value.span,
+            Character(value) => value.span, StringLiteral(value) => value.span, Boolean(value) => value.span
+        }
+    }
+}
+impl Drop for PatternArguments {
+    pub fn drop() { match self { Positional(values) => values.drop(), Named(values) => values.drop(), None => {} } }
+}
+
+pub struct IdentifierData { pub name: String, pub synthetic: bool }
+impl Drop for IdentifierData { pub fn drop() { self.name.drop(); } }
+
+pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix }
+impl Drop for IntLiteralData { pub fn drop() {} }
+
+pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix }
+impl Drop for FloatLiteralData { pub fn drop() {} }
+
+pub struct CharLiteralData { pub value: String }
+impl Drop for CharLiteralData { pub fn drop() { self.value.drop(); } }
+
+pub struct StrLiteralData { pub value: String }
+impl Drop for StrLiteralData { pub fn drop() { self.value.drop(); } }
+
+pub struct BoolLiteralData { pub value: bool }
+impl Drop for BoolLiteralData { pub fn drop() {} }
+
+pub struct ProgramData { pub items: Vec<Item&> }
+impl Drop for ProgramData { pub fn drop() { self.items.drop(); } }
+
+pub struct BlockData { pub stmts: Vec<Expr&>, pub end: Option<Position>, pub parameter_bindings: Vec<PatternLet&> }
+impl Drop for BlockData { pub fn drop() { self.stmts.drop(); self.parameter_bindings.drop(); } }
+
+pub struct ArgumentData { pub name: Option<Identifier&>, pub value: Expr& }
+impl Drop for ArgumentData { pub fn drop() {} }
+
+pub struct VarInfoData { pub name: Identifier&, pub var_type: TypeSyntax& }
+impl Drop for VarInfoData { pub fn drop() {} }
+
+pub struct PatternParamData { pub pattern: Pattern&, pub var_type: TypeSyntax& }
+impl Drop for PatternParamData { pub fn drop() {} }
+
+pub struct PatternLetData { pub pattern: Pattern&, pub var_type: TypeSyntax&, pub init_expr: Expr&, pub else_branch: Option<Block&>, pub is_parameter: bool }
+impl Drop for PatternLetData { pub fn drop() {} }
+
+pub struct LetConditionData { pub pattern: Pattern&, pub value: Expr& }
+impl Drop for LetConditionData { pub fn drop() {} }
+
+pub struct ElifBranchData { pub condition: Condition, pub body: Block& }
+impl Drop for ElifBranchData { pub fn drop() {} }
+
+pub struct MatchArmData { pub pattern: Pattern&, pub guard: Option<Expr&>, pub body: Block&, pub origin: MatchArmOrigin }
+impl Drop for MatchArmData { pub fn drop() {} }
+
+pub struct AttrData { pub kind: AttrKind }
+impl Drop for AttrData { pub fn drop() {} }
+
+pub struct TypeGenericParamData { pub name: Identifier& }
+impl Drop for TypeGenericParamData { pub fn drop() {} }
+
+pub struct ConstGenericParamData { pub name: Identifier&, pub const_type: TypeSyntax& }
+impl Drop for ConstGenericParamData { pub fn drop() {} }
+
+pub struct FieldInfoData { pub attrs: Vec<Attr&>, pub name: Identifier&, pub field_type: TypeSyntax& }
+impl Drop for FieldInfoData { pub fn drop() { self.attrs.drop(); } }
+
+pub struct VariantInfoData { pub name: Identifier&, pub fields: Vec<VarInfo&> }
+impl Drop for VariantInfoData { pub fn drop() { self.fields.drop(); } }
+
+pub struct MethodDeclData { pub attrs: Vec<Attr&>, pub name: Identifier&, pub generics: Vec<GenericParam>, pub params: Vec<Parameter>, pub ret_type: Option<TypeSyntax&> }
+impl Drop for MethodDeclData { pub fn drop() { self.attrs.drop(); self.generics.drop(); self.params.drop(); } }
+
+pub struct MethodDefData { pub decl: MethodDecl&, pub body: Block& }
+impl Drop for MethodDefData { pub fn drop() {} }
+
+pub struct ExternFuncDeclData { pub name: Identifier&, pub params: Vec<VarInfo&>, pub ret_type: Option<TypeSyntax&> }
+impl Drop for ExternFuncDeclData { pub fn drop() { self.params.drop(); } }
+
+pub struct ImplConditionData { pub name: Identifier&, pub traits: Vec<TypeSyntax&> }
+impl Drop for ImplConditionData { pub fn drop() { self.traits.drop(); } }
+
+pub struct CaptureItemData { pub name: Identifier&, pub expr: Expr& }
+impl Drop for CaptureItemData { pub fn drop() {} }
+
+pub struct FieldPatternData { pub name: Identifier&, pub pattern: Pattern& }
+impl Drop for FieldPatternData { pub fn drop() {} }
+
+pub enum ExprData {
+    Identifier { name: Identifier& },
+    Literal { literal: LiteralRef },
+    Binary { op: BinaryOperator, left: Expr&, right: Expr& },
+    Unary { op: UnaryOperator, operand: Expr& },
+    TryExpr { operand: Expr& },
+    Call { callee: Expr&, args: Vec<Argument&> },
+    MethodCall { receiver: Expr&, method_name: Identifier&, generics: Vec<TypeSyntax&>, args: Vec<Argument&> },
+    FieldAccess { receiver: Expr&, field_name: Identifier& },
+    Builtin { kind: BuiltinKind, type_args: Vec<TypeSyntax&>, args: Vec<Argument&> },
+    TypeItem { name: Identifier&, generics: Vec<GenericArgument> },
+    Block { block: Block& },
+    Tuple { elements: Vec<Expr&> },
+    Array { elements: Vec<Expr&> },
+    ArrayRepeat { element: Expr&, count: Expr& },
+    DynValue { value: Expr& },
+    DynBuffer { size: Expr&, element: Expr& },
+    VarDecl { name: Identifier&, var_type: TypeSyntax&, init_expr: Option<Expr&> },
+    PatternLet { binding: PatternLet& },
+    If { condition: Condition, then_branch: Block&, elif_branches: Vec<ElifBranch&>, else_branch: Option<Block&> },
+    ComptimeIf { condition: Expr&, then_branch: Block&, else_branch: Block& },
+    For { pattern: Pattern&, iterable: Expr&, body: Block& },
+    While { condition: Condition, body: Block& },
+    Loop { body: Block& },
+    Match { expr: Expr&, arms: Vec<MatchArm&> },
+    Return { expr: Option<Expr&> },
+    Break { expr: Option<Expr&> },
+    Continue,
+    Defer { action: Expr& },
+    Assert { condition: Expr&, message: Option<Expr&> },
+    Delete { target: Expr& },
+    Semi { expr: Expr& },
+    ClosureExpr { captures: Vec<CaptureItem&>, params: Vec<Parameter>, return_type: Option<TypeSyntax&>, body: Block& },
+    CompileConfig { name: String },
+}
+
+impl Drop for ExprData {
+    pub fn drop() {
+        match self {
+            Identifier(name) => {},
+            Literal(literal) => {},
+            Binary(op, left, right) => {},
+            Unary(op, operand) => {},
+            TryExpr(operand) => {},
+            Call(callee, args) => { args.drop(); },
+            MethodCall(receiver, method_name, generics, args) => { generics.drop(); args.drop(); },
+            FieldAccess(receiver, field_name) => {},
+            Builtin(kind, type_args, args) => { type_args.drop(); args.drop(); },
+            TypeItem(name, generics) => { generics.drop(); },
+            Block(block) => {},
+            Tuple(elements) => { elements.drop(); },
+            Array(elements) => { elements.drop(); },
+            ArrayRepeat(element, count) => {},
+            DynValue(value) => {},
+            DynBuffer(size, element) => {},
+            VarDecl(name, var_type, init_expr) => {},
+            PatternLet(binding) => {},
+            If(condition, then_branch, elif_branches, else_branch) => { elif_branches.drop(); },
+            ComptimeIf(condition, then_branch, else_branch) => {},
+            For(pattern, iterable, body) => {},
+            While(condition, body) => {},
+            Loop(body) => {},
+            Match(expr, arms) => { arms.drop(); },
+            Return(expr) => {},
+            Break(expr) => {},
+            Continue => {},
+            Defer(action) => {},
+            Assert(condition, message) => {},
+            Delete(target) => {},
+            Semi(expr) => {},
+            ClosureExpr(captures, params, return_type, body) => { captures.drop(); params.drop(); },
+            CompileConfig(name) => { name.drop(); },
+        }
+    }
+}
+
+pub enum TypeData {
+    IntType { signed: bool, width: u64 },
+    FloatType { width: u64 },
+    BoolType,
+    StrType,
+    CharType,
+    VoidType,
+    NeverType,
+    DeducedType,
+    CScalarType { name: String },
+    CPtrType { pointee_type: TypeSyntax& },
+    NamedType { name: Identifier& },
+    ArrayType { element_type: TypeSyntax&, size: ConstExpr& },
+    TupleType { element_types: Vec<TypeSyntax&> },
+    PointerType { pointee_type: TypeSyntax& },
+    RefType { pointee_type: TypeSyntax& },
+    SliceType { element_type: TypeSyntax& },
+    InstanceType { base: TypeSyntax&, generic_args: Vec<GenericArgument> },
+    FunctionType { param_types: Vec<TypeSyntax&>, return_type: TypeSyntax& },
+}
+
+impl Drop for TypeData {
+    pub fn drop() {
+        match self {
+            IntType(signed, width) => {},
+            FloatType(width) => {},
+            BoolType => {},
+            StrType => {},
+            CharType => {},
+            VoidType => {},
+            NeverType => {},
+            DeducedType => {},
+            CScalarType(name) => { name.drop(); },
+            CPtrType(pointee_type) => {},
+            NamedType(name) => {},
+            ArrayType(element_type, size) => {},
+            TupleType(element_types) => { element_types.drop(); },
+            PointerType(pointee_type) => {},
+            RefType(pointee_type) => {},
+            SliceType(element_type) => {},
+            InstanceType(base, generic_args) => { generic_args.drop(); },
+            FunctionType(param_types, return_type) => { param_types.drop(); },
+        }
+    }
+}
+
+pub enum ConstExprData {
+    LiteralConstExpr { literal: IntLiteral& },
+    GenericConstExpr { name: Identifier& },
+    UnaryConstExpr { op: UnaryOperator, operand: ConstExpr& },
+    BinaryConstExpr { op: BinaryOperator, left: ConstExpr&, right: ConstExpr& },
+}
+
+impl Drop for ConstExprData {
+    pub fn drop() {
+        match self {
+            LiteralConstExpr(literal) => {},
+            GenericConstExpr(name) => {},
+            UnaryConstExpr(op, operand) => {},
+            BinaryConstExpr(op, left, right) => {},
+        }
+    }
+}
+
+pub enum PatternData {
+    WildcardPattern,
+    LiteralPattern { literal: LiteralRef },
+    RangePattern { bounds: RangeBounds },
+    NamePattern { name: Identifier& },
+    BindPattern { name: Identifier&, inner: Pattern& },
+    OrPattern { alternatives: Vec<Pattern&> },
+    ConstructPattern { name: Identifier&, qualifier: Option<TypeSyntax&>, arguments: PatternArguments, rest: bool },
+    TuplePattern { elements: Vec<Pattern&> },
+    SequencePattern { prefix: Vec<Pattern&>, suffix: Vec<Pattern&>, rest: bool },
+}
+
+impl Drop for PatternData {
+    pub fn drop() {
+        match self {
+            WildcardPattern => {},
+            LiteralPattern(literal) => {},
+            RangePattern(bounds) => {},
+            NamePattern(name) => {},
+            BindPattern(name, inner) => {},
+            OrPattern(alternatives) => { alternatives.drop(); },
+            ConstructPattern(name, qualifier, arguments, rest) => { arguments.drop(); },
+            TuplePattern(elements) => { elements.drop(); },
+            SequencePattern(prefix, suffix, rest) => { prefix.drop(); suffix.drop(); },
+        }
+    }
+}
+
+pub enum ItemData {
+    Import { paths: Vec<Identifier&>, target: Identifier&, alias: Option<Identifier&>, end: Option<Position> },
+    Alias { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, target: TypeSyntax& },
+    FuncDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, params: Vec<Parameter>, ret_type: Option<TypeSyntax&>, body: Block& },
+    ConstDef { attrs: Vec<Attr&>, name: Identifier&, const_type: TypeSyntax&, value: Expr& },
+    OpaqueTypeDef { attrs: Vec<Attr&>, name: Identifier& },
+    ExternBlock { attrs: Vec<Attr&>, abi: String, functions: Vec<ExternFuncDecl&> },
+    StructDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, fields: Vec<FieldInfo&> },
+    EnumDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, variants: Vec<VariantInfo&> },
+    TraitDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, items: Vec<TraitMember> },
+    Impl { generics: Vec<GenericParam>, target: TypeSyntax&, trait_type: Option<TypeSyntax&>, items: Vec<MethodDef&>, conditions: Vec<ImplCondition&> },
+}
+
+impl Drop for ItemData {
+    pub fn drop() {
+        match self {
+            Import(paths, target, alias, end) => { paths.drop(); },
+            Alias(attrs, name, generics, target) => { attrs.drop(); generics.drop(); },
+            FuncDef(attrs, name, generics, params, ret_type, body) => { attrs.drop(); generics.drop(); params.drop(); },
+            ConstDef(attrs, name, const_type, value) => { attrs.drop(); },
+            OpaqueTypeDef(attrs, name) => { attrs.drop(); },
+            ExternBlock(attrs, abi, functions) => { attrs.drop(); abi.drop(); functions.drop(); },
+            StructDef(attrs, name, generics, fields) => { attrs.drop(); generics.drop(); fields.drop(); },
+            EnumDef(attrs, name, generics, variants) => { attrs.drop(); generics.drop(); variants.drop(); },
+            TraitDef(attrs, name, generics, items) => { attrs.drop(); generics.drop(); items.drop(); },
+            Impl(generics, target, trait_type, items, conditions) => { generics.drop(); items.drop(); conditions.drop(); },
+        }
+    }
+}

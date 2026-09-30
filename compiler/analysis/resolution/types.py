@@ -9,8 +9,10 @@ from compiler.analysis.facts.names import NameReferences
 from compiler.analysis.symbol.symbol import Symbol, SymbolKind
 from compiler.analysis.ty import ty as Type
 from compiler.analysis.unit import hir as HIR
+from compiler.error import CompilerError
 from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.lex.token import IntLiteral
+from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import (ASTType, ConstExpr,
                                               GenericConstExpr,
@@ -31,6 +33,8 @@ class TypeResolver:
         self.__ctx = type_ctx
         self.__names = names
         self.__constant_value = constant_value
+        self.__aliases: dict[int, tuple[AST.Alias, SymbolCtx]] = {}
+        self.__filling_aliases: set[int] = set()
         self.__const_eval = ConstantExpressionEvaluator(
             type_ctx, lambda _type_id: 0, "type-level constant expression"
         )
@@ -58,16 +62,51 @@ class TypeResolver:
 
         This is used during type checking to convert the types written in the
         source code (AST) to the internal type representation. A name that refers
-        to an alias resolves to the alias's own type id: an alias is a type in its
-        own right, so a declaration does not have to wait for the alias body (and
-        therefore does not depend on where the alias is declared). Consumers that
-        need the aliased type look through it with :meth:`TypeCtx.resolve_aliases`.
+        to an alias retains the alias's own type ID. Its body is resolved in the
+        definition scope on demand, independently of declaration order.
+        Consumers inspect the underlying type with :meth:`TypeCtx.resolve_aliases`.
         """
         return self.__resolve(ty, symbol_ctx)
 
     def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         """Resolve a type-level integer expression to its constant type ID."""
         return self.__resolve_const_expr(const_expr, symbol_ctx)
+
+    def register_alias(self, type_id: int, definition: AST.Alias, symbol_ctx: SymbolCtx) -> None:
+        """Retain a definition scope for demand-driven alias body resolution."""
+        ty = self.__ctx[type_id]
+        if not isinstance(ty, Type.AliasType):
+            raise CompilerError("alias registration requires an alias type")
+        self.__aliases[id(ty.custom_def)] = definition, symbol_ctx.clone()
+
+    def resolve_alias(self, type_id: int) -> None:
+        """Fill an alias body before a consumer inspects its concrete kind."""
+        ty = self.__ctx[type_id]
+        if not isinstance(ty, Type.AliasType) or ty.custom_def.aliased_type != -1:
+            return
+        key = id(ty.custom_def)
+        entry = self.__aliases.get(key)
+        if entry is None:
+            return
+        definition, symbol_ctx = entry
+        if key in self.__filling_aliases:
+            raise AnalysisError(f"Circular type alias: {definition.name.name}", definition.span)
+        self.__filling_aliases.add(key)
+        symbol_ctx.enter_scope()
+        try:
+            for parameter, generic_id in zip(definition.generics, ty.custom_def.generics):
+                kind = (
+                    SymbolKind.ConstGeneric
+                    if isinstance(parameter, AST.ConstGenericParam)
+                    else SymbolKind.Type
+                )
+                symbol_ctx.add_symbol(
+                    parameter.name.name, kind, generic_id, span=parameter.name.span
+                )
+            ty.custom_def.aliased_type = self.resolve(definition.target, symbol_ctx)
+        finally:
+            symbol_ctx.exit_scope()
+            self.__filling_aliases.discard(key)
 
     def __resolve(self, ty: ASTType, symbol_ctx: SymbolCtx) -> int:
         """Resolve *ty* without collapsing its top-level alias.
@@ -137,6 +176,7 @@ class TypeResolver:
                 # Record the name as written: editors navigate and hover type
                 # annotations, which no HIR expression represents.
                 self.__names.record(name.span, symbol.type_id)
+                self.resolve_alias(symbol.type_id)
                 return symbol.type_id
             case ASTTy.InstanceType(base=base, generic_args=generic_args):
                 # Hardcoded type constructors (Tuple / Fn) are not

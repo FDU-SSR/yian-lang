@@ -1,0 +1,90 @@
+from compiler.frontend.ast.node import VarInfo, VarInfoData, Parameter, PatternParamData, GenericParam, TypeGenericParamData, ConstGenericParamData, TypeSyntax;
+from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
+from compiler.frontend.parse.pattern import parse_binding_pattern;
+from compiler.frontend.parse.state import Parser, take_vec;
+from compiler.frontend.parse.type import parse_type;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+pub fn parse_var_info(parser: Parser&) -> Option<VarInfo&> {
+    let name = parser.identifier()?;
+    parser.take_punct(PunctuatorKind.Colon);
+    parser.ready()?;
+    let ty = parse_type(parser)?;
+    Option<VarInfo&>.Some(val=parser.arena.alloc_var_info(VarInfoData(name=name, var_type=ty), name.span))
+}
+pub fn parse_parameter(parser: Parser&) -> Option<Parameter> {
+    let pattern = parse_binding_pattern(parser)?;
+    parser.take_punct(PunctuatorKind.Colon);
+    parser.ready()?;
+    let ty = parse_type(parser)?;
+    let parameter = match &pattern.data {
+        NamePattern(name) => Parameter.Named(value=parser.arena.alloc_var_info(
+            VarInfoData(name=*name, var_type=ty), pattern.span)),
+        _ => Parameter.Pattern(value=parser.arena.alloc_pattern_param(
+            PatternParamData(pattern=pattern, var_type=ty), pattern.span)),
+    };
+    Option<Parameter>.Some(val=parameter)
+}
+pub fn parse_parameters(parser: Parser&) -> Option<Vec<Parameter>> {
+    parser.take_punct(PunctuatorKind.LParen);
+    parser.ready()?;
+    let values = Vec<Parameter>.new();
+    defer values.drop();
+    while !parser.at_punct(PunctuatorKind.RParen) {
+        values.push(parse_parameter(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
+    }
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+    Option<Vec<Parameter>>.Some(val=take_vec<Parameter>(&values))
+}
+pub fn parse_named_parameters(parser: Parser&) -> Option<Vec<VarInfo&>> {
+    parser.take_punct(PunctuatorKind.LParen);
+    parser.ready()?;
+    let values = Vec<VarInfo&>.new();
+    defer values.drop();
+    while !parser.at_punct(PunctuatorKind.RParen) {
+        values.push(parse_var_info(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        parser.advance();
+    }
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+    Option<Vec<VarInfo&>>.Some(val=take_vec<VarInfo&>(&values))
+}
+pub fn parse_generics(parser: Parser&) -> Option<Vec<GenericParam>> {
+    let values = Vec<GenericParam>.new();
+    defer values.drop();
+    if parser.at_punct(PunctuatorKind.LAngle) {
+        parser.advance();
+        while !parser.at_punct(PunctuatorKind.RAngle) {
+            let start = parser.peek().span;
+            if parser.at_keyword(KeywordKind.Const) {
+                parser.advance();
+                let name = parser.identifier()?;
+                parser.take_punct(PunctuatorKind.Colon);
+                parser.ready()?;
+                let ty = parse_type(parser)?;
+                values.push(GenericParam.Constant(value=parser.arena.alloc_const_generic_param(
+                    ConstGenericParamData(name=name, const_type=ty), start + ty.span)));
+            } else {
+                let name = parser.identifier()?;
+                values.push(GenericParam.Type(value=parser.arena.alloc_type_generic_param(
+                    TypeGenericParamData(name=name), name.span)));
+            }
+            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            parser.advance();
+        }
+        parser.take_punct(PunctuatorKind.RAngle);
+        parser.ready()?;
+    }
+    Option<Vec<GenericParam>>.Some(val=take_vec<GenericParam>(&values))
+}
+pub fn parse_return_type(parser: Parser&) -> Option<TypeSyntax&> {
+    if !parser.at_punct(PunctuatorKind.Arrow) { return Option<TypeSyntax&>.None; }
+    parser.advance();
+    parse_type(parser)
+}
