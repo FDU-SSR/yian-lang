@@ -1,9 +1,10 @@
-from compiler.frontend.lex.number import is_float_literal;
 from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, IntSuffix, FloatSuffix;
 from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IteratorExt, Peekable;
+from std.core.ops import Index;
+from std.core.option import Option;
 from std.core.result import Result;
 from std.core.str import CharIter;
 from std.core.string import String;
@@ -24,17 +25,36 @@ impl Drop for LexError {
     pub fn drop() { self.message.drop(); }
 }
 
-fn punctuator(word: str) -> bool {
-    return PunctuatorKind.from_text(word).is_some();
+fn decimal_digit(code: u32) -> bool {
+    return code >= u32('0') && code <= u32('9');
+}
+
+fn ascii_letter(code: u32) -> bool {
+    return (code >= u32('A') && code <= u32('Z')) ||
+        (code >= u32('a') && code <= u32('z'));
 }
 
 fn ident_start(code: u32) -> bool {
-    return code == 95u32 || (code >= 65u32 && code <= 90u32) ||
-    (code >= 97u32 && code <= 122u32);
+    return code == u32('_') || ascii_letter(code);
 }
 
 fn ident_part(code: u32) -> bool {
-    return ident_start(code) || (code >= 48u32 && code <= 57u32);
+    return ident_start(code) || decimal_digit(code);
+}
+
+fn hexadecimal_literal(raw: str) -> bool {
+    return raw.starts_with("0x") || raw.starts_with("0X");
+}
+
+fn is_float_literal(raw: str) -> bool {
+    let hexadecimal = hexadecimal_literal(raw);
+    for current in raw.chars() {
+        if current == '.' || current == 'p' || current == 'P' ||
+            (!hexadecimal && (current == 'e' || current == 'E')) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn number_part(raw: str, code: u32) -> bool {
@@ -42,42 +62,35 @@ fn number_part(raw: str, code: u32) -> bool {
         let bytes = raw.as_slice();
         let last = bytes[bytes.len() - 1u64];
         if last == b'p' || last == b'P' { return true; }
-        return (last == b'e' || last == b'E') &&
-            !raw.starts_with("0x") && !raw.starts_with("0X");
+        return (last == b'e' || last == b'E') && !hexadecimal_literal(raw);
     }
-    return (code >= u32('0') && code <= u32('9')) || code == u32('_') ||
-        (code >= u32('a') && code <= u32('z')) ||
-        (code >= u32('A') && code <= u32('Z'));
+    return decimal_digit(code) || code == u32('_') || ascii_letter(code);
 }
 
 fn integer_suffix(raw: str) -> IntSuffix {
-    if raw.ends_with("i8") { return IntSuffix.I8; }
-    if raw.ends_with("i16") { return IntSuffix.I16; }
-    if raw.ends_with("i32") { return IntSuffix.I32; }
-    if raw.ends_with("i64") { return IntSuffix.I64; }
-    if raw.ends_with("u8") { return IntSuffix.U8; }
-    if raw.ends_with("u16") { return IntSuffix.U16; }
-    if raw.ends_with("u32") { return IntSuffix.U32; }
-    if raw.ends_with("u64") { return IntSuffix.U64; }
-    if raw.ends_with("uint") { return IntSuffix.Uint; }
-    if raw.ends_with("int") { return IntSuffix.Int; }
+    for suffix in [IntSuffix.I8, IntSuffix.I16, IntSuffix.I32, IntSuffix.I64,
+        IntSuffix.U8, IntSuffix.U16, IntSuffix.U32, IntSuffix.U64,
+        IntSuffix.Uint, IntSuffix.Int] {
+        if raw.ends_with(suffix.spelling()) { return *suffix; }
+    }
     return IntSuffix.Unsuffixed;
 }
 
 fn float_suffix(raw: str) -> FloatSuffix {
-    if raw.ends_with("f16") { return FloatSuffix.F16; }
-    if raw.ends_with("f32") { return FloatSuffix.F32; }
-    if raw.ends_with("f64") { return FloatSuffix.F64; }
-    if raw.ends_with("float") { return FloatSuffix.Float; }
+    for suffix in [FloatSuffix.F16, FloatSuffix.F32, FloatSuffix.F64, FloatSuffix.Float] {
+        if raw.ends_with(suffix.spelling()) { return *suffix; }
+    }
     return FloatSuffix.Unsuffixed;
 }
 
 fn numeric_body(raw: str, suffix: str) -> str {
-    let end = raw.as_slice().len() - suffix.as_slice().len();
-    if suffix.as_slice().len() != 0u64 && end != 0u64 && raw.as_slice()[end - 1u64] == b'_' {
+    let bytes = raw.as_slice();
+    let suffix_len = suffix.as_slice().len();
+    let end = bytes.len() - suffix_len;
+    if suffix_len != 0u64 && end != 0u64 && bytes[end - 1u64] == b'_' {
         end -= 1u64;
     }
-    return str.from_slice_unchecked(raw.as_slice()[0u64..end]);
+    return str.from_slice_unchecked(bytes[0u64..end]);
 }
 
 fn suffix_max(suffix: IntSuffix) -> u64 {
@@ -119,10 +132,23 @@ fn whitespace(code: u32) -> bool {
 }
 
 fn hex_digit(code: u32) -> i32 {
-    if code >= 48u32 && code <= 57u32 { return i32(code - 48u32); }
-    if code >= 65u32 && code <= 70u32 { return i32(code - 65u32) + 10; }
-    if code >= 97u32 && code <= 102u32 { return i32(code - 97u32) + 10; }
+    if decimal_digit(code) { return i32(code - u32('0')); }
+    if code >= u32('A') && code <= u32('F') { return i32(code - u32('A')) + 10; }
+    if code >= u32('a') && code <= u32('f') { return i32(code - u32('a')) + 10; }
     return -1;
+}
+
+fn simple_escape(code: char) -> Option<char> {
+    return match code {
+        'n' => Option<char>.Some('\n'),
+        't' => Option<char>.Some('\t'),
+        'r' => Option<char>.Some('\r'),
+        '\\' => Option<char>.Some('\\'),
+        '\'' => Option<char>.Some('\''),
+        '"' => Option<char>.Some('"'),
+        '0' => Option<char>.Some('\0'),
+        _ => Option<char>.None,
+    };
 }
 
 pub struct Lexer {
@@ -165,7 +191,7 @@ impl Lexer {
     fn advance() -> u32 {
         let current = self.cursor.next();
         let code = u32(*current.unwrap());
-        if code == 10u32 {
+        if code == u32('\n') {
             self.row += 1u64;
             self.column = 0u64;
         } else {
@@ -203,7 +229,7 @@ impl Lexer {
                 skipped = true;
                 self.advance();
                 self.advance();
-                while !self.at_end() && self.peek() != 10u32 { self.advance(); }
+                while !self.at_end() && self.peek() != u32('\n') { self.advance(); }
                 if !self.at_end() { self.advance(); } else { self.row += 1u64; self.column = 0u64; }
                 continue;
             }
@@ -234,15 +260,12 @@ impl Lexer {
         if self.at_end() {
             return Result<char, LexError>.Err(msg=self.fail("Invalid escape sequence at end of literal", start));
         }
-        let next = self.advance();
-        if next == 110u32 { return Result<char, LexError>.Ok(val='\n'); }
-        if next == 116u32 { return Result<char, LexError>.Ok(val='\t'); }
-        if next == 114u32 { return Result<char, LexError>.Ok(val='\r'); }
-        if next == 92u32 { return Result<char, LexError>.Ok(val='\\'); }
-        if next == 39u32 { return Result<char, LexError>.Ok(val='\''); }
-        if next == 34u32 { return Result<char, LexError>.Ok(val='"'); }
-        if next == 48u32 { return Result<char, LexError>.Ok(val='\0'); }
-        if next == 120u32 || next == 88u32 {
+        let next = char(self.advance());
+        match simple_escape(next) {
+            Some(value) => return Result<char, LexError>.Ok(val=value),
+            None => {},
+        }
+        if next == 'x' || next == 'X' {
             let code: u32 = 0u32;
             let index: u64 = 0u64;
             while index < 2u64 {
@@ -256,13 +279,13 @@ impl Lexer {
             }
             return Result<char, LexError>.Ok(val=char(code));
         }
-        if next == 117u32 || next == 85u32 {
-            if self.peek() != 123u32 {
+        if next == 'u' || next == 'U' {
+            if self.peek() != u32('{') {
                 return Result<char, LexError>.Err(msg=self.fail("missing opening brace in Unicode escape", start));
             }
             self.advance();
             let code: u32 = 0u32;
-            while !self.at_end() && self.peek() != 125u32 {
+            while !self.at_end() && self.peek() != u32('}') {
                 let d = hex_digit(self.peek());
                 if d < 0 || code > 0x10ffffu32 / 16u32 {
                     return Result<char, LexError>.Err(msg=self.fail("invalid Unicode escape", start));
@@ -287,7 +310,7 @@ impl Lexer {
         let count: u64 = 0u64;
         while !self.at_end() && self.peek() != quote {
             let code = self.advance();
-            if code == 92u32 {
+            if code == u32('\\') {
                 decoded.push(self.escape(start)?);
             } else {
                 decoded.push(char(code));
@@ -298,7 +321,7 @@ impl Lexer {
             return Result<Token, LexError>.Err(msg=self.fail("Unterminated literal", start));
         }
         self.advance();
-        if quote == 34u32 {
+        if quote == u32('"') {
             transferred = true;
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
         }
@@ -328,15 +351,15 @@ impl Lexer {
         self.advance();
         self.tokens.push(self.token(TokenPayload.FStrStart, start));
         while !self.at_end() {
-            if self.peek() == 34u32 {
+            if self.peek() == u32('"') {
                 self.advance();
                 self.tokens.push(self.marker(TokenPayload.FStrEnd, self.position()));
                 return Result<bool, LexError>.Ok(val=true);
             }
-            if self.peek() == 125u32 {
+            if self.peek() == u32('}') {
                 return Result<bool, LexError>.Err(msg=self.fail("unexpected closing brace in f-string", self.position()));
             }
-            if self.peek() == 123u32 {
+            if self.peek() == u32('{') {
                 self.advance();
                 self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position()));
                 let depth: u64 = 1u64;
@@ -349,7 +372,7 @@ impl Lexer {
                         self.fstring()?;
                         continue;
                     }
-                    if self.peek() == 125u32 && depth == 1u64 {
+                    if self.peek() == u32('}') && depth == 1u64 {
                         let brace_start = self.position();
                         self.advance();
                         self.tokens.push(self.token(TokenPayload.FStrExprEnd, brace_start));
@@ -357,8 +380,8 @@ impl Lexer {
                     }
                     let current = self.peek();
                     let next = self.one(skipped)?;
-                    if current == 123u32 { depth += 1u64; }
-                    if current == 125u32 { depth -= 1u64; }
+                    if current == u32('{') { depth += 1u64; }
+                    if current == u32('}') { depth -= 1u64; }
                     self.tokens.push(next);
                 }
                 continue;
@@ -366,117 +389,96 @@ impl Lexer {
 
             let segment_start = self.position();
             let literal = String.new();
-            while !self.at_end() && self.peek() != 34u32 && self.peek() != 123u32 {
-                if self.peek() == 125u32 {
-                    literal.drop();
+            let transferred = false;
+            defer { if !transferred { literal.drop(); } };
+            while !self.at_end() && self.peek() != u32('"') && self.peek() != u32('{') {
+                if self.peek() == u32('}') {
                     return Result<bool, LexError>.Err(msg=self.fail("unexpected closing brace in f-string", self.position()));
                 }
                 let current = self.advance();
-                if current != 92u32 {
+                if current != u32('\\') {
                     literal.push(char(current));
                     continue;
                 }
                 if self.at_end() {
-                    literal.drop();
                     return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string escape", self.position()));
                 }
-                let escaped = self.advance();
-                if escaped == 110u32 { literal.push('\n'); } elif escaped == 116u32 { literal.push('\t'); } elif escaped == 114u32 { literal.push('\r'); } elif escaped == 48u32 { literal.push('\0'); } elif escaped == 92u32 { literal.push('\\'); } elif escaped == 39u32 { literal.push('\''); } elif escaped == 34u32 { literal.push('"'); } elif escaped == 123u32 { literal.push('{'); } elif escaped == 125u32 { literal.push('}'); } else { literal.push('\\'); literal.push(char(escaped)); }
+                let escaped = char(self.advance());
+                match simple_escape(escaped) {
+                    Some(value) => literal.push(value),
+                    None => {
+                        if escaped != '{' && escaped != '}' { literal.push('\\'); }
+                        literal.push(escaped);
+                    },
+                }
             }
-            if literal.len() != 0u64 {
+            if !literal.is_empty() {
                 self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
-            } else {
-                literal.drop();
+                transferred = true;
             }
         }
         return Result<bool, LexError>.Ok(val=true);
     }
 
-    fn one(previous_whitespace: bool) -> Result<Token, LexError> {
-        let start = self.position();
-        if self.at_end() {
-            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.EndOfFile, start));
-        }
-        let code = self.advance();
-        if code == 34u32 { return self.quoted(start, code, false); }
-        if code == 39u32 { return self.quoted(start, code, false); }
-        if code == 98u32 && self.peek() == 39u32 {
-            self.advance();
-            return self.quoted(start, 39u32, true);
-        }
-        if ident_start(code) {
-            let raw = String.new();
-            raw.push(char(code));
-            while !self.at_end() && ident_part(self.peek()) { raw.push(char(self.advance())); }
-            match KeywordKind.from_text(raw.as_str()) {
-                Some(kind) => {
-                    raw.drop();
-                    return Result<Token, LexError>.Ok(val=self.token(
-                        TokenPayload.Keyword(value=kind), start));
-                },
-                None => {},
-            }
-            return Result<Token, LexError>.Ok(val=self.token(
-                TokenPayload.Identifier(value=raw), start));
-        }
-        if code >= 48u32 && code <= 57u32 {
-            let raw = String.new();
-            raw.push(char(code));
-            while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
-            if self.peek() == u32('.') &&
-            self.peek_next() >= u32('0') && self.peek_next() <= u32('9') {
-                raw.push(char(self.advance()));
-                raw.push(char(self.advance()));
-                while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
-            }
-            if is_float_literal(raw.as_str()) {
-                let suffix = float_suffix(raw.as_str());
-                let body = numeric_body(raw.as_str(), suffix.spelling());
-                let value = match f64.parse(body) {
-                    Ok(parsed) => parsed,
-                    Err(error) => {
-                        let problem = self.fail(number_error_message(error), start);
-                        raw.drop();
-                        return Result<Token, LexError>.Err(msg=problem);
-                    },
-                };
-                let token = self.float_token(start, value, suffix);
+    fn identifier(start: Position, code: u32) -> Token {
+        let raw = String.new();
+        raw.push(char(code));
+        while !self.at_end() && ident_part(self.peek()) { raw.push(char(self.advance())); }
+        match KeywordKind.from_text(raw.as_str()) {
+            Some(kind) => {
                 raw.drop();
-                return Result<Token, LexError>.Ok(val=token);
-            }
-            let suffix = integer_suffix(raw.as_str());
-            let body = numeric_body(raw.as_str(), suffix.spelling());
-            let value = match u64.parse(body) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    let problem = self.fail(number_error_message(error), start);
-                    raw.drop();
-                    return Result<Token, LexError>.Err(msg=problem);
-                },
-            };
-            if value > suffix_max(suffix) {
-                let message = String.from(&"Integer literal exceeds maximum value for type ");
-                message.push_str(suffix.spelling());
-                let problem = self.fail(message.as_str(), start);
-                message.drop(); raw.drop();
-                return Result<Token, LexError>.Err(msg=problem);
-            }
-            let token = self.integer_token(start, value, suffix);
-            raw.drop();
-            return Result<Token, LexError>.Ok(val=token);
+                return self.token(TokenPayload.Keyword(value=kind), start);
+            },
+            None => return self.token(TokenPayload.Identifier(value=raw), start),
         }
+    }
 
-        if (code == 60u32 || code == 62u32) && !previous_whitespace {
-            let label = "<angle>";
-            if code == 62u32 { label = ">angle>"; }
-            let kind = *PunctuatorKind.from_text(label).unwrap();
+    fn parse_number<T>(body: str, start: Position) -> Result<T, LexError> {
+        return match T.parse(body) {
+            Ok(value) => Result<T, LexError>.Ok(value),
+            Err(error) => Result<T, LexError>.Err(self.fail(number_error_message(error), start)),
+        };
+    }
+
+    fn number(start: Position, code: u32) -> Result<Token, LexError> {
+        let raw = String.new();
+        defer raw.drop();
+        raw.push(char(code));
+        while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
+        if self.peek() == u32('.') && decimal_digit(self.peek_next()) {
+            raw.push(char(self.advance()));
+            raw.push(char(self.advance()));
+            while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
+        }
+        if is_float_literal(raw.as_str()) {
+            let suffix = float_suffix(raw.as_str());
+            let body = numeric_body(raw.as_str(), suffix.spelling());
+            let value = self.parse_number<f64>(body, start)?;
+            return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
+        }
+        let suffix = integer_suffix(raw.as_str());
+        let body = numeric_body(raw.as_str(), suffix.spelling());
+        let value = self.parse_number<u64>(body, start)?;
+        if value > suffix_max(suffix) {
+            let message = String.from(&"Integer literal exceeds maximum value for type ");
+            defer message.drop();
+            message.push_str(suffix.spelling());
+            return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
+        }
+        return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
+    }
+
+    fn punctuator(start: Position, code: u32, previous_whitespace: bool) -> Result<Token, LexError> {
+        if (code == u32('<') || code == u32('>')) && !previous_whitespace {
+            let kind = if code == u32('<') { PunctuatorKind.LAngle } else { PunctuatorKind.RAngle };
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
         }
         let raw = String.new();
+        defer raw.drop();
         raw.push(char(code));
         while !self.at_end() && self.peek() < 128u32 {
             raw.push(char(self.peek()));
-            if !punctuator(raw.as_str()) {
+            if PunctuatorKind.from_text(raw.as_str()).is_none() {
                 raw.pop();
                 break;
             }
@@ -484,13 +486,25 @@ impl Lexer {
         }
         let kind = match PunctuatorKind.from_text(raw.as_str()) {
             Some(value) => value,
-            None => {
-                raw.drop();
-                return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start));
-            },
+            None => return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start)),
         };
-        raw.drop();
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
+    }
+
+    fn one(previous_whitespace: bool) -> Result<Token, LexError> {
+        let start = self.position();
+        if self.at_end() {
+            return Result<Token, LexError>.Ok(self.token(TokenPayload.EndOfFile, start));
+        }
+        let code = self.advance();
+        if code == u32('"') || code == u32('\'') { return self.quoted(start, code, false); }
+        if code == u32('b') && self.peek() == u32('\'') {
+            self.advance();
+            return self.quoted(start, u32('\''), true);
+        }
+        if ident_start(code) { return Result<Token, LexError>.Ok(self.identifier(start, code)); }
+        if decimal_digit(code) { return self.number(start, code); }
+        return self.punctuator(start, code, previous_whitespace);
     }
 
     pub fn run() -> Result<Vec<Token>, LexError> {
