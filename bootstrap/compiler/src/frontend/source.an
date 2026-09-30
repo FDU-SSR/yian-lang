@@ -72,11 +72,15 @@ impl SourceManager {
     pub fn load(path: str) -> Result<u64, String> {
         let file = match File.open(path, OpenMode.Read) {
             Ok(value) => value,
-            Err(_) => return Result<u64, String>.Err(msg=String.from(&"cannot open source file")),
+            Err(problem) => {
+                problem.drop();
+                return Result<u64, String>.Err(msg=String.from(&"cannot open source file"));
+            },
         };
         let text = match file.read_to_string() {
             Ok(value) => value,
-            Err(_) => {
+            Err(problem) => {
+                problem.drop();
                 file.drop();
                 return Result<u64, String>.Err(msg=String.from(&"cannot read UTF-8 source file"));
             },
@@ -148,81 +152,81 @@ fn child_path(parent: str, name: str) -> String {
     return child;
 }
 
+fn release_entries(entries: Vec<DirEntry>&) {
+    let index: u64 = 0u64;
+    while index < entries.len() { entries[index].drop(); index += 1u64; }
+    entries.drop();
+}
+
 fn collect_dir(path: str, paths: Vec<String>&) -> Result<bool, String> {
-    let directory = match Directory.open(path) {
-        Ok(value) => value,
-        Err(_) => return Result<bool, String>.Err(msg=String.from(&"cannot open source directory")),
-    };
     let entries = Vec<DirEntry>.new();
-    loop {
-        let next = match directory.next() {
+    defer release_entries(&entries);
+    {
+        let directory = match Directory.open(path) {
             Ok(value) => value,
-            Err(_) => {
-                let index: u64 = 0u64;
-                while index < entries.len() { entries[index].drop(); index += 1u64; }
-                entries.drop(); directory.drop();
-                return Result<bool, String>.Err(msg=String.from(&"cannot read source directory"));
+            Err(problem) => {
+                problem.drop();
+                return Result<bool, String>.Err(msg=String.from(&"cannot open source directory"));
             },
         };
-        match next {
-            Some(entry) => entries.push(entry),
-            None => { break; },
+        defer directory.drop();
+        loop {
+            let next = match directory.next() {
+                Ok(value) => value,
+                Err(problem) => {
+                    problem.drop();
+                    return Result<bool, String>.Err(msg=String.from(&"cannot read source directory"));
+                },
+            };
+            match next {
+                Some(entry) => entries.push(entry),
+                None => { break; },
+            }
         }
     }
-    directory.drop();
     sort_entries(&entries);
 
     let index: u64 = 0u64;
     while index < entries.len() {
         let entry = &entries[index];
         let child = child_path(path, entry.name());
+        let transferred = false;
+        defer { if !transferred { child.drop(); } };
         let kind = entry.kind();
         if kind == DirEntryKind.Directory {
-            let result = collect_dir(child.as_str(), paths);
-            if result.is_err() {
-                child.drop();
-                let remaining: u64 = 0u64;
-                while remaining < entries.len() { entries[remaining].drop(); remaining += 1u64; }
-                entries.drop();
-                return result;
-            }
-            child.drop();
+            collect_dir(child.as_str(), paths)?;
         } elif kind == DirEntryKind.File && entry.name().ends_with(".an") {
             paths.push(child);
+            transferred = true;
         } elif kind == DirEntryKind.Other {
             let possible_dir = Directory.open(child.as_str());
             match possible_dir {
                 Ok(value) => {
                     value.drop();
-                    let result = collect_dir(child.as_str(), paths);
-                    child.drop();
-                    if result.is_err() {
-                        let remaining: u64 = 0u64;
-                        while remaining < entries.len() { entries[remaining].drop(); remaining += 1u64; }
-                        entries.drop();
-                        return result;
-                    }
+                    collect_dir(child.as_str(), paths)?;
                 },
-                Err(_) => {
-                    if entry.name().ends_with(".an") { paths.push(child); }
-                    else { child.drop(); }
+                Err(problem) => {
+                    problem.drop();
+                    if entry.name().ends_with(".an") {
+                        paths.push(child);
+                        transferred = true;
+                    }
                 },
             }
         } elif kind == DirEntryKind.Link && entry.name().ends_with(".an") {
             // Symlinked directories are not traversed or treated as source files.
             let possible_dir = Directory.open(child.as_str());
             match possible_dir {
-                Ok(value) => { value.drop(); child.drop(); },
-                Err(_) => paths.push(child),
+                Ok(value) => { value.drop(); },
+                Err(problem) => {
+                    problem.drop();
+                    paths.push(child);
+                    transferred = true;
+                },
             }
-        } else {
-            child.drop();
         }
         index += 1u64;
     }
-    index = 0u64;
-    while index < entries.len() { entries[index].drop(); index += 1u64; }
-    entries.drop();
     return Result<bool, String>.Ok(val=true);
 }
 
@@ -237,19 +241,24 @@ pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, String> {
             Ok(value) => {
                 value.drop();
                 let start = paths.len();
-                let result = collect_dir(root, &paths);
-                if result.is_err() {
-                    let count: u64 = 0u64;
-                    while count < paths.len() { paths[count].drop(); count += 1u64; }
-                    paths.drop();
-                    return Result<Vec<String>, String>.Err(msg=String.from(&"source directory traversal failed"));
-                }
+                match collect_dir(root, &paths) {
+                    Ok(_) => {},
+                    Err(problem) => {
+                        problem.drop();
+                        let count: u64 = 0u64;
+                        while count < paths.len() { paths[count].drop(); count += 1u64; }
+                        paths.drop();
+                        return Result<Vec<String>, String>.Err(msg=String.from(&"source directory traversal failed"));
+                    },
+                };
                 sort_paths(&paths, start);
             },
-            Err(_) => {
+            Err(problem) => {
+                problem.drop();
                 let file = match File.open(root, OpenMode.Read) {
                     Ok(value) => value,
-                    Err(_) => {
+                    Err(problem) => {
+                        problem.drop();
                         let count: u64 = 0u64;
                         while count < paths.len() { paths[count].drop(); count += 1u64; }
                         paths.drop();

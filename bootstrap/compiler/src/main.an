@@ -1,10 +1,8 @@
 from std.core.drop import Drop;
 from std.core.env import args, exit;
-from std.core.io import File, OpenMode, Stdout;
+from std.core.io import Stderr, Stdout;
 from std.core.string import String;
 from std.core.vec import Vec;
-from llvm.ir import IrType;
-from llvm.object import Module;
 from compiler.frontend.source import SourceManager, collect_sources;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import drop_tokens;
@@ -31,6 +29,13 @@ fn release_paths(paths: Vec<String>&) {
     paths.drop();
 }
 
+fn write_output(text: str) -> bool {
+    return match Stdout.write_all(text) {
+        Ok(_) => true,
+        Err(problem) => { problem.drop(); false },
+    };
+}
+
 fn frontend(arguments: Vec<String>&) -> bool {
     let phase = arguments[2u64].as_str();
     let roots = Vec<String>.new();
@@ -42,7 +47,11 @@ fn frontend(arguments: Vec<String>&) -> bool {
     }
     let paths = match collect_sources(&roots) {
         Ok(value) => value,
-        Err(_) => { Stdout.write_all("{\"version\":1,\"files\":[],\"diagnostic\":{\"stage\":\"io\"}}\n"); return false; },
+        Err(problem) => {
+            problem.drop();
+            write_output("{\"version\":1,\"files\":[],\"diagnostic\":{\"stage\":\"io\"}}\n");
+            return false;
+        },
     };
     defer release_paths(&paths);
     let sources = SourceManager.new();
@@ -55,11 +64,12 @@ fn frontend(arguments: Vec<String>&) -> bool {
     while index < paths.len() {
         let id = match sources.load(paths[index].as_str()) {
             Ok(value) => value,
-            Err(_) => {
+            Err(problem) => {
+                problem.drop();
                 output.push_str("],\"diagnostic\":{\"stage\":\"io\",\"path\":");
                 append_string(&output, paths[index].as_str());
                 output.push_str("}}\n");
-                Stdout.write_all(output.as_str());
+                write_output(output.as_str());
                 return false;
             },
         };
@@ -78,7 +88,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                 output.push(',');
                 append_span(&output, problem.span());
                 output.push_str("}}\n");
-                Stdout.write_all(output.as_str());
+                write_output(output.as_str());
                 problem.drop();
                 return false;
             },
@@ -101,7 +111,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                     output.push(',');
                     append_span(&output, problem.span());
                     output.push_str("}}\n");
-                    Stdout.write_all(output.as_str());
+                    write_output(output.as_str());
                     problem.drop();
                     drop_tokens(&tokens);
                     return false;
@@ -120,8 +130,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
         index += 1u64;
     }
     output.push_str("],\"diagnostic\":null}\n");
-    Stdout.write_all(output.as_str());
-    return true;
+    return write_output(output.as_str());
 }
 
 fn main() {
@@ -134,37 +143,10 @@ fn main() {
         if !success { exit(1i32); }
         return;
     }
-    if arguments.len() != 2u64 {
-        @panic("expected one object output path or --frontend-json {tokens,ast,desugared} INPUT...");
-    }
-
-    let module = Module.new("bootstrap_stage0", 0u8);
-    defer module.close();
-    let parameters = Vec<IrType>.new();
-    defer parameters.drop();
-    let signature = module.function_type(module.void_type(), parameters.as_slice());
-    let entry = module.add_function("__yian_main", signature);
-    let block = entry.append_block("entry");
-    let builder = module.builder();
-    builder.position_at_end(block);
-    builder.ret_void();
-
-    if module.verify().is_err() {
-        @panic("LLVM module verification failed");
-    }
-    let object = match module.object() {
-        Ok(bytes) => bytes,
-        Err(_) => @panic("LLVM object emission failed"),
+    match Stderr.write_all("usage: compiler --frontend-json {tokens,ast,desugared} INPUT...\n") {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
     };
-    defer object.drop();
-
-    let file = File.open(arguments[1u64].as_str(), OpenMode.Write).unwrap();
-    if file.write_bytes_all(object.as_slice()).is_err() {
-        @panic("object write failed");
-    }
-    if file.close().is_err() {
-        @panic("object close failed");
-    }
-
     release_arguments(&arguments);
+    exit(2i32);
 }

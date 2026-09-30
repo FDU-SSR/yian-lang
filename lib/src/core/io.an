@@ -37,6 +37,10 @@ pub struct IoError {
     msg: String,
 }
 
+impl Drop for IoError {
+    pub fn drop() { self.msg.drop(); }
+}
+
 impl IoError {
     pub fn kind() -> IoErrorKind {
         self.kind

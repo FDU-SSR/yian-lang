@@ -282,42 +282,39 @@ impl Lexer {
 
     fn quoted(start: Position, quote: u32, byte_literal: bool) -> Result<Token, LexError> {
         let decoded = String.new();
+        let transferred = false;
+        defer { if !transferred { decoded.drop(); } };
         let count: u64 = 0u64;
         while !self.at_end() && self.peek() != quote {
             let code = self.advance();
             if code == 92u32 {
-                let escaped = self.escape(start);
-                match escaped {
-                    Ok(value) => decoded.push(value),
-                    Err(problem) => { decoded.drop(); return Result<Token, LexError>.Err(msg=problem); },
-                }
+                decoded.push(self.escape(start)?);
             } else {
                 decoded.push(char(code));
             }
             count += 1u64;
         }
         if self.at_end() {
-            decoded.drop();
             return Result<Token, LexError>.Err(msg=self.fail("Unterminated literal", start));
         }
         self.advance();
         if quote == 34u32 {
+            transferred = true;
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
         }
         if count != 1u64 {
-            decoded.drop();
             return Result<Token, LexError>.Err(msg=self.fail("character literal must contain one character", start));
         }
         if byte_literal {
             let first = decoded.chars().next();
             let code = u32(*first.unwrap());
-            decoded.drop();
             if code > 255u32 {
                 return Result<Token, LexError>.Err(msg=self.fail("byte literal exceeds 255", start));
             }
             return Result<Token, LexError>.Ok(val=self.integer_token(start,
                 u64(code), IntSuffix.U8));
         }
+        transferred = true;
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Character(value=decoded), start));
     }
 
@@ -344,16 +341,12 @@ impl Lexer {
                 self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position()));
                 let depth: u64 = 1u64;
                 loop {
-                    let skipped = match self.skip_ignored() {
-                        Ok(value) => value,
-                        Err(problem) => return Result<bool, LexError>.Err(msg=problem),
-                    };
+                    let skipped = self.skip_ignored()?;
                     if self.at_end() {
                         return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string expression", self.position()));
                     }
                     if self.has_pair('f', '"') {
-                        let nested = self.fstring();
-                        if nested.is_err() { return nested; }
+                        self.fstring()?;
                         continue;
                     }
                     if self.peek() == 125u32 && depth == 1u64 {
@@ -363,10 +356,7 @@ impl Lexer {
                         break;
                     }
                     let current = self.peek();
-                    let next = match self.one(skipped) {
-                        Ok(value) => value,
-                        Err(problem) => return Result<bool, LexError>.Err(msg=problem),
-                    };
+                    let next = self.one(skipped)?;
                     if current == 123u32 { depth += 1u64; }
                     if current == 125u32 { depth -= 1u64; }
                     self.tokens.push(next);
@@ -504,22 +494,14 @@ impl Lexer {
     }
 
     pub fn run() -> Result<Vec<Token>, LexError> {
+        defer self.drop();
         loop {
-            let skipped = match self.skip_ignored() {
-                Ok(value) => value,
-                Err(problem) => { self.drop(); return Result<Vec<Token>, LexError>.Err(msg=problem); },
-            };
+            let skipped = self.skip_ignored()?;
             if self.has_pair('f', '"') {
-                let result = self.fstring();
-                match result {
-                    Ok(_) => continue,
-                    Err(problem) => { self.drop(); return Result<Vec<Token>, LexError>.Err(msg=problem); },
-                }
+                self.fstring()?;
+                continue;
             }
-            let next = match self.one(skipped) {
-                Ok(value) => value,
-                Err(problem) => { self.drop(); return Result<Vec<Token>, LexError>.Err(msg=problem); },
-            };
+            let next = self.one(skipped)?;
             let done = next.is_eof();
             self.tokens.push(next);
             if done {

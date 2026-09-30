@@ -156,6 +156,9 @@ impl Directory {
 
 impl Drop for Directory {
     pub fn drop() {
-        self.close();
+        match self.close() {
+            Ok(_) => {},
+            Err(error) => error.drop(),
+        }
     }
 }

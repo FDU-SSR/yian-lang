@@ -292,6 +292,13 @@ fn parse_args(parser: Parser&) -> Vec<NodeId> {
 fn parse_postfix(parser: Parser&, initial: NodeId) -> NodeId {
     let expr = initial;
     while !parser.failed() {
+        if parser.at_punct(PunctuatorKind.Question) {
+            let question = parser.take_punct(PunctuatorKind.Question);
+            let node = parser.alloc(AstTag.TryExpr, parser.node(expr).span() + question);
+            parser.child(node, AstFieldName.Operand, expr);
+            expr = node;
+            continue;
+        }
         if parser.at_punct(PunctuatorKind.LParen) {
             let open = parser.peek().span;
             let args = parse_args(parser);
