@@ -1,0 +1,122 @@
+from std.core.io import Read, Write, BufRead, BufReader, BufWriter, IoError, IoErrorKind;
+from std.core.result import Result;
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+from std.core.ops import Index;
+from std.core.range import Range;
+
+struct Reader { data: u8[], position: u64, chunk: u64, fail_at: u64, failed: bool }
+impl Read for Reader {
+    pub fn read(buffer: u8[]) -> Result<u64, IoError> {
+        if buffer.len() == 0u64 { return Result<u64, IoError>.Ok(val=0u64); }
+        if self.position == self.fail_at && !self.failed {
+            self.failed = true;
+            return Result<u64, IoError>.Err(msg=IoError.other("reader failure"));
+        }
+        let count = self.data.len() - self.position;
+        if count > self.chunk { count = self.chunk; }
+        if count > buffer.len() { count = buffer.len(); }
+        let i = 0u64;
+        while i < count { buffer[i] = self.data[self.position + i]; i += 1u64; }
+        self.position += count;
+        Result<u64, IoError>.Ok(val=count)
+    }
+}
+struct Writer { output: Vec<u8>, zero: bool, failed: bool, fail_at: u64, flush_error: bool }
+impl Write for Writer {
+    pub fn write(data: u8[]) -> Result<u64, IoError> {
+        if self.zero { return Result<u64, IoError>.Ok(val=0u64); }
+        if self.output.len() == self.fail_at && !self.failed {
+            self.failed = true;
+            return Result<u64, IoError>.Err(msg=IoError.other("writer failure"));
+        }
+        let count = data.len(); if count > 2u64 { count = 2u64; }
+        self.output.extend_from_slice(data[0u64..count]);
+        Result<u64, IoError>.Ok(val=count)
+    }
+    pub fn flush() -> Result<(), IoError> {
+        if self.flush_error {
+            self.flush_error = false;
+            return Result<(), IoError>.Err(msg=IoError.other("flush failure"));
+        }
+        Result<(), IoError>.Ok(val=())
+    }
+}
+fn error_kind<T>(result: Result<T, IoError>, kind: IoErrorKind) {
+    match result {
+        Err(error) => { defer error.drop(); assert error.kind() == kind: "I/O error kind"; },
+        Ok(_) => @panic("expected I/O error"),
+    }
+}
+fn short_reads() {
+    let reader = Reader("abcdef".as_slice(), 0u64, 1u64, 99u64, false);
+    let buffer: u8[6]; @assume_init(buffer);
+    reader.read_exact(buffer.as_slice()).unwrap();
+    assert str.from_slice_unchecked(buffer.as_slice()) == "abcdef": "read_exact handles short reads";
+    error_kind(reader.read_exact(buffer.as_slice()), IoErrorKind.UnexpectedEof);
+    assert *reader.read(buffer[0u64..0u64]).unwrap() == 0u64: "empty read";
+    let utf8 = Reader("中😀".as_slice(), 0u64, 1u64, 99u64, false);
+    let text = *utf8.read_to_string().unwrap(); defer text.drop();
+    assert text.as_str() == "中😀": "UTF-8 spanning reads";
+    let invalid: u8[2] = [255u8, 0u8];
+    let bad = Reader(invalid.as_slice(), 0u64, 1u64, 99u64, false);
+    error_kind(bad.read_to_string(), IoErrorKind.InvalidData);
+}
+fn lines() {
+    let source = Reader("中😀\r\n\nlast".as_slice(), 0u64, 99u64, 99u64, false);
+    let reader = BufReader<Reader>.with_capacity(2u64, &source); defer reader.drop();
+    let first = *reader.read_line().unwrap().unwrap(); defer first.drop();
+    let second = *reader.read_line().unwrap().unwrap(); defer second.drop();
+    let third = *reader.read_line().unwrap().unwrap(); defer third.drop();
+    assert first.as_str() == "中😀\r\n": "line preserves CRLF and UTF-8";
+    assert second.as_str() == "\n": "empty line differs from EOF";
+    assert third.as_str() == "last": "unterminated final line";
+    assert reader.read_line().unwrap().is_none(): "EOF";
+    let preview = Reader("ab\ncd\nef".as_slice(), 0u64, 99u64, 99u64, false);
+    let buffered = BufReader<Reader>.new(&preview); defer buffered.drop();
+    let line = *buffered.read_line().unwrap().unwrap(); defer line.drop();
+    let remaining = *buffered.read_to_string().unwrap(); defer remaining.drop();
+    assert line.as_str() == "ab\n" && remaining.as_str() == "cd\nef": "prefetched bytes survive";
+    let intermittent = Reader("abcdef".as_slice(), 0u64, 2u64, 2u64, false);
+    let retry = BufReader<Reader>.with_capacity(2u64, &intermittent); defer retry.drop();
+    let bytes: u8[2]; @assume_init(bytes);
+    retry.read_exact(bytes.as_slice()).unwrap();
+    error_kind(retry.read(bytes.as_slice()), IoErrorKind.Other);
+    retry.read_exact(bytes.as_slice()).unwrap();
+    assert str.from_slice_unchecked(bytes.as_slice()) == "cd": "refill error does not replay consumed bytes";
+    let invalid: u8[2] = [255u8, 10u8];
+    let bad = Reader(invalid.as_slice(), 0u64, 99u64, 99u64, false);
+    let bad_lines = BufReader<Reader>.new(&bad); defer bad_lines.drop();
+    error_kind(bad_lines.read_line(), IoErrorKind.InvalidData);
+}
+fn writes() {
+    let sink = Writer(Vec<u8>.new(), false, false, 99u64, false); defer sink.output.drop();
+    sink.write_str("abcdef").unwrap();
+    assert str.from_slice_unchecked(sink.output.as_slice()) == "abcdef": "write_all handles short writes";
+    let stopped = Writer(Vec<u8>.new(), true, false, 99u64, false); defer stopped.output.drop();
+    error_kind(stopped.write_str("x"), IoErrorKind.WriteZero);
+    let target = Writer(Vec<u8>.new(), false, false, 2u64, false); defer target.output.drop();
+    let buffer = BufWriter<Writer>.with_capacity(8u64, &target); defer buffer.drop();
+    buffer.write_str("abcdef").unwrap();
+    assert target.output.len() == 0u64: "buffered output awaits flush";
+    error_kind(buffer.finish(), IoErrorKind.Other);
+    assert target.output.len() == 2u64: "partial flush";
+    buffer.finish().unwrap();
+    buffer.finish().unwrap();
+    assert str.from_slice_unchecked(target.output.as_slice()) == "abcdef": "retry does not duplicate prefix";
+    let small_sink = Writer(Vec<u8>.new(), false, false, 99u64, true); defer small_sink.output.drop();
+    let small = BufWriter<Writer>.with_capacity(3u64, &small_sink); defer small.drop();
+    small.write_str("0123456789").unwrap();
+    error_kind(small.finish(), IoErrorKind.Other);
+    small.finish().unwrap();
+    assert str.from_slice_unchecked(small_sink.output.as_slice()) == "0123456789": "capacity boundary and underlying flush";
+    let owned_only = Writer(Vec<u8>.new(), false, false, 99u64, false); defer owned_only.output.drop();
+    {
+        let pending = BufWriter<Writer>.new(&owned_only);
+        pending.write_str("pending").unwrap();
+        pending.drop();
+    }
+    assert owned_only.output.len() == 0u64: "drop releases only the buffer";
+    owned_only.write_str("still open").unwrap();
+}
+fn main() { short_reads(); lines(); writes(); }

@@ -1,0 +1,23 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("fn f() { (); }").run().unwrap(); defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    assert parser.at_end(): "unit program consumed";
+    match &tree.root.data.items[0].data {
+        FuncDef(_, _, _, _, _, body) => match &body.data.stmts[0].data {
+            Semi(value) => match &value.data {
+                Tuple(elements) => { assert elements.len() == 0u64: "unit is an empty tuple"; },
+                _ => @panic("unit tuple expression"),
+            },
+            _ => @panic("unit statement"),
+        },
+        _ => @panic("unit function"),
+    }
+}

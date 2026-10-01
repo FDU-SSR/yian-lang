@@ -9,10 +9,12 @@
 from std.core.io import Stdout, Stderr;
 
 fn main() {
-    Stdout.write("stdout write\n").unwrap();
-    Stdout.write_all("stdout write_all\n").unwrap();
+    Stdout.new().drop();
+    Stderr.new().drop();
+    Stdout.new().write_str("stdout write\n").unwrap();
+    Stdout.new().write_str("stdout write_all\n").unwrap();
 
-    Stderr.write("stderr line 1\n").unwrap();
-    Stderr.write_all("stderr line 2\n").unwrap();
+    Stderr.new().write_str("stderr line 1\n").unwrap();
+    Stderr.new().write_str("stderr line 2\n").unwrap();
 
 }

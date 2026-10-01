@@ -1,7 +1,7 @@
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.fs import Directory, DirEntry, DirEntryKind;
-from std.core.io import File, OpenMode;
+from std.core.fs import Directory, DirEntryKind, metadata, read_to_string;
+from std.core.io import IoError, IoErrorKind;
 from std.core.ops import Add, AddAssign, Index;
 from std.core.result import Result;
 from std.core.string import String;
@@ -82,26 +82,11 @@ impl SourceManager {
     pub fn len() -> u64 { return self.files.len(); }
     pub fn file(id: u64) -> SourceFile& { return &self.files[id]; }
 
-    pub fn load(path: str) -> Result<u64, String> {
-        let file = match File.open(path, OpenMode.Read) {
-            Ok(value) => value,
-            Err(problem) => {
-                problem.drop();
-                return Result<u64, String>.Err(msg=String.from(&"cannot open source file"));
-            },
-        };
-        let text = match file.read_to_string() {
-            Ok(value) => value,
-            Err(problem) => {
-                problem.drop();
-                file.drop();
-                return Result<u64, String>.Err(msg=String.from(&"cannot read UTF-8 source file"));
-            },
-        };
-        file.drop();
+    pub fn load(path: str) -> Result<u64, IoError> {
+        let text = read_to_string(path)?;
         let id = self.files.len();
         self.files.push(SourceFile(path=String.from(&path), text=text));
-        return Result<u64, String>.Ok(val=id);
+        Result<u64, IoError>.Ok(val=id)
     }
 }
 
@@ -130,20 +115,6 @@ fn less(left: str, right: str) -> bool {
     return a.len() < b.len();
 }
 
-fn sort_entries(entries: Vec<DirEntry>&) {
-    let index: u64 = 1u64;
-    while index < entries.len() {
-        let current = entries[index];
-        let before = index;
-        while before > 0u64 && less(current.name(), entries[before - 1u64].name()) {
-            entries[before] = entries[before - 1u64];
-            before -= 1u64;
-        }
-        entries[before] = current;
-        index += 1u64;
-    }
-}
-
 fn sort_paths(paths: Vec<String>&, start: u64) {
     let index = start + 1u64;
     while index < paths.len() {
@@ -158,131 +129,58 @@ fn sort_paths(paths: Vec<String>&, start: u64) {
     }
 }
 
-fn child_path(parent: str, name: str) -> String {
-    let child = String.from(&parent);
-    if !parent.ends_with("/") { child.push('/'); }
-    child.push_str(name);
-    return child;
-}
-
-fn release_entries(entries: Vec<DirEntry>&) {
-    let index: u64 = 0u64;
-    while index < entries.len() { entries[index].drop(); index += 1u64; }
-    entries.drop();
-}
-
-fn collect_dir(path: str, paths: Vec<String>&) -> Result<bool, String> {
-    let entries = Vec<DirEntry>.new();
-    defer release_entries(&entries);
-    {
-        let directory = match Directory.open(path) {
-            Ok(value) => value,
-            Err(problem) => {
-                problem.drop();
-                return Result<bool, String>.Err(msg=String.from(&"cannot open source directory"));
-            },
+fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
+    let directory = Directory.open(path)?;
+    defer directory.drop();
+    loop {
+        let entry = match directory.next()? {
+            Some(value) => value,
+            None => { break; },
         };
-        defer directory.drop();
-        loop {
-            let next = match directory.next() {
-                Ok(value) => value,
-                Err(problem) => {
-                    problem.drop();
-                    return Result<bool, String>.Err(msg=String.from(&"cannot read source directory"));
-                },
-            };
-            match next {
-                Some(entry) => entries.push(entry),
-                None => { break; },
-            }
-        }
-    }
-    sort_entries(&entries);
-
-    let index: u64 = 0u64;
-    while index < entries.len() {
-        let entry = &entries[index];
-        let child = child_path(path, entry.name());
-        let transferred = false;
-        defer { if !transferred { child.drop(); } };
+        defer entry.drop();
+        let child = entry.path().as_str();
         let kind = entry.kind();
         if kind == DirEntryKind.Directory {
-            collect_dir(child.as_str(), paths)?;
-        } elif kind == DirEntryKind.File && entry.name().ends_with(".an") {
-            paths.push(child);
-            transferred = true;
-        } elif kind == DirEntryKind.Other {
-            let possible_dir = Directory.open(child.as_str());
-            match possible_dir {
-                Ok(value) => {
-                    value.drop();
-                    collect_dir(child.as_str(), paths)?;
-                },
-                Err(problem) => {
-                    problem.drop();
-                    if entry.name().ends_with(".an") {
-                        paths.push(child);
-                        transferred = true;
-                    }
-                },
-            }
-        } elif kind == DirEntryKind.Link && entry.name().ends_with(".an") {
-            // Symlinked directories are not traversed or treated as source files.
-            let possible_dir = Directory.open(child.as_str());
-            match possible_dir {
-                Ok(value) => { value.drop(); },
-                Err(problem) => {
-                    problem.drop();
-                    paths.push(child);
-                    transferred = true;
-                },
-            }
+            collect_dir(child, paths)?;
+        } elif kind == DirEntryKind.File {
+            if entry.name().ends_with(".an") { paths.push(String.from(&child)); }
+        } elif kind == DirEntryKind.Link {
+            let info = entry.metadata()?;
+            if info.is_file() && entry.name().ends_with(".an") { paths.push(String.from(&child)); }
         }
-        index += 1u64;
     }
-    return Result<bool, String>.Ok(val=true);
+    Result<(), IoError>.Ok(val=())
+}
+
+fn release_paths(paths: Vec<String>&) {
+    let index = 0u64;
+    while index < paths.len() { paths[index].drop(); index += 1u64; }
+    paths.drop();
 }
 
 // Roots retain command-line order; files within each directory are sorted.
-pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, String> {
+pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
     let paths = Vec<String>.new();
-    let index: u64 = 0u64;
+    let transferred = false;
+    defer { if !transferred { release_paths(&paths); } };
+    let index = 0u64;
     while index < inputs.len() {
         let root = inputs[index].as_str();
-        let directory = Directory.open(root);
-        match directory {
-            Ok(value) => {
-                value.drop();
-                let start = paths.len();
-                match collect_dir(root, &paths) {
-                    Ok(_) => {},
-                    Err(problem) => {
-                        problem.drop();
-                        let count: u64 = 0u64;
-                        while count < paths.len() { paths[count].drop(); count += 1u64; }
-                        paths.drop();
-                        return Result<Vec<String>, String>.Err(msg=String.from(&"source directory traversal failed"));
-                    },
-                };
-                sort_paths(&paths, start);
-            },
-            Err(problem) => {
-                problem.drop();
-                let file = match File.open(root, OpenMode.Read) {
-                    Ok(value) => value,
-                    Err(problem) => {
-                        problem.drop();
-                        let count: u64 = 0u64;
-                        while count < paths.len() { paths[count].drop(); count += 1u64; }
-                        paths.drop();
-                        return Result<Vec<String>, String>.Err(msg=String.from(&"source path does not exist"));
-                    },
-                };
-                file.drop();
-                if root.ends_with(".an") { paths.push(String.from(&root)); }
-            },
+        let info = metadata(root)?;
+        if info.is_dir() {
+            let start = paths.len();
+            collect_dir(root, &paths)?;
+            sort_paths(&paths, start);
+        } elif info.is_file() {
+            if root.ends_with(".an") { paths.push(String.from(&root)); }
+        } else {
+            let error = IoError.new(IoErrorKind.InvalidInput, "source path is not a file or directory");
+            let contextual = error.with_path(root);
+            error.drop();
+            return Result<Vec<String>, IoError>.Err(msg=contextual);
         }
         index += 1u64;
     }
-    return Result<Vec<String>, String>.Ok(val=paths);
+    transferred = true;
+    Result<Vec<String>, IoError>.Ok(val=paths)
 }

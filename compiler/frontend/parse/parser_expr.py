@@ -193,6 +193,10 @@ class ExprParser:
                 return self.__parse_fstring(token)
             case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
                 self.__stream.consume_punctuator(Tok.PunctuatorKind.LParen)
+                peeked = self.__stream.peek()
+                if isinstance(peeked, Tok.Punctuator) and peeked.kind == Tok.PunctuatorKind.RParen:
+                    self.__stream.consume_punctuator(Tok.PunctuatorKind.RParen)
+                    return AST.Tuple(span=token.span, elements=[])
                 expr = self.parse_expr()
 
                 next_token = self.__stream.peek()

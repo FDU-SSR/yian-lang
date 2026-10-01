@@ -1,4 +1,4 @@
-// Test: read all of stdin via Stdin.read_to_string().
+// Test: read all of stdin via Stdin.new().read_to_string().
 //
 // The 5000-byte input spans multiple 4096-byte reads; the assertions verify
 // that read_to_string preserves data across the chunk boundary.
@@ -6,7 +6,7 @@ from std.core.io import Stdin;
 from std.core.string import String;
 
 fn main() {
-    let content: String = *Stdin.read_to_string().unwrap();
+    let content: String = *Stdin.new().read_to_string().unwrap();
     assert content.len() == 5000u64: "read_to_string must capture all stdin";
     let head: str = content[0u64..4];
     let tail: str = content[4996u64..5000];

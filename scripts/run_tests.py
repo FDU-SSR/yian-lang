@@ -113,8 +113,8 @@ class TestCase:
     cli_args: list[str] | None = None
     """CLI arguments to pass to the compiled executable."""
 
-    stdin: str = ""
-    """Content to pipe to the executable's stdin."""
+    stdin: bytes = b""
+    """Bytes to pipe to the executable's stdin without decoding or newline translation."""
 
     compiler_args: list[str] = field(default_factory=list)
     """Additional compiler arguments for this test or one of its variants."""
@@ -238,12 +238,12 @@ def __find_ans(test_rel: str) -> Path | None:
     return p if p.exists() else None
 
 
-def __find_input(test_rel: str) -> tuple[list[str] | None, str]:
+def __find_input(test_rel: str) -> tuple[list[str] | None, bytes]:
     """Look for input files corresponding to *test_rel* in the suite input directory.
 
     Returns ``(cli_args, stdin)`` where:
       - *cli_args* is a list of whitespace-split args (None if no .args file).
-      - *stdin* is the content of the .stdin file (empty string if not found).
+      - *stdin* is the exact .stdin file content (empty bytes if not found).
 
     *test_rel* follows the same naming convention as ``__find_ans``:
       - "env/args.an"            → …/env/args.args, …/env/args.stdin
@@ -259,10 +259,10 @@ def __find_input(test_rel: str) -> tuple[list[str] | None, str]:
         text = args_path.read_text().strip()
         cli_args = text.split() if text else []
 
-    stdin = ""
+    stdin = b""
     stdin_path = INPUT_DIR / (base + ".stdin")
     if stdin_path.exists():
-        stdin = stdin_path.read_text()
+        stdin = stdin_path.read_bytes()
 
     return cli_args, stdin
 
@@ -627,10 +627,8 @@ def run_test(
         run_proc = subprocess.run(
             exe_cmd,
             cwd=ROOT_DIR,
-            input=test.stdin or None,
+            input=test.stdin,
             capture_output=True,
-            encoding="utf-8",
-            errors="replace",
             check=False,
         )
         run_elapsed = (time.monotonic() - run_start) * 1000.0
@@ -639,8 +637,8 @@ def run_test(
             test=test,
             exit_code=run_proc.returncode,
             elapsed_ms=compile_elapsed + run_elapsed,
-            output=compiler_output + run_proc.stderr,
-            stdout=run_proc.stdout,
+            output=compiler_output + __decode_output(run_proc.stderr),
+            stdout=__decode_output(run_proc.stdout),
             check_stdout=True,
         )
 
@@ -651,6 +649,11 @@ def run_test(
         output=compiler_output,
         compile_only=compile_only,
     )
+
+
+def __decode_output(data: bytes) -> str:
+    """Decode captured output with the text-mode subprocess newline convention."""
+    return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResult:
@@ -703,10 +706,8 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
     run_proc = subprocess.run(
         exe_cmd,
         cwd=ROOT_DIR,
-        input=test.stdin or None,
+        input=test.stdin,
         capture_output=True,
-        encoding="utf-8",
-        errors="replace",
         check=False,
     )
     run_elapsed = (time.monotonic() - run_start) * 1000.0
@@ -715,8 +716,8 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
         test=test,
         exit_code=run_proc.returncode,
         elapsed_ms=compile_elapsed + run_elapsed,
-        output=output + run_proc.stderr,
-        stdout=run_proc.stdout,
+        output=output + __decode_output(run_proc.stderr),
+        stdout=__decode_output(run_proc.stdout),
         check_stdout=True,
     )
 

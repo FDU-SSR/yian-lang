@@ -2,7 +2,7 @@ from std.core.env import exit;
 from std.core.io import Stderr;
 
 fn main() {
-    Stderr.write_all("before\n").unwrap();
-    defer Stderr.write_all("deferred\n").unwrap();
+    Stderr.new().write_str("before\n").unwrap();
+    defer Stderr.new().write_str("deferred\n").unwrap();
     exit(7);
 }

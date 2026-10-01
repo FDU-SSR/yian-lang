@@ -96,6 +96,6 @@ fn main() {
     assert next > payload.ptr: "nested pointer comparison";
     next[0] = 21;
     assert payload.view[1] == 21: "nested pointer/slice write";
-    Stdout.write_all(payload.text).unwrap();
+    Stdout.new().write_str(payload.text).unwrap();
     del payload.ptr;
 }

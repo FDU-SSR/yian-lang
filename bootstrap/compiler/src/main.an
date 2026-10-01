@@ -32,7 +32,7 @@ fn release_paths(paths: Vec<String>&) {
 }
 
 fn write_output(text: str) -> bool {
-    return match Stdout.write_all(text) {
+    return match Stdout.new().write_str(text) {
         Ok(_) => true,
         Err(problem) => { problem.drop(); false },
     };
@@ -67,12 +67,17 @@ fn frontend(arguments: Vec<String>&) -> bool {
     let paths = match collect_sources(&roots) {
         Ok(value) => value,
         Err(problem) => {
-            problem.drop();
+            defer problem.drop();
             let writer = Writer.new(); defer writer.drop();
             writer.begin_object(); writer.key("version"); writer.write_u64(1);
             writer.key("files"); writer.begin_array(); writer.end_array();
             writer.key("diagnostic"); writer.begin_object();
             writer.key("stage"); writer.write_string("io");
+            writer.key("message"); writer.write_string(problem.msg());
+            match problem.raw_os_error() {
+                Some(code) => { writer.key("osError"); writer.write_i64(i64(code)); },
+                None => {},
+            }
             diagnostic_end(&writer);
             return false;
         },
@@ -90,8 +95,13 @@ fn frontend(arguments: Vec<String>&) -> bool {
         let id = match sources.load(paths[index].as_str()) {
             Ok(value) => value,
             Err(problem) => {
-                problem.drop();
+                defer problem.drop();
                 diagnostic_start(&output, "io", paths[index].as_str());
+                output.key("message"); output.write_string(problem.msg());
+                match problem.raw_os_error() {
+                    Some(code) => { output.key("osError"); output.write_i64(i64(code)); },
+                    None => {},
+                }
                 diagnostic_end(&output);
                 return false;
             },
@@ -154,7 +164,7 @@ fn main() {
         if !success { exit(1i32); }
         return;
     }
-    match Stderr.write_all("usage: compiler --frontend-json {tokens,ast,desugared} INPUT...\n") {
+    match Stderr.new().write_str("usage: compiler --frontend-json {tokens,ast,desugared} INPUT...\n") {
         Ok(_) => {},
         Err(problem) => problem.drop(),
     };

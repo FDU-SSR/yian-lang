@@ -1,164 +1,256 @@
 from std.core.drop import Drop;
-from std.core.io import IoError, IoErrorKind;
+from std.core.io import File, OpenMode, IoError, IoErrorKind, io_status;
 from std.core.option import Option;
 from std.core.ops import Index;
 from std.core.range import Range;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
+from std.core.path import Path, PathBuf;
 from std.ffi.c_string import c_string_bytes;
 
-// The private representation follows the Linux x86-64 LP64 dirent64 ABI.
 opaque type DirHandle;
-opaque type Dirent;
-
 extern "C" {
-    fn opendir(path: cptr<c_char>) -> cptr<DirHandle>;
-    fn readdir64(directory: cptr<DirHandle>) -> cptr<Dirent>;
-    fn closedir(directory: cptr<DirHandle>) -> c_int;
-    fn __errno_location() -> cptr<c_int>;
+    fn yian_io_metadata(path: cptr<c_char>, follow: i32, fields: cptr<u64>) -> i32;
+    fn yian_io_mkdir(path: cptr<c_char>) -> i32;
+    fn yian_io_remove(path: cptr<c_char>, directory: i32) -> i32;
+    fn yian_io_rename(from: cptr<c_char>, to: cptr<c_char>) -> i32;
+    fn yian_io_current_dir(buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_io_canonicalize(path: cptr<c_char>, buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_io_dir_open(path: cptr<c_char>, error: cptr<i32>) -> cptr<DirHandle>;
+    fn yian_io_dir_next(directory: cptr<DirHandle>, buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_io_dir_close(directory: cptr<DirHandle>) -> i32;
 }
-
-pub enum DirEntryKind {
-    File,
-    Directory,
-    Link,
-    Other,
+pub enum DirEntryKind { File, Directory, Link, Other }
+pub struct Metadata { kind: DirEntryKind, size: u64, seconds: i64, nanos: u32 }
+impl Metadata {
+    static pub fn from_fields(fields: u64[]) -> Self {
+        let kind = match fields[0] {
+            1u64 => DirEntryKind.File, 2u64 => DirEntryKind.Directory,
+            3u64 => DirEntryKind.Link, _ => DirEntryKind.Other,
+        };
+        Self(kind=kind, size=fields[1], seconds=i64(fields[2]), nanos=u32(fields[3]))
+    }
+    pub fn file_type() -> DirEntryKind { self.kind }
+    pub fn is_file() -> bool { self.kind == DirEntryKind.File }
+    pub fn is_dir() -> bool { self.kind == DirEntryKind.Directory }
+    pub fn is_symlink() -> bool { self.kind == DirEntryKind.Link }
+    pub fn len() -> u64 { self.size }
+    pub fn modified() -> (i64, u32) { (self.seconds, self.nanos) }
 }
-
-pub struct DirEntry {
-    name: String,
-    kind: DirEntryKind,
+fn c_path(path: str) -> Result<Vec<u8>, IoError> {
+    match c_string_bytes(path) {
+        Ok(bytes) => Result<Vec<u8>, IoError>.Ok(val=bytes),
+        Err(_) => Result<Vec<u8>, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "path contains NUL")),
+    }
 }
+fn path_status(status: i32, operation: str, path: str) -> Result<(), IoError> {
+    match io_status(status, operation) {
+        Ok(_) => Result<(), IoError>.Ok(val=()),
+        Err(error) => {
+            let contextual = error.with_path(path); error.drop();
+            Result<(), IoError>.Err(msg=contextual)
+        },
+    }
+}
+ffi fn path_metadata(path: str, follow: i32) -> Result<Metadata, IoError> {
+    let bytes = c_path(path)?; defer bytes.drop();
+    let (data, _) = @ffi_parts(bytes.as_slice());
+    let fields: u64[4] = [0u64, 0u64, 0u64, 0u64];
+    let (out, _) = @ffi_parts(fields.as_slice());
+    path_status(yian_io_metadata(@ffi_ptr_cast<c_char>(data), follow, out), "metadata", path)?;
+    Result<Metadata, IoError>.Ok(val=Metadata.from_fields(fields.as_slice()))
+}
+pub fn metadata(path: str) -> Result<Metadata, IoError> { path_metadata(path, 1) }
+pub fn symlink_metadata(path: str) -> Result<Metadata, IoError> { path_metadata(path, 0) }
+pub fn try_exists(path: str) -> Result<bool, IoError> {
+    match metadata(path) {
+        Ok(_) => Result<bool, IoError>.Ok(val=true),
+        Err(error) => {
+            if error.kind() == IoErrorKind.NotFound { error.drop(); return Result<bool, IoError>.Ok(val=false); }
+            Result<bool, IoError>.Err(msg=error)
+        },
+    }
+}
+pub ffi fn create_dir(path: str) -> Result<(), IoError> {
+    let bytes = c_path(path)?; defer bytes.drop();
+    let (data, _) = @ffi_parts(bytes.as_slice());
+    path_status(yian_io_mkdir(@ffi_ptr_cast<c_char>(data)), "create directory", path)
+}
+pub fn create_dir_all(path: str) -> Result<(), IoError> {
+    if path.as_slice().len() == 0u64 { return Result<(), IoError>.Ok(val=()); }
+    match create_dir(path) {
+        Ok(_) => return Result<(), IoError>.Ok(val=()),
+        Err(error) => {
+            if error.kind() == IoErrorKind.AlreadyExists {
+                let info = match metadata(path) {
+                    Ok(value) => value,
+                    Err(problem) => { error.drop(); return Result<(), IoError>.Err(msg=problem); },
+                };
+                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val=()); }
+                return Result<(), IoError>.Err(msg=error);
+            }
+            if error.kind() != IoErrorKind.NotFound { return Result<(), IoError>.Err(msg=error); }
+            error.drop();
+        },
+    }
+    match Path.new(path).parent() { Some(parent) => { create_dir_all(parent.as_str())?; }, None => {}, }
+    match create_dir(path) {
+        Ok(_) => Result<(), IoError>.Ok(val=()),
+        Err(error) => {
+            if error.kind() == IoErrorKind.AlreadyExists {
+                let info = match metadata(path) {
+                    Ok(value) => value,
+                    Err(problem) => { error.drop(); return Result<(), IoError>.Err(msg=problem); },
+                };
+                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val=()); }
+            }
+            Result<(), IoError>.Err(msg=error)
+        },
+    }
+}
+ffi fn remove(path: str, directory: i32) -> Result<(), IoError> {
+    let bytes = c_path(path)?; defer bytes.drop();
+    let (data, _) = @ffi_parts(bytes.as_slice());
+    path_status(yian_io_remove(@ffi_ptr_cast<c_char>(data), directory), "remove", path)
+}
+pub fn remove_file(path: str) -> Result<(), IoError> { remove(path, 0) }
+pub fn remove_dir(path: str) -> Result<(), IoError> { remove(path, 1) }
+pub ffi fn rename(from: str, to: str) -> Result<(), IoError> {
+    let a = c_path(from)?; defer a.drop();
+    let b = c_path(to)?; defer b.drop();
+    let (left, _) = @ffi_parts(a.as_slice()); let (right, _) = @ffi_parts(b.as_slice());
+    let status = yian_io_rename(@ffi_ptr_cast<c_char>(left), @ffi_ptr_cast<c_char>(right));
+    if status < 0 {
+        let error = IoError.from_os_error(-status, "rename");
+        let first = error.with_path(from); error.drop();
+        let result = first.with_path(to); first.drop();
+        return Result<(), IoError>.Err(msg=result);
+    }
+    Result<(), IoError>.Ok(val=())
+}
+ffi fn resolved_path(path: str, canonical: bool) -> Result<PathBuf, IoError> {
+    let bytes = c_path(path)?; defer bytes.drop();
+    let (input, _) = @ffi_parts(bytes.as_slice());
+    let capacity = 256u64;
+    loop {
+        let buffer = Vec<u8>.with_capacity(capacity);
+        let i = 0u64; while i < capacity { buffer.push(0u8); i += 1u64; }
+        let (output, _) = @ffi_parts(buffer.as_slice());
+        let count = if canonical { yian_io_canonicalize(@ffi_ptr_cast<c_char>(input), output, capacity) }
+                    else { yian_io_current_dir(output, capacity) };
+        if count < 0 {
+            buffer.drop();
+            let error = IoError.from_os_error(i32(-count), if canonical { "canonicalize" } else { "current directory" });
+            if error.kind() == IoErrorKind.BufferTooSmall {
+                error.drop(); capacity *= 2u64; continue;
+            }
+            let result = error.with_path(path); error.drop();
+            return Result<PathBuf, IoError>.Err(msg=result);
+        }
+        defer buffer.drop();
+        let text = match str.from_slice(buffer.as_slice()[0u64..u64(count)]) {
+            Some(value) => value,
+            None => {
+                let error = IoError.new(IoErrorKind.InvalidData, if canonical { "canonical path is not valid UTF-8" } else { "current directory is not valid UTF-8" });
+                let result = error.with_path(path); error.drop();
+                return Result<PathBuf, IoError>.Err(msg=result);
+            },
+        };
+        return Result<PathBuf, IoError>.Ok(val=PathBuf.from(text));
+    }
+}
+pub fn current_dir() -> Result<PathBuf, IoError> { resolved_path("", false) }
+pub fn canonicalize(path: str) -> Result<PathBuf, IoError> { resolved_path(path, true) }
 
+pub fn read(path: str) -> Result<Vec<u8>, IoError> {
+    let file = File.open(path, OpenMode.Read)?; defer file.drop();
+    match file.read_to_bytes() {
+        Ok(value) => Result<Vec<u8>, IoError>.Ok(val=value),
+        Err(error) => { let result = error.with_path(path); error.drop(); Result<Vec<u8>, IoError>.Err(msg=result) },
+    }
+}
+pub fn read_to_string(path: str) -> Result<String, IoError> {
+    let file = File.open(path, OpenMode.Read)?; defer file.drop();
+    match file.read_to_string() {
+        Ok(value) => Result<String, IoError>.Ok(val=value),
+        Err(error) => { let result = error.with_path(path); error.drop(); Result<String, IoError>.Err(msg=result) },
+    }
+}
+fn write_mode(path: str, data: u8[], mode: OpenMode) -> Result<(), IoError> {
+    let file = File.open(path, mode)?; defer file.drop();
+    match file.write_all(data) {
+        Ok(_) => {},
+        Err(error) => { let result = error.with_path(path); error.drop(); return Result<(), IoError>.Err(msg=result); },
+    }
+    match file.close() {
+        Ok(_) => Result<(), IoError>.Ok(val=()),
+        Err(error) => { let result = error.with_path(path); error.drop(); Result<(), IoError>.Err(msg=result) },
+    }
+}
+pub fn write(path: str, data: u8[]) -> Result<(), IoError> { write_mode(path, data, OpenMode.Write) }
+pub fn write_string(path: str, data: str) -> Result<(), IoError> { write(path, data.as_slice()) }
+pub fn append(path: str, data: u8[]) -> Result<(), IoError> { write_mode(path, data, OpenMode.Append) }
+
+pub struct DirEntry { name: String, path: PathBuf, kind: DirEntryKind }
 impl DirEntry {
-    pub fn name() -> str {
-        return self.name.as_str();
-    }
-
-    pub fn kind() -> DirEntryKind {
-        return self.kind;
-    }
+    pub fn name() -> str { self.name.as_str() }
+    pub fn path() -> Path { self.path.as_path() }
+    pub fn kind() -> DirEntryKind { self.kind }
+    pub fn metadata() -> Result<Metadata, IoError> { metadata(self.path.as_str()) }
+    pub fn symlink_metadata() -> Result<Metadata, IoError> { symlink_metadata(self.path.as_str()) }
 }
-
-impl Drop for DirEntry {
-    pub fn drop() {
-        self.name.drop();
-    }
-}
-
-pub struct Directory {
-    handle: cptr<DirHandle>,
-}
-
+impl Drop for DirEntry { pub fn drop() { self.name.drop(); self.path.drop(); } }
+// Directory owns its native handle and path. Callers borrow it by reference.
+pub struct Directory { handle: cptr<DirHandle>, path: PathBuf }
 impl Directory {
     static pub ffi fn open(path: str) -> Result<Self, IoError> {
-        let c_path = match c_string_bytes(path) {
-            Ok(value) => value,
-            Err(_) => return Result<Self, IoError>.Err(
-                msg=IoError.new(IoErrorKind.InvalidInput, "directory path contains NUL")
-            ),
-        };
-        defer c_path.drop();
-        let (path_data, _) = @ffi_parts(c_path.as_slice());
-        let handle = opendir(@ffi_ptr_cast<c_char>(path_data));
+        let bytes = c_path(path)?; defer bytes.drop();
+        let (data, _) = @ffi_parts(bytes.as_slice());
+        let error = 0i32;
+        let handle = yian_io_dir_open(@ffi_ptr_cast<c_char>(data), @ffi_addr(&error));
         if handle == @ffi_null<DirHandle>() {
-            return Result<Self, IoError>.Err(msg=IoError.other("cannot open directory"));
+            let problem = IoError.from_os_error(error, "open directory");
+            let result = problem.with_path(path); problem.drop();
+            return Result<Self, IoError>.Err(msg=result);
         }
-        return Result<Self, IoError>.Ok(val=Self(handle=handle));
+        Result<Self, IoError>.Ok(val=Self(handle=handle, path=PathBuf.from(path)))
     }
-
-    // A returned entry owns its name and remains valid after the next read.
     pub ffi fn next() -> Result<Option<DirEntry>, IoError> {
-        if self.handle == @ffi_null<DirHandle>() {
-            return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("directory is closed"));
+        if self.handle == @ffi_null<DirHandle>() { return Result<Option<DirEntry>, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "directory is closed")); }
+        let buffer: u8[4096]; @assume_init(buffer);
+        let (data, count) = @ffi_parts(buffer.as_slice());
+        let length = yian_io_dir_next(self.handle, data, count);
+        if length < 0 {
+            let error = IoError.from_os_error(i32(-length), "read directory");
+            let result = error.with_path(self.path.as_str()); error.drop();
+            return Result<Option<DirEntry>, IoError>.Err(msg=result);
         }
-        loop {
-            let zero: u8[4] = [0u8, 0u8, 0u8, 0u8];
-            @ffi_copy_to(@ffi_ptr_cast<u8>(__errno_location()), zero.as_slice(), 4u64);
-            let record = readdir64(self.handle);
-            if record == @ffi_null<Dirent>() {
-                let error: u8[4];
-                @assume_init(error);
-                @ffi_copy_from(error.as_slice(), @ffi_ptr_cast<u8>(__errno_location()), 4u64);
-                if error[0] != 0u8 || error[1] != 0u8 || error[2] != 0u8 || error[3] != 0u8 {
-                    return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("directory read failed"));
-                }
-                return Result<Option<DirEntry>, IoError>.Ok(val=Option<DirEntry>.None);
-            }
-
-            let header: u8[19];
-            @assume_init(header);
-            let raw = @ffi_ptr_cast<u8>(record);
-            @ffi_copy_from(header.as_slice(), raw, 19u64);
-            let record_length = u64(header[16]) | (u64(header[17]) << 8);
-            if record_length < 20u64 {
-                return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("invalid directory entry"));
-            }
-
-            let bytes = Vec<u8>.new();
-            let name_capacity = record_length - 19u64;
-            let index: u64 = 0;
-            while index < name_capacity {
-                bytes.push(0u8);
-                index += 1u64;
-            }
-            @ffi_copy_from(bytes.as_slice(), raw + 19u64, name_capacity);
-            let length: u64 = 0u64;
-            while length < name_capacity && bytes[length] != 0u8 {
-                length += 1u64;
-            }
-            if length == name_capacity {
-                bytes.drop();
-                return Result<Option<DirEntry>, IoError>.Err(msg=IoError.other("unterminated directory entry"));
-            }
-            if (length == 1u64 && bytes[0] == b'.') ||
-                (length == 2u64 && bytes[0] == b'.' && bytes[1] == b'.') {
-                bytes.drop();
-                continue;
-            }
-            let name = match str.from_slice(bytes.as_slice()[0u64..length]) {
-                Some(value) => value,
-                None => {
-                    bytes.drop();
-                    return Result<Option<DirEntry>, IoError>.Err(
-                        msg=IoError.new(IoErrorKind.InvalidInput, "directory entry is not valid UTF-8")
-                    );
-                },
-            };
-            let owned_name = String.from(&name);
-            bytes.drop();
-            let kind = match header[18] {
-                4u8 => DirEntryKind.Directory,
-                8u8 => DirEntryKind.File,
-                10u8 => DirEntryKind.Link,
-                _ => DirEntryKind.Other,
-            };
-            return Result<Option<DirEntry>, IoError>.Ok(
-                val=Option<DirEntry>.Some(DirEntry(name=owned_name, kind=kind))
-            );
-        }
+        if length == 0i64 { return Result<Option<DirEntry>, IoError>.Ok(val=Option<DirEntry>.None); }
+        let text = match str.from_slice(buffer[0u64..u64(length)]) {
+            Some(value) => value,
+            None => {
+                let error = IoError.new(IoErrorKind.InvalidData, "directory entry is not valid UTF-8");
+                let result = error.with_path(self.path.as_str()); error.drop();
+                return Result<Option<DirEntry>, IoError>.Err(msg=result);
+            },
+        };
+        let path = self.path.as_path().join(text);
+        let info = match symlink_metadata(path.as_str()) {
+            Ok(value) => value,
+            Err(error) => { path.drop(); return Result<Option<DirEntry>, IoError>.Err(msg=error); },
+        };
+        Result<Option<DirEntry>, IoError>.Ok(val=Option<DirEntry>.Some(DirEntry(name=String.from(&text), path=path, kind=info.file_type())))
     }
-
-    pub ffi fn close() -> Result<i32, IoError> {
-        if self.handle == @ffi_null<DirHandle>() {
-            return Result<i32, IoError>.Ok(val=0);
-        }
-        let handle = self.handle;
-        self.handle = @ffi_null<DirHandle>();
-        let result = closedir(handle);
-        if result < 0 {
-            return Result<i32, IoError>.Err(msg=IoError.other("directory close failed"));
-        }
-        return Result<i32, IoError>.Ok(val=i32(result));
+    pub ffi fn close() -> Result<(), IoError> {
+        if self.handle == @ffi_null<DirHandle>() { return Result<(), IoError>.Ok(val=()); }
+        let handle = self.handle; self.handle = @ffi_null<DirHandle>();
+        path_status(yian_io_dir_close(handle), "close directory", self.path.as_str())
     }
 }
-
 impl Drop for Directory {
     pub fn drop() {
-        match self.close() {
-            Ok(_) => {},
-            Err(error) => error.drop(),
-        }
+        match self.close() { Ok(_) => {}, Err(error) => error.drop(), }
+        self.path.drop();
     }
 }

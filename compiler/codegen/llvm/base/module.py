@@ -5,6 +5,8 @@ LLVM Module manager — owns ir.Module, TypeMapper, IntrinsicManager.
 
 from __future__ import annotations
 
+from typing import cast
+
 from llvmlite import ir
 
 from compiler.analysis.ty import ty as Type
@@ -14,6 +16,7 @@ from compiler.codegen.cfg import ir as IR
 from compiler.codegen.llvm.base.intrinsics import IntrinsicManager
 from compiler.codegen.llvm.base.types import LLTypeCtx
 from compiler.codegen.llvm.base.value import LLValue
+from compiler.error import CompilerError
 from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 
 # 目标平台: 三元组与 data layout 必须成对出现在模块上。
@@ -196,7 +199,15 @@ class LLModule:
         if not isinstance(ty, Type.FunctionType) or not ty.custom_def.is_extern:
             raise KeyError(type_id)
         signature = self.__ll_type_ctx.get_ll_func_type(type_id)
-        declared = LLFunction(ir.Function(self.__module, signature, name=ty.custom_def.name))
+        name = ty.custom_def.name
+        existing = cast(ir.GlobalValue | None, self.__module.globals.get(name))
+        if existing is None:
+            function = ir.Function(self.__module, signature, name=name)
+        elif isinstance(existing, ir.Function) and existing.function_type == signature:
+            function = existing
+        else:
+            raise CompilerError(f"conflicting declarations for C symbol '{name}'")
+        declared = LLFunction(function)
         self.__functions[type_id] = declared
         return declared
 

@@ -1,6 +1,6 @@
-// append_file must retain the common open boundary for a stale path.
+// append must retain the common open boundary for a stale path.
 
-from std.core.io import append_file;
+from std.core.fs import append;
 
 fn main() {
     let bytes: u8* = dyn[4] 0u8;
@@ -10,5 +10,5 @@ fn main() {
     bytes[3] = 112u8;
     let path: str = str.from(&bytes[0u64..4]);
     del bytes;
-    append_file(path, "ignored");
+    append(path, "ignored".as_slice());
 }

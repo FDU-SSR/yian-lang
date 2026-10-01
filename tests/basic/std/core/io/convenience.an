@@ -1,26 +1,26 @@
-// Test convenience functions: read_file, write_file, append_file
+// Test convenience functions: read_to_string, write_string, append
 //
 // Expected output: 0
 
-from std.core.io import read_file, write_file, append_file;
+from std.core.fs import read_to_string, write_string, append;
 
 fn main() {
     let path = "/tmp/yian_test_conv.txt";
 
-    // write_file + read_file
-    write_file(path, "convenience test\n");
-    let s = read_file(path);
-    assert s.as_str() == "convenience test\n": "write_file then read_file";
+    // write_string + read_to_string
+    write_string(path, "convenience test\n").unwrap();
+    let s = *read_to_string(path).unwrap();
+    assert s.as_str() == "convenience test\n": "write_string then read_to_string";
 
-    // write_file overwrites
-    write_file(path, "overwritten\n");
-    let s2 = read_file(path);
-    assert s2.as_str() == "overwritten\n": "write_file should overwrite";
+    // write_string overwrites
+    write_string(path, "overwritten\n").unwrap();
+    let s2 = *read_to_string(path).unwrap();
+    assert s2.as_str() == "overwritten\n": "write_string should overwrite";
 
-    // append_file
-    write_file(path, "first\n");
-    append_file(path, "second\n");
-    let s3 = read_file(path);
-    assert s3.as_str() == "first\nsecond\n": "append_file should append";
+    // append
+    write_string(path, "first\n").unwrap();
+    append(path, "second\n".as_slice()).unwrap();
+    let s3 = *read_to_string(path).unwrap();
+    assert s3.as_str() == "first\nsecond\n": "append should append";
 
 }

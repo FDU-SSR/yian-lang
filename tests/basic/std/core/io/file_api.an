@@ -9,7 +9,7 @@ fn main() {
 
     // Write with File API
     let f = File.open(path, OpenMode.Write).unwrap();
-    f.write("Hello, File API!\n").unwrap();
+    f.write_str("Hello, File API!\n").unwrap();
     f.drop();
 
     // Read back
@@ -21,8 +21,8 @@ fn main() {
 
     // Append mode
     let f3 = File.open(path, OpenMode.Append).unwrap();
-    f3.write("second line\n").unwrap();
-    f3.write_all("third line\n").unwrap();
+    f3.write_str("second line\n").unwrap();
+    f3.write_str("third line\n").unwrap();
     f3.drop();
 
     let f4 = File.open(path, OpenMode.Read).unwrap();

@@ -131,6 +131,10 @@ fn primary(parser: Parser&) -> Option<Expr&> {
     }
     if parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
+        if parser.at_punct(PunctuatorKind.RParen) {
+            parser.advance();
+            return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=Vec<Expr&>.new()), span));
+        }
         let first = parse_expr(parser)?;
         if !parser.at_punct(PunctuatorKind.Comma) {
             parser.take_punct(PunctuatorKind.RParen);

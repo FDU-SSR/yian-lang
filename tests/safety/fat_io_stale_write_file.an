@@ -1,6 +1,6 @@
-// write_file must retain the common open boundary for a stale path.
+// write_string must retain the common open boundary for a stale path.
 
-from std.core.io import write_file;
+from std.core.fs import write_string;
 
 fn main() {
     let bytes: u8* = dyn[4] 0u8;
@@ -10,5 +10,5 @@ fn main() {
     bytes[3] = 112u8;
     let path: str = str.from(&bytes[0u64..4]);
     del bytes;
-    write_file(path, "ignored");
+    write_string(path, "ignored");
 }

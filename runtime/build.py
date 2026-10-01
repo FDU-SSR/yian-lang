@@ -43,7 +43,7 @@ ASAN_FLAGS = ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-poin
 
 
 def __sources() -> list[Path]:
-    return SOURCES + [HEADER, SELFTEST, Path(__file__).resolve()]
+    return SOURCES + sorted((RUNTIME_DIR / "include").glob("*.h")) + [SELFTEST, Path(__file__).resolve()]
 
 
 def __is_fresh() -> bool:

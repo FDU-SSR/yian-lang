@@ -1,407 +1,344 @@
 from std.core.vec import Vec;
 from std.core.string import String;
 from std.core.result import Result;
+from std.core.option import Option;
 from std.core.drop import Drop;
 from std.core.range import Range;
+from std.core.ops import Index;
+from std.core.fs import Metadata;
 from std.ffi.c_string import c_string_bytes;
 
-// =====================================================================
-// File open flags (Linux x86_64)
-// =====================================================================
-// O_RDONLY   = 0
-// O_WRONLY   = 1
-// O_RDWR     = 2
-// O_CREAT    = 64
-// O_TRUNC    = 512
-// O_APPEND   = 1024
-// O_WRONLY | O_CREAT | O_TRUNC  = 577
-// O_WRONLY | O_CREAT | O_APPEND = 1089
-// O_RDWR | O_CREAT              = 66
-
-// =====================================================================
-// IoError — structured I/O error
-// =====================================================================
-
+extern "C" {
+    fn yian_io_error_kind(error: i32) -> i32;
+    fn yian_io_error_message(error: i32, buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_io_open(path: cptr<c_char>, options: u32) -> i64;
+    fn yian_io_read(fd: i32, buffer: cptr<u8>, length: u64) -> i64;
+    fn yian_io_write(fd: i32, buffer: cptr<u8>, length: u64) -> i64;
+    fn yian_io_close(fd: i32) -> i32;
+    fn yian_io_seek(fd: i32, offset: i64, origin: i32) -> i64;
+    fn yian_io_set_len(fd: i32, length: u64) -> i32;
+    fn yian_io_sync(fd: i32) -> i32;
+    fn yian_io_fmetadata(fd: i32, fields: cptr<u64>) -> i32;
+}
 pub enum IoErrorKind {
-    NotFound,
-    PermissionDenied,
-    AlreadyExists,
-    InvalidInput,
-    UnexpectedEof,
-    Interrupted,
-    Other,
+    NotFound, PermissionDenied, AlreadyExists, InvalidInput, InvalidData,
+    UnexpectedEof, WriteZero, Interrupted, NotADirectory, IsADirectory,
+    DirectoryNotEmpty, WouldBlock, BrokenPipe, BufferTooSmall, Other,
 }
-
-pub struct IoError {
-    kind: IoErrorKind,
-    msg: String,
-}
-
-impl Drop for IoError {
-    pub fn drop() { self.msg.drop(); }
-}
-
+pub struct IoError { kind: IoErrorKind, msg: String, code: Option<i32> }
+impl Drop for IoError { pub fn drop() { self.msg.drop(); } }
 impl IoError {
-    pub fn kind() -> IoErrorKind {
-        self.kind
+    pub fn kind() -> IoErrorKind { self.kind }
+    pub fn msg() -> str { self.msg.as_str() }
+    pub fn raw_os_error() -> Option<i32> { self.code }
+    static pub fn new(kind: IoErrorKind, msg: str) -> Self {
+        Self(kind=kind, msg=String.from(&msg), code=Option<i32>.None)
     }
-
-    pub fn msg() -> str {
-        self.msg.as_str()
-    }
-
-    pub static fn new(kind: IoErrorKind, msg: str) -> Self {
-        let s = String.from(&msg);
-        Self(kind=kind, msg=s)
-    }
-
-    pub static fn not_found(msg: str) -> Self {
-        Self.new(IoErrorKind.NotFound, msg)
-    }
-
-    pub static fn permission_denied(msg: str) -> Self {
-        Self.new(IoErrorKind.PermissionDenied, msg)
-    }
-
-    pub static fn unexpected_eof() -> Self {
-        let s = String.from(&"unexpected EOF");
-        Self(kind=IoErrorKind.UnexpectedEof, msg=s)
-    }
-
-    pub static fn other(msg: str) -> Self {
-        Self.new(IoErrorKind.Other, msg)
-    }
-}
-
-// =====================================================================
-// OpenMode
-// =====================================================================
-
-pub enum OpenMode {
-    Read,
-    Write,
-    Append,
-    ReadWrite,
-}
-
-// Linux write(2) accepts at most 0x7ffff000 bytes per call.
-const WRITE_CHUNK_MAX: u64 = 2147479552u64;
-
-fn write_bytes_once(fd: i32, data: u8[]) -> Result<u64, IoError> {
-    if data.len() == 0 {
-        return Result<u64, IoError>.Ok(val=0u64);
-    }
-    let count = data.len();
-    if count > WRITE_CHUNK_MAX {
-        count = WRITE_CHUNK_MAX;
-    }
-    let written = @sys_write_bytes(fd, data[0u64..count]);
-    if written < 0 {
-        return Result<u64, IoError>.Err(msg=IoError.other("write failed"));
-    }
-    return Result<u64, IoError>.Ok(val=u64(written));
-}
-
-fn write_bytes_all_fd(fd: i32, data: u8[]) -> Result<u64, IoError> {
-    let offset: u64 = 0;
-    while offset < data.len() {
-        let count = data.len() - offset;
-        if count > WRITE_CHUNK_MAX {
-            count = WRITE_CHUNK_MAX;
-        }
-        let end = offset + count;
-        let written = @sys_write_bytes(fd, data[offset..end]);
-        if written <= 0 {
-            return Result<u64, IoError>.Err(msg=IoError.other("write failed"));
-        }
-        offset += u64(written);
-    }
-    return Result<u64, IoError>.Ok(val=offset);
-}
-
-// =====================================================================
-// File — owning file handle
-// =====================================================================
-
-pub struct File {
-    fd: i32,
-}
-
-impl File {
-    fn assert_open() {
-        if self.fd == -2 {
-            @panic("file is closed");
-        }
-    }
-
-    // Open a file at `path` with the given `mode`.
-    pub static fn open(path: str, mode: OpenMode) -> Result<File, IoError> {
-        let flags: i32 = match mode {
-            Read => 0,
-            Write => 577,
-            Append => 1089,
-            ReadWrite => 66,
+    static pub ffi fn from_os_error(code: i32, operation: str) -> Self {
+        let kind = match yian_io_error_kind(code) {
+            1 => IoErrorKind.NotFound, 2 => IoErrorKind.PermissionDenied,
+            3 => IoErrorKind.AlreadyExists, 4 => IoErrorKind.InvalidInput,
+            5 => IoErrorKind.Interrupted, 6 => IoErrorKind.NotADirectory,
+            7 => IoErrorKind.IsADirectory, 8 => IoErrorKind.DirectoryNotEmpty,
+            9 => IoErrorKind.WouldBlock, 10 => IoErrorKind.BrokenPipe,
+            11 => IoErrorKind.BufferTooSmall,
+            _ => IoErrorKind.Other,
         };
-        let c_path = match c_string_bytes(path) {
-            Ok(bytes) => bytes,
-            Err(_) => return Result<File, IoError>.Err(
-                msg=IoError.new(IoErrorKind.InvalidInput, "file path contains NUL")
-            ),
-        };
-        defer c_path.drop();
-        let fd: i32 = @open(str.from_slice_unchecked(c_path.as_slice()), flags);
-        if fd < 0 {
-            return Result<File, IoError>.Err(msg=IoError.not_found("cannot open file"));
+        let message = String.from(&operation);
+        let buffer: u8[512]; @assume_init(buffer);
+        let (data, capacity) = @ffi_parts(buffer.as_slice());
+        let length = yian_io_error_message(code, data, capacity);
+        if length >= 0i64 {
+            match str.from_slice(buffer[0u64..u64(length)]) {
+                Some(text) => { message.push_str(": "); message.push_str(text); },
+                None => {},
+            }
         }
-        Result<File, IoError>.Ok(val=File(fd=fd))
+        Self(kind=kind, msg=message, code=Option<i32>.Some(code))
     }
-
-    // Return the raw file descriptor.
-    pub fn fd() -> i32 {
-        self.assert_open();
-        self.fd
+    static pub fn not_found(msg: str) -> Self { Self.new(IoErrorKind.NotFound, msg) }
+    static pub fn permission_denied(msg: str) -> Self { Self.new(IoErrorKind.PermissionDenied, msg) }
+    static pub fn unexpected_eof() -> Self { Self.new(IoErrorKind.UnexpectedEof, "unexpected EOF") }
+    static pub fn other(msg: str) -> Self { Self.new(IoErrorKind.Other, msg) }
+    pub fn with_path(path: str) -> Self {
+        let text = String.from(&self.msg.as_str());
+        text.push_str(": "); text.push_str(path);
+        Self(kind=self.kind, msg=text, code=self.code)
     }
-
-    // Read up to buf.len() bytes into the provided buffer.
-    // Returns the number of bytes read. 0 means EOF.
-    pub fn read(buf: u8[]) -> Result<u64, IoError> {
-        self.assert_open();
-        let count: i64 = @sys_read_bytes(self.fd, buf);
-        if count < 0 {
-            return Result<u64, IoError>.Err(msg=IoError.other("read failed"));
+}
+pub fn io_status(status: i32, operation: str) -> Result<(), IoError> {
+    if status < 0 { return Result<(), IoError>.Err(msg=IoError.from_os_error(-status, operation)); }
+    Result<(), IoError>.Ok(val=())
+}
+ffi fn read_fd(fd: i32, buffer: u8[]) -> Result<u64, IoError> {
+    let (data, count) = @ffi_parts(buffer);
+    let result = yian_io_read(fd, data, count);
+    if result < 0 { return Result<u64, IoError>.Err(msg=IoError.from_os_error(i32(-result), "read")); }
+    Result<u64, IoError>.Ok(val=u64(result))
+}
+ffi fn write_fd(fd: i32, buffer: u8[]) -> Result<u64, IoError> {
+    let (data, count) = @ffi_parts(buffer);
+    let result = yian_io_write(fd, data, count);
+    if result < 0 { return Result<u64, IoError>.Err(msg=IoError.from_os_error(i32(-result), "write")); }
+    Result<u64, IoError>.Ok(val=u64(result))
+}
+pub trait Read {
+    fn read(buffer: u8[]) -> Result<u64, IoError>;
+    fn read_exact(buffer: u8[]) -> Result<(), IoError> {
+        let offset = 0u64;
+        while offset < buffer.len() {
+            let count = self.read(buffer[offset..buffer.len()])?;
+            if count == 0u64 { return Result<(), IoError>.Err(msg=IoError.unexpected_eof()); }
+            offset += count;
         }
-        Result<u64, IoError>.Ok(val=u64(count))
+        Result<(), IoError>.Ok(val=())
     }
-
-    // Read all remaining bytes without interpreting their encoding.
-    pub fn read_to_bytes() -> Result<Vec<u8>, IoError> {
-        self.assert_open();
-        let result = Vec<u8>.new();
-        let buf: u8[4096];
-        @assume_init(buf);
+    fn read_to_bytes() -> Result<Vec<u8>, IoError> {
+        let output = Vec<u8>.new();
+        let buffer: u8[4096]; @assume_init(buffer);
         loop {
-            let count: i64 = @sys_read_bytes(self.fd, buf.as_slice());
-            if count < 0 {
-                result.drop();
-                return Result<Vec<u8>, IoError>.Err(msg=IoError.other("read failed"));
-            }
-            if count == 0 {
-                break;
-            }
-            result.extend_from_slice(buf.as_slice()[0u64..u64(count)]);
+            let count = match self.read(buffer.as_slice()) {
+                Ok(n) => n,
+                Err(error) => { output.drop(); return Result<Vec<u8>, IoError>.Err(msg=error); },
+            };
+            if count == 0u64 { break; }
+            output.extend_from_slice(buffer[0u64..count]);
         }
-        Result<Vec<u8>, IoError>.Ok(val=result)
+        Result<Vec<u8>, IoError>.Ok(val=output)
     }
-
-    // Validate UTF-8 after reading the entire stream, including split sequences.
-    pub fn read_to_string() -> Result<String, IoError> {
-        let data = match self.read_to_bytes() {
-            Ok(value) => value,
-            Err(error) => return Result<String, IoError>.Err(msg=error),
-        };
+    fn read_to_string() -> Result<String, IoError> {
+        let data = self.read_to_bytes()?;
         defer data.drop();
-        let content = match str.from_slice(data.as_slice()) {
+        let text = match str.from_slice(data.as_slice()) {
             Some(value) => value,
-            None => return Result<String, IoError>.Err(
-                msg=IoError.new(IoErrorKind.InvalidInput, "file is not valid UTF-8")
-            ),
+            None => return Result<String, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidData, "input is not valid UTF-8")),
         };
-        let result = String.from(&content);
-        Result<String, IoError>.Ok(val=result)
-    }
-
-    // Write a str to the file. Returns the number of bytes written.
-    pub fn write(data: str) -> Result<u64, IoError> {
-        self.assert_open();
-        write_bytes_once(self.fd, data.as_slice())
-    }
-
-    // Write the entire str to the file.
-    pub fn write_all(data: str) -> Result<u64, IoError> {
-        self.assert_open();
-        write_bytes_all_fd(self.fd, data.as_slice())
-    }
-
-    // Write bytes without interpreting them as UTF-8.
-    pub fn write_bytes(data: u8[]) -> Result<u64, IoError> {
-        self.assert_open();
-        write_bytes_once(self.fd, data)
-    }
-
-    // Write all bytes, including arbitrary binary data.
-    pub fn write_bytes_all(data: u8[]) -> Result<u64, IoError> {
-        self.assert_open();
-        write_bytes_all_fd(self.fd, data)
-    }
-
-    // Close the file descriptor explicitly.
-    // After @close(), the File records the closed state with fd = -2.
-    pub fn close() -> Result<i32, IoError> {
-        self.assert_open();
-        let ret: i32 = @close(self.fd);
-        self.fd = -2;
-        if ret < 0 {
-            return Result<i32, IoError>.Err(msg=IoError.other("close failed"));
-        }
-        Result<i32, IoError>.Ok(val=ret)
+        Result<String, IoError>.Ok(val=String.from(&text))
     }
 }
-
-// ------------------------------------------------------------------
-// Drop — closes the fd if still valid
-// ------------------------------------------------------------------
-
-impl Drop for File {
-    pub fn drop() {
-        if self.fd != -2 {
-            @close(self.fd);
-            self.fd = -2;
+pub trait Write {
+    fn write(data: u8[]) -> Result<u64, IoError>;
+    fn flush() -> Result<(), IoError>;
+    fn write_all(data: u8[]) -> Result<(), IoError> {
+        let offset = 0u64;
+        while offset < data.len() {
+            let count = self.write(data[offset..data.len()])?;
+            if count == 0u64 { return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.WriteZero, "write made no progress")); }
+            offset += count;
         }
+        Result<(), IoError>.Ok(val=())
+    }
+    fn write_str(data: str) -> Result<(), IoError> { self.write_all(data.as_slice()) }
+}
+pub enum SeekFrom { Start { offset: u64 }, Current { offset: i64 }, End { offset: i64 } }
+pub trait Seek { fn seek(position: SeekFrom) -> Result<u64, IoError>; }
+pub enum OpenMode { Read, Write, Append, ReadWrite }
+pub struct OpenOptions { bits: u32 }
+impl OpenOptions {
+    static pub fn new() -> Self { Self(bits=0u32) }
+    fn flag(bit: u32, enabled: bool) -> Self {
+        if enabled { self.bits |= bit; } else { self.bits &= ~bit; }
+        return *self;
+    }
+    pub fn read(enabled: bool) -> Self { self.flag(1u32, enabled) }
+    pub fn write(enabled: bool) -> Self { self.flag(2u32, enabled) }
+    pub fn append(enabled: bool) -> Self {
+        self.flag(4u32, enabled);
+        if enabled { self.flag(2u32, true); }
+        return *self;
+    }
+    pub fn create(enabled: bool) -> Self { self.flag(8u32, enabled) }
+    pub fn truncate(enabled: bool) -> Self { self.flag(16u32, enabled) }
+    pub fn create_new(enabled: bool) -> Self { self.flag(32u32, enabled) }
+    pub ffi fn open(path: str) -> Result<File, IoError> {
+        let bytes = match c_string_bytes(path) {
+            Ok(value) => value,
+            Err(_) => return Result<File, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "file path contains NUL")),
+        };
+        defer bytes.drop();
+        let (data, _) = @ffi_parts(bytes.as_slice());
+        let fd = yian_io_open(@ffi_ptr_cast<c_char>(data), self.bits);
+        if fd < 0 {
+            let error = IoError.from_os_error(i32(-fd), "open");
+            let contextual = error.with_path(path); error.drop();
+            return Result<File, IoError>.Err(msg=contextual);
+        }
+        Result<File, IoError>.Ok(val=File(descriptor=i32(fd)))
     }
 }
-
-// =====================================================================
-// Stdin / Stdout / Stderr — standard stream wrappers
-// =====================================================================
-
+// File owns its descriptor. Passing a reference avoids duplicating ownership.
+pub struct File { descriptor: i32 }
+impl File {
+    static pub fn open(path: str, mode: OpenMode) -> Result<Self, IoError> {
+        let options = OpenOptions.new();
+        match mode {
+            Read => { options.read(true); },
+            Write => { options.write(true); options.create(true); options.truncate(true); },
+            Append => { options.append(true); options.create(true); },
+            ReadWrite => { options.read(true); options.write(true); options.create(true); },
+        };
+        options.open(path)
+    }
+    pub fn fd() -> i32 { self.descriptor }
+    pub ffi fn close() -> Result<(), IoError> {
+        if self.descriptor < 0 { return Result<(), IoError>.Ok(val=()); }
+        let fd = self.descriptor; self.descriptor = -1;
+        io_status(yian_io_close(fd), "close")
+    }
+    pub ffi fn metadata() -> Result<Metadata, IoError> {
+        let fields: u64[4] = [0u64, 0u64, 0u64, 0u64];
+        let (data, _) = @ffi_parts(fields.as_slice());
+        io_status(yian_io_fmetadata(self.descriptor, data), "file metadata")?;
+        Result<Metadata, IoError>.Ok(val=Metadata.from_fields(fields.as_slice()))
+    }
+    pub ffi fn set_len(length: u64) -> Result<(), IoError> { io_status(yian_io_set_len(self.descriptor, length), "set file length") }
+    pub ffi fn sync_all() -> Result<(), IoError> { io_status(yian_io_sync(self.descriptor), "sync file") }
+}
+impl Read for File {
+    pub fn read(buffer: u8[]) -> Result<u64, IoError> {
+        if self.descriptor < 0 { return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "file is closed")); }
+        read_fd(self.descriptor, buffer)
+    }
+}
+impl Write for File {
+    pub fn write(data: u8[]) -> Result<u64, IoError> {
+        if self.descriptor < 0 { return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "file is closed")); }
+        write_fd(self.descriptor, data)
+    }
+    pub fn flush() -> Result<(), IoError> {
+        if self.descriptor < 0 { return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "file is closed")); }
+        Result<(), IoError>.Ok(val=())
+    }
+}
+impl Seek for File {
+    pub ffi fn seek(position: SeekFrom) -> Result<u64, IoError> {
+        let offset: i64 = 0i64; let origin: i32 = 0;
+        match position {
+            Start(value) => {
+                if value > 9223372036854775807u64 { return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "seek offset out of range")); }
+                offset = i64(value);
+            },
+            Current(value) => { offset = value; origin = 1; },
+            End(value) => { offset = value; origin = 2; },
+        };
+        let result = yian_io_seek(self.descriptor, offset, origin);
+        if result < 0 { return Result<u64, IoError>.Err(msg=IoError.from_os_error(i32(-result), "seek")); }
+        Result<u64, IoError>.Ok(val=u64(result))
+    }
+}
+impl Drop for File { pub fn drop() { match self.close() { Ok(_) => {}, Err(error) => error.drop(), } } }
 pub struct Stdin {}
-
-impl Stdin {
-    // Read a single line, excluding the trailing newline.
-    pub static fn read_line() -> Result<String, IoError> {
-        let result = String.new();
-        let buf: u8[256];
-        @assume_init(buf);
-        loop {
-            let s: str = @sys_read(0, buf.as_slice());
-            let data = s.as_slice();
-            let n = data.len();
-            if n == 0 {
-                break;
-            }
-            // scan for newline within the chunk
-            let found: i32 = -1;
-            for i in 0u64..n {
-                if data[i] == 10u8 {
-                    found = i32(i);
-                    break;
-                }
-            }
-            if found >= 0 {
-                let newline_pos = u64(found);
-                if newline_pos > 0 {
-                    let byte_slice = data[0u64..newline_pos];
-                    let line_data = str.from(&byte_slice);
-                    result.push_str(line_data);
-                }
-                break;
-            }
-            result.push_str(s);
-        }
-        Result<String, IoError>.Ok(val=result)
-    }
-
-    // Read up to buf.len() bytes from stdin.
-    pub static fn read(buf: u8[]) -> Result<u64, IoError> {
-        let s: str = @sys_read(0, buf);
-        Result<u64, IoError>.Ok(val=s.as_slice().len())
-    }
-
-    // Read all of stdin into a String.
-    pub static fn read_to_string() -> Result<String, IoError> {
-        let result = String.new();
-        let buf: u8[4096];
-        @assume_init(buf);
-        loop {
-            let s: str = @sys_read(0, buf.as_slice());
-            let data = s.as_slice();
-            let n = data.len();
-            if n == 0 {
-                break;
-            }
-            result.push_str(s);
-        }
-        // buf is a stack array; it is never del'd (del frees heap blocks only).
-        Result<String, IoError>.Ok(val=result)
-    }
-}
-
 pub struct Stdout {}
-
-impl Stdout {
-    pub static fn write(data: str) -> Result<u64, IoError> {
-        write_bytes_once(1, data.as_slice())
-    }
-
-    pub static fn write_all(data: str) -> Result<u64, IoError> {
-        write_bytes_all_fd(1, data.as_slice())
-    }
-
-    // no-op for unbuffered output; reserved for future buffering
-    pub static fn flush() {}
-}
-
 pub struct Stderr {}
-
-impl Stderr {
-    pub static fn write(data: str) -> Result<u64, IoError> {
-        write_bytes_once(2, data.as_slice())
+impl Stdin { static pub fn new() -> Self { Self() } }
+impl Stdout { static pub fn new() -> Self { Self() } }
+impl Stderr { static pub fn new() -> Self { Self() } }
+impl Drop for Stdin { pub fn drop() {} }
+impl Drop for Stdout { pub fn drop() {} }
+impl Drop for Stderr { pub fn drop() {} }
+impl Read for Stdin { pub fn read(buffer: u8[]) -> Result<u64, IoError> { read_fd(0, buffer) } }
+impl Write for Stdout {
+    pub fn write(data: u8[]) -> Result<u64, IoError> { write_fd(1, data) }
+    pub fn flush() -> Result<(), IoError> { Result<(), IoError>.Ok(val=()) }
+}
+impl Write for Stderr {
+    pub fn write(data: u8[]) -> Result<u64, IoError> { write_fd(2, data) }
+    pub fn flush() -> Result<(), IoError> { Result<(), IoError>.Ok(val=()) }
+}
+pub trait BufRead {
+    fn read_until(delimiter: u8) -> Result<Vec<u8>, IoError>;
+    fn read_line() -> Result<Option<String>, IoError> {
+        let bytes = self.read_until(10u8)?; defer bytes.drop();
+        if bytes.len() == 0u64 { return Result<Option<String>, IoError>.Ok(val=Option<String>.None); }
+        let text = match str.from_slice(bytes.as_slice()) {
+            Some(value) => value,
+            None => return Result<Option<String>, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidData, "line is not valid UTF-8")),
+        };
+        Result<Option<String>, IoError>.Ok(val=Option<String>.Some(String.from(&text)))
     }
-
-    pub static fn write_all(data: str) -> Result<u64, IoError> {
-        write_bytes_all_fd(2, data.as_slice())
+}
+fn buffer_of(capacity: u64) -> Vec<u8> {
+    let buffer = Vec<u8>.with_capacity(capacity); let i = 0u64;
+    while i < capacity { buffer.push(0u8); i += 1u64; }
+    buffer
+}
+// The reader borrows its stream and owns only its buffer.
+pub struct BufReader<R> { inner: R&, buffer: Vec<u8>, start: u64, end: u64 }
+impl<R> BufReader<R> if R: Read {
+    static pub fn new(inner: R&) -> Self { Self.with_capacity(8192u64, inner) }
+    static pub fn with_capacity(capacity: u64, inner: R&) -> Self {
+        if capacity == 0u64 { @panic("buffer capacity must be positive"); }
+        Self(inner=inner, buffer=buffer_of(capacity), start=0u64, end=0u64)
     }
-
-    pub static fn flush() {}
+    fn refill() -> Result<(), IoError> {
+        if self.start == self.end {
+            self.start = 0u64;
+            self.end = 0u64;
+            self.end = self.inner.read(self.buffer.as_slice())?;
+        }
+        Result<(), IoError>.Ok(val=())
+    }
 }
-
-// =====================================================================
-// Terminal I/O convenience functions
-// =====================================================================
-
-pub fn print(s: str) {
-    @sys_write(1, s);
+impl<R> Read for BufReader<R> if R: Read {
+    pub fn read(destination: u8[]) -> Result<u64, IoError> {
+        if destination.len() == 0u64 { return Result<u64, IoError>.Ok(val=0u64); }
+        self.refill()?;
+        let count = self.end - self.start;
+        if count > destination.len() { count = destination.len(); }
+        let i = 0u64;
+        while i < count { destination[i] = self.buffer[self.start + i]; i += 1u64; }
+        self.start += count;
+        Result<u64, IoError>.Ok(val=count)
+    }
 }
-
-pub fn readline() -> String {
-    Stdin.read_line().unwrap().clone()
+impl<R> BufRead for BufReader<R> if R: Read {
+    pub fn read_until(delimiter: u8) -> Result<Vec<u8>, IoError> {
+        let output = Vec<u8>.new();
+        loop {
+            match self.refill() { Ok(_) => {}, Err(error) => { output.drop(); return Result<Vec<u8>, IoError>.Err(msg=error); }, }
+            if self.start == self.end { break; }
+            let byte = self.buffer[self.start]; self.start += 1u64; output.push(byte);
+            if byte == delimiter { break; }
+        }
+        Result<Vec<u8>, IoError>.Ok(val=output)
+    }
 }
-
-// =====================================================================
-// High-level file I/O convenience functions
-// =====================================================================
-
-pub fn read_file(path: str) -> String {
-    let f = File.open(path, OpenMode.Read).unwrap();
-    let content = f.read_to_string().unwrap();
-    f.drop();
-    return *content;
+impl<R> Drop for BufReader<R> { pub fn drop() { self.buffer.drop(); } }
+// finish() reports output errors. drop() releases the buffer without writing.
+pub struct BufWriter<W> { inner: W&, buffer: Vec<u8>, capacity: u64, offset: u64 }
+impl<W> BufWriter<W> if W: Write {
+    static pub fn new(inner: W&) -> Self { Self.with_capacity(8192u64, inner) }
+    static pub fn with_capacity(capacity: u64, inner: W&) -> Self {
+        if capacity == 0u64 { @panic("buffer capacity must be positive"); }
+        Self(inner=inner, buffer=Vec<u8>.with_capacity(capacity), capacity=capacity, offset=0u64)
+    }
+    fn drain() -> Result<(), IoError> {
+        while self.offset < self.buffer.len() {
+            let count = self.inner.write(self.buffer.as_slice()[self.offset..self.buffer.len()])?;
+            if count == 0u64 { return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.WriteZero, "write made no progress")); }
+            self.offset += count;
+        }
+        self.buffer.clear(); self.offset = 0u64;
+        Result<(), IoError>.Ok(val=())
+    }
+    pub fn finish() -> Result<(), IoError> { self.flush() }
 }
-
-pub fn write_file(path: str, content: str) {
-    let f = File.open(path, OpenMode.Write).unwrap();
-    f.write_all(content).unwrap();
-    f.drop();
+impl<W> Write for BufWriter<W> if W: Write {
+    pub fn write(data: u8[]) -> Result<u64, IoError> {
+        if data.len() == 0u64 { return Result<u64, IoError>.Ok(val=0u64); }
+        if self.offset != 0u64 || self.buffer.len() == self.capacity { self.drain()?; }
+        let count = self.capacity - self.buffer.len();
+        if count > data.len() { count = data.len(); }
+        self.buffer.extend_from_slice(data[0u64..count]);
+        Result<u64, IoError>.Ok(val=count)
+    }
+    pub fn flush() -> Result<(), IoError> { self.drain()?; self.inner.flush() }
 }
-
-pub fn append_file(path: str, content: str) {
-    let f = File.open(path, OpenMode.Append).unwrap();
-    f.write_all(content).unwrap();
-    f.drop();
+impl<W> Drop for BufWriter<W> { pub fn drop() { self.buffer.drop(); } }
+pub fn print(text: str) {
+    let output = Stdout.new();
+    match output.write_str(text) { Ok(_) => {}, Err(error) => { error.drop(); @panic("stdout write failed"); }, }
 }
-
-// =====================================================================
-// Low-level open wrappers (return Result<File, IoError>)
-// =====================================================================
-
-pub fn open_rdonly(path: str) -> Result<File, IoError> {
-    File.open(path, OpenMode.Read)
-}
-
-pub fn open_wronly(path: str) -> Result<File, IoError> {
-    File.open(path, OpenMode.Write)
-}
-
-pub fn open_append(path: str) -> Result<File, IoError> {
-    File.open(path, OpenMode.Append)
-}
+pub fn open_rdonly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Read) }
+pub fn open_wronly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Write) }
+pub fn open_append(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Append) }

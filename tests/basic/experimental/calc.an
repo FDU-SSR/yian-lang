@@ -1,17 +1,26 @@
 // A simple calculator for testing stdin and string conversion.
 
 from std.core.string import String;
-from std.core.io import Stdin, print;
+from std.core.io import Stdin, BufReader, print;
+from std.core.drop import Drop;
 from std.core.option import Option;
 
 fn main() {
+    let input = Stdin.new();
+    let reader = BufReader<Stdin>.new(&input);
+    defer reader.drop();
     loop {
-        let line: String = *Stdin.read_line().unwrap()
+        let owned = match *reader.read_line().unwrap() {
+            Some(value) => value,
+            None => { break; },
+        };
+        defer owned.drop();
+        let line = String.from(&owned.as_str().trim());
+        defer line.drop();
         if line == "exit" {
             break
         }
-        // Stdin.read_line() returns an empty String at EOF.  Stop here so the
-        // non-interactive test runner does not spin forever on an empty stdin.
+        // Empty input lines terminate the calculator.
         if line.is_empty() {
             break
         }

@@ -33,7 +33,7 @@ fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
     disk.next = match state.piles[pile] {
         Some(d) => {
             if disk.size >= d.size {
-                Stderr.write_all("Cannot put a big disk on a smaller one").unwrap();
+                Stderr.new().write_str("Cannot put a big disk on a smaller one").unwrap();
                 exit(1)
             }
             Option<TowersDisk&>.Some(d)
@@ -46,7 +46,7 @@ fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
 fn pop_disk_from(pile: u64, state: TowersState&) -> TowersDisk& {
     return match state.piles[pile] {
         None => {
-            Stderr.write_all("Attempting to remove a disk from an empty pile").unwrap();
+            Stderr.new().write_str("Attempting to remove a disk from an empty pile").unwrap();
             exit(1)
         },
         Some(tt) => {

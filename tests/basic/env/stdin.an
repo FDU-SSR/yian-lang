@@ -1,11 +1,16 @@
-// Test: read a line from stdin via Stdin.read_line()
+// Test: read a line from stdin via BufReader<Stdin>
 //
 // stdin from tests/input/env/stdin.an.stdin:  hello from stdin
 
-from std.core.io import Stdin;
-from std.core.string import String;
+from std.core.io import Stdin, BufReader;
+from std.core.drop import Drop;
 
 fn main() {
-    let line = Stdin.read_line().unwrap();
-    assert *line == "hello from stdin";
+    let input = Stdin.new();
+    let reader = BufReader<Stdin>.new(&input);
+    defer reader.drop();
+    let owned = *reader.read_line().unwrap().unwrap();
+    defer owned.drop();
+    let line = owned.as_str().trim();
+    assert line == "hello from stdin";
 }

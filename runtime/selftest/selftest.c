@@ -7,12 +7,18 @@
  */
 
 #include "yian_rt.h"
+#include "yian_io.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 static int failures = 0;
@@ -181,6 +187,179 @@ static void check_allocator(void) {
     }
 }
 
+static volatile sig_atomic_t io_signals = 0;
+static void io_signal_handler(int signal_number) {
+    (void)signal_number;
+    io_signals++;
+}
+
+static void check_io(void) {
+    char root[] = "/tmp/yian-runtime-io-XXXXXX";
+    if (!mkdtemp(root)) { check(0, "I/O fixture directory"); return; }
+    char file[256], link[256], invalid[256], restricted[256];
+    snprintf(file, sizeof(file), "%s/data", root);
+    snprintf(link, sizeof(link), "%s/link", root);
+    snprintf(invalid, sizeof(invalid), "%s/data/child", root);
+    snprintf(restricted, sizeof(restricted), "%s/restricted", root);
+    check(yian_io_open(file, 1) == -ENOENT, "open preserves ENOENT");
+    check(yian_io_open(file, 9) == -EINVAL, "create requires write access");
+    int fd = (int)yian_io_open(file, 2 | 8 | 32);
+    check(fd >= 0, "exclusive creation");
+    if (fd >= 0) {
+        check(fcntl(fd, F_GETFD) & FD_CLOEXEC, "file descriptor close-on-exec");
+        check(yian_io_open(file, 2 | 32) == -EEXIST, "exclusive collision preserves EEXIST");
+        const uint8_t data[] = {0, 255, 128, 10};
+        check(yian_io_write(fd, data, sizeof(data)) == 4, "binary write count");
+        uint64_t fields[4];
+        check(yian_io_fmetadata(fd, fields) == 0 && fields[0] == 1 && fields[1] == 4,
+              "fixed-width file metadata");
+        check(yian_io_set_len(fd, 2) == 0 && yian_io_sync(fd) == 0, "truncate and sync");
+        check(yian_io_set_len(fd, UINT64_MAX) == -EOVERFLOW, "file length overflow");
+        check(yian_io_close(fd) == 0, "file close");
+    }
+    fd = (int)yian_io_open(file, 1);
+    if (fd >= 0) {
+        uint8_t data[4] = {9, 9, 9, 9};
+        check(yian_io_read(fd, data, sizeof(data)) == 2 && data[0] == 0 && data[1] == 255,
+              "binary read and short count");
+        check(yian_io_read(fd, data, sizeof(data)) == 0, "EOF");
+        check(yian_io_seek(fd, 0, 0) == 0 && yian_io_read(fd, data, 1) == 1, "seek");
+        check(yian_io_close(fd) == 0, "read descriptor close");
+    } else { check(0, "open binary file"); }
+    uint64_t fields[4] = {99, 99, 99, 99};
+    check(yian_io_metadata(invalid, 1, fields) == -ENOTDIR && fields[0] == 99,
+          "failed metadata preserves errno and does not publish fields");
+    check(symlink("data", link) == 0, "symlink fixture");
+    check(yian_io_metadata(link, 0, fields) == 0 && fields[0] == 3, "lstat link");
+    check(yian_io_metadata(link, 1, fields) == 0 && fields[0] == 1, "stat follows link");
+    uint8_t path[256];
+    check(yian_io_canonicalize(link, path, sizeof(path)) == (int64_t)strlen(file) &&
+          memcmp(path, file, strlen(file)) == 0, "canonicalize follows link");
+    check(yian_io_canonicalize(link, path, 1) == -ERANGE, "canonicalize buffer size");
+    check(yian_io_current_dir(path, 1) == -ERANGE, "current directory buffer size");
+    int32_t error = 0;
+    void *directory = yian_io_dir_open(root, &error);
+    check(directory != NULL && error == 0, "directory open");
+    if (directory) {
+        int entries = 0;
+        int64_t n;
+        while ((n = yian_io_dir_next(directory, path, sizeof(path))) > 0) {
+            check((n == 4 && !memcmp(path, "data", 4)) || (n == 4 && !memcmp(path, "link", 4)),
+                  "directory names exclude dot entries");
+            entries++;
+        }
+        check(n == 0 && entries == 2, "directory EOF");
+        check(yian_io_dir_close(directory) == 0, "directory close");
+    }
+    check(yian_io_dir_open(file, &error) == NULL && error == ENOTDIR, "directory open error");
+    check(yian_io_remove(root, 1) == -ENOTEMPTY, "nonempty directory error");
+
+    fd = open(restricted, O_CREAT | O_WRONLY | O_TRUNC, 0000);
+    check(fd >= 0, "permission fixture");
+    if (fd >= 0) close(fd);
+    chmod(root, 0755);
+    pid_t child = fork();
+    if (child == 0) {
+        if (geteuid() == 0 && setuid(65534) != 0) _exit(2);
+        _exit(yian_io_open(restricted, 1) == -EACCES ? 0 : 1);
+    }
+    int status = 0;
+    if (child > 0) waitpid(child, &status, 0);
+    check(child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+          "permission denied independent of root test execution");
+
+    int pipefd[2];
+    if (pipe(pipefd) == 0) {
+        close(pipefd[0]);
+        sigset_t before, after;
+        sigprocmask(SIG_SETMASK, NULL, &before);
+        check(yian_io_write(pipefd[1], (const uint8_t *)"x", 1) == -EPIPE,
+              "broken pipe returns error instead of terminating");
+        sigprocmask(SIG_SETMASK, NULL, &after);
+        check(sigismember(&before, SIGPIPE) == sigismember(&after, SIGPIPE), "SIGPIPE mask preserved");
+        sigset_t blocked, pending;
+        sigemptyset(&blocked);
+        sigaddset(&blocked, SIGPIPE);
+        sigprocmask(SIG_BLOCK, &blocked, &before);
+        raise(SIGPIPE);
+        check(yian_io_write(pipefd[1], (const uint8_t *)"x", 1) == -EPIPE, "broken pipe with pending signal");
+        sigpending(&pending);
+        check(sigismember(&pending, SIGPIPE), "preexisting SIGPIPE remains pending");
+        int caught = 0;
+        sigwait(&blocked, &caught);
+        sigprocmask(SIG_SETMASK, &before, NULL);
+        close(pipefd[1]);
+    } else { check(0, "broken pipe fixture"); }
+
+    if (pipe(pipefd) == 0) {
+        struct sigaction action = {0}, old_action;
+        action.sa_handler = io_signal_handler;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGALRM, &action, &old_action);
+        child = fork();
+        if (child == 0) {
+            close(pipefd[0]);
+            usleep(50000);
+            _exit(write(pipefd[1], "x", 1) == 1 ? 0 : 1);
+        }
+        close(pipefd[1]);
+        if (child > 0) {
+            struct itimerval timer = {{0, 1000}, {0, 1000}}, stopped = {0};
+            setitimer(ITIMER_REAL, &timer, NULL);
+            uint8_t byte = 0;
+            int64_t n = yian_io_read(pipefd[0], &byte, 1);
+            setitimer(ITIMER_REAL, &stopped, NULL);
+            check(n == 1 && byte == 'x' && io_signals > 0, "blocking read retries EINTR");
+            waitpid(child, &status, 0);
+            check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "EINTR writer child");
+        } else { check(0, "EINTR child creation"); }
+        close(pipefd[0]);
+        sigaction(SIGALRM, &old_action, NULL);
+    } else { check(0, "EINTR pipe fixture"); }
+    if (pipe(pipefd) == 0) {
+        int flags = fcntl(pipefd[1], F_GETFL);
+        fcntl(pipefd[1], F_SETFL, flags | O_NONBLOCK);
+        uint8_t fill[4096] = {0};
+        while (write(pipefd[1], fill, sizeof(fill)) > 0) {}
+        check(errno == EAGAIN, "full pipe fixture");
+        fcntl(pipefd[1], F_SETFL, flags);
+        struct sigaction action = {0}, old_action;
+        action.sa_handler = io_signal_handler;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGALRM, &action, &old_action);
+        child = fork();
+        if (child == 0) {
+            close(pipefd[1]);
+            usleep(50000);
+            ssize_t n;
+            do { n = read(pipefd[0], fill, sizeof(fill)); } while (n > 0);
+            _exit(n == 0 ? 0 : 1);
+        }
+        close(pipefd[0]);
+        if (child > 0) {
+            sig_atomic_t initial = io_signals;
+            struct itimerval timer = {{0, 1000}, {0, 1000}}, stopped = {0};
+            setitimer(ITIMER_REAL, &timer, NULL);
+            int64_t n = yian_io_write(pipefd[1], (const uint8_t *)"x", 1);
+            setitimer(ITIMER_REAL, &stopped, NULL);
+            check(n == 1 && io_signals > initial, "blocking write retries EINTR");
+            close(pipefd[1]);
+            waitpid(child, &status, 0);
+            check(WIFEXITED(status) && WEXITSTATUS(status) == 0, "EINTR reader child");
+        } else { close(pipefd[1]); check(0, "EINTR reader creation"); }
+        sigaction(SIGALRM, &old_action, NULL);
+    } else { check(0, "EINTR write pipe fixture"); }
+    check(yian_io_error_message(EACCES, path, sizeof(path)) > 0 &&
+          yian_io_error_message(EACCES, path, 1) == -ERANGE,
+          "operating system error message with bounded output");
+    check(yian_io_error_kind(EACCES) == 2 && yian_io_error_kind(ENOTDIR) == 6 &&
+          yian_io_error_kind(EPIPE) == 10 && yian_io_error_kind(ERANGE) == 11,
+          "stable error kind mapping");
+    check(yian_io_remove(link, 0) == 0 && yian_io_remove(file, 0) == 0 &&
+          yian_io_remove(restricted, 0) == 0 && yian_io_remove(root, 1) == 0,
+          "I/O fixture cleanup");
+}
+
 void __yian_main(void) {
     char buf[256];
     size_t len = 0;
@@ -214,6 +393,7 @@ void __yian_main(void) {
           "ABI failure message text");
 
     check_allocator();
+    check_io();
 
     if (failures != 0) {
         printf("selftest: %d failure(s)\n", failures);

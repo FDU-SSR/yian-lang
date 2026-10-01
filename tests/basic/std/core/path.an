@@ -1,0 +1,32 @@
+from std.core.path import Path, PathBuf;
+from std.core.drop import Drop;
+
+fn main() {
+    assert Path.new("/").parent().is_none(): "root has no parent";
+    assert Path.new("/").file_name().is_none(): "root has no file name";
+    assert Path.new("").parent().is_none(): "empty path has no parent";
+    assert Path.new("main.an").parent().unwrap().as_str() == "": "relative file parent is empty";
+    assert Path.new("/a///b/").parent().unwrap().as_str() == "/a": "repeated and trailing separators";
+    assert *Path.new("a/b.an/").file_name().unwrap() == "b.an": "file name";
+    assert *Path.new("a/b.an").extension().unwrap() == "an": "extension";
+    assert Path.new(".hidden").extension().is_none(): "dot file";
+    assert *Path.new(".hidden.an").extension().unwrap() == "an": "dot file extension";
+    assert *Path.new("file.").extension().unwrap() == "": "empty extension";
+    assert Path.new("a/..").file_name().is_none(): "parent component is not file name";
+    let joined = Path.new("/a").join("b/../c"); defer joined.drop();
+    assert joined.as_str() == "/a/b/../c": "join preserves parent components";
+    let absolute = Path.new("/a").join("/b"); defer absolute.drop();
+    assert absolute.as_str() == "/b": "absolute operand replaces base";
+    let empty = Path.new("").join("b"); defer empty.drop();
+    assert empty.as_str() == "b": "empty base";
+    let changed = Path.new("/a/中.an").with_extension("o"); defer changed.drop();
+    assert changed.as_str() == "/a/中.o": "replace extension";
+    let removed = Path.new("a.tar.gz").with_extension(""); defer removed.drop();
+    assert removed.as_str() == "a.tar": "remove final extension";
+    let hidden = Path.new(".hidden").with_extension("an"); defer hidden.drop();
+    assert hidden.as_str() == ".hidden.an": "add extension to dot file";
+    let owned = PathBuf.from("a"); defer owned.drop();
+    owned.push("b"); assert owned.as_str() == "a/b": "owned push";
+    let transfer = owned.into_string(); defer transfer.drop();
+    assert owned.as_str() == "" && transfer.as_str() == "a/b": "owned string extraction";
+}

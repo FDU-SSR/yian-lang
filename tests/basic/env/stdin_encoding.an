@@ -1,0 +1,10 @@
+from std.core.io import Stdin, IoErrorKind;
+from std.core.drop import Drop;
+
+fn main() {
+    let input = Stdin.new();
+    match input.read_to_string() {
+        Err(error) => { defer error.drop(); assert error.kind() == IoErrorKind.InvalidData: "stdin validates UTF-8"; },
+        Ok(text) => { text.drop(); @panic("invalid UTF-8 stdin accepted"); },
+    }
+}

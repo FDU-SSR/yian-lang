@@ -1,0 +1,85 @@
+from std.core.fs import Directory, metadata, symlink_metadata, read_to_string, write_string;
+from std.core.fs import create_dir_all, remove_file, remove_dir, canonicalize;
+from std.core.io import IoErrorKind;
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+from std.ffi.c_string import c_string_bytes;
+
+extern "C" {
+    fn symlink(target: cptr<c_char>, link: cptr<c_char>) -> c_int;
+    fn unlink(path: cptr<c_char>) -> c_int;
+    fn yian_io_open(path: cptr<c_char>, options: u32) -> i64;
+    fn yian_io_close(fd: i32) -> i32;
+}
+ffi fn make_link(target: str, path: str) {
+    let a = *c_string_bytes(target).unwrap(); defer a.drop();
+    let b = *c_string_bytes(path).unwrap(); defer b.drop();
+    let (left, _) = @ffi_parts(a.as_slice()); let (right, _) = @ffi_parts(b.as_slice());
+    assert symlink(@ffi_ptr_cast<c_char>(left), @ffi_ptr_cast<c_char>(right)) == 0: "create symlink";
+}
+ffi fn invalid_name() {
+    let name = Vec<u8>.new(); defer name.drop();
+    name.extend_from_slice("/tmp/yian-io-links/".as_slice()); name.push(255u8); name.push(0u8);
+    let (path, _) = @ffi_parts(name.as_slice());
+    let fd = yian_io_open(@ffi_ptr_cast<c_char>(path), 10u32);
+    assert fd >= 0i64: "non-UTF-8 filename fixture";
+    assert yian_io_close(i32(fd)) == 0: "fixture close";
+    let directory = *Directory.open("/tmp/yian-io-links").unwrap();
+    let seen = false;
+    loop {
+        match directory.next() {
+            Ok(value) => match value { Some(entry) => entry.drop(), None => { break; }, },
+            Err(error) => {
+                defer error.drop();
+                assert error.kind() == IoErrorKind.InvalidData: "non-UTF-8 name error";
+                seen = true;
+                break;
+            },
+        }
+    }
+    directory.drop();
+    assert seen: "directory rejects non-UTF-8 names";
+    assert unlink(@ffi_ptr_cast<c_char>(path)) == 0: "invalid filename cleanup";
+}
+fn main() {
+    create_dir_all("/tmp/yian-io-links/sub").unwrap();
+    write_string("/tmp/yian-io-links/中.an", "中😀").unwrap();
+    make_link("中.an", "/tmp/yian-io-links/file.an");
+    make_link("sub", "/tmp/yian-io-links/directory.an");
+    make_link("missing", "/tmp/yian-io-links/dangling.an");
+    assert symlink_metadata("/tmp/yian-io-links/file.an").unwrap().is_symlink(): "symlink metadata";
+    assert metadata("/tmp/yian-io-links/file.an").unwrap().is_file(): "file link target";
+    assert metadata("/tmp/yian-io-links/directory.an").unwrap().is_dir(): "directory link target";
+    let text = *read_to_string("/tmp/yian-io-links/file.an").unwrap(); defer text.drop();
+    assert text.as_str() == "中😀": "read linked UTF-8 source";
+    let canonical = *canonicalize("/tmp/yian-io-links/file.an").unwrap(); defer canonical.drop();
+    assert canonical.as_str() == "/tmp/yian-io-links/中.an": "canonical symlink path";
+    let directory = *Directory.open("/tmp/yian-io-links").unwrap();
+    let count = 0u64;
+    loop {
+        match *directory.next().unwrap() {
+            Some(entry) => {
+                assert entry.path().as_str().starts_with("/tmp/yian-io-links/"): "owned entry path";
+                if entry.name() == "file.an" {
+                    assert entry.symlink_metadata().unwrap().is_symlink(): "entry lstat";
+                    assert entry.metadata().unwrap().is_file(): "entry stat";
+                }
+                entry.drop(); count += 1u64;
+            },
+            None => { break; },
+        }
+    }
+    assert count == 5u64: "entries include dangling link";
+    directory.drop();
+    match metadata("/tmp/yian-io-links/dangling.an") {
+        Err(error) => { assert error.kind() == IoErrorKind.NotFound: "dangling target error"; error.drop(); },
+        Ok(_) => @panic("dangling target accepted"),
+    }
+    invalid_name();
+    remove_file("/tmp/yian-io-links/dangling.an").unwrap();
+    remove_file("/tmp/yian-io-links/file.an").unwrap();
+    remove_file("/tmp/yian-io-links/directory.an").unwrap();
+    remove_file("/tmp/yian-io-links/中.an").unwrap();
+    remove_dir("/tmp/yian-io-links/sub").unwrap();
+    remove_dir("/tmp/yian-io-links").unwrap();
+}

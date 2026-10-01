@@ -1,0 +1,61 @@
+from compiler.frontend.source import SourceManager, collect_sources;
+from std.core.fs import create_dir_all, write_string, write, remove_file, remove_dir;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.drop import Drop;
+from std.core.io import IoErrorKind;
+from std.core.ops import Index;
+
+fn release_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+fn main() {
+    let root = "/tmp/yian-bootstrap-sources";
+    create_dir_all("/tmp/yian-bootstrap-sources/nested").unwrap();
+    write_string("/tmp/yian-bootstrap-sources/z.an", "fn z() {}").unwrap();
+    write_string("/tmp/yian-bootstrap-sources/a.an", "fn a() { let s = \"中😀\"; }").unwrap();
+    write_string("/tmp/yian-bootstrap-sources/ignored.txt", "ignored").unwrap();
+    write_string("/tmp/yian-bootstrap-sources/nested/b.an", "fn b() {}").unwrap();
+    let inputs = Vec<String>.new(); defer release_strings(&inputs);
+    inputs.push(String.from(&"/tmp/yian-bootstrap-sources/z.an"));
+    inputs.push(String.from(&root));
+    let paths = *collect_sources(&inputs).unwrap(); defer release_strings(&paths);
+    assert paths.len() == 4u64: "root order preserves explicit file plus recursive sources";
+    assert paths[0].as_str() == "/tmp/yian-bootstrap-sources/z.an": "explicit root first";
+    assert paths[1].as_str() == "/tmp/yian-bootstrap-sources/a.an": "directory sorted first";
+    assert paths[2].as_str() == "/tmp/yian-bootstrap-sources/nested/b.an": "nested source";
+    assert paths[3].as_str() == "/tmp/yian-bootstrap-sources/z.an": "directory sorted last";
+    let sources = SourceManager.new(); defer sources.drop();
+    let id = *sources.load(paths[1].as_str()).unwrap();
+    assert sources.file(id).text().contains("中😀"): "UTF-8 source";
+    let bad: u8[1] = [255u8];
+    write("/tmp/yian-bootstrap-sources/bad.an", bad.as_slice()).unwrap();
+    match sources.load("/tmp/yian-bootstrap-sources/bad.an") {
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidData: "invalid source encoding";
+            assert error.msg().contains("/tmp/yian-bootstrap-sources/bad.an"): "read error includes path";
+        },
+        Ok(_) => @panic("invalid source accepted"),
+    }
+    let absent = Vec<String>.new(); defer release_strings(&absent);
+    absent.push(String.from(&"/tmp/yian-bootstrap-sources/absent"));
+    match collect_sources(&absent) {
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.NotFound: "missing root";
+            assert error.raw_os_error().is_some(): "system error code";
+            assert error.msg().contains("absent"): "root error includes path";
+        },
+        Ok(_) => @panic("missing root accepted"),
+    }
+    remove_file("/tmp/yian-bootstrap-sources/bad.an").unwrap();
+    remove_file("/tmp/yian-bootstrap-sources/z.an").unwrap();
+    remove_file("/tmp/yian-bootstrap-sources/a.an").unwrap();
+    remove_file("/tmp/yian-bootstrap-sources/ignored.txt").unwrap();
+    remove_file("/tmp/yian-bootstrap-sources/nested/b.an").unwrap();
+    remove_dir("/tmp/yian-bootstrap-sources/nested").unwrap();
+    remove_dir(root).unwrap();
+}
