@@ -6,7 +6,8 @@ from std.core.vec import Vec;
 from compiler.frontend.source import SourceManager, collect_sources;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import drop_tokens;
-from compiler.frontend.json import append_string, append_span;
+from compiler.frontend.json import append_span;
+from json.write import Writer;
 from compiler.frontend.observe import append_token_file, lex_code, parse_code;
 from compiler.frontend.ast.format import AstFormatter;
 from compiler.frontend.parse.state import Parser;
@@ -38,6 +39,23 @@ fn write_output(text: str) -> bool {
     };
 }
 
+fn emit_json(writer: Writer&) -> bool {
+    return match writer.finish() {
+        Ok(text) => { defer text.drop(); write_output(text.as_str()) && write_output("\n") },
+        Err(_) => false,
+    };
+}
+
+fn diagnostic_start(writer: Writer&, stage: str, path: str) {
+    writer.end_array(); writer.key("diagnostic"); writer.begin_object();
+    writer.key("stage"); writer.write_string(stage);
+    writer.key("path"); writer.write_string(path);
+}
+
+fn diagnostic_end(writer: Writer&) {
+    writer.end_object(); writer.end_object(); emit_json(writer);
+}
+
 fn frontend(arguments: Vec<String>&) -> bool {
     let phase = arguments[2u64].as_str();
     let roots = Vec<String>.new();
@@ -51,16 +69,22 @@ fn frontend(arguments: Vec<String>&) -> bool {
         Ok(value) => value,
         Err(problem) => {
             problem.drop();
-            write_output("{\"version\":1,\"files\":[],\"diagnostic\":{\"stage\":\"io\"}}\n");
+            let writer = Writer.new(); defer writer.drop();
+            writer.begin_object(); writer.key("version"); writer.write_u64(1);
+            writer.key("files"); writer.begin_array(); writer.end_array();
+            writer.key("diagnostic"); writer.begin_object();
+            writer.key("stage"); writer.write_string("io");
+            diagnostic_end(&writer);
             return false;
         },
     };
     defer release_paths(&paths);
     let sources = SourceManager.new();
     defer sources.drop();
-    let output = String.from(&"{\"version\":1,\"phase\":");
-    append_string(&output, phase);
-    output.push_str(",\"files\":[");
+    let output = Writer.with_max_depth(512u64);
+    output.begin_object(); output.key("version"); output.write_u64(1);
+    output.key("phase"); output.write_string(phase);
+    output.key("files"); output.begin_array();
     defer output.drop();
     index = 0u64;
     while index < paths.len() {
@@ -68,10 +92,8 @@ fn frontend(arguments: Vec<String>&) -> bool {
             Ok(value) => value,
             Err(problem) => {
                 problem.drop();
-                output.push_str("],\"diagnostic\":{\"stage\":\"io\",\"path\":");
-                append_string(&output, paths[index].as_str());
-                output.push_str("}}\n");
-                write_output(output.as_str());
+                diagnostic_start(&output, "io", paths[index].as_str());
+                diagnostic_end(&output);
                 return false;
             },
         };
@@ -80,60 +102,47 @@ fn frontend(arguments: Vec<String>&) -> bool {
         let tokens = match lexer.run() {
             Ok(value) => value,
             Err(problem) => {
-                output.push_str("],\"diagnostic\":{\"stage\":\"lex\",\"path\":");
-                append_string(&output, source.path());
-                output.push_str(",\"code\":");
-                append_string(&output, lex_code(problem.message()));
-                output.push_str(",\"severity\":\"error\"");
-                output.push_str(",\"message\":");
-                append_string(&output, problem.message());
-                output.push(',');
+                diagnostic_start(&output, "lex", source.path());
+                output.key("code"); output.write_string(lex_code(problem.message()));
+                output.key("severity"); output.write_string("error");
+                output.key("message"); output.write_string(problem.message());
                 append_span(&output, problem.span());
-                output.push_str("}}\n");
-                write_output(output.as_str());
+                diagnostic_end(&output);
                 problem.drop();
                 return false;
             },
         };
         if phase == "tokens" {
-            if index != 0u64 { output.push(','); }
             append_token_file(&output, source.path(), &tokens);
         } else {
             let parser = Parser.new(&tokens);
             let tree = match parse_program(&parser) {
                 Ok(value) => value,
                 Err(problem) => {
-                    output.push_str("],\"diagnostic\":{\"stage\":\"parse\",\"path\":");
-                    append_string(&output, source.path());
-                    output.push_str(",\"code\":");
-                    append_string(&output, parse_code(problem.message()));
-                    output.push_str(",\"severity\":\"error\"");
-                    output.push_str(",\"message\":");
-                    append_string(&output, problem.message());
-                    output.push(',');
+                    diagnostic_start(&output, "parse", source.path());
+                    output.key("code"); output.write_string(parse_code(problem.message()));
+                    output.key("severity"); output.write_string("error");
+                    output.key("message"); output.write_string(problem.message());
                     append_span(&output, problem.span());
-                    output.push_str("}}\n");
-                    write_output(output.as_str());
+                    diagnostic_end(&output);
                     problem.drop();
                     drop_tokens(&tokens);
                     return false;
                 },
             };
             if phase == "desugared" { desugar(&tree, source.path()); }
-            if index != 0u64 { output.push(','); }
-            output.push_str("{\"path\":");
-            append_string(&output, source.path());
-            output.push_str(",\"ast\":");
+            output.begin_object(); output.key("path");
+            output.write_string(source.path()); output.key("ast");
             let formatter = AstFormatter.new(&output);
             formatter.append_program(tree.root);
-            output.push('}');
+            output.end_object();
             tree.drop();
         }
         drop_tokens(&tokens);
         index += 1u64;
     }
-    output.push_str("],\"diagnostic\":null}\n");
-    return write_output(output.as_str());
+    output.end_array(); output.key("diagnostic"); output.write_null(); output.end_object();
+    return emit_json(&output);
 }
 
 fn main() {

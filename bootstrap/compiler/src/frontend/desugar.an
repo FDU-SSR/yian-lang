@@ -1,8 +1,8 @@
 from compiler.frontend.ast.arena import AstArena, AstTree;
-from compiler.frontend.ast.node import Identifier, IdentifierData, Expr, ExprData, Block, BlockData, Pattern, PatternData, PatternLet, PatternLetData, Parameter, VarInfoData, TypeSyntax, TypeData, Condition, ElifBranch, MatchArm, MatchArmData, PatternArguments, Argument, ArgumentData, StrLiteralData, LiteralRef, Item, MethodDef;
+from compiler.frontend.ast.node import Identifier, IdentifierData, Expr, ExprData, Block, BlockData, Pattern, PatternData, PatternLet, PatternLetData, Parameter, VarInfoData, TypeSyntax, TypeData, Condition, ElifBranch, MatchArm, MatchArmData, PatternArguments, Argument, ArgumentData, StrLiteralData, Literal, Item, MethodDef;
 from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from compiler.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
-from compiler.frontend.ast.traversal import AstVisitor, AstRewriter, walk_program, rewrite_program;
+from compiler.frontend.ast.traversal import AstVisitor, AstRewriter, walk_program, rewrite_expr_children;
 from compiler.frontend.source import Span, Position;
 from std.core.convert import From;
 from std.core.drop import Drop;
@@ -115,7 +115,8 @@ fn assertion_message(path: str, span: Span) -> String {
 }
 struct ControlLowerer { arena: AstArena&, path: str }
 impl AstRewriter for ControlLowerer {
-    pub fn expr(node: Expr&) -> Expr& {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
         let span = node.span;
         match &node.data {
             If(cond, yes, branches, no) => {
@@ -174,7 +175,7 @@ impl AstRewriter for ControlLowerer {
                 let value = if message.is_some() { *message.unwrap() } else {
                     let text = assertion_message(self.path, span);
                     let literal = self.arena.alloc_str_literal(StrLiteralData(value=text), span);
-                    self.arena.alloc_expr(ExprData.Literal(literal=LiteralRef.StringLiteral(value=literal)), span)
+                    self.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), span)
                 };
                 let args = Vec<Argument&>.new();
                 args.push(argument(self.arena, value));
@@ -188,7 +189,8 @@ impl AstRewriter for ControlLowerer {
 }
 struct ExpressionLowerer { arena: AstArena& }
 impl AstRewriter for ExpressionLowerer {
-    pub fn expr(node: Expr&) -> Expr& {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
         match &node.data {
             Binary(op, left, right) => {
                 if *op == BinaryOperator.Range {
@@ -213,7 +215,7 @@ pub fn desugar(tree: AstTree&, path: str) {
     let parameters = ParameterNormalizer(arena=&tree.arena);
     walk_program(tree.root, &parameters);
     let control = ControlLowerer(arena=&tree.arena, path=path);
-    tree.root = rewrite_program(tree.root, &control);
+    tree.root = control.rewrite_program(tree.root);
     let expressions = ExpressionLowerer(arena=&tree.arena);
-    tree.root = rewrite_program(tree.root, &expressions);
+    tree.root = expressions.rewrite_program(tree.root);
 }

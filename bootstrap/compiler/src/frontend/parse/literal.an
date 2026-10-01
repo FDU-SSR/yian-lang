@@ -1,33 +1,33 @@
-from compiler.frontend.ast.node import IntLiteralData, FloatLiteralData, CharLiteralData, StrLiteralData, BoolLiteralData, LiteralRef;
+from compiler.frontend.ast.node import IntLiteralData, FloatLiteralData, CharLiteralData, StrLiteralData, BoolLiteralData, Literal;
 from compiler.frontend.lex.token import KeywordKind;
 from compiler.frontend.parse.state import Parser;
 from std.core.convert import From;
 from std.core.option import Option;
 from std.core.string import String;
 
-pub fn parse_literal(parser: Parser&) -> Option<LiteralRef> {
+pub fn parse_literal(parser: Parser&) -> Option<Literal> {
     parser.ready()?;
     let token = parser.peek();
     let span = token.span;
     let literal = match token.kind() {
-        Integer(value, suffix) => LiteralRef.Integer(value=parser.arena.alloc_int_literal(
+        Integer(value, suffix) => Literal.Integer(value=parser.arena.alloc_int_literal(
             IntLiteralData(value=*value, negative=false, suffix=*suffix), span)),
-        Float(value, suffix) => LiteralRef.Float(value=parser.arena.alloc_float_literal(
+        Float(value, suffix) => Literal.Float(value=parser.arena.alloc_float_literal(
             FloatLiteralData(value=*value, suffix=*suffix), span)),
-        Character(_) => LiteralRef.Character(value=parser.arena.alloc_char_literal(
+        Character(_) => Literal.Character(value=parser.arena.alloc_char_literal(
             CharLiteralData(value=String.from(&token.value())), span)),
-        StringLiteral(_) => LiteralRef.StringLiteral(value=parser.arena.alloc_str_literal(
+        StringLiteral(_) => Literal.StringLiteral(value=parser.arena.alloc_str_literal(
             StrLiteralData(value=String.from(&token.value())), span)),
         Keyword(kind) => {
             if *kind != KeywordKind.True_ && *kind != KeywordKind.False_ {
                 parser.error("Expected literal", span);
-                return Option<LiteralRef>.None;
+                return Option<Literal>.None;
             }
-            LiteralRef.Boolean(value=parser.arena.alloc_bool_literal(
+            Literal.Boolean(value=parser.arena.alloc_bool_literal(
                 BoolLiteralData(value=*kind == KeywordKind.True_), span))
         },
-        _ => { parser.error("Expected literal", span); return Option<LiteralRef>.None; },
+        _ => { parser.error("Expected literal", span); return Option<Literal>.None; },
     };
     parser.advance();
-    Option<LiteralRef>.Some(val=literal)
+    Option<Literal>.Some(val=literal)
 }

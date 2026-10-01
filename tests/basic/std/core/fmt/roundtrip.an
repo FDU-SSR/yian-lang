@@ -1,0 +1,66 @@
+from std.core.fmt import ToString;
+from std.core.drop import Drop;
+from std.num.f64 import from_bits, to_bits;
+
+fn parse_signed(text: str) -> f64 {
+    let bytes = text.as_slice();
+    let negative = bytes[0] == b'-';
+    let body = if negative { str.from_slice_unchecked(bytes[1u64..bytes.len()]) } else { text };
+    let value = match f64.parse(body) { Ok(value) => value, Err(_) => @panic("float parse failed") };
+    if negative { -value } else { value }
+}
+
+fn check64(bits: u64) {
+    let value = from_bits(bits);
+    let text = value.to_string();
+    defer text.drop();
+    assert to_bits(parse_signed(text.as_str())) == bits: "binary64 roundtrip";
+}
+
+fn check32(bits: u32) {
+    let value: f32 = 0.0_f32;
+    @memcpy(&value, &bits, 4);
+    let text = value.to_string();
+    defer text.drop();
+    let parsed = f32(parse_signed(text.as_str()));
+    let actual: u32 = 0;
+    @memcpy(&actual, &parsed, 4);
+    assert actual == bits: "binary32 roundtrip";
+}
+
+fn spelling(value: f64, expected: str) {
+    let text = value.to_string(); defer text.drop();
+    assert text.as_str() == expected: "float spelling";
+}
+
+fn main() {
+    let short = 0.3_f32.to_string();
+    assert short == "0.3": "binary32 uses its own precision";
+    short.drop();
+    let exact = 1.2345678901234567_f64.to_string();
+    assert exact == "1.2345678901234567": "retain significant digits";
+    exact.drop();
+    let special = from_bits(0x8000000000000000u64).to_string();
+    assert special == "-0": "negative zero";
+    special.drop();
+    spelling(0.000001_f64, "0.000001"); spelling(0.0000001_f64, "1e-7");
+    spelling(1e20_f64, "100000000000000000000"); spelling(1e21_f64, "1e21");
+    spelling(from_bits(0x7ff0000000000000u64), "inf");
+    spelling(from_bits(0xfff0000000000000u64), "-inf");
+    spelling(from_bits(0x7ff8000000000000u64), "NaN");
+    check64(0u64); check64(0x8000000000000000u64);
+    check64(1u64); check64(0x000fffffffffffffu64);
+    check64(0x0010000000000000u64); check64(0x7fefffffffffffffu64);
+    check32(0u32); check32(0x80000000u32);
+    check32(1u32); check32(0x007fffffu32);
+    check32(0x00800000u32); check32(0x7f7fffffu32);
+    let seed: u64 = 74755u64;
+    let count: u64 = 0;
+    while count < 2048u64 {
+        seed = seed * 6364136223846793005u64 + 1442695040888963407u64;
+        if ((seed >> 52u64) & 2047u64) != 2047u64 { check64(seed); }
+        let bits = u32(seed);
+        if ((bits >> 23u32) & 255u32) != 255u32 { check32(bits); }
+        count += 1;
+    }
+}

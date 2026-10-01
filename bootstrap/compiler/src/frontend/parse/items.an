@@ -4,7 +4,7 @@ from compiler.frontend.ast.atoms import AttrKind;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
 from compiler.frontend.parse.expr import parse_block, parse_expr;
 from compiler.frontend.parse.parameters import parse_generics, parse_parameters, parse_named_parameters, parse_return_type, parse_var_info;
-from compiler.frontend.parse.state import Parser, ParseError, take_vec;
+from compiler.frontend.parse.state import Parser, ParseError;
 from compiler.frontend.parse.type import parse_type;
 from compiler.frontend.source import Span, Position;
 from std.core.convert import From;
@@ -32,7 +32,7 @@ fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {
         } elif parser.at_keyword(KeywordKind.Ffi) { parser.advance(); AttrKind.Ffi } elif parser.at_keyword(KeywordKind.Static) { parser.advance(); AttrKind.Static } else { break; };
         values.push(parser.arena.alloc_attr(AttrData(kind=kind), span));
     }
-    Option<Vec<Attr&>>.Some(val=take_vec<Attr&>(&values))
+    Option<Vec<Attr&>>.Some(val=values.take())
 }
 fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
     let span = parser.peek().span;
@@ -48,7 +48,7 @@ fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
         if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); parser.ready()?; }
         let end = match alias { Some(value) => value.span, None => target.span };
         if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) { end = parser.peek().span; parser.advance(); }
-        items.push(parser.arena.alloc_item(ItemData.Import(paths=take_vec<Identifier&>(&paths), target=target, alias=alias, end=Option<Position>.Some(val=end.end)), span));
+        items.push(parser.arena.alloc_item(ItemData.Import(paths=paths.take(), target=target, alias=alias, end=Option<Position>.Some(val=end.end)), span));
     } else {
         parser.take_keyword(KeywordKind.Import);
         parser.ready()?;
@@ -103,7 +103,7 @@ fn program(parser: Parser&) -> Option<Program&> {
     }
     let span = parser.peek().span;
     if items.len() != 0 { span = items[0u64].span; let i: u64 = 1; while i < items.len() { span += items[i].span; i += 1; } }
-    Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=take_vec<Item&>(&items)), span))
+    Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=items.take()), span))
 }
 pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> { parser.finish(program(parser)) }
 fn alias_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
@@ -116,7 +116,7 @@ fn alias_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let target = parse_type(parser)?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Alias(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), target=target), name.span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Alias(attrs=attrs.take(), name=name, generics=generics.take(), target=target), name.span))
 }
 fn opaque_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Opaque);
@@ -125,7 +125,7 @@ fn opaque_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.OpaqueTypeDef(attrs=take_vec(attrs), name=name), span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.OpaqueTypeDef(attrs=attrs.take(), name=name), span))
 }
 fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.take_keyword(KeywordKind.Fn);
@@ -137,7 +137,7 @@ fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.ready()?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
-    Option<ExternFuncDecl&>.Some(val=parser.arena.alloc_extern_func_decl(ExternFuncDeclData(name=name, params=take_vec<VarInfo&>(&params), ret_type=ret), name.span))
+    Option<ExternFuncDecl&>.Some(val=parser.arena.alloc_extern_func_decl(ExternFuncDeclData(name=name, params=params.take(), ret_type=ret), name.span))
 }
 fn extern_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Extern);
@@ -152,7 +152,7 @@ fn extern_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { functions.push(extern_function(parser)?); }
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=take_vec(attrs), abi=String.from(&"C"), functions=take_vec<ExternFuncDecl&>(&functions)), span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=attrs.take(), abi=String.from(&"C"), functions=functions.take()), span))
 }
 fn const_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Const);
@@ -165,7 +165,7 @@ fn const_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let value = parse_expr(parser)?;
     let end = parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ConstDef(attrs=take_vec(attrs), name=name, const_type=ty, value=value), span + end))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ConstDef(attrs=attrs.take(), name=name, const_type=ty, value=value), span + end))
 }
 fn field_info(parser: Parser&) -> Option<FieldInfo&> {
     let attrs = attributes(parser)?;
@@ -174,7 +174,7 @@ fn field_info(parser: Parser&) -> Option<FieldInfo&> {
     parser.take_punct(PunctuatorKind.Colon);
     parser.ready()?;
     let ty = parse_type(parser)?;
-    Option<FieldInfo&>.Some(val=parser.arena.alloc_field_info(FieldInfoData(attrs=take_vec<Attr&>(&attrs), name=name, field_type=ty), name.span))
+    Option<FieldInfo&>.Some(val=parser.arena.alloc_field_info(FieldInfoData(attrs=attrs.take(), name=name, field_type=ty), name.span))
 }
 fn struct_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
@@ -192,7 +192,7 @@ fn struct_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     }
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.StructDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), fields=take_vec<FieldInfo&>(&fields)), name.span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.StructDef(attrs=attrs.take(), name=name, generics=generics.take(), fields=fields.take()), name.span))
 }
 fn variant_info(parser: Parser&) -> Option<VariantInfo&> {
     let name = parser.identifier()?;
@@ -208,7 +208,7 @@ fn variant_info(parser: Parser&) -> Option<VariantInfo&> {
         parser.take_punct(PunctuatorKind.RBrace);
         parser.ready()?;
     }
-    Option<VariantInfo&>.Some(val=parser.arena.alloc_variant_info(VariantInfoData(name=name, fields=take_vec<VarInfo&>(&fields)), name.span))
+    Option<VariantInfo&>.Some(val=parser.arena.alloc_variant_info(VariantInfoData(name=name, fields=fields.take()), name.span))
 }
 fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
@@ -226,7 +226,7 @@ fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     }
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.EnumDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), variants=take_vec<VariantInfo&>(&variants)), name.span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.EnumDef(attrs=attrs.take(), name=name, generics=generics.take(), variants=variants.take()), name.span))
 }
 fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
     let attrs = attributes(parser)?;
@@ -240,7 +240,7 @@ fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
     defer params.drop();
     let ret = parse_return_type(parser);
     parser.ready()?;
-    Option<MethodDecl&>.Some(val=parser.arena.alloc_method_decl(MethodDeclData(attrs=take_vec<Attr&>(&attrs), name=name, generics=take_vec<GenericParam>(&generics), params=take_vec<Parameter>(&params), ret_type=ret), name.span))
+    Option<MethodDecl&>.Some(val=parser.arena.alloc_method_decl(MethodDeclData(attrs=attrs.take(), name=name, generics=generics.take(), params=params.take(), ret_type=ret), name.span))
 }
 fn method_def(parser: Parser&, decl: MethodDecl&) -> Option<MethodDef&> {
     let body = parse_block(parser)?;
@@ -273,7 +273,7 @@ fn trait_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { members.push(trait_member(parser)?); }
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.TraitDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), items=take_vec<TraitMember>(&members)), name.span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.TraitDef(attrs=attrs.take(), name=name, generics=generics.take(), items=members.take()), name.span))
 }
 fn impl_conditions(parser: Parser&) -> Option<Vec<ImplCondition&>> {
     let conditions = Vec<ImplCondition&>.new();
@@ -286,11 +286,11 @@ fn impl_conditions(parser: Parser&) -> Option<Vec<ImplCondition&>> {
         defer traits.drop();
         traits.push(parse_type(parser)?);
         while parser.at_punct(PunctuatorKind.Plus) { parser.advance(); traits.push(parse_type(parser)?); }
-        conditions.push(parser.arena.alloc_impl_condition(ImplConditionData(name=name, traits=take_vec<TypeSyntax&>(&traits)), name.span));
+        conditions.push(parser.arena.alloc_impl_condition(ImplConditionData(name=name, traits=traits.take()), name.span));
         if !parser.at_punct(PunctuatorKind.Comma) { break; }
         parser.advance();
     }
-    Option<Vec<ImplCondition&>>.Some(val=take_vec<ImplCondition&>(&conditions))
+    Option<Vec<ImplCondition&>>.Some(val=conditions.take())
 }
 fn impl_item(parser: Parser&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Impl);
@@ -309,7 +309,7 @@ fn impl_item(parser: Parser&) -> Option<Item&> {
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { methods.push(method_def(parser, method_decl(parser)?)?); }
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Impl(generics=take_vec<GenericParam>(&generics), target=target, trait_type=trait, items=take_vec<MethodDef&>(&methods), conditions=take_vec<ImplCondition&>(&conditions)), span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Impl(generics=generics.take(), target=target, trait_type=trait, items=methods.take(), conditions=conditions.take()), span))
 }
 fn function_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
@@ -321,5 +321,5 @@ fn function_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let ret = parse_return_type(parser);
     parser.ready()?;
     let body = parse_block(parser)?;
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.FuncDef(attrs=take_vec(attrs), name=name, generics=take_vec<GenericParam>(&generics), params=take_vec<Parameter>(&params), ret_type=ret, body=body), name.span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.FuncDef(attrs=attrs.take(), name=name, generics=generics.take(), params=params.take(), ret_type=ret, body=body), name.span))
 }

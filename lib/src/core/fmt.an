@@ -1,5 +1,6 @@
 from std.core.range import Range;
 from std.core.string import String;
+from std.num.format.ryu import format_f32, format_f64;
 
 pub trait ToString {
     fn to_string() -> String;
@@ -40,48 +41,6 @@ fn signed_to_string(value: i64) -> String {
     let mag: u64 = u64(value);
     mag = 0u64 - mag;
     append_unsigned_digits(&out, mag);
-    out
-}
-
-// 把 f64 转成十进制文本, 目前是**近似显示**: 整数部分截断, 小数部分最多 6 位,
-// 不做舍入/进位, 只在余数恰好变成 0.0 时提前收尾; 不保证"最短且可往返表示"
-// (那需要 Grisu/Dragon 一类算法, 目前没有实现)。NaN 和 0.0 走前面的分支。
-fn float_to_string(value: f64) -> String {
-    if value != value {
-        return String.from(&"NaN");
-    }
-
-    if value == 0.0 {
-        return String.from(&"0");
-    }
-
-    let out = String.new();
-    if value < 0.0 {
-        out.push('-');
-        value = -value;
-    }
-
-    let int_part: u64 = u64(value);
-    append_unsigned_digits(&out, int_part);
-
-    let frac: f64 = value - f64(int_part);
-    if frac == 0.0 {
-        return out;
-    }
-
-    out.push('.');
-    let count: u64 = 0;
-    while count < 6u64 {
-        frac *= 10.0
-        let digit: u8 = u8(frac);
-        out.push(char(b'0' + digit));
-        frac -= f64(digit)
-        count += 1
-        if frac == 0.0 {
-            break;
-        }
-    }
-
     out
 }
 
@@ -135,13 +94,13 @@ impl ToString for i64 {
 
 impl ToString for f32 {
     fn to_string() -> String {
-        float_to_string(f64(*self))
+        format_f32(*self)
     }
 }
 
 impl ToString for f64 {
     fn to_string() -> String {
-        float_to_string(*self)
+        format_f64(*self)
     }
 }
 

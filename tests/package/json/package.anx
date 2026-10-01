@@ -1,0 +1,7 @@
+[package]
+name = "json_consumer"
+kind = "bin"
+version = "0.1.0"
+
+[dependencies]
+json = { path = "../../../bootstrap/json" }

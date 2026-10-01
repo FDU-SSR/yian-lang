@@ -1,38 +1,12 @@
 from compiler.frontend.source import Span;
-from std.core.drop import Drop;
-from std.core.iter import IntoIterator, Iterator;
-from std.core.string import String;
-from std.core.ops import Index;
+from json.write import Writer;
 
-pub fn append_u64(output: String&, value: u64) {
-    let digits = value.to_string_radix(10u64);
-    output.push_str(digits.as_str());
-    digits.drop();
-}
-
-pub fn append_string(output: String&, value: str) {
-    output.push('"');
-    for ch in value.chars() {
-        let code = u32(ch);
-        if ch == '"' { output.push_str("\\\""); } elif ch == '\\' { output.push_str("\\\\"); } elif ch == '\n' { output.push_str("\\n"); } elif ch == '\r' { output.push_str("\\r"); } elif ch == '\t' { output.push_str("\\t"); } elif code < 32u32 {
-            let hex: str = "0123456789abcdef";
-            let digits = hex.as_slice();
-            output.push_str("\\u00");
-            output.push(char(digits[u64(code >> 4u32)]));
-            output.push(char(digits[u64(code & 15u32)]));
-        } else { output.push(ch); }
-    }
-    output.push('"');
-}
-
-pub fn append_span(output: String&, span: Span) {
-    output.push_str("\"start\":[");
-    append_u64(output, span.start.row);
-    output.push(',');
-    append_u64(output, span.start.column);
-    output.push_str("],\"end\":[");
-    append_u64(output, span.end.row);
-    output.push(',');
-    append_u64(output, span.end.column);
-    output.push(']');
+// Source spans are compiler-specific fields in an open JSON object.
+pub fn append_span(output: Writer&, span: Span) {
+    output.key("start"); output.begin_array();
+    output.write_u64(span.start.row); output.write_u64(span.start.column);
+    output.end_array();
+    output.key("end"); output.begin_array();
+    output.write_u64(span.end.row); output.write_u64(span.end.column);
+    output.end_array();
 }

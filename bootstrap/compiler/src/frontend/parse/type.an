@@ -2,7 +2,7 @@ from compiler.frontend.ast.node import TypeSyntax, TypeData, ConstExpr, ConstExp
 from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
 from compiler.frontend.parse.literal import parse_literal;
-from compiler.frontend.parse.state import Parser, take_vec;
+from compiler.frontend.parse.state import Parser;
 from compiler.frontend.source import Span;
 from std.core.drop import Drop;
 from std.core.ops import Index;
@@ -65,7 +65,7 @@ fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
             parse_type(parser)?
         } else { parser.arena.alloc_type_syntax(TypeData.VoidType, span) };
         return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(
-            TypeData.FunctionType(param_types=take_vec<TypeSyntax&>(&params), return_type=result), span));
+            TypeData.FunctionType(param_types=params.take(), return_type=result), span));
     }
     if token.is_identifier() {
         let name = parser.identifier()?;
@@ -95,7 +95,7 @@ fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
             parser.take_punct(PunctuatorKind.RParen);
             parser.ready()?;
         }
-        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=take_vec<TypeSyntax&>(&members)), span));
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=members.take()), span));
     }
     parser.error("Expected type", span);
     Option<TypeSyntax&>.None
@@ -124,7 +124,7 @@ pub fn parse_type(parser: Parser&) -> Option<TypeSyntax&> {
                     Constant(_) => { parser.error("cptr requires exactly one type argument", span); return Option<TypeSyntax&>.None; },
                 };
                 base = parser.arena.alloc_type_syntax(TypeData.CPtrType(pointee_type=pointee), span);
-            } else { base = parser.arena.alloc_type_syntax(TypeData.InstanceType(base=base, generic_args=take_vec<GenericArgument>(&args)), span); }
+            } else { base = parser.arena.alloc_type_syntax(TypeData.InstanceType(base=base, generic_args=args.take()), span); }
         } elif parser.at_punct(PunctuatorKind.Star) {
             parser.advance();
             base = parser.arena.alloc_type_syntax(TypeData.PointerType(pointee_type=base), span);

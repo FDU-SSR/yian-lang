@@ -1,7 +1,7 @@
 from compiler.frontend.ast.node import VarInfo, VarInfoData, Parameter, PatternParamData, GenericParam, TypeGenericParamData, ConstGenericParamData, TypeSyntax;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
 from compiler.frontend.parse.pattern import parse_binding_pattern;
-from compiler.frontend.parse.state import Parser, take_vec;
+from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.type import parse_type;
 from std.core.drop import Drop;
 from std.core.option import Option;
@@ -39,7 +39,7 @@ pub fn parse_parameters(parser: Parser&) -> Option<Vec<Parameter>> {
     }
     parser.take_punct(PunctuatorKind.RParen);
     parser.ready()?;
-    Option<Vec<Parameter>>.Some(val=take_vec<Parameter>(&values))
+    Option<Vec<Parameter>>.Some(val=values.take())
 }
 pub fn parse_named_parameters(parser: Parser&) -> Option<Vec<VarInfo&>> {
     parser.take_punct(PunctuatorKind.LParen);
@@ -53,7 +53,7 @@ pub fn parse_named_parameters(parser: Parser&) -> Option<Vec<VarInfo&>> {
     }
     parser.take_punct(PunctuatorKind.RParen);
     parser.ready()?;
-    Option<Vec<VarInfo&>>.Some(val=take_vec<VarInfo&>(&values))
+    Option<Vec<VarInfo&>>.Some(val=values.take())
 }
 pub fn parse_generics(parser: Parser&) -> Option<Vec<GenericParam>> {
     let values = Vec<GenericParam>.new();
@@ -81,7 +81,7 @@ pub fn parse_generics(parser: Parser&) -> Option<Vec<GenericParam>> {
         parser.take_punct(PunctuatorKind.RAngle);
         parser.ready()?;
     }
-    Option<Vec<GenericParam>>.Some(val=take_vec<GenericParam>(&values))
+    Option<Vec<GenericParam>>.Some(val=values.take())
 }
 pub fn parse_return_type(parser: Parser&) -> Option<TypeSyntax&> {
     if !parser.at_punct(PunctuatorKind.Arrow) { return Option<TypeSyntax&>.None; }

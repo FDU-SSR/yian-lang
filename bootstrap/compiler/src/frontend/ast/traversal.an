@@ -1,8 +1,8 @@
-from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, LiteralRef, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
 from std.core.ops import Index;
 
 // Traversal follows child edges; shared nodes are visited once per incoming edge.
-// Rewriters process children before replacing a node, without revisiting the replacement.
+// Binding inputs precede their patterns; block parameter bindings precede statements.
 pub trait AstVisitor {
     fn enter_identifier(node: Identifier&) -> bool { true }
     fn leave_identifier(node: Identifier&) {}
@@ -68,38 +68,112 @@ pub trait AstVisitor {
     fn leave_item(node: Item&) {}
 }
 
+// Default methods rewrite children before returning the node; overrides control recursion and replacement.
+// Child helpers never replace their root. Replacements are revisited only when an override requests it.
 pub trait AstRewriter {
-    fn identifier(node: Identifier&) -> Identifier& { node }
-    fn int_literal(node: IntLiteral&) -> IntLiteral& { node }
-    fn float_literal(node: FloatLiteral&) -> FloatLiteral& { node }
-    fn char_literal(node: CharLiteral&) -> CharLiteral& { node }
-    fn str_literal(node: StrLiteral&) -> StrLiteral& { node }
-    fn bool_literal(node: BoolLiteral&) -> BoolLiteral& { node }
-    fn program(node: Program&) -> Program& { node }
-    fn block(node: Block&) -> Block& { node }
-    fn argument(node: Argument&) -> Argument& { node }
-    fn var_info(node: VarInfo&) -> VarInfo& { node }
-    fn pattern_param(node: PatternParam&) -> PatternParam& { node }
-    fn pattern_let(node: PatternLet&) -> PatternLet& { node }
-    fn let_condition(node: LetCondition&) -> LetCondition& { node }
-    fn elif_branch(node: ElifBranch&) -> ElifBranch& { node }
-    fn match_arm(node: MatchArm&) -> MatchArm& { node }
-    fn attr(node: Attr&) -> Attr& { node }
-    fn type_generic_param(node: TypeGenericParam&) -> TypeGenericParam& { node }
-    fn const_generic_param(node: ConstGenericParam&) -> ConstGenericParam& { node }
-    fn field_info(node: FieldInfo&) -> FieldInfo& { node }
-    fn variant_info(node: VariantInfo&) -> VariantInfo& { node }
-    fn method_decl(node: MethodDecl&) -> MethodDecl& { node }
-    fn method_def(node: MethodDef&) -> MethodDef& { node }
-    fn extern_func_decl(node: ExternFuncDecl&) -> ExternFuncDecl& { node }
-    fn impl_condition(node: ImplCondition&) -> ImplCondition& { node }
-    fn capture_item(node: CaptureItem&) -> CaptureItem& { node }
-    fn field_pattern(node: FieldPattern&) -> FieldPattern& { node }
-    fn expr(node: Expr&) -> Expr& { node }
-    fn type_syntax(node: TypeSyntax&) -> TypeSyntax& { node }
-    fn const_expr(node: ConstExpr&) -> ConstExpr& { node }
-    fn pattern(node: Pattern&) -> Pattern& { node }
-    fn item(node: Item&) -> Item& { node }
+    fn rewrite_identifier(node: Identifier&) -> Identifier& { node }
+    fn rewrite_int_literal(node: IntLiteral&) -> IntLiteral& { node }
+    fn rewrite_float_literal(node: FloatLiteral&) -> FloatLiteral& { node }
+    fn rewrite_char_literal(node: CharLiteral&) -> CharLiteral& { node }
+    fn rewrite_str_literal(node: StrLiteral&) -> StrLiteral& { node }
+    fn rewrite_bool_literal(node: BoolLiteral&) -> BoolLiteral& { node }
+    fn rewrite_program(node: Program&) -> Program& {
+        rewrite_program_children(node, self);
+        node
+    }
+    fn rewrite_block(node: Block&) -> Block& {
+        rewrite_block_children(node, self);
+        node
+    }
+    fn rewrite_argument(node: Argument&) -> Argument& {
+        rewrite_argument_children(node, self);
+        node
+    }
+    fn rewrite_var_info(node: VarInfo&) -> VarInfo& {
+        rewrite_var_info_children(node, self);
+        node
+    }
+    fn rewrite_pattern_param(node: PatternParam&) -> PatternParam& {
+        rewrite_pattern_param_children(node, self);
+        node
+    }
+    fn rewrite_pattern_let(node: PatternLet&) -> PatternLet& {
+        rewrite_pattern_let_children(node, self);
+        node
+    }
+    fn rewrite_let_condition(node: LetCondition&) -> LetCondition& {
+        rewrite_let_condition_children(node, self);
+        node
+    }
+    fn rewrite_elif_branch(node: ElifBranch&) -> ElifBranch& {
+        rewrite_elif_branch_children(node, self);
+        node
+    }
+    fn rewrite_match_arm(node: MatchArm&) -> MatchArm& {
+        rewrite_match_arm_children(node, self);
+        node
+    }
+    fn rewrite_attr(node: Attr&) -> Attr& { node }
+    fn rewrite_type_generic_param(node: TypeGenericParam&) -> TypeGenericParam& {
+        rewrite_type_generic_param_children(node, self);
+        node
+    }
+    fn rewrite_const_generic_param(node: ConstGenericParam&) -> ConstGenericParam& {
+        rewrite_const_generic_param_children(node, self);
+        node
+    }
+    fn rewrite_field_info(node: FieldInfo&) -> FieldInfo& {
+        rewrite_field_info_children(node, self);
+        node
+    }
+    fn rewrite_variant_info(node: VariantInfo&) -> VariantInfo& {
+        rewrite_variant_info_children(node, self);
+        node
+    }
+    fn rewrite_method_decl(node: MethodDecl&) -> MethodDecl& {
+        rewrite_method_decl_children(node, self);
+        node
+    }
+    fn rewrite_method_def(node: MethodDef&) -> MethodDef& {
+        rewrite_method_def_children(node, self);
+        node
+    }
+    fn rewrite_extern_func_decl(node: ExternFuncDecl&) -> ExternFuncDecl& {
+        rewrite_extern_func_decl_children(node, self);
+        node
+    }
+    fn rewrite_impl_condition(node: ImplCondition&) -> ImplCondition& {
+        rewrite_impl_condition_children(node, self);
+        node
+    }
+    fn rewrite_capture_item(node: CaptureItem&) -> CaptureItem& {
+        rewrite_capture_item_children(node, self);
+        node
+    }
+    fn rewrite_field_pattern(node: FieldPattern&) -> FieldPattern& {
+        rewrite_field_pattern_children(node, self);
+        node
+    }
+    fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
+        node
+    }
+    fn rewrite_type_syntax(node: TypeSyntax&) -> TypeSyntax& {
+        rewrite_type_syntax_children(node, self);
+        node
+    }
+    fn rewrite_const_expr(node: ConstExpr&) -> ConstExpr& {
+        rewrite_const_expr_children(node, self);
+        node
+    }
+    fn rewrite_pattern(node: Pattern&) -> Pattern& {
+        rewrite_pattern_children(node, self);
+        node
+    }
+    fn rewrite_item(node: Item&) -> Item& {
+        rewrite_item_children(node, self);
+        node
+    }
 }
 
 pub fn walk_identifier(node: Identifier&, visitor: AstVisitor&) {
@@ -148,15 +222,15 @@ pub fn walk_block(node: Block&, visitor: AstVisitor&) {
     if !visitor.enter_block(node) { return; }
     {
         let index: u64 = 0;
-        while index < (node.data.stmts).len() {
-            walk_expr((node.data.stmts)[index], visitor);
+        while index < (node.data.parameter_bindings).len() {
+            walk_pattern_let((node.data.parameter_bindings)[index], visitor);
             index += 1;
         }
     };
     {
         let index: u64 = 0;
-        while index < (node.data.parameter_bindings).len() {
-            walk_pattern_let((node.data.parameter_bindings)[index], visitor);
+        while index < (node.data.stmts).len() {
+            walk_expr((node.data.stmts)[index], visitor);
             index += 1;
         }
     };
@@ -191,9 +265,9 @@ pub fn walk_pattern_param(node: PatternParam&, visitor: AstVisitor&) {
 
 pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
     if !visitor.enter_pattern_let(node) { return; }
-    walk_pattern(node.data.pattern, visitor);
-    walk_type_syntax(node.data.var_type, visitor);
     walk_expr(node.data.init_expr, visitor);
+    walk_type_syntax(node.data.var_type, visitor);
+    walk_pattern(node.data.pattern, visitor);
     match &(node.data.else_branch) {
         Some(value) => {
             walk_block(*value, visitor);
@@ -205,8 +279,8 @@ pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
 
 pub fn walk_let_condition(node: LetCondition&, visitor: AstVisitor&) {
     if !visitor.enter_let_condition(node) { return; }
-    walk_pattern(node.data.pattern, visitor);
     walk_expr(node.data.value, visitor);
+    walk_pattern(node.data.pattern, visitor);
     visitor.leave_let_condition(node);
 }
 
@@ -368,7 +442,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
         },
         Literal(literal) => {
-            walk_literal_ref(&(*literal), visitor);
+            walk_literal(&(*literal), visitor);
         },
         Binary(op, left, right) => {
             walk_expr(*left, visitor);
@@ -506,8 +580,8 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_block(*else_branch, visitor);
         },
         For(pattern, iterable, body) => {
-            walk_pattern(*pattern, visitor);
             walk_expr(*iterable, visitor);
+            walk_pattern(*pattern, visitor);
             walk_block(*body, visitor);
         },
         While(condition, body) => {
@@ -691,7 +765,7 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
         WildcardPattern => {
         },
         LiteralPattern(literal) => {
-            walk_literal_ref(&(*literal), visitor);
+            walk_literal(&(*literal), visitor);
         },
         RangePattern(bounds) => {
             walk_range_bounds(&(*bounds), visitor);
@@ -963,7 +1037,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
     visitor.leave_item(node);
 }
 
-pub fn walk_literal_ref(node: LiteralRef&, visitor: AstVisitor&) {
+pub fn walk_literal(node: Literal&, visitor: AstVisitor&) {
     match node {
         Integer(value) => {
             walk_int_literal(*value, visitor);
@@ -1076,168 +1150,127 @@ pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
     };
 }
 
-pub fn rewrite_identifier(node: Identifier&, rewriter: AstRewriter&) -> Identifier& {
-    rewriter.identifier(node)
-}
-
-pub fn rewrite_int_literal(node: IntLiteral&, rewriter: AstRewriter&) -> IntLiteral& {
-    rewriter.int_literal(node)
-}
-
-pub fn rewrite_float_literal(node: FloatLiteral&, rewriter: AstRewriter&) -> FloatLiteral& {
-    rewriter.float_literal(node)
-}
-
-pub fn rewrite_char_literal(node: CharLiteral&, rewriter: AstRewriter&) -> CharLiteral& {
-    rewriter.char_literal(node)
-}
-
-pub fn rewrite_str_literal(node: StrLiteral&, rewriter: AstRewriter&) -> StrLiteral& {
-    rewriter.str_literal(node)
-}
-
-pub fn rewrite_bool_literal(node: BoolLiteral&, rewriter: AstRewriter&) -> BoolLiteral& {
-    rewriter.bool_literal(node)
-}
-
-pub fn rewrite_program(node: Program&, rewriter: AstRewriter&) -> Program& {
+pub fn rewrite_program_children(node: Program&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
         while index < (node.data.items).len() {
-            (node.data.items)[index] = rewrite_item((node.data.items)[index], rewriter);
+            (node.data.items)[index] = rewriter.rewrite_item((node.data.items)[index]);
             index += 1;
         }
     };
-    rewriter.program(node)
 }
 
-pub fn rewrite_block(node: Block&, rewriter: AstRewriter&) -> Block& {
-    {
-        let index: u64 = 0;
-        while index < (node.data.stmts).len() {
-            (node.data.stmts)[index] = rewrite_expr((node.data.stmts)[index], rewriter);
-            index += 1;
-        }
-    };
+pub fn rewrite_block_children(node: Block&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
         while index < (node.data.parameter_bindings).len() {
-            (node.data.parameter_bindings)[index] = rewrite_pattern_let((node.data.parameter_bindings)[index], rewriter);
+            (node.data.parameter_bindings)[index] = rewriter.rewrite_pattern_let((node.data.parameter_bindings)[index]);
             index += 1;
         }
     };
-    rewriter.block(node)
+    {
+        let index: u64 = 0;
+        while index < (node.data.stmts).len() {
+            (node.data.stmts)[index] = rewriter.rewrite_expr((node.data.stmts)[index]);
+            index += 1;
+        }
+    };
 }
 
-pub fn rewrite_argument(node: Argument&, rewriter: AstRewriter&) -> Argument& {
+pub fn rewrite_argument_children(node: Argument&, rewriter: AstRewriter&) {
     match &(node.data.name) {
         Some(value) => {
-            *value = rewrite_identifier(*value, rewriter);
+            *value = rewriter.rewrite_identifier(*value);
         },
         None => {},
     };
-    node.data.value = rewrite_expr(node.data.value, rewriter);
-    rewriter.argument(node)
+    node.data.value = rewriter.rewrite_expr(node.data.value);
 }
 
-pub fn rewrite_var_info(node: VarInfo&, rewriter: AstRewriter&) -> VarInfo& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    node.data.var_type = rewrite_type_syntax(node.data.var_type, rewriter);
-    rewriter.var_info(node)
+pub fn rewrite_var_info_children(node: VarInfo&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
 }
 
-pub fn rewrite_pattern_param(node: PatternParam&, rewriter: AstRewriter&) -> PatternParam& {
-    node.data.pattern = rewrite_pattern(node.data.pattern, rewriter);
-    node.data.var_type = rewrite_type_syntax(node.data.var_type, rewriter);
-    rewriter.pattern_param(node)
+pub fn rewrite_pattern_param_children(node: PatternParam&, rewriter: AstRewriter&) {
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
 }
 
-pub fn rewrite_pattern_let(node: PatternLet&, rewriter: AstRewriter&) -> PatternLet& {
-    node.data.pattern = rewrite_pattern(node.data.pattern, rewriter);
-    node.data.var_type = rewrite_type_syntax(node.data.var_type, rewriter);
-    node.data.init_expr = rewrite_expr(node.data.init_expr, rewriter);
+pub fn rewrite_pattern_let_children(node: PatternLet&, rewriter: AstRewriter&) {
+    node.data.init_expr = rewriter.rewrite_expr(node.data.init_expr);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
     match &(node.data.else_branch) {
         Some(value) => {
-            *value = rewrite_block(*value, rewriter);
+            *value = rewriter.rewrite_block(*value);
         },
         None => {},
     };
-    rewriter.pattern_let(node)
 }
 
-pub fn rewrite_let_condition(node: LetCondition&, rewriter: AstRewriter&) -> LetCondition& {
-    node.data.pattern = rewrite_pattern(node.data.pattern, rewriter);
-    node.data.value = rewrite_expr(node.data.value, rewriter);
-    rewriter.let_condition(node)
+pub fn rewrite_let_condition_children(node: LetCondition&, rewriter: AstRewriter&) {
+    node.data.value = rewriter.rewrite_expr(node.data.value);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
 }
 
-pub fn rewrite_elif_branch(node: ElifBranch&, rewriter: AstRewriter&) -> ElifBranch& {
+pub fn rewrite_elif_branch_children(node: ElifBranch&, rewriter: AstRewriter&) {
     rewrite_condition(&(node.data.condition), rewriter);
-    node.data.body = rewrite_block(node.data.body, rewriter);
-    rewriter.elif_branch(node)
+    node.data.body = rewriter.rewrite_block(node.data.body);
 }
 
-pub fn rewrite_match_arm(node: MatchArm&, rewriter: AstRewriter&) -> MatchArm& {
-    node.data.pattern = rewrite_pattern(node.data.pattern, rewriter);
+pub fn rewrite_match_arm_children(node: MatchArm&, rewriter: AstRewriter&) {
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
     match &(node.data.guard) {
         Some(value) => {
-            *value = rewrite_expr(*value, rewriter);
+            *value = rewriter.rewrite_expr(*value);
         },
         None => {},
     };
-    node.data.body = rewrite_block(node.data.body, rewriter);
-    rewriter.match_arm(node)
+    node.data.body = rewriter.rewrite_block(node.data.body);
 }
 
-pub fn rewrite_attr(node: Attr&, rewriter: AstRewriter&) -> Attr& {
-    rewriter.attr(node)
+pub fn rewrite_type_generic_param_children(node: TypeGenericParam&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
 }
 
-pub fn rewrite_type_generic_param(node: TypeGenericParam&, rewriter: AstRewriter&) -> TypeGenericParam& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    rewriter.type_generic_param(node)
+pub fn rewrite_const_generic_param_children(node: ConstGenericParam&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.const_type = rewriter.rewrite_type_syntax(node.data.const_type);
 }
 
-pub fn rewrite_const_generic_param(node: ConstGenericParam&, rewriter: AstRewriter&) -> ConstGenericParam& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    node.data.const_type = rewrite_type_syntax(node.data.const_type, rewriter);
-    rewriter.const_generic_param(node)
-}
-
-pub fn rewrite_field_info(node: FieldInfo&, rewriter: AstRewriter&) -> FieldInfo& {
+pub fn rewrite_field_info_children(node: FieldInfo&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
         while index < (node.data.attrs).len() {
-            (node.data.attrs)[index] = rewrite_attr((node.data.attrs)[index], rewriter);
+            (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
             index += 1;
         }
     };
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    node.data.field_type = rewrite_type_syntax(node.data.field_type, rewriter);
-    rewriter.field_info(node)
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.field_type = rewriter.rewrite_type_syntax(node.data.field_type);
 }
 
-pub fn rewrite_variant_info(node: VariantInfo&, rewriter: AstRewriter&) -> VariantInfo& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
+pub fn rewrite_variant_info_children(node: VariantInfo&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
         while index < (node.data.fields).len() {
-            (node.data.fields)[index] = rewrite_var_info((node.data.fields)[index], rewriter);
+            (node.data.fields)[index] = rewriter.rewrite_var_info((node.data.fields)[index]);
             index += 1;
         }
     };
-    rewriter.variant_info(node)
 }
 
-pub fn rewrite_method_decl(node: MethodDecl&, rewriter: AstRewriter&) -> MethodDecl& {
+pub fn rewrite_method_decl_children(node: MethodDecl&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
         while index < (node.data.attrs).len() {
-            (node.data.attrs)[index] = rewrite_attr((node.data.attrs)[index], rewriter);
+            (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
             index += 1;
         }
     };
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
         while index < (node.data.generics).len() {
@@ -1254,129 +1287,123 @@ pub fn rewrite_method_decl(node: MethodDecl&, rewriter: AstRewriter&) -> MethodD
     };
     match &(node.data.ret_type) {
         Some(value) => {
-            *value = rewrite_type_syntax(*value, rewriter);
+            *value = rewriter.rewrite_type_syntax(*value);
         },
         None => {},
     };
-    rewriter.method_decl(node)
 }
 
-pub fn rewrite_method_def(node: MethodDef&, rewriter: AstRewriter&) -> MethodDef& {
-    node.data.decl = rewrite_method_decl(node.data.decl, rewriter);
-    node.data.body = rewrite_block(node.data.body, rewriter);
-    rewriter.method_def(node)
+pub fn rewrite_method_def_children(node: MethodDef&, rewriter: AstRewriter&) {
+    node.data.decl = rewriter.rewrite_method_decl(node.data.decl);
+    node.data.body = rewriter.rewrite_block(node.data.body);
 }
 
-pub fn rewrite_extern_func_decl(node: ExternFuncDecl&, rewriter: AstRewriter&) -> ExternFuncDecl& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
+pub fn rewrite_extern_func_decl_children(node: ExternFuncDecl&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
         while index < (node.data.params).len() {
-            (node.data.params)[index] = rewrite_var_info((node.data.params)[index], rewriter);
+            (node.data.params)[index] = rewriter.rewrite_var_info((node.data.params)[index]);
             index += 1;
         }
     };
     match &(node.data.ret_type) {
         Some(value) => {
-            *value = rewrite_type_syntax(*value, rewriter);
+            *value = rewriter.rewrite_type_syntax(*value);
         },
         None => {},
     };
-    rewriter.extern_func_decl(node)
 }
 
-pub fn rewrite_impl_condition(node: ImplCondition&, rewriter: AstRewriter&) -> ImplCondition& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
+pub fn rewrite_impl_condition_children(node: ImplCondition&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
         while index < (node.data.traits).len() {
-            (node.data.traits)[index] = rewrite_type_syntax((node.data.traits)[index], rewriter);
+            (node.data.traits)[index] = rewriter.rewrite_type_syntax((node.data.traits)[index]);
             index += 1;
         }
     };
-    rewriter.impl_condition(node)
 }
 
-pub fn rewrite_capture_item(node: CaptureItem&, rewriter: AstRewriter&) -> CaptureItem& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    node.data.expr = rewrite_expr(node.data.expr, rewriter);
-    rewriter.capture_item(node)
+pub fn rewrite_capture_item_children(node: CaptureItem&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.expr = rewriter.rewrite_expr(node.data.expr);
 }
 
-pub fn rewrite_field_pattern(node: FieldPattern&, rewriter: AstRewriter&) -> FieldPattern& {
-    node.data.name = rewrite_identifier(node.data.name, rewriter);
-    node.data.pattern = rewrite_pattern(node.data.pattern, rewriter);
-    rewriter.field_pattern(node)
+pub fn rewrite_field_pattern_children(node: FieldPattern&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
 }
 
-pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
+pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
     match &node.data {
         Identifier(name) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
         },
         Literal(literal) => {
-            rewrite_literal_ref(&(*literal), rewriter);
+            rewrite_literal(&(*literal), rewriter);
         },
         Binary(op, left, right) => {
-            *left = rewrite_expr(*left, rewriter);
-            *right = rewrite_expr(*right, rewriter);
+            *left = rewriter.rewrite_expr(*left);
+            *right = rewriter.rewrite_expr(*right);
         },
         Unary(op, operand) => {
-            *operand = rewrite_expr(*operand, rewriter);
+            *operand = rewriter.rewrite_expr(*operand);
         },
         TryExpr(operand) => {
-            *operand = rewrite_expr(*operand, rewriter);
+            *operand = rewriter.rewrite_expr(*operand);
         },
         Call(callee, args) => {
-            *callee = rewrite_expr(*callee, rewriter);
+            *callee = rewriter.rewrite_expr(*callee);
             {
                 let index: u64 = 0;
                 while index < (*args).len() {
-                    (*args)[index] = rewrite_argument((*args)[index], rewriter);
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
                 }
             };
         },
         MethodCall(receiver, method_name, generics, args) => {
-            *receiver = rewrite_expr(*receiver, rewriter);
-            *method_name = rewrite_identifier(*method_name, rewriter);
+            *receiver = rewriter.rewrite_expr(*receiver);
+            *method_name = rewriter.rewrite_identifier(*method_name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
-                    (*generics)[index] = rewrite_type_syntax((*generics)[index], rewriter);
+                    (*generics)[index] = rewriter.rewrite_type_syntax((*generics)[index]);
                     index += 1;
                 }
             };
             {
                 let index: u64 = 0;
                 while index < (*args).len() {
-                    (*args)[index] = rewrite_argument((*args)[index], rewriter);
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
                 }
             };
         },
         FieldAccess(receiver, field_name) => {
-            *receiver = rewrite_expr(*receiver, rewriter);
-            *field_name = rewrite_identifier(*field_name, rewriter);
+            *receiver = rewriter.rewrite_expr(*receiver);
+            *field_name = rewriter.rewrite_identifier(*field_name);
         },
         Builtin(kind, type_args, args) => {
             {
                 let index: u64 = 0;
                 while index < (*type_args).len() {
-                    (*type_args)[index] = rewrite_type_syntax((*type_args)[index], rewriter);
+                    (*type_args)[index] = rewriter.rewrite_type_syntax((*type_args)[index]);
                     index += 1;
                 }
             };
             {
                 let index: u64 = 0;
                 while index < (*args).len() {
-                    (*args)[index] = rewrite_argument((*args)[index], rewriter);
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
                 }
             };
         },
         TypeItem(name, generics) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1386,13 +1413,13 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
             };
         },
         Block(block) => {
-            *block = rewrite_block(*block, rewriter);
+            *block = rewriter.rewrite_block(*block);
         },
         Tuple(elements) => {
             {
                 let index: u64 = 0;
                 while index < (*elements).len() {
-                    (*elements)[index] = rewrite_expr((*elements)[index], rewriter);
+                    (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
                     index += 1;
                 }
             };
@@ -1401,75 +1428,75 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
             {
                 let index: u64 = 0;
                 while index < (*elements).len() {
-                    (*elements)[index] = rewrite_expr((*elements)[index], rewriter);
+                    (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
                     index += 1;
                 }
             };
         },
         ArrayRepeat(element, count) => {
-            *element = rewrite_expr(*element, rewriter);
-            *count = rewrite_expr(*count, rewriter);
+            *element = rewriter.rewrite_expr(*element);
+            *count = rewriter.rewrite_expr(*count);
         },
         DynValue(value) => {
-            *value = rewrite_expr(*value, rewriter);
+            *value = rewriter.rewrite_expr(*value);
         },
         DynBuffer(size, element) => {
-            *size = rewrite_expr(*size, rewriter);
-            *element = rewrite_expr(*element, rewriter);
+            *size = rewriter.rewrite_expr(*size);
+            *element = rewriter.rewrite_expr(*element);
         },
         VarDecl(name, var_type, init_expr) => {
-            *name = rewrite_identifier(*name, rewriter);
-            *var_type = rewrite_type_syntax(*var_type, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
+            *var_type = rewriter.rewrite_type_syntax(*var_type);
             match &(*init_expr) {
                 Some(value) => {
-                    *value = rewrite_expr(*value, rewriter);
+                    *value = rewriter.rewrite_expr(*value);
                 },
                 None => {},
             };
         },
         PatternLet(binding) => {
-            *binding = rewrite_pattern_let(*binding, rewriter);
+            *binding = rewriter.rewrite_pattern_let(*binding);
         },
         If(condition, then_branch, elif_branches, else_branch) => {
             rewrite_condition(&(*condition), rewriter);
-            *then_branch = rewrite_block(*then_branch, rewriter);
+            *then_branch = rewriter.rewrite_block(*then_branch);
             {
                 let index: u64 = 0;
                 while index < (*elif_branches).len() {
-                    (*elif_branches)[index] = rewrite_elif_branch((*elif_branches)[index], rewriter);
+                    (*elif_branches)[index] = rewriter.rewrite_elif_branch((*elif_branches)[index]);
                     index += 1;
                 }
             };
             match &(*else_branch) {
                 Some(value) => {
-                    *value = rewrite_block(*value, rewriter);
+                    *value = rewriter.rewrite_block(*value);
                 },
                 None => {},
             };
         },
         ComptimeIf(condition, then_branch, else_branch) => {
-            *condition = rewrite_expr(*condition, rewriter);
-            *then_branch = rewrite_block(*then_branch, rewriter);
-            *else_branch = rewrite_block(*else_branch, rewriter);
+            *condition = rewriter.rewrite_expr(*condition);
+            *then_branch = rewriter.rewrite_block(*then_branch);
+            *else_branch = rewriter.rewrite_block(*else_branch);
         },
         For(pattern, iterable, body) => {
-            *pattern = rewrite_pattern(*pattern, rewriter);
-            *iterable = rewrite_expr(*iterable, rewriter);
-            *body = rewrite_block(*body, rewriter);
+            *iterable = rewriter.rewrite_expr(*iterable);
+            *pattern = rewriter.rewrite_pattern(*pattern);
+            *body = rewriter.rewrite_block(*body);
         },
         While(condition, body) => {
             rewrite_condition(&(*condition), rewriter);
-            *body = rewrite_block(*body, rewriter);
+            *body = rewriter.rewrite_block(*body);
         },
         Loop(body) => {
-            *body = rewrite_block(*body, rewriter);
+            *body = rewriter.rewrite_block(*body);
         },
         Match(expr, arms) => {
-            *expr = rewrite_expr(*expr, rewriter);
+            *expr = rewriter.rewrite_expr(*expr);
             {
                 let index: u64 = 0;
                 while index < (*arms).len() {
-                    (*arms)[index] = rewrite_match_arm((*arms)[index], rewriter);
+                    (*arms)[index] = rewriter.rewrite_match_arm((*arms)[index]);
                     index += 1;
                 }
             };
@@ -1477,7 +1504,7 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
         Return(expr) => {
             match &(*expr) {
                 Some(value) => {
-                    *value = rewrite_expr(*value, rewriter);
+                    *value = rewriter.rewrite_expr(*value);
                 },
                 None => {},
             };
@@ -1485,7 +1512,7 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
         Break(expr) => {
             match &(*expr) {
                 Some(value) => {
-                    *value = rewrite_expr(*value, rewriter);
+                    *value = rewriter.rewrite_expr(*value);
                 },
                 None => {},
             };
@@ -1493,28 +1520,28 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
         Continue => {
         },
         Defer(action) => {
-            *action = rewrite_expr(*action, rewriter);
+            *action = rewriter.rewrite_expr(*action);
         },
         Assert(condition, message) => {
-            *condition = rewrite_expr(*condition, rewriter);
+            *condition = rewriter.rewrite_expr(*condition);
             match &(*message) {
                 Some(value) => {
-                    *value = rewrite_expr(*value, rewriter);
+                    *value = rewriter.rewrite_expr(*value);
                 },
                 None => {},
             };
         },
         Delete(target) => {
-            *target = rewrite_expr(*target, rewriter);
+            *target = rewriter.rewrite_expr(*target);
         },
         Semi(expr) => {
-            *expr = rewrite_expr(*expr, rewriter);
+            *expr = rewriter.rewrite_expr(*expr);
         },
         ClosureExpr(captures, params, return_type, body) => {
             {
                 let index: u64 = 0;
                 while index < (*captures).len() {
-                    (*captures)[index] = rewrite_capture_item((*captures)[index], rewriter);
+                    (*captures)[index] = rewriter.rewrite_capture_item((*captures)[index]);
                     index += 1;
                 }
             };
@@ -1527,19 +1554,18 @@ pub fn rewrite_expr(node: Expr&, rewriter: AstRewriter&) -> Expr& {
             };
             match &(*return_type) {
                 Some(value) => {
-                    *value = rewrite_type_syntax(*value, rewriter);
+                    *value = rewriter.rewrite_type_syntax(*value);
                 },
                 None => {},
             };
-            *body = rewrite_block(*body, rewriter);
+            *body = rewriter.rewrite_block(*body);
         },
         CompileConfig(name) => {
         },
     };
-    rewriter.expr(node)
 }
 
-pub fn rewrite_type_syntax(node: TypeSyntax&, rewriter: AstRewriter&) -> TypeSyntax& {
+pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {
     match &node.data {
         IntType(signed, width) => {
         },
@@ -1560,35 +1586,35 @@ pub fn rewrite_type_syntax(node: TypeSyntax&, rewriter: AstRewriter&) -> TypeSyn
         CScalarType(name) => {
         },
         CPtrType(pointee_type) => {
-            *pointee_type = rewrite_type_syntax(*pointee_type, rewriter);
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
         },
         NamedType(name) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
         },
         ArrayType(element_type, size) => {
-            *element_type = rewrite_type_syntax(*element_type, rewriter);
-            *size = rewrite_const_expr(*size, rewriter);
+            *element_type = rewriter.rewrite_type_syntax(*element_type);
+            *size = rewriter.rewrite_const_expr(*size);
         },
         TupleType(element_types) => {
             {
                 let index: u64 = 0;
                 while index < (*element_types).len() {
-                    (*element_types)[index] = rewrite_type_syntax((*element_types)[index], rewriter);
+                    (*element_types)[index] = rewriter.rewrite_type_syntax((*element_types)[index]);
                     index += 1;
                 }
             };
         },
         PointerType(pointee_type) => {
-            *pointee_type = rewrite_type_syntax(*pointee_type, rewriter);
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
         },
         RefType(pointee_type) => {
-            *pointee_type = rewrite_type_syntax(*pointee_type, rewriter);
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
         },
         SliceType(element_type) => {
-            *element_type = rewrite_type_syntax(*element_type, rewriter);
+            *element_type = rewriter.rewrite_type_syntax(*element_type);
         },
         InstanceType(base, generic_args) => {
-            *base = rewrite_type_syntax(*base, rewriter);
+            *base = rewriter.rewrite_type_syntax(*base);
             {
                 let index: u64 = 0;
                 while index < (*generic_args).len() {
@@ -1601,66 +1627,64 @@ pub fn rewrite_type_syntax(node: TypeSyntax&, rewriter: AstRewriter&) -> TypeSyn
             {
                 let index: u64 = 0;
                 while index < (*param_types).len() {
-                    (*param_types)[index] = rewrite_type_syntax((*param_types)[index], rewriter);
+                    (*param_types)[index] = rewriter.rewrite_type_syntax((*param_types)[index]);
                     index += 1;
                 }
             };
-            *return_type = rewrite_type_syntax(*return_type, rewriter);
+            *return_type = rewriter.rewrite_type_syntax(*return_type);
         },
     };
-    rewriter.type_syntax(node)
 }
 
-pub fn rewrite_const_expr(node: ConstExpr&, rewriter: AstRewriter&) -> ConstExpr& {
+pub fn rewrite_const_expr_children(node: ConstExpr&, rewriter: AstRewriter&) {
     match &node.data {
         LiteralConstExpr(literal) => {
-            *literal = rewrite_int_literal(*literal, rewriter);
+            *literal = rewriter.rewrite_int_literal(*literal);
         },
         GenericConstExpr(name) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
         },
         UnaryConstExpr(op, operand) => {
-            *operand = rewrite_const_expr(*operand, rewriter);
+            *operand = rewriter.rewrite_const_expr(*operand);
         },
         BinaryConstExpr(op, left, right) => {
-            *left = rewrite_const_expr(*left, rewriter);
-            *right = rewrite_const_expr(*right, rewriter);
+            *left = rewriter.rewrite_const_expr(*left);
+            *right = rewriter.rewrite_const_expr(*right);
         },
     };
-    rewriter.const_expr(node)
 }
 
-pub fn rewrite_pattern(node: Pattern&, rewriter: AstRewriter&) -> Pattern& {
+pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
     match &node.data {
         WildcardPattern => {
         },
         LiteralPattern(literal) => {
-            rewrite_literal_ref(&(*literal), rewriter);
+            rewrite_literal(&(*literal), rewriter);
         },
         RangePattern(bounds) => {
             rewrite_range_bounds(&(*bounds), rewriter);
         },
         NamePattern(name) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
         },
         BindPattern(name, inner) => {
-            *name = rewrite_identifier(*name, rewriter);
-            *inner = rewrite_pattern(*inner, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
+            *inner = rewriter.rewrite_pattern(*inner);
         },
         OrPattern(alternatives) => {
             {
                 let index: u64 = 0;
                 while index < (*alternatives).len() {
-                    (*alternatives)[index] = rewrite_pattern((*alternatives)[index], rewriter);
+                    (*alternatives)[index] = rewriter.rewrite_pattern((*alternatives)[index]);
                     index += 1;
                 }
             };
         },
         ConstructPattern(name, qualifier, arguments, rest) => {
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             match &(*qualifier) {
                 Some(value) => {
-                    *value = rewrite_type_syntax(*value, rewriter);
+                    *value = rewriter.rewrite_type_syntax(*value);
                 },
                 None => {},
             };
@@ -1670,7 +1694,7 @@ pub fn rewrite_pattern(node: Pattern&, rewriter: AstRewriter&) -> Pattern& {
             {
                 let index: u64 = 0;
                 while index < (*elements).len() {
-                    (*elements)[index] = rewrite_pattern((*elements)[index], rewriter);
+                    (*elements)[index] = rewriter.rewrite_pattern((*elements)[index]);
                     index += 1;
                 }
             };
@@ -1679,36 +1703,35 @@ pub fn rewrite_pattern(node: Pattern&, rewriter: AstRewriter&) -> Pattern& {
             {
                 let index: u64 = 0;
                 while index < (*prefix).len() {
-                    (*prefix)[index] = rewrite_pattern((*prefix)[index], rewriter);
+                    (*prefix)[index] = rewriter.rewrite_pattern((*prefix)[index]);
                     index += 1;
                 }
             };
             {
                 let index: u64 = 0;
                 while index < (*suffix).len() {
-                    (*suffix)[index] = rewrite_pattern((*suffix)[index], rewriter);
+                    (*suffix)[index] = rewriter.rewrite_pattern((*suffix)[index]);
                     index += 1;
                 }
             };
         },
     };
-    rewriter.pattern(node)
 }
 
-pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
+pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
     match &node.data {
         Import(paths, target, alias, end) => {
             {
                 let index: u64 = 0;
                 while index < (*paths).len() {
-                    (*paths)[index] = rewrite_identifier((*paths)[index], rewriter);
+                    (*paths)[index] = rewriter.rewrite_identifier((*paths)[index]);
                     index += 1;
                 }
             };
-            *target = rewrite_identifier(*target, rewriter);
+            *target = rewriter.rewrite_identifier(*target);
             match &(*alias) {
                 Some(value) => {
-                    *value = rewrite_identifier(*value, rewriter);
+                    *value = rewriter.rewrite_identifier(*value);
                 },
                 None => {},
             };
@@ -1717,11 +1740,11 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1729,17 +1752,17 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
                     index += 1;
                 }
             };
-            *target = rewrite_type_syntax(*target, rewriter);
+            *target = rewriter.rewrite_type_syntax(*target);
         },
         FuncDef(attrs, name, generics, params, ret_type, body) => {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1756,46 +1779,46 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             };
             match &(*ret_type) {
                 Some(value) => {
-                    *value = rewrite_type_syntax(*value, rewriter);
+                    *value = rewriter.rewrite_type_syntax(*value);
                 },
                 None => {},
             };
-            *body = rewrite_block(*body, rewriter);
+            *body = rewriter.rewrite_block(*body);
         },
         ConstDef(attrs, name, const_type, value) => {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
-            *const_type = rewrite_type_syntax(*const_type, rewriter);
-            *value = rewrite_expr(*value, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
+            *const_type = rewriter.rewrite_type_syntax(*const_type);
+            *value = rewriter.rewrite_expr(*value);
         },
         OpaqueTypeDef(attrs, name) => {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
         },
         ExternBlock(attrs, abi, functions) => {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
             {
                 let index: u64 = 0;
                 while index < (*functions).len() {
-                    (*functions)[index] = rewrite_extern_func_decl((*functions)[index], rewriter);
+                    (*functions)[index] = rewriter.rewrite_extern_func_decl((*functions)[index]);
                     index += 1;
                 }
             };
@@ -1804,11 +1827,11 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1819,7 +1842,7 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*fields).len() {
-                    (*fields)[index] = rewrite_field_info((*fields)[index], rewriter);
+                    (*fields)[index] = rewriter.rewrite_field_info((*fields)[index]);
                     index += 1;
                 }
             };
@@ -1828,11 +1851,11 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1843,7 +1866,7 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*variants).len() {
-                    (*variants)[index] = rewrite_variant_info((*variants)[index], rewriter);
+                    (*variants)[index] = rewriter.rewrite_variant_info((*variants)[index]);
                     index += 1;
                 }
             };
@@ -1852,11 +1875,11 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
             {
                 let index: u64 = 0;
                 while index < (*attrs).len() {
-                    (*attrs)[index] = rewrite_attr((*attrs)[index], rewriter);
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
                 }
             };
-            *name = rewrite_identifier(*name, rewriter);
+            *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
                 while index < (*generics).len() {
@@ -1880,48 +1903,47 @@ pub fn rewrite_item(node: Item&, rewriter: AstRewriter&) -> Item& {
                     index += 1;
                 }
             };
-            *target = rewrite_type_syntax(*target, rewriter);
+            *target = rewriter.rewrite_type_syntax(*target);
             match &(*trait_type) {
                 Some(value) => {
-                    *value = rewrite_type_syntax(*value, rewriter);
+                    *value = rewriter.rewrite_type_syntax(*value);
                 },
                 None => {},
             };
             {
                 let index: u64 = 0;
                 while index < (*items).len() {
-                    (*items)[index] = rewrite_method_def((*items)[index], rewriter);
+                    (*items)[index] = rewriter.rewrite_method_def((*items)[index]);
                     index += 1;
                 }
             };
             {
                 let index: u64 = 0;
                 while index < (*conditions).len() {
-                    (*conditions)[index] = rewrite_impl_condition((*conditions)[index], rewriter);
+                    (*conditions)[index] = rewriter.rewrite_impl_condition((*conditions)[index]);
                     index += 1;
                 }
             };
         },
     };
-    rewriter.item(node)
 }
 
-pub fn rewrite_literal_ref(node: LiteralRef&, rewriter: AstRewriter&) {
+pub fn rewrite_literal(node: Literal&, rewriter: AstRewriter&) {
     match node {
         Integer(value) => {
-            *value = rewrite_int_literal(*value, rewriter);
+            *value = rewriter.rewrite_int_literal(*value);
         },
         Float(value) => {
-            *value = rewrite_float_literal(*value, rewriter);
+            *value = rewriter.rewrite_float_literal(*value);
         },
         Character(value) => {
-            *value = rewrite_char_literal(*value, rewriter);
+            *value = rewriter.rewrite_char_literal(*value);
         },
         StringLiteral(value) => {
-            *value = rewrite_str_literal(*value, rewriter);
+            *value = rewriter.rewrite_str_literal(*value);
         },
         Boolean(value) => {
-            *value = rewrite_bool_literal(*value, rewriter);
+            *value = rewriter.rewrite_bool_literal(*value);
         },
     };
 }
@@ -1929,12 +1951,12 @@ pub fn rewrite_literal_ref(node: LiteralRef&, rewriter: AstRewriter&) {
 pub fn rewrite_range_bounds(node: RangeBounds&, rewriter: AstRewriter&) {
     match node {
         Integer(lower, upper) => {
-            *lower = rewrite_int_literal(*lower, rewriter);
-            *upper = rewrite_int_literal(*upper, rewriter);
+            *lower = rewriter.rewrite_int_literal(*lower);
+            *upper = rewriter.rewrite_int_literal(*upper);
         },
         Character(lower, upper) => {
-            *lower = rewrite_char_literal(*lower, rewriter);
-            *upper = rewrite_char_literal(*upper, rewriter);
+            *lower = rewriter.rewrite_char_literal(*lower);
+            *upper = rewriter.rewrite_char_literal(*upper);
         },
     };
 }
@@ -1942,10 +1964,10 @@ pub fn rewrite_range_bounds(node: RangeBounds&, rewriter: AstRewriter&) {
 pub fn rewrite_condition(node: Condition&, rewriter: AstRewriter&) {
     match node {
         Expression(value) => {
-            *value = rewrite_expr(*value, rewriter);
+            *value = rewriter.rewrite_expr(*value);
         },
         Let(value) => {
-            *value = rewrite_let_condition(*value, rewriter);
+            *value = rewriter.rewrite_let_condition(*value);
         },
     };
 }
@@ -1953,10 +1975,10 @@ pub fn rewrite_condition(node: Condition&, rewriter: AstRewriter&) {
 pub fn rewrite_generic_argument(node: GenericArgument&, rewriter: AstRewriter&) {
     match node {
         Type(value) => {
-            *value = rewrite_type_syntax(*value, rewriter);
+            *value = rewriter.rewrite_type_syntax(*value);
         },
         Constant(value) => {
-            *value = rewrite_const_expr(*value, rewriter);
+            *value = rewriter.rewrite_const_expr(*value);
         },
     };
 }
@@ -1964,10 +1986,10 @@ pub fn rewrite_generic_argument(node: GenericArgument&, rewriter: AstRewriter&) 
 pub fn rewrite_generic_param(node: GenericParam&, rewriter: AstRewriter&) {
     match node {
         Type(value) => {
-            *value = rewrite_type_generic_param(*value, rewriter);
+            *value = rewriter.rewrite_type_generic_param(*value);
         },
         Constant(value) => {
-            *value = rewrite_const_generic_param(*value, rewriter);
+            *value = rewriter.rewrite_const_generic_param(*value);
         },
     };
 }
@@ -1975,10 +1997,10 @@ pub fn rewrite_generic_param(node: GenericParam&, rewriter: AstRewriter&) {
 pub fn rewrite_parameter(node: Parameter&, rewriter: AstRewriter&) {
     match node {
         Named(value) => {
-            *value = rewrite_var_info(*value, rewriter);
+            *value = rewriter.rewrite_var_info(*value);
         },
         Pattern(value) => {
-            *value = rewrite_pattern_param(*value, rewriter);
+            *value = rewriter.rewrite_pattern_param(*value);
         },
     };
 }
@@ -1986,10 +2008,10 @@ pub fn rewrite_parameter(node: Parameter&, rewriter: AstRewriter&) {
 pub fn rewrite_trait_member(node: TraitMember&, rewriter: AstRewriter&) {
     match node {
         Declaration(value) => {
-            *value = rewrite_method_decl(*value, rewriter);
+            *value = rewriter.rewrite_method_decl(*value);
         },
         Definition(value) => {
-            *value = rewrite_method_def(*value, rewriter);
+            *value = rewriter.rewrite_method_def(*value);
         },
     };
 }
@@ -2002,7 +2024,7 @@ pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&
             {
                 let index: u64 = 0;
                 while index < (*values).len() {
-                    (*values)[index] = rewrite_pattern((*values)[index], rewriter);
+                    (*values)[index] = rewriter.rewrite_pattern((*values)[index]);
                     index += 1;
                 }
             };
@@ -2011,7 +2033,7 @@ pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&
             {
                 let index: u64 = 0;
                 while index < (*values).len() {
-                    (*values)[index] = rewrite_field_pattern((*values)[index], rewriter);
+                    (*values)[index] = rewriter.rewrite_field_pattern((*values)[index]);
                     index += 1;
                 }
             };

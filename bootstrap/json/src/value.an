@@ -1,0 +1,145 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.convert import From;
+from std.core.ops import Index;
+from std.core.iter import Iterator;
+
+pub enum Number {
+    Signed { value: i64 },
+    Unsigned { value: u64 },
+    Float { value: f64 },
+}
+
+// Strings and containers own their storage; copies retain the same resource aliases.
+pub enum Value {
+    Null,
+    Boolean { value: bool },
+    Number { value: Number },
+    String { value: String },
+    Array { values: Vec<Value> },
+    Object { value: Object },
+}
+
+struct Member { key: String, value: Value }
+
+// Members retain insertion order. Lookup scans the member list.
+pub struct Object { members: Vec<Member> }
+
+impl Object {
+    static pub fn new() -> Self { Self(members=Vec<Member>.new()) }
+    pub fn len() -> u64 { self.members.len() }
+    pub fn get(key: str) -> Option<Value&> {
+        let i: u64 = 0;
+        while i < self.members.len() {
+            if self.members[i].key.as_str() == key {
+                return Option<Value&>.Some(&self.members[i].value);
+            }
+            i += 1;
+        }
+        Option<Value&>.None
+    }
+    // The caller receives the previous value and owns its cleanup responsibility.
+    pub fn insert(key: str, value: Value) -> Option<Value> {
+        let i: u64 = 0;
+        while i < self.members.len() {
+            if self.members[i].key.as_str() == key {
+                let previous = self.members[i].value;
+                self.members[i].value = value;
+                return Option<Value>.Some(previous);
+            }
+            i += 1;
+        }
+        self.members.push(Member(key=String.from(&key), value=value));
+        Option<Value>.None
+    }
+    pub fn iter() -> ObjectIter { ObjectIter(object=self, index=0u64) }
+}
+
+pub struct ObjectIter { object: Object&, index: u64 }
+impl Iterator<(str, Value&)> for ObjectIter {
+    pub fn next() -> Option<(str, Value&)> {
+        if self.index >= self.object.members.len() { return Option<(str, Value&)>.None; }
+        let member = &self.object.members[self.index];
+        self.index += 1;
+        Option<(str, Value&)>.Some((member.key.as_str(), &member.value))
+    }
+}
+
+impl Drop for Object {
+    pub fn drop() {
+        let i: u64 = 0;
+        while i < self.members.len() {
+            self.members[i].key.drop();
+            self.members[i].value.drop();
+            i += 1;
+        }
+        self.members.drop();
+    }
+}
+
+impl Clone for Object {
+    pub fn clone() -> Self {
+        let result = Self.new();
+        let i: u64 = 0;
+        while i < self.members.len() {
+            result.insert(self.members[i].key.as_str(), self.members[i].value.clone());
+            i += 1;
+        }
+        result
+    }
+}
+
+impl Value {
+    static pub fn string(text: str) -> Self { Self.String(String.from(&text)) }
+    static pub fn array() -> Self { Self.Array(Vec<Value>.new()) }
+    static pub fn object() -> Self { Self.Object(Object.new()) }
+    pub fn as_string() -> Option<str> {
+        match self { String(value) => Option<str>.Some(value.as_str()), _ => Option<str>.None }
+    }
+    pub fn as_array() -> Option<Vec<Value>&> {
+        match self { Array(values) => Option<Vec<Value>&>.Some(values), _ => Option<Vec<Value>&>.None }
+    }
+    pub fn as_object() -> Option<Object&> {
+        match self { Object(value) => Option<Object&>.Some(value), _ => Option<Object&>.None }
+    }
+    pub fn as_number() -> Option<Number&> {
+        match self { Number(value) => Option<Number&>.Some(value), _ => Option<Number&>.None }
+    }
+}
+
+impl Drop for Value {
+    pub fn drop() {
+        match self {
+            String(value) => value.drop(),
+            Array(values) => {
+                let i: u64 = 0;
+                while i < values.len() { values[i].drop(); i += 1; }
+                values.drop();
+            },
+            Object(value) => value.drop(),
+            _ => {},
+        };
+        *self = Value.Null;
+    }
+}
+
+impl Clone for Value {
+    pub fn clone() -> Self {
+        match self {
+            Null => Self.Null,
+            Boolean(value) => Self.Boolean(*value),
+            Number(value) => Self.Number(*value),
+            String(value) => Self.String(value.clone()),
+            Object(value) => Self.Object(value.clone()),
+            Array(values) => {
+                let result = Vec<Value>.with_capacity(values.len());
+                let i: u64 = 0;
+                while i < values.len() { result.push(values[i].clone()); i += 1; }
+                Self.Array(result)
+            },
+        }
+    }
+}

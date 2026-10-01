@@ -1,0 +1,41 @@
+from json.parse import parse;
+from json.write import stringify;
+from std.core.drop import Drop;
+from std.num.f64 import to_bits;
+
+fn unsigned(text: str, expected: u64) {
+    let value = parse(text).unwrap(); defer value.drop();
+    match value.as_number().unwrap() {
+        Unsigned(n) => { assert *n == expected: "unsigned value"; },
+        _ => @panic("unsigned kind"),
+    }
+}
+fn signed(text: str, expected: i64) {
+    let value = parse(text).unwrap(); defer value.drop();
+    match value.as_number().unwrap() {
+        Signed(n) => { assert *n == expected: "signed value"; },
+        _ => @panic("signed kind"),
+    }
+}
+fn floating(text: str, expected: u64) {
+    let value = parse(text).unwrap(); defer value.drop();
+    match value.as_number().unwrap() {
+        Float(n) => { assert to_bits(*n) == expected: "float value"; },
+        _ => @panic("float kind"),
+    };
+    let output = stringify(value).unwrap(); defer output.drop();
+    let copy = parse(output.as_str()).unwrap(); defer copy.drop();
+    match copy.as_number().unwrap() {
+        Float(n) => { assert to_bits(*n) == expected: "typed float roundtrip"; },
+        _ => @panic("float kind lost"),
+    }
+}
+fn main() {
+    unsigned("0", 0u64); unsigned("18446744073709551615", 18446744073709551615u64);
+    signed("-0", 0i64); signed("-1", -1i64);
+    signed("-9223372036854775808", -9223372036854775807i64 - 1i64);
+    floating("0.0", 0u64); floating("-0.0", 0x8000000000000000u64);
+    floating("5e-324", 1u64); floating("1.7976931348623157e308", 0x7fefffffffffffffu64);
+    floating("1.2345678901234567", to_bits(1.2345678901234567_f64));
+    floating("1E+2", to_bits(100.0_f64));
+}

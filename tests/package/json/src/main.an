@@ -1,0 +1,16 @@
+from json.parse import parse;
+from json.write import Writer, stringify;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+
+fn main() {
+    let writer = Writer.new(); defer writer.drop();
+    writer.begin_object(); writer.key("compiler"); writer.begin_array();
+    writer.write_string("标识符"); writer.write_f64(1.2345678901234567_f64);
+    writer.end_array(); writer.end_object();
+    let text = writer.finish().unwrap(); defer text.drop();
+    let value = parse(text.as_str()).unwrap();
+    let cloned = value.clone(); value.drop(); defer cloned.drop();
+    let encoded = stringify(&cloned).unwrap(); defer encoded.drop();
+    assert encoded.as_str() == text.as_str(): "JSON package roundtrip";
+}

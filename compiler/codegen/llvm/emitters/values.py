@@ -64,9 +64,7 @@ class ValueEmitter:
     def unary(self, op: UnaryOperator, operand: LLValue) -> LLValue:
         if op == UnaryOperator.Neg:
             if isinstance(operand.ir_val.type, ir.types._BaseFloatType):  # type: ignore
-                value = self.__builder.fsub(
-                    ir.Constant(operand.ir_val.type, 0.0), operand.ir_val  # type: ignore
-                )  # type: ignore
+                value = self.__builder.fneg(operand.ir_val)  # type: ignore
             else:
                 value = self.__builder.neg(operand.ir_val)  # type: ignore
         elif op == UnaryOperator.LogicalNot:

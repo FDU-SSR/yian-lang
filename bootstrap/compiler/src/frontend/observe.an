@@ -1,9 +1,9 @@
 from compiler.frontend.lex.token import Token;
-from compiler.frontend.json import append_string, append_span, append_u64;
+from compiler.frontend.json import append_span;
+from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
-from std.core.string import String;
 from std.core.vec import Vec;
 
 fn token_kind(token: Token&) -> str {
@@ -43,39 +43,37 @@ pub fn parse_code(message: str) -> str {
     return "E299";
 }
 
-fn append_token(output: String&, token: Token&) {
-    output.push_str("{\"kind\":");
-    append_string(output, token_kind(token));
-    output.push_str(",\"value\":");
+fn append_token(output: Writer&, token: Token&) {
+    output.begin_object(); output.key("kind");
+    output.write_string(token_kind(token));
+    output.key("value");
     match token.kind() {
         Integer(_, _) => {
             let value = token.integer_value().to_string_radix(10u64);
-            append_string(output, value.as_str());
+            output.write_string(value.as_str());
             value.drop();
         },
         Float(_, _) => {
             let value = token.float_value().to_string();
-            append_string(output, value.as_str());
+            output.write_string(value.as_str());
             value.drop();
         },
-        _ => append_string(output, token.value()),
+        _ => output.write_string(token.value()),
     }
-    output.push_str(",\"suffix\":");
-    append_string(output, token.suffix());
-    output.push(',');
+    output.key("suffix");
+    output.write_string(token.suffix());
     append_span(output, token.span);
-    output.push('}');
+    output.end_object();
 }
 
-pub fn append_token_file(output: String&, path: str, tokens: Vec<Token>&) {
-    output.push_str("{\"path\":");
-    append_string(output, path);
-    output.push_str(",\"tokens\":[");
+pub fn append_token_file(output: Writer&, path: str, tokens: Vec<Token>&) {
+    output.begin_object(); output.key("path");
+    output.write_string(path);
+    output.key("tokens"); output.begin_array();
     let index: u64 = 0u64;
     while index < tokens.len() {
-        if index != 0u64 { output.push(','); }
         append_token(output, &tokens[index]);
         index += 1u64;
     }
-    output.push_str("]}");
+    output.end_array(); output.end_object();
 }

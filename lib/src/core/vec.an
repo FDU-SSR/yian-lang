@@ -18,6 +18,14 @@ impl<T> Vec<T> {
         Self.with_capacity(0)
     }
 
+    // Return the current vector and leave an empty vector in its place.
+    // The backing buffer is not copied or freed; existing aliases remain unchanged.
+    pub fn take() -> Self {
+        let result = *self;
+        *self = Self.new();
+        result
+    }
+
     // Create a Vec with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
         Self(

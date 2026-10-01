@@ -1,35 +1,35 @@
-from compiler.frontend.ast.node import Pattern, PatternData, LiteralRef, RangeBounds, PatternArguments, FieldPattern, FieldPatternData, Identifier, TypeSyntax;
+from compiler.frontend.ast.node import Pattern, PatternData, Literal, RangeBounds, PatternArguments, FieldPattern, FieldPatternData, Identifier, TypeSyntax;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
 from compiler.frontend.parse.literal import parse_literal;
-from compiler.frontend.parse.state import Parser, take_vec;
+from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.type import parse_type;
 from std.core.drop import Drop;
 from std.core.ops import Index;
 from std.core.option import Option;
 from std.core.vec import Vec;
 
-fn pattern_literal(parser: Parser&) -> Option<LiteralRef> {
+fn pattern_literal(parser: Parser&) -> Option<Literal> {
     if parser.at_punct(PunctuatorKind.Minus) {
         let minus = parser.take_punct(PunctuatorKind.Minus);
         if !parser.peek().is_integer() {
             parser.error("Expected integer literal after '-' in pattern", minus);
-            return Option<LiteralRef>.None;
+            return Option<Literal>.None;
         }
         let literal = parse_literal(parser)?;
         match &literal {
             Integer(value) => { value.data.negative = true; value.span = minus + value.span; },
             _ => {},
         }
-        return Option<LiteralRef>.Some(val=literal);
+        return Option<Literal>.Some(val=literal);
     }
     let literal = parse_literal(parser)?;
     match literal {
-        Float(_) => { parser.error("Expected literal in pattern", literal.span()); Option<LiteralRef>.None },
-        _ => Option<LiteralRef>.Some(val=literal),
+        Float(_) => { parser.error("Expected literal in pattern", literal.span()); Option<Literal>.None },
+        _ => Option<Literal>.Some(val=literal),
     }
 }
 
-fn range_bounds(parser: Parser&, lower: LiteralRef, upper: LiteralRef) -> Option<RangeBounds> {
+fn range_bounds(parser: Parser&, lower: Literal, upper: Literal) -> Option<RangeBounds> {
     match lower {
         Integer(a) => match upper { Integer(b) => return Option<RangeBounds>.Some(val=RangeBounds.Integer(lower=a, upper=b)), _ => {} },
         Character(a) => match upper { Character(b) => return Option<RangeBounds>.Some(val=RangeBounds.Character(lower=a, upper=b)), _ => {} },
@@ -87,7 +87,7 @@ fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
         parser.take_punct(PunctuatorKind.RBracket);
         parser.ready()?;
         return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
-            PatternData.SequencePattern(prefix=take_vec<Pattern&>(&prefix), suffix=take_vec<Pattern&>(&suffix), rest=rest), span));
+            PatternData.SequencePattern(prefix=prefix.take(), suffix=suffix.take(), rest=rest), span));
     }
     if parser.at_punct(PunctuatorKind.LParen) {
         parser.advance();
@@ -107,7 +107,7 @@ fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
         }
         parser.take_punct(PunctuatorKind.RParen);
         parser.ready()?;
-        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.TuplePattern(elements=take_vec<Pattern&>(&members)), span));
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.TuplePattern(elements=members.take()), span));
     }
     if token.is_identifier() || parser.keyword_token() { return named_pattern(parser); }
     parser.error("Unexpected token in pattern", span);
@@ -169,7 +169,7 @@ fn named_pattern(parser: Parser&) -> Option<Pattern&> {
     }
     parser.take_punct(PunctuatorKind.RParen);
     parser.ready()?;
-    let arguments = if has_named { PatternArguments.Named(values=take_vec<FieldPattern&>(&named)) } elif rest { PatternArguments.None } else { PatternArguments.Positional(values=take_vec<Pattern&>(&positional)) };
+    let arguments = if has_named { PatternArguments.Named(values=named.take()) } elif rest { PatternArguments.None } else { PatternArguments.Positional(values=positional.take()) };
     Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
         PatternData.ConstructPattern(name=name, qualifier=qualifier, arguments=arguments, rest=rest), name.span))
 }
@@ -190,7 +190,7 @@ fn pattern_or(parser: Parser&) -> Option<Pattern&> {
     alternatives.push(first);
     while parser.at_punct(PunctuatorKind.Pipe) { parser.advance(); alternatives.push(pattern_at(parser)?); }
     let span = first.span + alternatives[alternatives.len() - 1].span;
-    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=take_vec<Pattern&>(&alternatives)), span))
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=alternatives.take()), span))
 }
 pub fn parse_binding_pattern(parser: Parser&) -> Option<Pattern&> { pattern_or(parser) }
 pub fn parse_match_pattern(parser: Parser&) -> Option<Pattern&> {
@@ -211,5 +211,5 @@ pub fn parse_match_pattern(parser: Parser&) -> Option<Pattern&> {
         alternatives.push(next);
     }
     let span = first.span + alternatives[alternatives.len() - 1].span;
-    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=take_vec<Pattern&>(&alternatives)), span))
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=alternatives.take()), span))
 }

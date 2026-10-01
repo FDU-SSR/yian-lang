@@ -1,0 +1,15 @@
+from json.parse import parse;
+from json.write import stringify;
+from std.core.drop import Drop;
+fn main() {
+    let value = parse("\"中文\\u0000\\b\\f\\n\\r\\t\\\"\\\\\\/\\ud83d\\ude00\"").unwrap();
+    defer value.drop();
+    assert *value.as_string().unwrap() == "中文\0\x08\x0c\n\r\t\"\\/😀": "unicode and escapes";
+    let output = stringify(value).unwrap(); defer output.drop();
+    let copy = parse(output.as_str()).unwrap(); defer copy.drop();
+    assert *copy.as_string().unwrap() == *value.as_string().unwrap(): "unicode roundtrip";
+    match parse("\"\\ud800\"") { Err(_) => {}, Ok(value) => { value.drop(); @panic("lone high surrogate"); } };
+    match parse("\"\\udc00\"") { Err(_) => {}, Ok(value) => { value.drop(); @panic("lone low surrogate"); } };
+    match parse("\"\\ud800\\u0041\"") { Err(_) => {}, Ok(value) => { value.drop(); @panic("invalid pair"); } };
+    match parse("\"\\u12xz\"") { Err(_) => {}, Ok(value) => { value.drop(); @panic("invalid hex"); } }
+}

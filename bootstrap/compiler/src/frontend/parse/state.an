@@ -10,13 +10,6 @@ from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-// Transfer a container's cleanup responsibility and leave an empty source.
-pub fn take_vec<T>(values: Vec<T>&) -> Vec<T> {
-    let result = *values;
-    *values = Vec<T>.new();
-    return result;
-}
-
 pub struct ParseError { message: String, span: Span }
 impl ParseError {
     pub fn message() -> str { self.message.as_str() }

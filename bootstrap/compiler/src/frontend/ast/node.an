@@ -7,7 +7,7 @@ from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-// References between nodes are non-owning; their arena owns every allocation.
+// AST nodes pair syntax data with source spans; node references are non-owning, and the arena owns allocations.
 pub struct Node<D> { pub data: D, pub span: Span }
 impl<D> Drop for Node<D> if D: Drop {
     pub fn drop() { self.data.drop(); }
@@ -45,9 +45,11 @@ pub typedef ConstExpr = Node<ConstExprData>;
 pub typedef Pattern = Node<PatternData>;
 pub typedef Item = Node<ItemData>;
 
+// Literal category tags without values or source spans.
 pub enum LiteralKind { Integer, Float, Character, StringLiteral, Boolean }
 
-pub enum LiteralRef {
+// A union of literal node references shared by literal expressions and patterns.
+pub enum Literal {
     Integer { value: IntLiteral& },
     Float { value: FloatLiteral& },
     Character { value: CharLiteral& },
@@ -55,43 +57,50 @@ pub enum LiteralRef {
     Boolean { value: BoolLiteral& },
 }
 
+// Range pattern endpoints: a pair of integer or character literals, not a range expression.
 pub enum RangeBounds {
     Integer { lower: IntLiteral&, upper: IntLiteral& },
     Character { lower: CharLiteral&, upper: CharLiteral& },
 }
 
+// An if / while condition: an expression or a let pattern-matching condition.
 pub enum Condition {
     Expression { value: Expr& },
     Let { value: LetCondition& },
 }
 
+// A generic instantiation argument: type syntax or a constant expression.
 pub enum GenericArgument {
     Type { value: TypeSyntax& },
     Constant { value: ConstExpr& },
 }
 
+// A generic declaration parameter: a type parameter or a constant parameter.
 pub enum GenericParam {
     Type { value: TypeGenericParam& },
     Constant { value: ConstGenericParam& },
 }
 
+// A function or method parameter: a named parameter or a typed destructuring pattern.
 pub enum Parameter {
     Named { value: VarInfo& },
     Pattern { value: PatternParam& },
 }
 
+// A trait method member: a declaration without a body or a definition with a default body.
 pub enum TraitMember {
     Declaration { value: MethodDecl& },
     Definition { value: MethodDef& },
 }
 
+// Constructor pattern arguments: none, positional patterns, or named field patterns.
 pub enum PatternArguments {
     None,
     Positional { values: Vec<Pattern&> },
     Named { values: Vec<FieldPattern&> },
 }
 
-impl LiteralRef {
+impl Literal {
     pub fn kind() -> LiteralKind {
         match self {
             Integer => LiteralKind.Integer, Float => LiteralKind.Float,
@@ -187,9 +196,10 @@ impl Drop for CaptureItemData { pub fn drop() {} }
 pub struct FieldPatternData { pub name: Identifier&, pub pattern: Pattern& }
 impl Drop for FieldPatternData { pub fn drop() {} }
 
+// Expression and statement syntax data; child expressions reference only Expr nodes.
 pub enum ExprData {
     Identifier { name: Identifier& },
-    Literal { literal: LiteralRef },
+    Literal { literal: Literal },
     Binary { op: BinaryOperator, left: Expr&, right: Expr& },
     Unary { op: UnaryOperator, operand: Expr& },
     TryExpr { operand: Expr& },
@@ -263,6 +273,7 @@ impl Drop for ExprData {
     }
 }
 
+// Type syntax in source code, not a semantic type produced by type checking.
 pub enum TypeData {
     IntType { signed: bool, width: u64 },
     FloatType { width: u64 },
@@ -309,6 +320,7 @@ impl Drop for TypeData {
     }
 }
 
+// Constant expressions in type syntax: integer literals, constant parameters, and arithmetic combinations.
 pub enum ConstExprData {
     LiteralConstExpr { literal: IntLiteral& },
     GenericConstExpr { name: Identifier& },
@@ -327,9 +339,10 @@ impl Drop for ConstExprData {
     }
 }
 
+// Pattern syntax for matching and destructuring, represented separately from expressions.
 pub enum PatternData {
     WildcardPattern,
-    LiteralPattern { literal: LiteralRef },
+    LiteralPattern { literal: Literal },
     RangePattern { bounds: RangeBounds },
     NamePattern { name: Identifier& },
     BindPattern { name: Identifier&, inner: Pattern& },
@@ -355,6 +368,7 @@ impl Drop for PatternData {
     }
 }
 
+// File-level declaration syntax, including imports, functions, types, traits, and impls.
 pub enum ItemData {
     Import { paths: Vec<Identifier&>, target: Identifier&, alias: Option<Identifier&>, end: Option<Position> },
     Alias { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, target: TypeSyntax& },

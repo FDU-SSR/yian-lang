@@ -1,0 +1,239 @@
+from std.core.str import CharIter;
+from std.core.iter import Iterator, Peekable;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.drop import Drop;
+from json.value import Value, Number;
+from json.error import ParseError, ParseErrorKind;
+
+pub struct ParseOptions { pub max_depth: u64 }
+impl ParseOptions {
+    static pub fn defaults() -> Self { Self(max_depth=128u64) }
+}
+
+struct Parser { chars: Peekable<CharIter, char>, row: u64, column: u64, max_depth: u64 }
+
+fn digit(c: char) -> bool { u32(c) >= u32('0') && u32(c) <= u32('9') }
+
+impl Parser {
+    fn error(kind: ParseErrorKind) -> ParseError {
+        ParseError(kind=kind, row=self.row, column=self.column)
+    }
+    fn peek() -> Option<char> {
+        match self.chars.peek() { Some(c) => Option<char>.Some(*c), None => Option<char>.None }
+    }
+    fn next() -> Option<char> {
+        let result = self.chars.next();
+        if let Some(c) = result {
+            if c == '\n' { self.row += 1; self.column = 0; } else { self.column += 1; }
+        }
+        result
+    }
+    fn whitespace() {
+        loop {
+            match self.peek() {
+                Some(c) if c == ' ' || c == '\t' || c == '\r' || c == '\n' => { self.next(); },
+                _ => { break; },
+            }
+        }
+    }
+    fn expect(c: char) -> Result<bool, ParseError> {
+        match self.peek() {
+            Some(found) if found == c => { self.next(); Result<bool, ParseError>.Ok(true) },
+            Some(_) => Result<bool, ParseError>.Err(self.error(ParseErrorKind.UnexpectedToken)),
+            _ => Result<bool, ParseError>.Err(self.error(ParseErrorKind.UnexpectedEnd)),
+        }
+    }
+    fn keyword(text: str) -> Result<bool, ParseError> {
+        let chars = text.chars();
+        while let Some(c) = chars.next() { self.expect(c)?; }
+        Result<bool, ParseError>.Ok(true)
+    }
+    fn hex4() -> Result<u32, ParseError> {
+        let value: u32 = 0;
+        let i: u64 = 0;
+        while i < 4 {
+            let c = match self.next() {
+                Some(c) => c,
+                None => { return Result<u32, ParseError>.Err(self.error(ParseErrorKind.UnexpectedEnd)); },
+            };
+            let n: u32 = 0;
+            if u32(c) >= u32('0') && u32(c) <= u32('9') { n = u32(c) - u32('0'); }
+            elif u32(c) >= u32('a') && u32(c) <= u32('f') { n = u32(c) - u32('a') + 10; }
+            elif u32(c) >= u32('A') && u32(c) <= u32('F') { n = u32(c) - u32('A') + 10; }
+            else { return Result<u32, ParseError>.Err(self.error(ParseErrorKind.InvalidUnicode)); }
+            value = value * 16 + n;
+            i += 1;
+        }
+        Result<u32, ParseError>.Ok(value)
+    }
+    fn string() -> Result<String, ParseError> {
+        self.expect('"')?;
+        let text = String.new();
+        defer text.drop();
+        loop {
+            let c = match self.next() {
+                Some(c) => c,
+                None => { return Result<String, ParseError>.Err(self.error(ParseErrorKind.UnexpectedEnd)); },
+            };
+            if c == '"' { let result = text; text = String.new(); return Result<String, ParseError>.Ok(result); }
+            if u32(c) < 32 { return Result<String, ParseError>.Err(self.error(ParseErrorKind.UnexpectedToken)); }
+            if c != '\\' { text.push(c); continue; }
+            let escaped = match self.next() {
+                Some(c) => c,
+                None => { return Result<String, ParseError>.Err(self.error(ParseErrorKind.UnexpectedEnd)); },
+            };
+            match escaped {
+                '"' => text.push('"'), '\\' => text.push('\\'), '/' => text.push('/'),
+                'b' => text.push(char(8u32)), 'f' => text.push(char(12u32)),
+                'n' => text.push('\n'), 'r' => text.push('\r'), 't' => text.push('\t'),
+                'u' => {
+                    let code = self.hex4()?;
+                    if code >= 0xd800 && code <= 0xdbff {
+                        self.expect('\\')?;
+                        self.expect('u')?;
+                        let low = self.hex4()?;
+                        if low < 0xdc00 || low > 0xdfff {
+                            return Result<String, ParseError>.Err(self.error(ParseErrorKind.InvalidUnicode));
+                        }
+                        code = 0x10000 + ((code - 0xd800) << 10) + low - 0xdc00;
+                    } elif code >= 0xdc00 && code <= 0xdfff {
+                        return Result<String, ParseError>.Err(self.error(ParseErrorKind.InvalidUnicode));
+                    }
+                    text.push(char(code));
+                },
+                _ => { return Result<String, ParseError>.Err(self.error(ParseErrorKind.InvalidEscape)); },
+            }
+        }
+    }
+    fn digits(text: String&, nonzero: bool&) {
+        while let Some(c) = self.peek() {
+            if !digit(c) { break; }
+            self.next(); text.push(c);
+            if c != '0' { *nonzero = true; }
+        }
+    }
+    fn number() -> Result<Value, ParseError> {
+        let position = self.error(ParseErrorKind.NumberOutOfRange);
+        let text = String.new();
+        defer text.drop();
+        let negative = false;
+        if let Some('-') = self.peek() { negative = true; self.next(); }
+        let nonzero = false;
+        match self.peek() {
+            Some('0') => { self.next(); text.push('0'); },
+            Some(c) if u32(c) >= u32('1') && u32(c) <= u32('9') => self.digits(&text, &nonzero),
+            _ => { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.InvalidNumber)); },
+        };
+        if let Some(c) = self.peek() {
+            if digit(c) { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.InvalidNumber)); }
+        }
+        let floating = false;
+        if let Some('.') = self.peek() {
+            floating = true; self.next(); text.push('.');
+            match self.peek() {
+                Some(c) if digit(c) => self.digits(&text, &nonzero),
+                _ => { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.InvalidNumber)); },
+            }
+        }
+        if let Some(c) = self.peek() {
+            if c == 'e' || c == 'E' {
+                floating = true; self.next(); text.push('e');
+                if let Some(sign) = self.peek() {
+                    if sign == '+' || sign == '-' { self.next(); text.push(sign); }
+                }
+                let ignored = false;
+                match self.peek() {
+                    Some(c) if digit(c) => self.digits(&text, &ignored),
+                    _ => { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.InvalidNumber)); },
+                }
+            }
+        }
+        if floating {
+            let value = match f64.parse(text.as_str()) {
+                Ok(value) => value,
+                Err(_) => { return Result<Value, ParseError>.Err(position); },
+            };
+            if nonzero && value == 0.0 { return Result<Value, ParseError>.Err(position); }
+            if negative { value = -value; }
+            return Result<Value, ParseError>.Ok(Value.Number(Number.Float(value)));
+        }
+        let magnitude = match u64.parse(text.as_str()) {
+            Ok(value) => value,
+            Err(_) => { return Result<Value, ParseError>.Err(position); },
+        };
+        if negative {
+            if magnitude > 9223372036854775808u64 { return Result<Value, ParseError>.Err(position); }
+            return Result<Value, ParseError>.Ok(Value.Number(Number.Signed(i64(0u64 - magnitude))));
+        }
+        Result<Value, ParseError>.Ok(Value.Number(Number.Unsigned(magnitude)))
+    }
+    fn array(depth: u64) -> Result<Value, ParseError> {
+        self.next(); self.whitespace();
+        let result = Value.array();
+        defer result.drop();
+        let values = result.as_array().unwrap();
+        if let Some(']') = self.peek() { self.next(); }
+        else {
+            loop {
+                values.push(self.value(depth + 1)?);
+                self.whitespace();
+                if let Some(']') = self.peek() { self.next(); break; }
+                self.expect(',')?; self.whitespace();
+            }
+        }
+        let output = result; result = Value.Null;
+        Result<Value, ParseError>.Ok(output)
+    }
+    fn object(depth: u64) -> Result<Value, ParseError> {
+        self.next(); self.whitespace();
+        let result = Value.object();
+        defer result.drop();
+        let object = result.as_object().unwrap();
+        if let Some('}') = self.peek() { self.next(); }
+        else {
+            loop {
+                let key = self.string()?;
+                defer key.drop();
+                self.whitespace(); self.expect(':')?; self.whitespace();
+                let value = self.value(depth + 1)?;
+                if let Some(previous) = object.insert(key.as_str(), value) { previous.drop(); }
+                self.whitespace();
+                if let Some('}') = self.peek() { self.next(); break; }
+                self.expect(',')?; self.whitespace();
+            }
+        }
+        let output = result; result = Value.Null;
+        Result<Value, ParseError>.Ok(output)
+    }
+    fn value(depth: u64) -> Result<Value, ParseError> {
+        self.whitespace();
+        match self.peek() {
+            Some('n') => { self.keyword("null")?; Result<Value, ParseError>.Ok(Value.Null) },
+            Some('t') => { self.keyword("true")?; Result<Value, ParseError>.Ok(Value.Boolean(true)) },
+            Some('f') => { self.keyword("false")?; Result<Value, ParseError>.Ok(Value.Boolean(false)) },
+            Some('"') => Result<Value, ParseError>.Ok(Value.String(self.string()?)),
+            Some('[') => {
+                if depth >= self.max_depth { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.DepthLimit)); }
+                self.array(depth)
+            },
+            Some('{') => {
+                if depth >= self.max_depth { return Result<Value, ParseError>.Err(self.error(ParseErrorKind.DepthLimit)); }
+                self.object(depth)
+            },
+            Some(c) if c == '-' || digit(c) => self.number(),
+            Some(_) => Result<Value, ParseError>.Err(self.error(ParseErrorKind.UnexpectedToken)),
+            _ => Result<Value, ParseError>.Err(self.error(ParseErrorKind.UnexpectedEnd)),
+        }
+    }
+}
+
+pub fn parse_with_options(text: str, options: ParseOptions) -> Result<Value, ParseError> {
+    let parser = Parser(chars=Peekable<CharIter, char>.new(text.chars()), row=0u64, column=0u64, max_depth=options.max_depth);
+    let value = parser.value(0)?;
+    parser.whitespace();
+    if parser.peek().is_some() { value.drop(); return Result<Value, ParseError>.Err(parser.error(ParseErrorKind.TrailingInput)); }
+    Result<Value, ParseError>.Ok(value)
+}
+pub fn parse(text: str) -> Result<Value, ParseError> { parse_with_options(text, ParseOptions.defaults()) }
