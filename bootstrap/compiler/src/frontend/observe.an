@@ -1,5 +1,4 @@
 from compiler.frontend.lex.token import Token;
-from compiler.frontend.json import append_span;
 from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
@@ -62,7 +61,7 @@ fn append_token(output: Writer&, token: Token&) {
     }
     output.key("suffix");
     output.write_string(token.suffix());
-    append_span(output, token.span);
+    token.span.write_json(output);
     output.end_object();
 }
 

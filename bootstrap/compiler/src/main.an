@@ -6,7 +6,6 @@ from std.core.vec import Vec;
 from compiler.frontend.source import SourceManager, collect_sources;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import drop_tokens;
-from compiler.frontend.json import append_span;
 from json.write import Writer;
 from compiler.frontend.observe import append_token_file, lex_code, parse_code;
 from compiler.frontend.ast.format import AstFormatter;
@@ -106,7 +105,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                 output.key("code"); output.write_string(lex_code(problem.message()));
                 output.key("severity"); output.write_string("error");
                 output.key("message"); output.write_string(problem.message());
-                append_span(&output, problem.span());
+                problem.span().write_json(&output);
                 diagnostic_end(&output);
                 problem.drop();
                 return false;
@@ -123,7 +122,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                     output.key("code"); output.write_string(parse_code(problem.message()));
                     output.key("severity"); output.write_string("error");
                     output.key("message"); output.write_string(problem.message());
-                    append_span(&output, problem.span());
+                    problem.span().write_json(&output);
                     diagnostic_end(&output);
                     problem.drop();
                     drop_tokens(&tokens);

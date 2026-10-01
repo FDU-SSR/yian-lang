@@ -1,6 +1,5 @@
 from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
 from compiler.frontend.source import Span;
-from compiler.frontend.json import append_span;
 from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
@@ -12,7 +11,7 @@ impl AstFormatter {
     fn node_start(tag: str, span: Span) {
         self.output.begin_object();
         self.output.key("tag"); self.output.write_string(tag);
-        append_span(self.output, span);
+        span.write_json(self.output);
         self.output.key("fields"); self.output.begin_object();
     }
     fn node_end() { self.output.end_object(); self.output.end_object(); }

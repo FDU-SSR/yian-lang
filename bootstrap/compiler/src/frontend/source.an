@@ -6,6 +6,7 @@ from std.core.ops import Add, AddAssign, Index;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
+from json.write import Writer;
 
 pub struct Position {
     pub row: u64,
@@ -15,6 +16,18 @@ pub struct Position {
 pub struct Span {
     pub start: Position,
     pub end: Position,
+}
+
+impl Span {
+    // Writes source coordinates as fields in an open JSON object.
+    pub fn write_json(output: Writer&) {
+        output.key("start"); output.begin_array();
+        output.write_u64(self.start.row); output.write_u64(self.start.column);
+        output.end_array();
+        output.key("end"); output.begin_array();
+        output.write_u64(self.end.row); output.write_u64(self.end.column);
+        output.end_array();
+    }
 }
 
 impl Add<Span, Span> for Span {
