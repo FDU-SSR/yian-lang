@@ -1,0 +1,15 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("\"中😀\" x\n  y\r\nz // 中😀\n").run().unwrap();
+    defer drop_tokens(&tokens);
+    assert tokens[0].span.start.row == 0 && tokens[0].span.start.column == 0: "initial position";
+    assert tokens[0].span.end.column == 4: "codepoints not UTF-8 bytes or UTF-16 units";
+    assert tokens[1].span.start.column == 5 && tokens[1].span.end.column == 6: "position after Unicode";
+    assert tokens[2].span.start.row == 1 && tokens[2].span.start.column == 2: "newline and indentation";
+    assert tokens[3].span.start.row == 2 && tokens[3].span.start.column == 0: "CRLF";
+    assert tokens[4].is_eof() && tokens[4].span.start.row == 3 && tokens[4].span.start.column == 0: "comment and EOF position";
+    assert tokens[4].span.end.row == 3 && tokens[4].span.end.column == 0: "zero-width EOF";
+}

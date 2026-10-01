@@ -1,0 +1,60 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.ast.format import AstFormatter;
+from compiler.frontend.ast.node import Identifier;
+from compiler.frontend.ast.traversal import AstVisitor, walk_program;
+from json.write import Writer;
+from json.parse import parse;
+from std.core.string import String;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+struct Counter { owned_names: u64 }
+impl AstVisitor for Counter {
+    pub fn enter_identifier(node: Identifier&) -> bool {
+        if node.data.name.as_str() == "owned" { self.owned_names += 1; }
+        true
+    }
+}
+fn success() {
+    let source = String.from(&"fn owned() { let text = \"中😀\"; for x in values() { consume(x); } }");
+    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    source.drop();
+    assert tokens[1].value() == "owned": "tokens own identifier after source release";
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    drop_tokens(&tokens);
+    let counter = Counter(0u64); walk_program(tree.root, &counter);
+    assert counter.owned_names == 1: "AST names survive token release";
+    desugar(&tree, "owned.an");
+    let writer = Writer.with_max_depth(512u64); defer writer.drop();
+    let formatter = AstFormatter.new(&writer); formatter.append_program(tree.root);
+    let text = *writer.finish().unwrap(); defer text.drop();
+    let json = *parse(text.as_str()).unwrap(); json.drop();
+}
+fn lex_failure() {
+    let source = String.from(&"let name = \"owned\"; \"unterminated");
+    let result = Lexer.new(source.as_str()).run(); source.drop();
+    match result {
+        Err(error) => { assert error.message().contains("Unterminated"): "lex error survives source release"; error.drop(); },
+        Ok(tokens) => { drop_tokens(&tokens); @panic("lex failure accepted"); },
+    }
+}
+fn parse_failure() {
+    let source = String.from(&"struct Owned { field: str } fn broken() { let text = \"owned\"; call(");
+    let tokens = *Lexer.new(source.as_str()).run().unwrap(); source.drop();
+    let parser = Parser.new(&tokens);
+    let result = parse_program(&parser); drop_tokens(&tokens);
+    match result {
+        Err(error) => { assert error.message().as_slice().len() != 0: "parse error survives token release"; error.drop(); },
+        Ok(tree) => { tree.drop(); @panic("parse failure accepted"); },
+    }
+}
+fn main() {
+    let round: u64 = 0;
+    while round < 100 { success(); lex_failure(); parse_failure(); round += 1; }
+}

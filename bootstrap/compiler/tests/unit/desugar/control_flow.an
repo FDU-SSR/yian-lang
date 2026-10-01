@@ -1,0 +1,36 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.ast.atoms import MatchArmOrigin;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("fn f() { if let Some(x) = next() { x; } elif ready() { y; } else { z; } while let Some(y) = next() { y; } while ready() { step(); } }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    desugar(&tree, "control.an");
+    let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
+    match &body.data.stmts[0].data { Match(value, arms) => {
+        match &value.data { Call(_, _) => {}, _ => @panic("if let input") };
+        assert arms.len() == 2 && arms[0].data.origin == MatchArmOrigin.Condition: "if let success arm";
+        assert arms[1].data.origin == MatchArmOrigin.Synthetic: "if let fallback origin";
+        match &arms[1].data.pattern.data { WildcardPattern => {}, _ => @panic("if let wildcard") };
+        match &arms[1].data.body.data.stmts[0].data { If(_, _, branches, no) => {
+            assert branches.len() == 0 && no.is_some(): "elif lowered with else retained";
+        }, _ => @panic("elif fallback") }
+    }, _ => @panic("if let match") };
+    match &body.data.stmts[1].data { Loop(block) => match &block.data.stmts[0].data {
+        Match(_, arms) => {
+            assert arms.len() == 2: "while let match";
+            match &arms[1].data.body.data.stmts[0].data { Break(_) => {}, _ => @panic("while let exit") };
+        }, _ => @panic("while let body"),
+    }, _ => @panic("while let loop") };
+    match &body.data.stmts[2].data { Loop(block) => {
+        assert block.data.stmts.len() == 2: "while guard and body";
+        match &block.data.stmts[0].data { If(_, yes, _, _) => match &yes.data.stmts[0].data { Break(_) => {}, _ => @panic("while guard exit") }, _ => @panic("while guard") };
+    }, _ => @panic("while loop") }
+}

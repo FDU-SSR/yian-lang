@@ -1,0 +1,23 @@
+from compiler.frontend.source import Position, Span;
+from std.core.ops import Add, AddAssign;
+
+fn span(a: u64, b: u64, c: u64, d: u64) -> Span {
+    Span(Position(a, b), Position(c, d))
+}
+fn check(value: Span, a: u64, b: u64, c: u64, d: u64) {
+    assert value.start.row == a && value.start.column == b: "span start";
+    assert value.end.row == c && value.end.column == d: "span end";
+}
+fn main() {
+    let left = span(1, 4, 1, 8);
+    let right = span(0, 9, 3, 2);
+    check(left + right, 0, 9, 3, 2);
+    check(right + left, 0, 9, 3, 2);
+    check(left + span(1, 2, 1, 6), 1, 2, 1, 8);
+    check(left + span(1, 5, 1, 5), 1, 4, 1, 8);
+    check(span(0, 0, 0, 0) + span(0, 0, 0, 0), 0, 0, 0, 0);
+    let assigned = left;
+    assigned += right;
+    check(assigned, 0, 9, 3, 2);
+    check(left, 1, 4, 1, 8);
+}

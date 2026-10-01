@@ -1,0 +1,62 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.ast.node import Expr;
+from compiler.frontend.ast.traversal import AstVisitor, walk_program;
+from compiler.frontend.ast.atoms import MatchArmOrigin;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+struct Counter { make: u64, into_iter: u64, next: u64 }
+impl AstVisitor for Counter {
+    pub fn enter_expr(node: Expr&) -> bool {
+        match &node.data {
+            Call(callee, _) => match &callee.data { Identifier(name) => { if name.data.name.as_str() == "make" { self.make += 1; } }, _ => {} },
+            MethodCall(_, name, _, _) => {
+                if name.data.name.as_str() == "into_iter" { self.into_iter += 1; }
+                if name.data.name.as_str() == "next" { self.next += 1; }
+            }, _ => {},
+        };
+        true
+    }
+}
+fn main() {
+    let tokens = *Lexer.new("fn f((x, y): (u64, u64)) { for (a, b) in make() { use(a, b); } let c = ||((m, n): (u64, u64)) -> u64 { m + n }; } impl Pair { fn sum((a, b): (u64, u64)) -> u64 { a + b } }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    desugar(&tree, "bindings.an");
+    match &tree.root.data.items[0].data { FuncDef(_, _, _, params, _, body) => {
+        assert params.len() == 1 && body.data.parameter_bindings.len() == 1: "parameter normalization";
+        match &params[0] { Named(info) => { assert info.data.name.data.synthetic: "generated parameter"; }, _ => @panic("named parameter") };
+        assert body.data.parameter_bindings[0].data.is_parameter: "parameter binding flag";
+        match &body.data.stmts[0].data { Block(block) => {
+            assert block.data.stmts.len() == 2: "iterator declaration and loop";
+            match &block.data.stmts[0].data { VarDecl(name, _, _) => { assert name.data.synthetic: "generated iterator"; }, _ => @panic("iterator declaration") };
+            match &block.data.stmts[1].data { Loop(repeat) => match &repeat.data.stmts[0].data {
+                Match(_, arms) => {
+                    assert arms.len() == 2 && arms[0].data.origin == MatchArmOrigin.ForItem: "for match arms";
+                    match &arms[0].data.pattern.data { ConstructPattern(name, _, args, _) => {
+                        assert name.data.synthetic && name.data.name.as_str() == "Some": "item constructor";
+                        match args { Positional(values) => match &values[0].data { TuplePattern(parts) => { assert parts.len() == 2: "for pattern retained"; }, _ => @panic("for tuple") }, _ => @panic("Some payload") };
+                    }, _ => @panic("item pattern") };
+                    match &arms[1].data.body.data.stmts[0].data { Break(_) => {}, _ => @panic("for exit") };
+                }, _ => @panic("next match"),
+            }, _ => @panic("for loop") }
+        }, _ => @panic("for block") };
+        match &body.data.stmts[1].data { Semi(expr) => match &expr.data { VarDecl(_, _, init) => match &init.unwrap().data {
+            ClosureExpr(_, params, _, closure_body) => {
+                assert closure_body.data.parameter_bindings.len() == 1: "closure parameter binding";
+                match &params[0] { Named(info) => { assert info.data.name.data.synthetic: "closure hidden parameter"; }, _ => @panic("closure named parameter") };
+            }, _ => @panic("closure"),
+        }, _ => @panic("closure declaration") }, _ => @panic("closure terminator") }
+    }, _ => @panic("function") };
+    match &tree.root.data.items[1].data { Impl(_, _, _, methods, _) => {
+        assert methods[0].data.body.data.parameter_bindings.len() == 1: "method parameter binding";
+        match &methods[0].data.decl.data.params[0] { Named(info) => { assert info.data.name.data.synthetic: "method hidden parameter"; }, _ => @panic("method named parameter") };
+    }, _ => @panic("method implementation") };
+    let counter = Counter(0u64, 0u64, 0u64); walk_program(tree.root, &counter);
+    assert counter.make == 1 && counter.into_iter == 1 && counter.next == 1: "iterable not duplicated";
+}

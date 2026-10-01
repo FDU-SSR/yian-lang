@@ -1,0 +1,34 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("fn f() { match value { name @ Some((a, b)) => a, [first, .., last] => last, Pair(left=x, ..) => x, 1..5 | 8 => 0, _ => 1 } if let Some(x) = next() { x; } while let Some(y) = next() { y; } }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
+    match &body.data.stmts[0].data { Match(_, arms) => {
+        assert arms.len() == 5: "match arms";
+        match &arms[0].data.pattern.data { BindPattern(name, inner) => {
+            assert name.data.name.as_str() == "name": "whole value binding";
+            match &inner.data { ConstructPattern(_, _, args, _) => match args {
+                Positional(values) => match &values[0].data { TuplePattern(parts) => { assert parts.len() == 2: "tuple payload"; }, _ => @panic("tuple pattern") }, _ => @panic("constructor arguments"),
+            }, _ => @panic("constructor pattern") }
+        }, _ => @panic("bind pattern") };
+        match &arms[1].data.pattern.data { SequencePattern(prefix, suffix, rest) => { assert prefix.len() == 1 && suffix.len() == 1 && *rest: "sequence rest"; }, _ => @panic("sequence") };
+        match &arms[2].data.pattern.data { ConstructPattern(_, _, args, rest) => {
+            assert *rest: "field rest";
+            match args { Named(fields) => { assert fields.len() == 1 && fields[0].data.name.data.name.as_str() == "left": "named field"; }, _ => @panic("field arguments") };
+        }, _ => @panic("field pattern") };
+        match &arms[3].data.pattern.data { OrPattern(choices) => {
+            assert choices.len() == 2: "alternatives";
+            match &choices[0].data { RangePattern(bounds) => match bounds { Integer(lower, upper) => { assert lower.data.value == 1 && upper.data.value == 5: "integer range"; }, _ => @panic("range kind") }, _ => @panic("range pattern") };
+        }, _ => @panic("or pattern") }
+    }, _ => @panic("match") };
+    match &body.data.stmts[1].data { If(condition, _, _, _) => match condition { Let(_) => {}, _ => @panic("if let") }, _ => @panic("if condition") };
+    match &body.data.stmts[2].data { While(condition, _) => match condition { Let(_) => {}, _ => @panic("while let") }, _ => @panic("while condition") }
+}

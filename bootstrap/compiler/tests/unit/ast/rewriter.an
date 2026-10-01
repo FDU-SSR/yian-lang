@@ -1,0 +1,49 @@
+from compiler.frontend.ast.arena import AstArena;
+from compiler.frontend.ast.node import Expr, ExprData, IdentifierData, BlockData, PatternLet;
+from compiler.frontend.ast.operator import BinaryOperator;
+from compiler.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
+from compiler.frontend.source import Span, Position;
+from std.core.convert import From;
+from std.core.string import String;
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.ops import Index;
+
+struct Rewriter { replacement: Expr&, visits: u64, recurse: bool, revisit: bool }
+impl AstRewriter for Rewriter {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        self.visits += 1;
+        if self.recurse { rewrite_expr_children(node, self); }
+        match &node.data { Identifier(name) if name.data.name.as_str() == "old" => {
+            if self.revisit { return self.rewrite_expr(self.replacement); }
+            self.replacement
+        }, _ => node }
+    }
+}
+fn main() {
+    let arena = AstArena.new(); defer arena.drop();
+    let span = Span(Position(0, 0), Position(0, 0));
+    let old = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"old"), false), span)), span);
+    let new = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"new"), false), span)), span);
+    let root = arena.alloc_expr(ExprData.Binary(BinaryOperator.Add, old, old), span);
+    let pass = Rewriter(new, 0u64, false, false);
+    pass.rewrite_expr(root);
+    assert pass.visits == 1: "override can suppress recursion";
+    pass.visits = 0; pass.recurse = true;
+    pass.rewrite_expr(root);
+    assert pass.visits == 3: "children once per edge, replacements not revisited";
+    match &root.data { Binary(_, left, right) => {
+        match &left.data { Identifier(name) => { assert name.data.name.as_str() == "new": "left replacement"; }, _ => @panic("left kind") };
+        match &right.data { Identifier(name) => { assert name.data.name.as_str() == "new": "right replacement"; }, _ => @panic("right kind") };
+    }, _ => @panic("binary root") };
+    pass.visits = 0; pass.revisit = true;
+    pass.rewrite_expr(old);
+    assert pass.visits == 2: "explicit replacement revisit";
+    let statements = Vec<Expr&>.new(); statements.push(old);
+    let block = arena.alloc_block(BlockData(statements, Option<Position>.None, Vec<PatternLet&>.new()), span);
+    pass.visits = 0; pass.revisit = false;
+    pass.rewrite_block(block);
+    assert pass.visits == 1: "default block method visits children";
+    match &block.data.stmts[0].data { Identifier(name) => { assert name.data.name.as_str() == "new": "default method saves replacement"; }, _ => @panic("default method result") }
+}

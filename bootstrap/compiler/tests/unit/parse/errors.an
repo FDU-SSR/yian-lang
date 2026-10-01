@@ -1,0 +1,24 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from std.core.drop import Drop;
+
+fn reject(source: str, part: str) {
+    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    match parse_program(&parser) {
+        Err(error) => { assert error.message().contains(part): error.message(); assert error.span().start.row == 0: "error position"; error.drop(); },
+        Ok(tree) => { tree.drop(); @panic("invalid program accepted"); },
+    }
+}
+fn main() {
+    reject("fn f( { }", "pattern");
+    reject("fn f() { let x =", "end of file");
+    reject("fn f() { call(1, 2; }", "Expected");
+    reject("typedef A = cptr<i32, u8>;", "exactly one");
+    reject("fn f() { match x { [a, .., ..] => 0 } }", "Only one");
+    reject("fn f() { match x { Pair(a, field=b) => 0 } }", "Cannot mix");
+    reject("extern \"Rust\" {}", "extern C");
+    reject("pub import pkg.item;", "Attributes");
+}

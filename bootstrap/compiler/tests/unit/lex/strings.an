@@ -1,0 +1,19 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("\"中😀\\n\\t\\\"\\\\\" '\\n' '\\u{4e2d}' f\"before {name} after\"").run().unwrap();
+    defer drop_tokens(&tokens);
+    match tokens[0].kind() { StringLiteral(text) => { assert text.as_str() == "中😀\n\t\"\\": "decoded string"; }, _ => @panic("string kind") };
+    match tokens[1].kind() { Character(text) => { assert text.as_str() == "\n": "escaped character"; }, _ => @panic("character kind") };
+    match tokens[2].kind() { Character(text) => { assert text.as_str() == "中": "unicode escape"; }, _ => @panic("unicode character") };
+    match tokens[3].kind() { FStrStart => {}, _ => @panic("f-string start") };
+    match tokens[4].kind() { FStrLiteral(text) => { assert text.as_str() == "before ": "f-string literal"; }, _ => @panic("f-string literal kind") };
+    match tokens[5].kind() { FStrExprBegin => {}, _ => @panic("f-string expression begin") };
+    assert tokens[6].is_identifier() && tokens[6].value() == "name": "interpolation token";
+    match tokens[7].kind() { FStrExprEnd => {}, _ => @panic("f-string expression end") };
+    match tokens[8].kind() { FStrLiteral(text) => { assert text.as_str() == " after": "trailing literal"; }, _ => @panic("trailing kind") };
+    match tokens[9].kind() { FStrEnd => {}, _ => @panic("f-string end") };
+    assert tokens.len() == 11 && tokens[10].is_eof(): "f-string EOF";
+}

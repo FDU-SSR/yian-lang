@@ -1,0 +1,48 @@
+from compiler.frontend.ast.arena import AstArena;
+from compiler.frontend.ast.node import Identifier, IdentifierData, Expr, ExprData, PatternData, PatternLetData, TypeData, BlockData, PatternLet, Block;
+from compiler.frontend.ast.operator import BinaryOperator;
+from compiler.frontend.ast.traversal import AstVisitor, walk_expr, walk_block;
+from compiler.frontend.source import Span, Position;
+from std.core.string import String;
+from std.core.convert import From;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.drop import Drop;
+
+struct Recorder { trace: String, prune: bool }
+impl AstVisitor for Recorder {
+    pub fn enter_expr(node: Expr&) -> bool {
+        self.trace.push('+');
+        match &node.data { Binary(_, _, _) if self.prune => false, _ => true }
+    }
+    pub fn leave_expr(node: Expr&) { self.trace.push('-'); }
+    pub fn enter_identifier(node: Identifier&) -> bool { self.trace.push_str(node.data.name.as_str()); true }
+}
+fn main() {
+    let arena = AstArena.new(); defer arena.drop();
+    let span = Span(Position(0, 0), Position(0, 0));
+    let name = arena.alloc_identifier(IdentifierData(String.from(&"leaf"), false), span);
+    let leaf = arena.alloc_expr(ExprData.Identifier(name), span);
+    let root = arena.alloc_expr(ExprData.Binary(BinaryOperator.Add, leaf, leaf), span);
+    let visitor = Recorder(String.new(), false); defer visitor.trace.drop();
+    walk_expr(root, &visitor);
+    assert visitor.trace.as_str() == "++leaf-+leaf--": "enter/leave and shared edges";
+    visitor.trace.clear(); visitor.prune = true;
+    walk_expr(root, &visitor);
+    assert visitor.trace.as_str() == "+": "pruning excludes descendants and leave";
+    visitor.trace.clear(); visitor.prune = false;
+    let try_node = arena.alloc_expr(ExprData.TryExpr(leaf), span);
+    walk_expr(try_node, &visitor);
+    assert visitor.trace.as_str() == "++leaf--": "try operand traversal";
+    visitor.trace.clear();
+    let bound = arena.alloc_identifier(IdentifierData(String.from(&"bound"), false), span);
+    let pattern = arena.alloc_pattern(PatternData.NamePattern(bound), span);
+    let ty = arena.alloc_type_syntax(TypeData.DeducedType, span);
+    let binding = arena.alloc_pattern_let(PatternLetData(pattern, ty, leaf, Option<Block&>.None, true), span);
+    let bindings = Vec<PatternLet&>.new(); bindings.push(binding);
+    let body = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"body"), false), span)), span);
+    let statements = Vec<Expr&>.new(); statements.push(body);
+    let block = arena.alloc_block(BlockData(statements, Option<Position>.None, bindings), span);
+    walk_block(block, &visitor);
+    assert visitor.trace.as_str() == "+leaf-bound+body-": "input before binding, parameter binding before statements";
+}

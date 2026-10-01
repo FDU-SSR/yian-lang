@@ -1,0 +1,28 @@
+from compiler.frontend.ast.arena import AstArena;
+from compiler.frontend.ast.node import IdentifierData, ExprData;
+from compiler.frontend.ast.operator import BinaryOperator;
+from compiler.frontend.source import Span, Position;
+from std.core.string import String;
+from std.core.convert import From;
+from std.core.drop import Drop;
+
+fn main() {
+    let arena = AstArena.new(); defer arena.drop();
+    let span = Span(Position(0, 0), Position(0, 4));
+    let name = arena.alloc_identifier(IdentifierData(String.from(&"kept"), false), span);
+    let first = arena.alloc_expr(ExprData.Identifier(name), span);
+    let index: u64 = 0;
+    while index < 1024 {
+        let other = arena.alloc_identifier(IdentifierData(String.from(&"later"), false), span);
+        arena.alloc_expr(ExprData.Identifier(other), span);
+        index += 1;
+    }
+    assert arena.len() == 2050: "all allocations counted";
+    assert name.data.name.as_str() == "kept": "identifier survives chunk expansion";
+    match &first.data { Identifier(value) => { assert value.data.name.as_str() == "kept": "early expression survives expansion"; }, _ => @panic("early node kind") };
+    let shared = arena.alloc_expr(ExprData.Binary(BinaryOperator.Add, first, first), span);
+    match &shared.data { Binary(_, left, right) => {
+        match &left.data { Identifier(value) => { assert value.data.name.as_str() == "kept": "left shared edge"; }, _ => @panic("left edge") };
+        match &right.data { Identifier(value) => { assert value.data.name.as_str() == "kept": "right shared edge"; }, _ => @panic("right edge") };
+    }, _ => @panic("shared node") }
+}

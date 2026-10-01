@@ -1,0 +1,27 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn reject(text: str, message: str) {
+    match Lexer.new(text).run() {
+        Err(error) => {
+            assert error.message().contains(message): "lexical error category";
+            assert error.span().start.row == 0: "lexical error location";
+            error.drop();
+        },
+        Ok(tokens) => { drop_tokens(&tokens); @panic("invalid source accepted"); },
+    }
+}
+fn main() {
+    reject("\"unterminated", "Unterminated");
+    reject("'unterminated", "Unterminated");
+    reject("/* unterminated", "Unterminated block comment");
+    reject("\"\\q\"", "escape");
+    let empty = *Lexer.new("").run().unwrap();
+    assert empty.len() == 1 && empty[0].is_eof(): "empty source EOF";
+    drop_tokens(&empty);
+    let comments = *Lexer.new("// line\n/* text /* ends at first close */").run().unwrap();
+    assert comments.len() == 1 && comments[0].is_eof(): "line and non-nested block comments";
+    drop_tokens(&comments);
+}

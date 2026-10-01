@@ -1,0 +1,74 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.observe import append_token_file;
+from compiler.frontend.ast.format import AstFormatter;
+from compiler.frontend.ast.node import Expr;
+from compiler.frontend.ast.traversal import AstVisitor, walk_program;
+from json.write import Writer;
+from json.parse import parse;
+from json.value import Value;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn field(value: Value&, key: str) -> Value& {
+    let object = *value.as_object().unwrap();
+    *object.get(key).unwrap()
+}
+fn text(value: Value&) -> str { *value.as_string().unwrap() }
+fn unsigned(value: Value&, expected: u64) {
+    match value { Number(number) => match number {
+        Unsigned(n) => { assert *n == expected: "JSON position component"; },
+        _ => @panic("JSON unsigned number"),
+    }, _ => @panic("JSON number") }
+}
+struct Check { for_nodes: u64, while_nodes: u64, try_nodes: u64, matches: u64 }
+impl AstVisitor for Check {
+    pub fn enter_expr(node: Expr&) -> bool {
+        match &node.data {
+            For(_, _, _) => { self.for_nodes += 1; }, While(_, _) => { self.while_nodes += 1; },
+            TryExpr(_) => { self.try_nodes += 1; }, Match(_, _) => { self.matches += 1; }, _ => {},
+        };
+        true
+    }
+}
+fn main() {
+    let source = "struct Pair { pub left: u64, right: u64 } enum Maybe { None, Some { value: u64 } } fn f((x, y): (u64, u64)) { let label = \"中😀\"; for (a, b) in items() { if let Some(v) = load(a)? { consume(v); } } }";
+    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
+    let token_writer = Writer.new(); defer token_writer.drop();
+    append_token_file(&token_writer, "memory.an", &tokens);
+    let token_text = *token_writer.finish().unwrap(); defer token_text.drop();
+    let token_json = *parse(token_text.as_str()).unwrap(); defer token_json.drop();
+    assert text(field(&token_json, "path")) == "memory.an": "token file path";
+    let token_array = *field(&token_json, "tokens").as_array().unwrap();
+    assert token_array.len() == tokens.len(): "token JSON count";
+    assert text(field(&token_array[0], "kind")) == "Keyword": "token kind JSON";
+    assert text(field(&token_array[0], "value")) == "struct": "token value JSON";
+    let start = *field(&token_array[0], "start").as_array().unwrap();
+    assert start.len() == 2: "token position shape";
+    unsigned(&start[0], 0); unsigned(&start[1], 0);
+    let end = *field(&token_array[0], "end").as_array().unwrap();
+    unsigned(&end[0], 0); unsigned(&end[1], 6);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    desugar(&tree, "memory.an");
+    let check = Check(0u64, 0u64, 0u64, 0u64); walk_program(tree.root, &check);
+    assert check.for_nodes == 0 && check.while_nodes == 0: "control sugar removed";
+    assert check.try_nodes == 1 && check.matches == 2: "nested constructs traversed";
+    let writer = Writer.with_max_depth(512u64); defer writer.drop();
+    let formatter = AstFormatter.new(&writer); formatter.append_program(tree.root);
+    let ast_text = *writer.finish().unwrap(); defer ast_text.drop();
+    let ast_json = *parse(ast_text.as_str()).unwrap(); defer ast_json.drop();
+    assert text(field(&ast_json, "tag")) == "Program": "AST root tag";
+    let items = *field(field(&ast_json, "fields"), "items").as_array().unwrap();
+    assert items.len() == 3: "AST item count";
+    assert text(field(&items[0], "tag")) == "StructDef": "struct output";
+    assert text(field(&items[1], "tag")) == "EnumDef": "enum output";
+    assert text(field(&items[2], "tag")) == "FuncDef": "function output";
+    let function = field(&items[2], "fields");
+    let body = field(field(function, "body"), "fields");
+    let bindings = *field(body, "parameter_bindings").as_array().unwrap();
+    assert bindings.len() == 1: "normalized parameter JSON";
+}

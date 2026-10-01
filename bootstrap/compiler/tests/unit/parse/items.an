@@ -1,0 +1,37 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.ast.atoms import AttrKind;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("from pkg.api import A as B; struct Pair<T> { pub left: T, right: u64 } enum Choice { Empty, Full { value: u64 } } trait Show { fn show() -> str; fn ready() -> bool { true } } impl Show for Pair<u64> { pub fn show() -> str { \"ok\" } } opaque type Handle; extern \"C\" { fn count(p: cptr<Handle>) -> c_int; } pub ffi fn wrap() -> u64 { let f = |n=1|(x: u64) -> u64 { n + x }; f(2) }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    let items = tree.root.data.items;
+    assert items.len() == 8: "declaration count";
+    match &items[0].data { Import(paths, target, alias, _) => {
+        assert paths.len() == 2 && target.data.name.as_str() == "A": "import path";
+        assert alias.unwrap().data.name.as_str() == "B": "import alias";
+    }, _ => @panic("import") };
+    match &items[1].data { StructDef(_, _, generics, fields) => { assert generics.len() == 1 && fields.len() == 2: "struct fields"; }, _ => @panic("struct") };
+    match &items[2].data { EnumDef(_, _, _, variants) => { assert variants.len() == 2 && variants[1].data.fields.len() == 1: "enum payload"; }, _ => @panic("enum") };
+    match &items[3].data { TraitDef(_, _, _, members) => {
+        assert members.len() == 2: "trait members";
+        match &members[0] { Declaration(_) => {}, _ => @panic("trait declaration") };
+        match &members[1] { Definition(_) => {}, _ => @panic("default method") };
+    }, _ => @panic("trait") };
+    match &items[4].data { Impl(_, _, trait_type, methods, _) => { assert trait_type.is_some() && methods.len() == 1: "trait implementation"; }, _ => @panic("impl") };
+    match &items[5].data { OpaqueTypeDef(_, _) => {}, _ => @panic("opaque") };
+    match &items[6].data { ExternBlock(_, abi, functions) => { assert abi.as_str() == "C" && functions.len() == 1: "extern declaration"; }, _ => @panic("extern") };
+    match &items[7].data { FuncDef(attrs, _, _, _, _, body) => {
+        assert attrs.len() == 2 && attrs[1].data.kind == AttrKind.Ffi: "FFI attribute";
+        let binding = match &body.data.stmts[0].data { Semi(expr) => *expr, _ => @panic("binding terminator") };
+        match &binding.data { VarDecl(_, _, init) => match &init.unwrap().data {
+            ClosureExpr(captures, params, ret, _) => { assert captures.len() == 1 && params.len() == 1 && ret.is_some(): "closure signature"; }, _ => @panic("closure initializer"),
+        }, _ => @panic("closure binding") }
+    }, _ => @panic("function") }
+}

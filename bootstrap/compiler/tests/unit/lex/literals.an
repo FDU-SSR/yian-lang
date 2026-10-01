@@ -1,0 +1,22 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import IntSuffix, FloatSuffix, drop_tokens;
+from std.core.ops import Index;
+from std.core.drop import Drop;
+
+fn rejected(text: str) {
+    match Lexer.new(text).run() {
+        Err(error) => { assert error.message().as_slice().len() != 0: "numeric diagnostic"; error.drop(); },
+        Ok(tokens) => { drop_tokens(&tokens); @panic("invalid numeric literal accepted"); },
+    }
+}
+fn main() {
+    let tokens = *Lexer.new("18446744073709551615 0xff_u8 0b1010 0o17 1_000_u64 1.25_f32 0x1.8p+1_f64 1e-3").run().unwrap();
+    defer drop_tokens(&tokens);
+    match tokens[0].kind() { Integer(n, suffix) => { assert *n == 18446744073709551615u64 && *suffix == IntSuffix.Unsuffixed: "u64 maximum"; }, _ => @panic("integer payload") };
+    match tokens[1].kind() { Integer(n, suffix) => { assert *n == 255 && *suffix == IntSuffix.U8: "hex suffix"; }, _ => @panic("hex payload") };
+    assert tokens[2].integer_value() == 10 && tokens[3].integer_value() == 15: "integer radices";
+    assert tokens[4].integer_value() == 1000 && tokens[4].suffix() == "u64": "integer separator";
+    match tokens[5].kind() { Float(n, suffix) => { assert *n == 1.25 && *suffix == FloatSuffix.F32: "float suffix"; }, _ => @panic("float payload") };
+    assert tokens[6].float_value() == 3.0 && tokens[7].float_value() == 0.001: "hex and decimal float";
+    rejected("18446744073709551616"); rejected("256_u8"); rejected("1e+"); rejected("0x");
+}

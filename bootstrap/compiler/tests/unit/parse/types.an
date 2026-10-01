@@ -1,0 +1,36 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("typedef A<T, const N: u64> = Vec<(T&, u8[N + 1])>; typedef B = fn(i32*, u8[]) -> cptr<c_char>;").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    assert tree.root.data.items.len() == 2: "aliases";
+    match &tree.root.data.items[0].data { Alias(_, name, generics, target) => {
+        assert name.data.name.as_str() == "A" && generics.len() == 2: "generic alias";
+        match &generics[0] { Type(_) => {}, _ => @panic("type parameter") };
+        match &generics[1] { Constant(_) => {}, _ => @panic("constant parameter") };
+        match &target.data { InstanceType(_, args) => {
+            assert args.len() == 1: "generic argument";
+            let tuple = match &args[0] { Type(value) => *value, _ => @panic("type argument") };
+            match &tuple.data { TupleType(elements) => {
+                assert elements.len() == 2: "tuple type";
+                match &elements[0].data { RefType(_) => {}, _ => @panic("reference type") };
+                match &elements[1].data { ArrayType(_, size) => match &size.data { BinaryConstExpr(_, _, _) => {}, _ => @panic("constant arithmetic") }, _ => @panic("array type") };
+            }, _ => @panic("tuple argument") }
+        }, _ => @panic("instance type") }
+    }, _ => @panic("alias") };
+    match &tree.root.data.items[1].data { Alias(_, _, _, target) => match &target.data {
+        FunctionType(params, result) => {
+            assert params.len() == 2: "function parameters";
+            match &params[0].data { PointerType(_) => {}, _ => @panic("pointer type") };
+            match &params[1].data { SliceType(_) => {}, _ => @panic("slice type") };
+            match &result.data { CPtrType(inner) => match &inner.data { CScalarType(name) => { assert name.as_str() == "c_char": "C scalar"; }, _ => @panic("C pointee") }, _ => @panic("C pointer") };
+        }, _ => @panic("function type"),
+    }, _ => @panic("second alias") }
+}

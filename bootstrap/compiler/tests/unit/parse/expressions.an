@@ -1,0 +1,58 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.ast.arena import AstTree;
+from compiler.frontend.ast.node import Expr;
+from compiler.frontend.ast.operator import BinaryOperator;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn expression(tree: AstTree&) -> Expr& {
+    match &tree.root.data.items[0].data {
+        FuncDef(_, _, _, _, _, body) => match &body.data.stmts[0].data { Semi(value) => *value, _ => @panic("expression statement") },
+        _ => @panic("function item"),
+    }
+}
+fn check(source: str, kind: u64) {
+    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    assert parser.at_end(): "whole program consumed";
+    let node = expression(&tree);
+    if kind == 0 {
+        match &node.data {
+            Binary(op, left, right) => {
+                assert *op == BinaryOperator.Add: "addition root";
+                match &right.data { Binary(op, _, _) => { assert *op == BinaryOperator.Mul: "multiplication priority"; }, _ => @panic("multiplication subtree") };
+                assert left.span.start.column == 9 && node.span.end.column == 18: "expression span";
+            }, _ => @panic("binary expression"),
+        }
+    } elif kind == 1 {
+        match &node.data { Binary(op, left, _) => {
+            assert *op == BinaryOperator.Sub: "subtraction root";
+            match &left.data { Binary(op, _, _) => { assert *op == BinaryOperator.Sub: "left associativity"; }, _ => @panic("left subtraction") };
+        }, _ => @panic("subtraction") }
+    } elif kind == 2 {
+        match &node.data { Binary(op, _, right) => {
+            assert *op == BinaryOperator.Assign: "assignment root";
+            match &right.data { Binary(op, _, _) => { assert *op == BinaryOperator.Assign: "right associativity"; }, _ => @panic("right assignment") };
+        }, _ => @panic("assignment") }
+    } else {
+        match &node.data { TryExpr(operand) => match &operand.data {
+            MethodCall(receiver, name, _, args) => {
+                assert name.data.name.as_str() == "apply" && args.len() == 1: "method arguments";
+                match &receiver.data { FieldAccess(receiver, field) => {
+                    assert field.data.name.as_str() == "member": "field access";
+                    match &receiver.data { Call(_, args) => { assert args.len() == 0: "call arguments"; }, _ => @panic("call receiver") };
+                }, _ => @panic("field receiver") }
+            }, _ => @panic("method operand"),
+        }, _ => @panic("try expression") }
+    }
+}
+fn main() {
+    check("fn f() { 1 + 2 * 3; }", 0);
+    check("fn f() { a - b - c; }", 1);
+    check("fn f() { a = b = c; }", 2);
+    check("fn f() { make().member.apply(1)?; }", 3);
+}

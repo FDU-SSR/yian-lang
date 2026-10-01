@@ -1,0 +1,48 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from compiler.frontend.ast.node import Expr;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn statement(expr: Expr&) -> Expr& {
+    match &expr.data { Semi(inner) => *inner, _ => @panic("semicolon statement") }
+}
+
+fn main() {
+    let tokens = *Lexer.new("fn f() { 1..4; x in values; assert ready(): \"message\"; assert ready(); value()?; }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    desugar(&tree, "expressions.an");
+    let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
+    match &body.data.stmts[0].data { Semi(expr) => match &expr.data {
+        Call(callee, args) => {
+            assert args.len() == 2: "range endpoints";
+            match &callee.data { Identifier(name) => { assert name.data.name.as_str() == "Range": "range constructor"; }, _ => @panic("range callee") };
+        }, _ => @panic("range call"),
+    }, _ => @panic("range statement") };
+    match &body.data.stmts[1].data { Semi(expr) => match &expr.data { MethodCall(receiver, name, _, args) => {
+        assert name.data.name.as_str() == "contains" && args.len() == 1: "contains rewrite";
+        match &receiver.data { Identifier(name) => { assert name.data.name.as_str() == "values": "contains receiver"; }, _ => @panic("contains target") };
+    }, _ => @panic("in method") }, _ => @panic("in statement") };
+    let i: u64 = 2;
+    while i < 4 {
+        match &statement(body.data.stmts[i]).data { If(_, yes, _, _) => match &yes.data.stmts[0].data {
+            Builtin(kind, _, args) => {
+                assert *kind == BuiltinKind.Panic && args.len() == 1: "assert panic";
+                match &args[0].data.value.data { Literal(literal) => match literal {
+                    StringLiteral(value) => {
+                        if i == 2 { assert value.data.value.as_str() == "message": "explicit assertion message"; }
+                        else { assert value.data.value.as_str().contains("expressions.an("): "generated assertion location"; }
+                    }, _ => @panic("assertion string"),
+                }, _ => @panic("assertion literal") }
+            }, _ => @panic("panic call"),
+        }, _ => @panic("assert condition") };
+        i += 1;
+    }
+    match &body.data.stmts[4].data { Semi(expr) => match &expr.data { TryExpr(_) => {}, _ => @panic("try syntax retained") }, _ => @panic("try statement") }
+}

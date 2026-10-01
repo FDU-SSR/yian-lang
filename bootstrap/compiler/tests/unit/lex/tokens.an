@@ -1,0 +1,24 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import KeywordKind, PunctuatorKind, drop_tokens;
+from std.core.ops import Index;
+
+fn main() {
+    let tokens = *Lexer.new("let letter = value >>= 2; value >> 1 >= 0 > -1; a .. b -> c => d ? != == <= && ||").run().unwrap();
+    defer drop_tokens(&tokens);
+    assert tokens[0].is_keyword(KeywordKind.Let): "keyword";
+    assert tokens[1].is_identifier() && tokens[1].value() == "letter": "keyword prefix identifier";
+    assert tokens[4].is_punct(PunctuatorKind.GreaterGreaterEqual): "longest shift assignment";
+    assert tokens[8].is_punct(PunctuatorKind.GreaterGreater): "shift token";
+    assert tokens[10].is_punct(PunctuatorKind.GreaterEqual): "comparison token";
+    assert tokens[12].is_punct(PunctuatorKind.Greater): "angle token";
+    assert tokens[17].is_punct(PunctuatorKind.DotDot): "range token";
+    assert tokens[19].is_punct(PunctuatorKind.Arrow): "arrow token";
+    assert tokens[21].is_punct(PunctuatorKind.FatArrow): "match arrow";
+    assert tokens[23].is_punct(PunctuatorKind.Question): "try token";
+    assert tokens[24].is_punct(PunctuatorKind.NotEqual): "not equal token";
+    assert tokens[25].is_punct(PunctuatorKind.EqualEqual): "equality token";
+    assert tokens[26].is_punct(PunctuatorKind.LessEqual): "less equal token";
+    assert tokens[27].is_punct(PunctuatorKind.AmpersandAmpersand): "logical and";
+    assert tokens[28].is_punct(PunctuatorKind.PipePipe): "logical or";
+    assert tokens.len() == 30 && tokens[29].is_eof(): "one terminal EOF";
+}
