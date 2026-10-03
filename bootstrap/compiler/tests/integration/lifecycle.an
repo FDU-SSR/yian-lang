@@ -25,12 +25,12 @@ fn success() {
     let tokens = *Lexer.new(source.as_str()).run().unwrap();
     source.drop();
     assert tokens[1].value() == "owned": "tokens own identifier after source release";
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
     drop_tokens(&tokens);
     let counter = Counter(0u64); walk_program(tree.root, &counter);
     assert counter.owned_names == 1: "AST names survive token release";
-    desugar(&tree, "owned.an");
+    desugar(&tree, "owned.an").unwrap();
     let writer = Writer.with_max_depth(512u64); defer writer.drop();
     let formatter = AstFormatter.new(&writer); formatter.append_program(tree.root);
     let text = *writer.finish().unwrap(); defer text.drop();
@@ -47,14 +47,36 @@ fn lex_failure() {
 fn parse_failure() {
     let source = String.from(&"struct Owned { field: str } fn broken() { let text = \"owned\"; call(");
     let tokens = *Lexer.new(source.as_str()).run().unwrap(); source.drop();
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let result = parse_program(&parser); drop_tokens(&tokens);
     match result {
         Err(error) => { assert error.message().as_slice().len() != 0: "parse error survives token release"; error.drop(); },
         Ok(tree) => { tree.drop(); @panic("parse failure accepted"); },
     }
 }
+fn desugar_failure() {
+    let source = String.from(&"const VALUE: i32 = source()?;");
+    let tokens = *Lexer.new(source.as_str()).run().unwrap(); source.drop();
+    let parser = Parser.new(&tokens); defer parser.drop();
+    let tree = *parse_program(&parser).unwrap();
+    drop_tokens(&tokens);
+    let result = desugar(&tree, "owned.an"); tree.drop();
+    match result {
+        Err(error) => {
+            assert error.message().contains("only allowed inside"): "desugar error owns message";
+            assert error.span().end.column > error.span().start.column: "desugar error owns range";
+            error.drop();
+        },
+        Ok(_) => @panic("desugar failure accepted"),
+    }
+}
+fn unfinished_parser() {
+    let tokens = *Lexer.new("name").run().unwrap(); defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
+    parser.identifier().unwrap();
+    parser.error("owned error", tokens[0].span);
+}
 fn main() {
     let round: u64 = 0;
-    while round < 100 { success(); lex_failure(); parse_failure(); round += 1; }
+    while round < 100 { success(); lex_failure(); parse_failure(); desugar_failure(); unfinished_parser(); round += 1; }
 }

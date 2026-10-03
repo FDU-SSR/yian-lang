@@ -4,7 +4,7 @@ from std.core.io import Stderr, Stdout;
 from std.core.string import String;
 from std.core.vec import Vec;
 from compiler.config import FrontendPhase, parse_args;
-from compiler.frontend.source import SourceManager, collect_sources;
+from compiler.frontend.source import SourceManager, collect_sources, Span;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import drop_tokens;
 from json.write import Writer;
@@ -45,6 +45,57 @@ fn diagnostic_start(writer: Writer&, stage: str, path: str) {
 
 fn diagnostic_end(writer: Writer&) {
     writer.end_object(); writer.end_object(); emit_json(writer);
+}
+
+fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span: Span) {
+    diagnostic_start(output, stage, path);
+    output.key("code"); output.write_string(if stage == "lex" { lex_code(message) } else { parse_code(message) });
+    output.key("severity"); output.write_string("error");
+    output.key("message"); output.write_string(message);
+    span.write_json(output);
+    diagnostic_end(output);
+}
+
+// 单文件资源在成功、解析失败和脱糖失败路径上均由局部作用域释放。
+fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -> bool {
+    let tokens = match Lexer.new(source).run() {
+        Ok(value) => value,
+        Err(problem) => {
+            defer problem.drop();
+            source_diagnostic(output, "lex", path, problem.message(), problem.span());
+            return false;
+        },
+    };
+    defer drop_tokens(&tokens);
+    if phase == FrontendPhase.Tokens {
+        append_token_file(output, path, &tokens);
+        return true;
+    }
+    let parser = Parser.new(&tokens);
+    defer parser.drop();
+    let tree = match parse_program(&parser) {
+        Ok(value) => value,
+        Err(problem) => {
+            defer problem.drop();
+            source_diagnostic(output, "parse", path, problem.message(), problem.span());
+            return false;
+        },
+    };
+    defer tree.drop();
+    if phase == FrontendPhase.Desugared {
+        match desugar(&tree, path) {
+            Ok(_) => {},
+            Err(problem) => {
+                defer problem.drop();
+                source_diagnostic(output, "parse", path, problem.message(), problem.span());
+                return false;
+            },
+        }
+    }
+    output.begin_object(); output.key("path"); output.write_string(path); output.key("ast");
+    AstFormatter.new(output).append_program(tree.root);
+    output.end_object();
+    true
 }
 
 fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
@@ -91,47 +142,7 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
             },
         };
         let source = sources.file(id);
-        let lexer = Lexer.new(source.text());
-        let tokens = match lexer.run() {
-            Ok(value) => value,
-            Err(problem) => {
-                diagnostic_start(&output, "lex", source.path());
-                output.key("code"); output.write_string(lex_code(problem.message()));
-                output.key("severity"); output.write_string("error");
-                output.key("message"); output.write_string(problem.message());
-                problem.span().write_json(&output);
-                diagnostic_end(&output);
-                problem.drop();
-                return false;
-            },
-        };
-        if phase == FrontendPhase.Tokens {
-            append_token_file(&output, source.path(), &tokens);
-        } else {
-            let parser = Parser.new(&tokens);
-            let tree = match parse_program(&parser) {
-                Ok(value) => value,
-                Err(problem) => {
-                    diagnostic_start(&output, "parse", source.path());
-                    output.key("code"); output.write_string(parse_code(problem.message()));
-                    output.key("severity"); output.write_string("error");
-                    output.key("message"); output.write_string(problem.message());
-                    problem.span().write_json(&output);
-                    diagnostic_end(&output);
-                    problem.drop();
-                    drop_tokens(&tokens);
-                    return false;
-                },
-            };
-            if phase == FrontendPhase.Desugared { desugar(&tree, source.path()); }
-            output.begin_object(); output.key("path");
-            output.write_string(source.path()); output.key("ast");
-            let formatter = AstFormatter.new(&output);
-            formatter.append_program(tree.root);
-            output.end_object();
-            tree.drop();
-        }
-        drop_tokens(&tokens);
+        if !observe_file(&output, phase, source.path(), source.text()) { return false; }
         index += 1u64;
     }
     output.end_array(); output.key("diagnostic"); output.write_null(); output.end_object();

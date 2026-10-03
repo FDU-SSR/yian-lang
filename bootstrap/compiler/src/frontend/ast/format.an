@@ -4,6 +4,7 @@ from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
+from compiler.frontend.ast.node import TypeSource;
 
 pub struct AstFormatter { output: Writer& }
 impl AstFormatter {
@@ -15,6 +16,23 @@ impl AstFormatter {
         self.output.key("fields"); self.output.begin_object();
     }
     fn node_end() { self.output.end_object(); self.output.end_object(); }
+
+    fn append_type_source(source: TypeSource&) {
+        match source {
+            Syntax(value) => self.append_type_syntax(*value),
+            ArgumentType(index) => {
+                self.output.begin_object();
+                self.output.key("tag"); self.output.write_string("ArgumentType");
+                self.output.key("index"); self.output.write_u64(*index);
+                self.output.end_object();
+            },
+            CallableReturnType => {
+                self.output.begin_object();
+                self.output.key("tag"); self.output.write_string("CallableReturnType");
+                self.output.end_object();
+            },
+        }
+    }
 
     fn append_identifier(node: Identifier&) {
         self.node_start("Identifier", node.span);
@@ -412,6 +430,23 @@ impl AstFormatter {
                 self.output.key("operand");
                 self.append_expr(*operand);
                 self.node_end();
+            },
+            TraitCall(trait, self_type, trait_args, method_name, args) => {
+                self.node_start("TraitCall", node.span);
+                self.output.key("trait"); self.append_expr(*trait);
+                self.output.key("self_type"); self.append_type_source(self_type);
+                self.output.key("trait_args"); self.output.begin_array();
+                let index: u64 = 0;
+                while index < trait_args.len() {
+                    match &(*trait_args)[index] { Some(value) => self.append_type_source(value), None => self.output.write_null() }
+                    index += 1;
+                }
+                self.output.end_array();
+                self.output.key("method_name"); self.append_identifier(*method_name);
+                self.output.key("args"); self.output.begin_array();
+                index = 0;
+                while index < args.len() { self.append_argument((*args)[index]); index += 1; }
+                self.output.end_array(); self.node_end();
             },
             Call(callee, args) => {
                 self.node_start("Call", node.span);

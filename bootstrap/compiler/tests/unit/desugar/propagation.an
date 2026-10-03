@@ -1,0 +1,86 @@
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import drop_tokens;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.ast.node import Expr, Pattern;
+from compiler.frontend.ast.traversal import AstVisitor, walk_program;
+from compiler.frontend.ast.atoms import MatchArmOrigin;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+struct Check { tries: u64, branches: u64, conversions: u64, sources: u64, bindings: Vec<str> }
+impl AstVisitor for Check {
+    pub fn enter_expr(node: Expr&) -> bool {
+        match &node.data {
+            TryExpr(_) => { self.tries += 1; },
+            Call(callee, _) => match &callee.data {
+                Identifier(name) => if name.data.name.as_str() == "source" { self.sources += 1; }, _ => {},
+            },
+            TraitCall(trait, self_type, types, method, args) => {
+                assert args.len() == 1: "single trait argument";
+                assert method.data.synthetic: "synthetic method";
+                let alias = match &trait.data { Identifier(name) => name.data.name.as_str(), _ => @panic("trait identifier") };
+                if method.data.name.as_str() == "branch" {
+                    self.branches += 1;
+                    assert alias == "%try_trait" && types.len() == 2: "Try dispatch";
+                    assert (*types)[0].is_none() && (*types)[1].is_none(): "infer output and residual";
+                    match self_type { ArgumentType(index) => { assert *index == 0: "operand type"; }, _ => @panic("branch type") }
+                } else {
+                    self.conversions += 1;
+                    assert method.data.name.as_str() == "from_residual" && alias == "%from_residual_trait": "residual dispatch";
+                    match self_type { CallableReturnType => {}, _ => @panic("return type") };
+                    assert types.len() == 1: "residual type argument";
+                    match types[0].unwrap() { ArgumentType(index) => { assert *index == 0: "residual type"; }, _ => @panic("conversion type") }
+                }
+            },
+            Match(value, arms) => match &value.data {
+                TraitCall(_, _, _, method, _) => if method.data.name.as_str() == "branch" {
+                    assert arms.len() == 2: "continue and break";
+                    assert arms[0].data.origin == MatchArmOrigin.Synthetic && arms[1].data.origin == MatchArmOrigin.Synthetic: "synthetic match arms";
+                    match &arms[1].data.body.data.stmts[0].data { Return(value) => {
+                        assert value.is_some(): "early return conversion";
+                    }, _ => @panic("residual early return") }
+                },
+                _ => {},
+            },
+            _ => {},
+        }
+        true
+    }
+    pub fn enter_pattern(node: Pattern&) -> bool {
+        match &node.data { NamePattern(name) => {
+            let text = name.data.name.as_str();
+            if text.starts_with("%try_") {
+                let index: u64 = 0;
+                while index < self.bindings.len() {
+                    assert self.bindings[index] != text: "unique propagation bindings";
+                    index += 1;
+                }
+                assert name.data.synthetic: "synthetic binding";
+                self.bindings.push(text);
+            }
+        }, _ => {} }
+        true
+    }
+}
+fn main() {
+    let tokens = *Lexer.new("fn f((x,y): (i32,i32)) { source()?; source()??; (&source())?; let run = |captured = source()?| () { source()? }; false && source()? == 1; source()?.field; source()?[0]; source()?(); defer cleanup(); }").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
+    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    desugar(&tree, "propagation.an").unwrap();
+    let check = Check(0u64, 0u64, 0u64, 0u64, Vec<str>.new()); defer check.bindings.drop();
+    walk_program(tree.root, &check);
+    assert check.tries == 0 && check.branches == 10 && check.conversions == 10: "all propagation expanded";
+    assert check.sources == 9 && check.bindings.len() == 20: "operands evaluated once";
+    assert tree.root.data.items.len() == 3: "two imports and function";
+    let allocated = tree.arena.len();
+    desugar(&tree, "propagation.an").unwrap();
+    assert tree.root.data.items.len() == 3 && tree.arena.len() == allocated: "repeat lowering has no additions";
+    match &tree.root.data.items[0].data { Import(_, target, alias, _) => {
+        assert target.data.name.as_str() == "Try" && alias.unwrap().data.synthetic: "Try import";
+        assert tree.root.data.items[0].span.start.row == 0: "valid synthetic span";
+    }, _ => @panic("synthetic import") }
+}

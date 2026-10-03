@@ -51,24 +51,33 @@ fn main() {
     unsigned(&start[0], 0); unsigned(&start[1], 0);
     let end = *field(&token_array[0], "end").as_array().unwrap();
     unsigned(&end[0], 0); unsigned(&end[1], 6);
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "memory.an");
+    desugar(&tree, "memory.an").unwrap();
     let check = Check(0u64, 0u64, 0u64, 0u64); walk_program(tree.root, &check);
     assert check.for_nodes == 0 && check.while_nodes == 0: "control sugar removed";
-    assert check.try_nodes == 1 && check.matches == 2: "nested constructs traversed";
+    assert check.try_nodes == 0 && check.matches == 3: "nested propagation lowered";
     let writer = Writer.with_max_depth(512u64); defer writer.drop();
     let formatter = AstFormatter.new(&writer); formatter.append_program(tree.root);
     let ast_text = *writer.finish().unwrap(); defer ast_text.drop();
     let ast_json = *parse(ast_text.as_str()).unwrap(); defer ast_json.drop();
     assert text(field(&ast_json, "tag")) == "Program": "AST root tag";
     let items = *field(field(&ast_json, "fields"), "items").as_array().unwrap();
-    assert items.len() == 3: "AST item count";
-    assert text(field(&items[0], "tag")) == "StructDef": "struct output";
-    assert text(field(&items[1], "tag")) == "EnumDef": "enum output";
-    assert text(field(&items[2], "tag")) == "FuncDef": "function output";
-    let function = field(&items[2], "fields");
-    let body = field(field(function, "body"), "fields");
-    let bindings = *field(body, "parameter_bindings").as_array().unwrap();
-    assert bindings.len() == 1: "normalized parameter JSON";
+    assert items.len() == 5: "declarations and propagation imports";
+    let structs: u64 = 0; let enums: u64 = 0; let functions: u64 = 0;
+    let index: u64 = 0;
+    while index < items.len() {
+        let tag = text(field(&items[index], "tag"));
+        if tag == "StructDef" { structs += 1; }
+        elif tag == "EnumDef" { enums += 1; }
+        elif tag == "FuncDef" {
+            functions += 1;
+            let function = field(&items[index], "fields");
+            let body = field(field(function, "body"), "fields");
+            let bindings = *field(body, "parameter_bindings").as_array().unwrap();
+            assert bindings.len() == 1: "normalized parameter JSON";
+        }
+        index += 1;
+    }
+    assert structs == 1 && enums == 1 && functions == 1: "declaration output";
 }

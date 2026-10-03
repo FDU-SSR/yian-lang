@@ -10,9 +10,9 @@ from std.core.ops import Index;
 fn main() {
     let tokens = *Lexer.new("fn f() { if let Some(x) = next() { x; } elif ready() { y; } else { z; } while let Some(y) = next() { y; } while ready() { step(); } }").run().unwrap();
     defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "control.an");
+    desugar(&tree, "control.an").unwrap();
     let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
     match &body.data.stmts[0].data { Match(value, arms) => {
         match &value.data { Call(_, _) => {}, _ => @panic("if let input") };

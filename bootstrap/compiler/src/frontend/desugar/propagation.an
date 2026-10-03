@@ -1,0 +1,156 @@
+from compiler.frontend.ast.arena import AstArena, AstTree;
+from compiler.frontend.ast.node import Program, Item, ItemData, MethodDef, Block, Expr, ExprData, TypeSource, PatternData, PatternArguments, Argument, Identifier, MatchArm, Pattern, TypeSyntax;
+from compiler.frontend.ast.atoms import MatchArmOrigin;
+from compiler.frontend.ast.operator import UnaryOperator;
+from compiler.frontend.ast.traversal import AstVisitor, AstRewriter, walk_program, walk_block, walk_capture_item, rewrite_expr_children;
+from compiler.frontend.desugar.build import identifier, name_expr, one_block, arm, match_expr, argument;
+from compiler.frontend.desugar.error import DesugarError;
+from compiler.frontend.source import Span, Position;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// 捕获初始化在外层求值；只有可调用体切换到自身的返回上下文。
+struct ContextValidator { in_callable: bool, problem: Option<DesugarError> }
+impl ContextValidator {
+    fn callable(body: Block&) {
+        let previous = self.in_callable;
+        self.in_callable = true;
+        walk_block(body, self);
+        self.in_callable = previous;
+    }
+}
+impl AstVisitor for ContextValidator {
+    pub fn enter_item(node: Item&) -> bool {
+        if self.problem.is_some() { return false; }
+        match &node.data {
+            FuncDef(_, _, _, _, _, body) => { self.callable(*body); false },
+            _ => true,
+        }
+    }
+    pub fn enter_method_def(node: MethodDef&) -> bool {
+        if self.problem.is_none() { self.callable(node.data.body); }
+        false
+    }
+    pub fn enter_expr(node: Expr&) -> bool {
+        if self.problem.is_some() { return false; }
+        match &node.data {
+            TryExpr(_) => {
+                if !self.in_callable {
+                    self.problem = Option<DesugarError>.Some(DesugarError.new(
+                        "'?' is only allowed inside a function, method or closure", node.span));
+                    return false;
+                }
+                true
+            },
+            ClosureExpr(captures, _, _, body) => {
+                let index: u64 = 0;
+                while index < captures.len() && self.problem.is_none() {
+                    walk_capture_item((*captures)[index], self);
+                    index += 1;
+                }
+                if self.problem.is_none() { self.callable(*body); }
+                false
+            },
+            _ => true,
+        }
+    }
+}
+
+pub fn validate_propagation(program: Program&) -> Result<void, DesugarError> {
+    let validator = ContextValidator(in_callable=false, problem=Option<DesugarError>.None);
+    walk_program(program, &validator);
+    match validator.problem.take() {
+        Some(problem) => Result<void, DesugarError>.Err(problem),
+        None => Result<void, DesugarError>.Ok({}),
+    }
+}
+
+struct TryLowerer { arena: AstArena&, next_binding: u64, imports: Vec<Item&> }
+impl TryLowerer {
+    fn hidden(span: Span, prefix: str, index: u64) -> Identifier& {
+        let name = f"{prefix}{index}";
+        defer name.drop();
+        identifier(self.arena, span, name.as_str(), true)
+    }
+    fn add_import(span: Span, target: str, alias: str) {
+        let paths = Vec<Identifier&>.new();
+        paths.push(identifier(self.arena, span, "std", true));
+        paths.push(identifier(self.arena, span, "core", true));
+        paths.push(identifier(self.arena, span, "try", true));
+        self.imports.push(self.arena.alloc_item(ItemData.Import(paths=paths,
+            target=identifier(self.arena, span, target, true),
+            alias=Option<Identifier&>.Some(identifier(self.arena, span, alias, true)),
+            end=Option<Position>.None), span));
+    }
+    fn trait_call(span: Span, trait: str, self_type: TypeSource, trait_args: Vec<Option<TypeSource>>, method: str, value: Expr&) -> Expr& {
+        let args = Vec<Argument&>.new();
+        args.push(argument(self.arena, value));
+        self.arena.alloc_expr(ExprData.TraitCall(
+            trait_expr=name_expr(self.arena, identifier(self.arena, span, trait, true)),
+            self_type=self_type, trait_args=trait_args,
+            method_name=identifier(self.arena, span, method, true), args=args), span)
+    }
+    fn expand(node: Expr&, operand: Expr&) -> Expr& {
+        let span = node.span;
+        if self.next_binding == 0 {
+            self.add_import(span, "Try", "%try_trait");
+            self.add_import(span, "FromResidual", "%from_residual_trait");
+        }
+        let index = self.next_binding;
+        self.next_binding += 1;
+        let value = self.hidden(span, "%try_value_", index);
+        let residual = self.hidden(span, "%try_residual_", index);
+        let reference = self.hidden(span, "%try_reference_", index);
+        let borrowed = match &operand.data { Unary(op, _) => *op == UnaryOperator.AddrOf, _ => false };
+        let branch_args = Vec<Option<TypeSource>>.new();
+        branch_args.push(Option<TypeSource>.None);
+        branch_args.push(Option<TypeSource>.None);
+        let branch = self.trait_call(span, "%try_trait", TypeSource.ArgumentType(0u64), branch_args,
+            "branch", if borrowed { name_expr(self.arena, reference) } else { operand });
+        let conversion_args = Vec<Option<TypeSource>>.new();
+        conversion_args.push(Option<TypeSource>.Some(TypeSource.ArgumentType(0u64)));
+        let conversion = self.trait_call(span, "%from_residual_trait", TypeSource.CallableReturnType,
+            conversion_args, "from_residual", name_expr(self.arena, residual));
+        let arms = Vec<MatchArm&>.new();
+        let bindings = [value, residual];
+        let variants = ["Continue", "Break"];
+        let results = [name_expr(self.arena, value),
+            self.arena.alloc_expr(ExprData.Return(Option<Expr&>.Some(conversion)), span)];
+        let i: u64 = 0;
+        while i < 2 {
+            let positional = Vec<Pattern&>.new();
+            positional.push(self.arena.alloc_pattern(PatternData.NamePattern(bindings[i]), span));
+            let pattern = self.arena.alloc_pattern(PatternData.ConstructPattern(
+                name=identifier(self.arena, span, variants[i], true), qualifier=Option<TypeSyntax&>.None,
+                arguments=PatternArguments.Positional(positional), rest=false), span);
+            arms.push(arm(self.arena, pattern, one_block(self.arena, span, results[i]), MatchArmOrigin.Synthetic));
+            i += 1;
+        }
+        let expanded = match_expr(self.arena, span, branch, arms);
+        if !borrowed { return expanded; }
+        // 绑定引用表达式一次，避免改变后续类型推导所见的引用身份。
+        let binding = self.arena.alloc_pattern(PatternData.BindPattern(
+            name=reference, inner=self.arena.alloc_pattern(PatternData.WildcardPattern, span)), span);
+        let outer = Vec<MatchArm&>.new();
+        outer.push(arm(self.arena, binding, one_block(self.arena, span, expanded), MatchArmOrigin.Synthetic));
+        match_expr(self.arena, span, operand, outer)
+    }
+}
+impl AstRewriter for TryLowerer {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
+        match &node.data { TryExpr(operand) => self.expand(node, *operand), _ => node }
+    }
+}
+
+pub fn lower_propagation(tree: AstTree&) {
+    let pass = TryLowerer(arena=&tree.arena, next_binding=0u64, imports=Vec<Item&>.new());
+    defer pass.imports.drop();
+    tree.root = pass.rewrite_program(tree.root);
+    if pass.imports.len() == 0 { return; }
+    let items = pass.imports.take();
+    items.extend_from_slice(tree.root.data.items.as_slice());
+    tree.root.data.items.drop();
+    tree.root.data.items = items;
+}

@@ -25,9 +25,9 @@ impl AstVisitor for Counter {
 fn main() {
     let tokens = *Lexer.new("fn f((x, y): (u64, u64)) { for (a, b) in make() { use(a, b); } let c = ||((m, n): (u64, u64)) -> u64 { m + n }; } impl Pair { fn sum((a, b): (u64, u64)) -> u64 { a + b } }").run().unwrap();
     defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "bindings.an");
+    desugar(&tree, "bindings.an").unwrap();
     match &tree.root.data.items[0].data { FuncDef(_, _, _, params, _, body) => {
         assert params.len() == 1 && body.data.parameter_bindings.len() == 1: "parameter normalization";
         match &params[0] { Named(info) => { assert info.data.name.data.synthetic: "generated parameter"; }, _ => @panic("named parameter") };

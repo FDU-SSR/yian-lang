@@ -5,6 +5,8 @@ from compiler.frontend.parse.items import parse_program;
 from compiler.frontend.desugar import desugar;
 from compiler.frontend.ast.atoms import BuiltinKind;
 from compiler.frontend.ast.node import Expr;
+from compiler.frontend.ast.arena import AstTree;
+from compiler.frontend.ast.node import Block;
 from std.core.drop import Drop;
 from std.core.ops import Index;
 
@@ -12,13 +14,22 @@ fn statement(expr: Expr&) -> Expr& {
     match &expr.data { Semi(inner) => *inner, _ => @panic("semicolon statement") }
 }
 
+fn function_body(tree: AstTree&) -> Block& {
+    let index: u64 = 0;
+    while index < tree.root.data.items.len() {
+        match &tree.root.data.items[index].data { FuncDef(_, _, _, _, _, body) => { return *body; }, _ => {} }
+        index += 1;
+    }
+    @panic("function")
+}
+
 fn main() {
     let tokens = *Lexer.new("fn f() { 1..4; x in values; assert ready(): \"message\"; assert ready(); value()?; }").run().unwrap();
     defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "expressions.an");
-    let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
+    desugar(&tree, "expressions.an").unwrap();
+    let body = function_body(&tree);
     match &body.data.stmts[0].data { Semi(expr) => match &expr.data {
         Call(callee, args) => {
             assert args.len() == 2: "range endpoints";
@@ -44,5 +55,7 @@ fn main() {
         }, _ => @panic("assert condition") };
         i += 1;
     }
-    match &body.data.stmts[4].data { Semi(expr) => match &expr.data { TryExpr(_) => {}, _ => @panic("try syntax retained") }, _ => @panic("try statement") }
+    match &body.data.stmts[4].data { Semi(expr) => match &expr.data { Match(_, arms) => {
+        assert arms.len() == 2: "propagation branches";
+    }, _ => @panic("propagation match") }, _ => @panic("try statement") }
 }

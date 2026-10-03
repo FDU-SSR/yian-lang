@@ -125,10 +125,16 @@ impl Parser {
             },
             None => {
                 self.arena.drop();
+                self.arena = AstArena.new();
                 let problem = self.problem;
                 self.problem.message = String.new();
                 return Result<AstTree, ParseError>.Err(msg=problem);
             },
         }
     }
+}
+
+// finish 转移或释放 arena；未完成的解析器仍拥有已分配节点和错误消息。
+impl Drop for Parser {
+    pub fn drop() { self.arena.drop(); self.problem.drop(); }
 }

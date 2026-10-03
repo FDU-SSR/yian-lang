@@ -1,8 +1,25 @@
 from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
 from std.core.ops import Index;
+from compiler.frontend.ast.node import TypeSource;
 
 // Traversal follows child edges; shared nodes are visited once per incoming edge.
 // Binding inputs precede their patterns; block parameter bindings precede statements.
+pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
+    match source {
+        Syntax(value) => walk_type_syntax(*value, visitor),
+        ArgumentType(_) => {},
+        CallableReturnType => {},
+    }
+}
+
+pub fn rewrite_type_source(source: TypeSource&, rewriter: AstRewriter&) {
+    match source {
+        Syntax(value) => { *value = rewriter.rewrite_type_syntax(*value); },
+        ArgumentType(_) => {},
+        CallableReturnType => {},
+    }
+}
+
 pub trait AstVisitor {
     fn enter_identifier(node: Identifier&) -> bool { true }
     fn leave_identifier(node: Identifier&) {}
@@ -453,6 +470,18 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         },
         TryExpr(operand) => {
             walk_expr(*operand, visitor);
+        },
+        TraitCall(trait, self_type, trait_args, method_name, args) => {
+            walk_expr(*trait, visitor);
+            walk_type_source(self_type, visitor);
+            let index: u64 = 0;
+            while index < trait_args.len() {
+                match &(*trait_args)[index] { Some(value) => walk_type_source(value, visitor), None => {} }
+                index += 1;
+            }
+            walk_identifier(*method_name, visitor);
+            index = 0;
+            while index < args.len() { walk_argument((*args)[index], visitor); index += 1; }
         },
         Call(callee, args) => {
             walk_expr(*callee, visitor);
@@ -1353,6 +1382,18 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         },
         TryExpr(operand) => {
             *operand = rewriter.rewrite_expr(*operand);
+        },
+        TraitCall(trait, self_type, trait_args, method_name, args) => {
+            *trait = rewriter.rewrite_expr(*trait);
+            rewrite_type_source(self_type, rewriter);
+            let index: u64 = 0;
+            while index < trait_args.len() {
+                match &(*trait_args)[index] { Some(value) => rewrite_type_source(value, rewriter), None => {} }
+                index += 1;
+            };
+            *method_name = rewriter.rewrite_identifier(*method_name);
+            index = 0;
+            while index < args.len() { (*args)[index] = rewriter.rewrite_argument((*args)[index]); index += 1; }
         },
         Call(callee, args) => {
             *callee = rewriter.rewrite_expr(*callee);
