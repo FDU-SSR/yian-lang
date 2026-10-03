@@ -1,8 +1,9 @@
 from std.core.drop import Drop;
-from std.core.env import args, exit;
+from std.core.env import exit;
 from std.core.io import Stderr, Stdout;
 from std.core.string import String;
 from std.core.vec import Vec;
+from compiler.config import FrontendPhase, parse_args;
 from compiler.frontend.source import SourceManager, collect_sources;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import drop_tokens;
@@ -12,15 +13,6 @@ from compiler.frontend.ast.format import AstFormatter;
 from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.items import parse_program;
 from compiler.frontend.desugar import desugar;
-
-fn release_arguments(arguments: Vec<String>&) {
-    let index: u64 = 0u64;
-    while index < arguments.len() {
-        arguments[index].drop();
-        index += 1u64;
-    }
-    arguments.drop();
-}
 
 fn release_paths(paths: Vec<String>&) {
     let index: u64 = 0u64;
@@ -55,16 +47,8 @@ fn diagnostic_end(writer: Writer&) {
     writer.end_object(); writer.end_object(); emit_json(writer);
 }
 
-fn frontend(arguments: Vec<String>&) -> bool {
-    let phase = arguments[2u64].as_str();
-    let roots = Vec<String>.new();
-    defer roots.drop();
-    let index: u64 = 3u64;
-    while index < arguments.len() {
-        roots.push(arguments[index]);
-        index += 1u64;
-    }
-    let paths = match collect_sources(&roots) {
+fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
+    let paths = match collect_sources(inputs) {
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
@@ -87,10 +71,10 @@ fn frontend(arguments: Vec<String>&) -> bool {
     defer sources.drop();
     let output = Writer.with_max_depth(512u64);
     output.begin_object(); output.key("version"); output.write_u64(1);
-    output.key("phase"); output.write_string(phase);
+    output.key("phase"); output.write_string(phase.name());
     output.key("files"); output.begin_array();
     defer output.drop();
-    index = 0u64;
+    let index = 0u64;
     while index < paths.len() {
         let id = match sources.load(paths[index].as_str()) {
             Ok(value) => value,
@@ -121,7 +105,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                 return false;
             },
         };
-        if phase == "tokens" {
+        if phase == FrontendPhase.Tokens {
             append_token_file(&output, source.path(), &tokens);
         } else {
             let parser = Parser.new(&tokens);
@@ -139,7 +123,7 @@ fn frontend(arguments: Vec<String>&) -> bool {
                     return false;
                 },
             };
-            if phase == "desugared" { desugar(&tree, source.path()); }
+            if phase == FrontendPhase.Desugared { desugar(&tree, source.path()); }
             output.begin_object(); output.key("path");
             output.write_string(source.path()); output.key("ast");
             let formatter = AstFormatter.new(&output);
@@ -154,20 +138,24 @@ fn frontend(arguments: Vec<String>&) -> bool {
     return emit_json(&output);
 }
 
+fn write_error(text: str) {
+    match Stderr.new().write_str(text) { Ok(_) => {}, Err(problem) => problem.drop(), }
+}
+
 fn main() {
-    let arguments = args();
-    if arguments.len() >= 4u64 && arguments[1u64].as_str() == "--frontend-json" &&
-    (arguments[2u64].as_str() == "tokens" || arguments[2u64].as_str() == "ast" ||
-        arguments[2u64].as_str() == "desugared") {
-        let success = frontend(&arguments);
-        release_arguments(&arguments);
-        if !success { exit(1i32); }
-        return;
-    }
-    match Stderr.new().write_str("usage: compiler --frontend-json {tokens,ast,desugared} INPUT...\n") {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
+    let status = match parse_args() {
+        Ok(config) => {
+            defer config.drop();
+            match &config.action {
+                Help(text) => if write_output(text.as_str()) { 0i32 } else { 1i32 },
+                FrontendJson(phase) => if frontend(*phase, &config.inputs) { 0i32 } else { 1i32 },
+            }
+        },
+        Err(message) => {
+            defer message.drop();
+            write_error(message.as_str());
+            2i32
+        },
     };
-    release_arguments(&arguments);
-    exit(2i32);
+    if status != 0i32 { exit(status); }
 }

@@ -39,17 +39,27 @@ from compiler.codegen.llvm.pipeline.emit import Emitter
 from compiler.codegen.llvm.base.module import LLModule
 from compiler.codegen.llvm.pipeline.translator import LLTranslator
 from compiler.runtime_lib import RuntimeBuildError, ensure_archive, ensure_object
+from compiler.cli import parse_arguments
 from compiler.target_layout import type_size_provider
 from compiler.error import CompilerError
 from compiler.native_link import NativeLink
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse the compiler CLI options and interspersed input paths."""
+    """解析编译器选项与混排的输入路径。"""
     parser = argparse.ArgumentParser(
         prog="compiler/main.py",
         description="Yian compiler entrypoint.",
+        add_help=False,
+        allow_abbrev=False,
     )
+    options: dict[str, argparse.Action] = {}
+
+    def __register(action: argparse.Action) -> None:
+        for name in action.option_strings:
+            options[name] = action
+
+    __register(parser.add_argument("-h", "--help", action="help", help="show this help message and exit"))
     parser.add_argument(
         "paths",
         nargs="+",
@@ -57,34 +67,34 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         help="Input path(s).",
     )
-    parser.add_argument(
+    __register(parser.add_argument(
         "-t", "--target",
         choices=["none", "exe", "ll", "bc", "obj", "asm"],
         default="exe",
         help="Output target kind (default: exe). Use 'none' for analysis only.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "-o", "--output",
         type=Path,
         metavar="PATH",
         default=None,
         help="Output file path (default: derived from first input file).",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "-O",
         type=int,
         metavar="LEVEL",
         default=0,
         choices=[0, 1, 2, 3],
         help="Optimization level: LLVM IR passes + backend + clang link (default: 0).",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--profile",
         action="store_true",
         default=False,
         help="Print per-phase timing information.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--dump",
         action="store_true",
         default=False,
@@ -92,31 +102,31 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "Write intermediate dumps (tokens.txt/ast.txt/hir.txt/cfg.txt, plus "
             "ir.ll when codegen runs) into build/. Default: off."
         ),
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--log-spec",
         type=str,
         metavar="SPEC",
         default="",
         help="Log configuration, e.g. 'all=INFO,type_check=DEBUG'.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--log-file",
         type=Path,
         metavar="PATH",
         default=None,
         help="Write log output to PATH in addition to stderr.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--packages",
         type=Path,
         metavar="PATH",
         default=None,
         help="Package map JSON file (enables package-mode import resolution).",
-    )
-    parser.add_argument("--link-lib", action="append", default=[], metavar="NAME")
-    parser.add_argument("--link-search", action="append", default=[], type=Path, metavar="DIR")
-    parser.add_argument(
+    ))
+    __register(parser.add_argument("--link-lib", action="append", default=[], metavar="NAME"))
+    __register(parser.add_argument("--link-search", action="append", default=[], type=Path, metavar="DIR"))
+    __register(parser.add_argument(
         "--compiler-root",
         type=Path,
         metavar="PATH",
@@ -125,8 +135,8 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "YIAN checkout root used to locate the standard library "
             "(default: $YIAN_LIB, then $YIAN_ROOT, then this checkout)."
         ),
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--analyze",
         action="store_true",
         default=False,
@@ -134,12 +144,12 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "Run analysis through type checking, comptime specialization, and definite-assignment "
             "validation; report diagnostics without code generation or build/ output."
         ),
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--frontend-json", choices=["tokens", "ast", "desugared"], default=None,
         help="Print a versioned frontend snapshot without semantic analysis.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--json",
         action="store_true",
         default=False,
@@ -147,8 +157,8 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "With --analyze, print one JSON object with the diagnostics on stdout. "
             "stdout then carries only that object; everything else goes to stderr."
         ),
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--format",
         action="store_true",
         default=False,
@@ -157,21 +167,21 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "whitespace, line breaks and comment placement). Prints to stdout; use "
             "-w to rewrite in place, or --check to report the files that differ."
         ),
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "-w",
         "--write",
         action="store_true",
         default=False,
         help="With --format, rewrite the files in place instead of printing them.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--check",
         action="store_true",
         default=False,
         help="With --format, report the files that need formatting and exit 1 if any.",
-    )
-    parser.add_argument(
+    ))
+    __register(parser.add_argument(
         "--raw-pointers",
         action="store_true",
         default=False,
@@ -179,12 +189,11 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "Use bare 8-byte pointers (no checks, no lock slots, no frame locks) across "
             "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
         ),
-    )
-    parser.add_argument("--allow-ffi", action="store_true", default=False,
-                        help="Allow FFI declarations and operations in standalone sources.")
-    # Intermixed parsing keeps "paths … options … paths" valid; a plain
-    # parse_args() would reject a positional that follows an option.
-    return parser.parse_intermixed_args(argv)
+    ))
+    __register(parser.add_argument("--allow-ffi", action="store_true", default=False,
+                        help="Allow FFI declarations and operations in standalone sources."))
+    arguments = sys.argv[1:] if argv is None else argv
+    return parse_arguments(parser, options, arguments)
 
 
 class _CompilationFailed(Exception):

@@ -1,0 +1,105 @@
+from std.cli import ArgumentParser, Nargs, ArgMatches;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum FrontendPhase { Tokens, Ast, Desugared }
+
+impl FrontendPhase {
+    pub fn name() -> str {
+        match self {
+            Tokens => "tokens",
+            Ast => "ast",
+            Desugared => "desugared",
+        }
+    }
+}
+
+pub enum CompilerAction {
+    FrontendJson { phase: FrontendPhase },
+    Help { text: String },
+}
+
+pub struct CompilerConfig {
+    pub action: CompilerAction,
+    pub inputs: Vec<String>,
+}
+
+impl CompilerConfig {
+    static fn from_matches(matches: ArgMatches&) -> Self {
+        let phase = match matches.get_string("phase") {
+            Ok(Some(text)) => if text == "tokens" {
+                FrontendPhase.Tokens
+            } elif text == "ast" {
+                FrontendPhase.Ast
+            } else {
+                FrontendPhase.Desugared
+            },
+            _ => @panic("missing frontend phase"),
+        };
+        let values = match matches.get_many("inputs") {
+            Ok(Some(values)) => values,
+            _ => @panic("missing frontend inputs"),
+        };
+        let inputs = Vec<String>.new();
+        let index = 0u64;
+        while index < values.len() {
+            match &values[index] {
+                Text(value) => inputs.push(String.from(&value.as_str())),
+                _ => @panic("invalid frontend input type"),
+            }
+            index += 1u64;
+        }
+        Self(action=CompilerAction.FrontendJson(phase), inputs=inputs)
+    }
+}
+
+impl Drop for CompilerConfig {
+    pub fn drop() {
+        match &self.action {
+            Help(text) => text.drop(),
+            FrontendJson(_) => {},
+        }
+        let index = 0u64;
+        while index < self.inputs.len() {
+            self.inputs[index].drop();
+            index += 1u64;
+        }
+        self.inputs.drop();
+    }
+}
+
+// 配置与错误文本拥有存储，独立于解析器和命令行字符串。
+pub fn parse_args() -> Result<CompilerConfig, String> {
+    let parser = ArgumentParser.new("compiler");
+    defer parser.drop();
+    parser.description("YIAN compiler frontend");
+    parser.add_argument("phase").long("frontend-json").required(true)
+        .choices(["tokens", "ast", "desugared"].as_slice()).metavar("PHASE")
+        .help("output the selected frontend stage as JSON");
+    parser.add_argument("inputs").nargs(Nargs.OneOrMore).metavar("INPUT")
+        .help("input files or directories");
+    match parser.parse_env() {
+        Ok(outcome) => match outcome {
+            Help(text) => Result<CompilerConfig, String>.Ok(
+                CompilerConfig(action=CompilerAction.Help(text), inputs=Vec<String>.new())),
+            Parsed(matches) => {
+                defer matches.drop();
+                Result<CompilerConfig, String>.Ok(CompilerConfig.from_matches(&matches))
+            },
+        },
+        Err(error) => {
+            defer error.drop();
+            let diagnostic = String.new();
+            match parser.format_usage() {
+                Ok(text) => { defer text.drop(); diagnostic.push_str(text.as_str()); },
+                Err(problem) => problem.drop(),
+            }
+            let message = error.format();
+            defer message.drop();
+            diagnostic.push_str(message.as_str());
+            Result<CompilerConfig, String>.Err(diagnostic)
+        },
+    }
+}
