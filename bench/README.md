@@ -1,7 +1,7 @@
 # bench/ — 评测集
 
 评测集按**来源**分目录、按**侧重点**分集合、按**规模**分快速/完全两档。每个集合都跑三态
-（C / raw / fat），C 参考实现是三态的权威值。
+（C / raw / fat），C 参考实现提供结果校验的参考值。分配器专项使用 fat/raw 两态。
 
 ## 目录
 
@@ -9,12 +9,12 @@
 bench/
 ├── AWFY/            来源: Are We Fast Yet (smarr/are-we-fast-yet 的 Java 微基准改写)
 │   ├── an/*.an        胖态源; <name>.raw.an 为裸态覆盖源 (同目录)
-│   ├── c/*.c          同算法同规模的 C 参考 (三态权威值)
+│   ├── c/*.c          C 参考实现（结果校验）
 │   └── specs/*.json   argv / 权威校验 (check) / 侧重 tag / 规模档
 ├── BG/              来源: The Computer Language Benchmarks Game (Revised BSD)
 ├── ALLOC/           分配器专项 (两态: fat vs libc malloc/free, 无 C 参考)
 │   ├── an/  specs/
-├── fatptr/          机制专项微基准 (方向 B: 表示尺寸/拷贝/追逐, 本仓库自写)
+├── fatptr/          机制专项微基准 (表示尺寸/拷贝/追逐, 本仓库自写)
 │   ├── an/  c/  specs/
 ├── sets/*.json      集合清单: 成员 + 默认规模档 + 测量次数
 ├── results/         生成物: <set>.{md,csv}、alloc.{md,csv}、partial.{md,csv}
@@ -43,12 +43,12 @@ python3 bench/bench_three_way.py --source AWFY --set fast
 | 集合 | 内容 | 默认规模档 | 用途 |
 | --- | --- | --- | --- |
 | `full` | 全部三态基准 | `full` | 正式基线与对外引用 |
-| `fast` | 8 项代表性基准 | `fast` | 开发中频繁跑（含编译 ≤2 分钟） |
-| `ptr` | tag `ptr` | `full` | 指针/对象图改动（方向 A/B） |
+| `fast` | 8 项代表性基准 | `fast` | 代表性子集与缩小规模，耗时取决于机器 |
+| `ptr` | tag `ptr` | `full` | 指针/对象图 |
 | `numeric` | tag `numeric` | `full` | 数值/循环改动 |
 | `string` | tag `string` | `full` | 字符串/IO 改动 |
 | `alloc-heavy` | tag `alloc` + storage/json | `full` | 分配密集但仍走三态 |
-| `micro` | tag `micro`（fatptr 三项） | `full` | 表示与 ABI 改动（方向 B）的尺寸/检查读数 |
+| `micro` | tag `micro`（fatptr 三项） | `full` | 表示与 ABI 的尺寸/检查读数 |
 
 AWFY 与 BG 的成员：AWFY 14 项（bounce、cd、deltablue、havlak、json、list、mand、nbody、permute、
 queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、fasta、revcomp、spectralnorm），
@@ -82,14 +82,13 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 超过 1 s 的项按 full 规模运行。缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数
 最安全；若必须缩放问题规模，断言与权威值都要跟着写成规模的函数。
 
-两档结论冲突时以完全档为准，并把该基准记进"已知规模敏感性"；当前两档在 `ptr`/`alloc`/
-`numeric`/`string` 四类上的方向一致。
+不同规模下的性能结论需分别解释；跨规模比较应核对工作量、缓存行为与采样条件。
 
 ## 三态协议
 
 | 态 | 编译/运行 |
 | --- | --- |
-| C | `clang -O2 -lm bench/<SOURCE>/c/<name>.c`（argv 见 spec） |
+| C | `clang -O2 -ffp-contract=off bench/<SOURCE>/c/<name>.c -lm`（argv 见 spec） |
 | raw | `yianc -O2 --raw-pointers lib/src <src>` + libc `malloc`/`free` |
 | fat | `yianc -O2 lib/src <src>`（胖指针为默认） |
 
@@ -97,12 +96,13 @@ fatptr 3 项（call_abi、copy_struct、chase）。
   绝对值对 argv[0] 长度 → 进程布局敏感）。
 - 采样：每态 1 次 warmup（不计入样本）后按 C→raw→fat **逐次轮转**测量 N 次；正式指标取最小值，
   同时记录中位数/四分位距/CV/峰值 RSS（`/usr/bin/time -v`）。
-- 降噪：`taskset -c <cpu>` 绑核；逐次轮转消除跨时段频率/温度漂移。
+- 降噪：`taskset -c <cpu>` 绑核；逐次轮转减轻跨时段频率/温度漂移。
 - 语义护栏：C warmup 必须通过 spec 的 `check`（`rc` / `stdout_eq` / `stdout_contains` /
   `stdout_int_mod`）；raw 与 fat 的 warmup stdout 与退出码必须逐字节一致，且退出码为 0。
   报告中标 `否` 即该基准的比值不可用。
-- **不设回归门槛**：性能试验只作参考，不写阈值脚本；本机同一份代码两次全量跑的逐项差可达 ±2%，
-  单项变化小于这个量级时只当噪声，结论取 min-of-N 且要看多项同向。
+- **不设回归门槛**：性能试验只作参考，不写阈值脚本；噪声量级取决于采样环境，判断变化需结合重复测量与样本分布。
+- **算法等价需独立核对**：退出码与输出一致只能说明结果校验通过，不能证明搜索路径、读写恢复、分配或错误路径一致。
+  解释比值前须核对 C/raw/fat 的算法与工作量；未经核对的条目不能作为表示开销的证据。
 
 ## 分配器专项
 
@@ -117,8 +117,8 @@ python3 bench/bench_allocator.py --scale fast --pin 4    # 快速档: 每态 3 �
 ## 结果留档
 
 `bench/results/` 里只有完全档与分配器记录（`full.{md,csv}`、`alloc.{md,csv}`）进版本历史；
-其余集合（`ptr`/`numeric`/`string`/`alloc-heavy`/`micro`）与临时子集（`partial.*`）是开发过程中的
-读数，已在 `.gitignore` 里排除。
+其余集合（`ptr`/`numeric`/`string`/`alloc-heavy`/`micro`）与临时子集（`partial.*`）由 `.gitignore` 排除。
+报告中的日期、提交与环境指纹定义该次测量的范围，不能视为当前源码性能。
 
 ## 新增一个基准
 

@@ -9,7 +9,7 @@
 | The Computer Language Benchmarks Game | `bench/BG/` | 5 | Revised BSD；基准源文件头注释记录具体来源与版权信息。 |
 | 本仓库编写的分配器负载 | `bench/ALLOC/` | 4 | 本仓库代码；fat/raw 两态对照 libc `malloc`/`free`。 |
 | 本仓库编写的机制微基准 | `bench/fatptr/` | 3 | 本仓库代码；比较表示尺寸、传参、拷贝与指针追逐的成本。 |
-| 对应基准的 C 参考实现 | `bench/AWFY/c/`、`bench/BG/c/`、`bench/fatptr/c/` | 22 | 本仓库编写；与 YIAN 版本使用相同的工作量和结果校验。 |
+| 对应基准的 C 参考实现 | `bench/AWFY/c/`、`bench/BG/c/`、`bench/fatptr/c/` | 22 | 本仓库编写；用于对齐工作量与结果校验；算法等价需逐项核对。 |
 
 上游主页：
 

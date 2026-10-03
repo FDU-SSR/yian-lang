@@ -218,12 +218,7 @@ def __run_one(
 
 
 def __bin_root_hint(project: Project, compiler_output: str) -> str:
-    """Explain the one surprising consequence of the Cargo-aligned rule.
-
-    A ``bin`` root has no library interface, so its own tests cannot import it;
-    that surfaces as an ordinary ``AX009`` from the synthetic test package,
-    which reads oddly without this note.
-    """
+    """为含 AX009 和根包名的编译输出附加 bin 根包的库接口提示。"""
     root = project.root_package
     if project.packages[root].kind is not PackageKind.BIN:
         return ""

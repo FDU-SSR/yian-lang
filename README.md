@@ -6,7 +6,7 @@ YIAN 是一门自研的静态类型编程语言，编译器用 Python 实现。
 ## 运行环境
 
 - Linux（如 Ubuntu）
-- Python 3.11+（`anx` 用 `tomllib` 读清单）；`scripts/install.sh` 要求 ≥ 3.11
+- Python 3.12+（编译器使用泛型函数语法；`anx` 用 `tomllib` 读清单）
 - LLVM 22 工具链：llvmlite 0.49（自带 LLVM 22）、clang 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）
 
 ## 安装与卸载
@@ -35,6 +35,9 @@ scripts/install.sh --python PATH      # 指定解释器
   `--no-build-isolation`（离线环境也能装），最后校验 `yianc`、`anx`、`yian-lsp` 是否在
   `PATH` 上。
 - `yian-lsp` 需要可选的 `pygls` 依赖；`yianc` 与 `anx` 不依赖它。
+
+安装元数据和脚本的最低版本检查为 Python 3.11，但 `compiler/frontend/parse/stream.py` 等模块
+使用 Python 3.12 的泛型函数语法；运行工具链需要 Python 3.12 或更高版本。
 
 卸载：
 
@@ -110,8 +113,13 @@ python3 scripts/run_tests.py -q               # 只打印汇总
 - [语言语法参考](docs/grammar/index.md) —— Yian 语言手册（语法、语义、标准库）
 - [anx 用户指南](docs/anx/index.md) —— 项目、清单、依赖、命令行、项目测试、诊断
 - [开发手册](docs/manual/index.md) —— 编译器各阶段（01–19）、anx 内部实现（20–25）、
-  分析接口与语言服务器（26–27）、格式化器（28）
+  分析接口与语言服务器（26–27）、格式化器（28）、FFI（29）、自举前端（30）
 - [快速上手](docs/grammar/00.quick_start.md) —— 可编译示例
+- [设计概览](docs/proposal.md) —— 语言、工具链与内存安全边界
+- [内存安全说明](docs/security.md) —— fat 模式检查与可信边界
+
+`bootstrap/compiler` 是 YIAN 实现的词法、语法与去糖前端，提供 `--frontend-json` 观察接口，
+不提供完整原生编译。包与测试入口见[自举编译器手册](docs/manual/30.bootstrap.md)。
 
 ## For GitHub users
 
@@ -121,7 +129,7 @@ Python. Pipeline: `.an source → Tokens → AST → desugared AST → HIR → C
 ### Environment
 
 - Linux (like Ubuntu)
-- Python 3.11+ (`anx` reads manifests with `tomllib`)
+- Python 3.12+ (the compiler uses generic function syntax; `anx` reads manifests with `tomllib`)
 - LLVM 22 toolchain: llvmlite 0.49 (bundles LLVM 22), clang 22, and the LLVM
   tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`)
 
@@ -137,6 +145,9 @@ scripts/uninstall.sh            # remove the `yian` distribution
 `lib/`, so point the tools at a checkout with `YIAN_LIB=/path/to/yian/lib/src`
 (or `YIAN_ROOT=/path/to/yian`). Installing only the dependency by hand works
 too: `pip install -r ./requirements.txt`.
+
+Package metadata and the install script accept Python 3.11, but compiler source
+uses Python 3.12 generic function syntax; run the toolchain with Python 3.12+.
 
 ### Compiling an example file
 

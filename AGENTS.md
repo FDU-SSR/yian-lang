@@ -4,7 +4,7 @@ YIAN is a statically typed programming language. Its compiler is written in Pyth
 
 `.an source → tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → native executable`
 
-The supported development environment is Linux with Python 3.11 or newer (`anx` reads manifests with `tomllib`) and the LLVM 22 toolchain: llvmlite 0.49 (which bundles LLVM 22), clang 22, and the LLVM tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`). `scripts/setup_llvm_toolchain.sh` installs that toolchain — llvmlite into the active environment, the clang-22 packages system-wide, and the unversioned commands switched to 22; `--check` only reports. `YIAN_CC` selects the compiler used for linking; it defaults to `clang`, then `cc`.
+The supported development environment is Linux with Python 3.12 or newer (the compiler uses generic function syntax; `anx` reads manifests with `tomllib`) and the LLVM 22 toolchain: llvmlite 0.49 (which bundles LLVM 22), clang 22, and the LLVM tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`). `scripts/setup_llvm_toolchain.sh` installs llvmlite into the selected environment. `--with-clang-22` also installs system clang/LLVM packages and switches unversioned commands to 22; `--with-conda-clang` installs the tools into the conda environment. `--check` only reports. `YIAN_CC` selects the compiler used for linking; it defaults to `clang`, then `cc`.
 
 ## Working rules
 
@@ -34,16 +34,17 @@ Current options include:
 - `-o/--output PATH`.
 - `-O {0..3}`; for non-`ll` targets this controls the LLVM optimization pipeline, backend optimization, and executable linking. `-t ll` emits unoptimized LLVM IR.
 - `--profile`, `--dump`, `--log-spec`, `--log-file`, and `--packages`.
+- `--frontend-json {tokens,ast,desugared}` prints a JSON frontend observation without semantic analysis or code generation.
 - `--compiler-root PATH` (locate the standard library in a checkout) and `--raw-pointers`.
 - `--allow-ffi` permits FFI declarations and operations in standalone sources; package builds use each package's `[package].ffi` value. `--link-lib NAME` and `--link-search DIR` add native libraries and search paths when linking an executable.
-- `--analyze` runs lexical, syntax, and semantic analysis through compile-time conditional specialization and definite-assignment analysis, with no code generation or `build/` output; `--json` additionally prints one machine-readable diagnostic object on stdout.
+- `--analyze` runs lexical, syntax, and semantic analysis including compile-time branch selection, match coverage, and definite-assignment analysis, with no code generation or `build/` output; `--json` additionally prints one machine-readable diagnostic object on stdout.
 - `--format` re-emits the input sources with canonical whitespace (stdout by default), `-w/--write` rewrites them in place, and `--check` lists the files that differ and exits nonzero.
 
 `--dump` writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/`; code generation also writes `ir.ll`. `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` are not supported options.
 
 Executables default to `build/a.out`; LLVM bitcode and object outputs default to `build/<stem>.<ext>`, while assembly defaults to `<stem>.s` in the current directory. Pass `-o` whenever the output name matters.
 
-`-t exe` and `-t obj` link the runtime library (`runtime/`, C sources, built on demand into `build/runtime/`); `-t ll`, `-t bc` and `-t asm` leave its symbols as external declarations, so those outputs need the runtime linked in separately. `runtime/build.py --check` builds the library, asserts its ABI constants against `compiler/codegen/cfg/lockmech.py`, `compiler/runtime_error.py` and `compiler/runtime_lib.py` (the size-class table mirror), and runs its self-test (`--asan` for the sanitizer build).
+`-t exe` and `-t obj` link the runtime library (`runtime/`, C sources, built on demand into `build/runtime/`); `-t ll`, `-t bc` and `-t asm` leave its symbols as external declarations, so those outputs need the runtime linked in separately. `runtime/build.py --check` builds the library, asserts its ABI constants against `compiler/codegen/abi/lockmech.py`, `compiler/runtime_error.py` and `compiler/runtime_lib.py` (the size-class table mirror), and runs its self-test (`--asan` for the sanitizer build).
 
 `yianc` and `anx` locate the standard library through `--compiler-root` (a YIAN checkout root), then `YIAN_LIB` (the `lib/src` directory itself), then `YIAN_ROOT` (a checkout root); an editable install falls back to this checkout, while a non-editable one must be configured.
 
@@ -51,7 +52,7 @@ Executables default to `build/a.out`; LLVM bitcode and object outputs default to
 
 ## Compiler pipeline
 
-`compiler/main.py` runs the passes in this order:
+`compiler/main.py` uses `AnalysisSession` for source-to-HIR analysis, then lowers and emits the selected definitions:
 
 ```text
 lex
@@ -61,15 +62,15 @@ lex
 → restricted-operation check
 → global resolution
 → type finalization
-→ type checking
-→ compile-time conditional specialization
+→ type checking (compile-time branch selection and AST-to-HIR lowering)
+→ match coverage analysis
 → definite-assignment analysis
 → CFG lowering
 → LLVM lowering
 → emission
 ```
 
-`comptime if` is type checked into HIR first. `ComptimeIfSpecializer` then evaluates its compile-time condition, keeps the selected branch, and removes unreachable definitions before CFG lowering. Closure environments and calls are represented as ordinary aggregates and functions during CFG lowering. `IS_RAW_MODE` is a reserved compile-time configuration name; the compiler supplies its value for the active compilation configuration.
+`ExprChecker.lower_comptime_if` evaluates the typed condition and lowers only the selected AST branch to HIR. Match coverage and definite-assignment analysis inspect that HIR. Closure environments and calls are represented as ordinary aggregates and functions during CFG lowering. `IS_RAW_MODE` is a reserved compile-time configuration name; the compiler supplies its value for the active compilation configuration.
 
 ## Tests and checks
 
@@ -94,7 +95,7 @@ Sources are under `tests/<suite>/`; expected results are under `tests/output/<su
 
 An existing `tests/input/<suite>/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The runner expands these variants without duplicating the source test.
 
-Test data lives under `tests/`; the runner and the other Python tooling live under `scripts/`. Use `python3 -m compileall -q compiler anx scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
+Test data lives under `tests/`; the runner and the other Python tooling live under `scripts/`. Use `python3 -m compileall -q compiler anx lsp scripts` for the Python syntax check. There are no separate security or paper-evaluation runners in the common test workflow.
 
 ## anx package manager
 
@@ -103,13 +104,14 @@ Test data lives under `tests/`; the runner and the other Python tooling live und
 ## Architecture
 
 - `compiler/frontend/` contains the hand-written lexer and recursive-descent parser. Expression and statement parsing is in `frontend/parse/parser_expr.py`; type syntax is in `parser_type.py`.
-- `compiler/analysis/passes/` contains desugaring, prelude injection, restricted-operation checking, global resolution, compile-time conditional specialization, type checking, and definite-assignment analysis.
+- `compiler/analysis/passes/` contains desugaring, prelude injection, restricted-operation checking, global resolution, type checking, match coverage, and definite-assignment analysis.
 - `compiler/analysis/lowering/` lowers expressions, calls, and closure bodies into HIR through `ExprChecker`, `CallDispatcher`, `OpBuilder`, and related helpers.
 - `compiler/analysis/ty/` contains type representations, unification, generic inference, trait implementation lookup, dereference lookup, and intrinsic type identifiers. `TypeCtx` owns the type space and its semantic queries.
 - `compiler/analysis/state.py`, `facts/`, `resolution/`, `unit/`, and `symbol/` contain shared semantic state, recorded name facts, type resolution, callable bodies, HIR compilation units, `DefPoint`, and symbol contexts.
 - `compiler/codegen/cfg/` contains CFG IR and its builder/translator; closure environments and calls become ordinary CFG aggregates and functions during CFG lowering.
 - `compiler/codegen/llvm/` lowers CFG nodes with llvmlite and emits target files through `Emitter`.
 - `lib/` is the standard library written in YIAN.
+- `bootstrap/compiler/` is a YIAN frontend with `--frontend-json {tokens,ast,desugared}` output; `bootstrap/json/` provides JSON parsing and writing. It does not implement semantic analysis or native code generation. See `docs/manual/30.bootstrap.md` for package interfaces and commands.
 - `bootstrap/ffi/` and `bootstrap/llvm/` are FFI consumer packages; the LLVM package uses LLVM 22 C API bindings and declares its C shim and link components through `[native.llvm]`.
 
 The shared language supports postfix reference types such as `T&`. For a concrete non-trait `T`, the common bare representation of non-ZST `T&` has the same data-pointer ABI and size as `T*`; it does not provide borrow checking or lifetime inference. When `T` is a trait, `T&` is a trait object with dynamic method dispatch. Concrete safety metadata and runtime checking mechanisms are implementation-specific and must not be inferred from the common ABI description.
@@ -118,7 +120,7 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 
 ## Conventions and gotchas
 
-- Pyright strict checking covers `compiler/` and `anx/`; avoid `Any`, `object`, and `hasattr()`. Keep imports at the top of new files and preserve the existing handler-map dispatch style in the type checker and LLVM translator.
+- Pyright strict checking covers `compiler/`, `anx/`, and `lsp/`; avoid `Any`, `object`, and `hasattr()`. Keep imports at the top of new files and preserve the existing handler-map dispatch style in the type checker and LLVM translator.
 - Python private names use a **double** leading underscore: module-level functions and constants (`__helper`, `__CONSTANT`), methods (`self.__drain()`), nested helpers, and instance attributes. Use a **single** underscore only where the double form breaks the reference at run time: a name written as `__name` inside a class body is rewritten to `_ClassName__name`, so a *module-level* private that a class body mentions (for example `_SEP` in `compiler/utils/log.py`, `_is_within` in `compiler/analysis/source_provenance.py`) must keep one underscore. A private defined *and* used inside the same class body is `__name` like any other. Audit with `grep -rnE "def _[^_]|^_[A-Za-z]|(self|cls)\._[^_]" --include=*.py compiler anx scripts`: every hit must be one of those module-level/class-body exceptions.
 - `bak/` is ignored legacy material, `.conda/` is a local environment, and `build/` contains compiler and test output. Do not modify them unless the user explicitly asks for it.
 - `ide-support/` contains the packaged VS Code extension and `licenses/` contains the project license texts.

@@ -1,6 +1,6 @@
 # Yian 开发文档
 
-本文档描述 Yian 工具链的内部实现，分四部分：
+本文档描述 Yian 工具链的内部实现：
 
 - **编译器**（01–19）：内部架构、数据流与关键算法，覆盖编译管线和编译器的主要子系统。
 - **anx 包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
@@ -9,12 +9,13 @@
   协议服务、调度与分发。
 - **格式化器**（28）：源码排版的规则、注释与空行的恢复、五条不变式与三个入口。
 - **FFI**（29）：C ABI 声明与封送的编译路径、包权限和原生链接。
+- **自举编译器**（30）：YIAN 实现的前端、JSON 数据结构与 LLVM FFI 包。
 
 ## 目录 · 编译器
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [01](01.pipeline.md) | 编译管线概览 | `compiler/main.py` |
+| [01](01.pipeline.md) | 编译管线概览 | `compiler/main.py`、`compiler/analysis/session.py` |
 | [02](02.frontend.md) | 前端 | `compiler/frontend/lex/`、`compiler/frontend/parse/` |
 | [03](03.desugar.md) | AST 去糖 | `compiler/analysis/passes/desugar.py` |
 | [04](04.resolve.md) | 全局符号解析 | `compiler/analysis/passes/global_resolve.py` |
@@ -24,7 +25,7 @@
 | [08](08.hir.md) | HIR IR | `compiler/analysis/unit/hir.py` |
 | [09](09.type_check.md) | 类型检查 | `compiler/analysis/passes/type_check.py` |
 | [10](10.cfg_ir.md) | CFG IR | `compiler/codegen/cfg/ir.py` |
-| [11](11.cfg_builder.md) | CFG 构建 | `compiler/codegen/cfg/passes/translator.py`、`compiler/codegen/cfg/lower/` |
+| [11](11.cfg_builder.md) | CFG 构建 | `compiler/codegen/cfg/pipeline.py`、`compiler/codegen/cfg/lower/` |
 | [12](12.llvm_codegen.md) | LLVM 代码生成 | `compiler/codegen/llvm/` |
 | [13](13.log.md) | 日志系统 | `compiler/utils/log.py` |
 | [14](14.cli_build.md) | CLI 与构建 | `compiler/main.py` |
@@ -53,5 +54,6 @@
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `compiler/format/`、`lsp/formatting.py` |
 | [29](29.ffi.md) | FFI 编译与链接 | `compiler/analysis/`、`compiler/codegen/llvm/emitters/ffi.py`、`compiler/native_link.py` |
+| [30](30.bootstrap.md) | 自举编译器 | `bootstrap/compiler/`、`bootstrap/json/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
 > 用户视角的用法见 [anx 用户指南](../anx/index.md)。

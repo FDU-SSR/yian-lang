@@ -47,7 +47,7 @@ YIAN（`.an`）的编辑器支持：声明式的语言注册与编辑体验、�
 
 分析结果按**整个项目**计算，但只发布给**已打开**的文档；每个诊断带被分析时的文档版本号，客户端据此
 丢弃过期结果；文件修好、关闭或不再被分析时，该文档的诊断会被清空。分析不生成代码，也不调用
-LLVM/clang/链接器。
+CFG/LLVM 代码生成或 clang 链接器；`@sizeof` 的编译期求值使用目标布局查询。
 
 ## 语言服务器
 
@@ -62,7 +62,7 @@ LLVM/clang/链接器。
 
 ```bash
 scripts/install.sh --with-deps              # editable 安装 yianc / anx / yian-lsp
-python3 -m pip install '.[lsp]'             # 只补语言服务器依赖（pygls；llvmlite 是基础依赖）
+python3 -m pip install -e '.[lsp]'          # editable 安装 YIAN 与 pygls
 python3 -m lsp --version                    # 用同一个解释器确认入口点可用
 ```
 
@@ -120,7 +120,7 @@ pip install -e '.[lsp]'，或把扩展设置指向正确的环境。实际可用
 方法、静态方法）、`shapes.an`（带载荷的枚举、`match`、泛型函数）、`measure.an`（trait、默认方法、
 条件实现 `impl<T> Trait for T if T: Trait`）、`text.an`（`Vec`/`String`/`Option`、`for`、闭包、
 f-string、`dyn` 数组与 `del`）、`handles.an`（`T&` 引用、指针参数、`Drop`、`defer`、`comptime if`），
-以及入口 `main.an`；`tests/tour.an` 跑一遍新增模块。
+以及入口 `main.an`；`ide-support/sample/tests/tour.an` 覆盖这些模块。
 
 要验收导航，把工作区设为 `ide-support/sample`，打开 `src/main.an`：在 `corner.scaled(2.0)` 的
 `scaled` 上 `F12` 应跳到 `src/geometry.an` 的方法定义；在 `flipped.first` 的 `first` 上悬停应显示
@@ -187,7 +187,7 @@ code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.7.0
   `vsce package` 构建安装包。
 - 选择服务器版本：检出目标源码版本并运行 `scripts/install.sh --with-deps`。editable 安装使用当前源码；
   可在输出通道核对 `connected to yian-lsp <版本>`。
-- 兼容性：扩展要求 VS Code `^1.90.0`；服务器要求 Python ≥ 3.11 与 `pygls` ≥ 2.1，`llvmlite` 由基础
+- 兼容性：扩展要求 VS Code `^1.90.0`；服务器及其编译器依赖要求 Python ≥ 3.12 与 `pygls` ≥ 2.1，`llvmlite` 由基础
   依赖提供；扩展与服务器的版本必须同号（见上文"版本匹配"）。
 
 打包产物（`*.vsix`）、`node_modules/`、`out/` 都不进版本库。VSIX 里必须带上
@@ -246,7 +246,7 @@ YIAN Language Server）。要把日志留档或开到更详细：
 | `typeof` | `keyword.operator.typeof.yian` |
 | `i8`…`u64` `f16`…`f64` `bool` `char` `str` `void` `int` `uint` `float` | `storage.type.primitive.yian` |
 | `Shape` `Point`（PascalCase） | `entity.name.type.yian` |
-| `@BitCopy` 等 PascalCase 属性 | `entity.other.attribute-name.yian` |
+| `@Name` 形式的 PascalCase 文本 | `entity.other.attribute-name.yian`（文本分类，不表示支持该属性） |
 | `@sizeof` `@str_get_len` 等小写内建 | `support.function.builtin.yian` |
 | `self` | `variable.language.self.yian` |
 | `_` | `variable.language.wildcard.yian` |
@@ -273,7 +273,7 @@ YIAN Language Server）。要把日志留档或开到更详细：
 
 - 不提供：内联提示（inlay hints）、折叠范围、选择范围、文档链接、工作区符号搜索
   （`workspace/symbol`）、`declaration` / `typeDefinition` / `implementation`、模糊匹配补全、
-  doc 注释补全、自动补 import。语言服务器不生成 snippet 项；静态代码片段由 VS Code 扩展提供。
+  doc 注释补全、自动补 import。语言服务器的函数补全带参数占位符；静态代码片段由 VS Code 扩展提供。
 - 编辑后的语法分析与完整分析分别在 200 ms、600 ms 空闲后运行；保存或语义请求会立即请求完整分析。
 - 语义高亮在文本领先于分析时返回空数组，客户端保留文本语法着色。
 - 重命名在无法确认符号集合完整时拒绝执行（标准库符号、非法名字、分析没检查过的定义里用到该名字）。

@@ -10,17 +10,20 @@ yianc [options] <paths...>
 
 - `paths`：一个或多个 `.an` 源文件路径或包含源文件的目录。编译器会递归查找 `.an` 文件。
 - 如果用到了标准库，需要把源码根 `lib/src` 也放进路径列表。
-- 源码中必须包含一个 `main` 函数作为程序入口。
+- 生成可执行文件需要唯一程序入口；分析模式和库包检查可不要求入口。
 
 ```bash
 # 编译单个测试文件（含标准库）
 yianc lib/src tests/basic/array/assign.an
 
 # 编译多个文件
-yianc lib/src tests/basic/std/core/option.an tests/basic/std/core/result.an
+yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/alias/imported_scope/main.an
 ```
 
 ### 1.1 工具链要求
+
+编译器源码使用 Python 3.12 的泛型函数语法，需要 Python 3.12+。安装元数据和脚本的
+最低版本检查是 3.11；工具链运行要求以源码语法为准。
 
 编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
 
@@ -171,7 +174,7 @@ yianc --compiler-root /path/to/yian lib/src main.an -t none
 yianc --raw-pointers lib/src main.an
 ```
 
-用裸 8 字节指针替换胖指针表示，不发射检查、锁槽与帧锁。这是诊断模式，不提供内存安全保证。
+用裸 8 字节指针替换胖指针表示，不发射 fat 指针检查、锁槽与帧锁；固定数组边界检查仍可发射。这是诊断模式，不提供内存安全保证。
 `anx build --raw-pointers` 把该开关透传给编译器。
 
 ### 2.10 `--analyze` / `--json` — 只做分析
@@ -181,10 +184,10 @@ yianc --analyze lib/src main.an
 yianc --analyze --json lib/src main.an
 ```
 
-运行完整语义分析：词法与语法分析、名称与类型解析、类型检查、编译期条件专门化和 definite-assignment
+运行完整语义分析：词法与语法分析、名称与类型解析、类型检查、编译期分支选择、模式覆盖与 definite-assignment
 检查；不运行 CFG/LLVM 代码生成，也不写 `build/`。
 `--json` 把诊断作为单个 JSON 对象写到 stdout（其余输出走 stderr）；退出码 `0` 表示成功，
-`1` 表示有诊断。`--json` 必须与 `--analyze` 一起使用。
+`1` 表示有错误；只有警告时仍返回 `0`。`--json` 必须与 `--analyze` 一起使用。
 
 ### 2.11 `--format` / `-w` / `--check` — 格式化源码
 
@@ -207,6 +210,18 @@ yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 `--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们不会自动执行在 `-t ll`、`-t bc` 或 `-t asm` 输出上；`-t obj` 保留待最终链接的外部符号。编译器会拒绝非法库名。
 
 声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim；`-t obj` 将 shim 和 YIAN 运行时合入可重定位目标文件，但仍需由最终链接器解析 LLVM 符号。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+
+### 2.13 `--frontend-json` — 前端观察
+
+```bash
+yianc --frontend-json tokens tests/basic/array/access.an
+yianc --frontend-json ast tests/basic/array/access.an
+yianc --frontend-json desugared tests/basic/array/access.an
+```
+
+在 stdout 输出一个前端 JSON 对象，停在指定阶段，不进行名称与类型解析或代码生成，
+不写构建产物。前端观察无需标准库输入；它与 `--analyze --json` 的语义诊断出口不同。
+YIAN 实现的同名入口见[自举编译器](manual/30.bootstrap.md)。
 
 ## 3. 日志与调试输出
 
@@ -349,7 +364,7 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 
 堆分配器是单线程尺寸类 arena：64 KiB、64 KiB 对齐的 slab，每个尺寸类一条空闲块链加一个正在填充的 slab；大于最大类的请求走独占尺寸块，并按额度缓存、按 `madvise` 归还物理页。用户程序不直接调用它：尺寸在编译期已知的分配点由编译器直接传尺寸类号（`YIAN_CLASS_BYTES` 的下标），否则传字节数。
 
-尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `compiler/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `compiler/codegen/cfg/lockmech.py`、`compiler/runtime_error.py` 一致，然后运行自测。
+尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `compiler/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `compiler/codegen/abi/lockmech.py`、`compiler/runtime_error.py` 一致，然后运行自测。
 
 手动构建与校验：
 

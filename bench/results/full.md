@@ -1,6 +1,8 @@
 # C / raw / fat 三态实测结果 — 集合 `full` (规模档 `full`)
 
-由 `bench/bench_three_way.py` 生成; 三态同一算法与规模, 差异只在实现与指针表示 (C 为 clang `-O2` 参考实现)。集合成员与规模档见 `bench/sets/<set>.json` 与各基准的 `specs/<name>.json`。
+由 `bench/bench_three_way.py` 生成；测量范围由下表的提交、日期和环境定义。C 为 clang `-O2` 参考实现。
+集合成员与规模档见 `bench/sets/<set>.json` 与各基准的 `specs/<name>.json`。
+输出一致和 C 校验列仅表示运行器校验结果，不构成算法等价证明；本表不表示当前源码的性能。
 
 ## 环境指纹
 

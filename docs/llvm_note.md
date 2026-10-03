@@ -14,11 +14,8 @@
 - `compiler/codegen/llvm/pipeline/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
   data layout, 就用目标机的 `target_data` 补上。
 
-只写三元组而留空 data layout 会出错, 且**只在 `-O1` 及以上**出现: 空布局把 `i64` 当作
-4 字节对齐, 中端把结构体字段访问的 typed GEP 折叠成字节偏移(例如 4 字节 tag + 8 字节指针的
-enum 之后跟 `u64` 时给 12), 而后端按目标机布局 `i64:64` 把该字段写在 16, 同一次访问的读写
-偏移不一致, 表现为静默取错值。外部工具(`clang`/`llc`)读入 data layout 为空的模块会先补上
-目标机布局再优化, 因此复现不出来; 只有 llvmlite 进程内管线会带着空布局跑 pass。
+优化器与后端必须使用一致布局。缺少 data layout 时，优化器计算的字段偏移与目标机布局可能不一致，
+因此目标信息在类型布局查询和目标文件发射两个入口都明确设置。
 
 ## 目标机与代码模型
 
@@ -36,22 +33,13 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
 `ir` 层(`ir.PointerType(pointee)` 得到 `T*`)。本编译器只在**函数指针**上保留有型指针, 其余指针
 构造都返回 `LLTypeCtx.ptr_type`(`ir.PointerType()`), 见 `codegen/llvm/base/types.py`。
 
-`FunctionCore` 与 memory emitter 按 opaque pointer 的约定构造指令:
+`MemoryEmitter` 以 YIAN 类型 ID 决定 load/store 的内存类型，并显式指定 `load` 的 `typ`。
+元素与聚合 GEP 先把地址重新定型为 opaque pointer，再指定 `source_etype`；步进由使用点的
+元素类型决定，不依赖地址在 llvmlite 中残留的 pointee 信息。
 
-- `load` 显式给 `typ=...`(值类型), 否则 llvmlite 抛 `ValueError("Load lacks type.")`;
-- `gep` 的元素类型按"基指针是否 opaque"分派: opaque 必须显式给 `source_etype=...`, 否则抛
-  `ValueError("GEP lacks type.")`; 有型指针(`alloca`、全局变量、函数指针)仍由 llvmlite 按 pointee
-  推导, 结果类型的 pointee 也是准的;
-- `store` 只在目标指针有型时校验值类型, opaque 目标不校验 (值类型由生成端保证);
-- 目标为 opaque、源为有型的 `bitcast` 不能走 `IRBuilder.bitcast`: llvmlite 认为有型指针与 opaque
-  指针相等, 会原样返回操作数, 结果仍带有源端 pointee 类型 (`gep` 会据此缩放下标)。`__bitcast`
-  位于 `function/core.py`, 在这种情况下直接构造 `CastInstr`, 保证值真正被重新定型; 其余情况沿用 llvmlite 的行为;
-- 函数指针保持有型 (`base/types.py` 的 `__handle_function_pointer`): llvmlite 的 `CallInstr` 与
-  `Value.function_type` 从 callee 的 pointee 取签名, 间接调用需要带签名的指针类型。
-
-指针不携带 pointee, 因此"字节视图"(把 `T*` 当 `i8*` 用)不需要 `bitcast`: 值原样传递, 字节
-步进由使用点的 `source_etype=ir.IntType(8)` 给出(`free`/`memcpy` 等 intrinsic 的参数本来就是
-opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitcast`。
+`function/core.py` 的 `PrimitiveIR.bitcast` 在有型指针转 opaque pointer 时直接构造
+`CastInstr`，保证 llvmlite 侧重新定型；其他情况使用 `IRBuilder.bitcast`。
+函数指针保留 llvmlite 调用所需的函数签名；模块文本统一打印 `ptr`。
 
 指针构造不为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
 只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好。
@@ -59,7 +47,7 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 发射文本由 `codegen/llvm/base/module.py` 关闭 llvmlite 的有型指针打印
 (`ir.types.ir_layer_typed_pointers_enabled = False`), 因此模块里所有指针都是 `ptr`(`alloca`、
 全局变量也一样)。该开关只影响类型打印: llvmlite 侧的类型判定不变, 生成的机器码也不变
-(同一基准在开关两侧的目标文件逐字节相同)。`bitcast ptr to ptr` LLVM 22 接受(实测 `opt` 退出码 0)。
+。LLVM 层的类型语义使用 opaque pointer；目标布局仍由 data layout 决定。
 
 ## 链接性(Linkage)
 
@@ -68,12 +56,12 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 - `common`: 用于未初始化的, 可以在多个模块中定义的全局变量, 链接器会将这些定义合并为一个.
 - `external`: 默认链接性, 表示该符号在模块外部可见, 可以被其他模块引用.
 - `internal`: 表示该符号仅在当前模块内可见, 不能被其他模块引用, *但是其他模块仍然有可能通过间接方式(如函数指针)访问该符号*.
-- `private`: 比 `internal` 更严格, 表示该符号仅在当前模块内可见, 其他模块无法通过任何方式访问该符号.
+- `private`: 只能从当前模块直接引用，不出现在目标文件符号表；地址仍可通过指针传出。
 - `weak`: 类似于 `linkonce`, 但弱符号在链接时允许被其他强符号覆盖.
-- `external_weak`: 类似于 `weak`, 但表示该符号在模块外部可见, 可以被其他模块引用, 但如果没有定义, 链接器不会报错.
+- `extern_weak`: 类似于 `weak`, 但表示该符号在模块外部可见, 可以被其他模块引用, 但如果没有定义, 链接器不会报错.
 - `available_externally`: 表示该符号在模块外部可见, 但不会在最终生成的目标文件中包含该符号的定义. 这种链接性通常用于跨模块的内联.
 - `linkonce`: 表示该符号可以在多个模块中定义, 但链接器会选择其中一个定义进行链接.
-- `append`: 用于全局变量, 表示该变量的定义会被追加到同名变量的末尾, 适用于数组等数据结构.
+- `appending`: 用于全局变量, 表示该变量的定义会被追加到同名变量的末尾, 适用于数组等数据结构.
 
 本编译器的 `base/module.py::LLModule.declare` 把每个非入口函数标为 `internal`; 程序入口发射为
 `__yian_main`, 保持 `external`, 由 C 运行时包装的 `main` 调用。整个程序编译进同一个 module、
@@ -97,9 +85,9 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 | `Naked`                    | EnumAttr | 函数没有函数前后栈帧, 适用于内联汇编                                        |
 | `NoRecurse`                | EnumAttr | 函数不会递归调用自身                                                        |
 | `ReturnsTwice`             | EnumAttr | 函数可能多次返回, 如 `setjmp` 函数                                          |
-| `Speculatable`             | EnumAttr | 函数可被推测执行, 即函数不存在可观测的副作用, 只要输入相同, 输出必然相同    |
-| `WillReturn`               | EnumAttr | 函数一定会返回, 与 `NoReturn` 相反                                          |
-| `Convergent`               | EnumAttr | 编译器不能移动对该函数的调用, 否则可能破坏多线程同步语义                    |
+| `Speculatable`             | EnumAttr | 无副作用且不会引入未定义行为，可在没有执行原调用的路径上提前执行            |
+| `WillReturn`               | EnumAttr | 调用会返回到调用者；不返回的执行违反该属性契约                              |
+| `Convergent`               | EnumAttr | 调用依赖参与执行的线程集合，代码移动与复制必须保持相应收敛约束              |
 | `SafeStack`                | EnumAttr | 启用安全栈保护机制(见[栈保护](#栈保护stack-protection))                     |
 | `StackProtect`             | EnumAttr | 启用栈保护机制(见[栈保护](#栈保护stack-protection))                         |
 | `StackProtectStrong`       | EnumAttr | 启用强栈保护机制(见[栈保护](#栈保护stack-protection))                       |
@@ -113,11 +101,11 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 | `InlineHint`               | EnumAttr | 建议内联函数                                                                |
 | `NoBuiltin`                | EnumAttr | 禁止将函数视为内建函数(见[内建函数](#内建函数builtin-functions))            |
 | `Builtin`                  | EnumAttr | 将函数视为内建函数(见[内建函数](#内建函数builtin-functions))                |
-| `NoDuplicate`              | EnumAttr | 禁止复制该调用(例如*函数内联*, *循环展开*)                                  |
+| `NoDuplicate`              | EnumAttr | 禁止产生同一调用的额外副本，例如循环展开；只保留一个副本的内联仍可进行       |
 | `NoMerge`                  | EnumAttr | 禁止合并该调用(例如*公共子表达式消除*, *循环不变代码外提*)                  |
 | `NoCfCheck`                | EnumAttr | 禁用控制流完整性检查(见[控制流完整性](#控制流完整性control-flow-integrity)) |
 | `StrictFP`                 | EnumAttr | 启用严格的浮点运算语义(见[严格浮点](#严格浮点strict-floating-point))        |
-| `MustProgress`             | EnumAttr | 函数必然会产生进展, 不会卡死(但不一定返回)                                  |
+| `MustProgress`             | EnumAttr | 执行必须终止、展开异常或与环境交互；不保证所有调用都返回                    |
 | `AllocSize`                | IntAttr  | 函数的返回值指向的内存块大小可以通过函数的参数计算得出                      |
 | `Memory`                   | IntAttr  | 通过位掩码指定函数对内存的访问行为                                          |
 
@@ -137,35 +125,35 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 | 属性名                  | 类型     | 说明                                                   |
 | ----------------------- | -------- | ------------------------------------------------------ |
 | `ByVal`                 | TypeAttr | 按值传递参数, 传递参数的副本                           |
-| `ByRef`                 | TypeAttr | 按引用传递参数, 传递参数的地址                         |
+| `ByRef`                 | TypeAttr | 声明指针参数的内存类型与可解引用大小，不要求隐式复制或栈上传递 |
 | `InReg`                 | EnumAttr | 强制使用寄存器传递参数                                 |
-| `NoAlias`               | EnumAttr | 参数指针不会与其他指针别名                             |
-| `NoCapture`             | EnumAttr | 函数不会保存指针的副本供函数返回后使用                 |
+| `NoAlias`               | EnumAttr | 调用中经该参数派生指针访问的已修改内存，不与非派生指针的访问重叠 |
+| `captures(none)`        | 捕获集合 | 不捕获该指针的地址或来源；LLVM 22 使用 `captures(...)` 表达捕获约束 |
 | `NonNull`               | EnumAttr | 参数指针不会为空                                       |
 | `Dereferenceable`       | IntAttr  | 参数指针至少可解引用指定字节数                         |
 | `DereferenceableOrNull` | IntAttr  | 参数指针为空或至少可解引用指定字节数                   |
 | `Returned`              | EnumAttr | 返回值总是等于该参数                                   |
 | `ImmArg`                | EnumAttr | 参数必须是一个常量                                     |
-| `NoUndef`               | EnumAttr | 参数不能是未定义值                                     |
+| `NoUndef`               | EnumAttr | 参数值的表示不能含 undef 或 poison 位                  |
 | `SExt`                  | EnumAttr | 参数在调用前进行符号扩展                               |
 | `ZExt`                  | EnumAttr | 参数在调用前进行零扩展                                 |
 | `StructRet`             | TypeAttr | 参数为返回结构体的隐藏指针                             |
 | `InAlloca`              | TypeAttr | 参数内存由调用者在栈上分配, 被调用函数直接使用这块内存 |
 | `Preallocated`          | TypeAttr | 参数指针指向预分配的内存(和 `InAlloca` 类似)           |
-| `ReadNone`              | EnumAttr | 不会读取或写入任何内存                                 |
-| `ReadOnly`              | EnumAttr | 只读取内存, 不写入内存                                 |
-| `WriteOnly`             | EnumAttr | 只写入内存, 不读取内存                                 |
+| `ReadNone`              | EnumAttr | 不经该指针参数读取或写入内存                           |
+| `ReadOnly`              | EnumAttr | 不经该指针参数写入内存                                 |
+| `WriteOnly`             | EnumAttr | 不经该指针参数读取内存                                 |
 | `ElementType`           | TypeAttr | 指定指针参数所指向的实际元素类型                       |
 
 ### 返回值属性(Return Attributes)
 
 | 属性名                  | 类型     | 说明                                 |
 | ----------------------- | -------- | ------------------------------------ |
-| `NoAlias`               | EnumAttr | 返回指针不会与其他指针别名           |
+| `NoAlias`               | EnumAttr | 返回存储与调用者可访问的其他对象存储不相交 |
 | `NonNull`               | EnumAttr | 返回指针不会为空                     |
 | `Dereferenceable`       | IntAttr  | 返回指针至少可解引用指定字节数       |
 | `DereferenceableOrNull` | IntAttr  | 返回指针为空或至少可解引用指定字节数 |
-| `NoUndef`               | EnumAttr | 返回值不能是未定义值                 |
+| `NoUndef`               | EnumAttr | 返回值的表示不能含 undef 或 poison 位 |
 | `SExt`                  | EnumAttr | 返回值进行符号扩展                   |
 | `ZExt`                  | EnumAttr | 返回值进行零扩展                     |
 
@@ -176,7 +164,7 @@ opaque 指针)。`FunctionCore` 负责真正改变 llvmlite 侧类型的 `__bitc
 | `Alignment` | IntAttr           | 指定参数或返回值的对齐要求 |
 | `Range`     | ConstantRangeAttr | 指定参数或返回值的取值范围 |
 
-## 类型别名分析(Type Alias Analysis)
+## 基于类型的别名分析（Type-Based Alias Analysis）
 
 `llvm` 使用类型别名分析 (TBAA) 来帮助优化器理解不同指针类型之间的别名关系. 通过为内存访问指令添加 TBAA 元数据, 可以告诉优化器哪些内存访问不会相互影响, 从而允许包括内存访问重排序在内的更激进优化. 例如:
 
@@ -193,9 +181,10 @@ void foo(struct A* a, struct B* b) {
 }
 ```
 
-对于每次内存访问, 可以通过一个元组来描述其 TBAA 信息, 即 (根类型, 访问类型, 偏移量). 在上面的例子中, `a->x` 的 TBAA 信息为 `(struct A, int, 0)`, `b->y` 的 TBAA 信息为 `(struct B, float, 0)`. 因为 `struct A` 和 `struct B` 都是聚合类型, 因此他们的 TBAA 信息的父节点分别是 `(int, 0)` 和 `(float, 0)`, 这两个父节点没有共同的祖先(因为 c 语言不允许 `int` 和 `float` 的隐式转换), 因此优化器可以确定这两个内存访问不会相互影响, 可以安全地重排序它们.
-
-备注: 因为 `Rust` 中本身的引用类型具有更严格的别名规则, 因此 `Rust` 不使用 TBAA.
+访问标签保存 `(基类型, 访问类型, 字节偏移)`，标量节点追溯到共同的根。
+同一根下的类型关系定义哪些访问可以别名；不同根的关系未知。规则来自源语言的别名契约，
+与整数和浮点之间能否隐式转换无关。YIAN LLVM 发射器不添加 TBAA 元数据。
+详见 [LLVM 22 TBAA 规则](https://releases.llvm.org/22.1.0/docs/LangRef.html#tbaa-metadata)。
 
 ### 构建 TBAA 元数据
 
@@ -234,26 +223,26 @@ struct A {
 
 ## 栈上对象生命周期(Stack Object Lifetimes)
 
-`llvm` 提供了 `lifetime.start` 和 `lifetime.end` 两条指令, 用于标记栈上对象的生命周期范围. 这些指令告诉优化器在对象的生命周期之外, 该内存区域不会被使用, 从而允许优化器进行更激进的内存优化, 如寄存器分配和内存重用. 相关接口的使用方法:
+LLVM 22 的栈对象生命周期 intrinsic 接受 `alloca` 地址或 poison：
 
-| 指令                                                           | 说明                                                   |
-| -------------------------------------------------------------- | ------------------------------------------------------ |
-| `@llvm.lifetime.start.p0(i64 immarg size, ptr nocapture addr)` | 标记从 `addr` 开始的 `size` 字节内存区域的生命周期开始 |
-| `@llvm.lifetime.end.p0(i64 immarg size, ptr nocapture addr)`   | 标记从 `addr` 开始的 `size` 字节内存区域的生命周期结束 |
+```llvm
+declare void @llvm.lifetime.start(ptr captures(none))
+declare void @llvm.lifetime.end(ptr captures(none))
+```
+
+这些标记供优化器推理栈对象存活范围，不执行 YIAN 的运行时撤销检查。YIAN 发射器不生成这些标记，
+其帧锁机制在 `pointer/safety.py` 中实现。
+接口见 [LLVM 22 生命周期标记](https://releases.llvm.org/22.1.0/docs/LangRef.html#llvm-lifetime-start-intrinsic)。
 
 ## 调试元数据(Debug Metadata)
 
-暂缺
+YIAN LLVM 发射器不生成源码调试元数据。
 
 ## 严格浮点(Strict Floating Point)
 
-`llvm` 支持严格浮点运算语义, 通过为函数或模块添加 `StrictFP` 属性, 可以确保浮点运算遵循 IEEE 标准, 禁止某些优化(如重新排序浮点运算) 以保证结果的可预测性和一致性. 例如:
-
-```c
-float a = 0.1;
-float b = 0.2;
-float c = a + b; // 在严格浮点模式下, c 的值不能被优化为 0.3f, 必须进行实际的浮点加法运算.
-```
+`strictfp` 与受约束浮点 intrinsic 用于表达舍入模式和浮点状态要求，并不禁止所有常量折叠。
+YIAN 发射器使用普通浮点指令，不添加 `strictfp` 或受约束浮点 intrinsic。
+语义见 [LLVM 22 strictfp](https://releases.llvm.org/22.1.0/docs/LangRef.html#fnattr-strictfp)。
 
 ## 内建函数(Builtin Functions)
 
@@ -271,7 +260,10 @@ float c = a + b; // 在严格浮点模式下, c 的值不能被优化为 0.3f, �
 `llvm.experimental.memset.pattern`；YIAN 的 `@memcpy`、`@sqrt`、`@sin` 和 `@cos` 分别
 下降到对应内建操作。
 
-## 保护机制(Protection Mechanism)
+## LLVM 保护机制与 YIAN 检查
+
+YIAN 发射器不添加栈金丝雀、SafeStack 或 CFI 的专门属性与插桩；fat 指针安全检查由自身表示与运行时实现。
+以下机制是 LLVM 提供的独立能力。
 
 ### 栈保护(Stack Protection)
 
