@@ -218,11 +218,11 @@ def __run_one(
 
 
 def __bin_root_hint(project: Project, compiler_output: str) -> str:
-    """为含 AX009 和根包名的编译输出附加 bin 根包的库接口提示。"""
+    """为根包未声明依赖的 E309 诊断附加 bin 根包的库接口提示。"""
     root = project.root_package
     if project.packages[root].kind is not PackageKind.BIN:
         return ""
-    if "AX009" not in compiler_output or f"'{root}'" not in compiler_output:
+    if f"error[E309]: package '{root}' is not a dependency of" not in compiler_output:
         return ""
     return (
         f"\nhint: package '{root}' has kind 'bin', so its modules are not visible to tests.\n"
