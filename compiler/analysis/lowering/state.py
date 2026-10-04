@@ -37,10 +37,10 @@ class DefKind(Enum):
 
 @dataclass(frozen=True)
 class DefFacts:
-    """一个 definition 在 type check 期间确定、helpers 要用的事实。
+    """Facts about a definition established during type checking and used by helpers.
 
-    构造即完整（`begin_def` 装好存表并返回），因此没有"未初始化"的中间态；
-    遍历期的可变状态（locals / 循环栈 / 作用域深度 / 当前 span）不在里面。
+    Construction is complete: `begin_def` populates the table and returns the facts.
+    Traversal state (locals, loop stack, scope depth, current span) is stored separately.
     """
 
     def_type_id: int
@@ -59,7 +59,7 @@ class DefinitionState:
     def __init__(self, semantic: SemanticState) -> None:
         self.__semantic = semantic
 
-        # def facts（begin_def 写入；current = 正在遍历的那一个）
+        # Definition facts (written by begin_def; current identifies the definition being traversed).
         self.__facts: dict[int, DefFacts] = {}
         self.__current: DefFacts | None = None
 
@@ -154,11 +154,11 @@ class DefinitionState:
 
     @property
     def current(self) -> DefFacts | None:
-        """正在遍历的 definition 的事实（`begin_def` 之前为 None）。"""
+        """Facts for the definition being traversed, or None before `begin_def`."""
         return self.__current
 
     def facts(self, def_type_id: int) -> DefFacts:
-        """取某个 definition 的事实。"""
+        """Return the facts for a definition."""
         return self.__facts[def_type_id]
 
     @property
@@ -180,7 +180,7 @@ class DefinitionState:
     # lifecycle
     def begin_def(self, *, unit_id: int, def_type_id: int, def_kind: DefKind, ast_body: AST.Block,
                   return_type_id: int, receiver_type_id: int | None, is_static: bool, symbol_ctx: SymbolCtx) -> DefFacts:
-        """开始一个 definition：装好它的事实存表并设为 current，重置遍历期状态。"""
+        """Begin a definition: store its facts, make it current, and reset traversal state."""
         facts = DefFacts(
             def_type_id=def_type_id,
             unit_id=unit_id,

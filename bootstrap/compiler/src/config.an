@@ -75,7 +75,7 @@ impl Drop for CompilerConfig {
     }
 }
 
-// 配置与错误文本拥有存储，独立于解析器和命令行字符串。
+// Configuration and error text own their storage independently of the parser and command-line strings.
 pub fn parse_args() -> Result<CompilerConfig, String> {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();

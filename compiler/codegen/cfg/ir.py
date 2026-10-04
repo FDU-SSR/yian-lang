@@ -14,18 +14,18 @@ from compiler.runtime_error import RuntimeErrorCode
 
 @dataclass
 class VarPtr:
-    """取局部变量槽地址,合成 4 字段胖指针 ⟨data=a_x, word=(e_f,k_f), index=0, size=1⟩。
+    """Address a local slot and synthesize <data=a_x, word=(e_f,k_f), index=0, size=1>.
 
-    data = 槽地址 a_x;word 打包当前帧锁位置与键(函数入口实体化的寄存器值);
-    index = 0;size = 1(取址总是指向单个元素
-    ——标量元素类型 T、数组元素类型 T[m])。
-    raw 模式:无帧锁,frame_word/frame_key 均为 None(裸 8B 指针)。
+    data is the slot address a_x; word packs the current frame's lock position and key,
+    materialized on function entry. index = 0 and size = 1: taking an address always targets
+    a single element, whether its type is scalar T or array T[m].
+    Raw mode uses an 8 B pointer without frame locks; frame_word/frame_key are None.
     """
     result: Reg
     var_ref: VarRef
-    frame_word: Value | None  # 当前帧的 word(帧进入时实体化);raw 模式为 None
-    frame_key: Value | None   # 保留的兼容输入字段;胖指针身份合并编码在 frame_word 中
-    raw: bool = False         # 惰性左值路径:裸取址(未取址左值)仅返回栈地址,不合成胖值
+    frame_word: Value | None  # Current frame word, materialized on entry; None in raw mode.
+    frame_key: Value | None   # Compatibility input field; fat-pointer identity is encoded in frame_word.
+    raw: bool = False         # Lazy lvalue path: taking an unaddressed lvalue's address returns a stack address without a fat value.
 
 
 @dataclass
@@ -84,15 +84,15 @@ class Store:
 class Malloc:
     """Allocate memory on the heap.
 
-    胖指针语义(CFG 层):分配「锁头 + 负载」块,块头锁槽写键
-    μ⟨e⟩ := k(k ← Gen(),堆键 MSB 1;锁槽 = 块首首字,BlockHeader);
-    返回 4 字段聚合 ⟨data=b+H, word=(e,k), index=0, size=n⟩(由 LLVM 层构造)。
-    pointee 为 ZST 时保持快路径(undef,不写锁槽;key=None)。
+    Fat-pointer CFG semantics: allocate a lock-header/payload block and write its key,
+    mu<e> := k (k <- Gen(), heap key MSB 1; lock slot is the block's first word, BlockHeader).
+    LLVM constructs <data=b+H, word=(e,k), index=0, size=n>.
+    ZST pointees use the fast path (undef, no slot write, key=None).
     """
     result: Reg
     type_id: int
     size: Value
-    key: Value | None = None  # k ← Gen();None = ZST 快路径(undef,不写锁槽)
+    key: Value | None = None  # k <- Gen(); None selects the ZST fast path (undef, no lock-slot write).
 
 
 @dataclass
@@ -154,34 +154,34 @@ class Delete:
 
 
 # ---------------------------------------------------------------------------
-# 检查插入与锁槽机制节点(CFG 层 检查点;LLVM 发射与运行期失败协议由 LLVM 层完成)
+# Check insertion and lock-slot nodes: CFG chooses check sites; LLVM emits checks and runtime failures.
 #
-# 运行时检查插入点包括 FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete
-# 与外部 I/O 的 CheckViewAccess。
-# 每个检查节点在 LLVM 层 落地为「前提不满足 → 诊断并以退出码 1 终止」;
-# 本文件承载节点存在性与语义,LLTranslator 的 case 由 LLVM 层 补充。
-# 锁槽交互:Malloc 由 LLVM 层在块首写锁表项的 key/anchor、Delete 换代(bump)。
+# Runtime checks cover FieldPtr/ElementPtr/PtrDiff/Load/Store/Delete
+# and CheckViewAccess for external I/O.
+# LLVM lowers each check to a diagnostic and exit code 1 when its precondition fails.
+# This file defines node presence and semantics; LLTranslator implements their lowering.
+# Lock-slot interactions: LLVM writes key/anchor for Malloc and increments the generation for Delete.
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class GenKey:
-    """`k_f ← Gen()`：帧进入 re-key 用的 32 位单调键体。
+    """`k_f <- Gen()`: a monotonic 32-bit key for re-keying on frame entry.
 
-    只有帧锁用它（堆对象的身份是锁表项里的 key，由分配器/释放路径换代，不走计数器）。
-    计数到 `FRAME_KEY_LIMIT` 即确定性失败（R003），绝不回绕。LLVM 层发射全局计数器
-    的 load/add/store 与掩码。
+    Only frame locks use this counter; heap identity lives in lock entries updated on allocation/release.
+    Reaching FRAME_KEY_LIMIT fails deterministically (R003) without wrapping. LLVM emits global
+    counter load/add/store operations and masking.
     """
     result: Reg
 
 
 @dataclass
 class AcquireFrameLock:
-    """从独立稳定影子栈取得当前帧锁槽并写入帧 word。
+    """Acquire a frame-lock slot from the stable shadow stack and write its frame word.
 
-    影子栈深度已达 ``FrameLockArena.SLOTS`` 时报告资源错误并终止。成功后 ``result``
-    是帧锁槽里的整字（即本次 re-key 的键，指针的 word 高位携带同一 32 位值）；
-    槽地址由 LLVM 层记录, 供返回路径写 SENTINEL。
+    Depth reaching FrameLockArena.SLOTS reports a resource error and terminates. On success, result
+    is the slot's full word (the new key, also carried in the pointer word's high 32 bits).
+    LLVM records the slot address for SENTINEL writes on return paths.
     """
     result: Reg
     key: Value
@@ -189,13 +189,13 @@ class AcquireFrameLock:
 
 @dataclass
 class CheckSafeAccess:
-    """safe_access(p,1) = live(p) ∧ in_bounds(p,1) 前检。
+    """Precheck safe_access(p,1) = live(p) and in_bounds(p,1).
 
-    Load/Store 插入点。live = 锁槽键比较(含 word=0 短路为假);
-    in_bounds = 0 ≤ index ∧ index+1 ≤ size。LLVM 层 发射。
+    Used for Load/Store. live compares slot keys and is false for word=0;
+    in_bounds requires 0 <= index and index+1 <= size. LLVM emits the check.
 
-    ``live=False``:指针的锁槽已知恒等于其键(函数帧内取址的指针,帧锁槽只在
-    函数入口写、返回时失效),时序项本身恒真,只发射空间项——错误码不变。
+    live=False means the slot is known to match the key (a pointer into the current frame, whose slot
+    changes only on entry/return). Emit only bounds checks, with the same error codes.
     """
     ptr: Value
     live: bool = True
@@ -210,7 +210,7 @@ class CheckViewAccess:
     block header; stack/global views rely on their live lock and constructor
     range invariant.
 
-    ``live=False``:调用点已确认该视图来自当前函数帧(帧锁槽恒等于其键)。
+    ``live=False``:the call site knows the view belongs to the current frame (the slot matches its key)。
     """
     view: Value
     live: bool = True
@@ -218,9 +218,9 @@ class CheckViewAccess:
 
 @dataclass
 class CheckInBounds:
-    """in_bounds(p_s,1)(FieldPtr 重锚定前提)。
+    """in_bounds(p_s,1), the precondition for FieldPtr re-anchoring.
 
-    对 one-past-end 的 s 取字段时报告安全错误。LLVM 层发射。
+    Taking a field of a one-past-end s reports a safety error. LLVM emits the check.
     """
     ptr: Value
 
@@ -238,21 +238,21 @@ class CheckSliceNonEmpty:
 
 @dataclass
 class CheckRefAccess:
-    """T& 引用访问前检:仅 live(r),免 in_bounds(tiered-pointers)。
+    """T& access precheck: live(r) only, without bounds metadata.
 
-    引用恒指向单个元素、无算术/比较/delete(2 字段 ⟨data,word⟩,
-    无 index/size),越界无概念——访问只需 live = 锁槽键比较(
-    含 word=0 短路为假)。T& Load/Store/FieldPtr 插入点。
+    References always address a single element and have no arithmetic/ordering/delete operations.
+    Their two fields <data,word> omit index/size, so access only compares the lock key
+    (word=0 makes live false). Used at T& Load/Store/FieldPtr sites.
     """
     ptr: Value
 
 
 @dataclass
 class CheckElementArith:
-    """ElementPtr 算术良构检查(0 ≤ index+n ≤ size)。
+    """ElementPtr arithmetic validity check: 0 <= index+n <= size.
 
-    越过 one-past-end 或负方向越界时报告安全错误;无回绕子义务(O-1)由 u64 回绕检测
-    落地(同型化,指针算术检查优化:icmp uge sum,index,LLVM 层 发射)。
+    Crossing one-past-end or the lower bound reports a safety error. No-wrap is enforced
+    through u64 overflow detection (icmp uge sum,index), emitted by LLVM.
     """
     base: Value
     offset: Value
@@ -260,72 +260,72 @@ class CheckElementArith:
 
 @dataclass
 class CheckElementAccess:
-    """合并检查(访问检查合并):ElementArith→InBounds→SafeAccess 合取谓词。
+    """Combined check: ElementArith, InBounds, and SafeAccess predicates.
 
-    派生链 elem = base + offset(ElementPtr)→ f = elem.field(FieldPtr)→
-    访问 f(Load/Store),当派生链可对且访问相邻时,三重检查合并为单节点:
-    良构(elem)(u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
-    (one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(
-    SafeAccess 的 live 项——重锚定字段指针 in_bounds(f,1) 恒真、
-    live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项;
-    非相邻访问不合并(访问点的 SafeAccess 按原样发射)。LLVM 层 发射。
+    For elem = base + offset (ElementPtr), f = elem.field (FieldPtr), and an adjacent Load/Store of f,
+    a matched derivation chain can combine the three checks into one node:
+    valid(elem) (u64 no-wrap and upper bound) and in_bounds(elem,1)
+    (taking a field from one-past-end reports a safety error) and live(elem).
+    Re-anchored field pointers have in_bounds(f,1) true and inherit the lock,
+    so live(f)=live(elem). Neither no-wrap nor live may be omitted.
+    Nonadjacent access retains its own SafeAccess check. LLVM emits the combined predicate.
     """
     base: Value
     offset: Value
-    ptr: Value  # elem:ElementPtr 结果,承载派生后 index/size/word
-    live: bool = True  # 帧内指针的 live 谓词恒真时设为 False,省略该项检查
+    ptr: Value  # elem: the ElementPtr result, carrying the derived index/size/word.
+    live: bool = True  # False omits live when it is known true for a pointer into the current frame.
 
 
 @dataclass
 class CheckRawBounds:
-    """裸数组越界检查：index < length（编译期长度）。
+    """Raw-array bounds check: index < length, where length is compile-time constant.
 
-    未取址数组元素访问不合成胖指针(无 index/size 元数据),无法承载
-    CheckElementArith / CheckSafeAccess;对编译期长度 N 做单个 unsigned
-    比较 index < N——等价 fat 路径 CheckElementArith(0 ≤ index ≤ N)与
-    Load/Store CheckSafeAccess(index+1 ≤ N)的组合语义(索引已 coerce u64,
-    无负方向)。LLVM 层 发射。
+    Unaddressed array access creates no fat pointer or index/size metadata, so it cannot carry
+    CheckElementArith / CheckSafeAccess. One unsigned comparison index < N matches
+    their combined fat-path semantics: 0 <= index <= N and index+1 <= N.
+    The index is already coerced to u64 and cannot be negative.
+    LLVM emits the check.
     """
     index: Value
     length: int
 
 
 # ---------------------------------------------------------------------------
-# 检查请求标记（下降只发语义标记，检查插入 pass 决定最终形态）
+# Check request markers: lowering records semantics; the insertion pass chooses the final form.
 # ---------------------------------------------------------------------------
 
 CHECK_REQUEST_PTRDIFF = "ptrdiff"        # operands=[lhs, rhs]
 CHECK_REQUEST_PTRCMP = "ptrcmp"          # operands=[lhs, rhs]
-CHECK_REQUEST_RAW_BOUNDS = "raw_bounds"  # operands=[index], extra=编译期长度
-CHECK_REQUEST_VIEW = "view"              # operands=[view], live=是否检查时序项
+CHECK_REQUEST_RAW_BOUNDS = "raw_bounds"  # operands=[index], extra=compile-time length.
+CHECK_REQUEST_VIEW = "view"              # operands=[view], live=whether to check lifetime.
 CHECK_REQUEST_SLICE_NONEMPTY = "slice_nonempty"  # operands=[ptr]
 CHECK_REQUEST_IN_BOUNDS = "in_bounds"    # operands=[ptr]
-CHECK_REQUEST_RECEIVER_IN_BOUNDS = "receiver_in_bounds"  # operands=[ptr]，调用侧 receiver 折算
+CHECK_REQUEST_RECEIVER_IN_BOUNDS = "receiver_in_bounds"  # operands=[ptr], for call-site receiver conversion.
 CHECK_REQUEST_ELEMENT_ARITH = "element_arith"    # operands=[base, offset]
 
 
 @dataclass
 class LiveKnownBegin:
-    """刚分配窗口开始：root 处出的指针在窗口内 live 恒真。
+    """Begin a fresh-allocation window: pointers derived from root are known live inside it.
 
-    窗口只在 `dyn[n] value` 的填充循环这类封闭区域（不含 `del`/调用）内开启，
-    由检查插入 pass 按 Begin/End 配对开合，不跨函数扩大。
+    Windows cover closed regions without del/calls, such as the fill loop for dyn[n] value.
+    The insertion pass pairs Begin/End markers and never extends a window across functions.
     """
     root: Value
 
 
 @dataclass
 class LiveKnownEnd:
-    """刚分配窗口结束（与 `LiveKnownBegin` 配对，窗口内不存在 del）。"""
+    """End a fresh-allocation window, paired with LiveKnownBegin; no del occurs inside."""
     root: Value
 
 
 @dataclass
 class CheckRequest:
-    """检查请求标记：下降只发标记，`passes/insert_checks.py` 决定最终形态。
+    """Check request marker: lowering emits markers; passes/insert_checks.py chooses checks.
 
-    语义上下文（单看 IR 恢复不出的数组长度、视图边界、折算前提、切片源跨度等）
-    放进 `operands`/`extra`；插入 pass 将标记物化为具体检查节点，并执行合并/提升。
+    operands/extra retain semantic facts not recoverable from IR alone: array lengths, view bounds,
+    conversion preconditions, and source spans. The pass materializes, combines, and hoists checks.
     """
 
     kind: str
@@ -335,10 +335,10 @@ class CheckRequest:
 
 @dataclass
 class CheckPtrDiff:
-    """PtrDiff 前提:data 相等 + 良构 + 无回绕。
+    """PtrDiff preconditions: equal data, valid arithmetic, and no wrap.
 
-    异对象指针差报告安全错误。该运算本身不访问内存，因此不检查
-    allocation live 状态；结果被解引用时再由访问检查负责。LLVM 层发射。
+    Differences between objects report a safety error. This operation does not access memory,
+    so it does not check allocation liveness; dereferencing the result performs access checks. LLVM emits it.
     """
     lhs: Value
     rhs: Value
@@ -346,11 +346,11 @@ class CheckPtrDiff:
 
 @dataclass
 class CheckPtrCmp:
-    """序比较前提:data 相等。
+    """Ordering precondition: equal data.
 
-    跨对象序比较报告安全错误（由 LLVM 层发射）。相等比较 按 (data, index)
-    二元组,无需该检查。指针比较本身不访问内存，因此不检查
-    allocation live 状态。
+    Cross-object ordering reports a safety error in LLVM. Equality compares (data,index)
+    without this check. Pointer comparison does not access memory and therefore
+    does not check allocation liveness.
     """
     lhs: Value
     rhs: Value
@@ -358,10 +358,10 @@ class CheckPtrCmp:
 
 @dataclass
 class PtrCmp:
-    """指针比较。
+    """Pointer comparison.
 
-    相等比较按 (data, index) 二元组;序比较在 CheckPtrCmp 前提
-    下按 index 比较。LLVM 无聚合 icmp,字段提取 + 前提检查由指针比较下降处理。
+    Equality compares (data,index); ordering compares index under CheckPtrCmp's precondition.
+    LLVM has no aggregate icmp, so pointer lowering extracts fields and checks preconditions.
     """
     result: Reg
     op: BinaryOperator
@@ -371,11 +371,11 @@ class PtrCmp:
 
 @dataclass
 class CheckDelete:
-    """Delete 前提:is_heap(p) ∧ live(p) ∧ is_raw(p)。
+    """Delete preconditions: is_heap(p), live(p), and is_raw(p).
 
-    is_heap 根据 word 的锁表下标判定;live 比较锁表项中的键;is_raw 检查 data
-    是否与锁表项记录的分配锚一致且 index = 0。双释放、栈指针释放、带偏移释放和
-    null 释放均报告安全错误。LLVM 层发射。
+    is_heap tests word's table index; live compares keys; is_raw verifies that data matches
+    the allocation anchor and index = 0. Double release, stack release, offset release,
+    and null release report safety errors. LLVM emits the check.
     """
     ptr: Value
 
@@ -429,12 +429,12 @@ class Cast:
     result: Reg
     value: Value
     to_type: int
-    raw: bool = False  # 惰性左值路径:裸指针强转(数组退化 T[N]*→T* 位转换,不合成胖值)
+    raw: bool = False  # Lazy lvalue path: raw pointer cast (array decay T[N]* -> T* bitcast, without fat synthesis).
 
 
 @dataclass
 class Undef:
-    """类型为 ``type_id`` 的未定义值(LLVM ``undef``)。"""
+    """Undefined value of type type_id (LLVM undef)."""
     result: Reg
     type_id: int
 
@@ -448,7 +448,7 @@ class SizeOf:
 
 @dataclass
 class Dangling:
-    """指向 ``type_id`` 的悬垂指针(地址 = 该类型的对齐值, 恒非零)。"""
+    """Dangling pointer to type_id (address equals the type's alignment and is always nonzero)."""
     result: Reg
     type_id: int
 
@@ -765,4 +765,4 @@ class Function:
     entry: Block  # entry block of the function/method, also included in `blocks`
     local_vars: dict[int, VarRef] = field(default_factory=dict[int, VarRef])  # symbol id -> VarRef for all local variables (including parameters)
     params: list[int] = field(default_factory=list[int])  # symbol ids of parameters, in order
-    frame_lock: tuple[Value, Value] | None = None  # ⟨e_f, k_f⟩:函数已从稳定影子栈取得帧锁;LLVM 层据此在全部返回路径写 SENTINEL 并弹出槽位
+    frame_lock: tuple[Value, Value] | None = None  # <e_f,k_f>: the function owns a shadow-stack frame lock; LLVM writes SENTINEL and pops on every return.

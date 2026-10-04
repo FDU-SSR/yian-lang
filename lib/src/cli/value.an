@@ -22,7 +22,7 @@ impl Nargs {
     }
 }
 
-// 字符串与列表由值自身拥有；浅副本共享这些存储。
+// Values own their strings and lists; shallow copies share that storage.
 pub enum ArgValue {
     Null,
     Text { value: String }, Bool { value: bool }, I64 { value: i64 },
@@ -81,7 +81,7 @@ pub struct MatchEntry { pub name: String, pub value: Option<ArgValue>, pub suppl
 impl Drop for MatchEntry {
     pub fn drop() { self.name.drop(); match self.value.take() { Some(value) => value.drop(), None => {}, } }
 }
-// 查询返回的引用、字符串视图与切片借用匹配结果，随匹配结果释放而失效。
+// Returned references, string views, and slices borrow the matches and become invalid when the matches are dropped.
 pub struct ArgMatches { pub entries: Vec<MatchEntry> }
 impl ArgMatches {
     fn entry(name: str) -> Option<MatchEntry&> {
@@ -151,6 +151,6 @@ impl Drop for ArgMatches {
         self.entries.drop();
     }
 }
-// 结果拥有匹配值或帮助文本，调用者显式调用 drop 释放。
+// The result owns matched values or help text; callers explicitly call drop to release them.
 pub enum ParseOutcome { Parsed { matches: ArgMatches }, Help { text: String } }
 impl Drop for ParseOutcome { pub fn drop() { match self { Parsed(value) => value.drop(), Help(text) => text.drop(), } } }

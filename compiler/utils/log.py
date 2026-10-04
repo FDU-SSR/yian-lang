@@ -1,4 +1,4 @@
-"""编译器日志基础设施：级别、输出、格式化、频道、单例与配置解析。"""
+"""Compiler logging: levels, output, formatting, channels, singleton, and configuration parsing."""
 from __future__ import annotations
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# 日志级别、输出与格式化
+# Logging levels, output, and formatting.
 # =============================================================================
 
 
@@ -119,7 +119,7 @@ class LogFormatter:
 
 
 # =============================================================================
-# 日志过滤器与频道
+# Logging filters and channels.
 # =============================================================================
 
 
@@ -322,7 +322,7 @@ class LogChannel:
 
 
 class NoopChannel:
-    """与 LogChannel 接口相同的空操作频道，由 CompilerLog 的 noop 配置选择。"""
+    """No-op channel with the LogChannel interface, selected by CompilerLog's noop configuration."""
 
     name: str = ""
     level: LogLevel = LogLevel.OFF
@@ -388,7 +388,7 @@ class NoopChannel:
 
 
 # =============================================================================
-# 日志单例与配置解析
+# Logging singleton and configuration parsing.
 # =============================================================================
 
 
@@ -523,12 +523,12 @@ class CompilerLog:
 
 
 # =============================================================================
-# 日志 dump 方法与 main.py 的 --dump 输出共用以下格式化函数。
+# Logging dumps and main.py's --dump output share these formatting functions.
 # =============================================================================
 
 
 def format_token_output(src_files: list["Path"], token_lists: list[list[Token]]) -> str:
-    """格式化多文件 token，供 --dump 和日志 dump 使用。"""
+    """Format tokens from multiple files for --dump and logging dumps."""
     sections: list[str] = []
     for src_file, tokens in zip(src_files, token_lists):
         lines = [f"Tokens for {src_file}:"]
@@ -538,7 +538,7 @@ def format_token_output(src_files: list["Path"], token_lists: list[list[Token]])
 
 
 def format_ast_output(src_files: list["Path"], programs: list[ASTProgram]) -> str:
-    """格式化多文件 AST，供 --dump 和日志 dump 使用。"""
+    """Format ASTs from multiple files for --dump and logging dumps."""
     sections: list[str] = []
     for src_file, program in zip(src_files, programs):
         sections.append(f"AST for {src_file}:\n{program.export().rstrip()}")
@@ -550,13 +550,13 @@ def format_hir_output(
     def_points: dict[int, DefPoint],
     type_ctx: TypeCtx,
 ) -> str:
-    """格式化完整 HIR，供 --dump 和日志 dump 使用。"""
+    """Format the complete HIR for --dump and logging dumps."""
     from compiler.analysis.unit.hir_export import export_hir_bundle
     return export_hir_bundle(unit_datas, def_points, type_ctx)
 
 
 def format_cfg_output(functions: dict[int, CfgFunction]) -> str:
-    """格式化多函数 CFG，供 --dump 和日志 dump 使用。"""
+    """Format CFG functions for --dump and logging dumps."""
     from compiler.codegen.cfg.dump import dump as dump_one
     sections: list[str] = []
     for type_id in sorted(functions.keys()):

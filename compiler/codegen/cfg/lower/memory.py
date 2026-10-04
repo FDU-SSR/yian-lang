@@ -11,12 +11,12 @@ from compiler.utils.log import CompilerLog
 
 
 def _ch_block():
-    """cfg.block 日志通道（类体内引用，按约定用单下划线）。"""
+    """cfg.block logging channel (single underscore permits references from class bodies)."""
     return CompilerLog.get("cfg.block")
 
 
 class MemoryOps:
-    """内存/指针原语下降器。"""
+    """Memory and pointer primitive lowering."""
 
     def __init__(self, state: FunctionState) -> None:
         self.__state = state
@@ -24,19 +24,19 @@ class MemoryOps:
     def build_load(self, ptr: IR.Value) -> IR.Value:
         ptr_type = self.__state.session.type_ctx[ptr.type_id]
         assert isinstance(ptr_type, (Type.PointerType, Type.RefType))
-        # 访问前检由检查插入 pass 依 IR 重建（T& 只查 live；胖指针查
-        # safe_access(p,1) 或 ElementArith∧InBounds∧live 合取）。
+        # The insertion pass reconstructs prechecks from IR: T& checks only live, while fat pointers check
+        # safe_access(p,1) or the combined ElementArith/InBounds/live predicate.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=ptr_type.pointee_type)
         return self.__state.emitter.emit(IR.Load(result=result, ptr=ptr)).result
 
     def build_store(self, value: IR.Value, ptr: IR.Value) -> None:
-        # 访问前检由检查插入 pass 依 IR 重建（分派同 Load）。
+        # The insertion pass reconstructs access prechecks from IR, using the same dispatch as Load.
         self.__state.emitter.emit(IR.Store(ptr=ptr, value=value))
 
     def build_malloc(self, type_id: int, size: IR.Value) -> IR.Value:
-        # CFG 层:Malloc 返回 4 字段聚合 ⟨data=b+H, word, index=0, size=n⟩(LLVM 层构造)。
-        # word 由 LLVM 层根据块首地址和块头中的上一代生成(分配处 +1)。
-        # pointee 为 ZST 时维持快路径(undef,不写块头);raw 模式无块头。
+        # CFG Malloc returns <data=b+H, word, index=0, size=n>, constructed by LLVM.
+        # LLVM generates word from the block base and the header's previous generation, incremented on allocation.
+        # ZST pointees use the undef fast path without header writes; raw mode has no header.
         key: IR.Value | None = None
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(type_id))
         malloc = self.__state.emitter.emit(IR.Malloc(result=result, type_id=type_id, size=size, key=key)).result
@@ -53,22 +53,22 @@ class MemoryOps:
         return realloc
 
     def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
-        # 良构检查（0 ≤ index+n ≤ size）与嵌套派生链的义务补发由检查插入 pass
-        # 依 `IR.ElementPtr` 边重建；这里只发节点与登记出处。
+        # The insertion pass reconstructs arithmetic validity (0 <= index+n <= size) and discharges nested
+        # derivation obligations along IR.ElementPtr edges; this layer only emits nodes and records provenance.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=result_type)
         elem_ptr = self.__state.emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
         return elem_ptr
 
     def build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
-        # 重锚定前提（in_bounds(p_s,1) / T& 的 live）与其合取合并由检查插入 pass
-        # 依 `IR.FieldPtr` 边重建；这里只发节点与登记出处。
+        # The insertion pass reconstructs re-anchoring preconditions (in_bounds(p_s,1), or live for T&) and
+        # their combined checks along IR.FieldPtr edges; this layer emits nodes and records provenance.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(field_type))
         field_ptr = self.__state.emitter.emit(IR.FieldPtr(result=result, base=base, field_index=field_index)).result
         return field_ptr
 
     def build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
-        # CFG 层插入检查:data 相等 + 良构 + 无回绕(异对象指针差失败)。
-        # 与 ElementPtr 算术一致:该运算不访问内存,不检查 allocation live。
+        # CFG preconditions: equal data, valid arithmetic, and no wrap; cross-object differences fail.
+        # As with ElementPtr arithmetic, this operation does not access memory or check allocation liveness.
         if self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRDIFF, operands=[lhs, rhs]))
             _ch_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕")
@@ -76,9 +76,9 @@ class MemoryOps:
         return self.__state.emitter.emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
-        # 指针序比较检查:序比较先查 data 相等(前提,跨对象序比较失败);
-        # 相等比较 按 (data, index) 二元组、无前提检查。
-        # 与 ElementPtr 算术一致:比较本身不访问内存,不检查 allocation live。
+        # Ordering checks equal data first; cross-object ordering fails.
+        # Equality compares the (data,index) pair without a precondition check.
+        # Like ElementPtr arithmetic, comparison does not access memory or check allocation liveness.
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRCMP, operands=[lhs, rhs]))
             _ch_block().debug(lambda: "check insert PtrCmp: data 相等")

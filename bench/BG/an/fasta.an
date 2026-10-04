@@ -1,18 +1,18 @@
-// bench/BG/an/fasta.an — 随机 DNA 序列生成校验和 (shootout fasta)
+// bench/BG/an/fasta.an: random DNA sequence checksum (shootout fasta).
 //
-// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
-// 语义权威源: bench/BG/c/fasta.c (项目自写 C 参考, 取 compute-only
-//   部分: 不输出序列文本, 只累计字符校验和)
-// 规模: n=25000000 (总迭代 10n = 2.5 亿), 断言 i32(checksum)%256 == -71
-//   (与 C 版一致)。
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/fasta.c, the project's compute-only C implementation:
+//   accumulate character checksums without printing sequence text.
+// Scale: n=25000000 (10n=250 million iterations); assert i32(checksum)%256==-71,
+//   matching C.
 //
-// 算法: LCG (g_seed*IA+IC)%IM 生成随机数 r, 按累积概率表选择碱基,
-//       与 repeat_fasta (alu 序列循环取碱基) 一起累计 checksum。
+// Algorithm: LCG (g_seed*IA+IC)%IM selects bases by cumulative probabilities;
+//       combine with repeat_fasta's cycling alu sequence to accumulate checksum.
 //
-// 签名: g_seed: i32&, checksum: i64&; genelist 为 AminoAcid[]。
+// Signature: g_seed:i32&, checksum:i64&; genelist:AminoAcid[].
 //
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Both modes share this source. dyn uses inference; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
 from std.core.io import print;
 
 struct AminoAcid {

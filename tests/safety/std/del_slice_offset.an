@@ -1,9 +1,9 @@
-// del-view 负例(d,std):@slice_from_parts 偏移视图 del → safety error。
-// 产生 data = lock_ptr+8+4 ≠ lock_ptr+8 的 T[] 视图:CheckDelete 的 is_raw data
-// 分量(data==lock_ptr+8)失败(SliceType 无 index 分量,偏移直接体现在 data)
-// → fail-stop → Exit code 1。仅整块视图(lo=0)可 del。
+// Deletion-view negative (d,stdlib): deleting an offset @slice_from_parts view causes a safety error.
+// A T[] view with data=lock_ptr+8+4 fails CheckDelete's is_raw data
+// comparison against lock_ptr+8. SliceType has no index; the offset resides in data,
+// causing termination with exit code 1. Only whole-block lo=0 views can be deleted.
 //
-// 注:本用例仅 fat 态运行(负例不接 RAW_TESTS;raw 态无检查语义不同)。
+// Run this negative case only in fat mode; raw mode omits checks and has different semantics.
 //
 // Expected exit code: 1
 

@@ -61,9 +61,9 @@ CFG/LLVM 代码生成或 clang 链接器；`@sizeof` 的编译期求值使用目
 就要让扩展用那个解释器**。在仓库根目录：
 
 ```bash
-scripts/install.sh --with-deps              # editable 安装 yianc / anx / yian-lsp
-python3 -m pip install -e '.[lsp]'          # editable 安装 YIAN 与 pygls
-python3 -m lsp --version                    # 用同一个解释器确认入口点可用
+scripts/install.sh --with-deps              # Install yianc/anx/yian-lsp in editable mode.
+python3 -m pip install -e '.[lsp]'          # Install YIAN and pygls in editable mode.
+python3 -m lsp --version                    # Verify entry points with the same interpreter.
 ```
 
 默认配置直接用 `PATH` 上的 `yian-lsp`。多环境机器（多个 conda 环境、系统 Python 与虚拟环境并存）
@@ -159,7 +159,7 @@ f-string、`dyn` 数组与 `del`）、`handles.an`（`T&` 引用、指针参数�
 ```bash
 cd ide-support/vscode
 npm install
-npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续编译
+npm run compile          # Compile src/ to out/; npm run watch compiles continuously.
 ```
 
 ## 调试
@@ -174,9 +174,9 @@ npm run compile          # 编译 src/ → out/；也可用 npm run watch 持续
 cd ide-support/vscode
 npm install
 npm run compile
-npx @vscode/vsce package          # 需要联网；也可全局安装 @vscode/vsce 后用 vsce package
+npx @vscode/vsce package          # Requires network; alternatively install @vscode/vsce globally and use vsce package.
 code --install-extension yian-language-support-0.7.0.vsix --force
-code --list-extensions --show-versions | grep -i yian   # 核对版本 ≥ 0.7.0
+code --list-extensions --show-versions | grep -i yian   # Verify version >=0.7.0.
 ```
 
 在 WSL / 远程窗口里 `code` 是远端 CLI，安装、卸载、`--list-extensions` 都作用于**远端**扩展目录，
@@ -226,7 +226,7 @@ YIAN Language Server）。要把日志留档或开到更详细：
 按大括号缩进折叠（VS Code 默认的 indentation 折叠策略）。此外支持注释形式的区域标记：
 
 ```yian
-// #region 名字
+// #region name
 ...
 // #endregion
 ```

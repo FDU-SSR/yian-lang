@@ -5,7 +5,7 @@ a name the analysis resolved to a particular declaration, so two same-named
 symbols in different scopes stay apart, and a rename edits exactly those spans.
 That is also why a rename can refuse: when the analysis cannot account for every
 use of the name, editing some of them would leave the program half-renamed, and
-refusing is the safe answer (无法确认符号身份时拒绝批量修改).
+refusing is the safe answer (bulk edits require confirmed symbol identities).
 
 Protocol edits and quick fixes are rendered by the client adapter, using the
 spans produced here.

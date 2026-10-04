@@ -16,7 +16,7 @@ from llvm.target_raw import LLVMSetTarget, LLVMCreatePassBuilderOptions, LLVMDis
 from llvm.target_raw import LLVMRunPasses, LLVMGetErrorMessage, LLVMDisposeErrorMessage;
 from llvm.target_raw import LLVMTargetMachineEmitToMemoryBuffer;
 
-// 句柄只供受信 FFI 代码使用。复制句柄不复制 LLVM 资源；session 必须覆盖所有子句柄的使用期。
+// Handles are for trusted FFI code only. Copying a handle does not copy LLVM resources; the session must outlive all child-handle uses.
 pub struct IrSession {
     context: cptr<LLVMOpaqueContext>,
     module: cptr<LLVMOpaqueModule>,
@@ -264,7 +264,7 @@ pub(ffi) ffi fn new_session(name: str, optimization_level: u8) -> IrSession {
     defer features.drop();
     let (cpu_data, _) = @ffi_parts(cpu.as_slice());
     let (features_data, _) = @ffi_parts(features.as_slice());
-    // LLVM 22 的 LLVMCodeGenOptLevel、LLVMRelocPIC 和 LLVMCodeModelSmall 枚举值。
+    // LLVM 22 enumeration values for LLVMCodeGenOptLevel, LLVMRelocPIC, and LLVMCodeModelSmall.
     let machine = LLVMCreateTargetMachine(
         target, triple, @ffi_ptr_cast<c_char>(cpu_data), @ffi_ptr_cast<c_char>(features_data),
         c_int(optimization_level), c_int(2), c_int(3)
@@ -425,7 +425,7 @@ pub(ffi) ffi fn const_signed_int(session: IrSession&, ty: IrType, bits: u64) -> 
     return wrap_value(session, LLVMConstInt(checked_type(session, ty), bits, c_int(1)));
 }
 
-// words 以低 64 位字在前的顺序表示任意宽度整数。
+// words represents an arbitrary-width integer with the least significant 64-bit word first.
 pub(ffi) ffi fn const_int_words(session: IrSession&, ty: IrType, words: u64[]) -> IrValue {
     let native_type = checked_type(session, ty);
     if words.len() == 0u64 {

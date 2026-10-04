@@ -176,8 +176,8 @@ struct B {
     float y;
 };
 void foo(struct A* a, struct B* b) {
-    a->x = 42;      // 访问类型为 struct A
-    b->y = 3.14f;   // 访问类型为 struct B
+    a->x = 42;      // Access through struct A.
+    b->y = 3.14f;   // Access through struct B.
 }
 ```
 

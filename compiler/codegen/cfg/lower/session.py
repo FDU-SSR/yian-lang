@@ -15,7 +15,7 @@ class LoweringSession:
         self.__type_mapper = CfgTypeMapper(type_ctx)
 
     # ------------------------------------------------------------------
-    # session 级
+    # Session scope.
     # ------------------------------------------------------------------
 
     @property
@@ -24,7 +24,7 @@ class LoweringSession:
 
     @property
     def raw_pointers(self) -> bool:
-        """诊断模式开关：开启时指针一律按裸 8B 处理，不生成检查、锁槽或帧锁。"""
+        """Raw-pointer mode: use bare 8 B pointers without checks, lock slots, or frame locks."""
         return self.__raw_pointers
 
     def cfg_type_id(self, type_id: int) -> int:

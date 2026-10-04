@@ -1,7 +1,7 @@
 from std.core.result import Result;
 from std.core.vec import Vec;
 
-// 构造独立的 NUL 结尾字节缓冲区；错误值是输入中的第一个 NUL 字节位置。
+// Construct an independent NUL-terminated byte buffer; an error identifies the first input NUL byte.
 pub fn c_string_bytes(value: str) -> Result<Vec<u8>, u64> {
     let input = value.as_slice();
     let index: u64 = 0;

@@ -21,7 +21,7 @@ class LLTypeCtx:
         self.__type_ctx = type_ctx
         self.__module = module
         self.__unit_names = unit_names
-        # 诊断模式：raw_pointers 开启时指针按裸 8B 处理，不携带胖指针元数据。
+        # Raw-pointer mode uses bare 8 B pointers without fat-pointer metadata.
         self.__raw_pointers = raw_pointers
 
         self.__storage: dict[int, ir.Type] = {}
@@ -31,21 +31,21 @@ class LLTypeCtx:
         self.__i8: ir.IntType = ir.IntType(8)  # type: ignore
         self.__i32: ir.IntType = ir.IntType(32)  # type: ignore
         self.__i64: ir.IntType = ir.IntType(64)  # type: ignore
-        # Opaque pointer 不携带 pointee (LLVM 15+ 的唯一表示)。
-        # GEP/load 的显式类型由调用点给出 (见 emitters/memory.py 与 function/core.py), 因此指针构造无需
-        # materialize pointee: 指针布局与 pointee 无关, 经指针回指自身的 struct/enum
-        # 也不必在构造指针时补齐自己的 body。
+        # Opaque pointers carry no pointee type (LLVM's sole representation since LLVM 15).
+        # GEP/load sites supply explicit types (see emitters/memory.py and function/core.py), so pointer construction
+        # does not materialize the pointee: pointer layout is independent of it, and self-referential struct/enum
+        # bodies need not be completed when constructing pointers.
         self.__ptr: ir.PointerType = ir.PointerType()  # type: ignore
-        # str 与 slice 共用 3 字段布局 {data, word, size} 24B;
-        # 诊断模式(raw_pointers)下退化为 2 字段 {data, size} 16B。
+        # str and slice share the 24 B layout {data,word,size};
+        # raw-pointer mode uses {data,size}, 16 B.
         if self.__raw_pointers:
             self.__str_ll_type: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
         else:
             self.__str_ll_type = ir.LiteralStructType([self.__ptr, self.__i64, self.__i64])  # type: ignore
-        # 4 字段胖指针 {data, word, index:u32, size:u32} = 8+8+4+4 = 24 B;
-        # word = ⟨kind:2 | field | id⟩(见 lockmech), index/size 是 32 位元素数。
+        # Four-field fat pointer {data,word,index:u32,size:u32} = 8+8+4+4 = 24 B;
+        # word encodes lock and key (see lockmech); index/size count elements in 32 bits.
         self.__fat_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64, self.__i32, self.__i32])  # type: ignore
-        # 2 字段引用 {data, word} 16 B。
+        # Two-field reference {data,word}, 16 B.
         self.__ref_pointer: ir.LiteralStructType = ir.LiteralStructType([self.__ptr, self.__i64])  # type: ignore
         self.__trait_object: ir.LiteralStructType = (
             ir.LiteralStructType([self.__ptr, self.__ptr]) if self.__raw_pointers
@@ -60,9 +60,9 @@ class LLTypeCtx:
 
     @property
     def ptr_type(self) -> ir.PointerType:
-        """opaque pointer 类型: 数据指针(dyn/T*/T&/切片 data)的唯一 LLVM 表示。
+        """Opaque pointer type: the LLVM representation of data pointers (dyn/T*/T&/slice data).
 
-        GEP 的元素类型与 load 的值类型由调用点显式给出, 指针本身不带 pointee。
+        GEP's element type and load's value type are explicit at use sites; the pointer carries no pointee.
         """
         return self.__ptr
 
@@ -227,24 +227,24 @@ class LLTypeCtx:
 
     def __handle_pointer(self, type_def: Type.PointerType) -> ir.Type:
         # 4-field fat pointer {data, word, index, size} = 24B
-        # (word 打包锁址与键; index/size 为 32 位元素数, 见 lockmech).
+        # word packs lock and key; index/size are 32-bit element counts (see lockmech).
         # Pointer-to-ZST never reaches here: is_zst erasure (above) runs first.
-        # 诊断模式:raw_pointers 下指针退化为裸 8B opaque 指针;元素/值类型(GEP 的
-        # source_etype、load 的 typ)由使用点显式给出。
+        # Raw-pointer mode uses bare 8 B opaque pointers; GEP's source_etype and load's typ
+        # are supplied explicitly at use sites.
         if self.__raw_pointers:
             return self.__ptr
         return self.__fat_pointer
 
     def __handle_ref(self, type_def: Type.RefType) -> ir.Type:
-        # 2 字段引用 ⟨data, word⟩ 16B(不含 index 和 size)。
-        # Ref-to-ZST 在上层已擦除。诊断模式(raw_pointers)下退化为裸指针 (opaque)。
+        # Two-field reference <data,word>, 16 B, without index/size.
+        # References to ZSTs are erased upstream; raw-pointer mode uses opaque pointers.
         if self.__raw_pointers:
             return self.__ptr
         return self.__ref_pointer
 
     def __handle_slice(self, type_def: Type.SliceType) -> ir.Type:
-        # 3 字段切片 {data: T*, word: u64, size: u64} 24B(不含 index)。
-        # 诊断模式(raw_pointers)下退化为 2 字段 {T*, u64}。
+        # Three-field slice {data:T*,word:u64,size:u64}, 24 B, without index.
+        # Raw-pointer mode uses two fields {T*,u64}.
         data_type = self.__ptr
         if self.__raw_pointers:
             return ir.LiteralStructType([data_type, self.__i64])
@@ -285,11 +285,11 @@ class LLTypeCtx:
             variant_size, variant_align = self.__stable_layout(variant.payload_type)
             max_size, max_align = max(max_size, variant_size), max(max_align, variant_align)
         pad = (max_size + max_align - 1) // max_align * max_align if max_size > 0 else 0
-        # 载荷槽用 i32 而不是 i8: `[N x i8]` 会被 SROA/instcombine 拆成逐字节拷贝
-        # (一份 72B 载荷 ~150 条指令, json 里一次 Vec::push 就这样), i32 槽则是
-        # 4 字节 move。槽总大小 4*ceil(pad/4) 等于 align_up(pad, 4), 枚举的
-        # 尺寸/对齐(见 __stable_layout 的 EnumType 分支)不变; 载荷读写都先 bitcast
-        # 到真实 payload 类型, 槽的元素类型不影响语义。
+        # Use i32 payload slots: SROA/instcombine can split [N x i8] into byte copies
+        # (~150 instructions for a 72 B payload, including a json Vec::push), while i32 slots use
+        # 4-byte moves. Total slot size 4*ceil(pad/4) equals align_up(pad,4), preserving enum
+        # size/alignment (see __stable_layout's EnumType branch); payload reads/writes bitcast first
+        # to the actual payload type, so the slot element type does not affect semantics.
         slots = (pad + 3) // 4
         identified.set_body(self.__i32, ir.ArrayType(self.__i32, slots))  # type: ignore
 
@@ -302,7 +302,7 @@ class LLTypeCtx:
         # pointer-to-ZST params stay ZST and remain dropped.
         params = [self.__get_raw_type(param_type) for param_type in param_type_ids if not self.is_zst(param_type)]
         if receiver_type_id is not None and not self.is_zst(receiver_type_id):
-            # 接收者以 `T&` 值类型引用传递:receiver_type_id 是值类型,
+            # Pass receivers by T& reference to the value type; receiver_type_id is that value type.
             # In fat mode, alloc_ref yields the 16B {data, word} representation.
             # Raw mode uses a bare pointer. Fat T* to T& conversion drops index/size.
             ref_type_id = self.__type_ctx.alloc_ref(receiver_type_id)
@@ -325,9 +325,9 @@ class LLTypeCtx:
         )
 
     def __handle_function_pointer(self, type_def: Type.FunctionPointerType) -> ir.Type:
-        # 函数指针保留有型指针: llvmlite 的 CallInstr/Value.function_type 从 callee 的
-        # pointee 取函数签名, 间接调用需要一个带签名的指针类型 (LLVM 侧 opaque 也要求
-        # 调用点显式给出签名, 而 llvmlite 只支持从 pointee 推导)。
+        # Function pointers remain typed: llvmlite CallInstr/Value.function_type reads the signature from
+        # callee.pointee. Indirect calls need a signature-bearing pointer (LLVM opaque pointers require an explicit
+        # signature at the call site, but llvmlite only supports deriving it from the pointee).
         return self.__build_function_type(type_def.return_type, type_def.parameter_types).as_pointer()
 
     # ------------------------------------------------------------------
@@ -362,7 +362,7 @@ class LLTypeCtx:
             result = (type_def.size, type_def.size)
         elif isinstance(type_def, Type.PointerType):
             # fat pointer — {ptr, i64, i32, i32} = 24B, align 8.
-            # 诊断模式:raw_pointers 下指针为裸 8B,align 8。
+            # Raw-pointer mode uses bare 8 B pointers with alignment 8.
             if self.__raw_pointers:
                 result = (self.__ptr.get_abi_size(self.__target_data), self.__ptr.get_abi_alignment(self.__target_data))  # type: ignore
             else:

@@ -12,7 +12,7 @@ from compiler.codegen.cfg.lower.values import ValueLowerer
 
 
 class CallsLowerer:
-    """调用下降器。"""
+    """Call lowering."""
 
     def __init__(self, state: FunctionState, values: ValueLowerer, resolver: ExprResolver) -> None:
         self.__state = state
@@ -67,15 +67,15 @@ class CallsLowerer:
             return self.build_call(expr.method_id, arg_vals, expr.type_id)
 
         # non-static: pass receiver address as the first argument.
-        # 方法签名中的 receiver 是 T&。fat 模式下 T* 为 24B、T& 为 16B；
-        # 转换会丢弃指针的 index/size 元数据，已经是 T& 的 receiver 保持不变。
+        # Method signatures use a T& receiver. In fat mode T* is 24 B and T& is 16 B;
+        # conversion discards index/size, while receivers already typed T& retain their representation.
         receiver_addr = self.__values.resolve_addr_fat(expr.receiver)
-        # T* receiver 折算(T*→T&)前发出 in_bounds 检查。
-        # 折算删除 index/size 字段,方法体内 self 访问仅剩 CheckRefAccess(live),
-        # one-past-end 指针(index==size, 良构)的 in_bounds 语义随之丢失。
-        # 折算前对 T* receiver 发检查请求(与 FieldPtr/解引用同一前提);是否为胖
-        # 指针、是否与同块既有检查去重,由检查插入 pass 判定;RefType receiver
-        # (方法体内 self.method())天然为 16B fat 引用、无越界概念,raw 模式无检查。
+        # Request an in_bounds check before converting a T* receiver to T&.
+        # Conversion removes index/size; self access in the method body uses only CheckRefAccess(live),
+        # so the bounds semantics of a valid one-past-end pointer (index==size) would otherwise be lost.
+        # Request the same precondition as FieldPtr/dereference before converting a T* receiver. The insertion pass
+        # decides whether it is fat and whether an existing check on the block makes it redundant. RefType receivers
+        # (self.method() in a method body) already use a 16 B fat reference with no bounds metadata; raw mode omits checks.
         self.__state.emitter.emit(IR.CheckRequest(
             kind=IR.CHECK_REQUEST_RECEIVER_IN_BOUNDS, operands=[receiver_addr],
         ))
@@ -97,11 +97,11 @@ class CallsLowerer:
         )).result
 
     def receiver_ref_type(self, receiver_addr: IR.Value) -> int:
-        """调用折算: receiver 折算目标类型 = alloc_ref(接收者值类型)。
+        """Receiver conversion target: alloc_ref(receiver value type).
 
-        receiver_addr.type_id 形态:值变量/auto-deref 指针变量/field 派生为 T*
-        (pointee 即接收者值类型);方法体内 self.method() 已是 T&。两者 pointee
-        都是值类型,统一 alloc_ref;LLVM cast 按 src/dst 分派收缩或 identity。
+        receiver_addr.type_id is T* for value variables, auto-dereferenced pointer variables, and fields;
+        its pointee is the receiver value type. self.method() already uses T& with that same pointee.
+        Both use alloc_ref; LLVM dispatches on source/destination to narrow or preserve the representation.
         """
         resolved = receiver_addr.type_id
         addr_ty = self.__state.session.type_ctx[resolved]
@@ -110,8 +110,8 @@ class CallsLowerer:
         return receiver_addr.type_id
 
     def build_call(self, callee_type: int, args: list[IR.Value], result_type: int) -> IR.Value:
-        # 调用可能释放/写锁槽 → 检查状态失效（先补发挂起 InBounds 义务，保证逃逸前失败）；
-        # 失效由检查插入 pass 在 `IR.Call` 处完成。
+        # Calls can release objects/write lock slots, invalidating check state; discharge pending InBounds before escape.
+        # The insertion pass invalidates state at IR.Call.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=result_type)
         return self.__state.emitter.emit(IR.Call(result=result, callee_type=callee_type, args=args)).result
 

@@ -1,7 +1,7 @@
-// Fat-pointer arithmetic underflow (negative direction) negative test (胖指针表示)
+// Fat-pointer arithmetic underflow negative test.
 //
 // CheckElementArith:0 ≤ index + offset ≤ size。
-// p - 1:offset = -1 → index 0 + (-1) < 0 → 良构失败 → fail-stop → Exit code 1。
+// p-1: offset -1 makes index negative, violating arithmetic validity and exiting with code 1.
 
 fn main() {
     let p: i32* = dyn[4] 0i32;
@@ -10,6 +10,6 @@ fn main() {
     p[2] = 3;
     p[3] = 4;
 
-    let q: i32* = p - 1; // index 0 + (-1) < 0 → CheckElementArith 失败 → safety error
+    let q: i32* = p - 1; // Index zero minus one is negative, failing CheckElementArith with a safety error.
     assert false: "unreachable"
 }

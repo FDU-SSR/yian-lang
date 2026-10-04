@@ -10,7 +10,7 @@ from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
 
-// 捕获初始化在外层求值；只有可调用体切换到自身的返回上下文。
+// Capture initializers are evaluated in the outer context; only callable bodies establish their own return context.
 struct ContextValidator { in_callable: bool, problem: Option<DesugarError> }
 impl ContextValidator {
     fn callable(body: Block&) {
@@ -72,7 +72,7 @@ impl AstVisitor for ContextValidator {
     }
 }
 
-// 只检查传播操作的返回上下文，不修改树；返回遍历中发现的首个错误。
+// Validate propagation return contexts without changing the tree; return the first error encountered during traversal.
 pub fn validate_propagation(program: Program&) -> Result<void, DesugarError> {
     let validator = ContextValidator(in_callable=false, problem=Option<DesugarError>.None);
     walk_program(program, &validator);
@@ -110,7 +110,7 @@ impl TryLowerer {
             method_name=identifier(self.arena, span, method, true), args=args), span)
     }
 
-    // trait 的类型参数由实参推导；这里只记录语义分析所需的类型来源。
+    // Infer trait type parameters from arguments; record only the type sources required by semantic analysis here.
     fn branch_call(span: Span, operand: Expr&) -> Expr& {
         let branch_args = Vec<Option<TypeSource>>.new();
         branch_args.push(Option<TypeSource>.None);
@@ -125,7 +125,7 @@ impl TryLowerer {
             conversion_args, "from_residual", name_expr(self.arena, residual))
     }
 
-    // Continue 产生传播结果；Break 将 residual 转换为当前可调用体的返回值。
+    // Continue produces the propagation result; Break converts the residual into the current callable's return value.
     fn propagation_arms(span: Span, value: Identifier&, residual: Identifier&, conversion: Expr&) -> Vec<MatchArm&> {
         let arms = Vec<MatchArm&>.new();
         let bindings = [value, residual];
@@ -146,7 +146,7 @@ impl TryLowerer {
         arms
     }
 
-    // 绑定引用表达式一次，保持类型推导所见的引用身份。
+    // Bind the reference expression once to preserve the reference identity seen by type inference.
     fn bind_reference(span: Span, reference: Identifier&, operand: Expr&, expanded: Expr&) -> Expr& {
         let binding = self.arena.alloc_pattern(PatternData.BindPattern(
             name=reference, inner=self.arena.alloc_pattern(PatternData.WildcardPattern, span)), span);
@@ -162,7 +162,7 @@ impl TryLowerer {
             self.add_import(span, "FromResidual", "%from_residual_trait");
         }
 
-        // 编号在子节点重写之后分配，所有隐藏名称共享本次传播的编号。
+        // Allocate an index after rewriting children; all hidden names for this propagation share that index.
         let index = self.next_binding;
         self.next_binding += 1;
         let value = self.hidden(span, "%try_value_", index);
@@ -188,7 +188,7 @@ impl AstRewriter for TryLowerer {
     }
 }
 
-// 重写传播操作，并按首次使用顺序在文件声明之前放置所需 trait 导入。
+// Rewrite propagation and prepend required trait imports in order of first use.
 pub fn lower_propagation(tree: AstTree&) {
     let pass = TryLowerer(arena=&tree.arena, next_binding=0u64, imports=Vec<Item&>.new());
     defer pass.imports.drop();

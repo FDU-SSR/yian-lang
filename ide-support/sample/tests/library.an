@@ -1,4 +1,4 @@
-// 测试可以 import 根包（hybrid 根的库接口）。
+// Tests can import the root package through the hybrid root's library interface.
 from std.core.io import print;
 from sample.geometry import Point, Pair, abs;
 from sample.shapes import Shape, area, max;

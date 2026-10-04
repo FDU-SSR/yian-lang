@@ -1,8 +1,8 @@
-// del-view 正例(a):整块 T[] 切片放行。`let arr: i32[] = dyn[4] 0i32` 经
-// T*→T[] 降级产生覆盖整个堆块的视图(data = lock_ptr+8,lo=0):CheckDelete
-// 四前提 is_heap(p) ∧ live(p) ∧ is_raw(p) 全部满足(SliceType 无 index 分量,
-// index==0 检查退化为恒真,仅查 data==lock_ptr+8)→ del arr 整块交还,
-// 锁槽写 SENTINEL + free(lock_ptr 寻址)。del 后重分配验证堆稳定。
+// Deletion-view positive (a): whole-block T[] succeeds. let arr:i32[]=dyn[4] 0i32
+// converts T* to a full heap view with data=lock_ptr+8,lo=0. CheckDelete's
+// is_heap/live/is_raw terms pass. SliceType has no index,
+// so the index-zero check is true and only data==lock_ptr+8 matters; del arr releases the block,
+// writes SENTINEL, and frees the lock-addressed allocation. Reallocate to verify stability.
 //
 // Expected output: 0
 
@@ -11,7 +11,7 @@ fn main() {
     assert arr.len() == 4: "whole-block view preserves element count";
     del arr;
 
-    // del 后重分配:新块独立可用
+    // Reallocate after del; the new block is independently usable.
     let q: i32* = dyn[2] 0i32;
     q[0] = 9;
     q[1] = 8;

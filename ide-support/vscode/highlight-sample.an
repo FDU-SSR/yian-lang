@@ -1,11 +1,11 @@
-// 高亮与 scope 检查样例：每个 grammar 规则至少出现一次。
-// 这个文件不参与构建（它不在任何 anx 工程里），只为肉眼与 scope 检查服务。
-/* 块注释
-   跨行 */
+// Highlighting/scope sample: every grammar rule appears at least once.
+// This file belongs to no anx project and is only for visual/scope checks.
+/* Block comment
+   spanning lines */
 from std.core.io import print;
 from sample.geometry import Point, Pair;
 
-// 关键字与声明
+// Keywords and declarations.
 typedef Meters = f64;
 
 struct Shape<T> {
@@ -43,7 +43,7 @@ impl Describe for Shape<Meters> {
     }
 }
 
-// 字面量、数字后缀、字符、字节、字符串与 f-string 内插
+// Literals, numeric suffixes, characters, bytes, strings, and f-string interpolation.
 fn literals() -> u64 {
     let decimal: u64 = 1_000_000;
     let hex: u64 = 0xFF_EC;
@@ -62,13 +62,13 @@ fn literals() -> u64 {
         + @str_get_len(interpolated) as u64 + @str_get_len(nested) as u64;
 }
 
-// 属性（PascalCase）与内建（小写）
+// Attributes (PascalCase) and builtins (lowercase).
 @BitCopy
 struct Copyable {
     pub flag: bool,
 }
 
-// 控制流、match、运算符、self、_、true/false、typeof、IS_RAW_MODE、comptime
+// Control flow, match, operators, self, _, true/false, typeof, IS_RAW_MODE, and comptime.
 fn control(value: i32, items: i32[]) -> i32 {
     let total: i32 = 0;
     let ignored: i32 = _;

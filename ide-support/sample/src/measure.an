@@ -1,8 +1,8 @@
-// 特征（trait）、默认方法与条件实现：跨实现跳转、补全与悬停的素材。
+// Traits, default methods, and conditional implementations for navigation, completion, and hover.
 from sample.types import Meters;
 
 pub trait Measured {
-    // 默认方法：实现者不写也能调用，编辑器应能跳到 trait 里的这一处。
+    // Default method: callable without an override; the editor should navigate to this trait declaration.
     fn label() -> str {
         return "measured";
     }
@@ -39,7 +39,7 @@ pub struct Bagged<T> {
     pub value: T,
 }
 
-// 条件实现：只有 T 可度量时 Bagged<T> 才可度量。
+// Conditional implementation: Bagged<T> is measurable only when T is measurable.
 impl<T> Measured for Bagged<T> if T: Measured {
     fn label() -> str {
         return "bagged";

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""build.py — 构建 YIAN 运行时库并做一致性检查与自测.
+"""build.py: build the YIAN runtime, check consistency, and run self-tests.
 
-用法 (在仓库根或任意位置执行):
+Usage from the repository root or any directory:
 
-  python3 runtime/build.py            # 构建 build/runtime/libyian_rt.{o,a} (已最新则跳过)
-  python3 runtime/build.py --force    # 强制重建
-  python3 runtime/build.py --check    # 构建 + ABI 常量一致性断言 + 自测
-  python3 runtime/build.py --asan     # 构建并运行 ASan/UBSan 版自测
-  python3 runtime/build.py --quiet    # 只输出错误 (供编译器内部调用)
+  python3 runtime/build.py            # Build build/runtime/libyian_rt.{o,a} unless current
+  python3 runtime/build.py --force    # Force rebuilding
+  python3 runtime/build.py --check    # Build, check ABI constants, and self-test
+  python3 runtime/build.py --asan     # Build/run ASan and UBSan self-tests
+  python3 runtime/build.py --quiet    # Errors only, for internal compiler calls
 
-一致性断言:
-  - runtime/include/yian_rt.h 的 YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
-    与 compiler/codegen/abi/lockmech.py::FrameLockArena 相等;
-  - YIAN_HDR_BYTES 与 lockmech.py::BlockHeader.BYTES 相等;
-  - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES 与 compiler/runtime_lib.py::CLASS_BYTES 逐项相等;
-  - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE 与 compiler/runtime_error.py 的 S002/R002
-    消息逐字节相等.
+Consistency checks:
+  - runtime/include/yian_rt.h YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
+    match compiler/codegen/abi/lockmech.py::FrameLockArena;
+  - YIAN_HDR_BYTES matches lockmech.py::BlockHeader.BYTES;
+  - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES match compiler/runtime_lib.py::CLASS_BYTES elementwise;
+  - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE match compiler/runtime_error.py S002/R002
+    messages byte-for-byte.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def build(force: bool = False, quiet: bool = False) -> None:
         obj = BUILD_DIR / (source.stem + ".o")
         __run([CC, *CFLAGS, "-c", str(source), "-o", str(obj)])
         objects.append(obj)
-    # 合并为单个可重定位对象: 供 `-t obj` 与用户对象再合并, 也作为静态库的唯一成员.
+    # Merge into one relocatable object, used for -t obj merging and as the archive's sole member.
     __run([CC, "-r", "-nostdlib", *[str(obj) for obj in objects], "-o", str(LIB_OBJECT)])
     __run(["llvm-ar", "rcs", str(LIB_ARCHIVE), str(LIB_OBJECT)])
 
@@ -101,7 +101,7 @@ def __macro_int(name: str) -> int:
     expr = re.sub(r"(?<=[0-9])[uUlL]+", "", expr)
     if re.fullmatch(r"[0-9()<>&| +\-*]+", expr) is None:
         raise SystemExit(f"[check] 宏 {name} 不是可求值的整数字面量表达式: {expr!r}")
-    return int(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - 已限制字符集
+    return int(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - character set is restricted
 
 
 def __macro_bytes(name: str) -> bytes:
@@ -113,7 +113,7 @@ def __macro_bytes(name: str) -> bytes:
 
 
 def __macro_int_list(name: str) -> list[int]:
-    """读取由整数字面量逗号分隔 (可带续行反斜杠) 的宏, 例如尺寸类表."""
+    """Read a comma-separated integer-literal macro, optionally with backslash continuation, such as the size-class table."""
     text = HEADER.read_text(encoding="utf-8")
     match = re.search(rf"^#define\s+{name}\s+((?:[^\n]*\\\n)*[^\n]*)$", text, re.MULTILINE)
     if match is None:

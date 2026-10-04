@@ -40,7 +40,7 @@ fn main() {
     assert drops == 5: "vec drop releases storage without dropping elements";
 
     let strings = Vec<String>.new();
-    // 首个 String 留出富余容量: 便于演示"克隆侧 push 只改自己的描述符"。
+    // Leave spare capacity in the first String to show clone-side push only changes its descriptor.
     let one = String.with_capacity(8);
     one.push_str("one");
     strings.push(one);
@@ -50,15 +50,15 @@ fn main() {
     strings.push(String.from(&"five"));
     assert strings[0] == "one" && strings[4] == "five";
 
-    // Vec::clone 只复制自己管理的元素缓冲区: 克隆出的描述符与原件独立(克隆侧
-    // push 不影响原件长度), 但元素(String)自己的字节缓冲区与原件共享。
+    // Vec::clone copies only its element buffer; cloned descriptors are independent, so pushing
+    // changes only the clone's length, while String elements still share their byte buffers.
     let cloned = strings.clone();
     cloned[0].push('!');
     assert strings[0] == "one": "clone descriptors are independent";
     assert cloned[0] == "one!": "growth through the clone stays local to its descriptor";
 
     // Vec.drop() only releases its backing allocation.  Clean the reachable
-    // String values explicitly; 两侧共享同一批缓冲区, 所以只清一份。
+    // String values explicitly; both copies share buffers, so clean only one set.
     for i in 0..strings.len() {
         strings[i].drop();
     }

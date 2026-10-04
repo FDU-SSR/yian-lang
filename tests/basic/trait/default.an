@@ -20,7 +20,7 @@ struct Rectangle {
 trait Shape {
     fn area() -> i32;
 
-    // 有默认实现
+    // Has a default implementation.
     fn move_by(dx: i32, dy: i32) {
         print("Nothing to do\n");
     }

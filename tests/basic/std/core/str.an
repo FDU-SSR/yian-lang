@@ -18,7 +18,7 @@ fn main() {
     let s_cp: Option<str> = str.from_slice(copyright[0u64..2]);
     assert s_cp.is_some(): "2-byte UTF-8 should be valid";
 
-    // 3-byte: U+4E2D 中 → E4 B8 AD
+    // 3-byte: U+4E2D (CJK character) -> E4 B8 AD.
     let zhong: u8[3] = [228, 184, 173];
     let s_zhong: Option<str> = str.from_slice(zhong[0u64..3]);
     assert s_zhong.is_some(): "3-byte UTF-8 should be valid";
@@ -95,7 +95,7 @@ fn main() {
     assert chars.next().is_none(): "should be exhausted";
 
     // ---- slicing at char boundaries ----
-    let mixed: u8[6] = [228, 189, 160, 229, 165, 189]; // "你好"
+    let mixed: u8[6] = [228, 189, 160, 229, 165, 189]; // Two Chinese characters spelling hello.
     let s_mixed: str = str.from(&mixed[0u64..6]);
     // slice at char boundary (byte 3)
     let s_first_char: str = s_mixed[0u64..3];

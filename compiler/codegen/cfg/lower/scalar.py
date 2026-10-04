@@ -41,10 +41,10 @@ class ScalarOps:
                 neg_offset = self.build_binary(BinaryOperator.Sub, zero, rhs, rhs.type_id)
                 return self.__memory.build_element_ptr(lhs, neg_offset, type_id)
 
-        # ── 指针比较字段化(指针比较)──
-        # 胖指针(双方 PointerType 且 pointee 非 ZST)的比较路由至 PtrCmp:
-        # 序比较先插 CheckPtrCmp(data 相等前提,跨对象失败);相等比较按
-        # (data, index) 二元组。FunctionPointerType 非 PointerType,不参与。
+        # -- Compare pointer fields --
+        # Route fat-pointer comparisons (both PointerType with non-ZST pointees) through PtrCmp:
+        # ordering inserts CheckPtrCmp for equal data, rejecting different objects; equality compares
+        # (data,index). FunctionPointerType is not PointerType and does not use this path.
         if op.is_comparison() and self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             return self.__memory.build_ptr_cmp(op, lhs, rhs, type_id)
 

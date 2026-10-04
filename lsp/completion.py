@@ -100,7 +100,7 @@ def __insert_text(item: Completion) -> tuple[str, bool]:
     Snippet syntax belongs to the client: the compiler reports the candidate and
     the parameter names it resolved, and this module decides that accepting a
     callable should put the caret in its first parameter rather than leave a bare
-    name behind (补全项的插入文本与参数占位符).
+    name behind (completion insertion text and parameter placeholders).
     """
     if not item.parameters:
         return item.label, False

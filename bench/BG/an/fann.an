@@ -1,14 +1,14 @@
 // bench/BG/an/fann.an — fannkuchredux (shootout fannkuchredux)
 //
-// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
-// 语义权威源: bench/BG/c/fann.c (项目自写 C 参考)
-// 规模: n=11 (11! = 39.9M 排列), 断言 max_flips == 51 (与 C 版 n=11 一致)。
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/fann.c, the project's C implementation.
+// Scale: n=11 (11!=39.9M permutations); assert max_flips==51, matching C at n=11.
 //
-// 算法: 经典 fannkuchredux —— 增量生成排列, 对每个排列反转前缀
-//        (首元素 k → 反转前 k+1 个), 统计最大反转次数与校验和。
+// Algorithm: classic fannkuchredux, incrementally generating permutations and reversing prefixes
+//        of length first_element+1, accumulating maximum flip count and checksum.
 //
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Both modes share this source. dyn uses inference; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
 from std.core.io import print;
 
 fn fannkuchredux(n: u64) -> i32 {
@@ -64,7 +64,7 @@ fn fannkuchredux(n: u64) -> i32 {
             checksum -= flips_count;
         }
 
-        // incremental permutation generation (下一排列)
+        // Incremental permutation generation (next permutation).
         while true {
             if r == i32(n) {
                 done = 1;

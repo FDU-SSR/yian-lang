@@ -1,11 +1,11 @@
-// bench/ALLOC/an/churn_mixed.an — 混合尺寸 churn (胖态): 每轮分配一个大块与一批小块, 按
-// "先释放大块、再释放这批小块"的顺序回收.
+// bench/ALLOC/an/churn_mixed.an: mixed-size churn (fat mode). Allocate one large block and a batch of small blocks,
+// then release the large block before the small blocks each round.
 //
-// 规模: 20000 轮, 每轮 1 个 16 KiB 大块 + 256 个 16 B 小块.
-// 断言: checksum == 轮数 × (大块 5 + 小块 256 × 2).
+// Scale: 20000 rounds, each with one 16 KiB block and 256 blocks of 16 B.
+// Assert checksum == rounds * (5 for the large block + 256 * 2 for small blocks).
 //
-// 这是首适配空闲链的退化形态: 下一轮的大块分配要顺序扫过链上排在前面的这批小块.
-// 裸态用 churn_mixed.raw.an (元素类型是 T* 而不是 T[]).
+// A first-fit free list degenerates here: the next large allocation scans the preceding small blocks.
+// Raw mode uses churn_mixed.raw.an with T* elements instead of T[].
 
 from std.core.io import print;
 

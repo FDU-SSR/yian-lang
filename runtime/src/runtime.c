@@ -1,7 +1,7 @@
 /*
- * runtime.c — YIAN 运行时库的进程级对象、失败路径与 C 入口包装.
+ * runtime.c: process globals, failure paths, and the C entry wrapper for YIAN.
  *
- * 语义与"运行时在编译器里手拼 IR"的版本逐条对应; 细节约定见 yian_rt.h。
+ * ABI contracts are defined in yian_rt.h.
  */
 
 #include "yian_rt.h"
@@ -13,15 +13,15 @@ char **__yian_argv = 0;
 
 uint64_t __yian_key_stack = 0;
 
-/* 锁表: 帧段 [0, 2^20) + 字面量/环境常量槽(key = 0, 即 BSS 初值) + 堆段.
- * 堆段的快路径由编译器发射的 IR 直接改 bump/free_head 与表项. */
+/* Lock table: frames [0,2^20), constant slots (key zero, the BSS initial value), and heap.
+ * Compiler-emitted IR directly updates bump/free_head and heap entries on fast paths. */
 uint64_t __secl_lock_table[YIAN_LOCK_TABLE_SLOTS];
 uint64_t __secl_lock_bump = YIAN_HEAP_LOCK_BASE;
 uint64_t __secl_lock_free_head = 0;
 
 uint64_t __secl_frame_lock_depth = 0;
 
-/* 失败路径上的写入: 尽力写完, 但不重试、不分配. */
+/* Failure-path writes are best effort, without retries or allocation. */
 static void write_all(const uint8_t *bytes, uint64_t length) {
     while (length > 0) {
         ssize_t written = write(2, bytes, (size_t)length);
@@ -47,7 +47,7 @@ void __yian_panic(const uint8_t *message, uint64_t length) {
     _exit(1);
 }
 
-/* 语言入口: fn main() 发射为 void @__yian_main(). */
+/* Language entry: fn main() emits void @__yian_main(). */
 extern void __yian_main(void);
 
 int main(int argc, char **argv) {

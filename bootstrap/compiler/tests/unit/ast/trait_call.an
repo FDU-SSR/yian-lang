@@ -39,7 +39,7 @@ fn main() {
     let rewriter = Rewriter(bool_type, 0u64); rewriter.rewrite_expr(call);
     assert rewriter.types == 2: "explicit sources rewritten";
     let writer = Writer.with_max_depth(512u64); defer writer.drop();
-    // append_program 是公开观察接口；测试从一个最小程序访问新增表达式。
+    // append_program is the public observation interface; a minimal program exposes the expression under test.
     let stmts = Vec<Expr&>.new(); stmts.push(call);
     let block = arena.alloc_block(BlockData(stmts, Option<Position>.None, Vec<PatternLet&>.new()), span);
     let item = arena.alloc_item(ItemData.FuncDef(

@@ -363,9 +363,9 @@ ide-support/vscode/node_modules/
 # The VS Code extension ships its own launch/task config for F5.
 !ide-support/vscode/.vscode/
 
-# 评测集结果: 只把完全档与分配器记录 (full.*, alloc.*) 进版本历史; 其余集合与临时子集都是
-# 开发过程的产物, 不提交。上面的通用 `results/` 规则会把整个目录忽略掉, 这里先把它收回来,
-# 再只放行两份记录。
+# Benchmark results: track only full-scale and allocator records (full.*, alloc.*).
+# Other sets and temporary subsets are development artifacts. The general results/ rule above
+# ignores the directory; restore it here, then allow only these two result sets.
 !bench/results/
 bench/results/*
 !bench/results/full.md

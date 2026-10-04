@@ -1,2 +1,2 @@
-// 正确模块：类型别名。
+// Valid module: type aliases.
 pub typedef Meters = f64;

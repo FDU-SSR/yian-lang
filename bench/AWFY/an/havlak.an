@@ -1,48 +1,48 @@
-// bench/AWFY/an/havlak.an — Havlak 循环识别 (AWFY 宏基准)
+// bench/AWFY/an/havlak.an: Havlak loop recognition (AWFY macrobenchmark).
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Havlak.java + havlak/*.java
-//       Havlak.java 与 BasicBlock/BasicBlockEdge/ControlFlowGraph/HavlakLoopFinder/
+// Upstream: AWFY benchmarks/Java/src/Havlak.java and havlak/*.java.
+//       Havlak.java and BasicBlock/BasicBlockEdge/ControlFlowGraph/HavlakLoopFinder/
 //       LoopStructureGraph/LoopTesterApp/SimpleLoop.java:
-//         `// Copyright 2011 Google Inc.` + Apache-2.0 (见 licenses/LICENSE-APACHE);
-//       UnionFindNode.java 与 som/*.java (Vector/Set/IdentitySet/IdentityDictionary):
-//         MIT, Copyright (c) 2001-2016 Stefan Marr / AWFY AUTHORS.md (见 licenses/LICENSE-MIT)。
-// 语义权威源: bench/AWFY/c/havlak.c (C 参考实现, 逐行对应上游; 与上游官方断言值逐项一致:
+//         `// Copyright 2011 Google Inc.` and Apache-2.0 (see licenses/LICENSE-APACHE);
+//       UnionFindNode.java and som/*.java (Vector/Set/IdentitySet/IdentityDictionary):
+//         MIT, Copyright (c) 2001-2016 Stefan Marr / AWFY AUTHORS.md (see licenses/LICENSE-MIT).
+// Semantic reference: bench/AWFY/c/havlak.c, following upstream with matching official assertions:
 //       innerIterations=1→(1605,5213), 15→(1647,5213), 150→(2052,5213), 1500→(6102,5213))
 //
-// 算法 (一句话): 对 CFG 做 DFS 前序编号 (last[w] 区间即支配判据), 每个节点的入边按
-//       回边/非回边分流; 再从后往前对每个 header w 反向追回边源, 用 Union-Find 把
-//       SCC 折叠成 SimpleLoop 并挂进 LoopStructureGraph 树, 最后递归标注嵌套层级。
+// Algorithm: DFS preorder numbers CFG nodes; last[w] intervals determine ancestry. Split incoming edges
+//       into back/non-back edges, then process headers in reverse order, tracing back-edge sources and using
+//       union-find to collapse SCCs into SimpleLoops in a LoopStructureGraph; recursively assign nesting levels.
 //
-// YIAN 实现结构:
+// YIAN implementation:
 //   1. SimpleLoop/BasicBlock/BasicBlockEdge/ControlFlowGraph/LoopStructureGraph/
-//      HavlakLoopFinder/LoopTesterApp 使用 struct 表达; som.Vector/Set/IdentitySet
-//      使用 Vec<T> 表达 (som.Set 是线性扫描的插入序集合)。
-//   2. BasicBlock 用 CFG 内唯一的 name 标识, SimpleLoop 用 LoopStructureGraph 内
-//      唯一的 counter 标识; IdentitySet.contains、节点比较与复用判断均比较 id。
-//   3. Union-Find 的 parent 使用 nodes 数组下标 u64 表示, parent 等于自身下标时为根。
-//   4. findSet 路径压缩按 parent 字段执行 nodeList.forEach(iter -> iter.union(parent))
-//      对应的更新规则; C 参考实现使用相同规则, 输出校验值为 6102/5213。
-//   5. BBClass 是包含 7 个无载荷变体的 enum; 比较通过 bb_is_self /
-//      bb_is_irreducible 两个 match 辅助函数完成。
+//      HavlakLoopFinder/LoopTesterApp use structs; som.Vector/Set/IdentitySet
+//      use Vec<T> (som.Set is an insertion-ordered set with linear scans).
+//   2. BasicBlock identity is its unique CFG name; SimpleLoop uses a unique LoopStructureGraph counter.
+//      IdentitySet.contains, node comparison, and reuse compare IDs.
+//   3. Union-find parents are u64 nodes-array indices; a node pointing to itself is a root.
+//   4. findSet path compression follows nodeList.forEach(iter -> iter.union(parent)) updates.
+//      The C reference uses the same rules and checks 6102/5213.
+//   5. BBClass is an enum with seven payload-free variants; bb_is_self and
+//      bb_is_irreducible perform comparisons through match.
 //   6. initAllNodes/doDFS/processEdges/stepD/stepE/setLoopAttributes/
-//      calculateNestingLevel* 使用显式循环, 不创建 forEach 闭包;
-//      stepE 对 nonBackPreds[x.dfsNumber] 的迭代在 w == x.dfsNumber 会追加同一集合,
-//      YIAN 版重读长度, 与 Java Vector.forEach 的迭代语义一致。
-//   7. 字典: IdentityDictionary<BasicBlock,Integer> number (customHash()=BasicBlock.name)
-//      与 header/last/nodes 一致, 落成按 name 索引的数组 (CFG 节点名唯一)。
-//   8. 每轮 benchmark 显式释放 finder 缓冲、LoopStructureGraph
-//      (含每个 SimpleLoop 的 basicBlocks/children) 与 ControlFlowGraph。
-//   9. 无受限内建 (@bitcast/@memcpy/@slice_from_parts/@str_from_parts); 本基准不需要
-//      sqrt/sin/cos, 故无自备数学。
+//      calculateNestingLevel* uses explicit loops without forEach closures;
+//      stepE can append to nonBackPreds[x.dfsNumber] while traversing it when w==x.dfsNumber,
+//      so YIAN rereads the length to match Java Vector.forEach semantics.
+//   7. IdentityDictionary<BasicBlock,Integer> number uses customHash()=BasicBlock.name,
+//      so, like header/last/nodes, it is an array indexed by the CFG's unique node names.
+//   8. Each benchmark round explicitly releases finder buffers, LoopStructureGraph,
+//      including each SimpleLoop's basicBlocks/children, and ControlFlowGraph.
+//   9. No restricted builtins (@bitcast/@memcpy/@slice_from_parts/@str_from_parts); this benchmark
+//      needs no sqrt/sin/cos or custom math.
 //
-// 单一源: fat 与 raw 共用本文件; 树/集合用 Option<T&> 与 Vec<T&>, 无切片,
-//         dyn 变量一律绑 T& (不写 T[]/T* 标注), 两模式通用。
-// 规模: 每个工作单元使用官方 innerIterations=1500, 结果为 6102/5213。
-// 外层重复只重复完整 LoopTesterApp。
-// 校验值: 每轮 loops=6102, nodes=5213; C 参考实现执行相同断言。
+// Both modes share this source, with Option<T&>/Vec<T&> trees and sets, without slices.
+//         Bind dyn variables as T& without T[]/T* annotations for compatibility with both modes.
+// Scale: official innerIterations=1500 per work unit, producing 6102/5213.
+// Outer repetitions repeat complete LoopTesterApp runs.
+// Assert loops=6102 and nodes=5213 each round, matching the C reference.
 from std.core.vec import Vec;
 
-// ── 基本块 / 边 / CFG (上游 havlak/BasicBlock.java, BasicBlockEdge.java,
+// -- Basic blocks / edges / CFG (upstream havlak/BasicBlock.java, BasicBlockEdge.java,
 //    ControlFlowGraph.java) ──
 
 struct BasicBlock {
@@ -57,7 +57,7 @@ struct BasicBlockEdge {
 }
 
 struct ControlFlowGraph {
-    // basicBlockMap: 下标即 name (None 表示该下标尚未建点)
+    // basicBlockMap: index equals name; None means the node has not been created.
     basic_blocks: Vec<Option<BasicBlock&>>,
     start_node: Option<BasicBlock&>,
     edge_list: Vec<BasicBlockEdge&>,
@@ -68,7 +68,7 @@ impl ControlFlowGraph {
         return dyn ControlFlowGraph(basic_blocks=Vec<Option<BasicBlock&>>.new(), start_node=Option<BasicBlock&>.None, edge_list=Vec<BasicBlockEdge&>.new());
     }
 
-    // 上游 createNode: 已存在则复用, 否则新建; size 首次为 1 时记 startNode
+    // Upstream createNode: reuse existing nodes, otherwise create; set startNode when size first reaches one.
     pub fn create_node(name: i32) -> BasicBlock& {
         let idx: u64 = u64(name);
         if idx < self.basic_blocks.len() && self.basic_blocks[idx].is_some() {
@@ -94,7 +94,7 @@ impl ControlFlowGraph {
     }
 }
 
-// 上游 BasicBlockEdge 构造: 建/取两端点, 挂 out/in 边, 并登记进 edgeList
+// Upstream BasicBlockEdge constructor: create/get endpoints, attach outgoing/incoming edges, register in edgeList.
 fn new_basic_block_edge(cfg: ControlFlowGraph&, from_name: i32, to_name: i32) {
     let from_node: BasicBlock& = cfg.create_node(from_name);
     let to_node: BasicBlock& = cfg.create_node(to_name);
@@ -104,10 +104,10 @@ fn new_basic_block_edge(cfg: ControlFlowGraph&, from_name: i32, to_name: i32) {
     cfg.edge_list.push(edge);
 }
 
-// ── 循环 (上游 havlak/SimpleLoop.java, LoopStructureGraph.java) ──
+// -- Loops (upstream havlak/SimpleLoop.java, LoopStructureGraph.java) --
 
 struct SimpleLoop {
-    counter: i32,        // 身份 id (IdentitySet 去重用)
+    counter: i32,        // Identity ID for IdentitySet deduplication.
     basic_blocks: Vec<BasicBlock&>,
     children: Vec<SimpleLoop&>,
     parent: Option<SimpleLoop&>,
@@ -118,7 +118,7 @@ struct SimpleLoop {
 }
 
 impl SimpleLoop {
-    // 上游 SimpleLoop(bb, isReducible); bb == None 即人造根
+    // Upstream SimpleLoop(bb,isReducible); bb=None denotes the artificial root.
     static pub fn new(bb: Option<BasicBlock&>, is_reducible: bool) -> SimpleLoop& {
         let loop_: SimpleLoop& = dyn SimpleLoop(counter=0, basic_blocks=Vec<BasicBlock&>.new(), children=Vec<SimpleLoop&>.new(), parent=Option<SimpleLoop&>.None, root_flag=false, is_reducible=is_reducible, nesting_level=0, depth_level=0);
         if bb.is_some() {
@@ -150,7 +150,7 @@ impl SimpleLoop {
         self.children.push(child);
     }
 
-    // 上游 setParent(parent): 记父并把自己挂进 parent.children
+    // Upstream setParent(parent): record parent and add self to parent.children.
     pub fn set_parent(parent: SimpleLoop&) {
         self.parent = Option<SimpleLoop&>.Some(parent);
         parent.add_child_loop(self);
@@ -221,7 +221,7 @@ impl LoopStructureGraph {
         return self.loops[i];
     }
 
-    // 上游 calculateNestingLevel
+    // Upstream calculateNestingLevel.
     pub fn calculate_nesting_level() {
         let i: u64 = 0;
         while i < self.loops.len() {
@@ -251,8 +251,8 @@ impl LoopStructureGraph {
     }
 }
 
-// ── Union/Find (上游 havlak/UnionFindNode.java) ──
-// parent 用 nodes 数组下标表达 (自指即 parent == 自身下标)
+// -- Union/find (upstream havlak/UnionFindNode.java) --
+// parent is a nodes-array index; self-parent means a root.
 
 struct UnionFindNode {
     parent: u64,
@@ -261,7 +261,7 @@ struct UnionFindNode {
     dfs_number: i32,
 }
 
-// ── 节点分类标记 (上游 HavlakLoopFinder.BasicBlockClass) ──
+// -- Node classification (upstream HavlakLoopFinder.BasicBlockClass) --
 
 enum BBClass {
     Top,
@@ -287,7 +287,7 @@ fn bb_is_irreducible(k: BBClass) -> bool {
     };
 }
 
-// ── 整数集合 (上游 som.Set<Integer>: 插入序 + 线性去重) ──
+// -- Integer set (upstream som.Set<Integer>: insertion order and linear deduplication) --
 
 struct IntSet {
     items: Vec<i32>,
@@ -333,7 +333,7 @@ fn vec_u64_has(v: Vec<u64>&, x: u64) -> bool {
     return false;
 }
 
-// ── 循环识别 (上游 havlak/HavlakLoopFinder.java) ──
+// -- Loop recognition (upstream havlak/HavlakLoopFinder.java) --
 
 struct HavlakLoopFinder {
     cfg: ControlFlowGraph&,
@@ -352,12 +352,12 @@ impl HavlakLoopFinder {
         return Self(cfg=cfg, lsg=lsg, non_back_preds=Vec<IntSet>.new(), back_preds=Vec<Vec<i32>>.new(), number=Vec<i32>.new(), header=Vec<i32>.new(), bb_type=Vec<BBClass>.new(), last=Vec<i32>.new(), nodes=Vec<UnionFindNode>.new());
     }
 
-    // 上游 isAncestor: 用 DFS 前序编号做支配判定
+    // Upstream isAncestor: test ancestry using DFS preorder numbers.
     fn is_ancestor(w: i32, v: i32) -> bool {
         return w <= v && v <= self.last[u64(w)];
     }
 
-    // 上游 UnionFindNode.findSet: 注意末行 union 的是 `this.parent` (AWFY 语义)
+    // Upstream UnionFindNode.findSet: the final union uses this.parent (AWFY semantics).
     fn find_set(x: u64) -> u64 {
         let node_list: Vec<u64> = Vec<u64>.new();
         let node: u64 = x;
@@ -378,7 +378,7 @@ impl HavlakLoopFinder {
         return node;
     }
 
-    // 上游 doDFS
+    // Upstream doDFS.
     fn do_dfs(current_node: BasicBlock&, current: i32) -> i32 {
         let ci: u64 = u64(current);
         self.nodes[ci].parent = ci;
@@ -400,7 +400,7 @@ impl HavlakLoopFinder {
         return last_id;
     }
 
-    // 上游 processEdges
+    // Upstream processEdges.
     fn process_edges(node_w: BasicBlock&, w: i32) {
         if node_w.in_edges.len() > 0 {
             let i: u64 = 0;
@@ -419,7 +419,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 上游 identifyEdges
+    // Upstream identifyEdges.
     fn identify_edges(size: i32) {
         let w: i32 = 0;
         while w < size {
@@ -436,7 +436,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 上游 stepD
+    // Upstream stepD.
     fn step_d(w: i32, node_pool: Vec<u64>&) {
         let wi: u64 = u64(w);
         let i: u64 = 0;
@@ -452,7 +452,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 上游 stepEProcessNonBackPreds
+    // Upstream stepEProcessNonBackPreds.
     fn step_e(w: i32, node_pool: Vec<u64>&, work_list: Vec<u64>&, x: u64) {
         let nbp: u64 = u64(self.nodes[x].dfs_number);
         let k: u64 = 0;
@@ -476,7 +476,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 上游 setLoopAttributes
+    // Upstream setLoopAttributes.
     fn set_loop_attributes(w: i32, node_pool: Vec<u64>&, loop_: SimpleLoop&) {
         self.nodes[u64(w)].loop_ = Option<SimpleLoop&>.Some(loop_);
         let i: u64 = 0;
@@ -495,7 +495,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 上游 findLoops
+    // Upstream findLoops.
     pub fn find_loops() {
         if self.cfg.start_node.is_none() {
             return;
@@ -515,13 +515,13 @@ impl HavlakLoopFinder {
             i += 1;
         }
 
-        // 上游 initAllNodes: 全标 UNVISITED + DFS 编号
+        // Upstream initAllNodes: mark all UNVISITED and assign DFS numbers.
         let start: BasicBlock& = *self.cfg.start_node.unwrap();
         self.do_dfs(start, 0);
 
         self.identify_edges(size);
 
-        // 起始节点是所有其它循环的根
+        // The start node is the root of all other loops.
         self.header[0] = 0;
 
         // Step c
@@ -569,7 +569,7 @@ impl HavlakLoopFinder {
         }
     }
 
-    // 释放 finder 持有的全部缓冲 (上游靠 GC)
+    // Release all finder buffers; upstream uses GC.
     pub fn free_buffers() {
         let i: u64 = 0;
         while i < self.non_back_preds.len() {
@@ -595,7 +595,7 @@ impl HavlakLoopFinder {
     }
 }
 
-// ── 释放辅助 ──
+// -- Release helpers --
 
 fn free_cfg(cfg: ControlFlowGraph&) {
     let i: u64 = 0;
@@ -633,7 +633,7 @@ fn free_lsg(lsg: LoopStructureGraph&) {
     del lsg;
 }
 
-// ── 测试驱动 (上游 havlak/LoopTesterApp.java) ──
+// -- Test driver (upstream havlak/LoopTesterApp.java) --
 
 struct AppResult {
     loops: i32,
@@ -653,7 +653,7 @@ impl LoopTesterApp {
         return Self(cfg=cfg, lsg=lsg);
     }
 
-    // 上游 buildDiamond
+    // Upstream buildDiamond.
     fn build_diamond(start: i32) -> i32 {
         let bb0: i32 = start;
         new_basic_block_edge(self.cfg, bb0, bb0 + 1);
@@ -663,12 +663,12 @@ impl LoopTesterApp {
         return bb0 + 3;
     }
 
-    // 上游 buildConnect
+    // Upstream buildConnect.
     fn build_connect(start: i32, end: i32) {
         new_basic_block_edge(self.cfg, start, end);
     }
 
-    // 上游 buildStraight
+    // Upstream buildStraight.
     fn build_straight(start: i32, n: i32) -> i32 {
         let i: i32 = 0;
         while i < n {
@@ -678,7 +678,7 @@ impl LoopTesterApp {
         return start + n;
     }
 
-    // 上游 buildBaseLoop
+    // Upstream buildBaseLoop.
     fn build_base_loop(from: i32) -> i32 {
         let header: i32 = self.build_straight(from, 1);
         let diamond1: i32 = self.build_diamond(header);
@@ -693,7 +693,7 @@ impl LoopTesterApp {
         return footer2;
     }
 
-    // 上游 constructCFG
+    // Upstream constructCFG.
     fn construct_cfg(par_loops: i32, ppar_loops: i32, pppar_loops: i32) {
         let n: i32 = 2;
         let parlooptrees: i32 = 0;
@@ -721,14 +721,14 @@ impl LoopTesterApp {
         }
     }
 
-    // 上游 findLoops(loopStructure)
+    // Upstream findLoops(loopStructure).
     fn run_find_loops(loop_structure: LoopStructureGraph&) {
         let finder: HavlakLoopFinder = HavlakLoopFinder.new(self.cfg, loop_structure);
         finder.find_loops();
         finder.free_buffers();
     }
 
-    // 上游 addDummyLoops
+    // Upstream addDummyLoops.
     fn add_dummy_loops(num_dummy_loops: i32) {
         let dummyloop: i32 = 0;
         while dummyloop < num_dummy_loops {
@@ -737,7 +737,7 @@ impl LoopTesterApp {
         }
     }
 
-    // 上游 constructSimpleCFG
+    // Upstream constructSimpleCFG.
     fn construct_simple_cfg() {
         self.cfg.create_node(0);
         self.build_base_loop(0);
@@ -745,7 +745,7 @@ impl LoopTesterApp {
         new_basic_block_edge(self.cfg, 0, 2);
     }
 
-    // 上游 LoopTesterApp.main
+    // Upstream LoopTesterApp.main.
     pub fn run(num_dummy_loops: i32, find_loop_iterations: i32, par_loops: i32, ppar_loops: i32, pppar_loops: i32) -> AppResult {
         self.construct_simple_cfg();
         self.add_dummy_loops(num_dummy_loops);
@@ -765,7 +765,7 @@ impl LoopTesterApp {
     }
 }
 
-// 一轮完整 app (上游 Havlak.innerBenchmarkLoop 的一次调用)
+// One complete app run (one upstream Havlak.innerBenchmarkLoop invocation).
 fn benchmark(inner_iterations: i32) -> AppResult {
     let app: LoopTesterApp = LoopTesterApp.new();
     let result: AppResult = app.run(inner_iterations, 50, 10, 10, 5);

@@ -29,7 +29,7 @@ class Identifier:
 
 @dataclass
 class TypeGenericParam:
-    """类型泛型参数，如 <T>"""
+    """Type generic parameter, such as <T>."""
     span: SrcSpan
     name: Identifier
 
@@ -39,10 +39,10 @@ class TypeGenericParam:
 
 @dataclass
 class ConstGenericParam:
-    """常量泛型参数，如 <const N: u64>"""
+    """Constant generic parameter, such as <const N: u64>."""
     span: SrcSpan
     name: Identifier
-    value_type: ASTType      # 常量的类型标注，如 u64
+    value_type: ASTType      # Constant type annotation, such as u64.
 
     def __repr__(self) -> str:
         return f"const {self.name.name}: {self.value_type}"
@@ -808,7 +808,7 @@ TraitItem: TypeAlias = (
 
 @dataclass
 class CaptureItem:
-    """闭包捕获条目: ``name = expr``"""
+    """Closure capture entry: name = expr."""
 
     span: SrcSpan
     name: Identifier
@@ -820,12 +820,12 @@ class CaptureItem:
 
 @dataclass
 class ClosureExpr:
-    """闭包表达式 ``|captures| (params) -> R { body }``"""
+    """Closure expression: |captures| (params) -> R { body }."""
 
     span: SrcSpan
     captures: list[CaptureItem]
     params: list[VarInfo | PatternParam]
-    return_type: ASTType | None      # None 表示返回 void
+    return_type: ASTType | None      # None means a void return.
     body: Block
 
     def __repr__(self) -> str:

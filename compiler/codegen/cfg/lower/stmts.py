@@ -28,7 +28,7 @@ class LoopCtx:
 
 
 class StmtLowerer:
-    """语句/控制流下降器：持有循环栈与 defer 作用域栈。"""
+    """Statement/control-flow lowering with loop and defer-scope stacks."""
 
     def __init__(self, state: FunctionState, resolver: ExprResolver, values: ValueLowerer, memory: MemoryOps) -> None:
         self.__state = state
@@ -39,7 +39,7 @@ class StmtLowerer:
         self.__defer_scopes: list[list[HIR.Expr]] = []
 
     def run(self, block: HIR.Block) -> IR.Value:
-        """下降一个函数体块（构建器的入口）。"""
+        """Lower a function body block, the builder's entry point."""
         return self.translate_block(block)
 
     def translate_block(self, block: HIR.Block) -> IR.Value:
@@ -183,9 +183,9 @@ class StmtLowerer:
 
     def translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolver.resolve_val(stmt.target)
-        # Delete 四前提 is_heap(p) ∧ live(p) ∧ is_raw(p) 与其后的检查状态失效由
-        # 检查插入 pass 在 `IR.Delete` 处依目标形态决定；这里只发释放节点。
-        # 整块交还——LLVM 层的 free() 提取 data 字段(释放范围 = 整块以 word 中的锁表索引寻址)
+        # The insertion pass chooses Delete preconditions (is_heap, live, is_raw) and subsequent state invalidation
+        # at IR.Delete according to the target representation; this layer only emits the release node.
+        # Return the whole block: LLVM free() extracts data and locates the allocation via word's lock-table index.
         self.__state.emitter.emit(IR.Delete(ptr))
         return self.__state.emitter.void_reg()
 

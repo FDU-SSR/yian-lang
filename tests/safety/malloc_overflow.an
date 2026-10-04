@@ -1,5 +1,5 @@
-// 分配元素数与元素尺寸相乘会超过 u64 可表示的字节数。运行时在尝试分配前
-// 检测该溢出并以安全错误终止。
+// Allocation count times element size exceeds the u64 byte range. Before attempting allocation,
+// the runtime detects overflow and terminates with a safety error.
 
 fn main() {
     let p: u64* = dyn[4611686018427387905] 0u64;

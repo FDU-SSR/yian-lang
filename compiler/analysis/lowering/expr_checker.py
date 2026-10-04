@@ -470,9 +470,9 @@ class ExprChecker:
                     expr.span,
                 )
             return HIR.BitCast(span=expr.span, value=expr, target_type=expected, type_id=expected, is_place=False)
-        # `T* → U&`: pointee 本身也可以 coerce(字面量定型)。先把被取址的表达式收敛到
-        # 期望的 pointee(取址结果随之成为 `U*`), 再走下面的 `T* → T&` 降级。否则
-        # `&<字面量>` 得到的 `T*` 会原样带进引用里, 临时量按字面量类型物化, 读出来是垃圾。
+        # `T* -> U&`: the pointee can also coerce (literal typing). First coerce the addressed expression to
+        # the expected pointee (making the address `U*`), then apply the `T* -> T&` conversion below. Otherwise
+        # `&<literal>` retains `T*` in the reference, materializes the literal's type, and yields invalid reads.
         if isinstance(expr_ty, Type.PointerType) and isinstance(expected_ty, Type.RefType) \
                 and not self.__ctx.type_ctx.is_same_type(expr_ty.pointee_type, expected_ty.pointee_type) \
                 and isinstance(expr, HIR.Unary) and expr.op == UnaryOperator.AddrOf:
@@ -865,8 +865,8 @@ class ExprChecker:
         target_expr = self.value(stmt.target)
         target_type = self.__ctx.type_ctx[target_expr.type_id]
         if not isinstance(target_type, (Type.PointerType, Type.SliceType, Type.RefType)):
-            # del-view: T*/T[]/T& 均可作 del 目标(释放动作三族通用,is_raw
-            # data 分量运行期拦截偏移释放);其余类型仍拒绝——含 StrType(不可达
-            # 防御:str 始终为值类型,不会以指针形态出现)
+            # Deletion views: T*/T[]/T& can all be del targets; release supports all three representations, and is_raw's
+            # data component rejects offset releases at runtime. Other types remain invalid, including StrType
+            # (a defensive unreachable case: str is always a value type and never has a pointer representation).
             raise AnalysisError("delete target must be a pointer, slice, or reference expression", stmt.target.span)
         return HIR.Delete(span=stmt.span, target=target_expr, type_id=TypeCtx.void_id, is_place=False)

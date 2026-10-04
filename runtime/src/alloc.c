@@ -1,29 +1,29 @@
 /*
- * alloc.c — YIAN 堆分配器: 尺寸类 arena.
+ * alloc.c: YIAN heap allocator with size-class arenas.
  *
- * 块布局 (与 lockmech.py::BlockHeader 一致): [lock(8) | active_size(8) | 负载...],
- * 负载从基址 + YIAN_HDR_BYTES 开始. 编译器写 lock 与 active_size; 分配器不占用块头,
- * 空闲块的自由链写在空闲负载的首字 (YIAN_NEXT_OFFSET = YIAN_HDR_BYTES).
+ * Block layout (matching lockmech.py::BlockHeader): [lock(8) | active_size(8) | payload...],
+ * with payload at base+YIAN_HDR_BYTES. The compiler writes lock/active_size; the allocator leaves the header alone.
+ * Free-list links occupy the first payload word (YIAN_NEXT_OFFSET=YIAN_HDR_BYTES).
  *
- * 分配路径 (每类一条自由链 + 一个正在填充的 slab):
- *   alloc: 类内自由链非空 → 弹出一块; 否则从当前 slab 顺序取一块, 用尽再映射新 slab.
- *   free : 由块地址定位 region 首部的 magic/类号, 把块压回该类自由链.
- * 两个路径都是 O(1) 且只碰热数据: 类数组、当前 slab 的 bump 游标、空闲块自身.
+ * Allocation paths, with one free list and filling slab per class:
+ *   alloc: pop a free block, otherwise bump within the current slab, mapping a new one when exhausted.
+ *   free: locate the region header's magic/class from the block address and push onto the class free list.
+ * Both paths are O(1), touching only hot class state, slab cursors, and the free block itself.
  *
- * 热路径是两个叶子函数: 弹链/取 bump 只有几条指令, 不建栈帧; 换 slab、大对象、内存
- * 耗尽全部转到 noinline 冷路径. 尺寸编译期已知的分配点由编译器算好类号直接调用
- * (类表在 yian_rt.h::YIAN_CLASS_BYTES), 运行时不必再按字节数查表.
+ * Hot paths are leaf functions without stack frames; slab replacement, large objects, and OOM
+ * use noinline cold paths. The compiler passes known class indices directly for compile-time sizes,
+ * using yian_rt.h::YIAN_CLASS_BYTES, avoiding runtime lookup by bytes.
  *
- * 尺寸类: 16 B 起、每倍频 3 档、比例约 1.25, 共 36 档至 49152 B; 更大的请求走大对象
- * chunk. slab 是 64 KiB、64 KiB 对齐的独立映射; 大对象 chunk 放在 64 KiB 对齐 region
- * 的 +64 处, region 首部放 LargeHeader. 因此 `block & ~(SLAB_BYTES-1)` 对两种块都指向
- * region 首部, 用其中的 magic 区分.
+ * Size classes start at 16 B, with three steps per doubling and ratios near 1.25, totaling 36 classes
+ * through 49152 B. Larger requests use large chunks. Slabs are independent 64 KiB aligned mappings;
+ * large chunks start at offset 64 in aligned regions whose headers contain LargeHeader.
+ * block & ~(SLAB_BYTES-1) finds either region header, distinguished by magic.
  *
- * 归还: slab 页常驻 (空闲块留在类自由链里复用, 长跑 RSS 由各类峰值决定); 大对象在
- * 超出缓存额度被淘汰时用 madvise(MADV_DONTNEED) 归还物理页, 但从不 munmap——地址空间
- * 始终保留, 悬垂指针读已释放块的锁槽仍命中映射 (读回 0), 检查按 S003/S006 报错而非段错误.
+ * Slab pages stay resident, with free blocks reused per class and RSS determined by class peaks.
+ * Large-object cache eviction uses madvise(MADV_DONTNEED) to return physical pages, never munmap:
+ * mappings remain, dangling slot reads yield zero, and checks report S003/S006 rather than segfaults.
  *
- * 单线程: 不加锁 (见 docs/security.md §10).
+ * Single-threaded, without locks (see docs/security.md).
  */
 
 #include "yian_rt.h"
@@ -32,7 +32,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* ── 参数 ── */
+/* -- Parameters -- */
 
 #define YIAN_SLAB_BYTES ((uint64_t)64 * 1024)
 #define YIAN_SLAB_CHUNK ((uint64_t)16 * YIAN_SLAB_BYTES)
@@ -42,7 +42,7 @@
 #define YIAN_SLAB_MAGIC 0x5949414e534c4142ull  /* "YIANSLAB" */
 #define YIAN_LARGE_MAGIC 0x5949414e4c415247ull /* "YIANLARG" */
 
-/* 空闲链与缓存链写在空闲块负载的首字. */
+/* Free/cache links occupy the first word of a free block's payload. */
 #define YIAN_NEXT_OFFSET YIAN_HDR_BYTES
 
 static const uint32_t yian_class_bytes[] = {YIAN_CLASS_BYTES};
@@ -52,28 +52,28 @@ _Static_assert(sizeof(yian_class_bytes) / sizeof(yian_class_bytes[0]) == YIAN_CL
 
 typedef struct Slab {
     uint64_t magic;
-    char *bump;          /* 下一个尚未借出的块 */
+    char *bump;          /* Next block not yet loaned out. */
     uint32_t class_index;
     uint32_t pad;
 } Slab;
 
 _Static_assert(sizeof(Slab) <= YIAN_SLAB_HEADER, "Slab descriptor must fit the slab header");
 
-/* 大对象 region 首部 (region 与 chunk 的偏移见 large_alloc). */
+/* Large-object region header; see large_alloc for the region/chunk offset. */
 typedef struct LargeHeader {
     uint64_t magic;
     uint64_t payload;
 } LargeHeader;
 
-static void *class_free[YIAN_CLASS_COUNT];  /* 每类空闲块链 */
-static Slab *class_fill[YIAN_CLASS_COUNT];  /* 每类正在填充的 slab */
+static void *class_free[YIAN_CLASS_COUNT];  /* Free-block list per class. */
+static Slab *class_fill[YIAN_CLASS_COUNT];  /* Filling slab per class. */
 
-/* 大对象缓存: 块负载首字复用为链; 超额度者移出缓存并归还物理页 */
+/* Large-object cache links use the first payload word; excess blocks are evicted and physical pages returned. */
 static void *large_head = 0;
 static void *large_tail = 0;
 static uint64_t large_cached_bytes = 0;
 
-/* ── 块与 region ── */
+/* -- Blocks and regions -- */
 
 static inline void *block_next(const void *block) {
     void *value;
@@ -85,7 +85,7 @@ static inline void block_set_next(void *block, void *next) {
     memcpy((char *)block + YIAN_NEXT_OFFSET, &next, sizeof(next));
 }
 
-/* region 首部: slab 块与大对象块都按 64 KiB 对齐, 因此掩码即可定位. */
+/* Region header: slab and large blocks use 64 KiB aligned regions, located by masking. */
 static inline void *block_region(const void *block) {
     return (void *)((uintptr_t)block & ~(uintptr_t)(YIAN_SLAB_BYTES - 1));
 }
@@ -94,7 +94,7 @@ static inline uint64_t align_up(uint64_t value, uint64_t align) {
     return (value + align - 1) & ~(align - 1);
 }
 
-/* madvise 要求页对齐: 只归还完全落在 [start, start+length) 内的整页. */
+/* madvise requires page alignment; return only complete pages inside [start,start+length). */
 static void release_pages(void *start, uint64_t length) {
     long page_value = sysconf(_SC_PAGESIZE);
     uint64_t page = page_value > 0 ? (uint64_t)page_value : 4096;
@@ -105,12 +105,12 @@ static void release_pages(void *start, uint64_t length) {
     }
 }
 
-/* ── 类查找与块尺寸 ── */
+/* -- Class lookup and block sizes -- */
 
-static uint32_t class_bucket_start[64]; /* 每个 2 的幂桶里第一个够用的尺寸类 */
+static uint32_t class_bucket_start[64]; /* First fitting size class in each power-of-two bucket. */
 static int alloc_inited = 0;
 
-/* 只在第一次通用分配时执行, 放在冷路径以免污染热路径的代码布局. */
+/* Initialize on the first generic allocation, on a cold path to preserve hot-path code layout. */
 static __attribute__((noinline, cold)) void alloc_init_slow(void) {
     for (uint32_t bucket = 0; bucket < 64; bucket++) {
         uint64_t threshold = (uint64_t)1 << bucket;
@@ -125,8 +125,8 @@ static __attribute__((noinline, cold)) void alloc_init_slow(void) {
     alloc_inited = 1;
 }
 
-/* 能容纳 ``bytes`` 的最小尺寸类的类号: clz 定桶 + 桶内至多 3 步.
- * 调用方保证 bytes 落在 [1, 最大类容量] 内, 且已执行过一次初始化. */
+/* Smallest class fitting bytes: clz selects the bucket, followed by at most three steps.
+ * Caller guarantees bytes in [1,largest class capacity] and completed initialization. */
 static inline uint32_t class_index(uint64_t bytes) {
     uint32_t index = class_bucket_start[63 - __builtin_clzll(bytes)];
     while (yian_class_bytes[index] < bytes) {
@@ -135,7 +135,7 @@ static inline uint32_t class_index(uint64_t bytes) {
     return index;
 }
 
-/* 类内一块占用的字节数 (块头 + 负载, 16 B 对齐). 无需预计算表. */
+/* Bytes per class block: header plus payload, aligned to 16 B; no precomputed table needed. */
 static inline uint32_t class_stride(uint32_t index) {
     return (uint32_t)align_up(YIAN_HDR_BYTES + yian_class_bytes[index], 16);
 }
@@ -147,8 +147,8 @@ static _Noreturn void alloc_fail(void) {
 
 /* ── slab ── */
 
-/* 空闲区域链: 地址空间已经映射好、但还没交给任何尺寸类的 64 KiB 区域.
- * 链写在区域首字, 区域成为 slab 时被 magic 覆盖. */
+/* Free regions: mapped 64 KiB areas not yet assigned to a size class.
+ * Their first-word link is replaced by magic when the region becomes a slab. */
 static void *region_free = 0;
 
 static inline void *region_next(const void *region) {
@@ -161,11 +161,11 @@ static inline void region_set_next(void *region, void *next) {
     memcpy(region, &next, sizeof(next));
 }
 
-/* 映射一块 64 KiB、64 KiB 对齐的 slab 区域, 描述符放在区域首部.
+/* Map a 64 KiB aligned slab region with its descriptor at the region base.
  *
- * 一次映射 YIAN_SLAB_CHUNK 字节并切成若干个 64 KiB 区域: 一个本次返回, 其余进
- * 空闲区域链. 区域粒度仍是 64 KiB (每个尺寸类的尾浪费上限不随 chunk 变大),
- * 而系统调用摊薄到每个区域不足一次; 头尾不足一个区域的零头还回内核. */
+ * Map YIAN_SLAB_CHUNK bytes and split into 64 KiB regions, returning one and caching the rest.
+ * Region granularity stays 64 KiB, so per-class tail waste does not grow with chunk size.
+ * System calls amortize across regions; incomplete leading/trailing regions return to the kernel. */
 static __attribute__((noinline)) Slab *slab_map(void) {
     if (region_free != 0) {
         Slab *region = region_free;
@@ -206,7 +206,7 @@ static Slab *slab_new(uint32_t index) {
     return slab;
 }
 
-/* 从 slab 顺序取一块; 用尽返回 0. */
+/* Bump-allocate a slab block; return zero when exhausted. */
 static inline void *slab_take(Slab *slab) {
     char *cursor = slab->bump;
     if (cursor + class_stride(slab->class_index) > (char *)slab + YIAN_SLAB_BYTES) {
@@ -216,9 +216,9 @@ static inline void *slab_take(Slab *slab) {
     return cursor;
 }
 
-/* ── 分配与释放 ── */
+/* -- Allocation and release -- */
 
-/* 冷路径: 该类空闲链为空, 从正在填充的 slab 顺序取, 用尽则映射新 slab. */
+/* Cold path: empty class free list; bump from the filling slab or map another when exhausted. */
 static __attribute__((noinline)) void *class_refill(uint32_t index) {
     Slab *slab = class_fill[index];
     if (slab == 0) {
@@ -226,7 +226,7 @@ static __attribute__((noinline)) void *class_refill(uint32_t index) {
         class_fill[index] = slab;
     }
     void *block = slab_take(slab);
-    if (block == 0) { /* 当前 slab 用尽: 换一块继续顺序取 */
+    if (block == 0) { /* Replace the exhausted slab and continue bump allocation. */
         slab = slab_new(index);
         class_fill[index] = slab;
         block = slab_take(slab);
@@ -234,7 +234,7 @@ static __attribute__((noinline)) void *class_refill(uint32_t index) {
     return block;
 }
 
-/* 热路径: 弹该类空闲链, 链空转冷路径. */
+/* Hot path: pop the class free list, or take the cold path when empty. */
 static inline void *class_pop(uint32_t index) {
     void *block = class_free[index];
     if (block != 0) {
@@ -249,7 +249,7 @@ static void slab_release(void *block, uint32_t index) {
     class_free[index] = block;
 }
 
-/* ── 大对象 ── */
+/* -- Large objects -- */
 
 static inline LargeHeader *large_header(void *chunk) {
     return (LargeHeader *)block_region(chunk);
@@ -277,17 +277,17 @@ static __attribute__((noinline)) void *large_alloc(uint64_t bytes) {
 
     uint64_t payload = align_up(bytes, 16);
     uint64_t span = align_up(YIAN_HDR_BYTES + payload + YIAN_SLAB_BYTES * 2, 4096);
-    /* 多留一个窗口 + 两个 slab: 保证能在映射内挑到"整块不跨 4 GiB 窗口"的落点.
-     * MAP_NORESERVE: 多留的是虚拟地址, 只在实际写入的页上提交物理内存. */
+    /* Reserve an extra window and two slabs to place the entire block within one 4 GiB window.
+     * MAP_NORESERVE reserves virtual addresses; physical memory is committed only for written pages. */
     uint64_t total = span + YIAN_WINDOW_BYTES + YIAN_SLAB_BYTES * 2;
     void *raw = mmap(0, (size_t)total, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (raw == MAP_FAILED) {
         alloc_fail();
     }
-    /* chunk 放在 64 KiB 对齐 region 的 +64 处, region 首部放 LargeHeader. */
+    /* Chunks start at offset 64 in 64 KiB aligned regions, with LargeHeader at the base. */
     uintptr_t region = (uintptr_t)align_up((uintptr_t)raw + YIAN_SLAB_HEADER, YIAN_SLAB_BYTES);
-    /* 若 [chunk, chunk + 块头 + 负载) 跨窗口, 整体挪到下一个窗口起点(仍是 64 KiB 对齐). */
+    /* If [chunk,chunk+header+payload) crosses a window, move to the next window start, still 64 KiB aligned. */
     uintptr_t first = region + YIAN_SLAB_HEADER;
     if ((first >> 32) != ((first + YIAN_HDR_BYTES + payload - 1) >> 32)) {
         region = (uintptr_t)align_up(first, YIAN_WINDOW_BYTES);
@@ -307,7 +307,7 @@ static __attribute__((noinline)) void *large_alloc(uint64_t bytes) {
     return (void *)chunk;
 }
 
-/* 冷路径: 大对象归还 (含按额度淘汰与退页). */
+/* Cold path: large-object return, including budget-based eviction and page return. */
 static __attribute__((noinline)) void large_release(void *chunk) {
     uint64_t payload = large_header(chunk)->payload;
     block_set_next(chunk, 0);
@@ -319,7 +319,7 @@ static __attribute__((noinline)) void large_release(void *chunk) {
     large_tail = chunk;
     large_cached_bytes += payload;
     while (large_cached_bytes > YIAN_LARGE_CACHE && large_head != large_tail) {
-        /* 淘汰出缓存: 归还它的物理页, 地址空间仍保留给悬垂读. */
+        /* Cache eviction returns physical pages but preserves virtual mappings for dangling reads. */
         void *victim = large_head;
         uint64_t victim_payload = large_header(victim)->payload;
         large_head = block_next(victim);
@@ -329,14 +329,14 @@ static __attribute__((noinline)) void large_release(void *chunk) {
     }
 }
 
-/* ── 对外接口 (编译器调用, 块头与检查不动) ──
+/* -- Compiler-facing API; headers and checks are compiler-owned --
  *
- * 两个分配入口都写成叶子函数: 热路径只碰类链头与空闲块自身, 换 slab / 大对象 /
- * 内存耗尽全部转 YIAN_NOINLINE 的冷路径, 因此没有栈帧与寄存器保存开销. */
+ * Both allocation entries are leaf functions: hot paths touch class heads/free blocks; slab replacement,
+ * large objects, and OOM use YIAN_NOINLINE cold paths, avoiding frame/register-save overhead. */
 
 void *__secl_pool_alloc(uint64_t requested) {
     if (requested == 0) {
-        requested = 1; /* 与 active_size 的空请求归一化一致 */
+        requested = 1; /* Match active_size normalization for empty requests. */
     }
     if (requested <= yian_class_bytes[YIAN_CLASS_COUNT - 1]) {
         if (__builtin_expect(!alloc_inited, 0)) {
@@ -347,9 +347,9 @@ void *__secl_pool_alloc(uint64_t requested) {
     return large_alloc(requested);
 }
 
-/* 编译器在尺寸编译期已知的分配点直接用类号调用, 省掉按字节数查表. */
+/* The compiler passes class indices for known sizes, avoiding byte-size lookup. */
 void *__secl_pool_alloc_class(uint32_t class_index_value) {
-    if (class_index_value >= YIAN_CLASS_COUNT) { /* ABI 误用/版本不一致: 显式终止 */
+    if (class_index_value >= YIAN_CLASS_COUNT) { /* Terminate explicitly on ABI misuse/version mismatch. */
         alloc_fail();
     }
     return class_pop(class_index_value);
@@ -367,7 +367,7 @@ void __secl_pool_release(void *block) {
     large_release(block);
 }
 
-/* 自测钩子: 块的可用负载容量 (slab 块取尺寸类, 大对象取 chunk 容量). */
+/* Self-test capacity hook: use the slab class or large chunk's payload capacity. */
 uint64_t __secl_pool_payload(const void *block) {
     void *region = block_region(block);
     if (*(const uint64_t *)region == YIAN_SLAB_MAGIC) {
@@ -376,17 +376,17 @@ uint64_t __secl_pool_payload(const void *block) {
     return ((const LargeHeader *)region)->payload;
 }
 
-/* ── 堆锁表项的分配与释放 ──
+/* -- Heap lock-entry allocation and release --
  *
- * 表项 = {key:u32 @0, anchor_lo32:u32 @4}. 帧段与字面量/环境槽由编译器/运行期直接使用;
- * 堆段由这里发放: 空闲表项把"下一空闲下标 + 1"写在自己的 anchor 字段, 链头是
- * 全局 __secl_lock_free_head(0 = 空). 发放与释放都把 key +1, 因此悬垂指针在
- * "已释放但未再发放"的窗口里也已经失配.
+ * Entries are {key:u32 @0,anchor_lo32:u32 @4}. Compiler/runtime use frame and constant slots directly.
+ * Heap entries store next-free-index+1 in anchor, with global __secl_lock_free_head as head
+ * (zero means empty). Allocation and release both increment key, so dangling pointers mismatch
+ * even after release and before reuse.
  *
- * 编译器发射的快路径(自由链非空时)自己弹出下标并把新的链头写回全局, 然后内联
- * "key +1 / 写 anchor / 组装 word": 表项的 key 写对 LLVM 可见, 刚分配后的 live 检查
- * 于是能折叠成真, 不会被留在内层循环里。只有自由链为空(需要 bump)才落到
- * __secl_lock_bump_take。
+ * Compiler-emitted free-list fast paths pop an index, update the global head, then inline
+ * key increment, anchor write, and word construction. LLVM sees key writes, allowing live checks
+ * on fresh allocations to fold to true rather than remain in inner loops.
+ * Only an empty free list requiring bump calls __secl_lock_bump_take.
  */
 static _Noreturn void lock_fail(void) {
     static const uint8_t message[] = YIAN_METADATA_MESSAGE;

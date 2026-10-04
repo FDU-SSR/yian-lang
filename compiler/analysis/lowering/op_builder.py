@@ -466,9 +466,9 @@ class OpBuilder:
 
         left_ty = self.__type_ctx[left_hir.type_id]
 
-        # auto-deref (与字段访问同规则): `r[i]` 索引的是引用所指对象——数组走
-        # ArrayAccess、切片走 SliceAccess、指针走 T* 的 Index 实现。指针自身不在这里
-        # 解引用: `p[i]` 由 T* 的 Index 实现与随后的 lvalue 化 deref 处理。
+        # Auto-deref follows field-access rules: `r[i]` indexes the referenced object, using ArrayAccess for arrays,
+        # SliceAccess for slices, and T*'s Index implementation for pointers. The pointer itself is not
+        # dereferenced here: `p[i]` uses T*'s Index implementation and the subsequent lvalue dereference.
         while isinstance(left_ty, Type.RefType):
             left_hir = HIR.Unary(span, UnaryOperator.Deref, left_hir, left_ty.pointee_type, is_place=True)
             left_ty = self.__type_ctx[left_ty.pointee_type]
@@ -553,7 +553,7 @@ class OpBuilder:
                 fn_ptr_type_id = self.__type_ctx.alloc_function_pointer(param_type_ids, ret_type_id)
                 return HIR.Unary(span, UnaryOperator.AddrOf, operand_hir, fn_ptr_type_id, is_place=False)
 
-        # `&*r`(r 是引用)按设计等同于 `r`: 直接折叠, 类型保持 `T&`(引用不降级成 `T*`)。
+        # `&*r` for a reference r folds to `r`, preserving `T&` rather than converting it to `T*`.
         if isinstance(operand_hir, HIR.Unary) and operand_hir.op == UnaryOperator.Deref:
             inner_ty = self.__type_ctx[operand_hir.operand.type_id]
             if isinstance(inner_ty, Type.RefType):
@@ -657,7 +657,7 @@ class OpBuilder:
                     and isinstance(left_ty, Type.CPtrType) and isinstance(right_ty, Type.CPtrType) \
                     and self.__type_ctx.is_same_type(left_hir.type_id, right_hir.type_id):
                 return HIR.Binary(span, desc.op, left_hir, right_hir, TypeCtx.bool_id, is_place=False)
-            # 引用只支持 == / != (身份比较: 比较所指对象的有效地址); 序比较对引用无意义。
+            # References support only == / != (identity comparison of effective addresses); ordering is undefined.
             if desc.op in (BinaryOperator.Eq, BinaryOperator.Neq) \
                     and isinstance(left_ty, Type.RefType) and isinstance(right_ty, Type.RefType):
                 if left_ty.pointee_type == right_ty.pointee_type:

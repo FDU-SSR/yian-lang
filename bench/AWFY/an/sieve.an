@@ -1,18 +1,18 @@
-// bench/AWFY/an/sieve.an — 埃拉托斯特尼筛法 (shootout sieve)
+// bench/AWFY/an/sieve.an: Sieve of Eratosthenes (shootout sieve).
 //
-// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Sieve.java (上游许可见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/sieve.c (项目自写 C 参考)
-// 规模: 每个工作单元分配 SIEVE_SIZE=5000 的 flags, 断言 prime_count==669。
+// Reference: AWFY benchmarks/Java/src/Sieve.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/sieve.c, the project's C implementation.
+// Scale: allocate SIEVE_SIZE=5000 flags per work unit; assert prime_count==669.
 //
-// 算法: 每趟将 flags[0..SIEVE_SIZE-1] 全置 true (i 表示数 i+1),
-//        sieve() 从 i=2 起标记合数, 统计素数个数。
+// Algorithm: initialize flags[0..SIEVE_SIZE-1] to true, with index i representing i+1;
+//        sieve() marks composites starting at i=2 and counts primes.
 //
-// 数组表示: sieve 的 flags 参数为 bool[] (块访问语义, 免 index 字段)。
-//   main 局部 flags 直绑 bool[] (let x: T[] = dyn[n] T, del-view 后
-//   del T[] 整块合法)。
+// flags is bool[] with block-access semantics and no index field.
+//   main binds flags directly as bool[] (let x:T[]=dyn[n] T);
+//   del T[] validly releases the whole block.
 //
-// 单一源: fat 与 raw 共用本文件。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
 fn sieve(flags: bool[], size: u64) -> i32 {
     let prime_count: i32 = 0;
     let i: u64 = 2;

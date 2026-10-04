@@ -13,7 +13,7 @@ fn parse_digit(byte: u8) -> i32 {
 }
 
 impl u64 {
-    /// 类型级常量: u64 的最大值。写成 static 是为了能按 `u64.max()` 调用。
+    /// Type-level constant: the maximum u64 value. static permits calling it as `u64.max()`.
     static pub fn max() -> u64 {
         0xFFFF_FFFF_FFFF_FFFFu64
     }
@@ -110,8 +110,8 @@ impl u64 {
             return String.from(&"0");
         }
 
-        // 静态数字表(不再每次分配一个 36 字节的 String) + 栈缓冲从低位往高位写,
-        // 最后一次 push_str 写出(u64 以 2 进制最多 64 位)。
+        // Use a static digit table and write a stack buffer from least to most significant digits, without allocating a 36-byte String;
+        // finish with one push_str (at most 64 binary digits for u64).
         let digits: u8[36] = [
             b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',
             b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', b'I', b'J', b'K', b'L', b'M',

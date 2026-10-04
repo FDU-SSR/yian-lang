@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
-// 绝对值函数
+// Absolute-value function.
 int abs_int(int x) {
     if (x < 0) {
         return -x;
@@ -11,12 +11,12 @@ int abs_int(int x) {
     return x;
 }
 
-// 随机数生成器结构体
+// Random-number generator struct.
 typedef struct {
     int seed;
 } Random;
 
-// 球结构体
+// Ball struct.
 typedef struct {
     int x;
     int y;
@@ -24,31 +24,31 @@ typedef struct {
     int y_vel;
 } Ball;
 
-// 随机数结果结构体
+// Random-number result struct.
 typedef struct {
     Random random_state;
     int value;
 } RandomResult;
 
-// 球初始化结果结构体
+// Ball-initialization result struct.
 typedef struct {
     Ball ball;
     Random random_state;
 } BallInitResult;
 
-// 弹跳结果结构体
+// Bounce-result struct.
 typedef struct {
     Ball ball;
     bool bounced;
 } BounceResult;
 
-// 随机数生成器初始化
+// Initialize the random-number generator.
 Random Random_new() {
     Random r = {74755};
     return r;
 }
 
-// 随机数生成器下一个值
+// Generate the next random value.
 RandomResult Random_next(Random* self) {
     int new_seed = ((self->seed * 1309) + 13849) & 65535;
     RandomResult result;
@@ -57,7 +57,7 @@ RandomResult Random_next(Random* self) {
     return result;
 }
 
-// 球初始化
+// Initialize a ball.
 BallInitResult BallInitResult_new(Random* r) {
     RandomResult res1 = Random_next(r);
     RandomResult res2 = Random_next(&res1.random_state);
@@ -76,7 +76,7 @@ BallInitResult BallInitResult_new(Random* r) {
     return result;
 }
 
-// 球弹跳逻辑
+// Ball-bounce logic.
 BounceResult Ball_bounce(Ball* self) {
     int x_limit = 500;
     int y_limit = 500;
@@ -120,7 +120,7 @@ BounceResult Ball_bounce(Ball* self) {
     return result;
 }
 
-// 性能测试函数
+// Benchmark function.
 int benchmark() {
     Random random = Random_new();
 
@@ -149,7 +149,7 @@ int benchmark() {
     return bounces;
 }
 
-// 主函数: argv[1] 只控制完整工作单元的外层重复次数。
+// main: argv[1] controls only the outer repetition count of complete work units.
 int main(int argc, char **argv) {
     int iterations = argc > 1 ? atoi(argv[1]) : 300000;
     for (int i = 0; i < iterations; i++) {

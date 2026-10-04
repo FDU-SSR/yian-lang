@@ -1,10 +1,10 @@
-// bench/fatptr/c/call_abi.c — call_abi 的 C 参考 (三态权威值)
+// bench/fatptr/c/call_abi.c: authoritative C reference for call_abi.
 //
-// 与 bench/fatptr/an/call_abi.an 同算法同规模: 热循环反复调用两个被调者, 参数是
-// 8 B 裸指针 (胖态拆开后的字段形态); 调用次数与起始下标由 argc 派生, 与 .an 的
-// `32 + argv.len()` 逐项对应 (fast 档把规模值经 argv[1] 传入, argc 因此同为 2)。
-// 被调者的循环体与 .an 相同; C 侧显式 noinline (clang 的内联阈值比 .an 侧更宽松),
-// 保证两侧跑的都是真实调用。
+// Same algorithm/scale as bench/fatptr/an/call_abi.an: repeatedly call two functions with
+// 8 B raw pointer fields. Call count and start index derive from argc, matching YIAN's
+// 32+argv.len(); fast passes scale in argv[1], so argc is two in both languages.
+// Bodies match YIAN; C explicitly uses noinline because clang has a more permissive threshold,
+// ensuring actual calls on both sides.
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

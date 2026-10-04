@@ -20,7 +20,7 @@ impl Drop for ParseError {
     pub fn drop() { self.message.drop(); }
 }
 
-// 借用以 EOF 结尾的非空 token 流，持有尚未交出的节点和错误消息。
+// Borrow a nonempty token stream ending in EOF and own nodes and diagnostic messages until they are transferred.
 pub struct Parser {
     tokens: Vec<Token>&,
     index: u64,
@@ -55,21 +55,21 @@ impl Parser {
 
     pub fn mark() -> u64 { self.index }
 
-    // 只恢复 token 位置；错误状态和 arena 中的试探节点不随位置回退。
+    // Restore only the token position; error state and speculative arena nodes are not rolled back.
     pub fn reset(mark: u64) { self.index = mark; }
 
     pub fn ready() -> Option<bool> {
         if self.failed { Option<bool>.None } else { Option<bool>.Some(val=true) }
     }
 
-    // 丢弃已记录的诊断，使回溯后的分支可以独立报告错误。
+    // Discard the recorded diagnostic so the backtracked branch can report errors independently.
     pub fn clear_error() {
         self.problem.drop();
         self.problem.message = String.new();
         self.failed = false;
     }
 
-    // 错误状态保持首个诊断，重复读取失败不覆盖它。
+    // Retain the first diagnostic; repeated read failures do not overwrite it.
     pub fn error(message: str, span: Span) {
         if self.failed {
             return;
@@ -166,7 +166,7 @@ impl Parser {
 
     pub fn keyword_token() -> bool { self.peek().is_keyword_token() }
 
-    // 成功时将 arena 交给树，失败时释放节点并交出诊断；解析器不再持有这些资源。
+    // Transfer the arena to the tree on success, or release nodes and transfer the diagnostic on failure; the parser relinquishes these resources.
     pub fn finish(root: Option<Program&>) -> Result<AstTree, ParseError> {
         match &root {
             Some(value) => {
@@ -187,7 +187,7 @@ impl Parser {
     }
 }
 
-// finish 转移或释放 arena；未完成的解析器仍拥有已分配节点和错误消息。
+// finish transfers or releases the arena; an unfinished parser still owns allocated nodes and the diagnostic message.
 impl Drop for Parser {
     pub fn drop() {
         self.arena.drop();

@@ -1,20 +1,20 @@
-// bench/AWFY/c/havlak.c — Havlak 循环识别 (AWFY 宏基准) 的 C 参考实现
+// bench/AWFY/c/havlak.c: C reference for Havlak loop recognition (AWFY macrobenchmark).
 //
-// 语义与规模与 bench/AWFY/an/havlak.an 对齐: 每个工作单元使用
-// innerIterations=1500, 结果为 6102/5213; 外层重复只控制完整工作单元次数。
-// 只用于跨语言正确性对照, 不参与 fat/raw 计时, 并逐轮断言官方结果。
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Havlak.java + havlak/*.java
+// Semantics and scale match bench/AWFY/an/havlak.an: each work unit uses
+// innerIterations=1500, yielding 6102/5213; outer repetitions only repeat complete work units.
+// Used for cross-language correctness comparison, outside fat/raw timing; assert official results each round.
+// Upstream: AWFY benchmarks/Java/src/Havlak.java and havlak/*.java.
 //       Havlak.java / BasicBlock / BasicBlockEdge / ControlFlowGraph / HavlakLoopFinder /
-//       LoopStructureGraph / LoopTesterApp / SimpleLoop 为
+//       LoopStructureGraph / LoopTesterApp / SimpleLoop use
 //       `// Copyright 2011 Google Inc.` + Apache-2.0 (licenses/LICENSE-APACHE);
-//       UnionFindNode.java 与 som/*.java 为 MIT (Copyright (c) 2001-2016 Stefan Marr /
+//       UnionFindNode.java and som/*.java use MIT (Copyright (c) 2001-2016 Stefan Marr /
 //       AWFY AUTHORS.md, licenses/LICENSE-MIT)。
 //
-// 数据结构以 struct、指针数组与线性集合表示; BasicBlock.name 唯一, 因而 number 表按
-// name 索引。findSet 的路径压缩对 nodeList 中的每个节点执行 iter.union(parent);
-// parent 是该节点的 parent 字段。C 参考实现与 YIAN 实现使用相同更新规则。
+// Structures use structs, pointer arrays, and linear sets. BasicBlock.name is unique, so number is indexed
+// by name. findSet path compression applies iter.union(parent) to every nodeList node,
+// where parent is that node's parent field. C and YIAN use the same update rules.
 //
-// 官方断言值: innerIterations=1500 → 6102 5213。
+// Official assertion: innerIterations=1500 -> 6102 5213.
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +23,7 @@
 #define UNVISITED INT_MAX
 #define MAXNONBACKPREDS (32 * 1024)
 
-// ── 动态指针数组 (som.Vector<E> / som.Set<E> / som.IdentitySet<E>) ──
+// -- Dynamic pointer arrays (som.Vector<E> / som.Set<E> / som.IdentitySet<E>) --
 typedef struct {
     void **items;
     int size;
@@ -56,7 +56,7 @@ static int pv_has(PtrVec *v, void *item) {
     return 0;
 }
 
-// som.Set.add / IdentitySet.add: 已存在则不追加
+// som.Set.add / IdentitySet.add: do not append an existing value.
 static void pv_add(PtrVec *v, void *item) {
     if (!pv_has(v, item)) {
         pv_append(v, item);
@@ -70,7 +70,7 @@ static void pv_free(PtrVec *v) {
     v->cap = 0;
 }
 
-// ── 动态 int 数组 (som.Vector<Integer> / som.Set<Integer>) ──
+// -- Dynamic int arrays (som.Vector<Integer> / som.Set<Integer>) --
 typedef struct {
     int *items;
     int size;
@@ -110,7 +110,7 @@ static void iv_free(IntVec *v) {
     v->cap = 0;
 }
 
-// ── 图 (havlak/BasicBlock.java, BasicBlockEdge.java, ControlFlowGraph.java) ──
+// -- Graph (havlak/BasicBlock.java, BasicBlockEdge.java, ControlFlowGraph.java) --
 typedef struct BasicBlock {
     int name;
     PtrVec in_edges;   // Vector<BasicBlock>
@@ -123,7 +123,7 @@ typedef struct {
 } BasicBlockEdge;
 
 typedef struct {
-    BasicBlock **blocks;  // basicBlockMap: 下标即 name
+    BasicBlock **blocks;  // basicBlockMap: index equals name.
     int n_blocks;         // Vector.size() (= max name + 1)
     int cap_blocks;
     BasicBlock *start_node;
@@ -168,7 +168,7 @@ static BasicBlock *cfg_create_node(ControlFlowGraph *cfg, int name) {
     return node;
 }
 
-// BasicBlockEdge 构造: 建/取两端节点, 连边, 并登记到 edgeList (上游语义)
+// BasicBlockEdge constructor: create/get endpoints, connect edges, register in edgeList, matching upstream.
 static void new_basic_block_edge(ControlFlowGraph *cfg, int from_name, int to_name) {
     BasicBlock *from = cfg_create_node(cfg, from_name);
     BasicBlock *to = cfg_create_node(cfg, to_name);
@@ -197,7 +197,7 @@ static void cfg_free(ControlFlowGraph *cfg) {
     free(cfg);
 }
 
-// ── 循环结构 (havlak/SimpleLoop.java, LoopStructureGraph.java) ──
+// -- Loop structures (havlak/SimpleLoop.java, LoopStructureGraph.java) --
 typedef struct SimpleLoop {
     PtrVec basic_blocks;  // IdentitySet<BasicBlock>
     PtrVec children;      // IdentitySet<SimpleLoop>
@@ -209,7 +209,7 @@ typedef struct SimpleLoop {
 } SimpleLoop;
 
 static SimpleLoop *loop_new(BasicBlock *bb, int is_reducible) {
-    (void)is_reducible;  // 上游保存但从未读取
+    (void)is_reducible;  // Stored but never read by upstream.
     SimpleLoop *loop = (SimpleLoop *)calloc(1, sizeof(SimpleLoop));
     if (bb != NULL) {
         pv_add(&loop->basic_blocks, bb);
@@ -247,7 +247,7 @@ static LoopStructureGraph *lsg_new(void) {
     lsg->loop_counter = 0;
     lsg->root = loop_new(NULL, 1);
     lsg->root->nesting_level = 0;
-    lsg->root->is_root = 1;  // 上游 setNestingLevel(0) 的副作用
+    lsg->root->is_root = 1;  // Side effect of upstream setNestingLevel(0).
     lsg->root->counter = lsg->loop_counter;
     lsg->loop_counter += 1;
     pv_append(&lsg->loops, lsg->root);
@@ -309,7 +309,7 @@ static void uf_init_node(UnionFindNode *node, BasicBlock *bb, int dfs_number) {
     node->loop = NULL;
 }
 
-// 上游 findSet: 末行 path compression 用的是 `this.parent` (AWFY 原样语义)
+// Upstream findSet's final path compression uses this.parent (AWFY semantics).
 static UnionFindNode *uf_find_set(UnionFindNode *self) {
     PtrVec node_list;
     memset(&node_list, 0, sizeof(node_list));
@@ -329,7 +329,7 @@ static UnionFindNode *uf_find_set(UnionFindNode *self) {
     return node;
 }
 
-// ── Havlak 循环识别 (havlak/HavlakLoopFinder.java) ──
+// -- Havlak loop recognition (havlak/HavlakLoopFinder.java) --
 typedef enum {
     BB_TOP,
     BB_NONHEADER,
@@ -348,7 +348,7 @@ typedef struct {
     IntVec *back_preds;      // Vector<Vector<Integer>>
     int n_non_back;
     int n_back;
-    int *number;             // IdentityDictionary<BasicBlock, Integer> → 按 name 索引
+    int *number;             // IdentityDictionary<BasicBlock,Integer>: index by name.
     int max_size;
     int *header;
     BasicBlockClass *type;
@@ -395,7 +395,7 @@ static void process_edges(HavlakLoopFinder *f, BasicBlock *node_w, int w) {
 static void step_e_process_non_back_preds(HavlakLoopFinder *f, int w, PtrVec *node_pool,
                                           PtrVec *work_list, UnionFindNode *x) {
     IntVec *preds = &f->non_back_preds[x->dfs_number];
-    // 上游 forEach: 迭代期间若 w == x.dfsNumber 会追加到同一集合, 这里同样重读 size
+    // Upstream forEach can append to its own set when w==x.dfsNumber; reread size to match.
     for (int k = 0; k < preds->size; k++) {
         UnionFindNode *y = f->nodes[preds->items[k]];
         UnionFindNode *ydash = uf_find_set(y);
@@ -459,7 +459,7 @@ static void find_loops(HavlakLoopFinder *f) {
         f->max_size = size;
     }
 
-    // nonBackPreds/backPreds/number 每次清空重建 (上游 removeAll + append)
+    // Clear and rebuild nonBackPreds/backPreds/number each run (upstream removeAll + append).
     for (int i = 0; i < f->n_non_back; i++) {
         iv_free(&f->non_back_preds[i]);
     }
@@ -479,7 +479,7 @@ static void find_loops(HavlakLoopFinder *f) {
         f->nodes[i] = (UnionFindNode *)calloc(1, sizeof(UnionFindNode));
     }
 
-    // initAllNodes: 全部标 UNVISITED + DFS 编号
+    // initAllNodes: mark all UNVISITED and assign DFS numbers.
     for (int i = 0; i < size; i++) {
         if (f->cfg->blocks[i] != NULL) {
             f->number[f->cfg->blocks[i]->name] = UNVISITED;
@@ -572,7 +572,7 @@ static void finder_free(HavlakLoopFinder *f) {
     }
 }
 
-// ── 测试驱动 (havlak/LoopTesterApp.java) ──
+// -- Test driver (havlak/LoopTesterApp.java) --
 typedef struct {
     ControlFlowGraph *cfg;
     LoopStructureGraph *lsg;
@@ -697,7 +697,7 @@ int main(int argc, char **argv) {
         lsg_free(app.lsg);
         cfg_free(app.cfg);
 
-        // 上游官方断言值 (AWFY Havlak.verifyResult): innerIterations=1500 → 6102 / 5213
+        // Official AWFY Havlak.verifyResult: innerIterations=1500 -> 6102/5213.
         if (loops != 6102 || nodes != 5213) {
             fprintf(stderr, "havlak: expected 6102 5213, got %d %d\n", loops, nodes);
             return 1;

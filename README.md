@@ -15,10 +15,10 @@ YIAN 是一门自研的静态类型编程语言，编译器用 Python 实现。
 Python 环境：
 
 ```bash
-scripts/install.sh                    # 默认：editable 安装，命令指向本检出
-scripts/install.sh --with-deps        # 让 pip 解析依赖（否则要求 llvmlite 已可导入）
-scripts/install.sh --user             # 装进用户 site-packages
-scripts/install.sh --python PATH      # 指定解释器
+scripts/install.sh                    # Default: editable installation; commands use this checkout.
+scripts/install.sh --with-deps        # Resolve dependencies with pip; otherwise llvmlite must already be importable.
+scripts/install.sh --user             # Install into user site-packages.
+scripts/install.sh --python PATH      # Select the interpreter.
 ```
 
 - **editable**（默认）：`yianc` / `anx` 直接指向这个检出，改 `compiler/`、`anx/`、`lsp/`
@@ -52,13 +52,13 @@ scripts/uninstall.sh
 标准库不是隐式输入：用到 `std.*` 时要把源码根 `lib/src` 一并放进路径列表。
 
 ```bash
-# 编译单个文件（含标准库）
+# Compile one file, including the standard library.
 yianc lib/src tests/basic/array/assign.an
 
-# 仅输出 LLVM IR
+# Emit LLVM IR only.
 yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
 
-# 按阶段打印日志
+# Log compilation stages.
 yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
@@ -70,13 +70,13 @@ yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 `anx` 负责项目创建、包名导入解析，以及构建 / 运行 / 检查 / 测试 / 格式化：
 
 ```bash
-anx new myapp               # 可执行项目；--kind lib / hybrid 建库 / 库+CLI
+anx new myapp               # Executable project; --kind lib/hybrid creates a library or library plus CLI.
 cd myapp
-anx run                     # 构建到 build/app 并执行
-anx check                   # 只做类型检查
-anx test                    # 跑 tests/ 下的项目测试
-anx fmt --check             # 检查根包源码格式（有差异时退出 1）
-anx graph --json            # 依赖图、文件归属与诊断（结构化输出）
+anx run                     # Build build/app and execute it.
+anx check                   # Type checking only.
+anx test                    # Run project tests under tests/.
+anx fmt --check             # Check root-package formatting; exit 1 on differences.
+anx graph --json            # Structured dependency graph, file ownership, and diagnostics.
 ```
 
 项目内使用包名导入（`from myapp.utils.math import add`）；依赖与 dev 依赖都在
@@ -87,7 +87,7 @@ anx graph --json            # 依赖图、文件归属与诊断（结构化输�
 mathlib = { path = "vendor/mathlib" }
 
 [dev-dependencies]
-testkit = { path = "vendor/testkit" }   # 只有 `anx test` 看得见
+testkit = { path = "vendor/testkit" }   # Visible only to anx test.
 ```
 
 完整用法见 [anx 用户指南](docs/anx/index.md)。依赖只支持本地路径：远程依赖、
@@ -101,11 +101,11 @@ testkit = { path = "vendor/testkit" }   # 只有 `anx test` 看得见
 ```bash
 scripts/install.sh
 
-python3 scripts/run_tests.py                  # basic 套件（默认）
-python3 scripts/run_tests.py --suite package  # 只跑 package 套件
+python3 scripts/run_tests.py                  # Basic suite (default).
+python3 scripts/run_tests.py --suite package  # Package suite only.
 python3 scripts/run_tests.py --all            # basic + safety + package
-python3 scripts/run_tests.py -f call          # 只跑名字匹配 "call" 的用例
-python3 scripts/run_tests.py -q               # 只打印汇总
+python3 scripts/run_tests.py -f call          # Only cases whose names match 'call'.
+python3 scripts/run_tests.py -q               # Summary only.
 ```
 
 ## 文档

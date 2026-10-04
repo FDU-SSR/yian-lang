@@ -1,17 +1,17 @@
-// bench/BG/an/revcomp.an — 反向互补 (shootout revcomp, compute-only)
+// bench/BG/an/revcomp.an: reverse complement (shootout revcomp, compute-only).
 //
-// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
-// 语义权威源: bench/BG/c/revcomp.c (项目自写 C 参考, 取校验和部分,
-//   不输出反向互补序列文本)
-// 规模: iterations=2000000, 断言 i32(checksum)%256 == 128。
-//   校验和随迭代次数线性变化 (每轮贡献恒定, 取模循环)。
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/revcomp.c, the project's checksum-only C implementation,
+//   without printing reverse-complement sequences.
+// Scale: iterations=2000000; assert i32(checksum)%256==128.
+//   Checksum grows linearly with iterations: each round contributes the same amount, cycling modulo 256.
 //
-// 注: 当前语法下 str 按字节切片 (str.as_slice() -> u8[]) 表达字符级
-//     IO; 输入为固定 386 字节 FASTA 序列 (3 条), 每轮扫描全部序列并
-//     做反向互补, 累计 checksum。complement 表基于 "ATCGGCTA...N" 对。
+// Character-level I/O uses byte views, str.as_slice()->u8[].
+//     Input is a fixed 386-byte FASTA document with three sequences; each round scans all sequences,
+//     computes their reverse complements, and accumulates checksum using the ATCGGCTA...N pairs.
 //
-// 单一源: fat 与 raw 共用本文件。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
 from std.core.io import print;
 
 fn main() {

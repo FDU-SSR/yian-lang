@@ -17,13 +17,13 @@ from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, 
 from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
 from llvm.ir import verify_module, module_ir, module_bitcode, module_object;
 
-// Module 独占 LLVM 资源的释放责任。浅复制不会复制资源，调用方只关闭一次。
+// Module exclusively owns LLVM resource cleanup. Shallow copies do not duplicate resources; the caller closes them once.
 pub struct Module {
     session: IrSession,
 }
 
-// Builder、Function 和 Global 是 Module 的非拥有视图。
-// 同一 Module 创建的 Builder 视图共享一个插入位置。
+// Builder, Function, and Global are non-owning views of Module.
+// Builder views created by the same Module share one insertion position.
 pub struct Builder {
     session: IrSession,
 }

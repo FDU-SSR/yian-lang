@@ -16,7 +16,7 @@ pub fn parse_var_info(parser: Parser&) -> Option<VarInfo&> {
     Option<VarInfo&>.Some(val=parser.arena.alloc_var_info(VarInfoData(name=name, var_type=ty), name.span))
 }
 
-// 名称模式直接构造命名形参，其他模式保留类型信息供参数脱糖使用。
+// Name patterns become named parameters directly; other patterns retain type information for parameter lowering.
 pub fn parse_parameter(parser: Parser&) -> Option<Parameter> {
     let pattern = parse_binding_pattern(parser)?;
     parser.take_punct(PunctuatorKind.Colon);
@@ -111,7 +111,7 @@ pub fn parse_generics(parser: Parser&) -> Option<Vec<GenericParam>> {
     Option<Vec<GenericParam>>.Some(val=values.take())
 }
 
-// 没有箭头时返回 None；调用方通过 parser.ready 区分缺省与解析失败。
+// Return None without an arrow; callers use parser.ready to distinguish omission from parse failure.
 pub fn parse_return_type(parser: Parser&) -> Option<TypeSyntax&> {
     if !parser.at_punct(PunctuatorKind.Arrow) {
         return Option<TypeSyntax&>.None;

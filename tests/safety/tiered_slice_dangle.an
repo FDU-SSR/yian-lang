@@ -1,6 +1,6 @@
-// Tiered-pointer 分级指针 (T[] 真锁): a slice view whose backing is freed safety errors
+// Tiered pointers (T[] actual lock): a slice with released backing causes a safety error
 // on access. The slice carries the real heap lock of the `dyn` backing
-// (表示层 真锁, not lit-lock); after `del p` the block-header lock slot is
+// (the representation carries its actual lock, not the literal lock); after del p the slot is
 // SENTINEL. `s[0]` derives a T* (lock-inherited) and the
 // deref live check fails → fail-stop → Exit code 1.
 //
@@ -9,7 +9,7 @@
 fn main() {
     let p: i32* = dyn[3] 0i32;
     p[0] = 1;
-    let s: i32[] = p[0u64..3]; // slice view, 真锁继承
+    let s: i32[] = p[0u64..3]; // Slice view inherits the actual lock.
     del p; // backing freed → lock slot SENTINEL
-    s[0] = 99 // slice element access → live 失败 → safety error
+    s[0] = 99 // Slice element access fails live with a safety error.
 }

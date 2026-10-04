@@ -13,7 +13,7 @@ from compiler.codegen.cfg.provenance import PointerFacts
 
 
 def _materialize(request: IR.CheckRequest) -> IR.Stmt:
-    """按 kind 物化标记（未知 kind 直接报错，避免静默丢检查）。"""
+    """Materialize markers by kind; reject unknown kinds rather than silently dropping checks."""
     match request.kind:
         case IR.CHECK_REQUEST_PTRDIFF:
             lhs, rhs = request.operands
@@ -36,7 +36,7 @@ def _materialize(request: IR.CheckRequest) -> IR.Stmt:
 
 
 class _CheckPlanner:
-    """单个 CFG 函数的检查规划器：块内状态 + 逐语句决定检查节点。"""
+    """Plan checks for one CFG function using block-local state and per-statement decisions."""
 
     def __init__(self, func: IR.Function, ctx: CfgModule) -> None:
         self.__func = func
@@ -48,7 +48,7 @@ class _CheckPlanner:
         self.__out: list[IR.Stmt] = []
 
     # ------------------------------------------------------------------
-    # 块内检查去重
+    # Deduplicate checks within a block.
     # ------------------------------------------------------------------
 
     def __value_key(self, v: IR.Value) -> str | None:
@@ -83,11 +83,11 @@ class _CheckPlanner:
         return False
 
     # ------------------------------------------------------------------
-    # 派生义务表（ElementPtr→FieldPtr→访问）
+    # Derivation obligations (ElementPtr -> FieldPtr -> access).
     # ------------------------------------------------------------------
 
     def __pop_owed(self, base: IR.Value) -> IR.Value | None:
-        """弹出 base 的挂起 in_bounds 义务，返回待检查的 elem（无义务返回 None）。"""
+        """Pop base's pending bounds obligation; return the element to check, or None."""
         if not isinstance(base, IR.Reg):
             return None
         owed_name = self.__field.pop(base.name, None)
@@ -97,20 +97,20 @@ class _CheckPlanner:
         return elem
 
     def __merge_access(self, ptr: IR.Value, live: bool = True) -> bool:
-        """合并访问检查：`ptr` 是 elem.field（派生链可对且访问相邻）时，以单个合取
-        检查（ElementArith 良构+无回绕 ∧ InBounds ∧ SafeAccess 的 live 项）替代
-        FieldPtr 的 InBounds（挂起义务）与本访问的 SafeAccess。返回 True 表示已合并
-        （调用方跳过 CheckSafeAccess 发射）。
+        """Combine access checks when ptr is elem.field in an adjacent, matched derivation chain.
+        One conjunction (ElementArith validity/no-wrap, InBounds, and SafeAccess's live term)
+        discharges FieldPtr's pending bounds obligation and this access's SafeAccess check.
+        Return True when combined, so the caller skips emitting CheckSafeAccess.
         """
         if not isinstance(ptr, IR.Reg):
             return False
         elem_name = self.__field.get(ptr.name)
         if elem_name is None:
             return False
-        # 义务已由合取检查承担（InBounds + live 并入）：弹出，避免失效点补发
+        # The conjunction discharges InBounds and live; pop the obligation to avoid re-emitting at invalidation.
         self.__field.pop(ptr.name)
-        # SafeAccess(f) 的 live 项由合取检查承载（in_bounds(f,1) 恒真）：
-        # 登记 f 的 safe 去重键，使同指针访问共享检查
+        # The conjunction covers SafeAccess(f)'s live term; in_bounds(f,1) is always true.
+        # Record f's safe-check key so accesses through the same pointer share the check.
         self.__checked.add((ptr.name, "safe"))
         elem, base, offset = self.__elem[elem_name]
         if self.__dedup(self.__pair_key(base, offset, "eacc")):
@@ -119,11 +119,11 @@ class _CheckPlanner:
         return True
 
     def __invalidate(self) -> None:
-        """失效：先补发挂起合并义务（CheckInBounds），再清空去重/合并表。
+        """Invalidate: discharge pending combined obligations, then clear cached checks and combinations.
 
-        释放、锁槽写、任意函数副作用或块终结会使缓存的检查结论失效；挂起义务
-        （派生链可对的 FieldPtr 跳过的 in_bounds(elem,1)）在这些操作前补发，保证
-        one-past-end 的 elem 取字段在逃逸（传参/返回/跨块）前报告安全错误。
+        Release, slot writes, arbitrary call effects, and block termination invalidate cached conclusions.
+        Emit bounds obligations skipped by matched FieldPtr chains before those operations, so taking
+        a field of a one-past-end elem fails before argument/return/block escape.
         """
         if self.__field:
             for elem_name in dict.fromkeys(self.__field.values()):
@@ -134,11 +134,11 @@ class _CheckPlanner:
         self.__field.clear()
 
     # ------------------------------------------------------------------
-    # 各规则的决定（与下降期逐条等价）
+    # Per-operation check decisions.
     # ------------------------------------------------------------------
 
     def __plan_access(self, ptr: IR.Value) -> None:
-        """R4/R5：Load/Store 的访问前检（T& 只查 live；胖指针查 safe_access 或合取）。"""
+        """Load/Store access prechecks: T& checks live; fat pointers use safe_access or a conjunction."""
         type_ctx = self.__ctx.type_ctx
         type_id = ptr.type_id
         ptr_type = type_ctx[type_id]
@@ -160,7 +160,7 @@ class _CheckPlanner:
             self.__out.append(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
 
     def __plan_element_ptr(self, base: IR.Value, offset: IR.Value) -> None:
-        """R11：ElementPtr 算术良构检查；嵌套派生链先补发挂起的 in_bounds(elem,1)。"""
+        """Check ElementPtr arithmetic validity; discharge nested pending in_bounds(elem,1) first."""
         if not self.__prov.is_fat_pointer(base):
             return
         owed_elem = self.__pop_owed(base)
@@ -170,9 +170,9 @@ class _CheckPlanner:
             self.__out.append(IR.CheckElementArith(base=base, offset=offset))
 
     def __plan_field_ptr(self, base: IR.Value) -> str | None:
-        """R12：FieldPtr 重锚定前提；可对派生链挂起义务并入访问点合取检查。
+        """FieldPtr re-anchoring preconditions; matched chains defer obligations to combined access checks.
 
-        返回应登记到 FieldPtr 结果上的挂起 elem 名（无义务返回 None）。
+        Return the pending elem name to attach to the FieldPtr result, or None.
         """
         merged_elem_name: str | None = None
         base_ty = self.__ctx.type_ctx[base.type_id]
@@ -189,21 +189,21 @@ class _CheckPlanner:
                 self.__out.append(IR.CheckInBounds(ptr=owed_elem))
             entry = self.__elem.get(base.name) if isinstance(base, IR.Reg) else None
             if entry is not None:
-                # 合并路径：in_bounds(elem,1) 挂起为义务，并入访问点的
-                # CheckElementAccess 合取检查；若访问不相邻，失效点补发。
+                # Combined path: defer in_bounds(elem,1) to the access site's
+                # CheckElementAccess conjunction; invalidation discharges it if access is not adjacent.
                 merged_elem_name = entry[0].name
             elif not self.__dedup(self.__ptr_key(base, "ib")):
                 self.__out.append(IR.CheckInBounds(ptr=base))
         return merged_elem_name
 
     def __plan_delete(self, ptr: IR.Value) -> None:
-        """R14：del 四前提（is_heap ∧ live ∧ is_raw）——换代后检查状态失效。"""
+        """del preconditions (is_heap, live, is_raw); generation changes invalidate check state."""
         if self.__prov.is_del_target(ptr):
             self.__out.append(IR.CheckDelete(ptr=ptr))
             self.__invalidate()
 
     def __plan_marker(self, request: IR.CheckRequest) -> None:
-        """物化语义标记；调用侧 receiver 折算前提与其它检查共享块内去重键。"""
+        """Materialize semantic markers; receiver-conversion preconditions share block-local check keys."""
         if request.kind == IR.CHECK_REQUEST_RECEIVER_IN_BOUNDS:
             ptr = request.operands[0]
             if self.__prov.is_fat_pointer(ptr) and not self.__dedup(self.__ptr_key(ptr, "ib")):
@@ -212,7 +212,7 @@ class _CheckPlanner:
         self.__out.append(_materialize(request))
 
     # ------------------------------------------------------------------
-    # 块遍历
+    # Block traversal.
     # ------------------------------------------------------------------
 
     def __visit(self, stmt: IR.Stmt) -> None:
@@ -252,7 +252,7 @@ class _CheckPlanner:
 
     def run(self) -> None:
         for block in self.__func.blocks:
-            # 块内状态不跨块（下降期由 switch_to 清空）；刚分配窗口跨块，挂在 provenance 上。
+            # Check state is block-local; fresh-allocation windows span blocks through provenance.
             self.__checked.clear()
             self.__elem.clear()
             self.__field.clear()
@@ -271,9 +271,9 @@ class InsertChecks:
         self.__ctx = ctx
 
     def run(self) -> None:
-        """函数间互不影响（状态都是单函数的），按下降序逐个跑。
+        """Process functions in lowering order with independent per-function state.
 
-        `ctx.functions` 就是本模块的全部函数，需要跨函数信息时也从这个 ctx 取。
+        ctx.functions contains all functions in the module and supplies any cross-function information.
         """
         for record in self.__ctx.functions.values():
             _CheckPlanner(record.function, self.__ctx).run()

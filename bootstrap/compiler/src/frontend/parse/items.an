@@ -45,7 +45,7 @@ fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {
     Option<Vec<Attr&>>.Some(val=values.take())
 }
 
-// 将两种导入语法展开为逐目标声明；同一 from 导入的目标共享结束位置。
+// Expand both import forms into per-target declarations; targets of one from import share an end position.
 fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
     let span = parser.peek().span;
     let direct = parser.at_keyword(KeywordKind.Import);
@@ -152,10 +152,10 @@ fn program(parser: Parser&) -> Option<Program&> {
     Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=items.take()), span))
 }
 
-// 完成声明解析，并将节点所有权或首个错误从解析器交给调用方。
+// Finish declaration parsing and transfer node ownership or the first error from the parser to the caller.
 pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> { parser.finish(program(parser)) }
 
-// 属性由具体声明接收；impl 声明不接受属性。
+// Individual declarations receive attributes; impl declarations do not accept them.
 fn declaration(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     if parser.at_keyword(KeywordKind.Typedef) {
         return alias_item(parser, attrs);

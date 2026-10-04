@@ -1,7 +1,7 @@
-"""运行时库的定位与按需构建.
+"""Locate and build the runtime library on demand.
 
-编译器在链接阶段需要 `runtime/` 产出的静态库（`-t exe`）与可重定位对象
-（`-t obj` 合并）。库缓存到 `build/runtime/`，只有运行时源码比产物新时才重新构建。
+Linking uses the runtime's static library for -t exe and relocatable object for -t obj.
+Cache artifacts in build/runtime/ and rebuild only when runtime sources are newer.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ BUILD_SCRIPT = RUNTIME_DIR / "build.py"
 
 
 class RuntimeBuildError(Exception):
-    """运行时库构建失败（源码缺失或 clang 报错）。"""
+    """Runtime build failure due to missing sources or clang errors."""
 
 
-# 尺寸类表: yian_rt.h::YIAN_CLASS_BYTES 的 Python 镜像, 类号即下标.
-# runtime/build.py --check 断言两侧逐项相等.
+# Size-class table: Python mirror of yian_rt.h::YIAN_CLASS_BYTES; the index is the class number.
+# runtime/build.py --check asserts element-by-element equality.
 CLASS_BYTES: tuple[int, ...] = (
     16, 20, 25, 32, 40, 50, 64, 80, 100,
     128, 160, 200, 256, 320, 400, 512, 640, 800,
@@ -33,7 +33,7 @@ CLASS_BYTES: tuple[int, ...] = (
 
 
 def class_index_for_payload(payload: int) -> int | None:
-    """返回能容纳 ``payload`` 字节的最小尺寸类的类号; 超过最大类时返回 ``None``。"""
+    """Return the smallest class fitting payload bytes, or None above the largest class."""
     for index, capacity in enumerate(CLASS_BYTES):
         if payload <= capacity:
             return index
@@ -72,12 +72,12 @@ def __ensure_built() -> None:
 
 
 def ensure_archive() -> Path:
-    """返回运行时静态库路径（供 `-t exe` 链接）。"""
+    """Return the runtime static library path for -t exe linking."""
     __ensure_built()
     return ARCHIVE
 
 
 def ensure_object() -> Path:
-    """返回运行时可重定位对象路径（供 `-t obj` 合并）。"""
+    """Return the runtime relocatable object path for -t obj merging."""
     __ensure_built()
     return OBJECT

@@ -30,7 +30,7 @@ fn assertion_message(path: str, span: Span) -> String {
 }
 struct ControlLowerer { arena: AstArena&, path: str }
 impl ControlLowerer {
-    // 从末尾向前构造回退分支，使 elif 条件保持源码中的求值顺序。
+    // Build fallback branches from the end to preserve source-order evaluation of elif conditions.
     fn lower_if(span: Span, cond: Condition, yes: Block&, branches: Vec<ElifBranch&>&, no: Option<Block&>) -> Expr& {
         let fallback = no;
         let index = branches.len();
@@ -45,7 +45,7 @@ impl ControlLowerer {
         conditional(self.arena, span, cond, yes, fallback)
     }
 
-    // 每轮先检查条件；模式匹配失败和普通条件为假均进入退出分支。
+    // Check the condition before each iteration; failed pattern matches and false expressions both select the exit branch.
     fn lower_while(span: Span, cond: Condition, body: Block&) -> Expr& {
         let stmts = Vec<Expr&>.new();
         match cond {
@@ -66,7 +66,7 @@ impl ControlLowerer {
         self.arena.alloc_expr(ExprData.Loop(body=block(self.arena, body.span, stmts)), span)
     }
 
-    // 迭代器初始化只求值一次；每轮匹配 next 的结果并保留循环变量的来源标记。
+    // Evaluate iterator initialization once; match next on each iteration and retain the loop-variable origin tag.
     fn lower_for(span: Span, pattern: Pattern&, iterable: Expr&, body: Block&) -> Expr& {
         let name = identifier(self.arena, span, "%iter", true);
         let init = method_call(self.arena, iterable.span, iterable, "into_iter", Vec<Argument&>.new());
@@ -101,7 +101,7 @@ impl ControlLowerer {
             self.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), span)
         };
 
-        // 消息表达式位于失败分支中，只在断言条件为假时求值。
+        // The message expression belongs to the failure branch and is evaluated only when the assertion condition is false.
         let args = Vec<Argument&>.new();
         args.push(argument(self.arena, value));
         let panic_call = self.arena.alloc_expr(ExprData.Builtin(kind=BuiltinKind.Panic, type_args=Vec<TypeSyntax&>.new(), args=args), span);
@@ -111,7 +111,7 @@ impl ControlLowerer {
 
 impl AstRewriter for ControlLowerer {
     pub fn rewrite_expr(node: Expr&) -> Expr& {
-        // 子节点先完成重写；构造出的控制流直接引用这些结果。
+        // Rewrite children first; generated control flow directly references their results.
         rewrite_expr_children(node, self);
 
         match &node.data {
@@ -124,7 +124,7 @@ impl AstRewriter for ControlLowerer {
     }
 }
 
-// 按子节点优先的顺序展开条件、循环和断言；path 用于默认断言消息。
+// Expand conditions, loops, and assertions in child-first order; path supplies default assertion messages.
 pub fn lower_control(tree: AstTree&, path: str) {
     let pass = ControlLowerer(arena=&tree.arena, path=path);
     tree.root = pass.rewrite_program(tree.root);

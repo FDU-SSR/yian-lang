@@ -46,7 +46,7 @@ from compiler.native_link import NativeLink
 
 
 def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
-    """解析编译器选项与混排的输入路径。"""
+    """Parse compiler options interleaved with input paths."""
     parser = argparse.ArgumentParser(
         prog="compiler/main.py",
         description="Yian compiler entrypoint.",
@@ -336,11 +336,11 @@ def __derive_output(args: argparse.Namespace, src_files: list[Path]) -> Path:
 
 
 def __select_linker() -> str:
-    """链接目标文件所用的 C 编译器。
+    """C compiler used to link object files.
 
-    顺序:``$YIAN_CC`` → ``clang`` → ``cc``。不隐式回落到带版本号的
-    ``clang-18``/``clang-20``:工具链版本由环境显式给出(见
-    ``scripts/setup_llvm_toolchain.sh``),避免"看起来能用但版本不对"。
+    Resolution order: $YIAN_CC, clang, then cc. Do not implicitly fall back to
+    versioned clang-18/clang-20: the environment explicitly selects the toolchain
+    (see scripts/setup_llvm_toolchain.sh), preventing accidental version mismatches.
     """
     override = os.environ.get("YIAN_CC", "")
     if override:
@@ -396,8 +396,8 @@ def __link_exe(
 def __merge_runtime_object(obj_path: Path, output_path: Path, native: NativeLink) -> None:
     """Merge the user object with the runtime object into one relocatable object.
 
-    ``-t obj`` 的产物保持单文件自包含：用户对象与运行时对象用 ``clang -r`` 合并，
-    链接阶段与普通对象一样使用。
+    The -t obj output is self-contained: clang -r merges user and runtime objects,
+    and the result links like an ordinary object.
     """
     linker = __select_linker()
     native.verify_linker(linker)

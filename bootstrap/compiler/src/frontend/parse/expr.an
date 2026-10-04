@@ -15,7 +15,7 @@ from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-// 只吸收左结合力不低于 min_bp 的运算符；右结合力决定递归边界。
+// Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.
 fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
     parser.ready()?;
 
@@ -44,7 +44,7 @@ fn prefix(parser: Parser&) -> Option<Expr&> {
     if candidate.is_some() {
         let op = *candidate.unwrap();
         parser.advance();
-        // 解引用和取地址的操作数不包含普通一元运算符层级以下的表达式。
+        // Dereference and address-of operands exclude expressions below the ordinary unary-operator precedence level.
         let rbp = if op == UnaryOperator.Deref || op == UnaryOperator.AddrOf { 14 } else { 13 };
         let operand = expr_bp(parser, rbp)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Unary(op=op, operand=operand), operand.span));
@@ -56,7 +56,7 @@ fn prefix(parser: Parser&) -> Option<Expr&> {
     postfix(parser, primary(parser)?)
 }
 
-// 表达式失败后探测类型形式；不是完整类型时重新解析以保留表达式诊断。
+// Probe type syntax after expression failure; if it is not a complete type, reparse to retain the expression diagnostic.
 fn diagnose_dyn_initializer(parser: Parser&, mark: u64, span: Span) {
     parser.clear_error();
     parser.reset(mark);
@@ -100,7 +100,7 @@ fn dyn_expr(parser: Parser&) -> Option<Expr&> {
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.DynBuffer(size=size, element=*value.unwrap()), span))
 }
 
-// 按起始 token 分派基本表达式；调用、成员和下标后缀由 postfix 处理。
+// Dispatch primary expressions by the starting token; postfix handles calls, members, and indexing.
 fn primary(parser: Parser&) -> Option<Expr&> {
     parser.ready()?;
 
@@ -226,7 +226,7 @@ fn identifier_expr(parser: Parser&) -> Option<Expr&> {
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=generics.take()), name.span))
 }
 
-// 空括号表示单元值；逗号区分元组与保留原节点的分组表达式。
+// Empty parentheses denote a unit value; commas distinguish tuples from grouping that preserves the original node.
 fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.peek().span;
     parser.advance();
@@ -262,7 +262,7 @@ fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=members.take()), span))
 }
 
-// 首个元素后的分号表示重复构造；逗号表示逐项列举。
+// A semicolon after the first element denotes repeated construction; commas denote explicit elements.
 fn array_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_punct(PunctuatorKind.LBracket);
     let members = Vec<Expr&>.new();
@@ -336,7 +336,7 @@ fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
     Option<Vec<Argument&>>.Some(val=args.take())
 }
 
-// 点后泛型参数要求方法调用；没有泛型和实参列表时生成字段访问。
+// Generic arguments after a dot require a method call; without generics or an argument list, produce field access.
 fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -433,7 +433,7 @@ fn builtin_expr(parser: Parser&) -> Option<Expr&> {
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Builtin(kind=*kind.unwrap(), type_args=types.take(), args=args.take()), start + end))
 }
 
-// 保留分号与 defer 的语法节点，并记录右花括号位置。
+// Retain semicolon and defer syntax nodes and record the closing-brace position.
 pub fn parse_block(parser: Parser&) -> Option<Block&> {
     let open = parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
@@ -707,7 +707,7 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
     Option<Expr&>.Some(val=result)
 }
 
-// 捕获初始化使用高于按位或的结合力，避免吞掉捕获列表的闭合竖线。
+// Capture initializers use binding power above bitwise OR to avoid consuming the closing capture-list pipe.
 fn closure_captures(parser: Parser&) -> Option<Vec<CaptureItem&>> {
     let captures = Vec<CaptureItem&>.new();
     defer captures.drop();

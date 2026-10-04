@@ -1,12 +1,12 @@
-// raw_slice_ref.an — raw slice/ref 双模式正例
+// raw_slice_ref.an: positive slice/reference cases in raw and fat modes.
 //
-// 覆盖从裸指针构造 slice/ref 的正确程序路径,fat/raw/nocheck 三态
-// (scripts/run_raw_tests.py)都必须 exit 0:
-//   - @slice_from_parts(p, n) 构造 T[]:len 保真断言(直接 s.len(),核心路径)
-//   - 索引访问断言(直接 s[i],含嵌套函数传参形态)
-//   - T* → T& 与 T[] → T& 用例
-//   - str 构造(@str_from_parts)与 len/首字节断言
-// 纯断言、无 stdout,为 success 用例(无需 .ans)。
+// Exercise valid slice/reference construction from raw pointers; fat/raw/nocheck configurations
+// must all exit zero:
+//   - @slice_from_parts(p,n) constructs T[] and preserves len, checked through s.len().
+//   - Index assertions use s[i], including nested argument passing.
+//   - T* -> T& and T[] -> T& cases.
+//   - @str_from_parts construction with length/first-byte assertions.
+// Assertions only, no stdout; successful execution needs no .ans.
 //
 // Expected output: 0
 
@@ -15,7 +15,7 @@ fn get_len(s: i32[]) -> u64 {
 }
 
 fn main() {
-    // --- @slice_from_parts(p, n) 构造 T[],len 保真(直接方法调用)---
+    // --- @slice_from_parts(p,n): T[] length through direct method calls ---
     let arr: u64[3] = [10, 20, 30];
     let p: u64* = &arr[0];
     let s: u64[] = @slice_from_parts(p, 3);
@@ -23,7 +23,7 @@ fn main() {
     let l: u64 = s.len();
     assert l == 3: "len via direct variable binding";
 
-    // --- 索引访问断言(直接下标,经 Index trait)---
+    // --- Index access through Index trait ---
     let v0: u64 = s[0];
     let v1: u64 = s[1];
     let v2: u64 = s[2];
@@ -31,7 +31,7 @@ fn main() {
     assert v1 == 20: "s[1] == 20";
     assert v2 == 30: "s[2] == 30";
 
-    // --- 嵌套函数传参形态(s 作为 i32[] 实参)---
+    // --- Nested call passing s as i32[] ---
     let arr2: i32[3] = [7, 8, 9];
     let p2b: i32* = &arr2[0];
     let s3: i32[] = @slice_from_parts(p2b, 3);
@@ -49,7 +49,7 @@ fn main() {
     let r2: i32& = s2;
     assert *r2 == 42: "T[]->T& reads through the reference";
 
-    // --- str 构造(@str_from_parts)---
+    // --- @str_from_parts construction ---
     let msg: str = "hi";
     let mp: u8* = @str_get_ptr(msg);
     let sub: str = @str_from_parts(mp, 1);

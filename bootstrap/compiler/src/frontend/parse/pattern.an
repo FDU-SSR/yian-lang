@@ -160,7 +160,7 @@ fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
     Option<Pattern&>.None
 }
 
-// 试探限定类型，再区分名称模式与构造模式；不适用的类型前缀回退到名称解析。
+// Probe a qualifying type, then distinguish name and constructor patterns; unsuitable type prefixes fall back to name parsing.
 fn named_pattern(parser: Parser&) -> Option<Pattern&> {
     let mark = parser.mark();
     let first = parser.peek();
@@ -194,7 +194,7 @@ fn named_pattern(parser: Parser&) -> Option<Pattern&> {
     constructor_pattern(parser, name, qualifier)
 }
 
-// 入口位于字段列表的左括号；字段容器在节点构造成功时交给 arena。
+// Enter at the field list's opening parenthesis; successful node construction transfers field containers to the arena.
 fn constructor_pattern(parser: Parser&, name: Identifier&, qualifier: Option<TypeSyntax&>) -> Option<Pattern&> {
     parser.advance();
     let positional = Vec<Pattern&>.new();
@@ -202,7 +202,7 @@ fn constructor_pattern(parser: Parser&, name: Identifier&, qualifier: Option<Typ
     let named = Vec<FieldPattern&>.new();
     defer named.drop();
 
-    // 位置字段和命名字段不能混用；省略标记只能位于字段列表末尾。
+    // Positional and named fields cannot be mixed; the omission marker must be the final field-list item.
     let has_named = false;
     let rest = false;
 
@@ -288,7 +288,7 @@ fn pattern_or(parser: Parser&) -> Option<Pattern&> {
 
 pub fn parse_binding_pattern(parser: Parser&) -> Option<Pattern&> { pattern_or(parser) }
 
-// 逗号分隔的匹配候选仅接受同类别字面量；竖线候选由 pattern_or 解析。
+// Comma-separated match alternatives must be literals of the same kind; pattern_or handles pipe-separated alternatives.
 pub fn parse_match_pattern(parser: Parser&) -> Option<Pattern&> {
     let first = pattern_or(parser)?;
     if !parser.at_punct(PunctuatorKind.Comma) {

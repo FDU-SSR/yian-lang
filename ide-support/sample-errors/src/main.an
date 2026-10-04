@@ -1,7 +1,7 @@
-// 入口文件本身是正确的；诊断集中在 errors.an 与 shapes.an。
+// Valid entry file; diagnostics are concentrated in errors.an and shapes.an.
 //
-// 这个工程只用于 IDE 诊断的人工验收：`anx build` 预期失败，
-// 具体错误见 src/errors.an 与 src/shapes.an 的注释。
+// This project is for manual IDE diagnostic checks; anx build is expected to fail.
+// See comments in src/errors.an and src/shapes.an for the specific errors.
 from std.core.io import print;
 from sample_errors.helper import double;
 

@@ -1,7 +1,7 @@
-// raw_compat_field.an — 裸指针兼容:结构体字段访问 + 字段指针读写
+// raw_compat_field.an: raw-pointer struct fields and reads/writes through field pointers.
 //
-// 通过堆分配结构体指针做字段读写,并经由外层结构的字段指针(indirection)
-// 读写被指向结构的字段。正确程序,fat 与 raw 双模式都必须 exit 0。
+// Read/write a heap struct and access its fields indirectly through an outer struct's pointer field.
+// This valid program must exit zero in both fat and raw modes.
 //
 // Expected output: 0
 
@@ -19,19 +19,19 @@ fn main() {
     assert pt.x == 1: "pt.x == 1";
     assert pt.y == 2: "pt.y == 2";
 
-    // 字段写
+    // Write fields.
     pt.x = 10;
     pt.y = 20;
     assert pt.x == 10: "pt.x == 10 after write";
     assert pt.y == 20: "pt.y == 20 after write";
 
-    // 字段指针(Wrap.p)解引用读写被指向结构
+    // Dereference Wrap.p to read/write the pointed-to struct.
     let w: Wrap* = dyn Wrap(pt);
     assert w.p.x == 10: "w.p.x == 10 via field pointer";
     w.p.y = 21;
     assert pt.y == 21: "write via w.p.y visible at pt.y";
 
-    // 取出字段指针后独立使用
+    // Extract the pointer field for independent use.
     let inner: Point* = w.p;
     assert inner.x + inner.y == 31: "inner.x + inner.y == 31";
     inner.x = 100;

@@ -60,7 +60,7 @@ fn is_float_literal(raw: str) -> bool {
     return false;
 }
 
-// 正负号仅跟随指数标记；十六进制的 e/E 是数字，不是指数标记。
+// Signs may only follow exponent markers; hexadecimal e/E are digits rather than exponent markers.
 fn number_part(raw: str, code: u32) -> bool {
     if code == u32('+') || code == u32('-') {
         let bytes = raw.as_slice();
@@ -97,7 +97,7 @@ fn float_suffix(raw: str) -> FloatSuffix {
     return FloatSuffix.Unsuffixed;
 }
 
-// 去除后缀及其前面的可选分隔符，返回借用原始文本的数值部分。
+// Remove the suffix and its optional preceding separator, returning a numeric-body view borrowed from the original text.
 fn numeric_body(raw: str, suffix: str) -> str {
     let bytes = raw.as_slice();
     let suffix_len = suffix.as_slice().len();
@@ -244,7 +244,7 @@ impl Lexer {
         return LexError(message=String.from(&message), span=Span(start=start, end=self.position()));
     }
 
-    // 消费空白和注释；返回是否消费过内容，供尖括号的词法分类使用。
+    // Consume whitespace and comments; report whether anything was consumed for angle-bracket classification.
     fn skip_ignored() -> Result<bool, LexError> {
         let skipped = false;
 
@@ -358,7 +358,7 @@ impl Lexer {
         return Result<char, LexError>.Err(msg=self.fail("invalid escape sequence", start));
     }
 
-    // 解码字面量；字符和字符串 token 接收存储，字节字面量只接收数值。
+    // Decode literals; character and string tokens receive storage, while byte literals receive only a numeric value.
     fn quoted(start: Position, quote: u32, byte_literal: bool) -> Result<Token, LexError> {
         let decoded = String.new();
         let transferred = false;
@@ -411,7 +411,7 @@ impl Lexer {
         return Token.new(payload, Span(start=position, end=position));
     }
 
-    // 入口位于插值左花括号之后；只有当前层的右花括号结束插值。
+    // Enter after the interpolation's opening brace; only a closing brace at the current depth ends interpolation.
     fn fstring_expression() -> Result<bool, LexError> {
         let depth: u64 = 1u64;
 
@@ -421,7 +421,7 @@ impl Lexer {
                 return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string expression", self.position()));
             }
 
-            // 嵌套格式化字符串自行消费内部括号，不参与当前插值的深度计数。
+            // Nested formatted strings consume their own braces without contributing to the current interpolation depth.
             if self.has_pair('f', '"') {
                 self.fstring()?;
                 continue;
@@ -447,7 +447,7 @@ impl Lexer {
         }
     }
 
-    // 扫描到引号或插值起点；非空片段的字符串存储交由 token 持有。
+    // Scan until a quote or interpolation start; nonempty fragment storage is transferred to a token.
     fn fstring_literal() -> Result<bool, LexError> {
         let segment_start = self.position();
         let literal = String.new();
@@ -477,7 +477,7 @@ impl Lexer {
             match simple_escape(escaped) {
                 Some(value) => literal.push(value),
                 None => {
-                    // 花括号转义只保留字符；其他未知转义同时保留反斜杠。
+                    // Escaped braces retain only the character; other unknown escapes retain the backslash as well.
                     if escaped != '{' && escaped != '}' {
                         literal.push('\\');
                     }
@@ -494,7 +494,7 @@ impl Lexer {
         Result<bool, LexError>.Ok(val=true)
     }
 
-    // 将文字片段和插值 token 顺序写入同一 token 流。
+    // Append literal-fragment and interpolation tokens to the same stream in source order.
     fn fstring() -> Result<bool, LexError> {
         let start = self.position();
         self.advance();
@@ -549,7 +549,7 @@ impl Lexer {
     }
 
     fn number(start: Position, code: u32) -> Result<Token, LexError> {
-        // 先保留完整拼写，再分别处理数值部分与类型后缀。
+        // Collect the full spelling before handling its numeric body and type suffix separately.
         let raw = String.new();
         defer raw.drop();
         raw.push(char(code));
@@ -588,7 +588,7 @@ impl Lexer {
     }
 
     fn punctuator(start: Position, code: u32, previous_whitespace: bool) -> Result<Token, LexError> {
-        // 无前导空白的尖括号作为泛型分隔符，不参与最长运算符匹配。
+        // Angle brackets without leading whitespace are generic delimiters and bypass longest-operator matching.
         if (code == u32('<') || code == u32('>')) && !previous_whitespace {
             let kind = if code == u32('<') { PunctuatorKind.LAngle } else { PunctuatorKind.RAngle };
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
@@ -642,7 +642,7 @@ impl Lexer {
         return self.punctuator(start, code, previous_whitespace);
     }
 
-    // 成功时交出 token 容器；错误路径由局部清理释放已扫描的 token。
+    // Transfer the token container on success; local cleanup releases scanned tokens on errors.
     pub fn run() -> Result<Vec<Token>, LexError> {
         defer self.drop();
 

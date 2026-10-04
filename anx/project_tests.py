@@ -218,7 +218,7 @@ def __run_one(
 
 
 def __bin_root_hint(project: Project, compiler_output: str) -> str:
-    """为根包未声明依赖的 E309 诊断附加 bin 根包的库接口提示。"""
+    """Attach a bin-package library-interface hint to E309 diagnostics for undeclared root dependencies."""
     root = project.root_package
     if project.packages[root].kind is not PackageKind.BIN:
         return ""

@@ -19,7 +19,7 @@ pub struct Span {
 }
 
 impl Span {
-    // 将起止坐标作为字段写入已打开的 JSON 对象。
+    // Write start and end coordinates as fields of an already-open JSON object.
     pub fn write_json(output: Writer&) {
         output.key("start");
         output.begin_array();
@@ -136,7 +136,7 @@ fn less(left: str, right: str) -> bool {
     return a.len() < b.len();
 }
 
-// 只排序本次目录收集追加的路径，前面的输入根保持原有顺序。
+// Sort only paths appended by this directory collection; preceding input roots retain their order.
 fn sort_paths(paths: Vec<String>&, start: u64) {
     let index = start + 1u64;
 
@@ -153,7 +153,7 @@ fn sort_paths(paths: Vec<String>&, start: u64) {
     }
 }
 
-// 递归实际目录；符号链接只收集其指向的源码文件，不递归链接目录。
+// Recurse into actual directories; collect symlinks only when they target source files, never recurse into linked directories.
 fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
     let directory = Directory.open(path)?;
     defer directory.drop();
@@ -195,7 +195,7 @@ fn release_paths(paths: Vec<String>&) {
     paths.drop();
 }
 
-// 输入根保持命令行顺序，各目录内的文件排序；失败时释放已收集的路径。
+// Preserve command-line root order and sort files within each directory; release collected paths on failure.
 pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
     let paths = Vec<String>.new();
     let transferred = false;

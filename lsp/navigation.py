@@ -84,7 +84,7 @@ def location(target: Target, navigator: Navigator) -> types.Location:
 def hover(resolution: Resolution, navigator: Navigator, span: SrcSpan) -> types.Hover | None:
     """The declaration and the expression's type, as markdown.
 
-    Everything shown comes from the analysis (悬停类型来自分析结果):
+    Everything shown comes from the analysis (hover types come from analysis):
     the kind and name from the declaration, the signature or type from the type
     in hand, and a note when the declaration is the standard library's.
     """

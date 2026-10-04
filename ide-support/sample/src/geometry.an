@@ -1,4 +1,4 @@
-// 结构体、泛型结构体、方法：供 main 与 tests 复用。
+// Structs, generic structs, and methods shared by main and tests.
 from sample.types import Meters;
 
 pub struct Point {

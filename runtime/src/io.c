@@ -63,7 +63,7 @@ int64_t yian_io_read(int32_t fd, uint8_t *b, uint64_t n) {
 int64_t yian_io_write(int32_t fd, const uint8_t *b, uint64_t n) {
     if (n == 0) return 0;
     if (n > 0x7ffff000u) n = 0x7ffff000u;
-    /* 仅阻塞当前线程的 SIGPIPE，保留调用者已有的待决信号与掩码。 */
+    /* Block SIGPIPE only in the current thread, preserving the caller's pending signals and mask. */
     sigset_t block, old, pending;
     sigemptyset(&block);
     sigaddset(&block, SIGPIPE);

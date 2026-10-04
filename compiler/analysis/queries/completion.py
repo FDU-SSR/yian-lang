@@ -5,7 +5,7 @@ the recorded references, and the type space.  What a position *expects* is read
 from the token stream (are we after a dot? inside an import? in a type position?),
 a question the lexer can answer even for unfinished input — which is why a
 half-typed expression still gets sensible candidates instead of an empty list
-(未完成表达式时仍返回合理的降级结果).
+(unfinished expressions still receive useful fallback candidates).
 
 The compiler side decides *what* the candidates are; turning them into protocol
 items (kinds, snippet syntax, ranges) is the LSP layer's job.
@@ -195,7 +195,7 @@ def complete(
         # The analysis never reached a symbol table — a syntax error stops the
         # pipeline before resolution.  The names in the file itself are still a
         # better answer than nothing while the user is mid-expression, as long as
-        # nothing is claimed about what they mean (降级结果).
+        # nothing is claimed about what they mean (fallback candidates).
         return CompletionResult(items=__lexical_items(tokens, prefix), span=prefix_span)
     completion_context = __context_at(path, tokens, row, col)
     if completion_context == __CONTEXT_MEMBER:
@@ -393,7 +393,7 @@ def __value_items(
     """Names visible at a value or expression position.
 
     Locals shadow the module's names, so they go in first and the first entry for
-    a label wins (去除同名重复项，处理局部符号遮蔽).
+    a label wins (deduplicate labels and respect local shadowing).
     """
     items: dict[str, Completion] = {}
     container = navigator.enclosing_definition_name(path, row, col)
@@ -450,7 +450,7 @@ def __member_items(
 
     The receiver's type comes from the recorded reference for that expression, so
     the list matches the *static* type the analysis computed rather than what the
-    name looks like (成员补全与接收者静态类型一致).
+    name looks like (member completion follows the receiver's static type).
     """
     view = navigator.view
     if not view.has_types:
@@ -525,8 +525,8 @@ def __import_name_items(
     """Public names of the module named by the import statement being written.
 
     Only ``pub`` declarations are offered: an import cannot reach further, so the
-    list is exactly what the compiler would accept (补全不包含不可见
-    的私有符号).
+    list is exactly what the compiler would accept (completion excludes inaccessible
+    private symbols).
     """
     view = navigator.view
     tokens = view.tokens_of(path)
@@ -612,7 +612,7 @@ def __from_callable(
 
     Inserting ``name(${1:x})`` is what makes accepting a function item put the
     caret in its first parameter instead of leaving a bare name behind (
-补全项的插入文本与参数占位符).
+completion insertion text includes parameter placeholders).
     """
     parameters = view.parameters_of(type_id)
     signature = __render_signature(view, name, type_id)

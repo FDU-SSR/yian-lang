@@ -56,71 +56,71 @@ class FatSafety:
     # -- Pointer metadata --
 
     def is_fat(self, ll_val: LLValue) -> bool:
-        """判定 LLVM 值是否已是胖结构聚合(PointerType 24B / SliceType 24B / RefType 16B)。
+        """Test whether an LLVM value is a fat aggregate: pointer/slice 24 B, reference 16 B.
 
-        分级指针表示统一:三个指针族类型的 LLVM 值形态为 LiteralStructType 即视为胖值;
-        raw 模式无元数据(裸 T* / {T*, u64} / 裸 T*),恒 False。从 slice/str 提取的
-        裸 8B 指针(type_id 为 PointerType)按 LLVM 值形态(指针而非结构)不误判。
+        LiteralStructType values of these three families count as fat values.
+        Raw mode has no metadata (bare pointer / {T*,u64} / bare reference) and returns False.
+        A bare pointer extracted from slice/str is not mistaken for a fat PointerType value.
         """
         return self.__pointers.is_fat(ll_val)
 
     def is_fat_type(self, type_id: int) -> bool:
-        """类型层胖指针判定(分级指针 按 type_id 分派):PointerType(pointee 非 ZST)
-        4 字段 / SliceType·StrType 3 字段 / RefType 2 字段,均为胖结构值;
-        raw 模式恒 False,指针一律按裸 8B 处理。与 CFG 层 is_fat_pointer
-        对应(后者专指 PointerType 的全检查路径)。
+        """Classify fat values by type_id: non-ZST PointerType has four fields,
+        SliceType/StrType three, and RefType two. All are aggregate values.
+        Raw mode returns False and uses bare 8 B pointers. CFG's is_fat_pointer
+        corresponds specifically to PointerType's full-check path.
         """
         return self.__pointers.is_fat_type(type_id)
 
     def extract_fat_field(self, ll_val: LLValue, index: int) -> LLValue:
-        """提取胖指针聚合字段;整数字段一律零扩展到 u64、指针字段 u8*(下标见 FAT_*/SLICE_*/REF_*)。
+        """Extract aggregate fields, zero-extending integers to u64 and returning u8* pointers.
 
-        PointerType 的 index/size 是 32 位元素数, 值层统一按 u64 处理(长度来自已被
-        校验 ≤ MAX_VIEW_COUNT 的分配容量, 提取端零扩展; 比较/算术语义与 u64 版一致);
-        word 是完整的 64 位整字(锁址 + 键)。
+        FAT_*/SLICE_*/REF_* define indices. PointerType index/size count elements in 32 bits,
+        with allocation capacities bounded by MAX_VIEW_COUNT; zero-extension preserves u64
+        comparison/arithmetic semantics. word retains all 64 bits encoding lock and key.
         """
         return self.__pointers.extract_fat_field(ll_val, index)
 
     def insert_field_value(self, agg: LLValue, value: LLValue, index: int) -> LLValue:
-        """按目标字段实际位宽插入聚合字段(收窄到 32 位视图字段时截断)。
+        """Insert a field at its actual width, truncating 32-bit view fields.
 
-        收窄只发生在 index/size 上: 构造写入的长度来自受 Malloc 上限约束的分配容量,
-        算术写入由 CheckElementArith 保证 ≤ size ≤ MAX_VIEW_COUNT, 因此截断不改变语义。
+        Only index/size narrow: lengths come from Malloc-bounded capacities, and arithmetic
+        uses CheckElementArith to enforce <= size <= MAX_VIEW_COUNT, so truncation preserves semantics.
         """
         return self.__pointers.insert_field_value(agg, value, index)
 
     def narrow_view_value(self, ir_val: ir.Value, agg: ir.Value, index: int) -> ir.Value:
-        """把常量视图值收窄到目标聚合字段位宽(供 undef 重建路径直插用)。"""
+        """Narrow a constant view value to its field width for direct insertion when rebuilding undef."""
         return self.__pointers.narrow_view_value(ir_val, agg, index)
 
     @staticmethod
     def check_static_view_count(count: int) -> None:
-        """编译期数组退化的长度上限: 超过 32 位视图上限的类型无法表示, 直接报错。"""
+        """Reject array decay when its compile-time length exceeds the 32-bit view limit."""
         PointerRepresentation.check_static_view_count(count)
 
     def check_view_count(self, value: LLValue, suffix: str) -> None:
-        """分配元素数上限: 必须 ≤ MAX_VIEW_COUNT(否则 32 位长度字段会截断)。
+        """Check allocation count <= MAX_VIEW_COUNT to prevent 32-bit length truncation.
 
-        只在堆分配处发射一次: 视图长度都来自某个分配的容量, 分配受这条上限约束后,
-        由视图派生出的长度(子切片、T*→T[] 的剩余长度、视图转换)必然可表示。
+        Emit once per heap allocation. View lengths derive from allocation capacities, so this bound
+        makes subslice lengths, T* -> T[] remaining lengths, and converted views representable.
         """
         limit: ir.Value = ir.Constant(ir.IntType(64), ABI.MAX_VIEW_COUNT)  # type: ignore
         ok = self.__builder.icmp_unsigned("<=", value.ir_val, limit)  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, ok), RuntimeErrorCode.R001, suffix)
 
     def build_fat(self, data: LLValue, word: LLValue, index: LLValue, size: LLValue, type_id: int) -> LLValue:
-        """按结构构造胖值:PointerType 4 字段 ⟨data,word,index,size⟩ /
-        SliceType·StrType 3 字段 ⟨data,word,size⟩ / RefType 2 字段 ⟨data,word⟩。
+        """Construct fat aggregates: PointerType <data,word,index,size>,
+        SliceType/StrType <data,word,size>, RefType <data,word>.
 
-        word 同时携带锁址与键(见 lockmech), 槽里存同一份。
+        word carries the lock index and key, matching the slot (see lockmech).
         """
         return self.__pointers.build_fat(data, word, index, size, type_id)
 
     def lock_of(self, builder: ir.IRBuilder, word: ir.Value, data: ir.Value) -> ir.Value:
-        """从 word 的锁表下标取得表项地址, 与 data 和槽种类无关。
+        """Resolve the lock-entry address from word's index, independent of data or slot kind.
 
-        lock 字段就是锁表下标, 地址 = @__secl_lock_table + lock*LOCK_ENTRY_BYTES;
-        下标区间自带 kind, 热路径没有分派。data 参数保留是为了与调用点同构。
+        Address = @__secl_lock_table + lock*LOCK_ENTRY_BYTES. Index ranges encode kind without
+        hot-path dispatch. The data argument retains a uniform call-site interface.
         """
         i32: ir.IntType = ir.IntType(32)  # type: ignore
         i64: ir.IntType = ir.IntType(64)  # type: ignore
@@ -129,44 +129,44 @@ class FatSafety:
         return builder.gep(table, [ir.Constant(i64, 0), index], inbounds=True)  # type: ignore
 
     def literal_word(self) -> ir.Value:
-        """字面量指针携带的 word(锁表字面量槽 key = 0, 恒 live)。"""
+        """Word carried by literal pointers (literal slot key=0, always live)."""
         return self.__pointers.literal_word()
 
     def env_word(self) -> ir.Value:
-        """环境指针携带的 word(锁表环境槽 key = 0, 恒 live)。"""
+        """Word carried by environment pointers (environment slot key=0, always live)."""
         return self.__pointers.env_word()
 
     def fat_data(self, ll_val: LLValue) -> LLValue:
-        """取胖指针的 data 字段(裸 8B 地址);已是裸指针则直接返回。
+        """Extract a fat pointer's bare 8 B data address, or return an already raw pointer.
 
-        slice/str 构造边界:从 slice 提取的裸 8B 指针(未合成 fat)与 malloc/VarPtr
-        合成的 fat 在此统一取数据地址。
+        At slice/str construction boundaries this handles both raw pointers extracted from slices
+        and fat values synthesized by malloc/VarPtr.
         """
         return self.__pointers.fat_data(ll_val)
 
     def promote_fat(self, ll_val: LLValue) -> LLValue:
-        """把裸 8B 指针值(如 Alloca 结果)提升为胖指针 ⟨data, word, 0, 1⟩。
+        """Promote a raw 8 B pointer (such as Alloca) to <data,word,0,1>.
 
-        值层统一: type_id 为 PointerType 的 LLVM 值须是聚合才能跨调用/返回/存储;
-        Alloca 等产生裸指针的原语在此补全元数据(字面量锁槽, 恒 live)。
+        PointerType LLVM values must be aggregates to cross calls/returns/stores. Complete metadata
+        for raw-pointer primitives here using the always-live literal slot.
         """
         return self.__pointers.promote_fat(ll_val)
 
     def fat_addr(self, ll_val: LLValue, pointee_type_id: int) -> LLValue:
-        """地址折算:有效地址 = data + index·|T|,一次 GEP(检查与取数共用)。
+        """Resolve effective address = data + index*|T| with one GEP shared by checks and access.
 
-        对 fat 值提取 data/index 字段,bitcast 到 T* 后按元素索引 GEP;对裸 8B
-        指针直接使用(索引恒 0 语义)。T&无 index 字段,恒指单个元素——
-        有效地址即 data。O-1 无回摆由检查(well-formed)保障。
+        Extract fat data/index, bitcast to T*, then GEP by element; raw pointers use their address
+        with index zero. T& has no index and always addresses one element, so its address is data.
+        Validity checks enforce no wrap.
         """
         return self.__pointers.fat_addr(ll_val, pointee_type_id)
 
     def gen_key_value(self) -> LLValue:
-        """帧进入 re-key:发射不回绕的 32 位单调键体, 耗尽即失败 (R003)。
+        """Re-key on frame entry with a monotonic 32-bit key; exhaustion reports R003.
 
-        key 与锁表项的 32 位槽严格同宽: 计数到 FRAME_KEY_LIMIT(0xFFFFFFFE,
-        0xFFFFFFFF 留给帧退出的 SENTINEL)即确定性终止, 绝不回绕——回绕会让旧指针
-        重新匹配。堆对象的身份不走这里(锁表项按块换代)。
+        Key width matches the entry's 32-bit key. Reaching FRAME_KEY_LIMIT (0xFFFFFFFE, with
+        0xFFFFFFFF reserved for SENTINEL) terminates without wrapping, since reuse would match
+        old pointers. Heap identities use per-entry generations instead.
         """
         counter = self.__module.get_key_counter()
         loaded = self.__builder.load(counter)  # type: ignore
@@ -189,8 +189,8 @@ class FatSafety:
     ) -> LLValue:
         """Allocate a fat-mode pool block and attach a fresh lock-table identity."""
         ptr_type_id = self.__type_ctx.alloc_pointer(type_id)
-        # 元素数与元素大小都是编译期常量时, 直接传尺寸类号选择分配入口.
-        # 请求大于最大类或元素数非常量时走通用入口.
+        # When count and element size are compile-time constants, choose the allocator by size-class index.
+        # Use the generic entry for requests above the largest class or nonconstant element counts.
         if class_index is None:
             block_ir = self.__builder.call(self.__module.get_pool_alloc(), [payload.ir_val])  # type: ignore
         else:
@@ -199,9 +199,9 @@ class FatSafety:
                 [ir.Constant(ir.IntType(32), class_index)],  # type: ignore
             )  # type: ignore
         block_base = LLValue(ptr_type_id, block_ir)  # type: ignore
-        # 块头 {extent:u32 @0, pad:u32 @4} = 8 B; 身份在锁表项里。
-        # 发放全部在发射的 IR 里完成(自由链非空 → 弹出下标; 为空 → 调 bump 入口),
-        # 因此表项的 key 写对 LLVM 可见: 刚分配内存上的 live 检查能折叠成真。
+        # Header {extent:u32 @0,pad:u32 @4} is 8 B; identity resides in the lock entry.
+        # Emitted IR handles slot allocation: pop a free index or call bump when empty,
+        # making key writes visible to LLVM so live checks on fresh allocations can fold to true.
         i32: ir.IntType = ir.IntType(32)  # type: ignore
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         anchor_lo32 = self.__builder.trunc(  # type: ignore
@@ -252,7 +252,7 @@ class FatSafety:
             block_base.ir_val,
             [ir.Constant(i64, ABI.BlockHeader.EXTENT_OFFSET)],  # type: ignore
             inbounds=False,
-            source_etype=ir.IntType(8),  # 块头按字节偏移索引
+            source_etype=ir.IntType(8),  # Index the block header by byte offset.
         )
         self.__builder.store(self.__builder.trunc(size.ir_val, i32), extent_ptr)  # type: ignore
 
@@ -261,7 +261,7 @@ class FatSafety:
             block_base.ir_val,
             [ir.Constant(ir.IntType(64), ABI.BlockHeader.BYTES)],  # type: ignore
             inbounds=False,
-            source_etype=ir.IntType(8),  # 载荷区按字节偏移索引
+            source_etype=ir.IntType(8),  # Index the payload by byte offset.
         )
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), data_ir)  # type: ignore
         word_val = LLValue(self.__type_ctx.u64_id, key_ir)  # type: ignore
@@ -297,15 +297,15 @@ class FatSafety:
         return self.gen_key_value()
 
     def acquire_frame_lock(self, key: LLValue | None) -> LLValue:
-        """在固定地址的独立影子栈上 push 一个帧锁槽, 槽里写帧 word。
+        """Push a frame-lock slot on the fixed-address shadow stack and write its word.
 
-        帧 word = ⟨key:32 | lock:32⟩: key 来自全局单调计数器,
-        lock 是影子栈槽位下标。节点结果是该 word; 槽地址记在
-        __frame_lock_slot_name 里供返回路径写 SENTINEL。热路径只有一次深度检查、
-        一次 GEP 与两次 store; 槽位先写 word, 再发布新深度, 且在任何用户语句之前完成。
+        word=<key:32|lock:32>; key comes from the global monotonic counter and lock is the depth.
+        The node returns word; __frame_lock_slot_name records the address for return-path
+        SENTINEL writes. The hot path has one depth check, one GEP, and two stores:
+        write the slot before publishing depth, all before user statements.
         """
         if key is None:
-            # 帧锁节点可能先于它的 GenKey 被翻译(两者都插在入口), 这里就地取键。
+            # Frame-lock lowering can precede its entry-block GenKey; obtain the key here if needed.
             key = self.gen_key_value()
         depth_ptr = self.__module.get_frame_lock_depth()
         depth = self.__builder.load(depth_ptr, name="frame.depth")  # type: ignore
@@ -326,7 +326,7 @@ class FatSafety:
         )
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         frame_key = self.__builder.and_(key.ir_val, ir.Constant(i64, ABI.KEY_MASK))  # type: ignore
-        # word = ⟨key:32 | lock:32⟩, lock = 影子栈深度(锁表下标)
+        # word=<key:32|lock:32>, where lock is shadow-stack depth (lock-table index).
         frame_word: ir.Value = self.__builder.or_(  # type: ignore
             self.__builder.shl(frame_key, ir.Constant(i64, ABI.WORD_KEY_SHIFT)),  # type: ignore
             depth,
@@ -337,7 +337,7 @@ class FatSafety:
             depth, ir.Constant(ir.IntType(64), 1), name="frame.depth.next"  # type: ignore
         )
         self.__builder.store(next_depth, depth_ptr)  # type: ignore
-        # 槽地址登记为函数级寄存器: 返回路径用它写 SENTINEL(节点结果是帧 word, 不是槽)。
+        # Record the slot address in a function register for SENTINEL writes; the node result is word, not the slot.
         self.__func.set_reg(
             "frame.slot",
             LLValue(self.__type_ctx.alloc_pointer(TypeCtx.u64_id), slot),
@@ -348,26 +348,26 @@ class FatSafety:
     def write_lock_slot(self, lock_ptr: LLValue, value: LLValue) -> None:
         """Write ``value`` to the lock slot addressed by ``lock_ptr``.
 
-        指针恒非空,锁槽恒可写(空容器持真实堆块)。
+        The pointer is nonnull and the slot writable (empty containers own real heap blocks)。
         """
         raw = self.fat_data(lock_ptr).ir_val
         self.__builder.store(value.ir_val, raw)  # type: ignore
 
     def set_frame_lock(self, e_f: IR.Value) -> None:
-        """标记函数已取得帧锁:全部返回路径写 SENTINEL 并 pop。
+        """Record that the function acquired a frame lock: every return writes SENTINEL and pops.
 
-        acquire_frame_lock 将槽地址记在 __frame_lock_slot_name 中;
-        此方法只记录获取状态, 参数是帧 word 而非槽地址。
+        acquire_frame_lock records the address in __frame_lock_slot_name.
+        This method records acquisition state; its argument is word, not the address.
         """
         assert isinstance(e_f, IR.Reg), "帧锁必须为入口寄存器"
         self.__frame_lock_acquired = True
 
     def release_frame_lock(self) -> None:
-        """帧退出写 SENTINEL,再从稳定影子栈 pop。
+        """Write SENTINEL on exit, then pop the stable shadow stack.
 
-        槽位保持映射且永不成为用户数据;每次 push 均在用户语句前写入键。
-        编译器生成的函数进退严格 LIFO,
-        因此退出仅需递减深度,无需空闲链或动态槽位检索。
+        Slots remain mapped and never hold user data; push writes their key before user statements.
+        Compiler-generated function entry/exit strictly follows LIFO order,
+        so exit decrements depth without a free list or dynamic slot lookup.
         """
         if not self.__frame_lock_acquired or self.__frame_lock_slot_name is None:
             return
@@ -384,28 +384,28 @@ class FatSafety:
     # -- Fat-pointer derivation and comparison --
 
     def fat_addr_i128(self, ll_val: LLValue, pointee_type_id: int) -> ir.Value:
-        """有效地址(data + index·|T|)以 i128 计算——宽整数天然无回摆(O-1)。"""
+        """Compute effective address (data+index*|T|) as i128 to avoid address wrap."""
         return self.__pointers.fat_addr_i128(ll_val, pointee_type_id)
 
     def cmp_fat_operands(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value]:
-        """比较操作数的 (data, index) 字段对:fat 聚合提取字段;裸 8B 指针按
-        (自身, 0)(索引恒 0 语义)。返回 i8* 与 u64 两个 LLVM 值。"""
+        """Return comparison fields (data,index): extract fat fields or use (raw pointer,0).
+        Return two LLVM values, i8* and u64."""
         return self.__pointers.cmp_fat_operands(ll_val)
 
     def slice_ptr_fat(self, base: LLValue, ptr_type_id: int) -> LLValue:
-        """把 3 字段 slice/str 的 data 合成为 4 字段胖指针 ⟨data, word, 0, size⟩。
+        """Convert three-field slice/str data to <data,word,0,size>.
 
-        分级指针表示:slice/str 自身携带真实 word(size 下标 2),直接继承
-        (锁继承)——这是 T[]→T* 派生的锁继承来源。
+        Inherit the view's actual word directly (size is field 2), preserving
+        lock identity when deriving T* from T[].
         """
         return self.__pointers.slice_ptr_fat(base, ptr_type_id)
 
     def synthesize_fat_value(self, value: LLValue, size: LLValue) -> LLValue:
-        """把裸 8B 指针值合成 4 字段胖指针 ⟨data, word, 0, size⟩。
+        """Synthesize <data,word,0,size> from a bare 8 B pointer.
 
-        用于 slice/str 边界:从 16B slice 取出的 ptr 字段是裸 8B 指针,落入
-        {T*, u64} 形态聚合(SliceStruct 等)时补全元数据。锁用全局字面量锁槽
-        (恒 live)——合成点常在薄包装内,帧锁会随返回失效并逃逸到调用者死栈帧。
+        At slice/str boundaries, complete metadata for raw ptr fields entering {T*,u64}
+        wrappers such as SliceStruct. Use the always-live global literal slot: a frame lock
+        in a thin wrapper would become invalid on return and escape into its caller.
         """
         data = LLValue(self.__type_ctx.alloc_pointer(self.__type_ctx.u8_id), value.ir_val)  # type: ignore
         word = LLValue(self.__type_ctx.u64_id, self.literal_word())  # type: ignore
@@ -415,19 +415,19 @@ class FatSafety:
         return self.build_fat(data, word, zero, size, value.type_id)
 
     def __fat_value_pair(self, v: ir.Value) -> tuple[ir.Value, ir.Value]:
-        """ir.Value 级别的 (data, second) 字段对(分级指针表示分派)。
+        """Return (data,second) at ir.Value level according to pointer representation.
 
-        第二字段按结构:4 字段指针取 index、3 字段 slice 取 size、2 字段 ref 取 word、
-        raw 2 字段 slice 取 size;裸指针按 (自身, 0)。
+        second is index for four-field pointers, size for three-field slices, word for
+        two-field references, size for raw slices, and zero for bare pointers.
         """
         if isinstance(v.type, ir.LiteralStructType):  # type: ignore
             field_count = len(v.type.elements)  # type: ignore
             if field_count >= 4:
-                second_idx = ABI.FAT_INDEX      # 胖指针: 比较 (data, index)
+                second_idx = ABI.FAT_INDEX      # Fat pointer: compare (data,index).
             elif field_count == 3:
-                second_idx = ABI.SLICE_SIZE     # 切片: 比较 (data, size)
+                second_idx = ABI.SLICE_SIZE     # Slice: compare (data,size).
             else:
-                second_idx = ABI.REF_WORD       # 引用: 比较 (data, word)
+                second_idx = ABI.REF_WORD       # Reference: compare (data,word).
             second = self.__builder.extract_value(v, second_idx)  # type: ignore
             if isinstance(second.type, ir.IntType) and second.type.width < 64:  # type: ignore
                 second = self.__builder.zext(second, ir.IntType(64))  # type: ignore
@@ -435,10 +435,10 @@ class FatSafety:
         return (v, ir.Constant(ir.IntType(64), 0))  # type: ignore
 
     def cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-        """对 ir.Value 级胖指针聚合操作数做字段比较。
+        """Compare fields of fat ir.Value aggregates.
 
-        相等按 (data, index) 二元组;序比较先插 data 相等前提检查(
-        跨对象失败)——未由 CFG 路由至此分支,须现场插检。
+        Equality uses (data,index); ordering first checks equal data and rejects different objects.
+        CFG did not route these values here, so insert the precondition locally.
         """
         data_l, idx_l = self.__fat_value_pair(lhs)
         data_r, idx_r = self.__fat_value_pair(rhs)
@@ -458,7 +458,7 @@ class FatSafety:
     # -- Access checks --
 
     def __word_key(self, word: ir.Value) -> ir.Value:
-        """取 word 里的 32 位 key(与锁表项里的 key 同宽)。"""
+        """Extract word's 32-bit key, matching the lock-entry key width."""
         i64: ir.IntType = ir.IntType(64)  # type: ignore
         return self.__builder.and_(  # type: ignore
             self.__builder.lshr(word, ir.Constant(i64, ABI.WORD_KEY_SHIFT)),  # type: ignore
@@ -466,11 +466,11 @@ class FatSafety:
         )
 
     def __extract_check_fields(self, ll_val: LLValue) -> tuple[ir.Value, ir.Value, ir.Value, ir.Value]:
-        """一次提取 check 字段 bundle (data, word, index, size)——仅 PointerType(4 字段)。
+        """Extract the check bundle (data,word,index,size) once for four-field PointerType.
 
-        check_safe_access 用 bundle 一次取齐 live(data/word 重建锁槽)与
-        in_bounds(index/size)两谓词所需字段, 避免各谓词重复 extract;
-        RefType(2 字段, 无 index/size)不得经此。
+        check_safe_access uses the bundle for live (data/word reconstruct the slot) and
+        in_bounds (index/size), avoiding repeated extraction.
+        Two-field RefType has no index/size and must not use this path.
         """
         ty = self.__type_ctx[ll_val.type_id]
         if not isinstance(ty, Type.PointerType):
@@ -482,11 +482,11 @@ class FatSafety:
         return data, word, index, size
 
     def __check_live(self, word: ir.Value, data: ir.Value) -> LLValue:
-        """live(p):锁表项 key 比较 ∧ word ≠ 0, 无分派、无窗口。
+        """live(p): compare the entry key and require word != 0, without dispatch or windows.
 
-        锁槽地址只由 word 的 lock 下标给出; 表项里存的是同一个 32 位 key, 所以比较
-        恒为"一次 32 位 load + 一次 32 位比较"。null(word = 0)用一次与运算短路为假,
-        不读表项 0, 也不多一个基本块。
+        word's lock index alone addresses the slot, whose key has the same 32-bit width,
+        so comparison uses one 32-bit load and comparison. Null (word=0) yields false
+        through an and operation without reading entry zero or adding a basic block.
         """
         i32: ir.IntType = ir.IntType(32)  # type: ignore
         lock = self.lock_of(self.__builder, word, data)
@@ -497,20 +497,20 @@ class FatSafety:
         return LLValue(self.__type_ctx.bool_id, self.__builder.and_(nonnull, matched))  # type: ignore
 
     def __check_in_bounds_cond(self, index: ir.Value, size: ir.Value) -> LLValue:
-        """in_bounds(p,1):0 ≤ index ∧ index+1 ≤ size,简化为 index < size(u64)。"""
+        """in_bounds(p,1): 0 <= index and index+1 <= size, simplified to unsigned index < size."""
         cond = self.__builder.icmp_unsigned("<", index, size)  # type: ignore
         return LLValue(self.__type_ctx.bool_id, cond)  # type: ignore
 
     def __check_live_and(self, word: ir.Value, data: ir.Value, other: ir.Value) -> ir.Value:
-        """live(p) ∧ other(i1 值)。"""
+        """Combine live(p) with other, an i1 value."""
         live_val = self.__check_live(word, data)
         return self.__builder.and_(live_val.ir_val, other)  # type: ignore
 
     def check_safe_access(self, ptr: LLValue, live: bool = True) -> None:
-        """safe_access(p,1) = live(p) ∧ in_bounds(p,1)。
+        """safe_access(p,1) = live(p) and in_bounds(p,1).
 
-        ``live=False``:调用点已确认该指针的锁槽恒等于其键(函数帧内取址),
-        时序项恒真,只发射空间项;错误码与失败条件(排除恒真项后)不变。
+        live=False means the call site knows the slot matches the pointer's key (current-frame address),
+        so emit only bounds checks, preserving error codes and remaining failure conditions.
         """
         if not self.is_fat(ptr):
             return
@@ -539,7 +539,7 @@ class FatSafety:
         if live:
             live_ok = self.__check_live(word, data)
         else:
-            # 帧内视图:锁槽恒等于其键,live 项恒真(见 check_safe_access)。
+            # Current-frame views have matching slot keys and known-true live (see check_safe_access).
             live_ok = LLValue(self.__type_ctx.bool_id, ir.Constant(ir.IntType(1), 1))  # type: ignore
 
         zero = ir.Constant(ir.IntType(64), 0)  # type: ignore
@@ -554,8 +554,8 @@ class FatSafety:
         # Heap views can be checked against the allocation header. Stack and
         # literal views have no allocation header; their constructors establish
         # the source range and the live lock protects their lifetime.
-        # 槽种类由锁表下标区间给出(堆区间 ≥ HEAP_LOCK_BASE); 负载锚由表项
-        # anchor_lo32 + data 高 32 位还原, 块首 = 锚 - BYTES(分配器保证同 4 GiB 窗口)。
+        # Index ranges encode slot kind (heap >= HEAP_LOCK_BASE); reconstruct the payload anchor from
+        # anchor_lo32 and data's high bits, then block base=anchor-BYTES (the allocator guarantees one 4 GiB window).
         index = self.__builder.and_(word, ir.Constant(ir.IntType(64), ABI.LOCK_MASK))  # type: ignore
         heap = self.__builder.icmp_unsigned(  # type: ignore
             ">=", index, ir.Constant(ir.IntType(64), ABI.HEAP_LOCK_BASE)  # type: ignore
@@ -570,7 +570,7 @@ class FatSafety:
         element_size = self.__ll_type_ctx.get_type_size(element_type)
         i128: ir.IntType = ir.IntType(128)  # type: ignore
         span_bytes, span_no_wrap = self.__mul_u64_i128(size, element_size)
-        # 块头 extent 是元素数: 按同一个元素大小折算成字节再比较。
+        # Header extent counts elements: convert to bytes with the same element size before comparison.
         active_size_bytes = self.__builder.mul(  # type: ignore
             active_size, ir.Constant(ir.IntType(64), element_size)  # type: ignore
         )
@@ -608,7 +608,7 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "view")
 
     def check_in_bounds(self, ptr: LLValue) -> None:
-        """in_bounds(p_s,1)(重锚定前提)。"""
+        """in_bounds(p_s,1), the re-anchoring precondition."""
         if not self.is_fat(ptr):
             return
         index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
@@ -626,10 +626,10 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, nonempty), RuntimeErrorCode.S007, "sref")
 
     def check_ref_access(self, ptr: LLValue) -> None:
-        """T& 引用访问前检:仅 live(免 in_bounds,tiered-pointers)。
+        """T& access precheck: live only, without bounds.
 
-        引用无 index/size(2 字段 ⟨data,word⟩),无越界概念;
-        live = 锁槽键比较(含 null 短路)。live 失败 → 报告 S003。
+        Two-field <data,word> references have no index/size or bounds metadata.
+        Compare slot keys, with null yielding false; live failure reports S003.
         """
         if not self.is_fat(ptr):
             return
@@ -648,22 +648,22 @@ class FatSafety:
         return self.__builder.and_(no_wrap, in_range)  # type: ignore
 
     def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
-        """良构检查:0 ≤ index+offset ≤ size;u64 同型化(回绕检测 + 上界比较)。
+        """Check 0 <= index+offset <= size using u64 no-wrap and upper-bound comparisons.
 
-        指针算术本身不访问内存，因此这里与 PtrDiff/PtrCmp 一样不检查
-        allocation live 状态；解引用与外部 I/O 在各自访问边界检查 live。
+        Pointer arithmetic does not access memory, so, like PtrDiff/PtrCmp, it omits
+        allocation liveness. Dereference and external I/O check live at their access boundaries.
 
-        对 u64 索引(非负恒真)把 0 ≤ index+offset ≤ size 分解为 u64 计算:
-        (a) 回绕检测 no_wrap = icmp uge sum, index(sum = index+offset,u64 回绕
-        ⟺ sum < index);(b) 上界比较 in_range = icmp ule sum, size;条件 =
-        and(no_wrap, in_range)。与 i128 语义论证:正偏移(offset < 2^63 且
-        index+offset < 2^64)无回绕时 sum ≥ index 恒真,只剩上界比较,与 i128
-        完全等价;回绕(index+offset ≥ 2^64)时 sum < index → no_wrap 失败 →
-        失败(等价 i128 的 sum ≥ 2^64 > size);下溢偏移(offset ≥ 2^63,
-        语义 = 极大无符号下标)u64 形式报告安全错误(收紧,对齐 u64 索引语义——sext
-        形式把其误解为负数,子切片 base.index ≥ |o| 时放行)。u64 同型使
-        ConstraintElimination 可关联循环/分支约束消除本检查(O-1 由回绕检测
-        落地,无需宽整数)。LLVM 层 发射。
+        For unsigned indices, nonnegativity is automatic. Decompose the condition into:
+        (a) no_wrap = icmp uge sum,index (sum=index+offset; unsigned wrap means sum<index),
+        (b) in_range = icmp ule sum,size, combining them with and.
+        For positive offsets below 2^63 and index+offset below 2^64, no_wrap is true,
+        leaving the upper bound, equivalent to the i128 formulation.
+        On overflow sum<index rejects the operation, equivalent to i128 sum>=2^64>size.
+        Offsets >=2^63 are very large unsigned indices and report a safety error;
+        sign-extension would instead treat them as negative and could admit a subslice
+        when base.index >= |offset|. The u64 form lets ConstraintElimination relate
+        loop/branch constraints and remove redundant checks,
+        while no-wrap remains enforced without wide integers. LLVM emits the predicate.
         """
         if not self.is_fat(base):
             return
@@ -671,23 +671,23 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S004, "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue, live: bool = True) -> None:
-        """合并检查:ElementArith→InBounds→SafeAccess 合取谓词(检查合并优化)。
+        """Combine ElementArith, InBounds, and SafeAccess into one predicate.
 
-        派生链 elem = base + offset → f = elem.field → 访问 f 的三重检查合并:
-        良构(elem)(u64 同型化:回绕检测 + 上界比较)∧ in_bounds(elem,1)
-        (one-past-end 的 elem 取字段时报告安全错误)∧ live(elem)(
-        SafeAccess 的 live 项;in_bounds(f,1) 对重锚定字段指针恒真、
-        live(f)=live(elem) 由锁字段继承)。禁止丢 no-wrap/live 任一子项。
-        LLVM 层 发射。
+        For elem=base+offset, f=elem.field, and access of f, require arithmetic validity
+        (u64 no-wrap and upper bound), in_bounds(elem,1)
+        (one-past-end field access is invalid), and live(elem).
+        A re-anchored field pointer has in_bounds(f,1) true and inherits its lock,
+        so live(f)=live(elem). Neither no-wrap nor live may be dropped.
+        LLVM emits the check.
         """
         if not (self.is_fat(base) and self.is_fat(ptr)):
             return
         elarith_cond = self.__element_arith_cond(base, offset)
-        # InBounds 部分:elem.index < elem.size
+        # InBounds term: elem.index < elem.size.
         e_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
         e_size = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
         ib_cond = self.__builder.icmp_unsigned("<", e_index, e_size)  # type: ignore
-        # live 部分:锁槽键比较,含 null 短路;帧内 elem 恒真时省略该项
+        # live term: compare slot keys, with null false; omit it when current-frame elem is known live.
         if live:
             ev_data = self.extract_fat_field(ptr, ABI.FAT_DATA).ir_val
             ev_word = self.extract_fat_field(ptr, ABI.FAT_WORD).ir_val
@@ -698,18 +698,18 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S002, "eacc")
 
     def check_raw_bounds(self, index: LLValue, length: int) -> None:
-        """惰性左值路径裸数组越界检查:0 ≤ index < length(编译期长度)。
+        """Lazy lvalue raw-array bounds check: 0 <= index < compile-time length.
 
-        未取址裸数组元素访问无胖元数据,单 unsigned 比较即达 fat 路径
-        CheckElementArith + CheckSafeAccess 的组合越界语义(索引已 coerce u64)。
+        Unaddressed arrays have no fat metadata. One unsigned comparison gives the combined
+        CheckElementArith/CheckSafeAccess bounds semantics; index is already coerced to u64.
         """
         cond = self.__builder.icmp_unsigned("<", index.ir_val, ir.Constant(ir.IntType(64), length))  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
-        """前提:data 相等 + 良构(双方 index ≤ size)+ 差可表示。
+        """Preconditions: equal data, both indices <= size, and a representable difference.
 
-        PtrDiff 不访问内存，故沿用指针算术策略，不检查 allocation live。
+        PtrDiff does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
         if not (self.is_fat(lhs) and self.is_fat(rhs)):
             return
@@ -731,9 +731,9 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """序比较前提:data 相等(跨对象序比较报告 S005)。
+        """Ordering precondition: equal data; cross-object ordering reports S005.
 
-        PtrCmp 不访问内存，故沿用指针算术策略，不检查 allocation live。
+        PtrCmp does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
         if not (self.is_fat(lhs) and self.is_fat(rhs)):
             return
@@ -763,7 +763,7 @@ class FatSafety:
         lock = self.lock_of(self.__builder, word, data)
         live_ok = self.__check_live(word, data)
         header_guard: ir.Value = self.__builder.and_(heap_ok, live_ok.ir_val)  # type: ignore
-        # 锚点判定: 表项 anchor_lo32 必须等于 data 低 32 位(重锚定指针立刻被拒)。
+        # Anchor check: anchor_lo32 must equal data's low 32 bits, immediately rejecting re-anchored pointers.
         anchor = self.__load_guarded_u32(lock, ABI.LockEntry.ANCHOR_OFFSET, header_guard)
         data_int: ir.Value = self.__builder.ptrtoint(data, ir.IntType(64))  # type: ignore
         raw_data_ok = self.__builder.icmp_unsigned(  # type: ignore

@@ -1,30 +1,30 @@
-// 故意写错的模块，供 IDE 诊断验收。
+// Intentionally invalid module for IDE diagnostic checks.
 //
-// 各函数分别构造一种错误场景，供语言服务器诊断样例工程使用。
+// Each function exercises an error for the language-server diagnostic sample.
 from sample_errors.helper import Origin, add, double;
 from sample_errors.types import Meters;
 
-// 1) 类型不匹配：返回 str，函数声明是 i32。
+// 1) Type mismatch: return str from a function declared i32.
 pub fn wrong_return_type() -> i32 {
     return "not an integer";
 }
 
-// 2) 未定义的名字。
+// 2) Undefined name.
 pub fn undefined_name() -> i32 {
     return not_defined_anywhere;
 }
 
-// 3) 访问不存在的字段。
+// 3) Access a nonexistent field.
 pub fn unknown_field(origin: Origin) -> Meters {
     return origin.z;
 }
 
-// 4) 参数个数不对。
+// 4) Incorrect argument count.
 pub fn wrong_arity() -> i32 {
     return add(1);
 }
 
-// 5) 同一个函数用错参数类型。
+// 5) Incorrect argument type for the same function.
 pub fn wrong_argument_type() -> i32 {
     return double("twenty one");
 }

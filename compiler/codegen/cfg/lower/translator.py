@@ -25,7 +25,7 @@ class CfgTranslator:
         return self.__module
 
     def run(self, def_points: dict[int, DefPoint]) -> None:
-        """逐个 `DefPoint` 下降成 CFG 函数，登记进 ctx 的函数表。"""
+        """Lower each DefPoint to a CFG function and register it in ctx's function table."""
         for dp in def_points.values():
             ty = self.__session.type_ctx[dp.type_id]
             if not isinstance(ty, (Type.FunctionType, Type.MethodType, Type.ClosureType)):
@@ -36,7 +36,7 @@ class CfgTranslator:
 
 
 # ---------------------------------------------------------------------------
-# 逐函数装配
+# Per-function assembly.
 # ---------------------------------------------------------------------------
 
 
@@ -73,7 +73,7 @@ class FunctionBuilder:
             ]
             if len(self.__closure_parameter_ids) != len(self.__closure_type.parameters):
                 raise ValueError("Closure CFG parameters do not match the checked closure signature")
-        # 发射句柄：当前函数 / 当前块 / 命名计数器
+        # Emission handles: current function, current block, and naming counter.
         self.__pointers = PointerFacts(ctx.type_ctx, ctx.raw_pointers)
         self.__emitter = FunctionEmitter(self.__pointers)
         self.__func_name = func_type.custom_def.name
@@ -122,10 +122,10 @@ class FunctionBuilder:
         if self.__emitter.current_block.terminator is None and self.__return_type != TypeCtx.void_id:
             self.__emitter.terminate(IR.Ret(body_val))
 
-        # ── 帧锁实体化标记 ──
-        # 函数若实体化了帧锁,LLVM 层须在全部返回路径 ret 前
-        # 写 SENTINEL 并从稳定影子栈弹出槽位,
-        # 使栈悬垂访问经 live 键比较确定性失败。标记随函数传给 LLTranslator。
+        # -- Frame-lock materialization marker --
+        # For functions with a materialized frame lock, LLVM must write SENTINEL before ret on every return path
+        # and pop the stable shadow-stack slot,
+        # so dangling stack accesses fail key comparison deterministically. Pass this marker to LLTranslator.
         self.__emitter.func.frame_lock = self.__exprs.values.frame_lock
 
         return CfgFunction(

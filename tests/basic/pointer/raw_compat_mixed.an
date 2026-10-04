@@ -1,8 +1,8 @@
-// raw_compat_mixed.an — 裸指针兼容:混合操作(分配 + 算术 + 字段 + 释放)
+// raw_compat_mixed.an: allocation, arithmetic, field access, and release.
 //
-// 组合用例:链表构建/遍历/释放 + 栈数组指针算术与差、序比较,
-// 混合 dyn 分配、struct 字段访问、del。正确程序,
-// fat 与 raw 双模式都必须 exit 0。
+// Combine linked-list construction/traversal/release with stack-array arithmetic, differences, and ordering,
+// using dyn, struct fields, and del in a valid program.
+// Both fat and raw modes must exit zero.
 //
 // Expected output: 0
 
@@ -12,7 +12,7 @@ struct Node {
 }
 
 fn main() {
-    // 链表构建 + 遍历
+    // Build and traverse the linked list.
     let n3: Node* = dyn Node(3, Option<Node*>.None);
     let n2: Node* = dyn Node(2, Option<Node*>.Some(n3));
     let n1: Node* = dyn Node(1, Option<Node*>.Some(n2));
@@ -30,7 +30,7 @@ fn main() {
     }
     assert sum == 6: "list sum == 6";
 
-    // 栈数组指针算术 + 差 + 序比较
+    // Stack-array pointer arithmetic, differences, and ordering.
     let arr: i32[5] = [1, 2, 3, 4, 5];
     let p: i32* = &arr[0];
     assert *(p + 3) == 4: "*(p+3) == 4";
@@ -38,7 +38,7 @@ fn main() {
     assert diff == 4: "ptr diff == 4";
     assert p + 4 > p + 3: "p+4 > p+3";
 
-    // 释放整条链(先存 next 再 del)
+    // Release the whole chain, saving next before del.
     let d: Option<Node*> = Option<Node*>.Some(n1);
     let count: i32 = 0;
     while d.is_some() {

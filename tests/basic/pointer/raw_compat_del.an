@@ -1,8 +1,8 @@
-// raw_compat_del.an — 裸指针兼容:分配 + 释放 + 重分配
+// raw_compat_del.an: raw-pointer allocation, release, and reallocation.
 //
-// 覆盖 del 正常路径后堆仍可用:del 释放一块,随后重分配的新块可
-// 正常读写(不依赖已释放指针),连续三轮分配/释放验证堆状态稳定。
-// 正确程序(无 UAF/OOB),fat 与 raw 双模式都必须 exit 0。
+// Verify the heap remains usable after del: a fresh block can be read/written independently
+// of released pointers. Three allocation/release rounds verify stable heap state.
+// A valid program without UAF/OOB must exit zero in both fat and raw modes.
 //
 // Expected output: 0
 
@@ -14,7 +14,7 @@ fn main() {
 
     del p;
 
-    // 释放后重分配:新块独立可用
+    // Reallocate after release; the fresh block is independently usable.
     let q: i32* = dyn[4] 0i32;
     q[1] = 5;
     q[2] = 6;
@@ -22,7 +22,7 @@ fn main() {
     assert q[1] + q[2] == 11: "q[1]+q[2] == 11";
     del q;
 
-    // 再次分配确认堆状态正常
+    // Allocate again to verify heap state.
     let r: i32* = dyn[2] 0i32;
     r[0] = 1;
     r[1] = 2;

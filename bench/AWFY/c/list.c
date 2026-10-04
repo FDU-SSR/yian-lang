@@ -3,13 +3,13 @@
 #include <stdbool.h>
 #include <assert.h>
 
-// 链表节点结构体
+// Linked-list node struct.
 typedef struct Element {
     int val;
     struct Element* next;
 } Element;
 
-// 创建链表
+// Create a linked list.
 Element* Element_make_list(int length) {
     if (length == 0) {
         return NULL;
@@ -21,12 +21,12 @@ Element* Element_make_list(int length) {
     return e;
 }
 
-// 计算链表长度
+// Compute list length.
 int Element_length_method(Element* self) {
     return self->next == NULL ? 1 : 1 + Element_length_method(self->next);
 }
 
-// 释放链表（不释放头节点）
+// Release the list except its head.
 void Element_free_method(Element* self) {
     Element* current = self->next;
     while (current != NULL) {
@@ -36,7 +36,7 @@ void Element_free_method(Element* self) {
     }
 }
 
-// 计算链表长度（外部函数）
+// Compute list length (external function).
 int Element_length(Element* e) {
     if (e == NULL) {
         return 0;
@@ -44,7 +44,7 @@ int Element_length(Element* e) {
     return Element_length_method(e);
 }
 
-// 判断链表x是否比链表y短
+// Test whether list x is shorter than list y.
 bool is_shorter_than(Element* x, Element* y) {
     Element* x_tail = x;
     Element* y_tail = y;
@@ -59,7 +59,7 @@ bool is_shorter_than(Element* x, Element* y) {
     return false;
 }
 
-// 递归的tail函数
+// Recursive tail function.
 Element* tail(Element* x, Element* y, Element* z) {
     if (is_shorter_than(y, x)) {
         Element* next_x = (x != NULL) ? x->next : NULL;
@@ -76,7 +76,7 @@ Element* tail(Element* x, Element* y, Element* z) {
     return z;
 }
 
-// 释放整个链表（包括头节点）
+// Release the entire list, including its head.
 void free_list(Element* e) {
     if (e == NULL) {
         return;
@@ -85,7 +85,7 @@ void free_list(Element* e) {
     free(e);
 }
 
-// 性能测试函数
+// Benchmark function.
 int benchmark_list() {
     Element* x = Element_make_list(15);
     Element* y = Element_make_list(10);
@@ -101,7 +101,7 @@ int benchmark_list() {
     return l;
 }
 
-// 主函数
+// main function.
 int main(int argc, char **argv) {
     int iterations = argc > 1 ? atoi(argv[1]) : 94077;
     for (int i = 0; i < iterations; i++) {

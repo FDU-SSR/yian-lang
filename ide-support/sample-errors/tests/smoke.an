@@ -1,4 +1,4 @@
-// 测试文件保持正确，避免它引入额外噪声。
+// Keep this test valid to avoid unrelated diagnostic noise.
 from std.core.io import print;
 
 fn main() {

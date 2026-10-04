@@ -6,12 +6,12 @@ from std.core.fmt import ToString;
 from std.core.ops import Index;
 from compiler.frontend.ast.node import TypeSource;
 
-// 将 AST 顺序写入借用的 JSON writer，保持节点标签、源码范围和字段结构。
+// Write the AST sequentially to a borrowed JSON writer, preserving tags, source spans, and field structure.
 pub struct AstFormatter { output: Writer& }
 impl AstFormatter {
     static pub fn new(output: Writer&) -> Self { Self(output=output) }
 
-    // 打开节点对象及其 fields 对象；node_end 按相反顺序闭合。
+    // Open the node object and its fields object; node_end closes them in reverse order.
     fn node_start(tag: str, span: Span) {
         self.output.begin_object();
         self.output.key("tag");

@@ -283,11 +283,11 @@ YIAN 安全模式使用运行时管理的单线程堆池。每个堆块都分为
 fn main() {
     let data: i32[5] = [10, 20, 30, 40, 50]
 
-    // 取数组中第二个元素的地址。
+    // Address the array's second element.
     let p: i32* = &data[1]
     assert *p == 20
 
-    // 切片是原数组的一段视图，不会拥有新的独立数据。
+    // A slice views part of the original array without owning independent data.
     let tail: i32[] = data[1u64..5]
     assert tail.len() == 4
     assert tail[0] == 20
@@ -307,8 +307,8 @@ fn main() {
     values[1] = 20
     values[2] = 30
 
-    // 合法下标只有 0、1、2。
-    values[3] = 40  // 安全错误 S002：越过动态数组末尾
+    // Valid indices are zero, one, and two.
+    values[3] = 40  // Safety error S002: past the dynamic array end.
 }
 ```
 
@@ -322,11 +322,11 @@ fn main() {
     let data: i32[3] = [10, 20, 30]
     let first: i32* = &data[0]
 
-    // 指向数组末尾之后的位置，可以作为循环边界保存。
+    // A one-past-end pointer may be retained as a loop boundary.
     let end: i32* = first + 3
 
     // let value: i32 = *end
-    // 安全错误 S002：one-past 位置不能被解引用
+    // Safety error S002: one-past-end cannot be dereferenced.
 }
 ```
 
@@ -342,7 +342,7 @@ fn main() {
     p[0] = 42
     del p
 
-    p[0] = 7  // 安全错误 S002：释放后使用
+    p[0] = 7  // Safety error S002: use after free.
 }
 ```
 
@@ -353,7 +353,7 @@ fn main() {
     let p: i32* = dyn[1] 0
     p[0] = 42
     del p
-    del p  // 安全错误 S006：双重释放
+    del p  // Safety error S006: double free.
 }
 ```
 
@@ -366,7 +366,7 @@ fn main() {
     let p: i32* = dyn[4] 0
     let inner: i32* = p + 1
 
-    del inner  // 安全错误 S006：inner 不是分配返回的对象起始指针
+    del inner  // Safety error S006: inner is not the allocation's original base pointer.
 }
 ```
 
@@ -386,7 +386,7 @@ fn main() {
     let value: i32 = 41
     let p: i32* = &value
 
-    // 显式类型标注触发 T* -> T[] 和 T* -> T& 转换。
+    // Explicit annotations trigger T* -> T[] and T* -> T& conversions.
     let view: i32[] = p
     let reference: i32& = p
     let reference2: i32& = view
@@ -407,13 +407,13 @@ fn main() {
 
 ```yian
 fn main() {
-    // 这个切片覆盖整个 4 元素 i32 堆块，因此可以释放。
+    // This slice covers the entire four-element i32 heap block and can be deleted.
     let p: i32* = dyn[4] 0
     let whole: i32[] = p
     assert whole.len() == 4
     del whole
 
-    // 一元素堆对象的起点引用也可以释放背后的整个堆块。
+    // A reference to the start of a one-element heap object can release its entire block.
     let p2: i32* = dyn[1] 0
     p2[0] = 7
     let r: i32& = &p2[0]
@@ -429,7 +429,7 @@ fn main() {
     let p: i32* = dyn[3] 0
     let offset: i32[] = p[1u64..3]
 
-    del offset  // 安全错误 S006：offset 不是完整堆块视图
+    del offset  // Safety error S006: offset is not a whole-block view.
 }
 ```
 
@@ -440,7 +440,7 @@ fn main() {
     let p: i32* = dyn[3] 0
     let r: i32& = &p[1]
 
-    del r  // 安全错误 S006：r 指向堆块内部，不是对象起点
+    del r  // Safety error S006: r points inside the heap block, not to its base.
 }
 ```
 
@@ -457,7 +457,7 @@ fn make_reference() -> i32& {
 
 fn main() {
     let r: i32& = make_reference()
-    let value: i32 = *r  // 安全错误 S003：原函数帧已经退出
+    let value: i32 = *r  // Safety error S003: the originating frame has exited.
 }
 ```
 
@@ -473,12 +473,12 @@ fn main() {
     del first
 
     let fresh: i32* = dyn[2] 0
-    // 空闲池可能复用物理地址；此处不要求 old 与 fresh 地址相等。
+    // The free pool may reuse addresses; old and fresh are not required to have equal addresses here.
     fresh[0] = 2
 
-    // 即使两者地址相等，old 仍然携带旧生命周期键。
+    // Even at an equal address, old still carries the previous lifetime key.
     // let value: i32 = *old
-    // 安全错误 S002：旧生命周期不能访问新对象
+    // Safety error S002: an old lifetime cannot access a new object.
 
     del fresh
 }

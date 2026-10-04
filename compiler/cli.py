@@ -19,7 +19,7 @@ def parse_arguments(
     options: Mapping[str, argparse.Action],
     argv: Sequence[str],
 ) -> argparse.Namespace:
-    """按顺序扫描单值选项和标志，输入路径可与选项混排。"""
+    """Scan single-value options and flags in order, allowing input paths between options."""
     option_args: list[str] = []
     paths: list[str] = []
     index = 0
@@ -39,7 +39,7 @@ def parse_arguments(
                 parser.error(f"argument {name}: expected one argument")
             attached = argv[index]
             index += 1
-        # 附加值保留以横杠开头的文本；argparse 校验类型、choices 和 action。
+        # Attached values retain leading hyphens; argparse validates types, choices, and actions.
         option_args.append(f"{action.option_strings[-1]}={attached}")
 
     while index < len(argv):
@@ -76,5 +76,5 @@ def parse_arguments(
                 break
             offset += 1
 
-    # 一个结束标记保护所有输入路径，并保留其在命令行中的顺序。
+    # One end-of-options marker protects all input paths while preserving their command-line order.
     return parser.parse_args([*option_args, "--", *paths])

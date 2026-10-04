@@ -1,4 +1,4 @@
-// Fat-pointer comparison field-based semantics (指针比较)
+// Fat-pointer comparison uses field-based semantics.
 //
 // 1. Cross-object == is ALLOWED — equality compares the (data, index) pair
 // 2. Same-object ordered comparison — compares by index after data-equal check
@@ -29,7 +29,7 @@ fn main() {
     assert p2 >= p1: "p2 >= p1";
     assert !(p2 < p1): "p2 < p1 should be false";
 
-    // -- assertion 3: cross-object < safety errors (data unequal → 前提失败) --
+    // -- Assertion 3: cross-object < fails its equal-data precondition --
     let c1: i32 = 5;
     let c2: i32 = 6;
     let pc1: i32* = &c1;

@@ -2,9 +2,9 @@
 #define YIAN_IO_H
 #include <stdint.h>
 
-/* 失败返回 -errno; 元数据字段为类型、长度、修改时间秒与纳秒。
- * 打开选项位为读、写、追加、创建、截断、排他创建。
- * 文件类型为普通文件=1、目录=2、符号链接=3、其他=4。 */
+/* Failures return -errno; metadata fields are kind, length, and modification seconds/nanoseconds.
+ * Open-option bits: read, write, append, create, truncate, exclusive create.
+ * File kinds: regular=1, directory=2, symbolic link=3, other=4. */
 int32_t yian_io_error_kind(int32_t error);
 int64_t yian_io_error_message(int32_t error, uint8_t *buffer, uint64_t capacity);
 int64_t yian_io_open(const char *path, uint32_t options);

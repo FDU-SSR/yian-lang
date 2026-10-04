@@ -11,12 +11,12 @@ from typing import cast
 from compiler.analysis.ty.context import TypeCtx
 from llvmlite import ir  # type: ignore[import-untyped]
 
-# 胖指针块布局:每个堆块布局为「块头 + 负载」——块首 8 B 元数据
-# ({extent:u32, pad:u32},块头区 [b, b+8) 在负载之前;分配锚定 data = b + 8)。
-# 分配时把这一轮的身份与该负载锚写进全局锁表项(key / anchor_lo32),
-# 释放把它换代并把下标压回自由链;本模块只声明这些 C 函数的签名,
-# 机制常量与谓词(SENTINEL / BlockHeader / LockEntry / FrameLockArena / is_heap /
-# live / is_raw)定义于 compiler/codegen/abi/lockmech.py。
+# Fat-pointer heap layout: an 8 B header precedes the payload,
+# with {extent:u32,pad:u32} in [b,b+8) and allocation anchor data=b+8.
+# Allocation writes the lifetime identity and payload anchor to the global lock entry (key/anchor_lo32);
+# release increments the generation and returns the index to the free list. This module declares C signatures;
+# mechanism constants and predicates (SENTINEL/BlockHeader/LockEntry/FrameLockArena/is_heap/
+# live/is_raw) are defined in compiler/codegen/abi/lockmech.py.
 
 
 class IntrinsicKind(Enum):

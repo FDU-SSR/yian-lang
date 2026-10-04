@@ -1,11 +1,11 @@
-// Fat-pointer use-after-free negative test (时序机制 建立的负例)
+// Fat-pointer use-after-free negative test for lifetime checks.
 //
-// del p 写块头锁槽 SENTINEL;随后访问 *p 经 live 锁槽键比较
-// 失败 → fail-stop → Exit code 1(LLVM 层 运行期 safety error 语义)。
+// del p writes SENTINEL to the block's lock slot; *p then fails live key comparison,
+// terminating with LLVM's runtime safety error and exit code 1.
 
 fn main() {
     let p: i32* = dyn[2] 0i32;
     p[0] = 1;
     del p;
-    p[0] = 99 // UAF: lock slot = SENTINEL → live 失败 → safety error
+    p[0] = 99 // UAF: SENTINEL slot fails live with a safety error.
 }

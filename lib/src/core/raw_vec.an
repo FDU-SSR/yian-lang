@@ -6,23 +6,23 @@ pub struct RawVec<T> {
     cap: u64,
 }
 
-// 生命周期由使用者负责: 释放后再取用或重复释放无效; fat 模式的指针检查会拒绝这些操作,
-// raw 模式不提供生命周期运行时检查。
-// ZST(`@sizeof<T> == 0`)没有真实数据可处理: 分配/拷贝/释放全部用 if 拦掉,
-// 只维护容量计数。
+// Callers manage the lifetime: use after release and repeated release are invalid; fat-pointer checks reject these operations.
+// Raw mode provides no runtime lifetime checks.
+// ZSTs (`@sizeof<T> == 0`) have no data storage: guard allocation, copying, and release with if conditions.
+// Maintain only the capacity count.
 //
-// 空态(`cap == 0`)不占堆块: 数据指针是 `@dangling<T>()`(地址 = T 的对齐值),
-// 两模式表示一致, 空态只做零长度的指针算术/传递, 不解引用、不释放。
-// 非零是硬要求: `Option<str>`/`Option<Slice<T>>` 这类单字段载荷用"载荷全零"
-// 编码 None, 空容器(或由它派生的空 str/切片)一旦取到全零指针, `Some(空值)`
-// 就会被误判成 `None`。`@dangling` 给出的地址是对齐值(≥ 1), 且是定值 ——
-// `@undef` 会在不同优化级别下物化成不同位型, 不能用来承载这个不变量。
+// Empty state (`cap == 0`) has no heap block; its data pointer is `@dangling<T>()` (address = T's alignment).
+// Both modes use this representation; empty state permits only zero-length pointer arithmetic and passing, never dereference or release.
+// A nonzero address is required: single-field payloads such as `Option<str>`/`Option<Slice<T>>` encode None as an all-zero payload.
+// If an empty container or derived empty str/slice has an all-zero pointer, `Some(empty)`
+// is misread as `None`. `@dangling` returns a fixed alignment address (>= 1).
+// `@undef` may materialize different bit patterns at different optimization levels and cannot uphold this invariant.
 impl<T> RawVec<T> {
     static pub fn new() -> Self {
         Self.with_capacity(0)
     }
 
-    // 空态数据指针: 指向 T 的悬垂指针, 不分配。
+    // Empty-state data pointer: a dangling pointer to T, without allocation.
     static fn empty_data() -> T* {
         return @dangling<T>();
     }
@@ -44,21 +44,21 @@ impl<T> RawVec<T> {
         )
     }
 
-    // 返回覆盖整个容量的指针。RawVec 不记录已初始化元素数, 调用者必须先写入元素再读取。
+    // Return a pointer covering the whole capacity. RawVec does not track initialized elements; callers must write before reading.
     pub fn ptr() -> T* {
         self.data
     }
 
     pub fn capacity() -> u64 {
         if @sizeof<T> == 0 {
-            // ZST 没有存储上限: 报最大容量, Vec::push 的 len == capacity() 永不成立。
+            // ZST storage is unbounded: report maximum capacity so Vec::push never reaches len == capacity().
             u64.max()
         } else {
             self.cap
         }
     }
 
-    // 释放当前缓冲。空态是悬垂指针而非堆块, 只有 cap > 0 才是分配过的。
+    // Release the buffer. Empty state is a dangling pointer, not a heap block; allocation exists only when cap > 0.
     fn release_data() {
         if self.cap > 0 {
             del self.data;
@@ -122,7 +122,7 @@ impl<T> RawVec<T> {
         }
 
         if len == 0 {
-            // 到这里 cap > len == 0, 当前缓冲一定分配过。
+            // Here cap > len == 0, so the current buffer is allocated.
             self.release_data();
             self.data = Self.empty_data();
             self.cap = 0;

@@ -3,7 +3,7 @@
 // then deletes every node.
 //
 // Coverage: dyn allocation + struct field access through pointer +
-//           Option 空态判定(is_some)+ del (single-free path).
+//           Option emptiness test (is_some) and del (single-free path).
 //
 // Expected output: 0
 

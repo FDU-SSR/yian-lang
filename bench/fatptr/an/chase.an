@@ -1,15 +1,15 @@
-// bench/fatptr/an/chase.an — 节点尺寸 → cache 足迹 (方向 B 微基准)
+// bench/fatptr/an/chase.an: node-size/cache-footprint microbenchmark.
 //
-// 目的: 链表追逐。节点只有一个 i64 值和一个 Option<Node&> 后继, 因此节点尺寸就是
-//       表示尺寸的直接读数: raw 16 B、fat 32 B (24 B 引用 + 8 B 值), 正是"节点尺寸 =
-//       cache 足迹"那条曲线的两端。节点数取到超出 LLC, 让尺寸差表现为 miss 率差。
-// 规模: NODES (节点数, `// bench-scale` 标记行); ROUNDS 固定。
-// C 参考: bench/fatptr/c/chase.c (同算法同规模, 16 B 节点)。
+// Chase a linked list. Each node contains i64 and Option<Node&>, so its size directly reflects
+//       representation size: raw 16 B, fat 32 B (24 B reference plus 8 B value). These are the endpoints of
+//       the node-size/cache-footprint curve. Exceed LLC capacity to expose differences in miss rates.
+// Scale: NODES at the // bench-scale marker; ROUNDS is fixed.
+// C reference: bench/fatptr/c/chase.c, same algorithm/scale with 16 B nodes.
 //
-// 数据布局: 从尾到头建单链 (head 始终是已建部分), 每轮从 head 走到底累加 value,
-//           最后逐节点 del 释放整条链。
+// Build the chain tail-to-head, keeping head at the built prefix; each round follows it and sums value,
+//           then release every node with del.
 //
-// 单一源: fat 与 raw 共用本文件 (raw 下 Option<Node&> 为 8 B 裸指针)。
+// Both modes share this source; raw Option<Node&> is an 8 B pointer.
 from std.core.io import print;
 
 struct Node {

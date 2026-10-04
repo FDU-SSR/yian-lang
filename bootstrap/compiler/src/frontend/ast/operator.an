@@ -121,7 +121,7 @@ impl BinaryOperator {
         }
     }
 
-    // 左结合力决定当前运算符能否进入 Pratt 解析循环。
+    // Left binding power determines whether the operator enters the Pratt parsing loop.
     pub fn lbp() -> i32 {
         match self {
             Add => 10,
@@ -159,7 +159,7 @@ impl BinaryOperator {
         }
     }
 
-    // 左结合运算符的右结合力更高，赋值运算符允许右侧继续吸收同级赋值。
+    // Left-associative operators use higher right binding power; assignments accept further assignments of equal precedence on the right.
     pub fn rbp() -> i32 {
         match self {
             Add => 11,

@@ -32,7 +32,7 @@ impl AstRewriter for ExpressionLowerer {
     }
 }
 
-// 范围表达式构造 Range；成员判断将右操作数作为 contains 的接收者。
+// Range expressions construct Range; membership expressions use the right operand as the contains receiver.
 pub fn lower_expressions(tree: AstTree&) {
     let pass = ExpressionLowerer(arena=&tree.arena);
     tree.root = pass.rewrite_program(tree.root);

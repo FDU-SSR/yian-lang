@@ -109,14 +109,14 @@ class SelfType:
 class ConstGenericType:
     type_id: int
     name: str
-    value_type: int      # 常量的类型，如 u64_id
+    value_type: int      # The constant's type, such as u64_id.
 
 
 @dataclass
 class LiteralValueType:
     type_id: int
-    value: int | bool     # 常量的具体值
-    value_type: int       # 值的类型，如 u64_id
+    value: int | bool     # The constant's value.
+    value_type: int       # The value's type, such as u64_id.
 
 
 @dataclass

@@ -1,7 +1,7 @@
-// bench/AWFY/an/mand.an — Mandelbrot 集位图校验和 (AWFY Mandelbrot)
+// bench/AWFY/an/mand.an: Mandelbrot bitmap checksum (AWFY Mandelbrot).
 //
-// 官方工作单元使用 size=500, 50 次复数迭代, 结果为 191。
-// 外层重复只重复完整图像计算。
+// Official work unit: size=500, 50 complex iterations, result 191.
+// Outer repetitions repeat the complete image calculation.
 
 fn mandelbrot(size: i32) -> i32 {
     let sum: i32 = 0;

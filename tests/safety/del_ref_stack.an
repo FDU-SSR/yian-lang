@@ -1,7 +1,7 @@
-// del-view 负例(b):栈 T& → safety error。`let r: i32& = &x`(x 为栈变量)产生栈键
-// (键最高位 msb 0 = 栈):CheckDelete 的 is_heap(p) 分量失败
-// → fail-stop → Exit code 1。data 分量虽为 lock_ptr+8(栈帧锁
-// 也满足 data==lock_ptr+8),但堆前提先行否决——栈对象不可 del。
+// Deletion-view negative (b): stack T& fails. let r:i32&=&x creates a stack key
+// with MSB zero; CheckDelete's is_heap term fails,
+// terminating with exit code 1. Even if data matches lock_ptr+8,
+// the heap precondition rejects deletion of stack objects.
 //
 // Expected exit code: 1
 

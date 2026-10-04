@@ -1,16 +1,16 @@
-// bench/AWFY/an/bounce.an — 球弹跳模拟 (shootout bounce)
+// bench/AWFY/an/bounce.an: ball-bounce simulation (shootout bounce).
 //
-// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Bounce.java (上游许可见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/bounce.c (项目自写 C 参考)
-// 规模: 每个工作单元创建 100 个球并模拟 50 轮, 断言 bounces == 1331。
+// Reference: AWFY benchmarks/Java/src/Bounce.java; upstream license: AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/bounce.c, the project's C implementation.
+// Scale: each work unit creates 100 balls, simulates 50 rounds, and asserts bounces == 1331.
 //
-// 算法: LCG 随机数 (seed = (seed*1309+13849) & 65535) 初始化 100 个
-//       Ball (x/y 在 [0,500), 速度在 [-150,150))。每轮对每个球做
-//       bounce: 位置+=速度, 越过 500×500 边界则反弹 (反向取 abs 并钳制),
-//       计数 bounced 次数。外层重复只重复完整工作单元。
+// Algorithm: initialize 100 balls with LCG seed=(seed*1309+13849)&65535,
+//       with x/y in [0,500) and velocities in [-150,150). Each round updates each ball:
+//       position += velocity, reflect at 500x500 boundaries using abs and clamping,
+//       then count bounces. Outer repetitions repeat complete work units.
 //
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Fat and raw modes share this source. dyn uses inference; range views such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
 fn abs_int(x: i32) -> i32 {
     if x < 0 {
         return -x;

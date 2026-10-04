@@ -1,7 +1,7 @@
-// bench/fatptr/c/chase.c — chase 的 C 参考 (三态权威值)
+// bench/fatptr/c/chase.c: authoritative C reference for chase.
 //
-// 与 bench/fatptr/an/chase.an 同算法同规模: 单链表逐节点追逐 (16 B 节点),
-// 规模 (节点数) 经 argv[1] 传入 (缺省与 .an 的标记值一致)。
+// Same algorithm/scale as bench/fatptr/an/chase.an: chase a singly linked list with 16 B nodes.
+// Node count is argv[1], defaulting to the YIAN marker value.
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

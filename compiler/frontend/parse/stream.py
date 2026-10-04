@@ -8,8 +8,8 @@ from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 
 # ------------------------------------------------------------------
-# frozenset常量：consume_separated / consume_until 的参数
-# 避免在热路径上重复构造set字面量
+# frozenset constants passed to consume_separated / consume_until.
+# Avoid repeated set-literal construction on hot paths.
 # ------------------------------------------------------------------
 
 SEP_COMMA = frozenset({Tok.PunctuatorKind.Comma})

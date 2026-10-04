@@ -56,8 +56,8 @@ fn main() {
     assert drops == 0: "clone remove must not clean the stored element";
     assert s.contains(&probe_alpha): "original set unaffected by clone removal";
 
-    // 元素的 String 缓冲区与原件共享: 两侧看到同一批键, 但不能再通过克隆改写
-    // 元素(扩容会释放共享缓冲区, 让原件悬空)。
+    // Element String buffers are shared with the original; both copies see the same keys, but mutating
+    // elements through the clone could grow/release shared buffers and leave the original dangling.
     let probe_beta = SKey(tag=String.from(&"beta"), drops=&drops);
     assert c.contains(&probe_beta) && s.contains(&probe_beta): "clone shares element storage";
 
@@ -65,8 +65,8 @@ fn main() {
     assert drops == 0: "original remove must not clean the stored element";
 
     // Removed keys are no longer reachable through the sets.  Clean the remaining
-    // keys and lookup values explicitly before freeing table storage; s 与 c 的键
-    // 共享同一批 String 缓冲区, 所以每个键只清一次。
+    // keys and lookup values explicitly before freeing table storage; s and c share key
+    // String buffers, so clean each key once.
     probe_alpha.drop();
     probe_beta.drop();
     for key in s {

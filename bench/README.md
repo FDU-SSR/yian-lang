@@ -29,13 +29,13 @@ bench/
 ## 集合
 
 ```bash
-python3 bench/bench_three_way.py --list-sets           # 列出集合、规模档、成员数
-python3 bench/bench_three_way.py --set full            # 完全档: 全部 22 项 (正式记录)
-python3 bench/bench_three_way.py --set fast --pin 4    # 快速档: 代表性子集 + 缩小规模
-python3 bench/bench_three_way.py --set ptr             # 侧重: 对象/指针图
-python3 bench/bench_three_way.py --set numeric         # 侧重: 数值/循环
-python3 bench/bench_three_way.py --set string          # 侧重: 字符串/IO
-python3 bench/bench_three_way.py --set micro           # 机制专项: 表示尺寸/拷贝/追逐微基准
+python3 bench/bench_three_way.py --list-sets           # List sets, scales, and member counts.
+python3 bench/bench_three_way.py --set full            # Full scale: all 22 benchmarks, for formal records.
+python3 bench/bench_three_way.py --set fast --pin 4    # Fast: representative subset at reduced scale.
+python3 bench/bench_three_way.py --set ptr             # Focus: object/pointer graphs.
+python3 bench/bench_three_way.py --set numeric         # Focus: numeric calculations/loops.
+python3 bench/bench_three_way.py --set string          # Focus: strings/I/O.
+python3 bench/bench_three_way.py --set micro           # Mechanism microbenchmarks: representation size/copying/pointer chasing.
 python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta --scale full
 python3 bench/bench_three_way.py --source AWFY --set fast
 ```
@@ -107,8 +107,8 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 ## 分配器专项
 
 ```bash
-python3 bench/bench_allocator.py --scale full --pin 4    # 完全档: 每态 7 次
-python3 bench/bench_allocator.py --scale fast --pin 4    # 快速档: 每态 3 次 + 缩小规模
+python3 bench/bench_allocator.py --scale full --pin 4    # Full scale: seven samples per mode.
+python3 bench/bench_allocator.py --scale fast --pin 4    # Fast scale: three samples per mode at reduced scale.
 ```
 
 `bench/ALLOC` 的四项没有 C 参考，对照态是 libc `malloc`/`free`（raw 态），因此是两态比较：

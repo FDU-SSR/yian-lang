@@ -10,7 +10,7 @@ from compiler.codegen.cfg.lower.state import FunctionState
 
 
 class SysLowerer:
-    """系统内建下降器。"""
+    """System builtin lowering."""
 
     def __init__(self, state: FunctionState, resolver: ExprResolver) -> None:
         self.__state = state

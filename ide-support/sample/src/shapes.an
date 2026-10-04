@@ -1,4 +1,4 @@
-// 枚举、泛型函数、match：面积与最大值。
+// Enums, generic functions, and match: area and maximum.
 from sample.types import Meters;
 
 pub enum Shape {

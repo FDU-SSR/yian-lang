@@ -1,32 +1,32 @@
-// bench/AWFY/an/cd.an — 碰撞检测 (CD, AWFY 宏基准)
+// bench/AWFY/an/cd.an: collision detection (CD, AWFY macrobenchmark).
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/CD.java + cd/*.java
-//       (MIT, Copyright (c) 2001-2016 Stefan Marr; cd/*.java 无逐文件许可头)
-// 语义权威源: bench/AWFY/c/cd.c (C 参考实现, 与上游 Java 断言值一致:
-//       aircraft=2→42, 10→390, 100→4305, 250→10830 次碰撞)
+// Upstream: AWFY benchmarks/Java/src/CD.java and cd/*.java.
+//       MIT, Copyright (c) 2001-2016 Stefan Marr; cd/*.java has no per-file license headers.
+// Semantic reference: bench/AWFY/c/cd.c; collision counts match upstream Java assertions:
+//       aircraft=2 -> 42, 10 -> 390, 100 -> 4305, 250 -> 10830 collisions.
 //
-// 算法: 200 帧, 每帧 simulate(time) 生成 numAircrafts 架飞机的位置
-//       (y = cos/sin(time)*2 + i*3), CollisionDetector 维护上一帧位置
-//       (CallSign → Vector3D 红黑树), 生成本帧 Motion 集合; 再把每条 Motion
-//       画到体素图 (Vector2D → Motion 列表, 红黑树) 上, 同一体素内两两求
-//       线段球体相交 (Motion.findIntersection), 累计碰撞数。
+// Algorithm: simulate numAircrafts positions over 200 frames,
+//       with y=cos/sin(time)*2+i*3. CollisionDetector retains previous positions
+//       in a CallSign -> Vector3D red-black tree and generates this frame's Motions.
+//       Rasterize each Motion into a Vector2D -> Motion-list voxel tree; test pairs in each voxel
+//       for swept-sphere intersection (Motion.findIntersection) and accumulate collisions.
 //
-// YIAN 实现结构:
-//   - 泛型红黑树通过带标签键 enum Key 与 RBTree<V> 表达; key_compare 实现
-//     CallSign / Vector2D 的排序规则。
-//   - 节点使用树内唯一递增 id 表示对象身份, 身份判断比较 id。
-//   - 遍历使用显式中序循环, 不创建遍历闭包。
-//   - sin/cos/sqrt 均使用 std.num.f64 的 LLVM 数学内建, 与 C 参考使用同一类系统原语。
-//     碰撞检测中的平方根对末位差异敏感, 因此两侧保持相同的数学调用路径。
-//     同一 discr 只开方一次 (上游 Java 写了两次 Math.sqrt, 等值)。
-//   - state 树的值为 Vector3D 值型 (上游是对象引用), 树节点/键布局见下。
+// YIAN implementation:
+//   - Generic red-black trees use tagged enum Key and RBTree<V>; key_compare implements
+//       CallSign and Vector2D ordering.
+//   - Nodes use unique increasing IDs within each tree for identity comparisons.
+//   - Traversal uses explicit inorder loops without closures.
+//   - sin/cos/sqrt use std.num.f64 LLVM math builtins, matching the C reference's system primitives.
+//       Collision square roots are sensitive to last-bit differences, so both use the same math path.
+//       Each discriminant is square-rooted once; upstream Java's two calls are equivalent.
+//   - The state tree stores Vector3D values (upstream uses object references); see node/key layouts below.
 //
-// 单一源: fat 与 raw 共用本文件; 树链用 Option<RBNode<V>&> (两模式通用)。
-// 规模: AIRCRAFT=250, FRAMES=200; 每个工作单元断言碰撞数 10830。
+// Both pointer modes share this source; tree links use Option<RBNode<V>&>.
+// Scale: AIRCRAFT=250, FRAMES=200; assert 10830 collisions per work unit.
 from std.num.f64 import sqrt, sin, cos;
 from std.core.vec import Vec;
 
-// ── 值类型 (上游 cd/Vector2D.java, cd/Vector3D.java) ──
+// -- Value types (upstream cd/Vector2D.java, cd/Vector3D.java) --
 
 struct Vector2D {
     x: f64,
@@ -82,7 +82,7 @@ fn v3_magnitude(a: Vector3D) -> f64 {
     return sqrt(v3_squared_magnitude(a));
 }
 
-// ── 红黑树键 (上游 CallSign / Vector2D 的 Comparable) ──
+// -- Red-black tree keys (upstream CallSign / Vector2D Comparable) --
 
 enum Key {
     Sign { value: i32 },
@@ -99,7 +99,7 @@ fn compare_numbers(a: f64, b: f64) -> i32 {
     if a > b {
         return 1;
     }
-    // NaN 视为最小
+    // Treat NaN as the smallest value.
     if a == a {
         return 1;
     }
@@ -152,7 +152,7 @@ fn key_sign_value(k: Key&) -> i32 {
     }
 }
 
-// ── 红黑树 (移植自上游 cd/RedBlackTree.java) ──
+// -- Red-black tree (from upstream cd/RedBlackTree.java) --
 
 struct RBNode<V> {
     id: u64,
@@ -212,7 +212,7 @@ impl<V> RBTree<V> {
         return Self(root=Option<RBNode<V>&>.None, next_id=1u64);
     }
 
-    // 上游 treeMinimum
+    // Upstream treeMinimum.
     pub fn first() -> Option<RBNode<V>&> {
         let current: Option<RBNode<V>&> = self.root;
         if current.is_none() {
@@ -225,7 +225,7 @@ impl<V> RBTree<V> {
         return Option<RBNode<V>&>.Some(node);
     }
 
-    // 上游 Node.successor()
+    // Upstream Node.successor().
     pub fn successor(node: RBNode<V>&) -> Option<RBNode<V>&> {
         if node.right.is_some() {
             let right: RBNode<V>& = *node.right.unwrap();
@@ -273,7 +273,7 @@ impl<V> RBTree<V> {
         return Option<V*>.Some(&node.unwrap().value);
     }
 
-    // 键已存在时返回其旧值, 否则返回 None。
+    // Return the previous value if the key exists, otherwise None.
     pub fn put(key: Key&, value: V) -> Option<V> {
         let parent: Option<RBNode<V>&> = Option<RBNode<V>&>.None;
         let current: Option<RBNode<V>&> = self.root;
@@ -309,7 +309,7 @@ impl<V> RBTree<V> {
             },
         }
 
-        // 插入后的红黑树重新平衡
+        // Rebalance after insertion.
         let root: RBNode<V>& = *self.root.unwrap();
         let x: RBNode<V>& = z;
         while x.id != root.id && x.parent.unwrap().red {
@@ -358,7 +358,7 @@ impl<V> RBTree<V> {
         return Option<V>.None;
     }
 
-    // 上游 remove: 返回被删除的值 (无则 None)
+    // Upstream remove: return the removed value, or None.
     pub fn remove(key: Key&) -> Option<V> {
         let found: Option<RBNode<V>&> = self.find_node(key);
         if found.is_none() {
@@ -438,7 +438,7 @@ impl<V> RBTree<V> {
         return p.left.unwrap().id == x.unwrap().id;
     }
 
-    // 上游 removeFixup (x 可能为 None)
+    // Upstream removeFixup; x can be None.
     fn remove_fixup(x: Option<RBNode<V>&>, x_parent: Option<RBNode<V>&>) {
         let node: Option<RBNode<V>&> = x;
         let parent: Option<RBNode<V>&> = x_parent;
@@ -567,7 +567,7 @@ impl<V> RBTree<V> {
         y.parent = Option<RBNode<V>&>.Some(x);
     }
 
-    // 释放全部节点 (值型, 无嵌套分配)
+    // Release all nodes (value payloads without nested allocations).
     static fn free_subtree(node: Option<RBNode<V>&>) {
         if node.is_none() {
             return;
@@ -584,7 +584,7 @@ impl<V> RBTree<V> {
     }
 }
 
-// ── 碰撞检测 (移植自上游 cd/Motion.java, cd/CollisionDetector.java, cd/Simulator.java) ──
+// -- Collision detection (upstream cd/Motion.java, CollisionDetector.java, Simulator.java) --
 
 fn motion_delta(m: Motion&) -> Vector3D {
     return v3_minus(m.pos_two, m.pos_one);
@@ -599,7 +599,7 @@ fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
 
     let a: f64 = v3_squared_magnitude(v3_minus(vec2, vec1));
     if a == 0.0 {
-        // 同速平行/静止: 距离恒定
+        // Equal-velocity parallel/stationary motion has constant distance.
         let dist: f64 = v3_magnitude(v3_minus(init2, init1));
         if dist <= radius {
             return Option<Vector3D>.Some(v3_times(v3_plus(init1, init2), 0.5));
@@ -614,7 +614,7 @@ fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
         return Option<Vector3D>.None;
     }
 
-    let root: f64 = sqrt(discr);  // 同一个 discr 只开方一次 (与上游等值)
+    let root: f64 = sqrt(discr);  // Take one square root per discriminant, equivalent to upstream.
     let v1: f64 = (-b - root) / (2.0 * a);
     let v2: f64 = (-b + root) / (2.0 * a);
     if v1 <= v2 && ((v1 <= 1.0 && 1.0 <= v2) || (v1 <= 0.0 && 0.0 <= v2) || (0.0 <= v1 && v2 <= 1.0)) {
@@ -765,7 +765,7 @@ impl CollisionDetector {
             i += 1;
         }
 
-        // 移除本帧未出现的飞机
+        // Remove aircraft absent from this frame.
         let to_remove: Vec<i32> = Vec<i32>.new();
         let cur: Option<RBNode<Vector3D>&> = self.state.first();
         while cur.is_some() {
@@ -783,7 +783,7 @@ impl CollisionDetector {
         }
         to_remove.drop();
 
-        // 体素归并
+        // Group motions into voxels.
         let voxel_map: RBTree<Vec<Motion&>> = RBTree<Vec<Motion&>>.new();
         let mi: u64 = 0;
         while mi < motions.len() {
@@ -791,7 +791,7 @@ impl CollisionDetector {
             mi += 1;
         }
 
-        // 同体素内两两求交
+        // Test pairs in each voxel for intersections.
         let collisions: i64 = 0;
         let cur2: Option<RBNode<Vec<Motion&>>&> = voxel_map.first();
         while cur2.is_some() {
@@ -817,7 +817,7 @@ impl CollisionDetector {
             cur2 = voxel_map.successor(node);
         }
 
-        // 释放本帧结构: 先释放体素桶 (Vec 缓冲), 再释放树节点与 Motion
+        // Release frame data: voxel buckets (Vec buffers), then tree nodes and Motions.
         let cur3: Option<RBNode<Vec<Motion&>>&> = voxel_map.first();
         while cur3.is_some() {
             let node: RBNode<Vec<Motion&>>& = *cur3.unwrap();

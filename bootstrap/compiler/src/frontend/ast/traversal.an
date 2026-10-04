@@ -2,8 +2,8 @@ from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, Cha
 from std.core.ops import Index;
 from compiler.frontend.ast.node import TypeSource;
 
-// 遍历沿子节点引用进行，共享节点按每条入边分别访问。
-// 绑定的输入先于模式访问；块内参数绑定先于语句访问。
+// Traversal follows child references; shared nodes are visited once per incoming edge.
+// Binding inputs precede patterns; block parameter bindings precede statements.
 pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
     match source {
         Syntax(value) => walk_type_syntax(*value, visitor),
@@ -22,7 +22,7 @@ pub fn rewrite_type_source(source: TypeSource&, rewriter: AstRewriter&) {
     }
 }
 
-// enter 返回 false 时跳过该节点的子节点和 leave 回调，不影响其他分支。
+// Returning false from enter skips the node's children and leave callback without affecting other branches.
 pub trait AstVisitor {
     fn enter_identifier(node: Identifier&) -> bool { true }
 
@@ -149,8 +149,8 @@ pub trait AstVisitor {
     fn leave_item(node: Item&) {}
 }
 
-// 默认方法先重写子节点再返回当前节点；覆盖方法决定递归和替换行为。
-// children 辅助函数只回写子节点引用，不替换根节点；替换结果不自动再次遍历。
+// Default methods rewrite children before returning the current node; overrides control recursion and replacement.
+// Children helpers only update child references, never replace the root; replacement nodes are not revisited automatically.
 pub trait AstRewriter {
     fn rewrite_identifier(node: Identifier&) -> Identifier& { node }
 

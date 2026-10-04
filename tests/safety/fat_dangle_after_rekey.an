@@ -1,13 +1,13 @@
-// Fat-pointer stack-dangle negative test — 帧 re-key 后旧指针访问
+// Fat-pointer dangling-stack negative test: access an old pointer after frame re-keying.
 //
-// make() 返回 &x(帧锁 ⟨e_f, k₁⟩);第一次调用退出写 SENTINEL,
-// 第二次调用 make() 进入帧时 re-key(新键 k₂)。旧指针 p 携带旧键,
-// 访问 p[0] 经 live 锁槽键比较失败 → fail-stop → Exit code 1。
+// make() returns &x with frame lock <e_f,k1>; the first call exits with SENTINEL,
+// then the second call re-keys the slot with k2. Old p still carries k1,
+// so p[0] fails live key comparison and terminates with exit code 1.
 
 fn make() -> i32* { let x: i32 = 42; &x }
 
 fn main() {
     let p: i32* = make();
-    make() // 第二次调用触发帧锁槽 re-key(新键)
-    p[0] = 99 // 旧键失配 → live 失败 → safety error
+    make() // The second call re-keys the frame slot.
+    p[0] = 99 // Old-key mismatch fails live with a safety error.
 }

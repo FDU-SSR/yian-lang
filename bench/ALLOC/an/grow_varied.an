@@ -1,10 +1,10 @@
-// bench/ALLOC/an/grow_varied.an — 变尺寸增长-释放: 每轮分配一个更大的块, 写入后释放.
+// bench/ALLOC/an/grow_varied.an: varying-size grow/release, writing and releasing a larger block each round.
 //
-// 规模: 32 轮, 第 c 轮分配 (c+1) MiB (单块 u8 数组).
-// 断言: checksum == 轮数 × 7.
+// Scale: 32 rounds; round c allocates (c+1) MiB as one u8 array.
+// Assert checksum == rounds * 7.
 //
-// 反映"分配-释放后是否复用/归还内存": 块尺寸逐轮变大且互不相同, 释放后若既不复用也
-// 不归还, 峰值 RSS 会随轮数线性增长到全部尺寸之和 (约 528 MiB).
+// Measures reuse/return after release: sizes differ and increase each round. Without either mechanism,
+// peak RSS grows to the sum of all sizes (about 528 MiB).
 
 from std.core.io import print;
 
@@ -17,7 +17,7 @@ fn main() {
     while cycle < cycles {
         let length: u64 = (cycle + 1) * mib;
         let chunk = dyn[length] 0u8;
-        // 每 4 KiB 写一次: 触达整块的所有页, 峰值 RSS 才反映真实占用.
+        // Write every 4 KiB to touch all pages, so peak RSS reflects actual residency.
         let k: u64 = 0;
         while k < length {
             chunk[k] = 7;

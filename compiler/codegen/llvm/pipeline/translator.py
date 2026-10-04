@@ -103,7 +103,7 @@ class LLTranslator:
 
         builder = LLBuilder(func, self.__module, self.__ll_type_ctx, self.__type_ctx, self.__raw_pointers)
         if cfg.frame_lock is not None:
-            # 帧退出写 SENTINEL 并弹出影子栈
+            # Write SENTINEL on frame exit and pop the shadow stack.
             builder.safety.set_frame_lock(cfg.frame_lock[0])
 
         # entry block + local var allocas
@@ -156,7 +156,7 @@ class LLTranslator:
             case IR.LiveKnownBegin() | IR.LiveKnownEnd():
                 raise ValueError("live-known window marker reached LLVM lowering")
             case IR.CheckRequest():
-                # 标记应由 passes/insert_checks.py 物化；到这里说明管线漏了插入 pass。
+                # passes/insert_checks.py must materialize markers; reaching here means that pass was omitted.
                 raise ValueError(f"unmaterialized check request: {stmt.kind}")
             case IR.VarPtr():
                 value = builder.memory.var_ptr(

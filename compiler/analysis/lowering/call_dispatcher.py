@@ -365,7 +365,7 @@ class CallDispatcher:
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
 
-        # payload_type 非 None 时必定是 StructType
+        # payload_type is always a StructType when it is not None.
         payload_ty = self.__ctx.type_ctx[variant.payload_type]
         assert isinstance(payload_ty, Type.StructType)
         fields = self.__ctx.type_ctx.get_struct_fields(payload_ty.type_id)

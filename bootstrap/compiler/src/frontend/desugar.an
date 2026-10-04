@@ -6,11 +6,11 @@ from compiler.frontend.desugar.expressions import lower_expressions;
 from compiler.frontend.desugar.propagation import validate_propagation, lower_propagation;
 from std.core.result import Result;
 
-// 校验失败时不修改 AST；成功时所有语法糖节点由普通控制流和调用表示。
+// Validation failures leave the AST untouched; successful lowering represents syntax sugar as ordinary control flow and calls.
 pub fn desugar(tree: AstTree&, path: str) -> Result<void, DesugarError> {
     validate_propagation(tree.root)?;
 
-    // 参数绑定和控制流先规范化，传播操作在已有可调用体上下文中展开。
+    // Normalize parameter bindings and control flow before expanding propagation in the existing callable context.
     normalize_parameters(tree);
     lower_control(tree, path);
     lower_expressions(tree);

@@ -24,14 +24,14 @@
 ## 快速上手
 
 ```bash
-scripts/install.sh        # 一次安装：yianc、anx 与 yian-lsp 进入 PATH
+scripts/install.sh        # Install yianc,anx,yian-lsp into PATH.
 
-anx new demo              # 生成 bin 项目骨架
+anx new demo              # Create a bin project skeleton.
 cd demo
 
-anx run                   # 构建到 build/app 并执行
-anx test                  # 跑 tests/ 下的项目测试（骨架里已有一个通过的用例）
-anx graph                 # 看依赖图与文件归属
+anx run                   # Build build/app and execute it.
+anx test                  # Run project tests; the skeleton includes a passing case.
+anx graph                 # Inspect dependencies and file ownership.
 ```
 
 `anx new` 生成的结构：
@@ -90,8 +90,8 @@ pub fn greet() {
 
 ```yian
 // demo/src/main.an
-from demo.greet import greet;        // 本包模块：第一段是包名，不是目录
-from mathlib.ops import add;         // 依赖包的模块
+from demo.greet import greet;        // This package's module: first component is the package name, not a directory.
+from mathlib.ops import add;         // Dependency package module.
 
 fn main() {
     greet();

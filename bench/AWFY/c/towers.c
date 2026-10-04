@@ -3,8 +3,8 @@
 #include <assert.h>
 #include <stdint.h>
 
-// AWFY Towers 基准单元使用 13 个盘和 8191 次移动。外层循环重复该单元，
-// 为进程级计时提供足够工作量。
+// AWFY Towers uses 13 disks and 8191 moves per unit. Outer repetitions provide
+// sufficient work for process-level timing.
 #define INNER_ITERATIONS 41065
 
 typedef struct TowersDisk {

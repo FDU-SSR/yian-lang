@@ -1,4 +1,4 @@
-// LLVM C 句柄只对受信 FFI 实现可见。
+// LLVM C handles are visible only to trusted FFI implementations.
 pub(ffi) opaque type LLVMOpaqueContext;
 pub(ffi) opaque type LLVMOpaqueModule;
 pub(ffi) opaque type LLVMOpaqueBuilder;

@@ -72,7 +72,7 @@ fn main() {
     assert m2[1].len() == 1 && c2[1].len() == 2: "clone descriptors are independent";
     assert c2[1][0] == "one" && c2[1][1] == "extra";
 
-    // 元素缓冲区与原件共享, 每个缓冲区只释放一次(选任意一侧), 再释放表存储。
+    // Element buffers are shared with the original; release each buffer once via either copy, then table storage.
     m2[1][0].drop();
     c2[1][1].drop();
     m2[1].drop();
@@ -91,8 +91,8 @@ fn main() {
     assert key_drops == 0: "cloning must not drop the original keys";
     assert c3.len() == 2;
 
-    // 键的 String 缓冲区与原件共享: 两侧看到同一批键, 但不能再通过克隆改写键
-    // (扩容会释放共享缓冲区, 让原件悬空)。
+    // Key String buffers are shared: both copies see the same keys, but mutating keys through the clone
+    // could grow and release shared buffers, leaving the original dangling.
     let probe1 = SKey(tag=String.from(&"k1"), drops=&key_drops);
     let probe2 = SKey(tag=String.from(&"k2"), drops=&key_drops);
     assert m3.contains(&probe1) && c3.contains(&probe1): "clone shares key storage";
@@ -102,7 +102,7 @@ fn main() {
 
     // Removed keys are no longer reachable through the map and are therefore not
     // cleaned by the container. Explicitly clean the remaining keys and lookup
-    // values; c3 与 m3 的键共享缓冲区, 所以每个键只清一次。
+    // values; c3 and m3 share key buffers, so clean each key once.
     probe1.drop();
     probe2.drop();
     for key in c3 {

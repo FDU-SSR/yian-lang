@@ -1,26 +1,26 @@
-// bench/AWFY/an/list.an — 链表 tail 递归归约 (shootout list)
+// bench/AWFY/an/list.an: recursive linked-list tail reduction (shootout list).
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/List.java (许可见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/list.c (项目自写 C 参考)
-// 规模: make_list 15/10/6, 断言 tail 结果长度 == 10。
+// Upstream: AWFY benchmarks/Java/src/List.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/list.c, the project's C implementation.
+// Scale: make_list 15/10/6; assert tail result length == 10.
 //
-// 算法: 单链表 (val + next 指针)。Element_make_list 递归建表 (长度
-//       递减, val=length), tail(x,y,z) 三链表归约: 当 y 比 x 短时
-//       同时前移三者指针后对 (next_x,y,z)/(next_y,z,x)/(next_z,x,y)
-//       递归嵌套, 否则返回 z。最终 tail 结果指向原 z 表的中段, 断言
-//       其长度 == 10。free_list 释放整条链 (含头节点)。
+// Algorithm: singly linked nodes (val,next). Element_make_list recursively creates nodes
+//       with decreasing length and val=length. tail(x,y,z) reduces three lists: when y is shorter than x,
+//       advance each list and recursively nest calls on (next_x,y,z)/(next_y,z,x)/(next_z,x,y);
+//       otherwise return z. The final result addresses the middle of the original z list; assert
+//       length==10. free_list releases the whole chain including its head.
 //
-// 数据布局: next 为 Option<Element&> (空/链尾为 None); 遍历位置用 match
-//       解包读取, 节点由 dyn Element(...) 分配, 释放直接 del T&。
+// Layout: next is Option<Element&>, with None for empty/tail; match unwraps traversal positions.
+//       dyn Element(...) allocates nodes, and del T& releases them.
 //
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Both modes share this source. dyn uses inference; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
 struct Element {
     val: i32,
     next: Option<Element&>,
 }
 
-// 复制 Option<Element&> 的标签与引用值, 返回独立的 Option 值。
+// Copy Option<Element&>'s tag and reference into an independent Option value.
 fn opt_copy(src: Option<Element&>) -> Option<Element&> {
     return match src {
         Some(e) => Option<Element&>.Some(e),
@@ -28,7 +28,7 @@ fn opt_copy(src: Option<Element&>) -> Option<Element&> {
     };
 }
 
-// 取节点 opt 的 next(空/链尾 → None)
+// Get opt's next node; empty/tail yields None.
 fn opt_next(src: Option<Element&>) -> Option<Element&> {
     return match src {
         None => Option<Element&>.None,
@@ -69,7 +69,7 @@ fn Element_free_method(self: Element&) {
                     Some(n) => Option<Element&>.Some(n),
                     None => Option<Element&>.None,
                 };
-                // 先读 next 再释放 cn (无 UAF: next 已取, cn 释放后不再读)
+                // Read next before releasing cn; cn is never read afterward, avoiding use-after-free.
                 del cn;
                 current = next;
             }
@@ -128,7 +128,7 @@ fn free_list(e: Option<Element&>) {
     match e {
         None => { return; },
         Some(el) => {
-            // 先释放后继链 (Element_free_method 释放 el.next 起), 再释放头节点
+            // Release successors (Element_free_method starts at el.next), then the head.
             Element_free_method(el);
             del el;
         }

@@ -11,7 +11,7 @@ fn invalid(name: str, text: str) -> CliError {
     CliError.new(CliErrorKind.InvalidValue, name, message.as_str())
 }
 
-// 符号与幅度分别处理，以表示 i64 的最小负值。
+// Handle sign and magnitude separately to represent the minimum negative i64 value.
 pub fn convert(text: str, kind: ValueType, name: str) -> Result<ArgValue, CliError> {
     if kind == ValueType.Text { return Result<ArgValue, CliError>.Ok(ArgValue.Text(String.from(&text))); }
     if kind == ValueType.Bool {

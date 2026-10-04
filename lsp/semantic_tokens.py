@@ -9,8 +9,8 @@ document text can resolve).
 
 Only identifiers and the primitive type keywords get a token.  Strings, comments
 and numbers are left to the grammar, which also means a file whose analysis
-stopped early gets no overlay rather than a wrong one (语义高亮失败
-时保留 的基础高亮).
+stopped early gets no overlay rather than a wrong one (failed semantic highlighting
+retains the base highlighting).
 """
 
 from __future__ import annotations

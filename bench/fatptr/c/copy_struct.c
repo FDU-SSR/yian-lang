@@ -1,8 +1,8 @@
-// bench/fatptr/c/copy_struct.c — copy_struct 的 C 参考 (三态权威值)
+// bench/fatptr/c/copy_struct.c: authoritative C reference for copy_struct.
 //
-// 与 bench/fatptr/an/copy_struct.an 同算法同规模: 结构体数组逐元素浅拷贝,
-// 元素含一个 8 B 裸引用字段与一个 8 B 裸视图字段; 规模 (轮数) 经 argv[1] 传入
-// (缺省与 .an 的标记值一致)。
+// Same algorithm/scale as bench/fatptr/an/copy_struct.an: shallow-copy struct arrays element by element,
+// with an 8 B raw reference and an 8 B raw view per element. argv[1] selects round count,
+// defaulting to the YIAN marker value.
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

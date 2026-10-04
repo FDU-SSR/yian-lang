@@ -7,7 +7,7 @@ from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-// AST 节点包含语法数据和源码范围；节点引用不拥有存储，所有节点由 arena 持有。
+// AST nodes contain syntax data and source spans; references do not own storage, and the arena owns all nodes.
 pub struct Node<D> { pub data: D, pub span: Span }
 impl<D> Drop for Node<D> if D: Drop {
     pub fn drop() { self.data.drop(); }
@@ -45,10 +45,10 @@ pub typedef ConstExpr = Node<ConstExprData>;
 pub typedef Pattern = Node<PatternData>;
 pub typedef Item = Node<ItemData>;
 
-// 字面量类别标记不包含值和源码范围。
+// Literal category tags contain neither values nor source spans.
 pub enum LiteralKind { Integer, Float, Character, StringLiteral, Boolean }
 
-// 字面量表达式和模式共用的字面量节点引用。
+// Literal expressions and patterns share these literal node references.
 pub enum Literal {
     Integer { value: IntLiteral& },
     Float { value: FloatLiteral& },
@@ -57,43 +57,43 @@ pub enum Literal {
     Boolean { value: BoolLiteral& },
 }
 
-// 范围模式的端点是一对整数或字符字面量，不是范围表达式。
+// Range-pattern endpoints are a pair of integer or character literals, rather than a range expression.
 pub enum RangeBounds {
     Integer { lower: IntLiteral&, upper: IntLiteral& },
     Character { lower: CharLiteral&, upper: CharLiteral& },
 }
 
-// if 和 while 的条件是普通表达式或 let 模式匹配。
+// An if or while condition is an expression or a let-pattern match.
 pub enum Condition {
     Expression { value: Expr& },
     Let { value: LetCondition& },
 }
 
-// 泛型实例化的实参是类型语法或常量表达式。
+// A generic instantiation argument is type syntax or a constant expression.
 pub enum GenericArgument {
     Type { value: TypeSyntax& },
     Constant { value: ConstExpr& },
 }
 
-// 泛型声明的形参是类型参数或常量参数。
+// A generic declaration parameter is a type parameter or a constant parameter.
 pub enum GenericParam {
     Type { value: TypeGenericParam& },
     Constant { value: ConstGenericParam& },
 }
 
-// 函数和方法的形参是命名参数或带类型的解构模式。
+// Function and method parameters are named parameters or typed destructuring patterns.
 pub enum Parameter {
     Named { value: VarInfo& },
     Pattern { value: PatternParam& },
 }
 
-// trait 方法成员是不带函数体的声明或带默认函数体的定义。
+// A trait method member is a declaration without a body or a definition with a default body.
 pub enum TraitMember {
     Declaration { value: MethodDecl& },
     Definition { value: MethodDef& },
 }
 
-// 构造模式的实参可以为空、位置模式或命名字段模式。
+// Constructor-pattern arguments can be absent, positional patterns, or named field patterns.
 pub enum PatternArguments {
     None,
     Positional { values: Vec<Pattern&> },
@@ -260,14 +260,14 @@ impl Drop for FieldPatternData {
     pub fn drop() {}
 }
 
-// 限定 trait 调用的类型来源；实参和返回类型由语义分析阶段解析。
+// Type sources for qualified trait calls; semantic analysis resolves argument and return types.
 pub enum TypeSource {
     Syntax { value: TypeSyntax& },
     ArgumentType { index: u64 },
     CallableReturnType,
 }
 
-// 表达式和语句的语法数据；子表达式统一引用 Expr 节点。
+// Expression and statement syntax data; all child expressions refer to Expr nodes.
 pub enum ExprData {
     Identifier { name: Identifier& },
     Literal { literal: Literal },
@@ -372,7 +372,7 @@ impl Drop for ExprData {
     }
 }
 
-// 源码中的类型语法，与类型检查产生的语义类型分开表示。
+// Source-level type syntax is represented separately from semantic types produced by type checking.
 pub enum TypeData {
     IntType { signed: bool, width: u64 },
     FloatType { width: u64 },
@@ -427,7 +427,7 @@ impl Drop for TypeData {
     }
 }
 
-// 类型语法中的常量表达式包含整数字面量、常量参数及其运算组合。
+// Constant expressions in type syntax include integer literals, constant parameters, and their arithmetic combinations.
 pub enum ConstExprData {
     LiteralConstExpr { literal: IntLiteral& },
     GenericConstExpr { name: Identifier& },
@@ -446,7 +446,7 @@ impl Drop for ConstExprData {
     }
 }
 
-// 匹配和解构的模式语法，与表达式分开表示。
+// Matching and destructuring patterns are represented separately from expressions.
 pub enum PatternData {
     WildcardPattern,
     LiteralPattern { literal: Literal },
@@ -484,7 +484,7 @@ impl Drop for PatternData {
     }
 }
 
-// 文件级声明的语法，包含导入、函数、类型、trait 和 impl。
+// File-level declaration syntax includes imports, functions, types, traits, and impls.
 pub enum ItemData {
     Import { paths: Vec<Identifier&>, target: Identifier&, alias: Option<Identifier&>, end: Option<Position> },
     Alias { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, target: TypeSyntax& },

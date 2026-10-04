@@ -1,59 +1,59 @@
-// bench/AWFY/an/deltablue.an — DeltaBlue 增量约束求解器 (AWFY 宏基准)
+// bench/AWFY/an/deltablue.an: DeltaBlue incremental constraint solver (AWFY macrobenchmark).
 //
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/DeltaBlue.java + deltablue/*.java
-//       (MIT, Copyright (c) 2001-2016 Stefan Marr; 这批文件源自 Mario Wolczko 的
-//        Java/Smalltalk DeltaBlue, 许可指向已归档的 Sun Labs 页面, 见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/deltablue.c (C 参考实现; 与之逐项对齐, 断言值一致)
+// Upstream: AWFY benchmarks/Java/src/DeltaBlue.java and deltablue/*.java.
+//       MIT, Copyright (c) 2001-2016 Stefan Marr; these files derive from Mario Wolczko's
+//        Java/Smalltalk DeltaBlue, licensed through an archived Sun Labs page; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/deltablue.c; operations and assertion values match.
 //
-// 算法: DeltaBlue 增量约束求解器。Planner 维护约束图与数据流图, 用单调递增的
-//       mark 值做环检测 (addPropagate/removePropagateFrom)。约束分 STRENGTH 层级
-//       (REQUIRED/STRONG_DEFAULT/DEFAULT/PREFERRED/ABSOLUTE_WEAKEST...), 强度比较
-//       决定传播方向 (chooseMethod)。chainTest(n): n 条 REQUIRED 等式链, 一端
-//       STRONG_DEFAULT stay, 另一端 PREFERRED edit; 反复把 vars[0] 设为 i 并执行
-//       plan, 断言 vars[n]==i (i=0..99)。projectionTest(n): n 组
-//       src --ScaleConstraint(scale=10, offset=1000)--> dst (src 带 DEFAULT stay),
-//       依次 change(src,17) / change(dst,1050) / change(scale,5) / change(offset,2000),
-//       断言 dst==1170、src==5、dests[i]==(i+1)*5+1000 再 (i+1)*5+2000。
+// Algorithm: Planner maintains constraint/dataflow graphs and detects cycles using monotonic
+//       marks in addPropagate/removePropagateFrom. Constraints have STRENGTH levels
+//       (REQUIRED/STRONG_DEFAULT/DEFAULT/PREFERRED/ABSOLUTE_WEAKEST...), with comparisons
+//       selecting propagation direction via chooseMethod. chainTest(n) creates n REQUIRED equalities,
+//       a STRONG_DEFAULT stay at one end and a PREFERRED edit at the other; set vars[0]=i, execute
+//       the plan, and assert vars[n]==i for i=0..99. projectionTest(n) creates n groups:
+//       src --ScaleConstraint(scale=10,offset=1000)--> dst, with DEFAULT stays on src.
+//       Apply change(src,17), change(dst,1050), change(scale,5), and change(offset,2000),
+//       asserting dst==1170, src==5, then dests[i]==(i+1)*5+1000 and (i+1)*5+2000.
 //
-// YIAN 实现结构:
-//   - Constraint 是带 Equality/Scale/Stay/Edit 变体的 tagged enum。约束方法按变体
-//     分派; Scale 的 addToGraph/removeFromGraph/inputs/recalculate 保持对应的约束规则。
-//   - Strength (Strength.java) 是 interned 常量对象, 上游只用 arithmeticValue 比较
-//     (sameAs/stronger/weaker/strongest/weakest), 且 sameAs(required) 也只看算术值;
-//     Strength 因此由 i32 arithmeticValue 表示, 不依赖对象身份。
-//   - 约束有 Planner.next_id 分配的唯一 id; 对约束的身份判定比较 id。
-//   - 遍历通过显式循环实现, 不创建 ForEachInterface/TestInterface 闭包;
-//     inputsKnown 直接写成「该约束所有输入都已知」的布尔合取。
-//   - 队列使用 Vec + head 游标; unsatisfied 的 sort 使用稳定插入排序, 与 Java TimSort 在
-//     「stronger ? -1 : 1」比较器下的稳定性一致 (等强度保持入队顺序)。
-//   - 每个测试结束时显式释放全部 Variable/Constraint; change() 内部的 EditConstraint
-//     在 destroyConstraint 后 del。分配次数与上游一致
+// YIAN implementation:
+//   - Constraint is a tagged enum with Equality/Scale/Stay/Edit variants and variant-based dispatch.
+//       Scale's addToGraph/removeFromGraph/inputs/recalculate preserve its constraint rules.
+//   - Upstream Strength uses interned constants, compared only through arithmeticValue
+//       (sameAs/stronger/weaker/strongest/weakest), including sameAs(required).
+//       Represent Strength by i32 arithmeticValue without object identity.
+//   - Planner.next_id assigns unique constraint IDs for identity comparison.
+//   - Explicit loops replace ForEachInterface/TestInterface closures;
+//       inputsKnown is a conjunction requiring every input to be known.
+//   - Queues use Vec plus a head cursor; stable insertion sort orders unsatisfied constraints,
+//       matching Java TimSort under stronger ? -1 : 1 and preserving equal-strength insertion order.
+//   - Release all Variables/Constraints after each test; change() deletes its EditConstraint
+//       after destroyConstraint. Allocation counts match upstream.
 //     (chainTest: n+1 Variable, n Equality + 1 Stay + 1 Edit; projectionTest:
 //      2n+2 Variable, n Stay + n Scale + 4 Edit)。
-//   - Planner.propagateFrom 不在 chainTest/projectionTest 的工作单元调用路径上。
+//   - Planner.propagateFrom is outside the chainTest/projectionTest work-unit call paths.
 //
-// 单一源: fat 与 raw 共用本文件; 约束/变量互相引用用 T&, 约束列表用 Vec<Constraint&>。
-// 规模: 每个工作单元执行 chainTest(12000) 与 projectionTest(12000) 各一次。
-// 外层重复只重复完整工作单元。
+// Both modes share this source: T& links constraints/variables; lists use Vec<Constraint&>.
+// Scale: each work unit runs chainTest(12000) and projectionTest(12000) once.
+// Outer repetitions repeat complete work units.
 from std.core.vec import Vec;
 
-// ── Direction (上游 deltablue/Direction.java) ──
-// Flow.Unset 表示约束当前没有满足的传播方向。
+// -- Direction (upstream deltablue/Direction.java) --
+// Flow.Unset means the constraint has no satisfied propagation direction.
 enum Flow {
     Forward,
     Backward,
     Unset,
 }
 
-// ── Strength (上游 deltablue/Strength.java) ──
-// 上游 Strength 是 interned 常量, 只用 arithmeticValue 参与比较, 故这里直接用 i32。
+// -- Strength (upstream deltablue/Strength.java) --
+// Upstream interned Strength constants compare only arithmeticValue, represented here as i32.
 fn strength_absolute_weakest() -> i32 { return 10000; }
 fn strength_required() -> i32 { return -800; }
 fn strength_strong_default() -> i32 { return -200; }
 fn strength_default() -> i32 { return 0; }
 fn strength_preferred() -> i32 { return -400; }
 
-// 对应 Strength.stronger / weaker / weakest (arithmeticValue 越小越强)。
+// Strength.stronger/weaker/weakest: lower arithmeticValue means stronger.
 fn strength_stronger(a: i32, b: i32) -> bool { return a < b; }
 fn strength_weaker(a: i32, b: i32) -> bool { return a > b; }
 fn strength_weakest(a: i32, b: i32) -> i32 {
@@ -63,8 +63,8 @@ fn strength_weakest(a: i32, b: i32) -> i32 {
     return b;
 }
 
-// ── 约束 (上游 AbstractConstraint + Unary/Binary + Equality/Scale/Stay/Edit) ──
-// 上游类层次折叠为一个 tagged enum, 用 match 分派。
+// -- Constraints (upstream AbstractConstraint, Unary/Binary, Equality/Scale/Stay/Edit) --
+// Represent the upstream class hierarchy as one tagged enum with match dispatch.
 enum Constraint {
     Equality {
         id: u64,
@@ -96,7 +96,7 @@ enum Constraint {
     },
 }
 
-// ── Variable (上游 deltablue/Variable.java) ──
+// -- Variable (upstream deltablue/Variable.java) --
 struct Variable {
     value: i32,
     constraints: Vec<Constraint&>,
@@ -106,13 +106,13 @@ struct Variable {
     stay: bool,
 }
 
-// ── Planner (上游 deltablue/Planner.java) ──
+// -- Planner (upstream deltablue/Planner.java) --
 struct Planner {
     current_mark: i32,
     next_id: u64,
 }
 
-// BinaryConstraint.chooseMethod 的共享体 (Equality/Scale 共用), 返回选定方向。
+// Shared BinaryConstraint.chooseMethod logic for Equality/Scale; return the selected direction.
 fn binary_choose(strength: i32, v1: Variable&, v2: Variable&, mark: i32) -> Flow {
     if v1.mark == mark {
         if v2.mark != mark && strength_stronger(strength, v2.walk_strength) {
@@ -126,7 +126,7 @@ fn binary_choose(strength: i32, v1: Variable&, v2: Variable&, mark: i32) -> Flow
         }
         return Flow.Unset;
     }
-    // 两变量都未被标记: 可自由选方向
+    // Neither variable is marked, so either direction can be chosen.
     if strength_weaker(v1.walk_strength, v2.walk_strength) {
         if strength_stronger(strength, v1.walk_strength) {
             return Flow.Backward;
@@ -144,7 +144,7 @@ impl Variable {
         return dyn Variable(0, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, strength_absolute_weakest(), true);
     }
 
-    // 上游 Variable.value(int)
+    // Upstream Variable.value(int).
     static pub fn value(v: i32) -> Variable& {
         return dyn Variable(v, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, strength_absolute_weakest(), true);
     }
@@ -153,7 +153,7 @@ impl Variable {
         self.constraints.push(c);
     }
 
-    // 上游 Vector.remove(c) (按对象身份移除第一个匹配项) + determinedBy 复位。
+    // Upstream Vector.remove(c): remove the first identity match and reset determinedBy.
     pub fn remove_constraint(c: Constraint&) {
         let i: u64 = 0;
         let idx: i64 = -1;
@@ -198,7 +198,7 @@ impl Constraint {
         };
     }
 
-    // 上游 AbstractConstraint.isInput / EditConstraint.isInput
+    // Upstream AbstractConstraint.isInput / EditConstraint.isInput.
     pub fn is_input() -> bool {
         return match self {
             Equality(id, strength, v1, v2, direction) => false,
@@ -208,7 +208,7 @@ impl Constraint {
         };
     }
 
-    // 上游 isSatisfied: 二元看 direction != null, 一元看 satisfied。
+    // Upstream isSatisfied: binary direction != null, unary satisfied flag.
     pub fn is_satisfied() -> bool {
         return match self {
             Equality(id, strength, v1, v2, direction) => match *direction {
@@ -226,7 +226,7 @@ impl Constraint {
         };
     }
 
-    // 上游 addToGraph
+    // Upstream addToGraph.
     pub fn add_to_graph() {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -252,7 +252,7 @@ impl Constraint {
         }
     }
 
-    // 上游 removeFromGraph
+    // Upstream removeFromGraph.
     pub fn remove_from_graph() {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -278,7 +278,7 @@ impl Constraint {
         }
     }
 
-    // 上游 chooseMethod (ScaleConstraint 不覆写, 与 BinaryConstraint 相同)
+    // Upstream chooseMethod; ScaleConstraint inherits BinaryConstraint's implementation.
     pub fn choose_method(mark: i32) {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -296,7 +296,7 @@ impl Constraint {
         }
     }
 
-    // 上游 execute
+    // Upstream execute.
     pub fn execute() {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -330,7 +330,7 @@ impl Constraint {
         }
     }
 
-    // 上游 inputsDo(in -> in.setMark(mark)): 标记本约束的输入变量。
+    // Upstream inputsDo(in -> in.setMark(mark)): mark this constraint's input variables.
     fn mark_inputs(mark: i32) {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -372,7 +372,7 @@ impl Constraint {
         }
     }
 
-    // 上游 inputsKnown(mark): 所有输入都「已知」(已标记 / stay / 无约束决定)。
+    // Upstream inputsKnown(mark): every input is marked, has a stay, or is not constraint-determined.
     pub fn inputs_known(mark: i32) -> bool {
         return match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -394,7 +394,7 @@ impl Constraint {
                     && (offset.mark == mark || offset.stay || offset.determined_by.is_none());
             },
             Stay(id, strength, output, satisfied) => {
-                // UnaryConstraint.inputsHasOne 恒为 false
+                // UnaryConstraint.inputsHasOne is always false.
                 return true;
             },
             Edit(id, strength, output, satisfied) => {
@@ -403,7 +403,7 @@ impl Constraint {
         };
     }
 
-    // 上游 markUnsatisfied
+    // Upstream markUnsatisfied.
     pub fn mark_unsatisfied() {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -421,7 +421,7 @@ impl Constraint {
         }
     }
 
-    // 上游 getOutput
+    // Upstream getOutput.
     pub fn get_output() -> Variable& {
         return match self {
             Equality(id, strength, v1, v2, direction) => match *direction {
@@ -439,7 +439,7 @@ impl Constraint {
         };
     }
 
-    // 上游 recalculate
+    // Upstream recalculate.
     pub fn recalculate() {
         match self {
             Equality(id, strength, v1, v2, direction) => {
@@ -493,12 +493,12 @@ impl Constraint {
         }
     }
 
-    // 上游 AbstractConstraint.satisfy
+    // Upstream AbstractConstraint.satisfy.
     pub fn satisfy(mark: i32, planner: Planner&) -> Option<Constraint&> {
         self.choose_method(mark);
 
         if self.is_satisfied() {
-            // 标记输入以支持 addPropagate 的环检测
+            // Mark inputs for addPropagate's cycle detection.
             self.mark_inputs(mark);
 
             let out: Variable& = self.get_output();
@@ -522,7 +522,7 @@ impl Constraint {
         return Option<Constraint&>.None;
     }
 
-    // 上游 AbstractConstraint.destroyConstraint
+    // Upstream AbstractConstraint.destroyConstraint.
     pub fn destroy_constraint(planner: Planner&) {
         if self.is_satisfied() {
             planner.incremental_remove(self);
@@ -530,7 +530,7 @@ impl Constraint {
         self.remove_from_graph();
     }
 
-    // ── 构造 (上游各约束构造函数: 建图 + incrementalAdd) ──
+    // -- Construction: upstream constructors build the graph and call incrementalAdd --
 
     static pub fn equality(v1: Variable&, v2: Variable&, strength: i32, planner: Planner&) -> Constraint& {
         let id: u64 = planner.new_constraint_id();
@@ -565,7 +565,7 @@ impl Constraint {
     }
 }
 
-// 执行 plan (上游 Plan.execute: forEach(c -> c.execute()))
+// Execute the plan (upstream Plan.execute: forEach(c -> c.execute())).
 fn execute_plan(plan: Vec<Constraint&>) {
     let i: u64 = 0;
     while i < plan.len() {
@@ -575,7 +575,7 @@ fn execute_plan(plan: Vec<Constraint&>) {
     }
 }
 
-// 释放辅助 (Java 侧靠 GC; 本移植显式回收)
+// Release helpers (Java uses GC; this port releases explicitly).
 fn free_constraints(cons: Vec<Constraint&>) {
     let i: u64 = 0;
     while i < cons.len() {
@@ -598,7 +598,7 @@ fn free_variables(vars: Vec<Variable&>) {
 }
 
 // unsatisfied.sort((c1,c2) -> c1.strength.stronger(c2.strength) ? -1 : 1)
-// 稳定插入排序: 强度强者在前, 等强度保持入队顺序 (与 Java TimSort 稳定性一致)。
+// Stable insertion sort: stronger first, preserving equal-strength enqueue order as Java TimSort does.
 fn sort_unsatisfied(v: Vec<Constraint&>) {
     let i: u64 = 1;
     while i < v.len() {
@@ -619,19 +619,19 @@ impl Planner {
         return dyn Planner(1, 1u64);
     }
 
-    // 唯一约束 id (用于身份比较, 见头部适配说明)
+    // Unique constraint ID for identity comparison.
     pub fn new_constraint_id() -> u64 {
         self.next_id += 1u64;
         return self.next_id;
     }
 
-    // 上游 newMark
+    // Upstream newMark.
     pub fn new_mark() -> i32 {
         self.current_mark += 1;
         return self.current_mark;
     }
 
-    // 上游 incrementalAdd
+    // Upstream incrementalAdd.
     pub fn incremental_add(c: Constraint&) {
         let mark: i32 = self.new_mark();
         let cur: Option<Constraint&> = c.satisfy(mark, self);
@@ -641,7 +641,7 @@ impl Planner {
         }
     }
 
-    // 上游 incrementalRemove
+    // Upstream incrementalRemove.
     pub fn incremental_remove(c: Constraint&) {
         let out: Variable& = c.get_output();
         c.mark_unsatisfied();
@@ -656,7 +656,7 @@ impl Planner {
         unsatisfied.drop();
     }
 
-    // 上游 addConstraintsConsumingTo(闭包 -> 显式循环)
+    // Upstream addConstraintsConsumingTo, using an explicit loop instead of a closure.
     pub fn add_constraints_consuming_to(v: Variable&, coll: Vec<Constraint&>&) {
         let determining: Option<Constraint&> = v.determined_by;
         let i: u64 = 0;
@@ -679,7 +679,7 @@ impl Planner {
         }
     }
 
-    // 上游 makePlan (todo 用 Vec + head 游标; sources 由本函数接管并释放)
+    // Upstream makePlan: todo uses Vec plus head; this function takes ownership of sources and releases it.
     pub fn make_plan(sources: Vec<Constraint&>) -> Vec<Constraint&> {
         let mark: i32 = self.new_mark();
         let plan: Vec<Constraint&> = Vec<Constraint&>.new();
@@ -691,7 +691,7 @@ impl Planner {
 
             let out: Variable& = c.get_output();
             if out.mark != mark && c.inputs_known(mark) {
-                // 尚未入 plan 且可入 plan
+                // Not yet in the plan, but eligible for inclusion.
                 plan.push(c);
                 out.mark = mark;
                 self.add_constraints_consuming_to(out, &sources);
@@ -701,7 +701,7 @@ impl Planner {
         return plan;
     }
 
-    // 上游 extractPlanFromConstraints
+    // Upstream extractPlanFromConstraints.
     pub fn extract_plan_from_constraints(constraints: Vec<Constraint&>) -> Vec<Constraint&> {
         let sources: Vec<Constraint&> = Vec<Constraint&>.new();
         let i: u64 = 0;
@@ -715,7 +715,7 @@ impl Planner {
         return self.make_plan(sources);
     }
 
-    // 上游 addPropagate
+    // Upstream addPropagate.
     pub fn add_propagate(c: Constraint&, mark: i32) -> bool {
         let todo: Vec<Constraint&> = Vec<Constraint&>.new();
         todo.push(c);
@@ -738,7 +738,7 @@ impl Planner {
         return true;
     }
 
-    // 上游 constraintsConsuming(闭包 -> 内联) + removePropagateFrom
+    // Upstream constraintsConsuming inlined, followed by removePropagateFrom.
     pub fn remove_propagate_from(out: Variable&) -> Vec<Constraint&> {
         let unsatisfied: Vec<Constraint&> = Vec<Constraint&>.new();
 
@@ -790,7 +790,7 @@ impl Planner {
         return unsatisfied;
     }
 
-    // 上游 change
+    // Upstream change.
     pub fn change(var: Variable&, new_value: i32) {
         let edit_c: Constraint& = Constraint.edit(var, strength_preferred(), self);
         let edit_v: Vec<Constraint&> = Vec<Constraint&>.new();
@@ -810,7 +810,7 @@ impl Planner {
         del edit_c;
     }
 
-    // 上游 chainTest: 返回校验值 (100 次迭代中 vars[n] 之和, 恒为 0+..+99 = 4950)
+    // Upstream chainTest: return the sum of vars[n] over 100 iterations, 0+...+99=4950.
     static pub fn chain_test(n: i32) -> i64 {
         let planner: Planner& = Planner.new();
 
@@ -823,7 +823,7 @@ impl Planner {
 
         let cons: Vec<Constraint&> = Vec<Constraint&>.new();
 
-        // n 条 REQUIRED 等式链
+        // Chain of n REQUIRED equalities.
         let k: i32 = 0;
         while k < n {
             let c: Constraint& = Constraint.equality(vars[u64(k)], vars[u64(k) + 1u64], strength_required(), planner);
@@ -860,7 +860,7 @@ impl Planner {
         return acc;
     }
 
-    // 上游 projectionTest: 返回校验值 (change 后各断言值 + 被检查的 dests 之和)
+    // Upstream projectionTest: return checked values after change plus the sum of inspected dests.
     static pub fn projection_test(n: i32) -> i64 {
         let planner: Planner& = Planner.new();
 

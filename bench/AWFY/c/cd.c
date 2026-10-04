@@ -1,10 +1,10 @@
-// bench/AWFY/c/cd.c — 碰撞检测 (CD) 的 C 参考实现
+// bench/AWFY/c/cd.c: C reference for collision detection (CD).
 //
-// 语义与规模与 bench/AWFY/an/cd.an 对齐; 只用于跨语言正确性对照, 不参与 fat/raw 计时。
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/CD.java + cd/*.java
-//       (MIT, Copyright (c) 2001-2016 Stefan Marr; 见仓库 LICENSE.md)
-// 说明: 上游用 Java 泛型红黑树 (RedBlackTree<K,V>), 这里用一个带标签键的连通实现;
-//       sin/cos/sqrt 直接用 libm。
+// Semantics and scale match bench/AWFY/an/cd.an; used for correctness comparison, outside fat/raw timing.
+// Upstream: AWFY benchmarks/Java/src/CD.java and cd/*.java.
+//       MIT, Copyright (c) 2001-2016 Stefan Marr; see the repository LICENSE.md.
+// Upstream uses generic RedBlackTree<K,V>; this implementation uses tagged keys in one tree.
+//       sin/cos/sqrt use libm directly.
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -63,7 +63,7 @@ static int compare_numbers(double a, double b) {
     if (a > b) {
         return 1;
     }
-    return (a == a) ? 1 : -1;  // NaN 视为最小
+    return (a == a) ? 1 : -1;  // Treat NaN as the smallest value.
 }
 
 static int v2_compare(Vector2D a, Vector2D b) {
@@ -71,7 +71,7 @@ static int v2_compare(Vector2D a, Vector2D b) {
     return result != 0 ? result : compare_numbers(a.y, b.y);
 }
 
-// ── 键: 标签 + CallSign 值 或 Vector2D ──
+// -- Keys: tag plus CallSign value or Vector2D --
 typedef struct {
     int kind;  // 0 = CallSign, 1 = Vector2D
     int sign;
@@ -104,7 +104,7 @@ static int key_compare(Key a, Key b) {
     return v2_compare(a.voxel, b.voxel);
 }
 
-// ── 红黑树 (键 → void* 值; 移植自上游 RedBlackTree.java) ──
+// -- Red-black tree (keys -> void* values; from upstream RedBlackTree.java) --
 enum { COLOR_RED, COLOR_BLACK };
 
 typedef struct RBNode {
@@ -421,7 +421,7 @@ static void rb_foreach(RBTree *tree, RBVisitor visit, void *ctx) {
     }
 }
 
-// ── 释放整棵树: 后序遍历释放全部节点; 传入 free_value 时同时释放节点值 ──
+// -- Release nodes in postorder; free_value optionally releases their values --
 typedef void (*RBValueFree)(void *value);
 
 static void rb_free_subtree(RBNode *node, RBValueFree free_value) {
@@ -443,7 +443,7 @@ static void rb_free_all_with(RBTree *tree, RBValueFree free_value) {
 
 static void rb_free_all(RBTree *tree) { rb_free_all_with(tree, NULL); }
 
-// ── CD 本体 ──
+// -- Collision detection --
 typedef struct {
     int callsign;
     Vector3D pos_one;
@@ -546,7 +546,7 @@ static Vector2D voxel_hash(Vector3D position) {
     return v2(x, y);
 }
 
-// 每个体素桶里的 motion 列表 (对应上游 Vector<Motion>)
+// Motion list per voxel bucket (upstream Vector<Motion>).
 typedef struct {
     Motion *items;
     int size;
@@ -561,7 +561,7 @@ static void list_append(MotionList *list, Motion motion) {
     list->items[list->size++] = motion;
 }
 
-// 释放体素桶: 先释放 items 缓冲, 再释放 MotionList 本身
+// Release voxel bucket: items buffer first, then MotionList.
 static void motion_list_free(void *value) {
     MotionList *list = value;
     free(list->items);
@@ -603,7 +603,7 @@ static void recurse(RBTree *voxel_map, RBTree *seen, Vector2D next_voxel, Motion
     recurse(voxel_map, seen, v2_plus(v2_plus(next_voxel, horizontal), vertical), motion);
 }
 
-// 收集体素桶 (只为 forEach 用; 上游按树序收集, 碰撞计数与顺序无关)
+// Collect buckets for forEach in upstream tree order; collision counts are order-independent.
 typedef struct {
     MotionList **buckets;
     int size;
@@ -650,17 +650,17 @@ static void collisions_push(CollisionVec *vec, Collision collision) {
     vec->items[vec->size++] = collision;
 }
 
-// ── 检测器 ──
+// -- Detector --
 typedef struct {
     RBTree state;  // CallSign → Vector3D*
 } Detector;
 
 static void detector_init(Detector *detector) { detector->state.root = NULL; }
 
-// 释放 state 中所有 Vector3D 值与树节点
+// Release all state Vector3D values and tree nodes.
 static void detector_destroy(Detector *detector) { rb_free_all_with(&detector->state, free); }
 
-// 收集 state 中本帧未出现的键 (上游 toRemove 的 forEach)
+// Collect state keys absent from this frame (upstream toRemove.forEach).
 typedef struct {
     int *items;
     int size;
@@ -688,7 +688,7 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
 
     for (int i = 0; i < frame_size; i++) {
         Key key = key_sign(frame[i].callsign);
-        // 上游存的是不可变 Vector3D 对象的引用; 这里必须存值拷贝 (帧数组会被复用)
+        // Upstream stores immutable Vector3D references; copy values here because the frame array is reused.
         Vector3D *stored = malloc(sizeof(Vector3D));
         *stored = frame[i].position;
         Vector3D *old_position = rb_put(&detector->state, key, stored);
@@ -697,16 +697,16 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
         Motion motion;
         motion.callsign = frame[i].callsign;
         if (old_position == NULL) {
-            motion.pos_one = new_position;  // 新出现的飞机按静止处理
+            motion.pos_one = new_position;  // Treat newly appearing aircraft as stationary.
         } else {
             motion.pos_one = *old_position;
-            free(old_position);  // 被替换的旧位置已归本树所有
+            free(old_position);  // The tree owns the previous position being replaced.
         }
         motion.pos_two = new_position;
         motions[i] = motion;
     }
 
-    // 移除本帧不再出现的飞机
+    // Remove aircraft absent from this frame.
     int *to_remove = malloc((size_t)frame_size * sizeof(int));
     RemoveCtx remove_ctx = {to_remove, 0, &seen};
     rb_foreach(&detector->state, collect_removable, &remove_ctx);
@@ -715,7 +715,7 @@ static int handle_new_frame(Detector *detector, Aircraft *frame, int frame_size)
     }
     free(to_remove);
 
-    // 体素归并
+    // Group motions into voxels.
     RBTree voxel_map;
     voxel_map.root = NULL;
     for (int i = 0; i < frame_size; i++) {

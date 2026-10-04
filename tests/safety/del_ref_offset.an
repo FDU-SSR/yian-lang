@@ -1,6 +1,6 @@
-// del-view 负例(a):堆偏移 T& → safety error。`let r: i32& = &p[1]` 产生
-// data = lock_ptr+8+4 ≠ lock_ptr+8:CheckDelete 的 is_raw data 分量
-// (data==lock_ptr+8)失败(RefType 无 index 分量,偏移直接体现在 data)
+// Deletion-view negative (a): offset heap T& fails. let r:i32&=&p[1] gives
+// data=lock_ptr+8+4, differing from the allocation anchor. CheckDelete's is_raw data
+// term fails; RefType has no index, so data itself carries the offset.
 // → fail-stop → Exit code 1。
 //
 // Expected exit code: 1

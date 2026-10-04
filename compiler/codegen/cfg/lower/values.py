@@ -14,22 +14,22 @@ from compiler.utils.log import CompilerLog
 
 
 def _ch_block():
-    """cfg.block 日志通道（类体内引用，按约定用单下划线）。"""
+    """cfg.block logging channel (single underscore permits references from class bodies)."""
     return CompilerLog.get("cfg.block")
 
 
 class ValueLowerer:
-    """惰值/取址 + 聚合/构造/转换下降器（持有帧锁实体化状态）。"""
+    """Lazy lvalue/address, aggregate, construction, and conversion lowering with frame-lock state."""
 
     def __init__(self, state: FunctionState, memory: MemoryOps, resolver: ExprResolver) -> None:
         self.__state = state
         self.__memory = memory
         self.__resolver = resolver
-        self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # ⟨e_f, k_f⟩:函数入口帧锁实体化
+        self.__frame_lock: tuple[IR.Value, IR.Value] | None = None  # <e_f,k_f>: frame lock materialized at function entry.
 
     @property
     def frame_lock(self) -> tuple[IR.Value, IR.Value] | None:
-        """帧锁寄存器对（构建器在 build() 末尾写入 IR.Function.frame_lock）。"""
+        """Frame-lock register pair; the builder writes IR.Function.frame_lock at the end of build()."""
         return self.__frame_lock
 
     def resolve_addr(self, expr: HIR.Expr) -> IR.Value:
@@ -66,11 +66,11 @@ class ValueLowerer:
                 raise CodegenError(f"Cannot resolve address of expression: {expr}", expr.span)
 
     def resolve_addr_fat(self, expr: HIR.Expr) -> IR.Value:
-        """惰性左值路径:恒胖地址解析——显式 &x(AddrOf)与方法 self receiver。
+        """Lazy lvalue path: resolve fat addresses for explicit &x and method receivers.
 
-        与 __resolve_addr(自然形态,裸变量→裸地址)不同:变量的地址一律合成
-        4 字段胖指针(首次取址惰性实体化帧锁),派生地址(field/array/deref)
-        沿胖基址传播,Load/Store/FieldPtr/ElementPtr 保留该表示及检查所需元数据。
+        Unlike __resolve_addr, which returns raw addresses for bare variables, this path always
+        synthesizes four-field fat pointers, lazily materializing the frame lock on first use.
+        Derived field/array/deref addresses propagate the fat base and retain check metadata.
         """
         # SliceAccess is value-shaped in HIR because ordinary indexing loads an
         # element.  When it is the operand of AddrOf, however, preserve the
@@ -109,8 +109,8 @@ class ValueLowerer:
         return self.__resolver.resolve_val(expr.operand)
 
     def resolve_field_access_addr(self, expr: HIR.FieldAccess, *, fat: bool = False) -> IR.Value:
-        # 惰性左值路径:fat=True(显式 & / 方法 receiver)时沿胖基址传播;
-        # 自然形态下基址裸/胖随其形态——裸变量 → 裸字段地址,胖指针(Deref 后)→ 胖。
+        # Lazy lvalues: fat=True (explicit & / method receiver) propagates the fat base;
+        # natural resolution preserves the base representation: bare variable -> raw field address, dereferenced fat pointer -> fat.
         base_addr = self.resolve_addr_fat(expr.receiver) if fat else self.resolve_addr(expr.receiver)
         return self.__memory.build_field_ptr(base_addr, expr.field.index, expr.type_id)
 
@@ -119,10 +119,10 @@ class ValueLowerer:
         return self.__memory.build_field_ptr(base_addr, expr.index, expr.type_id)
 
     def resolve_array_access_addr(self, expr: HIR.ArrayAccess, *, fat: bool = False) -> IR.Value:
-        # T[N] 元素地址:数组指针退化为 T* 后按元素索引;LLVM cast 数组退化时
-        # 以 data 为基址并设置 size=N。
-        # 惰性左值路径:裸数组基址(普通数组变量)走裸位转换 + 编译期
-        # 越界检查;胖基址(Deref 后)走原退化 + ElementPtr 良构检查。
+        # T[N] element addresses: decay the array pointer to T*, then index; LLVM uses data as the base
+        # and sets size=N when decaying the array.
+        # Lazy lvalues: bare array bases (ordinary array variables) use raw bitcasts and compile-time
+        # bounds checks; fat bases after Deref use decay and ElementPtr validity checks.
         base_addr = self.resolve_addr_fat(expr.array) if fat else self.resolve_addr(expr.array)
         elem_ptr_type = self.__state.session.type_ctx.alloc_pointer(expr.element_type)
         elem_base = self.build_cast(base_addr, elem_ptr_type)
@@ -135,15 +135,15 @@ class ValueLowerer:
         return self.__memory.build_element_ptr(elem_base, index_val, elem_ptr_type)
 
     def resolve_slice_access_addr(self, expr: HIR.SliceAccess, *, fat: bool = False) -> IR.Value:
-        """T[] 元素地址内建解析（切片索引内联优化）。
+        """Built-in resolution of T[] element addresses for inline slice indexing.
 
-        镜像 slice.an as_struct+ptr+index 链的净效应,但内联在调用点,消除
-        emit_object 无优化时逐次全栈调用开销。实现:
-        1. 解析切片值(fat 3 字段 {data,word,size} / raw 2 字段 {data,size});
-        2. 提取 data 字段(fat 下经 __slice_ptr_fat 合成 4 字段胖指针,携带切片
-           真锁,锁继承语义与 as_struct 一致;raw 下为裸指针);
-        3. __build_element_ptr → CheckElementArith + ElementPtr 得元素地址。
-        调用方的 fieldptr/load/store 触发 CheckInBounds/CheckSafeAccess。
+        Mirror slice.an's as_struct/ptr/index chain at the call site, avoiding full stack calls
+        when emit_object runs without optimization:
+        1. Resolve the slice value (fat {data,word,size}, raw {data,size}).
+        2. Extract data; __slice_ptr_fat synthesizes a four-field pointer inheriting the slice's
+           actual lock, as as_struct does. Raw mode uses a bare pointer.
+        3. __build_element_ptr emits CheckElementArith and ElementPtr for the element address.
+        The caller's fieldptr/load/store triggers CheckInBounds/CheckSafeAccess.
         """
         slice_val = self.__resolver.resolve_val(expr.slice)
         index_val = self.__resolver.resolve_val(expr.index)
@@ -193,11 +193,11 @@ class ValueLowerer:
     # ------------------------------------------------------------------
 
     def build_var_ptr_fat(self, var_ref: IR.VarRef) -> IR.Value:
-        """取局部变量槽地址并合成 4 字段胖指针 ⟨a_x, word(e_f,k_f), 0, 1⟩。
+        """Address a local slot and synthesize <a_x, word(e_f,k_f), 0, 1>.
 
-        data = 槽地址 a_x;word 打包当前帧锁位置与键(首次取址时惰性
-        实体化于函数入口);index = 0;size = 1(取址总是指向单个元素,含数组取址)。
-        LLVM 下降由 LLVM 层完成。惰性左值路径:显式 &x 与方法 receiver 专用。
+        data is the slot address; word packs the frame-lock position and key, lazily materialized
+        at function entry on first address-taking. index=0 and size=1, including array addresses.
+        LLVM lowers the value. This path serves explicit &x and method receivers.
         """
         e_f, k_f = self.emit_frame_lock()
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(var_ref.type_id))
@@ -207,9 +207,9 @@ class ValueLowerer:
         return fat
 
     def build_var_ptr_raw(self, var_ref: IR.VarRef) -> IR.Value:
-        """惰性左值路径:裸取址——未取址左值(赋值/读取/字段派生基址)
-        仅返回栈槽地址,不合成胖指针、不触发帧锁实体化(帧锁延迟到真正需要
-        胖指针的 AddrOf/方法 receiver 首次取址)。裸指针无胖元数据,检查跳过。
+        """Lazy lvalue path: return the raw stack-slot address for unaddressed lvalues.
+        Assignment, reads, and field-base derivation need no fat pointer or frame lock. Materialization
+        waits for AddrOf/method receivers; raw addresses omit metadata and checks.
         """
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=self.__state.session.type_ctx.alloc_pointer(var_ref.type_id))
         raw_ptr = self.__state.emitter.emit(IR.VarPtr(
@@ -232,13 +232,13 @@ class ValueLowerer:
         return addr
 
     def emit_frame_lock(self) -> tuple[IR.Value | None, IR.Value | None]:
-        """帧锁实体化:k_f ← Gen()(栈键 MSB 0),从独立
-        稳定影子栈 push 一个 u64 锁槽并写入 k_f。仅在首次
-        取址(VarPtr)时惰性触发,实体化语句插入入口块语句最前——先于正文与
-        终止符;无取址的函数不含帧锁节点。帧退出写 SENTINEL 并 pop(全部返回
-        路径)的发射由 LLVM 层完成。
-        raw 模式:无帧锁——直接返回 None 帧字段,不实体化
-        GenKey/AcquireFrameLock。"""
+        """Materialize a frame lock: k_f <- Gen() (stack key MSB 0), pushing
+        a u64 slot on the independent stable shadow stack and writing k_f. Trigger lazily
+        on the first VarPtr and prepend materialization statements to the entry block,
+        before the body and terminator. Functions without address-taking have no frame-lock nodes.
+        LLVM writes SENTINEL and pops the slot on every return path.
+        Raw mode returns None frame fields without materializing
+        GenKey/AcquireFrameLock."""
         if self.__state.session.raw_pointers:
             return (None, None)
         if self.__frame_lock is not None:
@@ -248,7 +248,7 @@ class ValueLowerer:
         k_f = self.build_gen_key()
         e_f_result = IR.Reg(
             name=self.__state.emitter.new_name(),
-            type_id=TypeCtx.u64_id,  # 帧 word(整字)
+            type_id=TypeCtx.u64_id,  # Frame word (full word).
         )
         e_f = self.__state.emitter.emit(IR.AcquireFrameLock(result=e_f_result, key=k_f)).result
         self.__state.emitter.current_block = saved_block
@@ -260,7 +260,7 @@ class ValueLowerer:
         return (e_f, k_f)
 
     def build_gen_key(self) -> IR.Value:
-        """`k_f ← Gen()`：帧进入 re-key 的 32 位键体。"""
+        """k_f <- Gen(): the 32-bit key used to re-key on frame entry."""
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.u64_id)
         return self.__state.emitter.emit(IR.GenKey(result=result)).result
 
@@ -297,19 +297,19 @@ class ValueLowerer:
         )).result
 
     def build_cast(self, value: IR.Value, to_type: int) -> IR.Value:
-        # CFG 层:Cast 指针→指针语义 ——ptr-to-T ↔ ptr-to-U(均非 ZST)= identity
-        #   (胖指针表示相同,LLVM 类型同为 {ptr,i64,i32,i32});涉及 ptr-to-ZST
-        #   = undef 例外(消除 LLVM size 不匹配风险)。CFG 层定义语义,发射由 LLVM 层完成。
-        # 惰性左值路径:裸源强转标 raw——LLVM 层位转换(不合成胖值);
-        # 裸性沿转换传播(裸数组退化基址的派生保持裸)。
+        # CFG pointer casts: non-ZST ptr-to-T <-> ptr-to-U are identity conversions
+        #   with the same LLVM {ptr,i64,i32,i32} representation. Casts involving ptr-to-ZST
+        #   produce undef to avoid LLVM size mismatches. CFG defines semantics; LLVM emits them.
+        # Lazy lvalues: mark raw-source casts raw for LLVM bitcasts without fat-value synthesis;
+        # raw representation propagates through casts and derived addresses of decayed bare arrays.
         to_resolved = to_type
         if isinstance(self.__state.session.type_ctx[to_resolved], Type.PointerType):
             _ch_block().debug(lambda: "cast ptr→ptr: identity (fat representation) / ptr-to-ZST 例外 = undef")
         raw = self.__state.pointers.is_raw(value)
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=to_type)
         cast = self.__state.emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result
-        # 嵌套派生链的挂起义务沿 ptr→ptr cast（identity 重贴）传播，由检查插入
-        # pass 依 `IR.Cast` 边重建。
+        # The insertion pass propagates pending obligations along pointer-to-pointer identity casts
+        # by following IR.Cast edges.
         return cast
 
     def resolve_bit_cast(self, expr: HIR.Builtin | HIR.BitCast) -> IR.Value:

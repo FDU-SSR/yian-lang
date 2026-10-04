@@ -1,11 +1,11 @@
-// bench/AWFY/c/richards.c — 任务调度器模拟 (Richards) 的 C 参考实现
+// bench/AWFY/c/richards.c: C reference for Richards task scheduling.
 //
-// 语义与 bench/AWFY/an/richards.an 对齐; C 与 YIAN 都执行一个独立工作单元,
-// 并在验证后释放该工作单元创建的对象。登记表统一记录对象, 避免沿任务/packet 的环状图递归释放。
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/Richards.java + richards/*.java
-//       (MIT, Copyright (c) 2001-2016 Stefan Marr; 见仓库 LICENSE.md)
-// 期望值 (上游 Java Scheduler.start 的断言):
-//       queuePacketCount == 23246 && holdCount == 9297 (单趟 run)。
+// Semantics match bench/AWFY/an/richards.an; C and YIAN execute an independent work unit,
+// then release its objects through a registry, without recursively following cyclic task/packet links.
+// Upstream: AWFY benchmarks/Java/src/Richards.java and richards/*.java.
+//       MIT, Copyright (c) 2001-2016 Stefan Marr; see the repository LICENSE.md.
+// Expected values from upstream Java Scheduler.start assertions:
+//       queuePacketCount==23246 and holdCount==9297 per run.
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,8 +1,8 @@
-// bench/ALLOC/an/grow_free.raw.an — 增长-释放循环 (裸态): 与 grow_free.an 同算法,
-// 元素类型是 T* (裸态没有切片).
+// bench/ALLOC/an/grow_free.raw.an: raw-mode grow/release loop with grow_free.an's algorithm.
+// Elements use T* (raw mode has no slices).
 //
-// 规模: 40 轮 × 4096 个 4 KiB 块 (每轮 16 MiB).
-// 断言: checksum == 每块写入值 7 × 块数 × 轮数.
+// Scale: 40 rounds * 4096 blocks of 4 KiB (16 MiB per round).
+// Assert checksum == value 7 written per block * blocks * rounds.
 
 from std.core.io import print;
 

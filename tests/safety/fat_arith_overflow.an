@@ -1,8 +1,8 @@
-// Fat-pointer arithmetic overflow negative test (胖指针表示)
+// Fat-pointer arithmetic overflow negative test.
 //
 // CheckElementArith:0 ≤ index + offset ≤ size。
-// p + 5:index 0 + 5 > size 4 → 良构失败 → fail-stop → Exit code 1。
-// 注意:p + 4(one-past-end,index == size)是良构的,不会 safety error;p + 5 越界才 safety error。
+// p+5: index zero plus five exceeds size four, violating validity and exiting with code 1.
+// p+4 is valid one-past-end (index==size); only p+5 causes a safety error.
 
 fn main() {
     let p: i32* = dyn[4] 0i32;
@@ -11,6 +11,6 @@ fn main() {
     p[2] = 3;
     p[3] = 4;
 
-    let q: i32* = p + 5; // index 0 + 5 > size 4 → CheckElementArith 失败 → safety error
+    let q: i32* = p + 5; // Index zero plus five exceeds size four, failing CheckElementArith with a safety error.
     assert false: "unreachable"
 }

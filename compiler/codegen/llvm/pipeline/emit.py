@@ -11,9 +11,9 @@ import tempfile
 
 from compiler.codegen.llvm.base.module import LLModule
 
-# 帧退出 SENTINEL 写(all-ones u64)在优化路径上须为 volatile:
-# LLVM 内存模型把"经悬垂指针读已退出帧"视为 UB,DSE 可证明该写为死存储而
-# 删除,锁槽残留入口键 → 调用方 live 检查误通过,丢失 Exit -4 语义。
+# Frame-exit SENTINEL stores (all-ones u64) must be volatile on optimized paths:
+# LLVM considers reads of exited frames through dangling pointers undefined, allowing DSE to remove the store.
+# A remaining entry key would make caller live checks pass, losing Exit -4 semantics.
 _SENTINEL_STORE = re.compile(r"\bstore i64 18446744073709551615\b")
 
 
@@ -64,29 +64,29 @@ class Emitter:
             ir_text = str(llvm_module)
             binding = self.__ensure_binding()
             if opt_level > 0:
-                # 见 _SENTINEL_STORE 注释:仅优化路径把帧退出 SENTINEL 写标
-                # volatile(DSE 不可删除/重排),`-t ll` 输出保持逐字节不变。
+                # See _SENTINEL_STORE: optimized paths mark frame-exit stores volatile to prevent DSE deletion/reordering;
+                # -t ll output retains the unmodified store representation.
                 ir_text = _SENTINEL_STORE.sub("store volatile i64 18446744073709551615", ir_text)
             self.emit_ll(llvm_module, ll_path)
             llvm_mod = binding.parse_assembly(ir_text)
             llvm_mod.verify()
             if opt_level > 0 or normalized_kind in ("obj", "asm"):
-                # code model 必须显式给: llvmlite 的默认值是 jitdefault, 在 64 位平台上落到
-                # large —— 后端于是不敢用 ±2 GiB 的 PC 相对寻址, 把每个函数地址与全局地址
-                # 都用 movabs 物化进寄存器, YIAN 内部调用被编译成 `call *%reg`。本编译产物
-                # 是单个可执行/目标文件 (代码与静态数据都远小于 2 GiB), small 与 clang 的
-                # 默认一致: 直接 call、RIP 相对寻址。链接镜像超过 ±2 GiB 时 small code
-                # model 会在链接期报告重定位溢出,不会静默产生错码。
+                # Set the code model explicitly: llvmlite defaults to jitdefault, which selects large on 64-bit targets,
+                # preventing +/-2 GiB PC-relative addressing. The backend materializes function and global addresses
+                # with movabs and emits YIAN calls as call *%reg. The output is one executable/object file,
+                # with code and static data well below 2 GiB. small matches clang's default:
+                # direct calls and RIP-relative addressing. Images beyond +/-2 GiB cause linker relocation overflow,
+                # rather than silently generating incorrect code.
                 target_machine = binding.Target.from_triple(llvm_module.triple).create_target_machine(reloc="pic", codemodel="small", opt=opt_level)  # type: ignore[union-attr]
             if target_machine is not None and not llvm_mod.data_layout:
-                # 发射端只保证 triple (apply_target 已写上配套 layout); 这里再兜
-                # 一道: 模块若没有 data layout, 中端 pass 会按空布局折叠字段偏移
-                # 而后端按目标机布局落子, 同一次访问读写偏移不一致 (见
-                # docs/llvm_note.md「目标三元组与 data layout」)。
+                # Emission ensures the triple; apply_target installs the matching layout. As a fallback, set data layout
+                # when missing, since middle-end passes otherwise fold field offsets using an empty layout
+                # while the backend uses the target layout, making read/write offsets inconsistent. See
+                # docs/llvm_note.md for target triples and data layouts.
                 llvm_mod.data_layout = str(target_machine.target_data)
             if opt_level > 0:
-                # speed_level 即 -O 档位:LLVMPY_buildPerModuleDefaultPipeline
-                # 据此构建 per-module 默认管线。
+                # speed_level is the -O level used by LLVMPY_buildPerModuleDefaultPipeline
+                # to construct the default per-module pipeline.
                 pto = binding.PipelineTuningOptions(opt_level)  # type: ignore[attr-defined]
                 builder = binding.create_pass_builder(target_machine, pto)  # type: ignore[attr-defined]
                 builder.getModulePassManager().run(llvm_mod, builder)

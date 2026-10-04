@@ -30,7 +30,7 @@ fn main() {
     assert pa == qa: "same address same index equal";
     assert pa == &a1: "&a1 == &a1";
 
-    // -- 3. Option 空态(is_some/is_none;NULL 比较已随 NULL 移除) --
+    // -- 3. Option emptiness (is_some/is_none) --
     let n: Option<i32*> = Option<i32*>.None;
     assert n.is_none(): "None.is_none()";
     let pp: Option<i32*> = Option<i32*>.Some(pa);

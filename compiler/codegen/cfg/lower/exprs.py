@@ -22,12 +22,12 @@ from compiler.utils.log import CompilerLog
 
 
 def ch_cfg():
-    """cfg.logical 日志通道（分派器的分支诊断）。"""
+    """cfg.logical logging channel for dispatcher branch diagnostics."""
     return CompilerLog.get("cfg.logical")
 
 
 class ExprLowerer:
-    """表达式下降器（含 HIR 分派器）。"""
+    """Expression lowering, including HIR dispatch."""
 
     def __init__(self, state: FunctionState) -> None:
         self.__state = state
@@ -288,8 +288,8 @@ class ExprLowerer:
         if expr.receiver.is_place:
             receiver_ty = self.__state.session.type_ctx[expr.receiver.type_id]
             if isinstance(receiver_ty, (Type.SliceType, Type.StrType)):
-                # 分级指针表示:slice/str 字段须从值提取(fieldptr 只能取裸字段地址,
-                # 无法携带锁元数据)。读整个值再 extract_value。
+                # Tiered pointer representation: extract slice/str fields from the value; fieldptr only produces raw addresses
+                # and cannot carry lock metadata. Load the whole value, then extract_value.
                 value = self.resolve_val(expr.receiver)
                 return self.__memory.build_extract_value(value, expr.index, expr.type_id)
             addr = self.__values.resolve_tuple_access_addr(expr)

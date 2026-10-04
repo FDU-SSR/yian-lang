@@ -242,8 +242,8 @@ impl<K, V> Drop for HashMap<K, V> {
 }
 
 impl<K, V> Clone for HashMap<K, V> {
-    // 只复制自己管理的两个缓冲区(ctrls + buckets): K/V 自己管理的资源不递归复制
-    // (容器 clone 的语义; 需要深拷贝时由调用者显式 clone 键值)。
+    // Copy only the two owned buffers (ctrls + buckets); do not recursively copy resources owned by K/V.
+    // Container clone has these semantics; callers explicitly clone keys and values when a deep copy is required.
     pub fn clone() -> Self {
         if self.capacity == 0 {
             @runtime_fail("S002");

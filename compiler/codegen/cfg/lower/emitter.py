@@ -8,29 +8,29 @@ from compiler.utils.log import CompilerLog
 
 
 def _ch_block():
-    """cfg.block 日志通道（类体内引用，按约定用单下划线）。"""
+    """cfg.block logging channel (single underscore permits references from class bodies)."""
     return CompilerLog.get("cfg.block")
 
 
 class FunctionEmitter:
-    """单个 CFG 函数的发射状态与最小原语。
+    """Emission state and minimal primitives for one CFG function.
 
-    - `func` / `current_block` / `counter` 是唯一的可变状态；
-    - `new_name()` / `new_block()` 共用 `counter`，保证 SSA 名与块名全局唯一；
-    - `emit()` updates pointer facts from each appended statement.
-    - `terminate()` / `position()` update control-flow position only.
+    - func/current_block/counter are the only mutable state.
+    - new_name()/new_block() share counter for unique SSA and block names.
+    - emit() updates pointer facts from each appended statement.
+    - terminate()/position() update control-flow position only.
     """
 
     def __init__(self, pointers: PointerFacts) -> None:
         self.func: IR.Function = IR.Function(
             name="", type_id=0, blocks=[], entry=IR.Block("")
-        )  # placeholder; bind() 后替换
+        )  # Placeholder replaced by bind().
         self.current_block: IR.Block = self.func.entry
         self.counter: int = 0
         self.__pointers = pointers
 
     def bind(self, func: IR.Function, entry: IR.Block) -> None:
-        """绑定到本次构建的函数与入口块（构建器在 `build()` 开头调用一次）。"""
+        """Bind the function and entry block once at the start of the builder's build()."""
         self.func = func
         self.current_block = entry
 
@@ -66,10 +66,10 @@ class FunctionEmitter:
         return stmt.result
 
     def terminate(self, term: IR.Terminator) -> None:
-        """写入当前块的终结符（调用方负责检查状态副作用）。"""
+        """Set the current block's terminator; the caller handles check-state effects."""
         _ch_block().trace(lambda: f"{self.current_block.label} <- {type(term).__name__}")
         self.current_block.terminator = term
 
     def position(self, block: IR.Block) -> None:
-        """切换当前块（调用方负责检查状态副作用）。"""
+        """Switch the current block; the caller handles check-state effects."""
         self.current_block = block

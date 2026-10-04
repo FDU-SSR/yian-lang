@@ -74,7 +74,7 @@ fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
     Option<TypeSyntax&>.None
 }
 
-// 函数类型省略返回类型时，使用语法上的 void 类型。
+// Function types without an explicit return type use the syntactic void type.
 fn function_type(parser: Parser&) -> Option<TypeSyntax&> {
     let span = parser.peek().span;
     parser.advance();
@@ -102,7 +102,7 @@ fn function_type(parser: Parser&) -> Option<TypeSyntax&> {
         TypeData.FunctionType(param_types=params.take(), return_type=result), span))
 }
 
-// 单个类型后的右括号表示分组；空括号或逗号分隔的类型表示元组。
+// A closing parenthesis after one type denotes grouping; empty parentheses or comma-separated types denote a tuple.
 fn parenthesized_type(parser: Parser&) -> Option<TypeSyntax&> {
     let span = parser.peek().span;
     parser.advance();
@@ -137,7 +137,7 @@ fn parenthesized_type(parser: Parser&) -> Option<TypeSyntax&> {
     Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=members.take()), span))
 }
 
-// 按源码顺序包装泛型、指针、引用和数组后缀。
+// Wrap generic, pointer, reference, and array suffixes in source order.
 pub fn parse_type(parser: Parser&) -> Option<TypeSyntax&> {
     let base = type_base(parser)?;
 
@@ -251,7 +251,7 @@ fn const_expr_bp(parser: Parser&, min_bp: i32) -> Option<ConstExpr&> {
 
 pub fn parse_const_expr(parser: Parser&) -> Option<ConstExpr&> { const_expr_bp(parser, 1) }
 
-// 优先试探类型；失败或后接常量运算符时，回到起点解析常量表达式。
+// Probe a type first; on failure or a following constant operator, return to the start and parse a constant expression.
 pub fn parse_generic_arg(parser: Parser&) -> Option<GenericArgument> {
     let token = parser.peek();
     if token.is_integer() || token.is_punct(PunctuatorKind.Minus) || token.is_punct(PunctuatorKind.Tilde) {

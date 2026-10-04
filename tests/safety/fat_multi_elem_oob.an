@@ -1,9 +1,9 @@
-// Fat-pointer multi-element out-of-bounds access negative test (胖指针表示)
+// Fat-pointer multi-element out-of-bounds access negative test.
 //
-// Pair 为 2 元素 struct;dyn[2] Pair 合法索引 0、1。
-// p[1].y 界内访问先填值;p[2].y 越过分配(2 个元素)访问,
-// 其解引用 index 2 + 1 > size 2 → in_bounds 失败 → safety error。
-// 期望 Exit code 1。
+// Pair contains two fields; dyn[2] Pair admits indices zero and one.
+// First fill p[1].y in bounds; p[2].y accesses beyond the two-element allocation,
+// where index 2+1>size 2 fails in_bounds with a safety error.
+// Expect exit code 1.
 
 struct Pair {
     x: i32,
@@ -17,9 +17,9 @@ fn main() {
     p[1].x = 3;
     p[1].y = 4;
 
-    let ok: i32 = p[1].y; // 界内访问:index 1 + 1 == size 2 → 通过
+    let ok: i32 = p[1].y; // In bounds: index 1+1==size 2 passes.
     assert ok == 4: "expected p[1].y == 4";
 
-    let v: i32 = p[2].y; // 跨末访问:index 2 + 1 > size 2 → in_bounds 失败 → safety error
+    let v: i32 = p[2].y; // Past the end: index 2+1>size 2 fails in_bounds with a safety error.
     assert v == 0: "unreachable"
 }

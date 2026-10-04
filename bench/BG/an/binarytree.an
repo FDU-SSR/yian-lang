@@ -1,21 +1,21 @@
-// bench/BG/an/binarytree.an — 二叉树递归构建/检查/删除 (shootout binary-trees)
+// bench/BG/an/binarytree.an: recursive binary-tree construction/check/release (shootout binary-trees).
 //
-// 上游: Benchmarks Game (shootout) 改写; 本文件为本仓库改写版 (上游为 Revised BSD, Copyright 2008-2012 Isaac Gouy)
-// 语义权威源: bench/BG/c/binarytree.c (项目自写 C 参考)
-// 规模: N=20, minDepth=4, 断言 check % 256 == 176。
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/binarytree.c, the project's C implementation.
+// Scale: N=20, minDepth=4; assert check%256==176.
 //
-// 算法: BottomUpTree 递归建满二叉树 (每节点两子指针), ItemCheck 递归
-//       求和 (空子树贡献 1, 非空加左右子树的 ItemCheck), DeleteTree
-//       递归后序删除。main 分三段: stretch tree (maxDepth+1) 建删、
-//       longLived tree (maxDepth) 保留至最后、中间按 depth 步进 2 建
-//       删 1<<(maxDepth-depth+minDepth) 棵临时树并累计 check。
+// Algorithm: BottomUpTree recursively constructs full binary trees with two child pointers per node;
+//       ItemCheck recursively sums children, counting empty subtrees as one; DeleteTree releases
+//       in postorder. main constructs/releases a stretch tree of maxDepth+1,
+//       retains a maxDepth longLived tree until the end, and, for depths stepping by two, constructs/releases
+//       1<<(maxDepth-depth+minDepth) temporary trees, accumulating check.
 //
-// 数据布局: left/right 为 Option<treeNode&> (空子树由 None 表达); 节点由
-//       dyn treeNode(...) 分配, ItemCheck 读路径为 treeNode&, DeleteTree
-//       释放路径直接 del T&。
+// Layout: left/right are Option<treeNode&>, using None for empty subtrees. Nodes are allocated by
+//       dyn treeNode(...); ItemCheck reads through treeNode&, and DeleteTree
+//       releases directly with del T&.
 //
-// 单一源: fat 与 raw 共用本文件。dyn 用类型推断; 需要切片处用范围视图
-//         x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Both modes share this source. dyn uses inference; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
 from std.core.io import print;
 
 struct treeNode {
@@ -61,7 +61,7 @@ fn DeleteTree(tree: Option<treeNode&>) {
                 Some(r) => { DeleteTree(Option<treeNode&>.Some(r)); },
                 None => { },
             }
-            // 后序: 子树已删, 释放本节点 (tt 释放后不再读)
+            // Postorder: children are already deleted; release this node without reading tt afterward.
             del tt;
         }
     }

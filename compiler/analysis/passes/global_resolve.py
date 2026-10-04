@@ -513,7 +513,7 @@ class GlobalResolve:
             raise AnalysisError("opaque C type must be used through cptr<T>", span)
 
     def __enter_generic_scope(self, unit: UnitData, ast_generics: list[AST.GenericParam], ty_generic_ids: Sequence[int]) -> None:
-        """进入泛型作用域，注册类型泛型和常量泛型符号。"""
+        """Enter a generic scope and register type and constant generic symbols."""
         unit.symbol_ctx.enter_scope()
         for param, ty_id in zip(ast_generics, ty_generic_ids):
             match param:

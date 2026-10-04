@@ -41,7 +41,7 @@ pub fn match_expr(arena: AstArena&, span: Span, value: Expr&, arms: Vec<MatchArm
     arena.alloc_expr(ExprData.Match(expr=value, arms=arms), span)
 }
 
-// 普通条件生成 if；let 条件生成带回退分支的 match，并保留条件来源标记。
+// Expression conditions produce if nodes; let conditions produce a match with a fallback and retain condition-origin tags.
 pub fn conditional(arena: AstArena&, span: Span, condition: Condition, yes: Block&, no: Option<Block&>) -> Expr& {
     match condition {
         Expression(value) => arena.alloc_expr(ExprData.If(condition=condition, then_branch=yes, elif_branches=Vec<ElifBranch&>.new(), else_branch=no), span),

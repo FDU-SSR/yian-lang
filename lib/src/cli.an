@@ -105,7 +105,7 @@ impl Drop for ArgumentSpec {
 }
 
 pub struct ArgumentParser { program: String, description: String, definitions: Vec<ArgumentSpec>, groups: Vec<bool> }
-// builder 保留解析器和索引；参数表扩容不使 builder 指向失效元素。
+// The builder retains the parser and index; growing the argument table does not leave it pointing to invalid elements.
 pub struct ArgumentBuilder { parser: ArgumentParser&, index: u64 }
 pub struct GroupBuilder { parser: ArgumentParser&, index: u64 }
 impl ArgumentBuilder {
@@ -142,7 +142,7 @@ impl ArgumentBuilder {
         spec.metavar = String.from(&text);
         *self
     }
-    // Append 的单值默认项构成列表，多值默认项构成一个分组；空列表不添加分组。
+    // Single-value Append defaults form a list; multi-value defaults form one group. An empty list adds no group.
     pub fn default_values(texts: str[]) -> Self {
         let spec = &self.parser.definitions[self.index];
         release_strings(&spec.defaults);
@@ -400,7 +400,7 @@ impl ArgumentParser {
         let value = match spec.make_value(texts.as_slice()) { Ok(value) => value, Err(error) => return Result<(), CliError>.Err(error.at(origin)), };
         match self.apply(matches, index, value) { Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)), }
     }
-    // argv 不含程序名；返回值拥有存储，解析过程不执行输出或退出。
+    // argv excludes the program name; results own their storage, and parsing performs no output or process exit.
     pub fn parse_args(argv: str[]) -> Result<ParseOutcome, CliError> {
         self.validate()?;
         let matches = self.initial()?;

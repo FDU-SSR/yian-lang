@@ -3,7 +3,7 @@ from std.collections.hash_set import HashSet;
 from std.core.drop import Drop;
 from std.core.ops import PartialEq;
 
-// 简单的可哈希值类型
+// Simple hashable value type.
 pub struct MyVal {
     pub value: u64,
 }
@@ -18,7 +18,7 @@ impl PartialEq<MyVal> for MyVal {
     }
 }
 
-// 为 MyVal 提供当前标准哈希器的 Hash 实现。
+// Implement Hash for MyVal using the standard hasher.
 impl Hash<Murmur3Hasher> for MyVal {
     fn hash(hasher: Murmur3Hasher) {
         let text = self.value.to_string();
@@ -26,9 +26,9 @@ impl Hash<Murmur3Hasher> for MyVal {
     }
 }
 
-// ---------- 测试开始 ----------
+// ---------- Tests begin ----------
 fn main() {
-    // 基础构造与容量
+    // Basic construction and capacity.
     let set1: HashSet<MyVal> = HashSet<MyVal>.with_capacity_and_hasher(
         0,
         Murmur3BuildHasher.with_seed(0)
@@ -75,7 +75,7 @@ fn main() {
     assert set2.len() == 0: "clear should reset size"
     assert set2.is_empty(): "clear should make set empty"
 
-    // 触发 resize：初始容量4，growth_left=3，插入第4个元素会触发扩容
+    // Trigger resize: initial capacity 4, growth_left=3; the fourth insertion grows the table.
     let set3: HashSet<MyVal> = HashSet<MyVal>.with_capacity_and_hasher(
         4,
         Murmur3BuildHasher.with_seed(0)
@@ -83,7 +83,7 @@ fn main() {
     set3.insert(MyVal(10))
     set3.insert(MyVal(20))
     set3.insert(MyVal(30))
-    // 此时 growth_left 应为 0，下次插入应触发 resize
+    // growth_left should now be zero; the next insertion triggers resizing.
     set3.insert(MyVal(40))
     assert set3.len() == 4: "len should be 4 after inserts"
     assert set3.contains(&MyVal(10))

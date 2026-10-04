@@ -1,5 +1,5 @@
 // ZST pointer comparison and arithmetic: a pointer whose pointee is
-// zero-sized is itself a ZST (size 0, 裁决 — ZST 保持 ZST).
+// zero-sized is itself a ZST (size 0; ZSTs remain zero-sized).
 // All such pointer values are indistinguishable, so == / != always behave as
 // equality; arithmetic participates without trapping (erased at codegen).
 //

@@ -1,41 +1,41 @@
 #!/usr/bin/env python3
-"""bench_three_way.py — C / raw / fat 三态性能实测 (以 C 参考为基线)。
+"""bench_three_way.py: measure C/raw/fat performance with the C reference as baseline.
 
-评测集按来源分目录、按侧重分集合、按规模分快速/完全两档:
+Benchmarks are organized by source, focus set, and fast/full scale:
 
-  bench/<SOURCE>/an/<name>.an       胖态源 (`<name>.raw.an` 为裸态覆盖源)
-  bench/<SOURCE>/c/<name>.c         C 参考 (三态的权威值)
-  bench/<SOURCE>/specs/<name>.json  argv / 权威校验 / 侧重 tag / 规模档
-  bench/sets/<set>.json             集合: 成员 + 默认规模档 + 测量次数
-  bench/results/<set>.{md,csv}      生成物 (含环境指纹与 commit)
+  bench/<SOURCE>/an/<name>.an       Fat source; <name>.raw.an is an optional raw override
+  bench/<SOURCE>/c/<name>.c         Authoritative C reference
+  bench/<SOURCE>/specs/<name>.json  Arguments, authoritative checks, focus tags, and scales
+  bench/sets/<set>.json             Set members, default scale, and sample count
+  bench/results/<set>.{md,csv}      Generated results with environment fingerprint and commit
 
-协议:
-  - 三态同一算法、同一规模: C `clang -O2 -ffp-contract=off -lm bench/<SOURCE>/c/<name>.c`;
-    raw `yianc -O2 --raw-pointers lib/src <src>`; fat `yianc -O2 lib/src <src>`。
-  - 规模档 fast: 对声明了 `scale.fast` 的基准, 把源里 `// bench-scale` 标记行的数字换成
-    fast 值, 生成构建副本 `build/bench/src/<profile>/<SOURCE>/<name>.an` 再编译; 同一个值
-    作为 argv 传给 C 参考 (`scale.c == "argv"`)。未声明的基准两档跑同一规模。
-  - 产物同目录、等长路径 (`build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>`)。
-  - 带任务的绑核 (`taskset -c <cpu>`) 可选, 正式记录必须绑核。
-  - 三态逐次轮转测量: 各 1 次 warmup (不计入样本) → 按 C→raw→fat 轮转 N 次; 正式指标取
-    各态最小值, 同时记录中位数/四分位距/CV/峰值 RSS。
-  - 语义护栏: C warmup 必须通过 spec 的权威值校验; raw 与 fat 的 warmup stdout/退出码必须
-    逐字节一致; 两态退出码必须为 0。任一不成立, 该基准的比值标注为不可用。
+Protocol:
+  - Same algorithm/scale: C uses clang -O2 -ffp-contract=off -lm bench/<SOURCE>/c/<name>.c;
+    raw uses yianc -O2 --raw-pointers lib/src <src>; fat uses yianc -O2 lib/src <src>.
+  - fast substitutes declared scale.fast values at // bench-scale source markers, generating
+    build/bench/src/<profile>/<SOURCE>/<name>.an. Pass the same scale as C argv when
+    scale.c == 'argv'. Benchmarks without a fast declaration use the same scale in both profiles.
+  - Artifacts use equal-length paths under build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>.
+  - CPU affinity via taskset -c <cpu> is optional, but required for formal records.
+  - Warm up each mode once, then rotate C/raw/fat for N measured rounds. Report minimum time,
+    median, interquartile range, CV, and peak RSS per mode.
+  - Semantic guards: C warmup must pass authoritative spec checks; raw/fat warmup stdout and exit
+    codes must match byte-for-byte and both exits must be zero. Otherwise ratios are unavailable.
 
-用法:
-  python3 bench/bench_three_way.py --list-sets          # 列出集合、规模档与成员数
-  python3 bench/bench_three_way.py --set full           # 默认: 完全档 (正式记录)
-  python3 bench/bench_three_way.py --set fast           # 快速档 (开发中频繁跑)
+Usage:
+  python3 bench/bench_three_way.py --list-sets          # List sets, scales, and member counts
+  python3 bench/bench_three_way.py --set full           # Default: full scale, formal records
+  python3 bench/bench_three_way.py --set fast           # Fast development scale
   python3 bench/bench_three_way.py --set ptr --scale full
   python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta
   python3 bench/bench_three_way.py --source AWFY --set fast
   python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
-输出:
-  bench/results/<set>.{md,csv}   命名集合的结果 (含指纹/协议/commit)
-  bench/results/partial.{md,csv} --bench/--source 的临时子集, 不覆盖集合结果
+Output:
+  bench/results/<set>.{md,csv}   Named-set results with fingerprint/protocol/commit
+  bench/results/partial.{md,csv} Temporary --bench/--source subsets, leaving set results intact
 
-独立脚本: 不触碰 scripts/run_tests.py; 不修改基准源码 (fast 档只在 build/ 下生成副本)。
+Standalone script: does not alter scripts/run_tests.py or sources; fast copies stay under build/.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ SCALE_MARKER = "// bench-scale"
 
 @dataclass(frozen=True)
 class Check:
-    """C 参考的权威结果 (声明式, 见 bench/<SOURCE>/specs/<name>.json)。"""
+    """Authoritative C result declared in bench/<SOURCE>/specs/<name>.json."""
 
     rc: int = 0
     stdout_eq: str | None = None
@@ -111,16 +111,16 @@ class Check:
 
 @dataclass(frozen=True)
 class Scale:
-    """规模档: 源里 `// bench-scale` 标记行的默认值与快速档值, 以及 C 侧如何接收。"""
+    """Scale profile: default/fast source // bench-scale values and how C receives them."""
 
     default: int
     fast: int | None = None
-    c: str = "none"  # "argv" = 把规模值作为 argv 传给 C 参考; "none" = C 不支持缩放
+    c: str = "none"  # 'argv' passes scale to the C reference; 'none' means C does not support scaling.
 
 
 @dataclass(frozen=True)
 class BenchSpec:
-    """一个三态基准: 源码 + C 参考 + spec (argv/权威值/tag/规模)。"""
+    """One three-mode benchmark: YIAN source, C reference, and argv/check/tag/scale specification."""
 
     name: str
     source: str
@@ -142,13 +142,13 @@ class BenchSpec:
         return self.raw_src != self.fat_src
 
     def scale_value(self, profile: str) -> int | None:
-        """该档要写入源副本的规模值; None = 用源里的默认值 (full 档总是 None)。"""
+        """Scale substituted in this profile's source copy; None uses the default (always None for full)."""
         if self.scale is None or profile != "fast":
             return None
         return self.scale.fast
 
     def run_argv(self, profile: str) -> tuple[str, ...]:
-        """三态共用的运行参数 (含 fast 档传给 C 参考的规模值)。"""
+        """Runtime arguments shared by all modes, including fast scale passed to C."""
         value = self.scale_value(profile)
         if value is not None and self.scale is not None and self.scale.c == "argv":
             return (*self.argv, str(value))
@@ -157,7 +157,7 @@ class BenchSpec:
 
 @dataclass(frozen=True)
 class SetDef:
-    """集合: 成员模式 (精确键 / `SOURCE/*` / `tag:x` / `*`) + 默认规模档与测量次数。"""
+    """Set: member patterns (exact key / SOURCE/* / tag:x / *) with default scale and sample count."""
 
     name: str
     scale: str
@@ -260,9 +260,9 @@ def load_spec(
 
 
 def discover() -> list[BenchSpec]:
-    """发现 bench/<SOURCE>/{an,c,specs} 下的三态基准。
+    """Discover three-mode benchmarks under bench/<SOURCE>/{an,c,specs}.
 
-    没有 `c/` 的来源 (纯分配器专项 bench/ALLOC) 不在这里发现, 由 bench/bench_allocator.py 负责。
+    Sources without c/, such as allocator-only bench/ALLOC, are handled by bench_allocator.py.
     """
     specs: list[BenchSpec] = []
     for source_dir in sorted(
@@ -299,7 +299,7 @@ def discover() -> list[BenchSpec]:
 
 
 def load_sets() -> dict[str, SetDef]:
-    """读取 bench/sets/*.json。"""
+    """Read bench/sets/*.json."""
     if not SETS_DIR.is_dir():
         raise SystemExit(f"[sets] 缺少目录 {SETS_DIR}")
     sets: dict[str, SetDef] = {}
@@ -338,7 +338,7 @@ def resolve_set(
     bench_filter: tuple[str, ...] = (),
     source_filter: tuple[str, ...] = (),
 ) -> list[BenchSpec]:
-    """把集合定义展开成基准列表, 并校验模式确实命中 (拼错集合项要立刻报错)。"""
+    """Expand set patterns into benchmarks; reject patterns matching nothing to catch misspellings."""
     for pattern in (*set_def.include, *set_def.exclude):
         if not any(_match(pattern, spec) for spec in specs):
             raise SystemExit(f"[select] 集合 {set_def.name} 的成员 {pattern!r} 没有匹配任何基准")
@@ -370,10 +370,10 @@ _SCALE_LINE_RE = re.compile(
 
 
 def materialize(spec: BenchSpec, profile: str) -> tuple[Path, Path]:
-    """返回该规模档下的 (胖态源, 裸态源)。
+    """Return (fat source,raw source) for the scale profile.
 
-    fast 档且 spec 声明了 `scale.fast` 时, 把 `// bench-scale` 标记行的数字替换掉, 生成
-    `build/bench/src/<profile>/<SOURCE>/<name>.an` 作为构建副本; 否则直接用仓库里的源。
+    When fast and scale.fast is declared, replace // bench-scale numbers and generate
+    build/bench/src/<profile>/<SOURCE>/<name>.an; otherwise use repository sources.
     """
     value = spec.scale_value(profile)
     if value is None:
@@ -404,7 +404,7 @@ def spec_bin(spec: BenchSpec, state: str) -> Path:
 
 
 def compile_c(spec: BenchSpec) -> Path:
-    """编译 C 参考 (clang -O2 -ffp-contract=off -lm); 失败即终止。"""
+    """Compile C with clang -O2 -ffp-contract=off -lm; stop on failure."""
     binary = spec_bin(spec, "c")
     binary.parent.mkdir(parents=True, exist_ok=True)
     res = subprocess.run(
@@ -421,7 +421,7 @@ def compile_c(spec: BenchSpec) -> Path:
 
 
 def compile_an(spec: BenchSpec, profile: str, raw: bool) -> Path:
-    """编译单态 YIAN 基准; 失败即终止 (编译错误属于基线失效, 不做部分结果)。"""
+    """Compile one YIAN mode; stop on failure because compile errors invalidate the baseline."""
     state = "raw" if raw else "fat"
     binary = spec_bin(spec, state)
     fat_src, raw_src = materialize(spec, profile)
@@ -458,7 +458,7 @@ def _env_plain() -> dict[str, str]:
 
 
 def _run(binary: Path, argv: list[str], pin: int | None) -> tuple[float, int, str, int]:
-    """运行一次: 返回 (墙钟 ms, 峰值 RSS KB, stdout, 退出码)。"""
+    """Run once and return (wall time ms,peak RSS KB,stdout,exit code)."""
     pre = ["taskset", "-c", str(pin)] if pin is not None else []
     t0 = time.monotonic()
     res = subprocess.run(
@@ -487,7 +487,7 @@ def _stats(samples: list[float]) -> Stats:
     mean = statistics.fmean(ordered)
     try:
         cv = statistics.stdev(ordered) / mean * 100.0 if mean > 0 else 0.0
-    except statistics.StatisticsError:  # 单样本
+    except statistics.StatisticsError:  # Single sample.
         cv = 0.0
     return Stats(
         med=statistics.median(ordered),
@@ -502,10 +502,10 @@ def _stats(samples: list[float]) -> Stats:
 def measure_triple(
     spec: BenchSpec, runs: int, pin: int | None, max_state_sec: float, profile: str
 ) -> Row:
-    """三态逐次轮转测量: warmup 各 1 次 → 按 C→raw→fat 轮转 used_runs 次。
+    """Warm up each mode, then rotate C/raw/fat for used_runs rounds.
 
-    三态共用同一份 argv (fast 档下含传给 C 参考的规模值); YIAN 侧的规模已经在编译期
-    由源副本固化, 因此两态跑的是与 C 相同的工作量。
+    All modes share argv, including fast scale for C. YIAN source copies encode their scale
+    at compile time, so both YIAN modes perform the same workload as C.
     """
     argv = list(spec.run_argv(profile))
     bins = {state: spec_bin(spec, state) for state in STATES}
@@ -576,7 +576,7 @@ def _tool_version(tool: str) -> str:
 
 
 def _llvmlite_info() -> tuple[str, str]:
-    """返回 (llvmlite 版本, LLVM 版本); 环境不可用时返回 ("n/a", "n/a")。"""
+    """Return (llvmlite version,LLVM version), or ('n/a','n/a') when unavailable."""
     try:
         import llvmlite  # noqa: PLC0415
         import llvmlite.binding as llvm_binding  # noqa: PLC0415
@@ -642,7 +642,7 @@ def _ratio(row: Row, num: str, den: str) -> float:
 
 
 def _ratio_usable(row: Row) -> bool:
-    """C 基线校验与两态语义护栏都通过时, 该基准的 C 比值才可用。"""
+    """C ratios are usable only when the C baseline and both mode guards pass."""
     return row.c_check_ok and row.yian_stdout_match
 
 
@@ -822,7 +822,7 @@ def main() -> int:
     parser.add_argument("--source", help="只测指定来源 (逗号分隔, 如 AWFY,BG)")
     parser.add_argument("--bench", dest="bench_keys",
                         help="只测指定基准 (SOURCE/name 或 name, 逗号分隔)")
-    parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # 兼容选项别名
+    parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # Compatibility option aliases.
     parser.add_argument("--list-sets", action="store_true", help="列出集合与成员数后退出")
     parser.add_argument("--runs", type=int, default=None,
                         help="每态测量次数 (默认取集合的 runs)")
@@ -888,7 +888,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    # 临时子集 (--bench/--source) 不覆盖集合结果; 命名集合写入 results/<set>.{md,csv}
+    # Temporary --bench/--source subsets leave set results intact; named sets write results/<set>.{md,csv}.
     partial = bool(bench_filter or source_filter)
     if partial:
         md_path, csv_path = PARTIAL_MD, PARTIAL_CSV

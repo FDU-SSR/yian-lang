@@ -3,7 +3,7 @@
 #include <assert.h>
 
 
-// 定义结构体
+// Struct definitions.
 typedef struct array_tree {
     struct array_tree* children;
     int child_count;
@@ -13,21 +13,21 @@ typedef struct Random {
     unsigned long long stage;
 } Random;
 
-// 全局变量
+// Global variables.
 int count_arrays = 0;
 
-// 初始化随机数生成器
+// Initialize the random-number generator.
 void Random_init(Random* r, unsigned long long seed) {
     r->stage = seed;
 }
 
-// 生成下一个随机数 (与官方 SOM Random 一致)
+// Generate the next random value, matching official SOM Random.
 unsigned long long Random_next(Random* r) {
     r->stage = (r->stage * 1309ULL + 13849ULL) & 65535ULL;
     return r->stage;
 }
 
-// 递归构建树
+// Recursively build the tree.
 array_tree* build_tree_depth(int depth, Random* random, int* out_count) {
     count_arrays++;
 
@@ -55,7 +55,7 @@ array_tree* build_tree_depth(int depth, Random* random, int* out_count) {
     return arr;
 }
 
-// 释放树的内存
+// Release tree memory.
 void free_tree(array_tree* arr, int count) {
     if (arr == NULL) {
         return;
@@ -68,7 +68,7 @@ void free_tree(array_tree* arr, int count) {
     free(arr);
 }
 
-// 基准测试函数
+// Benchmark function.
 int benchmark_storage(int root_depth) {
     Random random;
     Random_init(&random, 74755);
@@ -82,7 +82,7 @@ int benchmark_storage(int root_depth) {
     return (int)count_arrays;
 }
 
-// 主函数
+// main function.
 int main(int argc, char **argv) {
     int iterations = argc > 1 ? atoi(argv[1]) : 9885;
     for (int i = 0; i < iterations; i++) {

@@ -1,9 +1,9 @@
-// raw_compat_alloc.an — 裸指针兼容:堆分配 + 数组遍历 + 求和断言
+// raw_compat_alloc.an: raw-pointer compatibility, heap allocation, traversal, and sum assertions.
 //
-// 语义正确的裸指针程序:dyn 堆分配 i32 数组,循环写入、遍历求和,
-// 断言和 == sum(1..16) = 136,最后 del 释放。
-// 在 fat 模式(检查开)与 raw 模式(--raw-pointers,无检查)下都必须 exit 0:
-// 该用例不依赖任何 trap,胖表示不应误伤其正确性。
+// Valid raw-pointer program: dyn allocates an i32 array, then loops write and sum it,
+// asserting sum(1..16)==136 before del releases it.
+// Both fat mode (checks enabled) and raw mode (--raw-pointers, no checks) must exit zero;
+// this test relies on no trap, and fat representation must preserve correctness.
 //
 // Expected output: 0
 

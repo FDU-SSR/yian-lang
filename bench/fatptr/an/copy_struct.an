@@ -1,17 +1,17 @@
-// bench/fatptr/an/copy_struct.an — 胖值驻留结构体时的拷贝/传参成本 (方向 B 微基准)
+// bench/fatptr/an/copy_struct.an: copying/passing structs containing fat values.
 //
-// 目的: 把"表示尺寸"这一项单独量出来。元素含一个 T& 字段与一个 T* 字段, 热循环只做
-//       结构体级浅拷贝 (不进入元素内部), 校验和只依赖数据值, 因此三态 stdout 一致,
-//       fat/raw 之差只能来自表示尺寸与按值传参档位。
-//       T& 是 B6 的目标 (24 → 16 B), T* 是 B1 的目标 (40 → 32 B; B6 不变)。
-// 规模: ROUNDS (拷贝轮数, `// bench-scale` 标记行); ITEMS 固定 (100000 元素)。
-// C 参考: bench/fatptr/c/copy_struct.c (同算法同规模, 8 B 裸指针字段)。
+// Isolate representation size: elements contain T& and T* fields; the hot loop makes shallow
+//       struct copies without entering elements. The checksum uses only data values, yielding equal stdout,
+//       so fat/raw differences come from representation size and by-value argument passing.
+//       Reference and pointer fields contribute independently to struct size and argument-passing costs.
+// Scale: ROUNDS at the // bench-scale marker; ITEMS fixed at 100000.
+// C reference: bench/fatptr/c/copy_struct.c, same algorithm/scale with 8 B raw pointer fields.
 //
-// 数据布局: payloads 与 Item 各一个堆数组; Item.ref = &payloads[i] (堆内引用),
-//           Item.view = &payloads[0] + i (视图, 用索引取到本元素);
-//           逐元素 src[i] → 局部变量 → dst[i] 浅拷贝, 并按值传给 sum_item。
+// Layout: one payloads array and one Item array; Item.ref=&payloads[i] references heap data,
+//           Item.view=&payloads[0]+i selects the element by index;
+//           shallow-copy src[i] through a local into dst[i], and pass it by value to sum_item.
 //
-// 单一源: fat 与 raw 共用本文件 (raw 下 T&/T* 都退化为 8 B 裸指针)。
+// Both modes share this source; raw T&/T* use 8 B pointers.
 from std.core.io import print;
 
 struct Payload {
@@ -24,7 +24,7 @@ struct Item {
     view: Payload*,
 }
 
-// 按值接收一个含胖值的结构体 (观测传参档位: 超过 16 B 走内存)
+// Receive a struct containing fat values by value; arguments over 16 B use memory.
 fn sum_item(src: Item) -> i64 {
     return src.value;
 }

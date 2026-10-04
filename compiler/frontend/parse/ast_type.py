@@ -12,9 +12,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class LiteralConstExpr:
-    """字面量常量，如 T[5]、Array<T, 3> 中的 5、3"""
+    """Literal constant, such as 5 in T[5] or 3 in Array<T,3>."""
     span: SrcSpan
-    literal: Token             # IntLiteral / BoolLiteral 等
+    literal: Token             # IntLiteral / BoolLiteral, etc.
 
     def __repr__(self) -> str:
         return str(self.literal)
@@ -22,7 +22,7 @@ class LiteralConstExpr:
 
 @dataclass
 class GenericConstExpr:
-    """泛型常量引用，如 T[N]、Array<T, N> 中的 N"""
+    """Generic constant reference, such as N in T[N] or Array<T,N>."""
     span: SrcSpan
     name: Identifier
 

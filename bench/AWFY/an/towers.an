@@ -1,21 +1,21 @@
-// bench/AWFY/an/towers.an — 汉诺塔指针栈模拟 (shootout towers)
+// bench/AWFY/an/towers.an: Tower of Hanoi pointer-stack simulation (shootout towers).
 //
-// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Towers.java (上游许可见 AWFY LICENSE.md)
-// 语义: 每个 benchmark 单元使用上游规模 disks=13, 断言 moves_done == 8191。
-//       main 通过外层重复完整单元, 为进程级计时提供稳定工作量。
+// Reference: AWFY benchmarks/Java/src/Towers.java; see AWFY LICENSE.md.
+// Each benchmark unit uses upstream disks=13 and asserts moves_done==8191.
+//       main repeats complete units for stable process-level timing.
 //
-// 算法: 3 根柱子各存一张 TowersDisk 链表 (按 size 从大到小, 栈顶最小)。
-//       push_disk 把 disk 压到某柱 (校验 size 递增), pop_disk_from 弹出
-//       栈顶, move_top_disk 完成单次移动并计数, move_disks 递归汉诺塔。
-//       build_tower_at 建 0..disks 的塔, 结束后 free_pile 逐节点释放。
-//       总移动次数 = 2^disks - 1。
+// Algorithm: three TowersDisk linked-list piles, ordered with the smallest disk on top.
+//       push_disk pushes after checking size order; pop_disk_from removes the top;
+//       move_top_disk performs/counts one move; move_disks implements recursive Hanoi.
+//       build_tower_at creates the 0..disks tower; free_pile releases nodes afterward.
+//       Total moves = 2^disks-1.
 //
-// Option/T& 表示: 链表尾/空柱由 Option 表达。push_disk 接收非空 T&；
-//       pop_disk_from 在非空路径返回 T&，空柱路径输出错误并终止。
-//       节点本体由 dyn T 分配并绑定 T&，free_pile 递归释放节点。
+// Option/T& representation: Option denotes empty piles and list tails; push_disk accepts nonnull T&.
+//       pop_disk_from returns T& for a nonempty pile and diagnoses/terminates on empty piles.
+//       dyn T allocates nodes bound as T&; free_pile recursively releases them.
 //
-// 单一源: fat 与 raw 共用本文件。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
 from std.core.io import Stderr;
 from std.core.env import exit;
 

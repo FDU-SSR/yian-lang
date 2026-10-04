@@ -8,7 +8,7 @@ from compiler.frontend.desugar.build import identifier, name_expr;
 
 struct ParameterNormalizer { arena: AstArena& }
 impl ParameterNormalizer {
-    // 模式形参通过隐藏名称接收实参，原模式作为函数体的参数绑定保存。
+    // Pattern parameters receive arguments through hidden names; original patterns are stored as body parameter bindings.
     fn normalize(params: Vec<Parameter>&, body: Block&) {
         let i: u64 = 0;
 
@@ -58,7 +58,7 @@ impl AstVisitor for ParameterNormalizer {
     }
 }
 
-// 就地处理函数、方法和闭包的模式形参；参数绑定先于函数体语句遍历。
+// Normalize pattern parameters of functions, methods, and closures in place; parameter bindings precede body statements in traversal.
 pub fn normalize_parameters(tree: AstTree&) {
     let pass = ParameterNormalizer(arena=&tree.arena);
     walk_program(tree.root, &pass);

@@ -44,7 +44,7 @@ fn emit_json(writer: Writer&) -> bool {
     };
 }
 
-// 入口处 files 数组仍打开；闭合它并打开同级的 diagnostic 对象。
+// The files array is open on entry; close it and open the sibling diagnostic object.
 fn diagnostic_start(writer: Writer&, stage: str, path: str) {
     writer.end_array();
 
@@ -57,14 +57,14 @@ fn diagnostic_start(writer: Writer&, stage: str, path: str) {
     writer.write_string(path);
 }
 
-// 闭合 diagnostic 及外层响应对象，然后写出完整 JSON。
+// Close the diagnostic and outer response objects, then write the complete JSON response.
 fn diagnostic_end(writer: Writer&) {
     writer.end_object();
     writer.end_object();
     emit_json(writer);
 }
 
-// I/O 诊断保留消息，并在存在系统错误码时附带原始错误码。
+// I/O diagnostics retain the message and include the raw system error code when available.
 fn io_error_fields(writer: Writer&, problem: IoError&) {
     writer.key("message");
     writer.write_string(problem.msg());
@@ -78,7 +78,7 @@ fn io_error_fields(writer: Writer&, problem: IoError&) {
     }
 }
 
-// 收集路径失败时没有文件观察结果，输出空 files 和 I/O 诊断。
+// Path-collection failures have no file observations; output empty files and an I/O diagnostic.
 fn collection_diagnostic(problem: IoError&) {
     let writer = Writer.new();
     defer writer.drop();
@@ -114,7 +114,7 @@ fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span:
     diagnostic_end(output);
 }
 
-// 单文件资源在成功、解析失败和脱糖失败路径上均由局部作用域释放。
+// Local scopes release per-file resources on success, parse failure, and desugaring failure.
 fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -> bool {
     let tokens = match Lexer.new(source).run() {
         Ok(value) => value,
@@ -164,7 +164,7 @@ fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -
     true
 }
 
-// 顺序观察输入文件；首个失败结束观察并输出包含已完成文件的诊断对象。
+// Observe input files sequentially; the first failure ends observation and outputs a diagnostic with completed files.
 fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
     let paths = match collect_sources(inputs) {
         Ok(value) => value,

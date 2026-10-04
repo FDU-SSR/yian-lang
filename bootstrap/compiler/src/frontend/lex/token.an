@@ -491,7 +491,7 @@ impl FloatSuffix {
     }
 }
 
-// 文本类 token 拥有字符串存储，数值类 token 保存解码后的值和后缀。
+// Text tokens own string storage; numeric tokens store decoded values and suffixes.
 pub enum TokenPayload {
     Keyword { value: KeywordKind },
     Identifier { value: String },
@@ -618,7 +618,7 @@ impl Drop for Token {
     }
 }
 
-// Vec 的释放不递归清理元素，必须先释放每个 token 持有的文本。
+// Dropping Vec does not recursively clean up elements; release each token's text first.
 pub fn drop_tokens(tokens: Vec<Token>&) {
     let index: u64 = 0u64;
 

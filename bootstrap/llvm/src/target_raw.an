@@ -2,7 +2,7 @@ from llvm.raw_types import LLVMOpaqueModule, LLVMOpaqueMemoryBuffer, LLVMOpaqueT
 from llvm.raw_types import LLVMOpaqueTarget, LLVMOpaqueTargetMachine, LLVMOpaqueTargetData;
 from llvm.raw_types import LLVMOpaquePassBuilderOptions, LLVMOpaqueError;
 
-// 导入的 C 声明仍只允许在 FFI 函数中直接调用。
+// Imported C declarations may still be called directly only inside FFI functions.
 pub(ffi) extern "C" {
     fn YIANLLVMInitializeNativeTarget() -> c_int;
     fn LLVMGetDefaultTargetTriple() -> cptr<c_char>;

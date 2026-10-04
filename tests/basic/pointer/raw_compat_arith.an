@@ -1,4 +1,4 @@
-// raw_compat_arith.an — 裸指针兼容:指针算术 p+n / p-n + 序比较 + 断言
+// raw_compat_arith.an: raw-pointer arithmetic p+n/p-n, ordering, and assertions.
 //
 // Covers same-object pointer arithmetic, differences, ordering comparisons,
 // and zero-offset identity. The negative-offset case is covered separately by
@@ -10,24 +10,24 @@ fn main() {
     let arr: i32[6] = [10, 20, 30, 40, 50, 60];
     let p: i32* = &arr[0];
 
-    // p+n 取值
+    // Read through p+n.
     assert *(p + 2) == 30: "*(p+2) == arr[2]";
     assert *(p + 5) == 60: "*(p+5) == arr[5]";
 
-    // 子切片(q = p+4)与 n == 0 恒等
+    // Subslice q=p+4 and identity when n==0.
     let q: i32* = p + 4;
     let r: i32* = p + 0;
     assert r == p: "p+0 == p";
     let s: i32* = q - 0;
     assert s == q: "q-0 == q";
 
-    // 指针差 → i64 元素偏移
+    // Pointer difference yields an i64 element offset.
     let d1: i64 = q - p;
     assert d1 == 4: "q - p == 4";
     let d2: i64 = (p + 5) - (p + 1);
     assert d2 == 4: "(p+5)-(p+1) == 4";
 
-    // 同对象序比较
+    // Order pointers into the same object.
     assert p < p + 1: "p < p+1";
     assert q > p: "q > p";
     assert p <= p: "p <= p";

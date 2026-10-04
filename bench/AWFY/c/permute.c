@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <assert.h>
 
-// 全局计数器
+// Global counter.
 int count = 0;
 
-// 交换数组元素（使用指针运算）
+// Swap array elements using pointer arithmetic.
 void swap_indices(int i, int j, int* v) {
     int* p = v + i;
     int* q = v + j;
@@ -14,7 +14,7 @@ void swap_indices(int i, int j, int* v) {
     *q = tmp;
 }
 
-// 递归排列生成函数
+// Recursive permutation generator.
 void permute_inner(int n, int* v) {
     count += 1;
     if (n != 0) {
@@ -28,7 +28,7 @@ void permute_inner(int n, int* v) {
     }
 }
 
-// 性能测试函数
+// Benchmark function.
 int benchmark_permute() {
     count = 0;
     int* v = (int*)calloc(6, sizeof(int));
@@ -38,7 +38,7 @@ int benchmark_permute() {
     return count;
 }
 
-// 主函数
+// main function.
 int main(int argc, char **argv) {
     int iterations = argc > 1 ? atoi(argv[1]) : 70866;
     for (int i = 0; i < iterations; i++) {

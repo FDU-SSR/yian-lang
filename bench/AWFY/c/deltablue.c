@@ -1,20 +1,20 @@
-// bench/AWFY/c/deltablue.c — DeltaBlue 增量约束求解器 (AWFY 宏基准) 的 C 参考实现
+// bench/AWFY/c/deltablue.c: C reference for DeltaBlue incremental constraint solving (AWFY macrobenchmark).
 //
-// 语义与规模与 bench/AWFY/an/deltablue.an 对齐; 只用于跨语言正确性对照, 不参与
-// fat/raw 计时。
-// 上游: AWFY (are-we-fast-yet) benchmarks/Java/src/DeltaBlue.java + deltablue/*.java
-//       (MIT, Copyright (c) 2001-2016 Stefan Marr; 源自 Mario Wolczko 的 Java/Smalltalk
-//        版本, 见 AWFY LICENSE.md)
-// 说明: 约束分派由带 kind 标签的结构体与 switch 实现; 强度 Strength 由 arithmeticValue
-//       (int) 表示。
-// 工作单元: chainTest(12000) 与 projectionTest(12000), 结果由内部断言验证。
-// 用法: ./deltablue [重复次数] (默认 1)
+// Semantics and scale match bench/AWFY/an/deltablue.an; used for cross-language correctness comparison,
+// outside fat/raw timing.
+// Upstream: AWFY benchmarks/Java/src/DeltaBlue.java and deltablue/*.java.
+//       MIT, Copyright (c) 2001-2016 Stefan Marr; derived from Mario Wolczko's Java/Smalltalk
+//        version; see AWFY LICENSE.md.
+// Constraints dispatch by struct kind and switch; Strength uses integer arithmeticValue.
+//       Strength representation: int.
+// Work unit: chainTest(12000) and projectionTest(12000), verified by internal assertions.
+// Usage: ./deltablue [repetitions], default 1.
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-// ── Strength (上游 deltablue/Strength.java) ──
+// -- Strength (upstream deltablue/Strength.java) --
 #define S_ABSOLUTE_WEAKEST 10000
 #define S_REQUIRED (-800)
 #define S_STRONG_DEFAULT (-200)
@@ -25,33 +25,33 @@ static bool strength_stronger(int a, int b) { return a < b; }
 static bool strength_weaker(int a, int b) { return a > b; }
 static int strength_weakest(int a, int b) { return a > b ? a : b; }
 
-// ── Direction (上游 deltablue/Direction.java); UNSET 表示上游的 null ──
+// -- Direction (upstream deltablue/Direction.java); UNSET denotes upstream null --
 typedef enum { FLOW_FORWARD, FLOW_BACKWARD, FLOW_UNSET } Flow;
 
 typedef struct Variable Variable;
 typedef struct Constraint Constraint;
 
-// ── Variable (上游 deltablue/Variable.java) ──
+// -- Variable (upstream deltablue/Variable.java) --
 struct Variable {
     int value;
     Constraint **constraints;
     int constraint_count;
     int constraint_capacity;
-    Constraint *determined_by;  // 上游 null 表示无
+    Constraint *determined_by;  // Upstream uses null for absence.
     int mark;
     int walk_strength;
     bool stay;
 };
 
-// ── Constraint (上游 AbstractConstraint + Unary/Binary + Equality/Scale/Stay/Edit) ──
+// -- Constraint (upstream AbstractConstraint, Unary/Binary, Equality/Scale/Stay/Edit) --
 typedef enum { C_EQUALITY, C_SCALE, C_STAY, C_EDIT } ConstraintKind;
 
 struct Constraint {
     ConstraintKind kind;
-    uint64_t id;    // 唯一 id, 替代上游的引用身份比较
+    uint64_t id;    // Unique ID for upstream reference-identity comparisons.
     int strength;   // Strength.arithmeticValue
-    Variable *v1;   // Equality/Scale: 源
-    Variable *v2;   // Equality/Scale: 目的
+    Variable *v1;   // Equality/Scale source.
+    Variable *v2;   // Equality/Scale destination.
     Variable *scale;
     Variable *offset;
     Variable *output;  // Stay/Edit
@@ -65,7 +65,7 @@ typedef struct {
     uint64_t next_id;
 } Planner;
 
-// ── 动态数组 (对应 std.core.vec 的 Vec<Constraint&> / Vec<Variable&>) ──
+// -- Dynamic arrays corresponding to Vec<Constraint&> / Vec<Variable&> in std.core.vec --
 typedef struct {
     Constraint **items;
     int count;
@@ -94,7 +94,7 @@ static void vvec_push(VariableVec *v, Variable *x) {
     v->items[v->count++] = x;
 }
 
-// ── Variable 操作 ──
+// -- Variable operations --
 static Variable *variable_new(int value) {
     Variable *v = malloc(sizeof(Variable));
     v->value = value;
@@ -116,7 +116,7 @@ static void variable_add_constraint(Variable *v, Constraint *c) {
     v->constraints[v->constraint_count++] = c;
 }
 
-// 上游 Vector.remove(c) (按对象身份移除第一个匹配项) + determinedBy 复位
+// Upstream Vector.remove(c): remove the first identity match and reset determinedBy.
 static void variable_remove_constraint(Variable *v, Constraint *c) {
     int idx = -1;
     for (int i = 0; i < v->constraint_count; i++) {
@@ -135,7 +135,7 @@ static void variable_remove_constraint(Variable *v, Constraint *c) {
     }
 }
 
-// ── Constraint 方法 ──
+// -- Constraint methods --
 static bool constraint_is_input(Constraint *c) { return c->kind == C_EDIT; }
 
 static bool constraint_is_satisfied(Constraint *c) {
@@ -145,7 +145,7 @@ static bool constraint_is_satisfied(Constraint *c) {
     return c->satisfied;
 }
 
-// BinaryConstraint.chooseMethod (Equality/Scale 共用), 返回选定方向
+// Shared BinaryConstraint.chooseMethod for Equality/Scale; return the selected direction.
 static Flow binary_choose(int strength, Variable *v1, Variable *v2, int mark) {
     if (v1->mark == mark) {
         if (v2->mark != mark && strength_stronger(strength, v2->walk_strength)) {
@@ -171,7 +171,7 @@ static Flow binary_choose(int strength, Variable *v1, Variable *v2, int mark) {
     return FLOW_UNSET;
 }
 
-// 上游 chooseMethod
+// Upstream chooseMethod.
 static void constraint_choose_method(Constraint *c, int mark) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -186,7 +186,7 @@ static void constraint_choose_method(Constraint *c, int mark) {
     }
 }
 
-// 上游 addToGraph
+// Upstream addToGraph.
 static void constraint_add_to_graph(Constraint *c) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -209,7 +209,7 @@ static void constraint_add_to_graph(Constraint *c) {
     }
 }
 
-// 上游 execute
+// Upstream execute.
 static void constraint_execute(Constraint *c) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -232,7 +232,7 @@ static void constraint_execute(Constraint *c) {
     }
 }
 
-// 上游 inputsDo(in -> in.setMark(mark))
+// Upstream inputsDo(in -> in.setMark(mark)).
 static void constraint_mark_inputs(Constraint *c, int mark) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -257,7 +257,7 @@ static void constraint_mark_inputs(Constraint *c, int mark) {
     }
 }
 
-// 上游 inputsKnown(mark)
+// Upstream inputsKnown(mark).
 static bool variable_known(Variable *v, int mark) {
     return v->mark == mark || v->stay || v->determined_by == NULL;
 }
@@ -280,7 +280,7 @@ static bool constraint_inputs_known(Constraint *c, int mark) {
     return true;
 }
 
-// 上游 markUnsatisfied
+// Upstream markUnsatisfied.
 static void constraint_mark_unsatisfied(Constraint *c) {
     if (c->kind == C_EQUALITY || c->kind == C_SCALE) {
         c->direction = FLOW_UNSET;
@@ -289,7 +289,7 @@ static void constraint_mark_unsatisfied(Constraint *c) {
     }
 }
 
-// 上游 getOutput
+// Upstream getOutput.
 static Variable *constraint_get_output(Constraint *c) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -302,7 +302,7 @@ static Variable *constraint_get_output(Constraint *c) {
     return c->v1;
 }
 
-// 上游 removeFromGraph
+// Upstream removeFromGraph.
 static void constraint_remove_from_graph(Constraint *c) {
     switch (c->kind) {
         case C_EQUALITY:
@@ -325,7 +325,7 @@ static void constraint_remove_from_graph(Constraint *c) {
     }
 }
 
-// 上游 recalculate
+// Upstream recalculate.
 static void constraint_recalculate(Constraint *c) {
     switch (c->kind) {
         case C_EQUALITY: {
@@ -379,13 +379,13 @@ static int planner_new_mark(Planner *p) {
 
 static bool planner_add_propagate(Planner *p, Constraint *c, int mark);
 
-// 上游 incrementalRemove
+// Upstream incrementalRemove.
 static void planner_incremental_remove(Planner *p, Constraint *c);
 
-// 上游 AbstractConstraint.satisfy
+// Upstream AbstractConstraint.satisfy.
 static bool constraint_satisfy(Constraint *c, int mark, Planner *p, Constraint **overridden_out);
 
-// 上游 addConstraintsConsumingTo (闭包 -> 显式循环)
+// Upstream addConstraintsConsumingTo with an explicit loop instead of a closure.
 static void add_constraints_consuming_to(Variable *v, ConstraintVec *coll) {
     Constraint *determining = v->determined_by;
     for (int i = 0; i < v->constraint_count; i++) {
@@ -400,7 +400,7 @@ static void add_constraints_consuming_to(Variable *v, ConstraintVec *coll) {
     }
 }
 
-// 上游 incrementalAdd
+// Upstream incrementalAdd.
 static void planner_incremental_add(Planner *p, Constraint *c) {
     int mark = planner_new_mark(p);
     Constraint *cur = NULL;
@@ -413,7 +413,7 @@ static void planner_incremental_add(Planner *p, Constraint *c) {
     }
 }
 
-// 上游 removePropagateFrom
+// Upstream removePropagateFrom.
 static ConstraintVec planner_remove_propagate_from(Planner *p, Variable *out) {
     ConstraintVec unsatisfied = {NULL, 0, 0};
     (void)p;
@@ -453,7 +453,7 @@ static ConstraintVec planner_remove_propagate_from(Planner *p, Variable *out) {
     free(todo.items);
 
     // unsatisfied.sort((c1,c2) -> c1.strength.stronger(c2.strength) ? -1 : 1)
-    // 稳定插入排序: 强者在前, 等强度保持入队顺序
+    // Stable insertion sort: stronger first, preserving equal-strength enqueue order.
     for (int i = 1; i < unsatisfied.count; i++) {
         Constraint *key = unsatisfied.items[i];
         int key_strength = key->strength;
@@ -467,7 +467,7 @@ static ConstraintVec planner_remove_propagate_from(Planner *p, Variable *out) {
     return unsatisfied;
 }
 
-// 上游 incrementalAdd 调用的 satisfy (返回 overridden); 返回 true 表示已满足
+// satisfy called by upstream incrementalAdd; returns overridden, with true indicating satisfaction.
 static bool constraint_satisfy(Constraint *c, int mark, Planner *p, Constraint **overridden_out) {
     constraint_choose_method(c, mark);
 
@@ -509,7 +509,7 @@ static void planner_incremental_remove(Planner *p, Constraint *c) {
     free(unsatisfied.items);
 }
 
-// 上游 addPropagate
+// Upstream addPropagate.
 static bool planner_add_propagate(Planner *p, Constraint *c, int mark) {
     ConstraintVec todo = {NULL, 0, 0};
     cvec_push(&todo, c);
@@ -532,7 +532,7 @@ static bool planner_add_propagate(Planner *p, Constraint *c, int mark) {
     return true;
 }
 
-// 上游 makePlan: 接管 sources 数组
+// Upstream makePlan: take ownership of sources.
 static ConstraintVec planner_make_plan(Planner *p, ConstraintVec sources) {
     int mark = planner_new_mark(p);
     ConstraintVec plan = {NULL, 0, 0};
@@ -553,7 +553,7 @@ static ConstraintVec planner_make_plan(Planner *p, ConstraintVec sources) {
     return plan;
 }
 
-// 上游 extractPlanFromConstraints
+// Upstream extractPlanFromConstraints.
 static ConstraintVec planner_extract_plan_from_constraints(Planner *p, ConstraintVec constraints) {
     ConstraintVec sources = {NULL, 0, 0};
     for (int i = 0; i < constraints.count; i++) {
@@ -571,7 +571,7 @@ static void execute_plan(ConstraintVec plan) {
     }
 }
 
-// ── 构造 (上游各约束构造函数: 建图 + incrementalAdd) ──
+// -- Construction: upstream constructors build the graph and call incrementalAdd --
 static Constraint *constraint_alloc(ConstraintKind kind, int strength) {
     Constraint *c = malloc(sizeof(Constraint));
     c->kind = kind;
@@ -628,7 +628,7 @@ static Constraint *constraint_edit(Variable *output, int strength, Planner *p) {
     return c;
 }
 
-// 上游 AbstractConstraint.destroyConstraint
+// Upstream AbstractConstraint.destroyConstraint.
 static void constraint_destroy(Constraint *c, Planner *p) {
     if (constraint_is_satisfied(c)) {
         planner_incremental_remove(p, c);
@@ -636,7 +636,7 @@ static void constraint_destroy(Constraint *c, Planner *p) {
     constraint_remove_from_graph(c);
 }
 
-// 上游 Planner.change
+// Upstream Planner.change.
 static void planner_change(Planner *p, Variable *var, int new_value) {
     Constraint *edit_c = constraint_edit(var, S_PREFERRED, p);
 
@@ -655,7 +655,7 @@ static void planner_change(Planner *p, Variable *var, int new_value) {
     free(edit_c);
 }
 
-// 释放辅助 (Java 侧靠 GC)
+// Release helpers (Java uses GC).
 static void free_constraints(ConstraintVec cons) {
     for (int i = 0; i < cons.count; i++) {
         free(cons.items[i]);
@@ -671,7 +671,7 @@ static void free_variables(VariableVec vars) {
     free(vars.items);
 }
 
-// 上游 Planner.chainTest: 返回校验值 (100 次迭代 vars[n] 之和, 恒为 4950)
+// Upstream Planner.chainTest: return the sum of vars[n] over 100 iterations, always 4950.
 static int64_t planner_chain_test(int n) {
     Planner *planner = planner_new();
 
@@ -713,7 +713,7 @@ static int64_t planner_chain_test(int n) {
     return acc;
 }
 
-// 上游 Planner.projectionTest: 返回校验值
+// Upstream Planner.projectionTest: return the check value.
 static int64_t planner_projection_test(int n) {
     Planner *planner = planner_new();
 

@@ -1,11 +1,11 @@
-// 文件头注释
-// 第二行
+// File header comment.
+// Second line.
 
-fn main() {   // 行尾注释
-    /* 块注释在语句前 */ let a: i32 = 1;
-    let b: i32 = 2;    // 另一个行尾
+fn main() {   // Trailing comment.
+    /* Block comment before a statement */ let a: i32 = 1;
+    let b: i32 = 2;    // Another trailing comment.
 
-    // 空行之后的独占注释
+    // Standalone comment after a blank line.
     let c: i32 = a + b;
 }
-// 末尾注释
+// Final comment.

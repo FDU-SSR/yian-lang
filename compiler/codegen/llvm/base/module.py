@@ -19,28 +19,28 @@ from compiler.codegen.llvm.base.value import LLValue
 from compiler.error import CompilerError
 from compiler.runtime_error import RuntimeErrorCode, runtime_error_message
 
-# 目标平台: 三元组与 data layout 必须成对出现在模块上。
+# Target triple and data layout must be set together on the module.
 #
-# 只写 triple、留空 data layout 时, 模块内声明的布局与目标机布局不一致: 中端
-# pass 按"无 ABI 对齐约束"的空布局折叠字段偏移, 后端按目标机布局落子, 同一个
-# 字段的读写偏移就会不同 (例如 4 字节 tag + 8 字节指针的 enum 之后跟 u64:
-# 空布局给 12, 目标机给 16), 表现为静默取错值, 且只在 -O1 及以上出现
-# (见 docs/llvm_note.md「目标三元组与 data layout」)。
+# Setting only the triple leaves IR and target layouts inconsistent: middle-end passes using an empty layout
+# fold offsets without ABI alignment, while the backend uses the target layout. Reads and writes can then
+# use different offsets, such as a u64 after an enum with a 4-byte tag and an 8-byte pointer:
+# the empty layout gives 12 and the target gives 16, silently reading incorrect values at -O1 or higher.
+# See docs/llvm_note.md for the relationship between target triples and data layouts.
 TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
 TARGET_DATA_LAYOUT = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-# llvmlite 的 IR 层默认把指针打印成有型的 `T*` (兼容旧 IR)。本项目的指针类型已统一
-# 为 opaque pointer (见 base/types.py 与 pipeline/builder.py), 因此关掉这套打印, 使发射的 IR 与
-# LLVM 的指针表示一致。该开关只影响类型打印: llvmlite 侧的指针判定与生成的机器码
-# 都不变。
+# llvmlite's IR printer defaults to typed T* pointers for compatibility. This project uses opaque pointers
+# (see base/types.py and pipeline/builder.py), so disable typed-pointer printing to align emitted IR
+# with LLVM's representation. This switch affects type printing only; llvmlite's pointer classification
+# and generated machine code are unchanged.
 ir.types.ir_layer_typed_pointers_enabled = False  # type: ignore
 
 
 def apply_target(module: ir.Module) -> None:
-    """把目标三元组与配套的 data layout 写到 ``module`` 上。
+    """Set module's target triple and matching data layout together.
 
-    LLVM 类型的具体布局(TargetData)由模块的 data layout 决定, 编译期布局查询与
-    发射阶段的优化/后端必须看到同一份, 故两者只能在同一个地方定义、一起落盘。
+    The module data layout determines TargetData. Compile-time layout queries and emission-time
+    optimization/code generation must see the same layout, defined and installed in one place.
     """
     module.triple = TARGET_TRIPLE
     module.data_layout = TARGET_DATA_LAYOUT
@@ -181,11 +181,11 @@ class LLModule:
             llvm_name = f"{cfg_func.name}.{cfg_func.type_id}"
         ir_func = ir.Function(self.__module, func_ir_type, name=llvm_name)
         if llvm_name != "__yian_main":
-            # 事实登记: 整个程序编译进同一个 module、交付物是单个可执行文件, YIAN 函数
-            # 不构成对外 ABI —— 除入口 (C 运行时的 main 包装要调它) 外都不需要对外可见。
+            # The whole program compiles into one module and executable; YIAN functions need no external ABI visibility
+            # except the entry function called by the C runtime's main wrapper.
             ir_func.linkage = "internal"
         if llvm_name.startswith("index."):
-            # 索引/检查辅助强制内联,使元素访问路径不保留额外辅助函数调用。
+            # Force-inline indexing/check helpers to avoid extra calls on element-access paths.
             ir_func.attributes.add("alwaysinline")
         func = LLFunction(ir_func)
         self.__functions[cfg_func.type_id] = func
@@ -342,14 +342,14 @@ class LLModule:
             self.__env_lock_global = global_var
         return self.__env_lock_global
 
-    # -- fat-pointer mechanism globals (LLVM 层) --
+    # -- Fat-pointer mechanism globals (LLVM layer) --
 
     def get_key_counter(self) -> ir.GlobalVariable:
-        """帧键单调计数器全局（``__yian_key_stack``，由 runtime 定义）。
+        """Global monotonic frame-key counter (__yian_key_stack, defined by the runtime).
 
-        ``k_f ← Gen()`` 的 LLVM 发射：load 全局计数 → 上限检查 → add 1 → store 回。
-        全局变量保证跨函数单调（同一槽位复用也不会给出相同的键）。堆对象的身份不走
-        计数器，而是由锁表项按块换代。
+        LLVM emits k_f <- Gen() as load, limit check, increment, and store. The global counter
+        remains monotonic across functions and slot reuse. Heap identity uses per-entry
+        generations instead of this counter.
         """
         if self.__key_stack_global is None:
             self.__key_stack_global = self.__new_key_counter("__yian_key_stack")
@@ -416,11 +416,11 @@ class LLModule:
         )
 
     def get_lit_lock(self) -> ir.GlobalVariable:
-        """字符串字面量锁槽:全局 i64,初值 = LITERAL_KEY(1),永不写。
+        """String-literal lock slot: a runtime-owned global i64, initialized to LITERAL_KEY(1), never written.
 
-        字面量数据是全局只读区、生命周期为整个程序——live(p) 读该锁槽恒等于
-        键,字面量派生的指针恒 live;键 1 与任何真实帧键只在各自锁槽内比较,
-        无跨槽串扰(以锁槽地址寻址)。初始化与所有权在运行时库。
+        Literal data is read-only global storage lasting for the whole program, so its key always
+        matches the slot and derived pointers remain live. Literal and frame keys are compared
+        only within their respective slots, addressed independently.
         """
         if self.__lit_lock_global is None:
             global_var = ir.GlobalVariable(self.__module, ir.IntType(64), name="__yian_lit_lock")  # type: ignore
@@ -433,9 +433,9 @@ class LLModule:
     def get_lock_table(self) -> ir.GlobalVariable:
         """Return the external lock-table declaration.
 
-        表项 8 B = {key:u32, anchor_lo32:u32}; 下标区间自带 kind:
-        [0, FRAME_LOCK_SLOTS) 帧影子栈槽, 接着两个字面量/环境常量槽, 其余由分配器发放。
-        表在运行时库里、位于 BSS: 只有被触到的页常驻。
+        Entries are 8 B {key:u32,anchor_lo32:u32}; index ranges encode kind:
+        frame slots occupy [0,FRAME_LOCK_SLOTS), then two constant slots, then allocator-issued heap slots.
+        The runtime owns the BSS table; only touched pages become resident.
         """
         if self.__frame_lock_arena_global is None:
             arena_type = ir.ArrayType(
@@ -450,7 +450,7 @@ class LLModule:
         return self.__frame_lock_arena_global
 
     def get_lock_bump(self) -> ir.GlobalVariable:
-        """Return the lock-table bump cursor declaration (堆段下一个未用下标)."""
+        """Return the lock-table bump cursor declaration (next unused heap index)."""
         if self.__lock_bump_global is None:
             global_var = ir.GlobalVariable(
                 self.__module, ir.IntType(64), name="__secl_lock_bump"
@@ -461,7 +461,7 @@ class LLModule:
         return self.__lock_bump_global
 
     def get_lock_free_head(self) -> ir.GlobalVariable:
-        """Return the lock-table free-list head declaration (0 = 空, 否则 = 下标 + 1)."""
+        """Return the lock-table free-list head declaration (0 means empty; otherwise index+1)."""
         if self.__lock_free_head_global is None:
             global_var = ir.GlobalVariable(
                 self.__module, ir.IntType(64), name="__secl_lock_free_head"
@@ -472,20 +472,20 @@ class LLModule:
         return self.__lock_free_head_global
 
     def get_lock_bump_take(self) -> ir.Function:
-        """Return the lock-table bump declaration (自由链为空时取新下标; 耗尽 R003)."""
+        """Return the bump declaration (take a new index when the free list is empty; exhaustion reports R003)."""
         if self.__lock_new_func is None:
             fn = ir.Function(
                 self.__module,
                 ir.FunctionType(ir.IntType(64), []),
                 name="__secl_lock_bump_take",
             )
-            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            # Failures terminate through noreturn __yian_runtime_fail without unwinding.
             fn.attributes.add("nounwind")
             self.__lock_new_func = fn
         return self.__lock_new_func
 
     def get_lock_release(self) -> ir.Function:
-        """Return the lock-table release declaration (按 word 释放表项)."""
+        """Return the lock-table release declaration (release an entry identified by word)."""
         if self.__lock_release_func is None:
             fn = ir.Function(
                 self.__module,
@@ -493,7 +493,7 @@ class LLModule:
                 name="__secl_lock_release",
             )
             fn.args[0].name = "word"
-            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            # Failures terminate through noreturn __yian_runtime_fail without unwinding.
             fn.attributes.add("nounwind")
             self.__lock_release_func = fn
         return self.__lock_release_func
@@ -515,8 +515,8 @@ class LLModule:
     def get_pool_alloc(self) -> ir.Function:
         """Return the runtime allocator declaration for stable-header blocks.
 
-        分配器在运行时库里 (尺寸类 arena), 返回块基址 (锁槽地址); 编译器随后写锁槽与
-        active_size, 负载 = 基址 + `BlockHeader.BYTES`。
+        The runtime's size-class arena returns a block base (lock-slot address). The compiler writes
+        the lock slot and active_size; payload = base + BlockHeader.BYTES.
         """
         if self.__pool_alloc_func is None:
             fn = ir.Function(
@@ -525,16 +525,16 @@ class LLModule:
                 name="__secl_pool_alloc",
             )
             fn.args[0].name = "requested"
-            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            # Failures terminate through noreturn __yian_runtime_fail without unwinding.
             fn.attributes.add("nounwind")
             self.__pool_alloc_func = fn
         return self.__pool_alloc_func
 
     def get_pool_alloc_class(self) -> ir.Function:
-        """Return the size-class allocator declaration (类号由编译器算好).
+        """Return the size-class allocator declaration (class index computed by the compiler).
 
-        尺寸在编译期已知的分配点直接传类号, 运行时省掉按字节数查表; 类号取值见
-        `runtime_lib.CLASS_BYTES`。
+        Allocations with compile-time sizes pass a class index directly, avoiding runtime byte-size lookup.
+        See runtime_lib.CLASS_BYTES for class indices.
         """
         if self.__pool_alloc_class_func is None:
             fn = ir.Function(
@@ -543,13 +543,13 @@ class LLModule:
                 name="__secl_pool_alloc_class",
             )
             fn.args[0].name = "class_index"
-            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            # Failures terminate through noreturn __yian_runtime_fail without unwinding.
             fn.attributes.add("nounwind")
             self.__pool_alloc_class_func = fn
         return self.__pool_alloc_class_func
 
     def get_pool_release(self) -> ir.Function:
-        """Return the runtime release declaration; 归还整块 (物理页由运行时回收)."""
+        """Return the runtime release declaration for whole blocks; the runtime reclaims physical pages."""
         if self.__pool_release_func is None:
             fn = ir.Function(
                 self.__module,
@@ -557,7 +557,7 @@ class LLModule:
                 name="__secl_pool_release",
             )
             fn.args[0].name = "block"
-            # 事实性标注: 失败路径经 noreturn 的 __yian_runtime_fail 终止, 不 unwind。
+            # Failures terminate through noreturn __yian_runtime_fail without unwinding.
             fn.attributes.add("nounwind")
             self.__pool_release_func = fn
         return self.__pool_release_func

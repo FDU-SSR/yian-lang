@@ -31,8 +31,8 @@ impl str {
         let i: u64 = 0;
 
         while i < len {
-            // ASCII 段整字跳过: 一次 8 字节读 + 一次掩码判断, 代替逐字节比较。
-            // 用 @memcpy 落到本地 u64, 避免未对齐的 8 字节解引用。
+            // Skip ASCII spans a word at a time with one eight-byte read and mask check rather than bytewise comparison.
+            // Use @memcpy into a local u64 to avoid an unaligned eight-byte dereference.
             while i + 8 <= len {
                 let word: u64 = 0;
                 @memcpy(&word, &bytes[i], 8);
@@ -143,8 +143,8 @@ impl str {
     pub fn contains_char(c: char) -> bool {
         let code: u32 = u32(c);
         if code < 128 {
-            // ASCII 字符就是单字节: 直接扫字节, 不必逐字符解码(Rust 的
-            // `str::contains(char)` 同样只对首个字节做 memchr)。
+            // ASCII characters are single bytes: scan bytes directly without decoding characters (Rust's
+            // `str::contains(char)` likewise applies memchr to the first byte).
             let bytes = self.as_slice();
             let len = bytes.len();
             let i: u64 = 0;
@@ -202,8 +202,8 @@ impl str {
         last.is_some() && *last.unwrap() == c
     }
 
-    // 在 hay[from..] 里找 sep 首次出现的字节下标(内部工具, find/split 共用)。
-    // sep 为空时返回 from。
+    // Find the first byte index of sep in hay[from..] (shared internal helper for find/split).
+    // Return from when sep is empty.
     static fn find_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
         let hlen = hay.len();
         let nlen = sep.len();
@@ -214,7 +214,7 @@ impl str {
             return Option<u64>.None;
         }
 
-        // 多字节模式先比首字节, 只有首字节命中才比其余字节。
+        // For multibyte patterns, compare the first byte before checking the rest.
         let last = hlen - nlen;
         let first_byte = sep[0];
         let i: u64 = from;
@@ -236,7 +236,7 @@ impl str {
         Option<u64>.None
     }
 
-    // 在 hay[..=from] 里找 sep 最后一次出现的字节下标(内部工具, rfind 用)。
+    // Find the last byte index of sep in hay[..=from] (internal helper for rfind).
     static fn rfind_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
         let hlen = hay.len();
         let nlen = sep.len();
@@ -247,7 +247,7 @@ impl str {
             return Option<u64>.None;
         }
 
-        // 起始位置不能超过最后一个可能的起点。
+        // The starting position must not exceed the last possible match start.
         let last: u64 = if from + nlen > hlen { hlen - nlen } else { from };
         let first_byte = sep[0];
         let i: u64 = last + 1;
@@ -288,7 +288,7 @@ impl str {
     pub fn find_char(c: char) -> Option<u64> {
         let code: u32 = u32(c);
         if code < 128 {
-            // 单字节字符直接扫字节(Rust 对单字节 Pattern 走 memchr)。
+            // Scan bytes directly for ASCII characters (Rust uses memchr for single-byte patterns).
             let byte = u8(code);
             let bytes = self.as_slice();
             let len = bytes.len();
@@ -361,7 +361,7 @@ impl Iterator<str> for SplitIter {
         let hit = str.find_in(self.hay, self.sep, start);
         match hit {
             None => {
-                // 最后一段(可能是空串), 之后迭代结束。
+                // The final segment may be empty; iteration ends after it.
                 self.done = true;
                 Option<str>.Some(str.from_slice_unchecked(self.hay[start..self.hay.len()]))
             }
@@ -393,8 +393,8 @@ impl CharIter {
 
 impl Iterator<char> for CharIter {
     pub fn next() -> Option<char> {
-        // 直接按 指针 + 剩余字节数 解码, 不再每读一个字节就构造一次
-        // `Option<u8*>` 并 unwrap(对应 Rust 的 `Chars::next` / `next_code_point`)。
+        // Decode directly from the pointer and remaining byte count, without constructing
+        // and unwrapping `Option<u8*>` for each byte (as in Rust's `Chars::next` / `next_code_point`).
         let n = self.byte_iter.n;
         if n == 0 {
             return Option<char>.None;
@@ -444,7 +444,7 @@ impl Iterator<char> for CharIter {
             return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
         }
 
-        // Invalid leading byte: 返回 None, 并消费该字节。
+        // Invalid leading byte: return None and consume that byte.
         self.byte_iter.ptr = p + 1;
         self.byte_iter.n = n - 1;
         return Option<char>.None;
@@ -477,7 +477,7 @@ impl RevCharIter {
 
 impl Iterator<char> for RevCharIter {
     pub fn next() -> Option<char> {
-        // 反向解码: `ptr` 是前向起点, 当前剩余区间是 [0, n), 从 n-1 往前找首字节。
+        // Reverse decoding: `ptr` is the forward start; search backward from n-1 for the leading byte in [0, n).
         let n = self.byte_iter.n;
         if n == 0 {
             return Option<char>.None;

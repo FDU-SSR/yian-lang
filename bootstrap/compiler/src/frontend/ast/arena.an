@@ -4,13 +4,13 @@ from std.core.drop import Drop;
 from std.core.ops import Index;
 from std.core.vec import Vec;
 
-// 满块不扩容；分配只写入有空位的块或新块，因此已分配节点的地址稳定。
+// Full chunks never grow; allocations use available slots or new chunks, keeping node addresses stable.
 struct NodePool<N> { chunks: Vec<Vec<N>>, count: u64 }
 impl<N> NodePool<N> {
     static fn new() -> Self { Self(chunks=Vec<Vec<N>>.new(), count=0) }
 
     fn alloc(value: N) -> N& {
-        // 每块容量同时受字节预算和节点数量上限约束，至少容纳一个节点。
+        // Chunk capacity is bounded by both the byte budget and node count, with room for at least one node.
         let capacity = 16384u64 / @sizeof<N>;
         if capacity == 0 {
             capacity = 1;
@@ -31,7 +31,7 @@ impl<N> NodePool<N> {
         return &chunk[index];
     }
 
-    // 释放节点内部拥有的字符串和容器；节点存储由 release_chunks 统一释放。
+    // Release strings and containers owned by nodes; release_chunks frees their storage separately.
     fn drop_payloads() {
         let i: u64 = 0;
 
@@ -259,7 +259,7 @@ impl AstArena {
 
 impl Drop for AstArena {
     pub fn drop() {
-        // 先释放各类节点拥有的负载，再统一释放所有节点的存储块。
+        // Release the payloads of every node category before freeing all node storage chunks.
         self.identifier.drop_payloads();
         self.int_literal.drop_payloads();
         self.float_literal.drop_payloads();

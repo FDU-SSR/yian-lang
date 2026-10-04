@@ -13,10 +13,10 @@ yianc [options] <paths...>
 - 生成可执行文件需要唯一程序入口；分析模式和库包检查可不要求入口。
 
 ```bash
-# 编译单个测试文件（含标准库）
+# Compile one test file, including the standard library.
 yianc lib/src tests/basic/array/assign.an
 
-# 编译多个文件
+# Compile multiple files.
 yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/alias/imported_scope/main.an
 ```
 
@@ -28,10 +28,10 @@ yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/al
 编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
 
 ```bash
-scripts/setup_llvm_toolchain.sh --check            # 只报告当前版本，不做修改
-scripts/setup_llvm_toolchain.sh --with-clang-22    # 安装 LLVM 22 并把系统默认命令切到 22（需要 sudo）
-scripts/setup_llvm_toolchain.sh --with-conda-clang # 或：只把 clang 22 装进当前 conda 环境（无需 sudo）
-scripts/setup_llvm_toolchain.sh --python PATH      # 指定解释器（默认 $PYTHON，其次 python3）
+scripts/setup_llvm_toolchain.sh --check            # Report current versions without changes.
+scripts/setup_llvm_toolchain.sh --with-clang-22    # Install LLVM 22 and switch system defaults to 22; requires sudo.
+scripts/setup_llvm_toolchain.sh --with-conda-clang # Alternatively install clang 22 into the current conda environment without sudo.
+scripts/setup_llvm_toolchain.sh --python PATH      # Select the interpreter; defaults to $PYTHON, then python3.
 ```
 
 脚本把 llvmlite 0.49 装进目标环境；`--check` 只报告 llvmlite 与各工具的实际版本。
@@ -192,9 +192,9 @@ yianc --analyze --json lib/src main.an
 ### 2.11 `--format` / `-w` / `--check` — 格式化源码
 
 ```bash
-yianc --format main.an          # 单个文件：格式化结果写到 stdout
-yianc --format -w src           # 多个文件：就地重写
-yianc --format --check src      # 只报告需要格式化的文件
+yianc --format main.an          # One file: print formatted source to stdout.
+yianc --format -w src           # Multiple files: rewrite in place.
+yianc --format --check src      # Report only files needing formatting.
 ```
 
 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。无法格式化的文件被跳过并在
@@ -233,13 +233,13 @@ Yian 编译器内置结构化日志系统；日志开关是 `--log-spec` / `--lo
 格式：`channel=level`，逗号分隔。支持前缀匹配（如 `type_check=DEBUG` 同时匹配 `type_check.coerce`）。
 
 ```bash
-# 显示所有阶段的 DEBUG 摘要
+# DEBUG summaries for all stages.
 yianc --log-spec "all=DEBUG" lib/src tests/basic/array/assign.an
 
-# 仅追踪类型检查中的表达式求值
+# Trace only type-checking expression evaluation.
 yianc --log-spec "type_check.expr=TRACE" lib/src tests/basic/array/assign.an
 
-# 追踪方法调度 + CFG 逻辑展开
+# Trace method dispatch and CFG logical lowering.
 yianc --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib/src tests/basic/array/assign.an
 ```
 
@@ -265,13 +265,13 @@ yianc --log-spec "all=DEBUG" --log-file /tmp/debug.log lib/src tests/basic/array
 ### 3.4 环境变量
 
 ```bash
-# 等价于 --log-spec（--log-spec 优先）
+# Equivalent to --log-spec; --log-spec takes precedence.
 YIAN_LOG="all=DEBUG,type_check=TRACE" yianc lib/src tests/basic/array/assign.an
 
-# 在默认日志文件之外，再写一份到 PATH
+# Write an additional log to PATH.
 YIAN_LOG_FILE=/tmp/debug.log yianc lib/src tests/basic/array/assign.an
 
-# 完全关闭日志
+# Disable logging entirely.
 YIAN_LOG="all=OFF" yianc lib/src tests/basic/array/assign.an
 ```
 
@@ -369,9 +369,9 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 手动构建与校验：
 
 ```bash
-python3 runtime/build.py            # 构建（已是最新则跳过）
-python3 runtime/build.py --check    # ABI 常量一致性断言 + 自测
-python3 runtime/build.py --asan     # ASan/UBSan 自测
+python3 runtime/build.py            # Build unless already current.
+python3 runtime/build.py --check    # ABI consistency checks and self-tests.
+python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 ```
 
 ## 6. 日志输出位置

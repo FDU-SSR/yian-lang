@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""bench_allocator.py — 堆分配器基准 (fat vs raw, 快速/完全两档)。
+"""bench_allocator.py: heap allocator benchmarks (fat versus raw, fast/full scales).
 
-目录与产物:
+Directories and artifacts:
 
-  bench/ALLOC/an/<name>.an        分配器基准源 (裸态覆盖源 `<name>.raw.an` 同目录)
-  bench/ALLOC/specs/<name>.json   侧重 tag 与规模档 (源里 `// bench-scale` 标记行)
-  bench/results/alloc.{md,csv}    生成物 (含环境指纹与 commit)
+  bench/ALLOC/an/<name>.an        Allocator source; optional raw override <name>.raw.an alongside it
+  bench/ALLOC/specs/<name>.json   Focus tags and scales, using source // bench-scale markers
+  bench/results/alloc.{md,csv}    Generated results with environment fingerprint and commit
 
-两态与协议:
-  分配器基准没有 C 参考, 对照态是 libc `malloc`/`free` (即 `--raw-pointers`), 因此这里是
-  fat/raw 两态比较; 每态 `--runs` 次取最小墙钟与最大峰值 RSS, 并校验两态 stdout 一致。
+Modes and protocol: allocator benchmarks have no C reference. Raw mode (--raw-pointers) uses libc malloc/free.
+  Compare fat/raw, taking minimum wall time and maximum peak RSS across --runs samples per mode;
+  verify identical stdout.
 
-规模档:
-  fast 档把 `specs/<name>.json` 里 `scale.fast` 的值写进源里 `// bench-scale` 标记行,
-  在 `build/bench/src/fast/ALLOC/` 下生成构建副本再编译; 完全档直接用仓库里的源。
-  基准内部断言都写成规模的函数, 因此缩小规模不改变断言语义。
+Scales:
+  fast substitutes specs/<name>.json scale.fast into // bench-scale marker lines,
+  generating copies under build/bench/src/fast/ALLOC/ before compilation; full uses repository sources.
+  Assertions are functions of scale, so reducing scale preserves assertion semantics.
 
-用法:
-  python3 bench/bench_allocator.py                       # 全部基准 (完全档)
-  python3 bench/bench_allocator.py --scale fast          # 快速档
+Usage:
+  python3 bench/bench_allocator.py                       # All benchmarks, full scale
+  python3 bench/bench_allocator.py --scale fast          # Fast scale
   python3 bench/bench_allocator.py --names churn_single --runs 5 --pin 4
-  python3 bench/bench_allocator.py --compiler-root /tmp/yian-copy  # 指定源码树编译
+  python3 bench/bench_allocator.py --compiler-root /tmp/yian-copy  # Compile a selected source tree
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def scale_value(spec: dict[str, object], profile: str) -> int | None:
 
 
 def source_path(name: str, raw: bool, spec: dict[str, object], profile: str) -> Path:
-    """裸态优先用 `<name>.raw.an` 覆盖源; fast 档生成替换过规模的构建副本。"""
+    """Prefer <name>.raw.an overrides for raw mode; fast scale generates resized build copies."""
     value = scale_value(spec, profile)
     if value is None:
         path = AN_DIR / f"{name}.raw.an" if raw and (AN_DIR / f"{name}.raw.an").exists() else AN_DIR / f"{name}.an"
@@ -130,7 +130,7 @@ def compile_one(name: str, raw: bool, compiler_root: Path, spec: dict[str, objec
 
 
 def run_one(binary: Path, pin: int | None) -> tuple[float, float, str]:
-    """返回 (墙钟 ms, 峰值 RSS MB, stdout)。"""
+    """Return (wall time in ms, peak RSS in MB, stdout)."""
     pre = ["taskset", "-c", str(pin)] if pin is not None else []
     env = {"LANG": "C", "PATH": "/usr/bin:/bin"}
     start = time.monotonic()
@@ -222,7 +222,7 @@ def main() -> int:
 
 
 def csv_rows_to_md(rows: list[str]) -> list[str]:
-    """把 CSV 行转成 markdown 表格行 (列顺序与表头一致)。"""
+    """Convert a CSV row to a Markdown table row in header-column order."""
     return ["| " + " | ".join(row.split(",")) + " |" for row in rows]
 
 

@@ -1,7 +1,7 @@
 // Test UTF-8 string handling
 //
 // Expected output:
-// 你好易安!
+// Hello, YIAN!
 // Hello Yian!
 // こんにちは、イアン！
 // 안녕하세요, 이안!

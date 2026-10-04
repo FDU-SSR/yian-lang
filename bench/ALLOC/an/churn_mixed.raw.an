@@ -1,8 +1,8 @@
-// bench/ALLOC/an/churn_mixed.raw.an — 混合尺寸 churn (裸态): 与 churn_mixed.an 同算法,
-// 元素类型是 T* (裸态没有切片).
+// bench/ALLOC/an/churn_mixed.raw.an: mixed-size churn (raw mode), using the same algorithm as churn_mixed.an.
+// Elements use T* (raw mode has no slices).
 //
-// 规模: 20000 轮, 每轮 1 个 16 KiB 大块 + 256 个 16 B 小块.
-// 断言: checksum == 轮数 × (大块 5 + 小块 256 × 2).
+// Scale: 20000 rounds, each with one 16 KiB block and 256 blocks of 16 B.
+// Assert checksum == rounds * (5 for the large block + 256 * 2 for small blocks).
 
 from std.core.io import print;
 

@@ -1,5 +1,5 @@
 // Test pointer subtraction: ptr - ptr → i64 element offset
-// (LLVM 层 值层 PtrDiff 结果 i64,sdiv 计算)
+// LLVM PtrDiff produces i64 via sdiv.
 //
 // Expected output: 0
 

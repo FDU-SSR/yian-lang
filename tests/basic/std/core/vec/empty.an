@@ -1,8 +1,8 @@
-// 空容器行为测试:Vec/String 空态 as_slice/len/cap/ptr + del 不 trap
+// Empty Vec/String behavior: as_slice/len/cap/ptr and del must not trap.
 //
-// 空容器不占堆块:data 是 `@dangling<T>()`(地址 = T 的对齐值, 恒非零), 两模式
-// 表示一致。非零保证 `Option<str>`/`Option<Slice<T>>` 这类"载荷全零即 None"的
-// niche 编码不会把 Some(空值) 误判成 None;del 空容器跳过悬垂指针, 不 trap。
+// Empty containers own no heap block; data=@dangling<T>(), the nonzero type alignment, in both modes.
+// Nonzero data preserves zero-payload None niches in Option<str>/Option<Slice<T>>:
+// Some(empty) remains Some. Deleting an empty container skips the dangling pointer without trapping.
 //
 // Expected output: (empty, exit 0)
 
@@ -10,7 +10,7 @@ from std.core.vec import Vec;
 from std.core.string import String;
 
 fn main() {
-    // ---- Vec<u8> 空容器:创建 + as_slice ----
+    // ---- Empty Vec<u8>: construction and as_slice ----
     let v: Vec<u8> = Vec<u8>.new();
     assert v.len() == 0: "empty vec len should be 0";
     assert v.is_empty(): "empty vec should be empty";
@@ -20,12 +20,12 @@ fn main() {
     assert s.len() == 0: "empty vec slice len should be 0";
     let p: u8* = @slice_get_ptr(s);
 
-    // 空容器的 data 都是同一个类型级悬垂地址(对齐值), 两模式一致。
+    // Empty containers share the type's dangling alignment address in both modes.
     let v2: Vec<u8> = Vec<u8>.new();
     let p2: u8* = @slice_get_ptr(v2.as_slice());
     assert p == p2: "empty vecs share the dangling pointer for u8";
 
-    // ---- shrink_to_fit(0) 后 Drop 不 trap ----
+    // ---- Drop after shrink_to_fit(0) must not trap ----
     // Shrinking an empty Vec to zero capacity leaves no allocation to release.
     let v3: Vec<u8> = Vec<u8>.new();
     v3.push(1);
@@ -35,9 +35,9 @@ fn main() {
     v3.shrink_to_fit();
     assert v3.capacity() == 0: "shrink_to_fit on empty vec should set capacity 0";
     assert v3.as_slice().len() == 0: "shrunk vec slice should be empty";
-    v3.drop(); // 空态 data 是悬垂指针 → 跳过释放,不 trap
+    v3.drop(); // Empty data is dangling; skip release without trapping.
 
-    // ---- 空→非空转换(grow/reserve 从空态取新块,不泄漏不 trap)----
+    // ---- Empty-to-nonempty: grow/reserve obtains a fresh block without leaks or traps ----
     let v4: Vec<u8> = Vec<u8>.new();
     v4.push(42);
     assert v4.len() == 1: "push on empty vec should work";
@@ -47,13 +47,13 @@ fn main() {
     assert v4.capacity() >= 100: "reserve from empty should grow capacity";
     assert v4.len() == 0: "reserve should not change len";
 
-    // ---- Vec<String> 空容器(泛型元素)----
+    // ---- Empty Vec<String> (generic elements) ----
     let vs: Vec<String> = Vec<String>.new();
     assert vs.len() == 0: "empty Vec<String> len should be 0";
     let ss = vs.as_slice();
     assert ss.len() == 0: "empty Vec<String> slice len should be 0";
 
-    // ---- String 空容器 ----
+    // ---- Empty String ----
     let st: String = String.new();
     assert st.is_empty(): "empty string should be empty";
     assert st.len() == 0: "empty string len should be 0";
@@ -61,12 +61,12 @@ fn main() {
     let sp: u8* = @slice_get_ptr(st.as_slice());
     assert sp == p: "empty String shares the dangling pointer for u8";
 
-    // 空 str 放进 niche Option:载荷若退化成全零(空指针),Some 会被读成 None。
-    // (空容器不持有堆块,这条断言同时锁住"悬垂地址非零"这一表示约束。)
+    // An empty str in a niche Option must not have all-zero payload, which would read Some as None.
+    // Empty containers own no block; this assertion also enforces the nonzero dangling address.
     let es: Option<str> = Option<str>.Some(st.as_str());
     assert es.is_some(): "empty str payload must not collide with the all-zero None encoding";
 
-    // 显式 drop 空容器:data 是悬垂指针 → 跳过释放,不 trap
+    // Explicitly drop an empty container: skip its dangling data pointer without trapping.
     vs.drop();
     st.drop();
 }

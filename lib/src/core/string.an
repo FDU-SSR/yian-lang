@@ -35,8 +35,8 @@ impl String {
 
 impl String {
     // Return the string contents as a str slice.
-    // String 的每个修改接口都只写入合法 UTF-8, 所以字节本身已经是 `str` 的不变式,
-    // 这里给出零开销视图而不是每次重新校验(Rust 的 `String::as_str` 同样是
+    // Every String mutation writes valid UTF-8, so its bytes already satisfy the `str` invariant.
+    // Return a zero-cost view without revalidation (Rust's `String::as_str` likewise uses
     // `from_utf8_unchecked`)。
     pub fn as_str() -> str {
         str.from_slice_unchecked(self.data.as_slice())
@@ -85,8 +85,8 @@ impl String {
             n = 3;
         }
 
-        // 一次预留 + 直接写字节 + 一次推进长度: 原来 2~4 字节的字符要逐字节
-        // `Vec::push`, 每个字节都各做一次容量检查/取指针/长度更新。
+        // Reserve once, write bytes directly, and advance the length once for a 2-4-byte character, avoiding per-byte
+        // `Vec::push` capacity checks, pointer retrieval, and length updates.
         // (Rust `String::push` = `reserve` + `encode_utf8_raw_unchecked` + `set_len`)
         let p: u8* = self.data.spare(n);
         if n == 1 {
@@ -169,7 +169,7 @@ impl String {
 
 impl Clone for String {
     pub fn clone() -> Self {
-        // 一次分配 + 一次 @memcpy: 只复制自己管理的字节缓冲区
+        // One allocation and one @memcpy copy only the owned byte buffer.
         let bytes = self.as_slice();
         let out = Self.with_capacity(bytes.len());
         out.data.extend_from_slice(bytes);
@@ -265,8 +265,8 @@ impl Deref<str> for String {
 
 impl From<str> for String {
     static pub fn from(value: str&) -> Self {
-        // 一次分配 + 一次 @memcpy, 不再走 `Vec::from(slice)` 的逐元素 clone+push;
-        // 语义上同样只复制缓冲区本身。
+        // Use one allocation and one @memcpy rather than the per-element clone+push of `Vec::from(slice)`;
+        // the semantics still copy only the buffer itself.
         let bytes = value.as_slice();
         let out = Self.with_capacity(bytes.len());
         out.data.extend_from_slice(bytes);

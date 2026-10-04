@@ -533,7 +533,7 @@ def __register_features(server: YianLanguageServer) -> None:
         if not outcome.ok:
             # A refused rename is a *request* failure with a readable reason, not
             # a server error: the client shows the message instead of applying a
-            # partial edit (拒绝批量修改).
+            # partial edit (refuse bulk changes).
             raise JsonRpcException(outcome.refusal, code=REQUEST_FAILED)
         return await __query(ls, result, lambda: workspace_edit(outcome, navigator))
     server.feature(types.TEXT_DOCUMENT_RENAME)(rename)

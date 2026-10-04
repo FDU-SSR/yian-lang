@@ -1,20 +1,20 @@
-// bench/AWFY/an/permute.an — 全排列递归交换 (shootout permute)
+// bench/AWFY/an/permute.an: recursive permutation swaps (shootout permute).
 //
-// 参考实现: AWFY (are-we-fast-yet) benchmarks/Java/src/Permute.java (上游许可见 AWFY LICENSE.md)
-// 语义权威源: bench/AWFY/c/permute.c (项目自写 C 参考)
-// 规模: n=6, 断言 count == 8660。
+// Reference: AWFY benchmarks/Java/src/Permute.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/permute.c, the project's C implementation.
+// Scale: n=6; assert count==8660.
 //
-// 算法: permute_inner(n, v) 对长度 n 的前缀做递归交换排列, 每次调用
-//       count+=1; n==0 时仅计数返回, 否则先递归 (n-1) 再对 i 从 n-1
-//       递减到 0 做 swap+递归+swap。swap_indices 通过指针索引交换
-//       v[i] 与 v[j]。总调用次数 = 1 + n*(1 + (n-1)*(1 + ...))。
+// Algorithm: permute_inner(n,v) recursively swaps permutations of the n-element prefix; every call
+//       increments count. At n=0 return after counting; otherwise recurse on n-1, then for i from n-1
+//       down to zero, swap/recurse/swap. swap_indices swaps v[i] and v[j] through pointer indexing.
+//       Total calls = 1+n*(1+(n-1)*(1+...)).
 //
-// 数组表示: swap_indices/permute_inner 的数组参数 v 为 i32[] (块访问语义,
-//   免 index 字段), count 为 i32& (引用)。benchmark_permute 局部 v 直绑
-//   i32[] (let x: T[] = dyn[n] T, del-view 后 del T[] 整块合法)。
+// Array representation: v in swap_indices/permute_inner is i32[] with block access and no index field;
+//   count is i32&. benchmark_permute binds v directly as
+//   i32[] (let x:T[]=dyn[n] T; del T[] validly releases the whole block).
 //
-// 单一源: fat 与 raw 共用本文件。
-// 合并规则: dyn 用类型推断; 需要切片处用范围视图 x[0u64..n]（两模式通用, fat 下仍受检查）。
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
 fn swap_indices(i: u64, j: u64, v: i32[]) {
     let tmp: i32 = v[i];
     v[i] = v[j];
