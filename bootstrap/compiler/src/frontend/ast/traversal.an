@@ -2,8 +2,8 @@ from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, Cha
 from std.core.ops import Index;
 from compiler.frontend.ast.node import TypeSource;
 
-// Traversal follows child edges; shared nodes are visited once per incoming edge.
-// Binding inputs precede their patterns; block parameter bindings precede statements.
+// 遍历沿子节点引用进行，共享节点按每条入边分别访问。
+// 绑定的输入先于模式访问；块内参数绑定先于语句访问。
 pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
     match source {
         Syntax(value) => walk_type_syntax(*value, visitor),
@@ -14,179 +14,273 @@ pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
 
 pub fn rewrite_type_source(source: TypeSource&, rewriter: AstRewriter&) {
     match source {
-        Syntax(value) => { *value = rewriter.rewrite_type_syntax(*value); },
+        Syntax(value) => {
+            *value = rewriter.rewrite_type_syntax(*value);
+        },
         ArgumentType(_) => {},
         CallableReturnType => {},
     }
 }
 
+// enter 返回 false 时跳过该节点的子节点和 leave 回调，不影响其他分支。
 pub trait AstVisitor {
     fn enter_identifier(node: Identifier&) -> bool { true }
+
     fn leave_identifier(node: Identifier&) {}
+
     fn enter_int_literal(node: IntLiteral&) -> bool { true }
+
     fn leave_int_literal(node: IntLiteral&) {}
+
     fn enter_float_literal(node: FloatLiteral&) -> bool { true }
+
     fn leave_float_literal(node: FloatLiteral&) {}
+
     fn enter_char_literal(node: CharLiteral&) -> bool { true }
+
     fn leave_char_literal(node: CharLiteral&) {}
+
     fn enter_str_literal(node: StrLiteral&) -> bool { true }
+
     fn leave_str_literal(node: StrLiteral&) {}
+
     fn enter_bool_literal(node: BoolLiteral&) -> bool { true }
+
     fn leave_bool_literal(node: BoolLiteral&) {}
+
     fn enter_program(node: Program&) -> bool { true }
+
     fn leave_program(node: Program&) {}
+
     fn enter_block(node: Block&) -> bool { true }
+
     fn leave_block(node: Block&) {}
+
     fn enter_argument(node: Argument&) -> bool { true }
+
     fn leave_argument(node: Argument&) {}
+
     fn enter_var_info(node: VarInfo&) -> bool { true }
+
     fn leave_var_info(node: VarInfo&) {}
+
     fn enter_pattern_param(node: PatternParam&) -> bool { true }
+
     fn leave_pattern_param(node: PatternParam&) {}
+
     fn enter_pattern_let(node: PatternLet&) -> bool { true }
+
     fn leave_pattern_let(node: PatternLet&) {}
+
     fn enter_let_condition(node: LetCondition&) -> bool { true }
+
     fn leave_let_condition(node: LetCondition&) {}
+
     fn enter_elif_branch(node: ElifBranch&) -> bool { true }
+
     fn leave_elif_branch(node: ElifBranch&) {}
+
     fn enter_match_arm(node: MatchArm&) -> bool { true }
+
     fn leave_match_arm(node: MatchArm&) {}
+
     fn enter_attr(node: Attr&) -> bool { true }
+
     fn leave_attr(node: Attr&) {}
+
     fn enter_type_generic_param(node: TypeGenericParam&) -> bool { true }
+
     fn leave_type_generic_param(node: TypeGenericParam&) {}
+
     fn enter_const_generic_param(node: ConstGenericParam&) -> bool { true }
+
     fn leave_const_generic_param(node: ConstGenericParam&) {}
+
     fn enter_field_info(node: FieldInfo&) -> bool { true }
+
     fn leave_field_info(node: FieldInfo&) {}
+
     fn enter_variant_info(node: VariantInfo&) -> bool { true }
+
     fn leave_variant_info(node: VariantInfo&) {}
+
     fn enter_method_decl(node: MethodDecl&) -> bool { true }
+
     fn leave_method_decl(node: MethodDecl&) {}
+
     fn enter_method_def(node: MethodDef&) -> bool { true }
+
     fn leave_method_def(node: MethodDef&) {}
+
     fn enter_extern_func_decl(node: ExternFuncDecl&) -> bool { true }
+
     fn leave_extern_func_decl(node: ExternFuncDecl&) {}
+
     fn enter_impl_condition(node: ImplCondition&) -> bool { true }
+
     fn leave_impl_condition(node: ImplCondition&) {}
+
     fn enter_capture_item(node: CaptureItem&) -> bool { true }
+
     fn leave_capture_item(node: CaptureItem&) {}
+
     fn enter_field_pattern(node: FieldPattern&) -> bool { true }
+
     fn leave_field_pattern(node: FieldPattern&) {}
+
     fn enter_expr(node: Expr&) -> bool { true }
+
     fn leave_expr(node: Expr&) {}
+
     fn enter_type_syntax(node: TypeSyntax&) -> bool { true }
+
     fn leave_type_syntax(node: TypeSyntax&) {}
+
     fn enter_const_expr(node: ConstExpr&) -> bool { true }
+
     fn leave_const_expr(node: ConstExpr&) {}
+
     fn enter_pattern(node: Pattern&) -> bool { true }
+
     fn leave_pattern(node: Pattern&) {}
+
     fn enter_item(node: Item&) -> bool { true }
+
     fn leave_item(node: Item&) {}
 }
 
-// Default methods rewrite children before returning the node; overrides control recursion and replacement.
-// Child helpers never replace their root. Replacements are revisited only when an override requests it.
+// 默认方法先重写子节点再返回当前节点；覆盖方法决定递归和替换行为。
+// children 辅助函数只回写子节点引用，不替换根节点；替换结果不自动再次遍历。
 pub trait AstRewriter {
     fn rewrite_identifier(node: Identifier&) -> Identifier& { node }
+
     fn rewrite_int_literal(node: IntLiteral&) -> IntLiteral& { node }
+
     fn rewrite_float_literal(node: FloatLiteral&) -> FloatLiteral& { node }
+
     fn rewrite_char_literal(node: CharLiteral&) -> CharLiteral& { node }
+
     fn rewrite_str_literal(node: StrLiteral&) -> StrLiteral& { node }
+
     fn rewrite_bool_literal(node: BoolLiteral&) -> BoolLiteral& { node }
+
     fn rewrite_program(node: Program&) -> Program& {
         rewrite_program_children(node, self);
         node
     }
+
     fn rewrite_block(node: Block&) -> Block& {
         rewrite_block_children(node, self);
         node
     }
+
     fn rewrite_argument(node: Argument&) -> Argument& {
         rewrite_argument_children(node, self);
         node
     }
+
     fn rewrite_var_info(node: VarInfo&) -> VarInfo& {
         rewrite_var_info_children(node, self);
         node
     }
+
     fn rewrite_pattern_param(node: PatternParam&) -> PatternParam& {
         rewrite_pattern_param_children(node, self);
         node
     }
+
     fn rewrite_pattern_let(node: PatternLet&) -> PatternLet& {
         rewrite_pattern_let_children(node, self);
         node
     }
+
     fn rewrite_let_condition(node: LetCondition&) -> LetCondition& {
         rewrite_let_condition_children(node, self);
         node
     }
+
     fn rewrite_elif_branch(node: ElifBranch&) -> ElifBranch& {
         rewrite_elif_branch_children(node, self);
         node
     }
+
     fn rewrite_match_arm(node: MatchArm&) -> MatchArm& {
         rewrite_match_arm_children(node, self);
         node
     }
+
     fn rewrite_attr(node: Attr&) -> Attr& { node }
+
     fn rewrite_type_generic_param(node: TypeGenericParam&) -> TypeGenericParam& {
         rewrite_type_generic_param_children(node, self);
         node
     }
+
     fn rewrite_const_generic_param(node: ConstGenericParam&) -> ConstGenericParam& {
         rewrite_const_generic_param_children(node, self);
         node
     }
+
     fn rewrite_field_info(node: FieldInfo&) -> FieldInfo& {
         rewrite_field_info_children(node, self);
         node
     }
+
     fn rewrite_variant_info(node: VariantInfo&) -> VariantInfo& {
         rewrite_variant_info_children(node, self);
         node
     }
+
     fn rewrite_method_decl(node: MethodDecl&) -> MethodDecl& {
         rewrite_method_decl_children(node, self);
         node
     }
+
     fn rewrite_method_def(node: MethodDef&) -> MethodDef& {
         rewrite_method_def_children(node, self);
         node
     }
+
     fn rewrite_extern_func_decl(node: ExternFuncDecl&) -> ExternFuncDecl& {
         rewrite_extern_func_decl_children(node, self);
         node
     }
+
     fn rewrite_impl_condition(node: ImplCondition&) -> ImplCondition& {
         rewrite_impl_condition_children(node, self);
         node
     }
+
     fn rewrite_capture_item(node: CaptureItem&) -> CaptureItem& {
         rewrite_capture_item_children(node, self);
         node
     }
+
     fn rewrite_field_pattern(node: FieldPattern&) -> FieldPattern& {
         rewrite_field_pattern_children(node, self);
         node
     }
+
     fn rewrite_expr(node: Expr&) -> Expr& {
         rewrite_expr_children(node, self);
         node
     }
+
     fn rewrite_type_syntax(node: TypeSyntax&) -> TypeSyntax& {
         rewrite_type_syntax_children(node, self);
         node
     }
+
     fn rewrite_const_expr(node: ConstExpr&) -> ConstExpr& {
         rewrite_const_expr_children(node, self);
         node
     }
+
     fn rewrite_pattern(node: Pattern&) -> Pattern& {
         rewrite_pattern_children(node, self);
         node
     }
+
     fn rewrite_item(node: Item&) -> Item& {
         rewrite_item_children(node, self);
         node
@@ -194,51 +288,76 @@ pub trait AstRewriter {
 }
 
 pub fn walk_identifier(node: Identifier&, visitor: AstVisitor&) {
-    if !visitor.enter_identifier(node) { return; }
+    if !visitor.enter_identifier(node) {
+        return;
+    }
+
     visitor.leave_identifier(node);
 }
 
 pub fn walk_int_literal(node: IntLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_int_literal(node) { return; }
+    if !visitor.enter_int_literal(node) {
+        return;
+    }
+
     visitor.leave_int_literal(node);
 }
 
 pub fn walk_float_literal(node: FloatLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_float_literal(node) { return; }
+    if !visitor.enter_float_literal(node) {
+        return;
+    }
+
     visitor.leave_float_literal(node);
 }
 
 pub fn walk_char_literal(node: CharLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_char_literal(node) { return; }
+    if !visitor.enter_char_literal(node) {
+        return;
+    }
+
     visitor.leave_char_literal(node);
 }
 
 pub fn walk_str_literal(node: StrLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_str_literal(node) { return; }
+    if !visitor.enter_str_literal(node) {
+        return;
+    }
+
     visitor.leave_str_literal(node);
 }
 
 pub fn walk_bool_literal(node: BoolLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_bool_literal(node) { return; }
+    if !visitor.enter_bool_literal(node) {
+        return;
+    }
+
     visitor.leave_bool_literal(node);
 }
 
 pub fn walk_program(node: Program&, visitor: AstVisitor&) {
-    if !visitor.enter_program(node) { return; }
+    if !visitor.enter_program(node) {
+        return;
+    }
     {
         let index: u64 = 0;
+
         while index < (node.data.items).len() {
             walk_item((node.data.items)[index], visitor);
             index += 1;
         }
     };
+
     visitor.leave_program(node);
 }
 
 pub fn walk_block(node: Block&, visitor: AstVisitor&) {
-    if !visitor.enter_block(node) { return; }
+    if !visitor.enter_block(node) {
+        return;
+    }
     {
         let index: u64 = 0;
+
         while index < (node.data.parameter_bindings).len() {
             walk_pattern_let((node.data.parameter_bindings)[index], visitor);
             index += 1;
@@ -246,16 +365,20 @@ pub fn walk_block(node: Block&, visitor: AstVisitor&) {
     };
     {
         let index: u64 = 0;
+
         while index < (node.data.stmts).len() {
             walk_expr((node.data.stmts)[index], visitor);
             index += 1;
         }
     };
+
     visitor.leave_block(node);
 }
 
 pub fn walk_argument(node: Argument&, visitor: AstVisitor&) {
-    if !visitor.enter_argument(node) { return; }
+    if !visitor.enter_argument(node) {
+        return;
+    }
     match &(node.data.name) {
         Some(value) => {
             walk_identifier(*value, visitor);
@@ -263,25 +386,34 @@ pub fn walk_argument(node: Argument&, visitor: AstVisitor&) {
         None => {},
     };
     walk_expr(node.data.value, visitor);
+
     visitor.leave_argument(node);
 }
 
 pub fn walk_var_info(node: VarInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_var_info(node) { return; }
+    if !visitor.enter_var_info(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     walk_type_syntax(node.data.var_type, visitor);
+
     visitor.leave_var_info(node);
 }
 
 pub fn walk_pattern_param(node: PatternParam&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern_param(node) { return; }
+    if !visitor.enter_pattern_param(node) {
+        return;
+    }
     walk_pattern(node.data.pattern, visitor);
     walk_type_syntax(node.data.var_type, visitor);
+
     visitor.leave_pattern_param(node);
 }
 
 pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern_let(node) { return; }
+    if !visitor.enter_pattern_let(node) {
+        return;
+    }
     walk_expr(node.data.init_expr, visitor);
     walk_type_syntax(node.data.var_type, visitor);
     walk_pattern(node.data.pattern, visitor);
@@ -291,25 +423,34 @@ pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
         },
         None => {},
     };
+
     visitor.leave_pattern_let(node);
 }
 
 pub fn walk_let_condition(node: LetCondition&, visitor: AstVisitor&) {
-    if !visitor.enter_let_condition(node) { return; }
+    if !visitor.enter_let_condition(node) {
+        return;
+    }
     walk_expr(node.data.value, visitor);
     walk_pattern(node.data.pattern, visitor);
+
     visitor.leave_let_condition(node);
 }
 
 pub fn walk_elif_branch(node: ElifBranch&, visitor: AstVisitor&) {
-    if !visitor.enter_elif_branch(node) { return; }
+    if !visitor.enter_elif_branch(node) {
+        return;
+    }
     walk_condition(&(node.data.condition), visitor);
     walk_block(node.data.body, visitor);
+
     visitor.leave_elif_branch(node);
 }
 
 pub fn walk_match_arm(node: MatchArm&, visitor: AstVisitor&) {
-    if !visitor.enter_match_arm(node) { return; }
+    if !visitor.enter_match_arm(node) {
+        return;
+    }
     walk_pattern(node.data.pattern, visitor);
     match &(node.data.guard) {
         Some(value) => {
@@ -318,31 +459,44 @@ pub fn walk_match_arm(node: MatchArm&, visitor: AstVisitor&) {
         None => {},
     };
     walk_block(node.data.body, visitor);
+
     visitor.leave_match_arm(node);
 }
 
 pub fn walk_attr(node: Attr&, visitor: AstVisitor&) {
-    if !visitor.enter_attr(node) { return; }
+    if !visitor.enter_attr(node) {
+        return;
+    }
+
     visitor.leave_attr(node);
 }
 
 pub fn walk_type_generic_param(node: TypeGenericParam&, visitor: AstVisitor&) {
-    if !visitor.enter_type_generic_param(node) { return; }
+    if !visitor.enter_type_generic_param(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
+
     visitor.leave_type_generic_param(node);
 }
 
 pub fn walk_const_generic_param(node: ConstGenericParam&, visitor: AstVisitor&) {
-    if !visitor.enter_const_generic_param(node) { return; }
+    if !visitor.enter_const_generic_param(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     walk_type_syntax(node.data.const_type, visitor);
+
     visitor.leave_const_generic_param(node);
 }
 
 pub fn walk_field_info(node: FieldInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_field_info(node) { return; }
+    if !visitor.enter_field_info(node) {
+        return;
+    }
     {
         let index: u64 = 0;
+
         while index < (node.data.attrs).len() {
             walk_attr((node.data.attrs)[index], visitor);
             index += 1;
@@ -350,26 +504,34 @@ pub fn walk_field_info(node: FieldInfo&, visitor: AstVisitor&) {
     };
     walk_identifier(node.data.name, visitor);
     walk_type_syntax(node.data.field_type, visitor);
+
     visitor.leave_field_info(node);
 }
 
 pub fn walk_variant_info(node: VariantInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_variant_info(node) { return; }
+    if !visitor.enter_variant_info(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     {
         let index: u64 = 0;
+
         while index < (node.data.fields).len() {
             walk_var_info((node.data.fields)[index], visitor);
             index += 1;
         }
     };
+
     visitor.leave_variant_info(node);
 }
 
 pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
-    if !visitor.enter_method_decl(node) { return; }
+    if !visitor.enter_method_decl(node) {
+        return;
+    }
     {
         let index: u64 = 0;
+
         while index < (node.data.attrs).len() {
             walk_attr((node.data.attrs)[index], visitor);
             index += 1;
@@ -378,6 +540,7 @@ pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
     walk_identifier(node.data.name, visitor);
     {
         let index: u64 = 0;
+
         while index < (node.data.generics).len() {
             walk_generic_param(&((node.data.generics)[index]), visitor);
             index += 1;
@@ -385,6 +548,7 @@ pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
     };
     {
         let index: u64 = 0;
+
         while index < (node.data.params).len() {
             walk_parameter(&((node.data.params)[index]), visitor);
             index += 1;
@@ -396,21 +560,28 @@ pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
         },
         None => {},
     };
+
     visitor.leave_method_decl(node);
 }
 
 pub fn walk_method_def(node: MethodDef&, visitor: AstVisitor&) {
-    if !visitor.enter_method_def(node) { return; }
+    if !visitor.enter_method_def(node) {
+        return;
+    }
     walk_method_decl(node.data.decl, visitor);
     walk_block(node.data.body, visitor);
+
     visitor.leave_method_def(node);
 }
 
 pub fn walk_extern_func_decl(node: ExternFuncDecl&, visitor: AstVisitor&) {
-    if !visitor.enter_extern_func_decl(node) { return; }
+    if !visitor.enter_extern_func_decl(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     {
         let index: u64 = 0;
+
         while index < (node.data.params).len() {
             walk_var_info((node.data.params)[index], visitor);
             index += 1;
@@ -422,38 +593,51 @@ pub fn walk_extern_func_decl(node: ExternFuncDecl&, visitor: AstVisitor&) {
         },
         None => {},
     };
+
     visitor.leave_extern_func_decl(node);
 }
 
 pub fn walk_impl_condition(node: ImplCondition&, visitor: AstVisitor&) {
-    if !visitor.enter_impl_condition(node) { return; }
+    if !visitor.enter_impl_condition(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     {
         let index: u64 = 0;
+
         while index < (node.data.traits).len() {
             walk_type_syntax((node.data.traits)[index], visitor);
             index += 1;
         }
     };
+
     visitor.leave_impl_condition(node);
 }
 
 pub fn walk_capture_item(node: CaptureItem&, visitor: AstVisitor&) {
-    if !visitor.enter_capture_item(node) { return; }
+    if !visitor.enter_capture_item(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     walk_expr(node.data.expr, visitor);
+
     visitor.leave_capture_item(node);
 }
 
 pub fn walk_field_pattern(node: FieldPattern&, visitor: AstVisitor&) {
-    if !visitor.enter_field_pattern(node) { return; }
+    if !visitor.enter_field_pattern(node) {
+        return;
+    }
     walk_identifier(node.data.name, visitor);
     walk_pattern(node.data.pattern, visitor);
+
     visitor.leave_field_pattern(node);
 }
 
 pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
-    if !visitor.enter_expr(node) { return; }
+    if !visitor.enter_expr(node) {
+        return;
+    }
     match &node.data {
         Identifier(name) => {
             walk_identifier(*name, visitor);
@@ -474,19 +658,28 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         TraitCall(trait, self_type, trait_args, method_name, args) => {
             walk_expr(*trait, visitor);
             walk_type_source(self_type, visitor);
+
             let index: u64 = 0;
+
             while index < trait_args.len() {
-                match &(*trait_args)[index] { Some(value) => walk_type_source(value, visitor), None => {} }
+                match &(*trait_args)[index] {
+                    Some(value) => walk_type_source(value, visitor), None => {}
+                }
                 index += 1;
             }
             walk_identifier(*method_name, visitor);
             index = 0;
-            while index < args.len() { walk_argument((*args)[index], visitor); index += 1; }
+
+            while index < args.len() {
+                walk_argument((*args)[index], visitor);
+                index += 1;
+            }
         },
         Call(callee, args) => {
             walk_expr(*callee, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     walk_argument((*args)[index], visitor);
                     index += 1;
@@ -498,6 +691,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_identifier(*method_name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_type_syntax((*generics)[index], visitor);
                     index += 1;
@@ -505,6 +699,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     walk_argument((*args)[index], visitor);
                     index += 1;
@@ -518,6 +713,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         Builtin(kind, type_args, args) => {
             {
                 let index: u64 = 0;
+
                 while index < (*type_args).len() {
                     walk_type_syntax((*type_args)[index], visitor);
                     index += 1;
@@ -525,6 +721,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     walk_argument((*args)[index], visitor);
                     index += 1;
@@ -535,6 +732,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_argument(&((*generics)[index]), visitor);
                     index += 1;
@@ -547,6 +745,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         Tuple(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     walk_expr((*elements)[index], visitor);
                     index += 1;
@@ -556,6 +755,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         Array(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     walk_expr((*elements)[index], visitor);
                     index += 1;
@@ -591,6 +791,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_block(*then_branch, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*elif_branches).len() {
                     walk_elif_branch((*elif_branches)[index], visitor);
                     index += 1;
@@ -624,6 +825,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             walk_expr(*expr, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*arms).len() {
                     walk_match_arm((*arms)[index], visitor);
                     index += 1;
@@ -669,6 +871,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         ClosureExpr(captures, params, return_type, body) => {
             {
                 let index: u64 = 0;
+
                 while index < (*captures).len() {
                     walk_capture_item((*captures)[index], visitor);
                     index += 1;
@@ -676,6 +879,7 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*params).len() {
                     walk_parameter(&((*params)[index]), visitor);
                     index += 1;
@@ -692,11 +896,14 @@ pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
         CompileConfig(name) => {
         },
     };
+
     visitor.leave_expr(node);
 }
 
 pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
-    if !visitor.enter_type_syntax(node) { return; }
+    if !visitor.enter_type_syntax(node) {
+        return;
+    }
     match &node.data {
         IntType(signed, width) => {
         },
@@ -729,6 +936,7 @@ pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
         TupleType(element_types) => {
             {
                 let index: u64 = 0;
+
                 while index < (*element_types).len() {
                     walk_type_syntax((*element_types)[index], visitor);
                     index += 1;
@@ -748,6 +956,7 @@ pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
             walk_type_syntax(*base, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generic_args).len() {
                     walk_generic_argument(&((*generic_args)[index]), visitor);
                     index += 1;
@@ -757,6 +966,7 @@ pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
         FunctionType(param_types, return_type) => {
             {
                 let index: u64 = 0;
+
                 while index < (*param_types).len() {
                     walk_type_syntax((*param_types)[index], visitor);
                     index += 1;
@@ -765,11 +975,14 @@ pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
             walk_type_syntax(*return_type, visitor);
         },
     };
+
     visitor.leave_type_syntax(node);
 }
 
 pub fn walk_const_expr(node: ConstExpr&, visitor: AstVisitor&) {
-    if !visitor.enter_const_expr(node) { return; }
+    if !visitor.enter_const_expr(node) {
+        return;
+    }
     match &node.data {
         LiteralConstExpr(literal) => {
             walk_int_literal(*literal, visitor);
@@ -785,11 +998,14 @@ pub fn walk_const_expr(node: ConstExpr&, visitor: AstVisitor&) {
             walk_const_expr(*right, visitor);
         },
     };
+
     visitor.leave_const_expr(node);
 }
 
 pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern(node) { return; }
+    if !visitor.enter_pattern(node) {
+        return;
+    }
     match &node.data {
         WildcardPattern => {
         },
@@ -809,6 +1025,7 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
         OrPattern(alternatives) => {
             {
                 let index: u64 = 0;
+
                 while index < (*alternatives).len() {
                     walk_pattern((*alternatives)[index], visitor);
                     index += 1;
@@ -828,6 +1045,7 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
         TuplePattern(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     walk_pattern((*elements)[index], visitor);
                     index += 1;
@@ -837,6 +1055,7 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
         SequencePattern(prefix, suffix, rest) => {
             {
                 let index: u64 = 0;
+
                 while index < (*prefix).len() {
                     walk_pattern((*prefix)[index], visitor);
                     index += 1;
@@ -844,6 +1063,7 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*suffix).len() {
                     walk_pattern((*suffix)[index], visitor);
                     index += 1;
@@ -851,15 +1071,19 @@ pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
             };
         },
     };
+
     visitor.leave_pattern(node);
 }
 
 pub fn walk_item(node: Item&, visitor: AstVisitor&) {
-    if !visitor.enter_item(node) { return; }
+    if !visitor.enter_item(node) {
+        return;
+    }
     match &node.data {
         Import(paths, target, alias, end) => {
             {
                 let index: u64 = 0;
+
                 while index < (*paths).len() {
                     walk_identifier((*paths)[index], visitor);
                     index += 1;
@@ -876,6 +1100,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         Alias(attrs, name, generics, target) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -884,6 +1109,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -894,6 +1120,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         FuncDef(attrs, name, generics, params, ret_type, body) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -902,6 +1129,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -909,6 +1137,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*params).len() {
                     walk_parameter(&((*params)[index]), visitor);
                     index += 1;
@@ -925,6 +1154,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         ConstDef(attrs, name, const_type, value) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -937,6 +1167,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         OpaqueTypeDef(attrs, name) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -947,6 +1178,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         ExternBlock(attrs, abi, functions) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -954,6 +1186,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*functions).len() {
                     walk_extern_func_decl((*functions)[index], visitor);
                     index += 1;
@@ -963,6 +1196,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         StructDef(attrs, name, generics, fields) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -971,6 +1205,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -978,6 +1213,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*fields).len() {
                     walk_field_info((*fields)[index], visitor);
                     index += 1;
@@ -987,6 +1223,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         EnumDef(attrs, name, generics, variants) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -995,6 +1232,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -1002,6 +1240,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*variants).len() {
                     walk_variant_info((*variants)[index], visitor);
                     index += 1;
@@ -1011,6 +1250,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         TraitDef(attrs, name, generics, items) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     walk_attr((*attrs)[index], visitor);
                     index += 1;
@@ -1019,6 +1259,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             walk_identifier(*name, visitor);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -1026,6 +1267,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*items).len() {
                     walk_trait_member(&((*items)[index]), visitor);
                     index += 1;
@@ -1035,6 +1277,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
         Impl(generics, target, trait_type, items, conditions) => {
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     walk_generic_param(&((*generics)[index]), visitor);
                     index += 1;
@@ -1049,6 +1292,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*items).len() {
                     walk_method_def((*items)[index], visitor);
                     index += 1;
@@ -1056,6 +1300,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*conditions).len() {
                     walk_impl_condition((*conditions)[index], visitor);
                     index += 1;
@@ -1063,6 +1308,7 @@ pub fn walk_item(node: Item&, visitor: AstVisitor&) {
             };
         },
     };
+
     visitor.leave_item(node);
 }
 
@@ -1161,6 +1407,7 @@ pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
         Positional(values) => {
             {
                 let index: u64 = 0;
+
                 while index < (*values).len() {
                     walk_pattern((*values)[index], visitor);
                     index += 1;
@@ -1170,6 +1417,7 @@ pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
         Named(values) => {
             {
                 let index: u64 = 0;
+
                 while index < (*values).len() {
                     walk_field_pattern((*values)[index], visitor);
                     index += 1;
@@ -1182,6 +1430,7 @@ pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
 pub fn rewrite_program_children(node: Program&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
+
         while index < (node.data.items).len() {
             (node.data.items)[index] = rewriter.rewrite_item((node.data.items)[index]);
             index += 1;
@@ -1192,6 +1441,7 @@ pub fn rewrite_program_children(node: Program&, rewriter: AstRewriter&) {
 pub fn rewrite_block_children(node: Block&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
+
         while index < (node.data.parameter_bindings).len() {
             (node.data.parameter_bindings)[index] = rewriter.rewrite_pattern_let((node.data.parameter_bindings)[index]);
             index += 1;
@@ -1199,6 +1449,7 @@ pub fn rewrite_block_children(node: Block&, rewriter: AstRewriter&) {
     };
     {
         let index: u64 = 0;
+
         while index < (node.data.stmts).len() {
             (node.data.stmts)[index] = rewriter.rewrite_expr((node.data.stmts)[index]);
             index += 1;
@@ -1271,6 +1522,7 @@ pub fn rewrite_const_generic_param_children(node: ConstGenericParam&, rewriter: 
 pub fn rewrite_field_info_children(node: FieldInfo&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
+
         while index < (node.data.attrs).len() {
             (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
             index += 1;
@@ -1284,6 +1536,7 @@ pub fn rewrite_variant_info_children(node: VariantInfo&, rewriter: AstRewriter&)
     node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
+
         while index < (node.data.fields).len() {
             (node.data.fields)[index] = rewriter.rewrite_var_info((node.data.fields)[index]);
             index += 1;
@@ -1294,6 +1547,7 @@ pub fn rewrite_variant_info_children(node: VariantInfo&, rewriter: AstRewriter&)
 pub fn rewrite_method_decl_children(node: MethodDecl&, rewriter: AstRewriter&) {
     {
         let index: u64 = 0;
+
         while index < (node.data.attrs).len() {
             (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
             index += 1;
@@ -1302,6 +1556,7 @@ pub fn rewrite_method_decl_children(node: MethodDecl&, rewriter: AstRewriter&) {
     node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
+
         while index < (node.data.generics).len() {
             rewrite_generic_param(&((node.data.generics)[index]), rewriter);
             index += 1;
@@ -1309,6 +1564,7 @@ pub fn rewrite_method_decl_children(node: MethodDecl&, rewriter: AstRewriter&) {
     };
     {
         let index: u64 = 0;
+
         while index < (node.data.params).len() {
             rewrite_parameter(&((node.data.params)[index]), rewriter);
             index += 1;
@@ -1331,6 +1587,7 @@ pub fn rewrite_extern_func_decl_children(node: ExternFuncDecl&, rewriter: AstRew
     node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
+
         while index < (node.data.params).len() {
             (node.data.params)[index] = rewriter.rewrite_var_info((node.data.params)[index]);
             index += 1;
@@ -1348,6 +1605,7 @@ pub fn rewrite_impl_condition_children(node: ImplCondition&, rewriter: AstRewrit
     node.data.name = rewriter.rewrite_identifier(node.data.name);
     {
         let index: u64 = 0;
+
         while index < (node.data.traits).len() {
             (node.data.traits)[index] = rewriter.rewrite_type_syntax((node.data.traits)[index]);
             index += 1;
@@ -1386,19 +1644,28 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         TraitCall(trait, self_type, trait_args, method_name, args) => {
             *trait = rewriter.rewrite_expr(*trait);
             rewrite_type_source(self_type, rewriter);
+
             let index: u64 = 0;
+
             while index < trait_args.len() {
-                match &(*trait_args)[index] { Some(value) => rewrite_type_source(value, rewriter), None => {} }
+                match &(*trait_args)[index] {
+                    Some(value) => rewrite_type_source(value, rewriter), None => {}
+                }
                 index += 1;
             };
             *method_name = rewriter.rewrite_identifier(*method_name);
             index = 0;
-            while index < args.len() { (*args)[index] = rewriter.rewrite_argument((*args)[index]); index += 1; }
+
+            while index < args.len() {
+                (*args)[index] = rewriter.rewrite_argument((*args)[index]);
+                index += 1;
+            }
         },
         Call(callee, args) => {
             *callee = rewriter.rewrite_expr(*callee);
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
@@ -1410,6 +1677,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             *method_name = rewriter.rewrite_identifier(*method_name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     (*generics)[index] = rewriter.rewrite_type_syntax((*generics)[index]);
                     index += 1;
@@ -1417,6 +1685,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
@@ -1430,6 +1699,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         Builtin(kind, type_args, args) => {
             {
                 let index: u64 = 0;
+
                 while index < (*type_args).len() {
                     (*type_args)[index] = rewriter.rewrite_type_syntax((*type_args)[index]);
                     index += 1;
@@ -1437,6 +1707,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*args).len() {
                     (*args)[index] = rewriter.rewrite_argument((*args)[index]);
                     index += 1;
@@ -1447,6 +1718,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_argument(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1459,6 +1731,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         Tuple(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
                     index += 1;
@@ -1468,6 +1741,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         Array(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
                     index += 1;
@@ -1503,6 +1777,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             *then_branch = rewriter.rewrite_block(*then_branch);
             {
                 let index: u64 = 0;
+
                 while index < (*elif_branches).len() {
                     (*elif_branches)[index] = rewriter.rewrite_elif_branch((*elif_branches)[index]);
                     index += 1;
@@ -1536,6 +1811,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             *expr = rewriter.rewrite_expr(*expr);
             {
                 let index: u64 = 0;
+
                 while index < (*arms).len() {
                     (*arms)[index] = rewriter.rewrite_match_arm((*arms)[index]);
                     index += 1;
@@ -1581,6 +1857,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         ClosureExpr(captures, params, return_type, body) => {
             {
                 let index: u64 = 0;
+
                 while index < (*captures).len() {
                     (*captures)[index] = rewriter.rewrite_capture_item((*captures)[index]);
                     index += 1;
@@ -1588,6 +1865,7 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*params).len() {
                     rewrite_parameter(&((*params)[index]), rewriter);
                     index += 1;
@@ -1639,6 +1917,7 @@ pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {
         TupleType(element_types) => {
             {
                 let index: u64 = 0;
+
                 while index < (*element_types).len() {
                     (*element_types)[index] = rewriter.rewrite_type_syntax((*element_types)[index]);
                     index += 1;
@@ -1658,6 +1937,7 @@ pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {
             *base = rewriter.rewrite_type_syntax(*base);
             {
                 let index: u64 = 0;
+
                 while index < (*generic_args).len() {
                     rewrite_generic_argument(&((*generic_args)[index]), rewriter);
                     index += 1;
@@ -1667,6 +1947,7 @@ pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {
         FunctionType(param_types, return_type) => {
             {
                 let index: u64 = 0;
+
                 while index < (*param_types).len() {
                     (*param_types)[index] = rewriter.rewrite_type_syntax((*param_types)[index]);
                     index += 1;
@@ -1715,6 +1996,7 @@ pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
         OrPattern(alternatives) => {
             {
                 let index: u64 = 0;
+
                 while index < (*alternatives).len() {
                     (*alternatives)[index] = rewriter.rewrite_pattern((*alternatives)[index]);
                     index += 1;
@@ -1734,6 +2016,7 @@ pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
         TuplePattern(elements) => {
             {
                 let index: u64 = 0;
+
                 while index < (*elements).len() {
                     (*elements)[index] = rewriter.rewrite_pattern((*elements)[index]);
                     index += 1;
@@ -1743,6 +2026,7 @@ pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
         SequencePattern(prefix, suffix, rest) => {
             {
                 let index: u64 = 0;
+
                 while index < (*prefix).len() {
                     (*prefix)[index] = rewriter.rewrite_pattern((*prefix)[index]);
                     index += 1;
@@ -1750,6 +2034,7 @@ pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*suffix).len() {
                     (*suffix)[index] = rewriter.rewrite_pattern((*suffix)[index]);
                     index += 1;
@@ -1764,6 +2049,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         Import(paths, target, alias, end) => {
             {
                 let index: u64 = 0;
+
                 while index < (*paths).len() {
                     (*paths)[index] = rewriter.rewrite_identifier((*paths)[index]);
                     index += 1;
@@ -1780,6 +2066,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         Alias(attrs, name, generics, target) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1788,6 +2075,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1798,6 +2086,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         FuncDef(attrs, name, generics, params, ret_type, body) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1806,6 +2095,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1813,6 +2103,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*params).len() {
                     rewrite_parameter(&((*params)[index]), rewriter);
                     index += 1;
@@ -1829,6 +2120,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         ConstDef(attrs, name, const_type, value) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1841,6 +2133,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         OpaqueTypeDef(attrs, name) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1851,6 +2144,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         ExternBlock(attrs, abi, functions) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1858,6 +2152,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*functions).len() {
                     (*functions)[index] = rewriter.rewrite_extern_func_decl((*functions)[index]);
                     index += 1;
@@ -1867,6 +2162,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         StructDef(attrs, name, generics, fields) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1875,6 +2171,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1882,6 +2179,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*fields).len() {
                     (*fields)[index] = rewriter.rewrite_field_info((*fields)[index]);
                     index += 1;
@@ -1891,6 +2189,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         EnumDef(attrs, name, generics, variants) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1899,6 +2198,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1906,6 +2206,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*variants).len() {
                     (*variants)[index] = rewriter.rewrite_variant_info((*variants)[index]);
                     index += 1;
@@ -1915,6 +2216,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         TraitDef(attrs, name, generics, items) => {
             {
                 let index: u64 = 0;
+
                 while index < (*attrs).len() {
                     (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
                     index += 1;
@@ -1923,6 +2225,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             *name = rewriter.rewrite_identifier(*name);
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1930,6 +2233,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*items).len() {
                     rewrite_trait_member(&((*items)[index]), rewriter);
                     index += 1;
@@ -1939,6 +2243,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
         Impl(generics, target, trait_type, items, conditions) => {
             {
                 let index: u64 = 0;
+
                 while index < (*generics).len() {
                     rewrite_generic_param(&((*generics)[index]), rewriter);
                     index += 1;
@@ -1953,6 +2258,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*items).len() {
                     (*items)[index] = rewriter.rewrite_method_def((*items)[index]);
                     index += 1;
@@ -1960,6 +2266,7 @@ pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
             };
             {
                 let index: u64 = 0;
+
                 while index < (*conditions).len() {
                     (*conditions)[index] = rewriter.rewrite_impl_condition((*conditions)[index]);
                     index += 1;
@@ -2064,6 +2371,7 @@ pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&
         Positional(values) => {
             {
                 let index: u64 = 0;
+
                 while index < (*values).len() {
                     (*values)[index] = rewriter.rewrite_pattern((*values)[index]);
                     index += 1;
@@ -2073,6 +2381,7 @@ pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&
         Named(values) => {
             {
                 let index: u64 = 0;
+
                 while index < (*values).len() {
                     (*values)[index] = rewriter.rewrite_field_pattern((*values)[index]);
                     index += 1;

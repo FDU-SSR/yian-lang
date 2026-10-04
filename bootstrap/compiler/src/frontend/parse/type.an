@@ -35,38 +35,29 @@ fn primitive(name: KeywordKind) -> Option<TypeData> {
 
 fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
     parser.ready()?;
+
     let token = parser.peek();
     let span = token.span;
     match token.kind() {
         Keyword(kind) => match primitive(*kind) {
-            Some(data) => { parser.advance(); return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span)); },
+            Some(data) => {
+                parser.advance();
+                return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span));
+            },
             None => {},
         },
         _ => {},
     }
+
     if parser.at_punct(PunctuatorKind.Exclamation) {
         parser.advance();
         return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.NeverType, span));
     }
+
     if parser.at_keyword(KeywordKind.Fn) {
-        parser.advance();
-        parser.take_punct(PunctuatorKind.LParen);
-        let params = Vec<TypeSyntax&>.new();
-        defer params.drop();
-        while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-            params.push(parse_type(parser)?);
-            if !parser.at_punct(PunctuatorKind.Comma) { break; }
-            parser.advance();
-        }
-        parser.take_punct(PunctuatorKind.RParen);
-        parser.ready()?;
-        let result = if parser.at_punct(PunctuatorKind.Arrow) {
-            parser.advance();
-            parse_type(parser)?
-        } else { parser.arena.alloc_type_syntax(TypeData.VoidType, span) };
-        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(
-            TypeData.FunctionType(param_types=params.take(), return_type=result), span));
+        return function_type(parser);
     }
+
     if token.is_identifier() {
         let name = parser.identifier()?;
         let spelling = name.data.name.as_str();
@@ -75,56 +66,117 @@ fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
         } else { TypeData.NamedType(name=name) };
         return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span));
     }
+
     if parser.at_punct(PunctuatorKind.LParen) {
-        parser.advance();
-        let members = Vec<TypeSyntax&>.new();
-        defer members.drop();
-        if parser.at_punct(PunctuatorKind.RParen) {
-            parser.advance();
-        } else {
-            let first = parse_type(parser)?;
-            if parser.at_punct(PunctuatorKind.RParen) { parser.advance(); return Option<TypeSyntax&>.Some(val=first); }
-            parser.take_punct(PunctuatorKind.Comma);
-            parser.ready()?;
-            members.push(first);
-            while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
-                members.push(parse_type(parser)?);
-                if !parser.at_punct(PunctuatorKind.Comma) { break; }
-                parser.advance();
-            }
-            parser.take_punct(PunctuatorKind.RParen);
-            parser.ready()?;
-        }
-        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=members.take()), span));
+        return parenthesized_type(parser);
     }
     parser.error("Expected type", span);
     Option<TypeSyntax&>.None
 }
 
+// 函数类型省略返回类型时，使用语法上的 void 类型。
+fn function_type(parser: Parser&) -> Option<TypeSyntax&> {
+    let span = parser.peek().span;
+    parser.advance();
+    parser.take_punct(PunctuatorKind.LParen);
+    let params = Vec<TypeSyntax&>.new();
+    defer params.drop();
+
+    while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+        params.push(parse_type(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    let result = if parser.at_punct(PunctuatorKind.Arrow) {
+        parser.advance();
+        parse_type(parser)?
+    } else { parser.arena.alloc_type_syntax(TypeData.VoidType, span) };
+
+    Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(
+        TypeData.FunctionType(param_types=params.take(), return_type=result), span))
+}
+
+// 单个类型后的右括号表示分组；空括号或逗号分隔的类型表示元组。
+fn parenthesized_type(parser: Parser&) -> Option<TypeSyntax&> {
+    let span = parser.peek().span;
+    parser.advance();
+    let members = Vec<TypeSyntax&>.new();
+    defer members.drop();
+    if parser.at_punct(PunctuatorKind.RParen) {
+        parser.advance();
+        return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=members.take()), span));
+    }
+
+    let first = parse_type(parser)?;
+    if parser.at_punct(PunctuatorKind.RParen) {
+        parser.advance();
+        return Option<TypeSyntax&>.Some(val=first);
+    }
+
+    parser.take_punct(PunctuatorKind.Comma);
+    parser.ready()?;
+    members.push(first);
+
+    while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+        members.push(parse_type(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(TypeData.TupleType(element_types=members.take()), span))
+}
+
+// 按源码顺序包装泛型、指针、引用和数组后缀。
 pub fn parse_type(parser: Parser&) -> Option<TypeSyntax&> {
     let base = type_base(parser)?;
+
     loop {
         let span = base.span;
         if parser.at_punct(PunctuatorKind.LAngle) {
             parser.advance();
             let args = Vec<GenericArgument>.new();
             defer args.drop();
+
             while !parser.failed() && !parser.at_punct(PunctuatorKind.RAngle) {
                 args.push(parse_generic_arg(parser)?);
-                if !parser.at_punct(PunctuatorKind.Comma) { break; }
+                if !parser.at_punct(PunctuatorKind.Comma) {
+                    break;
+                }
                 parser.advance();
             }
+
             parser.take_punct(PunctuatorKind.RAngle);
             parser.ready()?;
+
             let cptr = match &base.data { NamedType(name) => name.data.name.as_str() == "cptr", _ => false };
             if cptr {
-                if args.len() != 1 { parser.error("cptr requires exactly one type argument", span); return Option<TypeSyntax&>.None; }
+                if args.len() != 1 {
+                    parser.error("cptr requires exactly one type argument", span);
+                    return Option<TypeSyntax&>.None;
+                }
+
                 let pointee = match &args[0u64] {
                     Type(value) => *value,
-                    Constant(_) => { parser.error("cptr requires exactly one type argument", span); return Option<TypeSyntax&>.None; },
+                    Constant(_) => {
+                        parser.error("cptr requires exactly one type argument", span);
+                        return Option<TypeSyntax&>.None;
+                    },
                 };
                 base = parser.arena.alloc_type_syntax(TypeData.CPtrType(pointee_type=pointee), span);
-            } else { base = parser.arena.alloc_type_syntax(TypeData.InstanceType(base=base, generic_args=args.take()), span); }
+            } else {
+                base = parser.arena.alloc_type_syntax(TypeData.InstanceType(base=base, generic_args=args.take()), span);
+            }
         } elif parser.at_punct(PunctuatorKind.Star) {
             parser.advance();
             base = parser.arena.alloc_type_syntax(TypeData.PointerType(pointee_type=base), span);
@@ -142,16 +194,21 @@ pub fn parse_type(parser: Parser&) -> Option<TypeSyntax&> {
                 parser.ready()?;
                 base = parser.arena.alloc_type_syntax(TypeData.ArrayType(element_type=base, size=size), span);
             }
-        } else { break; }
+        } else {
+            break;
+        }
     }
+
     Option<TypeSyntax&>.Some(val=base)
 }
 
 fn const_binding(op: BinaryOperator) -> i32 {
     match op { BitOr | BitXor | BitAnd | Shl | Shr | Add | Sub | Mul | Div | Mod => op.lbp(), _ => 0 }
 }
+
 fn const_expr_bp(parser: Parser&, min_bp: i32) -> Option<ConstExpr&> {
     parser.ready()?;
+
     let span = parser.peek().span;
     let lhs = if parser.at_punct(PunctuatorKind.Minus) || parser.at_punct(PunctuatorKind.Tilde) {
         let op = *UnaryOperator.from_token(parser.peek()).unwrap();
@@ -171,24 +228,36 @@ fn const_expr_bp(parser: Parser&, min_bp: i32) -> Option<ConstExpr&> {
     } elif parser.peek().is_identifier() || parser.keyword_token() {
         let name = parser.identifier()?;
         parser.arena.alloc_const_expr(ConstExprData.GenericConstExpr(name=name), span)
-    } else { parser.error("Expected integer constant expression", span); return Option<ConstExpr&>.None; };
+    } else {
+        parser.error("Expected integer constant expression", span);
+        return Option<ConstExpr&>.None;
+    };
+
     loop {
         let candidate = BinaryOperator.from_token(parser.peek());
         let lbp = match candidate { Some(op) => const_binding(op), None => 0 };
-        if lbp == 0 || lbp < min_bp { break; }
+        if lbp == 0 || lbp < min_bp {
+            break;
+        }
+
         let op = *candidate.unwrap();
         parser.advance();
         let rhs = const_expr_bp(parser, lbp + 1)?;
         lhs = parser.arena.alloc_const_expr(ConstExprData.BinaryConstExpr(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
     }
+
     Option<ConstExpr&>.Some(val=lhs)
 }
+
 pub fn parse_const_expr(parser: Parser&) -> Option<ConstExpr&> { const_expr_bp(parser, 1) }
+
+// 优先试探类型；失败或后接常量运算符时，回到起点解析常量表达式。
 pub fn parse_generic_arg(parser: Parser&) -> Option<GenericArgument> {
     let token = parser.peek();
     if token.is_integer() || token.is_punct(PunctuatorKind.Minus) || token.is_punct(PunctuatorKind.Tilde) {
         return Option<GenericArgument>.Some(val=GenericArgument.Constant(value=parse_const_expr(parser)?));
     }
+
     let mark = parser.mark();
     let ty = parse_type(parser);
     if ty.is_some() {

@@ -10,28 +10,38 @@ from std.core.vec import Vec;
 pub fn identifier(arena: AstArena&, span: Span, name: str, synthetic: bool) -> Identifier& {
     arena.alloc_identifier(IdentifierData(name=String.from(&name), synthetic=synthetic), span)
 }
+
 pub fn name_expr(arena: AstArena&, name: Identifier&) -> Expr& { arena.alloc_expr(ExprData.Identifier(name=name), name.span) }
+
 pub fn block(arena: AstArena&, span: Span, stmts: Vec<Expr&>) -> Block& {
     arena.alloc_block(BlockData(stmts=stmts, end=Option<Position>.None, parameter_bindings=Vec<PatternLet&>.new()), span)
 }
+
 pub fn block_expr(arena: AstArena&, body: Block&) -> Expr& { arena.alloc_expr(ExprData.Block(block=body), body.span) }
+
 pub fn one_block(arena: AstArena&, span: Span, value: Expr&) -> Block& {
     let stmts = Vec<Expr&>.new();
     stmts.push(value);
     block(arena, span, stmts)
 }
+
 pub fn break_block(arena: AstArena&, span: Span) -> Block& {
     one_block(arena, span, arena.alloc_expr(ExprData.Break(expr=Option<Expr&>.None), span))
 }
+
 pub fn unary_not(arena: AstArena&, value: Expr&) -> Expr& {
     arena.alloc_expr(ExprData.Unary(op=UnaryOperator.LogicalNot, operand=value), value.span)
 }
+
 pub fn arm(arena: AstArena&, pattern: Pattern&, body: Block&, origin: MatchArmOrigin) -> MatchArm& {
     arena.alloc_match_arm(MatchArmData(pattern=pattern, guard=Option<Expr&>.None, body=body, origin=origin), pattern.span)
 }
+
 pub fn match_expr(arena: AstArena&, span: Span, value: Expr&, arms: Vec<MatchArm&>) -> Expr& {
     arena.alloc_expr(ExprData.Match(expr=value, arms=arms), span)
 }
+
+// 普通条件生成 if；let 条件生成带回退分支的 match，并保留条件来源标记。
 pub fn conditional(arena: AstArena&, span: Span, condition: Condition, yes: Block&, no: Option<Block&>) -> Expr& {
     match condition {
         Expression(value) => arena.alloc_expr(ExprData.If(condition=condition, then_branch=yes, elif_branches=Vec<ElifBranch&>.new(), else_branch=no), span),
@@ -45,9 +55,11 @@ pub fn conditional(arena: AstArena&, span: Span, condition: Condition, yes: Bloc
         },
     }
 }
+
 pub fn method_call(arena: AstArena&, span: Span, receiver: Expr&, name: str, args: Vec<Argument&>) -> Expr& {
     arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=identifier(arena, span, name, true), generics=Vec<TypeSyntax&>.new(), args=args), span)
 }
+
 pub fn argument(arena: AstArena&, value: Expr&) -> Argument& {
     arena.alloc_argument(ArgumentData(name=Option<Identifier&>.None, value=value), value.span)
 }

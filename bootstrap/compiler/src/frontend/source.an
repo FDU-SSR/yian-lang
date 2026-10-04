@@ -19,13 +19,18 @@ pub struct Span {
 }
 
 impl Span {
-    // Writes source coordinates as fields in an open JSON object.
+    // 将起止坐标作为字段写入已打开的 JSON 对象。
     pub fn write_json(output: Writer&) {
-        output.key("start"); output.begin_array();
-        output.write_u64(self.start.row); output.write_u64(self.start.column);
+        output.key("start");
+        output.begin_array();
+        output.write_u64(self.start.row);
+        output.write_u64(self.start.column);
         output.end_array();
-        output.key("end"); output.begin_array();
-        output.write_u64(self.end.row); output.write_u64(self.end.column);
+
+        output.key("end");
+        output.begin_array();
+        output.write_u64(self.end.row);
+        output.write_u64(self.end.column);
         output.end_array();
     }
 }
@@ -34,14 +39,16 @@ impl Add<Span, Span> for Span {
     pub fn add(other: Span) -> Span {
         let start = self.start;
         if other.start.row < start.row ||
-            (other.start.row == start.row && other.start.column < start.column) {
+        (other.start.row == start.row && other.start.column < start.column) {
             start = other.start;
         }
+
         let end = self.end;
         if other.end.row > end.row ||
-            (other.end.row == end.row && other.end.column > end.column) {
+        (other.end.row == end.row && other.end.column > end.column) {
             end = other.end;
         }
+
         return Span(start=start, end=end);
     }
 }
@@ -62,6 +69,7 @@ pub struct SourceFile {
 
 impl SourceFile {
     pub fn path() -> str { return self.path.as_str(); }
+
     pub fn text() -> str { return self.text.as_str(); }
 }
 
@@ -80,10 +88,12 @@ impl SourceManager {
     static pub fn new() -> Self { return Self(files=Vec<SourceFile>.new()); }
 
     pub fn len() -> u64 { return self.files.len(); }
+
     pub fn file(id: u64) -> SourceFile& { return &self.files[id]; }
 
     pub fn load(path: str) -> Result<u64, IoError> {
         let text = read_to_string(path)?;
+
         let id = self.files.len();
         self.files.push(SourceFile(path=String.from(&path), text=text));
         Result<u64, IoError>.Ok(val=id)
@@ -93,6 +103,7 @@ impl SourceManager {
 impl Drop for SourceManager {
     pub fn drop() {
         let index: u64 = 0u64;
+
         while index < self.files.len() {
             self.files[index].drop();
             index += 1u64;
@@ -105,21 +116,34 @@ fn less(left: str, right: str) -> bool {
     let a = left.as_slice();
     let b = right.as_slice();
     let limit = a.len();
-    if b.len() < limit { limit = b.len(); }
+    if b.len() < limit {
+        limit = b.len();
+    }
+
     let index: u64 = 0u64;
+
     while index < limit {
-        if a[index] < b[index] { return true; }
-        if a[index] > b[index] { return false; }
+        if a[index] < b[index] {
+            return true;
+        }
+
+        if a[index] > b[index] {
+            return false;
+        }
         index += 1u64;
     }
+
     return a.len() < b.len();
 }
 
+// 只排序本次目录收集追加的路径，前面的输入根保持原有顺序。
 fn sort_paths(paths: Vec<String>&, start: u64) {
     let index = start + 1u64;
+
     while index < paths.len() {
         let current = paths[index];
         let before = index;
+
         while before > start && less(current.as_str(), paths[before - 1u64].as_str()) {
             paths[before] = paths[before - 1u64];
             before -= 1u64;
@@ -129,13 +153,17 @@ fn sort_paths(paths: Vec<String>&, start: u64) {
     }
 }
 
+// 递归实际目录；符号链接只收集其指向的源码文件，不递归链接目录。
 fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
     let directory = Directory.open(path)?;
     defer directory.drop();
+
     loop {
         let entry = match directory.next()? {
             Some(value) => value,
-            None => { break; },
+            None => {
+                break;
+            },
         };
         defer entry.drop();
         let child = entry.path().as_str();
@@ -143,27 +171,42 @@ fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
         if kind == DirEntryKind.Directory {
             collect_dir(child, paths)?;
         } elif kind == DirEntryKind.File {
-            if entry.name().ends_with(".an") { paths.push(String.from(&child)); }
+            if entry.name().ends_with(".an") {
+                paths.push(String.from(&child));
+            }
         } elif kind == DirEntryKind.Link {
             let info = entry.metadata()?;
-            if info.is_file() && entry.name().ends_with(".an") { paths.push(String.from(&child)); }
+            if info.is_file() && entry.name().ends_with(".an") {
+                paths.push(String.from(&child));
+            }
         }
     }
-    Result<(), IoError>.Ok(val=())
+
+    Result<(), IoError>.Ok(val= ())
 }
 
 fn release_paths(paths: Vec<String>&) {
     let index = 0u64;
-    while index < paths.len() { paths[index].drop(); index += 1u64; }
+
+    while index < paths.len() {
+        paths[index].drop();
+        index += 1u64;
+    }
     paths.drop();
 }
 
-// Roots retain command-line order; files within each directory are sorted.
+// 输入根保持命令行顺序，各目录内的文件排序；失败时释放已收集的路径。
 pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
     let paths = Vec<String>.new();
     let transferred = false;
-    defer { if !transferred { release_paths(&paths); } };
+    defer {
+        if !transferred {
+            release_paths(&paths);
+        }
+    };
+
     let index = 0u64;
+
     while index < inputs.len() {
         let root = inputs[index].as_str();
         let info = metadata(root)?;
@@ -172,7 +215,9 @@ pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
             collect_dir(root, &paths)?;
             sort_paths(&paths, start);
         } elif info.is_file() {
-            if root.ends_with(".an") { paths.push(String.from(&root)); }
+            if root.ends_with(".an") {
+                paths.push(String.from(&root));
+            }
         } else {
             let error = IoError.new(IoErrorKind.InvalidInput, "source path is not a file or directory");
             let contextual = error.with_path(root);
@@ -181,6 +226,7 @@ pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
         }
         index += 1u64;
     }
+
     transferred = true;
     Result<Vec<String>, IoError>.Ok(val=paths)
 }

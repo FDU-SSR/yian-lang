@@ -18,6 +18,7 @@ pub struct LexError {
 
 impl LexError {
     pub fn message() -> str { return self.message.as_str(); }
+
     pub fn span() -> Span { return self.span; }
 }
 
@@ -31,7 +32,7 @@ fn decimal_digit(code: u32) -> bool {
 
 fn ascii_letter(code: u32) -> bool {
     return (code >= u32('A') && code <= u32('Z')) ||
-        (code >= u32('a') && code <= u32('z'));
+    (code >= u32('a') && code <= u32('z'));
 }
 
 fn ident_start(code: u32) -> bool {
@@ -48,22 +49,29 @@ fn hexadecimal_literal(raw: str) -> bool {
 
 fn is_float_literal(raw: str) -> bool {
     let hexadecimal = hexadecimal_literal(raw);
+
     for current in raw.chars() {
         if current == '.' || current == 'p' || current == 'P' ||
-            (!hexadecimal && (current == 'e' || current == 'E')) {
+        (!hexadecimal && (current == 'e' || current == 'E')) {
             return true;
         }
     }
+
     return false;
 }
 
+// 正负号仅跟随指数标记；十六进制的 e/E 是数字，不是指数标记。
 fn number_part(raw: str, code: u32) -> bool {
     if code == u32('+') || code == u32('-') {
         let bytes = raw.as_slice();
         let last = bytes[bytes.len() - 1u64];
-        if last == b'p' || last == b'P' { return true; }
+        if last == b'p' || last == b'P' {
+            return true;
+        }
+
         return (last == b'e' || last == b'E') && !hexadecimal_literal(raw);
     }
+
     return decimal_digit(code) || code == u32('_') || ascii_letter(code);
 }
 
@@ -71,18 +79,25 @@ fn integer_suffix(raw: str) -> IntSuffix {
     for suffix in [IntSuffix.I8, IntSuffix.I16, IntSuffix.I32, IntSuffix.I64,
         IntSuffix.U8, IntSuffix.U16, IntSuffix.U32, IntSuffix.U64,
         IntSuffix.Uint, IntSuffix.Int] {
-        if raw.ends_with(suffix.spelling()) { return *suffix; }
+        if raw.ends_with(suffix.spelling()) {
+            return *suffix;
+        }
     }
+
     return IntSuffix.Unsuffixed;
 }
 
 fn float_suffix(raw: str) -> FloatSuffix {
     for suffix in [FloatSuffix.F16, FloatSuffix.F32, FloatSuffix.F64, FloatSuffix.Float] {
-        if raw.ends_with(suffix.spelling()) { return *suffix; }
+        if raw.ends_with(suffix.spelling()) {
+            return *suffix;
+        }
     }
+
     return FloatSuffix.Unsuffixed;
 }
 
+// 去除后缀及其前面的可选分隔符，返回借用原始文本的数值部分。
 fn numeric_body(raw: str, suffix: str) -> str {
     let bytes = raw.as_slice();
     let suffix_len = suffix.as_slice().len();
@@ -90,6 +105,7 @@ fn numeric_body(raw: str, suffix: str) -> str {
     if suffix_len != 0u64 && end != 0u64 && bytes[end - 1u64] == b'_' {
         end -= 1u64;
     }
+
     return str.from_slice_unchecked(bytes[0u64..end]);
 }
 
@@ -123,18 +139,29 @@ fn whitespace(code: u32) -> bool {
     if (code >= 9u32 && code <= 13u32) || (code >= 28u32 && code <= 32u32) {
         return true;
     }
+
     if code == 0x85u32 || code == 0xA0u32 || code == 0x1680u32 ||
     code == 0x202Fu32 || code == 0x205Fu32 || code == 0x3000u32 {
         return true;
     }
+
     return (code >= 0x2000u32 && code <= 0x200Au32) ||
     (code >= 0x2028u32 && code <= 0x2029u32);
 }
 
 fn hex_digit(code: u32) -> i32 {
-    if decimal_digit(code) { return i32(code - u32('0')); }
-    if code >= u32('A') && code <= u32('F') { return i32(code - u32('A')) + 10; }
-    if code >= u32('a') && code <= u32('f') { return i32(code - u32('a')) + 10; }
+    if decimal_digit(code) {
+        return i32(code - u32('0'));
+    }
+
+    if code >= u32('A') && code <= u32('F') {
+        return i32(code - u32('A')) + 10;
+    }
+
+    if code >= u32('a') && code <= u32('f') {
+        return i32(code - u32('a')) + 10;
+    }
+
     return -1;
 }
 
@@ -197,6 +224,7 @@ impl Lexer {
         } else {
             self.column += 1u64;
         }
+
         return code;
     }
 
@@ -216,32 +244,50 @@ impl Lexer {
         return LexError(message=String.from(&message), span=Span(start=start, end=self.position()));
     }
 
+    // 消费空白和注释；返回是否消费过内容，供尖括号的词法分类使用。
     fn skip_ignored() -> Result<bool, LexError> {
         let skipped = false;
+
         loop {
-            if self.at_end() { break; }
+            if self.at_end() {
+                break;
+            }
+
             if whitespace(self.peek()) {
                 skipped = true;
                 self.advance();
                 continue;
             }
+
             if self.has_pair('/', '/') {
                 skipped = true;
                 self.advance();
                 self.advance();
-                while !self.at_end() && self.peek() != u32('\n') { self.advance(); }
-                if !self.at_end() { self.advance(); } else { self.row += 1u64; self.column = 0u64; }
+
+                while !self.at_end() && self.peek() != u32('\n') {
+                    self.advance();
+                }
+
+                if !self.at_end() {
+                    self.advance();
+                } else {
+                    self.row += 1u64;
+                    self.column = 0u64;
+                }
                 continue;
             }
+
             if self.has_pair('/', '*') {
                 skipped = true;
                 self.advance();
                 self.advance();
+
                 loop {
                     if self.at_end() {
                         let at = self.position();
                         return Result<bool, LexError>.Err(msg=self.fail("Unterminated block comment", at));
                     }
+
                     if self.has_pair('*', '/') {
                         self.advance();
                         self.advance();
@@ -253,6 +299,7 @@ impl Lexer {
             }
             break;
         }
+
         return Result<bool, LexError>.Ok(val=skipped);
     }
 
@@ -260,14 +307,17 @@ impl Lexer {
         if self.at_end() {
             return Result<char, LexError>.Err(msg=self.fail("Invalid escape sequence at end of literal", start));
         }
+
         let next = char(self.advance());
         match simple_escape(next) {
             Some(value) => return Result<char, LexError>.Ok(val=value),
             None => {},
         }
+
         if next == 'x' || next == 'X' {
             let code: u32 = 0u32;
             let index: u64 = 0u64;
+
             while index < 2u64 {
                 let d = hex_digit(self.peek());
                 if d < 0 {
@@ -277,14 +327,17 @@ impl Lexer {
                 self.advance();
                 index += 1u64;
             }
+
             return Result<char, LexError>.Ok(val=char(code));
         }
+
         if next == 'u' || next == 'U' {
             if self.peek() != u32('{') {
                 return Result<char, LexError>.Err(msg=self.fail("missing opening brace in Unicode escape", start));
             }
             self.advance();
             let code: u32 = 0u32;
+
             while !self.at_end() && self.peek() != u32('}') {
                 let d = hex_digit(self.peek());
                 if d < 0 || code > 0x10ffffu32 / 16u32 {
@@ -293,6 +346,7 @@ impl Lexer {
                 code = code * 16u32 + u32(d);
                 self.advance();
             }
+
             if self.at_end() || code > 0x10ffffu32 ||
             (code >= 0xd800u32 && code <= 0xdfffu32) {
                 return Result<char, LexError>.Err(msg=self.fail("invalid Unicode escape", start));
@@ -300,14 +354,22 @@ impl Lexer {
             self.advance();
             return Result<char, LexError>.Ok(val=char(code));
         }
+
         return Result<char, LexError>.Err(msg=self.fail("invalid escape sequence", start));
     }
 
+    // 解码字面量；字符和字符串 token 接收存储，字节字面量只接收数值。
     fn quoted(start: Position, quote: u32, byte_literal: bool) -> Result<Token, LexError> {
         let decoded = String.new();
         let transferred = false;
-        defer { if !transferred { decoded.drop(); } };
+        defer {
+            if !transferred {
+                decoded.drop();
+            }
+        };
+
         let count: u64 = 0u64;
+
         while !self.at_end() && self.peek() != quote {
             let code = self.advance();
             if code == u32('\\') {
@@ -317,6 +379,7 @@ impl Lexer {
             }
             count += 1u64;
         }
+
         if self.at_end() {
             return Result<Token, LexError>.Err(msg=self.fail("Unterminated literal", start));
         }
@@ -325,15 +388,18 @@ impl Lexer {
             transferred = true;
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
         }
+
         if count != 1u64 {
             return Result<Token, LexError>.Err(msg=self.fail("character literal must contain one character", start));
         }
+
         if byte_literal {
             let first = decoded.chars().next();
             let code = u32(*first.unwrap());
             if code > 255u32 {
                 return Result<Token, LexError>.Err(msg=self.fail("byte literal exceeds 255", start));
             }
+
             return Result<Token, LexError>.Ok(val=self.integer_token(start,
                 u64(code), IntSuffix.U8));
         }
@@ -345,85 +411,127 @@ impl Lexer {
         return Token.new(payload, Span(start=position, end=position));
     }
 
+    // 入口位于插值左花括号之后；只有当前层的右花括号结束插值。
+    fn fstring_expression() -> Result<bool, LexError> {
+        let depth: u64 = 1u64;
+
+        loop {
+            let skipped = self.skip_ignored()?;
+            if self.at_end() {
+                return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string expression", self.position()));
+            }
+
+            // 嵌套格式化字符串自行消费内部括号，不参与当前插值的深度计数。
+            if self.has_pair('f', '"') {
+                self.fstring()?;
+                continue;
+            }
+
+            if self.peek() == u32('}') && depth == 1u64 {
+                let brace_start = self.position();
+                self.advance();
+                self.tokens.push(self.token(TokenPayload.FStrExprEnd, brace_start));
+                return Result<bool, LexError>.Ok(val=true);
+            }
+
+            let current = self.peek();
+            let next = self.one(skipped)?;
+            if current == u32('{') {
+                depth += 1u64;
+            }
+
+            if current == u32('}') {
+                depth -= 1u64;
+            }
+            self.tokens.push(next);
+        }
+    }
+
+    // 扫描到引号或插值起点；非空片段的字符串存储交由 token 持有。
+    fn fstring_literal() -> Result<bool, LexError> {
+        let segment_start = self.position();
+        let literal = String.new();
+        let transferred = false;
+        defer {
+            if !transferred {
+                literal.drop();
+            }
+        };
+
+        while !self.at_end() && self.peek() != u32('"') && self.peek() != u32('{') {
+            if self.peek() == u32('}') {
+                return Result<bool, LexError>.Err(msg=self.fail("unexpected closing brace in f-string", self.position()));
+            }
+
+            let current = self.advance();
+            if current != u32('\\') {
+                literal.push(char(current));
+                continue;
+            }
+
+            if self.at_end() {
+                return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string escape", self.position()));
+            }
+
+            let escaped = char(self.advance());
+            match simple_escape(escaped) {
+                Some(value) => literal.push(value),
+                None => {
+                    // 花括号转义只保留字符；其他未知转义同时保留反斜杠。
+                    if escaped != '{' && escaped != '}' {
+                        literal.push('\\');
+                    }
+                    literal.push(escaped);
+                },
+            }
+        }
+
+        if !literal.is_empty() {
+            self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
+            transferred = true;
+        }
+
+        Result<bool, LexError>.Ok(val=true)
+    }
+
+    // 将文字片段和插值 token 顺序写入同一 token 流。
     fn fstring() -> Result<bool, LexError> {
         let start = self.position();
         self.advance();
         self.advance();
         self.tokens.push(self.token(TokenPayload.FStrStart, start));
+
         while !self.at_end() {
             if self.peek() == u32('"') {
                 self.advance();
                 self.tokens.push(self.marker(TokenPayload.FStrEnd, self.position()));
                 return Result<bool, LexError>.Ok(val=true);
             }
+
             if self.peek() == u32('}') {
                 return Result<bool, LexError>.Err(msg=self.fail("unexpected closing brace in f-string", self.position()));
             }
+
             if self.peek() == u32('{') {
                 self.advance();
                 self.tokens.push(self.marker(TokenPayload.FStrExprBegin, self.position()));
-                let depth: u64 = 1u64;
-                loop {
-                    let skipped = self.skip_ignored()?;
-                    if self.at_end() {
-                        return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string expression", self.position()));
-                    }
-                    if self.has_pair('f', '"') {
-                        self.fstring()?;
-                        continue;
-                    }
-                    if self.peek() == u32('}') && depth == 1u64 {
-                        let brace_start = self.position();
-                        self.advance();
-                        self.tokens.push(self.token(TokenPayload.FStrExprEnd, brace_start));
-                        break;
-                    }
-                    let current = self.peek();
-                    let next = self.one(skipped)?;
-                    if current == u32('{') { depth += 1u64; }
-                    if current == u32('}') { depth -= 1u64; }
-                    self.tokens.push(next);
-                }
+                self.fstring_expression()?;
                 continue;
             }
 
-            let segment_start = self.position();
-            let literal = String.new();
-            let transferred = false;
-            defer { if !transferred { literal.drop(); } };
-            while !self.at_end() && self.peek() != u32('"') && self.peek() != u32('{') {
-                if self.peek() == u32('}') {
-                    return Result<bool, LexError>.Err(msg=self.fail("unexpected closing brace in f-string", self.position()));
-                }
-                let current = self.advance();
-                if current != u32('\\') {
-                    literal.push(char(current));
-                    continue;
-                }
-                if self.at_end() {
-                    return Result<bool, LexError>.Err(msg=self.fail("unterminated f-string escape", self.position()));
-                }
-                let escaped = char(self.advance());
-                match simple_escape(escaped) {
-                    Some(value) => literal.push(value),
-                    None => {
-                        if escaped != '{' && escaped != '}' { literal.push('\\'); }
-                        literal.push(escaped);
-                    },
-                }
-            }
-            if !literal.is_empty() {
-                self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
-                transferred = true;
-            }
+            self.fstring_literal()?;
         }
+
         return Result<bool, LexError>.Ok(val=true);
     }
 
     fn identifier(start: Position, code: u32) -> Token {
         let raw = String.new();
         raw.push(char(code));
-        while !self.at_end() && ident_part(self.peek()) { raw.push(char(self.advance())); }
+
+        while !self.at_end() && ident_part(self.peek()) {
+            raw.push(char(self.advance()));
+        }
         match KeywordKind.from_text(raw.as_str()) {
             Some(kind) => {
                 raw.drop();
@@ -441,21 +549,31 @@ impl Lexer {
     }
 
     fn number(start: Position, code: u32) -> Result<Token, LexError> {
+        // 先保留完整拼写，再分别处理数值部分与类型后缀。
         let raw = String.new();
         defer raw.drop();
         raw.push(char(code));
-        while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
+
+        while !self.at_end() && number_part(raw.as_str(), self.peek()) {
+            raw.push(char(self.advance()));
+        }
+
         if self.peek() == u32('.') && decimal_digit(self.peek_next()) {
             raw.push(char(self.advance()));
             raw.push(char(self.advance()));
-            while !self.at_end() && number_part(raw.as_str(), self.peek()) { raw.push(char(self.advance())); }
+
+            while !self.at_end() && number_part(raw.as_str(), self.peek()) {
+                raw.push(char(self.advance()));
+            }
         }
+
         if is_float_literal(raw.as_str()) {
             let suffix = float_suffix(raw.as_str());
             let body = numeric_body(raw.as_str(), suffix.spelling());
             let value = self.parse_number<f64>(body, start)?;
             return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
         }
+
         let suffix = integer_suffix(raw.as_str());
         let body = numeric_body(raw.as_str(), suffix.spelling());
         let value = self.parse_number<u64>(body, start)?;
@@ -465,17 +583,21 @@ impl Lexer {
             message.push_str(suffix.spelling());
             return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
         }
+
         return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
     }
 
     fn punctuator(start: Position, code: u32, previous_whitespace: bool) -> Result<Token, LexError> {
+        // 无前导空白的尖括号作为泛型分隔符，不参与最长运算符匹配。
         if (code == u32('<') || code == u32('>')) && !previous_whitespace {
             let kind = if code == u32('<') { PunctuatorKind.LAngle } else { PunctuatorKind.RAngle };
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
         }
+
         let raw = String.new();
         defer raw.drop();
         raw.push(char(code));
+
         while !self.at_end() && self.peek() < 128u32 {
             raw.push(char(self.peek()));
             if PunctuatorKind.from_text(raw.as_str()).is_none() {
@@ -484,10 +606,12 @@ impl Lexer {
             }
             self.advance();
         }
+
         let kind = match PunctuatorKind.from_text(raw.as_str()) {
             Some(value) => value,
             None => return Result<Token, LexError>.Err(msg=self.fail("invalid punctuator", start)),
         };
+
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
     }
 
@@ -496,25 +620,39 @@ impl Lexer {
         if self.at_end() {
             return Result<Token, LexError>.Ok(self.token(TokenPayload.EndOfFile, start));
         }
+
         let code = self.advance();
-        if code == u32('"') || code == u32('\'') { return self.quoted(start, code, false); }
+        if code == u32('"') || code == u32('\'') {
+            return self.quoted(start, code, false);
+        }
+
         if code == u32('b') && self.peek() == u32('\'') {
             self.advance();
             return self.quoted(start, u32('\''), true);
         }
-        if ident_start(code) { return Result<Token, LexError>.Ok(self.identifier(start, code)); }
-        if decimal_digit(code) { return self.number(start, code); }
+
+        if ident_start(code) {
+            return Result<Token, LexError>.Ok(self.identifier(start, code));
+        }
+
+        if decimal_digit(code) {
+            return self.number(start, code);
+        }
+
         return self.punctuator(start, code, previous_whitespace);
     }
 
+    // 成功时交出 token 容器；错误路径由局部清理释放已扫描的 token。
     pub fn run() -> Result<Vec<Token>, LexError> {
         defer self.drop();
+
         loop {
             let skipped = self.skip_ignored()?;
             if self.has_pair('f', '"') {
                 self.fstring()?;
                 continue;
             }
+
             let next = self.one(skipped)?;
             let done = next.is_eof();
             self.tokens.push(next);
@@ -530,6 +668,7 @@ impl Lexer {
 impl Drop for Lexer {
     pub fn drop() {
         let index: u64 = 0u64;
+
         while index < self.tokens.len() {
             self.tokens[index].drop();
             index += 1u64;

@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.env import exit;
-from std.core.io import Stderr, Stdout;
+from std.core.io import IoError, Stderr, Stdout;
 from std.core.string import String;
 from std.core.vec import Vec;
 from compiler.config import FrontendPhase, parse_args;
@@ -16,6 +16,7 @@ from compiler.frontend.desugar import desugar;
 
 fn release_paths(paths: Vec<String>&) {
     let index: u64 = 0u64;
+
     while index < paths.len() {
         paths[index].drop();
         index += 1u64;
@@ -26,32 +27,89 @@ fn release_paths(paths: Vec<String>&) {
 fn write_output(text: str) -> bool {
     return match Stdout.new().write_str(text) {
         Ok(_) => true,
-        Err(problem) => { problem.drop(); false },
+        Err(problem) => {
+            problem.drop();
+            false
+        },
     };
 }
 
 fn emit_json(writer: Writer&) -> bool {
     return match writer.finish() {
-        Ok(text) => { defer text.drop(); write_output(text.as_str()) && write_output("\n") },
+        Ok(text) => {
+            defer text.drop();
+            write_output(text.as_str()) && write_output("\n")
+        },
         Err(_) => false,
     };
 }
 
+// 入口处 files 数组仍打开；闭合它并打开同级的 diagnostic 对象。
 fn diagnostic_start(writer: Writer&, stage: str, path: str) {
-    writer.end_array(); writer.key("diagnostic"); writer.begin_object();
-    writer.key("stage"); writer.write_string(stage);
-    writer.key("path"); writer.write_string(path);
+    writer.end_array();
+
+    writer.key("diagnostic");
+    writer.begin_object();
+    writer.key("stage");
+    writer.write_string(stage);
+
+    writer.key("path");
+    writer.write_string(path);
 }
 
+// 闭合 diagnostic 及外层响应对象，然后写出完整 JSON。
 fn diagnostic_end(writer: Writer&) {
-    writer.end_object(); writer.end_object(); emit_json(writer);
+    writer.end_object();
+    writer.end_object();
+    emit_json(writer);
+}
+
+// I/O 诊断保留消息，并在存在系统错误码时附带原始错误码。
+fn io_error_fields(writer: Writer&, problem: IoError&) {
+    writer.key("message");
+    writer.write_string(problem.msg());
+
+    match problem.raw_os_error() {
+        Some(code) => {
+            writer.key("osError");
+            writer.write_i64(i64(code));
+        },
+        None => {},
+    }
+}
+
+// 收集路径失败时没有文件观察结果，输出空 files 和 I/O 诊断。
+fn collection_diagnostic(problem: IoError&) {
+    let writer = Writer.new();
+    defer writer.drop();
+
+    writer.begin_object();
+    writer.key("version");
+    writer.write_u64(1);
+
+    writer.key("files");
+    writer.begin_array();
+    writer.end_array();
+
+    writer.key("diagnostic");
+    writer.begin_object();
+    writer.key("stage");
+    writer.write_string("io");
+    io_error_fields(&writer, problem);
+    diagnostic_end(&writer);
 }
 
 fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span: Span) {
     diagnostic_start(output, stage, path);
-    output.key("code"); output.write_string(if stage == "lex" { lex_code(message) } else { parse_code(message) });
-    output.key("severity"); output.write_string("error");
-    output.key("message"); output.write_string(message);
+
+    output.key("code");
+    output.write_string(if stage == "lex" { lex_code(message) } else { parse_code(message) });
+
+    output.key("severity");
+    output.write_string("error");
+
+    output.key("message");
+    output.write_string(message);
     span.write_json(output);
     diagnostic_end(output);
 }
@@ -67,10 +125,12 @@ fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -
         },
     };
     defer drop_tokens(&tokens);
+
     if phase == FrontendPhase.Tokens {
         append_token_file(output, path, &tokens);
         return true;
     }
+
     let parser = Parser.new(&tokens);
     defer parser.drop();
     let tree = match parse_program(&parser) {
@@ -82,6 +142,7 @@ fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -
         },
     };
     defer tree.drop();
+
     if phase == FrontendPhase.Desugared {
         match desugar(&tree, path) {
             Ok(_) => {},
@@ -92,65 +153,76 @@ fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -
             },
         }
     }
-    output.begin_object(); output.key("path"); output.write_string(path); output.key("ast");
+
+    output.begin_object();
+    output.key("path");
+    output.write_string(path);
+
+    output.key("ast");
     AstFormatter.new(output).append_program(tree.root);
     output.end_object();
     true
 }
 
+// 顺序观察输入文件；首个失败结束观察并输出包含已完成文件的诊断对象。
 fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
     let paths = match collect_sources(inputs) {
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
-            let writer = Writer.new(); defer writer.drop();
-            writer.begin_object(); writer.key("version"); writer.write_u64(1);
-            writer.key("files"); writer.begin_array(); writer.end_array();
-            writer.key("diagnostic"); writer.begin_object();
-            writer.key("stage"); writer.write_string("io");
-            writer.key("message"); writer.write_string(problem.msg());
-            match problem.raw_os_error() {
-                Some(code) => { writer.key("osError"); writer.write_i64(i64(code)); },
-                None => {},
-            }
-            diagnostic_end(&writer);
+            collection_diagnostic(&problem);
             return false;
         },
     };
     defer release_paths(&paths);
+
     let sources = SourceManager.new();
     defer sources.drop();
     let output = Writer.with_max_depth(512u64);
-    output.begin_object(); output.key("version"); output.write_u64(1);
-    output.key("phase"); output.write_string(phase.name());
-    output.key("files"); output.begin_array();
+    output.begin_object();
+    output.key("version");
+    output.write_u64(1);
+
+    output.key("phase");
+    output.write_string(phase.name());
+
+    output.key("files");
+    output.begin_array();
     defer output.drop();
+
     let index = 0u64;
+
     while index < paths.len() {
         let id = match sources.load(paths[index].as_str()) {
             Ok(value) => value,
             Err(problem) => {
                 defer problem.drop();
                 diagnostic_start(&output, "io", paths[index].as_str());
-                output.key("message"); output.write_string(problem.msg());
-                match problem.raw_os_error() {
-                    Some(code) => { output.key("osError"); output.write_i64(i64(code)); },
-                    None => {},
-                }
+                io_error_fields(&output, &problem);
                 diagnostic_end(&output);
                 return false;
             },
         };
+
         let source = sources.file(id);
-        if !observe_file(&output, phase, source.path(), source.text()) { return false; }
+        if !observe_file(&output, phase, source.path(), source.text()) {
+            return false;
+        }
         index += 1u64;
     }
-    output.end_array(); output.key("diagnostic"); output.write_null(); output.end_object();
+
+    output.end_array();
+
+    output.key("diagnostic");
+    output.write_null();
+    output.end_object();
     return emit_json(&output);
 }
 
 fn write_error(text: str) {
-    match Stderr.new().write_str(text) { Ok(_) => {}, Err(problem) => problem.drop(), }
+    match Stderr.new().write_str(text) {
+        Ok(_) => {}, Err(problem) => problem.drop(),
+    }
 }
 
 fn main() {
@@ -168,5 +240,8 @@ fn main() {
             2i32
         },
     };
-    if status != 0i32 { exit(status); }
+
+    if status != 0i32 {
+        exit(status);
+    }
 }

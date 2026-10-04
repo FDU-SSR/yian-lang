@@ -38,12 +38,15 @@ impl CompilerConfig {
             },
             _ => @panic("missing frontend phase"),
         };
+
         let values = match matches.get_many("inputs") {
             Ok(Some(values)) => values,
             _ => @panic("missing frontend inputs"),
         };
+
         let inputs = Vec<String>.new();
         let index = 0u64;
+
         while index < values.len() {
             match &values[index] {
                 Text(value) => inputs.push(String.from(&value.as_str())),
@@ -61,7 +64,9 @@ impl Drop for CompilerConfig {
             Help(text) => text.drop(),
             FrontendJson(_) => {},
         }
+
         let index = 0u64;
+
         while index < self.inputs.len() {
             self.inputs[index].drop();
             index += 1u64;
@@ -76,10 +81,10 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
     defer parser.drop();
     parser.description("YIAN compiler frontend");
     parser.add_argument("phase").long("frontend-json").required(true)
-        .choices(["tokens", "ast", "desugared"].as_slice()).metavar("PHASE")
-        .help("output the selected frontend stage as JSON");
+    .choices(["tokens", "ast", "desugared"].as_slice()).metavar("PHASE")
+    .help("output the selected frontend stage as JSON");
     parser.add_argument("inputs").nargs(Nargs.OneOrMore).metavar("INPUT")
-        .help("input files or directories");
+    .help("input files or directories");
     match parser.parse_env() {
         Ok(outcome) => match outcome {
             Help(text) => Result<CompilerConfig, String>.Ok(
@@ -93,9 +98,13 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
             defer error.drop();
             let diagnostic = String.new();
             match parser.format_usage() {
-                Ok(text) => { defer text.drop(); diagnostic.push_str(text.as_str()); },
+                Ok(text) => {
+                    defer text.drop();
+                    diagnostic.push_str(text.as_str());
+                },
                 Err(problem) => problem.drop(),
             }
+
             let message = error.format();
             defer message.drop();
             diagnostic.push_str(message.as_str());

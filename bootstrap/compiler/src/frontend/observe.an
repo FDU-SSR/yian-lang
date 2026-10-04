@@ -23,28 +23,56 @@ fn token_kind(token: Token&) -> str {
     }
 }
 
+// 按词法诊断消息归类观察输出的错误码，未匹配的消息使用通用码。
 pub fn lex_code(message: str) -> str {
-    if message.contains("Unterminated block comment") { return "E101"; }
+    if message.contains("Unterminated block comment") {
+        return "E101";
+    }
+
     if message.contains("Unterminated string literal") ||
     message.contains("Unterminated character literal") ||
-    message.contains("Unterminated byte literal") { return "E105"; }
-    if message.contains("f-string") { return "E102"; }
-    if message.contains("unterminated") && message.contains("escape") { return "E103"; }
+    message.contains("Unterminated byte literal") {
+        return "E105";
+    }
+
+    if message.contains("f-string") {
+        return "E102";
+    }
+
+    if message.contains("unterminated") && message.contains("escape") {
+        return "E103";
+    }
+
     return "E199";
 }
 
+// 按语法诊断消息归类观察输出的错误码，将保留字错误单独归类。
 pub fn parse_code(message: str) -> str {
     if message.starts_with("End of token stream reached") || message.contains("end of file") ||
-    message.contains("<eof>") { return "E201"; }
-    if message.starts_with("Expected") { return "E202"; }
-    if message.starts_with("Unexpected") { return "E203"; }
-    if message.contains("reserved") { return "E204"; }
+    message.contains("<eof>") {
+        return "E201";
+    }
+
+    if message.starts_with("Expected") {
+        return "E202";
+    }
+
+    if message.starts_with("Unexpected") {
+        return "E203";
+    }
+
+    if message.contains("reserved") {
+        return "E204";
+    }
+
     return "E299";
 }
 
 fn append_token(output: Writer&, token: Token&) {
-    output.begin_object(); output.key("kind");
+    output.begin_object();
+    output.key("kind");
     output.write_string(token_kind(token));
+
     output.key("value");
     match token.kind() {
         Integer(_, _) => {
@@ -59,6 +87,7 @@ fn append_token(output: Writer&, token: Token&) {
         },
         _ => output.write_string(token.value()),
     }
+
     output.key("suffix");
     output.write_string(token.suffix());
     token.span.write_json(output);
@@ -66,13 +95,18 @@ fn append_token(output: Writer&, token: Token&) {
 }
 
 pub fn append_token_file(output: Writer&, path: str, tokens: Vec<Token>&) {
-    output.begin_object(); output.key("path");
+    output.begin_object();
+    output.key("path");
     output.write_string(path);
-    output.key("tokens"); output.begin_array();
+
+    output.key("tokens");
+    output.begin_array();
     let index: u64 = 0u64;
+
     while index < tokens.len() {
         append_token(output, &tokens[index]);
         index += 1u64;
     }
-    output.end_array(); output.end_object();
+    output.end_array();
+    output.end_object();
 }

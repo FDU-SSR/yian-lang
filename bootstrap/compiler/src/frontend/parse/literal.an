@@ -7,6 +7,7 @@ from std.core.string import String;
 
 pub fn parse_literal(parser: Parser&) -> Option<Literal> {
     parser.ready()?;
+
     let token = parser.peek();
     let span = token.span;
     let literal = match token.kind() {
@@ -26,7 +27,10 @@ pub fn parse_literal(parser: Parser&) -> Option<Literal> {
             Literal.Boolean(value=parser.arena.alloc_bool_literal(
                 BoolLiteralData(value=*kind == KeywordKind.True_), span))
         },
-        _ => { parser.error("Expected literal", span); return Option<Literal>.None; },
+        _ => {
+            parser.error("Expected literal", span);
+            return Option<Literal>.None;
+        },
     };
     parser.advance();
     Option<Literal>.Some(val=literal)

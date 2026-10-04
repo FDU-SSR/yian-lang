@@ -491,6 +491,7 @@ impl FloatSuffix {
     }
 }
 
+// 文本类 token 拥有字符串存储，数值类 token 保存解码后的值和后缀。
 pub enum TokenPayload {
     Keyword { value: KeywordKind },
     Identifier { value: String },
@@ -528,12 +529,15 @@ impl Token {
     }
 
     pub fn kind() -> TokenPayload& { return &self.payload; }
+
     pub fn is_keyword_token() -> bool {
         match self.payload { Keyword(_) => true, _ => false }
     }
+
     pub fn is_punctuator() -> bool {
         match self.payload { Punctuator(_) => true, _ => false }
     }
+
     pub fn value() -> str {
         match self.payload {
             Keyword(value) => value.spelling(),
@@ -549,6 +553,7 @@ impl Token {
             EndOfFile => "<eof>",
         }
     }
+
     pub fn suffix() -> str {
         match self.payload {
             Integer(_, suffix) => suffix.spelling(),
@@ -556,42 +561,49 @@ impl Token {
             _ => "",
         }
     }
+
     pub fn integer_value() -> u64 {
         match self.payload {
             Integer(value, _) => return value,
             _ => @panic("token is not an integer literal"),
         }
     }
+
     pub fn float_value() -> f64 {
         match self.payload {
             Float(value, _) => return value,
             _ => @panic("token is not a float literal"),
         }
     }
+
     pub fn is_eof() -> bool {
         match self.payload {
             EndOfFile => true,
             _ => false,
         }
     }
+
     pub fn is_keyword(word: KeywordKind) -> bool {
         match self.payload {
             Keyword(value) => value == word,
             _ => false,
         }
     }
+
     pub fn is_punct(word: PunctuatorKind) -> bool {
         match self.payload {
             Punctuator(value) => value == word,
             _ => false,
         }
     }
+
     pub fn is_identifier() -> bool {
         match self.payload {
             Identifier => true,
             _ => false,
         }
     }
+
     pub fn is_integer() -> bool {
         match self.payload {
             Integer => true,
@@ -606,8 +618,10 @@ impl Drop for Token {
     }
 }
 
+// Vec 的释放不递归清理元素，必须先释放每个 token 持有的文本。
 pub fn drop_tokens(tokens: Vec<Token>&) {
     let index: u64 = 0u64;
+
     while index < tokens.len() {
         tokens[index].drop();
         index += 1u64;

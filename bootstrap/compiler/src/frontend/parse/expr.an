@@ -7,7 +7,7 @@ from compiler.frontend.parse.parameters import parse_parameters, parse_return_ty
 from compiler.frontend.parse.pattern import parse_binding_pattern, parse_match_pattern;
 from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.type import parse_generic_arg, parse_type;
-from compiler.frontend.source import Position;
+from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
@@ -15,33 +15,67 @@ from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
+// 只吸收左结合力不低于 min_bp 的运算符；右结合力决定递归边界。
 fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
     parser.ready()?;
+
     let lhs = prefix(parser)?;
+
     loop {
         let candidate = BinaryOperator.from_token(parser.peek());
         let lbp = match candidate { Some(op) => op.lbp(), None => 0 };
-        if lbp == 0 || lbp < min_bp { break; }
+        if lbp == 0 || lbp < min_bp {
+            break;
+        }
+
         let op = *candidate.unwrap();
         parser.advance();
         let rhs = expr_bp(parser, op.rbp())?;
         lhs = parser.arena.alloc_expr(ExprData.Binary(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
     }
+
     Option<Expr&>.Some(val=lhs)
 }
+
 pub fn parse_expr(parser: Parser&) -> Option<Expr&> { expr_bp(parser, 1) }
+
 fn prefix(parser: Parser&) -> Option<Expr&> {
     let candidate = UnaryOperator.from_token(parser.peek());
     if candidate.is_some() {
         let op = *candidate.unwrap();
         parser.advance();
+        // 解引用和取地址的操作数不包含普通一元运算符层级以下的表达式。
         let rbp = if op == UnaryOperator.Deref || op == UnaryOperator.AddrOf { 14 } else { 13 };
         let operand = expr_bp(parser, rbp)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Unary(op=op, operand=operand), operand.span));
     }
-    if parser.at_keyword(KeywordKind.Dyn) { return dyn_expr(parser); }
+
+    if parser.at_keyword(KeywordKind.Dyn) {
+        return dyn_expr(parser);
+    }
     postfix(parser, primary(parser)?)
 }
+
+// 表达式失败后探测类型形式；不是完整类型时重新解析以保留表达式诊断。
+fn diagnose_dyn_initializer(parser: Parser&, mark: u64, span: Span) {
+    parser.clear_error();
+    parser.reset(mark);
+    parse_type(parser);
+
+    let complete_type = !parser.failed() && (
+        parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.RParen) ||
+        parser.at_punct(PunctuatorKind.Comma) || parser.at_punct(PunctuatorKind.RBracket) ||
+        parser.at_punct(PunctuatorKind.RBrace) || parser.at_end());
+    if complete_type {
+        parser.error("'dyn[n]' initializes every element from a value, not a type: write 'dyn[n] <initial value>'", span);
+        return;
+    }
+
+    parser.clear_error();
+    parser.reset(mark);
+    parse_expr(parser);
+}
+
 fn dyn_expr(parser: Parser&) -> Option<Expr&> {
     parser.take_keyword(KeywordKind.Dyn);
     let span = parser.peek().span;
@@ -49,165 +83,292 @@ fn dyn_expr(parser: Parser&) -> Option<Expr&> {
         let value = parse_expr(parser)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.DynValue(value=value), span));
     }
+
     parser.advance();
     let size = parse_expr(parser)?;
     parser.take_punct(PunctuatorKind.RBracket);
     parser.ready()?;
+
     let mark = parser.mark();
     let initializer_span = parser.peek().span;
     let value = parse_expr(parser);
     if value.is_none() {
-        parser.clear_error();
-        parser.reset(mark);
-        parse_type(parser);
-        if !parser.failed() && (parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.RParen) ||
-            parser.at_punct(PunctuatorKind.Comma) || parser.at_punct(PunctuatorKind.RBracket) ||
-            parser.at_punct(PunctuatorKind.RBrace) || parser.at_end()) {
-            parser.error("'dyn[n]' initializes every element from a value, not a type: write 'dyn[n] <initial value>'", initializer_span);
-        } else { parser.clear_error(); parser.reset(mark); parse_expr(parser); }
+        diagnose_dyn_initializer(parser, mark, initializer_span);
         return Option<Expr&>.None;
     }
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.DynBuffer(size=size, element=*value.unwrap()), span))
 }
+
+// 按起始 token 分派基本表达式；调用、成员和下标后缀由 postfix 处理。
 fn primary(parser: Parser&) -> Option<Expr&> {
     parser.ready()?;
+
     let token = parser.peek();
     let span = token.span;
     if parser.at_punct(PunctuatorKind.LBrace) {
         let body = parse_block(parser)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Block(block=body), body.span));
     }
-    if parser.at_keyword(KeywordKind.Return) { return return_expr(parser); }
-    if parser.at_keyword(KeywordKind.If) { return if_expr(parser); }
-    if parser.at_keyword(KeywordKind.Comptime) { return comptime_if(parser); }
+
+    if parser.at_keyword(KeywordKind.Return) {
+        return return_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.If) {
+        return if_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Comptime) {
+        return comptime_if(parser);
+    }
+
     if parser.at_keyword(KeywordKind.IsRawMode) {
         parser.advance();
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.CompileConfig(name=String.from(&"IS_RAW_MODE")), span));
     }
-    if parser.at_keyword(KeywordKind.For) { return for_expr(parser); }
-    if parser.at_keyword(KeywordKind.While) { return while_expr(parser); }
-    if parser.at_keyword(KeywordKind.Loop) { return loop_expr(parser); }
-    if parser.at_keyword(KeywordKind.Match) { return match_expr(parser); }
-    if parser.at_keyword(KeywordKind.Break) { return break_expr(parser); }
+
+    if parser.at_keyword(KeywordKind.For) {
+        return for_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.While) {
+        return while_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Loop) {
+        return loop_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Match) {
+        return match_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Break) {
+        return break_expr(parser);
+    }
+
     if parser.at_keyword(KeywordKind.Continue) {
         parser.advance();
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Continue, span));
     }
-    if parser.at_keyword(KeywordKind.Assert) { return assert_expr(parser); }
+
+    if parser.at_keyword(KeywordKind.Assert) {
+        return assert_expr(parser);
+    }
+
     if parser.at_keyword(KeywordKind.Del) {
         parser.advance();
         let target = parse_expr(parser)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Delete(target=target), span));
     }
-    if parser.at_keyword(KeywordKind.Let) { return let_expr(parser); }
-    if parser.at_punct(PunctuatorKind.Pipe) || parser.at_punct(PunctuatorKind.PipePipe) { return closure_expr(parser); }
-    if parser.at_punct(PunctuatorKind.At) { return builtin_expr(parser); }
+
+    if parser.at_keyword(KeywordKind.Let) {
+        return let_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.Pipe) || parser.at_punct(PunctuatorKind.PipePipe) {
+        return closure_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.At) {
+        return builtin_expr(parser);
+    }
+
     let is_literal = match token.kind() {
         Integer | Float | Character | StringLiteral => true,
         Keyword(kind) => *kind == KeywordKind.True_ || *kind == KeywordKind.False_,
         FStrStart => return fstring(parser),
         _ => false,
     };
+
     if is_literal {
         let literal = parse_literal(parser)?;
         return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Literal(literal=literal), span));
     }
+
     if token.is_identifier() || parser.keyword_token() {
-        let name = parser.identifier()?;
-        if parser.at_punct(PunctuatorKind.LAngle) {
-            parser.advance();
-            let generics = Vec<GenericArgument>.new();
-            defer generics.drop();
-            while !parser.at_punct(PunctuatorKind.RAngle) {
-                generics.push(parse_generic_arg(parser)?);
-                if !parser.at_punct(PunctuatorKind.Comma) { break; }
-                parser.advance();
-            }
-            parser.take_punct(PunctuatorKind.RAngle);
-            parser.ready()?;
-            return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=generics.take()), name.span));
-        }
-        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Identifier(name=name), name.span));
+        return identifier_expr(parser);
     }
+
     if parser.at_punct(PunctuatorKind.LParen) {
-        parser.advance();
-        if parser.at_punct(PunctuatorKind.RParen) {
-            parser.advance();
-            return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=Vec<Expr&>.new()), span));
-        }
-        let first = parse_expr(parser)?;
-        if !parser.at_punct(PunctuatorKind.Comma) {
-            parser.take_punct(PunctuatorKind.RParen);
-            parser.ready()?;
-            return Option<Expr&>.Some(val=first);
-        }
-        parser.advance();
-        let members = Vec<Expr&>.new();
-        defer members.drop();
-        members.push(first);
-        while !parser.at_punct(PunctuatorKind.RParen) {
-            members.push(parse_expr(parser)?);
-            if !parser.at_punct(PunctuatorKind.Comma) { break; }
-            parser.advance();
-        }
-        parser.take_punct(PunctuatorKind.RParen);
-        parser.ready()?;
-        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=members.take()), span));
+        return parenthesized_expr(parser);
     }
-    if parser.at_punct(PunctuatorKind.LBracket) { return array_expr(parser); }
+
+    if parser.at_punct(PunctuatorKind.LBracket) {
+        return array_expr(parser);
+    }
     parser.error(if token.is_eof() { "Unexpected end of file while parsing expression" } else { "Unexpected token while parsing expression" }, span);
     Option<Expr&>.None
 }
+
+fn identifier_expr(parser: Parser&) -> Option<Expr&> {
+    let name = parser.identifier()?;
+    if !parser.at_punct(PunctuatorKind.LAngle) {
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Identifier(name=name), name.span));
+    }
+
+    parser.advance();
+    let generics = Vec<GenericArgument>.new();
+    defer generics.drop();
+
+    while !parser.at_punct(PunctuatorKind.RAngle) {
+        generics.push(parse_generic_arg(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RAngle);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=generics.take()), name.span))
+}
+
+// 空括号表示单元值；逗号区分元组与保留原节点的分组表达式。
+fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.peek().span;
+    parser.advance();
+    if parser.at_punct(PunctuatorKind.RParen) {
+        parser.advance();
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=Vec<Expr&>.new()), span));
+    }
+
+    let first = parse_expr(parser)?;
+    if !parser.at_punct(PunctuatorKind.Comma) {
+        parser.take_punct(PunctuatorKind.RParen);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=first);
+    }
+
+    parser.advance();
+    let members = Vec<Expr&>.new();
+    defer members.drop();
+    members.push(first);
+
+    while !parser.at_punct(PunctuatorKind.RParen) {
+        members.push(parse_expr(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=members.take()), span))
+}
+
+// 首个元素后的分号表示重复构造；逗号表示逐项列举。
 fn array_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_punct(PunctuatorKind.LBracket);
     let members = Vec<Expr&>.new();
     defer members.drop();
-    if !parser.at_punct(PunctuatorKind.RBracket) {
-        let first = parse_expr(parser)?;
-        if parser.at_punct(PunctuatorKind.Semicolon) {
-            parser.advance();
-            let count = parse_expr(parser)?;
-            parser.take_punct(PunctuatorKind.RBracket);
-            parser.ready()?;
-            return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ArrayRepeat(element=first, count=count), span));
-        }
-        members.push(first);
-        if parser.at_punct(PunctuatorKind.Comma) {
-            parser.advance();
-            while !parser.at_punct(PunctuatorKind.RBracket) {
-                members.push(parse_expr(parser)?);
-                if !parser.at_punct(PunctuatorKind.Comma) { break; }
-                parser.advance();
+    if parser.at_punct(PunctuatorKind.RBracket) {
+        parser.take_punct(PunctuatorKind.RBracket);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Array(elements=members.take()), span));
+    }
+
+    let first = parse_expr(parser)?;
+    if parser.at_punct(PunctuatorKind.Semicolon) {
+        parser.advance();
+        let count = parse_expr(parser)?;
+        parser.take_punct(PunctuatorKind.RBracket);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ArrayRepeat(element=first, count=count), span));
+    }
+
+    members.push(first);
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+
+        while !parser.at_punct(PunctuatorKind.RBracket) {
+            members.push(parse_expr(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
             }
+            parser.advance();
         }
     }
+
     parser.take_punct(PunctuatorKind.RBracket);
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Array(elements=members.take()), span))
 }
+
 fn argument(parser: Parser&) -> Option<Argument&> {
     let name = Option<Identifier&>.None;
-    if parser.peek().is_identifier() && parser.peek_at(1).is_punct(PunctuatorKind.Equal) { name = parser.identifier(); parser.advance(); }
+    if parser.peek().is_identifier() && parser.peek_at(1).is_punct(PunctuatorKind.Equal) {
+        name = parser.identifier();
+        parser.advance();
+    }
+
     let value = parse_expr(parser)?;
     let span = match name { Some(ident) => ident.span + value.span, None => value.span };
     Option<Argument&>.Some(val=parser.arena.alloc_argument(ArgumentData(name=name, value=value), span))
 }
+
 fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
     parser.take_punct(PunctuatorKind.LParen);
     parser.ready()?;
+
     let args = Vec<Argument&>.new();
     defer args.drop();
+
     while !parser.at_punct(PunctuatorKind.RParen) {
         args.push(argument(parser)?);
-        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
         parser.advance();
     }
+
     parser.take_punct(PunctuatorKind.RParen);
     parser.ready()?;
+
     Option<Vec<Argument&>>.Some(val=args.take())
 }
+
+// 点后泛型参数要求方法调用；没有泛型和实参列表时生成字段访问。
+fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
+    parser.advance();
+    let name = parser.identifier()?;
+    let generics = Vec<TypeSyntax&>.new();
+    defer generics.drop();
+    let generic_call = parser.at_punct(PunctuatorKind.LAngle);
+    if generic_call {
+        parser.advance();
+
+        while !parser.at_punct(PunctuatorKind.RAngle) {
+            generics.push(parse_type(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
+            parser.advance();
+        }
+
+        parser.take_punct(PunctuatorKind.RAngle);
+        parser.ready()?;
+    }
+
+    if !generic_call && !parser.at_punct(PunctuatorKind.LParen) {
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.FieldAccess(receiver=receiver, field_name=name), receiver.span));
+    }
+
+    let args = arguments(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=name, generics=generics.take(), args=args), receiver.span))
+}
+
 fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
     let expr = initial;
+
     loop {
         if parser.at_punct(PunctuatorKind.Question) {
             let span = expr.span + parser.take_punct(PunctuatorKind.Question);
@@ -216,35 +377,21 @@ fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
             let args = arguments(parser)?;
             expr = parser.arena.alloc_expr(ExprData.Call(callee=expr, args=args), expr.span + parser.previous_span());
         } elif parser.at_punct(PunctuatorKind.Dot) {
-            parser.advance();
-            let name = parser.identifier()?;
-            let generics = Vec<TypeSyntax&>.new();
-            defer generics.drop();
-            let generic_call = parser.at_punct(PunctuatorKind.LAngle);
-            if generic_call {
-                parser.advance();
-                while !parser.at_punct(PunctuatorKind.RAngle) {
-                    generics.push(parse_type(parser)?);
-                    if !parser.at_punct(PunctuatorKind.Comma) { break; }
-                    parser.advance();
-                }
-                parser.take_punct(PunctuatorKind.RAngle);
-                parser.ready()?;
-            }
-            if generic_call || parser.at_punct(PunctuatorKind.LParen) {
-                let args = arguments(parser)?;
-                expr = parser.arena.alloc_expr(ExprData.MethodCall(receiver=expr, method_name=name, generics=generics.take(), args=args), expr.span);
-            } else { expr = parser.arena.alloc_expr(ExprData.FieldAccess(receiver=expr, field_name=name), expr.span); }
+            expr = member_expr(parser, expr)?;
         } elif parser.at_punct(PunctuatorKind.LBracket) {
             parser.advance();
             let index = parse_expr(parser)?;
             parser.take_punct(PunctuatorKind.RBracket);
             parser.ready()?;
             expr = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Index, left=expr, right=index), expr.span);
-        } else { break; }
+        } else {
+            break;
+        }
     }
+
     Option<Expr&>.Some(val=expr)
 }
+
 fn builtin_expr(parser: Parser&) -> Option<Expr&> {
     let start = parser.take_punct(PunctuatorKind.At);
     let name = parser.identifier()?;
@@ -258,29 +405,42 @@ fn builtin_expr(parser: Parser&) -> Option<Expr&> {
         parser.error(message.as_str(), name.span);
         return Option<Expr&>.None;
     }
+
     let types = Vec<TypeSyntax&>.new();
     defer types.drop();
     let end = name.span;
     if parser.at_punct(PunctuatorKind.LAngle) {
         parser.advance();
+
         while !parser.at_punct(PunctuatorKind.RAngle) {
             types.push(parse_type(parser)?);
-            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
             parser.advance();
         }
         end = parser.take_punct(PunctuatorKind.RAngle);
         parser.ready()?;
     }
+
     let args = Vec<Argument&>.new();
     defer args.drop();
-    if parser.at_punct(PunctuatorKind.LParen) { args = arguments(parser)?; end = parser.previous_span(); }
+    if parser.at_punct(PunctuatorKind.LParen) {
+        args = arguments(parser)?;
+        end = parser.previous_span();
+    }
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Builtin(kind=*kind.unwrap(), type_args=types.take(), args=args.take()), start + end))
 }
+
+// 保留分号与 defer 的语法节点，并记录右花括号位置。
 pub fn parse_block(parser: Parser&) -> Option<Block&> {
     let open = parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let stmts = Vec<Expr&>.new();
     defer stmts.drop();
+
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
         let statement = if parser.at_keyword(KeywordKind.Defer) {
             let span = parser.take_keyword(KeywordKind.Defer);
@@ -290,146 +450,225 @@ pub fn parse_block(parser: Parser&) -> Option<Block&> {
             parser.arena.alloc_expr(ExprData.Defer(action=action), span)
         } else {
             let expr = parse_expr(parser)?;
-            if parser.at_punct(PunctuatorKind.Semicolon) { parser.advance(); parser.arena.alloc_expr(ExprData.Semi(expr=expr), expr.span) } else { expr }
+            if parser.at_punct(PunctuatorKind.Semicolon) {
+                parser.advance();
+                parser.arena.alloc_expr(ExprData.Semi(expr=expr), expr.span)
+            } else { expr }
         };
         stmts.push(statement);
     }
+
     let close = parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Block&>.Some(val=parser.arena.alloc_block(BlockData(stmts=stmts.take(), end=Option<Position>.Some(val=close.end), parameter_bindings=Vec<PatternLet&>.new()), open))
 }
+
 fn return_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Return);
     let value = if parser.at_punct(PunctuatorKind.Semicolon) { Option<Expr&>.None } else { parse_expr(parser) };
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Return(expr=value), span))
 }
+
 fn condition(parser: Parser&) -> Option<Condition> {
-    if !parser.at_keyword(KeywordKind.Let) { return Option<Condition>.Some(val=Condition.Expression(value=parse_expr(parser)?)); }
+    if !parser.at_keyword(KeywordKind.Let) {
+        return Option<Condition>.Some(val=Condition.Expression(value=parse_expr(parser)?));
+    }
+
     let span = parser.take_keyword(KeywordKind.Let);
     let pattern = parse_binding_pattern(parser)?;
     parser.take_punct(PunctuatorKind.Equal);
     parser.ready()?;
+
     let value = parse_expr(parser)?;
     Option<Condition>.Some(val=Condition.Let(value=parser.arena.alloc_let_condition(LetConditionData(pattern=pattern, value=value), span)))
 }
+
 fn if_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.If);
     let cond = condition(parser)?;
     let yes = parse_block(parser)?;
     let branches = Vec<ElifBranch&>.new();
     defer branches.drop();
+
     while parser.at_keyword(KeywordKind.Elif) {
         let span = parser.take_keyword(KeywordKind.Elif);
         let cond = condition(parser)?;
         let body = parse_block(parser)?;
         branches.push(parser.arena.alloc_elif_branch(ElifBranchData(condition=cond, body=body), span));
     }
+
     let no = Option<Block&>.None;
-    if parser.at_keyword(KeywordKind.Else) { parser.advance(); no = parse_block(parser); }
+    if parser.at_keyword(KeywordKind.Else) {
+        parser.advance();
+        no = parse_block(parser);
+    }
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.If(condition=cond, then_branch=yes, elif_branches=branches.take(), else_branch=no), span))
 }
+
 fn comptime_if(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Comptime);
     parser.take_keyword(KeywordKind.If);
     parser.ready()?;
+
     let cond = parse_expr(parser)?;
     let yes = parse_block(parser)?;
     parser.take_keyword(KeywordKind.Else);
     parser.ready()?;
+
     let no = parse_block(parser)?;
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ComptimeIf(condition=cond, then_branch=yes, else_branch=no), span))
 }
+
 fn for_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.For);
     let pattern = parse_binding_pattern(parser)?;
     parser.take_keyword(KeywordKind.In);
     parser.ready()?;
+
     let iterable = parse_expr(parser)?;
     let body = parse_block(parser)?;
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.For(pattern=pattern, iterable=iterable, body=body), span))
 }
+
 fn while_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.While);
     let cond = condition(parser)?;
     let body = parse_block(parser)?;
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.While(condition=cond, body=body), span))
 }
+
 fn loop_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Loop);
     let body = parse_block(parser)?;
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Loop(body=body), span))
 }
+
 fn match_arm(parser: Parser&) -> Option<MatchArm&> {
-    if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+    }
+
     let pattern = parse_match_pattern(parser)?;
     let guard = Option<Expr&>.None;
-    if parser.at_keyword(KeywordKind.If) { parser.advance(); guard = parse_expr(parser); parser.ready()?; }
+    if parser.at_keyword(KeywordKind.If) {
+        parser.advance();
+        guard = parse_expr(parser);
+        parser.ready()?;
+    }
     parser.take_punct(PunctuatorKind.FatArrow);
     parser.ready()?;
+
     let body = if parser.at_punct(PunctuatorKind.LBrace) { parse_block(parser)? } else {
         let value = parse_expr(parser)?;
         let stmts = Vec<Expr&>.new();
         stmts.push(value);
         parser.arena.alloc_block(BlockData(stmts=stmts, end=Option<Position>.None, parameter_bindings=Vec<PatternLet&>.new()), value.span)
     };
-    if parser.at_punct(PunctuatorKind.Comma) { parser.advance(); }
+
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+    }
+
     Option<MatchArm&>.Some(val=parser.arena.alloc_match_arm(MatchArmData(pattern=pattern, guard=guard, body=body, origin=MatchArmOrigin.User), pattern.span))
 }
+
 fn match_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Match);
     let value = parse_expr(parser)?;
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let arms = Vec<MatchArm&>.new();
     defer arms.drop();
-    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { arms.push(match_arm(parser)?); }
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        arms.push(match_arm(parser)?);
+    }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Match(expr=value, arms=arms.take()), span))
 }
+
 fn break_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Break);
     let value = if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.RBrace) { Option<Expr&>.None } else { parse_expr(parser) };
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Break(expr=value), span))
 }
+
 fn assert_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Assert);
     let cond = parse_expr(parser)?;
     let message = Option<Expr&>.None;
-    if parser.at_punct(PunctuatorKind.Colon) { parser.advance(); message = parse_expr(parser); }
+    if parser.at_punct(PunctuatorKind.Colon) {
+        parser.advance();
+        message = parse_expr(parser);
+    }
     parser.ready()?;
+
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Assert(condition=cond, message=message), span))
 }
+
 fn let_expr(parser: Parser&) -> Option<Expr&> {
     let span = parser.take_keyword(KeywordKind.Let);
     let pattern = parse_binding_pattern(parser)?;
-    let ty = if parser.at_punct(PunctuatorKind.Colon) { parser.advance(); parse_type(parser)? } elif parser.at_punct(PunctuatorKind.Equal) { parser.arena.alloc_type_syntax(TypeData.DeducedType, pattern.span) } else { parser.error("Expected ':' or '=' after let pattern", parser.peek().span); return Option<Expr&>.None; };
+    let ty = if parser.at_punct(PunctuatorKind.Colon) {
+        parser.advance();
+        parse_type(parser)?
+    } elif parser.at_punct(PunctuatorKind.Equal) { parser.arena.alloc_type_syntax(TypeData.DeducedType, pattern.span) } else {
+        parser.error("Expected ':' or '=' after let pattern", parser.peek().span);
+        return Option<Expr&>.None;
+    };
+
     let init = Option<Expr&>.None;
-    if parser.at_punct(PunctuatorKind.Equal) { parser.advance(); init = parse_expr(parser); parser.ready()?; }
+    if parser.at_punct(PunctuatorKind.Equal) {
+        parser.advance();
+        init = parse_expr(parser);
+        parser.ready()?;
+    }
+
     let no = Option<Block&>.None;
-    if parser.at_keyword(KeywordKind.Else) { parser.advance(); no = parse_block(parser); parser.ready()?; }
+    if parser.at_keyword(KeywordKind.Else) {
+        parser.advance();
+        no = parse_block(parser);
+        parser.ready()?;
+    }
+
     if no.is_none() {
         match &pattern.data {
             NamePattern(name) => return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.VarDecl(name=*name, var_type=ty, init_expr=init), pattern.span)),
             _ => {},
         }
     }
-    if init.is_none() { parser.error("A destructuring let requires an initializer", pattern.span); return Option<Expr&>.None; }
+
+    if init.is_none() {
+        parser.error("A destructuring let requires an initializer", pattern.span);
+        return Option<Expr&>.None;
+    }
+
     let binding = parser.arena.alloc_pattern_let(PatternLetData(pattern=pattern, var_type=ty, init_expr=*init.unwrap(), else_branch=no, is_parameter=false), span);
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.PatternLet(binding=binding), span))
 }
+
 fn method(parser: Parser&, receiver: Expr&, name: str) -> Expr& {
     let ident = parser.named_identifier(receiver.span, name, false);
     parser.arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=ident, generics=Vec<TypeSyntax&>.new(), args=Vec<Argument&>.new()), receiver.span)
 }
+
 fn fstring(parser: Parser&) -> Option<Expr&> {
     let span = parser.peek().span;
     parser.advance();
     let segments = Vec<Expr&>.new();
     defer segments.drop();
+
     loop {
         let token = parser.peek();
         match token.kind() {
@@ -438,43 +677,81 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
                 segments.push(parser.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), token.span));
                 parser.advance();
             },
-            FStrExprBegin => { parser.advance(); let value = parse_expr(parser)?; parser.advance(); segments.push(method(parser, value, "to_string")); },
-            FStrEnd => { parser.advance(); break; },
-            _ => { parser.error("Unexpected token in f-string", token.span); return Option<Expr&>.None; },
+            FStrExprBegin => {
+                parser.advance();
+                let value = parse_expr(parser)?;
+                parser.advance();
+                segments.push(method(parser, value, "to_string"));
+            },
+            FStrEnd => {
+                parser.advance();
+                break;
+            },
+            _ => {
+                parser.error("Unexpected token in f-string", token.span);
+                return Option<Expr&>.None;
+            },
         }
     }
+
     let name = parser.named_identifier(span, "String", false);
     let ty = parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=Vec<GenericArgument>.new()), span);
     let result = method(parser, ty, "new");
     let i: u64 = 0;
-    while i < segments.len() { result = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Add, left=result, right=segments[i]), span); i += 1; }
+
+    while i < segments.len() {
+        result = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Add, left=result, right=segments[i]), span);
+        i += 1;
+    }
+
     Option<Expr&>.Some(val=result)
 }
-fn closure_expr(parser: Parser&) -> Option<Expr&> {
-    let span = parser.peek().span;
+
+// 捕获初始化使用高于按位或的结合力，避免吞掉捕获列表的闭合竖线。
+fn closure_captures(parser: Parser&) -> Option<Vec<CaptureItem&>> {
     let captures = Vec<CaptureItem&>.new();
     defer captures.drop();
-    if parser.at_punct(PunctuatorKind.PipePipe) { parser.advance(); } else {
-        parser.take_punct(PunctuatorKind.Pipe);
-        parser.ready()?;
-        if parser.at_punct(PunctuatorKind.Pipe) { parser.advance(); } else {
-            loop {
-                let name = parser.identifier()?;
-                parser.take_punct(PunctuatorKind.Equal);
-                parser.ready()?;
-                let value = expr_bp(parser, 5)?;
-                captures.push(parser.arena.alloc_capture_item(CaptureItemData(name=name, expr=value), name.span + value.span));
-                if !parser.at_punct(PunctuatorKind.Comma) { break; }
-                parser.advance();
-            }
-            parser.take_punct(PunctuatorKind.Pipe);
-            parser.ready()?;
-        }
+    if parser.at_punct(PunctuatorKind.PipePipe) {
+        parser.advance();
+        return Option<Vec<CaptureItem&>>.Some(val=captures.take());
     }
+
+    parser.take_punct(PunctuatorKind.Pipe);
+    parser.ready()?;
+    if parser.at_punct(PunctuatorKind.Pipe) {
+        parser.advance();
+        return Option<Vec<CaptureItem&>>.Some(val=captures.take());
+    }
+
+    loop {
+        let name = parser.identifier()?;
+        parser.take_punct(PunctuatorKind.Equal);
+        parser.ready()?;
+
+        let value = expr_bp(parser, 5)?;
+        captures.push(parser.arena.alloc_capture_item(CaptureItemData(name=name, expr=value), name.span + value.span));
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.Pipe);
+    parser.ready()?;
+
+    Option<Vec<CaptureItem&>>.Some(val=captures.take())
+}
+
+fn closure_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.peek().span;
+    let captures = closure_captures(parser)?;
+    defer captures.drop();
+
     let params = parse_parameters(parser)?;
     defer params.drop();
     let ret = parse_return_type(parser);
     parser.ready()?;
+
     let body = parse_block(parser)?;
     Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ClosureExpr(captures=captures.take(), params=params.take(), return_type=ret, body=body), span + body.span))
 }

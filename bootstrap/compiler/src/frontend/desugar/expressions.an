@@ -9,6 +9,7 @@ struct ExpressionLowerer { arena: AstArena& }
 impl AstRewriter for ExpressionLowerer {
     pub fn rewrite_expr(node: Expr&) -> Expr& {
         rewrite_expr_children(node, self);
+
         match &node.data {
             Binary(op, left, right) => {
                 if *op == BinaryOperator.Range {
@@ -18,6 +19,7 @@ impl AstRewriter for ExpressionLowerer {
                     let callee = name_expr(self.arena, identifier(self.arena, node.span, "Range", false));
                     return self.arena.alloc_expr(ExprData.Call(callee=callee, args=args), node.span);
                 }
+
                 if *op == BinaryOperator.In {
                     let args = Vec<Argument&>.new();
                     args.push(argument(self.arena, *left));
@@ -29,6 +31,8 @@ impl AstRewriter for ExpressionLowerer {
         node
     }
 }
+
+// 范围表达式构造 Range；成员判断将右操作数作为 contains 的接收者。
 pub fn lower_expressions(tree: AstTree&) {
     let pass = ExpressionLowerer(arena=&tree.arena);
     tree.root = pass.rewrite_program(tree.root);

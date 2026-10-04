@@ -7,7 +7,7 @@ from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-// AST nodes pair syntax data with source spans; node references are non-owning, and the arena owns allocations.
+// AST 节点包含语法数据和源码范围；节点引用不拥有存储，所有节点由 arena 持有。
 pub struct Node<D> { pub data: D, pub span: Span }
 impl<D> Drop for Node<D> if D: Drop {
     pub fn drop() { self.data.drop(); }
@@ -45,10 +45,10 @@ pub typedef ConstExpr = Node<ConstExprData>;
 pub typedef Pattern = Node<PatternData>;
 pub typedef Item = Node<ItemData>;
 
-// Literal category tags without values or source spans.
+// 字面量类别标记不包含值和源码范围。
 pub enum LiteralKind { Integer, Float, Character, StringLiteral, Boolean }
 
-// A union of literal node references shared by literal expressions and patterns.
+// 字面量表达式和模式共用的字面量节点引用。
 pub enum Literal {
     Integer { value: IntLiteral& },
     Float { value: FloatLiteral& },
@@ -57,43 +57,43 @@ pub enum Literal {
     Boolean { value: BoolLiteral& },
 }
 
-// Range pattern endpoints: a pair of integer or character literals, not a range expression.
+// 范围模式的端点是一对整数或字符字面量，不是范围表达式。
 pub enum RangeBounds {
     Integer { lower: IntLiteral&, upper: IntLiteral& },
     Character { lower: CharLiteral&, upper: CharLiteral& },
 }
 
-// An if / while condition: an expression or a let pattern-matching condition.
+// if 和 while 的条件是普通表达式或 let 模式匹配。
 pub enum Condition {
     Expression { value: Expr& },
     Let { value: LetCondition& },
 }
 
-// A generic instantiation argument: type syntax or a constant expression.
+// 泛型实例化的实参是类型语法或常量表达式。
 pub enum GenericArgument {
     Type { value: TypeSyntax& },
     Constant { value: ConstExpr& },
 }
 
-// A generic declaration parameter: a type parameter or a constant parameter.
+// 泛型声明的形参是类型参数或常量参数。
 pub enum GenericParam {
     Type { value: TypeGenericParam& },
     Constant { value: ConstGenericParam& },
 }
 
-// A function or method parameter: a named parameter or a typed destructuring pattern.
+// 函数和方法的形参是命名参数或带类型的解构模式。
 pub enum Parameter {
     Named { value: VarInfo& },
     Pattern { value: PatternParam& },
 }
 
-// A trait method member: a declaration without a body or a definition with a default body.
+// trait 方法成员是不带函数体的声明或带默认函数体的定义。
 pub enum TraitMember {
     Declaration { value: MethodDecl& },
     Definition { value: MethodDef& },
 }
 
-// Constructor pattern arguments: none, positional patterns, or named field patterns.
+// 构造模式的实参可以为空、位置模式或命名字段模式。
 pub enum PatternArguments {
     None,
     Positional { values: Vec<Pattern&> },
@@ -107,6 +107,7 @@ impl Literal {
             Character => LiteralKind.Character, StringLiteral => LiteralKind.StringLiteral, Boolean => LiteralKind.Boolean
         }
     }
+
     pub fn span() -> Span {
         match self {
             Integer(value) => value.span, Float(value) => value.span,
@@ -115,86 +116,149 @@ impl Literal {
     }
 }
 impl Drop for PatternArguments {
-    pub fn drop() { match self { Positional(values) => values.drop(), Named(values) => values.drop(), None => {} } }
+    pub fn drop() {
+        match self {
+            Positional(values) => values.drop(), Named(values) => values.drop(), None => {}
+        }
+    }
 }
 
 pub struct IdentifierData { pub name: String, pub synthetic: bool }
-impl Drop for IdentifierData { pub fn drop() { self.name.drop(); } }
+impl Drop for IdentifierData {
+    pub fn drop() { self.name.drop(); }
+}
 
 pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix }
-impl Drop for IntLiteralData { pub fn drop() {} }
+impl Drop for IntLiteralData {
+    pub fn drop() {}
+}
 
 pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix }
-impl Drop for FloatLiteralData { pub fn drop() {} }
+impl Drop for FloatLiteralData {
+    pub fn drop() {}
+}
 
 pub struct CharLiteralData { pub value: String }
-impl Drop for CharLiteralData { pub fn drop() { self.value.drop(); } }
+impl Drop for CharLiteralData {
+    pub fn drop() { self.value.drop(); }
+}
 
 pub struct StrLiteralData { pub value: String }
-impl Drop for StrLiteralData { pub fn drop() { self.value.drop(); } }
+impl Drop for StrLiteralData {
+    pub fn drop() { self.value.drop(); }
+}
 
 pub struct BoolLiteralData { pub value: bool }
-impl Drop for BoolLiteralData { pub fn drop() {} }
+impl Drop for BoolLiteralData {
+    pub fn drop() {}
+}
 
 pub struct ProgramData { pub items: Vec<Item&> }
-impl Drop for ProgramData { pub fn drop() { self.items.drop(); } }
+impl Drop for ProgramData {
+    pub fn drop() { self.items.drop(); }
+}
 
 pub struct BlockData { pub stmts: Vec<Expr&>, pub end: Option<Position>, pub parameter_bindings: Vec<PatternLet&> }
-impl Drop for BlockData { pub fn drop() { self.stmts.drop(); self.parameter_bindings.drop(); } }
+impl Drop for BlockData {
+    pub fn drop() {
+        self.stmts.drop();
+        self.parameter_bindings.drop();
+    }
+}
 
 pub struct ArgumentData { pub name: Option<Identifier&>, pub value: Expr& }
-impl Drop for ArgumentData { pub fn drop() {} }
+impl Drop for ArgumentData {
+    pub fn drop() {}
+}
 
 pub struct VarInfoData { pub name: Identifier&, pub var_type: TypeSyntax& }
-impl Drop for VarInfoData { pub fn drop() {} }
+impl Drop for VarInfoData {
+    pub fn drop() {}
+}
 
 pub struct PatternParamData { pub pattern: Pattern&, pub var_type: TypeSyntax& }
-impl Drop for PatternParamData { pub fn drop() {} }
+impl Drop for PatternParamData {
+    pub fn drop() {}
+}
 
 pub struct PatternLetData { pub pattern: Pattern&, pub var_type: TypeSyntax&, pub init_expr: Expr&, pub else_branch: Option<Block&>, pub is_parameter: bool }
-impl Drop for PatternLetData { pub fn drop() {} }
+impl Drop for PatternLetData {
+    pub fn drop() {}
+}
 
 pub struct LetConditionData { pub pattern: Pattern&, pub value: Expr& }
-impl Drop for LetConditionData { pub fn drop() {} }
+impl Drop for LetConditionData {
+    pub fn drop() {}
+}
 
 pub struct ElifBranchData { pub condition: Condition, pub body: Block& }
-impl Drop for ElifBranchData { pub fn drop() {} }
+impl Drop for ElifBranchData {
+    pub fn drop() {}
+}
 
 pub struct MatchArmData { pub pattern: Pattern&, pub guard: Option<Expr&>, pub body: Block&, pub origin: MatchArmOrigin }
-impl Drop for MatchArmData { pub fn drop() {} }
+impl Drop for MatchArmData {
+    pub fn drop() {}
+}
 
 pub struct AttrData { pub kind: AttrKind }
-impl Drop for AttrData { pub fn drop() {} }
+impl Drop for AttrData {
+    pub fn drop() {}
+}
 
 pub struct TypeGenericParamData { pub name: Identifier& }
-impl Drop for TypeGenericParamData { pub fn drop() {} }
+impl Drop for TypeGenericParamData {
+    pub fn drop() {}
+}
 
 pub struct ConstGenericParamData { pub name: Identifier&, pub const_type: TypeSyntax& }
-impl Drop for ConstGenericParamData { pub fn drop() {} }
+impl Drop for ConstGenericParamData {
+    pub fn drop() {}
+}
 
 pub struct FieldInfoData { pub attrs: Vec<Attr&>, pub name: Identifier&, pub field_type: TypeSyntax& }
-impl Drop for FieldInfoData { pub fn drop() { self.attrs.drop(); } }
+impl Drop for FieldInfoData {
+    pub fn drop() { self.attrs.drop(); }
+}
 
 pub struct VariantInfoData { pub name: Identifier&, pub fields: Vec<VarInfo&> }
-impl Drop for VariantInfoData { pub fn drop() { self.fields.drop(); } }
+impl Drop for VariantInfoData {
+    pub fn drop() { self.fields.drop(); }
+}
 
 pub struct MethodDeclData { pub attrs: Vec<Attr&>, pub name: Identifier&, pub generics: Vec<GenericParam>, pub params: Vec<Parameter>, pub ret_type: Option<TypeSyntax&> }
-impl Drop for MethodDeclData { pub fn drop() { self.attrs.drop(); self.generics.drop(); self.params.drop(); } }
+impl Drop for MethodDeclData {
+    pub fn drop() {
+        self.attrs.drop();
+        self.generics.drop();
+        self.params.drop();
+    }
+}
 
 pub struct MethodDefData { pub decl: MethodDecl&, pub body: Block& }
-impl Drop for MethodDefData { pub fn drop() {} }
+impl Drop for MethodDefData {
+    pub fn drop() {}
+}
 
 pub struct ExternFuncDeclData { pub name: Identifier&, pub params: Vec<VarInfo&>, pub ret_type: Option<TypeSyntax&> }
-impl Drop for ExternFuncDeclData { pub fn drop() { self.params.drop(); } }
+impl Drop for ExternFuncDeclData {
+    pub fn drop() { self.params.drop(); }
+}
 
 pub struct ImplConditionData { pub name: Identifier&, pub traits: Vec<TypeSyntax&> }
-impl Drop for ImplConditionData { pub fn drop() { self.traits.drop(); } }
+impl Drop for ImplConditionData {
+    pub fn drop() { self.traits.drop(); }
+}
 
 pub struct CaptureItemData { pub name: Identifier&, pub expr: Expr& }
-impl Drop for CaptureItemData { pub fn drop() {} }
+impl Drop for CaptureItemData {
+    pub fn drop() {}
+}
 
 pub struct FieldPatternData { pub name: Identifier&, pub pattern: Pattern& }
-impl Drop for FieldPatternData { pub fn drop() {} }
+impl Drop for FieldPatternData {
+    pub fn drop() {}
+}
 
 // 限定 trait 调用的类型来源；实参和返回类型由语义分析阶段解析。
 pub enum TypeSource {
@@ -203,7 +267,7 @@ pub enum TypeSource {
     CallableReturnType,
 }
 
-// Expression and statement syntax data; child expressions reference only Expr nodes.
+// 表达式和语句的语法数据；子表达式统一引用 Expr 节点。
 pub enum ExprData {
     Identifier { name: Identifier& },
     Literal { literal: Literal },
@@ -249,26 +313,47 @@ impl Drop for ExprData {
             Binary(op, left, right) => {},
             Unary(op, operand) => {},
             TryExpr(operand) => {},
-            TraitCall(trait, self_type, trait_args, method_name, args) => { trait_args.drop(); args.drop(); },
-            Call(callee, args) => { args.drop(); },
-            MethodCall(receiver, method_name, generics, args) => { generics.drop(); args.drop(); },
+            TraitCall(trait, self_type, trait_args, method_name, args) => {
+                trait_args.drop();
+                args.drop();
+            },
+            Call(callee, args) => {
+                args.drop();
+            },
+            MethodCall(receiver, method_name, generics, args) => {
+                generics.drop();
+                args.drop();
+            },
             FieldAccess(receiver, field_name) => {},
-            Builtin(kind, type_args, args) => { type_args.drop(); args.drop(); },
-            TypeItem(name, generics) => { generics.drop(); },
+            Builtin(kind, type_args, args) => {
+                type_args.drop();
+                args.drop();
+            },
+            TypeItem(name, generics) => {
+                generics.drop();
+            },
             Block(block) => {},
-            Tuple(elements) => { elements.drop(); },
-            Array(elements) => { elements.drop(); },
+            Tuple(elements) => {
+                elements.drop();
+            },
+            Array(elements) => {
+                elements.drop();
+            },
             ArrayRepeat(element, count) => {},
             DynValue(value) => {},
             DynBuffer(size, element) => {},
             VarDecl(name, var_type, init_expr) => {},
             PatternLet(binding) => {},
-            If(condition, then_branch, elif_branches, else_branch) => { elif_branches.drop(); },
+            If(condition, then_branch, elif_branches, else_branch) => {
+                elif_branches.drop();
+            },
             ComptimeIf(condition, then_branch, else_branch) => {},
             For(pattern, iterable, body) => {},
             While(condition, body) => {},
             Loop(body) => {},
-            Match(expr, arms) => { arms.drop(); },
+            Match(expr, arms) => {
+                arms.drop();
+            },
             Return(expr) => {},
             Break(expr) => {},
             Continue => {},
@@ -276,13 +361,18 @@ impl Drop for ExprData {
             Assert(condition, message) => {},
             Delete(target) => {},
             Semi(expr) => {},
-            ClosureExpr(captures, params, return_type, body) => { captures.drop(); params.drop(); },
-            CompileConfig(name) => { name.drop(); },
+            ClosureExpr(captures, params, return_type, body) => {
+                captures.drop();
+                params.drop();
+            },
+            CompileConfig(name) => {
+                name.drop();
+            },
         }
     }
 }
 
-// Type syntax in source code, not a semantic type produced by type checking.
+// 源码中的类型语法，与类型检查产生的语义类型分开表示。
 pub enum TypeData {
     IntType { signed: bool, width: u64 },
     FloatType { width: u64 },
@@ -315,21 +405,29 @@ impl Drop for TypeData {
             VoidType => {},
             NeverType => {},
             DeducedType => {},
-            CScalarType(name) => { name.drop(); },
+            CScalarType(name) => {
+                name.drop();
+            },
             CPtrType(pointee_type) => {},
             NamedType(name) => {},
             ArrayType(element_type, size) => {},
-            TupleType(element_types) => { element_types.drop(); },
+            TupleType(element_types) => {
+                element_types.drop();
+            },
             PointerType(pointee_type) => {},
             RefType(pointee_type) => {},
             SliceType(element_type) => {},
-            InstanceType(base, generic_args) => { generic_args.drop(); },
-            FunctionType(param_types, return_type) => { param_types.drop(); },
+            InstanceType(base, generic_args) => {
+                generic_args.drop();
+            },
+            FunctionType(param_types, return_type) => {
+                param_types.drop();
+            },
         }
     }
 }
 
-// Constant expressions in type syntax: integer literals, constant parameters, and arithmetic combinations.
+// 类型语法中的常量表达式包含整数字面量、常量参数及其运算组合。
 pub enum ConstExprData {
     LiteralConstExpr { literal: IntLiteral& },
     GenericConstExpr { name: Identifier& },
@@ -348,7 +446,7 @@ impl Drop for ConstExprData {
     }
 }
 
-// Pattern syntax for matching and destructuring, represented separately from expressions.
+// 匹配和解构的模式语法，与表达式分开表示。
 pub enum PatternData {
     WildcardPattern,
     LiteralPattern { literal: Literal },
@@ -369,15 +467,24 @@ impl Drop for PatternData {
             RangePattern(bounds) => {},
             NamePattern(name) => {},
             BindPattern(name, inner) => {},
-            OrPattern(alternatives) => { alternatives.drop(); },
-            ConstructPattern(name, qualifier, arguments, rest) => { arguments.drop(); },
-            TuplePattern(elements) => { elements.drop(); },
-            SequencePattern(prefix, suffix, rest) => { prefix.drop(); suffix.drop(); },
+            OrPattern(alternatives) => {
+                alternatives.drop();
+            },
+            ConstructPattern(name, qualifier, arguments, rest) => {
+                arguments.drop();
+            },
+            TuplePattern(elements) => {
+                elements.drop();
+            },
+            SequencePattern(prefix, suffix, rest) => {
+                prefix.drop();
+                suffix.drop();
+            },
         }
     }
 }
 
-// File-level declaration syntax, including imports, functions, types, traits, and impls.
+// 文件级声明的语法，包含导入、函数、类型、trait 和 impl。
 pub enum ItemData {
     Import { paths: Vec<Identifier&>, target: Identifier&, alias: Option<Identifier&>, end: Option<Position> },
     Alias { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, target: TypeSyntax& },
@@ -394,16 +501,49 @@ pub enum ItemData {
 impl Drop for ItemData {
     pub fn drop() {
         match self {
-            Import(paths, target, alias, end) => { paths.drop(); },
-            Alias(attrs, name, generics, target) => { attrs.drop(); generics.drop(); },
-            FuncDef(attrs, name, generics, params, ret_type, body) => { attrs.drop(); generics.drop(); params.drop(); },
-            ConstDef(attrs, name, const_type, value) => { attrs.drop(); },
-            OpaqueTypeDef(attrs, name) => { attrs.drop(); },
-            ExternBlock(attrs, abi, functions) => { attrs.drop(); abi.drop(); functions.drop(); },
-            StructDef(attrs, name, generics, fields) => { attrs.drop(); generics.drop(); fields.drop(); },
-            EnumDef(attrs, name, generics, variants) => { attrs.drop(); generics.drop(); variants.drop(); },
-            TraitDef(attrs, name, generics, items) => { attrs.drop(); generics.drop(); items.drop(); },
-            Impl(generics, target, trait_type, items, conditions) => { generics.drop(); items.drop(); conditions.drop(); },
+            Import(paths, target, alias, end) => {
+                paths.drop();
+            },
+            Alias(attrs, name, generics, target) => {
+                attrs.drop();
+                generics.drop();
+            },
+            FuncDef(attrs, name, generics, params, ret_type, body) => {
+                attrs.drop();
+                generics.drop();
+                params.drop();
+            },
+            ConstDef(attrs, name, const_type, value) => {
+                attrs.drop();
+            },
+            OpaqueTypeDef(attrs, name) => {
+                attrs.drop();
+            },
+            ExternBlock(attrs, abi, functions) => {
+                attrs.drop();
+                abi.drop();
+                functions.drop();
+            },
+            StructDef(attrs, name, generics, fields) => {
+                attrs.drop();
+                generics.drop();
+                fields.drop();
+            },
+            EnumDef(attrs, name, generics, variants) => {
+                attrs.drop();
+                generics.drop();
+                variants.drop();
+            },
+            TraitDef(attrs, name, generics, items) => {
+                attrs.drop();
+                generics.drop();
+                items.drop();
+            },
+            Impl(generics, target, trait_type, items, conditions) => {
+                generics.drop();
+                items.drop();
+                conditions.drop();
+            },
         }
     }
 }

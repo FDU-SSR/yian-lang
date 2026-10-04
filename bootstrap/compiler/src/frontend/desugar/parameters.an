@@ -8,8 +8,10 @@ from compiler.frontend.desugar.build import identifier, name_expr;
 
 struct ParameterNormalizer { arena: AstArena& }
 impl ParameterNormalizer {
+    // 模式形参通过隐藏名称接收实参，原模式作为函数体的参数绑定保存。
     fn normalize(params: Vec<Parameter>&, body: Block&) {
         let i: u64 = 0;
+
         while i < params.len() {
             let parameter = params[i];
             match parameter {
@@ -20,8 +22,10 @@ impl ParameterNormalizer {
                     digits.drop();
                     let hidden = identifier(self.arena, value.span, label.as_str(), true);
                     label.drop();
+
                     let info = self.arena.alloc_var_info(VarInfoData(name=hidden, var_type=value.data.var_type), value.span);
                     params[i] = Parameter.Named(value=info);
+
                     let init = name_expr(self.arena, hidden);
                     let binding = self.arena.alloc_pattern_let(PatternLetData(pattern=value.data.pattern, var_type=value.data.var_type,
                         init_expr=init, else_branch=Option<Block&>.None, is_parameter=true), value.span);
@@ -35,19 +39,26 @@ impl ParameterNormalizer {
 }
 impl AstVisitor for ParameterNormalizer {
     pub fn enter_item(node: Item&) -> bool {
-        match &node.data { FuncDef(_, _, _, params, _, body) => self.normalize(params, *body), _ => {} }
+        match &node.data {
+            FuncDef(_, _, _, params, _, body) => self.normalize(params, *body), _ => {}
+        }
         true
     }
+
     pub fn enter_expr(node: Expr&) -> bool {
-        match &node.data { ClosureExpr(_, params, _, body) => self.normalize(params, *body), _ => {} }
+        match &node.data {
+            ClosureExpr(_, params, _, body) => self.normalize(params, *body), _ => {}
+        }
         true
     }
+
     pub fn enter_method_def(node: MethodDef&) -> bool {
         self.normalize(&node.data.decl.data.params, node.data.body);
         true
     }
 }
 
+// 就地处理函数、方法和闭包的模式形参；参数绑定先于函数体语句遍历。
 pub fn normalize_parameters(tree: AstTree&) {
     let pass = ParameterNormalizer(arena=&tree.arena);
     walk_program(tree.root, &pass);

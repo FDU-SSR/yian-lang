@@ -18,6 +18,7 @@ from std.core.vec import Vec;
 fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {
     let values = Vec<Attr&>.new();
     defer values.drop();
+
     loop {
         let span = parser.peek().span;
         let kind = if parser.at_keyword(KeywordKind.Pub) {
@@ -29,11 +30,22 @@ fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {
                 parser.ready()?;
                 AttrKind.PubFfi
             } else { AttrKind.Pub }
-        } elif parser.at_keyword(KeywordKind.Ffi) { parser.advance(); AttrKind.Ffi } elif parser.at_keyword(KeywordKind.Static) { parser.advance(); AttrKind.Static } else { break; };
+        } elif parser.at_keyword(KeywordKind.Ffi) {
+            parser.advance();
+            AttrKind.Ffi
+        } elif parser.at_keyword(KeywordKind.Static) {
+            parser.advance();
+            AttrKind.Static
+        } else {
+            break;
+        };
         values.push(parser.arena.alloc_attr(AttrData(kind=kind), span));
     }
+
     Option<Vec<Attr&>>.Some(val=values.take())
 }
+
+// 将两种导入语法展开为逐目标声明；同一 from 导入的目标共享结束位置。
 fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
     let span = parser.peek().span;
     let direct = parser.at_keyword(KeywordKind.Import);
@@ -41,33 +53,60 @@ fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
     let paths = Vec<Identifier&>.new();
     defer paths.drop();
     paths.push(parser.identifier()?);
-    while parser.at_punct(PunctuatorKind.Dot) { parser.advance(); paths.push(parser.identifier()?); }
+
+    while parser.at_punct(PunctuatorKind.Dot) {
+        parser.advance();
+        paths.push(parser.identifier()?);
+    }
+
     if direct {
         let target = *paths.pop().unwrap();
         let alias = Option<Identifier&>.None;
-        if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); parser.ready()?; }
+        if parser.at_keyword(KeywordKind.As) {
+            parser.advance();
+            alias = parser.identifier();
+            parser.ready()?;
+        }
+
         let end = match alias { Some(value) => value.span, None => target.span };
-        if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) { end = parser.peek().span; parser.advance(); }
+        if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.Comma) {
+            end = parser.peek().span;
+            parser.advance();
+        }
         items.push(parser.arena.alloc_item(ItemData.Import(paths=paths.take(), target=target, alias=alias, end=Option<Position>.Some(val=end.end)), span));
     } else {
         parser.take_keyword(KeywordKind.Import);
         parser.ready()?;
+
         let targets = Vec<Identifier&>.new();
         defer targets.drop();
         let aliases = Vec<Option<Identifier&>>.new();
         defer aliases.drop();
+
         loop {
             targets.push(parser.identifier()?);
             let alias = Option<Identifier&>.None;
-            if parser.at_keyword(KeywordKind.As) { parser.advance(); alias = parser.identifier(); parser.ready()?; }
+            if parser.at_keyword(KeywordKind.As) {
+                parser.advance();
+                alias = parser.identifier();
+                parser.ready()?;
+            }
             aliases.push(alias);
-            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
             parser.advance();
         }
+
         let last = targets.len() - 1;
         let end = match &aliases[last] { Some(value) => value.span, None => targets[last].span };
-        if parser.at_punct(PunctuatorKind.Semicolon) { end = parser.peek().span; parser.advance(); }
+        if parser.at_punct(PunctuatorKind.Semicolon) {
+            end = parser.peek().span;
+            parser.advance();
+        }
+
         let i: u64 = 0;
+
         while i < targets.len() {
             let copied = Vec<Identifier&>.new();
             copied.extend_from_slice(paths.as_slice());
@@ -75,37 +114,98 @@ fn imports(parser: Parser&, items: Vec<Item&>&) -> Option<bool> {
             i += 1;
         }
     }
+
     Option<bool>.Some(val=true)
 }
+
 fn program(parser: Parser&) -> Option<Program&> {
     let items = Vec<Item&>.new();
     defer items.drop();
+
     while !parser.at_end() {
         let attrs = attributes(parser)?;
         defer attrs.drop();
         if parser.at_keyword(KeywordKind.Import) || parser.at_keyword(KeywordKind.From) {
-            if attrs.len() != 0 { parser.error("Attributes are not allowed on import statements", attrs[0u64].span); return Option<Program&>.None; }
+            if attrs.len() != 0 {
+                parser.error("Attributes are not allowed on import statements", attrs[0u64].span);
+                return Option<Program&>.None;
+            }
             imports(parser, &items)?;
             continue;
         }
-        let item = if parser.at_keyword(KeywordKind.Typedef) { alias_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Opaque) { opaque_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Extern) { extern_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Struct) { struct_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Enum) { enum_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Trait) { trait_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Fn) { function_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Const) { const_item(parser, &attrs)? } elif parser.at_keyword(KeywordKind.Impl) {
-            if attrs.len() != 0 { parser.error("Attributes are not allowed on impl blocks", attrs[0u64].span); return Option<Program&>.None; }
-            impl_item(parser)?
-        } else {
-            let message = String.from(&"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '");
-            defer message.drop();
-            message.push_str(parser.peek().value());
-            message.push('\'');
-            parser.error(message.as_str(), parser.peek().span);
-            return Option<Program&>.None;
-        };
+
+        let item = declaration(parser, &attrs)?;
         items.push(item);
     }
+
     let span = parser.peek().span;
-    if items.len() != 0 { span = items[0u64].span; let i: u64 = 1; while i < items.len() { span += items[i].span; i += 1; } }
+    if items.len() != 0 {
+        span = items[0u64].span;
+        let i: u64 = 1;
+
+        while i < items.len() {
+            span += items[i].span;
+            i += 1;
+        }
+    }
+
     Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=items.take()), span))
 }
+
+// 完成声明解析，并将节点所有权或首个错误从解析器交给调用方。
 pub fn parse_program(parser: Parser&) -> Result<AstTree, ParseError> { parser.finish(program(parser)) }
+
+// 属性由具体声明接收；impl 声明不接受属性。
+fn declaration(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
+    if parser.at_keyword(KeywordKind.Typedef) {
+        return alias_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Opaque) {
+        return opaque_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Extern) {
+        return extern_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Struct) {
+        return struct_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Enum) {
+        return enum_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Trait) {
+        return trait_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Fn) {
+        return function_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Const) {
+        return const_item(parser, attrs);
+    }
+
+    if parser.at_keyword(KeywordKind.Impl) {
+        if attrs.len() != 0 {
+            parser.error("Attributes are not allowed on impl blocks", attrs[0u64].span);
+            return Option<Item&>.None;
+        }
+
+        return impl_item(parser);
+    }
+
+    let message = String.from(&"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '");
+    defer message.drop();
+    message.push_str(parser.peek().value());
+    message.push('\'');
+    parser.error(message.as_str(), parser.peek().span);
+    Option<Item&>.None
+}
+
 fn alias_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -113,23 +213,30 @@ fn alias_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     defer generics.drop();
     parser.take_punct(PunctuatorKind.Equal);
     parser.ready()?;
+
     let target = parse_type(parser)?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Alias(attrs=attrs.take(), name=name, generics=generics.take(), target=target), name.span))
 }
+
 fn opaque_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Opaque);
     parser.take_keyword(KeywordKind.Type);
     parser.ready()?;
+
     let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.OpaqueTypeDef(attrs=attrs.take(), name=name), span))
 }
+
 fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.take_keyword(KeywordKind.Fn);
     parser.ready()?;
+
     let name = parser.identifier()?;
     let params = parse_named_parameters(parser)?;
     defer params.drop();
@@ -137,45 +244,63 @@ fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.ready()?;
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
+
     Option<ExternFuncDecl&>.Some(val=parser.arena.alloc_extern_func_decl(ExternFuncDeclData(name=name, params=params.take(), ret_type=ret), name.span))
 }
+
 fn extern_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Extern);
     let token = parser.peek();
     let accepted = match token.kind() { StringLiteral => token.value() == "C", _ => false };
-    if !accepted { parser.error("Only extern C is supported", token.span); return Option<Item&>.None; }
+    if !accepted {
+        parser.error("Only extern C is supported", token.span);
+        return Option<Item&>.None;
+    }
     parser.advance();
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let functions = Vec<ExternFuncDecl&>.new();
     defer functions.drop();
-    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { functions.push(extern_function(parser)?); }
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        functions.push(extern_function(parser)?);
+    }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=attrs.take(), abi=String.from(&"C"), functions=functions.take()), span))
 }
+
 fn const_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Const);
     let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Colon);
     parser.ready()?;
+
     let ty = parse_type(parser)?;
     parser.take_punct(PunctuatorKind.Equal);
     parser.ready()?;
+
     let value = parse_expr(parser)?;
     let end = parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ConstDef(attrs=attrs.take(), name=name, const_type=ty, value=value), span + end))
 }
+
 fn field_info(parser: Parser&) -> Option<FieldInfo&> {
     let attrs = attributes(parser)?;
     defer attrs.drop();
     let name = parser.identifier()?;
     parser.take_punct(PunctuatorKind.Colon);
     parser.ready()?;
+
     let ty = parse_type(parser)?;
     Option<FieldInfo&>.Some(val=parser.arena.alloc_field_info(FieldInfoData(attrs=attrs.take(), name=name, field_type=ty), name.span))
 }
+
 fn struct_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -183,33 +308,46 @@ fn struct_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let fields = Vec<FieldInfo&>.new();
     defer fields.drop();
+
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
         fields.push(field_info(parser)?);
-        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
         parser.advance();
     }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.StructDef(attrs=attrs.take(), name=name, generics=generics.take(), fields=fields.take()), name.span))
 }
+
 fn variant_info(parser: Parser&) -> Option<VariantInfo&> {
     let name = parser.identifier()?;
     let fields = Vec<VarInfo&>.new();
     defer fields.drop();
     if parser.at_punct(PunctuatorKind.LBrace) {
         parser.advance();
+
         while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
             fields.push(parse_var_info(parser)?);
-            if !parser.at_punct(PunctuatorKind.Comma) { break; }
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
             parser.advance();
         }
+
         parser.take_punct(PunctuatorKind.RBrace);
         parser.ready()?;
     }
+
     Option<VariantInfo&>.Some(val=parser.arena.alloc_variant_info(VariantInfoData(name=name, fields=fields.take()), name.span))
 }
+
 fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -217,22 +355,30 @@ fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let variants = Vec<VariantInfo&>.new();
     defer variants.drop();
+
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
         variants.push(variant_info(parser)?);
-        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
         parser.advance();
     }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.EnumDef(attrs=attrs.take(), name=name, generics=generics.take(), variants=variants.take()), name.span))
 }
+
 fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
     let attrs = attributes(parser)?;
     defer attrs.drop();
     parser.take_keyword(KeywordKind.Fn);
     parser.ready()?;
+
     let name = parser.identifier()?;
     let generics = parse_generics(parser)?;
     defer generics.drop();
@@ -240,27 +386,39 @@ fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
     defer params.drop();
     let ret = parse_return_type(parser);
     parser.ready()?;
+
     Option<MethodDecl&>.Some(val=parser.arena.alloc_method_decl(MethodDeclData(attrs=attrs.take(), name=name, generics=generics.take(), params=params.take(), ret_type=ret), name.span))
 }
+
 fn method_def(parser: Parser&, decl: MethodDecl&) -> Option<MethodDef&> {
     let body = parse_block(parser)?;
     Option<MethodDef&>.Some(val=parser.arena.alloc_method_def(MethodDefData(decl=decl, body=body), decl.span))
 }
+
 fn trait_member(parser: Parser&) -> Option<TraitMember> {
     let decl = method_decl(parser)?;
-    if parser.at_punct(PunctuatorKind.LBrace) { return Option<TraitMember>.Some(val=TraitMember.Definition(value=method_def(parser, decl)?)); }
+    if parser.at_punct(PunctuatorKind.LBrace) {
+        return Option<TraitMember>.Some(val=TraitMember.Definition(value=method_def(parser, decl)?));
+    }
+
     let i: u64 = 0;
+
     while i < decl.data.params.len() {
         match &decl.data.params[i] {
-            Pattern(value) => { parser.error("Parameter patterns require a method body", value.span); return Option<TraitMember>.None; },
+            Pattern(value) => {
+                parser.error("Parameter patterns require a method body", value.span);
+                return Option<TraitMember>.None;
+            },
             Named(_) => {},
         }
         i += 1;
     }
     parser.take_punct(PunctuatorKind.Semicolon);
     parser.ready()?;
+
     Option<TraitMember>.Some(val=TraitMember.Declaration(value=decl))
 }
+
 fn trait_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -268,49 +426,81 @@ fn trait_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     defer generics.drop();
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let members = Vec<TraitMember>.new();
     defer members.drop();
-    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { members.push(trait_member(parser)?); }
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        members.push(trait_member(parser)?);
+    }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.TraitDef(attrs=attrs.take(), name=name, generics=generics.take(), items=members.take()), name.span))
 }
+
 fn impl_conditions(parser: Parser&) -> Option<Vec<ImplCondition&>> {
     let conditions = Vec<ImplCondition&>.new();
     defer conditions.drop();
+
     loop {
         let name = parser.identifier()?;
         parser.take_punct(PunctuatorKind.Colon);
         parser.ready()?;
+
         let traits = Vec<TypeSyntax&>.new();
         defer traits.drop();
         traits.push(parse_type(parser)?);
-        while parser.at_punct(PunctuatorKind.Plus) { parser.advance(); traits.push(parse_type(parser)?); }
+
+        while parser.at_punct(PunctuatorKind.Plus) {
+            parser.advance();
+            traits.push(parse_type(parser)?);
+        }
         conditions.push(parser.arena.alloc_impl_condition(ImplConditionData(name=name, traits=traits.take()), name.span));
-        if !parser.at_punct(PunctuatorKind.Comma) { break; }
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
         parser.advance();
     }
+
     Option<Vec<ImplCondition&>>.Some(val=conditions.take())
 }
+
 fn impl_item(parser: Parser&) -> Option<Item&> {
     let span = parser.take_keyword(KeywordKind.Impl);
     let generics = parse_generics(parser)?;
     defer generics.drop();
     let target = parse_type(parser)?;
     let trait = Option<TypeSyntax&>.None;
-    if parser.at_keyword(KeywordKind.For) { parser.advance(); trait = Option<TypeSyntax&>.Some(val=target); target = parse_type(parser)?; }
+    if parser.at_keyword(KeywordKind.For) {
+        parser.advance();
+        trait = Option<TypeSyntax&>.Some(val=target);
+        target = parse_type(parser)?;
+    }
+
     let conditions = Vec<ImplCondition&>.new();
     defer conditions.drop();
-    if parser.at_keyword(KeywordKind.If) { parser.advance(); conditions = impl_conditions(parser)?; }
+    if parser.at_keyword(KeywordKind.If) {
+        parser.advance();
+        conditions = impl_conditions(parser)?;
+    }
     parser.take_punct(PunctuatorKind.LBrace);
     parser.ready()?;
+
     let methods = Vec<MethodDef&>.new();
     defer methods.drop();
-    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() { methods.push(method_def(parser, method_decl(parser)?)?); }
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        methods.push(method_def(parser, method_decl(parser)?)?);
+    }
+
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
+
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.Impl(generics=generics.take(), target=target, trait_type=trait, items=methods.take(), conditions=conditions.take()), span))
 }
+
 fn function_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.advance();
     let name = parser.identifier()?;
@@ -320,6 +510,7 @@ fn function_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     defer params.drop();
     let ret = parse_return_type(parser);
     parser.ready()?;
+
     let body = parse_block(parser)?;
     Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.FuncDef(attrs=attrs.take(), name=name, generics=generics.take(), params=params.take(), ret_type=ret, body=body), name.span))
 }

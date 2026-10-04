@@ -4,34 +4,55 @@ from std.core.drop import Drop;
 from std.core.ops import Index;
 from std.core.vec import Vec;
 
-// Full chunks never grow, so node addresses survive all subsequent allocations.
+// 满块不扩容；分配只写入有空位的块或新块，因此已分配节点的地址稳定。
 struct NodePool<N> { chunks: Vec<Vec<N>>, count: u64 }
 impl<N> NodePool<N> {
     static fn new() -> Self { Self(chunks=Vec<Vec<N>>.new(), count=0) }
+
     fn alloc(value: N) -> N& {
+        // 每块容量同时受字节预算和节点数量上限约束，至少容纳一个节点。
         let capacity = 16384u64 / @sizeof<N>;
-        if capacity == 0 { capacity = 1; }
-        if capacity > 256 { capacity = 256; }
+        if capacity == 0 {
+            capacity = 1;
+        }
+
+        if capacity > 256 {
+            capacity = 256;
+        }
+
         if self.chunks.len() == 0 || self.chunks[self.chunks.len() - 1].len() == capacity {
             self.chunks.push(Vec<N>.with_capacity(capacity));
         }
+
         let chunk = &self.chunks[self.chunks.len() - 1];
         let index = chunk.len();
         chunk.push(value);
         self.count += 1;
         return &chunk[index];
     }
+
+    // 释放节点内部拥有的字符串和容器；节点存储由 release_chunks 统一释放。
     fn drop_payloads() {
         let i: u64 = 0;
+
         while i < self.chunks.len() {
             let j: u64 = 0;
-            while j < self.chunks[i].len() { self.chunks[i][j].drop(); j += 1; }
+
+            while j < self.chunks[i].len() {
+                self.chunks[i][j].drop();
+                j += 1;
+            }
             i += 1;
         }
     }
+
     fn release_chunks() {
         let i: u64 = 0;
-        while i < self.chunks.len() { self.chunks[i].drop(); i += 1; }
+
+        while i < self.chunks.len() {
+            self.chunks[i].drop();
+            i += 1;
+        }
         self.chunks.drop();
     }
 }
@@ -106,99 +127,131 @@ impl AstArena {
             item=NodePool<Item>.new(),
         );
     }
+
     pub fn len() -> u64 {
         return self.identifier.count + self.int_literal.count + self.float_literal.count + self.char_literal.count + self.str_literal.count + self.bool_literal.count + self.program.count + self.block.count + self.argument.count + self.var_info.count + self.pattern_param.count + self.pattern_let.count + self.let_condition.count + self.elif_branch.count + self.match_arm.count + self.attr.count + self.type_generic_param.count + self.const_generic_param.count + self.field_info.count + self.variant_info.count + self.method_decl.count + self.method_def.count + self.extern_func_decl.count + self.impl_condition.count + self.capture_item.count + self.field_pattern.count + self.expr.count + self.type_syntax.count + self.const_expr.count + self.pattern.count + self.item.count;
     }
+
     pub fn alloc_identifier(data: IdentifierData, span: Span) -> Identifier& {
         return self.identifier.alloc(Identifier(data=data, span=span));
     }
+
     pub fn alloc_int_literal(data: IntLiteralData, span: Span) -> IntLiteral& {
         return self.int_literal.alloc(IntLiteral(data=data, span=span));
     }
+
     pub fn alloc_float_literal(data: FloatLiteralData, span: Span) -> FloatLiteral& {
         return self.float_literal.alloc(FloatLiteral(data=data, span=span));
     }
+
     pub fn alloc_char_literal(data: CharLiteralData, span: Span) -> CharLiteral& {
         return self.char_literal.alloc(CharLiteral(data=data, span=span));
     }
+
     pub fn alloc_str_literal(data: StrLiteralData, span: Span) -> StrLiteral& {
         return self.str_literal.alloc(StrLiteral(data=data, span=span));
     }
+
     pub fn alloc_bool_literal(data: BoolLiteralData, span: Span) -> BoolLiteral& {
         return self.bool_literal.alloc(BoolLiteral(data=data, span=span));
     }
+
     pub fn alloc_program(data: ProgramData, span: Span) -> Program& {
         return self.program.alloc(Program(data=data, span=span));
     }
+
     pub fn alloc_block(data: BlockData, span: Span) -> Block& {
         return self.block.alloc(Block(data=data, span=span));
     }
+
     pub fn alloc_argument(data: ArgumentData, span: Span) -> Argument& {
         return self.argument.alloc(Argument(data=data, span=span));
     }
+
     pub fn alloc_var_info(data: VarInfoData, span: Span) -> VarInfo& {
         return self.var_info.alloc(VarInfo(data=data, span=span));
     }
+
     pub fn alloc_pattern_param(data: PatternParamData, span: Span) -> PatternParam& {
         return self.pattern_param.alloc(PatternParam(data=data, span=span));
     }
+
     pub fn alloc_pattern_let(data: PatternLetData, span: Span) -> PatternLet& {
         return self.pattern_let.alloc(PatternLet(data=data, span=span));
     }
+
     pub fn alloc_let_condition(data: LetConditionData, span: Span) -> LetCondition& {
         return self.let_condition.alloc(LetCondition(data=data, span=span));
     }
+
     pub fn alloc_elif_branch(data: ElifBranchData, span: Span) -> ElifBranch& {
         return self.elif_branch.alloc(ElifBranch(data=data, span=span));
     }
+
     pub fn alloc_match_arm(data: MatchArmData, span: Span) -> MatchArm& {
         return self.match_arm.alloc(MatchArm(data=data, span=span));
     }
+
     pub fn alloc_attr(data: AttrData, span: Span) -> Attr& {
         return self.attr.alloc(Attr(data=data, span=span));
     }
+
     pub fn alloc_type_generic_param(data: TypeGenericParamData, span: Span) -> TypeGenericParam& {
         return self.type_generic_param.alloc(TypeGenericParam(data=data, span=span));
     }
+
     pub fn alloc_const_generic_param(data: ConstGenericParamData, span: Span) -> ConstGenericParam& {
         return self.const_generic_param.alloc(ConstGenericParam(data=data, span=span));
     }
+
     pub fn alloc_field_info(data: FieldInfoData, span: Span) -> FieldInfo& {
         return self.field_info.alloc(FieldInfo(data=data, span=span));
     }
+
     pub fn alloc_variant_info(data: VariantInfoData, span: Span) -> VariantInfo& {
         return self.variant_info.alloc(VariantInfo(data=data, span=span));
     }
+
     pub fn alloc_method_decl(data: MethodDeclData, span: Span) -> MethodDecl& {
         return self.method_decl.alloc(MethodDecl(data=data, span=span));
     }
+
     pub fn alloc_method_def(data: MethodDefData, span: Span) -> MethodDef& {
         return self.method_def.alloc(MethodDef(data=data, span=span));
     }
+
     pub fn alloc_extern_func_decl(data: ExternFuncDeclData, span: Span) -> ExternFuncDecl& {
         return self.extern_func_decl.alloc(ExternFuncDecl(data=data, span=span));
     }
+
     pub fn alloc_impl_condition(data: ImplConditionData, span: Span) -> ImplCondition& {
         return self.impl_condition.alloc(ImplCondition(data=data, span=span));
     }
+
     pub fn alloc_capture_item(data: CaptureItemData, span: Span) -> CaptureItem& {
         return self.capture_item.alloc(CaptureItem(data=data, span=span));
     }
+
     pub fn alloc_field_pattern(data: FieldPatternData, span: Span) -> FieldPattern& {
         return self.field_pattern.alloc(FieldPattern(data=data, span=span));
     }
+
     pub fn alloc_expr(data: ExprData, span: Span) -> Expr& {
         return self.expr.alloc(Expr(data=data, span=span));
     }
+
     pub fn alloc_type_syntax(data: TypeData, span: Span) -> TypeSyntax& {
         return self.type_syntax.alloc(TypeSyntax(data=data, span=span));
     }
+
     pub fn alloc_const_expr(data: ConstExprData, span: Span) -> ConstExpr& {
         return self.const_expr.alloc(ConstExpr(data=data, span=span));
     }
+
     pub fn alloc_pattern(data: PatternData, span: Span) -> Pattern& {
         return self.pattern.alloc(Pattern(data=data, span=span));
     }
+
     pub fn alloc_item(data: ItemData, span: Span) -> Item& {
         return self.item.alloc(Item(data=data, span=span));
     }
@@ -206,6 +259,7 @@ impl AstArena {
 
 impl Drop for AstArena {
     pub fn drop() {
+        // 先释放各类节点拥有的负载，再统一释放所有节点的存储块。
         self.identifier.drop_payloads();
         self.int_literal.drop_payloads();
         self.float_literal.drop_payloads();
@@ -237,6 +291,7 @@ impl Drop for AstArena {
         self.const_expr.drop_payloads();
         self.pattern.drop_payloads();
         self.item.drop_payloads();
+
         self.identifier.release_chunks();
         self.int_literal.release_chunks();
         self.float_literal.release_chunks();
@@ -268,9 +323,12 @@ impl Drop for AstArena {
         self.const_expr.release_chunks();
         self.pattern.release_chunks();
         self.item.release_chunks();
+
         *self = AstArena.new();
     }
 }
 
 pub struct AstTree { pub arena: AstArena, pub root: Program& }
-impl Drop for AstTree { pub fn drop() { self.arena.drop(); } }
+impl Drop for AstTree {
+    pub fn drop() { self.arena.drop(); }
+}
