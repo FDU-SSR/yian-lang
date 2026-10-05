@@ -1,0 +1,88 @@
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.fs import canonicalize;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.path import PathBuf;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Paths passed to classification queries must already be canonical.
+fn invalid(message: str) -> AnalysisError {
+    AnalysisError.user(DiagnosticCode.Source, Option<SourceSpan>.None, message)
+}
+
+pub fn normalize_path(path: str) -> Result<PathBuf, AnalysisError> {
+    match canonicalize(path) {
+        Ok(value) => Result<PathBuf, AnalysisError>.Ok(value),
+        Err(error) => {
+            defer error.drop();
+            Result<PathBuf, AnalysisError>.Err(invalid(error.msg()))
+        },
+    }
+}
+
+// Prefix matches always stop at a path-component boundary.
+pub fn within(path: str, root: str) -> bool {
+    if root == "/" {
+        return path.starts_with("/");
+    }
+
+    if path == root {
+        return true;
+    }
+
+    if !path.starts_with(root) || path.as_slice().len() <= root.as_slice().len() {
+        return false;
+    }
+
+    path.as_slice()[root.as_slice().len()] == b'/'
+}
+
+pub struct SourceTrust {
+    root: PathBuf,
+    test_roots: Vec<PathBuf>
+}
+
+impl SourceTrust {
+    static pub fn new(stdlib_root: str) -> Result<Self, AnalysisError> {
+        Result<Self, AnalysisError>.Ok(Self(normalize_path(stdlib_root)?, Vec<PathBuf>.new()))
+    }
+
+    pub fn add_test_root(root: str) -> Result<(), AnalysisError> {
+        self.test_roots.push(normalize_path(root)?);
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn is_stdlib(path: str) -> bool {
+        within(path, self.root.as_str())
+    }
+
+    pub fn allows_restricted(path: str) -> bool {
+        if within(path, self.root.as_str()) {
+            return true;
+        }
+
+        for root in self.test_roots {
+            if within(path, root.as_str()) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+impl Drop for SourceTrust {
+    pub fn drop() {
+        self.root.drop();
+
+        for root in self.test_roots {
+            root.drop();
+        }
+
+        self.test_roots.drop();
+    }
+}

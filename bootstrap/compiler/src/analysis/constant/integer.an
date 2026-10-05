@@ -1,0 +1,306 @@
+from compiler.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
+from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from std.core.result import Result;
+
+pub fn normalized(bits: u64, width: IntegerWidth, signed: bool) -> IntegerValue {
+    IntegerValue.fixed(bits, width, signed)
+}
+
+pub fn is_negative(value: IntegerValue) -> bool {
+    value.is_negative()
+}
+
+pub fn magnitude(value: IntegerValue) -> u64 {
+    if value.is_untyped() {
+        return value.raw_bits();
+    }
+
+    if is_negative(value) {
+        (0u64 - value.raw_bits()) & value.storage_width().mask()
+    } else {
+        value.raw_bits()
+    }
+}
+
+pub fn cast_integer(value: IntegerValue, width: IntegerWidth, signed: bool) -> IntegerValue {
+    let bits = magnitude(value);
+
+    if is_negative(value) {
+        bits = 0u64 - bits;
+    }
+
+    normalized(bits, width, signed)
+}
+
+pub fn compare(left: IntegerValue, right: IntegerValue) -> i32 {
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+
+    if ln != rn {
+        return if ln {
+            -1
+        } else {
+            1
+        };
+    }
+
+    let a = magnitude(left);
+    let b = magnitude(right);
+
+    if a == b {
+        return 0;
+    }
+
+    let less = if ln {
+        a > b
+    } else {
+        a < b
+    };
+
+    if less {
+        -1
+    } else {
+        1
+    }
+}
+
+fn finish(absolute: u64, negative: bool, shape: IntegerValue) -> IntegerValue {
+    if shape.is_untyped() {
+        return IntegerValue.untyped(absolute, negative);
+    }
+
+    normalized(if negative {
+            0u64 - absolute
+        } else {
+            absolute
+        }, shape.storage_width(), shape.is_signed())
+}
+
+pub fn integer_unary(op: UnaryOperator, value: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    match op {
+        Neg => Result<IntegerValue, ConstEvalError>.Ok(finish(magnitude(value), !is_negative(value), value)),
+        BitNot => {
+            if value.is_untyped() {
+                // Infinite two's-complement identity: ~x == -x-1.
+                if is_negative(value) {
+                    return Result<IntegerValue, ConstEvalError>.Ok(finish(value.raw_bits() - 1, false, value));
+                }
+
+                if value.raw_bits() == 0xFFFFFFFFFFFFFFFFu64 {
+                    return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+                }
+
+                return Result<IntegerValue, ConstEvalError>.Ok(finish(value.raw_bits() + 1, true, value));
+            }
+
+            Result<IntegerValue, ConstEvalError>.Ok(normalized(~value.raw_bits(), value.storage_width(), value.is_signed()))
+        },
+        _ => Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidOperator),
+    }
+}
+
+pub fn integer_binary(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    if op == BinaryOperator.Div || op == BinaryOperator.Mod {
+        return divide(op, left, right);
+    }
+
+    if op == BinaryOperator.Shl || op == BinaryOperator.Shr {
+        return shift(op, left, right);
+    }
+
+    if !left.is_untyped() {
+        return fixed_binary(op, left, right);
+    }
+
+    if op == BinaryOperator.Add || op == BinaryOperator.Sub {
+        return add_magnitudes(op, left, right);
+    }
+
+    if op == BinaryOperator.Mul {
+        return multiply(left, right);
+    }
+
+    bitwise(op, left, right)
+}
+
+fn divide(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let a = magnitude(left);
+    let b = magnitude(right);
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+
+    if b == 0 {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.DivisionByZero);
+    }
+
+    // Unsigned magnitudes also represent abs(i64::MIN), avoiding signed division overflow.
+    return Result<IntegerValue, ConstEvalError>.Ok(if op == BinaryOperator.Div {
+            finish(a / b, ln != rn, left)
+        } else {
+            finish(a % b, ln, left)
+        });
+}
+
+fn shift(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let a = magnitude(left);
+    let b = magnitude(right);
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+
+    if rn {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.NegativeShift);
+    }
+
+    let width = if left.is_untyped() {
+        64u64
+    } else {
+        u64(left.storage_width().bits())
+    };
+
+    if b >= width {
+        if op == BinaryOperator.Shl && left.is_untyped() && a != 0 {
+            return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+        }
+
+        let bits = if op == BinaryOperator.Shr && ln {
+            left.storage_width().mask()
+        } else {
+            0u64
+        };
+
+        return Result<IntegerValue, ConstEvalError>.Ok(if left.is_untyped() {
+                finish(if ln && op == BinaryOperator.Shr {
+                    1u64
+                } else {
+                    0u64
+                }, ln && op == BinaryOperator.Shr, left)
+            } else {
+                normalized(bits, left.storage_width(), left.is_signed())
+            });
+    }
+
+    if op == BinaryOperator.Shl {
+        if left.is_untyped() && a > (0xFFFFFFFFFFFFFFFFu64 >> b) {
+            return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+        }
+
+        return Result<IntegerValue, ConstEvalError>.Ok(finish(a << b, ln, left));
+    }
+
+    if left.is_untyped() {
+        let rounded = a >> b;
+
+        if ln && b != 0 && (a & ((1u64 << b) - 1)) != 0 {
+            rounded += 1;
+        }
+
+        return Result<IntegerValue, ConstEvalError>.Ok(finish(rounded, ln, left));
+    }
+
+    let bits = left.raw_bits() >> b;
+
+    if ln && b != 0 {
+        bits |= left.storage_width().mask() ^ (left.storage_width().mask() >> b);
+    }
+
+    return Result<IntegerValue, ConstEvalError>.Ok(normalized(bits, left.storage_width(), left.is_signed()));
+}
+
+fn fixed_binary(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let l = left.raw_bits();
+    let r = cast_integer(right, left.storage_width(), left.is_signed()).raw_bits();
+    let bits = match op {
+        Add => l + r,
+        Sub => l - r,
+        Mul => l * r,
+        BitAnd => l & r,
+        BitOr => l | r,
+        BitXor => l ^ r,
+        _ => return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidOperator)
+    };
+
+    return Result<IntegerValue, ConstEvalError>.Ok(normalized(bits, left.storage_width(), left.is_signed()));
+}
+
+fn add_magnitudes(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let a = magnitude(left);
+    let b = magnitude(right);
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+    let negative = if op == BinaryOperator.Sub {
+        !rn
+    } else {
+        rn
+    };
+
+    if ln == negative {
+        if a > 0xFFFFFFFFFFFFFFFFu64 - b {
+            return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+        }
+
+        return Result<IntegerValue, ConstEvalError>.Ok(finish(a + b, ln, left));
+    }
+
+    return Result<IntegerValue, ConstEvalError>.Ok(if a >= b {
+            finish(a - b, ln, left)
+        } else {
+            finish(b - a, negative, left)
+        });
+}
+
+fn multiply(left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let a = magnitude(left);
+    let b = magnitude(right);
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+
+    if b != 0 && a > 0xFFFFFFFFFFFFFFFFu64 / b {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    return Result<IntegerValue, ConstEvalError>.Ok(finish(a * b, ln != rn, left));
+}
+
+fn bitwise(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let a = magnitude(left);
+    let b = magnitude(right);
+    let ln = is_negative(left);
+    let rn = is_negative(right);
+
+    // Infinite two's-complement negatives have a high extension of all ones.
+    let l = if ln {
+        0u64 - a
+    } else {
+        a
+    };
+
+    let r = if rn {
+        0u64 - b
+    } else {
+        b
+    };
+
+    let bits = match op {
+        BitAnd => l & r,
+        BitOr => l | r,
+        BitXor => l ^ r,
+        _ => return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidOperator)
+    };
+
+    let negative = match op {
+        BitAnd => ln && rn,
+        BitOr => ln || rn,
+        BitXor => ln != rn,
+        _ => false
+    };
+
+    if negative && bits == 0 {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    Result<IntegerValue, ConstEvalError>.Ok(finish(if negative {
+            0u64 - bits
+        } else {
+            bits
+        }, negative, left))
+}

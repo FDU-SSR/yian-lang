@@ -1,0 +1,163 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+// IDs identify append-only records within one analysis session.
+pub struct SourceId {
+    pub index: u64
+}
+
+impl PartialEq<SourceId> for SourceId {
+    pub fn eq(other: SourceId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for SourceId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct UnitId {
+    pub index: u64
+}
+
+impl PartialEq<UnitId> for UnitId {
+    pub fn eq(other: UnitId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for UnitId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct NameId {
+    pub index: u64
+}
+
+impl PartialEq<NameId> for NameId {
+    pub fn eq(other: NameId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for NameId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct TypeId {
+    pub index: u64
+}
+
+impl PartialEq<TypeId> for TypeId {
+    pub fn eq(other: TypeId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for TypeId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct SymbolId {
+    pub index: u64
+}
+
+impl PartialEq<SymbolId> for SymbolId {
+    pub fn eq(other: SymbolId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for SymbolId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct DefId {
+    pub index: u64
+}
+
+impl PartialEq<DefId> for DefId {
+    pub fn eq(other: DefId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for DefId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct ScopeId {
+    pub index: u64
+}
+
+impl PartialEq<ScopeId> for ScopeId {
+    pub fn eq(other: ScopeId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for ScopeId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct ImplId {
+    pub index: u64
+}
+
+impl PartialEq<ImplId> for ImplId {
+    pub fn eq(other: ImplId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for ImplId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct HirId {
+    pub index: u64
+}
+
+impl PartialEq<HirId> for HirId {
+    pub fn eq(other: HirId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for HirId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct PatternId {
+    pub index: u64
+}
+
+impl PartialEq<PatternId> for PatternId {
+    pub fn eq(other: PatternId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for PatternId {
+    pub fn hash(hasher: Murmur3Hasher) {
+        self.index.hash(hasher);
+    }
+}

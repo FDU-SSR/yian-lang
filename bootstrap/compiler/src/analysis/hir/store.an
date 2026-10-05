@@ -1,0 +1,69 @@
+from compiler.common.ids import HirId, PatternId;
+from compiler.analysis.hir.node import HirNode;
+from compiler.analysis.hir.pattern import PatternNode;
+from compiler.diagnostics.model import AnalysisError;
+from std.collections.arena import Arena;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+
+pub struct HirStore {
+    nodes: Arena<HirNode>,
+    patterns: Arena<PatternNode>
+}
+
+impl HirStore {
+    static pub fn new() -> Self {
+        Self(Arena<HirNode>.new(), Arena<PatternNode>.new())
+    }
+
+    pub fn add(node: HirNode) -> HirId {
+        let id = HirId(self.nodes.len());
+        self.nodes.alloc(node);
+        id
+    }
+
+    pub fn add_pattern(pattern: PatternNode) -> PatternId {
+        let id = PatternId(self.patterns.len());
+        self.patterns.alloc(pattern);
+        id
+    }
+
+    pub fn get(id: HirId) -> Option<HirNode&> {
+        self.nodes.get(id.index)
+    }
+
+    pub fn get_pattern(id: PatternId) -> Option<PatternNode&> {
+        self.patterns.get(id.index)
+    }
+
+    pub fn require(id: HirId) -> Result<HirNode&, AnalysisError> {
+        match self.get(id) {
+            Some(value) => Result<HirNode&, AnalysisError>.Ok(value),
+            None => Result<HirNode&, AnalysisError>.Err(AnalysisError.internal("invalid HIR ID"))
+        }
+    }
+
+    pub fn require_pattern(id: PatternId) -> Result<PatternNode&, AnalysisError> {
+        match self.get_pattern(id) {
+            Some(value) => Result<PatternNode&, AnalysisError>.Ok(value),
+            None => Result<PatternNode&, AnalysisError>.Err(AnalysisError.internal("invalid pattern ID"))
+        }
+    }
+}
+
+impl Drop for HirStore {
+    pub fn drop() {
+        for node in self.nodes {
+            node.drop();
+        }
+
+        for pattern in self.patterns {
+            pattern.drop();
+        }
+
+        self.nodes.drop();
+        self.patterns.drop();
+    }
+}

@@ -1,0 +1,301 @@
+from compiler.common.ids import HirId, PatternId;
+from compiler.common.traversal import WalkControl;
+from compiler.analysis.hir.node import HirNode;
+from compiler.analysis.hir.pattern import PatternNode;
+from compiler.analysis.hir.store import HirStore;
+from compiler.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.result import Result;
+
+// Failed enter/child/leave calls return immediately, without synthetic leave calls.
+// Visitors borrow nodes and must not change child edges during a walk.
+// Type and symbol IDs are semantic links, not recursive traversal edges.
+pub trait HirVisitor {
+    fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_expr(id: HirId, node: HirNode&) -> Result<(), AnalysisError> {
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_pattern(id: PatternId, node: PatternNode&) -> Result<(), AnalysisError> {
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+pub fn walk_expr(store: HirStore&, id: HirId, visitor: HirVisitor&) -> Result<(), AnalysisError> {
+    let node = store.require(id)?;
+
+    if visitor.enter_expr(id, node)? == WalkControl.Skip {
+        return Result<(), AnalysisError>.Ok(());
+    }
+
+    match &node.kind {
+        Block(value) => {
+            for id in value.stmts {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        Return(value) => {
+            match value {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        If(value) => {
+            walk_expr(store, value.cond, visitor)?;
+            walk_expr(store, value.then_branch, visitor)?;
+
+            match &value.else_branch {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        Loop(value) => {
+            walk_expr(store, *value, visitor)?;
+        },
+        Break(value) => {
+            match value {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        Continue => {},
+        Defer(value) => {
+            walk_expr(store, *value, visitor)?;
+        },
+        Delete(value) => {
+            walk_expr(store, *value, visitor)?;
+        },
+        Semi(value) => {
+            walk_expr(store, *value, visitor)?;
+        },
+        Let(value) => {
+            match &value.init {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        PatternLet(value) => {
+            walk_expr(store, value.value, visitor)?;
+            walk_pattern(store, value.pattern, visitor)?;
+
+            match &value.else_branch {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        Match(value) => {
+            walk_expr(store, value.value, visitor)?;
+
+            for arm in value.arms {
+                walk_pattern(store, arm.pattern, visitor)?;
+
+                match &arm.guard {
+                    Some(id) => {
+                        walk_expr(store, *id, visitor)?;
+                    },
+                    None => {}
+                };
+
+                walk_expr(store, arm.body, visitor)?;
+            }
+        },
+        Binary(value) => {
+            walk_expr(store, value.left, visitor)?;
+            walk_expr(store, value.right, visitor)?;
+        },
+        Unary(value) => {
+            walk_expr(store, value.operand, visitor)?;
+        },
+        Call(value) => {
+            for id in value.args {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        StructConstruct(value) => {
+            for entry in value.field_values {
+                walk_expr(store, entry[1], visitor)?;
+            }
+        },
+        Invoke(value) => {
+            walk_expr(store, value.callable, visitor)?;
+
+            for id in value.args {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        Cast(value) => {
+            walk_expr(store, value.value, visitor)?;
+        },
+        BitCast(value) => {
+            walk_expr(store, value.value, visitor)?;
+        },
+        TraitObjectCoerce(value) => {
+            walk_expr(store, value.value, visitor)?;
+        },
+        MethodCall(value) => {
+            walk_expr(store, value.receiver, visitor)?;
+
+            for id in value.args {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        TraitObjectMethodCall(value) => {
+            walk_expr(store, value.receiver, visitor)?;
+
+            for id in value.args {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        VariantConstruct(value) => {
+            match &value.args {
+                Some(entries) => {
+                    for entry in *entries {
+                        walk_expr(store, entry[1], visitor)?;
+                    }
+                },
+                None => {}
+            };
+        },
+        FieldAccess(value) => {
+            walk_expr(store, value.receiver, visitor)?;
+        },
+        TupleAccess(value) => {
+            walk_expr(store, value.receiver, visitor)?;
+        },
+        ArrayAccess(value) => {
+            walk_expr(store, value.array, visitor)?;
+            walk_expr(store, value.index, visitor)?;
+        },
+        SliceAccess(value) => {
+            walk_expr(store, value.slice, visitor)?;
+            walk_expr(store, value.index, visitor)?;
+        },
+        DynValue(value) => {
+            walk_expr(store, *value, visitor)?;
+        },
+        DynBuffer(value) => {
+            walk_expr(store, value.length, visitor)?;
+
+            match &value.element {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        Builtin(value) => {
+            for id in value.args {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        Tuple(value) => {
+            for id in value.field_values {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        Array(value) => {
+            for id in value.elements {
+                walk_expr(store, *id, visitor)?;
+            }
+        },
+        ArrayRepeat(value) => {
+            walk_expr(store, value.element, visitor)?;
+        },
+        Var(value) => {},
+        IntLiteral(value) => {},
+        FloatLiteral(value) => {},
+        CharLiteral(value) => {},
+        StrLiteral(value) => {},
+        BoolLiteral(value) => {},
+        Ty => {},
+        Closure(value) => {
+            for entry in value.captures {
+                walk_expr(store, entry[1], visitor)?;
+            }
+        },
+    }
+
+    visitor.leave_expr(id, node)
+}
+
+pub fn walk_pattern(store: HirStore&, id: PatternId, visitor: HirVisitor&) -> Result<(), AnalysisError> {
+    let node = store.require_pattern(id)?;
+
+    if visitor.enter_pattern(id, node)? == WalkControl.Skip {
+        return Result<(), AnalysisError>.Ok(());
+    }
+
+    match &node.kind {
+        EnumPattern(value) => {
+            match &value.fields {
+                Some(entries) => {
+                    for entry in *entries {
+                        walk_pattern(store, entry[1], visitor)?;
+                    }
+                },
+                None => {}
+            };
+        },
+        WildcardPattern => {},
+        LiteralPattern(value) => {
+            match &value.condition {
+                Some(id) => {
+                    walk_expr(store, *id, visitor)?;
+                },
+                None => {}
+            };
+        },
+        RangePattern(value) => {},
+        BindPattern(value) => {
+            walk_pattern(store, value.inner, visitor)?;
+        },
+        RefPattern(value) => {
+            walk_pattern(store, *value, visitor)?;
+        },
+        OrPattern(value) => {
+            for id in value.alternatives {
+                walk_pattern(store, *id, visitor)?;
+            }
+        },
+        StructPattern(value) => {
+            for entry in value.fields {
+                walk_pattern(store, entry[1], visitor)?;
+            }
+        },
+        TuplePattern(value) => {
+            for id in value.elements {
+                walk_pattern(store, *id, visitor)?;
+            }
+        },
+        SequencePattern(value) => {
+            for id in value.prefix {
+                walk_pattern(store, *id, visitor)?;
+            }
+
+            for id in value.suffix {
+                walk_pattern(store, *id, visitor)?;
+            }
+        },
+    }
+
+    visitor.leave_pattern(id, node)
+}

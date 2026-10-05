@@ -1,0 +1,111 @@
+from compiler.common.ids import SourceId, UnitId;
+from compiler.analysis.definition.registry import DefinitionRegistry;
+from compiler.analysis.definition.worklist import DefinitionWorklist;
+from compiler.analysis.hir.store import HirStore;
+from compiler.analysis.names import NameInterner;
+from compiler.analysis.symbol.scope import SymbolStore;
+from compiler.analysis.ty.impl_registry import ImplRegistry;
+from compiler.analysis.ty.store import TypeStore;
+from compiler.diagnostics.model import DiagnosticSink;
+from compiler.frontend.prepare import PreparedFile;
+from compiler.frontend.source import SourceManager, SourceFile;
+from compiler.package.model import PackageMap;
+from compiler.package.provenance import SourceTrust;
+from std.collections.arena import Arena;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+
+pub struct CompilationUnit {
+    pub id: UnitId,
+    pub source: SourceId,
+    pub prepared: PreparedFile,
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}
+
+impl Drop for CompilationUnit {
+    pub fn drop() {
+        self.prepared.drop();
+    }
+}
+
+// This owner keeps all source/AST/semantic references alive for one preparation run.
+pub struct AnalysisSession {
+    sources: SourceManager,
+    pub names: NameInterner,
+    units: Arena<CompilationUnit>,
+    pub types: TypeStore,
+    pub symbols: SymbolStore,
+    pub hir: HirStore,
+    pub definitions: DefinitionRegistry,
+    pub worklist: DefinitionWorklist,
+    pub impls: ImplRegistry,
+    pub diagnostics: DiagnosticSink,
+    packages: Option<PackageMap>,
+    trust: SourceTrust,
+    pub raw_pointers: bool,
+}
+
+impl AnalysisSession {
+    // Package metadata and source trust transfer into this owner at construction.
+    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
+        Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
+            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
+            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers)
+    }
+
+    // A prepared file transfers only after all fallible preparation has completed.
+    fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
+        let id = UnitId(self.units.len());
+        self.units.alloc(CompilationUnit(id, prepared.source, prepared,
+            permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
+        id
+    }
+
+    pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
+        self.units.get(id.index)
+    }
+
+    pub fn source(id: SourceId) -> Option<SourceFile&> {
+        self.sources.get(id.index)
+    }
+
+    pub fn len() -> u64 {
+        self.units.len()
+    }
+}
+
+impl Drop for AnalysisSession {
+    pub fn drop() {
+        self.diagnostics.drop();
+        self.worklist.drop();
+        self.definitions.drop();
+        self.impls.drop();
+        self.hir.drop();
+        self.symbols.drop();
+        self.types.drop();
+
+        for unit in self.units {
+            unit.drop();
+        }
+
+        self.units.drop();
+
+        match &self.packages {
+            Some(packages) => packages.drop(),
+            None => {}
+        }
+
+        self.trust.drop();
+        self.names.drop();
+        self.sources.drop();
+    }
+}
+
+pub struct SourcePermissions {
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}

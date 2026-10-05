@@ -1,3 +1,4 @@
+from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import Index;
 from std.core.range import Range;
 from std.core.vec import Vec;
@@ -45,4 +46,8 @@ impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
             n=N,
         )
     }
+}
+
+impl<T, const N: u64> Hash<Murmur3Hasher> for T[N] {
+    fn hash(hasher: Murmur3Hasher) { self.as_slice().hash(hasher); }
 }

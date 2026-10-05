@@ -1,11 +1,15 @@
+from std.core.path import PathBuf;
+from std.collections.arena import Arena;
+from std.collections.sort import sort_by;
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.fs import Directory, DirEntryKind, metadata, read_to_string;
+from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize;
 from std.core.io import IoError, IoErrorKind;
 from std.core.ops import Add, AddAssign, Index;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
+from std.core.option import Option;
 from json.write import Writer;
 
 pub struct Position {
@@ -65,10 +69,13 @@ impl AddAssign<Span, Span> for Span {
 pub struct SourceFile {
     path: String,
     text: String,
+    canonical: PathBuf,
 }
 
 impl SourceFile {
     pub fn path() -> str { return self.path.as_str(); }
+
+    pub fn canonical_path() -> str { self.canonical.as_str() }
 
     pub fn text() -> str { return self.text.as_str(); }
 }
@@ -77,25 +84,40 @@ impl Drop for SourceFile {
     pub fn drop() {
         self.path.drop();
         self.text.drop();
+        self.canonical.drop();
     }
 }
 
 pub struct SourceManager {
-    files: Vec<SourceFile>,
+    files: Arena<SourceFile>,
 }
 
 impl SourceManager {
-    static pub fn new() -> Self { return Self(files=Vec<SourceFile>.new()); }
+    static pub fn new() -> Self { return Self(files=Arena<SourceFile>.new()); }
 
     pub fn len() -> u64 { return self.files.len(); }
 
-    pub fn file(id: u64) -> SourceFile& { return &self.files[id]; }
+    pub fn file(id: u64) -> SourceFile& {
+        match self.files.get(id) {
+            Some(file) => file,
+            None => @panic("E599: invalid source ID"),
+        }
+    }
+
+    pub fn get(id: u64) -> Option<SourceFile&> { self.files.get(id) }
 
     pub fn load(path: str) -> Result<u64, IoError> {
-        let text = read_to_string(path)?;
+        let canonical = canonicalize(path)?;
+        let text = match read_to_string(path) {
+            Ok(value) => value,
+            Err(error) => {
+                canonical.drop();
+                return Result<u64, IoError>.Err(error);
+            },
+        };
 
         let id = self.files.len();
-        self.files.push(SourceFile(path=String.from(&path), text=text));
+        self.files.alloc(SourceFile(path=String.from(&path), text=text, canonical=canonical));
         Result<u64, IoError>.Ok(val=id)
     }
 }
@@ -105,7 +127,7 @@ impl Drop for SourceManager {
         let index: u64 = 0u64;
 
         while index < self.files.len() {
-            self.files[index].drop();
+            (*self.files.get(index).unwrap()).drop();
             index += 1u64;
         }
         self.files.drop();
@@ -138,20 +160,10 @@ fn less(left: str, right: str) -> bool {
 
 // Sort only paths appended by this directory collection; preceding input roots retain their order.
 fn sort_paths(paths: Vec<String>&, start: u64) {
-    let index = start + 1u64;
-
-    while index < paths.len() {
-        let current = paths[index];
-        let before = index;
-
-        while before > start && less(current.as_str(), paths[before - 1u64].as_str()) {
-            paths[before] = paths[before - 1u64];
-            before -= 1u64;
-        }
-        paths[before] = current;
-        index += 1u64;
-    }
+    sort_by(paths.as_slice()[start..paths.len()], path_less);
 }
+
+fn path_less(left: String&, right: String&) -> bool { less(left.as_str(), right.as_str()) }
 
 // Recurse into actual directories; collect symlinks only when they target source files, never recurse into linked directories.
 fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {

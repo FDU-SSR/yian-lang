@@ -1,0 +1,105 @@
+from compiler.common.ids import SourceId;
+from compiler.config import FrontendPhase;
+from compiler.diagnostics.model import DiagnosticCode;
+from compiler.frontend.ast.arena import AstTree;
+from compiler.frontend.desugar import desugar;
+from compiler.frontend.diagnostics import lex_code, parse_code;
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import Token, drop_tokens;
+from compiler.frontend.parse.items import parse_program;
+from compiler.frontend.parse.state import Parser;
+from compiler.frontend.source import Span;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum PreparationStage {
+    Lex,
+    Parse,
+    Desugar,
+}
+
+pub struct PreparationError {
+    pub stage: PreparationStage,
+    pub code: DiagnosticCode,
+    pub message: String,
+    pub span: Span
+}
+
+impl Drop for PreparationError {
+    pub fn drop() {
+        self.message.drop();
+    }
+}
+
+// Tokens and the optional tree transfer together; the parser owns neither after success.
+pub struct PreparedFile {
+    pub source: SourceId,
+    pub tokens: Vec<Token>,
+    pub tree: Option<AstTree>
+}
+
+impl Drop for PreparedFile {
+    pub fn drop() {
+        match &self.tree {
+            Some(tree) => tree.drop(),
+            None => {}
+        }
+
+        drop_tokens(&self.tokens);
+    }
+}
+
+pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, PreparationError> {
+    let tokens = match Lexer.new(source).run() {
+        Ok(value) => value,
+        Err(error) => {
+            defer error.drop();
+            return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
+        },
+    };
+
+    let prepared = PreparedFile(id, tokens, Option<AstTree>.None);
+    let transferred = false;
+    defer {
+        if !transferred {
+            prepared.drop();
+        }
+    };
+
+    if phase == FrontendPhase.Tokens {
+        transferred = true;
+        return Result<PreparedFile, PreparationError>.Ok(prepared);
+    }
+
+    let parser = Parser.new(&prepared.tokens);
+    defer parser.drop();
+    let tree = match parse_program(&parser) {
+        Ok(value) => value,
+        Err(error) => {
+            defer error.drop();
+            return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Parse, parse_code(error.message()), String.from(&error.message()), error.span()));
+        },
+    };
+
+    prepared.tree = Option<AstTree>.Some(tree);
+
+    if phase == FrontendPhase.Desugared {
+        // Desugaring allocates nodes, so mutate the tree held by the resource owner.
+        // A shallow copy would retain stale arena lengths and chunk-buffer pointers.
+        let owned_tree = prepared.tree.unwrap();
+        match desugar(owned_tree, path) {
+            Ok(_) => {},
+            Err(error) => {
+                defer error.drop();
+                return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Desugar, parse_code(error.message()), String.from(&error.message()), error.span()));
+            },
+        }
+    }
+
+    transferred = true;
+    Result<PreparedFile, PreparationError>.Ok(prepared)
+}

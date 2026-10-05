@@ -1,0 +1,240 @@
+from compiler.common.location import SourceSpan;
+from compiler.frontend.source import Span;
+from std.collections.arena import Arena;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum DiagnosticCode {
+    UnterminatedComment,
+    FString,
+    Escape,
+    UnterminatedLiteral,
+    Lexical,
+    EndOfInput,
+    ExpectedToken,
+    UnexpectedToken,
+    ReservedWord,
+    Syntax,
+    Source,
+    GenericArguments,
+    Constant,
+    Internal,
+}
+
+impl DiagnosticCode {
+    pub fn text() -> str {
+        match self {
+            UnterminatedComment => "E101",
+            FString => "E102",
+            Escape => "E103",
+            UnterminatedLiteral => "E105",
+            Lexical => "E199",
+            EndOfInput => "E201",
+            ExpectedToken => "E202",
+            UnexpectedToken => "E203",
+            ReservedWord => "E204",
+            Syntax => "E299",
+            Source => "E399",
+            GenericArguments => "E405",
+            Constant => "E503",
+            Internal => "E599",
+        }
+    }
+}
+
+pub enum Severity {
+    Error,
+    Warning,
+    Note,
+}
+
+pub enum AnalysisErrorKind {
+    User,
+    Internal,
+    Unsupported,
+}
+
+// Source locations borrow a live session. Detached locations own their path text.
+pub enum DiagnosticLocation {
+    Source {
+        value: SourceSpan
+    },
+    Detached {
+        path: String,
+        span: Span
+    },
+}
+
+impl DiagnosticLocation {
+    pub fn span() -> Span {
+        match self {
+            Source(value) => value.span,
+            Detached(_, span) => *span
+        }
+    }
+}
+
+impl Drop for DiagnosticLocation {
+    pub fn drop() {
+        match self {
+            Source(_) => {},
+            Detached(path, _) => path.drop()
+        }
+    }
+}
+
+pub struct RelatedLocation {
+    pub location: DiagnosticLocation,
+    pub message: String
+}
+
+impl Drop for RelatedLocation {
+    pub fn drop() {
+        self.location.drop();
+        self.message.drop();
+    }
+}
+
+pub struct Diagnostic {
+    pub code: DiagnosticCode,
+    pub severity: Severity,
+    pub location: Option<DiagnosticLocation>,
+    pub message: String,
+    pub related: Vec<RelatedLocation>,
+}
+
+impl Diagnostic {
+    static pub fn new(code: DiagnosticCode, severity: Severity, location: Option<SourceSpan>, message: str) -> Self {
+        let primary = match location {
+            Some(value) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(value)),
+            None => Option<DiagnosticLocation>.None,
+        };
+
+        Self(code, severity, primary, String.from(&message), Vec<RelatedLocation>.new())
+    }
+
+    pub fn add_related(location: SourceSpan, message: str) {
+        self.related.push(RelatedLocation(DiagnosticLocation.Source(location), String.from(&message)));
+    }
+}
+
+impl Drop for Diagnostic {
+    pub fn drop() {
+        match &self.location {
+            Some(value) => value.drop(),
+            None => {}
+        }
+
+        for item in self.related {
+            item.drop();
+        }
+
+        self.related.drop();
+        self.message.drop();
+    }
+}
+
+pub struct AnalysisError {
+    pub kind: AnalysisErrorKind,
+    pub diagnostic: Diagnostic
+}
+
+impl AnalysisError {
+    static pub fn user(code: DiagnosticCode, location: Option<SourceSpan>, message: str) -> Self {
+        Self(AnalysisErrorKind.User, Diagnostic.new(code, Severity.Error, location, message))
+    }
+
+    static pub fn internal(message: str) -> Self {
+        Self(AnalysisErrorKind.Internal, Diagnostic.new(DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None, message))
+    }
+
+    static pub fn unsupported(location: Option<SourceSpan>, message: str) -> Self {
+        Self(AnalysisErrorKind.Unsupported, Diagnostic.new(DiagnosticCode.Constant, Severity.Error, location, message))
+    }
+}
+
+impl Drop for AnalysisError {
+    pub fn drop() {
+        self.diagnostic.drop();
+    }
+}
+
+// Ownership transfers into the sink; no diagnostic payload is copied deeply.
+pub struct DiagnosticSink {
+    diagnostics: Arena<Diagnostic>
+}
+
+impl DiagnosticSink {
+    static pub fn new() -> Self {
+        Self(Arena<Diagnostic>.new())
+    }
+
+    pub fn push(diagnostic: Diagnostic) {
+        self.diagnostics.alloc(diagnostic);
+    }
+
+    pub fn len() -> u64 {
+        self.diagnostics.len()
+    }
+
+    pub fn get(index: u64) -> Option<Diagnostic&> {
+        self.diagnostics.get(index)
+    }
+
+    pub fn has_errors() -> bool {
+        for item in self.diagnostics {
+            if item.severity == Severity.Error {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+impl Drop for DiagnosticSink {
+    pub fn drop() {
+        for diagnostic in self.diagnostics {
+            diagnostic.drop();
+        }
+
+        self.diagnostics.drop();
+    }
+}
+
+pub struct MessageBuilder {
+    text: String
+}
+
+impl MessageBuilder {
+    static pub fn new() -> Self {
+        Self(String.new())
+    }
+
+    pub fn append(text: str) {
+        self.text.push_str(text);
+    }
+
+    pub fn number(value: u64) {
+        let text = value.to_string();
+        defer text.drop();
+        self.append(text.as_str());
+    }
+
+    pub fn finish() -> String {
+        let result = self.text;
+        self.text = String.new();
+        result
+    }
+}
+
+impl Drop for MessageBuilder {
+    pub fn drop() {
+        self.text.drop();
+    }
+}

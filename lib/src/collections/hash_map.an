@@ -85,65 +85,107 @@ impl<K, V> HashMap<K, V> {
         }
     }
 
-    pub fn get(key: K&) -> Option<V&> {
-        if self.capacity == 0 {
-            return Option<V&>.None;
-        }
+    // A single probe implementation serves borrowed lookup and resource transfer.
+    fn find_index(key: K&) -> Option<u64> {
+        if self.capacity == 0 { return Option<u64>.None; }
+
         let hash = self.hash_key(key);
-        let primary_index = hash & (self.capacity - 1);
+        let index = hash & (self.capacity - 1);
         let h2 = self.get_h2(hash);
-        let index = primary_index;
-        for i in 0..self.capacity {
-            let ctrl_byte = self.ctrls[index];
-
-            if ctrl_byte == 0b1111_1111 {
-                return Option<V&>.None;
-            }
-
-            if ctrl_byte == h2 {
-                let bucket: Bucket<K, V>* = &self.buckets[index]
-                if bucket.key == *key {
-                    return Option<V&>.Some(&bucket.value);
-                }
+        for probe in 0..self.capacity {
+            let control = self.ctrls[index];
+            if control == 0xFF { return Option<u64>.None; }
+            if control == h2 && self.buckets[index].key == *key {
+                return Option<u64>.Some(index);
             }
             index = (index + 1) & (self.capacity - 1);
         }
+        Option<u64>.None
+    }
 
-        Option<V&>.None
+    pub fn get(key: K&) -> Option<V&> {
+        match self.find_index(key) {
+            Some(index) => Option<V&>.Some(&self.buckets[index].value),
+            None => Option<V&>.None,
+        }
     }
 
     pub fn remove(key: K&) -> bool {
-        if self.capacity == 0 {
-            return false;
-        }
-        let hash = self.hash_key(key);
-        let primary_index = hash & (self.capacity - 1);
-        let h2 = self.get_h2(hash);
-        let index = primary_index;
-        for i in 0..self.capacity {
-            let ctrl_byte = self.ctrls[index];
-
-            if ctrl_byte == 0b1111_1111 {
-                return false;
-            }
-
-            if ctrl_byte == h2 {
-                let bucket: Bucket<K, V>* = &self.buckets[index]
-                if bucket.key == *key {
-                    self.ctrls[index] = 0b1000_0000
-                    self.size -= 1
-                    // The removed bucket is discarded without dropping either
-                    // element. Element cleanup is the caller's responsibility.
-                    return true;
-                }
-            }
-            index = (index + 1) & (self.capacity - 1);
-        }
-        false
+        // Container removal does not release resources owned by either element.
+        self.remove_entry(key).is_some()
     }
 
     pub fn contains(key: K&) -> bool {
         self.get(key).is_some()
+    }
+
+    // A hit replaces the bucket in place and transfers both old resources.
+    pub fn insert_or_replace(key: K, value: V) -> Option<(K, V)> {
+        match self.find_index(&key) {
+            Some(index) => {
+                let old = (self.buckets[index].key, self.buckets[index].value);
+                self.buckets[index] = Bucket<K, V>(key, value);
+                return Option<(K, V)>.Some(old);
+            },
+            None => {},
+        }
+
+        self.insert_absent(key, value);
+        Option<(K, V)>.None
+    }
+
+    pub fn remove_entry(key: K&) -> Option<(K, V)> {
+        let index = match self.find_index(key) {
+            Some(index) => index,
+            None => return Option<(K, V)>.None,
+        };
+        let entry = (self.buckets[index].key, self.buckets[index].value);
+        self.ctrls[index] = 0x80;
+        self.size -= 1;
+        Option<(K, V)>.Some(entry)
+    }
+
+    // A hit returns the unused input key; the factory runs only on a miss.
+    // The factory must not reenter or structurally modify this table.
+    pub fn get_or_insert_with<F>(key: K, factory: F) -> (V&, Option<K>) {
+        match self.find_index(&key) {
+            Some(index) => return (&self.buckets[index].value, Option<K>.Some(key)),
+            None => {},
+        }
+
+        let value = factory();
+        let index = self.insert_absent(key, value);
+        (&self.buckets[index].value, Option<K>.None)
+    }
+
+    // The caller has already excluded an equal key; no duplicate-key policy applies.
+    fn insert_absent(key: K, value: V) -> u64 {
+        if self.capacity == 0 { @runtime_fail("S002"); }
+        if self.growth_left == 0 { self.resize(self.capacity * 2); }
+
+        let hash = self.hash_key(&key);
+        let index = hash & (self.capacity - 1);
+        for probe in 0..self.capacity {
+            let control = self.ctrls[index];
+            if control == 0xFF || control == 0x80 {
+                self.ctrls[index] = self.get_h2(hash);
+                self.buckets[index] = Bucket<K, V>(key, value);
+                self.size += 1;
+                self.growth_left -= 1;
+                return index;
+            }
+            index = (index + 1) & (self.capacity - 1);
+        }
+        @runtime_fail("S002")
+    }
+
+    // Structural mutation invalidates these borrowed iterators and element references.
+    pub fn entries() -> HashMapEntryIter<K, V> {
+        HashMapEntryIter<K, V>(self.buckets, self.ctrls, self.capacity, 0)
+    }
+
+    pub fn values() -> HashMapValueIter<K, V> {
+        HashMapValueIter<K, V>(self.entries())
     }
 
     pub fn len() -> u64 {
@@ -289,6 +331,34 @@ impl<K, V> Index<K, V&> for HashMap<K, V> {
         }
 
         @panic("key ! found");
+    }
+}
+
+pub struct HashMapEntryIter<K, V> {
+    buckets: Bucket<K, V>*, ctrls: u8*, capacity: u64, index: u64,
+}
+
+impl<K, V> Iterator<(K&, V&)> for HashMapEntryIter<K, V> {
+    pub fn next() -> Option<(K&, V&)> {
+        while self.index < self.capacity {
+            let index = self.index;
+            self.index += 1;
+            let control = self.ctrls[index];
+            if control != 0xFF && control != 0x80 {
+                return Option<(K&, V&)>.Some((&self.buckets[index].key, &self.buckets[index].value));
+            }
+        }
+        Option<(K&, V&)>.None
+    }
+}
+
+pub struct HashMapValueIter<K, V> { entries: HashMapEntryIter<K, V> }
+impl<K, V> Iterator<V&> for HashMapValueIter<K, V> {
+    pub fn next() -> Option<V&> {
+        match self.entries.next() {
+            Some(entry) => Option<V&>.Some(entry[1]),
+            None => Option<V&>.None,
+        }
     }
 }
 

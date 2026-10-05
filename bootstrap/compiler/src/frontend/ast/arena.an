@@ -4,132 +4,87 @@ from std.core.drop import Drop;
 from std.core.ops import Index;
 from std.core.vec import Vec;
 
-// Full chunks never grow; allocations use available slots or new chunks, keeping node addresses stable.
-struct NodePool<N> { chunks: Vec<Vec<N>>, count: u64 }
-impl<N> NodePool<N> {
-    static fn new() -> Self { Self(chunks=Vec<Vec<N>>.new(), count=0) }
+from std.collections.arena import Arena;
+from std.core.iter import IntoIterator;
 
-    fn alloc(value: N) -> N& {
-        // Chunk capacity is bounded by both the byte budget and node count, with room for at least one node.
-        let capacity = 16384u64 / @sizeof<N>;
-        if capacity == 0 {
-            capacity = 1;
-        }
-
-        if capacity > 256 {
-            capacity = 256;
-        }
-
-        if self.chunks.len() == 0 || self.chunks[self.chunks.len() - 1].len() == capacity {
-            self.chunks.push(Vec<N>.with_capacity(capacity));
-        }
-
-        let chunk = &self.chunks[self.chunks.len() - 1];
-        let index = chunk.len();
-        chunk.push(value);
-        self.count += 1;
-        return &chunk[index];
-    }
-
-    // Release strings and containers owned by nodes; release_chunks frees their storage separately.
-    fn drop_payloads() {
-        let i: u64 = 0;
-
-        while i < self.chunks.len() {
-            let j: u64 = 0;
-
-            while j < self.chunks[i].len() {
-                self.chunks[i][j].drop();
-                j += 1;
-            }
-            i += 1;
-        }
-    }
-
-    fn release_chunks() {
-        let i: u64 = 0;
-
-        while i < self.chunks.len() {
-            self.chunks[i].drop();
-            i += 1;
-        }
-        self.chunks.drop();
-    }
+// Payload cleanup is separate from storage cleanup across all node categories.
+fn drop_payloads<N>(nodes: Arena<N>*) {
+    for node in *nodes { node.drop(); }
 }
 
 pub struct AstArena {
-    identifier: NodePool<Identifier>,
-    int_literal: NodePool<IntLiteral>,
-    float_literal: NodePool<FloatLiteral>,
-    char_literal: NodePool<CharLiteral>,
-    str_literal: NodePool<StrLiteral>,
-    bool_literal: NodePool<BoolLiteral>,
-    program: NodePool<Program>,
-    block: NodePool<Block>,
-    argument: NodePool<Argument>,
-    var_info: NodePool<VarInfo>,
-    pattern_param: NodePool<PatternParam>,
-    pattern_let: NodePool<PatternLet>,
-    let_condition: NodePool<LetCondition>,
-    elif_branch: NodePool<ElifBranch>,
-    match_arm: NodePool<MatchArm>,
-    attr: NodePool<Attr>,
-    type_generic_param: NodePool<TypeGenericParam>,
-    const_generic_param: NodePool<ConstGenericParam>,
-    field_info: NodePool<FieldInfo>,
-    variant_info: NodePool<VariantInfo>,
-    method_decl: NodePool<MethodDecl>,
-    method_def: NodePool<MethodDef>,
-    extern_func_decl: NodePool<ExternFuncDecl>,
-    impl_condition: NodePool<ImplCondition>,
-    capture_item: NodePool<CaptureItem>,
-    field_pattern: NodePool<FieldPattern>,
-    expr: NodePool<Expr>,
-    type_syntax: NodePool<TypeSyntax>,
-    const_expr: NodePool<ConstExpr>,
-    pattern: NodePool<Pattern>,
-    item: NodePool<Item>,
+    identifier: Arena<Identifier>,
+    int_literal: Arena<IntLiteral>,
+    float_literal: Arena<FloatLiteral>,
+    char_literal: Arena<CharLiteral>,
+    str_literal: Arena<StrLiteral>,
+    bool_literal: Arena<BoolLiteral>,
+    program: Arena<Program>,
+    block: Arena<Block>,
+    argument: Arena<Argument>,
+    var_info: Arena<VarInfo>,
+    pattern_param: Arena<PatternParam>,
+    pattern_let: Arena<PatternLet>,
+    let_condition: Arena<LetCondition>,
+    elif_branch: Arena<ElifBranch>,
+    match_arm: Arena<MatchArm>,
+    attr: Arena<Attr>,
+    type_generic_param: Arena<TypeGenericParam>,
+    const_generic_param: Arena<ConstGenericParam>,
+    field_info: Arena<FieldInfo>,
+    variant_info: Arena<VariantInfo>,
+    method_decl: Arena<MethodDecl>,
+    method_def: Arena<MethodDef>,
+    extern_func_decl: Arena<ExternFuncDecl>,
+    impl_condition: Arena<ImplCondition>,
+    capture_item: Arena<CaptureItem>,
+    field_pattern: Arena<FieldPattern>,
+    expr: Arena<Expr>,
+    type_syntax: Arena<TypeSyntax>,
+    const_expr: Arena<ConstExpr>,
+    pattern: Arena<Pattern>,
+    item: Arena<Item>,
 }
 
 impl AstArena {
     static pub fn new() -> Self {
         return Self(
-            identifier=NodePool<Identifier>.new(),
-            int_literal=NodePool<IntLiteral>.new(),
-            float_literal=NodePool<FloatLiteral>.new(),
-            char_literal=NodePool<CharLiteral>.new(),
-            str_literal=NodePool<StrLiteral>.new(),
-            bool_literal=NodePool<BoolLiteral>.new(),
-            program=NodePool<Program>.new(),
-            block=NodePool<Block>.new(),
-            argument=NodePool<Argument>.new(),
-            var_info=NodePool<VarInfo>.new(),
-            pattern_param=NodePool<PatternParam>.new(),
-            pattern_let=NodePool<PatternLet>.new(),
-            let_condition=NodePool<LetCondition>.new(),
-            elif_branch=NodePool<ElifBranch>.new(),
-            match_arm=NodePool<MatchArm>.new(),
-            attr=NodePool<Attr>.new(),
-            type_generic_param=NodePool<TypeGenericParam>.new(),
-            const_generic_param=NodePool<ConstGenericParam>.new(),
-            field_info=NodePool<FieldInfo>.new(),
-            variant_info=NodePool<VariantInfo>.new(),
-            method_decl=NodePool<MethodDecl>.new(),
-            method_def=NodePool<MethodDef>.new(),
-            extern_func_decl=NodePool<ExternFuncDecl>.new(),
-            impl_condition=NodePool<ImplCondition>.new(),
-            capture_item=NodePool<CaptureItem>.new(),
-            field_pattern=NodePool<FieldPattern>.new(),
-            expr=NodePool<Expr>.new(),
-            type_syntax=NodePool<TypeSyntax>.new(),
-            const_expr=NodePool<ConstExpr>.new(),
-            pattern=NodePool<Pattern>.new(),
-            item=NodePool<Item>.new(),
+            identifier=Arena<Identifier>.new(),
+            int_literal=Arena<IntLiteral>.new(),
+            float_literal=Arena<FloatLiteral>.new(),
+            char_literal=Arena<CharLiteral>.new(),
+            str_literal=Arena<StrLiteral>.new(),
+            bool_literal=Arena<BoolLiteral>.new(),
+            program=Arena<Program>.new(),
+            block=Arena<Block>.new(),
+            argument=Arena<Argument>.new(),
+            var_info=Arena<VarInfo>.new(),
+            pattern_param=Arena<PatternParam>.new(),
+            pattern_let=Arena<PatternLet>.new(),
+            let_condition=Arena<LetCondition>.new(),
+            elif_branch=Arena<ElifBranch>.new(),
+            match_arm=Arena<MatchArm>.new(),
+            attr=Arena<Attr>.new(),
+            type_generic_param=Arena<TypeGenericParam>.new(),
+            const_generic_param=Arena<ConstGenericParam>.new(),
+            field_info=Arena<FieldInfo>.new(),
+            variant_info=Arena<VariantInfo>.new(),
+            method_decl=Arena<MethodDecl>.new(),
+            method_def=Arena<MethodDef>.new(),
+            extern_func_decl=Arena<ExternFuncDecl>.new(),
+            impl_condition=Arena<ImplCondition>.new(),
+            capture_item=Arena<CaptureItem>.new(),
+            field_pattern=Arena<FieldPattern>.new(),
+            expr=Arena<Expr>.new(),
+            type_syntax=Arena<TypeSyntax>.new(),
+            const_expr=Arena<ConstExpr>.new(),
+            pattern=Arena<Pattern>.new(),
+            item=Arena<Item>.new(),
         );
     }
 
     pub fn len() -> u64 {
-        return self.identifier.count + self.int_literal.count + self.float_literal.count + self.char_literal.count + self.str_literal.count + self.bool_literal.count + self.program.count + self.block.count + self.argument.count + self.var_info.count + self.pattern_param.count + self.pattern_let.count + self.let_condition.count + self.elif_branch.count + self.match_arm.count + self.attr.count + self.type_generic_param.count + self.const_generic_param.count + self.field_info.count + self.variant_info.count + self.method_decl.count + self.method_def.count + self.extern_func_decl.count + self.impl_condition.count + self.capture_item.count + self.field_pattern.count + self.expr.count + self.type_syntax.count + self.const_expr.count + self.pattern.count + self.item.count;
+        return self.identifier.len() + self.int_literal.len() + self.float_literal.len() + self.char_literal.len() + self.str_literal.len() + self.bool_literal.len() + self.program.len() + self.block.len() + self.argument.len() + self.var_info.len() + self.pattern_param.len() + self.pattern_let.len() + self.let_condition.len() + self.elif_branch.len() + self.match_arm.len() + self.attr.len() + self.type_generic_param.len() + self.const_generic_param.len() + self.field_info.len() + self.variant_info.len() + self.method_decl.len() + self.method_def.len() + self.extern_func_decl.len() + self.impl_condition.len() + self.capture_item.len() + self.field_pattern.len() + self.expr.len() + self.type_syntax.len() + self.const_expr.len() + self.pattern.len() + self.item.len();
     }
 
     pub fn alloc_identifier(data: IdentifierData, span: Span) -> Identifier& {
@@ -260,69 +215,69 @@ impl AstArena {
 impl Drop for AstArena {
     pub fn drop() {
         // Release the payloads of every node category before freeing all node storage chunks.
-        self.identifier.drop_payloads();
-        self.int_literal.drop_payloads();
-        self.float_literal.drop_payloads();
-        self.char_literal.drop_payloads();
-        self.str_literal.drop_payloads();
-        self.bool_literal.drop_payloads();
-        self.program.drop_payloads();
-        self.block.drop_payloads();
-        self.argument.drop_payloads();
-        self.var_info.drop_payloads();
-        self.pattern_param.drop_payloads();
-        self.pattern_let.drop_payloads();
-        self.let_condition.drop_payloads();
-        self.elif_branch.drop_payloads();
-        self.match_arm.drop_payloads();
-        self.attr.drop_payloads();
-        self.type_generic_param.drop_payloads();
-        self.const_generic_param.drop_payloads();
-        self.field_info.drop_payloads();
-        self.variant_info.drop_payloads();
-        self.method_decl.drop_payloads();
-        self.method_def.drop_payloads();
-        self.extern_func_decl.drop_payloads();
-        self.impl_condition.drop_payloads();
-        self.capture_item.drop_payloads();
-        self.field_pattern.drop_payloads();
-        self.expr.drop_payloads();
-        self.type_syntax.drop_payloads();
-        self.const_expr.drop_payloads();
-        self.pattern.drop_payloads();
-        self.item.drop_payloads();
+        drop_payloads(&self.identifier);
+        drop_payloads(&self.int_literal);
+        drop_payloads(&self.float_literal);
+        drop_payloads(&self.char_literal);
+        drop_payloads(&self.str_literal);
+        drop_payloads(&self.bool_literal);
+        drop_payloads(&self.program);
+        drop_payloads(&self.block);
+        drop_payloads(&self.argument);
+        drop_payloads(&self.var_info);
+        drop_payloads(&self.pattern_param);
+        drop_payloads(&self.pattern_let);
+        drop_payloads(&self.let_condition);
+        drop_payloads(&self.elif_branch);
+        drop_payloads(&self.match_arm);
+        drop_payloads(&self.attr);
+        drop_payloads(&self.type_generic_param);
+        drop_payloads(&self.const_generic_param);
+        drop_payloads(&self.field_info);
+        drop_payloads(&self.variant_info);
+        drop_payloads(&self.method_decl);
+        drop_payloads(&self.method_def);
+        drop_payloads(&self.extern_func_decl);
+        drop_payloads(&self.impl_condition);
+        drop_payloads(&self.capture_item);
+        drop_payloads(&self.field_pattern);
+        drop_payloads(&self.expr);
+        drop_payloads(&self.type_syntax);
+        drop_payloads(&self.const_expr);
+        drop_payloads(&self.pattern);
+        drop_payloads(&self.item);
 
-        self.identifier.release_chunks();
-        self.int_literal.release_chunks();
-        self.float_literal.release_chunks();
-        self.char_literal.release_chunks();
-        self.str_literal.release_chunks();
-        self.bool_literal.release_chunks();
-        self.program.release_chunks();
-        self.block.release_chunks();
-        self.argument.release_chunks();
-        self.var_info.release_chunks();
-        self.pattern_param.release_chunks();
-        self.pattern_let.release_chunks();
-        self.let_condition.release_chunks();
-        self.elif_branch.release_chunks();
-        self.match_arm.release_chunks();
-        self.attr.release_chunks();
-        self.type_generic_param.release_chunks();
-        self.const_generic_param.release_chunks();
-        self.field_info.release_chunks();
-        self.variant_info.release_chunks();
-        self.method_decl.release_chunks();
-        self.method_def.release_chunks();
-        self.extern_func_decl.release_chunks();
-        self.impl_condition.release_chunks();
-        self.capture_item.release_chunks();
-        self.field_pattern.release_chunks();
-        self.expr.release_chunks();
-        self.type_syntax.release_chunks();
-        self.const_expr.release_chunks();
-        self.pattern.release_chunks();
-        self.item.release_chunks();
+        self.identifier.clear();
+        self.int_literal.clear();
+        self.float_literal.clear();
+        self.char_literal.clear();
+        self.str_literal.clear();
+        self.bool_literal.clear();
+        self.program.clear();
+        self.block.clear();
+        self.argument.clear();
+        self.var_info.clear();
+        self.pattern_param.clear();
+        self.pattern_let.clear();
+        self.let_condition.clear();
+        self.elif_branch.clear();
+        self.match_arm.clear();
+        self.attr.clear();
+        self.type_generic_param.clear();
+        self.const_generic_param.clear();
+        self.field_info.clear();
+        self.variant_info.clear();
+        self.method_decl.clear();
+        self.method_def.clear();
+        self.extern_func_decl.clear();
+        self.impl_condition.clear();
+        self.capture_item.clear();
+        self.field_pattern.clear();
+        self.expr.clear();
+        self.type_syntax.clear();
+        self.const_expr.clear();
+        self.pattern.clear();
+        self.item.clear();
 
         *self = AstArena.new();
     }

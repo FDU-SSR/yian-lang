@@ -1,3 +1,4 @@
+from std.core.hash import Hash, Murmur3Hasher;
 from std.core.option import Option;
 from std.core.vec import Vec;
 from std.core.iter import Iterator, IntoIterator;
@@ -161,5 +162,12 @@ impl<T> Index<Range<u64>, T[]> for T[] {
         let start_ptr = self.ptr() + range.start;
         let len = range.end - range.start;
         @slice_from_parts(start_ptr, len)
+    }
+}
+
+impl<T> Hash<Murmur3Hasher> for T[] {
+    fn hash(hasher: Murmur3Hasher) {
+        self.len().hash(hasher);
+        for value in *self { value.hash(hasher); }
     }
 }

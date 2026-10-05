@@ -1,0 +1,116 @@
+from compiler.common.ids import SourceId;
+from compiler.common.location import SourceSpan;
+from compiler.analysis.session.session import AnalysisSession, SourcePermissions;
+from compiler.config import FrontendPhase;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.render import detach;
+from compiler.frontend.prepare import PreparedFile, prepare_file;
+from compiler.frontend.source import collect_sources;
+from compiler.package.model import PackageMap;
+from compiler.package.provenance import SourceTrust;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+impl AnalysisSession {
+    // Failure releases the partial session after its diagnostic locations are detached.
+    static pub fn prepare(inputs: Vec<String>&, trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool, allow_ffi: bool) -> Result<Self, AnalysisError> {
+        let session = Self.new(trust, packages, raw_pointers);
+        let transferred = false;
+        defer {
+            if !transferred {
+                session.drop();
+            }
+        };
+
+        let paths = match collect_sources(inputs) {
+            Ok(value) => value,
+            Err(error) => {
+                defer error.drop();
+                return Result<Self, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source, Option<SourceSpan>.None, error.msg()));
+            },
+        };
+
+        defer release_paths(&paths);
+
+        for path in paths {
+            let source = session.load_source(path.as_str())?;
+            let prepared = match session.prepare_source(source) {
+                Ok(value) => value,
+                Err(error) => {
+                    match detach(&error.diagnostic, &session.sources) {
+                        Ok(_) => {},
+                        Err(problem) => {
+                            error.drop();
+                            return Result<Self, AnalysisError>.Err(problem);
+                        },
+                    }
+
+                    return Result<Self, AnalysisError>.Err(error);
+                },
+            };
+
+            let file = session.sources.file(source.index);
+            let permissions = session.classify(file.canonical_path(), allow_ffi);
+            session.accept(prepared, permissions);
+        }
+
+        transferred = true;
+        Result<Self, AnalysisError>.Ok(session)
+    }
+
+    fn load_source(path: str) -> Result<SourceId, AnalysisError> {
+        match self.sources.load(path) {
+            Ok(id) => Result<SourceId, AnalysisError>.Ok(SourceId(id)),
+            Err(error) => {
+                defer error.drop();
+                let contextual = error.with_path(path);
+                defer contextual.drop();
+                Result<SourceId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source, Option<SourceSpan>.None, contextual.msg()))
+            },
+        }
+    }
+
+    fn prepare_source(source: SourceId) -> Result<PreparedFile, AnalysisError> {
+        let file = self.sources.file(source.index);
+
+        match prepare_file(source, file.path(), file.text(), FrontendPhase.Desugared) {
+            Ok(value) => Result<PreparedFile, AnalysisError>.Ok(value),
+            Err(error) => {
+                defer error.drop();
+                Result<PreparedFile, AnalysisError>.Err(AnalysisError.user(error.code,
+                    Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str()))
+            },
+        }
+    }
+
+    // Permission precedence is independent of the spelling of the input path.
+    fn classify(canonical: str, allow_ffi: bool) -> SourcePermissions {
+        let stdlib = self.trust.is_stdlib(canonical);
+        let restricted = self.trust.allows_restricted(canonical);
+        let ffi = stdlib || allow_ffi;
+
+        match &self.packages {
+            None => {},
+            Some(packages) => match packages.package_of(canonical) {
+                None => {},
+                Some(package) => {
+                    ffi = package.allows_ffi;
+                },
+            },
+        }
+
+        SourcePermissions(stdlib, restricted, ffi)
+    }
+}
+
+fn release_paths(paths: Vec<String>&) {
+    for path in *paths {
+        path.drop();
+    }
+
+    paths.drop();
+}

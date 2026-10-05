@@ -1,0 +1,5 @@
+// Skip suppresses both the child walk and the matching leave callback.
+pub enum WalkControl {
+    Continue,
+    Skip,
+}

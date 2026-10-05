@@ -1,3 +1,4 @@
+from std.core.hash import Hash, Murmur3Hasher;
 from std.core.raw_vec import RawVec;
 
 from std.core.ops import Index, PartialEq, Deref, Add;
@@ -280,4 +281,8 @@ impl<T> Drop for Vec<T> {
         self.raw_vec.drop();
         self.len = 0;
     }
+}
+
+impl<T> Hash<Murmur3Hasher> for Vec<T> {
+    fn hash(hasher: Murmur3Hasher) { self.as_slice().hash(hasher); }
 }

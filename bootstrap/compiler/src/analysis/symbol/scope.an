@@ -1,0 +1,173 @@
+from compiler.common.ids import NameId, SymbolId, ScopeId;
+from compiler.analysis.symbol.model import Symbol;
+from compiler.diagnostics.model import AnalysisError;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub struct Scope {
+    parent: Option<ScopeId>,
+    names: HashMap<NameId, SymbolId>
+}
+
+impl Scope {
+    static fn new(parent: Option<ScopeId>) -> Self {
+        Self(parent, HashMap<NameId, SymbolId>.new())
+    }
+
+    pub fn get(name: NameId) -> Option<SymbolId> {
+        match self.names.get(&name) {
+            Some(id) => Option<SymbolId>.Some(*id),
+            None => Option<SymbolId>.None
+        }
+    }
+
+    fn bind(name: NameId, symbol: SymbolId) -> bool {
+        if self.names.contains(&name) {
+            return false;
+        }
+
+        self.names.insert(name, symbol);
+        true
+    }
+
+    fn snapshot() -> Self {
+        Self(self.parent, self.names.clone())
+    }
+}
+
+impl Drop for Scope {
+    pub fn drop() {
+        self.names.drop();
+    }
+}
+
+pub struct SymbolStore {
+    symbols: Arena<Symbol>,
+    scopes: Arena<Scope>
+}
+
+impl SymbolStore {
+    static pub fn new() -> Self {
+        Self(Arena<Symbol>.new(), Arena<Scope>.new())
+    }
+
+    pub fn add(symbol: Symbol) -> SymbolId {
+        let id = SymbolId(self.symbols.len());
+        self.symbols.alloc(symbol);
+        id
+    }
+
+    pub fn get(id: SymbolId) -> Option<Symbol&> {
+        self.symbols.get(id.index)
+    }
+
+    fn add_scope(scope: Scope) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.alloc(scope);
+        id
+    }
+
+    pub fn scope(id: ScopeId) -> Option<Scope&> {
+        self.scopes.get(id.index)
+    }
+
+    // Parents must already exist, so append-only creation cannot introduce cycles.
+    pub fn create_scope(parent: Option<ScopeId>) -> Result<ScopeId, AnalysisError> {
+        match parent {
+            Some(id) => {
+                if self.scope(id).is_none() {
+                    return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("invalid parent scope"));
+                }
+            },
+            None => {},
+        }
+
+        Result<ScopeId, AnalysisError>.Ok(self.add_scope(Scope.new(parent)))
+    }
+
+    pub fn bind(scope: ScopeId, name: NameId, symbol: SymbolId) -> Result<bool, AnalysisError> {
+        if self.get(symbol).is_none() {
+            return Result<bool, AnalysisError>.Err(AnalysisError.internal("invalid symbol ID"));
+        }
+
+        match self.scope(scope) {
+            Some(target) => Result<bool, AnalysisError>.Ok(target.bind(name, symbol)),
+            None => Result<bool, AnalysisError>.Err(AnalysisError.internal("invalid scope ID")),
+        }
+    }
+
+    pub fn lookup(scope: ScopeId, name: NameId) -> Option<SymbolId> {
+        let current = Option<ScopeId>.Some(scope);
+
+        while current.is_some() {
+            let id = *current.unwrap();
+
+            if id.index >= self.scopes.len() {
+                return Option<SymbolId>.None;
+            }
+
+            let found = (*self.scopes.get(id.index).unwrap()).get(name);
+
+            if found.is_some() {
+                return found;
+            }
+
+            current = (*self.scopes.get(id.index).unwrap()).parent;
+        }
+
+        Option<SymbolId>.None
+    }
+
+    // Copy the complete parent chain so mutations in either branch stay isolated.
+    pub fn snapshot(scope: ScopeId) -> Result<ScopeId, AnalysisError> {
+        let chain = Vec<ScopeId>.new();
+        defer chain.drop();
+        let current = Option<ScopeId>.Some(scope);
+
+        while current.is_some() {
+            let id = *current.unwrap();
+
+            if id.index >= self.scopes.len() {
+                return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("invalid scope ID"));
+            }
+
+            if chain.len() >= self.scopes.len() {
+                return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("cyclic scope chain"));
+            }
+
+            chain.push(id);
+            current = (*self.scopes.get(id.index).unwrap()).parent;
+        }
+
+        // Clone from the root down; the copied chain never references old scopes.
+        let parent = Option<ScopeId>.None;
+        let remaining = chain.len();
+
+        while remaining > 0 {
+            remaining -= 1;
+            let copy = (*self.scopes.get(chain[remaining].index).unwrap()).snapshot();
+            copy.parent = parent;
+            parent = Option<ScopeId>.Some(self.add_scope(copy));
+        }
+
+        Result<ScopeId, AnalysisError>.Ok(*parent.unwrap())
+    }
+}
+
+impl Drop for SymbolStore {
+    pub fn drop() {
+        for scope in self.scopes {
+            scope.drop();
+        }
+
+        self.scopes.drop();
+        self.symbols.drop();
+    }
+}

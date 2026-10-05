@@ -1,0 +1,153 @@
+from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError;
+from compiler.frontend.source import SourceManager;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from json.write import Writer;
+
+// Resolve every location before the source owner is released, including related files.
+pub fn detach(diagnostic: Diagnostic&, sources: SourceManager&) -> Result<(), AnalysisError> {
+    match &diagnostic.location {
+        Some(location) => {
+            detach_location(location, sources)?;
+        },
+        None => {},
+    }
+
+    for related in diagnostic.related {
+        detach_location(&related.location, sources)?;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn detach_location(location: DiagnosticLocation&, sources: SourceManager&) -> Result<(), AnalysisError> {
+    match location {
+        Source(value) => {
+            let file = match sources.get(value.source.index) {
+                Some(file) => file,
+                None => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid diagnostic source ID")),
+            };
+
+            let detached = DiagnosticLocation.Detached(String.from(&file.path()), value.span);
+            *location = detached;
+        },
+        Detached(_, _) => {},
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn location_path(location: DiagnosticLocation&, sources: Option<SourceManager&>) -> Result<str, AnalysisError> {
+    match location {
+        Detached(path, _) => Result<str, AnalysisError>.Ok(path.as_str()),
+        Source(value) => {
+            let manager = match sources {
+                Some(manager) => manager,
+                None => return Result<str, AnalysisError>.Err(AnalysisError.internal("diagnostic requires its source manager")),
+            };
+
+            match manager.get(value.source.index) {
+                Some(file) => Result<str, AnalysisError>.Ok(file.path()),
+                None => Result<str, AnalysisError>.Err(AnalysisError.internal("invalid diagnostic source ID")),
+            }
+        },
+    }
+}
+
+pub fn write_json(diagnostic: Diagnostic&, output: Writer&, sources: Option<SourceManager&>) -> Result<(), AnalysisError> {
+    output.begin_object();
+    output.key("code");
+    output.write_string(diagnostic.code.text());
+    output.key("severity");
+    output.write_string(match diagnostic.severity {
+            Error => "error",
+            Warning => "warning",
+            Note => "note"
+        });
+    output.key("message");
+    output.write_string(diagnostic.message.as_str());
+    output.key("location");
+
+    match &diagnostic.location {
+        Some(location) => {
+            write_location(location, output, sources)?;
+        },
+        None => output.write_null(),
+    }
+
+    output.key("related");
+    output.begin_array();
+
+    for related in diagnostic.related {
+        output.begin_object();
+        output.key("message");
+        output.write_string(related.message.as_str());
+        output.key("location");
+        write_location(&related.location, output, sources)?;
+        output.end_object();
+    }
+
+    output.end_array();
+    output.end_object();
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn write_location(location: DiagnosticLocation&, output: Writer&, sources: Option<SourceManager&>) -> Result<(), AnalysisError> {
+    let path = location_path(location, sources)?;
+    output.begin_object();
+    output.key("path");
+    output.write_string(path);
+    location.span().write_json(output);
+    output.end_object();
+    Result<(), AnalysisError>.Ok(())
+}
+
+pub fn render(diagnostic: Diagnostic&, sources: Option<SourceManager&>) -> Result<String, AnalysisError> {
+    let text = String.new();
+    let transferred = false;
+    defer {
+        if !transferred {
+            text.drop();
+        }
+    };
+
+    text.push_str(diagnostic.code.text());
+    text.push_str(": ");
+    text.push_str(diagnostic.message.as_str());
+
+    match &diagnostic.location {
+        Some(location) => {
+            append_location(&text, location, sources)?;
+        },
+        None => {},
+    }
+
+    for related in diagnostic.related {
+        text.push_str("\n  ");
+        text.push_str(related.message.as_str());
+        append_location(&text, &related.location, sources)?;
+    }
+
+    transferred = true;
+    Result<String, AnalysisError>.Ok(text)
+}
+
+fn append_location(text: String&, location: DiagnosticLocation&, sources: Option<SourceManager&>) -> Result<(), AnalysisError> {
+    text.push_str(" at ");
+    text.push_str(location_path(location, sources)?);
+    let span = location.span();
+    let row = (span.start.row + 1).to_string();
+    defer row.drop();
+    let column = (span.start.column + 1).to_string();
+    defer column.drop();
+    text.push_str(":");
+    text.push_str(row.as_str());
+    text.push_str(":");
+    text.push_str(column.as_str());
+    Result<(), AnalysisError>.Ok(())
+}

@@ -1,3 +1,6 @@
+from compiler.frontend.diagnostics import lex_code, parse_code;
+from compiler.frontend.prepare import prepare_file, PreparationStage;
+from compiler.common.ids import SourceId;
 from std.core.drop import Drop;
 from std.core.env import exit;
 from std.core.io import IoError, Stderr, Stdout;
@@ -5,14 +8,9 @@ from std.core.string import String;
 from std.core.vec import Vec;
 from compiler.config import FrontendPhase, parse_args;
 from compiler.frontend.source import SourceManager, collect_sources, Span;
-from compiler.frontend.lex.lexer import Lexer;
-from compiler.frontend.lex.token import drop_tokens;
 from json.write import Writer;
-from compiler.frontend.observe import append_token_file, lex_code, parse_code;
+from compiler.frontend.observe import append_token_file;
 from compiler.frontend.ast.format import AstFormatter;
-from compiler.frontend.parse.state import Parser;
-from compiler.frontend.parse.items import parse_program;
-from compiler.frontend.desugar import desugar;
 
 fn release_paths(paths: Vec<String>&) {
     let index: u64 = 0u64;
@@ -103,7 +101,7 @@ fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span:
     diagnostic_start(output, stage, path);
 
     output.key("code");
-    output.write_string(if stage == "lex" { lex_code(message) } else { parse_code(message) });
+    output.write_string(if stage == "lex" { lex_code(message).text() } else { parse_code(message).text() });
 
     output.key("severity");
     output.write_string("error");
@@ -115,44 +113,21 @@ fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span:
 }
 
 // Local scopes release per-file resources on success, parse failure, and desugaring failure.
-fn observe_file(output: Writer&, phase: FrontendPhase, path: str, source: str) -> bool {
-    let tokens = match Lexer.new(source).run() {
+fn observe_file(output: Writer&, phase: FrontendPhase, id: SourceId, path: str, source: str) -> bool {
+    let prepared = match prepare_file(id, path, source, phase) {
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
-            source_diagnostic(output, "lex", path, problem.message(), problem.span());
+            source_diagnostic(output, if problem.stage == PreparationStage.Lex { "lex" } else { "parse" }, path, problem.message.as_str(), problem.span);
             return false;
         },
     };
-    defer drop_tokens(&tokens);
-
+    defer prepared.drop();
     if phase == FrontendPhase.Tokens {
-        append_token_file(output, path, &tokens);
+        append_token_file(output, path, &prepared.tokens);
         return true;
     }
-
-    let parser = Parser.new(&tokens);
-    defer parser.drop();
-    let tree = match parse_program(&parser) {
-        Ok(value) => value,
-        Err(problem) => {
-            defer problem.drop();
-            source_diagnostic(output, "parse", path, problem.message(), problem.span());
-            return false;
-        },
-    };
-    defer tree.drop();
-
-    if phase == FrontendPhase.Desugared {
-        match desugar(&tree, path) {
-            Ok(_) => {},
-            Err(problem) => {
-                defer problem.drop();
-                source_diagnostic(output, "parse", path, problem.message(), problem.span());
-                return false;
-            },
-        }
-    }
+    let tree = prepared.tree.unwrap();
 
     output.begin_object();
     output.key("path");
@@ -205,7 +180,7 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
         };
 
         let source = sources.file(id);
-        if !observe_file(&output, phase, source.path(), source.text()) {
+        if !observe_file(&output, phase, SourceId(id), source.path(), source.text()) {
             return false;
         }
         index += 1u64;

@@ -1,0 +1,108 @@
+from std.core.vec import Vec;
+from std.core.ops import Index;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+
+// Chunks never grow after receiving nodes. References survive further allocations.
+// The arena owns storage only; callers release element payloads before clear/drop.
+// The owner must not be shallow-copied and independently cleared or dropped.
+pub struct Arena<T> {
+    chunks: Vec<Vec<T>>,
+    count: u64,
+    chunk_capacity: u64
+}
+
+impl<T> Arena<T> {
+    static pub fn new() -> Self {
+        let capacity = 256u64;
+
+        if @sizeof<T> != 0 {
+            capacity = 16384u64 / @sizeof<T>;
+
+            if capacity == 0 {
+                capacity = 1;
+            }
+
+            if capacity > 256 {
+                capacity = 256;
+            }
+        }
+
+        Self(Vec<Vec<T>>.new(), 0, capacity)
+    }
+
+    pub fn len() -> u64 {
+        self.count
+    }
+
+    // Indices follow allocation order and are valid until clear/drop.
+    pub fn get(index: u64) -> Option<T&> {
+        if index >= self.count {
+            return Option<T&>.None;
+        }
+
+        let chunk = &self.chunks[index / self.chunk_capacity];
+        Option<T&>.Some(&chunk[index % self.chunk_capacity])
+    }
+
+    pub fn alloc(value: T) -> T& {
+        if self.chunks.len() == 0 || self.chunks[self.chunks.len() - 1].len() == self.chunk_capacity {
+            self.chunks.push(Vec<T>.with_capacity(self.chunk_capacity));
+        }
+
+        let chunk = &self.chunks[self.chunks.len() - 1];
+        let index = chunk.len();
+        chunk.push(value);
+        self.count += 1;
+        &chunk[index]
+    }
+
+    // All issued references and iterators expire here; payloads are not dropped.
+    pub fn clear() {
+        for chunk in self.chunks {
+            chunk.drop();
+        }
+
+        self.chunks.drop();
+        self.chunks = Vec<Vec<T>>.new();
+        self.count = 0;
+    }
+}
+
+pub struct ArenaIter<T> {
+    arena: Arena<T>&,
+    chunk: u64,
+    index: u64
+}
+
+impl<T> Iterator<T&> for ArenaIter<T> {
+    pub fn next() -> Option<T&> {
+        while self.chunk < self.arena.chunks.len() {
+            let chunk = &self.arena.chunks[self.chunk];
+
+            if self.index < chunk.len() {
+                let node = &chunk[self.index];
+                self.index += 1;
+                return Option<T&>.Some(node);
+            }
+
+            self.chunk += 1;
+            self.index = 0;
+        }
+
+        Option<T&>.None
+    }
+}
+
+impl<T> IntoIterator<ArenaIter<T>> for Arena<T> {
+    pub fn into_iter() -> ArenaIter<T> {
+        ArenaIter<T>(self, 0, 0)
+    }
+}
+
+impl<T> Drop for Arena<T> {
+    pub fn drop() {
+        self.clear();
+    }
+}

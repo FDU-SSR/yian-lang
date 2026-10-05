@@ -1,0 +1,46 @@
+from compiler.diagnostics.model import DiagnosticCode;
+
+// Classify observation error codes by lexical diagnostic message; unmatched messages use the generic code.
+pub fn lex_code(message: str) -> DiagnosticCode {
+    if message.contains("Unterminated block comment") {
+        return DiagnosticCode.UnterminatedComment;
+    }
+
+    if message.contains("Unterminated string literal") ||
+    message.contains("Unterminated character literal") ||
+    message.contains("Unterminated byte literal") {
+        return DiagnosticCode.UnterminatedLiteral;
+    }
+
+    if message.contains("f-string") {
+        return DiagnosticCode.FString;
+    }
+
+    if message.contains("unterminated") && message.contains("escape") {
+        return DiagnosticCode.Escape;
+    }
+
+    return DiagnosticCode.Lexical;
+}
+
+// Classify observation error codes by parse diagnostic message, with a separate category for reserved-word errors.
+pub fn parse_code(message: str) -> DiagnosticCode {
+    if message.starts_with("End of token stream reached") || message.contains("end of file") ||
+    message.contains("<eof>") {
+        return DiagnosticCode.EndOfInput;
+    }
+
+    if message.starts_with("Expected") {
+        return DiagnosticCode.ExpectedToken;
+    }
+
+    if message.starts_with("Unexpected") {
+        return DiagnosticCode.UnexpectedToken;
+    }
+
+    if message.contains("reserved") {
+        return DiagnosticCode.ReservedWord;
+    }
+
+    return DiagnosticCode.Syntax;
+}

@@ -1,0 +1,83 @@
+from compiler.common.ids import TypeId;
+from compiler.diagnostics.model import AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub enum WorkState {
+    Queued,
+    Checking,
+    Complete,
+    Failed,
+}
+
+// Scheduling owns IDs and states only; procedure bodies belong to the registry.
+pub struct DefinitionWorklist {
+    states: HashMap<TypeId, WorkState>,
+    queue: Vec<TypeId>,
+    cursor: u64,
+}
+
+impl DefinitionWorklist {
+    static pub fn new() -> Self {
+        Self(HashMap<TypeId, WorkState>.new(), Vec<TypeId>.new(), 0)
+    }
+
+    pub fn enqueue(type_id: TypeId) -> bool {
+        if self.states.contains(&type_id) {
+            return false;
+        }
+
+        self.states.insert(type_id, WorkState.Queued);
+        self.queue.push(type_id);
+        true
+    }
+
+    pub fn next() -> Option<TypeId> {
+        if self.cursor == self.queue.len() {
+            return Option<TypeId>.None;
+        }
+
+        let type_id = self.queue[self.cursor];
+        self.cursor += 1;
+        let state = *self.states.get(&type_id).unwrap();
+        *state = WorkState.Checking;
+        Option<TypeId>.Some(type_id)
+    }
+
+    pub fn finish(type_id: TypeId, failed: bool) -> Result<(), AnalysisError> {
+        let state = match self.states.get(&type_id) {
+            Some(value) => value,
+            None => return Result<(), AnalysisError>.Err(AnalysisError.internal("unknown work item")),
+        };
+
+        if *state != WorkState.Checking {
+            return Result<(), AnalysisError>.Err(AnalysisError.internal("work item is not being checked"));
+        };
+
+        *state = if failed {
+            WorkState.Failed
+        } else {
+            WorkState.Complete
+        };
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn state(type_id: TypeId) -> Option<WorkState> {
+        match self.states.get(&type_id) {
+            None => Option<WorkState>.None,
+            Some(value) => Option<WorkState>.Some(*value),
+        }
+    }
+}
+
+impl Drop for DefinitionWorklist {
+    pub fn drop() {
+        self.states.drop();
+        self.queue.drop();
+    }
+}

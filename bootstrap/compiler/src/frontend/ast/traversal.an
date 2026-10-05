@@ -1,3 +1,6 @@
+from compiler.frontend.ast.walk import TryAstVisitor, try_walk_type_source, try_walk_identifier, try_walk_int_literal, try_walk_float_literal, try_walk_char_literal, try_walk_str_literal, try_walk_bool_literal, try_walk_program, try_walk_block, try_walk_argument, try_walk_var_info, try_walk_pattern_param, try_walk_pattern_let, try_walk_let_condition, try_walk_elif_branch, try_walk_match_arm, try_walk_attr, try_walk_type_generic_param, try_walk_const_generic_param, try_walk_field_info, try_walk_variant_info, try_walk_method_decl, try_walk_method_def, try_walk_extern_func_decl, try_walk_impl_condition, try_walk_capture_item, try_walk_field_pattern, try_walk_expr, try_walk_type_syntax, try_walk_const_expr, try_walk_pattern, try_walk_item, try_walk_literal, try_walk_range_bounds, try_walk_condition, try_walk_generic_argument, try_walk_generic_param, try_walk_parameter, try_walk_trait_member, try_walk_pattern_arguments;
+from compiler.common.traversal import WalkControl;
+from std.core.result import Result;
 from compiler.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
 from std.core.ops import Index;
 from compiler.frontend.ast.node import TypeSource;
@@ -5,11 +8,8 @@ from compiler.frontend.ast.node import TypeSource;
 // Traversal follows child references; shared nodes are visited once per incoming edge.
 // Binding inputs precede patterns; block parameter bindings precede statements.
 pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
-    match source {
-        Syntax(value) => walk_type_syntax(*value, visitor),
-        ArgumentType(_) => {},
-        CallableReturnType => {},
-    }
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_source<()>(source, &adapter);
 }
 
 pub fn rewrite_type_source(source: TypeSource&, rewriter: AstRewriter&) {
@@ -288,1143 +288,198 @@ pub trait AstRewriter {
 }
 
 pub fn walk_identifier(node: Identifier&, visitor: AstVisitor&) {
-    if !visitor.enter_identifier(node) {
-        return;
-    }
-
-    visitor.leave_identifier(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_identifier<()>(node, &adapter);
 }
 
 pub fn walk_int_literal(node: IntLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_int_literal(node) {
-        return;
-    }
-
-    visitor.leave_int_literal(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_int_literal<()>(node, &adapter);
 }
 
 pub fn walk_float_literal(node: FloatLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_float_literal(node) {
-        return;
-    }
-
-    visitor.leave_float_literal(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_float_literal<()>(node, &adapter);
 }
 
 pub fn walk_char_literal(node: CharLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_char_literal(node) {
-        return;
-    }
-
-    visitor.leave_char_literal(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_char_literal<()>(node, &adapter);
 }
 
 pub fn walk_str_literal(node: StrLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_str_literal(node) {
-        return;
-    }
-
-    visitor.leave_str_literal(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_str_literal<()>(node, &adapter);
 }
 
 pub fn walk_bool_literal(node: BoolLiteral&, visitor: AstVisitor&) {
-    if !visitor.enter_bool_literal(node) {
-        return;
-    }
-
-    visitor.leave_bool_literal(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_bool_literal<()>(node, &adapter);
 }
 
 pub fn walk_program(node: Program&, visitor: AstVisitor&) {
-    if !visitor.enter_program(node) {
-        return;
-    }
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.items).len() {
-            walk_item((node.data.items)[index], visitor);
-            index += 1;
-        }
-    };
-
-    visitor.leave_program(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_program<()>(node, &adapter);
 }
 
 pub fn walk_block(node: Block&, visitor: AstVisitor&) {
-    if !visitor.enter_block(node) {
-        return;
-    }
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.parameter_bindings).len() {
-            walk_pattern_let((node.data.parameter_bindings)[index], visitor);
-            index += 1;
-        }
-    };
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.stmts).len() {
-            walk_expr((node.data.stmts)[index], visitor);
-            index += 1;
-        }
-    };
-
-    visitor.leave_block(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_block<()>(node, &adapter);
 }
 
 pub fn walk_argument(node: Argument&, visitor: AstVisitor&) {
-    if !visitor.enter_argument(node) {
-        return;
-    }
-    match &(node.data.name) {
-        Some(value) => {
-            walk_identifier(*value, visitor);
-        },
-        None => {},
-    };
-    walk_expr(node.data.value, visitor);
-
-    visitor.leave_argument(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_argument<()>(node, &adapter);
 }
 
 pub fn walk_var_info(node: VarInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_var_info(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    walk_type_syntax(node.data.var_type, visitor);
-
-    visitor.leave_var_info(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_var_info<()>(node, &adapter);
 }
 
 pub fn walk_pattern_param(node: PatternParam&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern_param(node) {
-        return;
-    }
-    walk_pattern(node.data.pattern, visitor);
-    walk_type_syntax(node.data.var_type, visitor);
-
-    visitor.leave_pattern_param(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_param<()>(node, &adapter);
 }
 
 pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern_let(node) {
-        return;
-    }
-    walk_expr(node.data.init_expr, visitor);
-    walk_type_syntax(node.data.var_type, visitor);
-    walk_pattern(node.data.pattern, visitor);
-    match &(node.data.else_branch) {
-        Some(value) => {
-            walk_block(*value, visitor);
-        },
-        None => {},
-    };
-
-    visitor.leave_pattern_let(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_let<()>(node, &adapter);
 }
 
 pub fn walk_let_condition(node: LetCondition&, visitor: AstVisitor&) {
-    if !visitor.enter_let_condition(node) {
-        return;
-    }
-    walk_expr(node.data.value, visitor);
-    walk_pattern(node.data.pattern, visitor);
-
-    visitor.leave_let_condition(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_let_condition<()>(node, &adapter);
 }
 
 pub fn walk_elif_branch(node: ElifBranch&, visitor: AstVisitor&) {
-    if !visitor.enter_elif_branch(node) {
-        return;
-    }
-    walk_condition(&(node.data.condition), visitor);
-    walk_block(node.data.body, visitor);
-
-    visitor.leave_elif_branch(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_elif_branch<()>(node, &adapter);
 }
 
 pub fn walk_match_arm(node: MatchArm&, visitor: AstVisitor&) {
-    if !visitor.enter_match_arm(node) {
-        return;
-    }
-    walk_pattern(node.data.pattern, visitor);
-    match &(node.data.guard) {
-        Some(value) => {
-            walk_expr(*value, visitor);
-        },
-        None => {},
-    };
-    walk_block(node.data.body, visitor);
-
-    visitor.leave_match_arm(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_match_arm<()>(node, &adapter);
 }
 
 pub fn walk_attr(node: Attr&, visitor: AstVisitor&) {
-    if !visitor.enter_attr(node) {
-        return;
-    }
-
-    visitor.leave_attr(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_attr<()>(node, &adapter);
 }
 
 pub fn walk_type_generic_param(node: TypeGenericParam&, visitor: AstVisitor&) {
-    if !visitor.enter_type_generic_param(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-
-    visitor.leave_type_generic_param(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_generic_param<()>(node, &adapter);
 }
 
 pub fn walk_const_generic_param(node: ConstGenericParam&, visitor: AstVisitor&) {
-    if !visitor.enter_const_generic_param(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    walk_type_syntax(node.data.const_type, visitor);
-
-    visitor.leave_const_generic_param(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_const_generic_param<()>(node, &adapter);
 }
 
 pub fn walk_field_info(node: FieldInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_field_info(node) {
-        return;
-    }
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.attrs).len() {
-            walk_attr((node.data.attrs)[index], visitor);
-            index += 1;
-        }
-    };
-    walk_identifier(node.data.name, visitor);
-    walk_type_syntax(node.data.field_type, visitor);
-
-    visitor.leave_field_info(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_field_info<()>(node, &adapter);
 }
 
 pub fn walk_variant_info(node: VariantInfo&, visitor: AstVisitor&) {
-    if !visitor.enter_variant_info(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.fields).len() {
-            walk_var_info((node.data.fields)[index], visitor);
-            index += 1;
-        }
-    };
-
-    visitor.leave_variant_info(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_variant_info<()>(node, &adapter);
 }
 
 pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
-    if !visitor.enter_method_decl(node) {
-        return;
-    }
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.attrs).len() {
-            walk_attr((node.data.attrs)[index], visitor);
-            index += 1;
-        }
-    };
-    walk_identifier(node.data.name, visitor);
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.generics).len() {
-            walk_generic_param(&((node.data.generics)[index]), visitor);
-            index += 1;
-        }
-    };
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.params).len() {
-            walk_parameter(&((node.data.params)[index]), visitor);
-            index += 1;
-        }
-    };
-    match &(node.data.ret_type) {
-        Some(value) => {
-            walk_type_syntax(*value, visitor);
-        },
-        None => {},
-    };
-
-    visitor.leave_method_decl(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_method_decl<()>(node, &adapter);
 }
 
 pub fn walk_method_def(node: MethodDef&, visitor: AstVisitor&) {
-    if !visitor.enter_method_def(node) {
-        return;
-    }
-    walk_method_decl(node.data.decl, visitor);
-    walk_block(node.data.body, visitor);
-
-    visitor.leave_method_def(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_method_def<()>(node, &adapter);
 }
 
 pub fn walk_extern_func_decl(node: ExternFuncDecl&, visitor: AstVisitor&) {
-    if !visitor.enter_extern_func_decl(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.params).len() {
-            walk_var_info((node.data.params)[index], visitor);
-            index += 1;
-        }
-    };
-    match &(node.data.ret_type) {
-        Some(value) => {
-            walk_type_syntax(*value, visitor);
-        },
-        None => {},
-    };
-
-    visitor.leave_extern_func_decl(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_extern_func_decl<()>(node, &adapter);
 }
 
 pub fn walk_impl_condition(node: ImplCondition&, visitor: AstVisitor&) {
-    if !visitor.enter_impl_condition(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    {
-        let index: u64 = 0;
-
-        while index < (node.data.traits).len() {
-            walk_type_syntax((node.data.traits)[index], visitor);
-            index += 1;
-        }
-    };
-
-    visitor.leave_impl_condition(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_impl_condition<()>(node, &adapter);
 }
 
 pub fn walk_capture_item(node: CaptureItem&, visitor: AstVisitor&) {
-    if !visitor.enter_capture_item(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    walk_expr(node.data.expr, visitor);
-
-    visitor.leave_capture_item(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_capture_item<()>(node, &adapter);
 }
 
 pub fn walk_field_pattern(node: FieldPattern&, visitor: AstVisitor&) {
-    if !visitor.enter_field_pattern(node) {
-        return;
-    }
-    walk_identifier(node.data.name, visitor);
-    walk_pattern(node.data.pattern, visitor);
-
-    visitor.leave_field_pattern(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_field_pattern<()>(node, &adapter);
 }
 
 pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
-    if !visitor.enter_expr(node) {
-        return;
-    }
-    match &node.data {
-        Identifier(name) => {
-            walk_identifier(*name, visitor);
-        },
-        Literal(literal) => {
-            walk_literal(&(*literal), visitor);
-        },
-        Binary(op, left, right) => {
-            walk_expr(*left, visitor);
-            walk_expr(*right, visitor);
-        },
-        Unary(op, operand) => {
-            walk_expr(*operand, visitor);
-        },
-        TryExpr(operand) => {
-            walk_expr(*operand, visitor);
-        },
-        TraitCall(trait, self_type, trait_args, method_name, args) => {
-            walk_expr(*trait, visitor);
-            walk_type_source(self_type, visitor);
-
-            let index: u64 = 0;
-
-            while index < trait_args.len() {
-                match &(*trait_args)[index] {
-                    Some(value) => walk_type_source(value, visitor), None => {}
-                }
-                index += 1;
-            }
-            walk_identifier(*method_name, visitor);
-            index = 0;
-
-            while index < args.len() {
-                walk_argument((*args)[index], visitor);
-                index += 1;
-            }
-        },
-        Call(callee, args) => {
-            walk_expr(*callee, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*args).len() {
-                    walk_argument((*args)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        MethodCall(receiver, method_name, generics, args) => {
-            walk_expr(*receiver, visitor);
-            walk_identifier(*method_name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_type_syntax((*generics)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*args).len() {
-                    walk_argument((*args)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        FieldAccess(receiver, field_name) => {
-            walk_expr(*receiver, visitor);
-            walk_identifier(*field_name, visitor);
-        },
-        Builtin(kind, type_args, args) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*type_args).len() {
-                    walk_type_syntax((*type_args)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*args).len() {
-                    walk_argument((*args)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        TypeItem(name, generics) => {
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_argument(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-        },
-        Block(block) => {
-            walk_block(*block, visitor);
-        },
-        Tuple(elements) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*elements).len() {
-                    walk_expr((*elements)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        Array(elements) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*elements).len() {
-                    walk_expr((*elements)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        ArrayRepeat(element, count) => {
-            walk_expr(*element, visitor);
-            walk_expr(*count, visitor);
-        },
-        DynValue(value) => {
-            walk_expr(*value, visitor);
-        },
-        DynBuffer(size, element) => {
-            walk_expr(*size, visitor);
-            walk_expr(*element, visitor);
-        },
-        VarDecl(name, var_type, init_expr) => {
-            walk_identifier(*name, visitor);
-            walk_type_syntax(*var_type, visitor);
-            match &(*init_expr) {
-                Some(value) => {
-                    walk_expr(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        PatternLet(binding) => {
-            walk_pattern_let(*binding, visitor);
-        },
-        If(condition, then_branch, elif_branches, else_branch) => {
-            walk_condition(&(*condition), visitor);
-            walk_block(*then_branch, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*elif_branches).len() {
-                    walk_elif_branch((*elif_branches)[index], visitor);
-                    index += 1;
-                }
-            };
-            match &(*else_branch) {
-                Some(value) => {
-                    walk_block(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        ComptimeIf(condition, then_branch, else_branch) => {
-            walk_expr(*condition, visitor);
-            walk_block(*then_branch, visitor);
-            walk_block(*else_branch, visitor);
-        },
-        For(pattern, iterable, body) => {
-            walk_expr(*iterable, visitor);
-            walk_pattern(*pattern, visitor);
-            walk_block(*body, visitor);
-        },
-        While(condition, body) => {
-            walk_condition(&(*condition), visitor);
-            walk_block(*body, visitor);
-        },
-        Loop(body) => {
-            walk_block(*body, visitor);
-        },
-        Match(expr, arms) => {
-            walk_expr(*expr, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*arms).len() {
-                    walk_match_arm((*arms)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        Return(expr) => {
-            match &(*expr) {
-                Some(value) => {
-                    walk_expr(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        Break(expr) => {
-            match &(*expr) {
-                Some(value) => {
-                    walk_expr(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        Continue => {
-        },
-        Defer(action) => {
-            walk_expr(*action, visitor);
-        },
-        Assert(condition, message) => {
-            walk_expr(*condition, visitor);
-            match &(*message) {
-                Some(value) => {
-                    walk_expr(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        Delete(target) => {
-            walk_expr(*target, visitor);
-        },
-        Semi(expr) => {
-            walk_expr(*expr, visitor);
-        },
-        ClosureExpr(captures, params, return_type, body) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*captures).len() {
-                    walk_capture_item((*captures)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*params).len() {
-                    walk_parameter(&((*params)[index]), visitor);
-                    index += 1;
-                }
-            };
-            match &(*return_type) {
-                Some(value) => {
-                    walk_type_syntax(*value, visitor);
-                },
-                None => {},
-            };
-            walk_block(*body, visitor);
-        },
-        CompileConfig(name) => {
-        },
-    };
-
-    visitor.leave_expr(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_expr<()>(node, &adapter);
 }
 
 pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
-    if !visitor.enter_type_syntax(node) {
-        return;
-    }
-    match &node.data {
-        IntType(signed, width) => {
-        },
-        FloatType(width) => {
-        },
-        BoolType => {
-        },
-        StrType => {
-        },
-        CharType => {
-        },
-        VoidType => {
-        },
-        NeverType => {
-        },
-        DeducedType => {
-        },
-        CScalarType(name) => {
-        },
-        CPtrType(pointee_type) => {
-            walk_type_syntax(*pointee_type, visitor);
-        },
-        NamedType(name) => {
-            walk_identifier(*name, visitor);
-        },
-        ArrayType(element_type, size) => {
-            walk_type_syntax(*element_type, visitor);
-            walk_const_expr(*size, visitor);
-        },
-        TupleType(element_types) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*element_types).len() {
-                    walk_type_syntax((*element_types)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        PointerType(pointee_type) => {
-            walk_type_syntax(*pointee_type, visitor);
-        },
-        RefType(pointee_type) => {
-            walk_type_syntax(*pointee_type, visitor);
-        },
-        SliceType(element_type) => {
-            walk_type_syntax(*element_type, visitor);
-        },
-        InstanceType(base, generic_args) => {
-            walk_type_syntax(*base, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generic_args).len() {
-                    walk_generic_argument(&((*generic_args)[index]), visitor);
-                    index += 1;
-                }
-            };
-        },
-        FunctionType(param_types, return_type) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*param_types).len() {
-                    walk_type_syntax((*param_types)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_type_syntax(*return_type, visitor);
-        },
-    };
-
-    visitor.leave_type_syntax(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_syntax<()>(node, &adapter);
 }
 
 pub fn walk_const_expr(node: ConstExpr&, visitor: AstVisitor&) {
-    if !visitor.enter_const_expr(node) {
-        return;
-    }
-    match &node.data {
-        LiteralConstExpr(literal) => {
-            walk_int_literal(*literal, visitor);
-        },
-        GenericConstExpr(name) => {
-            walk_identifier(*name, visitor);
-        },
-        UnaryConstExpr(op, operand) => {
-            walk_const_expr(*operand, visitor);
-        },
-        BinaryConstExpr(op, left, right) => {
-            walk_const_expr(*left, visitor);
-            walk_const_expr(*right, visitor);
-        },
-    };
-
-    visitor.leave_const_expr(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_const_expr<()>(node, &adapter);
 }
 
 pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
-    if !visitor.enter_pattern(node) {
-        return;
-    }
-    match &node.data {
-        WildcardPattern => {
-        },
-        LiteralPattern(literal) => {
-            walk_literal(&(*literal), visitor);
-        },
-        RangePattern(bounds) => {
-            walk_range_bounds(&(*bounds), visitor);
-        },
-        NamePattern(name) => {
-            walk_identifier(*name, visitor);
-        },
-        BindPattern(name, inner) => {
-            walk_identifier(*name, visitor);
-            walk_pattern(*inner, visitor);
-        },
-        OrPattern(alternatives) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*alternatives).len() {
-                    walk_pattern((*alternatives)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        ConstructPattern(name, qualifier, arguments, rest) => {
-            walk_identifier(*name, visitor);
-            match &(*qualifier) {
-                Some(value) => {
-                    walk_type_syntax(*value, visitor);
-                },
-                None => {},
-            };
-            walk_pattern_arguments(&(*arguments), visitor);
-        },
-        TuplePattern(elements) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*elements).len() {
-                    walk_pattern((*elements)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        SequencePattern(prefix, suffix, rest) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*prefix).len() {
-                    walk_pattern((*prefix)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*suffix).len() {
-                    walk_pattern((*suffix)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-    };
-
-    visitor.leave_pattern(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern<()>(node, &adapter);
 }
 
 pub fn walk_item(node: Item&, visitor: AstVisitor&) {
-    if !visitor.enter_item(node) {
-        return;
-    }
-    match &node.data {
-        Import(paths, target, alias, end) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*paths).len() {
-                    walk_identifier((*paths)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*target, visitor);
-            match &(*alias) {
-                Some(value) => {
-                    walk_identifier(*value, visitor);
-                },
-                None => {},
-            };
-        },
-        Alias(attrs, name, generics, target) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            walk_type_syntax(*target, visitor);
-        },
-        FuncDef(attrs, name, generics, params, ret_type, body) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*params).len() {
-                    walk_parameter(&((*params)[index]), visitor);
-                    index += 1;
-                }
-            };
-            match &(*ret_type) {
-                Some(value) => {
-                    walk_type_syntax(*value, visitor);
-                },
-                None => {},
-            };
-            walk_block(*body, visitor);
-        },
-        ConstDef(attrs, name, const_type, value) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            walk_type_syntax(*const_type, visitor);
-            walk_expr(*value, visitor);
-        },
-        OpaqueTypeDef(attrs, name) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-        },
-        ExternBlock(attrs, abi, functions) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*functions).len() {
-                    walk_extern_func_decl((*functions)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        StructDef(attrs, name, generics, fields) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*fields).len() {
-                    walk_field_info((*fields)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        EnumDef(attrs, name, generics, variants) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*variants).len() {
-                    walk_variant_info((*variants)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        TraitDef(attrs, name, generics, items) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*attrs).len() {
-                    walk_attr((*attrs)[index], visitor);
-                    index += 1;
-                }
-            };
-            walk_identifier(*name, visitor);
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*items).len() {
-                    walk_trait_member(&((*items)[index]), visitor);
-                    index += 1;
-                }
-            };
-        },
-        Impl(generics, target, trait_type, items, conditions) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*generics).len() {
-                    walk_generic_param(&((*generics)[index]), visitor);
-                    index += 1;
-                }
-            };
-            walk_type_syntax(*target, visitor);
-            match &(*trait_type) {
-                Some(value) => {
-                    walk_type_syntax(*value, visitor);
-                },
-                None => {},
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*items).len() {
-                    walk_method_def((*items)[index], visitor);
-                    index += 1;
-                }
-            };
-            {
-                let index: u64 = 0;
-
-                while index < (*conditions).len() {
-                    walk_impl_condition((*conditions)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-    };
-
-    visitor.leave_item(node);
+    let adapter = VisitorAdapter(visitor);
+    try_walk_item<()>(node, &adapter);
 }
 
 pub fn walk_literal(node: Literal&, visitor: AstVisitor&) {
-    match node {
-        Integer(value) => {
-            walk_int_literal(*value, visitor);
-        },
-        Float(value) => {
-            walk_float_literal(*value, visitor);
-        },
-        Character(value) => {
-            walk_char_literal(*value, visitor);
-        },
-        StringLiteral(value) => {
-            walk_str_literal(*value, visitor);
-        },
-        Boolean(value) => {
-            walk_bool_literal(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_literal<()>(node, &adapter);
 }
 
 pub fn walk_range_bounds(node: RangeBounds&, visitor: AstVisitor&) {
-    match node {
-        Integer(lower, upper) => {
-            walk_int_literal(*lower, visitor);
-            walk_int_literal(*upper, visitor);
-        },
-        Character(lower, upper) => {
-            walk_char_literal(*lower, visitor);
-            walk_char_literal(*upper, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_range_bounds<()>(node, &adapter);
 }
 
 pub fn walk_condition(node: Condition&, visitor: AstVisitor&) {
-    match node {
-        Expression(value) => {
-            walk_expr(*value, visitor);
-        },
-        Let(value) => {
-            walk_let_condition(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_condition<()>(node, &adapter);
 }
 
 pub fn walk_generic_argument(node: GenericArgument&, visitor: AstVisitor&) {
-    match node {
-        Type(value) => {
-            walk_type_syntax(*value, visitor);
-        },
-        Constant(value) => {
-            walk_const_expr(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_generic_argument<()>(node, &adapter);
 }
 
 pub fn walk_generic_param(node: GenericParam&, visitor: AstVisitor&) {
-    match node {
-        Type(value) => {
-            walk_type_generic_param(*value, visitor);
-        },
-        Constant(value) => {
-            walk_const_generic_param(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_generic_param<()>(node, &adapter);
 }
 
 pub fn walk_parameter(node: Parameter&, visitor: AstVisitor&) {
-    match node {
-        Named(value) => {
-            walk_var_info(*value, visitor);
-        },
-        Pattern(value) => {
-            walk_pattern_param(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_parameter<()>(node, &adapter);
 }
 
 pub fn walk_trait_member(node: TraitMember&, visitor: AstVisitor&) {
-    match node {
-        Declaration(value) => {
-            walk_method_decl(*value, visitor);
-        },
-        Definition(value) => {
-            walk_method_def(*value, visitor);
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_trait_member<()>(node, &adapter);
 }
 
 pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
-    match node {
-        None => {
-        },
-        Positional(values) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*values).len() {
-                    walk_pattern((*values)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-        Named(values) => {
-            {
-                let index: u64 = 0;
-
-                while index < (*values).len() {
-                    walk_field_pattern((*values)[index], visitor);
-                    index += 1;
-                }
-            };
-        },
-    };
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_arguments<()>(node, &adapter);
 }
 
 pub fn rewrite_program_children(node: Program&, rewriter: AstRewriter&) {
@@ -2389,4 +1444,319 @@ pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&
             };
         },
     };
+}
+
+// This adapter cannot fail; legacy visitors share the fallible traversal topology.
+struct VisitorAdapter { visitor: AstVisitor& }
+impl TryAstVisitor<()> for VisitorAdapter {
+    pub fn enter_identifier(node: Identifier&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_identifier(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_identifier(node: Identifier&) -> Result<(), ()> {
+        self.visitor.leave_identifier(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_int_literal(node: IntLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_int_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_int_literal(node: IntLiteral&) -> Result<(), ()> {
+        self.visitor.leave_int_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_float_literal(node: FloatLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_float_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_float_literal(node: FloatLiteral&) -> Result<(), ()> {
+        self.visitor.leave_float_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_char_literal(node: CharLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_char_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_char_literal(node: CharLiteral&) -> Result<(), ()> {
+        self.visitor.leave_char_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_str_literal(node: StrLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_str_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_str_literal(node: StrLiteral&) -> Result<(), ()> {
+        self.visitor.leave_str_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_bool_literal(node: BoolLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_bool_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_bool_literal(node: BoolLiteral&) -> Result<(), ()> {
+        self.visitor.leave_bool_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_program(node: Program&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_program(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_program(node: Program&) -> Result<(), ()> {
+        self.visitor.leave_program(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_block(node: Block&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_block(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_block(node: Block&) -> Result<(), ()> {
+        self.visitor.leave_block(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_argument(node: Argument&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_argument(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_argument(node: Argument&) -> Result<(), ()> {
+        self.visitor.leave_argument(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_var_info(node: VarInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_var_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_var_info(node: VarInfo&) -> Result<(), ()> {
+        self.visitor.leave_var_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern_param(node: PatternParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern_param(node: PatternParam&) -> Result<(), ()> {
+        self.visitor.leave_pattern_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern_let(node: PatternLet&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern_let(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern_let(node: PatternLet&) -> Result<(), ()> {
+        self.visitor.leave_pattern_let(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_let_condition(node: LetCondition&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_let_condition(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_let_condition(node: LetCondition&) -> Result<(), ()> {
+        self.visitor.leave_let_condition(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_elif_branch(node: ElifBranch&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_elif_branch(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_elif_branch(node: ElifBranch&) -> Result<(), ()> {
+        self.visitor.leave_elif_branch(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_match_arm(node: MatchArm&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_match_arm(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_match_arm(node: MatchArm&) -> Result<(), ()> {
+        self.visitor.leave_match_arm(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_attr(node: Attr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_attr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_attr(node: Attr&) -> Result<(), ()> {
+        self.visitor.leave_attr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_type_generic_param(node: TypeGenericParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_type_generic_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_type_generic_param(node: TypeGenericParam&) -> Result<(), ()> {
+        self.visitor.leave_type_generic_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_const_generic_param(node: ConstGenericParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_const_generic_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_const_generic_param(node: ConstGenericParam&) -> Result<(), ()> {
+        self.visitor.leave_const_generic_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_field_info(node: FieldInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_field_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_field_info(node: FieldInfo&) -> Result<(), ()> {
+        self.visitor.leave_field_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_variant_info(node: VariantInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_variant_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_variant_info(node: VariantInfo&) -> Result<(), ()> {
+        self.visitor.leave_variant_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_method_decl(node: MethodDecl&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_method_decl(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_method_decl(node: MethodDecl&) -> Result<(), ()> {
+        self.visitor.leave_method_decl(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_method_def(node: MethodDef&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_method_def(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_method_def(node: MethodDef&) -> Result<(), ()> {
+        self.visitor.leave_method_def(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_extern_func_decl(node: ExternFuncDecl&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_extern_func_decl(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_extern_func_decl(node: ExternFuncDecl&) -> Result<(), ()> {
+        self.visitor.leave_extern_func_decl(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_impl_condition(node: ImplCondition&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_impl_condition(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_impl_condition(node: ImplCondition&) -> Result<(), ()> {
+        self.visitor.leave_impl_condition(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_capture_item(node: CaptureItem&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_capture_item(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_capture_item(node: CaptureItem&) -> Result<(), ()> {
+        self.visitor.leave_capture_item(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_field_pattern(node: FieldPattern&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_field_pattern(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_field_pattern(node: FieldPattern&) -> Result<(), ()> {
+        self.visitor.leave_field_pattern(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_expr(node: Expr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_expr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_expr(node: Expr&) -> Result<(), ()> {
+        self.visitor.leave_expr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_type_syntax(node: TypeSyntax&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_type_syntax(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_type_syntax(node: TypeSyntax&) -> Result<(), ()> {
+        self.visitor.leave_type_syntax(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_const_expr(node: ConstExpr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_const_expr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_const_expr(node: ConstExpr&) -> Result<(), ()> {
+        self.visitor.leave_const_expr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern(node: Pattern&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern(node: Pattern&) -> Result<(), ()> {
+        self.visitor.leave_pattern(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_item(node: Item&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_item(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_item(node: Item&) -> Result<(), ()> {
+        self.visitor.leave_item(node);
+        Result<(), ()>.Ok(())
+    }
+
 }

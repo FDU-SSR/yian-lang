@@ -1,0 +1,65 @@
+from compiler.common.ids import NameId;
+from std.collections.hash_map import HashMap;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// Strings own their buffers; index keys borrow those buffers across vector growth.
+pub struct NameInterner {
+    names: Vec<String>,
+    index: HashMap<str, NameId>
+}
+
+impl NameInterner {
+    static pub fn new() -> Self {
+        Self(Vec<String>.new(), HashMap<str, NameId>.new())
+    }
+
+    pub fn intern(text: str) -> NameId {
+        match self.index.get(&text) {
+            Some(id) => return *id,
+            None => {}
+        }
+
+        let owned = String.from(&text);
+        let id = NameId(self.names.len());
+        self.index.insert(owned.as_str(), id);
+        self.names.push(owned);
+        id
+    }
+
+    pub fn get(id: NameId) -> Option<str> {
+        if id.index >= self.names.len() {
+            return Option<str>.None;
+        }
+
+        Option<str>.Some(self.names[id.index].as_str())
+    }
+
+    pub fn text(id: NameId) -> str {
+        match self.get(id) {
+            Some(value) => value,
+            None => @panic("E599: invalid name ID")
+        }
+    }
+
+    pub fn len() -> u64 {
+        self.names.len()
+    }
+}
+
+impl Drop for NameInterner {
+    pub fn drop() {
+        self.index.drop();
+
+        for name in self.names {
+            name.drop();
+        }
+
+        self.names.drop();
+    }
+}
