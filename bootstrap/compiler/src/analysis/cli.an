@@ -1,0 +1,200 @@
+from compiler.config import CompilerConfig;
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.session.output import AnalysisOptions;
+from compiler.package.model import PackageMap;
+from compiler.package.provenance import SourceTrust;
+from compiler.diagnostics.model import AnalysisError, Diagnostic;
+from compiler.diagnostics.render import write_json, render;
+from compiler.frontend.source import SourceManager;
+from json.write import Writer;
+from std.core.drop import Drop;
+from std.core.io import Stdout, Stderr;
+from std.core.option import Option;
+from std.core.path import Path;
+from std.core.fs import try_exists;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.core.iter import Iterator, IntoIterator;
+
+fn emit(json: bool, success: bool, diagnostic: Option<Diagnostic&>, sources: Option<SourceManager&>, warnings: Option<Vec<Diagnostic>&>) -> bool {
+    if json {
+        let writer = Writer.new();
+        defer writer.drop();
+        writer.begin_object();
+        writer.key("success");
+        writer.write_bool(success);
+        writer.key("diagnostics");
+        writer.begin_array();
+
+        match diagnostic {
+            Some(value) => match write_json(value, &writer, sources) {
+                Ok(_) => {},
+                Err(problem) => {
+                    problem.drop();
+                    return false;
+                },
+            },
+            None => {},
+        }
+
+        match warnings {
+            Some(values) => {
+                for warning in *values {
+                    match write_json(warning, &writer, sources) {
+                        Ok(_) => {},
+                        Err(problem) => {
+                            problem.drop();
+                            return false;
+                        },
+                    }
+                }
+            },
+            None => {},
+        }
+
+        writer.end_array();
+        writer.end_object();
+        let text = match writer.finish() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        defer text.drop();
+
+        match Stdout.new().write_str(text.as_str()) {
+            Ok(_) => {},
+            Err(problem) => {
+                problem.drop();
+                return false;
+            },
+        }
+
+        return match Stdout.new().write_str("\n") {
+            Ok(_) => true,
+            Err(problem) => {
+                problem.drop();
+                false
+            },
+        };
+    }
+
+    if success {
+        return true;
+    }
+
+    match diagnostic {
+        Some(value) => {
+            let text = match render(value, sources) {
+                Ok(value) => value,
+                Err(problem) => {
+                    problem.drop();
+                    return false;
+                },
+            };
+            defer text.drop();
+
+            match Stderr.new().write_str(text.as_str()) {
+                Ok(_) => {},
+                Err(problem) => {
+                    problem.drop();
+                    return false;
+                },
+            }
+        },
+        None => {},
+    }
+
+    match warnings {
+        Some(values) => {
+            for warning in *values {
+                let text = match render(warning, sources) {
+                    Ok(value) => value,
+                    Err(problem) => {
+                        problem.drop();
+                        return false;
+                    },
+                };
+                defer text.drop();
+
+                match Stderr.new().write_str(text.as_str()) {
+                    Ok(_) => {},
+                    Err(problem) => {
+                        problem.drop();
+                        return false;
+                    },
+                }
+            }
+        },
+        None => {},
+    }
+
+    true
+}
+
+fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
+    let stdlib = Path.new(config.compiler_root.as_str()).join("lib/src");
+    defer stdlib.drop();
+    let trust = SourceTrust.new(stdlib.as_str())?;
+    let transferred = false;
+    defer {
+        if !transferred {
+            trust.drop();
+        }
+    };
+
+    // Only configured checkout roots grant low-level test privileges.
+    let harnesses = ["tests/basic/std", "tests/safety/std"];
+
+    for harness in harnesses {
+        let root = Path.new(config.compiler_root.as_str()).join(*harness);
+        defer root.drop();
+
+        match try_exists(root.as_str()) {
+            Ok(exists) => {
+                if exists {
+                    trust.add_test_root(root.as_str())?;
+                }
+            },
+            Err(problem) => {
+                defer problem.drop();
+                return Result<AnalysisSession, AnalysisError>.Err(AnalysisError.internal(problem.msg()));
+            },
+        }
+    }
+
+    let packages = match &config.packages {
+        Some(path) => match PackageMap.load(path.as_str()) {
+            Ok(value) => Option<PackageMap>.Some(value),
+            Err(problem) => {
+                return Result<AnalysisSession, AnalysisError>.Err(problem);
+            },
+        },
+        None => Option<PackageMap>.None,
+    };
+
+    transferred = true;
+    AnalysisSession.prepare(&config.inputs, trust, packages, config.raw_pointers, config.allow_ffi)
+}
+
+pub fn analyze_cli(config: CompilerConfig&, json: bool) -> bool {
+    let session = match prepare(config) {
+        Ok(value) => value,
+        Err(problem) => {
+            defer problem.drop();
+            emit(json, false, Option<Diagnostic&>.Some(&problem.diagnostic), Option<SourceManager&>.None, Option<Vec<Diagnostic>&>.None);
+            return false;
+        },
+    };
+    defer session.drop();
+
+    match session.analyze(AnalysisOptions.new()) {
+        Ok(output) => {
+            defer output.drop();
+            emit(json, true, Option<Diagnostic&>.None, Option<SourceManager&>.Some(session.source_manager()), Option<Vec<Diagnostic>&>.Some(&output.warnings))
+        },
+        Err(problem) => {
+            defer problem.drop();
+            emit(json, false, Option<Diagnostic&>.Some(&problem.diagnostic), Option<SourceManager&>.Some(session.source_manager()), Option<Vec<Diagnostic>&>.None);
+            false
+        },
+    }
+}

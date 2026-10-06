@@ -13,7 +13,7 @@ impl PartialEq<SourceId> for SourceId {
 }
 
 impl Hash<Murmur3Hasher> for SourceId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -29,7 +29,7 @@ impl PartialEq<UnitId> for UnitId {
 }
 
 impl Hash<Murmur3Hasher> for UnitId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -45,7 +45,7 @@ impl PartialEq<NameId> for NameId {
 }
 
 impl Hash<Murmur3Hasher> for NameId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -61,7 +61,7 @@ impl PartialEq<TypeId> for TypeId {
 }
 
 impl Hash<Murmur3Hasher> for TypeId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -77,7 +77,7 @@ impl PartialEq<SymbolId> for SymbolId {
 }
 
 impl Hash<Murmur3Hasher> for SymbolId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -93,7 +93,7 @@ impl PartialEq<DefId> for DefId {
 }
 
 impl Hash<Murmur3Hasher> for DefId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -109,7 +109,7 @@ impl PartialEq<ScopeId> for ScopeId {
 }
 
 impl Hash<Murmur3Hasher> for ScopeId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -125,7 +125,7 @@ impl PartialEq<ImplId> for ImplId {
 }
 
 impl Hash<Murmur3Hasher> for ImplId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -141,7 +141,7 @@ impl PartialEq<HirId> for HirId {
 }
 
 impl Hash<Murmur3Hasher> for HirId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }
@@ -157,7 +157,7 @@ impl PartialEq<PatternId> for PatternId {
 }
 
 impl Hash<Murmur3Hasher> for PatternId {
-    pub fn hash(hasher: Murmur3Hasher) {
+    pub fn hash(hasher: Murmur3Hasher&) {
         self.index.hash(hasher);
     }
 }

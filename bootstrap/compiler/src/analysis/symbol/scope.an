@@ -1,5 +1,6 @@
 from compiler.common.ids import NameId, SymbolId, ScopeId;
-from compiler.analysis.symbol.model import Symbol;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from std.collections.hash_set import HashSet;
 from compiler.diagnostics.model import AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
@@ -123,6 +124,34 @@ impl SymbolStore {
         }
 
         Option<SymbolId>.None
+    }
+
+    // A closure shares lexical type identities without granting access to uncaptured variables.
+    pub fn inherit_types(target: ScopeId, source: ScopeId) -> Result<(), AnalysisError> {
+        let seen = HashSet<NameId>.new();
+        defer seen.drop();
+        let current = Option<ScopeId>.Some(source);
+
+        while current.is_some() {
+            let scope = *self.scope(*current.unwrap()).unwrap();
+
+            for entry in scope.names.entries() {
+                if seen.contains(entry[0]) {
+                    continue;
+                }
+
+                seen.insert(*entry[0]);
+                let symbol = *self.get(*entry[1]).unwrap();
+
+                if symbol.kind == SymbolKind.Type || symbol.kind == SymbolKind.Alias {
+                    self.bind(target, *entry[0], *entry[1])?;
+                }
+            }
+
+            current = scope.parent;
+        }
+
+        Result<(), AnalysisError>.Ok(())
     }
 
     // Copy the complete parent chain so mutations in either branch stay isolated.

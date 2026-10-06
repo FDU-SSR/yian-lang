@@ -1,10 +1,12 @@
-from std.cli import ArgumentParser, Nargs, ArgMatches;
+from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
 from std.core.drop import Drop;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 
-pub enum FrontendPhase { Tokens, Ast, Desugared }
+pub enum FrontendPhase {
+    Tokens, Ast, Desugared
+}
 
 impl FrontendPhase {
     pub fn name() -> str {
@@ -17,17 +19,35 @@ impl FrontendPhase {
 }
 
 pub enum CompilerAction {
-    FrontendJson { phase: FrontendPhase },
-    Help { text: String },
+    FrontendJson {
+        phase: FrontendPhase
+    },
+    Analyze {
+        json: bool
+    },
+    Help {
+        text: String
+    },
 }
 
 pub struct CompilerConfig {
     pub action: CompilerAction,
     pub inputs: Vec<String>,
+    pub compiler_root: String,
+    pub packages: Option<String>,
+    pub raw_pointers: bool,
+    pub allow_ffi: bool,
 }
 
 impl CompilerConfig {
-    static fn from_matches(matches: ArgMatches&) -> Self {
+    static fn from_matches(matches: ArgMatches&) -> Result<Self, String> {
+        let analyze = *matches.get_bool("analyze").unwrap().unwrap();
+        let json = *matches.get_bool("json").unwrap().unwrap();
+
+        if json && !analyze {
+            return Result<Self, String>.Err(String.from(&"error: --json requires --analyze\n"));
+        }
+
         let phase = match matches.get_string("phase") {
             Ok(Some(text)) => if text == "tokens" {
                 FrontendPhase.Tokens
@@ -36,7 +56,7 @@ impl CompilerConfig {
             } else {
                 FrontendPhase.Desugared
             },
-            _ => @panic("missing frontend phase"),
+            _ => FrontendPhase.Desugared,
         };
 
         let values = match matches.get_many("inputs") {
@@ -52,9 +72,25 @@ impl CompilerConfig {
                 Text(value) => inputs.push(String.from(&value.as_str())),
                 _ => @panic("invalid frontend input type"),
             }
+
             index += 1u64;
         }
-        Self(action=CompilerAction.FrontendJson(phase), inputs=inputs)
+
+        let root = match matches.get_string("compiler-root") {
+            Ok(Some(value)) => String.from(&value),
+            _ => String.from(&"."),
+        };
+        let packages = match matches.get_string("packages") {
+            Ok(Some(value)) => Option<String>.Some(String.from(&value)),
+            _ => Option<String>.None,
+        };
+        let raw = *matches.get_bool("raw-pointers").unwrap().unwrap();
+        let ffi = *matches.get_bool("allow-ffi").unwrap().unwrap();
+        Result<Self, String>.Ok(Self(if analyze {
+                CompilerAction.Analyze(json)
+            } else {
+                CompilerAction.FrontendJson(phase)
+            }, inputs, root, packages, raw, ffi))
     }
 }
 
@@ -63,6 +99,7 @@ impl Drop for CompilerConfig {
         match &self.action {
             Help(text) => text.drop(),
             FrontendJson(_) => {},
+            Analyze(_) => {},
         }
 
         let index = 0u64;
@@ -71,7 +108,14 @@ impl Drop for CompilerConfig {
             self.inputs[index].drop();
             index += 1u64;
         }
+
         self.inputs.drop();
+        self.compiler_root.drop();
+
+        match &self.packages {
+            Some(value) => value.drop(),
+            None => {},
+        }
     }
 }
 
@@ -79,24 +123,34 @@ impl Drop for CompilerConfig {
 pub fn parse_args() -> Result<CompilerConfig, String> {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();
-    parser.description("YIAN compiler frontend");
-    parser.add_argument("phase").long("frontend-json").required(true)
+    parser.description("YIAN compiler frontend and semantic analyzer");
+    let modes = parser.add_mutually_exclusive_group(true);
+    modes.add_argument("phase").long("frontend-json")
     .choices(["tokens", "ast", "desugared"].as_slice()).metavar("PHASE")
     .help("output the selected frontend stage as JSON");
+    modes.add_argument("analyze").long("analyze").action(Action.StoreTrue)
+    .help("analyze sources without generating native code");
+    parser.add_argument("json").long("json").action(Action.StoreTrue).help("output analysis diagnostics as JSON");
+    parser.add_argument("compiler-root").long("compiler-root").metavar("PATH").help("checkout root used for standard-library trust");
+    parser.add_argument("packages").long("packages").metavar("PATH").help("v2 package map");
+    parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue).help("analyze sources for raw-pointer mode");
+    parser.add_argument("allow-ffi").long("allow-ffi").action(Action.StoreTrue).help("allow FFI in standalone sources");
     parser.add_argument("inputs").nargs(Nargs.OneOrMore).metavar("INPUT")
     .help("input files or directories");
+
     match parser.parse_env() {
         Ok(outcome) => match outcome {
             Help(text) => Result<CompilerConfig, String>.Ok(
-                CompilerConfig(action=CompilerAction.Help(text), inputs=Vec<String>.new())),
+                CompilerConfig(CompilerAction.Help(text), Vec<String>.new(), String.new(), Option<String>.None, false, false)),
             Parsed(matches) => {
                 defer matches.drop();
-                Result<CompilerConfig, String>.Ok(CompilerConfig.from_matches(&matches))
+                CompilerConfig.from_matches(&matches)
             },
         },
         Err(error) => {
             defer error.drop();
             let diagnostic = String.new();
+
             match parser.format_usage() {
                 Ok(text) => {
                     defer text.drop();

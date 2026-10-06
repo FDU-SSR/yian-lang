@@ -49,5 +49,5 @@ impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
 }
 
 impl<T, const N: u64> Hash<Murmur3Hasher> for T[N] {
-    fn hash(hasher: Murmur3Hasher) { self.as_slice().hash(hasher); }
+    fn hash(hasher: Murmur3Hasher&) { self.as_slice().hash(hasher); }
 }

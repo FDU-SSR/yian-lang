@@ -1,0 +1,136 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.ty.model import TypeData;
+from compiler.analysis.ty.callable import instance_substitutions;
+from compiler.analysis.ty.substitution import substitute;
+from compiler.common.ids import TypeId, DefId;
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+enum StorageVisit {
+    Enter {
+        type_id: TypeId
+    },
+    LeaveType {
+        type_id: TypeId
+    },
+    LeaveDefinition {
+        definition: DefId
+    },
+}
+
+// References and pointers terminate the by-value graph; nominal identities detect recursive storage.
+fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<TypeId>&, active_definitions: HashSet<DefId>&, expand: bool, location: SourceSpan) -> Result<(), AnalysisError> {
+    let pending = Vec<StorageVisit>.new();
+    defer pending.drop();
+    pending.push(StorageVisit.Enter(type_id));
+
+    while pending.len() != 0 {
+        let current = match *pending.pop().unwrap() {
+            Enter(value) => value,
+            LeaveType(value) => {
+                active_types.remove(&value);
+                continue;
+            },
+            LeaveDefinition(value) => {
+                active_definitions.remove(&value);
+                continue;
+            },
+        };
+
+        match ctx.session.types.require(current)? {
+            Nominal(id, _) => {
+                let definition = *ctx.session.types.definition(*id).unwrap();
+                let recursive = if expand {
+                    active_types.contains(&current)
+                } else {
+                    active_definitions.contains(id)
+                };
+                if recursive {
+                    return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch,
+                        Option<SourceSpan>.Some(definition.header().span), "type has recursive by-value storage"));
+                }
+
+                if expand {
+                    active_types.insert(current);
+                    pending.push(StorageVisit.LeaveType(current));
+                } else {
+                    active_definitions.insert(*id);
+                    pending.push(StorageVisit.LeaveDefinition(*id));
+                }
+
+                let substitutions = instance_substitutions(ctx, current)?;
+                defer substitutions.drop();
+
+                match definition.body()? {
+                    Struct(value) => {
+                        for field in value.fields {
+                            let field_type = if expand {
+                                substitute(&ctx.session.types, field.type_id, &substitutions)?
+                            } else {
+                                field.type_id
+                            };
+                            pending.push(StorageVisit.Enter(field_type));
+                        }
+                    },
+                    Enum(value) => {
+                        for variant in value.variants {
+                            match &variant.payload {
+                                Some(payload) => {
+                                    let payload_type = if expand {
+                                        substitute(&ctx.session.types, *payload, &substitutions)?
+                                    } else {
+                                        *payload
+                                    };
+                                    pending.push(StorageVisit.Enter(payload_type));
+                                }, None => {}
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            Tuple(elements) => {
+                for element in *elements {
+                    pending.push(StorageVisit.Enter(*element));
+                }
+            },
+            Array(element, length) => {
+                let empty = match ctx.session.types.require(*length)? {
+                    LiteralValue(bits, _, _) => *bits == 0, _ => false
+                };
+
+                if !empty {
+                    pending.push(StorageVisit.Enter(*element));
+                }
+            },
+            _ => {},
+        }
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+pub fn finalize_types(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let active_types = HashSet<TypeId>.new();
+    defer active_types.drop();
+    let active_definitions = HashSet<DefId>.new();
+    defer active_definitions.drop();
+    let index = 0u64;
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+        let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+        // Template cycles and concrete storage cycles need distinct identities.
+        check_value(ctx, symbol.type_id, &active_types, &active_definitions, false, ctx.span(declaration.unit, declaration.item.span))?;
+        check_value(ctx, symbol.type_id, &active_types, &active_definitions, true, ctx.span(declaration.unit, declaration.item.span))?;
+        index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

@@ -10,8 +10,9 @@ pub trait BuildHasher<T> {
     fn build_hasher() -> T;
 }
 
+// Hashing borrows the caller's accumulator so nested writes update the same state.
 pub trait Hash<T> {
-    fn hash(hasher: T);
+    fn hash(hasher: T&);
 }
 
 pub struct Murmur3Hasher {
@@ -140,5 +141,5 @@ impl BuildHasher<Murmur3Hasher> for Murmur3BuildHasher {
 
 // ZST types carry no bytes — hashing is a no-op.
 impl Hash<Murmur3Hasher> for void {
-    fn hash(hasher: Murmur3Hasher) {}
+    fn hash(hasher: Murmur3Hasher&) {}
 }

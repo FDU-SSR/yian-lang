@@ -48,6 +48,10 @@ pub struct ImplRegistry {
 }
 
 impl ImplRegistry {
+    pub fn len() -> u64 {
+        self.records.len()
+    }
+
     static pub fn new() -> Self {
         Self(Arena<ImplRecord>.new(), HashMap<TypeId, Vec<ImplId>>.new())
     }

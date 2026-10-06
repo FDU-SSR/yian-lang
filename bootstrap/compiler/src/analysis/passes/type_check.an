@@ -1,0 +1,225 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
+from compiler.analysis.symbol.model import SymbolKind;
+from compiler.analysis.ty.model import NominalKind;
+from compiler.analysis.ty.callable import signature, schedule;
+from compiler.analysis.ty.validation import validate_concrete_value;
+from compiler.analysis.constant.definitions import evaluate_constant;
+from compiler.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
+    let record = *ctx.session.unit(unit).unwrap();
+
+    match ctx.session.package_map() {
+        Some(packages) => match packages.package_of(ctx.session.source(record.source).unwrap().canonical_path()) {
+            Some(owner) => match packages.root_name() {
+                Some(name) => owner.name.as_str() == name, None => true
+            },
+            None => true,
+        },
+        None => true,
+    }
+}
+
+pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
+    let output = AnalysisOutput.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            output.drop();
+        }
+    };
+
+    let index = 0u64;
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+
+        match &declaration.item.data {
+            ConstDef(_, _, _, _) => {
+                evaluate_constant(ctx, declaration.symbol, options.sizes)?;
+            },
+            FuncDef(_, name, generics, _, _, _) => {
+                let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
+                let unit = *ctx.session.unit(declaration.unit).unwrap();
+
+                if root_unit(ctx, declaration.unit) {
+                    if generics.len() == 0 {
+                        schedule(ctx, type_id)?;
+                    }
+
+                    if name.data.name.as_str() == "main" {
+                        if output.entry.is_some() {
+                            return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.Duplicate, "multiple main functions"));
+                        }
+
+                        let signature = ctx.session.types.complete_definition(*declaration.definition.unwrap())?;
+
+                        match signature {
+                            Function(value) => {
+                                if generics.len() != 0 || value.parameters.len() != 0 || value.result != ctx.primitives.void {
+                                    return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.TypeMismatch, "main must have no parameters, be nongeneric, and return void"));
+                                }
+                            },
+                            _ => {},
+                        }
+
+                        output.entry = Option<TypeId>.Some(type_id);
+                    }
+                }
+            },
+            _ => {},
+        }
+
+        index += 1;
+    }
+
+    index = 0;
+
+    while index < ctx.session.definitions.len() {
+        let procedure = *ctx.session.definitions.at(index).unwrap();
+
+        if root_unit(ctx, procedure.unit) {
+            let header = *ctx.session.types.definition(procedure.definition).unwrap();
+
+            if header.generic_count() == 0 {
+                schedule(ctx, procedure.type_id)?;
+            }
+        }
+
+        index += 1;
+    }
+
+    if options.require_entry && output.entry.is_none() {
+        return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Undefined,
+            Option<SourceSpan>.None, "no main function found"));
+    }
+
+    while true {
+        let type_id = match ctx.session.worklist.next() {
+            Some(value) => value,
+            None => {
+                break;
+            },
+        };
+        let finished = false;
+        defer {
+            if !finished {
+                match ctx.session.worklist.finish(type_id, true) {
+                    Ok(_) => {}, Err(problem) => problem.drop()
+                }
+            }
+        };
+        let procedure = match ctx.session.definitions.get(type_id) {
+            Some(value) => value,
+            None => return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
+        };
+        let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
+        let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(*parent))?;
+        let callable = signature(ctx, type_id)?;
+        defer callable.drop();
+        let location = ctx.span(procedure.unit, procedure.body.span);
+        validate_concrete_value(ctx, callable.result, location)?;
+        for parameter in callable.parameters {
+            validate_concrete_value(ctx, parameter.type_id, location)?;
+        }
+
+        let checker = ExprChecker.new(ctx, procedure.unit, scope, callable.result, options.sizes);
+        defer checker.drop();
+        checker.ffi_allowed = callable.is_ffi;
+        let parameters = Vec<SymbolId>.new();
+        let captures = Vec<(NameId, SymbolId)>.new();
+        let transferred = false;
+        defer {
+            if !transferred {
+                parameters.drop();
+                captures.drop();
+            }
+        };
+
+        match ctx.closure_captures.get(&procedure.definition) {
+            Some(symbols) => {
+                for symbol in *symbols {
+                    parameters.push(*symbol);
+                    captures.push((ctx.session.symbols.get(*symbol).unwrap().name, *symbol));
+                }
+            },
+            None => {},
+        }
+
+        match ctx.session.types.require(type_id)? {
+            Nominal(id, arguments) => {
+                let header = *ctx.session.types.definition(*id).unwrap();
+                let index = 0u64;
+
+                while index < arguments.len() {
+                    let generic = *header.generic(index).unwrap();
+                    let name = match ctx.session.types.require(generic)? {
+                        Generic(name) => *name,
+                        ConstGeneric(name, _) => *name,
+                        SelfType(_) => ctx.session.names.intern("Self"),
+                        _ => return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("invalid generic identity")),
+                    };
+                    checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
+                    index += 1;
+                }
+            },
+            _ => {},
+        }
+
+        match &callable.receiver {
+            Some(receiver) => {
+                let name = ctx.session.names.intern("Self");
+
+                if ctx.session.symbols.scope(scope).unwrap().get(name).is_none() {
+                    checker.bind("Self", *receiver, procedure.body.span, SymbolKind.Type)?;
+                }
+
+                if !callable.is_static {
+                    let reference = ctx.session.types.reference(*receiver);
+                    parameters.push(checker.bind("self", reference, procedure.body.span, SymbolKind.Parameter)?);
+                }
+            },
+            None => {},
+        }
+
+        for parameter in callable.parameters {
+            parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, procedure.body.span, SymbolKind.Parameter)?);
+        }
+
+        let root = match checker.block(procedure.body) {
+            Ok(value) => value,
+            Err(error) => {
+                return Result<AnalysisOutput, AnalysisError>.Err(error);
+            },
+        };
+        root = checker.coerce(root, callable.result)?;
+        transferred = true;
+        output.procedures.push(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures));
+        let recorded = false;
+
+        for id in output.checked {
+            if *id == procedure.definition {
+                recorded = true;
+            }
+        }
+
+        if !recorded {
+            output.checked.push(procedure.definition);
+        }
+
+        ctx.session.worklist.finish(type_id, false)?;
+        finished = true;
+    }
+
+    accepted = true;
+    Result<AnalysisOutput, AnalysisError>.Ok(output)
+}

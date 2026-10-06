@@ -1,0 +1,251 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.common.ids import UnitId, SymbolId;
+from compiler.frontend.ast.node import Identifier;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.fs import canonicalize;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn find_unit(ctx: ResolutionContext&, path: str) -> Option<UnitId> {
+    let index = 0u64;
+
+    while index < ctx.session.len() {
+        let id = UnitId(index);
+        let source = ctx.session.unit(id).unwrap().source;
+
+        if ctx.session.source(source).unwrap().canonical_path() == path {
+            return Option<UnitId>.Some(id);
+        }
+
+        index += 1;
+    }
+
+    Option<UnitId>.None
+}
+
+// Package visibility and entry restrictions apply before a module can export names.
+fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, span: Span) -> Result<UnitId, AnalysisError> {
+    if paths.len() == 0 {
+        return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "empty import path"));
+    }
+
+    let source = *ctx.session.source(ctx.session.unit(unit).unwrap().source).unwrap();
+    let first = paths[0].data.name.as_str();
+    let path = PathBuf.new();
+    defer path.drop();
+    let start = 0u64;
+
+    if first == "std" {
+        path.push(ctx.session.stdlib_root());
+        start = 1;
+    } else {
+        match ctx.session.package_map() {
+            Some(packages) => {
+                let spec = match packages.find(first) {
+                    Some(value) => value,
+                    None => return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "unknown package in import")),
+                };
+
+                if !packages.visible(packages.package_of(source.canonical_path()), first) {
+                    return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported package is not a dependency"));
+                }
+
+                path.push(spec.source_root.as_str());
+                start = 1;
+            },
+            None => {
+                let parent = *Path.new(source.canonical_path()).parent().unwrap();
+                path.push(parent.as_str());
+            },
+        }
+    }
+
+    if start >= paths.len() {
+        return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "import names a package rather than a module"));
+    }
+
+    while start < paths.len() {
+        path.push(paths[start].data.name.as_str());
+        start += 1;
+    }
+
+    let filename = String.from(&path.as_str());
+    defer filename.drop();
+    filename.push_str(".an");
+    let canonical = match canonicalize(filename.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            problem.drop();
+            return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "imported module does not exist"));
+        },
+    };
+    defer canonical.drop();
+
+    match ctx.session.package_map() {
+        Some(packages) => {
+            if packages.is_entry(canonical.as_str()) {
+                return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "package entry module cannot be imported"));
+            }
+        },
+        None => {},
+    }
+
+    match find_unit(ctx, canonical.as_str()) {
+        Some(id) => Result<UnitId, AnalysisError>.Ok(id),
+        None => Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "imported module is absent from compilation inputs")),
+    }
+}
+
+fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str, alias: str, span: Span) -> Result<bool, AnalysisError> {
+    let name_id = ctx.session.names.intern(name);
+    let symbol = match ctx.session.symbols.lookup(ctx.scopes[target.index], name_id) {
+        Some(value) => value,
+        None => return Result<bool, AnalysisError>.Ok(false),
+    };
+    let record = *ctx.session.symbols.get(symbol).unwrap();
+
+    if !record.is_public {
+        return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported symbol is private"));
+    }
+
+    let alias_id = ctx.session.names.intern(alias);
+    if record.ffi_only && !ctx.session.unit(unit).unwrap().allows_ffi {
+        return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported symbol requires FFI permission"));
+    }
+
+    let scope = ctx.scopes[unit.index];
+
+    match ctx.session.symbols.lookup(scope, alias_id) {
+        Some(previous) => {
+            if previous == symbol {
+                return Result<bool, AnalysisError>.Ok(true);
+            }
+
+            return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Duplicate, "import conflicts with another declaration"));
+        },
+        None => {},
+    }
+
+    ctx.session.symbols.bind(scope, alias_id, symbol)?;
+    Result<bool, AnalysisError>.Ok(true)
+}
+
+// Repeated binding resolves re-exports without making import cycles declaration-order dependent.
+pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let round = 0u64;
+
+    while round <= ctx.session.len() {
+        let missing = false;
+        let index = 0u64;
+
+        while index < ctx.session.len() {
+            let unit = UnitId(index);
+            let root = ctx.session.unit(unit).unwrap().prepared.tree.unwrap().root;
+
+            for item in root.data.items {
+                match &item.data {
+                    Import(paths, target, alias, _) => {
+                        let destination = target_unit(ctx, unit, paths, item.span)?;
+                        let alias_name = match alias {
+                            Some(value) => value.data.name.as_str(),
+                            None => target.data.name.as_str(),
+                        };
+
+                        if !bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, item.span)? {
+                            if round == ctx.session.len() {
+                                return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Undefined, "imported symbol does not exist"));
+                            }
+
+                            missing = true;
+                        }
+                    },
+                    _ => {},
+                }
+            }
+
+            index += 1;
+        }
+
+        if !missing {
+            return inject_prelude(ctx);
+        }
+
+        round += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+// Prelude bindings share the exported symbol identity rather than copying its record.
+fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let entries = [("core/option", "Option"), ("core/result", "Result"), ("core/vec", "Vec"),
+        ("core/string", "String"), ("core/range", "Range"), ("core/ops", "Ordering"),
+        ("core/clone", "Clone"), ("core/builtin_types", "Ptr"), ("core/builtin_types", "Slice"),
+        ("core/builtin_types", "Array"), ("core/builtin_types", "Never")];
+    let has_stdlib = false;
+    let index = 0u64;
+
+    while index < ctx.session.len() {
+        if ctx.session.unit(UnitId(index)).unwrap().is_stdlib {
+            has_stdlib = true;
+        }
+
+        index += 1;
+    }
+
+    if !has_stdlib {
+        return Result<(), AnalysisError>.Ok(());
+    }
+
+    index = 0;
+
+    while index < ctx.session.len() {
+        let unit = UnitId(index);
+        let record = *ctx.session.unit(unit).unwrap();
+
+        if !record.is_stdlib {
+            for entry in entries {
+                let filename = String.from(&ctx.session.stdlib_root());
+                defer filename.drop();
+                filename.push_str("/");
+                filename.push_str(entry[0]);
+                filename.push_str(".an");
+                let destination = match find_unit(ctx, filename.as_str()) {
+                    Some(id) => id,
+                    None => return Result<(), AnalysisError>.Err(ctx.error(unit, record.prepared.tree.unwrap().root.span, DiagnosticCode.Undefined, "prelude module is absent from compilation inputs")),
+                };
+                // Explicit imports, including aliases, suppress the corresponding prelude import.
+                let explicit = false;
+
+                for item in record.prepared.tree.unwrap().root.data.items {
+                    match &item.data {
+                        Import(paths, target, _, _) => {
+                            if target.data.name.as_str() == entry[1] && target_unit(ctx, unit, paths, item.span)? == destination {
+                                explicit = true;
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+
+                let name = ctx.session.names.intern(entry[1]);
+
+                if !explicit && ctx.session.symbols.lookup(ctx.scopes[unit.index], name).is_none() {
+                    if !bind_import(ctx, unit, destination, entry[1], entry[1], record.prepared.tree.unwrap().root.span)? {
+                        return Result<(), AnalysisError>.Err(ctx.error(unit, record.prepared.tree.unwrap().root.span, DiagnosticCode.Undefined, "prelude symbol is missing"));
+                    }
+                }
+            }
+        }
+
+        index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

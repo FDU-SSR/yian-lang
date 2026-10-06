@@ -23,7 +23,7 @@ impl u8 {
 }
 
 impl Hash<Murmur3Hasher> for u8 {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         let val: u8 = *self;
         let ptr: u8* = &val;
         let buf: u8[1] = [0];

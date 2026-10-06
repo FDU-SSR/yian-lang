@@ -22,7 +22,7 @@ impl Drop for SKey {
 }
 
 impl Hash<Murmur3Hasher> for SKey {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         hasher.write(self.tag.as_slice());
     }
 }

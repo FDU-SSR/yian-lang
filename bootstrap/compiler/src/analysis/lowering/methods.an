@@ -1,0 +1,187 @@
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.resolution.types import resolve_type;
+from compiler.analysis.ty.callable import signature;
+from compiler.analysis.ty.method_lookup import lookup_method_with_generics;
+from compiler.analysis.hir.node import HirKind, Unary, Block;
+from compiler.common.ids import HirId, TypeId;
+from compiler.frontend.ast.node import Expr, TypeSyntax, Argument;
+from compiler.frontend.ast.operator import UnaryOperator;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.collections.hash_set import HashSet;
+
+impl ExprChecker {
+    pub fn method(span: Span, receiver: Expr&, spelling: str, generics: Vec<TypeSyntax&>&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        let receiver_id = self.expression(receiver)?;
+        let receiver_type = self.type_of(receiver_id);
+        let static_call = match &self.ctx.session.hir.require(receiver_id)?.kind {
+            Ty => true,
+            _ => false,
+        };
+        let name = self.ctx.session.names.intern(spelling);
+
+        if static_call {
+            match self.variant(span, receiver_type, name, args)? {
+                Some(value) => return Result<HirId, AnalysisError>.Ok(value),
+                None => {},
+            }
+        }
+
+        let values = Vec<HirId>.new();
+        let types = Vec<TypeId>.new();
+        defer {
+            values.drop();
+            types.drop();
+        };
+
+        for arg in *args {
+            if arg.data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(arg.span, "method arguments cannot be named"));
+            }
+
+            let value = self.expression(arg.data.value)?;
+            values.push(value);
+            types.push(self.type_of(value));
+        }
+
+        let required = Option<TypeId>.None;
+        let generic_start = 0u64;
+
+        if static_call {
+            match self.ctx.session.types.require(receiver_type)? {
+                Nominal(id, _) => match self.ctx.session.types.complete_definition(*id)? {
+                    Trait(_) => {
+                        if generics.len() == 0 {
+                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait static call requires a concrete Self argument"));
+                        }
+
+                        required = Option<TypeId>.Some(receiver_type);
+                        receiver_type = self.local_type(generics[0])?;
+                        generic_start = 1;
+                    },
+                    _ => {},
+                },
+                _ => {},
+            }
+        }
+
+        // Resolve explicit arguments before candidate inference; owner arguments remain fixed.
+        let explicit = Vec<TypeId>.new();
+        defer explicit.drop();
+        let argument_index = generic_start;
+
+        while argument_index < generics.len() {
+            explicit.push(self.local_type(generics[argument_index])?);
+            argument_index += 1;
+        }
+
+        let provided = if explicit.len() == 0 {
+            Option<Vec<TypeId>&>.None
+        } else {
+            Option<Vec<TypeId>&>.Some(&explicit)
+        };
+
+        let method_id = Option<TypeId>.None;
+        let prefix = Vec<HirId>.new();
+        let transferred = false;
+        defer {
+            if !transferred {
+                prefix.drop();
+            }
+        };
+        let visited = HashSet<TypeId>.new();
+        defer visited.drop();
+
+        // Receiver adaptation terminates on a repeated type rather than an arbitrary depth.
+        while true {
+            if !visited.insert(receiver_type) {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "automatic dereference cycle"));
+            }
+
+            match self.ctx.session.types.require(receiver_type)? {
+                TraitObject(trait_id) => {
+                    if generics.len() != 0 {
+                        return Result<HirId, AnalysisError>.Err(self.error(span, "dynamic method cannot have generic arguments"));
+                    }
+
+                    let result = self.dynamic_method(span, receiver_id, *trait_id, name, &values)?;
+
+                    if prefix.len() == 0 {
+                        return Result<HirId, AnalysisError>.Ok(result);
+                    }
+
+                    prefix.push(result);
+                    transferred = true;
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), false, HirKind.Block(Block(prefix))));
+                },
+                _ => {},
+            }
+
+            match lookup_method_with_generics(self.ctx, receiver_type, name, required, Option<Vec<TypeId>&>.Some(&types), provided, self.ctx.span(self.unit, span)) {
+                Ok(value) => {
+                    method_id = Option<TypeId>.Some(value);
+                    break;
+                },
+                Err(problem) => {
+                    if static_call || problem.diagnostic.code != DiagnosticCode.Undefined {
+                        return Result<HirId, AnalysisError>.Err(problem);
+                    }
+
+                    let inner = match self.ctx.session.types.require(receiver_type)? {
+                        Reference(value) => Option<TypeId>.Some(*value),
+                        Pointer(value) => Option<TypeId>.Some(*value),
+                        _ => Option<TypeId>.None,
+                    };
+
+                    match inner {
+                        Some(value) => {
+                            problem.drop();
+                            receiver_type = value;
+                            receiver_id = self.node(span, value, true, HirKind.Unary(Unary(UnaryOperator.Deref, receiver_id)));
+                        },
+                        None => match self.deref_value(span, receiver_id, &prefix)? {
+                            Some(value) => {
+                                problem.drop();
+                                receiver_id = value;
+                                receiver_type = self.type_of(value);
+                            },
+                            None => return Result<HirId, AnalysisError>.Err(problem),
+                        },
+                    }
+                },
+            }
+        }
+
+        let method_type = *method_id.unwrap();
+        let callable = signature(self.ctx, method_type)?;
+        defer callable.drop();
+
+        if callable.is_static {
+            return self.call_values(span, method_type, &values, Option<HirId>.None);
+        }
+
+        if static_call {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "instance method requires a receiver"));
+        }
+
+        receiver_id = self.receiver_place(span, receiver_id, &prefix)?;
+        let reference = self.ctx.session.types.reference(receiver_type);
+        let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver_id)));
+        let call = self.call_values(span, method_type, &values, Option<HirId>.Some(borrowed))?;
+
+        if prefix.len() == 0 {
+            return Result<HirId, AnalysisError>.Ok(call);
+        }
+
+        // The resulting block owns adaptation temporaries and evaluates the receiver once.
+        prefix.push(call);
+        transferred = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(call), false, HirKind.Block(Block(prefix))))
+    }
+}

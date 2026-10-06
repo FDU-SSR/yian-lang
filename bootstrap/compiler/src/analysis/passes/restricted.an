@@ -1,0 +1,59 @@
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.common.ids import UnitId, SourceId;
+from compiler.common.location import SourceSpan;
+from compiler.common.traversal import WalkControl;
+from compiler.frontend.ast.node import Expr;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from compiler.frontend.ast.walk import TryAstVisitor, try_walk_program;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.option import Option;
+from std.core.result import Result;
+
+struct RestrictedVisitor {
+    source: SourceId,
+}
+
+impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
+    pub fn enter_expr(node: Expr&) -> Result<WalkControl, AnalysisError> {
+        match &node.data {
+            Builtin(kind, _, _) => {
+                let restricted = match kind {
+                    SizeOf => false,
+                    Panic => false,
+                    FfiAddr => false,
+                    FfiParts => false,
+                    FfiNull => false,
+                    FfiPtrCast => false,
+                    FfiCopyFrom => false,
+                    FfiCopyTo => false,
+                    _ => true,
+                };
+
+                if restricted {
+                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Access,
+                        Option<SourceSpan>.Some(SourceSpan(self.source, node.span)), "restricted operation is only allowed in trusted sources"));
+                }
+            },
+            _ => {},
+        }
+
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+}
+
+pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> {
+    let index = 0u64;
+
+    while index < session.len() {
+        let unit = *session.unit(UnitId(index)).unwrap();
+
+        if !unit.allows_restricted {
+            let visitor = RestrictedVisitor(unit.source);
+            try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor)?;
+        }
+
+        index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

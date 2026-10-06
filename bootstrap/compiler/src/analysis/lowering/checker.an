@@ -1,0 +1,208 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.ty.relations import compatible;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from compiler.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Cast;
+from compiler.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
+from compiler.analysis.constant.integer import integer_fits;
+from compiler.common.ids import UnitId, ScopeId, HirId, SymbolId, TypeId, DefId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.node import Block, Literal;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// The checker owns no session data. Lexical state is restored by defer on every error path.
+pub struct ExprChecker {
+    pub ctx: ResolutionContext&,
+    pub unit: UnitId,
+    pub scope: ScopeId,
+    pub return_type: TypeId,
+    pub sizes: Option<TypeSizeProvider&>,
+    pub ffi_allowed: bool,
+    loops: Vec<LoopContext>,
+    deferred: u64,
+    pub parameter_binding: bool,
+}
+
+pub struct LoopContext {
+    breaks: Vec<HirId>,
+    accepts_value: bool,
+}
+
+impl LoopContext {
+    static pub fn new(accepts_value: bool) -> Self {
+        Self(Vec<HirId>.new(), accepts_value)
+    }
+
+    pub fn exits() -> Vec<HirId>& {
+        &self.breaks
+    }
+
+    pub fn accepts_value() -> bool {
+        self.accepts_value
+    }
+
+    pub fn add_break(id: HirId) {
+        self.breaks.push(id);
+    }
+}
+
+impl Drop for LoopContext {
+    pub fn drop() {
+        self.breaks.drop();
+    }
+}
+
+impl Drop for ExprChecker {
+    pub fn drop() {
+        for loop_context in self.loops {
+            loop_context.drop();
+        }
+
+        self.loops.drop();
+    }
+}
+
+impl ExprChecker {
+    static pub fn new(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, result: TypeId, sizes: Option<TypeSizeProvider&>) -> Self {
+        Self(ctx, unit, scope, result, sizes, false, Vec<LoopContext>.new(), 0, false)
+    }
+
+    pub fn node(span: Span, type_id: TypeId, place: bool, kind: HirKind) -> HirId {
+        self.ctx.session.hir.add(HirNode(self.ctx.span(self.unit, span), type_id, place, kind))
+    }
+
+    pub fn type_of(id: HirId) -> TypeId {
+        self.ctx.session.hir.get(id).unwrap().type_id
+    }
+
+    fn error(span: Span, message: str) -> AnalysisError {
+        self.ctx.error(self.unit, span, DiagnosticCode.TypeMismatch, message)
+    }
+
+    pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
+        let node = *self.ctx.session.hir.get(id).unwrap();
+
+        if node.type_id == expected || node.type_id == self.ctx.primitives.never {
+            return Result<HirId, AnalysisError>.Ok(id);
+        }
+
+        match self.convert(id, expected)? {
+            Some(value) => return Result<HirId, AnalysisError>.Ok(value), None => {}
+        }
+
+        if !compatible(self.ctx, node.type_id, expected) {
+            return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "incompatible expression type"));
+        }
+
+        if node.type_id == self.ctx.primitives.integer_literal && self.constant_shape(id)? {
+            match self.ctx.session.types.require(expected)? {
+                Integer(bits, signed) => {
+                    let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
+                    let value = evaluator.evaluate(id)?;
+
+                    match &value.value {
+                        Integer(integer) => {
+                            if !integer_fits(*integer, *bits, *signed) {
+                                return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "integer literal is out of range for its type"));
+                            }
+                        },
+                        _ => {},
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        // Literal conversion is represented explicitly so constants and code generation agree.
+        Result<HirId, AnalysisError>.Ok(self.node(node.span.span, expected, false, HirKind.Cast(Cast(id, expected))))
+    }
+
+    fn constant_shape(id: HirId) -> Result<bool, AnalysisError> {
+        match &self.ctx.session.hir.require(id)?.kind {
+            IntLiteral(_) => Result<bool, AnalysisError>.Ok(true),
+            FloatLiteral(_) => Result<bool, AnalysisError>.Ok(true),
+            BoolLiteral(_) => Result<bool, AnalysisError>.Ok(true),
+            CharLiteral(_) => Result<bool, AnalysisError>.Ok(true),
+            StrLiteral(_) => Result<bool, AnalysisError>.Ok(true),
+            Unary(value) => self.constant_shape(value.operand),
+            Binary(value) => Result<bool, AnalysisError>.Ok(self.constant_shape(value.left)? && self.constant_shape(value.right)?),
+            Cast(value) => self.constant_shape(value.value),
+            Block(value) => {
+                if value.stmts.len() == 1 {
+                    self.constant_shape(value.stmts[0])
+                } else {
+                    Result<bool, AnalysisError>.Ok(false)
+                }
+            },
+            _ => Result<bool, AnalysisError>.Ok(false),
+        }
+    }
+
+    pub fn bind(name: str, type_id: TypeId, span: Span, kind: SymbolKind) -> Result<SymbolId, AnalysisError> {
+        let interned = self.ctx.session.names.intern(name);
+
+        if name == "IS_RAW_MODE" {
+            return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "binding uses a reserved compiler name"));
+        }
+
+        if self.parameter_binding {
+            match self.ctx.session.symbols.lookup(self.scope, interned) {
+                Some(existing) => {
+                    if self.ctx.session.symbols.get(existing).unwrap().kind == SymbolKind.Parameter {
+                        return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "pattern binding duplicates a function parameter"));
+                    }
+                },
+                None => {},
+            }
+        }
+
+        let symbol = self.ctx.session.symbols.add(Symbol(interned, kind, type_id, self.unit,
+            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false,
+            Option<SymbolId>.None, Option<DefId>.None));
+
+        if !self.ctx.session.symbols.bind(self.scope, interned, symbol)? {
+            return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "duplicate local binding"));
+        }
+
+        Result<SymbolId, AnalysisError>.Ok(symbol)
+    }
+
+    pub fn block(block: Block&) -> Result<HirId, AnalysisError> {
+        let previous = self.scope;
+        self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+        defer self.scope = previous;
+        let statements = Vec<HirId>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                statements.drop();
+            }
+        };
+
+        for binding in block.data.parameter_bindings {
+            statements.push(self.pattern_binding(*binding)?);
+        }
+
+        let result = self.ctx.primitives.void;
+        let terminated = false;
+
+        for statement in block.data.stmts {
+            let lowered = self.expression(*statement)?;
+            statements.push(lowered);
+
+            if !terminated {
+                result = self.type_of(lowered);
+                terminated = result == self.ctx.primitives.never;
+            }
+        }
+
+        accepted = true;
+        Result<HirId, AnalysisError>.Ok(self.node(block.span, result, false, HirKind.Block(HirBlock(statements))))
+    }
+}

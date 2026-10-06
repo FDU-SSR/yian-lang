@@ -166,7 +166,7 @@ impl<T> Index<Range<u64>, T[]> for T[] {
 }
 
 impl<T> Hash<Murmur3Hasher> for T[] {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         self.len().hash(hasher);
         for value in *self { value.hash(hasher); }
     }

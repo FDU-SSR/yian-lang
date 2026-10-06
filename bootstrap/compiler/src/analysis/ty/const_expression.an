@@ -1,0 +1,39 @@
+from compiler.analysis.ty.store import TypeStore;
+from compiler.analysis.constant.value import IntegerValue;
+from compiler.analysis.constant.integer import integer_unary, integer_binary, magnitude;
+from compiler.common.ids import TypeId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.operator import UnaryOperator, BinaryOperator;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.option import Option;
+from std.core.result import Result;
+
+// Symbolic nodes retain declaration identities until a concrete substitution makes them evaluable.
+pub fn const_unary(store: TypeStore&, op: UnaryOperator, operand: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
+    match store.require(operand)? {
+        LiteralValue(bits, negative, type_id) => {
+            let value = match integer_unary(op, IntegerValue.untyped(*bits, *negative)) {
+                Ok(value) => value,
+                Err(error) => return Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Constant, span, error.message())),
+            };
+            Result<TypeId, AnalysisError>.Ok(store.literal(magnitude(value), value.is_negative(), *type_id))
+        },
+        _ => Result<TypeId, AnalysisError>.Ok(store.const_unary(op, operand)),
+    }
+}
+
+pub fn const_binary(store: TypeStore&, op: BinaryOperator, left: TypeId, right: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
+    match store.require(left)? {
+        LiteralValue(left_bits, left_negative, left_type) => match store.require(right)? {
+            LiteralValue(right_bits, right_negative, _) => {
+                let value = match integer_binary(op, IntegerValue.untyped(*left_bits, *left_negative), IntegerValue.untyped(*right_bits, *right_negative)) {
+                    Ok(value) => value,
+                    Err(error) => return Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Constant, span, error.message())),
+                };
+                Result<TypeId, AnalysisError>.Ok(store.literal(magnitude(value), value.is_negative(), *left_type))
+            },
+            _ => Result<TypeId, AnalysisError>.Ok(store.const_binary(op, left, right)),
+        },
+        _ => Result<TypeId, AnalysisError>.Ok(store.const_binary(op, left, right)),
+    }
+}

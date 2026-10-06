@@ -7,6 +7,7 @@ from std.core.io import IoError, Stderr, Stdout;
 from std.core.string import String;
 from std.core.vec import Vec;
 from compiler.config import FrontendPhase, parse_args;
+from compiler.analysis.cli import analyze_cli;
 from compiler.frontend.source import SourceManager, collect_sources, Span;
 from json.write import Writer;
 from compiler.frontend.observe import append_token_file;
@@ -19,6 +20,7 @@ fn release_paths(paths: Vec<String>&) {
         paths[index].drop();
         index += 1u64;
     }
+
     paths.drop();
 }
 
@@ -101,7 +103,11 @@ fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span:
     diagnostic_start(output, stage, path);
 
     output.key("code");
-    output.write_string(if stage == "lex" { lex_code(message).text() } else { parse_code(message).text() });
+    output.write_string(if stage == "lex" {
+            lex_code(message).text()
+        } else {
+            parse_code(message).text()
+        });
 
     output.key("severity");
     output.write_string("error");
@@ -118,15 +124,21 @@ fn observe_file(output: Writer&, phase: FrontendPhase, id: SourceId, path: str, 
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
-            source_diagnostic(output, if problem.stage == PreparationStage.Lex { "lex" } else { "parse" }, path, problem.message.as_str(), problem.span);
+            source_diagnostic(output, if problem.stage == PreparationStage.Lex {
+                    "lex"
+                } else {
+                    "parse"
+                }, path, problem.message.as_str(), problem.span);
             return false;
         },
     };
     defer prepared.drop();
+
     if phase == FrontendPhase.Tokens {
         append_token_file(output, path, &prepared.tokens);
         return true;
     }
+
     let tree = prepared.tree.unwrap();
 
     output.begin_object();
@@ -180,9 +192,11 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
         };
 
         let source = sources.file(id);
+
         if !observe_file(&output, phase, SourceId(id), source.path(), source.text()) {
             return false;
         }
+
         index += 1u64;
     }
 
@@ -204,9 +218,23 @@ fn main() {
     let status = match parse_args() {
         Ok(config) => {
             defer config.drop();
+
             match &config.action {
-                Help(text) => if write_output(text.as_str()) { 0i32 } else { 1i32 },
-                FrontendJson(phase) => if frontend(*phase, &config.inputs) { 0i32 } else { 1i32 },
+                Help(text) => if write_output(text.as_str()) {
+                    0i32
+                } else {
+                    1i32
+                },
+                FrontendJson(phase) => if frontend(*phase, &config.inputs) {
+                    0i32
+                } else {
+                    1i32
+                },
+                Analyze(json) => if analyze_cli(&config, *json) {
+                    0i32
+                } else {
+                    1i32
+                },
             }
         },
         Err(message) => {

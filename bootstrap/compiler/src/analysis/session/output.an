@@ -1,0 +1,65 @@
+from compiler.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.diagnostics.model import Diagnostic;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+pub struct AnalysisOptions {
+    pub require_entry: bool,
+    // The caller keeps this provider alive for the entire synchronous analysis call.
+    pub sizes: Option<TypeSizeProvider&>,
+}
+
+impl AnalysisOptions {
+    static pub fn new() -> Self {
+        Self(false, Option<TypeSizeProvider&>.None)
+    }
+}
+
+// HIR and symbols belong to the session; only the lists belong to this result.
+pub struct AnalyzedProcedure {
+    pub definition: DefId,
+    pub type_id: TypeId,
+    pub parameters: Vec<SymbolId>,
+    pub root: HirId,
+    pub unit: UnitId,
+    pub captures: Vec<(NameId, SymbolId)>,
+}
+
+impl Drop for AnalyzedProcedure {
+    pub fn drop() {
+        self.parameters.drop();
+        self.captures.drop();
+    }
+}
+
+pub struct AnalysisOutput {
+    pub checked: Vec<DefId>,
+    pub procedures: Vec<AnalyzedProcedure>,
+    pub entry: Option<TypeId>,
+    pub warnings: Vec<Diagnostic>,
+}
+
+impl AnalysisOutput {
+    static pub fn new() -> Self {
+        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None, Vec<Diagnostic>.new())
+    }
+}
+
+impl Drop for AnalysisOutput {
+    pub fn drop() {
+        for procedure in self.procedures {
+            procedure.drop();
+        }
+
+        for warning in self.warnings {
+            warning.drop();
+        }
+
+        self.checked.drop();
+        self.procedures.drop();
+        self.warnings.drop();
+    }
+}

@@ -1,0 +1,290 @@
+from compiler.analysis.resolution.context import ResolutionContext, DeclarationState;
+from compiler.analysis.resolution.types import resolve_type, resolve_alias;
+from compiler.analysis.resolution.declarations import has_attr;
+from compiler.analysis.resolution.methods import resolve_trait;
+from compiler.analysis.definition.registry import Procedure, DefinitionKind;
+from compiler.analysis.ty.model import DefinitionBody, DefinitionHeader, NominalKind, AggregateDefinition, EnumDefinition, CallableDefinition, StructField, EnumVariant, Parameter, AccessMode, TypeData;
+from compiler.analysis.ty.validation import contains_ffi;
+from compiler.common.ids import TypeId, NameId, UnitId, ScopeId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.node import Parameter as SyntaxParameter, GenericParam;
+from compiler.frontend.ast.atoms import AttrKind;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax: Vec<SyntaxParameter>&) -> Result<Vec<Parameter>, AnalysisError> {
+    let result = Vec<Parameter>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            result.drop();
+        }
+    };
+
+    for parameter in *syntax {
+        match parameter {
+            Named(value) => {
+                let name = ctx.session.names.intern(value.data.name.data.name.as_str());
+
+                for previous in result {
+                    if previous.name == name {
+                        return Result<Vec<Parameter>, AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.Duplicate, "duplicate function parameter"));
+                    }
+                }
+
+                let type_id = resolve_type(ctx, unit, scope, value.data.var_type)?;
+
+                if type_id == ctx.primitives.error {
+                    return Result<Vec<Parameter>, AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.TypeMismatch, "parameter type cannot be inferred"));
+                }
+
+                result.push(Parameter(name, type_id, Option<SourceSpan>.Some(ctx.span(unit, value.span))));
+            },
+            Pattern(value) => {
+                return Result<Vec<Parameter>, AnalysisError>.Err(AnalysisError.internal("parameter patterns must be desugared before declaration resolution"));
+            },
+        }
+    }
+
+    accepted = true;
+    Result<Vec<Parameter>, AnalysisError>.Ok(result)
+}
+
+pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generics: Vec<GenericParam>&) -> Result<(), AnalysisError> {
+    for generic in *generics {
+        match generic {
+            Constant(value) => {
+                let type_id = resolve_type(ctx, unit, scope, value.data.const_type)?;
+
+                match ctx.session.types.require(type_id)? {
+                    Integer(_, _) => {},
+                    Bool => {},
+                    _ => return Result<(), AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.GenericArguments, "constant parameter requires an integer or boolean type")),
+                }
+
+                let name = ctx.session.names.intern(value.data.name.data.name.as_str());
+                let symbol = *ctx.session.symbols.lookup(scope, name).unwrap();
+                let generic_id = ctx.session.symbols.get(symbol).unwrap().type_id;
+
+                match ctx.session.types.require(generic_id)? {
+                    ConstGeneric(_, annotation) => *annotation = type_id,
+                    _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("constant parameter has invalid type")),
+                };
+            },
+            Type(_) => {},
+        }
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+pub fn resolve_definitions(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let index = 0u64;
+    // Constant-parameter annotations can refer to imported aliases.
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+
+        match &declaration.item.data {
+            FuncDef(_, _, generics, _, _, _) => {
+                annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            },
+            StructDef(_, _, generics, _) => {
+                annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            },
+            EnumDef(_, _, generics, _) => {
+                annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            },
+            TraitDef(_, _, generics, _) => {
+                annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            },
+            Alias(_, _, generics, _) => {
+                annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            },
+            _ => {},
+        }
+
+        index += 1;
+    }
+
+    index = 0;
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+        let unit = declaration.unit;
+        let scope = declaration.scope;
+
+        match &declaration.item.data {
+            Alias(_, _, _, _) => {
+                resolve_alias(ctx, declaration.symbol)?;
+            },
+            FuncDef(attrs, _, _, params, ret_type, body) => {
+                let result = match ret_type {
+                    Some(syntax) => resolve_type(ctx, unit, scope, *syntax)?,
+                    None => ctx.primitives.void,
+                };
+                let params = parameters(ctx, unit, scope, params)?;
+                let definition = *declaration.definition.unwrap();
+                let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
+                ctx.session.types.finish_definition(definition, DefinitionBody.Function(CallableDefinition(params, result, Option<TypeId>.None,
+                    false, false, has_attr(attrs, AttrKind.Ffi), false, has_attr(attrs, AttrKind.PubFfi), has_attr(attrs, AttrKind.Pub), 0)))?;
+                ctx.session.definitions.register(Procedure(definition, type_id, unit, *body, DefinitionKind.Function))?;
+            },
+            StructDef(attrs, _, _, fields) => {
+                let values = Vec<StructField>.new();
+                let accepted = false;
+                defer {
+                    if !accepted {
+                        values.drop();
+                    }
+                };
+
+                for field in *fields {
+                    if field.data.attrs.len() > 1 || (field.data.attrs.len() == 1 && field.data.attrs[0].data.kind != AttrKind.Pub) {
+                        return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "invalid structure field modifier"));
+                    }
+
+                    let name = ctx.session.names.intern(field.data.name.data.name.as_str());
+
+                    for previous in values {
+                        if previous.name == name {
+                            return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Duplicate, "duplicate structure field"));
+                        }
+                    }
+
+                    let type_id = resolve_type(ctx, unit, scope, field.data.field_type)?;
+                    let access = if has_attr(&field.data.attrs, AttrKind.Pub) {
+                        AccessMode.Public
+                    } else {
+                        AccessMode.Private
+                    };
+
+                    if access == AccessMode.Public && has_attr(attrs, AttrKind.Pub) && contains_ffi(&ctx.session.types, type_id, false) {
+                        return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public structure field cannot expose a C ABI type"));
+                    }
+
+                    values.push(StructField(name, type_id, access, values.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
+                }
+
+                accepted = true;
+                ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Struct(AggregateDefinition(values, HashMap<NameId, TypeId>.new())))?;
+            },
+            EnumDef(attrs, _, _, variants) => {
+                let values = Vec<EnumVariant>.new();
+                let accepted = false;
+                defer {
+                    if !accepted {
+                        values.drop();
+                    }
+                };
+
+                for variant in *variants {
+                    let name = ctx.session.names.intern(variant.data.name.data.name.as_str());
+
+                    for previous in values {
+                        if previous.name == name {
+                            return Result<(), AnalysisError>.Err(ctx.error(unit, variant.span, DiagnosticCode.Duplicate, "duplicate enum variant"));
+                        }
+                    }
+
+                    let payloads = Vec<StructField>.new();
+                    let moved = false;
+                    defer {
+                        if !moved {
+                            payloads.drop();
+                        }
+                    };
+
+                    for field in variant.data.fields {
+                        let field_name = ctx.session.names.intern(field.data.name.data.name.as_str());
+
+                        for previous in payloads {
+                            if previous.name == field_name {
+                                return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Duplicate, "duplicate enum payload field"));
+                            }
+                        }
+
+                        let type_id = resolve_type(ctx, unit, scope, field.data.var_type)?;
+
+                        if has_attr(attrs, AttrKind.Pub) && contains_ffi(&ctx.session.types, type_id, false) {
+                            return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public enum payload cannot expose a C ABI type"));
+                        }
+
+                        payloads.push(StructField(field_name, type_id, AccessMode.Public, payloads.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
+                    }
+
+                    let payload = Option<TypeId>.None;
+
+                    if payloads.len() != 0 {
+                        let arguments = Vec<TypeId>.new();
+                        defer arguments.drop();
+                        let owner = *ctx.session.types.definition(*declaration.definition.unwrap()).unwrap();
+                        let index = 0u64;
+
+                        while index < owner.generic_count() {
+                            arguments.push(*owner.generic(index).unwrap());
+                            index += 1;
+                        }
+
+                        let identity = ctx.session.types.register(DefinitionHeader(NominalKind.Struct, name, ctx.span(unit, variant.span), unit), arguments.clone());
+                        moved = true;
+                        ctx.session.types.finish_definition(identity, DefinitionBody.Struct(AggregateDefinition(payloads, HashMap<NameId, TypeId>.new())))?;
+                        payload = Option<TypeId>.Some(ctx.session.types.instance(identity, &arguments)?);
+                    }
+
+                    values.push(EnumVariant(name, payload, values.len(), Option<SourceSpan>.Some(ctx.span(unit, variant.span))));
+                }
+
+                accepted = true;
+                ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Enum(EnumDefinition(values, HashMap<NameId, TypeId>.new())))?;
+            },
+            TraitDef(_, _, _, _) => {
+                resolve_trait(ctx, index)?;
+            },
+            ConstDef(_, _, syntax, _) => {
+                let type_id = resolve_type(ctx, unit, scope, *syntax)?;
+                ctx.session.symbols.get(declaration.symbol).unwrap().type_id = type_id;
+            },
+            OpaqueTypeDef(_, _) => {},
+            ExternBlock(_, _, functions) => {
+                let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+
+                for function in *functions {
+                    if ctx.session.names.intern(function.data.name.data.name.as_str()) == symbol.name {
+                        let values = Vec<Parameter>.new();
+                        let accepted = false;
+                        defer {
+                            if !accepted {
+                                values.drop();
+                            }
+                        };
+
+                        for parameter in function.data.params {
+                            let name = ctx.session.names.intern(parameter.data.name.data.name.as_str());
+                            let type_id = resolve_type(ctx, unit, scope, parameter.data.var_type)?;
+                            values.push(Parameter(name, type_id, Option<SourceSpan>.Some(ctx.span(unit, parameter.span))));
+                        }
+
+                        let result = match &function.data.ret_type {
+                            Some(value) => resolve_type(ctx, unit, scope, *value)?,
+                            None => ctx.primitives.void,
+                        };
+                        accepted = true;
+                        ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Function(CallableDefinition(values, result, Option<TypeId>.None, false, true, true, true, false, false, 0)))?;
+                    }
+                }
+            },
+            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid named declaration")),
+        }
+
+        declaration.state = DeclarationState.Complete;
+        index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

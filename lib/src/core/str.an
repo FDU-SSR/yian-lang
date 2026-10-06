@@ -598,7 +598,7 @@ impl Index<Range<u64>, str> for str {
 }
 
 impl Hash<Murmur3Hasher> for str {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         let bytes: u8[] = self.as_slice();
         hasher.write(bytes);
     }

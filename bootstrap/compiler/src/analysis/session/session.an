@@ -25,6 +25,13 @@ pub struct CompilationUnit {
     pub allows_ffi: bool,
 }
 
+pub enum AnalysisPhase {
+    Prepared,
+    Analyzing,
+    Complete,
+    Failed,
+}
+
 impl Drop for CompilationUnit {
     pub fn drop() {
         self.prepared.drop();
@@ -46,6 +53,7 @@ pub struct AnalysisSession {
     packages: Option<PackageMap>,
     trust: SourceTrust,
     pub raw_pointers: bool,
+    phase: AnalysisPhase,
 }
 
 impl AnalysisSession {
@@ -53,7 +61,7 @@ impl AnalysisSession {
     static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
         Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
             SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
-            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers)
+            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
     }
 
     // A prepared file transfers only after all fallible preparation has completed.
@@ -74,6 +82,21 @@ impl AnalysisSession {
 
     pub fn len() -> u64 {
         self.units.len()
+    }
+
+    pub fn source_manager() -> SourceManager& {
+        &self.sources
+    }
+
+    pub fn package_map() -> Option<PackageMap&> {
+        match &self.packages {
+            Some(value) => Option<PackageMap&>.Some(value),
+            None => Option<PackageMap&>.None,
+        }
+    }
+
+    pub fn stdlib_root() -> str {
+        self.trust.stdlib_root()
     }
 }
 

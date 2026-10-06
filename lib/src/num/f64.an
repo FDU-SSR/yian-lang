@@ -377,8 +377,14 @@ fn hex_bits(mantissa: u64, exponent: i64, truncated: bool) -> u64 {
 }
 
 impl Hash<Murmur3Hasher> for f64 {
-    fn hash(hasher: Murmur3Hasher) {
-        let value: f64 = *self;
+    fn hash(hasher: Murmur3Hasher&) {
+        // Signed zeros compare equal and share the same hash representation.
+        let value: f64 = if *self == 0.0f64 {
+            0.0f64
+        } else {
+            *self
+        };
+
         let bytes: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
         @memcpy(&bytes, &value, 8);
         hasher.write(bytes.as_slice());

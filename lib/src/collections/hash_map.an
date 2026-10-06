@@ -266,7 +266,7 @@ impl<K, V> HashMap<K, V> {
 
     pub fn hash_key(key: K&) -> u64 {
         let hasher = self.hasher_builder.build_hasher();
-        key.hash(hasher);
+        key.hash(&hasher);
         hasher.finish()
     }
 }

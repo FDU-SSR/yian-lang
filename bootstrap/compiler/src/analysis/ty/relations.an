@@ -1,0 +1,139 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.common.ids import TypeId;
+from compiler.analysis.ty.model import TypeData;
+from compiler.diagnostics.model import AnalysisError;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+
+pub fn is_integer(ctx: ResolutionContext&, id: TypeId) -> bool {
+    match *ctx.session.types.get(id).unwrap() {
+        Integer(_, _) => true,
+        CScalar(_, _, _) => true,
+        IntLiteral => true,
+        _ => false,
+    }
+}
+
+pub fn is_numeric(ctx: ResolutionContext&, id: TypeId) -> bool {
+    if is_integer(ctx, id) {
+        return true;
+    }
+
+    match *ctx.session.types.get(id).unwrap() {
+        Float(_) => true,
+        FloatLiteral => true,
+        _ => false,
+    }
+}
+
+pub fn default_type(ctx: ResolutionContext&, id: TypeId) -> TypeId {
+    if id == ctx.primitives.integer_literal {
+        return ctx.primitives.integer;
+    }
+
+    if id == ctx.primitives.float_literal {
+        return ctx.primitives.float;
+    }
+
+    match *ctx.session.types.get(id).unwrap() {
+        Pointer(inner) => ctx.session.types.pointer(default_type(ctx, *inner)),
+        Reference(inner) => ctx.session.types.reference(default_type(ctx, *inner)),
+        Tuple(elements) => {
+            let concrete = Vec<TypeId>.new();
+            defer concrete.drop();
+
+            for element in *elements {
+                concrete.push(default_type(ctx, *element));
+            }
+
+            ctx.session.types.tuple(&concrete)
+        },
+        Array(element, length) => ctx.session.types.array(default_type(ctx, *element), *length),
+        _ => id,
+    }
+}
+
+pub fn compatible(ctx: ResolutionContext&, actual: TypeId, expected: TypeId) -> bool {
+    if actual == expected || actual == ctx.primitives.never {
+        return true;
+    }
+
+    if actual == ctx.primitives.integer_literal {
+        return match *ctx.session.types.get(expected).unwrap() {
+            Integer(_, _) => true, CScalar(_, _, _) => true, Float(_) => true, IntLiteral => true, FloatLiteral => true, _ => false
+        };
+    }
+
+    if actual == ctx.primitives.float_literal {
+        return match *ctx.session.types.get(expected).unwrap() {
+            Float(_) => true,
+            _ => false,
+        };
+    }
+
+    match *ctx.session.types.get(actual).unwrap() {
+        Pointer(inner) => match *ctx.session.types.get(expected).unwrap() {
+            Reference(value) => *inner == *value,
+            Slice(value) => !ctx.session.raw_pointers && *inner == *value,
+            Pointer(value) => match *ctx.session.types.get(*inner).unwrap() {
+                Array(element, _) => *element == *value, _ => false
+            },
+            TraitObject(_) => true,
+            _ => false,
+        },
+        Reference(inner) => match *ctx.session.types.get(expected).unwrap() {
+            TraitObject(_) => true, _ => false
+        },
+        Slice(element) => match *ctx.session.types.get(expected).unwrap() {
+            Reference(value) => *element == *value, _ => false
+        },
+        Array(element, length) => match *ctx.session.types.get(expected).unwrap() {
+            Pointer(value) => *element == *value,
+            Array(value, count) => *length == *count && compatible(ctx, *element, *value),
+            _ => false,
+        },
+        Tuple(elements) => match *ctx.session.types.get(expected).unwrap() {
+            Tuple(values) => {
+                if elements.len() != values.len() {
+                    return false;
+                }
+
+                let index = 0u64;
+
+                while index < elements.len() {
+                    if !compatible(ctx, elements[index], values[index]) {
+                        return false;
+                    }
+
+                    index += 1;
+                }
+
+                true
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+pub fn has_literal(ctx: ResolutionContext&, type_id: TypeId) -> bool {
+    match *ctx.session.types.get(type_id).unwrap() {
+        IntLiteral => true,
+        FloatLiteral => true,
+        Pointer(inner) => has_literal(ctx, *inner),
+        Reference(inner) => has_literal(ctx, *inner),
+        Tuple(elements) => {
+            for element in *elements {
+                if has_literal(ctx, *element) {
+                    return true;
+                }
+            }
+
+            false
+        },
+        Array(element, _) => has_literal(ctx, *element),
+        _ => false,
+    }
+}

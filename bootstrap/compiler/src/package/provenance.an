@@ -47,6 +47,10 @@ pub struct SourceTrust {
 }
 
 impl SourceTrust {
+    pub fn stdlib_root() -> str {
+        self.root.as_str()
+    }
+
     static pub fn new(stdlib_root: str) -> Result<Self, AnalysisError> {
         Result<Self, AnalysisError>.Ok(Self(normalize_path(stdlib_root)?, Vec<PathBuf>.new()))
     }

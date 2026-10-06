@@ -20,7 +20,7 @@ impl PartialEq<MyKey> for MyKey {
 
 // Implement Hash for MyKey using the standard hasher.
 impl Hash<Murmur3Hasher> for MyKey {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         let text = self.id.to_string();
         hasher.write(text.as_slice());
     }

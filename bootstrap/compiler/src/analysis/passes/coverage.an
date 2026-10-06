@@ -1,0 +1,904 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.ty.callable import instance_substitutions;
+from compiler.analysis.ty.substitution import substitute;
+from compiler.analysis.ty.aggregate import payload_fields;
+from compiler.analysis.constant.interval import Interval, Boundary, scalar_key, scalar_domain;
+from compiler.analysis.constant.value import ConstValue;
+from compiler.analysis.hir.node import HirNode;
+from compiler.analysis.hir.traversal import HirVisitor, walk_expr;
+from compiler.analysis.session.output import AnalysisOutput;
+from compiler.common.ids import PatternId, TypeId, HirId;
+from compiler.common.location import SourceSpan;
+from compiler.common.traversal import WalkControl;
+from compiler.frontend.ast.atoms import MatchArmOrigin;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode, Diagnostic, Severity;
+from std.collections.sort import sort_by;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+typedef Cell = Option<PatternId>;
+
+struct Row {
+    cells: Vec<Cell>,
+}
+
+impl Drop for Row {
+    pub fn drop() {
+        self.cells.drop();
+    }
+}
+
+enum ConstructorKind {
+    Boolean {
+        value: bool
+    },
+    Variant {
+        index: u64
+    },
+    Tuple,
+    Structure,
+    Scalar {
+        interval: Interval
+    },
+    Literal {
+        value: ConstValue
+    },
+    Other,
+    Sequence {
+        length: u64, prefix: u64, suffix: u64
+    },
+}
+
+struct Constructor {
+    kind: ConstructorKind,
+    fields: Vec<TypeId>,
+}
+
+impl Drop for Constructor {
+    pub fn drop() {
+        self.fields.drop();
+    }
+}
+
+fn release_rows(rows: Vec<Row>&) {
+    for row in *rows {
+        row.drop();
+    }
+
+    rows.drop();
+}
+
+fn release_constructors(values: Vec<Constructor>&) {
+    for value in *values {
+        value.drop();
+    }
+
+    values.drop();
+}
+
+fn boundary_less(left: Boundary&, right: Boundary&) -> bool {
+    left.less(*right)
+}
+
+struct CoverageChecker {
+    ctx: ResolutionContext&,
+    output: AnalysisOutput&,
+}
+
+impl CoverageChecker {
+    fn irrefutable(id: PatternId) -> Result<bool, AnalysisError> {
+        let rows = Vec<Row>.new();
+        defer release_rows(&rows);
+        let cells = Vec<Cell>.new();
+        cells.push(Cell.Some(id));
+        rows.push(Row(cells));
+
+        let query = Vec<Cell>.new();
+        query.push(Cell.None);
+        let wildcard = Row(query);
+        defer wildcard.drop();
+
+        let types = Vec<TypeId>.new();
+        defer types.drop();
+        types.push(self.ctx.session.hir.require_pattern(id)?.type_id);
+        Result<bool, AnalysisError>.Ok(!self.useful(&rows, &wildcard, &types)?)
+    }
+
+    fn opaque(id: PatternId) -> bool {
+        match &self.ctx.session.hir.require_pattern(id).unwrap().kind {
+            LiteralPattern(value) => value.condition.is_some(),
+            BindPattern(value) => self.opaque(value.inner),
+            RefPattern(value) => self.opaque(*value),
+            TuplePattern(value) => {
+                for element in value.elements {
+                    if self.opaque(*element) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+            StructPattern(value) => {
+                for field in value.fields {
+                    if self.opaque(field[1]) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+            EnumPattern(value) => {
+                match &value.fields {
+                    Some(fields) => {
+                        for field in *fields {
+                            if self.opaque(field[1]) {
+                                return true;
+                            }
+                        }
+                    }, None => {}
+                }
+
+                false
+            },
+            OrPattern(value) => {
+                for alternative in value.alternatives {
+                    if self.opaque(*alternative) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+            SequencePattern(value) => {
+                for element in value.prefix {
+                    if self.opaque(*element) {
+                        return true;
+                    }
+                }
+
+                for element in value.suffix {
+                    if self.opaque(*element) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+            _ => false,
+        }
+    }
+
+    fn peel(cell: Cell) -> Cell {
+        let result = cell;
+
+        while result.is_some() {
+            let id = *result.unwrap();
+
+            match &self.ctx.session.hir.require_pattern(id).unwrap().kind {
+                BindPattern(value) => result = Cell.Some(value.inner),
+                RefPattern(value) => result = Cell.Some(*value),
+                WildcardPattern => return Cell.None,
+                _ => return result,
+            }
+        }
+
+        result
+    }
+
+    fn scalar_interval(cell: Cell, type_id: TypeId) -> Result<Option<Interval>, AnalysisError> {
+        let cell = self.peel(cell);
+
+        if cell.is_none() {
+            return Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None);
+        }
+
+        let node = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
+
+        match &node.kind {
+            RangePattern(value) => Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.Some(Interval(value.lower, value.upper))),
+            LiteralPattern(value) => {
+                let key = match &value.value {
+                    Integer(integer) => match self.ctx.session.types.require(node.type_id)? {
+                        Integer(bits, signed) => scalar_key(integer.raw_bits(), *bits, *signed),
+                        CScalar(bits, signed, _) => scalar_key(integer.raw_bits(), *bits, *signed),
+                        _ => return Result<Option<Interval>, AnalysisError>.Err(AnalysisError.internal("integer pattern has non-integer type")),
+                    },
+                    Char(value) => u64(*value),
+                    _ => return Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None),
+                };
+                let low = Boundary.Finite(key);
+                Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.Some(Interval(low, low.next())))
+            },
+            _ => Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None),
+        }
+    }
+
+    fn constructors(type_id: TypeId, matrix: Vec<Row>&, query: Cell) -> Result<Vec<Constructor>, AnalysisError> {
+        let result = Vec<Constructor>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                release_constructors(&result);
+            }
+        };
+
+        match self.ctx.session.types.require(type_id)? {
+            Reference(inner) => return self.constructors(*inner, matrix, query),
+            Bool => {
+                result.push(Constructor(ConstructorKind.Boolean(false), Vec<TypeId>.new()));
+                result.push(Constructor(ConstructorKind.Boolean(true), Vec<TypeId>.new()));
+            },
+            Nominal(definition, _) => {
+                let substitutions = instance_substitutions(self.ctx, type_id)?;
+                defer substitutions.drop();
+
+                match self.ctx.session.types.complete_definition(*definition)? {
+                    Enum(body) => {
+                        for variant in body.variants {
+                            let fields = Vec<TypeId>.new();
+                            let moved = false;
+                            defer {
+                                if !moved {
+                                    fields.drop();
+                                }
+                            };
+                            let descriptors = payload_fields(self.ctx, variant.payload)?;
+                            defer descriptors.drop();
+
+                            for field in descriptors {
+                                fields.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                            }
+
+                            result.push(Constructor(ConstructorKind.Variant(variant.discriminant), fields));
+                            moved = true;
+                        }
+                    },
+                    Struct(body) => {
+                        let fields = Vec<TypeId>.new();
+                        let moved = false;
+                        defer {
+                            if !moved {
+                                fields.drop();
+                            }
+                        };
+
+                        for field in body.fields {
+                            fields.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                        }
+
+                        result.push(Constructor(ConstructorKind.Structure, fields));
+                        moved = true;
+                    },
+                    _ => {
+                        result.push(Constructor(ConstructorKind.Other, Vec<TypeId>.new()));
+                    },
+                }
+            },
+            Tuple(elements) => {
+                result.push(Constructor(ConstructorKind.Tuple, elements.clone()));
+            },
+            Array(element, count) => {
+                let length = match self.ctx.session.types.require(*count)? {
+                    LiteralValue(bits, negative, _) => {
+                        if *negative {
+                            return Result<Vec<Constructor>, AnalysisError>.Err(AnalysisError.internal("negative array length"));
+                        };
+
+                        *bits
+                    },
+                    _ => return Result<Vec<Constructor>, AnalysisError>.Err(AnalysisError.unsupported(Option<SourceSpan>.None, "sequence coverage requires an instantiated array length")),
+                };
+                let shape = self.sequence_shape(matrix, query)?;
+                self.sequence_constructor(length, shape[0], shape[1], *element, &result);
+            },
+            Slice(element) => {
+                let shape = self.sequence_shape(matrix, query)?;
+                // Beyond all observed prefix/suffix lengths, every longer slice specializes alike.
+                let boundary = shape[0] + shape[1];
+                let length = 0u64;
+
+                while length <= boundary {
+                    self.sequence_constructor(length, shape[0], shape[1], *element, &result);
+                    length += 1;
+                }
+
+                self.sequence_constructor(boundary + 1, shape[0], shape[1], *element, &result);
+            },
+            Integer(_, _) => {
+                self.scalar_constructors(type_id, matrix, query, &result)?;
+            },
+            CScalar(_, _, _) => {
+                self.scalar_constructors(type_id, matrix, query, &result)?;
+            },
+            Char => {
+                self.scalar_constructors(type_id, matrix, query, &result)?;
+            },
+            Never => {},
+            _ => {
+                // Infinite domains need a wildcard for values outside the observed literals.
+                let query = self.peel(query);
+
+                match query {
+                    Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                        LiteralPattern(value) => result.push(Constructor(ConstructorKind.Literal(value.value), Vec<TypeId>.new())),
+                        _ => result.push(Constructor(ConstructorKind.Other, Vec<TypeId>.new())),
+                    },
+                    None => {
+                        for row in *matrix {
+                            let cell = self.peel(row.cells[0]);
+
+                            match cell {
+                                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                                    LiteralPattern(value) => {
+                                        result.push(Constructor(ConstructorKind.Literal(value.value), Vec<TypeId>.new()));
+                                    },
+                                    _ => {},
+                                },
+                                None => {},
+                            }
+                        }
+
+                        result.push(Constructor(ConstructorKind.Other, Vec<TypeId>.new()));
+                    },
+                }
+            },
+        }
+
+        accepted = true;
+        Result<Vec<Constructor>, AnalysisError>.Ok(result)
+    }
+
+    fn sequence_shape(matrix: Vec<Row>&, query: Cell) -> Result<(u64, u64), AnalysisError> {
+        let prefix = 0u64;
+        let suffix = 0u64;
+        let index = 0u64;
+
+        while index <= matrix.len() {
+            let cell = if index == matrix.len() {
+                query
+            } else {
+                matrix[index].cells[0]
+            };
+
+            match self.peel(cell) {
+                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                    SequencePattern(value) => {
+                        if value.prefix.len() > prefix {
+                            prefix = value.prefix.len();
+                        }
+
+                        if value.suffix.len() > suffix {
+                            suffix = value.suffix.len();
+                        }
+                    },
+                    _ => {},
+                },
+                None => {},
+            }
+
+            index += 1;
+        }
+
+        Result<(u64, u64), AnalysisError>.Ok((prefix, suffix))
+    }
+
+    fn sequence_constructor(length: u64, prefix: u64, suffix: u64, element: TypeId, result: Vec<Constructor>&) {
+        let before = if prefix < length {
+            prefix
+        } else {
+            length
+        };
+        let after = if suffix < length - before {
+            suffix
+        } else {
+            length - before
+        };
+        let fields = Vec<TypeId>.new();
+        let index = 0u64;
+
+        while index < before + after {
+            fields.push(element);
+            index += 1;
+        }
+
+        result.push(Constructor(ConstructorKind.Sequence(length, before, after), fields));
+    }
+
+    fn scalar_constructors(type_id: TypeId, matrix: Vec<Row>&, query: Cell, result: Vec<Constructor>&) -> Result<(), AnalysisError> {
+        let domain = match self.ctx.session.types.require(type_id)? {
+            Integer(bits, _) => scalar_domain(*bits),
+            CScalar(bits, _, _) => scalar_domain(*bits),
+            Char => Interval(Boundary.Finite(0), Boundary.Finite(0x110000)),
+            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid scalar coverage domain")),
+        };
+        let cuts = Vec<Boundary>.new();
+        defer cuts.drop();
+        let character = type_id == self.ctx.primitives.character;
+
+        if character {
+            cuts.push(Boundary.Finite(0xD800));
+            cuts.push(Boundary.Finite(0xE000));
+        }
+
+        for row in *matrix {
+            match self.scalar_interval(row.cells[0], type_id)? {
+                Some(interval) => {
+                    cuts.push(interval.low);
+                    cuts.push(interval.high);
+                },
+                None => {},
+            }
+        }
+
+        match self.scalar_interval(query, type_id)? {
+            Some(interval) => {
+                cuts.push(interval.low);
+                cuts.push(interval.high);
+            },
+            None => {},
+        }
+
+        let intervals = domain.split(cuts.as_slice());
+        defer intervals.drop();
+
+        for interval in intervals {
+            if !character || interval.low.less(Boundary.Finite(0xD800)) || !interval.low.less(Boundary.Finite(0xE000)) {
+                result.push(Constructor(ConstructorKind.Scalar(*interval), Vec<TypeId>.new()));
+            }
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn specialize(cell: Cell, type_id: TypeId, constructor: Constructor&) -> Result<Option<Row>, AnalysisError> {
+        let cell = self.peel(cell);
+        let fields = Vec<Cell>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                fields.drop();
+            }
+        };
+        let index = 0u64;
+
+        while index < constructor.fields.len() {
+            fields.push(Cell.None);
+            index += 1;
+        }
+
+        if cell.is_none() {
+            accepted = true;
+            return Result<Option<Row>, AnalysisError>.Ok(Option<Row>.Some(Row(fields)));
+        }
+
+        let pattern = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
+        let matches = match &pattern.kind {
+            EnumPattern(value) => match &constructor.kind {
+                Variant(index) => {
+                    if *index != value.variant.discriminant {
+                        false
+                    } else {
+                        match &value.fields {
+                            Some(values) => {
+                                for field in *values {
+                                    fields[field[0]] = Cell.Some(field[1]);
+                                }
+                            }, None => {}
+                        }
+
+                        true
+                    }
+                },
+                _ => false,
+            },
+            TuplePattern(value) => match &constructor.kind {
+                Tuple => {
+                    index = 0;
+
+                    for element in value.elements {
+                        fields[index] = Cell.Some(*element);
+                        index += 1;
+                    }
+
+                    true
+                },
+                _ => false,
+            },
+            StructPattern(value) => match &constructor.kind {
+                Structure => {
+                    for field in value.fields {
+                        fields[field[0]] = Cell.Some(field[1]);
+                    }
+
+                    true
+                },
+                _ => false,
+            },
+            LiteralPattern(value) => match &constructor.kind {
+                Boolean(expected) => match &value.value {
+                    Bool(actual) => *actual == *expected, _ => false
+                },
+                Literal(expected) => equal_constant(&value.value, expected),
+                Scalar(interval) => match self.scalar_interval(cell, type_id)? {
+                    Some(value) => value.intersect(*interval).is_some(), None => false
+                },
+                _ => false,
+            },
+            RangePattern(_) => match &constructor.kind {
+                Scalar(interval) => match self.scalar_interval(cell, type_id)? {
+                    Some(value) => value.intersect(*interval).is_some(), None => false
+                },
+                _ => false,
+            },
+            SequencePattern(value) => match &constructor.kind {
+                Sequence(length, prefix, suffix) => {
+                    let required = value.prefix.len() + value.suffix.len();
+
+                    if *length < required || (!value.rest && *length != required) {
+                        false
+                    } else {
+                        index = 0;
+
+                        for pattern in value.prefix {
+                            fields[index] = Cell.Some(*pattern);
+                            index += 1;
+                        }
+
+                        index = 0;
+
+                        while index < value.suffix.len() {
+                            let position = *length - value.suffix.len() + index;
+                            let column = if position < *prefix {
+                                position
+                            } else {
+                                *prefix + position - (*length - *suffix)
+                            };
+                            fields[column] = Cell.Some(value.suffix[index]);
+                            index += 1;
+                        }
+
+                        true
+                    }
+                },
+                _ => false,
+            },
+            _ => return Result<Option<Row>, AnalysisError>.Err(AnalysisError.internal("coverage specialization requires a normalized pattern")),
+        };
+
+        if !matches {
+            return Result<Option<Row>, AnalysisError>.Ok(Option<Row>.None);
+        }
+
+        accepted = true;
+        Result<Option<Row>, AnalysisError>.Ok(Option<Row>.Some(Row(fields)))
+    }
+
+    // Constructor specialization keeps columns correlated, including nested tuple and enum payloads.
+    fn useful(matrix: Vec<Row>&, query: Row&, types: Vec<TypeId>&) -> Result<bool, AnalysisError> {
+        if types.len() == 0 {
+            return Result<bool, AnalysisError>.Ok(matrix.len() == 0);
+        }
+
+        let head = self.peel(query.cells[0]);
+        // A wildcard row covers every column without expanding recursive nominal payloads.
+
+        for row in *matrix {
+            let universal = true;
+
+            for cell in row.cells {
+                if self.peel(*cell).is_some() {
+                    universal = false;
+                }
+            }
+
+            if universal {
+                return Result<bool, AnalysisError>.Ok(false);
+            }
+        }
+
+        if head.is_none() {
+            let opaque_column = true;
+
+            for row in *matrix {
+                if self.peel(row.cells[0]).is_some() {
+                    opaque_column = false;
+                }
+            }
+
+            if opaque_column {
+                match self.ctx.session.types.require(types[0])? {
+                    Never => return Result<bool, AnalysisError>.Ok(false),
+                    Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                        Enum(body) => {
+                            if body.variants.len() == 0 {
+                                return Result<bool, AnalysisError>.Ok(false);
+                            }
+                        },
+                        _ => {},
+                    },
+                    _ => {},
+                }
+
+                let suffix = Vec<TypeId>.new();
+                defer suffix.drop();
+                let cells = Vec<Cell>.new();
+                defer cells.drop();
+                let rows = Vec<Row>.new();
+                defer release_rows(&rows);
+                let index = 1u64;
+
+                while index < types.len() {
+                    suffix.push(types[index]);
+                    cells.push(query.cells[index]);
+                    index += 1;
+                }
+
+                for row in *matrix {
+                    let remainder = Vec<Cell>.new();
+                    index = 1;
+
+                    while index < row.cells.len() {
+                        remainder.push(row.cells[index]);
+                        index += 1;
+                    }
+
+                    rows.push(Row(remainder));
+                }
+
+                return self.useful(&rows, &Row(cells), &suffix);
+            }
+        }
+
+        match head {
+            Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                OrPattern(value) => {
+                    for alternative in value.alternatives {
+                        let candidate = Row(query.cells.clone());
+                        defer candidate.drop();
+                        candidate.cells[0] = Cell.Some(*alternative);
+
+                        if self.useful(matrix, &candidate, types)? {
+                            return Result<bool, AnalysisError>.Ok(true);
+                        }
+                    }
+
+                    return Result<bool, AnalysisError>.Ok(false);
+                },
+                _ => {},
+            },
+            None => {},
+        }
+
+        let expanded = Vec<Row>.new();
+        defer release_rows(&expanded);
+        let has_alternatives = false;
+
+        for row in *matrix {
+            let head = self.peel(row.cells[0]);
+            let expanded_row = false;
+
+            match head {
+                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                    OrPattern(value) => {
+                        for alternative in value.alternatives {
+                            let cells = row.cells.clone();
+                            cells[0] = Cell.Some(*alternative);
+                            expanded.push(Row(cells));
+                        }
+
+                        has_alternatives = true;
+                        expanded_row = true;
+                    },
+                    _ => {},
+                },
+                None => {},
+            }
+
+            if !expanded_row {
+                expanded.push(Row(row.cells.clone()));
+            }
+        }
+
+        if has_alternatives {
+            return self.useful(&expanded, query, types);
+        }
+
+        let type_id = types[0];
+        let constructors = self.constructors(type_id, matrix, query.cells[0])?;
+        defer release_constructors(&constructors);
+
+        for constructor in constructors {
+            let candidate = match self.specialize(query.cells[0], type_id, constructor)? {
+                Some(value) => value,
+                None => {
+                    continue;
+                },
+            };
+            defer candidate.drop();
+            let index = 1u64;
+
+            while index < query.cells.len() {
+                candidate.cells.push(query.cells[index]);
+                index += 1;
+            }
+
+            let remaining_types = constructor.fields.clone();
+            defer remaining_types.drop();
+            index = 1;
+
+            while index < types.len() {
+                remaining_types.push(types[index]);
+                index += 1;
+            }
+
+            let rows = Vec<Row>.new();
+            defer release_rows(&rows);
+
+            for row in *matrix {
+                match self.specialize(row.cells[0], type_id, constructor)? {
+                    Some(specialized) => {
+                        index = 1;
+
+                        while index < row.cells.len() {
+                            specialized.cells.push(row.cells[index]);
+                            index += 1;
+                        }
+
+                        rows.push(specialized);
+                    },
+                    None => {},
+                }
+            }
+
+            if self.useful(&rows, &candidate, &remaining_types)? {
+                return Result<bool, AnalysisError>.Ok(true);
+            }
+        }
+
+        Result<bool, AnalysisError>.Ok(false)
+    }
+}
+
+fn equal_constant(left: ConstValue&, right: ConstValue&) -> bool {
+    match left {
+        Integer(value) => match right {
+            Integer(other) => value.raw_bits() == other.raw_bits() && value.is_negative() == other.is_negative(), _ => false
+        },
+        Bool(value) => match right {
+            Bool(other) => *value == *other, _ => false
+        },
+        Char(value) => match right {
+            Char(other) => *value == *other, _ => false
+        },
+        Float(value) => match right {
+            Float(other) => *value == *other, _ => false
+        },
+        String(value) => match right {
+            String(other) => *value == *other, _ => false
+        },
+    }
+}
+
+impl HirVisitor for CoverageChecker {
+    pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        match &node.kind {
+            Match(value) => {
+                let guarded = false;
+
+                for arm in value.arms {
+                    if arm.guard.is_some() || self.opaque(arm.pattern) {
+                        guarded = true;
+                    }
+                }
+
+                if guarded {
+                    let final_arm = value.arms[value.arms.len() - 1];
+
+                    if final_arm.guard.is_some() || self.peel(Cell.Some(final_arm.pattern)).is_some() {
+                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "guarded or opaque match requires a final unguarded wildcard arm"));
+                    }
+                }
+
+                let rows = Vec<Row>.new();
+                defer release_rows(&rows);
+                let types = Vec<TypeId>.new();
+                defer types.drop();
+                types.push(self.ctx.session.hir.require(value.value)?.type_id);
+                let side_effect_seen = false;
+
+                for arm in value.arms {
+                    if arm.origin == MatchArmOrigin.ForItem {
+                        let item = match &self.ctx.session.hir.require_pattern(arm.pattern)?.kind {
+                            EnumPattern(pattern) => match &pattern.fields {
+                                Some(fields) => {
+                                    if fields.len() != 1 {
+                                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern must have one payload"));
+                                    }
+
+                                    fields[0][1]
+                                },
+                                None => return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern has no payload")),
+                            },
+                            _ => return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern must select an enum variant")),
+                        };
+
+                        if !self.irrefutable(item)? {
+                            return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(arm.span), "for element pattern may fail"));
+                        }
+                    }
+
+                    let cells = Vec<Cell>.new();
+                    cells.push(Cell.Some(arm.pattern));
+                    let row = Row(cells);
+                    let moved = false;
+                    defer {
+                        if !moved {
+                            row.drop();
+                        }
+                    };
+
+                    if arm.origin == MatchArmOrigin.User && !side_effect_seen && !self.useful(&rows, &row, &types)? {
+                        self.output.warnings.push(Diagnostic.new(DiagnosticCode.UnreachablePattern, Severity.Warning, Option<SourceSpan>.Some(arm.span), "unreachable match arm"));
+                    }
+
+                    if arm.guard.is_some() || self.opaque(arm.pattern) {
+                        side_effect_seen = true;
+                    } elif !side_effect_seen {
+                        rows.push(row);
+                        moved = true;
+                    }
+                }
+
+                if guarded {
+                    return Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue);
+                }
+
+                let cells = Vec<Cell>.new();
+                cells.push(Cell.None);
+                let wildcard = Row(cells);
+                defer wildcard.drop();
+
+                if self.useful(&rows, &wildcard, &types)? {
+                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "match is not exhaustive"));
+                }
+            },
+            PatternLet(value) => {
+                if value.else_branch.is_none() {
+                    let rows = Vec<Row>.new();
+                    defer release_rows(&rows);
+                    let cells = Vec<Cell>.new();
+                    cells.push(Cell.Some(value.pattern));
+                    rows.push(Row(cells));
+                    let query = Vec<Cell>.new();
+                    query.push(Cell.None);
+                    let wildcard = Row(query);
+                    defer wildcard.drop();
+                    let types = Vec<TypeId>.new();
+                    defer types.drop();
+                    types.push(self.ctx.session.hir.require(value.value)?.type_id);
+
+                    if self.useful(&rows, &wildcard, &types)? {
+                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "refutable binding requires an else branch"));
+                    }
+                }
+            },
+            _ => {},
+        }
+
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+}
+
+pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
+    let checker = CoverageChecker(ctx, output);
+
+    for procedure in output.procedures {
+        walk_expr(&ctx.session.hir, procedure.root, &checker)?;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

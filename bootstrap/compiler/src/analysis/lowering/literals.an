@@ -1,0 +1,157 @@
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.resolution.types import scalar_name;
+from compiler.analysis.ty.validation import contains_ffi;
+from compiler.analysis.ty.model import TypeData;
+from compiler.analysis.hir.node import HirKind;
+from compiler.analysis.constant.value import IntegerValue, IntegerWidth;
+from compiler.analysis.constant.integer import cast_integer, integer_fits;
+from compiler.analysis.constant.floating import round_float;
+from compiler.analysis.constant.definitions import evaluate_constant;
+from compiler.common.ids import HirId;
+from compiler.frontend.ast.node import Literal;
+from compiler.frontend.source import Span;
+from compiler.frontend.lex.token import IntSuffix;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.result import Result;
+
+impl ExprChecker {
+    fn integer_literal(span: Span, magnitude: u64, negative: bool, suffix: IntSuffix) -> Result<HirId, AnalysisError> {
+        let type_id = match &suffix {
+            Unsuffixed => self.ctx.primitives.integer_literal,
+            I8 => self.ctx.session.types.primitive(TypeData.Integer(8, true))?,
+            I16 => self.ctx.session.types.primitive(TypeData.Integer(16, true))?,
+            I32 => self.ctx.session.types.primitive(TypeData.Integer(32, true))?,
+            I64 => self.ctx.session.types.primitive(TypeData.Integer(64, true))?,
+            U8 => self.ctx.session.types.primitive(TypeData.Integer(8, false))?,
+            U16 => self.ctx.session.types.primitive(TypeData.Integer(16, false))?,
+            U32 => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
+            U64 => self.ctx.primitives.unsigned,
+            Int => self.ctx.primitives.integer,
+            Uint => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
+        };
+        let integer = IntegerValue.untyped(magnitude, negative);
+
+        if type_id != self.ctx.primitives.integer_literal {
+            match self.ctx.session.types.require(type_id)? {
+                Integer(bits, signed) => {
+                    if !integer_fits(integer, *bits, *signed) {
+                        return Result<HirId, AnalysisError>.Err(self.error(span, "integer literal is out of range for its suffix"));
+                    }
+
+                    integer = cast_integer(integer, *IntegerWidth.from_bits(*bits).unwrap(), *signed);
+                },
+                _ => {},
+            }
+        }
+
+        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.IntLiteral(integer)))
+    }
+
+    fn literal(span: Span, literal: Literal&) -> Result<HirId, AnalysisError> {
+        let result = match literal {
+            Integer(value) => return self.integer_literal(span, value.data.value, value.data.negative, value.data.suffix),
+            Float(value) => {
+                let type_id = match &value.data.suffix {
+                    Unsuffixed => self.ctx.primitives.float_literal,
+                    F16 => self.ctx.session.types.primitive(TypeData.Float(16))?,
+                    F32 => self.ctx.session.types.primitive(TypeData.Float(32))?,
+                    F64 => self.ctx.primitives.float,
+                    Float => self.ctx.primitives.float,
+                };
+                let number = match self.ctx.session.types.require(type_id)? {
+                    Float(bits) => round_float(value.data.value, *bits),
+                    _ => value.data.value,
+                };
+                self.node(span, type_id, false, HirKind.FloatLiteral(number))
+            },
+            Boolean(value) => self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(value.data.value)),
+            StringLiteral(value) => {
+                let interned = self.ctx.session.names.intern(value.data.value.as_str());
+                self.node(span, self.ctx.primitives.string, false, HirKind.StrLiteral(interned))
+            },
+            Character(value) => {
+                let chars = value.data.value.as_str().chars();
+                let character = match chars.next() {
+                    Some(value) => value,
+                    None => return Result<HirId, AnalysisError>.Err(self.error(span, "empty character literal")),
+                };
+                self.node(span, self.ctx.primitives.character, false, HirKind.CharLiteral(u32(character)))
+            },
+        };
+
+        Result<HirId, AnalysisError>.Ok(result)
+    }
+
+    fn identifier(span: Span, name: str) -> Result<HirId, AnalysisError> {
+        if name == "c_int" || name == "c_uint" || name == "c_size" || name == "c_char" {
+            if !self.ffi_allowed {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI conversion requires an ffi function"));
+            }
+
+            let width = if name == "c_char" {
+                8u32
+            } elif name == "c_size" {
+                64u32
+            } else {
+                32u32
+            };
+            let signed = name != "c_uint" && name != "c_size";
+            let interned = self.ctx.session.names.intern(name);
+            let type_id = self.ctx.session.types.primitive(TypeData.CScalar(width, signed, interned))?;
+            return Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty));
+        }
+
+        match scalar_name(self.ctx, name) {
+            Some(type_id) => return Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty)),
+            None => {},
+        }
+
+        let interned = self.ctx.session.names.intern(name);
+        let symbol = match self.ctx.session.symbols.lookup(self.scope, interned) {
+            Some(value) => value,
+            None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Undefined, "unknown name")),
+        };
+        let record = *self.ctx.session.symbols.get(symbol).unwrap();
+        let type_id = record.type_id;
+
+        match &record.kind {
+            Variable => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Var(symbol))),
+            Parameter => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Var(symbol))),
+            Function => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty)),
+            Type => {
+                match self.ctx.session.types.require(type_id)? {
+                    LiteralValue(bits, negative, value_type) => {
+                        if *value_type == self.ctx.primitives.boolean {
+                            return Result<HirId, AnalysisError>.Ok(self.node(span, *value_type, false, HirKind.BoolLiteral(*bits != 0)));
+                        }
+
+                        let integer = IntegerValue.untyped(*bits, *negative);
+
+                        match self.ctx.session.types.require(*value_type)? {
+                            Integer(width, signed) => {
+                                integer = cast_integer(integer, *IntegerWidth.from_bits(*width).unwrap(), *signed);
+                            },
+                            _ => {},
+                        }
+
+                        return Result<HirId, AnalysisError>.Ok(self.node(span, *value_type, false, HirKind.IntLiteral(integer)));
+                    },
+                    _ => {},
+                }
+
+                Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
+            },
+            Alias => {
+                if !self.ffi_allowed && contains_ffi(&self.ctx.session.types, type_id, false) {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI alias requires an ffi function"));
+                }
+                Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
+            },
+            Constant => evaluate_constant(self.ctx, symbol, self.sizes),
+            Module => Result<HirId, AnalysisError>.Err(self.error(span, "module is not a value")),
+        }
+    }
+}

@@ -132,7 +132,7 @@ impl u64 {
 }
 
 impl Hash<Murmur3Hasher> for u64 {
-    fn hash(hasher: Murmur3Hasher) {
+    fn hash(hasher: Murmur3Hasher&) {
         let val: u64 = *self;
         let buf: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
         @memcpy(&buf, &val, 8);

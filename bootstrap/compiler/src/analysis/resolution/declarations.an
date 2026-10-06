@@ -1,0 +1,201 @@
+from compiler.analysis.resolution.context import ResolutionContext, Declaration, DeclarationState;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from compiler.analysis.ty.model import NominalKind, DefinitionHeader;
+from compiler.common.ids import UnitId, ScopeId, TypeId, DefId, SymbolId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.node import Item, Identifier, GenericParam, Attr;
+from compiler.frontend.ast.atoms import AttrKind;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub fn has_attr(attrs: Vec<Attr&>&, kind: AttrKind) -> bool {
+    for attr in *attrs {
+        if attr.data.kind == kind {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Attr&>&, function: bool, external: bool) -> Result<(), AnalysisError> {
+    let seen = Vec<AttrKind>.new();
+    defer seen.drop();
+
+    for attr in *attrs {
+        for previous in seen {
+            if *previous == attr.data.kind {
+                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Duplicate, "duplicate declaration modifier"));
+            }
+        }
+
+        seen.push(attr.data.kind);
+
+        if attr.data.kind == AttrKind.Ffi || attr.data.kind == AttrKind.PubFfi {
+            if !ctx.session.unit(unit).unwrap().allows_ffi {
+                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI requires package ffi = true or --allow-ffi"));
+            }
+
+            if !function && !external {
+                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI modifier requires a function or FFI declaration"));
+            }
+        }
+    }
+
+    if has_attr(attrs, AttrKind.Pub) && has_attr(attrs, AttrKind.PubFfi) {
+        return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Access, "use either pub or pub(ffi)"));
+    }
+
+    if external {
+        if !ctx.session.unit(unit).unwrap().allows_ffi || has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.Ffi) || has_attr(attrs, AttrKind.Static) {
+            return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Access, "invalid or unauthorized FFI declaration"));
+        }
+    } elif has_attr(attrs, AttrKind.Static) || (function && has_attr(attrs, AttrKind.PubFfi) && !has_attr(attrs, AttrKind.Ffi)) {
+        return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Access, "invalid top-level declaration modifier"));
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+// Generic names bind into a child scope before any annotation is resolved.
+pub fn collect_generics(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generics: Vec<GenericParam>&) -> Result<Vec<TypeId>, AnalysisError> {
+    let ids = Vec<TypeId>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            ids.drop();
+        }
+    };
+
+    for generic in *generics {
+        let name = match generic {
+            Type(value) => value.data.name,
+            Constant(value) => value.data.name,
+        };
+        let interned = ctx.session.names.intern(name.data.name.as_str());
+        let type_id = match generic {
+            Type(_) => ctx.session.types.generic(interned),
+            Constant(_) => ctx.session.types.const_generic(interned, ctx.primitives.error),
+        };
+        let symbol = ctx.session.symbols.add(Symbol(interned, SymbolKind.Type, type_id, unit,
+            Option<SourceSpan>.Some(ctx.span(unit, name.span)), false, false, false,
+            Option<SymbolId>.None, Option<DefId>.None));
+
+        if !ctx.session.symbols.bind(scope, interned, symbol)? {
+            return Result<Vec<TypeId>, AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "duplicate generic parameter"));
+        }
+
+        ids.push(type_id);
+    }
+
+    accepted = true;
+    Result<Vec<TypeId>, AnalysisError>.Ok(ids)
+}
+
+fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Identifier&, attrs: Vec<Attr&>&, generics: Vec<GenericParam>&, kind: SymbolKind, nominal: Option<NominalKind>, external: bool) -> Result<(), AnalysisError> {
+    attributes(ctx, unit, item, attrs, kind == SymbolKind.Function, external)?;
+    let name_id = ctx.session.names.intern(name.data.name.as_str());
+
+    if name.data.name.as_str() == "IS_RAW_MODE" || name.data.name.as_str() == "Self" {
+        return Result<(), AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "declaration uses a reserved compiler name"));
+    }
+
+    let parent = ctx.scopes[unit.index];
+    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(parent))?;
+    let generic_ids = collect_generics(ctx, unit, scope, generics)?;
+    let definition = match nominal {
+        Some(value) => Option<DefId>.Some(ctx.session.types.register(DefinitionHeader(value, name_id, ctx.span(unit, item.span), unit), generic_ids)),
+        None => {
+            generic_ids.drop();
+            Option<DefId>.None
+        },
+    };
+
+    let type_id = match definition {
+        Some(id) => {
+            ctx.callable_scopes.insert(id, scope);
+            let ids = Vec<TypeId>.new();
+            defer ids.drop();
+            let record = *ctx.session.types.definition(id).unwrap();
+            let index = 0u64;
+
+            while index < record.generic_count() {
+                ids.push(*record.generic(index).unwrap());
+                index += 1;
+            }
+
+            ctx.session.types.instance(id, &ids)?
+        },
+        None => if external {
+            ctx.session.types.opaque(name_id, ctx.span(unit, item.span))
+        } else {
+            ctx.primitives.error
+        },
+    };
+    let symbol = ctx.session.symbols.add(Symbol(name_id, kind, type_id, unit,
+        Option<SourceSpan>.Some(ctx.span(unit, name.span)),
+        has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.PubFfi), false,
+        has_attr(attrs, AttrKind.PubFfi), Option<SymbolId>.None, definition));
+
+    if !ctx.session.symbols.bind(parent, name_id, symbol)? {
+        return Result<(), AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "duplicate symbol name"));
+    }
+
+    ctx.add(Declaration(item, unit, scope, symbol, definition, DeclarationState.Declared));
+    Result<(), AnalysisError>.Ok(())
+}
+
+pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let unit_index = 0u64;
+    let empty = Vec<GenericParam>.new();
+    defer empty.drop();
+
+    while unit_index < ctx.session.len() {
+        let unit = UnitId(unit_index);
+        let prepared = *ctx.session.unit(unit).unwrap();
+        let root = prepared.prepared.tree.unwrap().root;
+
+        for item in root.data.items {
+            match &item.data {
+                FuncDef(attrs, name, generics, _, _, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), false)?;
+                },
+                StructDef(attrs, name, generics, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Struct), false)?;
+                },
+                EnumDef(attrs, name, generics, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Enum), false)?;
+                },
+                TraitDef(attrs, name, generics, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Trait), false)?;
+                },
+                Alias(attrs, name, generics, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Alias, Option<NominalKind>.None, false)?;
+                },
+                ConstDef(attrs, name, _, _) => {
+                    collect_named(ctx, unit, *item, *name, attrs, &empty, SymbolKind.Constant, Option<NominalKind>.None, false)?;
+                },
+                OpaqueTypeDef(attrs, name) => {
+                    collect_named(ctx, unit, *item, *name, attrs, &empty, SymbolKind.Type, Option<NominalKind>.None, true)?;
+                },
+                Import(_, _, _, _) => {},
+                Impl(_, _, _, _, _) => {},
+                ExternBlock(attrs, _, functions) => {
+                    attributes(ctx, unit, *item, attrs, false, true)?;
+
+                    for function in *functions {
+                        collect_named(ctx, unit, *item, function.data.name, attrs, &empty, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), true)?;
+                    }
+                },
+            }
+        }
+
+        unit_index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

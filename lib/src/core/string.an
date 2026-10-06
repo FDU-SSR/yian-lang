@@ -306,5 +306,5 @@ impl Drop for String {
 }
 
 impl Hash<Murmur3Hasher> for String {
-    fn hash(hasher: Murmur3Hasher) { self.as_str().hash(hasher); }
+    fn hash(hasher: Murmur3Hasher&) { self.as_str().hash(hasher); }
 }

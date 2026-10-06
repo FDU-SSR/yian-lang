@@ -1,0 +1,69 @@
+from compiler.analysis.session.session import AnalysisSession, AnalysisPhase;
+from compiler.analysis.session.output import AnalysisOptions, AnalysisOutput;
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.resolution.declarations import collect_declarations;
+from compiler.analysis.resolution.imports import resolve_imports;
+from compiler.analysis.resolution.definitions import resolve_definitions;
+from compiler.analysis.resolution.methods import resolve_impls;
+from compiler.analysis.resolution.automatic import register_automatic;
+from compiler.analysis.passes.restricted import check_restricted;
+from compiler.analysis.passes.type_check import check_procedures;
+from compiler.analysis.ty.finalize import finalize_types;
+from compiler.analysis.ty.impl_check import check_impls;
+from compiler.analysis.ty.validation import validate_declarations;
+from compiler.analysis.passes.definite_assignment import check_assignment;
+from compiler.analysis.passes.coverage import check_coverage;
+from compiler.analysis.passes.verify_hir import verify_hir;
+from compiler.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.iter import Iterator, IntoIterator;
+
+impl AnalysisSession {
+    // A failed run leaves its partial semantic data owned by the session for diagnostics.
+    pub fn analyze(options: AnalysisOptions) -> Result<AnalysisOutput, AnalysisError> {
+        if self.phase != AnalysisPhase.Prepared {
+            return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("analysis session cannot be analyzed twice"));
+        }
+
+        self.phase = AnalysisPhase.Analyzing;
+        let completed = false;
+        defer {
+            self.phase = if completed {
+                AnalysisPhase.Complete
+            } else {
+                AnalysisPhase.Failed
+            };
+        };
+
+        check_restricted(self)?;
+        let context = ResolutionContext.new(self)?;
+        defer context.drop();
+        context.sizes = options.sizes;
+        collect_declarations(&context)?;
+        resolve_imports(&context)?;
+        resolve_definitions(&context)?;
+        resolve_impls(&context)?;
+        register_automatic(&context)?;
+        finalize_types(&context)?;
+        check_impls(&context)?;
+        validate_declarations(&context)?;
+        let output = check_procedures(&context, &options)?;
+        let accepted = false;
+        defer {
+            if !accepted {
+                output.drop();
+            }
+        };
+        verify_hir(&context, &output)?;
+        check_coverage(&context, &output)?;
+
+        for procedure in output.procedures {
+            check_assignment(&context, procedure)?;
+        }
+
+        accepted = true;
+        completed = true;
+        Result<AnalysisOutput, AnalysisError>.Ok(output)
+    }
+}

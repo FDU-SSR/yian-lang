@@ -1,0 +1,492 @@
+from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.ty.substitution import infer, substitute;
+from compiler.analysis.ty.store import TypeStore;
+from compiler.analysis.ty.model import Parameter;
+from compiler.analysis.ty.relations import compatible, default_type;
+from compiler.analysis.ty.display import type_text;
+from std.core.string import String;
+from compiler.common.ids import TypeId, NameId, ImplId;
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+struct TraitQuery {
+    target: TypeId,
+    trait_id: TypeId,
+}
+
+// The graph includes query types and declared impl patterns, including nested bounds.
+// A growing inference branch has a finite budget without restricting all inputs to one depth.
+fn query_budget(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId) -> Result<u64, AnalysisError> {
+    let pending = Vec<TypeId>.new();
+    defer pending.drop();
+    let seen = HashSet<TypeId>.new();
+    defer seen.drop();
+    pending.push(target);
+    pending.push(trait_id);
+    let index = 0u64;
+
+    while index < ctx.session.impls.len() {
+        let record = *ctx.session.impls.get(ImplId(index)).unwrap();
+        pending.push(record.target);
+        match &record.trait_id {
+            Some(value) => {
+                pending.push(*value);
+            }, None => {}
+        }
+        for condition in record.conditions {
+            pending.push(condition.generic);
+            for bound in condition.traits {
+                pending.push(*bound);
+            }
+        }
+        index += 1;
+    }
+
+    let count = 0u64;
+    while pending.len() != 0 {
+        let id = *pending.pop().unwrap();
+        if !seen.insert(id) {
+            continue;
+        }
+        count += 1;
+        match ctx.session.types.require(id)? {
+            Pointer(inner) | Reference(inner) | CPointer(inner) | Slice(inner) | TraitObject(inner) => {
+                pending.push(*inner);
+            },
+            Array(inner, length) => {
+                pending.push(*inner);
+                pending.push(*length);
+            },
+            Tuple(elements) | Nominal(_, elements) => {
+                for element in *elements {
+                    pending.push(*element);
+                }
+            },
+            FunctionPointer(parameters, result) => {
+                for parameter in *parameters {
+                    pending.push(*parameter);
+                }
+                pending.push(*result);
+            },
+            Closure(captures, parameters, result, _, _, _) => {
+                for capture in *captures {
+                    pending.push(capture.type_id);
+                }
+                for parameter in *parameters {
+                    pending.push(parameter.type_id);
+                }
+                pending.push(*result);
+            },
+            ConstUnary(_, value) => {
+                pending.push(*value);
+            },
+            ConstBinary(_, left, right) => {
+                pending.push(*left);
+                pending.push(*right);
+            },
+            _ => {},
+        }
+    }
+    Result<u64, AnalysisError>.Ok(count * 2 + 1)
+}
+
+fn conditions(ctx: ResolutionContext&, impl_id: ImplId, substitutions: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
+    let record = *ctx.session.impls.get(impl_id).unwrap();
+
+    for condition in record.conditions {
+        let target = substitute(&ctx.session.types, condition.generic, substitutions)?;
+
+        for trait_id in condition.traits {
+            let required = substitute(&ctx.session.types, *trait_id, substitutions)?;
+
+            if !solve_trait(ctx, target, required, substitutions, depth + 1, budget, active, span)? {
+                return Result<bool, AnalysisError>.Ok(false);
+            }
+        }
+    }
+
+    Result<bool, AnalysisError>.Ok(true)
+}
+
+// Cyclic or exhausted candidates fail locally, allowing other implementations to succeed.
+pub fn implements(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId, span: SourceSpan) -> Result<bool, AnalysisError> {
+    let substitutions = HashMap<TypeId, TypeId>.new();
+    defer substitutions.drop();
+    let active = Vec<TraitQuery>.new();
+    defer active.drop();
+    let budget = query_budget(ctx, target, trait_id)?;
+    solve_trait(ctx, target, trait_id, &substitutions, 0, budget, &active, span)
+}
+
+struct TraitSolution {
+    trait_id: TypeId,
+    bindings: HashMap<TypeId, TypeId>,
+}
+
+fn release_solutions(solutions: Vec<TraitSolution>&) {
+    for solution in *solutions {
+        solution.bindings.drop();
+    }
+    solutions.drop();
+}
+
+// Conditions may infer parameters absent from the receiver, such as an iterator's item type.
+// Candidate-local bindings are committed only after every nested obligation succeeds.
+fn solve_trait(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId, outer: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
+    if depth >= budget {
+        return Result<bool, AnalysisError>.Ok(false);
+    }
+
+    for query in *active {
+        if query.target == target && query.trait_id == trait_id {
+            return Result<bool, AnalysisError>.Ok(false);
+        }
+    }
+    active.push(TraitQuery(target, trait_id));
+    defer active.pop();
+
+    let candidates = Vec<MethodCandidate>.new();
+    defer candidates.drop();
+    let solutions = Vec<TraitSolution>.new();
+    defer release_solutions(&solutions);
+    let index = 0u64;
+
+    while index < ctx.session.impls.len() {
+        let id = ImplId(index);
+        let record = *ctx.session.impls.get(id).unwrap();
+
+        match &record.trait_id {
+            Some(pattern) => {
+                let local = HashMap<TypeId, TypeId>.new();
+                defer local.drop();
+
+                if !infer(&ctx.session.types, record.target, target, &local) {
+                    index += 1;
+                    continue;
+                }
+
+                let resolved = substitute(&ctx.session.types, *pattern, &local)?;
+                let trial = outer.clone();
+                defer trial.drop();
+
+                if !infer(&ctx.session.types, trait_id, resolved, &trial) {
+                    if !infer(&ctx.session.types, *pattern, trait_id, &local) {
+                        index += 1;
+                        continue;
+                    }
+                }
+
+                if !conditions(ctx, id, &local, depth, budget, active, span)? {
+                    index += 1;
+                    continue;
+                }
+
+                let completed = substitute(&ctx.session.types, *pattern, &local)?;
+
+                if !infer(&ctx.session.types, trait_id, completed, &trial) {
+                    index += 1;
+                    continue;
+                }
+
+                let rank = if record.automatic {
+                    0u32
+                } else {
+                    1u32
+                };
+                let exact = record.target == target && record.generics.len() == 0;
+                let blanket = record.conditions.len() != 0 && match ctx.session.types.require(record.target)? {
+                    Generic(_) => true,
+                    _ => false,
+                };
+                candidates.push(MethodCandidate(completed, Option<TypeId>.Some(completed), rank, exact, blanket));
+                solutions.push(TraitSolution(completed, trial.clone()));
+            },
+            None => {},
+        }
+
+        index += 1;
+    }
+
+    let selected = match select_candidate(&candidates, Option<SourceSpan>.Some(span))? {
+        Some(value) => value,
+        None => return Result<bool, AnalysisError>.Ok(false),
+    };
+    for solution in solutions {
+        if solution.trait_id == selected {
+            for entry in solution.bindings.entries() {
+                outer.insert(*entry[0], *entry[1]);
+            }
+            return Result<bool, AnalysisError>.Ok(true);
+        }
+    }
+    Result<bool, AnalysisError>.Err(AnalysisError.internal("selected trait candidate has no inference solution"))
+}
+
+struct MethodCandidate {
+    method: TypeId,
+    trait_id: Option<TypeId>,
+    rank: u32,
+    exact: bool,
+    blanket: bool,
+}
+
+fn same_trait(left: Option<TypeId>, right: Option<TypeId>) -> bool {
+    match left {
+        Some(value) => match right {
+            Some(other) => value == other, None => false
+        },
+        None => right.is_none(),
+    }
+}
+
+// Ranking happens after collection so declaration order cannot turn a lower-priority
+// ambiguity into an error before an inherent or explicit implementation is seen.
+fn select_candidate(candidates: Vec<MethodCandidate>&, span: Option<SourceSpan>) -> Result<Option<TypeId>, AnalysisError> {
+    let selected = Option<TypeId>.None;
+    for candidate in *candidates {
+        let dominated = false;
+        for other in *candidates {
+            if other.rank > candidate.rank || (other.rank == candidate.rank && candidate.blanket && other.exact && same_trait(candidate.trait_id, other.trait_id)) {
+                dominated = true;
+                break;
+            }
+        }
+        if dominated {
+            continue;
+        }
+
+        match selected {
+            Some(method) => {
+                if method != candidate.method {
+                    return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, span, "ambiguous implementation query"));
+                }
+            },
+            None => {
+                selected = Option<TypeId>.Some(candidate.method);
+            },
+        }
+    }
+    Result<Option<TypeId>, AnalysisError>.Ok(selected)
+}
+
+// Each candidate owns independent inference state. Inherent methods precede trait methods.
+pub fn lookup_method(ctx: ResolutionContext&, target: TypeId, name: NameId, required: Option<TypeId>, span: SourceSpan) -> Result<TypeId, AnalysisError> {
+    lookup_method_args(ctx, target, name, required, Option<Vec<TypeId>&>.None, span)
+}
+
+pub fn lookup_method_args(ctx: ResolutionContext&, target: TypeId, name: NameId, required: Option<TypeId>, arguments: Option<Vec<TypeId>&>, span: SourceSpan) -> Result<TypeId, AnalysisError> {
+    lookup_method_with_generics(ctx, target, name, required, arguments, Option<Vec<TypeId>&>.None, span)
+}
+
+// Explicit method arguments constrain each isolated candidate before value arguments and bounds.
+pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name: NameId, required: Option<TypeId>, arguments: Option<Vec<TypeId>&>, explicit: Option<Vec<TypeId>&>, span: SourceSpan) -> Result<TypeId, AnalysisError> {
+    let candidates = Vec<MethodCandidate>.new();
+    defer candidates.drop();
+    let index = 0u64;
+    let wrong_arity = false;
+    let matching_arity = false;
+    let active = Vec<TraitQuery>.new();
+    defer active.drop();
+    let query_trait = match required {
+        Some(value) => value, None => ctx.primitives.void
+    };
+    let budget = query_budget(ctx, target, query_trait)?;
+
+    while index < ctx.session.impls.len() {
+        let id = ImplId(index);
+        let record = *ctx.session.impls.get(id).unwrap();
+        let method = match record.methods.get(&name) {
+            Some(value) => *value,
+            None => {
+                index += 1;
+                continue;
+            },
+        };
+        let substitutions = HashMap<TypeId, TypeId>.new();
+        defer substitutions.drop();
+
+        if !infer(&ctx.session.types, record.target, target, &substitutions) {
+            index += 1;
+            continue;
+        }
+
+        match ctx.session.types.require(method)? {
+            Nominal(definition, method_arguments) => {
+                let header = *ctx.session.types.definition(*definition).unwrap();
+                let body = match ctx.session.types.complete_definition(*definition)? {
+                    Method(value) => value,
+                    _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("method registry contains a non-method")),
+                };
+
+                match explicit {
+                    Some(values) => {
+                        let count = header.generic_count() - body.inherited_generics;
+                        if values.len() > count {
+                            wrong_arity = true;
+                            index += 1;
+                            continue;
+                        }
+
+                        matching_arity = true;
+                        let position = 0u64;
+                        while position < values.len() {
+                            substitutions.insert(*header.generic(header.generic_count() - values.len() + position).unwrap(), values[position]);
+                            position += 1;
+                        }
+                    },
+                    None => {},
+                }
+
+                let position = 0u64;
+
+                while position < method_arguments.len() {
+                    let generic = *header.generic(position).unwrap();
+                    let actual = substitute(&ctx.session.types, method_arguments[position], &substitutions)?;
+
+                    if generic != actual && !substitutions.contains(&generic) {
+                        substitutions.insert(generic, actual);
+                    }
+
+                    position += 1;
+                }
+            },
+            _ => {},
+        }
+
+        match required {
+            Some(trait_id) => match &record.trait_id {
+                Some(pattern) => {
+                    if !match_trait(&ctx.session.types, *pattern, trait_id, &substitutions) {
+                        index += 1;
+                        continue;
+                    }
+                },
+                None => {
+                    index += 1;
+                    continue;
+                },
+            },
+            None => {},
+        }
+
+        if !match_arguments(ctx, method, arguments, &substitutions)? || !conditions(ctx, id, &substitutions, 0, budget, &active, span)? {
+            index += 1;
+            continue;
+        }
+
+        let candidate = substitute(&ctx.session.types, method, &substitutions)?;
+        let rank = if record.trait_id.is_none() {
+            2u32
+        } elif record.automatic {
+            0u32
+        } else {
+            1u32
+        };
+        let exact = record.target == target && record.generics.len() == 0;
+        let blanket = record.conditions.len() != 0 && match ctx.session.types.require(record.target)? {
+            Generic(_) => true,
+            _ => false,
+        };
+        let trait_id = match &record.trait_id {
+            Some(value) => Option<TypeId>.Some(substitute(&ctx.session.types, *value, &substitutions)?),
+            None => Option<TypeId>.None,
+        };
+        candidates.push(MethodCandidate(candidate, trait_id, rank, exact, blanket));
+        index += 1;
+    }
+
+    match select_candidate(&candidates, Option<SourceSpan>.Some(span))? {
+        Some(value) => Result<TypeId, AnalysisError>.Ok(value),
+        None => {
+            if wrong_arity && !matching_arity {
+                return Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.GenericArguments,
+                    Option<SourceSpan>.Some(span), "method generic argument count mismatch"));
+            }
+
+            let message = String.from(&"method '");
+            defer message.drop();
+            message.push_str(ctx.session.names.text(name));
+            message.push_str("' is not implemented for ");
+            let target_name = type_text(ctx, target);
+            defer target_name.drop();
+            message.push_str(target_name.as_str());
+            Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Undefined, Option<SourceSpan>.Some(span), message.as_str()))
+        },
+    }
+}
+
+fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Vec<TypeId>&>, substitutions: HashMap<TypeId, TypeId>&) -> Result<bool, AnalysisError> {
+    let values = match arguments {
+        Some(value) => value, None => return Result<bool, AnalysisError>.Ok(true)
+    };
+    let definition = match ctx.session.types.require(method)? {
+        Nominal(id, _) => *id, _ => return Result<bool, AnalysisError>.Ok(false)
+    };
+    let parameters: Vec<Parameter>& = match ctx.session.types.complete_definition(definition)? {
+        Method(value) => &value.parameters, _ => return Result<bool, AnalysisError>.Ok(false)
+    };
+
+    if parameters.len() != values.len() {
+        return Result<bool, AnalysisError>.Ok(false);
+    }
+
+    let index = 0u64;
+
+    while index < parameters.len() {
+        let expected = substitute(&ctx.session.types, parameters[index].type_id, substitutions)?;
+        let actual = values[index];
+        let matches = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
+            Reference(inner) => match ctx.session.types.require(actual)? {
+                Pointer(value) => compatible(ctx, *value, *inner) || infer(&ctx.session.types, *inner, *value, substitutions), _ => infer(&ctx.session.types, expected, actual, substitutions)
+            },
+            _ => infer(&ctx.session.types, expected, actual, substitutions),
+        };
+
+        if !matches {
+            return Result<bool, AnalysisError>.Ok(false);
+        }
+
+        index += 1;
+    }
+
+    Result<bool, AnalysisError>.Ok(true)
+}
+
+// Omitted trait arguments are query variables, not bindings shared by competing impls.
+fn match_trait(store: TypeStore&, pattern: TypeId, required: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+    match *store.get(pattern).unwrap() {
+        Nominal(definition, arguments) => match *store.get(required).unwrap() {
+            Nominal(other, requested) => {
+                if *definition != *other || arguments.len() != requested.len() {
+                    return false;
+                }
+
+                let index = 0u64;
+
+                while index < arguments.len() {
+                    let wildcard = match *store.get(requested[index]).unwrap() {
+                        Generic(_) => true, ConstGeneric(_, _) => true, _ => false
+                    };
+
+                    if !wildcard && !infer(store, arguments[index], requested[index], substitutions) {
+                        return false;
+                    }
+
+                    index += 1;
+                }
+
+                true
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}

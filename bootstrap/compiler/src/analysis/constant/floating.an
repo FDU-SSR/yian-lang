@@ -198,19 +198,33 @@ pub fn float_integer(value: f64, width: IntegerWidth, signed: bool) -> Result<In
         return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidCast);
     }
 
-    let magnitude = if value < 0.0 {
-        -value
-    } else {
-        value
-    };
+    let fraction_bits = 52u32;
+    let fraction_mask = 0x000FFFFFFFFFFFFFu64;
+    let exponent_mask = 0x7FFu64;
+    let sign_mask = 0x8000000000000000u64;
+    let exponent_bias = 1023i32;
+    let bits = to_bits(value);
+    let power = i32((bits >> fraction_bits) & exponent_mask) - exponent_bias;
 
-    // Guard the conversion before LLVM fptoui; out-of-range input is undefined there.
-    if magnitude >= 18446744073709551616.0f64 {
-        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidCast);
+    if power < 0 {
+        return Result<IntegerValue, ConstEvalError>.Ok(normalized(0, width, signed));
     }
 
-    let integer = u64(magnitude);
-    Result<IntegerValue, ConstEvalError>.Ok(normalized(if value < 0.0 {
+    // Truncation followed by fixed-width normalization uses only the low integer bits.
+    // Decomposing binary64 avoids undefined host conversion for large finite values.
+    let significand = (1u64 << fraction_bits) | (bits & fraction_mask);
+    let integer = if power < i32(fraction_bits) {
+        significand >> u32(i32(fraction_bits) - power)
+    } else {
+        let shift = u32(power - i32(fraction_bits));
+        if shift >= width.bits() {
+            0u64
+        } else {
+            significand << shift
+        }
+    };
+
+    Result<IntegerValue, ConstEvalError>.Ok(normalized(if (bits & sign_mask) != 0 {
             0u64 - integer
         } else {
             integer

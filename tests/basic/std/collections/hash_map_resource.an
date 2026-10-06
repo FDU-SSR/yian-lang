@@ -24,7 +24,7 @@ impl Drop for KGuard {
 }
 
 impl Hash<Murmur3Hasher> for KGuard {
-    fn hash(hasher: Murmur3Hasher) { self.id.hash(hasher); }
+    fn hash(hasher: Murmur3Hasher&) { self.id.hash(hasher); }
 }
 
 impl PartialEq<KGuard> for KGuard {

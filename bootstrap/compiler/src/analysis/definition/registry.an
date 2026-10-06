@@ -28,6 +28,14 @@ pub struct DefinitionRegistry {
 }
 
 impl DefinitionRegistry {
+    pub fn len() -> u64 {
+        self.records.len()
+    }
+
+    pub fn at(index: u64) -> Option<Procedure&> {
+        self.records.get(index)
+    }
+
     static pub fn new() -> Self {
         Self(Arena<Procedure>.new(), HashMap<TypeId, u64>.new())
     }

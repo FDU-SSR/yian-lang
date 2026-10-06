@@ -1,0 +1,186 @@
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.ty.method_lookup import lookup_method_args, lookup_method;
+from compiler.analysis.ty.relations import default_type;
+from compiler.analysis.hir.node import HirKind, Unary, Let, Block;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from compiler.common.ids import HirId, TypeId, SymbolId, DefId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn operator_method(op: BinaryOperator) -> str {
+    match op {
+        Add => "add", Sub => "sub", Mul => "mul", Div => "div", Mod => "rem",
+        BitAnd => "bit_and", BitOr => "bit_or", BitXor => "bit_xor", Shl => "shl", Shr => "shr",
+        Eq => "eq", Neq => "ne", Lt => "lt", Leq => "le", Gt => "gt", Geq => "ge",
+        AddAssign => "add_assign", SubAssign => "sub_assign", MulAssign => "mul_assign", DivAssign => "div_assign", ModAssign => "rem_assign",
+        BitAndAssign => "bitand_assign", BitOrAssign => "bitor_assign", BitXorAssign => "bitxor_assign", ShlAssign => "shl_assign", ShrAssign => "shr_assign",
+        Index => "index", _ => "",
+    }
+}
+
+fn operator_trait(op: BinaryOperator) -> str {
+    match op {
+        Add => "Add", Sub => "Sub", Mul => "Mul", Div => "Div", Mod => "Rem",
+        BitAnd => "BitAnd", BitOr => "BitOr", BitXor => "BitXor", Shl => "Shl", Shr => "Shr",
+        Eq => "PartialEq", Neq => "PartialEq", Lt => "PartialOrd", Leq => "PartialOrd", Gt => "PartialOrd", Geq => "PartialOrd",
+        AddAssign => "AddAssign", SubAssign => "SubAssign", MulAssign => "MulAssign", DivAssign => "DivAssign", ModAssign => "RemAssign",
+        BitAndAssign => "BitAndAssign", BitOrAssign => "BitOrAssign", BitXorAssign => "BitXorAssign", ShlAssign => "ShlAssign", ShrAssign => "ShrAssign",
+        Index => "Index", _ => "",
+    }
+}
+
+impl ExprChecker {
+    pub fn overloaded_unary(span: Span, op: UnaryOperator, value: HirId) -> Result<HirId, AnalysisError> {
+        let prefix = Vec<HirId>.new();
+        let transferred = false;
+        defer {
+            if !transferred {
+                prefix.drop();
+            }
+        };
+        let result = if op == UnaryOperator.Deref {
+            match self.deref_value(span, value, &prefix)? {
+                Some(value) => value,
+                None => return Result<HirId, AnalysisError>.Err(self.error(span, "type has no dereference implementation")),
+            }
+        } else {
+            let spelling = if op == UnaryOperator.Neg {
+                "neg"
+            } else {
+                "bit_not"
+            };
+            let name = self.ctx.session.names.intern(spelling);
+            let receiver = self.receiver_place(span, value, &prefix)?;
+            let required = self.ctx.intrinsic(if op == UnaryOperator.Neg {
+                    "Neg"
+                } else {
+                    "BitNot"
+                });
+            let method = lookup_method(self.ctx, self.type_of(value), name, required, self.ctx.span(self.unit, span))?;
+            let reference = self.ctx.session.types.reference(self.type_of(receiver));
+            let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
+            let arguments = Vec<HirId>.new();
+            defer arguments.drop();
+            self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?
+        };
+
+        if op == UnaryOperator.Deref {
+            match self.ctx.session.types.require(self.type_of(result))? {
+                Pointer(inner) => {
+                    result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
+                },
+                Reference(inner) => {
+                    result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
+                },
+                _ => {},
+            }
+        }
+
+        if prefix.len() == 0 {
+            return Result<HirId, AnalysisError>.Ok(result);
+        }
+
+        prefix.push(result);
+        transferred = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.session.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
+    }
+
+    pub fn deref_value(span: Span, value: HirId, prefix: Vec<HirId>&) -> Result<Option<HirId>, AnalysisError> {
+        let required = match self.ctx.intrinsic("Deref") {
+            Some(value) => value, None => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
+        };
+        let name = self.ctx.session.names.intern("deref");
+        let method = match lookup_method(self.ctx, self.type_of(value), name, Option<TypeId>.Some(required), self.ctx.span(self.unit, span)) {
+            Ok(value) => value,
+            Err(problem) => {
+                if problem.diagnostic.code == DiagnosticCode.Undefined {
+                    problem.drop();
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None);
+                }
+
+                return Result<Option<HirId>, AnalysisError>.Err(problem);
+            },
+        };
+        let receiver = self.receiver_place(span, value, prefix)?;
+        let reference = self.ctx.session.types.reference(self.type_of(receiver));
+        let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
+        let arguments = Vec<HirId>.new();
+        defer arguments.drop();
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?))
+    }
+
+    // A spill gives temporary receivers a place without evaluating their initializer twice.
+    pub fn receiver_place(span: Span, value: HirId, prefix: Vec<HirId>&) -> Result<HirId, AnalysisError> {
+        if self.ctx.session.hir.require(value)?.is_place {
+            return Result<HirId, AnalysisError>.Ok(value);
+        }
+
+        let name = self.ctx.session.names.intern("%receiver");
+        let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, self.type_of(value), self.unit,
+            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
+        prefix.push(self.node(span, self.ctx.primitives.void, false, HirKind.Let(Let(Option<HirId>.Some(value), Option<SymbolId>.Some(symbol)))));
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(value), true, HirKind.Var(symbol)))
+    }
+
+    pub fn overloaded_binary(span: Span, op: BinaryOperator, left: HirId, right: HirId) -> Result<HirId, AnalysisError> {
+        let spelling = operator_method(op);
+
+        if spelling == "" {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "operator has no applicable implementation"));
+        }
+
+        let prefix = Vec<HirId>.new();
+        let transferred = false;
+        defer {
+            if !transferred {
+                prefix.drop();
+            }
+        };
+        let receiver = self.receiver_place(span, left, &prefix)?;
+        let name = self.ctx.session.names.intern(spelling);
+        let reference = self.ctx.session.types.reference(self.type_of(receiver));
+        let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
+        let arguments = Vec<HirId>.new();
+        defer arguments.drop();
+        let read_only = op == BinaryOperator.Index || op == BinaryOperator.Eq || op == BinaryOperator.Neq || op == BinaryOperator.Lt || op == BinaryOperator.Leq || op == BinaryOperator.Gt || op == BinaryOperator.Geq;
+        let argument = if read_only {
+            self.node(span, self.ctx.session.types.pointer(self.type_of(right)), false, HirKind.Unary(Unary(UnaryOperator.AddrOf, right)))
+        } else {
+            right
+        };
+        arguments.push(argument);
+        let types = Vec<TypeId>.new();
+        defer types.drop();
+        types.push(self.type_of(argument));
+        let required = self.ctx.intrinsic(operator_trait(op));
+        let method = lookup_method_args(self.ctx, self.type_of(receiver), name, required, Option<Vec<TypeId>&>.Some(&types), self.ctx.span(self.unit, span))?;
+        let result = self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?;
+
+        if op == BinaryOperator.Index {
+            match self.ctx.session.types.require(self.type_of(result))? {
+                Reference(inner) => {
+                    result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
+                },
+                Pointer(inner) => {
+                    result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
+                },
+                _ => {},
+            }
+        }
+
+        if prefix.len() == 0 {
+            return Result<HirId, AnalysisError>.Ok(result);
+        }
+
+        prefix.push(result);
+        transferred = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.session.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
+    }
+}

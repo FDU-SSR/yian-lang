@@ -1,6 +1,7 @@
 from compiler.common.ids import TypeId, DefId, NameId, UnitId;
 from compiler.common.location import SourceSpan;
 from compiler.diagnostics.model import AnalysisError;
+from compiler.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.hash import Hash;
@@ -89,6 +90,9 @@ pub struct CallableDefinition {
     pub is_ffi: bool,
     pub is_extern: bool,
     pub ffi_only: bool,
+    pub is_public: bool,
+    // Only parameters after this prefix belong to the method's explicit argument list.
+    pub inherited_generics: u64,
 }
 
 impl Drop for CallableDefinition {
@@ -185,6 +189,17 @@ impl TypeDefinition {
             return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid definition completion"));
         }
 
+        let valid_prefix = match &body {
+            Method(value) => value.inherited_generics <= self.generics.len(),
+            Function(value) => value.inherited_generics == 0,
+            _ => true,
+        };
+
+        if !valid_prefix {
+            body.drop();
+            return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid callable generic prefix"));
+        }
+
         self.status = DefinitionStatus.Complete(body);
         Result<(), AnalysisError>.Ok(())
     }
@@ -234,6 +249,12 @@ pub enum TypeData {
         bits: u64,
         negative: bool,
         value_type: TypeId
+    },
+    ConstUnary {
+        op: UnaryOperator, operand: TypeId
+    },
+    ConstBinary {
+        op: BinaryOperator, left: TypeId, right: TypeId
     },
     Pointer {
         pointee: TypeId

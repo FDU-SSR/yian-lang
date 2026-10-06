@@ -21,7 +21,7 @@ pub struct Symbol {
     pub span: Option<SourceSpan>,
     pub is_public: bool,
     pub is_static: bool,
-    pub is_ffi: bool,
+    pub ffi_only: bool,
     pub const_origin: Option<SymbolId>,
     pub alias: Option<DefId>,
 }

@@ -1,0 +1,329 @@
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.hir.node import HirKind, Binary, Unary, BitCast, Cast, Tuple, Array as HirArray, ArrayRepeat, Block, If, Match, MatchArm;
+from compiler.analysis.constant.value import IntegerWidth;
+from compiler.analysis.constant.integer import cast_integer, integer_fits;
+from compiler.analysis.constant.floating import round_float, integer_float;
+from compiler.analysis.ty.substitution import infer, substitute;
+from compiler.analysis.ty.callable import signature, schedule, instance_substitutions;
+from compiler.analysis.ty.relations import compatible, default_type;
+from compiler.common.ids import HirId, TypeId;
+from compiler.frontend.ast.operator import UnaryOperator, BinaryOperator;
+from compiler.diagnostics.model import AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl ExprChecker {
+    pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+        match *self.ctx.session.types.get(expected).unwrap() {
+            Reference(inner) => match *self.ctx.session.types.get(actual).unwrap() {
+                Pointer(value) => return compatible(self.ctx, *value, *inner) || infer(&self.ctx.session.types, *inner, default_type(self.ctx, *value), substitutions),
+                Slice(value) => return infer(&self.ctx.session.types, *inner, *value, substitutions),
+                _ => {},
+            },
+            Pointer(inner) => match *self.ctx.session.types.get(actual).unwrap() {
+                Array(value, _) => return infer(&self.ctx.session.types, *inner, *value, substitutions),
+                _ => {},
+            },
+            _ => {},
+        }
+
+        infer(&self.ctx.session.types, expected, default_type(self.ctx, actual), substitutions)
+    }
+
+    // Owning aggregate lists are copied before rewriting IDs; loop exits are finalized during construction.
+    pub fn convert(id: HirId, expected: TypeId) -> Result<Option<HirId>, AnalysisError> {
+        let node = *self.ctx.session.hir.require(id)?;
+        let actual = self.ctx.session.types.require(node.type_id)?;
+        let target = self.ctx.session.types.require(expected)?;
+        // Context can type an addressed literal without changing a shared HIR node.
+
+        match &node.kind {
+            IntLiteral(integer) => {
+                if node.type_id == self.ctx.primitives.integer_literal {
+                    match target {
+                        Integer(bits, signed) | CScalar(bits, signed, _) => {
+                            if !integer_fits(*integer, *bits, *signed) {
+                                return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "integer literal is out of range for its type"));
+                            }
+                            let width = *IntegerWidth.from_bits(*bits).unwrap();
+                            let value = cast_integer(*integer, width, *signed);
+                            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.IntLiteral(value))));
+                        },
+                        Float(bits) => {
+                            let value = integer_float(*integer);
+                            let literal = self.node(node.span.span, expected, false, HirKind.FloatLiteral(round_float(value, *bits)));
+                            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(literal));
+                        },
+                        FloatLiteral => {
+                            let literal = self.node(node.span.span, expected, false, HirKind.FloatLiteral(integer_float(*integer)));
+                            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(literal));
+                        },
+                        _ => {},
+                    }
+                }
+            },
+            FloatLiteral(value) => {
+                if node.type_id == self.ctx.primitives.float_literal {
+                    match target {
+                        Float(bits) => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.FloatLiteral(round_float(*value, *bits))))),
+                        _ => {},
+                    }
+                }
+            },
+            Binary(binary) => {
+                // Context types operands before arithmetic, so wrapping and rounding
+                // occur at each operation rather than only at an outer cast.
+                if (node.type_id == self.ctx.primitives.integer_literal || node.type_id == self.ctx.primitives.float_literal) && compatible(self.ctx, node.type_id, expected) {
+                    let left = self.coerce(binary.left, expected)?;
+                    let right_type = if binary.op == BinaryOperator.Shl || binary.op == BinaryOperator.Shr {
+                        default_type(self.ctx, self.type_of(binary.right))
+                    } else { expected };
+                    let right = self.coerce(binary.right, right_type)?;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Binary(Binary(binary.op, left, right)))));
+                }
+                // Pointer differences expose the same 64-bit pattern in either integer view.
+                if binary.op == BinaryOperator.Sub {
+                    let pointer_difference = match self.ctx.session.types.require(self.type_of(binary.left))? {
+                        Pointer(_) => self.type_of(binary.left) == self.type_of(binary.right),
+                        _ => false,
+                    };
+                    let integer_view = match target { Integer(bits, _) => *bits == 64, _ => false };
+                    if pointer_difference && integer_view {
+                        return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Cast(Cast(id, expected)))));
+                    }
+                }
+            },
+            Loop(body) => {
+                if compatible(self.ctx, node.type_id, expected) {
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.typed_loop(node.span.span, *body, expected)?));
+                }
+            },
+            Block(block) => {
+                if block.stmts.len() != 0 && compatible(self.ctx, node.type_id, expected) {
+                    let statements = block.stmts.clone();
+                    let transferred = false;
+                    defer {
+                        if !transferred {
+                            statements.drop();
+                        }
+                    };
+                    let last = statements.len() - 1;
+                    statements[last] = self.coerce(statements[last], expected)?;
+                    transferred = true;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Block(Block(statements)))));
+                }
+            },
+            If(branch) => {
+                if compatible(self.ctx, node.type_id, expected) && branch.else_branch.is_some() {
+                    let yes = self.coerce(branch.then_branch, expected)?;
+                    let no = self.coerce(*branch.else_branch.unwrap(), expected)?;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.If(If(branch.cond, yes, Option<HirId>.Some(no))))));
+                }
+            },
+            Match(match_node) => {
+                if compatible(self.ctx, node.type_id, expected) {
+                    let arms = Vec<MatchArm>.new();
+                    let transferred = false;
+                    defer {
+                        if !transferred {
+                            arms.drop();
+                        }
+                    };
+
+                    for arm in match_node.arms {
+                        arms.push(MatchArm(arm.span, arm.pattern, arm.guard, self.coerce(arm.body, expected)?, arm.origin));
+                    }
+
+                    transferred = true;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Match(Match(match_node.value, arms, match_node.is_ref)))));
+                }
+            },
+            Unary(unary) => {
+                if (node.type_id == self.ctx.primitives.integer_literal || node.type_id == self.ctx.primitives.float_literal) && compatible(self.ctx, node.type_id, expected) {
+                    let operand = self.coerce(unary.operand, expected)?;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Unary(Unary(unary.op, operand)))));
+                }
+                if unary.op == UnaryOperator.AddrOf {
+                    match target {
+                        Pointer(pointee) => {
+                            if self.type_of(unary.operand) != *pointee && compatible(self.ctx, self.type_of(unary.operand), *pointee) {
+                                let value = self.coerce(unary.operand, *pointee)?;
+                                return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, value)))));
+                            }
+                        },
+                        Reference(pointee) => {
+                            if self.type_of(unary.operand) != *pointee {
+                                let value = self.coerce(unary.operand, *pointee)?;
+                                let pointer = self.ctx.session.types.pointer(*pointee);
+                                let address = self.node(node.span.span, pointer, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, value)));
+                                return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.BitCast(BitCast(address, expected)))));
+                            }
+                        },
+                        FunctionPointer(parameters, result) => {
+                            match &self.ctx.session.hir.require(unary.operand)?.kind {
+                                Ty => return self.convert_function_address(id, expected, parameters, *result),
+                                _ => {},
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            },
+            _ => {},
+        }
+
+        match target {
+            TraitObject(trait_id) => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.make_trait_object(id, expected, *trait_id)?)), _ => {}
+        }
+
+        let bitcast = match actual {
+            Pointer(inner) => match target {
+                Reference(value) => *inner == *value,
+                Slice(value) => !self.ctx.session.raw_pointers && *inner == *value,
+                Pointer(value) => match self.ctx.session.types.require(*inner)? {
+                    Array(element, _) => *element == *value, _ => false
+                },
+                _ => false,
+            },
+            Slice(element) => match target {
+                Reference(value) => *element == *value, _ => false
+            },
+            _ => false,
+        };
+
+        if bitcast {
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.BitCast(BitCast(id, expected)))));
+        }
+
+        match &node.kind {
+            Tuple(tuple) => match target {
+                Tuple(elements) => {
+                    if tuple.field_values.len() != elements.len() {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "tuple arity mismatch"));
+                    }
+
+                    let values = Vec<HirId>.new();
+                    let transferred = false;
+                    defer {
+                        if !transferred {
+                            values.drop();
+                        }
+                    };
+                    let index = 0u64;
+
+                    while index < elements.len() {
+                        values.push(self.coerce(tuple.field_values[index], elements[index])?);
+                        index += 1;
+                    }
+
+                    transferred = true;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Tuple(Tuple(values)))));
+                },
+                _ => {},
+            },
+            Array(array) => match target {
+                Array(element, length) => {
+                    let same_length = match actual {
+                        Array(_, count) => *count == *length, _ => false
+                    };
+
+                    if !same_length {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "array length mismatch"));
+                    }
+
+                    let values = Vec<HirId>.new();
+                    let transferred = false;
+                    defer {
+                        if !transferred {
+                            values.drop();
+                        }
+                    };
+
+                    for value in array.elements {
+                        values.push(self.coerce(*value, *element)?);
+                    }
+
+                    transferred = true;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Array(HirArray(*element, values)))));
+                },
+                _ => {},
+            },
+            ArrayRepeat(array) => match target {
+                Array(element, length) => {
+                    let same_length = match actual {
+                        Array(_, count) => *count == *length, _ => false
+                    };
+
+                    if !same_length {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "array length mismatch"));
+                    }
+
+                    let value = self.coerce(array.element, *element)?;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.ArrayRepeat(ArrayRepeat(*element, value)))));
+                },
+                _ => {},
+            },
+            _ => {},
+        }
+
+        match actual {
+            Array(element, _) => match target {
+                Pointer(value) => {
+                    if *element == *value {
+                        let pointer = self.ctx.session.types.pointer(node.type_id);
+                        let address = self.node(node.span.span, pointer, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, id)));
+                        return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.BitCast(BitCast(address, expected)))));
+                    }
+                },
+                _ => {},
+            },
+            _ => {},
+        }
+
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
+    }
+
+    fn convert_function_address(id: HirId, expected: TypeId, parameters: Vec<TypeId>&, result: TypeId) -> Result<Option<HirId>, AnalysisError> {
+        let node = self.ctx.session.hir.require(id)?;
+        let operand = match &node.kind {
+            Unary(value) => value.operand, _ => return Result<Option<HirId>, AnalysisError>.Err(AnalysisError.internal("function address lacks an operand"))
+        };
+        let template = self.type_of(operand);
+        let substitutions = instance_substitutions(self.ctx, template)?;
+        defer substitutions.drop();
+        let callable = signature(self.ctx, template)?;
+        defer callable.drop();
+
+        if parameters.len() != callable.parameters.len() {
+            return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer parameter count mismatch"));
+        }
+
+        let index = 0u64;
+
+        while index < parameters.len() {
+            if !infer(&self.ctx.session.types, callable.parameters[index].type_id, parameters[index], &substitutions) {
+                return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer parameter type mismatch"));
+            }
+
+            index += 1;
+        }
+
+        if !infer(&self.ctx.session.types, callable.result, result, &substitutions) {
+            return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer result type mismatch"));
+        }
+
+        let instance = substitute(&self.ctx.session.types, template, &substitutions)?;
+
+        if !callable.is_header {
+            schedule(self.ctx, instance)?;
+        }
+
+        let callee = self.node(node.span.span, instance, false, HirKind.Ty);
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, callee)))))
+    }
+}

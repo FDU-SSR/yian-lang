@@ -1,0 +1,62 @@
+from compiler.analysis.resolution.context import ResolutionContext, DeclarationState;
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
+from compiler.analysis.hir.node import HirKind;
+from compiler.analysis.ty.relations import default_type;
+from compiler.analysis.resolution.types import resolve_type;
+from compiler.common.ids import SymbolId, HirId;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.option import Option;
+from std.core.drop import Drop;
+from std.core.result import Result;
+
+pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Option<TypeSizeProvider&>) -> Result<HirId, AnalysisError> {
+    match ctx.constants.get(&symbol) {
+        Some(value) => return Result<HirId, AnalysisError>.Ok(*value),
+        None => {},
+    }
+
+    let declaration = *ctx.for_symbol(symbol).unwrap();
+
+    if declaration.state == DeclarationState.Resolving {
+        return Result<HirId, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.Constant, "recursive constant definition"));
+    }
+
+    declaration.state = DeclarationState.Resolving;
+    let record = *ctx.session.symbols.get(symbol).unwrap();
+
+    match &declaration.item.data {
+        ConstDef(_, _, annotation, _) => {
+            record.type_id = resolve_type(ctx, declaration.unit, declaration.scope, *annotation)?;
+        },
+        _ => {},
+    }
+
+    let checker = ExprChecker.new(ctx, declaration.unit, declaration.scope, ctx.primitives.void, sizes);
+    defer checker.drop();
+    let lowered = match &declaration.item.data {
+        ConstDef(_, _, _, initializer) => checker.expression(*initializer)?,
+        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("invalid constant definition")),
+    };
+    let type_id = if record.type_id == ctx.primitives.error {
+        default_type(ctx, checker.type_of(lowered))
+    } else {
+        record.type_id
+    };
+    let converted = checker.coerce(lowered, type_id)?;
+    let evaluator = ConstantEvaluator.new(&ctx.session.types, &ctx.session.hir, sizes);
+    let constant = evaluator.evaluate(converted)?;
+    let kind = match &constant.value {
+        Integer(value) => HirKind.IntLiteral(*value),
+        Float(value) => HirKind.FloatLiteral(*value),
+        Bool(value) => HirKind.BoolLiteral(*value),
+        Char(value) => HirKind.CharLiteral(*value),
+        String(value) => HirKind.StrLiteral(*value),
+    };
+    record.type_id = type_id;
+    let result = checker.node(declaration.item.span, type_id, false, kind);
+    ctx.constants.insert(symbol, result);
+    declaration.state = DeclarationState.Complete;
+
+    Result<HirId, AnalysisError>.Ok(result)
+}

@@ -21,6 +21,15 @@ pub enum DiagnosticCode {
     ReservedWord,
     Syntax,
     Source,
+    Duplicate,
+    Undefined,
+    Access,
+    TypeMismatch,
+    ControlFlow,
+    Coverage,
+    Uninitialized,
+    UnreachablePattern,
+    Unsupported,
     GenericArguments,
     Constant,
     Internal,
@@ -40,6 +49,15 @@ impl DiagnosticCode {
             ReservedWord => "E204",
             Syntax => "E299",
             Source => "E399",
+            Duplicate => "E401",
+            Undefined => "E402",
+            Access => "E403",
+            TypeMismatch => "E404",
+            ControlFlow => "E406",
+            Coverage => "E501",
+            Uninitialized => "E502",
+            UnreachablePattern => "W501",
+            Unsupported => "E598",
             GenericArguments => "E405",
             Constant => "E503",
             Internal => "E599",
@@ -145,6 +163,15 @@ pub struct AnalysisError {
 }
 
 impl AnalysisError {
+    // This transfers the same owned payload; an existing primary location remains authoritative.
+    pub fn with_location(location: SourceSpan) -> Self {
+        if self.diagnostic.location.is_none() {
+            self.diagnostic.location = Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(location));
+        };
+
+        *self
+    }
+
     static pub fn user(code: DiagnosticCode, location: Option<SourceSpan>, message: str) -> Self {
         Self(AnalysisErrorKind.User, Diagnostic.new(code, Severity.Error, location, message))
     }
@@ -154,7 +181,7 @@ impl AnalysisError {
     }
 
     static pub fn unsupported(location: Option<SourceSpan>, message: str) -> Self {
-        Self(AnalysisErrorKind.Unsupported, Diagnostic.new(DiagnosticCode.Constant, Severity.Error, location, message))
+        Self(AnalysisErrorKind.Unsupported, Diagnostic.new(DiagnosticCode.Unsupported, Severity.Error, location, message))
     }
 }
 

@@ -1,0 +1,150 @@
+from compiler.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, SourceId, HirId;
+from compiler.common.location import SourceSpan;
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.ty.model import TypeData;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.frontend.ast.node import Item;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub enum DeclarationState {
+    Declared,
+    Resolving,
+    Complete,
+}
+
+// Syntax references belong to the session; this record owns no AST resources.
+pub struct Declaration {
+    pub item: Item&,
+    pub unit: UnitId,
+    pub scope: ScopeId,
+    pub symbol: SymbolId,
+    pub definition: Option<DefId>,
+    pub state: DeclarationState,
+}
+
+pub struct PrimitiveTypes {
+    pub void: TypeId,
+    pub never: TypeId,
+    pub error: TypeId,
+    pub boolean: TypeId,
+    pub character: TypeId,
+    pub string: TypeId,
+    pub integer_literal: TypeId,
+    pub float_literal: TypeId,
+    pub integer: TypeId,
+    pub unsigned: TypeId,
+    pub float: TypeId,
+}
+
+impl PrimitiveTypes {
+    static pub fn new(session: AnalysisSession&) -> Result<Self, AnalysisError> {
+        Result<Self, AnalysisError>.Ok(Self(
+            session.types.primitive(TypeData.Void)?, session.types.primitive(TypeData.Never)?,
+            session.types.primitive(TypeData.Error)?, session.types.primitive(TypeData.Bool)?,
+            session.types.primitive(TypeData.Char)?, session.types.primitive(TypeData.Str)?,
+            session.types.primitive(TypeData.IntLiteral)?, session.types.primitive(TypeData.FloatLiteral)?,
+            session.types.primitive(TypeData.Integer(32, true))?,
+            session.types.primitive(TypeData.Integer(64, false))?,
+            session.types.primitive(TypeData.Float(64))?))
+    }
+}
+
+// The context lives for one analysis run and borrows its session throughout.
+pub struct ResolutionContext {
+    pub session: AnalysisSession&,
+    pub primitives: PrimitiveTypes,
+    pub scopes: Vec<ScopeId>,
+    declarations: Arena<Declaration>,
+    pub callable_scopes: HashMap<DefId, ScopeId>,
+    pub constants: HashMap<SymbolId, HirId>,
+    pub closure_captures: HashMap<DefId, Vec<SymbolId>>,
+    pub sizes: Option<TypeSizeProvider&>,
+}
+
+impl ResolutionContext {
+    static pub fn new(session: AnalysisSession&) -> Result<Self, AnalysisError> {
+        let primitives = PrimitiveTypes.new(session)?;
+        let scopes = Vec<ScopeId>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                scopes.drop();
+            }
+        };
+
+        let index = 0u64;
+
+        while index < session.len() {
+            scopes.push(session.symbols.create_scope(Option<ScopeId>.None)?);
+            index += 1;
+        }
+
+        accepted = true;
+        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None))
+    }
+
+    pub fn span(unit: UnitId, span: Span) -> SourceSpan {
+        SourceSpan(self.session.unit(unit).unwrap().source, span)
+    }
+
+    pub fn error(unit: UnitId, span: Span, code: DiagnosticCode, message: str) -> AnalysisError {
+        AnalysisError.user(code, Option<SourceSpan>.Some(self.span(unit, span)), message)
+    }
+
+    pub fn add(declaration: Declaration) {
+        self.declarations.alloc(declaration);
+    }
+
+    pub fn len() -> u64 {
+        self.declarations.len()
+    }
+
+    pub fn declaration(index: u64) -> Declaration& {
+        *self.declarations.get(index).unwrap()
+    }
+
+    pub fn for_symbol(symbol: SymbolId) -> Option<Declaration&> {
+        for declaration in self.declarations {
+            if declaration.symbol == symbol {
+                return Option<Declaration&>.Some(declaration);
+            }
+        }
+
+        Option<Declaration&>.None
+    }
+
+    pub fn intrinsic(name: str) -> Option<TypeId> {
+        for declaration in self.declarations {
+            let symbol = *self.session.symbols.get(declaration.symbol).unwrap();
+
+            if self.session.unit(declaration.unit).unwrap().is_stdlib && self.session.names.text(symbol.name) == name {
+                return Option<TypeId>.Some(symbol.type_id);
+            }
+        }
+
+        Option<TypeId>.None
+    }
+}
+
+impl Drop for ResolutionContext {
+    pub fn drop() {
+        self.declarations.drop();
+        self.callable_scopes.drop();
+        self.constants.drop();
+
+        for captures in self.closure_captures.values() {
+            captures.drop();
+        }
+
+        self.closure_captures.drop();
+        self.scopes.drop();
+    }
+}

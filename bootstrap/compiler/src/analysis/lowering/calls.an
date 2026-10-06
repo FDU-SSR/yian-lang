@@ -1,0 +1,262 @@
+from compiler.analysis.lowering.checker import ExprChecker;
+from compiler.analysis.ty.callable import signature, schedule, instance_substitutions;
+from compiler.analysis.ty.substitution import infer, substitute, has_generic;
+from compiler.analysis.ty.relations import compatible, default_type, is_numeric, has_literal;
+from compiler.analysis.ty.validation import contains_ffi;
+from compiler.analysis.hir.node import HirKind, Invoke, Cast, Call as HirCall, MethodCall as HirMethodCall;
+from compiler.common.ids import HirId, TypeId;
+from compiler.frontend.ast.node import Expr, Argument;
+from compiler.frontend.source import Span;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl ExprChecker {
+    pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        let target = self.expression(callee)?;
+        let type_id = self.type_of(target);
+        let type_expression = match &self.ctx.session.hir.require(target)?.kind {
+            Ty => true,
+            _ => false,
+        };
+
+        match self.ctx.session.types.require(type_id)? {
+            FunctionPointer(parameters, result) => return self.invoke(span, target, parameters, *result, args),
+            Closure(_, parameters, result, _, _, _) => {
+                let types = Vec<TypeId>.new();
+                defer types.drop();
+
+                for parameter in *parameters {
+                    types.push(parameter.type_id);
+                }
+
+                return self.invoke(span, target, &types, *result, args);
+            },
+            _ => {},
+        }
+
+        if is_numeric(self.ctx, type_id) || type_id == self.ctx.primitives.character {
+            if !type_expression {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "scalar conversion requires a type expression"));
+            }
+            if args.len() != 1 {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "scalar conversion requires one argument"));
+            }
+
+            let value = self.expression(args[0].data.value)?;
+            let source = self.type_of(value);
+
+            if !is_numeric(self.ctx, source) && source != self.ctx.primitives.character && source != self.ctx.primitives.boolean {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "invalid scalar conversion"));
+            }
+
+            if args[0].data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "scalar conversion argument cannot be named"));
+            }
+
+            return Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Cast(Cast(value, type_id))));
+        }
+
+        if !type_expression {
+            match self.ctx.session.types.require(type_id)? {
+                Nominal(definition, _) => {
+                    match self.ctx.session.types.complete_definition(*definition)? {
+                        Struct(_) => return Result<HirId, AnalysisError>.Err(self.error(span, "aggregate construction requires a type expression")),
+                        _ => {},
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        self.call_nominal(span, type_id, args)
+    }
+
+    fn invoke(span: Span, target: HirId, parameters: Vec<TypeId>&, result: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        if parameters.len() != args.len() {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "callable argument count mismatch"));
+        }
+
+        let values = Vec<HirId>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                values.drop();
+            }
+        };
+        let index = 0u64;
+
+        while index < args.len() {
+            if args[index].data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "callable value arguments cannot be named"));
+            }
+
+            let value = self.expression(args[index].data.value)?;
+            values.push(self.coerce(value, parameters[index])?);
+            index += 1;
+        }
+
+        accepted = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Invoke(Invoke(target, values))))
+    }
+
+    pub fn call_nominal(span: Span, type_id: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        self.call_with_receiver(span, type_id, args, Option<HirId>.None)
+    }
+
+    fn call_with_receiver(span: Span, type_id: TypeId, args: Vec<Argument&>&, receiver: Option<HirId>) -> Result<HirId, AnalysisError> {
+        let nominal = match self.ctx.session.types.require(type_id)? {
+            Nominal(definition, _) => *definition,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "expression is not callable")),
+        };
+        let definition = match self.ctx.session.types.complete_definition(nominal)? {
+            Function(value) => value,
+            Method(value) => value,
+            Struct(_) => return self.construct(span, type_id, args),
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "type is not callable")),
+        };
+
+        if args.len() != definition.parameters.len() {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "function argument count mismatch"));
+        }
+
+        let values = Vec<HirId>.new();
+        defer values.drop();
+        let index = 0u64;
+
+        while index < args.len() {
+            let arg = args[index];
+
+            match &arg.data.name {
+                Some(_) => return Result<HirId, AnalysisError>.Err(self.error(arg.span, "function arguments cannot be named")),
+                None => {},
+            }
+
+            let value = self.expression(arg.data.value)?;
+            values.push(value);
+            index += 1;
+        }
+
+        self.call_values(span, type_id, &values, receiver)
+    }
+
+    // Prepared arguments are borrowed. The HIR receives a separate ID list on success.
+
+    pub fn call_values(span: Span, type_id: TypeId, arguments: Vec<HirId>&, receiver: Option<HirId>) -> Result<HirId, AnalysisError> {
+        let nominal = match self.ctx.session.types.require(type_id)? {
+            Nominal(definition, _) => *definition,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "call requires a callable definition")),
+        };
+        let definition = match self.ctx.session.types.complete_definition(nominal)? {
+            Function(value) => value,
+            Method(value) => value,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "definition is not callable")),
+        };
+
+        if arguments.len() != definition.parameters.len() {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "function argument count mismatch"));
+        }
+
+        if definition.ffi_only && !self.ffi_allowed {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "FFI-only call requires an ffi function"));
+        }
+
+        let values = arguments.clone();
+        let accepted = false;
+        defer {
+            if !accepted {
+                values.drop();
+            }
+        };
+        let substitutions = instance_substitutions(self.ctx, type_id)?;
+        defer substitutions.drop();
+        let index = 0u64;
+        // Concrete arguments constrain generics before unsuffixed literals choose defaults.
+
+        while index < values.len() {
+            if !has_literal(self.ctx, self.type_of(values[index])) {
+                let expected = substitute(&self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+
+                if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, self.type_of(values[index]), &substitutions) {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "function argument cannot be matched to its parameter"));
+                }
+            }
+
+            index += 1;
+        }
+
+        index = 0;
+
+        while index < values.len() {
+            let actual = self.type_of(values[index]);
+            let expected = substitute(&self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+
+            if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, actual, &substitutions) {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "function argument cannot be matched to its parameter"));
+            }
+
+            index += 1;
+        }
+
+        let actual_arguments = Vec<TypeId>.new();
+        defer actual_arguments.drop();
+        let header = *self.ctx.session.types.definition(nominal).unwrap();
+        index = 0;
+
+        while index < header.generic_count() {
+            let generic = *header.generic(index).unwrap();
+
+            match substitutions.get(&generic) {
+                Some(value) => actual_arguments.push(*value),
+                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.GenericArguments, "cannot infer generic argument")),
+            }
+
+            index += 1;
+        }
+
+        let instance = self.ctx.session.types.instance(nominal, &actual_arguments)?;
+        if !definition.is_header && has_generic(&self.ctx.session.types, instance) {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "function instance requires concrete generic arguments"));
+        }
+
+        let callable = signature(self.ctx, instance)?;
+        defer callable.drop();
+
+        if !self.ffi_allowed {
+            // Permission follows the declaration, rather than a concrete generic binding.
+            let exposed = contains_ffi(&self.ctx.session.types, definition.result, false);
+
+            for parameter in definition.parameters {
+                if contains_ffi(&self.ctx.session.types, parameter.type_id, false) {
+                    exposed = true;
+                }
+            }
+
+            if exposed {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI call signature requires an ffi function"));
+            }
+        }
+
+        index = 0;
+
+        while index < values.len() {
+            values[index] = self.coerce(values[index], callable.parameters[index].type_id)?;
+            index += 1;
+        }
+
+        if !callable.is_header {
+            schedule(self.ctx, instance)?;
+        }
+
+        accepted = true;
+        let kind = match receiver {
+            Some(value) => HirKind.MethodCall(HirMethodCall(value, instance, values)),
+            None => HirKind.Call(HirCall(instance, values)),
+        };
+        Result<HirId, AnalysisError>.Ok(self.node(span, callable.result, false, kind))
+    }
+}
