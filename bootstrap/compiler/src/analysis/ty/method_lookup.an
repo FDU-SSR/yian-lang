@@ -9,7 +9,6 @@ from compiler.common.ids import TypeId, NameId, ImplId;
 from compiler.common.location import SourceSpan;
 from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.hash_map import HashMap;
-from std.collections.hash_set import HashSet;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
@@ -22,80 +21,16 @@ struct TraitQuery {
     trait_id: TypeId,
 }
 
-// The graph includes query types and declared impl patterns, including nested bounds.
-// A growing inference branch has a finite budget without restricting all inputs to one depth.
+// The registered type count bounds every graph of query and impl-pattern identities.
+// Active queries detect cycles; this finite budget also bounds growing inference branches.
 fn query_budget(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId) -> Result<u64, AnalysisError> {
-    let pending = Vec<TypeId>.new();
-    defer pending.drop();
-    let seen = HashSet<TypeId>.new();
-    defer seen.drop();
-    pending.push(target);
-    pending.push(trait_id);
-    let index = 0u64;
-
-    while index < ctx.session.impls.len() {
-        let record = *ctx.session.impls.get(ImplId(index)).unwrap();
-        pending.push(record.target);
-        match &record.trait_id {
-            Some(value) => {
-                pending.push(*value);
-            }, None => {}
-        }
-        for condition in record.conditions {
-            pending.push(condition.generic);
-            for bound in condition.traits {
-                pending.push(*bound);
-            }
-        }
-        index += 1;
+    ctx.session.types.require(target)?;
+    ctx.session.types.require(trait_id)?;
+    let count = ctx.session.types.len();
+    if count > (0xFFFFFFFFFFFFFFFFu64 - 1u64) / 2u64 {
+        return Result<u64, AnalysisError>.Err(AnalysisError.internal("trait query budget exceeds the target range"));
     }
-
-    let count = 0u64;
-    while pending.len() != 0 {
-        let id = *pending.pop().unwrap();
-        if !seen.insert(id) {
-            continue;
-        }
-        count += 1;
-        match ctx.session.types.require(id)? {
-            Pointer(inner) | Reference(inner) | CPointer(inner) | Slice(inner) | TraitObject(inner) => {
-                pending.push(*inner);
-            },
-            Array(inner, length) => {
-                pending.push(*inner);
-                pending.push(*length);
-            },
-            Tuple(elements) | Nominal(_, elements) => {
-                for element in *elements {
-                    pending.push(*element);
-                }
-            },
-            FunctionPointer(parameters, result) => {
-                for parameter in *parameters {
-                    pending.push(*parameter);
-                }
-                pending.push(*result);
-            },
-            Closure(captures, parameters, result, _, _, _) => {
-                for capture in *captures {
-                    pending.push(capture.type_id);
-                }
-                for parameter in *parameters {
-                    pending.push(parameter.type_id);
-                }
-                pending.push(*result);
-            },
-            ConstUnary(_, value) => {
-                pending.push(*value);
-            },
-            ConstBinary(_, left, right) => {
-                pending.push(*left);
-                pending.push(*right);
-            },
-            _ => {},
-        }
-    }
-    Result<u64, AnalysisError>.Ok(count * 2 + 1)
+    Result<u64, AnalysisError>.Ok(count * 2u64 + 1u64)
 }
 
 fn conditions(ctx: ResolutionContext&, impl_id: ImplId, substitutions: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
@@ -445,9 +380,10 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
         let actual = values[index];
         let matches = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
             Reference(inner) => match ctx.session.types.require(actual)? {
-                Pointer(value) => compatible(ctx, *value, *inner) || infer(&ctx.session.types, *inner, *value, substitutions), _ => infer(&ctx.session.types, expected, actual, substitutions)
+                Pointer(value) => compatible(ctx, *value, *inner) || infer(&ctx.session.types, *inner, default_type(ctx, *value), substitutions),
+                _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions)
             },
-            _ => infer(&ctx.session.types, expected, actual, substitutions),
+            _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions),
         };
 
         if !matches {

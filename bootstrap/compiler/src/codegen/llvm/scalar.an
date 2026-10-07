@@ -1,0 +1,134 @@
+from compiler.codegen.error import CodegenError;
+from compiler.codegen.types import BackendTypes;
+from compiler.common.ids import TypeId;
+from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from llvm.object import Module, Builder;
+from llvm.ir import IrValue, BinaryOp, IntCompare, RealCompare, CastOp;
+from std.core.result import Result;
+
+pub enum ScalarKind {
+    Integer { bits: u32, signed: bool },
+    Float { bits: u32 },
+    Pointer,
+}
+
+pub fn scalar(types: BackendTypes&, type_id: TypeId) -> Result<ScalarKind, CodegenError> {
+    match types.semantic_store().require(type_id)? {
+        Bool => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(1u32, false)),
+        Char => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(32u32, false)),
+        Integer(bits, signed) | CScalar(bits, signed, _) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(*bits, *signed)),
+        Float(bits) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Float(*bits)),
+        Pointer(_) | Reference(_) | CPointer(_) | FunctionPointer(_, _) | Nominal(_, _) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Pointer),
+        _ => Result<ScalarKind, CodegenError>.Err(CodegenError.invalid("type has no scalar LLVM operation")),
+    }
+}
+
+pub fn binary(builder: Builder&, types: BackendTypes&, module: Module&, op: BinaryOperator,
+    type_id: TypeId, rhs_type: TypeId, left: IrValue, right: IrValue) -> Result<IrValue, CodegenError> {
+    let category = scalar(types, type_id)?;
+    let signed = match category { Integer(_, value) => value, _ => false, };
+    let floating = match category { Float(_) => true, _ => false, };
+    let comparison = match op { Eq | Neq | Lt | Leq | Gt | Geq => true, _ => false, };
+    if comparison && types.is_zst(type_id)? {
+        let equal = op == BinaryOperator.Eq || op == BinaryOperator.Leq || op == BinaryOperator.Geq;
+        return Result<IrValue, CodegenError>.Ok(module.const_int(module.int_type(1u32), if equal { 1u64 } else { 0u64 }));
+    }
+    if comparison {
+        if floating {
+            let predicate = match op {
+                Eq => RealCompare.Oeq, Neq => RealCompare.Une, Lt => RealCompare.Olt,
+                Leq => RealCompare.Ole, Gt => RealCompare.Ogt, _ => RealCompare.Oge,
+            };
+            return Result<IrValue, CodegenError>.Ok(builder.fcmp(predicate, left, right, ""));
+        }
+        let predicate = match op {
+            Eq => IntCompare.Eq, Neq => IntCompare.Ne,
+            Lt => if signed { IntCompare.Slt } else { IntCompare.Ult },
+            Leq => if signed { IntCompare.Sle } else { IntCompare.Ule },
+            Gt => if signed { IntCompare.Sgt } else { IntCompare.Ugt },
+            _ => if signed { IntCompare.Sge } else { IntCompare.Uge },
+        };
+        return Result<IrValue, CodegenError>.Ok(builder.icmp(predicate, left, right, ""));
+    }
+    if op == BinaryOperator.Shl || op == BinaryOperator.Shr {
+        right = cast(builder, types, module, rhs_type, type_id, right)?;
+    }
+    let instruction = if floating {
+        match op {
+            Add => BinaryOp.Fadd, Sub => BinaryOp.Fsub, Mul => BinaryOp.Fmul,
+            Div => BinaryOp.Fdiv, Mod => BinaryOp.Frem,
+            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid floating-point CFG operator")),
+        }
+    } else {
+        match op {
+            Add => BinaryOp.Add, Sub => BinaryOp.Sub, Mul => BinaryOp.Mul,
+            Div => if signed { BinaryOp.Sdiv } else { BinaryOp.Udiv },
+            Mod => if signed { BinaryOp.Srem } else { BinaryOp.Urem },
+            BitAnd => BinaryOp.And, BitOr => BinaryOp.Or, BitXor => BinaryOp.Xor,
+            Shl => BinaryOp.Shl, Shr => if signed { BinaryOp.Ashr } else { BinaryOp.Lshr },
+            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid integer CFG operator")),
+        }
+    };
+    Result<IrValue, CodegenError>.Ok(builder.binary(instruction, left, right, ""))
+}
+
+pub fn unary(builder: Builder&, types: BackendTypes&, op: UnaryOperator,
+    type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
+    let result = match op {
+        Neg => match scalar(types, type_id)? {
+            Float(_) => builder.fneg(value, ""),
+            _ => builder.neg(value, ""),
+        },
+        BitNot | LogicalNot => builder.not(value, ""),
+        _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid scalar unary CFG operator")),
+    };
+    Result<IrValue, CodegenError>.Ok(result)
+}
+
+pub fn cast(builder: Builder&, types: BackendTypes&, module: Module&,
+    source: TypeId, target: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
+    if source == target { return Result<IrValue, CodegenError>.Ok(value); }
+    let from = scalar(types, source)?;
+    let to = scalar(types, target)?;
+    let native = types.value_type(target)?;
+    let op = match &from {
+        Integer(width, signed) => match &to {
+            Integer(bits, _) => {
+                if *bits == 1u32 {
+                    return Result<IrValue, CodegenError>.Ok(builder.icmp(IntCompare.Ne, value,
+                        module.const_int(types.value_type(source)?, 0u64), ""));
+                }
+                if *bits == *width { return Result<IrValue, CodegenError>.Ok(value); }
+                if *bits < *width { CastOp.Trunc } elif *signed { CastOp.Sext } else { CastOp.Zext }
+            },
+            Float(_) => if *signed { CastOp.Sitofp } else { CastOp.Uitofp },
+            Pointer => CastOp.Inttoptr,
+        },
+        Float(width) => match &to {
+            Integer(bits, signed) => {
+                if *bits == 1u32 {
+                    return Result<IrValue, CodegenError>.Ok(builder.fcmp(RealCompare.Une, value,
+                        module.const_real(types.value_type(source)?, 0.0f64), ""));
+                }
+                if !*signed {
+                    let native_source = types.value_type(source)?;
+                    let nonnegative = builder.fcmp(RealCompare.Oge, value, module.const_real(native_source, 0.0f64), "");
+                    let converted = builder.cast(CastOp.Fptoui, value, native, "");
+                    return Result<IrValue, CodegenError>.Ok(builder.select(nonnegative, converted, module.const_int(native, 0u64), ""));
+                }
+                CastOp.Fptosi
+            },
+            Float(bits) => {
+                if *bits == *width { return Result<IrValue, CodegenError>.Ok(value); }
+                if *bits < *width { CastOp.Fptrunc } else { CastOp.Fpext }
+            },
+            Pointer => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("float cannot cast to pointer")),
+        },
+        Pointer => match &to {
+            Pointer => return Result<IrValue, CodegenError>.Ok(value),
+            Integer(_, _) => CastOp.Ptrtoint,
+            Float(_) => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("pointer cannot cast to float")),
+        },
+    };
+    Result<IrValue, CodegenError>.Ok(builder.cast(op, value, native, ""))
+}

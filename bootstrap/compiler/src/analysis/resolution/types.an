@@ -387,7 +387,7 @@ fn named_constant(ctx: ResolutionContext&, unit: UnitId, symbol: SymbolId, span:
         let constant = evaluator.evaluate(expression)?;
         return match &constant.value {
             Integer(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude(*value), value.is_negative(), constant.type_id)),
-            Bool(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(u64(*value), false, constant.type_id)),
+            Bool(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(if *value { 1u64 } else { 0u64 }, false, constant.type_id)),
             _ => Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Constant, "generic constant argument requires an integer or boolean value")),
         };
     }

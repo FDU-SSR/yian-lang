@@ -1,0 +1,244 @@
+from compiler.codegen.llvm.module import FunctionLowering;
+from compiler.codegen.cfg.ids import ValueId;
+from compiler.codegen.error import CodegenError;
+from compiler.codegen.abi.runtime import failure_message, ENV_WORD;
+from compiler.common.ids import TypeId;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from llvm.ir import IrValue, IrType, IntCompare, BinaryOp, CastOp;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl FunctionLowering {
+    fn external_call(name: str, result: IrType, parameters: IrType[], arguments: IrValue[]) -> Result<IrValue, CodegenError> {
+        let signature = self.owner.module.function_type(result, parameters);
+        let function = self.owner.runtime_function(name, signature)?;
+        Result<IrValue, CodegenError>.Ok(self.builder.call(signature, function.value(), arguments, ""))
+    }
+
+    pub fn failure(code: str) -> Result<(), CodegenError> {
+        let text = failure_message(code);
+        let module = self.owner.module;
+        let array = module.array_type(module.int_type(8u32), text.as_slice().len());
+        let global = module.add_global("", array);
+        global.set_initializer(module.const_bytes(text.as_slice(), false));
+        global.set_constant(true);
+        global.set_private_linkage();
+        let parameters = [module.pointer_type(0u32), module.int_type(64u32)];
+        let arguments = [global.value(), module.const_int(module.int_type(64u32), text.as_slice().len())];
+        self.external_call("__yian_runtime_fail", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
+        self.builder.unreachable();
+        Result<(), CodegenError>.Ok(())
+    }
+
+    // Internal LLVM check blocks retain the CFG predecessor's actual exit identity for Phi edges.
+    pub fn checked(condition: IrValue, code: str) -> Result<(), CodegenError> {
+        let success = self.function.append_block("");
+        let failure = self.function.append_block("");
+        self.builder.cond_br(condition, success, failure);
+        self.builder.position_at_end(failure);
+        self.failure(code)?;
+        self.builder.position_at_end(success);
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn release(id: ValueId) -> Result<(), CodegenError> {
+        let type_id = self.cfg.value(id)?.type_id;
+        if self.owner.types.is_zst(type_id)? { return Result<(), CodegenError>.Ok(()); }
+        let value = self.get(id)?;
+        if !self.owner.types.raw_pointers() { return self.release_fat(type_id, value); }
+        let pointer = match self.owner.session.types.require(type_id)? {
+            Slice(_) => self.builder.extract_value(value, 0u32, ""),
+            _ => value,
+        };
+        let parameters = [self.owner.module.pointer_type(0u32)];
+        let arguments = [pointer];
+        self.external_call("free", self.owner.module.void_type(), parameters.as_slice(), arguments.as_slice())?;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn builtin(type_id: TypeId, kind: BuiltinKind, type_args: Vec<TypeId>&, args: Vec<ValueId>&) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        let native = self.owner.types.value_type(type_id)?;
+        let pointer = module.pointer_type(0u32);
+        let i32_type = module.int_type(32u32);
+        let i64_type = module.int_type(64u32);
+        let result = match kind {
+            Panic => {
+                let message = self.get(args[0])?;
+                let parameters = [pointer, i64_type];
+                let arguments = [self.builder.extract_value(message, 0u32, ""), self.view_length(message)];
+                self.external_call("__yian_panic", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
+                module.const_null(native)
+            },
+            RuntimeFail => {
+                let code = match &self.cfg.value(args[0])?.kind {
+                    Bytes(name) => self.owner.session.names.text(*name),
+                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime failure has no constant code")),
+                };
+                // The caller emits the HIR never terminator after this noreturn call.
+                let text = failure_message(code);
+                let array = module.array_type(module.int_type(8u32), text.as_slice().len());
+                let global = module.add_global("", array);
+                global.set_initializer(module.const_bytes(text.as_slice(), false));
+                global.set_constant(true);
+                global.set_private_linkage();
+                let parameters = [pointer, i64_type];
+                let arguments = [global.value(), module.const_int(i64_type, text.as_slice().len())];
+                self.external_call("__yian_runtime_fail", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
+                module.const_null(native)
+            },
+            Exit => {
+                let parameters = [i32_type];
+                let arguments = [self.get(args[0])?];
+                self.external_call("_exit", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
+                module.const_null(native)
+            },
+            SliceFromParts | StrFromParts => {
+                let source_type = self.cfg.value(args[0])?.type_id;
+                let source = self.get(args[0])?;
+                let length = self.get(args[1])?;
+                if self.fat(source_type)? {
+                    self.check_count(length)?;
+                    let index = self.pointer_index(source);
+                    let size = self.pointer_size(source);
+                    let available = self.builder.binary(BinaryOp.Sub, size, index, "");
+                    let valid = self.builder.binary(BinaryOp.And,
+                        self.builder.icmp(IntCompare.Ule, index, size, ""), self.builder.icmp(IntCompare.Ule, length, available, ""), "");
+                    self.checked(valid, "S004")?;
+                }
+                self.make_pointer(type_id, self.pointer_data(source_type, source)?, self.pointer_word(source_type, source)?, self.integer(0u64), length)?
+            },
+            SliceGetPtr | StrGetPtr => {
+                if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
+                    let source = self.get(args[0])?;
+                    let source_type = self.cfg.value(args[0])?.type_id;
+                    let length = self.view_length(source);
+                    if !self.owner.types.raw_pointers() { self.check_count(length)?; }
+                    self.make_pointer(type_id, self.builder.extract_value(source, 0u32, ""), self.pointer_word(source_type, source)?, self.integer(0u64), length)?
+                }
+            },
+            SliceGetLen | StrGetLen => self.view_length(self.get(args[0])?),
+            FfiAddr => self.memory_address(self.cfg.value(args[0])?.type_id, self.get(args[0])?)?,
+            FfiPtrCast => self.get(args[0])?,
+            FfiParts => {
+                let source = self.get(args[0])?;
+                let value = module.undef_value(native);
+                value = self.builder.insert_value(value, self.builder.extract_value(source, 0u32, ""), 0u32, "");
+                self.builder.insert_value(value, self.view_length(source), 1u32, "")
+            },
+            MemCopy | FfiCopyFrom | FfiCopyTo => {
+                let destination = self.get(args[0])?;
+                let source = self.get(args[1])?;
+                if kind == BuiltinKind.FfiCopyFrom || kind == BuiltinKind.FfiCopyTo {
+                    let view_index = if kind == BuiltinKind.FfiCopyFrom { 0u64 } else { 1u64 };
+                    let view = self.get(args[view_index])?;
+                    self.checked(self.builder.icmp(IntCompare.Ule, self.get(args[2])?, self.view_length(view), ""), "S001")?;
+                    if kind == BuiltinKind.FfiCopyFrom { destination = self.builder.extract_value(view, 0u32, ""); } else { source = self.builder.extract_value(view, 0u32, ""); }
+                    self.builder.memcpy(destination, 1u32, source, 1u32, self.get(args[2])?);
+                } elif !self.owner.types.is_zst(self.cfg.value(args[0])?.type_id)? && !self.owner.types.is_zst(self.cfg.value(args[1])?.type_id)? {
+                    destination = self.memory_address(self.cfg.value(args[0])?.type_id, destination)?;
+                    source = self.memory_address(self.cfg.value(args[1])?.type_id, source)?;
+                    self.builder.memcpy(destination, 1u32, source, 1u32, self.get(args[2])?);
+                }
+                module.const_null(native)
+            },
+            SysWrite | SysWriteBytes | SysRead | SysReadBytes => {
+                let view = self.get(args[1])?;
+                let view_type = self.cfg.value(args[1])?.type_id;
+                let data = self.builder.extract_value(view, 0u32, "");
+                let length = self.view_length(view);
+                let parameters = [i32_type, pointer, i64_type];
+                let arguments = [self.get(args[0])?, data, length];
+                let read = kind == BuiltinKind.SysRead || kind == BuiltinKind.SysReadBytes;
+                let count = self.external_call(if read { "read" } else { "write" }, i64_type, parameters.as_slice(), arguments.as_slice())?;
+                if kind == BuiltinKind.SysRead {
+                    self.make_pointer(type_id, data, self.pointer_word(view_type, view)?, self.integer(0u64), count)?
+                } elif kind == BuiltinKind.SysWrite {
+                    module.const_null(native)
+                } else { count }
+            },
+            Open => {
+                let view = self.get(args[0])?;
+                let path = self.builder.extract_value(view, 0u32, "");
+                let parameters = [pointer, i32_type, i32_type];
+                let arguments = [path, self.get(args[1])?, module.const_int(i32_type, 420u64)];
+                self.external_call("open", i32_type, parameters.as_slice(), arguments.as_slice())?
+            },
+            Close => {
+                let parameters = [i32_type];
+                let arguments = [self.get(args[0])?];
+                self.external_call("close", i32_type, parameters.as_slice(), arguments.as_slice())?
+            },
+            Sqrt | Sin | Cos => {
+                let parameters = [module.double_type()];
+                let arguments = [self.get(args[0])?];
+                let name = match kind { Sqrt => "llvm.sqrt.f64", Sin => "llvm.sin.f64", _ => "llvm.cos.f64", };
+                self.external_call(name, module.double_type(), parameters.as_slice(), arguments.as_slice())?
+            },
+            Argc => {
+                let global = self.owner.runtime_global("__yian_argc", i32_type);
+                let count = self.builder.load(i32_type, global.value(), "");
+                self.builder.cast(CastOp.Zext, count, i64_type, "")
+            },
+            ArgBytes => {
+                let global = self.owner.runtime_global("__yian_argc", i32_type);
+                let count = self.builder.cast(CastOp.Zext, self.builder.load(i32_type, global.value(), ""), i64_type, "");
+                let in_range = self.builder.icmp(IntCompare.Ult, self.get(args[0])?, count, "");
+                self.checked(in_range, "S001")?;
+                let argv = self.owner.runtime_global("__yian_argv", pointer);
+                let base = self.builder.load(pointer, argv.value(), "");
+                let indices = [self.get(args[0])?];
+                let slot = self.builder.gep(pointer, base, indices.as_slice(), false, "");
+                let data = self.builder.load(pointer, slot, "");
+                let nonnull = self.builder.icmp(IntCompare.Ne, data, module.const_null(pointer), "");
+                self.checked(nonnull, "S002")?;
+                let parameters = [pointer];
+                let arguments = [data];
+                let length = self.external_call("strlen", i64_type, parameters.as_slice(), arguments.as_slice())?;
+                self.make_pointer(type_id, data, self.integer(ENV_WORD), self.integer(0u64), length)?
+            },
+            Dangling => {
+                if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
+                    // A non-owning dangling pointer uses its pointee alignment as an address.
+                    let data = self.builder.cast(CastOp.Inttoptr, module.const_int(i64_type,
+                        u64(module.abi_alignment(self.owner.types.value_type(type_args[0])?))), pointer, "");
+                    self.make_pointer(type_id, data, self.integer(ENV_WORD), self.integer(0u64), self.integer(0u64))?
+                }
+            },
+            Alloc | Realloc => {
+                if !self.owner.types.raw_pointers() && !self.owner.types.is_zst(type_id)? {
+                    let count = self.get(args[if kind == BuiltinKind.Alloc { 0u64 } else { 1u64 }])?;
+                    return if kind == BuiltinKind.Alloc {
+                        self.allocate_fat(type_id, type_args[0], count)
+                    } else { self.reallocate_fat(type_id, type_args[0], self.get(args[0])?, count) };
+                }
+                if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
+                    let size = module.abi_size(self.owner.types.value_type(type_args[0])?);
+                    let count = self.get(args[if kind == BuiltinKind.Alloc { 0u64 } else { 1u64 }])?;
+                    let fits = self.builder.icmp(IntCompare.Ule, count, module.const_int(i64_type, 0xFFFFFFFFFFFFFFFFu64 / size), "");
+                    self.checked(fits, "R001")?;
+                    let bytes = self.builder.binary(BinaryOp.Mul, count, module.const_int(i64_type, size), "");
+                    let zero = self.builder.icmp(IntCompare.Eq, bytes, module.const_int(i64_type, 0u64), "");
+                    let normalized = self.builder.select(zero, module.const_int(i64_type, 1u64), bytes, "");
+                    let allocated = if kind == BuiltinKind.Alloc {
+                        let parameters = [i64_type];
+                        let arguments = [normalized];
+                        self.external_call("malloc", pointer, parameters.as_slice(), arguments.as_slice())?
+                    } else {
+                        let parameters = [pointer, i64_type];
+                        let arguments = [self.get(args[0])?, normalized];
+                        self.external_call("realloc", pointer, parameters.as_slice(), arguments.as_slice())?
+                    };
+                    let valid = self.builder.icmp(IntCompare.Ne, allocated, module.const_null(pointer), "");
+                    self.checked(valid, "R002")?;
+                    allocated
+                }
+            },
+            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("LLVM builtin lowering is unavailable")),
+        };
+        Result<IrValue, CodegenError>.Ok(result)
+    }
+}

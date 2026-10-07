@@ -1,5 +1,6 @@
 from compiler.analysis.resolution.context import ResolutionContext;
-from compiler.analysis.ty.callable import instance_substitutions, signature;
+from compiler.analysis.ty.callable import store_substitutions, store_signature;
+from compiler.analysis.ty.store import TypeStore;
 from compiler.analysis.ty.substitution import substitute;
 from compiler.common.ids import TypeId;
 from compiler.common.location import SourceSpan;
@@ -15,20 +16,20 @@ fn before(left: TypeId&, right: TypeId&) -> bool {
     left.index < right.index
 }
 
-fn mentions(ctx: ResolutionContext&, type_id: TypeId, self_type: TypeId) -> Result<bool, AnalysisError> {
+fn mentions(store: TypeStore&, type_id: TypeId, self_type: TypeId) -> Result<bool, AnalysisError> {
     if type_id == self_type {
         return Result<bool, AnalysisError>.Ok(true);
     }
 
-    match ctx.session.types.require(type_id)? {
-        Pointer(inner) => mentions(ctx, *inner, self_type),
-        Reference(inner) => mentions(ctx, *inner, self_type),
-        Slice(inner) => mentions(ctx, *inner, self_type),
-        TraitObject(inner) => mentions(ctx, *inner, self_type),
-        Array(inner, _) => mentions(ctx, *inner, self_type),
+    match store.require(type_id)? {
+        Pointer(inner) => mentions(store, *inner, self_type),
+        Reference(inner) => mentions(store, *inner, self_type),
+        Slice(inner) => mentions(store, *inner, self_type),
+        TraitObject(inner) => mentions(store, *inner, self_type),
+        Array(inner, _) => mentions(store, *inner, self_type),
         Tuple(elements) => {
             for element in *elements {
-                if mentions(ctx, *element, self_type)? {
+                if mentions(store, *element, self_type)? {
                     return Result<bool, AnalysisError>.Ok(true);
                 }
             }
@@ -37,7 +38,7 @@ fn mentions(ctx: ResolutionContext&, type_id: TypeId, self_type: TypeId) -> Resu
         },
         Nominal(_, arguments) => {
             for argument in *arguments {
-                if mentions(ctx, *argument, self_type)? {
+                if mentions(store, *argument, self_type)? {
                     return Result<bool, AnalysisError>.Ok(true);
                 }
             }
@@ -46,12 +47,12 @@ fn mentions(ctx: ResolutionContext&, type_id: TypeId, self_type: TypeId) -> Resu
         },
         FunctionPointer(parameters, result) => {
             for parameter in *parameters {
-                if mentions(ctx, *parameter, self_type)? {
+                if mentions(store, *parameter, self_type)? {
                     return Result<bool, AnalysisError>.Ok(true);
                 }
             }
 
-            mentions(ctx, *result, self_type)
+            mentions(store, *result, self_type)
         },
         _ => Result<bool, AnalysisError>.Ok(false),
     }
@@ -60,10 +61,14 @@ fn mentions(ctx: ResolutionContext&, type_id: TypeId, self_type: TypeId) -> Resu
 // Declaration IDs give dynamic slots a deterministic order independent of hash buckets.
 // Static methods have no dynamic slot. Instance signatures cannot depend on concrete Self.
 pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
-    let definition = match ctx.session.types.require(trait_id)? {
+    store_object_methods(&ctx.session.types, trait_id)
+}
+
+pub fn store_object_methods(store: TypeStore&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
+    let definition = match store.require(trait_id)? {
         Nominal(id, _) => *id, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait object has invalid trait identity"))
     };
-    let methods = match ctx.session.types.complete_definition(definition)? {
+    let methods = match store.complete_definition(definition)? {
         Trait(methods) => methods, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait object target is not a trait"))
     };
     let result = Vec<TypeId>.new();
@@ -73,9 +78,9 @@ pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<T
             result.drop();
         }
     };
-    let substitutions = instance_substitutions(ctx, trait_id)?;
+    let substitutions = store_substitutions(store, trait_id)?;
     defer substitutions.drop();
-    let trait_header = *ctx.session.types.definition(definition).unwrap();
+    let trait_header = *store.definition(definition).unwrap();
     let templates = Vec<TypeId>.new();
     defer templates.drop();
 
@@ -86,11 +91,11 @@ pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<T
     sort_by(templates.as_slice(), before);
 
     for method in templates {
-        let id = match ctx.session.types.require(*method)? {
+        let id = match store.require(*method)? {
             Nominal(id, _) => *id, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait member has invalid identity"))
         };
-        let header = *ctx.session.types.definition(id).unwrap();
-        let callable = signature(ctx, *method)?;
+        let header = *store.definition(id).unwrap();
+        let callable = store_signature(store, *method)?;
         defer callable.drop();
 
         if callable.is_static {
@@ -103,18 +108,18 @@ pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<T
 
         let self_type = *header.generic(trait_header.generic_count()).unwrap();
 
-        if mentions(ctx, callable.result, self_type)? {
+        if mentions(store, callable.result, self_type)? {
             return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(header.header().span), "trait object method returns concrete Self"));
         }
 
         for parameter in callable.parameters {
-            if mentions(ctx, parameter.type_id, self_type)? {
+            if mentions(store, parameter.type_id, self_type)? {
                 return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(header.header().span), "trait object method parameter uses concrete Self"));
             }
         }
 
-        substitutions.insert(self_type, ctx.session.types.trait_object(trait_id));
-        result.push(substitute(&ctx.session.types, *method, &substitutions)?);
+        substitutions.insert(self_type, store.trait_object(trait_id));
+        result.push(substitute(store, *method, &substitutions)?);
     }
 
     transferred = true;

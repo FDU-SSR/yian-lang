@@ -1,5 +1,6 @@
 from compiler.analysis.resolution.context import ResolutionContext;
 from compiler.analysis.ty.model import Parameter, TypeData;
+from compiler.analysis.ty.store import TypeStore;
 from compiler.analysis.ty.substitution import substitute;
 from compiler.analysis.definition.registry import Procedure;
 from compiler.common.ids import TypeId, DefId;
@@ -28,6 +29,11 @@ impl Drop for CallableSignature {
 }
 
 pub fn instance_substitutions(ctx: ResolutionContext&, type_id: TypeId) -> Result<HashMap<TypeId, TypeId>, AnalysisError> {
+    store_substitutions(&ctx.session.types, type_id)
+}
+
+// This query borrows only session-owned records and remains valid after resolution ends.
+pub fn store_substitutions(store: TypeStore&, type_id: TypeId) -> Result<HashMap<TypeId, TypeId>, AnalysisError> {
     let map = HashMap<TypeId, TypeId>.new();
     let accepted = false;
     defer {
@@ -36,9 +42,9 @@ pub fn instance_substitutions(ctx: ResolutionContext&, type_id: TypeId) -> Resul
         }
     };
 
-    match ctx.session.types.require(type_id)? {
+    match store.require(type_id)? {
         Nominal(id, arguments) => {
-            let definition = *ctx.session.types.definition(*id).unwrap();
+            let definition = *store.definition(*id).unwrap();
             let index = 0u64;
 
             while index < arguments.len() {
@@ -59,13 +65,18 @@ pub fn instance_substitutions(ctx: ResolutionContext&, type_id: TypeId) -> Resul
 }
 
 pub fn signature(ctx: ResolutionContext&, type_id: TypeId) -> Result<CallableSignature, AnalysisError> {
-    let substitutions = instance_substitutions(ctx, type_id)?;
+    store_signature(&ctx.session.types, type_id)
+}
+
+// The returned parameter list belongs to the caller; identities belong to the type store.
+pub fn store_signature(store: TypeStore&, type_id: TypeId) -> Result<CallableSignature, AnalysisError> {
+    let substitutions = store_substitutions(store, type_id)?;
     defer substitutions.drop();
-    let id = match ctx.session.types.require(type_id)? {
+    let id = match store.require(type_id)? {
         Nominal(id, _) => *id,
         _ => return Result<CallableSignature, AnalysisError>.Err(AnalysisError.internal("invalid callable identity")),
     };
-    let body = match ctx.session.types.complete_definition(id)? {
+    let body = match store.complete_definition(id)? {
         Function(value) => value,
         Method(value) => value,
         _ => return Result<CallableSignature, AnalysisError>.Err(AnalysisError.internal("definition is not callable")),
@@ -79,12 +90,12 @@ pub fn signature(ctx: ResolutionContext&, type_id: TypeId) -> Result<CallableSig
     };
 
     for parameter in body.parameters {
-        parameters.push(Parameter(parameter.name, substitute(&ctx.session.types, parameter.type_id, &substitutions)?, parameter.span));
+        parameters.push(Parameter(parameter.name, substitute(store, parameter.type_id, &substitutions)?, parameter.span));
     }
 
-    let result = substitute(&ctx.session.types, body.result, &substitutions)?;
+    let result = substitute(store, body.result, &substitutions)?;
     let receiver = match &body.receiver {
-        Some(value) => Option<TypeId>.Some(substitute(&ctx.session.types, *value, &substitutions)?),
+        Some(value) => Option<TypeId>.Some(substitute(store, *value, &substitutions)?),
         None => Option<TypeId>.None,
     };
 

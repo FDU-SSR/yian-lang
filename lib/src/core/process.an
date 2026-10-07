@@ -1,0 +1,220 @@
+from std.core.drop import Drop;
+from std.core.io import IoError;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.range import Range;
+from std.core.ops import Index, Deref;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.ffi.c_string import c_string_bytes;
+
+extern "C" {
+    fn yian_process_output(program: cptr<c_char>, arguments: cptr<cptr<c_char>>,
+        directory: cptr<c_char>, error: cptr<i32>) -> cptr<u8>;
+    fn yian_process_length(result: cptr<u8>, stream: i32) -> u64;
+    fn yian_process_copy(result: cptr<u8>, stream: i32, buffer: cptr<u8>, capacity: u64) -> i32;
+    fn yian_process_status(result: cptr<u8>, signaled: cptr<i32>) -> i32;
+    fn yian_process_drop(result: cptr<u8>);
+    fn yian_process_env(name: cptr<c_char>, buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_process_temp_dir(parent: cptr<c_char>, buffer: cptr<u8>, capacity: u64) -> i64;
+}
+
+pub enum ExitStatus {
+    Exited { code: i32 },
+    Signaled { signal: i32 },
+}
+
+impl ExitStatus {
+    pub fn success() -> bool {
+        match self {
+            Exited(code) => *code == 0,
+            Signaled(_) => false,
+        }
+    }
+}
+
+// The two buffers are independent copies of the native process result.
+pub struct ProcessOutput {
+    pub status: ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl Drop for ProcessOutput {
+    pub fn drop() {
+        self.stdout.drop();
+        self.stderr.drop();
+    }
+}
+
+pub struct Command {
+    program: String,
+    arguments: Vec<String>,
+    directory: Option<String>,
+}
+
+fn terminated(value: str) -> Result<Vec<u8>, IoError> {
+    match c_string_bytes(value) {
+        Ok(bytes) => Result<Vec<u8>, IoError>.Ok(bytes),
+        Err(_) => Result<Vec<u8>, IoError>.Err(IoError.other("process argument contains NUL")),
+    }
+}
+
+fn release_buffers(buffers: Vec<Vec<u8>>&) {
+    for buffer in *buffers {
+        buffer.drop();
+    }
+    buffers.drop();
+}
+
+ffi fn captured(result: cptr<u8>, stream: i32) -> Result<Vec<u8>, IoError> {
+    let length = yian_process_length(result, stream);
+    let bytes = Vec<u8>.with_capacity(length);
+    for index in 0u64..length {
+        bytes.push(0u8);
+    }
+    let buffer_parts = @ffi_parts(bytes.as_slice());
+    let buffer = buffer_parts[0];
+    let capacity = buffer_parts[1];
+    let error = yian_process_copy(result, stream, buffer, capacity);
+    if error != 0 {
+        bytes.drop();
+        return Result<Vec<u8>, IoError>.Err(IoError.from_os_error(-error, "capture process output"));
+    }
+    Result<Vec<u8>, IoError>.Ok(bytes)
+}
+
+impl Command {
+    static pub fn new(program: str) -> Self {
+        Self(String.from(&program), Vec<String>.new(), Option<String>.None)
+    }
+
+    pub fn arg(value: str) {
+        self.arguments.push(String.from(&value));
+    }
+
+    pub fn current_dir(path: str) {
+        match &self.directory {
+            Some(value) => value.drop(),
+            None => {},
+        }
+        self.directory = Option<String>.Some(String.from(&path));
+    }
+
+    // Native calls borrow terminated buffers only for this synchronous operation.
+    pub ffi fn output() -> Result<ProcessOutput, IoError> {
+        let buffers = Vec<Vec<u8>>.new();
+        defer release_buffers(&buffers);
+        buffers.push(terminated(self.program.as_str())?);
+        for argument in self.arguments {
+            buffers.push(terminated(argument.as_str())?);
+        }
+        let pointers = Vec<cptr<c_char>>.new();
+        defer pointers.drop();
+        for buffer in buffers {
+            let data = @ffi_parts(buffer.as_slice())[0];
+            pointers.push(@ffi_ptr_cast<c_char>(data));
+        }
+        pointers.push(@ffi_null<c_char>());
+        let directory = match &self.directory {
+            Some(path) => terminated(path.as_str())?,
+            None => Vec<u8>.new(),
+        };
+        defer directory.drop();
+        let cwd = @ffi_null<c_char>();
+        if directory.len() != 0 {
+            let data = @ffi_parts(directory.as_slice())[0];
+            cwd = @ffi_ptr_cast<c_char>(data);
+        }
+        let arguments = @ffi_parts(pointers.as_slice())[0];
+        let error = 0i32;
+        let result = yian_process_output(pointers[0], arguments, cwd, @ffi_addr(&error));
+        if result == @ffi_null<u8>() {
+            return Result<ProcessOutput, IoError>.Err(IoError.from_os_error(-error, "start process"));
+        }
+        defer yian_process_drop(result);
+        let stdout = captured(result, 0i32)?;
+        let accepted = false;
+        defer {
+            if !accepted { stdout.drop(); }
+        };
+        let stderr = captured(result, 1i32)?;
+        let signaled = 0i32;
+        let code = yian_process_status(result, @ffi_addr(&signaled));
+        accepted = true;
+        Result<ProcessOutput, IoError>.Ok(ProcessOutput(if signaled != 0 {
+                ExitStatus.Signaled(code)
+            } else {
+                ExitStatus.Exited(code)
+            }, stdout, stderr))
+    }
+}
+
+impl Drop for Command {
+    pub fn drop() {
+        self.program.drop();
+        for argument in self.arguments { argument.drop(); }
+        self.arguments.drop();
+        match &self.directory {
+            Some(value) => value.drop(),
+            None => {},
+        }
+    }
+}
+
+// A missing variable is None; invalid UTF-8 and operating-system errors remain explicit.
+pub ffi fn env_var(name: str) -> Result<Option<String>, IoError> {
+    let terminated_name = terminated(name)?;
+    defer terminated_name.drop();
+    let name_data = @ffi_parts(terminated_name.as_slice())[0];
+    let capacity = 256u64;
+    while capacity <= 0x7FFFFFFFFFFFFFFFu64 / 2 {
+        let bytes = Vec<u8>.with_capacity(capacity);
+        defer bytes.drop();
+        for index in 0u64..capacity { bytes.push(0u8); }
+        let buffer_parts = @ffi_parts(bytes.as_slice());
+        let buffer = buffer_parts[0];
+        let length = buffer_parts[1];
+        let result = yian_process_env(@ffi_ptr_cast<c_char>(name_data), buffer, length);
+        if result == -2i64 {
+            return Result<Option<String>, IoError>.Ok(Option<String>.None);
+        }
+        if result == -34i64 {
+            capacity *= 2;
+            continue;
+        }
+        if result < 0 {
+            return Result<Option<String>, IoError>.Err(IoError.from_os_error(i32(-result), "read environment"));
+        }
+        let text = match str.from_slice(bytes.as_slice()[0u64..u64(result)]) {
+            Some(value) => value,
+            None => return Result<Option<String>, IoError>.Err(IoError.other("environment value is not UTF-8")),
+        };
+        return Result<Option<String>, IoError>.Ok(Option<String>.Some(String.from(&text)));
+    }
+    Result<Option<String>, IoError>.Err(IoError.other("environment value is too large"))
+}
+
+// The returned directory is caller-owned and must be removed after its known children.
+pub ffi fn temporary_directory(parent: str) -> Result<String, IoError> {
+    let parent_bytes = terminated(parent)?;
+    defer parent_bytes.drop();
+    let parent_data = @ffi_parts(parent_bytes.as_slice())[0];
+    let capacity = parent.as_slice().len() + 32u64;
+    let bytes = Vec<u8>.with_capacity(capacity);
+    defer bytes.drop();
+    for index in 0u64..capacity { bytes.push(0u8); }
+    let buffer_parts = @ffi_parts(bytes.as_slice());
+    let buffer = buffer_parts[0];
+    let length = buffer_parts[1];
+    let result = yian_process_temp_dir(@ffi_ptr_cast<c_char>(parent_data), buffer, length);
+    if result < 0 {
+        return Result<String, IoError>.Err(IoError.from_os_error(i32(-result), "create temporary directory"));
+    }
+    let text = match str.from_slice(bytes.as_slice()[0u64..u64(result)]) {
+        Some(value) => value,
+        None => return Result<String, IoError>.Err(IoError.other("temporary directory path is not UTF-8")),
+    };
+    Result<String, IoError>.Ok(String.from(&text))
+}

@@ -1,0 +1,125 @@
+from compiler.codegen.llvm.module import FunctionLowering;
+from compiler.codegen.error import CodegenError;
+from compiler.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE;
+from compiler.common.ids import TypeId;
+from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
+from std.core.result import Result;
+
+impl FunctionLowering {
+    // The free-list link occupies the anchor half of an inactive lock entry.
+    fn acquire_heap_word(data: IrValue) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        let integer = module.int_type(64u32);
+        let head_global = self.owner.runtime_global("__secl_lock_free_head", integer);
+        let head = self.builder.load(integer, head_global.value(), "");
+        let recycled = self.function.append_block("");
+        let fresh = self.function.append_block("");
+        let done = self.function.append_block("");
+        self.builder.cond_br(self.builder.icmp(IntCompare.Ne, head, self.integer(0u64), ""), recycled, fresh);
+
+        self.builder.position_at_end(recycled);
+        let recycled_index = self.builder.binary(BinaryOp.Sub, head, self.integer(1u64), "");
+        let entry = self.builder.load(integer, self.lock_slot(recycled_index), "");
+        self.builder.store(self.builder.binary(BinaryOp.Lshr, entry, self.integer(32u64), ""), head_global.value());
+        self.builder.br(done);
+
+        self.builder.position_at_end(fresh);
+        let parameters = [module.void_type();
+            0];
+        let arguments = [self.integer(0u64);
+            0];
+        let fresh_index = self.external_call("__secl_lock_bump_take", integer, parameters.as_slice(), arguments.as_slice())?;
+        self.builder.br(done);
+
+        self.builder.position_at_end(done);
+        let index = self.builder.phi(integer, "");
+        let values = [recycled_index, fresh_index];
+        let blocks = [recycled, fresh];
+        self.builder.add_incoming(index, values.as_slice(), blocks.as_slice());
+        let slot = self.lock_slot(index);
+        let old = self.builder.load(integer, slot, "");
+        let key = self.builder.binary(BinaryOp.And,
+            self.builder.binary(BinaryOp.Add, old, self.integer(1u64), ""), self.integer(LOCK_MASK), "");
+        let anchor = self.builder.binary(BinaryOp.And,
+            self.builder.cast(CastOp.Ptrtoint, data, integer, ""), self.integer(LOCK_MASK), "");
+        self.builder.store(self.builder.binary(BinaryOp.Or, key,
+            self.builder.binary(BinaryOp.Shl, anchor, self.integer(32u64), ""), ""), slot);
+        Result<IrValue, CodegenError>.Ok(self.builder.binary(BinaryOp.Or, index,
+            self.builder.binary(BinaryOp.Shl, key, self.integer(32u64), ""), ""))
+    }
+
+    pub fn allocate_fat(type_id: TypeId, element: TypeId, count: IrValue) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        if self.owner.types.is_zst(type_id)? {
+            return Result<IrValue, CodegenError>.Ok(module.const_null(self.owner.types.value_type(type_id)?));
+        }
+        self.check_count(count)?;
+        let size = module.abi_size(self.owner.types.value_type(element)?);
+        let fits = self.builder.icmp(IntCompare.Ule, count, self.integer((0xFFFFFFFFFFFFFFFFu64 - HEADER_BYTES) / size), "");
+        self.checked(fits, "R001")?;
+        let bytes = self.builder.binary(BinaryOp.Mul, count, self.integer(size), "");
+        let payload = self.builder.select(self.builder.icmp(IntCompare.Eq, bytes, self.integer(0u64), ""), self.integer(1u64), bytes, "");
+        let parameters = [module.int_type(64u32)];
+        let arguments = [payload];
+        let base = self.external_call("__secl_pool_alloc", module.pointer_type(0u32), parameters.as_slice(), arguments.as_slice())?;
+        let indices = [self.integer(HEADER_BYTES)];
+        let data = self.builder.gep(module.int_type(8u32), base, indices.as_slice(), false, "");
+        let word = self.acquire_heap_word(data)?;
+        self.builder.store(self.builder.cast(CastOp.Trunc, count, module.int_type(32u32), ""), base);
+        self.make_pointer(type_id, data, word, self.integer(0u64), count)
+    }
+
+    // Complete root views may release an allocation. Derived or narrowed views cannot.
+    pub fn checked_heap_base(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        let data = self.builder.extract_value(value, 0u32, "");
+        let word = self.pointer_word(type_id, value)?;
+        let lock = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+        let live = self.live(word, "S006")?;
+        let heap = self.builder.icmp(IntCompare.Uge, lock, self.integer(HEAP_LOCK_BASE), "");
+        self.checked(self.builder.binary(BinaryOp.And, live, heap, ""), "S006")?;
+
+        let anchor = self.heap_anchor(data, word);
+        let data_integer = self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), "");
+        let valid = self.builder.icmp(IntCompare.Eq, data_integer, anchor, "");
+        let extent = self.heap_extent(anchor);
+        let count = match self.owner.session.types.require(type_id)? {
+            Pointer(_) => {
+                valid = self.builder.binary(BinaryOp.And, valid,
+                    self.builder.icmp(IntCompare.Eq, self.pointer_index(value), self.integer(0u64), ""), "");
+                self.pointer_size(value)
+            },
+            Slice(_) | Str => self.view_length(value),
+            Reference(_) => self.integer(1u64),
+            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("deallocation has no language pointer")),
+        };
+        valid = self.builder.binary(BinaryOp.And, valid, self.builder.icmp(IntCompare.Eq, count, extent, ""), "");
+        self.checked(valid, "S006")?;
+        Result<IrValue, CodegenError>.Ok(self.builder.cast(CastOp.Inttoptr,
+            self.builder.binary(BinaryOp.Sub, anchor, self.integer(HEADER_BYTES), ""), module.pointer_type(0u32), ""))
+    }
+
+    pub fn release_fat(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
+        let module = self.owner.module;
+        let base = self.checked_heap_base(type_id, value)?;
+        let word_parameters = [module.int_type(64u32)];
+        let word_arguments = [self.pointer_word(type_id, value)?];
+        self.external_call("__secl_lock_release", module.void_type(), word_parameters.as_slice(), word_arguments.as_slice())?;
+        let pointer_parameters = [module.pointer_type(0u32)];
+        let pointer_arguments = [base];
+        self.external_call("__secl_pool_release", module.void_type(), pointer_parameters.as_slice(), pointer_arguments.as_slice())?;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn reallocate_fat(type_id: TypeId, element: TypeId, previous: IrValue, count: IrValue) -> Result<IrValue, CodegenError> {
+        self.checked_heap_base(type_id, previous)?;
+        let replacement = self.allocate_fat(type_id, element, count)?;
+        let old_count = self.pointer_size(previous);
+        let copied = self.builder.select(self.builder.icmp(IntCompare.Ult, old_count, count, ""), old_count, count, "");
+        let bytes = self.builder.binary(BinaryOp.Mul, copied,
+            self.integer(self.owner.module.abi_size(self.owner.types.value_type(element)?)), "");
+        self.builder.memcpy(self.pointer_data(type_id, replacement)?, 1u32, self.pointer_data(type_id, previous)?, 1u32, bytes);
+        self.release_fat(type_id, previous)?;
+        Result<IrValue, CodegenError>.Ok(replacement)
+    }
+}

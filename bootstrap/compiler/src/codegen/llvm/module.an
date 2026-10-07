@@ -1,0 +1,513 @@
+from compiler.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
+from compiler.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction;
+from compiler.codegen.error import CodegenError;
+from compiler.codegen.types import BackendTypes;
+from compiler.codegen.llvm.scalar import binary, unary, cast;
+from compiler.codegen.abi.runtime import LITERAL_WORD;
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.ty.callable import store_signature;
+from compiler.analysis.ty.model import NominalKind;
+from compiler.codegen.llvm.dynamic import ThunkKey;
+from compiler.common.ids import TypeId, NameId;
+from llvm.object import Module, Function, Builder, Global;
+from llvm.ir import IrValue, IrBlock, IrType;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// All handles are non-owning. The driver closes the module after this view is released.
+pub struct LlvmLowering {
+    pub session: AnalysisSession&,
+    pub types: BackendTypes&,
+    pub module: Module&,
+    functions: HashMap<TypeId, Function>,
+    externs: HashMap<NameId, TypeId>,
+    runtime: HashMap<str, Function>,
+    globals: HashMap<str, Global>,
+    thunks: HashMap<ThunkKey, Function>,
+    entry: Option<TypeId>,
+}
+
+impl LlvmLowering {
+    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>) -> Self {
+        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry)
+    }
+
+    // Runtime names are static text; language externs and runtime declarations share LLVM symbols.
+    pub fn runtime_function(name: str, signature: IrType) -> Result<Function, CodegenError> {
+        match self.runtime.get(&name) {
+            Some(value) => return Result<Function, CodegenError>.Ok(*value),
+            None => {},
+        }
+        let function = match self.module.declare_function(name, signature) {
+            Ok(value) => value,
+            Err(message) => return Result<Function, CodegenError>.Err(CodegenError.llvm_error(message)),
+        };
+        self.runtime.insert(name, function);
+        Result<Function, CodegenError>.Ok(function)
+    }
+
+    pub fn runtime_global(name: str, ty: IrType) -> Global {
+        match self.globals.get(&name) { Some(value) => return *value, None => {}, }
+        let global = self.module.add_global(name, ty);
+        self.globals.insert(name, global);
+        global
+    }
+
+    pub fn declare(type_id: TypeId) -> Result<Function, CodegenError> {
+        match self.functions.get(&type_id) {
+            Some(value) => return Result<Function, CodegenError>.Ok(*value),
+            None => {},
+        }
+        let signature = self.types.function_type(type_id)?;
+        let record = match self.session.types.require(type_id)? {
+            Nominal(definition, _) => *self.session.types.definition(*definition).unwrap(),
+            _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a nominal callable")),
+        };
+        let external = match record.body()? {
+            Function(value) | Method(value) => value.is_extern,
+            _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a function")),
+        };
+        let name = String.new();
+        defer name.drop();
+        if external {
+            match self.externs.get(&record.header().name) {
+                Some(existing) => {
+                    self.check_extern(*existing, type_id)?;
+                    let function = **self.functions.get(existing).unwrap();
+                    self.functions.insert(type_id, function);
+                    return Result<Function, CodegenError>.Ok(function);
+                },
+                None => {},
+            }
+            name.push_str(self.session.names.text(record.header().name));
+            self.externs.insert(record.header().name, type_id);
+        } else {
+            let is_entry = match self.entry { Some(value) => value == type_id, None => false, };
+            if is_entry {
+                name.push_str("__yian_main");
+            } else {
+                name.push_str("yian.fn.");
+                let number = type_id.index.to_string();
+                defer number.drop();
+                name.push_str(number.as_str());
+            }
+        }
+        let function = match self.module.declare_function(name.as_str(), signature) {
+            Ok(value) => value,
+            Err(message) => return Result<Function, CodegenError>.Err(CodegenError.llvm_error(message)),
+        };
+        self.functions.insert(type_id, function);
+        Result<Function, CodegenError>.Ok(function)
+    }
+
+    fn check_extern(left: TypeId, right: TypeId) -> Result<(), CodegenError> {
+        let first = self.types.signature(left)?;
+
+        let second = self.types.signature(right)?;
+
+        let valid = first.result == second.result && first.parameters.len() == second.parameters.len()
+        && first.is_static == second.is_static && first.receiver.is_some() == second.receiver.is_some();
+        if valid {
+            for index in 0u64..first.parameters.len() {
+                if first.parameters[index].type_id != second.parameters[index].type_id { valid = false; }
+            }
+        }
+        if !valid {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("external symbol has inconsistent signatures"));
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn lower(cfg: CfgModule&) -> Result<(), CodegenError> {
+        // Every referenced callable has an LLVM declaration before any body is generated.
+        for index in 0u64..cfg.len() {
+            let function = *cfg.function(FunctionId(index)).unwrap();
+            self.declare(function.callable)?;
+            for value_index in 0u64..function.value_count() {
+                match &function.value(ValueId(value_index))?.kind {
+                    Function(callable) => { self.declare(*callable)?; },
+                    _ => {},
+                }
+            }
+            for block_index in 0u64..function.block_count() {
+                for instruction in function.block(BlockId(block_index))?.instructions {
+                    match &instruction.operation {
+                        Call(callable, _) => { self.declare(*callable)?; },
+                        _ => {},
+                    }
+                }
+            }
+        }
+        for index in 0u64..cfg.len() {
+            let function = *cfg.function(FunctionId(index)).unwrap();
+            let body = FunctionLowering.new(self, function)?;
+            defer body.drop();
+            body.lower()?;
+        }
+        match self.module.verify() {
+            Ok(_) => Result<(), CodegenError>.Ok(()),
+            Err(message) => Result<(), CodegenError>.Err(CodegenError.llvm_error(message)),
+        }
+    }
+}
+
+impl Drop for LlvmLowering {
+    pub fn drop() {
+        self.functions.drop();
+        self.externs.drop();
+        self.runtime.drop();
+        self.globals.drop();
+        self.thunks.drop();
+    }
+}
+
+pub struct FunctionLowering {
+    owner: LlvmLowering&,
+    cfg: CfgFunction&,
+    builder: Builder,
+    function: Function,
+    blocks: Vec<IrBlock>,
+    exits: Vec<IrBlock>,
+    values: Vec<Option<IrValue>>,
+    locals: Vec<IrValue>,
+    enum_slots: HashMap<ValueId, IrValue>,
+    array_slots: HashMap<ValueId, IrValue>,
+    frame_state: Option<IrValue>,
+}
+
+impl FunctionLowering {
+    static fn new(owner: LlvmLowering&, cfg: CfgFunction&) -> Result<Self, CodegenError> {
+        let body = Self(owner, cfg, owner.module.builder(), owner.declare(cfg.callable)?,
+            Vec<IrBlock>.new(), Vec<IrBlock>.new(), Vec<Option<IrValue>>.new(), Vec<IrValue>.new(), HashMap<ValueId, IrValue>.new(), HashMap<ValueId, IrValue>.new(),
+            Option<IrValue>.None);
+        let accepted = false;
+        defer { if !accepted { body.drop(); } };
+        for index in 0u64..cfg.block_count() {
+            let name = index.to_string();
+            defer name.drop();
+            body.blocks.push(body.function.append_block(name.as_str()));
+            body.exits.push(body.blocks[index]);
+        }
+        for index in 0u64..cfg.value_count() { body.values.push(Option<IrValue>.None); }
+        body.builder.position_at_end(body.blocks[0]);
+        // Enum byte reinterpretation uses entry-block spills, including inside loops.
+        for index in 0u64..cfg.value_count() {
+            let id = ValueId(index);
+            let type_id = cfg.value(id)?.type_id;
+            let enumeration = match owner.session.types.require(type_id)? {
+                Nominal(definition, _) => owner.session.types.definition(*definition).unwrap().header().kind == NominalKind.Enum,
+                _ => false,
+            };
+            if enumeration && !owner.types.is_zst(type_id)? && owner.types.niche_payload(type_id)?.is_none() {
+                body.enum_slots.insert(id, body.builder.alloca(owner.types.value_type(type_id)?, ""));
+            }
+        }
+        for index in 0u64..cfg.local_count() {
+            let local = cfg.local(LocalId(index))?;
+            let pointer = if owner.types.is_zst(local.type_id)? {
+                owner.module.const_null(owner.module.pointer_type(0u32))
+            } else {
+                body.builder.alloca(owner.types.value_type(local.type_id)?, "")
+            };
+            body.locals.push(pointer);
+        }
+        for index in 0u64..cfg.block_count() {
+            for instruction in cfg.block(BlockId(index))?.instructions {
+                match &instruction.operation {
+                    Repeat(_, _) => {
+                        let id = *instruction.result.unwrap();
+                        let type_id = cfg.value(id)?.type_id;
+                        if !owner.types.is_zst(type_id)? {
+                            body.array_slots.insert(id, body.builder.alloca(owner.types.value_type(type_id)?, ""));
+                        }
+                    },
+                    _ => {},
+                }
+            }
+        }
+        let owns_addresses = false;
+        for index in 0u64..cfg.block_count() {
+            for instruction in cfg.block(BlockId(index))?.instructions {
+                match &instruction.operation {
+                    Address(local) => { if !owner.types.is_zst(cfg.local(*local)?.type_id)? { owns_addresses = true; } },
+                    _ => {},
+                }
+            }
+        }
+        // The private word slot exists at entry, but a lock is acquired only on an executed address operation.
+        if owns_addresses && !owner.types.raw_pointers() {
+            let state = body.builder.alloca(owner.module.int_type(64u32), "frame.word");
+            body.builder.store(body.integer(0u64), state);
+            body.frame_state = Option<IrValue>.Some(state);
+        }
+
+        let parameters = Vec<IrValue>.new();
+        defer parameters.drop();
+        let position = 0u32;
+        for type_id in cfg.parameters {
+            if owner.types.is_zst(*type_id)? {
+                parameters.push(owner.module.const_null(owner.types.value_type(*type_id)?));
+            } else {
+                parameters.push(body.function.param(position));
+                position += 1u32;
+            }
+        }
+        for index in 0u64..cfg.value_count() {
+            let record = cfg.value(ValueId(index))?;
+            let native = owner.types.value_type(record.type_id)?;
+            let value = match &record.kind {
+                Integer(bits) => Option<IrValue>.Some(owner.module.const_int(native, *bits)),
+                Float(number) => Option<IrValue>.Some(owner.module.const_real(native, *number)),
+                Zero => Option<IrValue>.Some(owner.module.const_null(native)),
+                Undef => Option<IrValue>.Some(owner.module.undef_value(native)),
+                Parameter(parameter) => Option<IrValue>.Some(parameters[*parameter]),
+                Function(callable) => Option<IrValue>.Some(owner.declare(*callable)?.value()),
+                Bytes(name) => Option<IrValue>.Some(body.string_value(record.type_id, *name)?),
+                Temporary(_, _) => Option<IrValue>.None,
+            };
+            body.values[index] = value;
+        }
+        // Phi identities exist before any backedge or forward incoming value is emitted.
+        for index in 0u64..cfg.block_count() {
+            body.builder.position_at_end(body.blocks[index]);
+            for instruction in cfg.block(BlockId(index))?.instructions {
+                match &instruction.operation {
+                    Phi(_) => {
+                        let id = *instruction.result.unwrap();
+                        let ty = owner.types.value_type(cfg.value(id)?.type_id)?;
+                        body.values[id.index] = Option<IrValue>.Some(body.builder.phi(ty, ""));
+                    },
+                    _ => {},
+                }
+            }
+        }
+        accepted = true;
+        Result<Self, CodegenError>.Ok(body)
+    }
+
+    fn get(id: ValueId) -> Result<IrValue, CodegenError> {
+        match self.values[id.index] {
+            Some(value) => Result<IrValue, CodegenError>.Ok(value),
+            None => Result<IrValue, CodegenError>.Err(CodegenError.invalid("LLVM operand has no generated value")),
+        }
+    }
+
+    fn string_value(type_id: TypeId, name: NameId) -> Result<IrValue, CodegenError> {
+        let text = self.owner.session.names.text(name);
+        let array = self.owner.module.array_type(self.owner.module.int_type(8u32), text.as_slice().len() + 1);
+        let global = self.owner.module.add_global("", array);
+        global.set_initializer(self.owner.module.const_bytes(text.as_slice(), true));
+        global.set_constant(true);
+        global.set_private_linkage();
+        self.make_pointer(type_id, global.value(), self.integer(LITERAL_WORD), self.integer(0u64), self.integer(text.as_slice().len()))
+    }
+
+    fn instruction(instruction: Instruction&) -> Result<(), CodegenError> {
+        for check in instruction.checks { self.safety_check(check)?; }
+        let result = match instruction.result {
+            Some(id) => Option<TypeId>.Some(self.cfg.value(id)?.type_id),
+            None => Option<TypeId>.None,
+        };
+        let types = self.owner.types;
+        let module = self.owner.module;
+        let value = match &instruction.operation {
+            Store(local, operand) => {
+                if !types.is_zst(self.cfg.local(*local)?.type_id)? { self.builder.store(self.get(*operand)?, self.locals[local.index]); }
+                Option<IrValue>.None
+            },
+            Write(address, operand) => {
+                if !types.is_zst(self.cfg.value(*operand)?.type_id)? {
+                    let pointer = self.memory_address(self.cfg.value(*address)?.type_id, self.get(*address)?)?;
+                    let stored = self.builder.store(self.get(*operand)?, pointer);
+                    self.builder.set_alignment(stored, 1u32);
+                }
+                Option<IrValue>.None
+            },
+            Delete(value) => {
+                self.release(*value)?;
+                Option<IrValue>.None
+            },
+            Fill(destination, element, count) => {
+                self.fill(*destination, *element, *count)?;
+                Option<IrValue>.None
+            },
+            Phi(_) => return Result<(), CodegenError>.Ok(()),
+            _ => {
+                let type_id = *result.unwrap();
+                let native = types.value_type(type_id)?;
+                let zst = types.is_zst(type_id)?;
+                let generated = match &instruction.operation {
+                    Load(local) => if zst { module.const_null(native) } else { self.builder.load(native, self.locals[local.index], "") },
+                    Address(local) => if zst { module.const_null(native) } else {
+                        let word = self.frame_lock()?;
+                        self.make_pointer(type_id, self.locals[local.index], word, self.integer(0u64), self.integer(1u64))?
+                    },
+                    Read(address) => if zst { module.const_null(native) } else {
+                        let pointer = self.memory_address(self.cfg.value(*address)?.type_id, self.get(*address)?)?;
+                        let loaded = self.builder.load(native, pointer, "");
+                        self.builder.set_alignment(loaded, 1u32);
+                        loaded
+                    },
+                    Binary(op, left, right) => self.binary_value(*op, *left, *right)?,
+                    Unary(op, operand) => unary(&self.builder, types, *op, type_id, self.get(*operand)?)?,
+                    Cast(operand) => {
+                        let source = self.cfg.value(*operand)?.type_id;
+                        let callable = match self.owner.session.types.require(source)? {
+                            Nominal(definition, _) => match self.owner.session.types.definition(*definition).unwrap().header().kind {
+                                Function | Method => true,
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                        if callable { self.owner.declare(source)?.value() } else { self.pointer_cast(source, type_id, self.get(*operand)?)? }
+                    },
+                    Call(callable, args) => {
+                        let values = Vec<IrValue>.new();
+                        defer values.drop();
+                        for arg in *args {
+                            if !types.is_zst(self.cfg.value(*arg)?.type_id)? { values.push(self.get(*arg)?); }
+                        }
+                        let called = self.builder.call(types.function_type(*callable)?, self.owner.declare(*callable)?.value(), values.as_slice(), "");
+                        if zst { module.const_null(native) } else { called }
+                    },
+                    Invoke(callable, args) => {
+                        let values = Vec<IrValue>.new();
+                        defer values.drop();
+                        for arg in *args { if !types.is_zst(self.cfg.value(*arg)?.type_id)? { values.push(self.get(*arg)?); } }
+                        let signature = types.function_type(self.cfg.value(*callable)?.type_id)?;
+                        let called = self.builder.call(signature, self.get(*callable)?, values.as_slice(), "");
+                        if zst { module.const_null(native) } else { called }
+                    },
+                    Aggregate(fields) => {
+                        let aggregate = module.undef_value(native);
+                        if !zst {
+                            let index = 0u32;
+                            for field in *fields {
+                                aggregate = self.builder.insert_value(aggregate, self.get(*field)?, index, "");
+                                index += 1u32;
+                            }
+                        }
+                        aggregate
+                    },
+                    Extract(aggregate, index) => if zst { module.const_null(native) } else { self.builder.extract_value(self.get(*aggregate)?, u32(*index), "") },
+                    FieldAddress(address, aggregate, index) => {
+                        if zst { module.const_null(native) } else {
+                            let indices = [module.const_int(module.int_type(32u32), 0u64), module.const_int(module.int_type(32u32), *index)];
+                            let source = self.cfg.value(*address)?.type_id;
+                            let base = self.memory_address(source, self.get(*address)?)?;
+                            let pointer = self.builder.gep(types.value_type(*aggregate)?, base, indices.as_slice(), false, "");
+                            self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
+                        }
+                    },
+                    EnumConstruct(discriminant, payload) => self.enum_construct(type_id, *discriminant, *payload, *instruction.result.unwrap())?,
+                    EnumTag(value) => self.enum_tag(*value)?,
+                    EnumPayload(value) => self.enum_payload(type_id, *value)?,
+                    EnumPayloadAddress(address, enumeration) => {
+                        let source = self.cfg.value(*address)?.type_id;
+                        let base = self.memory_address(source, self.get(*address)?)?;
+                        let pointer = self.enum_address(*enumeration, base)?;
+                        self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
+                    },
+                    PointerOffset(pointer, index, subtract) => self.pointer_offset(*pointer, *index, *subtract)?,
+                    PointerDifference(left, right) => self.pointer_difference(*left, *right)?,
+                    IndexAddress(address, element, index, bounds) => self.index_address(type_id, *address, *element, *index, bounds)?,
+                    Repeat(element, count) => self.array_repeat(*instruction.result.unwrap(), *element, *count)?,
+                    TraitObject(source, methods) => self.trait_object(type_id, *source, methods)?,
+                    DynamicCall(receiver, method, slot, args) => self.dynamic_call(type_id, *receiver, *method, *slot, args)?,
+                    Builtin(kind, type_args, args) => self.builtin(type_id, *kind, type_args, args)?,
+                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("LLVM lowering has no CFG operation handler")),
+                };
+                Option<IrValue>.Some(generated)
+            },
+        };
+        match instruction.result {
+            Some(id) => { self.values[id.index] = value; },
+            None => {},
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    fn lower() -> Result<(), CodegenError> {
+        let pending = Vec<BlockId>.new();
+        defer pending.drop();
+        let visited = HashSet<BlockId>.new();
+        defer visited.drop();
+        // Reachable blocks follow their dominators. Orphan blocks follow after the entry graph.
+        for index in 0u64..self.cfg.block_count() {
+            pending.push(BlockId(index));
+            while !pending.is_empty() {
+                let id = *pending.pop().unwrap();
+                if !visited.insert(id) { continue; }
+                let block = self.cfg.block(id)?;
+                self.builder.position_at_end(self.blocks[id.index]);
+                for instruction in block.instructions {
+                    match self.instruction(instruction) {
+                        Ok(_) => {},
+                        Err(problem) => return Result<(), CodegenError>.Err(problem.with_location(instruction.span)),
+                    }
+                }
+                self.exits[id.index] = self.builder.insertion_block();
+                match &*block.terminator.unwrap() {
+                    Return(value) => {
+                        self.end_frame();
+                        match value {
+                            Some(id) => { self.builder.ret(self.get(*id)?); },
+                            None => { self.builder.ret_void(); },
+                        }
+                    },
+                    Jump(destination) => {
+                        self.builder.br(self.blocks[destination.index]);
+                        pending.push(*destination);
+                    },
+                    Branch(condition, yes, no) => {
+                        self.builder.cond_br(self.get(*condition)?, self.blocks[yes.index], self.blocks[no.index]);
+                        pending.push(*no);
+                        pending.push(*yes);
+                    },
+                    Unreachable => { self.builder.unreachable(); },
+                }
+            }
+        }
+        for index in 0u64..self.cfg.block_count() {
+            for instruction in self.cfg.block(BlockId(index))?.instructions {
+                match &instruction.operation {
+                    Phi(incoming) => {
+                        let values = Vec<IrValue>.new();
+                        defer values.drop();
+                        let blocks = Vec<IrBlock>.new();
+                        defer blocks.drop();
+                        for edge in *incoming {
+                            values.push(self.get(edge[0])?);
+                            blocks.push(self.exits[edge[1].index]);
+                        }
+                        self.builder.add_incoming(self.get(*instruction.result.unwrap())?, values.as_slice(), blocks.as_slice());
+                    },
+                    _ => {},
+                }
+            }
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+}
+
+impl Drop for FunctionLowering {
+    pub fn drop() {
+        self.blocks.drop();
+        self.exits.drop();
+        self.values.drop();
+        self.locals.drop();
+        self.enum_slots.drop();
+        self.array_slots.drop();
+    }
+}

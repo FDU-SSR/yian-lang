@@ -80,6 +80,15 @@ impl PackageMap {
 }
 
 impl PackageMap {
+    pub fn len() -> u64 {
+        self.packages.len()
+    }
+
+    // Loaded maps are immutable; returned records remain borrowed until map release.
+    pub fn at(index: u64) -> Option<PackageSpec&> {
+        self.packages.as_slice().get(index)
+    }
+
     pub fn find(name: str) -> Option<PackageSpec&> {
         for package in self.packages {
             if package.name.as_str() == name {

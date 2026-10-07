@@ -1,0 +1,114 @@
+from compiler.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from compiler.codegen.cfg.model import CfgModule, CfgFunction, Instruction, SafetyCheck, AccessKind;
+from compiler.codegen.types import BackendTypes;
+from compiler.codegen.error import CodegenError;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.range import Range;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+
+// Derived place addresses preserve pointer access diagnostics until a language reference is stored or passed.
+fn access_kind(function: CfgFunction&, types: BackendTypes&, address: ValueId) -> Result<AccessKind, CodegenError> {
+    let current = address;
+    let remaining = function.value_count();
+    while remaining != 0u64 {
+        remaining -= 1u64;
+        let value = function.value(current)?;
+        match types.semantic_store().require(value.type_id)? {
+            Pointer(_) | CPointer(_) => return Result<AccessKind, CodegenError>.Ok(AccessKind.Pointer),
+            _ => {},
+        }
+        match &value.kind {
+            Temporary(block, position) => {
+                match &function.block(*block)?.instructions[*position].operation {
+                    FieldAddress(base, _, _) | EnumPayloadAddress(base, _) => { current = *base; continue; },
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+        return Result<AccessKind, CodegenError>.Ok(AccessKind.Reference);
+    }
+    Result<AccessKind, CodegenError>.Err(CodegenError.invalid("cyclic CFG address provenance"))
+}
+
+fn access(function: CfgFunction&, types: BackendTypes&, address: ValueId) -> Result<SafetyCheck, CodegenError> {
+    Result<SafetyCheck, CodegenError>.Ok(SafetyCheck.Access(address, access_kind(function, types, address)?))
+}
+
+fn checks_for(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&) -> Result<(), CodegenError> {
+    instruction.checks.clear();
+    let live = match instruction.result {
+        Some(value) => !types.is_zst(function.value(value)?.type_id)?,
+        None => true,
+    };
+    match &instruction.operation {
+        Read(address) => {
+            if live { instruction.checks.push(access(function, types, *address)?); }
+        },
+        Write(address, value) => {
+            if !types.is_zst(function.value(*value)?.type_id)? { instruction.checks.push(access(function, types, *address)?); }
+        },
+        FieldAddress(address, _, _) | EnumPayloadAddress(address, _) => {
+            if live {
+                match types.semantic_store().require(function.value(*address)?.type_id)? {
+                    Pointer(_) => instruction.checks.push(SafetyCheck.InBounds(*address)),
+                    _ => instruction.checks.push(access(function, types, *address)?),
+                }
+            }
+        },
+        IndexAddress(address, _, offset, bounds) => {
+            instruction.checks.push(SafetyCheck.Index(*offset, *bounds));
+            if live { instruction.checks.push(access(function, types, *address)?); }
+        },
+        Cast(value) => {
+            if !types.raw_pointers() && live {
+                let source = types.semantic_store().require(function.value(*value)?.type_id)?;
+                let target = types.semantic_store().require(function.value(*instruction.result.unwrap())?.type_id)?;
+                match (source, target) {
+                    (Pointer(_), Reference(_)) => instruction.checks.push(SafetyCheck.InBounds(*value)),
+                    (Slice(_), Reference(_)) => {
+                        instruction.checks.push(SafetyCheck.Nonempty(*value));
+                        instruction.checks.push(SafetyCheck.View(*value));
+                    },
+                    _ => {},
+                }
+            }
+        },
+        TraitObject(source, _) => {
+            if !types.is_zst(function.value(*source)?.type_id)? { instruction.checks.push(access(function, types, *source)?); }
+        },
+        Builtin(kind, _, args) => match kind {
+            FfiAddr => instruction.checks.push(access(function, types, args[0])?),
+            Panic | Open | FfiParts => instruction.checks.push(SafetyCheck.View(args[0])),
+            SysRead | SysReadBytes | SysWrite | SysWriteBytes => instruction.checks.push(SafetyCheck.View(args[1])),
+            FfiCopyFrom | FfiCopyTo => instruction.checks.push(SafetyCheck.View(args[if *kind == BuiltinKind.FfiCopyFrom { 0u64 } else { 1u64 }])),
+            MemCopy => {
+                if !types.is_zst(function.value(args[0])?.type_id)? && !types.is_zst(function.value(args[1])?.type_id)? {
+                    instruction.checks.push(SafetyCheck.Copy(args[0], args[1], args[2]));
+                }
+            },
+            _ => {},
+        },
+        _ => {},
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Each access receives its own checks. Calls, releases and joins never share a cached live fact.
+pub fn insert_checks(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                match checks_for(function, types, instruction) {
+                    Ok(_) => {},
+                    Err(problem) => return Result<(), CodegenError>.Err(problem.with_location(instruction.span)),
+                }
+            }
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}

@@ -1,11 +1,14 @@
 from compiler.config import CompilerConfig;
 from compiler.analysis.session.session import AnalysisSession;
 from compiler.analysis.session.output import AnalysisOptions;
+from compiler.codegen.session import BackendSession, BackendOptions;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
 from compiler.package.model import PackageMap;
 from compiler.package.provenance import SourceTrust;
 from compiler.diagnostics.model import AnalysisError, Diagnostic;
 from compiler.diagnostics.render import write_json, render;
 from compiler.frontend.source import SourceManager;
+from compiler.driver.paths import source_roots;
 from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.io import Stdout, Stderr;
@@ -130,11 +133,22 @@ fn emit(json: bool, success: bool, diagnostic: Option<Diagnostic&>, sources: Opt
     true
 }
 
-fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
-    let stdlib = Path.new(config.compiler_root.as_str()).join("lib/src");
-    defer stdlib.drop();
-    let trust = SourceTrust.new(stdlib.as_str())?;
+pub fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
     let transferred = false;
+    let packages = match &config.packages {
+        Some(path) => match PackageMap.load(path.as_str()) {
+            Ok(value) => Option<PackageMap>.Some(value),
+            Err(problem) => return Result<AnalysisSession, AnalysisError>.Err(problem),
+        },
+        None => Option<PackageMap>.None,
+    };
+    defer {
+        if !transferred { match &packages { Some(value) => value.drop(), None => {}, } }
+    };
+    let map = match &packages { Some(value) => Option<PackageMap&>.Some(value), None => Option<PackageMap&>.None, };
+    let roots = source_roots(config, map)?;
+    defer roots.drop();
+    let trust = SourceTrust.new(roots.standard_library.as_str())?;
     defer {
         if !transferred {
             trust.drop();
@@ -145,7 +159,7 @@ fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
     let harnesses = ["tests/basic/std", "tests/safety/std"];
 
     for harness in harnesses {
-        let root = Path.new(config.compiler_root.as_str()).join(*harness);
+        let root = roots.checkout.as_path().join(*harness);
         defer root.drop();
 
         match try_exists(root.as_str()) {
@@ -160,16 +174,6 @@ fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
             },
         }
     }
-
-    let packages = match &config.packages {
-        Some(path) => match PackageMap.load(path.as_str()) {
-            Ok(value) => Option<PackageMap>.Some(value),
-            Err(problem) => {
-                return Result<AnalysisSession, AnalysisError>.Err(problem);
-            },
-        },
-        None => Option<PackageMap>.None,
-    };
 
     transferred = true;
     AnalysisSession.prepare(&config.inputs, trust, packages, config.raw_pointers, config.allow_ffi)
@@ -186,7 +190,20 @@ pub fn analyze_cli(config: CompilerConfig&, json: bool) -> bool {
     };
     defer session.drop();
 
-    match session.analyze(AnalysisOptions.new()) {
+    let backend = match BackendSession.new(&session, BackendOptions(session.raw_pointers, 0u8)) {
+        Ok(value) => value,
+        Err(problem) => {
+            defer problem.drop();
+            emit(json, false, Option<Diagnostic&>.Some(&problem.diagnostic),
+                Option<SourceManager&>.Some(session.source_manager()), Option<Vec<Diagnostic>&>.None);
+            return false;
+        },
+    };
+    defer backend.drop();
+    let options = AnalysisOptions.new();
+    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+
+    match session.analyze(options) {
         Ok(output) => {
             defer output.drop();
             emit(json, true, Option<Diagnostic&>.None, Option<SourceManager&>.Some(session.source_manager()), Option<Vec<Diagnostic>&>.Some(&output.warnings))

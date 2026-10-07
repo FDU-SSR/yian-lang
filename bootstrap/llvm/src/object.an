@@ -2,20 +2,21 @@ from std.core.result import Result;
 from std.core.vec import Vec;
 from llvm.ir import IrSession, IrType, IrValue, IrBlock;
 from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
-from llvm.ir import new_session, close_session, abi_size_of, abi_alignment_of;
-from llvm.ir import void_type, int_type, float_type, double_type, pointer_type;
+from llvm.ir import new_session, try_new_session, close_session, session_target, abi_size_of, abi_alignment_of;
+from llvm.ir import void_type, int_type, half_type, float_type, double_type, pointer_type;
 from llvm.ir import array_type, struct_type, named_struct_type, set_struct_body, function_type;
 from llvm.ir import const_int, const_signed_int, const_int_words, const_real, const_null;
 from llvm.ir import undef_value, const_bytes, const_array, const_struct;
-from llvm.ir import add_function, function_param, append_block, add_global;
+from llvm.ir import add_function, declare_function, function_param, append_block, add_global;
 from llvm.ir import set_initializer, set_global_constant, set_internal_linkage, set_private_linkage;
 from llvm.ir import set_alignment, set_volatile, add_function_attribute, add_parameter_attribute;
-from llvm.ir import position_at_end, build_ret, build_ret_void, build_br, build_cond_br;
+from llvm.ir import position_at_end, insertion_block, build_ret, build_ret_void, build_br, build_cond_br;
 from llvm.ir import build_switch, add_switch_case, build_unreachable, build_phi, add_incoming;
 from llvm.ir import build_call, build_select, build_alloca, build_load, build_store;
 from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, build_insert_value;
 from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
-from llvm.ir import verify_module, module_ir, module_bitcode, module_object;
+from llvm.ir import verify_module, module_ir, module_bitcode, module_object, module_assembly, optimize_session;
+from llvm.ir import try_module_ir, try_module_bitcode;
 
 // Module exclusively owns LLVM resource cleanup. Shallow copies do not duplicate resources; the caller closes them once.
 pub struct Module {
@@ -39,8 +40,19 @@ pub struct Global {
 }
 
 impl Module {
+    pub ffi fn try_ir() -> Result<Vec<u8>, Vec<u8>> { try_module_ir(&self.session) }
+
+    pub ffi fn try_bitcode() -> Result<Vec<u8>, Vec<u8>> { try_module_bitcode(&self.session) }
+
     static pub ffi fn new(name: str, optimization_level: u8) -> Self {
         return Self(session=new_session(name, optimization_level));
+    }
+
+    static pub ffi fn try_new(name: str, optimization_level: u8) -> Result<Self, Vec<u8>> {
+        match try_new_session(name, optimization_level) {
+            Ok(value) => Result<Self, Vec<u8>>.Ok(Self(value)),
+            Err(message) => Result<Self, Vec<u8>>.Err(message),
+        }
     }
 
     pub ffi fn close() {
@@ -50,6 +62,8 @@ impl Module {
     pub ffi fn builder() -> Builder {
         return Builder(session=self.session);
     }
+
+    pub ffi fn target_triple() -> Vec<u8> { session_target(&self.session) }
 
     pub ffi fn abi_size(ty: IrType) -> u64 {
         return abi_size_of(&self.session, ty);
@@ -69,6 +83,10 @@ impl Module {
 
     pub ffi fn float_type() -> IrType {
         return float_type(&self.session);
+    }
+
+    pub ffi fn half_type() -> IrType {
+        return half_type(&self.session);
     }
 
     pub ffi fn double_type() -> IrType {
@@ -143,6 +161,13 @@ impl Module {
         return Global(session=self.session, value=add_global(&self.session, name, ty));
     }
 
+    pub ffi fn declare_function(name: str, ty: IrType) -> Result<Function, Vec<u8>> {
+        match declare_function(&self.session, name, ty) {
+            Ok(value) => Result<Function, Vec<u8>>.Ok(Function(self.session, value)),
+            Err(message) => Result<Function, Vec<u8>>.Err(message),
+        }
+    }
+
     pub ffi fn verify() -> Result<bool, Vec<u8>> {
         return verify_module(&self.session);
     }
@@ -157,6 +182,14 @@ impl Module {
 
     pub ffi fn object() -> Result<Vec<u8>, Vec<u8>> {
         return module_object(&self.session);
+    }
+
+    pub ffi fn assembly() -> Result<Vec<u8>, Vec<u8>> {
+        module_assembly(&self.session)
+    }
+
+    pub ffi fn optimize() -> Result<bool, Vec<u8>> {
+        optimize_session(&self.session)
     }
 }
 
@@ -213,6 +246,8 @@ impl Global {
 }
 
 impl Builder {
+    pub ffi fn insertion_block() -> IrBlock { insertion_block(&self.session) }
+
     pub ffi fn position_at_end(block: IrBlock) {
         position_at_end(&self.session, block);
     }

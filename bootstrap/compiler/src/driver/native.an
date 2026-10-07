@@ -1,0 +1,562 @@
+from compiler.package.model import PackageMap;
+from std.collections.hash_set import HashSet;
+from std.collections.sort import sort_by;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fs import Directory, canonicalize, create_dir_all, remove_file, remove_dir, rename;
+from std.core.io import IoError;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.fmt import ToString;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import Command, ProcessOutput, ExitStatus, env_var, temporary_directory;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// Errors retain the exact argv and both streams; rendering never needs a live child process.
+pub struct DriverError {
+    pub tool: String,
+    pub arguments: Vec<String>,
+    pub status: Option<ExitStatus>,
+    pub os_error: Option<i32>,
+    pub message: String,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+fn release_strings(values: Vec<String>&) {
+    for value in *values { value.drop(); }
+    values.drop();
+}
+
+fn copied(values: Vec<String>&) -> Vec<String> {
+    let result = Vec<String>.new();
+    for value in *values { result.push(String.from(&value.as_str())); }
+    result
+}
+
+impl DriverError {
+    static pub fn message(tool: str, message: str) -> Self {
+        Self(String.from(&tool), Vec<String>.new(), Option<ExitStatus>.None, Option<i32>.None,
+            String.from(&message), Vec<u8>.new(), Vec<u8>.new())
+    }
+}
+
+impl Drop for DriverError {
+    pub fn drop() {
+        self.tool.drop();
+        release_strings(&self.arguments);
+        self.message.drop();
+        self.stdout.drop();
+        self.stderr.drop();
+    }
+}
+
+pub fn execute(tool: str, arguments: Vec<String>&) -> Result<ProcessOutput, DriverError> {
+    let command = Command.new(tool);
+    defer command.drop();
+    for argument in *arguments { command.arg(argument.as_str()); }
+    let output = match command.output() {
+        Ok(value) => value,
+        Err(problem) => {
+            defer problem.drop();
+            let error = DriverError.message(tool, problem.msg());
+            error.arguments = copied(arguments);
+            error.os_error = problem.raw_os_error();
+            return Result<ProcessOutput, DriverError>.Err(error);
+        },
+    };
+    if !output.status.success() {
+        return Result<ProcessOutput, DriverError>.Err(DriverError(String.from(&tool), copied(arguments),
+            Option<ExitStatus>.Some(output.status), Option<i32>.None,
+            String.from(&"native tool failed"), output.stdout, output.stderr));
+    }
+    Result<ProcessOutput, DriverError>.Ok(output)
+}
+
+// POSIX quoting is decoded into argv; expansion and shell execution never occur.
+pub fn split_flags(text: str) -> Result<Vec<String>, DriverError> {
+    let result = Vec<String>.new();
+    let word = Vec<u8>.new();
+    defer word.drop();
+    let accepted = false;
+    defer {
+        if !accepted { release_strings(&result); }
+    };
+    let quote = 0u8;
+    let escaped = false;
+    let started = false;
+    for byte in text.as_slice() {
+        if escaped {
+            if quote == 34u8 && *byte != 34u8 && *byte != 92u8 && *byte != 36u8 && *byte != 96u8 && *byte != 10u8 {
+                word.push(92u8);
+            }
+            if *byte != 10u8 { word.push(*byte); }
+            escaped = false;
+            if *byte != 10u8 { started = true; }
+            continue;
+        }
+        if *byte == 92u8 && quote != 39u8 {
+            escaped = true;
+            continue;
+        }
+        if quote != 0u8 {
+            if *byte == quote { quote = 0u8; } else { word.push(*byte); }
+            started = true;
+            continue;
+        }
+        if *byte == 34u8 || *byte == 39u8 {
+            quote = *byte;
+            started = true;
+        } elif *byte == 32u8 || *byte == 9u8 || *byte == 10u8 || *byte == 13u8 {
+            if started {
+                result.push(flag_word(&word)?);
+                word.clear();
+                started = false;
+            }
+        } else {
+            word.push(*byte);
+            started = true;
+        }
+    }
+    if escaped || quote != 0u8 {
+        return Result<Vec<String>, DriverError>.Err(DriverError.message("llvm-config", "unterminated quoting in native flags"));
+    }
+    if started { result.push(flag_word(&word)?); }
+    accepted = true;
+    Result<Vec<String>, DriverError>.Ok(result)
+}
+
+fn flag_word(bytes: Vec<u8>&) -> Result<String, DriverError> {
+    match str.from_slice(bytes.as_slice()) {
+        Some(value) => Result<String, DriverError>.Ok(String.from(&value)),
+        None => Result<String, DriverError>.Err(DriverError.message("llvm-config", "native flag is not UTF-8")),
+    }
+}
+
+fn io_error(tool: str, problem: IoError) -> DriverError {
+    defer problem.drop();
+    let error = DriverError.message(tool, problem.msg());
+    error.os_error = problem.raw_os_error();
+    error
+}
+
+fn text_query(arguments: Vec<String>&) -> Result<String, DriverError> {
+    let output = execute("llvm-config", arguments)?;
+    defer output.drop();
+    match str.from_slice(output.stdout.as_slice()) {
+        Some(value) => Result<String, DriverError>.Ok(String.from(&value.trim())),
+        None => Result<String, DriverError>.Err(DriverError.message("llvm-config", "tool output is not UTF-8")),
+    }
+}
+
+fn less(left: String&, right: String&) -> bool {
+    let a = left.as_str().as_slice();
+    let b = right.as_str().as_slice();
+    let index = 0u64;
+    while index < a.len() && index < b.len() {
+        if a[index] != b[index] { return a[index] < b[index]; }
+        index += 1;
+    }
+    a.len() < b.len()
+}
+
+fn clean_directory(paths: Vec<String>&, directory: str) {
+    for path in *paths {
+        match remove_file(path.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+    }
+    release_strings(paths);
+    match remove_dir(directory) { Ok(_) => {}, Err(problem) => problem.drop(), }
+}
+
+struct NativeInputs {
+    sources: Vec<String>,
+    components: Vec<String>,
+}
+
+impl Drop for NativeInputs {
+    pub fn drop() {
+        release_strings(&self.sources);
+        release_strings(&self.components);
+    }
+}
+
+fn unique(values: Vec<String>&, text: str) {
+    for value in *values {
+        if value.as_str() == text { return; }
+    }
+
+    values.push(String.from(&text));
+}
+
+pub struct NativeDriver {
+    root: PathBuf,
+    compiler: String,
+    packages: Option<PackageMap&>,
+}
+
+pub struct Artifact {
+    pub path: String,
+}
+
+impl Drop for Artifact {
+    pub fn drop() { self.path.drop(); }
+}
+
+impl NativeDriver {
+    static pub fn new(checkout: str, packages: Option<PackageMap&>) -> Result<Self, DriverError> {
+        let root = match canonicalize(checkout) {
+            Ok(value) => value,
+            Err(problem) => return Result<Self, DriverError>.Err(io_error("runtime", problem)),
+        };
+        let accepted = false;
+        defer { if !accepted { root.drop(); } };
+        let compiler = match env_var("YIAN_CC") {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                let arguments = Vec<String>.new();
+                defer release_strings(&arguments);
+                arguments.push(String.from(&"--version"));
+                match execute("clang", &arguments) {
+                    Ok(output) => { output.drop(); String.from(&"clang") },
+                    Err(problem) => {
+                        // A missing clang permits cc; a selected tool's compilation errors never select another tool.
+                        let missing = match problem.os_error {
+                            Some(code) => code == 2i32,
+                            None => false,
+                        };
+                        if !missing {
+                            return Result<Self, DriverError>.Err(problem);
+                        }
+                        problem.drop();
+                        let output = execute("cc", &arguments)?;
+                        output.drop();
+                        String.from(&"cc")
+                    },
+                }
+            },
+            Err(problem) => return Result<Self, DriverError>.Err(io_error("environment", problem)),
+        };
+        accepted = true;
+        let driver = Self(root, compiler, packages);
+        let ready = false;
+        defer { if !ready { driver.drop(); } };
+        driver.validate_compiler()?;
+        ready = true;
+        Result<Self, DriverError>.Ok(driver)
+    }
+
+    fn run(arguments: Vec<String>&) -> Result<(), DriverError> {
+        let output = execute(self.compiler.as_str(), arguments)?;
+        output.drop();
+        Result<(), DriverError>.Ok(())
+    }
+
+    // Package names remain borrowed from the immutable map throughout this traversal.
+    fn native_inputs() -> Result<NativeInputs, DriverError> {
+        let inputs = NativeInputs(Vec<String>.new(), Vec<String>.new());
+        let accepted = false;
+        defer { if !accepted { inputs.drop(); } };
+        let map = match self.packages {
+            Some(value) => value,
+            None => {
+                accepted = true;
+                return Result<NativeInputs, DriverError>.Ok(inputs);
+            },
+        };
+        let pending = Vec<str>.new();
+        defer pending.drop();
+        let seen = HashSet<str>.new();
+        defer seen.drop();
+
+        match map.root_name() {
+            Some(name) => pending.push(name),
+            None => {
+                for index in 0u64..map.len() {
+                    pending.push(map.at(index).unwrap().name.as_str());
+                }
+            },
+        }
+
+        while !pending.is_empty() {
+            let name = *pending.pop().unwrap();
+            if !seen.insert(name) { continue; }
+            let package = match map.find(name) {
+                Some(value) => value,
+                None => return Result<NativeInputs, DriverError>.Err(
+                    DriverError.message("packages", "native dependency has no package record")),
+            };
+
+            for dependency in package.dependencies {
+                pending.push(dependency.as_str());
+            }
+
+            match &package.native_llvm {
+                Some(native) => {
+                    if native.major != 22u32 {
+                        return Result<NativeInputs, DriverError>.Err(
+                            DriverError.message("llvm-config", "native package requires an unsupported LLVM major"));
+                    }
+
+                    for component in native.components {
+                        unique(&inputs.components, component.as_str());
+                    }
+
+                    let root = package.source_root.as_path().parent().unwrap();
+                    for source in native.sources {
+                        let joined = root.join(source.as_str());
+                        defer joined.drop();
+                        let path = match canonicalize(joined.as_str()) {
+                            Ok(value) => value,
+                            Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native source", problem)),
+                        };
+                        defer path.drop();
+                        unique(&inputs.sources, path.as_str());
+                    }
+                },
+                None => {},
+            }
+        }
+
+        sort_by(inputs.sources.as_slice(), less);
+        sort_by(inputs.components.as_slice(), less);
+        accepted = true;
+        Result<NativeInputs, DriverError>.Ok(inputs)
+    }
+
+    fn validate_llvm() -> Result<(), DriverError> {
+        let arguments = Vec<String>.new();
+        defer release_strings(&arguments);
+        arguments.push(String.from(&"--version"));
+        let version = text_query(&arguments)?;
+        defer version.drop();
+        if !version.as_str().starts_with("22.") {
+            return Result<(), DriverError>.Err(DriverError.message("llvm-config", "LLVM 22 is required"));
+        }
+
+        arguments[0].drop();
+        arguments[0] = String.from(&"--host-target");
+        let target = text_query(&arguments)?;
+        defer target.drop();
+        if !target.as_str().starts_with("x86_64-") || !target.as_str().contains("linux") || target.as_str().contains("x32") {
+            return Result<(), DriverError>.Err(DriverError.message("llvm-config", "Linux x86-64 is required"));
+        }
+
+        Result<(), DriverError>.Ok(())
+    }
+
+    fn validate_compiler() -> Result<(), DriverError> {
+        let arguments = Vec<String>.new();
+        defer release_strings(&arguments);
+        arguments.push(String.from(&"-dumpmachine"));
+        let output = execute(self.compiler.as_str(), &arguments)?;
+        defer output.drop();
+        let compiler_target = match str.from_slice(output.stdout.as_slice()) {
+            Some(value) => value.trim(),
+            None => return Result<(), DriverError>.Err(DriverError.message(self.compiler.as_str(), "compiler target is not UTF-8")),
+        };
+        if !compiler_target.starts_with("x86_64-") || !compiler_target.contains("linux") || compiler_target.contains("x32") {
+            return Result<(), DriverError>.Err(DriverError.message(self.compiler.as_str(), "Linux x86-64 compiler is required"));
+        }
+
+        Result<(), DriverError>.Ok(())
+    }
+
+    fn native_objects(directory: str, temporary: Vec<String>&) -> Result<Vec<String>, DriverError> {
+        let inputs = self.native_inputs()?;
+        defer inputs.drop();
+        let objects = Vec<String>.new();
+        let accepted = false;
+        defer { if !accepted { release_strings(&objects); } };
+        if inputs.sources.is_empty() && inputs.components.is_empty() {
+            accepted = true;
+            return Result<Vec<String>, DriverError>.Ok(objects);
+        }
+
+        self.validate_llvm()?;
+        let query = Vec<String>.new();
+        defer release_strings(&query);
+        query.push(String.from(&"--cflags"));
+        let text = text_query(&query)?;
+        defer text.drop();
+        let flags = split_flags(text.as_str())?;
+        defer release_strings(&flags);
+        let index = 0u64;
+
+        for source in inputs.sources {
+            let name = String.from(&"native_");
+            defer name.drop();
+            let number = index.to_string();
+            defer number.drop();
+            name.push_str(number.as_str());
+            name.push_str(".o");
+            let output = Path.new(directory).join(name.as_str());
+            defer output.drop();
+            temporary.push(String.from(&output.as_str()));
+            let arguments = copied(&flags);
+            defer release_strings(&arguments);
+            arguments.push(String.from(&"-O2"));
+            arguments.push(String.from(&"-fPIC"));
+            arguments.push(String.from(&"-c"));
+            arguments.push(String.from(&source.as_str()));
+            arguments.push(String.from(&"-o"));
+            arguments.push(String.from(&output.as_str()));
+            self.run(&arguments)?;
+            objects.push(String.from(&output.as_str()));
+            index += 1u64;
+        }
+
+        accepted = true;
+        Result<Vec<String>, DriverError>.Ok(objects)
+    }
+
+    fn link_flags() -> Result<Vec<String>, DriverError> {
+        let inputs = self.native_inputs()?;
+        defer inputs.drop();
+        let flags = Vec<String>.new();
+        let accepted = false;
+        defer { if !accepted { release_strings(&flags); } };
+        if !inputs.sources.is_empty() || !inputs.components.is_empty() {
+            for option in ["--ldflags", "--libs", "--system-libs"] {
+                let arguments = Vec<String>.new();
+                defer release_strings(&arguments);
+                arguments.push(String.from(option));
+                if *option == "--libs" {
+                    for component in inputs.components {
+                        arguments.push(String.from(&component.as_str()));
+                    }
+                }
+
+                let text = text_query(&arguments)?;
+                defer text.drop();
+                let words = split_flags(text.as_str())?;
+                // The strings transfer to flags; only the source container storage is released.
+                for word in words { flags.push(*word); }
+                words.drop();
+            }
+        }
+
+        accepted = true;
+        Result<Vec<String>, DriverError>.Ok(flags)
+    }
+
+    // Runtime and C-shim objects belong to one temporary build directory.
+    pub fn link(object: str, output: str, level: u8, relocatable: bool,
+        libraries: Vec<String>&, searches: Vec<String>&) -> Result<Artifact, DriverError> {
+        if level > 3u8 {
+            return Result<Artifact, DriverError>.Err(DriverError.message("link", "invalid optimization level"));
+        }
+        let parent = match Path.new(output).parent() {
+            Some(value) => if value.as_str() == "" { "." } else { value.as_str() },
+            None => ".",
+        };
+        match create_dir_all(parent) {
+            Ok(_) => {},
+            Err(problem) => return Result<Artifact, DriverError>.Err(io_error("link", problem)),
+        }
+        let directory = match temporary_directory(parent) {
+            Ok(value) => value,
+            Err(problem) => return Result<Artifact, DriverError>.Err(io_error("link", problem)),
+        };
+        defer directory.drop();
+        let temporary = Vec<String>.new();
+        defer clean_directory(&temporary, directory.as_str());
+        let sources = Vec<String>.new();
+        defer release_strings(&sources);
+        let source_root = self.root.as_path().join("runtime/src");
+        defer source_root.drop();
+        let listing = match Directory.open(source_root.as_str()) {
+            Ok(value) => value,
+            Err(problem) => return Result<Artifact, DriverError>.Err(io_error("runtime", problem)),
+        };
+        defer listing.drop();
+        while true {
+            let entry = match listing.next() {
+                Ok(Some(value)) => value,
+                Ok(None) => { break; },
+                Err(problem) => return Result<Artifact, DriverError>.Err(io_error("runtime", problem)),
+            };
+            defer entry.drop();
+            if entry.name().ends_with(".c") { sources.push(String.from(&entry.path().as_str())); }
+        }
+        sort_by(sources.as_slice(), less);
+        let arguments = Vec<String>.new();
+        defer release_strings(&arguments);
+        let include = self.root.as_path().join("runtime/include");
+        defer include.drop();
+        let include_flag = String.from(&"-I");
+        defer include_flag.drop();
+        include_flag.push_str(include.as_str());
+        let runtime_object = Path.new(directory.as_str()).join("runtime.o");
+        defer runtime_object.drop();
+        temporary.push(String.from(&runtime_object.as_str()));
+        arguments.push(String.from(&"-O2"));
+        arguments.push(String.from(&"-fno-strict-aliasing"));
+        arguments.push(String.from(&include_flag.as_str()));
+        arguments.push(String.from(&"-r"));
+        arguments.push(String.from(&"-nostdlib"));
+        for source in sources { arguments.push(String.from(&source.as_str())); }
+        arguments.push(String.from(&"-o"));
+        arguments.push(String.from(&runtime_object.as_str()));
+        self.run(&arguments)?;
+        release_strings(&arguments);
+        arguments = Vec<String>.new();
+        let archive = Path.new(directory.as_str()).join("runtime.a");
+        defer archive.drop();
+        temporary.push(String.from(&archive.as_str()));
+        arguments.push(String.from(&"rcs"));
+        arguments.push(String.from(&archive.as_str()));
+        arguments.push(String.from(&runtime_object.as_str()));
+        let archived = execute("llvm-ar", &arguments)?;
+        archived.drop();
+        release_strings(&arguments);
+        arguments = Vec<String>.new();
+
+        let native = self.native_objects(directory.as_str(), &temporary)?;
+        defer release_strings(&native);
+        let flags = self.link_flags()?;
+        defer release_strings(&flags);
+        let destination = Path.new(directory.as_str()).join("output");
+        defer destination.drop();
+        temporary.push(String.from(&destination.as_str()));
+        if relocatable {
+            arguments.push(String.from(&"-r"));
+            arguments.push(String.from(&"-nostdlib"));
+        }
+        arguments.push(String.from(&object));
+        for path in native { arguments.push(String.from(&path.as_str())); }
+        arguments.push(String.from(&if relocatable { runtime_object.as_str() } else { archive.as_str() }));
+        if !relocatable {
+            for flag in flags { arguments.push(String.from(&flag.as_str())); }
+            for search in *searches {
+                let flag = String.from(&"-L");
+                flag.push_str(search.as_str());
+                arguments.push(flag);
+            }
+            for library in *libraries {
+                let flag = String.from(&"-l");
+                flag.push_str(library.as_str());
+                arguments.push(flag);
+            }
+            arguments.push(String.from(&"-lm"));
+            arguments.push(String.from(&match level { 0 => "-O0", 1 => "-O1", 2 => "-O2", _ => "-O3" }));
+        }
+        arguments.push(String.from(&"-o"));
+        arguments.push(String.from(&destination.as_str()));
+        self.run(&arguments)?;
+        match rename(destination.as_str(), output) {
+            Ok(_) => Result<Artifact, DriverError>.Ok(Artifact(String.from(&output))),
+            Err(problem) => Result<Artifact, DriverError>.Err(io_error("link", problem)),
+        }
+    }
+}
+
+impl Drop for NativeDriver {
+    pub fn drop() {
+        self.root.drop();
+        self.compiler.drop();
+    }
+}

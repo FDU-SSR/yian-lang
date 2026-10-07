@@ -16,6 +16,13 @@ from llvm.target_raw import LLVMSetTarget, LLVMCreatePassBuilderOptions, LLVMDis
 from llvm.target_raw import LLVMRunPasses, LLVMGetErrorMessage, LLVMDisposeErrorMessage;
 from llvm.target_raw import LLVMTargetMachineEmitToMemoryBuffer;
 
+// LLVM C API enum values used by verifier, target creation and native emission.
+const LLVM_RETURN_STATUS_ACTION: c_int = 2;
+const LLVM_ASSEMBLY_FILE: c_int = 0;
+const LLVM_OBJECT_FILE: c_int = 1;
+const LLVM_RELOC_PIC: c_int = 2;
+const LLVM_CODE_MODEL_SMALL: c_int = 3;
+
 // Handles are for trusted FFI code only. Copying a handle does not copy LLVM resources; the session must outlive all child-handle uses.
 pub struct IrSession {
     context: cptr<LLVMOpaqueContext>,
@@ -47,7 +54,7 @@ pub enum IntCompare {
 }
 
 pub enum RealCompare {
-    Oeq, Ogt, Oge, Olt, Ole, One, Ord, Uno,
+    Oeq, Ogt, Oge, Olt, Ole, One, Ord, Uno, Une,
 }
 
 pub enum BinaryOp {
@@ -63,18 +70,22 @@ pub enum CastOp {
 
 extern "C" {
     fn LLVMContextCreate() -> cptr<LLVMOpaqueContext>;
+    fn LLVMGetNamedFunction(module: cptr<LLVMOpaqueModule>, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMGlobalGetValueType(value: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueType>;
     fn LLVMContextDispose(context: cptr<LLVMOpaqueContext>);
     fn LLVMModuleCreateWithNameInContext(name: cptr<c_char>, context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueModule>;
     fn LLVMDisposeModule(module: cptr<LLVMOpaqueModule>);
     fn LLVMCreateBuilderInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueBuilder>;
     fn LLVMDisposeBuilder(builder: cptr<LLVMOpaqueBuilder>);
     fn LLVMPositionBuilderAtEnd(builder: cptr<LLVMOpaqueBuilder>, block: cptr<LLVMOpaqueBasicBlock>);
+    fn LLVMGetInsertBlock(builder: cptr<LLVMOpaqueBuilder>) -> cptr<LLVMOpaqueBasicBlock>;
     fn LLVMPrintModuleToString(module: cptr<LLVMOpaqueModule>) -> cptr<c_char>;
     fn LLVMDisposeMessage(message: cptr<c_char>);
     fn LLVMVerifyModule(module: cptr<LLVMOpaqueModule>, action: c_int, message: cptr<cptr<c_char>>) -> c_int;
 
     fn LLVMVoidTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
     fn LLVMIntTypeInContext(context: cptr<LLVMOpaqueContext>, bits: c_uint) -> cptr<LLVMOpaqueType>;
+    fn LLVMHalfTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
     fn LLVMFloatTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
     fn LLVMDoubleTypeInContext(context: cptr<LLVMOpaqueContext>) -> cptr<LLVMOpaqueType>;
     fn LLVMPointerTypeInContext(context: cptr<LLVMOpaqueContext>, address_space: c_uint) -> cptr<LLVMOpaqueType>;
@@ -234,57 +245,77 @@ ffi fn wrap_value(session: IrSession&, native: cptr<LLVMOpaqueValue>) -> IrValue
     return IrValue(native=native, owner=session.module);
 }
 
+// The fallible constructor owns cleanup of every successfully created parent resource.
+ffi fn error_bytes(message: str) -> Vec<u8> {
+    message.as_slice().to_vec()
+}
+
 pub(ffi) ffi fn new_session(name: str, optimization_level: u8) -> IrSession {
+    match try_new_session(name, optimization_level) {
+        Ok(value) => value,
+        Err(message) => {
+            message.drop();
+            @panic("LLVM session creation failed");
+        },
+    }
+}
+
+pub(ffi) ffi fn try_new_session(name: str, optimization_level: u8) -> Result<IrSession, Vec<u8>> {
     if optimization_level > 3u8 {
-        @panic("LLVM optimization level must be 0 through 3");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM optimization level must be 0 through 3"));
     }
     if YIANLLVMInitializeNativeTarget() != c_int(0) {
-        @panic("LLVM native target is unavailable");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM native target is unavailable"));
     }
-    let c_name = checked_c_string(name);
+    let c_name = match c_string_bytes(name) {
+        Ok(bytes) => bytes,
+        Err(_) => return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM name contains NUL")),
+    };
     defer c_name.drop();
-    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    let name_data = @ffi_parts(c_name.as_slice())[0];
     let triple = LLVMGetDefaultTargetTriple();
     if triple == @ffi_null<c_char>() {
-        @panic("LLVM host target triple is unavailable");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM host target triple is unavailable"));
     }
     let target = @ffi_null<LLVMOpaqueTarget>();
     let target_message = @ffi_null<c_char>();
     let target_status = LLVMGetTargetFromTriple(triple, @ffi_addr(&target), @ffi_addr(&target_message));
+    if target_status != c_int(0) || target == @ffi_null<LLVMOpaqueTarget>() {
+        let error = if target_message == @ffi_null<c_char>() { error_bytes("LLVM host target lookup failed") } else { copy_llvm_message(target_message) };
+        if target_message != @ffi_null<c_char>() { LLVMDisposeMessage(target_message); }
+        LLVMDisposeMessage(triple);
+        return Result<IrSession, Vec<u8>>.Err(msg=error);
+    }
     if target_message != @ffi_null<c_char>() {
         LLVMDisposeMessage(target_message);
-    }
-    if target_status != c_int(0) || target == @ffi_null<LLVMOpaqueTarget>() {
-        LLVMDisposeMessage(triple);
-        @panic("LLVM host target lookup failed");
     }
     let cpu = checked_c_string("generic");
     defer cpu.drop();
     let features = checked_c_string("");
     defer features.drop();
-    let (cpu_data, _) = @ffi_parts(cpu.as_slice());
-    let (features_data, _) = @ffi_parts(features.as_slice());
-    // LLVM 22 enumeration values for LLVMCodeGenOptLevel, LLVMRelocPIC, and LLVMCodeModelSmall.
+    let cpu_data = @ffi_parts(cpu.as_slice())[0];
+    let features_data = @ffi_parts(features.as_slice())[0];
+    // LLVMCodeGenOptLevel uses the same 0..3 levels as the public configuration.
     let machine = LLVMCreateTargetMachine(
         target, triple, @ffi_ptr_cast<c_char>(cpu_data), @ffi_ptr_cast<c_char>(features_data),
-        c_int(optimization_level), c_int(2), c_int(3)
+        c_int(optimization_level), LLVM_RELOC_PIC, LLVM_CODE_MODEL_SMALL
     );
     if machine == @ffi_null<LLVMOpaqueTargetMachine>() {
         LLVMDisposeMessage(triple);
-        @panic("LLVM target machine creation failed");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM target machine creation failed"));
     }
     let layout = LLVMCreateTargetDataLayout(machine);
     if layout == @ffi_null<LLVMOpaqueTargetData>() {
         LLVMDisposeTargetMachine(machine);
         LLVMDisposeMessage(triple);
-        @panic("LLVM target data layout creation failed");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM target data layout creation failed"));
     }
     let context = LLVMContextCreate();
     if context == @ffi_null<LLVMOpaqueContext>() {
         LLVMDisposeTargetData(layout);
         LLVMDisposeTargetMachine(machine);
         LLVMDisposeMessage(triple);
-        @panic("LLVM context creation failed");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM context creation failed"));
     }
     let module = LLVMModuleCreateWithNameInContext(@ffi_ptr_cast<c_char>(name_data), context);
     if module == @ffi_null<LLVMOpaqueModule>() {
@@ -292,7 +323,7 @@ pub(ffi) ffi fn new_session(name: str, optimization_level: u8) -> IrSession {
         LLVMDisposeTargetData(layout);
         LLVMDisposeTargetMachine(machine);
         LLVMDisposeMessage(triple);
-        @panic("LLVM module creation failed");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM module creation failed"));
     }
     LLVMSetTarget(module, triple);
     LLVMSetModuleDataLayout(module, layout);
@@ -303,13 +334,13 @@ pub(ffi) ffi fn new_session(name: str, optimization_level: u8) -> IrSession {
         LLVMDisposeTargetData(layout);
         LLVMDisposeTargetMachine(machine);
         LLVMDisposeMessage(triple);
-        @panic("LLVM builder creation failed");
+        return Result<IrSession, Vec<u8>>.Err(msg=error_bytes("LLVM builder creation failed"));
     }
-    return IrSession(
+    return Result<IrSession, Vec<u8>>.Ok(val=IrSession(
         context=context, module=module, builder=builder,
         target_machine=machine, target_layout=layout,
         target_triple=triple, optimization_level=optimization_level
-    );
+        ));
 }
 
 pub(ffi) ffi fn close_session(session: IrSession&) {
@@ -326,6 +357,16 @@ pub(ffi) ffi fn close_session(session: IrSession&) {
     session.target_machine = @ffi_null<LLVMOpaqueTargetMachine>();
     session.target_layout = @ffi_null<LLVMOpaqueTargetData>();
     session.target_triple = @ffi_null<c_char>();
+}
+
+// The target text is copied; the LLVM-owned message remains session-owned.
+pub(ffi) ffi fn session_target(session: IrSession&) -> Vec<u8> {
+    checked_session(session);
+    let bytes_parts = copy_c_string(session.target_triple, 4096u64);
+    let bytes = bytes_parts[0];
+    let truncated = bytes_parts[1];
+    if truncated { bytes.drop(); return error_bytes("invalid LLVM target triple"); }
+    bytes
 }
 
 pub(ffi) ffi fn abi_size_of(session: IrSession&, ty: IrType) -> u64 {
@@ -356,6 +397,11 @@ pub(ffi) ffi fn float_type(session: IrSession&) -> IrType {
     return wrap_type(session, LLVMFloatTypeInContext(session.context));
 }
 
+pub(ffi) ffi fn half_type(session: IrSession&) -> IrType {
+    checked_session(session);
+    return wrap_type(session, LLVMHalfTypeInContext(session.context));
+}
+
 pub(ffi) ffi fn double_type(session: IrSession&) -> IrType {
     checked_session(session);
     return wrap_type(session, LLVMDoubleTypeInContext(session.context));
@@ -379,7 +425,9 @@ pub(ffi) ffi fn struct_type(session: IrSession&, fields: IrType[], packed: bool)
         native.push(checked_type(session, fields[index]));
         index += 1;
     }
-    let (data, length) = @ffi_parts(native.as_slice());
+    let data_parts = @ffi_parts(native.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     return wrap_type(session, LLVMStructTypeInContext(session.context, data, checked_count(length), c_bool(packed)));
 }
 
@@ -387,7 +435,7 @@ pub(ffi) ffi fn named_struct_type(session: IrSession&, name: str) -> IrType {
     checked_session(session);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_type(session, LLVMStructCreateNamed(session.context, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -400,7 +448,9 @@ pub(ffi) ffi fn set_struct_body(session: IrSession&, ty: IrType, fields: IrType[
         native_fields.push(checked_type(session, fields[index]));
         index += 1;
     }
-    let (data, length) = @ffi_parts(native_fields.as_slice());
+    let data_parts = @ffi_parts(native_fields.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     LLVMStructSetBody(native_type, data, checked_count(length), c_bool(packed));
 }
 
@@ -413,7 +463,9 @@ pub(ffi) ffi fn function_type(session: IrSession&, result: IrType, params: IrTyp
         native.push(checked_type(session, params[index]));
         index += 1;
     }
-    let (data, length) = @ffi_parts(native.as_slice());
+    let data_parts = @ffi_parts(native.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     return wrap_type(session, LLVMFunctionType(return_type, data, checked_count(length), c_int(0)));
 }
 
@@ -431,7 +483,9 @@ pub(ffi) ffi fn const_int_words(session: IrSession&, ty: IrType, words: u64[]) -
     if words.len() == 0u64 {
         @panic("LLVM arbitrary precision constant has no words");
     }
-    let (data, count) = @ffi_parts(words);
+    let data_parts = @ffi_parts(words);
+    let data = data_parts[0];
+    let count = data_parts[1];
     return wrap_value(session, LLVMConstIntOfArbitraryPrecision(native_type, checked_count(count), data));
 }
 
@@ -449,7 +503,9 @@ pub(ffi) ffi fn undef_value(session: IrSession&, ty: IrType) -> IrValue {
 
 pub(ffi) ffi fn const_bytes(session: IrSession&, bytes: u8[], null_terminate: bool) -> IrValue {
     checked_session(session);
-    let (data, length) = @ffi_parts(bytes);
+    let data_parts = @ffi_parts(bytes);
+    let data = data_parts[0];
+    let length = data_parts[1];
     let c_length = c_size(length);
     if u64(c_length) != length {
         @panic("LLVM string length exceeds C size_t");
@@ -466,7 +522,9 @@ pub(ffi) ffi fn const_array(session: IrSession&, element: IrType, values: IrValu
         native.push(checked_value(session, values[index]));
         index += 1;
     }
-    let (data, length) = @ffi_parts(native.as_slice());
+    let data_parts = @ffi_parts(native.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     return wrap_value(session, LLVMConstArray2(element_type, data, length));
 }
 
@@ -479,7 +537,9 @@ pub(ffi) ffi fn const_struct(session: IrSession&, values: IrValue[], packed: boo
         native.push(checked_value(session, values[index]));
         index += 1;
     }
-    let (data, length) = @ffi_parts(native.as_slice());
+    let data_parts = @ffi_parts(native.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     return wrap_value(session, LLVMConstStructInContext(session.context, data, checked_count(length), c_bool(packed)));
 }
 
@@ -487,7 +547,7 @@ pub(ffi) ffi fn add_function(session: IrSession&, name: str, ty: IrType) -> IrVa
     let native_type = checked_type(session, ty);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMAddFunction(session.module, @ffi_ptr_cast<c_char>(data), native_type));
 }
 
@@ -495,11 +555,30 @@ pub(ffi) ffi fn function_param(session: IrSession&, function: IrValue, index: u3
     return wrap_value(session, LLVMGetParam(checked_value(session, function), c_uint(index)));
 }
 
+// Repeated declarations share a symbol only when their complete LLVM signature agrees.
+pub(ffi) ffi fn declare_function(session: IrSession&, name: str, ty: IrType) -> Result<IrValue, Vec<u8>> {
+    let native_type = checked_type(session, ty);
+    let c_name = match c_string_bytes(name) {
+        Ok(value) => value,
+        Err(_) => return Result<IrValue, Vec<u8>>.Err(error_bytes("function name contains NUL")),
+    };
+    defer c_name.drop();
+    let data = @ffi_parts(c_name.as_slice())[0];
+    let existing = LLVMGetNamedFunction(session.module, @ffi_ptr_cast<c_char>(data));
+    if existing != @ffi_null<LLVMOpaqueValue>() {
+        if LLVMGlobalGetValueType(existing) != native_type {
+            return Result<IrValue, Vec<u8>>.Err(error_bytes("external function signatures disagree"));
+        }
+        return Result<IrValue, Vec<u8>>.Ok(wrap_value(session, existing));
+    }
+    Result<IrValue, Vec<u8>>.Ok(add_function(session, name, ty))
+}
+
 pub(ffi) ffi fn append_block(session: IrSession&, function: IrValue, name: str) -> IrBlock {
     let native_function = checked_value(session, function);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     let block = LLVMAppendBasicBlockInContext(session.context, native_function, @ffi_ptr_cast<c_char>(data));
     if block == @ffi_null<LLVMOpaqueBasicBlock>() {
         @panic("LLVM basic block creation failed");
@@ -511,11 +590,15 @@ pub(ffi) ffi fn position_at_end(session: IrSession&, block: IrBlock) {
     LLVMPositionBuilderAtEnd(session.builder, checked_block(session, block));
 }
 
+pub(ffi) ffi fn insertion_block(session: IrSession&) -> IrBlock {
+    IrBlock(LLVMGetInsertBlock(session.builder), session.module)
+}
+
 pub(ffi) ffi fn add_global(session: IrSession&, name: str, ty: IrType) -> IrValue {
     let native_type = checked_type(session, ty);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMAddGlobal(session.module, native_type, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -547,7 +630,9 @@ ffi fn add_enum_attribute(session: IrSession&, function: IrValue, index: u32, na
     let native_function = checked_value(session, function);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, length) = @ffi_parts(c_name.as_slice());
+    let data_parts = @ffi_parts(c_name.as_slice());
+    let data = data_parts[0];
+    let length = data_parts[1];
     let c_length = c_size(length - 1u64);
     if u64(c_length) != length - 1u64 {
         @panic("LLVM attribute name exceeds C size_t");
@@ -616,7 +701,7 @@ pub(ffi) ffi fn build_phi(session: IrSession&, ty: IrType, name: str) -> IrValue
     let native_type = checked_type(session, ty);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildPhi(session.builder, native_type, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -635,8 +720,10 @@ pub(ffi) ffi fn add_incoming(session: IrSession&, phi: IrValue, values: IrValue[
         native_blocks.push(checked_block(session, blocks[index]));
         index += 1;
     }
-    let (value_data, length) = @ffi_parts(native_values.as_slice());
-    let (block_data, _) = @ffi_parts(native_blocks.as_slice());
+    let value_data_parts = @ffi_parts(native_values.as_slice());
+    let value_data = value_data_parts[0];
+    let length = value_data_parts[1];
+    let block_data = @ffi_parts(native_blocks.as_slice())[0];
     LLVMAddIncoming(native_phi, value_data, block_data, checked_count(length));
 }
 
@@ -650,10 +737,12 @@ pub(ffi) ffi fn build_call(session: IrSession&, signature: IrType, function: IrV
         native_args.push(checked_value(session, args[index]));
         index += 1;
     }
-    let (args_data, length) = @ffi_parts(native_args.as_slice());
+    let args_data_parts = @ffi_parts(native_args.as_slice());
+    let args_data = args_data_parts[0];
+    let length = args_data_parts[1];
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    let name_data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildCall2(session.builder, native_signature, native_function, args_data, checked_count(length), @ffi_ptr_cast<c_char>(name_data)));
 }
 
@@ -663,7 +752,7 @@ pub(ffi) ffi fn build_select(session: IrSession&, condition: IrValue, yes: IrVal
     let native_no = checked_value(session, no);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildSelect(session.builder, native_condition, native_yes, native_no, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -671,7 +760,7 @@ pub(ffi) ffi fn build_alloca(session: IrSession&, ty: IrType, name: str) -> IrVa
     let native_type = checked_type(session, ty);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildAlloca(session.builder, native_type, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -680,7 +769,7 @@ pub(ffi) ffi fn build_load(session: IrSession&, ty: IrType, pointer: IrValue, na
     let native_pointer = checked_value(session, pointer);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildLoad2(session.builder, native_type, native_pointer, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -714,10 +803,12 @@ pub(ffi) ffi fn build_gep(session: IrSession&, ty: IrType, pointer: IrValue, ind
         native_indices.push(checked_value(session, indices[index]));
         index += 1;
     }
-    let (indices_data, length) = @ffi_parts(native_indices.as_slice());
+    let indices_data_parts = @ffi_parts(native_indices.as_slice());
+    let indices_data = indices_data_parts[0];
+    let length = indices_data_parts[1];
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (name_data, _) = @ffi_parts(c_name.as_slice());
+    let name_data = @ffi_parts(c_name.as_slice())[0];
     let result = if in_bounds {
         LLVMBuildInBoundsGEP2(session.builder, native_type, native_pointer, indices_data, checked_count(length), @ffi_ptr_cast<c_char>(name_data))
     } else {
@@ -730,7 +821,7 @@ pub(ffi) ffi fn build_extract_value(session: IrSession&, aggregate: IrValue, ind
     let native_aggregate = checked_value(session, aggregate);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildExtractValue(session.builder, native_aggregate, c_uint(index), @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -739,7 +830,7 @@ pub(ffi) ffi fn build_insert_value(session: IrSession&, aggregate: IrValue, valu
     let native_value = checked_value(session, value);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildInsertValue(session.builder, native_aggregate, native_value, c_uint(index), @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -748,7 +839,7 @@ pub(ffi) ffi fn build_binary(session: IrSession&, op: BinaryOp, left: IrValue, r
     let native_right = checked_value(session, right);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     let c_data = @ffi_ptr_cast<c_char>(data);
     let result = match op {
         BinaryOp.Add => LLVMBuildAdd(session.builder, native_left, native_right, c_data),
@@ -777,7 +868,7 @@ pub(ffi) ffi fn build_neg(session: IrSession&, value: IrValue, name: str) -> IrV
     let native_value = checked_value(session, value);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildNeg(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -785,7 +876,7 @@ pub(ffi) ffi fn build_fneg(session: IrSession&, value: IrValue, name: str) -> Ir
     let native_value = checked_value(session, value);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildFNeg(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -793,7 +884,7 @@ pub(ffi) ffi fn build_not(session: IrSession&, value: IrValue, name: str) -> IrV
     let native_value = checked_value(session, value);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildNot(session.builder, native_value, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -809,7 +900,7 @@ pub(ffi) ffi fn build_icmp(session: IrSession&, predicate: IntCompare, left: IrV
     };
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildICmp(session.builder, c_int(code), native_left, native_right, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -821,10 +912,11 @@ pub(ffi) ffi fn build_fcmp(session: IrSession&, predicate: RealCompare, left: Ir
         RealCompare.Oge => 3, RealCompare.Olt => 4,
         RealCompare.Ole => 5, RealCompare.One => 6,
         RealCompare.Ord => 7, RealCompare.Uno => 8,
+        RealCompare.Une => 14,
     };
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     return wrap_value(session, LLVMBuildFCmp(session.builder, c_int(code), native_left, native_right, @ffi_ptr_cast<c_char>(data)));
 }
 
@@ -833,7 +925,7 @@ pub(ffi) ffi fn build_cast(session: IrSession&, op: CastOp, value: IrValue, ty: 
     let native_type = checked_type(session, ty);
     let c_name = checked_c_string(name);
     defer c_name.drop();
-    let (data, _) = @ffi_parts(c_name.as_slice());
+    let data = @ffi_parts(c_name.as_slice())[0];
     let c_data = @ffi_ptr_cast<c_char>(data);
     let result = match op {
         CastOp.Trunc => LLVMBuildTrunc(session.builder, native_value, native_type, c_data),
@@ -856,7 +948,9 @@ ffi fn copy_llvm_message(message: cptr<c_char>) -> Vec<u8> {
     if message == @ffi_null<c_char>() {
         return Vec<u8>.new();
     }
-    let (bytes, truncated) = copy_c_string(message, 1073741824u64);
+    let bytes_parts = copy_c_string(message, 1073741824u64);
+    let bytes = bytes_parts[0];
+    let truncated = bytes_parts[1];
     if truncated {
         @panic("LLVM diagnostic exceeds the copy limit");
     }
@@ -866,7 +960,7 @@ ffi fn copy_llvm_message(message: cptr<c_char>) -> Vec<u8> {
 pub(ffi) ffi fn verify_module(session: IrSession&) -> Result<bool, Vec<u8>> {
     checked_session(session);
     let message = @ffi_null<c_char>();
-    let status = LLVMVerifyModule(session.module, c_int(2), @ffi_addr(&message));
+    let status = LLVMVerifyModule(session.module, LLVM_RETURN_STATUS_ACTION, @ffi_addr(&message));
     if status != c_int(0) {
         let error = copy_llvm_message(message);
         if message != @ffi_null<c_char>() {
@@ -881,27 +975,42 @@ pub(ffi) ffi fn verify_module(session: IrSession&) -> Result<bool, Vec<u8>> {
 }
 
 pub(ffi) ffi fn module_ir(session: IrSession&) -> Vec<u8> {
+    match try_module_ir(session) {
+        Ok(value) => value,
+        Err(message) => { message.drop(); @panic("LLVM module printing failed") },
+    }
+}
+
+pub(ffi) ffi fn try_module_ir(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
     checked_session(session);
     let message = LLVMPrintModuleToString(session.module);
     if message == @ffi_null<c_char>() {
-        @panic("LLVM module printing failed");
+        return Result<Vec<u8>, Vec<u8>>.Err(msg=error_bytes("LLVM module printing failed"));
     }
     defer LLVMDisposeMessage(message);
-    return copy_llvm_message(message);
+    return Result<Vec<u8>, Vec<u8>>.Ok(val=copy_llvm_message(message));
 }
 
 pub(ffi) ffi fn module_bitcode(session: IrSession&) -> Vec<u8> {
+    match try_module_bitcode(session) {
+        Ok(value) => value,
+        Err(message) => { message.drop(); @panic("LLVM bitcode emission failed") },
+    }
+}
+
+pub(ffi) ffi fn try_module_bitcode(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
     checked_session(session);
     let buffer = LLVMWriteBitcodeToMemoryBuffer(session.module);
     if buffer == @ffi_null<LLVMOpaqueMemoryBuffer>() {
-        @panic("LLVM bitcode emission failed");
+        return Result<Vec<u8>, Vec<u8>>.Err(msg=error_bytes("LLVM bitcode emission failed"));
     }
     defer LLVMDisposeMemoryBuffer(buffer);
-    return copy_c_bytes(@ffi_ptr_cast<u8>(LLVMGetBufferStart(buffer)), u64(LLVMGetBufferSize(buffer)));
+    return Result<Vec<u8>, Vec<u8>>.Ok(val=copy_c_bytes(@ffi_ptr_cast<u8>(LLVMGetBufferStart(buffer)), u64(LLVMGetBufferSize(buffer))));
 }
 
-pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
+pub(ffi) ffi fn optimize_session(session: IrSession&) -> Result<bool, Vec<u8>> {
     checked_session(session);
+    verify_module(session)?;
     if session.optimization_level != 0u8 {
         let pipeline = match session.optimization_level {
             1u8 => checked_c_string("default<O1>"),
@@ -909,10 +1018,10 @@ pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
             _ => checked_c_string("default<O3>"),
         };
         defer pipeline.drop();
-        let (pipeline_data, _) = @ffi_parts(pipeline.as_slice());
+        let pipeline_data = @ffi_parts(pipeline.as_slice())[0];
         let options = LLVMCreatePassBuilderOptions();
         if options == @ffi_null<LLVMOpaquePassBuilderOptions>() {
-            @panic("LLVM pass builder creation failed");
+            return Result<bool, Vec<u8>>.Err(msg=error_bytes("LLVM pass builder creation failed"));
         }
         defer LLVMDisposePassBuilderOptions(options);
         let error = LLVMRunPasses(session.module, @ffi_ptr_cast<c_char>(pipeline_data), session.target_machine, options);
@@ -922,20 +1031,27 @@ pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
             if message != @ffi_null<c_char>() {
                 LLVMDisposeErrorMessage(message);
             }
-            return Result<Vec<u8>, Vec<u8>>.Err(msg=bytes);
+            return Result<bool, Vec<u8>>.Err(msg=bytes);
         }
     }
 
-    let verification = verify_module(session);
-    match verification {
-        Ok(_) => {},
-        Err(message) => return Result<Vec<u8>, Vec<u8>>.Err(msg=message),
-    }
+    verify_module(session)
+}
 
+pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
+    module_native(session, false)
+}
+
+pub(ffi) ffi fn module_assembly(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
+    module_native(session, true)
+}
+
+ffi fn module_native(session: IrSession&, assembly: bool) -> Result<Vec<u8>, Vec<u8>> {
+    optimize_session(session)?;
     let output = @ffi_null<LLVMOpaqueMemoryBuffer>();
     let emit_message = @ffi_null<c_char>();
     let emit_status = LLVMTargetMachineEmitToMemoryBuffer(
-        session.target_machine, session.module, c_int(1), @ffi_addr(&emit_message), @ffi_addr(&output)
+        session.target_machine, session.module, if assembly { LLVM_ASSEMBLY_FILE } else { LLVM_OBJECT_FILE }, @ffi_addr(&emit_message), @ffi_addr(&output)
     );
     if emit_status != c_int(0) {
         let error = copy_llvm_message(emit_message);
@@ -951,7 +1067,7 @@ pub(ffi) ffi fn module_object(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
         LLVMDisposeMessage(emit_message);
     }
     if output == @ffi_null<LLVMOpaqueMemoryBuffer>() {
-        @panic("LLVM object emission returned no buffer");
+        return Result<Vec<u8>, Vec<u8>>.Err(msg=error_bytes("LLVM native emission returned no buffer"));
     }
     defer LLVMDisposeMemoryBuffer(output);
     let bytes = copy_c_bytes(@ffi_ptr_cast<u8>(LLVMGetBufferStart(output)), u64(LLVMGetBufferSize(output)));

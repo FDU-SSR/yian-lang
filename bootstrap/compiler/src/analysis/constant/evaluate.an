@@ -191,7 +191,7 @@ impl ConstantEvaluator {
                 match &value {
                     Integer(v) => integer = cast_integer(*v, width, *signed),
                     Char(v) => integer = normalized(u64(*v), width, *signed),
-                    Bool(v) => integer = normalized(u64(*v), width, *signed),
+                    Bool(v) => integer = normalized(if *v { 1u64 } else { 0u64 }, width, *signed),
                     Float(v) => integer = match float_integer(*v, width, *signed) {
                         Ok(value) => value,
                         Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location))

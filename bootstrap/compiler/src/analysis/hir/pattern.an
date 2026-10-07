@@ -112,6 +112,16 @@ pub enum PatternKind {
 }
 
 // The store owns payload buffers; ID edges never own their target nodes.
+impl PatternKind {
+    pub fn name() -> str {
+        match self {
+            EnumPattern(_) => "Enum", WildcardPattern => "Wildcard", LiteralPattern(_) => "Literal",
+            RangePattern(_) => "Range", BindPattern(_) => "Bind", RefPattern(_) => "Reference",
+            OrPattern(_) => "Or", StructPattern(_) => "Struct", TuplePattern(_) => "Tuple", SequencePattern(_) => "Sequence",
+        }
+    }
+}
+
 pub struct PatternNode {
     pub span: SourceSpan,
     pub type_id: TypeId,

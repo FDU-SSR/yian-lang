@@ -8,6 +8,7 @@ from std.core.string import String;
 from std.core.vec import Vec;
 from compiler.config import FrontendPhase, parse_args;
 from compiler.analysis.cli import analyze_cli;
+from compiler.driver.compile import compile_cli;
 from compiler.frontend.source import SourceManager, collect_sources, Span;
 from json.write import Writer;
 from compiler.frontend.observe import append_token_file;
@@ -235,6 +236,7 @@ fn main() {
                 } else {
                     1i32
                 },
+                Compile => if compile_cli(&config) { 0i32 } else { 1i32 },
             }
         },
         Err(message) => {

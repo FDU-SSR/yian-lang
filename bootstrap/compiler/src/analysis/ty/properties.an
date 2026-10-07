@@ -1,5 +1,6 @@
 from compiler.analysis.resolution.context import ResolutionContext;
-from compiler.analysis.ty.callable import instance_substitutions;
+from compiler.analysis.ty.callable import store_substitutions;
+from compiler.analysis.ty.store import TypeStore;
 from compiler.analysis.ty.substitution import substitute;
 from compiler.common.ids import TypeId;
 from compiler.diagnostics.model import AnalysisError;
@@ -10,12 +11,16 @@ from std.collections.hash_set import HashSet;
 
 // Finalization rejects storage cycles before these structural queries run.
 pub fn is_zst(ctx: ResolutionContext&, type_id: TypeId) -> Result<bool, AnalysisError> {
-    let visiting = HashSet<TypeId>.new();
-    defer visiting.drop();
-    zst_inner(ctx, type_id, &visiting)
+    store_is_zst(&ctx.session.types, type_id)
 }
 
-fn zst_inner(ctx: ResolutionContext&, type_id: TypeId, visiting: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
+pub fn store_is_zst(store: TypeStore&, type_id: TypeId) -> Result<bool, AnalysisError> {
+    let visiting = HashSet<TypeId>.new();
+    defer visiting.drop();
+    zst_inner(store, type_id, &visiting)
+}
+
+fn zst_inner(store: TypeStore&, type_id: TypeId, visiting: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
     // Reference cycles carry an address; they do not make an aggregate a ZST.
 
     if !visiting.insert(type_id) {
@@ -24,14 +29,14 @@ fn zst_inner(ctx: ResolutionContext&, type_id: TypeId, visiting: HashSet<TypeId>
 
     defer visiting.remove(&type_id);
 
-    match ctx.session.types.require(type_id)? {
+    match store.require(type_id)? {
         Void => Result<bool, AnalysisError>.Ok(true),
         Never => Result<bool, AnalysisError>.Ok(true),
-        Pointer(inner) => zst_inner(ctx, *inner, visiting),
-        Reference(inner) => zst_inner(ctx, *inner, visiting),
+        Pointer(inner) => zst_inner(store, *inner, visiting),
+        Reference(inner) => zst_inner(store, *inner, visiting),
         Tuple(elements) => {
             for element in *elements {
-                if !zst_inner(ctx, *element, visiting)? {
+                if !zst_inner(store, *element, visiting)? {
                     return Result<bool, AnalysisError>.Ok(false);
                 }
             }
@@ -39,19 +44,23 @@ fn zst_inner(ctx: ResolutionContext&, type_id: TypeId, visiting: HashSet<TypeId>
             Result<bool, AnalysisError>.Ok(true)
         },
         Array(element, length) => {
-            let empty = match ctx.session.types.require(*length)? {
+            let empty = match store.require(*length)? {
                 LiteralValue(bits, _, _) => *bits == 0, _ => false
             };
-            Result<bool, AnalysisError>.Ok(empty || zst_inner(ctx, *element, visiting)?)
+            Result<bool, AnalysisError>.Ok(empty || zst_inner(store, *element, visiting)?)
+        },
+        Closure(_, _, _, _, environment, _) => match environment {
+            Some(value) => zst_inner(store, *value, visiting),
+            None => Result<bool, AnalysisError>.Err(AnalysisError.internal("closure has no completed environment")),
         },
         Nominal(id, _) => {
-            let substitutions = instance_substitutions(ctx, type_id)?;
+            let substitutions = store_substitutions(store, type_id)?;
             defer substitutions.drop();
 
-            match ctx.session.types.complete_definition(*id)? {
+            match store.complete_definition(*id)? {
                 Struct(body) => {
                     for field in body.fields {
-                        if !zst_inner(ctx, substitute(&ctx.session.types, field.type_id, &substitutions)?, visiting)? {
+                        if !zst_inner(store, substitute(store, field.type_id, &substitutions)?, visiting)? {
                             return Result<bool, AnalysisError>.Ok(false);
                         }
                     }
@@ -68,7 +77,7 @@ fn zst_inner(ctx: ResolutionContext&, type_id: TypeId, visiting: HashSet<TypeId>
                     }
 
                     match body.variants[0].payload {
-                        Some(payload) => zst_inner(ctx, substitute(&ctx.session.types, payload, &substitutions)?, visiting),
+                        Some(payload) => zst_inner(store, substitute(store, payload, &substitutions)?, visiting),
                         None => Result<bool, AnalysisError>.Ok(true),
                     }
                 },

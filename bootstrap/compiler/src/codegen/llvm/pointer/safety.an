@@ -1,0 +1,188 @@
+from compiler.codegen.llvm.module import FunctionLowering;
+from compiler.codegen.error import CodegenError;
+from compiler.codegen.abi.runtime import FRAME_LOCK_SLOTS, LOCK_TABLE_SLOTS, LOCK_MASK, FRAME_KEY_LIMIT, SENTINEL, HEAP_LOCK_BASE, HEADER_BYTES, LITERAL_WORD;
+from compiler.common.ids import TypeId;
+from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
+from std.core.option import Option;
+from std.core.result import Result;
+
+impl FunctionLowering {
+    pub fn lock_slot(index: IrValue) -> IrValue {
+        let module = self.owner.module;
+        let table = self.owner.runtime_global("__secl_lock_table", module.array_type(module.int_type(64u32), LOCK_TABLE_SLOTS));
+        let indices = [self.integer(0u64), index];
+        self.builder.gep(module.array_type(module.int_type(64u32), LOCK_TABLE_SLOTS), table.value(), indices.as_slice(), false, "")
+    }
+
+    pub fn check_count(count: IrValue) -> Result<(), CodegenError> {
+        self.checked(self.builder.icmp(IntCompare.Ule, count, self.integer(LOCK_MASK), ""), "R001")
+    }
+
+    // Slot identity is checked before any allocation header is read.
+    pub fn live(word: IrValue, code: str) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        let index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+        self.checked(self.builder.icmp(IntCompare.Ult, index, self.integer(LOCK_TABLE_SLOTS), ""), code)?;
+        let current = self.builder.load(module.int_type(32u32), self.lock_slot(index), "");
+        let shifted = self.builder.binary(BinaryOp.Lshr, word, self.integer(32u64), "");
+        let key = self.builder.cast(CastOp.Trunc, shifted, module.int_type(32u32), "");
+        let same = self.builder.icmp(IntCompare.Eq, current, key, "");
+        let nonnull = self.builder.icmp(IntCompare.Ne, word, self.integer(0u64), "");
+        Result<IrValue, CodegenError>.Ok(self.builder.binary(BinaryOp.And, same, nonnull, ""))
+    }
+
+    pub fn check_access(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
+        let code = match self.owner.session.types.require(type_id)? { Reference(_) => "S003", _ => "S002", };
+        self.check_access_as(type_id, value, code)
+    }
+
+    pub fn check_access_as(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
+        if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
+        let reference = match self.owner.session.types.require(type_id)? { Reference(_) => true, _ => false, };
+        let valid = self.live(self.pointer_word(type_id, value)?, code)?;
+        if !reference {
+            valid = self.builder.binary(BinaryOp.And, valid,
+                self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), "");
+        }
+        self.checked(valid, code)
+    }
+
+    pub fn memory_address(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
+        // The CFG check list establishes access validity before address extraction.
+        self.pointer_data(type_id, value)
+    }
+
+    pub fn check_in_bounds(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
+        if self.fat(type_id)? {
+            match self.owner.session.types.require(type_id)? {
+                Pointer(_) => { self.checked(self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), "S001")?; },
+                _ => {},
+            }
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    // The first executed local address acquires one slot. Later addresses reuse its identity, including on loop backedges.
+    pub fn frame_lock() -> Result<IrValue, CodegenError> {
+        if self.owner.types.raw_pointers() { return Result<IrValue, CodegenError>.Ok(self.integer(LITERAL_WORD)); }
+        let state = match self.frame_state {
+            Some(value) => value,
+            None => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("local address has no frame word slot")),
+        };
+        let module = self.owner.module;
+        let integer = module.int_type(64u32);
+        let previous = self.builder.load(integer, state, "");
+        let origin = self.builder.insertion_block();
+        let acquire = self.function.append_block("");
+        let done = self.function.append_block("");
+        self.builder.cond_br(self.builder.icmp(IntCompare.Ne, previous, self.integer(0u64), ""), done, acquire);
+
+        self.builder.position_at_end(acquire);
+        let counter = self.owner.runtime_global("__yian_key_stack", integer);
+        let key = self.builder.load(integer, counter.value(), "");
+        self.checked(self.builder.icmp(IntCompare.Ult, key, self.integer(FRAME_KEY_LIMIT), ""), "R003")?;
+        let next = self.builder.binary(BinaryOp.Add, key, self.integer(1u64), "");
+        self.builder.store(next, counter.value());
+
+        let depth_global = self.owner.runtime_global("__secl_frame_lock_depth", integer);
+        let depth = self.builder.load(integer, depth_global.value(), "");
+        self.checked(self.builder.icmp(IntCompare.Ult, depth, self.integer(FRAME_LOCK_SLOTS), ""), "R003")?;
+        let slot = self.lock_slot(depth);
+        self.builder.store(next, slot);
+        self.builder.store(self.builder.binary(BinaryOp.Add, depth, self.integer(1u64), ""), depth_global.value());
+        let word = self.builder.binary(BinaryOp.Or,
+            self.builder.binary(BinaryOp.Shl, next, self.integer(32u64), ""), depth, "");
+        self.builder.store(word, state);
+        let acquired = self.builder.insertion_block();
+        self.builder.br(done);
+
+        self.builder.position_at_end(done);
+        let result = self.builder.phi(integer, "");
+        let values = [previous, word];
+        let blocks = [origin, acquired];
+        self.builder.add_incoming(result, values.as_slice(), blocks.as_slice());
+        Result<IrValue, CodegenError>.Ok(result)
+    }
+
+    // Paths without an address have no slot to release. An acquired slot is invalidated with a volatile store.
+    pub fn end_frame() {
+        match self.frame_state {
+            Some(state) => {
+                let integer = self.owner.module.int_type(64u32);
+                let word = self.builder.load(integer, state, "");
+                let release = self.function.append_block("");
+                let done = self.function.append_block("");
+                self.builder.cond_br(self.builder.icmp(IntCompare.Ne, word, self.integer(0u64), ""), release, done);
+
+                self.builder.position_at_end(release);
+                let depth = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+                let invalidation = self.builder.store(self.integer(SENTINEL), self.lock_slot(depth));
+                self.builder.set_volatile(invalidation, true);
+                let depth_global = self.owner.runtime_global("__secl_frame_lock_depth", integer);
+                self.builder.store(depth, depth_global.value());
+                self.builder.br(done);
+                self.builder.position_at_end(done);
+            },
+            None => {},
+        }
+    }
+
+    // Heap anchors reconstruct an address within the allocator's single 4 GiB window.
+    pub fn heap_anchor(data: IrValue, word: IrValue) -> IrValue {
+        let integer = self.owner.module.int_type(64u32);
+        let slot_index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+        let entry = self.builder.load(integer, self.lock_slot(slot_index), "");
+        let low = self.builder.binary(BinaryOp.Lshr, entry, self.integer(32u64), "");
+        let address = self.builder.cast(CastOp.Ptrtoint, data, integer, "");
+        let high = self.builder.binary(BinaryOp.And, address, self.integer(0xFFFFFFFF00000000u64), "");
+        self.builder.binary(BinaryOp.Or, high, low, "")
+    }
+
+    pub fn heap_extent(anchor: IrValue) -> IrValue {
+        let module = self.owner.module;
+        let base = self.builder.binary(BinaryOp.Sub, anchor, self.integer(HEADER_BYTES), "");
+        let pointer = self.builder.cast(CastOp.Inttoptr, base, module.pointer_type(0u32), "");
+        self.builder.cast(CastOp.Zext, self.builder.load(module.int_type(32u32), pointer, ""), module.int_type(64u32), "")
+    }
+
+    pub fn check_view(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
+        if self.owner.types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+        let module = self.owner.module;
+        let data = self.builder.extract_value(value, 0u32, "");
+        let word = self.pointer_word(type_id, value)?;
+        self.checked(self.live(word, "S002")?, "S002")?;
+        let length = self.view_length(value);
+        let empty = self.builder.icmp(IntCompare.Eq, length, self.integer(0u64), "");
+        let nonnull = self.builder.icmp(IntCompare.Ne, data, module.const_null(module.pointer_type(0u32)), "");
+        self.checked(self.builder.binary(BinaryOp.Or, empty, nonnull, ""), "S002")?;
+
+        let index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+        let heap = self.builder.icmp(IntCompare.Uge, index, self.integer(HEAP_LOCK_BASE), "");
+        let inspect = self.function.append_block("");
+        let done = self.function.append_block("");
+        self.builder.cond_br(heap, inspect, done);
+        self.builder.position_at_end(inspect);
+        let anchor = self.heap_anchor(data, word);
+        let extent = self.heap_extent(anchor);
+        let element = match self.owner.session.types.require(type_id)? {
+            Slice(element) => self.owner.types.value_type(*element)?,
+            Str => module.int_type(8u32),
+            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("view check has no element type")),
+        };
+        let wide = module.int_type(128u32);
+        let size = module.const_int(wide, module.abi_size(element));
+        let span = self.builder.binary(BinaryOp.Mul, self.builder.cast(CastOp.Zext, length, wide, ""), size, "");
+        let active = self.builder.binary(BinaryOp.Mul, self.builder.cast(CastOp.Zext, extent, wide, ""), size, "");
+        let start = self.builder.cast(CastOp.Zext, self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), ""), wide, "");
+        let base = self.builder.cast(CastOp.Zext, anchor, wide, "");
+        let end = self.builder.binary(BinaryOp.Add, start, span, "");
+        let limit = self.builder.binary(BinaryOp.Add, base, active, "");
+        let valid = self.builder.binary(BinaryOp.And,
+            self.builder.icmp(IntCompare.Uge, start, base, ""), self.builder.icmp(IntCompare.Ule, end, limit, ""), "");
+        valid = self.builder.binary(BinaryOp.And, valid, self.builder.icmp(IntCompare.Ule, limit, module.const_int(wide, 0xFFFFFFFFFFFFFFFFu64), ""), "");
+        self.checked(valid, "S002")?;
+        self.builder.br(done);
+        self.builder.position_at_end(done);
+        Result<(), CodegenError>.Ok(())
+    }
+}

@@ -2,6 +2,8 @@
 name = "compiler"
 kind = "hybrid"
 version = "0.1.0"
+ffi = true
 
 [dependencies]
 json = { path = "../json" }
+llvm = { path = "../llvm" }

@@ -1,0 +1,249 @@
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.session.output import AnalysisOutput, AnalyzedProcedure;
+from compiler.analysis.ty.callable import store_signature;
+from compiler.codegen.types import BackendTypes;
+from compiler.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
+from compiler.codegen.cfg.model import CfgModule, CfgFunction, ValueKind, Operation, Terminator;
+from compiler.codegen.error import CodegenError;
+from compiler.common.ids import HirId, TypeId, SymbolId;
+from compiler.common.location import SourceSpan;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub struct CleanupScope {
+    pub actions: Vec<HirId>,
+}
+
+impl Drop for CleanupScope {
+    pub fn drop() { self.actions.drop(); }
+}
+
+pub struct LoopTarget {
+    pub head: BlockId,
+    pub exit: BlockId,
+    pub cleanup_depth: u64,
+    pub result_type: TypeId,
+    pub incoming: Vec<(ValueId, BlockId)>,
+}
+
+impl Drop for LoopTarget {
+    pub fn drop() { self.incoming.drop(); }
+}
+
+// Lowering borrows the checked session and owns only per-function maps and cleanup stacks.
+pub struct Lowering {
+    pub session: AnalysisSession&,
+    pub types: BackendTypes&,
+    pub function: CfgFunction&,
+    pub current: Option<BlockId>,
+    pub locals: HashMap<SymbolId, LocalId>,
+    pub captured_places: HashMap<SymbolId, ValueId>,
+    pub scopes: Vec<CleanupScope>,
+    pub loops: Vec<LoopTarget>,
+    pub dependencies: Vec<TypeId>&,
+}
+
+impl Lowering {
+    static pub fn new(session: AnalysisSession&, types: BackendTypes&, function: CfgFunction&,
+        dependencies: Vec<TypeId>&) -> Self {
+        Self(session, types, function, Option<BlockId>.Some(function.add_block()),
+            HashMap<SymbolId, LocalId>.new(), HashMap<SymbolId, ValueId>.new(), Vec<CleanupScope>.new(), Vec<LoopTarget>.new(), dependencies)
+    }
+
+    pub fn zero(type_id: TypeId) -> ValueId {
+        self.function.add_value(type_id, ValueKind.Zero)
+    }
+
+    pub fn emit(span: SourceSpan, type_id: TypeId, operation: Operation) -> Result<ValueId, CodegenError> {
+        let block = match self.current {
+            Some(value) => value,
+            None => {
+                operation.drop();
+                return Result<ValueId, CodegenError>.Ok(self.zero(type_id));
+            },
+        };
+        let result = self.function.append(block, span, Option<TypeId>.Some(type_id), operation)?;
+        Result<ValueId, CodegenError>.Ok(*result.unwrap())
+    }
+
+    pub fn effect(span: SourceSpan, operation: Operation) -> Result<(), CodegenError> {
+        let block = match self.current {
+            Some(value) => value,
+            None => {
+                operation.drop();
+                return Result<(), CodegenError>.Ok(());
+            },
+        };
+        self.function.append(block, span, Option<TypeId>.None, operation)?;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn end(terminator: Terminator) -> Result<(), CodegenError> {
+        let block = match self.current {
+            Some(value) => value,
+            None => return Result<(), CodegenError>.Err(CodegenError.invalid("path has already exited")),
+        };
+        self.function.terminate(block, terminator)?;
+        self.current = Option<BlockId>.None;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn bind(symbol: SymbolId) -> Result<LocalId, CodegenError> {
+        match self.locals.get(&symbol) {
+            Some(value) => return Result<LocalId, CodegenError>.Ok(*value),
+            None => {},
+        }
+        let record = match self.session.symbols.get(symbol) {
+            Some(value) => value,
+            None => return Result<LocalId, CodegenError>.Err(CodegenError.invalid("invalid lowered symbol")),
+        };
+        let local = self.function.add_local(record.type_id);
+        self.locals.insert(symbol, local);
+        Result<LocalId, CodegenError>.Ok(local)
+    }
+
+    // Exit values are computed by the caller before any deferred action runs.
+    pub fn clean_to(depth: u64) -> Result<(), CodegenError> {
+        if self.current.is_none() { return Result<(), CodegenError>.Ok(()); }
+        let scope = self.scopes.len();
+        while scope > depth {
+            scope -= 1u64;
+            let action = self.scopes[scope].actions.len();
+            while action != 0 {
+                action -= 1u64;
+                let id = self.scopes[scope].actions[action];
+                self.expression(id)?;
+                if self.current.is_none() { return Result<(), CodegenError>.Ok(()); }
+            }
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn finish(procedure: AnalyzedProcedure&) -> Result<(), CodegenError> {
+        let root = self.session.hir.require(procedure.root)?;
+        let parameter_start = 0u64;
+        let parameter_position = 0u64;
+        match self.types.closure_environment(procedure.type_id) {
+            Some(environment) => {
+                let reference = self.session.types.reference(environment);
+                let pointer = self.function.add_value(reference, ValueKind.Parameter(0u64));
+                let index = 0u64;
+                for capture in procedure.captures {
+                    let symbol = self.session.symbols.get(capture[1]).unwrap();
+                    let captured_ref = self.session.types.reference(symbol.type_id);
+                    let address = self.emit(root.span, captured_ref, Operation.FieldAddress(pointer, environment, index))?;
+                    self.captured_places.insert(capture[1], address);
+                    index += 1u64;
+                }
+                parameter_start = procedure.captures.len();
+                parameter_position = 1u64;
+            },
+            None => {
+                if !procedure.captures.is_empty() { return Result<(), CodegenError>.Err(CodegenError.invalid("capturing procedure has no environment ABI")); }
+            },
+        }
+
+        for index in parameter_start..procedure.parameters.len() {
+            let symbol = procedure.parameters[index];
+            let local = self.bind(symbol)?;
+            let type_id = self.function.local(local)?.type_id;
+            let parameter = self.function.add_value(type_id, ValueKind.Parameter(parameter_position));
+            self.effect(root.span, Operation.Store(local, parameter))?;
+            parameter_position += 1u64;
+        }
+
+        let value = self.expression(procedure.root)?;
+        if self.current.is_some() {
+            let result = if self.types.is_zst(self.function.result_type)? {
+                Option<ValueId>.None
+            } else {
+                Option<ValueId>.Some(value)
+            };
+            self.end(Terminator.Return(result))?;
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+}
+
+impl Drop for Lowering {
+    pub fn drop() {
+        for scope in self.scopes { scope.drop(); }
+        for target in self.loops { target.drop(); }
+        self.scopes.drop();
+        self.loops.drop();
+        self.locals.drop();
+        self.captured_places.drop();
+    }
+}
+
+pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: AnalysisOutput&)
+-> Result<CfgModule, CodegenError> {
+    let module = CfgModule.new(&session.types, output.entry);
+    let accepted = false;
+    defer { if !accepted { module.drop(); } };
+    let pending = Vec<TypeId>.new();
+    defer pending.drop();
+    let seen = HashSet<TypeId>.new();
+    defer seen.drop();
+    let procedures = HashMap<TypeId, u64>.new();
+    defer procedures.drop();
+    for index in 0u64..output.procedures.len() {
+        let callable = output.procedures[index].type_id;
+        if procedures.contains(&callable) {
+            return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("duplicate checked procedure"));
+        }
+        procedures.insert(callable, index);
+    }
+
+    match output.entry {
+        Some(value) => pending.push(value),
+        None => {
+            for procedure in output.procedures { pending.push(procedure.type_id); }
+        },
+    }
+
+    while !pending.is_empty() {
+        let callable = *pending.pop().unwrap();
+        if !seen.insert(callable) { continue; }
+        let signature = types.signature(callable)?;
+
+        if signature.is_header { continue; }
+        let position = match procedures.get(&callable) {
+            Some(value) => *value,
+            None => return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("checked callable has no exported procedure")),
+        };
+        let body: AnalyzedProcedure& = &output.procedures[position];
+
+        let parameters = Vec<TypeId>.new();
+        let start = 0u64;
+        match types.closure_environment(callable) {
+            Some(environment) => {
+                parameters.push(session.types.reference(environment));
+                start = body.captures.len();
+            },
+            None => {},
+        }
+        for index in start..body.parameters.len() {
+            parameters.push(session.symbols.get(body.parameters[index]).unwrap().type_id);
+        }
+        let function = CfgFunction.new(callable, signature.result, parameters);
+        let owns_function = true;
+        defer { if owns_function { function.drop(); } };
+        let lowering = Lowering.new(session, types, &function, &pending);
+        defer lowering.drop();
+        lowering.finish(body)?;
+        // Module receives the function after lowering has relinquished its borrowed state.
+        owns_function = false;
+        module.add(function)?;
+    }
+
+    accepted = true;
+    Result<CfgModule, CodegenError>.Ok(module)
+}

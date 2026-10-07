@@ -1,0 +1,74 @@
+from compiler.config import CompilerConfig;
+from compiler.package.model import PackageMap;
+from compiler.diagnostics.model import AnalysisError;
+from compiler.package.provenance import normalize_path;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import env_var;
+from std.core.result import Result;
+
+pub struct SourceRoots {
+    pub checkout: PathBuf,
+    pub standard_library: PathBuf,
+}
+
+impl SourceRoots {
+    static fn from_checkout(path: str) -> Result<Self, AnalysisError> {
+        let checkout = normalize_path(path)?;
+        let accepted = false;
+        defer { if !accepted { checkout.drop(); } };
+        let joined = checkout.as_path().join("lib/src");
+        defer joined.drop();
+        let standard_library = normalize_path(joined.as_str())?;
+        accepted = true;
+        Result<Self, AnalysisError>.Ok(Self(checkout, standard_library))
+    }
+
+    static fn from_library(path: str) -> Result<Self, AnalysisError> {
+        let library = normalize_path(path)?;
+        let accepted = false;
+        defer { if !accepted { library.drop(); } };
+        let parent = match library.as_path().parent() {
+            Some(value) => value,
+            None => return Result<Self, AnalysisError>.Err(AnalysisError.internal("standard-library root has no checkout parent")),
+        };
+        let checkout = match parent.parent() {
+            Some(value) => PathBuf.from(value.as_str()),
+            None => return Result<Self, AnalysisError>.Err(AnalysisError.internal("standard-library root has no checkout parent")),
+        };
+        accepted = true;
+        Result<Self, AnalysisError>.Ok(Self(checkout, library))
+    }
+}
+
+impl Drop for SourceRoots {
+    pub fn drop() { self.checkout.drop(); self.standard_library.drop(); }
+}
+
+pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> Result<SourceRoots, AnalysisError> {
+    if config.root_explicit { return SourceRoots.from_checkout(config.compiler_root.as_str()); }
+    for name in ["YIAN_LIB", "YIAN_ROOT"] {
+        let path = match env_var(*name) {
+            Ok(value) => value,
+            Err(problem) => { defer problem.drop(); return Result<SourceRoots, AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
+        };
+        match &path {
+            Some(value) => {
+                defer value.drop();
+                return if *name == "YIAN_LIB" { SourceRoots.from_library(value.as_str()) } else { SourceRoots.from_checkout(value.as_str()) };
+            },
+            None => {},
+        }
+    }
+
+    match packages {
+        Some(map) => match map.find("std") {
+            Some(package) => return SourceRoots.from_library(package.source_root.as_str()),
+            None => {},
+        },
+        None => {},
+    }
+    SourceRoots.from_checkout(config.compiler_root.as_str())
+}

@@ -1,0 +1,180 @@
+from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.session.output import AnalysisOutput;
+from compiler.analysis.ty.store import TypeStore;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.codegen.cfg.model import CfgModule;
+from compiler.codegen.cfg.verify import verify_cfg, verify_structure;
+from compiler.codegen.cfg.passes.checks import insert_checks;
+from compiler.codegen.cfg.passes.cleanup import cleanup;
+from compiler.codegen.lowering.context import lower_module;
+from compiler.codegen.llvm.module import LlvmLowering;
+from compiler.codegen.types import BackendTypes;
+from compiler.codegen.error import CodegenError;
+from compiler.config import OutputKind;
+from llvm.object import Module;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub struct BackendOptions {
+    pub raw_pointers: bool,
+    pub optimization: u8,
+}
+
+pub struct EmitOptions {
+    pub target: OutputKind,
+}
+
+pub struct Emission {
+    pub target: OutputKind,
+    pub bytes: Vec<u8>,
+}
+
+impl Drop for Emission {
+    pub fn drop() { self.bytes.drop(); }
+}
+
+enum BackendPhase {
+    Created, Lowered, Generated, Emitted, Failed,
+}
+
+// LLVM's owning module has a stable heap address across shallow return-value transfers.
+pub struct BackendSession {
+    analysis: AnalysisSession&,
+    module: Module*,
+    types: BackendTypes,
+    options: BackendOptions,
+    phase: BackendPhase,
+    generated: Option<CfgModule&>,
+}
+
+impl BackendSession {
+    static pub fn new(analysis: AnalysisSession&, options: BackendOptions) -> Result<Self, CodegenError> {
+        if options.raw_pointers != analysis.raw_pointers || options.optimization > 3u8 {
+            return Result<Self, CodegenError>.Err(CodegenError.invalid("inconsistent backend configuration"));
+        }
+        let value = match Module.try_new("yian", options.optimization) {
+            Ok(value) => value,
+            Err(message) => return Result<Self, CodegenError>.Err(CodegenError.llvm_error(message)),
+        };
+        let accepted = false;
+        defer { if !accepted { value.close(); } };
+        let target_bytes = value.target_triple();
+        defer target_bytes.drop();
+        let target = match str.from_slice(target_bytes.as_slice()) {
+            Some(text) => text,
+            None => return Result<Self, CodegenError>.Err(CodegenError.invalid("LLVM target is not UTF-8")),
+        };
+        if !target.starts_with("x86_64-") || !target.contains("linux") || target.contains("x32")
+        || value.abi_size(value.pointer_type(0u32)) != 8u64 {
+            return Result<Self, CodegenError>.Err(CodegenError.target("backend requires Linux x86-64 LP64"));
+        }
+        let module = dyn value;
+        let types = BackendTypes.new(&analysis.types, &*module, options.raw_pointers);
+        accepted = true;
+        Result<Self, CodegenError>.Ok(Self(analysis, module, types, options, BackendPhase.Created, Option<CfgModule&>.None))
+    }
+
+    pub fn size_provider() -> TypeSizeProvider& { &self.types }
+
+    pub fn lower(output: AnalysisOutput&) -> Result<CfgModule, CodegenError> {
+        if self.phase != BackendPhase.Created {
+            return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("backend lowering has already started"));
+        }
+        self.phase = BackendPhase.Failed;
+        self.types.finish_analysis();
+        let cfg = lower_module(self.analysis, &self.types, output)?;
+        let accepted = false;
+        defer { if !accepted { cfg.drop(); } };
+        verify_structure(&cfg)?;
+        cleanup(&cfg)?;
+        insert_checks(&cfg, &self.types)?;
+        verify_cfg(&cfg, &self.types)?;
+        self.phase = BackendPhase.Lowered;
+        accepted = true;
+        Result<CfgModule, CodegenError>.Ok(cfg)
+    }
+
+    pub fn emit(cfg: CfgModule&, options: EmitOptions) -> Result<Emission, CodegenError> {
+        self.check_cfg(cfg)?;
+        if (self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated) || options.target == OutputKind.None {
+            return Result<Emission, CodegenError>.Err(CodegenError.invalid("backend emission is not permitted in this state"));
+        }
+        if self.phase == BackendPhase.Lowered { self.generate(cfg)?; }
+        self.phase = BackendPhase.Failed;
+        let bytes = match options.target {
+            Ll => match self.module.try_ir() {
+                Ok(value) => value,
+                Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+            },
+            Bc => {
+                match self.module.optimize() {
+                    Ok(_) => {},
+                    Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+                }
+                match self.module.try_bitcode() {
+                    Ok(value) => value,
+                    Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+                }
+            },
+            Asm => match self.module.assembly() {
+                Ok(value) => value,
+                Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+            },
+            _ => match self.module.object() {
+                Ok(value) => value,
+                Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+            },
+        };
+        self.phase = BackendPhase.Emitted;
+        Result<Emission, CodegenError>.Ok(Emission(options.target, bytes))
+    }
+
+    fn generate(cfg: CfgModule&) -> Result<(), CodegenError> {
+        self.phase = BackendPhase.Failed;
+        verify_cfg(cfg, &self.types)?;
+        insert_checks(cfg, &self.types)?;
+        verify_cfg(cfg, &self.types)?;
+        let lowering = LlvmLowering.new(self.analysis, &self.types, &*self.module, cfg.entry);
+        defer lowering.drop();
+        lowering.lower(cfg)?;
+        self.generated = Option<CfgModule&>.Some(cfg);
+        self.phase = BackendPhase.Generated;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    // The caller releases this byte snapshot independently of the LLVM module.
+    pub fn llvm_snapshot(cfg: CfgModule&) -> Result<Vec<u8>, CodegenError> {
+        self.check_cfg(cfg)?;
+        if self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated {
+            return Result<Vec<u8>, CodegenError>.Err(CodegenError.invalid("LLVM snapshot is unavailable in this state"));
+        }
+        if self.phase == BackendPhase.Lowered { self.generate(cfg)?; }
+        match self.module.try_ir() {
+            Ok(value) => Result<Vec<u8>, CodegenError>.Ok(value),
+            Err(message) => Result<Vec<u8>, CodegenError>.Err(CodegenError.llvm_error(message)),
+        }
+    }
+
+    // A generated graph stays borrowed and immutable through emission.
+    fn check_cfg(cfg: CfgModule&) -> Result<(), CodegenError> {
+        let owner: TypeStore& = &self.analysis.types;
+        if cfg.type_store() != owner {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG belongs to another analysis session"));
+        }
+        match self.generated {
+            Some(value) => { if value != cfg { return Result<(), CodegenError>.Err(CodegenError.invalid("LLVM module represents another CFG")); } },
+            None => {},
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+}
+
+impl Drop for BackendSession {
+    pub fn drop() {
+        self.types.drop();
+        self.module.close();
+        del self.module;
+    }
+}

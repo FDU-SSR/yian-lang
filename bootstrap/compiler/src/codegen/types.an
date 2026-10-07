@@ -1,0 +1,510 @@
+from compiler.analysis.ty.store import TypeStore;
+from compiler.analysis.ty.model import NominalKind, StructField, EnumVariant;
+from compiler.analysis.ty.callable import CallableSignature, store_signature;
+from compiler.analysis.ty.properties import store_is_zst;
+from compiler.analysis.ty.queries import struct_fields, enum_variants;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.common.ids import TypeId;
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from llvm.object import Module;
+from llvm.ir import IrType;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub struct BackendTypeId {
+    pub index: u64,
+}
+
+struct BackendType {
+    semantic: TypeId,
+    native: IrType,
+}
+
+// Query results own their buffers. Arena addresses remain valid while other concrete types are queried.
+struct QueryCache<T> {
+    records: Arena<T>,
+    index: HashMap<TypeId, u64>,
+}
+
+impl<T> QueryCache<T> {
+    static fn new() -> Self { Self(Arena<T>.new(), HashMap<TypeId, u64>.new()) }
+
+    fn get(type_id: TypeId) -> Option<T&> {
+        match self.index.get(&type_id) {
+            Some(index) => self.records.get(*index),
+            None => Option<T&>.None,
+        }
+    }
+
+    fn insert(type_id: TypeId, value: T) -> T& {
+        let index = self.records.len();
+        let record = self.records.alloc(value);
+        self.index.insert(type_id, index);
+        record
+    }
+}
+
+impl<T> Drop for QueryCache<T> if T: Drop {
+    pub fn drop() {
+        for record in self.records { record.drop(); }
+        self.index.drop();
+        self.records.drop();
+    }
+}
+
+// LLVM handles borrow module. Both module and semantic store outlive this cache.
+pub struct BackendTypes {
+    store: TypeStore&,
+    module: Module&,
+    raw: bool,
+    records: Arena<BackendType>,
+    index: HashMap<TypeId, BackendTypeId>,
+    active: HashSet<TypeId>,
+    closure_calls: HashMap<TypeId, TypeId>,
+    scanned_types: u64,
+    zst_cache: HashMap<TypeId, bool>,
+    cache_zst: bool,
+    fields: QueryCache<Vec<StructField>>,
+    variants: QueryCache<Vec<EnumVariant>>,
+    signatures: QueryCache<CallableSignature>,
+}
+
+fn unavailable(message: str) -> AnalysisError {
+    AnalysisError.unsupported(Option<SourceSpan>.None, message)
+}
+
+impl BackendTypes {
+    pub fn raw_pointers() -> bool { self.raw }
+
+    static pub fn new(store: TypeStore&, module: Module&, raw: bool) -> Self {
+        Self(store, module, raw, Arena<BackendType>.new(),
+            HashMap<TypeId, BackendTypeId>.new(), HashSet<TypeId>.new(), HashMap<TypeId, TypeId>.new(), 0u64,
+            HashMap<TypeId, bool>.new(), false, QueryCache<Vec<StructField>>.new(),
+            QueryCache<Vec<EnumVariant>>.new(), QueryCache<CallableSignature>.new())
+    }
+
+    pub fn semantic_store() -> TypeStore& {
+        self.store
+    }
+
+    pub fn is_zst(type_id: TypeId) -> Result<bool, AnalysisError> {
+        if self.cache_zst {
+            match self.zst_cache.get(&type_id) {
+                Some(value) => return Result<bool, AnalysisError>.Ok(*value),
+                None => {},
+            }
+        }
+
+        let result = store_is_zst(self.store, type_id)?;
+        if self.cache_zst { self.zst_cache.insert(type_id, result); }
+        Result<bool, AnalysisError>.Ok(result)
+    }
+
+    // Completed analysis fixes definition bodies and closure environments. Earlier size queries cannot cache these facts.
+    pub fn finish_analysis() { self.cache_zst = true; }
+
+    // Definition queries reject incomplete bodies. Completed bodies are immutable; callers borrow cache-owned buffers.
+    pub fn fields_of(type_id: TypeId) -> Result<Vec<StructField>&, AnalysisError> {
+        match self.fields.get(type_id) {
+            Some(value) => return Result<Vec<StructField>&, AnalysisError>.Ok(value),
+            None => {},
+        }
+        let value = struct_fields(self.store, type_id)?;
+        Result<Vec<StructField>&, AnalysisError>.Ok(self.fields.insert(type_id, value))
+    }
+
+    pub fn variants_of(type_id: TypeId) -> Result<Vec<EnumVariant>&, AnalysisError> {
+        match self.variants.get(type_id) {
+            Some(value) => return Result<Vec<EnumVariant>&, AnalysisError>.Ok(value),
+            None => {},
+        }
+        let value = enum_variants(self.store, type_id)?;
+        Result<Vec<EnumVariant>&, AnalysisError>.Ok(self.variants.insert(type_id, value))
+    }
+
+    pub fn signature(type_id: TypeId) -> Result<CallableSignature&, AnalysisError> {
+        match self.signatures.get(type_id) {
+            Some(value) => return Result<CallableSignature&, AnalysisError>.Ok(value),
+            None => {},
+        }
+        let value = store_signature(self.store, type_id)?;
+        Result<CallableSignature&, AnalysisError>.Ok(self.signatures.insert(type_id, value))
+    }
+
+    pub fn closure_environment(callable: TypeId) -> Option<TypeId> {
+        while self.scanned_types < self.store.len() {
+            let id = TypeId(self.scanned_types);
+            self.scanned_types += 1u64;
+            match self.store.get(id).unwrap() {
+                Closure(_, _, _, _, environment, call) => match (environment, call) {
+                    (Some(value), Some(method)) => { self.closure_calls.insert(*method, *value); },
+                    _ => {},
+                },
+                _ => {},
+            }
+        }
+        match self.closure_calls.get(&callable) {
+            Some(value) => Option<TypeId>.Some(*value),
+            None => Option<TypeId>.None,
+        }
+    }
+
+    pub fn get(id: BackendTypeId) -> Option<IrType> {
+        match self.records.get(id.index) {
+            Some(value) => Option<IrType>.Some(value.native),
+            None => Option<IrType>.None,
+        }
+    }
+
+    // Only completed mappings enter the public index. Failed LLVM placeholders stay module-owned.
+    pub fn lower(type_id: TypeId) -> Result<BackendTypeId, AnalysisError> {
+        match self.index.get(&type_id) {
+            Some(value) => return Result<BackendTypeId, AnalysisError>.Ok(*value),
+            None => {},
+        }
+
+        if !self.active.insert(type_id) {
+            return Result<BackendTypeId, AnalysisError>.Err(unavailable("recursive by-value backend type"));
+        }
+        defer self.active.remove(&type_id);
+
+        let native = if self.is_zst(type_id)? {
+            self.empty_type()
+        } else {
+            self.map_value(type_id)?
+        };
+        let id = BackendTypeId(self.records.len());
+        self.records.alloc(BackendType(type_id, native));
+        self.index.insert(type_id, id);
+        Result<BackendTypeId, AnalysisError>.Ok(id)
+    }
+
+    pub fn value_type(type_id: TypeId) -> Result<IrType, AnalysisError> {
+        let id = self.lower(type_id)?;
+        Result<IrType, AnalysisError>.Ok(*self.get(id).unwrap())
+    }
+
+    fn empty_type() -> IrType {
+        let fields = Vec<IrType>.new();
+        defer fields.drop();
+
+        self.module.struct_type(fields.as_slice(), false)
+    }
+
+    fn pointer_type() -> IrType {
+        self.module.pointer_type(0u32)
+    }
+
+    fn view_type() -> IrType {
+        let fields = Vec<IrType>.new();
+        defer fields.drop();
+
+        fields.push(self.pointer_type());
+        fields.push(self.module.int_type(64u32));
+        if !self.raw {
+            fields.push(self.module.int_type(64u32));
+        }
+        self.module.struct_type(fields.as_slice(), false)
+    }
+
+    fn reference_type() -> IrType {
+        if self.raw {
+            return self.pointer_type();
+        }
+        let fields = [self.pointer_type(), self.module.int_type(64u32)];
+        self.module.struct_type(fields.as_slice(), false)
+    }
+
+    fn fat_pointer_type() -> IrType {
+        if self.raw {
+            return self.pointer_type();
+        }
+        let fields = [self.pointer_type(), self.module.int_type(64u32),
+            self.module.int_type(32u32), self.module.int_type(32u32)];
+        self.module.struct_type(fields.as_slice(), false)
+    }
+
+    fn object_type() -> IrType {
+        let fields = Vec<IrType>.new();
+        defer fields.drop();
+
+        fields.push(self.pointer_type());
+        if !self.raw {
+            fields.push(self.module.int_type(64u32));
+        }
+        fields.push(self.pointer_type());
+        self.module.struct_type(fields.as_slice(), false)
+    }
+
+    fn map_value(type_id: TypeId) -> Result<IrType, AnalysisError> {
+        let value = match self.store.require(type_id)? {
+            Bool => self.module.int_type(1u32),
+            Char => self.module.int_type(32u32),
+            Integer(bits, _) | CScalar(bits, _, _) => self.module.int_type(*bits),
+            Float(bits) => match *bits {
+                16 => self.module.half_type(),
+                32 => self.module.float_type(),
+                64 => self.module.double_type(),
+                _ => return Result<IrType, AnalysisError>.Err(unavailable("unsupported floating-point width")),
+            },
+            CPointer(_) | FunctionPointer(_, _) => self.pointer_type(),
+            Pointer(_) => self.fat_pointer_type(),
+            Reference(_) => self.reference_type(),
+            Slice(_) | Str => self.view_type(),
+            TraitObject(_) => self.object_type(),
+            Array(element, length) => {
+                let count = match self.store.require(*length)? {
+                    LiteralValue(bits, negative, _) => {
+                        if *negative {
+                            return Result<IrType, AnalysisError>.Err(unavailable("negative array length"));
+                        };
+                        (*bits)
+                    },
+                    _ => return Result<IrType, AnalysisError>.Err(unavailable("array length is not concrete")),
+                };
+                let native = self.value_type(*element)?;
+                let size = self.module.abi_size(native);
+                if size != 0 && count > 0x7FFFFFFFFFFFFFFFu64 / size {
+                    return Result<IrType, AnalysisError>.Err(unavailable("array allocation size exceeds target range"));
+                }
+                self.module.array_type(native, count)
+            },
+            Tuple(elements) => {
+                let fields = Vec<IrType>.new();
+                defer fields.drop();
+
+                for element in *elements {
+                    fields.push(self.value_type(*element)?);
+                }
+                self.validate_fields(fields.as_slice())?;
+                self.module.struct_type(fields.as_slice(), false)
+            },
+            Closure(_, _, _, _, environment, _) => {
+                match environment {
+                    Some(value) => return self.value_type(*value),
+                    None => return Result<IrType, AnalysisError>.Err(AnalysisError.internal("closure has no environment type")),
+                }
+            },
+            Nominal(definition, _) => {
+                match self.store.definition(*definition).unwrap().header().kind {
+                    Struct => return self.structure(type_id),
+                    Enum => return self.enumeration(type_id),
+                    _ => return Result<IrType, AnalysisError>.Err(unavailable("nominal type has no value representation")),
+                }
+            },
+            _ => return Result<IrType, AnalysisError>.Err(unavailable("type is not a concrete backend value")),
+        };
+        Result<IrType, AnalysisError>.Ok(value)
+    }
+
+    fn named_type(type_id: TypeId) -> IrType {
+        let name = String.from(&"yian.type.");
+        defer name.drop();
+        let number = type_id.index.to_string();
+        defer number.drop();
+        name.push_str(number.as_str());
+        self.module.named_struct_type(name.as_str())
+    }
+
+    // Check target field sizes and padding before LLVM can wrap the aggregate's allocation size.
+    fn validate_fields(fields: IrType[]) -> Result<(), AnalysisError> {
+        let limit = 0x7FFFFFFFFFFFFFFFu64;
+        let offset = 0u64;
+        let aggregate_alignment = 1u64;
+        for field in fields {
+            let alignment = u64(self.module.abi_alignment(*field));
+            if alignment == 0u64 {
+                return Result<(), AnalysisError>.Err(AnalysisError.internal("LLVM field has zero ABI alignment"));
+            }
+            let size = self.module.abi_size(*field);
+            let padding = (alignment - offset % alignment) % alignment;
+            if padding > limit - offset || size > limit - offset - padding {
+                return Result<(), AnalysisError>.Err(unavailable("aggregate allocation size exceeds target range"));
+            }
+            offset += padding + size;
+            if alignment > aggregate_alignment { aggregate_alignment = alignment; }
+        }
+
+        let padding = (aggregate_alignment - offset % aggregate_alignment) % aggregate_alignment;
+        if padding > limit - offset {
+            return Result<(), AnalysisError>.Err(unavailable("aggregate allocation size exceeds target range"));
+        }
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn structure(type_id: TypeId) -> Result<IrType, AnalysisError> {
+        let native = self.named_type(type_id);
+        let members = self.fields_of(type_id)?;
+
+        let fields = Vec<IrType>.new();
+        defer fields.drop();
+
+        for member in members {
+            fields.push(self.value_type(member.type_id)?);
+        }
+        self.validate_fields(fields.as_slice())?;
+        self.module.set_struct_body(native, fields.as_slice(), false);
+        Result<IrType, AnalysisError>.Ok(native)
+    }
+
+    // Only the two-variant, one-pointer-field shape has a null niche.
+    pub fn niche_payload(type_id: TypeId) -> Result<Option<TypeId>, AnalysisError> {
+        let variants = self.variants_of(type_id)?;
+
+        if variants.len() != 2 {
+            return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+        }
+        let payload = Option<TypeId>.None;
+        let has_unit = false;
+        for variant in variants {
+            match variant.payload {
+                Some(value) => {
+                    if payload.is_some() {
+                        return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+                    }
+                    payload = Option<TypeId>.Some(value);
+                },
+                None => {
+                    has_unit = true;
+                },
+            }
+        }
+        if !has_unit || payload.is_none() {
+            return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+        }
+        let fields = self.fields_of(*payload.unwrap())?;
+
+        if fields.len() != 1 || self.is_zst(fields[0].type_id)? {
+            return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+        }
+        let candidate = fields[0].type_id;
+        let allowed = match self.store.require(candidate)? {
+            Pointer(_) | Reference(_) | FunctionPointer(_, _) | Str => true,
+            Slice(element) => !self.is_zst(*element)?,
+            _ => false,
+        };
+        Result<Option<TypeId>, AnalysisError>.Ok(if allowed {
+                Option<TypeId>.Some(candidate)
+            } else {
+                Option<TypeId>.None
+            })
+    }
+
+    fn enumeration(type_id: TypeId) -> Result<IrType, AnalysisError> {
+        match self.niche_payload(type_id)? {
+            Some(value) => return self.value_type(value),
+            None => {},
+        }
+        let native = self.named_type(type_id);
+        let variants = self.variants_of(type_id)?;
+
+        let size = 0u64;
+        let alignment = 1u64;
+        for variant in variants {
+            match variant.payload {
+                Some(value) => {
+                    let ty = self.value_type(value)?;
+                    let bytes = self.module.abi_size(ty);
+                    let align = u64(self.module.abi_alignment(ty));
+                    if bytes > size { size = bytes; }
+                    if align > alignment { alignment = align; }
+                },
+                None => {},
+            }
+        }
+        if size > 0x7FFFFFFFFFFFFFFFu64 - alignment - 4 {
+            return Result<IrType, AnalysisError>.Err(unavailable("enum allocation size exceeds target range"));
+        }
+        let padded = ((size + alignment - 1) / alignment) * alignment;
+        let fields = [self.module.int_type(32u32),
+            self.module.array_type(self.module.int_type(32u32), (padded + 3) / 4)];
+        self.module.set_struct_body(native, fields.as_slice(), false);
+        Result<IrType, AnalysisError>.Ok(native)
+    }
+
+    // Signature filtering and call argument filtering must share the same ZST decisions.
+    pub fn function_type(type_id: TypeId) -> Result<IrType, AnalysisError> {
+        match self.store.require(type_id)? {
+            FunctionPointer(arguments, result) => {
+                let native = Vec<IrType>.new();
+                defer native.drop();
+                for argument in *arguments { if !self.is_zst(*argument)? { native.push(self.value_type(*argument)?); } }
+                let returned = if self.is_zst(*result)? { self.module.void_type() } else { self.value_type(*result)? };
+                return Result<IrType, AnalysisError>.Ok(self.module.function_type(returned, native.as_slice()));
+            },
+            _ => {},
+        }
+        let signature = self.signature(type_id)?;
+
+        let parameters = Vec<IrType>.new();
+        defer parameters.drop();
+        match self.closure_environment(type_id) {
+            Some(environment) => { if !self.is_zst(environment)? { parameters.push(self.reference_type()); } },
+            None => {},
+        }
+        if !signature.is_static {
+            match signature.receiver {
+                Some(value) => {
+                    if !self.is_zst(value)? {
+                        parameters.push(self.reference_type());
+                    }
+                },
+                None => {},
+            }
+        }
+        for parameter in signature.parameters {
+            if !self.is_zst(parameter.type_id)? {
+                parameters.push(self.value_type(parameter.type_id)?);
+            }
+        }
+        let result = if self.is_zst(signature.result)? {
+            self.module.void_type()
+        } else {
+            self.value_type(signature.result)?
+        };
+        Result<IrType, AnalysisError>.Ok(self.module.function_type(result, parameters.as_slice()))
+    }
+
+    pub fn dynamic_signature(object_type: TypeId, method: TypeId) -> Result<IrType, AnalysisError> {
+        let signature = self.signature(method)?;
+
+        let parameters = Vec<IrType>.new();
+        defer parameters.drop();
+        parameters.push(self.value_type(object_type)?);
+        for parameter in signature.parameters {
+            if !self.is_zst(parameter.type_id)? { parameters.push(self.value_type(parameter.type_id)?); }
+        }
+        let result = if self.is_zst(signature.result)? { self.module.void_type() } else { self.value_type(signature.result)? };
+        Result<IrType, AnalysisError>.Ok(self.module.function_type(result, parameters.as_slice()))
+    }
+}
+
+impl TypeSizeProvider for BackendTypes {
+    pub fn size_of(type_id: TypeId) -> Result<u64, AnalysisError> {
+        let ty = self.value_type(type_id)?;
+        Result<u64, AnalysisError>.Ok(self.module.abi_size(ty))
+    }
+}
+
+impl Drop for BackendTypes {
+    pub fn drop() {
+        self.active.drop();
+        self.closure_calls.drop();
+        self.zst_cache.drop();
+        self.fields.drop();
+        self.variants.drop();
+        self.signatures.drop();
+        self.index.drop();
+        self.records.drop();
+    }
+}

@@ -1,0 +1,69 @@
+from compiler.codegen.cfg.ids import FunctionId, BlockId;
+from compiler.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Terminator;
+from compiler.codegen.error import CodegenError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.range import Range;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn clean_function(function: CfgFunction&) -> Result<(), CodegenError> {
+    let reachable = Vec<bool>.new();
+    defer reachable.drop();
+    for index in 0u64..function.block_count() { reachable.push(false); }
+    let pending = Vec<BlockId>.new();
+    defer pending.drop();
+    pending.push(BlockId(0u64));
+    while !pending.is_empty() {
+        let id = *pending.pop().unwrap();
+        if reachable[id.index] { continue; }
+        reachable[id.index] = true;
+        let block = function.block(id)?;
+        match &*block.terminator.unwrap() {
+            Jump(destination) => pending.push(*destination),
+            Branch(_, yes, no) => {
+                pending.push(*yes);
+                pending.push(*no);
+            },
+            _ => {},
+        }
+    }
+
+    // Arena IDs remain stable. Dead records contain no operations or outgoing edges.
+    for index in 0u64..function.block_count() {
+        let block = function.block(BlockId(index))?;
+        if !reachable[index] {
+            for instruction in block.instructions { instruction.drop(); }
+            block.instructions.drop();
+            block.instructions = Vec<Instruction>.new();
+            block.terminator = Option<Terminator>.Some(Terminator.Unreachable);
+            continue;
+        }
+
+        for instruction in block.instructions {
+            match &instruction.operation {
+                Phi(incoming) => {
+                    let edge = 0u64;
+                    while edge < incoming.len() {
+                        if !reachable[incoming[edge][1].index] { incoming.remove(edge); } else { edge += 1u64; }
+                    }
+                },
+                _ => {},
+            }
+        }
+        match &*block.terminator.unwrap() {
+            Branch(_, yes, no) => {
+                if *yes == *no { block.terminator = Option<Terminator>.Some(Terminator.Jump(*yes)); }
+            },
+            _ => {},
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+pub fn cleanup(module: CfgModule&) -> Result<(), CodegenError> {
+    for index in 0u64..module.len() { clean_function(*module.function(FunctionId(index)).unwrap())?; }
+    Result<(), CodegenError>.Ok(())
+}

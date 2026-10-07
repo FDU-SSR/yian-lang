@@ -1,0 +1,338 @@
+from compiler.codegen.lowering.context import Lowering;
+from compiler.codegen.cfg.ids import BlockId, ValueId;
+from compiler.codegen.cfg.model import Operation, Terminator, ValueKind, IndexBounds;
+from compiler.codegen.error import CodegenError;
+from compiler.analysis.hir.node import HirNode, Match, PatternLet;
+from compiler.analysis.ty.model import TypeData;
+from compiler.analysis.ty.queries import enum_variants;
+from compiler.analysis.hir.pattern import SequencePattern;
+from compiler.frontend.ast.atoms import BuiltinKind;
+from compiler.common.ids import PatternId, TypeId;
+from compiler.common.location import SourceSpan;
+from compiler.frontend.ast.operator import BinaryOperator;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl Lowering {
+    pub fn pattern_binding(node: HirNode&, binding: PatternLet&) -> Result<ValueId, CodegenError> {
+        let initial = self.expression(binding.value)?;
+        let success = self.function.add_block();
+        let failure = self.function.add_block();
+        self.pattern_test(binding.pattern, initial, Option<ValueId>.None, success, failure)?;
+        self.current = Option<BlockId>.Some(failure);
+        match binding.else_branch {
+            Some(body) => { self.expression(body)?; },
+            None => {},
+        }
+        if self.current.is_some() { self.end(Terminator.Unreachable)?; }
+        self.current = Option<BlockId>.Some(success);
+        Result<ValueId, CodegenError>.Ok(self.zero(node.type_id))
+    }
+
+    fn boolean(value: bool) -> Result<ValueId, CodegenError> {
+        let type_id = self.session.types.primitive(TypeData.Bool)?;
+        Result<ValueId, CodegenError>.Ok(self.function.add_value(type_id, ValueKind.Integer(if value { 1u64 } else { 0u64 })))
+    }
+
+    fn compare(span: SourceSpan, op: BinaryOperator, left: ValueId, right: ValueId) -> Result<ValueId, CodegenError> {
+        let type_id = self.session.types.primitive(TypeData.Bool)?;
+        self.emit(span, type_id, Operation.Binary(op, left, right))
+    }
+
+    // Tests emit branches directly so payload reads only occur after their tag succeeds.
+    fn pattern_test(id: PatternId, value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId)
+    -> Result<(), CodegenError> {
+        let pattern = self.session.hir.require_pattern(id)?;
+        match self.lower_pattern_test(id, value, address, yes, no) {
+            Ok(value) => Result<(), CodegenError>.Ok(value),
+            Err(problem) => Result<(), CodegenError>.Err(problem.with_location(pattern.span)),
+        }
+    }
+
+    fn lower_pattern_test(id: PatternId, value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId)
+    -> Result<(), CodegenError> {
+        let pattern = self.session.hir.require_pattern(id)?;
+        match &pattern.kind {
+            WildcardPattern => self.end(Terminator.Jump(yes)),
+            BindPattern(binding) => {
+                let local = self.bind(binding.symbol_id)?;
+                let expected = self.function.local(local)?.type_id;
+                let bound = if expected == self.function.value(value)?.type_id {
+                    value
+                } else {
+                    match address {
+                        Some(pointer) => pointer,
+                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("reference binding has no matched place")),
+                    }
+                };
+                self.effect(pattern.span, Operation.Store(local, bound))?;
+                self.pattern_test(binding.inner, value, address, yes, no)
+            },
+            RefPattern(inner) => {
+                let type_id = self.session.hir.require_pattern(*inner)?.type_id;
+                let loaded = self.emit(pattern.span, type_id, Operation.Read(value))?;
+                self.pattern_test(*inner, loaded, Option<ValueId>.Some(value), yes, no)
+            },
+            LiteralPattern(literal) => {
+                let condition = match literal.condition {
+                    Some(condition) => {
+                        let symbol = *literal.condition_symbol.unwrap();
+                        let local = self.bind(symbol)?;
+                        self.effect(pattern.span, Operation.Store(local, value))?;
+                        self.expression(condition)?
+                    },
+                    None => {
+                        let constant = match &literal.value {
+                            Integer(number) => ValueKind.Integer(if number.is_untyped() && number.is_negative() {
+                                    0u64 - number.raw_bits()
+                                } else { number.raw_bits() }),
+                            Bool(value) => ValueKind.Integer(if *value { 1u64 } else { 0u64 }),
+                            Char(value) => ValueKind.Integer(u64(*value)),
+                            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("literal pattern has no scalar value")),
+                        };
+                        let rhs = self.function.add_value(pattern.type_id, constant);
+                        self.compare(pattern.span, BinaryOperator.Eq, value, rhs)?
+                    },
+                };
+                self.end(Terminator.Branch(condition, yes, no))
+            },
+            RangePattern(range) => {
+                let width = 64u32;
+                let signed = false;
+                match self.session.types.require(pattern.type_id)? {
+                    Integer(bits, sign) | CScalar(bits, sign, _) => { width = *bits; signed = *sign; },
+                    Char => { width = 32u32; },
+                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("range pattern is not integer-like")),
+                }
+                match &range.lower { AfterMax => return self.end(Terminator.Jump(no)), _ => {}, }
+                let high_test = self.function.add_block();
+                match &range.lower {
+                    Finite(key) => {
+                        let bits = if signed { *key ^ (1u64 << (width - 1)) } else { *key };
+                        let rhs = self.function.add_value(pattern.type_id, ValueKind.Integer(bits));
+                        let condition = self.compare(pattern.span, BinaryOperator.Geq, value, rhs)?;
+                        self.end(Terminator.Branch(condition, high_test, no))?;
+                    },
+                    AfterMax => { self.end(Terminator.Jump(no))?; },
+                }
+                self.current = Option<BlockId>.Some(high_test);
+                match &range.upper {
+                    AfterMax => self.end(Terminator.Jump(yes)),
+                    Finite(key) => {
+                        // A narrow domain's exclusive maximum cannot be represented in its value type.
+                        if width < 64 && *key == (1u64 << width) { return self.end(Terminator.Jump(yes)); }
+                        let bits = if signed { *key ^ (1u64 << (width - 1)) } else { *key };
+                        let rhs = self.function.add_value(pattern.type_id, ValueKind.Integer(bits));
+                        let condition = self.compare(pattern.span, BinaryOperator.Lt, value, rhs)?;
+                        self.end(Terminator.Branch(condition, yes, no))
+                    },
+                }
+            },
+            OrPattern(alternatives) => {
+                let index = 0u64;
+                for alternative in alternatives.alternatives {
+                    index += 1u64;
+                    let next = if index == alternatives.alternatives.len() { no } else { self.function.add_block() };
+                    self.pattern_test(*alternative, value, address, yes, next)?;
+                    if next != no { self.current = Option<BlockId>.Some(next); }
+                }
+                Result<(), CodegenError>.Ok(())
+            },
+            TuplePattern(tuple) => {
+                let fields = Vec<(u64, PatternId)>.new();
+                defer fields.drop();
+                let index = 0u64;
+                for child in tuple.elements { fields.push((index, *child)); index += 1u64; }
+                self.pattern_fields(pattern.span, pattern.type_id, &fields, value, address, yes, no)
+            },
+            StructPattern(structure) => self.pattern_fields(pattern.span, pattern.type_id, &structure.fields, value, address, yes, no),
+            EnumPattern(enumeration) => {
+                let tag_type = self.session.types.primitive(TypeData.Integer(32u32, false))?;
+                let tag = self.emit(pattern.span, tag_type, Operation.EnumTag(value))?;
+                let expected = self.function.add_value(tag_type, ValueKind.Integer(enumeration.variant.discriminant));
+                let condition = self.compare(pattern.span, BinaryOperator.Eq, tag, expected)?;
+                let success = self.function.add_block();
+                self.end(Terminator.Branch(condition, success, no))?;
+                self.current = Option<BlockId>.Some(success);
+                match &enumeration.fields {
+                    Some(fields) => {
+                        if fields.is_empty() { return self.end(Terminator.Jump(yes)); }
+                        let variants = self.types.variants_of(pattern.type_id)?;
+
+                        let concrete = Option<TypeId>.None;
+                        for variant in variants {
+                            if variant.discriminant == enumeration.variant.discriminant { concrete = variant.payload; }
+                        }
+                        let payload_type = match concrete {
+                            Some(value) => value,
+                            None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum pattern has no concrete payload")),
+                        };
+                        let payload = self.emit(pattern.span, payload_type, Operation.EnumPayload(value))?;
+                        let pointer = match address {
+                            Some(pointer) => {
+                                let reference = self.session.types.reference(payload_type);
+                                Option<ValueId>.Some(self.emit(pattern.span, reference, Operation.EnumPayloadAddress(pointer, pattern.type_id))?)
+                            },
+                            None => Option<ValueId>.None,
+                        };
+                        self.pattern_fields(pattern.span, payload_type, fields, payload, pointer, yes, no)
+                    },
+                    None => self.end(Terminator.Jump(yes)),
+                }
+            },
+            SequencePattern(sequence) => self.sequence_test(pattern.span, pattern.type_id, sequence, value, address, yes, no),
+        }
+    }
+
+    fn sequence_test(span: SourceSpan, type_id: TypeId, sequence: SequencePattern&, value: ValueId,
+        address: Option<ValueId>, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        let unsigned = self.session.types.primitive(TypeData.Integer(64u32, false))?;
+        let element = Option<TypeId>.None;
+        let length = Option<ValueId>.None;
+        let base = Option<ValueId>.None;
+        match self.session.types.require(type_id)? {
+            Array(inner, count) => {
+                element = Option<TypeId>.Some(*inner);
+                let size = match self.session.types.require(*count)? {
+                    LiteralValue(bits, _, _) => *bits,
+                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("array pattern has no concrete length")),
+                };
+                length = Option<ValueId>.Some(self.function.add_value(unsigned, ValueKind.Integer(size)));
+                base = address;
+                if base.is_none() {
+                    let local = self.function.add_local(type_id);
+                    self.effect(span, Operation.Store(local, value))?;
+                    let reference = self.session.types.reference(type_id);
+                    base = Option<ValueId>.Some(self.emit(span, reference, Operation.Address(local))?);
+                }
+            },
+            Slice(inner) => {
+                element = Option<TypeId>.Some(*inner);
+                let arguments = Vec<ValueId>.new();
+                arguments.push(value);
+                length = Option<ValueId>.Some(self.emit(span, unsigned, Operation.Builtin(BuiltinKind.SliceGetLen, Vec<TypeId>.new(), arguments))?);
+                let pointer_arguments = Vec<ValueId>.new();
+                pointer_arguments.push(value);
+                let pointer = self.session.types.pointer(*inner);
+                base = Option<ValueId>.Some(self.emit(span, pointer, Operation.Builtin(BuiltinKind.SliceGetPtr, Vec<TypeId>.new(), pointer_arguments))?);
+            },
+            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("sequence pattern has no array or slice")),
+        }
+        let count = sequence.prefix.len() + sequence.suffix.len();
+        let minimum = self.function.add_value(unsigned, ValueKind.Integer(count));
+        let condition = self.compare(span, if sequence.rest { BinaryOperator.Geq } else { BinaryOperator.Eq }, *length.unwrap(), minimum)?;
+        let fields = self.function.add_block();
+        self.end(Terminator.Branch(condition, fields, no))?;
+        self.current = Option<BlockId>.Some(fields);
+        if count == 0u64 { return self.end(Terminator.Jump(yes)); }
+        let completed = 0u64;
+        let index = 0u64;
+        for child in sequence.prefix {
+            let offset = self.function.add_value(unsigned, ValueKind.Integer(index));
+            completed += 1u64;
+            let next = if completed == count { yes } else { self.function.add_block() };
+            self.sequence_element(span, *element.unwrap(), *base.unwrap(), offset, *length.unwrap(), *child, address.is_some(), next, no)?;
+            if next != yes { self.current = Option<BlockId>.Some(next); }
+            index += 1u64;
+        }
+        index = 0u64;
+        for child in sequence.suffix {
+            let distance = self.function.add_value(unsigned, ValueKind.Integer(sequence.suffix.len() - index));
+            let offset = self.emit(span, unsigned, Operation.Binary(BinaryOperator.Sub, *length.unwrap(), distance))?;
+            completed += 1u64;
+            let next = if completed == count { yes } else { self.function.add_block() };
+            self.sequence_element(span, *element.unwrap(), *base.unwrap(), offset, *length.unwrap(), *child, address.is_some(), next, no)?;
+            if next != yes { self.current = Option<BlockId>.Some(next); }
+            index += 1u64;
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    fn sequence_element(span: SourceSpan, element: TypeId, base: ValueId, offset: ValueId, length: ValueId,
+        pattern: PatternId, borrowed: bool, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        let reference = self.session.types.reference(element);
+        let pointer = self.emit(span, reference, Operation.IndexAddress(base, element, offset, IndexBounds.Array(length)))?;
+        let value = self.emit(span, element, Operation.Read(pointer))?;
+        self.pattern_test(pattern, value, if borrowed { Option<ValueId>.Some(pointer) } else { Option<ValueId>.None }, yes, no)
+    }
+
+    fn pattern_fields(span: SourceSpan, aggregate_type: TypeId, fields: Vec<(u64, PatternId)>&,
+        value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        if fields.is_empty() { return self.end(Terminator.Jump(yes)); }
+        let index = 0u64;
+        for field in *fields {
+            index += 1u64;
+            let pattern = self.session.hir.require_pattern(field[1])?;
+            let element = self.emit(span, pattern.type_id, Operation.Extract(value, field[0]))?;
+            let pointer = match address {
+                Some(pointer) => {
+                    let reference = self.session.types.reference(pattern.type_id);
+                    Option<ValueId>.Some(self.emit(span, reference, Operation.FieldAddress(pointer, aggregate_type, field[0]))?)
+                },
+                None => Option<ValueId>.None,
+            };
+            let next = if index == fields.len() { yes } else { self.function.add_block() };
+            self.pattern_test(field[1], element, pointer, next, no)?;
+            if next != yes { self.current = Option<BlockId>.Some(next); }
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn match_value(node: HirNode&, value: Match&) -> Result<ValueId, CodegenError> {
+        let matched = self.expression(value.value)?;
+        let address = Option<ValueId>.None;
+        if value.is_ref {
+            address = Option<ValueId>.Some(matched);
+        }
+        let join = self.function.add_block();
+        let incoming = Vec<(ValueId, BlockId)>.new();
+        let transferred = false;
+        defer { if !transferred { incoming.drop(); } };
+        for arm in value.arms {
+            match address {
+                Some(pointer) => {
+                    // A failed guard may mutate the referred value before the next arm.
+                    let inner = match self.session.types.require(self.function.value(pointer)?.type_id)? {
+                        Reference(inner) => *inner,
+                        _ => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("reference match has no reference value")),
+                    };
+                    matched = self.emit(node.span, inner, Operation.Read(pointer))?;
+                },
+                None => {},
+            }
+            let body = self.function.add_block();
+            let next = self.function.add_block();
+            self.pattern_test(arm.pattern, matched, address, body, next)?;
+            self.current = Option<BlockId>.Some(body);
+            match arm.guard {
+                Some(guard) => {
+                    let condition = self.expression(guard)?;
+                    let guarded = self.function.add_block();
+                    self.end(Terminator.Branch(condition, guarded, next))?;
+                    self.current = Option<BlockId>.Some(guarded);
+                },
+                None => {},
+            }
+            let result = self.expression(arm.body)?;
+            match self.current {
+                Some(block) => { incoming.push((result, block)); self.end(Terminator.Jump(join))?; },
+                None => {},
+            }
+            self.current = Option<BlockId>.Some(next);
+        }
+        // Coverage is checked on HIR. The remaining path is semantically unreachable.
+        self.end(Terminator.Unreachable)?;
+        self.current = Option<BlockId>.Some(join);
+        if incoming.is_empty() {
+            self.end(Terminator.Unreachable)?;
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+        }
+        if self.types.is_zst(node.type_id)? { return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id)); }
+        transferred = true;
+        self.emit(node.span, node.type_id, Operation.Phi(incoming))
+    }
+}

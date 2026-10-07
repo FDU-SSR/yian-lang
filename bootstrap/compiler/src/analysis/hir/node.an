@@ -365,6 +365,54 @@ pub enum HirKind {
 }
 
 // The store owns payload buffers; ID edges never own their target nodes.
+impl HirKind {
+    pub fn name() -> str {
+        match self {
+            Block(_) => "Block",
+            Return(_) => "Return",
+            If(_) => "If",
+            Loop(_) => "Loop",
+            Break(_) => "Break",
+            Continue => "Continue",
+            Defer(_) => "Defer",
+            Delete(_) => "Delete",
+            Semi(_) => "Semi",
+            Let(_) => "Let",
+            PatternLet(_) => "PatternLet",
+            Match(_) => "Match",
+            Binary(_) => "Binary",
+            Unary(_) => "Unary",
+            Call(_) => "Call",
+            StructConstruct(_) => "StructConstruct",
+            Invoke(_) => "Invoke",
+            Cast(_) => "Cast",
+            BitCast(_) => "BitCast",
+            TraitObjectCoerce(_) => "TraitObjectCoerce",
+            MethodCall(_) => "MethodCall",
+            TraitObjectMethodCall(_) => "TraitObjectMethodCall",
+            VariantConstruct(_) => "VariantConstruct",
+            FieldAccess(_) => "FieldAccess",
+            TupleAccess(_) => "TupleAccess",
+            ArrayAccess(_) => "ArrayAccess",
+            SliceAccess(_) => "SliceAccess",
+            DynValue(_) => "DynValue",
+            DynBuffer(_) => "DynBuffer",
+            Builtin(_) => "Builtin",
+            Tuple(_) => "Tuple",
+            Array(_) => "Array",
+            ArrayRepeat(_) => "ArrayRepeat",
+            Var(_) => "Var",
+            IntLiteral(_) => "IntLiteral",
+            FloatLiteral(_) => "FloatLiteral",
+            CharLiteral(_) => "CharLiteral",
+            StrLiteral(_) => "StrLiteral",
+            BoolLiteral(_) => "BoolLiteral",
+            Ty => "Ty",
+            Closure(_) => "Closure",
+        }
+    }
+}
+
 pub struct HirNode {
     pub span: SourceSpan,
     pub type_id: TypeId,
