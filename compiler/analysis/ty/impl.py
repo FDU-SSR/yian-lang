@@ -301,7 +301,10 @@ class ImplRegistry:
             # method name in impl -> check signature matches the trait method
             if method_name in impl_methods:
                 impl_method_ty_id = impl_methods[method_name]
-                if not self.__impl_signature_match(trait_ty.type_id, impl.target, trait_method_ty_id, impl_method_ty_id):
+                if not self.__impl_signature_match(
+                    trait_ty.type_id, impl.target, trait_method_ty_id,
+                    impl_method_ty_id, len(impl.generics),
+                ):
                     raise AnalysisError(
                         f"Method '{method_name}' in impl of trait '{self.__ctx.get_name(impl.trait)}' for type '{self.__ctx.get_name(impl.target)}' does not match the signature of the trait method",
                         impl.span,
@@ -371,7 +374,7 @@ class ImplRegistry:
 
         return False
 
-    def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int) -> bool:
+    def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int, impl_generic_count: int) -> bool:
         """
         Check that the method defined in the impl matches the method defined in the trait.
         """
@@ -379,6 +382,10 @@ class ImplRegistry:
         assert isinstance(trait_method_ty, Type.MethodType)
         impl_method_ty = self.__ctx[impl_method]
         assert isinstance(impl_method_ty, Type.MethodType)
+
+        if trait_method_ty.is_static != impl_method_ty.is_static:
+            return False
+
         receiver_type = self.__ctx.get_receiver_type(impl_method)
 
         if not self.__ctx.is_same_type(receiver_type, target_type):
@@ -392,6 +399,13 @@ class ImplRegistry:
         self_trait_ty = self.__ctx[trait_receiver_ty.trait_type_id]
         if not isinstance(self_trait_ty, Type.TraitType) or self_trait_ty.custom_def is not trait_type_ty.custom_def:
             return False
+
+        # Inherited trait and impl parameters do not belong to the method's arity.
+        trait_own_generics = len(trait_method_ty.custom_def.generics) - len(trait_type_ty.custom_def.generics)
+        impl_own_generics = len(impl_method_ty.custom_def.generics) - impl_generic_count
+        if trait_own_generics != impl_own_generics:
+            return False
+
         if not self.__impl_compatible(trait_type, target_type, self.__ctx.get_return_type(trait_method), self.__ctx.get_return_type(impl_method)):
             return False
         trait_params = self.__ctx.get_params(trait_method)

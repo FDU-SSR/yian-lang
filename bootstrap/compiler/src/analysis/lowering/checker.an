@@ -88,6 +88,50 @@ impl ExprChecker {
         self.ctx.error(self.unit, span, DiagnosticCode.Type, message)
     }
 
+    // Failed constraints and unresolved parameters use distinct diagnostic categories.
+    fn inference_error(span: Span, expected: TypeId, actual: TypeId) -> AnalysisError {
+        let wanted = type_text(self.ctx, expected);
+        defer wanted.drop();
+        let observed = type_text(self.ctx, actual);
+        defer observed.drop();
+        let relation = match self.ctx.session.types.get(expected).unwrap() {
+            Nominal(expected_definition, _) => {
+                match self.ctx.session.types.get(actual).unwrap() {
+                    Nominal(actual_definition, _) => {
+                        if *expected_definition != *actual_definition {
+                            "to"
+                        } else {
+                            "for"
+                        }
+                    },
+                    _ => "for",
+                }
+            },
+            _ => "for",
+        };
+        let message = String.from(&"cannot infer generic arguments from '");
+        defer message.drop();
+        message.push_str(observed.as_str());
+        message.push_str("' ");
+        message.push_str(relation);
+        message.push_str(" '");
+        message.push_str(wanted.as_str());
+        message.push_str("'");
+
+        self.ctx.error(self.unit, span, DiagnosticCode.Inference, message.as_str())
+    }
+
+    fn unbound_arguments(span: Span, type_id: TypeId) -> AnalysisError {
+        let name = type_text(self.ctx, type_id);
+        defer name.drop();
+        let message = String.from(&"cannot infer generic type '");
+        defer message.drop();
+        message.push_str(name.as_str());
+        message.push_str("' from the call arguments");
+
+        self.error(span, message.as_str())
+    }
+
     pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
         let node = *self.ctx.session.hir.get(id).unwrap();
 

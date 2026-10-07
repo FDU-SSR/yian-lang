@@ -1,0 +1,9 @@
+enum Choice<T> {
+    Value { value: i32 },
+    Other { value: T },
+}
+
+fn main() {
+    // Named fields must constrain every enum parameter needed by the result.
+    Choice.Value(value=7);
+}

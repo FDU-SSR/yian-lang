@@ -1,0 +1,35 @@
+trait Factory<T> {
+    static fn create(value: T) -> Self;
+}
+
+trait OtherFactory {
+    static fn create<A, B>(first: A, second: B) -> Self;
+}
+
+struct Product {
+    pub value: i32,
+}
+
+impl OtherFactory for Product {
+    static fn create<A, B>(first: A, second: B) -> Self {
+        Product(100)
+    }
+}
+
+impl Factory<i32> for Product {
+    static fn create(value: i32) -> Self {
+        Product(value)
+    }
+}
+
+impl Product {
+    static fn create(value: i32) -> Self {
+        Product(value + 200)
+    }
+}
+
+fn main() {
+    assert Factory<i32>.create<Product>(7).value == 7;
+    assert OtherFactory.create<Product, i32, bool>(9, true).value == 100;
+    assert Factory<i32>.create<Product>(11).value == 11;
+}

@@ -1,0 +1,4 @@
+fn main() {
+    // The invalid return form is diagnosed before its operand is resolved.
+    return unknown_name;
+}

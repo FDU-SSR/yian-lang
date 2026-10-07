@@ -1,0 +1,11 @@
+struct Record<T> {
+    pub value: T,
+}
+
+typedef IntRecord = Record<i32>;
+
+fn main() {
+    let record = IntRecord(7);
+    let reference: IntRecord& = &record;
+    reference.missing;
+}

@@ -1,0 +1,25 @@
+trait Reader<T> {
+    fn read() -> T;
+    static fn echo<U>(value: U) -> U;
+}
+
+struct Record<T> {
+    pub value: T,
+}
+
+impl<T> Reader<T> for Record<T> {
+    fn read() -> T {
+        self.value
+    }
+
+    static fn echo<U>(value: U) -> U {
+        value
+    }
+}
+
+fn main() {
+    let record = Record<i32>(7);
+    assert record.read() == 7;
+    assert Reader<i32>.echo<Record<i32>, bool>(true);
+    assert Reader<i32>.echo<Record<i32>>(9u64) == 9u64;
+}

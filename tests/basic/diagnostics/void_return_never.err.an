@@ -1,0 +1,4 @@
+fn main() {
+    // A diverging operand still uses an invalid return form in a void function.
+    return @panic("unreachable");
+}

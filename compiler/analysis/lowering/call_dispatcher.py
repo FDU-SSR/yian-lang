@@ -300,7 +300,7 @@ class CallDispatcher:
         if isinstance(ty, Type.EnumType):
             variant = ty.get_variant_by_name(node.method_name.name, self.__ctx.type_ctx)
             if variant is not None:
-                return self.__handle_variant_construction(node.span, receiver.type_id, variant, node.args)
+                return self.build_variant_construction(node.span, receiver.type_id, variant, node.args)
 
         args = self.__resolve_positional_args(node.args, "static method call")
         return self.dispatch_method_call(
@@ -348,19 +348,20 @@ class CallDispatcher:
             is_place=False,
         )
 
-    def __handle_variant_construction(self, span: SrcSpan, enum_type_id: int, variant: Type.EnumVariant, args: list[AST.Arg]) -> HIR.Expr:
+    def build_variant_construction(self, span: SrcSpan, enum_type_id: int, variant: Type.EnumVariant, args: list[AST.Arg]) -> HIR.Expr:
         if not args:
             if variant.payload_type is not None:
                 raise AnalysisError(f"variant '{variant.name}' expects an argument", span)
-            return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=None, type_id=enum_type_id, is_place=False)
+            inference = GenericInference(self.__ctx.type_ctx, span)
+            return self.__finish_variant_construction(span, enum_type_id, variant, None, inference)
 
         if self.__has_named_arg(args):
             if variant.payload_type is not None:
                 self.__record_field_names(
                     args, self.__ctx.type_ctx.get_struct_fields(variant.payload_type)
                 )
-            coerced_args = self.__resolve_named_variant_args(span, variant, args)
-            return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=coerced_args, type_id=enum_type_id, is_place=False)
+            coerced_args, inference = self.__resolve_named_variant_args(span, variant, args)
+            return self.__finish_variant_construction(span, enum_type_id, variant, coerced_args, inference)
 
         if variant.payload_type is None:
             raise AnalysisError(f"variant '{variant.name}' does not take any arguments", span)
@@ -381,7 +382,26 @@ class CallDispatcher:
 
         coerced_values = [self.__expr.coerce(val, inference.instantiate(field_type_id)) for field_type_id, val in zip(field_type_ids, arg_values)]
         args_dict = {field.name: val for field, val in zip(fields, coerced_values)}
-        return HIR.VariantConstruct(span=span, enum_id=enum_type_id, variant=variant, args=args_dict, type_id=enum_type_id, is_place=False)
+        return self.__finish_variant_construction(span, enum_type_id, variant, args_dict, inference)
+
+    def __finish_variant_construction(
+        self, span: SrcSpan, enum_type_id: int, variant: Type.EnumVariant,
+        args: dict[str, HIR.Expr] | None, inference: GenericInference,
+    ) -> HIR.VariantConstruct:
+        """Require a concrete enum identity and instantiate its selected payload."""
+        instantiated_enum_id = inference.instantiate(enum_type_id)
+        payload_type = None
+        if variant.payload_type is not None:
+            payload_type = inference.instantiate(variant.payload_type)
+
+        concrete_variant = Type.EnumVariant(
+            name=variant.name, payload_type=payload_type,
+            discriminant=variant.discriminant, span=variant.span,
+        )
+        return HIR.VariantConstruct(
+            span=span, enum_id=instantiated_enum_id, variant=concrete_variant,
+            args=args, type_id=instantiated_enum_id, is_place=False,
+        )
 
     def __resolve_positional_args(self, args: list[AST.Arg], context_name: str) -> list[HIR.Expr]:
         if self.__has_named_arg(args):
@@ -489,7 +509,7 @@ class CallDispatcher:
             inference,
         )
 
-    def __resolve_named_variant_args(self, span: SrcSpan, variant: Type.EnumVariant, args: list[AST.Arg]) -> dict[str, HIR.Expr]:
+    def __resolve_named_variant_args(self, span: SrcSpan, variant: Type.EnumVariant, args: list[AST.Arg]) -> tuple[dict[str, HIR.Expr], GenericInference]:
         if any(arg.name is None for arg in args):
             raise AnalysisError("named and positional arguments cannot be mixed", span)
         if variant.payload_type is None:
@@ -519,10 +539,11 @@ class CallDispatcher:
         for field in fields:
             inference.constrain(field.type_id, resolved_values[field.name].type_id)
 
-        return {
+        coerced_args = {
             field.name: self.__expr.coerce(resolved_values[field.name], inference.instantiate(field.type_id))
             for field in fields
         }
+        return coerced_args, inference
 
     def __has_named_arg(self, args: list[AST.Arg]) -> bool:
         return any(arg.name is not None for arg in args)

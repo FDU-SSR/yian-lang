@@ -1,0 +1,8 @@
+fn identity<T>(value: i32) -> i32 {
+    value
+}
+
+fn main() {
+    // The value argument does not constrain T.
+    identity(7);
+}

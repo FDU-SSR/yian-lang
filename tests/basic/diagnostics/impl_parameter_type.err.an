@@ -1,0 +1,11 @@
+trait Transform {
+    fn apply(value: i32) -> i32;
+}
+
+impl Transform for i32 {
+    fn apply(value: bool) -> i32 {
+        0
+    }
+}
+
+fn main() {}

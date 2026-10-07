@@ -1,0 +1,8 @@
+struct Record {
+    pub value: i32,
+}
+
+fn main() {
+    let record = Record(7);
+    record.missing;
+}

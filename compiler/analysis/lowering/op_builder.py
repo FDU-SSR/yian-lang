@@ -615,7 +615,7 @@ class OpBuilder:
         if variant is None:
             raise AnalysisError(f"Enum '{self.__type_ctx.get_name(enum_type_id)}' has no variant named '{variant_name}'.", span)
 
-        return HIR.VariantConstruct(span, enum_type_id, variant, None, enum_type_id, is_place=False)
+        return self.__call_dispatcher.build_variant_construction(span, enum_type_id, variant, [])
 
     # ------------------------------------------------------------------
     # table-driven generic builders

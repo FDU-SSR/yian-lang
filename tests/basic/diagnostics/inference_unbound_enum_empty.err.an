@@ -1,0 +1,9 @@
+enum Choice<T> {
+    Empty,
+    Other { value: T },
+}
+
+fn main() {
+    // An empty variant still requires a concrete enum identity.
+    Choice.Empty;
+}

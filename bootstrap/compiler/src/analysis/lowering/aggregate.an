@@ -119,7 +119,7 @@ impl ExprChecker {
 
             match substitutions.get(&generic) {
                 Some(value) => arguments.push(*value),
-                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Inference, "cannot infer generic arguments for aggregate")),
+                None => return Result<HirId, AnalysisError>.Err(self.unbound_arguments(span, type_id)),
             }
 
             index += 1;
@@ -236,7 +236,7 @@ impl ExprChecker {
 
                 match substitutions.get(&generic) {
                     Some(value) => arguments.push(*value),
-                    None => return Result<Option<HirId>, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Inference, "cannot infer generic arguments for enum")),
+                    None => return Result<Option<HirId>, AnalysisError>.Err(self.unbound_arguments(span, type_id)),
                 }
 
                 index += 1;
